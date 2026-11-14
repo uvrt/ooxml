@@ -856,17 +856,10 @@ fn keep_trial(fx: &F, items: &[usize], on: bool, address: &str) -> Option<Value>
     if !changed {
         return None;
     }
-    let lo = *items.iter().min()?;
     let hi = *items.iter().max()? + 1;
-    let mut st = crate::engine::Stat::default();
-    eng.repaginate(
-        crate::incr::Change {
-            a: lo,
-            b_old: hi,
-            b_new: hi,
-        },
-        &mut st,
-    );
+    // Laid out whole (milliseconds): a keep released can move the range up onto the page
+    // before the one its first block starts (an incremental layout would start there).
+    eng.pag = crate::paginate::paginate_all(&eng.doc, &eng.flow);
     eng.fields();
     let then = eng.snapshot();
     let after = if hi < s.inputs.len() { Some(hi) } else { None };

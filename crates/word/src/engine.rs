@@ -512,7 +512,7 @@ impl Engine {
         st
     }
 
-    pub(crate) fn repaginate(&mut self, ch: Change, st: &mut Stat) {
+    fn repaginate(&mut self, ch: Change, st: &mut Stat) {
         if self.pag.starts.is_empty() || ch.a >= self.flow.len() && self.flow.is_empty() {
             self.pag = paginate_all(&self.doc, &self.flow);
             return;
