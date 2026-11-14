@@ -4,13 +4,19 @@
 //!
 //! Moved in from the performance lanes' prototype (lane S: kernels; lane E: the owner).
 pub mod engine;
+pub mod linebreak;
 pub mod incr;
 pub mod paginate;
 pub mod snapshot;
 pub mod table;
 
-// The core's modules, under the paths this crate's code was written against.
-pub use ooxml_core::{measure, model, owner, units};
+// The core's modules, under the paths this crate's code was written against; `measure`
+// is the core's with Word's line breaking (`linebreak`) beside it, as it was one module.
+pub use ooxml_core::{model, owner, units};
+pub mod measure {
+    pub use crate::linebreak::*;
+    pub use ooxml_core::measure::*;
+}
 
 use measure::{measure, LineH, Tables};
 use model::{Export, ItemIn};
