@@ -1,0 +1,918 @@
+#!/usr/bin/env python3
+"""Build decks that measure the **horizontal legend's inter-entry gap**.
+
+``LEGEND_ENTRY_GAP_EM = 0.5`` in ``resolve/chart.py`` was refuted by ROADMAP.md 3.3: four
+charts solved for four gaps -- 0.77, 1.03, 1.12 and 1.15 em -- and the gap is constant
+*within* each chart, so it is not a per-entry quantity and not a measurement error.  What
+it is a function of is the question these decks were built to answer, and **they answer
+it**: see ROADMAP.md 3.5 and :data:`~pptx2svg.resolve.chart.LEGEND_ENTRY_SLACK`.  The run
+is padded by a fifth of its own natural width and that slack is cut into ``n + 1`` equal
+gaps, so the gap grows with the entries and the frame does not enter at all.
+
+The reading is geometric rather than typographic.  Every entry's **key** is a path -- a
+filled swatch for a bar, a horizontal rule for a line -- so the pitch between consecutive
+keys comes off the export with no font metric in it at all.  One pitch is
+
+    pitch(i) = key + key_gap + advance(name(i)) + G
+
+and since ``key + key_gap`` is one number per chart, the only unknown a slide leaves is
+``key + key_gap + G``, which is what ``read_legend_probe.py`` calls **K**.  Whether the
+``G`` inside it is a constant is exactly the open question.
+
+Two readings were in play when these decks were written, and one experiment separates them:
+
+* **packed** -- entries are laid out with a fixed gap and the run is then centred;
+* **distributed** -- entries are spread over an available width, so the "gap" is the
+  residue ``(available - sum of widths) / (n - 1)`` and differs per chart by construction.
+
+Hold a chart fixed and **lengthen one entry's name by delta**.  A packed layout leaves the
+pitch between two *unchanged* entries alone and moves the first key left by delta/2; a
+distributed one shrinks that pitch by ``delta / (n - 1)`` and leaves the first key where it
+was.  The ``x-`` family is that experiment; the rest of the sweep says what the answer is
+a function of.  **Neither reading was right**: the pitch between two untouched entries
+*grew*, which is the packed sign and the distributed one's opposite, and the ``f`` family
+then showed the frame does not enter at all.
+
+| family | holds | varies |
+| --- | --- | --- |
+| ``x`` | frame, count, key | one name's length -- the discriminating experiment |
+| ``n`` | frame, names, key | entry count, 2 through 7 |
+| ``w`` | frame, count, key | total name width, including one long entry among short |
+| ``k`` | frame, count, names | key type: bar, line, marker-only, area, pie, scatter, combo |
+| ``f`` | count, names, key | frame width, 240 through 720 pt |
+| ``z`` | frame, count, names | font size, 8 through 18 pt -- the answer is stated in ems |
+| ``p`` | everything | ``legendPos``: ``b``, ``t``, ``tr`` |
+
+Four later decks answer the question the first five left open -- **what happens when a
+legend wraps** -- and correct the row constant underneath it.  See ROADMAP.md 3.5, *The
+legend row, and what wraps inside it*:
+
+| deck | subject | read with |
+| --- | --- | --- |
+| ``legend-side`` | a side legend whose entries wrap: block, pitch, wrap depth | ``--side`` |
+| ``legend-row`` | a horizontal legend past the 0.9 cap: the grid it becomes | ``--rows`` |
+| ``legend-band`` | what a row costs the plot, against a **no-legend control** | ``--rows`` |
+| ``legend-face`` | whether the row is a constant or the face's line box | ``--rows`` |
+
+The last two are the load-bearing ones.  A chart's plot bottom is its category axis line,
+so differencing a 1-, 2- and 3-row legend against a control with no ``c:legend`` at all
+gives the row with no other reserve in it, to 0.005 pt -- and naming a face is what
+separates ``1.2083 * size`` from ``0.99 * lineBox``, because Aptos and Calibri are
+metric-compatible and every earlier deck used one of the two.
+
+Usage -- the deck's file name picks its probe table::
+
+    python3 tools/make_legend_probe.py ~/pptx2svg-oracle/legend-pack.pptx
+    osascript tools/powerpoint_export_pdf.applescript \\
+        ~/pptx2svg-oracle/legend-pack.pptx ~/pptx2svg-oracle/legend-pack.pdf
+    python3 tools/read_legend_probe.py ~/pptx2svg-oracle/legend-pack.pdf
+
+The decks and their exports are throwaway and are **not** committed; ``~/pptx2svg-oracle``
+is the directory PowerPoint is allowed to write to and it is left holding its twenty
+corpus files.  See ROADMAP.md section 0.1 before blaming a failed export on the path.
+"""
+
+from __future__ import annotations
+
+import re
+import sys
+import zipfile
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+ROOT = HERE.parent
+SOURCE = ROOT / "tests/fixtures/authoring-integration.pptx"
+
+C = "xmlns:c='http://schemas.openxmlformats.org/drawingml/2006/chart'"
+A = "xmlns:a='http://schemas.openxmlformats.org/drawingml/2006/main'"
+R = "xmlns:r='http://schemas.openxmlformats.org/officeDocument/2006/relationships'"
+NAMESPACES = (
+    'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
+    'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" '
+    'xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"'
+)
+CHART_TYPE = "application/vnd.openxmlformats-officedocument.drawingml.chart+xml"
+SLIDE_TYPE = "application/vnd.openxmlformats-officedocument.presentationml.slide+xml"
+SLIDE_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide"
+LAYOUT_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout"
+CHART_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart"
+
+EMU = 12700
+FRAME_OFF = (18 * EMU, 18 * EMU)
+
+EMPTY_TREE = (
+    '<p:spTree><p:nvGrpSpPr><p:cNvPr id="0" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>'
+    '<p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/>'
+    '<a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr></p:spTree>'
+)
+
+PRIMARY_CAT = 90000
+PRIMARY_VAL = 90001
+SECOND_CAT = 90002
+SECOND_VAL = 90003
+
+CATEGORIES = ("C1", "C2", "C3", "C4", "C5")
+
+#: Entry names.  **Every one begins with the same letter**, so a pitch read off the text's
+#: ink box carries no left-side-bearing difference and can be compared with the pitch read
+#: off the keys.  The keys are the primary reading; this only keeps the cross-check honest.
+NAMES = [f"W{'i' * n}" for n in range(1, 9)]
+
+#: A long name and a short one, for the width sweep and the discriminating experiment.
+SHORT = "Wm"
+LONG = "Wmmmmmmmmmmmm"
+
+
+def values_for(high: float, count: int = 5) -> list[float]:
+    factors = (0.3, 1.0, 0.55, 0.8, 0.45)
+    out = [high * factors[i % len(factors)] for i in range(count)]
+    out[1] = high
+    return out
+
+
+# --------------------------------------------------------------------------------------
+# Chart XML
+# --------------------------------------------------------------------------------------
+
+
+def _points(values) -> str:
+    return "".join(f"<c:pt idx='{i}'><c:v>{v!r}</c:v></c:pt>" for i, v in enumerate(values))
+
+
+def _cats(names) -> str:
+    inner = "".join(f"<c:pt idx='{i}'><c:v>{n}</c:v></c:pt>" for i, n in enumerate(names))
+    return (
+        "<c:cat><c:strRef><c:strCache>"
+        f"<c:ptCount val='{len(names)}'/>{inner}</c:strCache></c:strRef></c:cat>"
+    )
+
+
+def _vals(values, tag: str = "val") -> str:
+    return (
+        f"<c:{tag}><c:numRef><c:numCache><c:formatCode>General</c:formatCode>"
+        f"<c:ptCount val='{len(values)}'/>{_points(values)}</c:numCache></c:numRef></c:{tag}>"
+    )
+
+
+def _name(text: str) -> str:
+    return (
+        "<c:tx><c:strRef><c:strCache><c:ptCount val='1'/>"
+        f"<c:pt idx='0'><c:v>{text}</c:v></c:pt></c:strCache></c:strRef></c:tx>"
+    )
+
+
+def _series(
+    index: int,
+    name: str,
+    values,
+    cats,
+    *,
+    kind: str,
+    marker: bool,
+    no_line: bool = False,
+) -> str:
+    """One ``c:ser``.  ``c:idx`` must be unique across every group (ROADMAP.md 0.1).
+
+    The child order is the schema's and is not negotiable: ``idx``, ``order``, ``tx``,
+    ``spPr``, ``marker``, ``cat``, ``val``, ``smooth``.  Out-of-order children cost an
+    earlier probe a -9074.
+
+    ``no_line`` writes the ``<a:ln><a:noFill/></a:ln>`` a stock chart's series carry, which
+    is the ``o`` family's whole subject: a series that legends with a **rule** and has no
+    rule to draw.
+    """
+    head = f"<c:ser><c:idx val='{index}'/><c:order val='{index}'/>" + _name(name)
+    if no_line:
+        head += "<c:spPr><a:ln w='19050'><a:noFill/></a:ln></c:spPr>"
+    if kind in ("line", "scatter", "stock"):
+        head += (
+            "<c:marker><c:symbol val='circle'/><c:size val='5'/></c:marker>"
+            if marker
+            else "<c:marker><c:symbol val='none'/></c:marker>"
+        )
+    if kind == "scatter":
+        xs = [float(i + 1) for i in range(len(values))]
+        return head + _vals(xs, "xVal") + _vals(values, "yVal") + "<c:smooth val='0'/></c:ser>"
+    body = _cats(cats) + _vals(values)
+    tail = "<c:smooth val='0'/>" if kind == "line" else ""
+    return head + body + tail + "</c:ser>"
+
+
+def _no_line_flags(group: dict, count: int) -> list[bool]:
+    """Which of this group's series state ``<a:ln><a:noFill/></a:ln>``."""
+    flag = group.get("no_line", False)
+    if flag is True:
+        return [True] * count
+    if flag is False:
+        return [False] * count
+    return [index in set(flag) for index in range(count)]
+
+
+def group_xml(group: dict, first_index: int, cats) -> tuple[str, int]:
+    """One ``c:*Chart`` element, and the next free series index."""
+    kind = group["kind"]
+    names = group["names"]
+    highs = group.get("highs") or [9.0] * len(names)
+    marker = group.get("marker", True)
+    markers = group.get("markers")
+    no_line = _no_line_flags(group, len(names))
+    body = "".join(
+        _series(first_index + i, names[i], values_for(highs[i]), cats,
+                kind="scatter" if kind == "scatter" else ("line" if kind == "line" else kind),
+                marker=markers[i] if markers is not None else marker,
+                no_line=no_line[i])
+        for i in range(len(names))
+    )
+    cat_id = SECOND_CAT if group.get("secondary") else PRIMARY_CAT
+    val_id = SECOND_VAL if group.get("secondary") else PRIMARY_VAL
+    ids = f"<c:axId val='{cat_id}'/><c:axId val='{val_id}'/>"
+    if kind == "col":
+        xml = (
+            "<c:barChart><c:barDir val='col'/><c:grouping val='clustered'/>"
+            f"<c:varyColors val='0'/>{body}<c:gapWidth val='150'/>{ids}</c:barChart>"
+        )
+    elif kind == "line":
+        xml = (
+            "<c:lineChart><c:grouping val='standard'/>"
+            f"<c:varyColors val='0'/>{body}<c:marker val='{1 if marker else 0}'/>"
+            f"{ids}</c:lineChart>"
+        )
+    elif kind == "stock":
+        # A `c:stockChart` takes exactly three or four series and no `c:grouping`.  Its
+        # `c:hiLowLines` is what a real stock chart draws instead of the series lines.
+        xml = (
+            "<c:stockChart>"
+            f"{body}<c:hiLowLines/>{ids}</c:stockChart>"
+        )
+    elif kind == "area":
+        xml = (
+            "<c:areaChart><c:grouping val='standard'/>"
+            f"<c:varyColors val='0'/>{body}{ids}</c:areaChart>"
+        )
+    elif kind == "pie":
+        # A pie legends its **categories**, so its one series carries every entry name in
+        # ``c:cat`` and the series name is irrelevant.  No axes.
+        series = _series(first_index, "Pie", values_for(9.0, len(names)), names,
+                         kind="pie", marker=False)
+        xml = f"<c:pieChart><c:varyColors val='1'/>{series}<c:firstSliceAng val='0'/></c:pieChart>"
+        return xml, first_index + 1
+    elif kind == "scatter":
+        xml = (
+            f"<c:scatterChart><c:scatterStyle val='{group.get('style', 'lineMarker')}'/>"
+            f"<c:varyColors val='0'/>{body}{ids}</c:scatterChart>"
+        )
+    else:
+        raise SystemExit(f"unknown group kind {kind!r}")
+    return xml, first_index + len(names)
+
+
+def cat_axis(ax_id: int, cross_id: int, *, delete: bool = False) -> str:
+    return (
+        f"<c:catAx><c:axId val='{ax_id}'/>"
+        "<c:scaling><c:orientation val='minMax'/></c:scaling>"
+        f"<c:delete val='{1 if delete else 0}'/><c:axPos val='b'/>"
+        "<c:numFmt formatCode='General' sourceLinked='1'/>"
+        "<c:majorTickMark val='out'/><c:minorTickMark val='none'/>"
+        "<c:tickLblPos val='nextTo'/>"
+        f"<c:crossAx val='{cross_id}'/><c:crosses val='autoZero'/>"
+        "<c:auto val='1'/><c:lblAlgn val='ctr'/><c:lblOffset val='100'/>"
+        "<c:noMultiLvlLbl val='0'/></c:catAx>"
+    )
+
+
+def val_axis(
+    ax_id: int,
+    cross_id: int,
+    *,
+    position: str = "l",
+    delete: bool = False,
+    gridlines: bool = True,
+    crosses: str = "autoZero",
+) -> str:
+    return (
+        f"<c:valAx><c:axId val='{ax_id}'/>"
+        "<c:scaling><c:orientation val='minMax'/></c:scaling>"
+        f"<c:delete val='{1 if delete else 0}'/><c:axPos val='{position}'/>"
+        + ("<c:majorGridlines/>" if gridlines else "")
+        + "<c:numFmt formatCode='General' sourceLinked='1'/>"
+        "<c:majorTickMark val='out'/><c:minorTickMark val='none'/>"
+        "<c:tickLblPos val='nextTo'/>"
+        f"<c:crossAx val='{cross_id}'/><c:crosses val='{crosses}'/>"
+        "<c:crossBetween val='between'/></c:valAx>"
+    )
+
+
+def _face(probe: dict) -> str:
+    """The chart's ``a:latin`` and ``a:ea``, for the decks that vary the face.
+
+    The legend's row pitch comes out the same for Aptos and for Calibri, which says
+    nothing at all: the two are metric-compatible to the unit.  Naming a face is what
+    separates a pitch that is a constant times the size from one that is the face's own
+    line box, and ``a:ea`` is what asks whether a Japanese legend follows the Latin face
+    it never draws with.
+    """
+    latin = probe.get("face")
+    east = probe.get("face_ea")
+    out = ""
+    if latin:
+        out += f"<a:latin typeface='{latin}'/>"
+    if east:
+        out += f"<a:ea typeface='{east}'/>"
+    return out
+
+
+def chart_xml(probe: dict) -> bytes:
+    groups = probe["groups"]
+    cats = probe.get("cats", CATEGORIES)
+    groups_xml = ""
+    index = 0
+    for group in groups:
+        xml, index = group_xml(group, index, cats)
+        groups_xml += xml
+    kinds = {group["kind"] for group in groups}
+    secondary = any(group.get("secondary") for group in groups)
+
+    axes = ""
+    if kinds != {"pie"}:
+        if kinds == {"scatter"}:
+            axes = val_axis(PRIMARY_CAT, PRIMARY_VAL, position="b", gridlines=False)
+            axes += val_axis(PRIMARY_VAL, PRIMARY_CAT)
+        else:
+            axes = cat_axis(PRIMARY_CAT, PRIMARY_VAL) + val_axis(PRIMARY_VAL, PRIMARY_CAT)
+        if secondary:
+            axes += val_axis(SECOND_VAL, SECOND_CAT, position="r", gridlines=False,
+                             crosses="max")
+            axes += cat_axis(SECOND_CAT, SECOND_VAL, delete=True)
+
+    size = probe.get("size", 1000)
+    return (
+        "<?xml version='1.0' encoding='UTF-8' standalone='yes'?>"
+        f"<c:chartSpace {C} {A} {R}>"
+        "<c:date1904 val='0'/><c:lang val='en-US'/><c:roundedCorners val='0'/>"
+        "<c:chart><c:autoTitleDeleted val='1'/><c:plotArea><c:layout/>"
+        + groups_xml
+        + axes
+        + "</c:plotArea>"
+        + (
+            ""
+            if probe.get("legend", "b") is None
+            else f"<c:legend><c:legendPos val='{probe.get('legend', 'b')}'/>"
+            "<c:overlay val='0'/></c:legend>"
+        )
+        + "<c:plotVisOnly val='1'/><c:dispBlanksAs val='gap'/></c:chart>"
+        "<c:txPr><a:bodyPr/><a:lstStyle/><a:p><a:pPr>"
+        f"<a:defRPr sz='{size}'>{_face(probe)}</a:defRPr>"
+        "</a:pPr><a:endParaRPr lang='en-US'/></a:p></c:txPr>"
+        "</c:chartSpace>"
+    ).encode()
+
+
+# --------------------------------------------------------------------------------------
+# The probe tables
+# --------------------------------------------------------------------------------------
+
+
+def _frame(width_pt: float, height_pt: float = 260.0) -> tuple[int, int]:
+    return (int(round(width_pt * EMU)), int(round(height_pt * EMU)))
+
+
+WIDE = _frame(480.0)
+
+
+def col(names, **extra) -> dict:
+    return {"kind": "col", "names": list(names), **extra}
+
+
+def line(names, **extra) -> dict:
+    return {"kind": "line", "names": list(names), **extra}
+
+
+def probe(key: str, groups: list[dict], **extra) -> dict:
+    return {"key": key, "frame": WIDE, "groups": groups, **extra}
+
+
+#: **The discriminating experiment.**  Four bar entries on one frame; ``x-long1`` and
+#: ``x-long4`` lengthen exactly one name.  The pitch between entries 2 and 3 -- neither of
+#: which moved -- is what separates a packed layout from a distributed one, and the first
+#: key's x says whether the run is centred on its own width or pinned to a band.
+FOUR = [SHORT, SHORT + "m", SHORT + "mm", SHORT + "mmm"]
+
+PACK_PROBES: list[dict] = [
+    probe("x-base", [col(FOUR)]),
+    probe("x-long1", [col([LONG] + FOUR[1:])]),
+    probe("x-long4", [col(FOUR[:3] + [LONG])]),
+    # The same three with a line key, whose entry width is dominated by the 19.2 pt rule.
+    probe("x-lbase", [line(FOUR)]),
+    probe("x-llong1", [line([LONG] + FOUR[1:])]),
+    probe("x-llong4", [line(FOUR[:3] + [LONG])]),
+    # **Entry count** at fixed names.
+    *[probe(f"n-{n}", [col(NAMES[:n])]) for n in range(2, 8)],
+    # **Name width** at fixed count: three entries whose total text grows, and the case
+    # the brief singles out -- one very long entry among short ones.
+    probe("w-sss", [col([SHORT, SHORT, SHORT])]),
+    probe("w-ssl", [col([SHORT, SHORT, LONG])]),
+    probe("w-sls", [col([SHORT, LONG, SHORT])]),
+    probe("w-lll", [col([LONG, LONG, LONG])]),
+    probe("w-mmm", [col([SHORT + "mmmm"] * 3)]),
+]
+
+#: **Key type**, at one frame and one name set, plus the three legend positions.  A line
+#: group is known to widen *every* key to 19.2 pt; a marker-only and an area key have
+#: never been measured.
+THREE = [SHORT, SHORT + "m", SHORT + "mm"]
+
+KEY_PROBES: list[dict] = [
+    probe("k-bar", [col(THREE)]),
+    probe("k-line", [line(THREE)]),
+    probe("k-linenm", [line(THREE, marker=False)]),
+    probe("k-area", [{"kind": "area", "names": THREE}]),
+    probe("k-pie", [{"kind": "pie", "names": THREE}], cats=THREE),
+    probe("k-scatter", [{"kind": "scatter", "names": THREE}]),
+    probe("k-scatmark", [{"kind": "scatter", "names": THREE, "style": "marker"}]),
+    # The mixed case a combo produces: two bar entries and one line entry.
+    probe("k-combo", [col(THREE[:2]), line(THREE[2:], secondary=True)]),
+    probe("k-combo2", [col(THREE[:1]), line(THREE[1:], secondary=True)]),
+    # **Position.**  ``tr`` may not follow the same rule at all.
+    probe("p-b", [col(THREE)], legend="b"),
+    probe("p-t", [col(THREE)], legend="t"),
+    probe("p-tr", [col(THREE)], legend="tr"),
+    probe("p-lb", [line(THREE)], legend="b"),
+    probe("p-lt", [line(THREE)], legend="t"),
+    probe("p-ltr", [line(THREE)], legend="tr"),
+]
+
+#: **Frame width** at a fixed entry set, and **font size** at a fixed frame.  The lesson
+#: from the tick sweep: a quantity that looks like a function of the drawn plot is often a
+#: function of the frame, so the frame is swept on its own with everything else held.
+FRAME_PROBES: list[dict] = [
+    *[
+        probe(f"f-{width:.0f}", [col(THREE)], frame=_frame(width))
+        for width in (240.0, 300.0, 360.0, 420.0, 480.0, 600.0, 720.0)
+    ],
+    # The same sweep with a line key, whose entries are 19.2 pt wider apiece.
+    *[
+        probe(f"fl-{width:.0f}", [line(THREE)], frame=_frame(width))
+        for width in (240.0, 360.0, 480.0, 720.0)
+    ],
+    # A frame sweep at **six** entries, where a distributed residue would be six times
+    # more sensitive to the frame than a two-entry one.
+    *[
+        probe(f"f6-{width:.0f}", [col(NAMES[:6])], frame=_frame(width))
+        for width in (300.0, 480.0, 720.0)
+    ],
+    # **Font size.**  The answer is quoted in ems, so a gap that is a constant number of
+    # points instead shows up here and nowhere else.
+    *[
+        probe(f"z-{size // 100}", [col(THREE)], size=size)
+        for size in (800, 1000, 1200, 1400, 1800)
+    ],
+]
+
+def wide(count: int) -> str:
+    """A name of a chosen width, always beginning with the same letter."""
+    return "W" + "m" * count
+
+
+#: **The overflow cap, and the slope at the entry counts the first deck only sampled
+#: once.**  The first round said the gap is ``0.2 * sum(W) / (n + 1)`` -- it grows with the
+#: entries rather than shrinking, so the legend is packed and not distributed -- with one
+#: exception, ``w-lll``, whose legend box came out at exactly 0.9 of the frame.  The ``c``
+#: family walks content across that threshold at three frame widths and three entry
+#: counts, which is what says whether 0.9 is a cap or a coincidence; the ``s`` families
+#: sweep the name width at n = 2, 5 and 6, where the first deck had a single point each
+#: and so could not see the slope at all.
+FIT_PROBES: list[dict] = [
+    # n = 3 at 480 pt: the natural box passes 0.9 * frame between k = 11 and k = 12.
+    *[probe(f"c3-{k:02d}", [col([wide(k)] * 3)]) for k in (8, 10, 11, 12, 13, 15, 18, 22)],
+    # The same threshold at two other frames.  A cap on the frame moves with it.
+    *[
+        probe(f"c3s-{k:02d}", [col([wide(k)] * 3)], frame=_frame(300.0))
+        for k in (4, 6, 8, 12, 18)
+    ],
+    *[
+        probe(f"c3w-{k:02d}", [col([wide(k)] * 3)], frame=_frame(720.0))
+        for k in (12, 18, 20, 24)
+    ],
+    # And at two other entry counts, where the threshold sits at a different name width.
+    *[probe(f"c2-{k:02d}", [col([wide(k)] * 2)]) for k in (14, 18, 20, 24)],
+    *[probe(f"c6-{k:02d}", [col([wide(k)] * 6)]) for k in (3, 4, 5, 6, 8)],
+    # **The slope** at the counts the first deck sampled once.
+    *[probe(f"s2-{k:02d}", [col([wide(k)] * 2)]) for k in (1, 4, 8, 12)],
+    *[probe(f"s5-{k:02d}", [col([wide(k)] * 5)]) for k in (1, 3, 5)],
+    *[probe(f"s6-{k:02d}", [col([wide(k)] * 6)]) for k in (1, 2, 3)],
+    # **Validation.**  Fresh combinations of frame, count, key and size, none of which the
+    # model was fitted on.
+    probe("v-line4", [line([wide(2), wide(5), wide(1), wide(7)])], frame=_frame(360.0)),
+    probe("v-bar5", [col([wide(6), wide(1), wide(9), wide(2), wide(4)])],
+          frame=_frame(600.0)),
+    probe("v-line7", [line([wide(k) for k in (1, 2, 3, 4, 5, 6, 7)])], frame=_frame(720.0)),
+    probe("v-small", [col([wide(1), wide(3)])], frame=_frame(200.0)),
+    probe("v-size14", [col([wide(2), wide(6), wide(1), wide(4), wide(8)])], size=1400),
+    probe("v-top", [col([wide(9), wide(2), wide(5)])], legend="t", frame=_frame(420.0)),
+    probe("v-combo", [col([wide(3), wide(6)]), line([wide(2)], secondary=True)],
+          frame=_frame(540.0)),
+]
+
+#: **The key that has nothing to draw.**  ``chart-gallery`` slide 11's stock chart states
+#: ``<a:ln><a:noFill/></a:ln>`` on every series, so each entry legends with a *rule* and
+#: has no rule to draw, and PowerPoint's export shows no key path at all.  Three layouts
+#: are consistent with "no key drawn" and they put the labels in three different places:
+#:
+#: * the entry keeps the 24.0 pt line cell and only the ink is missing;
+#: * the entry keeps *a* cell but a narrower one -- the 1.0985 em swatch cell;
+#: * the entry loses its cell entirely and the run is that much narrower.
+#:
+#: Every slide here names its entries ``W``, ``Wm``, ``Wmm``... so each label's ink begins
+#: at the same left side bearing and the pitch between two labels is the pitch between two
+#: **cells** with no font residue in it.  ``read_legend_probe.py`` then solves each slide
+#: for the one unknown, the cell, from the pitches and from the run's centring
+#: independently.
+NOKEY_THREE = [wide(1), wide(3), wide(5)]
+
+NOKEY_PROBES: list[dict] = [
+    # The two controls, whose cells are already measured: 24.0 pt and 1.0985 em.
+    probe("o-line", [line(NOKEY_THREE)]),
+    probe("o-bar", [col(NOKEY_THREE)]),
+    # **The case.**  A line group whose every series has no rule, with and without the
+    # marker that is the only thing left to draw.
+    probe("o-none", [line(NOKEY_THREE, no_line=True, marker=False)]),
+    probe("o-mark", [line(NOKEY_THREE, no_line=True, marker=True)]),
+    # **Per chart or per entry?**  One group, one series without its rule.  If the cell is
+    # a decision for the chart, all three entries move together; if it is a decision for
+    # the series, only the bare one does.
+    probe("o-mix0", [line(NOKEY_THREE, no_line=(0,), marker=False)]),
+    probe("o-mix2", [line(NOKEY_THREE, no_line=(2,), marker=False)]),
+    probe("o-mix02", [line(NOKEY_THREE, no_line=(0, 2), marker=False)]),
+    # The gallery's own configuration: a real `c:stockChart`, no rules, a marker on the
+    # last series only -- and the same chart with its rules left in, which says whether a
+    # stock legend is a line legend at all.
+    probe("o-stock", [{"kind": "stock", "names": NOKEY_THREE, "no_line": True,
+                       "markers": [False, False, True]}]),
+    probe("o-stockline", [{"kind": "stock", "names": NOKEY_THREE, "markers": [False, False, True]}]),
+    # **Entry count and frame**, at the bare configuration.  The cell enters the gap
+    # through `n * cell` inside the slack, so a count sweep separates it from the gap far
+    # better than one slide can.
+    *[
+        probe(f"o-n{n}", [line([wide(k) for k in range(1, n + 1)], no_line=True, marker=False)])
+        for n in (2, 4, 5)
+    ],
+    *[
+        probe(f"o-f{width:.0f}", [line(NOKEY_THREE, no_line=True, marker=False)],
+              frame=_frame(width))
+        for width in (300.0, 720.0)
+    ],
+    # A width sweep, which moves the gap without moving the cell.
+    probe("o-w", [line([wide(1), wide(8), wide(3)], no_line=True, marker=False)]),
+    # A **side** legend of the same chart: the stacked branch draws the same key and no
+    # probe has asked what it does when there is nothing to draw.
+    probe("o-side", [line(NOKEY_THREE, no_line=True, marker=False)], legend="r"),
+]
+
+def tokens(count: int) -> str:
+    """A name of ``count`` equal words, separated by spaces so it wraps predictably.
+
+    A side legend's band is capped at a fraction of the frame and a name wider than it
+    wraps; an unbroken ``Wmmmm...`` would make the break point PowerPoint's own hyphenation
+    decision, where a phrase breaks at a space and each line comes back as its own text
+    object in the export.  Every word is the same so a line's width says how many words
+    are on it.
+    """
+    return " ".join(["Wmmm"] * count)
+
+
+#: **Where a side legend's wrapped rows sit.**  ROADMAP.md 3.5 records the band cap and the
+#: opened row pitch and says the *block's* vertical placement was never measured: ours
+#: centres the rows and lands about 6 pt low on `real-financial-report.pptx`'s doughnut,
+#: whose five baselines are 26.46, 43.50, 56.70, 86.94 and 116.94 pt from the frame top.
+#: One chart cannot separate the three unknowns that produces -- where the block starts,
+#: where a row's first baseline sits inside it, and how far the second line drops -- so
+#: this family varies each one against the others:
+#:
+#: * ``sv-`` single-line controls at four counts, four frame heights and four sizes.  The
+#:   unwrapped rule is already shipped and matches to 0.06 pt, so these are what say
+#:   whether a changed wrapped rule still reduces to it.
+#: * ``sw-t`` walks one name from one line to four at a fixed count, which is the only
+#:   family that sees the pitch **opening** per extra line -- 1.22 em is one measurement
+#:   on one chart and three lines has only ever been extrapolated.
+#: * ``sw-h`` and ``sw-n`` move the frame height and the entry count under a fixed wrapped
+#:   entry.  A centred block moves by half of either; a top-anchored one does not move at
+#:   all with the height.
+#: * ``sw-z`` is the em check: the whole side layout is quoted in ems and the opening, the
+#:   first baseline's offset and the wrapped line's drop each have to scale or be points.
+#: * ``sw-mid``/``sw-two``/``sw-all`` ask whether the opened pitch is a decision for the
+#:   **legend** (every row takes the deepest entry's pitch, which is what the doughnut
+#:   showed) or for each row on its own.
+SIDE_TALL = _frame(300.0, 260.0)
+
+
+def side(key: str, groups: list[dict], **extra) -> dict:
+    return {"key": key, "frame": SIDE_TALL, "legend": "r", "groups": groups, **extra}
+
+
+SIDE_PROBES: list[dict] = [
+    # **Single line.**  The shipped rule -- rows of 1.8 em centred on the frame, each
+    # entry centred in its row -- has to come back out of these unchanged.
+    *[side(f"sv-n{n}", [col([tokens(1)] * n)]) for n in (2, 3, 4, 5)],
+    *[
+        side(f"sv-h{height:.0f}", [col([tokens(1)] * 3)], frame=_frame(300.0, height))
+        for height in (160.0, 200.0, 260.0, 340.0)
+    ],
+    *[
+        side(f"sv-z{size // 100}", [col([tokens(1)] * 3)], size=size)
+        for size in (800, 1200, 1400, 1800)
+    ],
+    # **One name from one line to four**, at a fixed three entries.
+    *[side(f"sw-t{k}", [col([tokens(k), tokens(1), tokens(1)])]) for k in (2, 3, 4, 5, 6, 8)],
+    # **Frame height** and **entry count** under a fixed two-line entry.
+    *[
+        side(f"sw-h{height:.0f}", [col([tokens(3), tokens(1), tokens(1), tokens(1)])],
+             frame=_frame(300.0, height))
+        for height in (160.0, 200.0, 260.0, 340.0)
+    ],
+    *[
+        side(f"sw-n{n}", [col([tokens(3)] + [tokens(1)] * (n - 1))])
+        for n in (2, 3, 5)
+    ],
+    # **Font size**, the em check.
+    *[
+        side(f"sw-z{size // 100}", [col([tokens(3), tokens(1), tokens(1)])], size=size)
+        for size in (800, 1400, 1800)
+    ],
+    # **Which rows open.**  The wrapped entry first, in the middle, last, everywhere, and
+    # two entries wrapped to different depths.
+    side("sw-mid", [col([tokens(1), tokens(3), tokens(1)])]),
+    side("sw-last", [col([tokens(1), tokens(1), tokens(3)])]),
+    side("sw-all", [col([tokens(3)] * 3)]),
+    side("sw-two", [col([tokens(3), tokens(1), tokens(5)])]),
+    # **The key**, which changes the width left for the name and the drawn key's height.
+    side("sw-line", [line([tokens(3), tokens(1), tokens(1)])]),
+    side("sw-pie", [{"kind": "pie", "names": [tokens(3), tokens(1), tokens(1)]}],
+         cats=[tokens(3), tokens(1), tokens(1)]),
+    # **Frame width**, which moves the band cap and so the wrap itself.
+    *[
+        side(f"sw-f{width:.0f}", [col([tokens(4), tokens(1), tokens(1)])],
+             frame=_frame(width, 260.0))
+        for width in (240.0, 360.0, 480.0)
+    ],
+    # A **left** legend, whose band is measured from the frame edge rather than the plot.
+    side("sw-left", [col([tokens(3), tokens(1), tokens(1)])], legend="l"),
+]
+
+
+#: **A horizontal legend that needs a second row.**  Past 0.9 of the frame the entries no
+#: longer fit on one line and PowerPoint wraps them; we floor the gap at zero and stay on
+#: one row.  ROADMAP.md 3.5 left it there because the *band* a second row takes is a
+#: second unmeasured question, and a legend that wraps to the wrong band height is worse
+#: than one that does not wrap.  Both questions are read off this deck:
+#:
+#: * every slide's **plot bottom** is a stroked axis line, so the band is the frame's
+#:   bottom edge less that line, and each wrapping slide is paired with a ``c`` control
+#:   whose entries are the same shape and fit on one row.  The difference is what a row
+#:   costs;
+#: * the **row assignment** -- which entries land on which row -- comes off the key x and
+#:   y of every entry, and the ``m`` family makes the entries unequal so a greedy fill and
+#:   a balanced split disagree.
+ROW_WIDE = _frame(480.0, 260.0)
+
+
+def row(key: str, groups: list[dict], **extra) -> dict:
+    return {"key": key, "frame": ROW_WIDE, "groups": groups, **extra}
+
+
+ROW_PROBES: list[dict] = [
+    # **Three entries** walked from just inside the cap to three rows' worth.  ``c`` is the
+    # control that still fits: the band it reserves is what a wrapped band is measured
+    # against.
+    *[row(f"rw3-{k:02d}", [col([wide(k)] * 3)]) for k in (11, 14, 16, 20, 26, 34)],
+    # **Other counts**, where the same total width splits differently.
+    *[row(f"rw2-{k:02d}", [col([wide(k)] * 2)]) for k in (20, 26, 34)],
+    *[row(f"rw4-{k:02d}", [col([wide(k)] * 4)]) for k in (8, 12, 18, 24)],
+    *[row(f"rw6-{k:02d}", [col([wide(k)] * 6)]) for k in (5, 8, 12, 18)],
+    *[row(f"rw7-{k:02d}", [col([wide(k)] * 7)]) for k in (4, 8, 14)],
+    # **Frame width** at a fixed wrapping content.  The cap is a fraction of the frame, so
+    # the same entries wrap onto a different number of rows as the frame moves.
+    *[
+        row(f"rwf-{width:.0f}", [col([wide(14)] * 4)], frame=_frame(width, 260.0))
+        for width in (300.0, 360.0, 480.0, 600.0, 720.0)
+    ],
+    # **Font size.**  The row pitch is quoted as 1.8 em and has only been measured at 10.
+    *[
+        row(f"rwz-{size // 100}", [col([wide(14)] * 4)], size=size)
+        for size in (800, 1400, 1800)
+    ],
+    # **The key**, whose 24.0 pt cell is nearly half an entry's width on a line chart.
+    *[row(f"rwl-{k:02d}", [line([wide(k)] * 3)]) for k in (8, 14, 22)],
+    # **Unequal entries.**  A greedy fill puts three on the first row here and a balanced
+    # split puts two; the pie is the same question with the per-point legend.
+    row("rwm-a", [col([wide(2), wide(2), wide(2), wide(24)])]),
+    row("rwm-b", [col([wide(24), wide(2), wide(2), wide(2)])]),
+    row("rwm-c", [col([wide(14), wide(4), wide(14), wide(4)])]),
+    row("rwm-pie", [{"kind": "pie", "names": [wide(12)] * 4}], cats=[wide(12)] * 4),
+    # **Position.**  A top legend wraps into the band at the other edge.
+    row("rwt-16", [col([wide(16)] * 3)], legend="t"),
+    row("rwt-c11", [col([wide(11)] * 3)], legend="t"),
+    # **Validation**, on combinations nothing is fitted to.
+    row("rv-5", [col([wide(k) for k in (6, 14, 3, 18, 9)])], frame=_frame(420.0, 260.0)),
+    row("rv-line", [line([wide(k) for k in (10, 4, 16, 6)])], frame=_frame(540.0, 260.0)),
+    row("rv-size", [col([wide(k) for k in (12, 5, 16, 8)])], size=1400),
+]
+
+#: **What a second row costs the plot.**  The ``legend-row`` deck says how the entries are
+#: arranged once they wrap; this one says how much of the frame the arrangement takes, which
+#: is the half of the question that kept wrapping unshipped.  The plot's bottom edge is the
+#: category axis line, and the band under it holds the category labels *and* the legend, so
+#: every size gets a **no-legend control** -- ``legend=None`` writes no ``c:legend`` at all
+#: -- and the legend's own band is the difference.  Row counts 1, 2 and 3 at five sizes then
+#: say whether the band is a multiple of the row pitch, of the font's line box, or neither.
+#:
+#: Each entry is wide enough that two of them pass the 0.9 cap, so the grid is one column
+#: and the row count is the entry count.  The name widths are chosen per size for that,
+#: because an entry's width scales with the type while the cap scales with the frame.
+BAND_NAME = {800: 34, 1000: 26, 1200: 22, 1400: 18, 1800: 14}
+
+BAND_PROBES: list[dict] = [
+    *[
+        probe(f"bn-{size // 100}", [col([wide(k)])], size=size, legend=None)
+        for size, k in BAND_NAME.items()
+    ],
+    *[
+        probe(f"b{rows_}-{size // 100}", [col([wide(k)] * rows_)], size=size)
+        for size, k in BAND_NAME.items()
+        for rows_ in (1, 2, 3)
+    ],
+    # The **top** legend, whose band comes off the plot's top edge instead.
+    *[probe(f"t{rows_}-10", [col([wide(26)] * rows_)], legend="t") for rows_ in (1, 2, 3)],
+    probe("tn-10", [col([wide(26)])], legend=None),
+]
+
+#: **Is the row pitch a constant or the face's line box?**  The ``legend-band`` deck fits
+#: ``1.2083 * size + 6.0`` to five sizes to 0.005 pt -- and ``0.99 * lineBox + 6.0`` fits
+#: them exactly as well, because the only faces in it are Aptos and Calibri and those two
+#: are metric-compatible to the unit (12.207 pt of line box at 10 pt apiece).  **Arial
+#: separates them**: its box is 11.172 and its pitch 11.499, so a face-driven band is a
+#: point smaller than a constant one, and ROTATED_LABEL_HEADROOM_PT's docstring already
+#: suspects as much from three rotated-label readings it could not otherwise explain.
+#:
+#: The Japanese rows ask the second half of it: ``real-financial-report.pptx``'s legends
+#: are drawn in a Japanese face with a 1.448 em box and measure the same 18.08 pt pitch as
+#: Aptos, which is only evidence of anything if the *Latin* face named beside it is not
+#: Calibri.  Here it is Arial.
+FACE_NAME = {"Arial": 30, "Times New Roman": 34, "Courier New": 22}
+JAPANESE = ["売上高構成比率推移", "営業利益率推移比率", "純利益率推移比率"]
+
+FACE_PROBES: list[dict] = [
+    *[
+        probe(f"{tag}{rows_}-{size // 100}", [col([wide(k)] * max(rows_, 1))],
+              size=size, face=face, legend=None if rows_ == 0 else "b")
+        for face, k, tag in (
+            ("Arial", FACE_NAME["Arial"], "a"),
+            ("Times New Roman", FACE_NAME["Times New Roman"], "m"),
+            ("Courier New", FACE_NAME["Courier New"], "c"),
+        )
+        for size in (1000, 1400)
+        for rows_ in (0, 1, 2)
+    ],
+    # The same question with **Japanese** entries: the face that draws them is the ``a:ea``
+    # one and the face named beside it is Arial, whose box is a point off Calibri's.
+    *[
+        probe(f"j{rows_}-10", [col(JAPANESE[:max(rows_, 1)])], face="Arial",
+              face_ea="Yu Gothic", legend=None if rows_ == 0 else "b",
+              frame=_frame(200.0, 260.0))
+        for rows_ in (0, 1, 2, 3)
+    ],
+]
+
+DECKS = {
+    "legend-pack": PACK_PROBES,
+    "legend-key": KEY_PROBES,
+    "legend-frame": FRAME_PROBES,
+    "legend-fit": FIT_PROBES,
+    "legend-nokey": NOKEY_PROBES,
+    "legend-side": SIDE_PROBES,
+    "legend-row": ROW_PROBES,
+    "legend-band": BAND_PROBES,
+    "legend-face": FACE_PROBES,
+}
+
+
+# --------------------------------------------------------------------------------------
+# Deck assembly -- the same shape as tools/make_combo_probe.py
+# --------------------------------------------------------------------------------------
+
+
+def slide_xml(index: int, probe_: dict) -> str:
+    cx, cy = probe_["frame"]
+    return (
+        "<?xml version='1.0' encoding='UTF-8' standalone='yes'?>"
+        f"<p:sld {NAMESPACES}><p:cSld>"
+        '<p:bg><p:bgPr><a:solidFill><a:srgbClr val="FFFFFF"/></a:solidFill>'
+        "<a:effectLst/></p:bgPr></p:bg>"
+        '<p:spTree><p:nvGrpSpPr><p:cNvPr id="0" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>'
+        '<p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/>'
+        '<a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>'
+        f"<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id='{100 + index}' "
+        f"name='{probe_['key']}'/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>"
+        f"<p:xfrm><a:off x='{FRAME_OFF[0]}' y='{FRAME_OFF[1]}'/>"
+        f"<a:ext cx='{cx}' cy='{cy}'/></p:xfrm>"
+        "<a:graphic><a:graphicData "
+        "uri='http://schemas.openxmlformats.org/drawingml/2006/chart'>"
+        f"<c:chart {C} {R} r:id='rIdChart'/></a:graphicData></a:graphic></p:graphicFrame>"
+        "</p:spTree></p:cSld>"
+        "<p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>"
+    )
+
+
+def slide_rels(index: int) -> str:
+    return (
+        "<?xml version='1.0' encoding='UTF-8' standalone='yes'?>"
+        "<Relationships xmlns='http://schemas.openxmlformats.org/package/2006/relationships'>"
+        f"<Relationship Id='rId1' Type='{LAYOUT_REL}' Target='../slideLayouts/slideLayout1.xml'/>"
+        f"<Relationship Id='rIdChart' Type='{CHART_REL}' Target='../charts/probe{index}.xml'/>"
+        "</Relationships>"
+    )
+
+
+def blank_template(xml: str) -> str:
+    xml = re.sub(r"<p:spTree>.*?</p:spTree>", EMPTY_TREE, xml, flags=re.S)
+    return re.sub(r"<p:bg>.*?</p:bg>", "", xml, flags=re.S)
+
+
+def probes_for(target: Path) -> list[dict]:
+    for name, table in DECKS.items():
+        if name in target.stem:
+            return table
+    raise SystemExit(f"name the deck after one of {sorted(DECKS)}, not {target.stem!r}")
+
+
+def write_deck(target: Path, probes: list[dict]) -> None:
+    source = zipfile.ZipFile(SOURCE)
+    presentation = source.read("ppt/presentation.xml").decode()
+    pres_rels = source.read("ppt/_rels/presentation.xml.rels").decode()
+    content_types = source.read("[Content_Types].xml").decode()
+    numbers = range(1, len(probes) + 1)
+
+    presentation = re.sub(
+        r"<p:sldIdLst>.*?</p:sldIdLst>",
+        "<p:sldIdLst>"
+        + "".join(f'<p:sldId id="{255 + n}" r:id="rIdS{n}"/>' for n in numbers)
+        + "</p:sldIdLst>",
+        presentation,
+        flags=re.S,
+    )
+    pres_rels = re.sub(r'<Relationship[^>]*Type="[^"]*/slide"[^>]*/>', "", pres_rels)
+    pres_rels = pres_rels.replace(
+        "</Relationships>",
+        "".join(
+            f'<Relationship Id="rIdS{n}" Type="{SLIDE_REL}" Target="slides/slide{n}.xml"/>'
+            for n in numbers
+        )
+        + "</Relationships>",
+    )
+    content_types = re.sub(
+        r'<Override PartName="/ppt/(slides/slide|charts/chart)\d+\.xml"[^>]*/>', "", content_types
+    )
+    content_types = content_types.replace(
+        "</Types>",
+        "".join(
+            f'<Override PartName="/ppt/slides/slide{n}.xml" ContentType="{SLIDE_TYPE}"/>'
+            f'<Override PartName="/ppt/charts/probe{n - 1}.xml" ContentType="{CHART_TYPE}"/>'
+            for n in numbers
+        )
+        + "</Types>",
+    )
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as out:
+        for item in source.infolist():
+            name = item.filename
+            if name.startswith("ppt/slides/") or name.startswith("ppt/charts/"):
+                continue
+            data = source.read(name)
+            if name == "ppt/presentation.xml":
+                data = presentation.encode()
+            elif name == "ppt/_rels/presentation.xml.rels":
+                data = pres_rels.encode()
+            elif name == "[Content_Types].xml":
+                data = content_types.encode()
+            elif re.search(r"slide(Layouts|Masters)/slide\w+\d+\.xml$", name):
+                data = blank_template(data.decode()).encode()
+            out.writestr(name, data)
+        for index, item in enumerate(probes):
+            out.writestr(f"ppt/slides/slide{index + 1}.xml", slide_xml(index, item))
+            out.writestr(f"ppt/slides/_rels/slide{index + 1}.xml.rels", slide_rels(index))
+            out.writestr(f"ppt/charts/probe{index}.xml", chart_xml(item))
+
+
+def main() -> int:
+    if len(sys.argv) != 2:
+        print(__doc__)
+        return 2
+    target = Path(sys.argv[1]).expanduser()
+    probes = probes_for(target)
+    write_deck(target, probes)
+    print(f"wrote {target} -- {len(probes)} slides")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

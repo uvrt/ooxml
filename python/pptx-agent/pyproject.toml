@@ -1,0 +1,64 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pptx-agent"
+version = "0.1.24"
+description = "An AI-editable PowerPoint layer: inspect, mutate and re-render .pptx decks losslessly"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+authors = [{ name = "Evert Koks" }]
+keywords = ["pptx", "powerpoint", "ooxml", "agent", "llm", "editing"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
+    "Topic :: Office/Business :: Office Suites",
+    "Topic :: Text Processing :: Markup :: XML",
+]
+# Why each dependency, and why at its version: CONTRIBUTING.md, "Dependencies".
+dependencies = ["lxml>=4.9", "ooxml-common>=0.45.0", "ooxml-edit>=0.111.0", "markdown-it-py>=3.0",
+                "mdit-py-plugins>=0.4"]
+
+[project.optional-dependencies]
+# Rendering is delegated to pptx2svg; it is optional so the edit layer can be used headless.
+render = ["pptx2svg>=0.2.0"]
+png = ["pptx2svg[png]>=0.2.0"]
+# Pillow: golden p5's grader compares the logos (tests/golden/grading/check_p5.py).  ruff:
+# the linter, which CI's build job runs at the same pin ([tool.ruff] below).
+dev = ["pytest>=7", "lxml>=4.9", "pptx2svg>=0.2.0", "pillow>=10", "ruff==0.17.2"]
+
+[project.urls]
+Homepage = "https://github.com/uvrt/pptx-agent"
+Repository = "https://github.com/uvrt/pptx-agent"
+
+# The package directory whole, so the wheel (and the sdist) carry py.typed too: a caller's
+# type checker reads the package's annotations (PEP 561).
+[tool.hatch.build.targets.wheel]
+packages = ["src/pptx_agent"]
+
+# A small set of bug-finding rules, not a style: pyflakes (F), syntax errors (E9),
+# mutable or called defaults (B006, B008), return in finally (B012), comparisons that do
+# nothing (B015) and pylint's errors (PLE).  No formatter and no import sorting.
+[tool.ruff]
+target-version = "py310"
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["F", "E9", "B006", "B008", "B012", "B015", "PLE"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# The oracle drives the real PowerPoint application; opt in with `pytest -m oracle`.
+addopts = "-m 'not oracle'"
+markers = ["oracle: needs macOS with Microsoft PowerPoint installed and automation granted",
+           "provider: calls a model provider's API online; skipped without its API key"]

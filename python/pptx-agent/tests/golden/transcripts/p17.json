@@ -1,0 +1,150 @@
+{
+ "task": "p17-template-new-year",
+ "inputs": [
+  {
+   "file": "input/example-template.pptx",
+   "as": "document",
+   "sha256": "81310055662a4abeb66eaea67ec342f75e3e0e163167a7441bd2e35943f15869",
+   "content_sha256": "5b00cfef137241fa8a9c4ef8dba992d1ac26ff6e2acf04a490aa7bfd21c65c71"
+  }
+ ],
+ "calls": [
+  {
+   "tool": "describe",
+   "arguments": {
+    "doc": "d1"
+   },
+   "expect": {
+    "ok": true
+   }
+  },
+  {
+   "tool": "find_text",
+   "arguments": {
+    "doc": "d1",
+    "text": "2026",
+    "stories": "all"
+   },
+   "expect": {
+    "ok": true
+   }
+  },
+  {
+   "tool": "batch",
+   "arguments": {
+    "ops": [
+     {
+      "tool": "ppt_set_text",
+      "arguments": {
+       "doc": "d1",
+       "items": [
+        {
+         "target": "M0.7",
+         "text": "© 2027 Example Corp B.V. Vertrouwelijk. Alle rechten voorbehouden."
+        },
+        {
+         "target": "L12.6",
+         "text": "Dit document is vertrouwelijk en uitsluitend bestemd voor de geadresseerde. Het mag niet worden gekopieerd of doorgegeven zonder schriftelijke toestemming van Example Corp B.V."
+        }
+       ]
+      }
+     },
+     {
+      "tool": "ppt_edit_master",
+      "arguments": {
+       "doc": "d1",
+       "action": "set_prompt",
+       "target": "L2.3",
+       "text": "Typ hier uw bevinding"
+      }
+     },
+     {
+      "tool": "ppt_edit_master",
+      "arguments": {
+       "doc": "d1",
+       "action": "rename_layout",
+       "target": "L12",
+       "text": "Juridisch"
+      }
+     },
+     {
+      "tool": "set_properties",
+      "arguments": {
+       "doc": "d1",
+       "language": "nl-NL"
+      }
+     }
+    ]
+   },
+   "expect": {
+    "ok": true
+   }
+  },
+  {
+   "tool": "ppt_edit_master",
+   "arguments": {
+    "doc": "d1",
+    "action": "set_footer",
+    "text": "Example Corp B.V.",
+    "slide_number": true
+   },
+   "expect": {
+    "ok": true
+   }
+  },
+  {
+   "tool": "find_text",
+   "arguments": {
+    "doc": "d1",
+    "text": "Confidential|Ltd|2026",
+    "regex": true,
+    "stories": "all"
+   },
+   "expect": {
+    "ok": true
+   }
+  },
+  {
+   "tool": "render",
+   "arguments": {
+    "doc": "d1",
+    "slides": [
+     3
+    ]
+   },
+   "expect": {
+    "ok": true
+   }
+  },
+  {
+   "tool": "check",
+   "arguments": {
+    "doc": "d1"
+   },
+   "expect": {
+    "ok": true
+   }
+  },
+  {
+   "tool": "save_document",
+   "arguments": {
+    "doc": "d1",
+    "name": "example-template.pptx",
+    "format": "pptx"
+   },
+   "expect": {
+    "ok": true
+   }
+  }
+ ],
+ "output": {
+  "name": "example-template.pptx",
+  "sha256": "8fbf77aca4b8e018e63aea7bdb6f2a801352361eaada26184df1df60d210cad4",
+  "calls": 8,
+  "content_sha256": "657470e7c666de51ece1a1290620048595c764e9307e2db7753817a3bf4ac1f2"
+ },
+ "check": {
+  "total": 18,
+  "passed": 18
+ }
+}

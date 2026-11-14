@@ -1,0 +1,298 @@
+{
+ "task": "w6-merge-section",
+ "clock": "2026-10-07T09:00:00+00:00",
+ "open": [
+  "field-handbook.docx"
+ ],
+ "blobs": [
+  "safety-bulletin.docx"
+ ],
+ "calls": [
+  {
+   "tool": "describe",
+   "arguments": {
+    "doc": "d1"
+   },
+   "expect": {
+    "ok": true,
+    "summary": "Described field-handbook.docx",
+    "data_sha": "7933e47144fa1e44",
+    "data_keys": [
+     "comments",
+     "comments.by_author",
+     "comments.open",
+     "comments.threads",
+     "compatibility_mode",
+     "controls",
+     "drawings",
+     "fields",
+     "headings",
+     "name",
+     "notes",
+     "notes.footnote",
+     "pages",
+     "problems",
+     "properties",
+     "properties.author",
+     "properties.subject",
+     "properties.title",
+     "revisions",
+     "revisions.by_author",
+     "revisions.changes",
+     "revisions.records",
+     "sections",
+     "styles_in_use",
+     "tables",
+     "tracking"
+    ],
+    "data_sha_core": "dc1e5b4f801e6411"
+   }
+  },
+  {
+   "tool": "word_read",
+   "arguments": {
+    "doc": "d1"
+   },
+   "expect": {
+    "ok": true,
+    "summary": "Read the document (final)",
+    "data_sha": "55c259f70729e326",
+    "data_sha_core": "55c259f70729e326"
+   }
+  },
+  {
+   "tool": "open_document",
+   "arguments": {
+    "blob": "b1"
+   },
+   "expect": {
+    "ok": true,
+    "summary": "Opened safety-bulletin.docx as d2 (docx)",
+    "created": [
+     "d2"
+    ],
+    "data_sha": "6e685a6e0dde4f22",
+    "data_keys": [
+     "baseline_problems",
+     "doc",
+     "kind",
+     "name",
+     "source",
+     "summary",
+     "summary.comments",
+     "summary.headings",
+     "summary.paragraphs",
+     "summary.revisions",
+     "summary.tables",
+     "summary.template",
+     "summary.title",
+     "version"
+    ],
+    "data_sha_core": "6e685a6e0dde4f22"
+   }
+  },
+  {
+   "tool": "word_read",
+   "arguments": {
+    "doc": "d2"
+   },
+   "expect": {
+    "ok": true,
+    "summary": "Read the document (final)",
+    "data_sha": "4f999f34e084c488",
+    "data_sha_core": "4f999f34e084c488"
+   }
+  },
+  {
+   "tool": "word_styles",
+   "arguments": {
+    "doc": "d1",
+    "action": "list",
+    "in_use_only": true
+   },
+   "expect": {
+    "ok": true,
+    "summary": "5 style(s)",
+    "data_sha": "95ac762bead39b14",
+    "data_keys": [
+     "[].based_on",
+     "[].kind",
+     "[].name"
+    ],
+    "data_sha_core": "95ac762bead39b14"
+   }
+  },
+  {
+   "tool": "word_styles",
+   "arguments": {
+    "doc": "d2",
+    "action": "list",
+    "in_use_only": true
+   },
+   "expect": {
+    "ok": true,
+    "summary": "7 style(s)",
+    "data_sha": "2b3d114c5b6494b4",
+    "data_keys": [
+     "[].based_on",
+     "[].kind",
+     "[].name"
+    ],
+    "data_sha_core": "2b3d114c5b6494b4"
+   }
+  },
+  {
+   "tool": "word_copy_from",
+   "arguments": {
+    "doc": "d1",
+    "source_doc": "d2",
+    "range": "p:654112D5..p:20C1ECE5",
+    "at": "after:p:767E7C15",
+    "styles": "use_destination",
+    "unmapped": "body",
+    "style_map": [
+     {
+      "source": "Bulletin Body",
+      "destination": "Handbook Body"
+     },
+     {
+      "source": "Bulletin Note",
+      "destination": "Handbook Body"
+     }
+    ]
+   },
+   "expect": {
+    "ok": true,
+    "summary": "Copied 11 block(s) from d2",
+    "created": [
+     "p:439BA4A8",
+     "p:70439822",
+     "p:11698B22",
+     "p:05252BEE",
+     "p:3052721F",
+     "p:43450195",
+     "p:78481EA1",
+     "p:20C1ECE5",
+     "p:41D60541",
+     "p:6FCDB881",
+     "p:0E520C6F",
+     "footnotes/p:1B7C9837"
+    ],
+    "warnings": [
+     "style 'List Number' added as Word writes it"
+    ],
+    "data_sha": "7413651158aada4d",
+    "data_keys": [
+     "blocks",
+     "copied",
+     "copied.fn:1",
+     "copied.p:05252BEE",
+     "copied.p:11698B22",
+     "copied.p:20C1ECE5",
+     "copied.p:3052721F",
+     "copied.p:31B189E1",
+     "copied.p:4329EC82",
+     "copied.p:43450195",
+     "copied.p:439BA4A8",
+     "copied.p:654112D5",
+     "copied.p:70439822",
+     "copied.p:78481EA1"
+    ],
+    "data_sha_core": "7413651158aada4d"
+   }
+  },
+  {
+   "tool": "word_read",
+   "arguments": {
+    "doc": "d1"
+   },
+   "expect": {
+    "ok": true,
+    "summary": "Read the document (final)",
+    "data_sha": "38ad81470adc33df",
+    "data_sha_core": "38ad81470adc33df"
+   }
+  },
+  {
+   "tool": "word_styles",
+   "arguments": {
+    "doc": "d1",
+    "action": "list",
+    "in_use_only": true
+   },
+   "expect": {
+    "ok": true,
+    "summary": "6 style(s)",
+    "data_sha": "f7c10c53fdd798d4",
+    "data_keys": [
+     "[].based_on",
+     "[].kind",
+     "[].name"
+    ],
+    "data_sha_core": "f7c10c53fdd798d4"
+   }
+  },
+  {
+   "tool": "check",
+   "arguments": {
+    "doc": "d1"
+   },
+   "expect": {
+    "ok": true,
+    "summary": "Checked validate, reflow, fields",
+    "data_sha": "e28051a8f60a7aa8",
+    "data_keys": [
+     "fields",
+     "fields.counts",
+     "fields.note",
+     "reflow",
+     "reflow.complete",
+     "reflow.coverage",
+     "reflow.pages",
+     "validate",
+     "validate.baseline",
+     "validate.fixed",
+     "validate.new",
+     "validate.problems",
+     "validation",
+     "validation.baseline",
+     "validation.new"
+    ],
+    "data_sha_core": "23ba4d8504c4cba4"
+   }
+  },
+  {
+   "tool": "save_document",
+   "arguments": {
+    "doc": "d1",
+    "name": "field-handbook.docx",
+    "format": "docx"
+   },
+   "expect": {
+    "ok": true,
+    "summary": "Saved field-handbook.docx for the application",
+    "data_sha": "00185e242cbfcdb3",
+    "data_keys": [
+     "coverage",
+     "coverage.blocks_laid_out",
+     "coverage.complete",
+     "coverage.pages",
+     "coverage.status",
+     "doc",
+     "format",
+     "name",
+     "size",
+     "validate",
+     "validate.baseline",
+     "validate.fixed",
+     "validate.new"
+    ],
+    "data_sha_core": "dbb69697b5c45129"
+   }
+  }
+ ],
+ "output": {
+  "name": "field-handbook.docx",
+  "sha256": "8baa451cf356616f99d2a317de88369780f9f772cbb4364af4418a5c56ca99ac"
+ }
+}

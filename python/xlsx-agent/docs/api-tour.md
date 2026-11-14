@@ -1,0 +1,1082 @@
+# A tour of the API
+
+**Status: 0.1.0, milestones R0 to R14 of [`ROADMAP.md`](../ROADMAP.md)** -- read and derive.
+A workbook opens from bytes, a path or a package, is catalogued in one bounded result, and
+is read, queried, profiled and searched by address; figures are derived here, never by the
+caller, each with the cells it came from, and kept as datasets; two workbooks are compared
+by key, and a workbook is checked against a declared schema. 0.2's edit foundation (E1)
+is in: a history with atomic batches, undo and redo to the bytes, a structure check, bounded
+edit reports and a checked save (see *Editing*); the writes themselves come with E3. The
+tools are thin wrappers over what follows: see
+[the tools README](../src/xlsx_agent/tools/README.md).
+
+The examples run on the made-up workbooks of the golden transcripts
+(`tests/golden_inputs.py`): a sales table `t:Sales` (Date, Region, Product, Units, Revenue;
+16 rows), an inventory `t:Stock` and a reviewed copy of it, and an order list `t:Orders`.
+The outputs shown are what they print, shortened.
+
+## Opening
+
+```python
+from xlsx_agent import Workbook, Locale      # Locale: ooxml_common.locales.Locale
+
+wb = Workbook.open("sales-july.xlsx")         # a path, bytes, a binary file or an OpcPackage
+wb.sheets      # [Sheet(name='Sales', id=1, state='visible', protected=False, type='worksheet')]
+wb.problems    # [] -- what the reader met, by address and code: Problem(address, code)
+wb.tables      # [Region(kind='table', name='Sales', sheet='Sales', columns=('Date', ...), ...)]
+wb.calculation # [] -- or 'full_calc_on_load', 'manual_calculation': caches may be stale
+wb.to_bytes()  # the bytes that were read
+```
+
+`.xlsx`, `.xlsm`, `.xltx` and `.xltm` open. A `.xls`, a `.xlsb`, an encrypted workbook or
+anything else is refused with an `OpenError` whose `code` says why; a package over
+ooxml-edit's zip limits (`Limits`, given as `limits=`) is refused before it is unpacked.
+A macro is kept and never run; an external link is listed, never followed.
+
+**Threads.** A `Workbook` is one thread's at a time: its indexes, regions and package do not
+lock. The tools give each call its workbook alone (a session's entry lock); used directly
+from several threads, hold a lock of your own around every use.
+
+**Locale and reader options.** The locale decides how text that looks like a number or a
+date is recognised (and the language of the language-dependent built-in formats); en-US
+when none is given, never the machine's:
+
+```python
+belgian = Locale(decimal_separator=",", thousands_separator=".", date_order="dmy",
+                 language="nl-BE", list_separator=";")
+wb = Workbook.open(data, locale=belgian,
+                   grouping=True,       # "1.234,5" is a number (the default)
+                   local_dates=True)    # "3/4/2026" is 3 April, as Excel reads it here
+```
+
+## The catalogue: describe and catalogue
+
+```python
+print(wb.describe(max_tokens=3000))     # what the describe tool returns, as compact JSON
+wb.catalogue()                          # the same as data: kind, date_system, sheets, regions
+```
+
+Each region (table, defined name, declared or detected region) comes with its range, row
+count, key columns and, per column, the inferred type, fill rate, min/max/mean or the
+distinct values when there are few, text lengths, formula share, validation lists and
+flags; up to two sample rows. A workbook too big for the token target lists every table
+and its first columns and names what it left for the profile.
+
+## Reading by address
+
+```python
+wb.cell("Sales!E2").as_dict()            # {'a': 'Sales!E2', 'v': 159.6, 't': 'number'}
+for row in wb.read("Sales!A1:E3"): ...   # lists of Value, typed: number, percent, date,
+                                         # time, datetime, text, bool, error, blank
+wb.read("Sales!A:A")                     # whole columns and rows clip to the used range
+wb.resolve("t:Stock/SKU-0002/Price", key="SKU")   # Selection(range=Stock!E3, ...)
+wb.comments("Sales"), wb.hyperlinks("Sales"), wb.merges("Sales"), wb.arrays("Sales")
+```
+
+A value read is the one stored: a date as ISO 8601 (`'2026-07-01'`, with its `serial`), a
+formula's cached value (none is `blank` with `issue='no_cached_value'`), no display
+string. Every form of address is in ROADMAP.md, "Addresses": `Sales!A1:E3`, `#1!E2` (by
+sheet id), `t:Sales`, `t:Sales[Revenue]`, `t:Stock/SKU-0002/Price`, `t:Sales/#5`,
+`t:Sales/#9:#16` (rows 9 to 16; `#9:` to the last), `t:Stock/*/Price`,
+`t:Stock/{SKU-0002,SKU-0007}/Price`, `d:by_region`. Every address returned is in one
+canonical form; `canonical_address("sales!$b$4", sheets=[s.name for s in wb.sheets])`
+gives `'Sales!B4'`, any accepted spelling in that form (README.md, "Addresses").
+
+**Addresses by key** name a row by its key column's value, so they keep naming the same
+cell when a consultant inserts, deletes or sorts rows (a position, `t:Sales/#5`, or a
+range does not). `*` is every row (or every column), and `expand` gives what an address
+covers one cell at a time, by key -- a coverage selector:
+
+```python
+wb.declare_key("t:Stock", "SKU")         # the caller's choice, when several columns could
+                                         # be the key; one detected key needs none
+wb.read("t:Stock/{SKU-0007,SKU-0002}/Price")   # those rows, in that order
+wb.expand("t:Stock/*/Price")             # ['t:Stock/SKU-0001/Price', 't:Stock/SKU-0002/Price', ...]
+wb.expand("t:Stock/SKU-0002/*")          # each value of one row
+required = set(wb.expand("t:Stock/*/Price"))
+used = {a for s in sources for a in wb.expand(s)}     # e.g. a derived value's sources
+missing = required - used                # cells no slide, check or plan used
+```
+
+A key is a cell's text, exactly (`007` is not the number 7), or a whole number's digits (the
+text `7` and the number 7 are one key); a blank, a fraction, a date and a boolean are no
+key. A row whose key another row shares is refused (`duplicate_key`), and `expand` refuses
+a row without a key (`no_key`), each with the rows by position: never the first of them.
+
+**A cell a citation names** (`'Q3 review'!K83`, `Review!$K$83`, `'Ann''s list'!B4`: any
+form Excel writes) can be turned into the table row that holds it -- what `xlsx_read` reads
+for such a target (round 25, X0):
+
+```python
+wb.rows_holding("'Q3 review'!$K$83")      # TableAddress t:Items/I-80: by key when the
+                                          # table's keys are unique, else t:Items/#80
+wb.rows_holding("'Q3 review'!K80:L90")    # t:Items/#77:#87, the rows a range covers
+wb.rows_holding("'Q3 review'!A1")         # None: a title, a header, outside every table
+```
+
+Merged or multi-row headers are declared, never guessed:
+
+```python
+wb.declare_region("Returns", "Returns!A3:F200", header_rows=2,
+                  headers=["SKU", "Date", "Qty", "Reason", "Store", "Refund"])
+```
+
+## Declaring tables
+
+An application that knows its workbooks -- a template filled in per run, say -- declares
+their tables from its own configuration, as plain data, before anything is described. A
+model never does: no tool takes a declaration (the tool layer takes them from the
+application, `xlsx_agent.tools.format(tables=...)` or `declare(session, ...)`). This
+example's workbook (made up, as in `tests/test_declare.py`) has a sheet of checks per area,
+each with a title over its header on row 3, and a hidden sheet of run facts:
+
+```python
+wb.declare_tables({"tables": [
+    {"name": "checks", "sheets": "Area *", "header_row": 3, "key": "Ref",
+     "description": "One row per check, every area",
+     "fields": [{"header": "Rating (1 to 5, in halves)", "id": "rating",
+                 "description": "The reviewer's rating"},
+                {"header": "Remark", "hidden": True}]},
+    {"name": "run", "type": "key_value", "sheets": "Run facts"}]})
+
+wb.region("t:checks").where       # "'Area North'!A3:D5,'Area South'!A3:D6"
+wb.cell("t:checks/S-2/rating").as_dict()  # {'a': "'Area South'!C5", 'v': 5, 't': 'number'}
+wb.cell("t:checks/#3/Topic").a    # "'Area South'!B4": positions count across the sheets
+wb.cell("t:run/report_date/value").as_dict()
+# {'a': "'Run facts'!B1", 'v': '2026-10-01', 't': 'date', 'serial': 46296.0, 'hidden': True}
+ds = wb.derive("t:checks", group_by=["Topic"],
+               measures=[{"fn": "mean", "column": "rating", "as": "avg"}])
+ds.rows[0], ds.provenance[0]["avg"].sources   # {'Topic': 'door', 'avg': 2.75},
+                                              # (t:checks/{N-1,S-1}/rating,)
+wb.cell("t:checks/N-1/Remark")    # NameNotFound: its columns are Ref, Topic, rating, Note
+```
+
+What a declaration says:
+
+- **Sheets** by exact name (case aside) or glob (`Area *`), one or a list. A table over
+  several sheets is one table: their rows in the workbook's order, the header the same text
+  on every sheet. Every value keeps its own cell's address -- in reads, queries, samples,
+  a derive's sources and left-out cells, datasets, comparisons and checks -- and a key finds
+  its row on whichever sheet holds it. The table's range is each sheet's, joined by `,`.
+- **Rows**: `header_row` (1 by default; 0 for none), `first_row`, `last_row`. Without
+  `last_row` the data ends at the first blank row, as a detected region's does; anything
+  further down within the columns is flagged `rows_below`. `columns` (`"A:F"`) when the
+  header row's extent is not the table's.
+- **A header found by its text**, for a sheet of several sections: `"header_row":
+  {"match": ["Ref", "Item"], "rows": "8:40"}` takes the one row whose cells hold every
+  text given (each a cell's whole text, case and runs of spaces aside, in any order, other
+  cells besides), on each sheet, within `rows` -- or, without it, below the tables
+  declared before it in the same list on that sheet. Its data runs to the first blank row
+  or the next row that matches, whichever comes first (no `first_row`, `last_row`). No
+  row, or more than one, is refused (`no_header`, `ambiguous_header`, the rows by number
+  as `valid_options`):
+
+  ```python
+  wb.declare_tables([
+      {"name": "ratings", "sheets": "Sections", "header_row": {"match": ["Ref", "Rating"]}},
+      {"name": "owners", "sheets": "Sections", "header_row": {"match": ["Ref", "Item"]}}])
+  # owners' header is looked for below ratings' rows: the one at row 9, not row 3
+  ```
+- **The key**: every row has one, and no two rows share one, across every sheet; otherwise
+  the declaration is refused, naming the cells (never the key).
+- **Fields** (by `header` or `column` letter): an `id` to address and show the column by
+  (its header still finds it), a `description` (shown by `describe` as `about`, by
+  `xlsx_profile` as `description`, with the header), and `hidden`: left out of everything a
+  model sees -- describe, read, query, derive, profile, compare, validate, a deck's `from`,
+  `find_text`, a region detected or declared over it -- and refused as unknown when named.
+  A column Excel hides is a column like any other unless declared hidden.
+- **Sheets hidden from the model**: `{"sheets": "Notes", "hidden": true}` (a name, a
+  glob or a list; `optional` as for a table) in the same list withholds whole sheets.
+  The workbook then has no such sheet: `wb.sheets`, `describe`, `open_document`'s count,
+  `find_text`, the problems and a comparison leave it out; an address by its name or id,
+  its Excel tables, the defined names on it, local to it or whose formula names it, and a
+  declared table naming it are refused exactly as for a sheet the workbook has not (its
+  name never offered); a drop-down drawn from it reads as one from no sheet, and a link to
+  it is left out. A formula on another sheet that reaches it -- a reference, a run of
+  sheets over it, its table, a name over it, `INDIRECT`/`OFFSET`, or its name anywhere in
+  the text -- keeps its value but not its text (`formula_withheld`). A sheet is never
+  shown again once withheld; a table kept already over it is refused (`on_hidden_sheet`),
+  and a sheet named that is not there is refused by its path only, never its name.
+  `wb.withheld_sheets` lists them for the program (no tool gives it). Use this, not a
+  table with every column hidden (refused: `no_columns`).
+- **A hidden column ends at the next section.** Hidden from its header row down, a
+  column is hidden to just above the header (or first row) of the next table declared
+  below it on the same sheet -- in the same declarations, or kept already -- so a later
+  section may show that column; the cells between the sections stay hidden. Only declared
+  tables bound it: an Excel table or a detected block below does not.
+- **Terms redacted** (`xlsx_agent.redact`): `{"redact": ["Acme Corp", "re:Project\\s+\\w+"],
+  "with": "[redacted]"}` in the same list replaces every match in every text the
+  workbook gives -- cells however stored, headers, comments, links, drop-down lists,
+  number formats, an Excel table's column names, sheet names -- so every read, search,
+  profile, derive, comparison, check and deck or document `from` sees the replacement. A
+  literal term is found case aside, any white space for a space (`whole_words: true`: not
+  inside a word); `re:` takes a regular expression, checked for its cost. A formula holding
+  a match keeps its value, not its text (`formula_withheld`); a table or defined name whose
+  name holds one is not listed; a sheet is shown and addressed by its name redacted
+  (`wb.sheets[1].stored_name` keeps the file's), while your declarations still name it as
+  stored and find headers by their stored text. Declare it first: it is refused once a
+  table is kept (`redact_late`), and so is a table name, column id or description of your
+  own holding a term (`redacted_term`). `find_text` never finds a term, nor says it was
+  there; no result counts the matches (`wb.redaction.redacted` does, for the program).
+- **The sheet is not a column.** A value is a cell, and the sheet's name is no cell's, so
+  there is no `_sheet` to group by; every address names its sheet. For one sheet's
+  figures, declare its own table too (`"sheets": "Area North"`).
+- **Key-value tables** (`"type": "key_value"`): a field column, a value column and any
+  more; `t:run/<field>/value`, shown compactly by `describe` as its fields and values. A
+  two-column block without a header whose first row holds a date or a number (so no header
+  is detected) and whose first column is a different text on every row is detected as one:
+  `t:'Run facts'!A1/author/value`.
+
+A declaration that does not fit the workbook is refused before any table is kept
+(`DeclarationError`: `code`, `path` such as `tables[0].fields[2].header`,
+`valid_options`): an unknown sheet, a glob matching none (unless `optional`), a header that
+differs on one sheet, an unknown header, an id that would name two columns, a hidden key,
+a key two rows share. Nothing is guessed past.
+
+## Cleaning text
+
+A declared field may also say how its text is cleaned (`xlsx_agent.clean`): a leading label
+stripped, a value captured from the end of the text, white space collapsed, a cell split
+into a list. Like the rest of a declaration,
+the rules are the application's configuration -- no tool takes them, so no definition
+changes -- and they are applied once, where the table is read. This example's workbook
+(made up, as in `tests/test_clean.py`) has a sheet of tasks per team whose "Owners" cell
+starts with the lead's label before the owners, `Lead: Robin;  Kim ;Ash`:
+
+```python
+wb.declare_tables([{"name": "tasks", "sheets": "Team *", "key": "Ref", "fields": [
+    {"header": "Owners", "id": "owners",
+     "clean": {"strip": r"^Lead:[^;]*;\s*", "split": ";"}},
+    {"header": "Note", "clean": {"strip": r"^Lead:[^;]*;\s*", "collapse_space": True}}]}])
+
+wb.cell("t:tasks/E-1/owners").as_dict()
+# {'a': "'Team East'!C2", 'v': ['Kim', 'Ash'], 't': 'list', 'cleaned': True}
+wb.cell("t:tasks/E-1/owners").original     # 'Lead: Robin;  Kim ;Ash': the text as stored
+wb.cell("'Team East'!C2").v                # the same: a cell by its address is as stored
+wb.cell("t:tasks/W-1/Note").as_dict()      # only a label: nothing left, so blank
+# {'a': "'Team West'!D2", 'v': None, 't': 'blank', 'cleaned': True}
+wb.column("t:tasks[owners]").stats().flags
+# {'cleaned': Count(count=2, first=("'Team East'!C2", "'Team West'!C2"))}
+```
+
+- **The rules**, in this order, on text values only: `strip` (a regular expression matched
+  at the start, within the cell's first 256 characters), `extract` (a regular expression
+  with one capture group, searched for -- anchored only as written -- in the cell's last
+  256 characters; the value is what the group captured, or `blank` when it is not found:
+  `{"extract": r"Status:\s*(\S.*)$"}` reads a narrative ending `Status: Partly done` as
+  `Partly done`; a pattern that begins with a label, as that one does, is tried once more
+  where the label last occurs when nothing matched there, so a status line followed by a
+  long justification is found too), `after` (the label a value follows, literal text or a
+  list: `{"after": ["Review state", "Next step"], "extract": r"^\s*:\s*(\S[^,.;\n]*)"}`
+  finds the labels' last occurrence anywhere, case aside, and applies `extract` to the text
+  after it as if the cell began there -- or from the label on, for a pattern written with
+  it), `split` (a literal separator; each
+  item trimmed, empty ones dropped; the value a `list` -- a tuple in Python, a list in
+  JSON -- even of one item), `collapse_space` (runs of white space become one space, none
+  at the ends; on each item of a split). Text cleaned to nothing is `blank`; cleaned text
+  that reads as a number or date is flagged `number_as_text` or `date_as_text`, so a
+  derive's `coerce` reads it.
+- **Never silent**: a value a rule changed says `cleaned` and keeps `original`; the cells
+  are counted with their first addresses in an `xlsx_read` or `xlsx_query` page
+  (`cleaned`), as a `cleaned` flag in `xlsx_profile` and `describe`, per column in
+  `xlsx_derive` (`Derived.cleaned`), and as a `CleanedWarning` when the table goes into a
+  deck or document (the tool's result lists it among its warnings). A cell that holds the
+  extract's label but no value the pattern finds reads blank with
+  `issue: "extract_unmatched"`, counted the same ways (`Derived.unmatched`; in `describe`
+  with its first cell), each tool's result warning about it.
+- **Bounded**: a pattern is compiled when declared, and refused (`bad_pattern`) when its
+  backtracking could grow past the square of the 256 characters it sees -- a repeat in a
+  repeat (`(a+)+`), an alternation in a repeat (`(a|ab)*`), a backreference, or more than
+  one repeat that can give characters back (`.*;` can; `[^;]*;` cannot). An `extract`
+  pattern is tried at every place of its window, so none of its repeats may give
+  characters back: `\s*(.+)$` is refused, `\s*(\S.*)$` taken.
+- **Numbers as shown**: `"on": "shown"` applies the rules to number and percent cells too,
+  each as the text Excel shows it with its format, in the workbook's locale
+  (`xlsx_agent.shown`): `{"extract": r"^(\d+)", "on": "shown"}` reads the text `"5.1"`
+  and the number 5.2 alike, as `"5"`. Where that text is not measured (a fraction, a
+  condition, a negative number, ...) the cell reads `blank` with
+  `issue: "unmeasured_format"`.
+- **Beside its column**: a field with `from_field` reads another column's cells by rules
+  of its own -- `{"id": "part", "from_field": "notes", "clean": {"extract":
+  r"Part:\s*(\S+)$"}}` -- right after it, its sources the cells read; a value by key in
+  it is refused (`derived_column`), naming the column to write.
+- **Not the key**: the key column is never cleaned (`clean_key`): an address by key names
+  the key as its cell holds it, and two keys cleaned alike would name one row. Nor is a
+  hidden column, nor the header.
+
+Lists flow on as follows:
+
+```python
+tasks = wb.region("t:tasks")
+[r[0].v for r in tasks.query(["Ref"], where={"owners": {"eq": "Kim"}}).rows]
+# ['E-1', 'E-2']: eq, in and contains pass when any item does
+wb.derive("t:tasks", measures=[{"fn": "count", "column": "owners", "as": "with owners"}]).rows
+# [{'with owners': 3}]: cells holding a list (rows, not items)
+wb.derive("t:tasks", group_by=["owners"])  # DeriveError wrong_type: a list is no one group
+table_dataset(wb, "t:tasks[owners]").rows  # into a deck or document: a line per item
+# (('Kim\nAsh',), ('Kim',), ('Ash\nLee',), (None,))
+```
+
+Every other function refuses a list column; `xlsx_compare` compares lists as values;
+`xlsx_validate_data` checks a list as `text`, item by item (an `enum` holds for each).
+
+## Query
+
+```python
+sales = wb.table("t:Sales")
+sales.query(["Date", "Revenue"], where={"Region": {"eq": "North"}},
+            sort=[("Revenue", "desc")], limit=2)
+# QueryResult(address='t:Sales', columns=('Date', 'Revenue'),
+#             rows=((Value(... row=5, v='2026-07-06', t='date'), Value(... v=177, ...)), ...),
+#             matches=5, ...)
+```
+
+Filters are `eq`, `in`, `gte`, `lte`, `contains`, `contains_any`, `words_gt`, `blank`,
+`not_blank`, `is_true` and `is_false` (a TRUE or FALSE cell, no value:
+`{"Kept": {"is_true": True}}`), combined with and; a filter on a column of the wrong type is refused naming the
+column's type. `{"Note": {"words_gt": 150}}` finds the text cells longer than 150 words.
+`{"Code": {"in": ["AB.12", "CD.7"], "loose": True}}` compares text ignoring case and every
+white space character (`ab. 12` matches `AB.12`; `xlsx_agent.query.loose_text` says exactly
+what is dropped), and the result's `loosened` counts the rows that matched only so.
+
+## Profile
+
+```python
+wb.table("t:Sales").column("Revenue").stats()
+# ColumnStats(address='t:Sales[Revenue]', range='Sales!E2:E17', rows=16, type='number',
+#             fill=1.0, min=34.5, max=239.4, mean=108.83125, distinct=12, ...)
+wb.profile("t:Sales", ["Units"])         # every column (or these) in one streamed pass
+```
+
+A date column's `min` and `max` are its range, as dates. Text columns give their lengths in
+characters and in words (median and max) and the address of the longest text; dates stored
+as text are flagged `date_as_text`, counted, and their own range is `date_text`.
+
+```python
+wb.key_columns("t:Stock")    # ['SKU', 'Item', 'Qty']: unique, never blank, text or whole
+                             # numbers; with more than one, a value by key names its key=
+wb.key_columns("t:Std")      # ['Clause']: a column of dotted numbers (4.1, 4.1.2) beside
+                             # columns of words is the key
+```
+
+## Find
+
+```python
+list(wb.find_text("Kettle", within="Sales!"))
+# [Found(kind='cell', address='Sales!C2', start=0, end=6, ...), ...]
+```
+
+Text cells, table and region names, column headers, comments and defined names are
+searched (a compiled pattern for a regex); numbers, dates and formula text are not.
+
+## Derive, and datasets
+
+```python
+ds = wb.derive("t:Sales", group_by=["Region"],
+               measures=[{"fn": "sum", "column": "Revenue", "as": "revenue"},
+                         {"fn": "count", "as": "orders"}],
+               sort=[("revenue", "desc")], round=2, id="by_region")
+ds.rows
+# [{'Region': 'North', 'revenue': 509.9, 'orders': 5},
+#  {'Region': 'West', 'revenue': 470.9, 'orders': 3}, ...]
+ds.sources["North"]["revenue"]           # Sales!E2, E5, E9, E13, E17 (RangeAddress each)
+ds.excluded                              # {} -- else per measure, per reason, with addresses
+```
+
+When the table has a key column -- declared, or the one column that is unique, never blank,
+text or whole numbers -- each value's sources are written by key instead, one key set in
+the table's order, which still names the same cells after rows are inserted or sorted:
+
+```python
+by_category = wb.derive("t:Stock", group_by=["Category"],
+                        measures=[{"fn": "sum", "column": "Qty"}])
+by_category.source_key                   # 'SKU'
+[str(s) for s in by_category.provenance[0]["sum Qty"].sources]
+# ['t:Stock/{SKU-0001,SKU-0002,SKU-0003}/Qty']
+```
+
+The measures are `count`, `sum`, `mean`, `median`, `min`, `max`, `first`, `last`, `share`
+and `distinct`, with `where`, `bins`, `pivot` (and `pivot_values`, below), `sort` and
+`top`. `min` and `max` take dates and give a date; `first` and `last` take any column and
+give the value of the first and last row used, in the table's order. Sums are `math.fsum`; rounding is half away from zero
+on the reported value only. Blanks, errors, numbers and dates stored as text and formulas
+without a cached value are left out of a measure and counted by reason
+(`coerce=["number_as_text", "date_as_text"]` opts in). A measure on a column whose type does
+not take it is refused (`DeriveError`) before anything is computed; when the column is text
+holding dates or numbers stored as text, the refusal says how many, names the first cell
+and the `coerce` that reads them (`error.issue`, `error.cells`).
+
+A pivot's columns can be listed (`pivot_values`): one per value, in that order, rows or
+none -- `count` 0 where none occur, every other measure `None` (a sum of nothing is not 0).
+The values are written as filter values are and matched as `group_by` groups, by type and
+value (in a number column `"5"` is the number 5, never the text `"5"`). The values present
+but not listed are no columns: their rows are left out (`left_out`, `not_listed`), and
+each is named with its row count:
+
+```python
+ds = wb.derive("t:Sales", group_by=["Paid"], pivot="Region",
+               pivot_values=["West", "Central"])
+ds.rows
+# [{'Paid': True, 'West': 1, 'Central': 0}, {'Paid': False, 'West': 1, 'Central': 0}]
+ds.pivot_unlisted   # [{'name': 'North', 'v': 'North', 't': 'text', 'rows': 4}, ...]
+```
+
+A derived result is a dataset, read back by address and derived from again -- its sources
+stay the original cells:
+
+```python
+from xlsx_agent import DatasetTable
+
+ds.dataset()        # ooxml_edit.tools.Dataset: columns, rows as reported, sources as text
+DatasetTable(ds).read("d:by_region/North/revenue")   # [[DatasetValue(d:by_region/#1/revenue, ...)]]
+wb.derive(ds, measures=[{"fn": "max", "column": "revenue", "as": "best"}]).rows
+# [{'best': 509.9}]
+```
+
+A dataset made in Python is derived from the same way. Its Python `date`, `datetime` and
+`time` values are dates without a label; ISO 8601 text is text until its column is labelled
+(the labels: `number`, `percent`, `date`, `time`, `datetime`, `text`, `bool`, `error`,
+ooxml-edit's `TYPE_LABELS`):
+
+```python
+from datetime import date
+from ooxml_edit.tools import Dataset
+from xlsx_agent.derive import derive
+
+sites = Dataset.from_records([{"site": "Ash", "opened": date(2026, 3, 1), "due": "2026-05-01"},
+                              {"site": "Oak", "opened": date(2026, 1, 20), "due": "2026-04-15"}],
+                             types={"due": "date"})
+derive(None, sites, measures=[{"fn": "min", "column": "opened"},
+                              {"fn": "max", "column": "due"}]).rows
+# [{'min opened': '2026-01-20', 'max due': '2026-05-01'}]
+```
+
+Without `types`, `max due` is refused (`wrong_type`, `issue="date_as_text"`), naming the
+label and `coerce=["date_as_text"]`. In a session the application keeps it with
+`session.keep_datasets([DatasetEntry("sites", sites)])`: `xlsx_derive` and `xlsx_read` take
+`d:sites`, and a deck or document tool writes its dates in the session's locale.
+
+In the tool layer `xlsx_derive` keeps the dataset in the session as `d:by_region`, which
+`xlsx_read` reads (with `sources: true`) after its workbook is closed too.
+
+**A filter keeps its rows** (round 51).  `where` alone -- no `group_by`, `measures`, `bins`
+or `pivot` -- keeps the matching rows, every column, as a join's rows are kept; the count
+is one measure away:
+
+```python
+wb.derive("t:Items", where=[{"column": "Kept", "op": "is_true"}]).rows
+# [{'Code': 'K7-12.3', 'Kept': True, 'Qty': 3}, {'Code': 'K7-13.1', 'Kept': True, 'Qty': 5}]
+wb.derive("t:Items", where=[{"column": "Kept", "op": "is_true"}],
+          measures=[{"fn": "count"}]).rows    # [{'count': 2}]
+```
+
+**Dates stored as text through a dataset** (round 25, X3).  A `first` or `last` of a column
+whose dates are stored as text, grouped without `coerce`, is a `text` column; its ISO dates
+stay `date_as_text` in the dataset, so a derive from it refuses `max` with the way out and
+takes `coerce=["date_as_text"]`.  With `coerce` the derived column is a date column, and a
+`group_by` of such a column groups by the day.  A `coerce` that read none of a refused
+column's values says it did not apply.
+
+**Joins** (round 25, X1; `xlsx_agent.join`).  `join` adds another table's or dataset's
+columns to each row, by key, before anything else; without `group_by`, `measures`, `bins`
+or `pivot` the joined rows are the result:
+
+```python
+wb.declare_tables([{"name": "issues", "sheets": "Issues", "key": "Issue",
+                    "fields": [{"header": "Items", "clean": {"split": ";"}}]}])
+ds = wb.derive("t:Items", join={"from": "t:issues", "on": ["Ref", "Items"],
+                                "columns": ["Issue"]}, id="items_issues")
+ds.rows[0]       # {'Ref': 'I-1', 'Name': 'pump', ..., 'Issue': ('Q-1', 'Q-2')}
+ds.rows[1]       # {'Ref': 'I-2', ..., 'Issue': None}: every row kept, unmatched blank
+[str(s) for s in ds.provenance[0]["Issue"].sources]   # ['t:issues/{Q-1,Q-2}/Issue']
+ds.joined        # Joined(source='t:issues', on=('Ref', 'Items'), matched=2, lists=True, ...)
+wb.derive("t:Items", join={"from": "t:issues", "on": ["Ref", "Items"], "columns": ["Issue"]},
+          group_by=["Status"], measures=[{"fn": "count", "column": "Issue"}])
+```
+
+Keys match by type and value, as `group_by` groups (text exactly); a list key (a declared
+split, or a list in a dataset) matches by any of its items, on either side. When a row
+matches several right rows, every joined column is a list column -- each cell the matched
+rows' values in their order, one row per left row, so the left table's counts and keys stay
+what they were; a deck or document shows such a cell one item per line. A joined name the
+left table has is renamed `Status (issues)`. Each joined value's sources are the joined
+rows' cells. The order: join, `where`, `group_by`/`bins`/`pivot`, measures, `sort`, `top`,
+`round` (refused for the rows themselves: they are cells as stored).
+
+**Fills** (round 35, R22; `xlsx_agent.fill`).  `fill` gives a column's blank cells the
+value of another column of the same row, after the join and before `where`:
+
+```python
+ds = wb.derive("t:Parts", fill=[{"column": "Limit", "from": "Default limit",
+                                 "coerce": "number"}], id="limits")
+ds.rows[1]["Limit"]                          # 40: the row's Default limit
+ds.provenance[1]["Limit"].filled             # 'Default limit': marked
+[str(s) for s in ds.provenance[1]["Limit"].sources]   # ['t:Parts/P-2/Default limit']
+ds.filled[0].as_dict()   # {'column': 'Limit', 'from': 'Default limit', 'coerce': 'number',
+                         #  'filled': {'count': 2, ...}, 'coerced': {...},
+                         #  'unfilled': {'blank': {...}, 'wrong_type': {...}}}
+wb.derive("t:Parts", join={"from": "t:Groups", "on": ["Group", "Group"]},
+          fill=[{"column": "Limit", "from": "Group limit"}])   # looked up by key
+```
+
+A cell is blank when it holds nothing or text of no characters (a formula's `""` is filled
+too, as a person sees it blank); every other cell keeps its
+value. A `from` cell that is blank, an error or a formula without a cached value fills
+nothing, and is counted by that reason; with `coerce` (`number`, `date`) text is read as a
+derive's `coerce` reads it, and a value of another type is `wrong_type`. Several fills apply
+in order, so a second one fills what the first left blank.
+
+## Trace: the rows a row rests on
+
+```python
+found = wb.trace(["t:tickets/T-1"], depth=2)   # t: rows; a dataset's rows: xlsx_trace
+for link in found.traces[0].links:
+    print(link.row, link.why, link.by, link.column)   # names / lists, and source for d:
+found.values("t:Parts/P-1")                      # every value in full, blanks left out
+```
+
+A row's `names` are the rows whose key its text holds (whole, case counting; only keys
+with a letter and a digit, or, in a table keyed by dotted numbers, its keys with a dot:
+`see 4.2`, never `4.2 kg`), followed `depth` steps; its `lists` the rows whose text holds
+its key. The tool `xlsx_trace` also traces a dataset's rows to their source rows, within a
+size budget, listing what did not fit (`xlsx_agent.tools.trace`).
+
+## Values judged from text
+
+```python
+recorded = wb.record_values("t:Shelf", key="Ref", source="notes", column="outcome",
+                            values=[{"key": "S-01", "value": "done"},
+                                    {"key": "S-04", "value": "done", "note": "French"}])
+recorded.dataset            # Ref, outcome, note: a row per key, the table's order
+recorded.not_recorded       # (key, source cell) of the rows with notes and no value
+```
+
+The values are the caller's judgement of each row's text; the library keeps it honest:
+each value's source is the cell it was judged from, unknown and repeated keys and empty
+source cells are refused (`RecordError`, every problem at once), and the rows whose text got
+no value are listed. In a tool session, `xlsx_record_values` keeps it as `d:<id>`, which
+reads, derives, traces and goes into decks and documents like a derive's dataset.
+
+A key is matched among the rows with text in `source` (round 54): a section heading or a
+spacer row repeating an item's reference is left out. A key two or more rows with text
+hold names no one row: that value alone is not recorded (round 55) -- it is in
+`recorded.refused`, its rows named -- and the rest of the call is. `type="number"` keeps numbers (a grade 1-5 a derive averages), and
+`add_to=recorded.dataset` adds a later call's values to an earlier one's:
+
+```python
+first = wb.record_values("t:Shelf", key="Ref", source="notes", column="grade",
+                         type="number", values=[{"key": "S-04", "value": 4}])
+more = wb.record_values("t:Shelf", key="Ref", source="notes", column="grade",
+                        type="number", values=[{"key": "S-05", "value": "3"}],
+                        add_to=first.dataset)
+more.added, more.recorded   # 1, 2
+```
+
+## Workbook tables into slides and documents
+
+A table's rows as an ooxml-edit `Dataset` -- what a deck or document tool places when given
+`from: "t:Stock"` (pptx-agent's `ppt_add_table`, the shared `edit_chart`) -- typed as read,
+nothing coerced, each value with its cell by key where the table has a key column, else its
+cell address:
+
+```python
+wb.dataset("t:Stock").sources[0][3]      # ('Stock!D2',): several key candidates, none named
+wb.declare_key("t:Stock", "SKU")
+rows = wb.dataset("t:Stock/{SKU-0003,SKU-0001}")   # or t:Stock, t:Stock[Qty], t:Stock/*/Qty
+rows.columns                             # ('SKU', 'Item', 'Category', 'Qty', 'Price')
+rows.rows[0]                             # ('SKU-0003', 'Wall plug 6 mm', 'Hardware', 450, 0.05)
+rows.sources[0][3]                       # ('t:Stock/SKU-0003/Qty',)
+
+from xlsx_agent import merge_sources
+merge_sources(["Stock!D2", "Stock!D3", "Stock!D4"])        # ['Stock!D2:D4']
+merge_sources(["t:Stock/SKU-0001/Qty", "t:Stock/SKU-0002/Qty"])
+# ['t:Stock/{SKU-0001,SKU-0002}/Qty']
+```
+
+In the tool layer the xlsx format registers this as its `t:` resolver and `merge_sources`
+(ooxml-edit 0.22.0, O3): one session holding a workbook and a deck fills a slide table or a
+chart from `t:Stock`, and the result names the cells each placed value came from. The
+workbook is only read.
+
+## Compare
+
+```python
+old = Workbook.open("inventory-generated.xlsx")
+new = Workbook.open("inventory-reviewed.xlsx")
+diff = Workbook.compare(old, new, tables=["t:Stock"], key="SKU")
+# Diff(tables=(TableDiff(a='t:Stock', key='SKU', rows_a=8, rows_b=8, paired=7, unchanged=5,
+#      added=(RowChange(change='added', key='SKU-0009', row='t:Stock/#8', ...),),
+#      removed=(... 'SKU-0006' ...), changed=(CellChange('changed', 'SKU-0002', 'Price', ...),
+#      CellChange('type', 'SKU-0005', 'Qty'): 9 became the text '9')), ...)
+```
+
+Sheets are matched by id (renamed, added, removed), tables by name, rows by key, cells by
+type then value. A key two rows share is reported as `duplicate_key`, never paired.
+
+Each change is named by key: a cell as `b` names it, a row in its workbook; the values keep
+each workbook's sheet address. Per column, `by_column()` counts the cells changed and, for
+numbers, percents, dates and times, which way they went and the largest move each way:
+
+```python
+table = diff.tables[0]
+table.changed[0].at, table.changed[0].delta     # ('t:Stock/SKU-0002/Price', Decimal('0.01'))
+table.added[0].at                               # 't:Stock/SKU-0009'
+[c.as_dict() for c in table.by_column()]
+# [{'changed': 1}, {'changed': 1, 'up': 1, 'max_up': 't:Stock/SKU-0002/Price +0.01'}]
+```
+
+`xlsx_compare` gives the same summary first, in each table's entry of its first page
+(`columns`, and `added` and `removed` by key), so a model can answer "what changed, and
+which way" without paging through the differences. A date moves in days (`+7d`), a time
+as `+1:30`; text, booleans and lists count as changed only. A declared hidden column is
+not a column of its table, so it is never compared or named.
+
+### Every cell by address: the integrity compare (X5)
+
+A host that sends a template out and takes it back -- from a client's offline review, or
+an agent's step -- asks a stricter question than "which rows changed": did any formula
+change, or become a value, even where the cached values still agree, and did anything
+change outside what was allowed?
+
+```python
+before = Workbook.open("stock-sent.xlsx")
+after = Workbook.open("stock-returned.xlsx")
+diff = Workbook.compare(before, after, cells=True,
+                        policy={"cells": ["Stock!B4", "Stock!D10:E209"]})
+diff.cells.counts()        # {'formula_to_literal': 1, 'value_changed': 14, 'cache_changed': 3}
+diff.cells.ranges("formula_to_literal")   # ({'Stock': ['F12']}, 0, 1)
+[e.address for e in diff.cells.outside]  # ['Stock!F12']: a formula pasted over as its value
+diff.cells.as_dict()       # bounded: counts, each kind's cells as ranges (50 at most), outside
+```
+
+Formulas are compared as text, normalised: `=sum( stock!f10:f14 )` is `SUM(Stock!F10:F14)`,
+a string literal's case is not; a shared formula's member is compared as its own formula,
+so a group written out cell by cell is no change. `cache_changed` (the same formula,
+another cached value) is a recalculation, never outside a policy. `formula_text=True` puts
+each changed cell's formulas on the change; without it a change is its address and kind.
+`xlsx_compare` takes `cells` and `formula_text` and asks the session's write policy.
+
+The structure is compared too, and listed apart from the cells (X6): defined names (added,
+removed, another refers-to), data validations (standard and `x14` alike, by the cells they
+cover and their rule), merged areas and conditional formats (by their cells and rules; the
+format a rule applies is a style, not compared). Every structural change is outside any
+write policy, which lets cell values be written and nothing else:
+
+```python
+diff.cells.structure_counts()   # {'name_changed': 1, 'validation_removed': 1}
+[c.as_dict() for c in diff.cells.structure]
+# [{'kind': 'name_changed', 'at': 'Markup'},
+#  {'kind': 'validation_removed', 'at': 'Stock!H10:H200'}]   formulas only with formula_text
+diff.cells.as_dict()["outside"]   # {'count': 1, 'structure': 2}
+```
+
+A table compared by key whose key column holds formulas (an id made from the row's number)
+is still paired by the cached keys -- a comparison only reads -- and says `formula_key`:
+such keys move with the rows, so compare by address (`cells=True`) to be sure.
+
+## Data validations (X5)
+
+```python
+for rule in wb.validations("Orders"):
+    rule.as_dict()
+# {'sheet': 'Orders', 'origin': 'standard', 'type': 'list', 'allow_blank': True,
+#  'cells': 'B2:B50', 'source': 'name', 'resolved': True, 'name': 'Categories', 'range': 'Lists!A2:A5', 'count': 4}
+# {'sheet': 'Orders', 'origin': 'standard', 'type': 'list', 'allow_blank': True,
+#  'cells': 'A2:A50', 'source': 'indirect', 'resolved': False, 'reason': 'indirect', 'uses': ['$B2']}
+# {'sheet': 'Orders', 'origin': 'x14', 'type': 'whole', 'operator': 'between', ...}
+written = wb.set_cells({"Orders!C3": "XL"})
+written.invalid            # ('Orders!C3',): written, and named -- "XL" is not in the list
+```
+
+A list's values are read where they can be without evaluating anything (an inline list, a
+range, a defined name over one, a table column); a dependent or dynamic list (`INDIRECT`,
+`OFFSET`, a name over one) is reported unresolved by address. `xlsx_read`'s `validations`
+lists the rules over a target.
+
+## Validate
+
+```python
+report = wb.validate_data({"tables": [{"table": "t:Orders", "key": ["Order"], "columns": [
+    {"name": "Customer", "type": "text", "required": True},
+    {"name": "Status", "enum": ["Open", "Shipped", "Closed"]},
+    {"name": "Qty", "type": "number", "min": "1"},
+    {"name": "Discount", "type": "number", "min": "0", "max": "0.5"}]}]})
+report.counts
+# {'required_blank': 1, 'wrong_type': 1, 'out_of_range': 2, 'not_in_enum': 1, 'duplicate_key': 1}
+report.problems[0]
+# DataProblem(code='required_blank', address='Orders!B4', cells=1, table='t:Orders',
+#             column='Customer', ...)
+```
+
+A schema names required `sheets` and `tables` (a `t:` address, or a region spec with
+`range`, `name`, `header_rows`, `headers`), each with a `key` and `columns`: `type`,
+`required`, `unique`, `min`, `max`, `step`, `enum` (with `case`), `validation_list` and
+`pattern`. A schema that is not one is refused (`SchemaError`, with the path) before
+anything is read. Problems carry addresses and codes, never a cell's text.
+
+## Editing (0.2: E1's foundation, E3's typed writes)
+
+Every change is a step of the workbook's history (ooxml-edit's `History`), written by
+ooxml-edit's lossless cell writer (`ooxml_edit.sheets`) through `wb.set_cells` (E3):
+
+```python
+written = wb.set_cells({
+    "Stock!B15": "Spare fan",                    # text: always literal, "=x" too
+    "Stock!D15": 12,                             # a number (finite; whole ones exact)
+    "Stock!G15": True,                           # a boolean
+    "Stock!H10": {"date": "2026-10-20"},         # a date (or a Python date), 1900 or 1904
+    "Stock!H15": {"date": "2026-10-21", "format": "yyyy-mm-dd"},   # a format of its own
+    "Stock!B4": None,                            # a blank: the value goes, the format stays
+    "Stock!J15": {"formula": "=D15*2"},          # a formula only when given as one
+})
+written.as_dict()
+# {'written': 7, 'changed': 6, 'cells': [{'a': 'Stock!B15', 'old': 'blank'}, ...],
+#  'calculation': 'invalidated'}
+wb.set_cells({"Stock!F10": 50}, replace_formulas=True)   # over a formula: only when asked
+# released: ('Stock!F10',) -- the shared group's master: F11 holds its formula now
+```
+
+- **Refused, before anything changes** (`EditError`, every refused cell in `problems`):
+  text over 32,767 characters (never cut), a number that is not finite or a whole number
+  past 2^53, empty text (write `None`), a date before the date system's first day, a date
+  string that is not ISO 8601 or the locale's order with a four-digit year
+  (`wb.locale`: `3/4/2026` is 3 April under nl-BE, 4 March under en-US; a time may follow,
+  `2026-01-05 14:30`, or stand alone, `14:30`), a time zone or a duration, a date into a
+  cell of a number format (`0.00`, `#,##0`, text, a custom code that shows no day: it would
+  show the serial) without `"format"`,
+  a formula over a formula cell without `replace_formulas`, a cell of an
+  array formula or a data table, a merged area's cell other than its first, a table's
+  header cell, a cell named twice, a shared group's master whose formula the lexer cannot
+  move safely. A new cell takes its row's or column's format, as one typed there does.
+- **A date into a General cell** -- a new one, or one of a format Excel replaces for a typed
+  date (currency, accounting, percentage, scientific, fraction, time) -- gets Excel's short
+  date (`numFmtId` 14), the rest of its format kept, and is listed in `short_date`
+  (measured: a date typed into each built-in format and several custom ones).
+- **Shared formulas.** Writing the master of a shared group hands the group to its next
+  member the call does not write, its formula moved by `xlsx_agent.formula.shift`
+  (`shift("D10*E10", 1, 0) == "D11*E11"`; `$` parts, names, structured references and
+  strings untouched); a member written leaves its group alone. Neighbours' formulas are
+  never touched.
+- **Markdown** (X3b). `{"markdown": "**Total** due *now*"}` writes rich text: `**bold**`,
+  `*italic*`, `~~struck~~`, escapes, code spans as text; each run carries the cell's whole
+  font with its marks (Excel shows a run with only `<b/>` in its default font: measured).
+  Each line is a line of the cell (not CommonMark's joined paragraphs); `- item` shows as
+  `• item`, `1. item` as its number, a nested item four spaces further in; a cell given a
+  line break gets a wrapping format (reused or appended), and a row with a height of its
+  own is named in `fixed_height` (Excel grows any other row to its lines on open). Text is
+  never Markdown: `"**"` stays two stars.
+
+```python
+wb.set_cells({"Stock!B16": {"markdown": "**Fans**\n- desk\n- *floor*"}})
+wb.cell("Stock!B16").v                   # 'Fans\n• desk\n• floor'
+wb.cell("Stock!B16", markdown=True).v    # '**Fans**\n- desk\n- *floor*': writes back the same
+wb.cell("Stock!B10", markdown=True).v    # plain text escaped: 'a\\*b' for a*b
+```
+
+- **Freshness.** Every formula value says `cache`: `cached_unverified` (as last saved,
+  never checked), `invalidated` (after any write, workbook-wide, or when the file arrived
+  with `fullCalcOnLoad` or manual calculation) or `absent` (no cached value); `external`
+  when it refers to another workbook. Derives, validations, profiles and `t:` sources
+  count them (`cache`), and a dataset from invalidated caches is stale:
+
+```python
+wb.cell("Totals!B1").cache               # 'invalidated' once anything was written
+wb.derive("t:Stock!A9", measures=[{"fn": "sum", "column": "Value", "as": "v"}]).cache
+# {'invalidated': 9}: the Id and Value formulas read (F10 is a number now); its dataset
+# is stale from the start
+wb.undo(); wb.undo(); wb.cell("Totals!B1").cache    # 'cached_unverified' again
+```
+
+- **Guards** (X4). The host says where the workbook may be written, once, at open
+  (`policy=`: cells, ranges, whole sheets, a table's columns; `{"cells": []}` writes
+  nothing), and may only narrow it; a protected sheet's locked cells are never written (its
+  unlocked ones are, as Excel lets them be typed into: R71); a value by key
+  is the row holding the key, and keys are values the application supplies (a key column
+  of formulas is refused, `formula_key`); a new row goes only into the free row of a
+  declared table's empty `capacity` that the host allocates to its key (X6, `allocate`); an
+  expectation and the revision refuse a write made on a stale reading. Everything is
+  checked before anything changes:
+
+```python
+wb = Workbook.open(data, policy={
+    "cells": ["Stock!B4"],
+    "tables": [{"table": "stock", "columns": ["Quantity", "Category"], "new_rows": True}],
+    "formulas": False})
+wb.declare_tables([{"name": "stock", "sheets": "Stock", "header_row": 9, "key": "Item",
+                    "capacity": 200}])                  # rows 10 to 209 are the table's
+wb.set_cells({"t:stock/Kettle/Quantity": 4})          # Stock!D12, wherever Kettle's row is
+wb.set_cells({"t:stock/Lamp/Quantity": 2, "t:stock/Lamp/Category": "Hardware"},
+             allocate={"t:stock/Lamp": 15}).new_rows  # ('Stock!B15',): the row allocated
+wb.set_cells({"t:stock/Fan/Quantity": 1}, allocate={"t:stock/Fan": 17})
+# EditError capacity_gap (allocate[0]): the next free row is 16 -- no blank row between
+wb.set_cells({"t:stock/Fan/Quantity": 1}, new_rows=True)   # the next free row: a
+# convenience, allowed only where the policy's table entry says new_rows
+wb.set_cells({"Stock!B4": {"value": "Ann", "expect": {"type": "empty"}},
+              "t:stock/Mug/Quantity": {"value": 17, "expect": {"value": 18}}},
+             revision=wb.version)
+wb.set_cells({"Stock!E10": 1})          # EditError not_writable (Stock!E10)
+wb.set_cells({"Stock!B4": {"value": "Bo", "expect": {"type": "empty"}}})
+# EditError not_expected (Stock!B4); .held == {'Stock!B4': 'text'}: a type, never the text
+wb.narrow_policy({"tables": [{"table": "stock", "columns": ["Quantity"]}]})
+wb.writable                             # [{...the first...}, {...the narrower...}]
+```
+
+The steps themselves:
+
+```python
+original = wb.to_bytes()
+with wb.batch() as edit:                 # one step: all of it or none of it
+    wb.set_cells({...}); wb.set_cells({...})
+edit.report.as_dict()
+# {'before': 0, 'version': 1, 'cells': {'Stock': ['B10:D10', 'B15']}, 'cell_count': 4,
+#  'parts': ['[Content_Types].xml', 'xl/_rels/workbook.xml.rels', 'xl/calcChain.xml',
+#            'xl/sharedStrings.xml', 'xl/workbook.xml', 'xl/worksheets/sheet1.xml'],
+#  'calculation': 'invalidated', 'issues': []}
+wb.version                               # 1 (wb.revision: the same)
+wb.undo(); wb.to_bytes() == original     # True
+wb.redo()                                # the edited bytes again
+wb.validate()                            # [] -- or Problem(code, address, count), never text
+wb.save("stock-filled.xlsx")             # SaveReport(kind='xlsx', size=..., verified=4, issues=())
+```
+
+- **Atomic.** Anything that raises inside a batch rolls the whole package back -- cells,
+  shared strings, styles, `calcPr`, the calculation chain with its relationship and
+  content-type entry -- and the version stays as it was, so nothing keyed by it (a tool
+  session's datasets) goes stale. An error caught inside the batch still rolls it back on
+  leaving (`EditError` `rolled_back`); `wb.savepoint()` inside a batch rolls back only what
+  runs in it.
+- **Writing invalidates.** The first write drops the calculation chain and sets
+  `fullCalcOnLoad`: `wb.calculation_status` is `"invalidated"` (`"cached_unverified"`
+  before: as last saved, never checked), read from the package, so an undo restores it.
+- **Reports** (`edit.report`, `wb.last_edit`): cells written as ranges, at most 50 (the rest
+  counted), the parts changed, the calculation status, and the structure issues of the
+  sheets written. Neither reports nor errors nor the `xlsx_agent.edit` logger carry a value,
+  a text or a formula.
+- **The structure check** (`wb.validate(sheets=None)`): row and cell order and references,
+  shared-string indexes and counts, style indexes, the dimension, tables (ref, columns,
+  names, overlaps, header cells), defined names (duplicates, scopes), relationships to
+  missing parts, content types, the calculation chain naming a cell without a formula.
+- **Save** (`wb.save(path_or_file, kind=None)`; `wb.to_bytes(kind)` unchecked): the kind
+  from the path's extension (or the workbook's), the main content type set to it; a kind
+  without macros is refused while the workbook holds a VBA project (`vba_project`). The
+  bytes are reopened and every cell written since the workbook was opened is read back
+  through the reader, type and value (`readback`, with the addresses), before anything is
+  written.
+
+### Sheets, merged cells and text XML cannot carry (E5; round 44: R52, R56, R63b)
+
+Each is one undoable step (or part of the open batch), refused before anything changes,
+and does what Excel does (measured in Excel for Mac; `xlsx_agent.edit.sheets` and
+`xlsx_agent.edit.merges` say what):
+
+```python
+wb.add_sheet("Rota", index=1)              # an empty worksheet, as Excel makes one
+wb.rename_sheet("Lists", "Tax rates").as_dict()
+# {'action': 'rename', 'sheet': 'Tax rates', 'id': 2, 'changed': True, 'sheets': [...],
+#  'rewritten': [{'kind': 'name', 'a': 'Categories'}, {'kind': 'formula', 'a': 'Stock!I10'},
+#                {'kind': 'chart', 'a': 'Totals!xl/charts/chart1.xml'},
+#                {'kind': 'pivot_cache', 'a': 'xl/pivotCache/pivotCacheDefinition1.xml'}, ...],
+#  'not_rewritten': [{'kind': 'hyperlink', 'a': 'Totals!A6'}]}    # Excel leaves those too
+wb.sheet_referents("Tax rates")            # what refers to it, by kind and address
+wb.delete_sheet("Tax rates")               # SheetError referred: .referents, each by address
+wb.delete_sheet("Tax rates", force=True)   # ... or as Excel deletes it: each reads #REF!
+wb.clear_sheet("Results")                  # Clear All: references to the sheet stay
+wb.set_sheet_state("Meta", "veryHidden")   # the active tab moves to a visible sheet
+wb.merge("Report!A1:F1")                   # EditError merge_content while B1:F1 hold anything
+wb.merge("Report!A1:F1", drop=True)        # every cell the first cell's format, as Excel
+wb.unmerge("Report!A1", fill="anchor")     # every cell of the area its first cell's format
+wb.set_cells({"Notes!A2": "line\x01feed"}).escaped     # ('Notes!A2',): stored line_x0001_feed
+```
+
+**Regenerating a sheet**: clear it and write it again -- every formula, name, chart series
+and validation that refers to it keeps referring to it. Deleting it and adding one of the
+same name breaks them all (Excel writes `#REF!` into each, and a new sheet of the name does
+not bring them back), which is why `delete_sheet` refuses while anything refers to the
+sheet. Names follow Excel's rules (1 to 31 characters, none of `: \ / ? * [ ]`, no `'` at
+either end, unique as Excel compares them); control characters are refused in a name.
+### Notes and document properties (round 44: R57, R62)
+
+Notes are Excel's notes (its legacy comments), written as Excel writes its own: the
+comments part, the hidden VML shape that pops up over the sheet, placed and anchored where
+Excel puts it (measured; `xlsx_agent.edit.notes`). Properties are the package's core and
+custom ones, through ooxml-edit's shared reader and writer (`xlsx_agent.edit.properties`).
+Each call is one undoable step:
+
+```python
+wb.set_comment("Stock!B3", "Check count", author="Stock team").as_dict()
+# {'action': 'set', 'changed': True, 'added': ['Stock!B3']}
+wb.set_comments({"Stock!B3": "Recount", "Stock!B9": "Ordered"})   # replaced / added
+wb.remove_comment("Stock!A1:D20")              # every note in the range; none: changed False
+[(c.cell, c.author, c.threaded) for c in wb.comments("Stock")]
+wb.set_comment("Stock!B2", "...")              # EditError threaded_comment on a thread's cell
+
+wb.properties().as_dict()
+# {'core': {'title': 'Stock list', 'creator': 'Ann', 'created': '2026-11-09T08:00:00Z', ...},
+#  'custom': {'Run': {'value': 42, 'type': 'integer'}}}
+wb.set_properties(title="Stock list", subject=None, custom={"Run": 43, "Draft": None})
+wb.set_properties(modified=datetime.now(timezone.utc))   # only when asked: a save keeps it
+```
+
+## New workbooks, tables written, rows appended (round 44: R51, R54, E4)
+
+```python
+wb = Workbook.new()                              # as Excel makes one: Sheet1, empty
+wb = Workbook.new(["Stock", "Notes"], author="Stock clerk")
+wb = Workbook.from_tables({                      # new() + write_table at A1, one step
+    "Stock": {"columns": ["Item", "Qty", "Added"], "table": "Stock",
+              "rows": [["Lamp", 3, date(2026, 1, 5)], ["Fan", 4, None]]},
+    "Notes": {"columns": ["Note"], "rows": [["checked"]]}})
+
+done = wb.write_table("Stock", "F2", ["Shelf", "Count"], [["A", 3], {"count": 4, "Shelf": "B"}],
+                      as_table="Shelves")       # or as_table=True: Table1, Table2...
+done.range, done.table                           # ('Stock!F2:G4', 'Shelves')
+wb.append_rows("t:Stock", [["Desk", 1, date(2026, 1, 7)]])   # the table grows
+wb.append_rows("Log", [["2026-11-08", "started"]])           # below the last value
+wb.append_rows("Log!B4:D200", [["late", 2]])                 # within a region's rows
+```
+
+- **A new workbook** has the nine parts Excel for Mac writes for one (measured: `make new
+  workbook`, saved): its theme (Aptos Narrow body, Excel's script faces), styles (the
+  Normal style, `TableStyleMedium2` as the default table style), one sheet with its view and
+  margins, `calcPr calcId`, the document properties -- with Excel for Windows' defaults
+  (Aptos Narrow 11, rows of 15 points, no base column width), as its readers use it. Excel's re-save changes only its own:
+  the application's name, its user, localised names, the folder saved in, ids.
+- **Values** are `set_cells`' (text literal, numbers, booleans, dates, `{"formula": ...}`,
+  `{"markdown": ...}`, `None`), `""` a blank; a row is a list, or a mapping by header. A
+  date in a cell that shows none gets Excel's short date (`numFmtId` 14), as a typed date
+  does (measured). Every guard of `set_cells` applies, and the whole call is one step.
+- **Refused, every problem listed, nothing changed**: a cell of the block holding a value or
+  a formula (`not_empty`, unless `overwrite=True`), a merged area or a table it meets
+  (`merged_cell`, `table_overlap`), a table name Excel refuses (`bad_table_name`, with one
+  that would do: the rules were measured -- not a cell or R1C1 reference, letters, digits,
+  `_ \ . ?`, at most 255, unique with defined names), an unknown style (`bad_table_style`).
+- **A table** is the part Excel writes when it makes one from a range: `ref`,
+  `totalsRowShown="0"`, an AutoFilter, a column per header, the workbook's default style
+  banded by rows. Excel opens it as a table with its filters and banding (oracle).
+- **append_rows to a table**: the rows after its data; `ref` and the AutoFilter grow, its
+  calculated columns are filled into a row that leaves them blank, a new cell takes the
+  format above it, and a totals row moves down below the new rows -- as Excel does when a
+  row is typed below a table, or the table resized (measured). The rows it grows into must
+  be empty, and nothing may refer to the totals row by address (`totals_referenced`): a
+  structured reference follows the table, an address would not.
+- **append_rows to a sheet or region**: the row after the last row holding a value or a
+  formula in its columns -- a cell with only a format does not count.
+
+## Rows and columns (round 44)
+
+Excel's own operations, every reference rewritten as Excel rewrites it (measured; what
+was measured is in ROADMAP.md, "Rows and columns: what Excel does"):
+
+```python
+wb.insert_rows("Stock", 5, 2)              # two empty rows before row 5
+wb.insert_columns("Stock", "C")            # one column before C (a table gets "Column1")
+wb.delete_rows("Stock", "8:9")             # references into them become #REF!
+wb.delete_columns("Stock", "K")
+wb.move_rows("Stock", "12:13", 2)          # Cut + "Insert Cut Cells": before row 2
+moved = wb.move_columns("Stock", "J", "A")
+moved.as_dict()
+# {'operation': 'move_columns', 'sheet': 'Stock', 'first': 10, 'count': 1, 'before': 1,
+#  'changed': True, 'formulas': 54, 'broken': [], 'broken_count': 0, 'removed': {},
+#  'notes': [], 'calculation': 'invalidated'}
+wb.rearrange_columns("Stock", ["C", "A", "B"], drop=["E"])   # one step, R59
+```
+
+- **One step each** (or part of the open `wb.batch()`), undone by `wb.undo()`; the report
+  (`Restructured`) counts the formulas rewritten and names where a reference became
+  `#REF!` (`broken`, by the new address; `name:Local` for a defined name) and what went
+  with deleted cells (`removed`).
+- **Inserted lines take the format of the line before them** (above, or to the left):
+  height or width, style, outline, the cells' styles, validations and conditional formats;
+  never hiding. Rows inserted in a table get its calculated columns' formula.
+- **Refused before anything changes, as Excel refuses**: an array formula cut through, cells
+  pushed off the sheet, a table's header row deleted, a table's columns moved, rows moved out
+  of a table, rows through two tables side by side, part of a merged area moved. **Refused,
+  not measured yet** (`not_measured`): see ROADMAP.md, RC. Nothing is written half-updated.
+- **Regenerating a sheet each run**: clear it and write it again rather than delete its rows
+  and add new ones -- a deleted row's references are `#REF!` for good.
+- **Reading a sheet someone rearranged**: a dataset by header (`wb.dataset("t:...")`)
+  already ignores the order of columns; `rearrange_columns` is for giving a sheet back in a
+  template's order. `order` lists columns in the order they are to stand, in the places the
+  listed columns hold now (columns not listed stay: `["K", "I"]` swaps K and I and leaves
+  J); a mapping says the same as `{"C": "A", "A": "C"}`; `drop` deletes columns first,
+  named as before. It makes the fewest moves (the longest run already in order stays) and
+  reports where each column went (`columns`, read from the steps it made).
+- **A table's columns** (round 46, R75) are reordered within the table's rows, as Excel
+  does when a table column is dragged: the table keeps its name, style, filter, totals row
+  and calculated columns, each column its id and name; the sheet's column widths and the
+  cells above and below the table stay (a note says so). An order that would move a column
+  into or out of a table is refused (`table_move`, naming the table and its columns);
+  `move_columns` still refuses whole columns of a table, as Excel does.
+- **Ranges across moved columns** change as Excel's moves change them, which can leave one
+  covering other cells (`SUM(A1:C1)` with C put first is `SUM(B1:C1)` in Excel too): each
+  such place is listed in `reshaped` (at most 50, `reshaped_count` all), on every step's
+  report and on the call's.
+
+```python
+done = wb.rearrange_columns("Shop", ["F", "C", "D", "E"])   # t:Lines' Note before Qty
+done.as_dict()
+# {'sheet': 'Shop', 'changed': True, 'columns': {'C': 'D', 'D': 'E', 'E': 'F', 'F': 'C'},
+#  'dropped': [], 'steps': [{'operation': 'move_table_columns', ...}], 'formulas': 13,
+#  'broken_count': 0, 'notes': ["t:Lines: its columns were reordered within the table's
+#  rows, as Excel does when a table column is dragged; ..."]}
+```
+
+## AutoFilters, hidden rows and pivot refresh (round 44: R55, R61)
+
+```python
+wb.set_autofilter("Stock", "A1:F8", {"Item": ["Lamp", "Desk"], "Shelf": [None]})
+wb.set_autofilter("t:Orders", criteria={"Item": "Lamp"})    # a table's own filter
+change = wb.set_autofilter("Stock!A1:F8", criteria={"Qty": [3, 12]})
+change.as_dict()
+# {'action': 'set_autofilter', 'target': 'Stock', 'range': 'Stock!A1:F8', 'changed': True,
+#  'criteria': {'Qty': ['12', '3']}, 'hidden': ['4:8'], 'hidden_by': 'xlsx-agent',
+#  'calculation': 'cached_unverified', 'notes': ['Excel does not apply a saved filter ...']}
+wb.clear_autofilter("Stock")                 # the filter off; keep=True: Excel's Clear
+wb.hide_rows("Meta", "1:3"); wb.show_rows("Meta", [2]); wb.hide_columns("Meta", "C:D")
+wb.refresh_pivots_on_load(True)              # opt-in; pivots=["Totals"] for some
+```
+
+- **Written as Excel writes it** (measured, `xlsx_agent.edit.filters`): one filter per
+  sheet with its hidden `_xlnm._FilterDatabase` name and `filterMode`; a table's in its
+  part. Values are matched as Excel's filter matches them: text without regard to case,
+  numbers by their shown text in the workbook's locale, formulas by their cached values.
+- **The rows are hidden here**: Excel does not apply a saved filter when it opens a file
+  (measured), so the rows a filter excludes are hidden by this call (`hidden_by`). A date,
+  boolean or error in a filtered column, and a formula column after any write, are refused
+  (`filter_unmeasured`, `filter_formulas`); `hide=False` writes the criteria only, for
+  Excel's Reapply.
+- **Pivot refresh on open** sets `refreshOnLoad` on the cache definitions, a targeted edit
+  of their bytes. Excel for Mac kept the flag but did not refresh on open (measured): a
+  host that needs current pivots refreshes them in Excel.
+
+## Formatting and layout (round 44: R53, E7)
+
+Formats from code, each call one step (undone with `wb.undo()`), refused before anything
+changes with every problem listed, and no value touched (`xlsx_agent.edit.format`,
+`xlsx_agent.edit.layout`):
+
+```python
+wb.format("Stock!A1:H1", font={"bold": True, "color": "#1F3864", "size": 12},
+          fill="#DDEBF7", border={"bottom": "thin"},
+          alignment={"horizontal": "center", "vertical": "center", "wrap": True})
+wb.format("Stock!D2:D40", number_format="0.0")       # "0.00" is built-in id 2, reused
+wb.format("Stock!J2:J40", like="Stock!D2")           # that cell's whole format
+wb.format("Stock!A1:H1", style="Heading 1")          # a cell style of the workbook
+wb.format("Stock!E:E", protection={"locked": False}) # whole columns (and rows: "Stock!3:3")
+wb.set_column_widths("Stock!A:H", "fit")             # Excel's AutoFit, measured
+wb.set_column_widths("Stock!J:J", 14)                # characters, as Excel's Column Width
+wb.column_widths("Stock!A:K")                        # read back: width, stored or default, hidden
+wb.set_row_heights("Stock!1:1", 30)                  # points; None fits the text again
+wb.freeze_panes("Stock", rows=1, columns=1)          # or at="B2"; rows=0, columns=0 unfreezes
+wb.set_gridlines("Stock", False)
+wb.protect_sheet("Stock", password="s3cret")         # Excel's SHA-512 hash; unprotect_sheet
+```
+
+Only what is asked changes (bold keeps the fill and the number format), and equal fonts,
+fills, borders, number formats and cell formats are reused, never added per cell. A fit
+measures each cell's shown text in its own font with ooxml-common's advance widths (exact
+against Excel's AutoFit for Calibri, Arial, Times New Roman, Courier New, Cambria and
+Aptos at 10-16 points, Calibri and Aptos at 6-36, Aptos Narrow -- Excel's default body
+face -- at 8-24, the padding growing with the cell font as Excel's); a cell in a font
+without its own measured widths (Calibri Light, Rockwell) refuses it, and the cells not measured (merged, wrapped, dates) are listed in `skipped`. The
+agent tool is `xlsx_format`, in the deferred `xlsx_format` group.

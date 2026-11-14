@@ -1,0 +1,34 @@
+"""Lossless, undoable editing of OOXML packages over lxml.
+
+What every Office Open XML editor needs, whatever the document inside the package:
+
+* :mod:`.opc` -- the OPC package: parts, relationships, content types, lossless save,
+  packages inside packages, and adding, copying and reaping parts.
+* :mod:`.xml` -- lxml helpers, a namespace registry and schema-ordered insertion.
+* :mod:`.history` -- undo/redo/batch over package snapshots.
+* :mod:`.stamp` -- durable ids written into an ``extLst`` extension.
+* :mod:`.properties` -- a package's core and custom document properties, read and set.
+* :mod:`.markdown` -- a small Markdown subset (emphasis, strikethrough, code spans,
+  escapes, lines and lists) read into runs with their marks and written back.
+
+And two optional subpackages, imported explicitly and never by the core:
+
+* :mod:`.charts` -- charts with the data behind them, and SmartArt diagrams, edited for any
+  document that embeds them; a format layer tells it where they live with a ``GraphicHost``.
+* :mod:`.tools` -- the plumbing of an agent tool layer: tool definitions for Claude and the
+  OpenAI APIs from one schema, a validating dispatcher, in-memory sessions, and a worker
+  pool with deadlines.  The format libraries build their tools on it.
+
+Nothing in the core may know about any one document format -- no vocabulary of any one
+markup language, no format-specific tag, part path or relationship type.  Format layers
+register their namespaces and child-order tables with :mod:`.xml` and subclass the package.
+``tests/test_neutrality.py`` enforces the rule, for the core and for :mod:`.tools`, and
+``tests/test_charts_neutrality.py`` keeps the charts subpackage free of any one document
+format.
+
+Dependencies: lxml, and ooxml-common for what every library reads the same way (number
+format codes, the measured date names, the locale).  ooxml-common never imports this
+package; this package may import it.
+"""
+
+__version__ = "0.116.1"

@@ -1,0 +1,9255 @@
+"""Charts: reading ``c:chartSpace``, and drawing what comes out of it.
+
+Every layout number asserted here was read out of PowerPoint's own PDF export as an exact
+vector coordinate, not eyeballed from a raster.  See ``src/pptx2svg/resolve/chart.py`` for
+where each constant came from and what its residual against the measurement is.
+"""
+
+from __future__ import annotations
+
+import collections
+import math
+import re
+import zipfile
+from xml.etree.ElementTree import fromstring
+
+import pytest
+
+from pptx2svg import ConvertOptions, convert_pptx_to_model
+from pptx2svg import model as m
+from pptx2svg.parse.chart import flat_chart_kind, parse_chart_space
+from pptx2svg.resolve.chart import (
+    _decade,
+    _nice_unit,
+    format_number,
+    nice_axis_scale,
+)
+
+C = 'xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart"'
+A = 'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"'
+R = 'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"'
+
+
+def chart(body: str):
+    return parse_chart_space(fromstring(f"<c:chartSpace {C} {A} {R}>{body}</c:chartSpace>"))
+
+
+def bar(series: str, extra: str = "") -> str:
+    return (
+        f"<c:chart><c:plotArea><c:barChart><c:barDir val='col'/>{series}"
+        f"</c:barChart>{extra}</c:plotArea></c:chart>"
+    )
+
+
+# -- Reading ---------------------------------------------------------------------------
+
+
+def test_chart_space_without_a_chart_reads_as_nothing():
+    assert chart("<c:date1904 val='0'/>") is None
+
+
+def test_series_values_come_from_the_cache_not_the_formula():
+    parsed = chart(
+        bar(
+            "<c:ser><c:idx val='0'/><c:order val='0'/><c:val><c:numRef>"
+            "<c:f>Sheet1!$B$2:$B$4</c:f><c:numCache><c:formatCode>#,##0</c:formatCode>"
+            "<c:ptCount val='3'/>"
+            "<c:pt idx='0'><c:v>3</c:v></c:pt>"
+            "<c:pt idx='1'><c:v>4</c:v></c:pt>"
+            "<c:pt idx='2'><c:v>5</c:v></c:pt>"
+            "</c:numCache></c:numRef></c:val></c:ser>"
+        )
+    )
+    series = parsed.plots[0].series[0]
+    assert series.values == [3.0, 4.0, 5.0]
+    assert series.format_code == "#,##0"
+
+
+def test_a_missing_point_is_a_blank_not_a_zero():
+    parsed = chart(
+        bar(
+            "<c:ser><c:val><c:numRef><c:numCache><c:ptCount val='4'/>"
+            "<c:pt idx='0'><c:v>1</c:v></c:pt>"
+            "<c:pt idx='3'><c:v>2</c:v></c:pt>"
+            "</c:numCache></c:numRef></c:val></c:ser>"
+        )
+    )
+    assert parsed.plots[0].series[0].values == [1.0, None, None, 2.0]
+
+
+def test_point_count_is_clamped_so_a_hostile_cache_cannot_allocate():
+    parsed = chart(
+        bar(
+            "<c:ser><c:val><c:numRef><c:numCache><c:ptCount val='99999999999'/>"
+            "<c:pt idx='0'><c:v>1</c:v></c:pt></c:numCache></c:numRef></c:val></c:ser>"
+        )
+    )
+    assert parsed.plots[0].series[0].values == [1.0]
+
+
+def test_categories_read_from_a_multi_level_reference():
+    # real-financial-report.pptx writes every category axis this way; a reader that only
+    # looks at c:strRef finds no labels at all and silently draws a bare axis.
+    parsed = chart(
+        bar(
+            "<c:ser><c:cat><c:multiLvlStrRef><c:multiLvlStrCache><c:ptCount val='3'/>"
+            "<c:lvl><c:pt idx='0'><c:v>Q1</c:v></c:pt>"
+            "<c:pt idx='1'><c:v>Q2</c:v></c:pt>"
+            "<c:pt idx='2'><c:v>Q3</c:v></c:pt></c:lvl>"
+            "<c:lvl><c:pt idx='0'><c:v>FY24</c:v></c:pt></c:lvl>"
+            "</c:multiLvlStrCache></c:multiLvlStrRef></c:cat>"
+            "<c:val><c:numRef><c:numCache><c:ptCount val='3'/>"
+            "<c:pt idx='0'><c:v>1</c:v></c:pt></c:numCache></c:numRef></c:val></c:ser>"
+        )
+    )
+    assert parsed.plots[0].series[0].categories == ["Q1", "Q2", "Q3"]
+
+
+def test_numeric_categories_become_labels():
+    parsed = chart(
+        bar(
+            "<c:ser><c:cat><c:numRef><c:numCache><c:ptCount val='2'/>"
+            "<c:pt idx='0'><c:v>2023</c:v></c:pt>"
+            "<c:pt idx='1'><c:v>2024</c:v></c:pt>"
+            "</c:numCache></c:numRef></c:cat>"
+            "<c:val><c:numRef><c:numCache><c:ptCount val='2'/>"
+            "<c:pt idx='0'><c:v>1</c:v></c:pt></c:numCache></c:numRef></c:val></c:ser>"
+        )
+    )
+    assert parsed.plots[0].series[0].categories == ["2023", "2024"]
+
+
+def test_a_chart_boolean_with_no_val_is_true():
+    # <c:delete/> deletes the axis.  Reading it as false -- which the ordinary DrawingML
+    # attribute rule would -- draws an axis PowerPoint does not.
+    parsed = chart(
+        "<c:chart><c:plotArea><c:barChart/>"
+        "<c:valAx><c:axId val='1'/><c:delete/></c:valAx>"
+        "<c:catAx><c:axId val='2'/><c:delete val='0'/></c:catAx>"
+        "</c:plotArea></c:chart>"
+    )
+    assert [axis.delete for axis in parsed.axes] == [True, False]
+
+
+def test_series_are_ordered_by_order_not_document_position():
+    parsed = chart(
+        bar(
+            "<c:ser><c:idx val='0'/><c:order val='1'/><c:tx><c:v>second</c:v></c:tx></c:ser>"
+            "<c:ser><c:idx val='1'/><c:order val='0'/><c:tx><c:v>first</c:v></c:tx></c:ser>"
+        )
+    )
+    assert [s.name.plain for s in parsed.plots[0].series] == ["first", "second"]
+
+
+def test_axis_ids_tie_a_plot_group_to_its_axes():
+    parsed = chart(
+        "<c:chart><c:plotArea>"
+        "<c:barChart><c:axId val='11'/><c:axId val='22'/></c:barChart>"
+        "<c:catAx><c:axId val='11'/></c:catAx><c:valAx><c:axId val='22'/></c:valAx>"
+        "</c:plotArea></c:chart>"
+    )
+    assert parsed.plots[0].axis_ids == ["11", "22"]
+    assert [axis.axis_id for axis in parsed.axes] == ["11", "22"]
+
+
+def test_chart_colour_map_override_is_read_but_master_mapping_is_not():
+    inherited = chart("<c:chart><c:plotArea/></c:chart><c:clrMapOvr><a:masterClrMapping/></c:clrMapOvr>")
+    assert inherited.color_map_override is None
+
+    overridden = chart(
+        "<c:chart><c:plotArea/></c:chart>"
+        "<c:clrMapOvr><a:overrideClrMapping bg1='dk1' tx1='lt1'/></c:clrMapOvr>"
+    )
+    assert overridden.color_map_override.mapping == {"bg1": "dk1", "tx1": "lt1"}
+
+
+def test_three_d_chart_kinds_fall_back_to_their_flat_equivalent():
+    assert flat_chart_kind("bar3DChart") == "barChart"
+    assert flat_chart_kind("pie3DChart") == "pieChart"
+    assert flat_chart_kind("barChart") == "barChart"
+
+
+@pytest.mark.parametrize(
+    "deck,part,kind,series_count",
+    [
+        ("authoring-integration.pptx", "ppt/charts/chart1.xml", "barChart", 1),
+        ("real-financial-report.pptx", "ppt/charts/chart1.xml", "barChart", 2),
+        ("real-financial-report.pptx", "ppt/charts/chart2.xml", "lineChart", 3),
+        ("real-financial-report.pptx", "ppt/charts/chart3.xml", "barChart", 2),
+        ("real-financial-report.pptx", "ppt/charts/chart4.xml", "doughnutChart", 1),
+        ("real-financial-report.pptx", "ppt/charts/chart5.xml", "radarChart", 2),
+    ],
+)
+def test_every_chart_in_the_corpus_reads(deck, part, kind, series_count):
+    from tests.conftest import FIXTURE_DIR  # noqa: PLC0415
+
+    with zipfile.ZipFile(FIXTURE_DIR / deck) as archive:
+        parsed = parse_chart_space(fromstring(archive.read(part)))
+    assert parsed is not None
+    assert parsed.plots[0].kind == kind
+    assert len(parsed.plots[0].series) == series_count
+    assert all(series.values for series in parsed.plots[0].series)
+
+
+# -- Axis scaling ----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "values,intervals,expected",
+    [
+        # authoring-integration.pptx: PowerPoint draws 0..6 by 1 for data topping out at
+        # 5, on a 228.3 pt frame with 10 pt labels -- ten intervals of room, so the base
+        # rule answers on its own.
+        ([3, 4, 5], 10, (0.0, 6.0, 1.0)),
+        # real-financial-report chart1, maxing at 4285: PowerPoint drew 0..5000 by 1000 on
+        # a 142.5 pt frame at 12 pt, which is six intervals of room.
+        ([3980, 4120, 4285, 465, 488, 512], 6, (0.0, 5000.0, 1000.0)),
+        # ...and chart3, maxing at 1842: 0..2000 by 500 on a 135 pt frame, also six.
+        ([1599, 1185, 663, 334, 1842, 1285, 814, 344], 6, (0.0, 2000.0, 500.0)),
+        # The same 1842 on a frame with room for ten draws 0..2000 by **200**, which is
+        # what says the by-500 axis above is a coarsened one rather than the base rule.
+        # Measured: `tools/make_axis_probe.py` deck `axis-bar`, probe `bar1842t`.
+        ([1599, 1185, 663, 334, 1842, 1285, 814, 344], 10, (0.0, 2000.0, 200.0)),
+    ],
+)
+def test_axis_scale_matches_what_powerpoint_drew(values, intervals, expected):
+    """All four come from reading gridline coordinates out of PowerPoint's PDF.
+
+    The unit is the finest 1-2-5 step that divides the padded range into *intervals*, and
+    the count is what the frame has room for; see :func:`side_axis_intervals`.
+    """
+    assert nice_axis_scale(min(values), max(values), intervals=intervals) == expected
+
+
+def test_the_side_axis_rung_is_the_faces_full_hhea_pitch():
+    """Arial is the face that separates the pitch from the line box, and it does it twice.
+
+    ``axis-wider``'s Arial cell walks a 10 pt axis over frames of 160, 165, 169, 172 and
+    175 pt; PowerPoint steps from nine intervals to ten somewhere in (160, 165].  The rung
+    decides where we step, and the two candidates put it in different places:
+
+        line box  22 + 12 * 11.1719 = 156.06    outside PowerPoint's window
+        pitch     22 + 12 * 11.4990 = 159.99    inside it, by 0.01 pt
+
+    So the line box is not loose here, it is refuted.  What the pitch leaves is the one
+    reading the sweep still misses -- 160 pt itself, by 0.012 pt of rung -- and
+    :data:`~pptx2svg.resolve.chart.AXIS_EDGE_RESERVE_PT` carries why that is not patched.
+    """
+    from pptx2svg.resolve.chart import font_box, side_axis_intervals
+
+    box = font_box("Arial", 10.0)
+    assert box.line_height == pytest.approx(11.1719, abs=5e-4)
+    assert box.pitch == pytest.approx(11.4990, abs=5e-4)
+    assert box.gap == pytest.approx(0.3271, abs=5e-4)
+
+    # Where each rung puts the nine-to-ten step, walked a point at a time.
+    def step(rung):
+        return next(h for h in range(140, 200) if side_axis_intervals(h, rung) == 10)
+
+    assert step(box.line_height) == 157
+    assert step(box.pitch) == 160
+
+    # A zero-gap face is untouched: every number measured with Aptos still stands.
+    aptos = font_box("Aptos", 10.0)
+    assert aptos.gap == 0.0
+    assert aptos.pitch == aptos.line_height
+
+
+def test_the_maximum_clears_the_data_by_five_per_cent_not_by_a_whole_unit():
+    """A series topping out at the axis maximum would touch the frame, and PowerPoint
+    clears it -- but by padding the range 5% before rounding, not by adding a unit.
+
+    The two are the same answer when the data lands on a unit boundary and different when
+    it does not, and **4.9 is where they part**: a whole-unit bump leaves 0..5, the pad
+    carries 5.145 past 5 and the axis goes to 6.  PowerPoint draws 0..6, measured on the
+    `axis-pad` deck, and the same deck brackets the pad itself -- 0.3..4.8 takes unit 1 and
+    0.3..4.76 takes 0.5, which is (4.17%, 5.04%] of the maximum.
+    """
+    assert nice_axis_scale(0.0, 5.0)[1] == 6.0
+    assert nice_axis_scale(0.0, 4.9)[1] == 6.0
+    assert nice_axis_scale(0.0, 4.7)[1] == 5.0
+
+
+def test_a_negative_minimum_extends_the_axis_below_zero():
+    minimum, maximum, unit = nice_axis_scale(-30.0, 120.0)
+    assert minimum < 0 and maximum >= 120 and unit > 0
+    assert minimum % unit == 0 and maximum % unit == 0
+
+
+def test_a_flat_series_still_gets_a_usable_axis():
+    minimum, maximum, unit = nice_axis_scale(0.0, 0.0)
+    assert maximum > minimum and unit > 0
+
+
+def _log10_off_by_one_ulp(direction: float):
+    """``math.log10`` with every answer nudged one ulp, the way a faithful libm may."""
+    correctly_rounded = math.log10
+
+    def perturbed(value: float) -> float:
+        return math.nextafter(correctly_rounded(value), direction)
+
+    return perturbed
+
+
+@pytest.mark.parametrize("direction", [-math.inf, math.inf])
+def test_a_one_ulp_error_in_log10_does_not_move_the_axis(monkeypatch, direction):
+    """The property a tripwire in `tests/test_vrt.py` used to stand in for.
+
+    That one asserted this *platform* rounds `log10(100.0)` to 2.0.  This one asserts our
+    own code does not care, which is the half that survives being run somewhere else:
+    `log10` is perturbed by an ulp in both directions -- harsher than any real libm
+    disagreement, since a faithful implementation is only allowed to be wrong one way at a
+    time -- and every axis has to come out where it was.
+
+    0..100 is `real-financial-report.pptx` slide 4's radar, the one place in the corpus
+    where the ulp used to show: with four intervals of radius the unit is a hundred over
+    four rounded up the ladder, which is 50, and it draws two rings.  One ulp low under the
+    old expression and `floor` gave a decade of 10, the unit became 10, and the slide grew
+    by five thousand characters of SVG.
+    """
+    monkeypatch.setattr(math, "log10", _log10_off_by_one_ulp(direction))
+
+    assert _decade(100.0) == 100.0
+    assert nice_axis_scale(0.0, 100.0, intervals=4, strict=False) == (0.0, 100.0, 50.0)
+    # The 1-2-5 ladder reads a magnitude the same way, and failed the same way: an ulp low
+    # made the magnitude of 100 be 10 and the rung above it 20, so an axis wanting a
+    # hundred-unit step got a twenty.
+    assert _nice_unit(100.0) == 100.0
+    assert _nice_unit(100.1) == 200.0
+    # And the measured axes are unmoved, ulp or no ulp.
+    assert nice_axis_scale(0.0, 5.0) == (0.0, 6.0, 1.0)
+    assert nice_axis_scale(465.0, 4285.0, intervals=6) == (0.0, 5000.0, 1000.0)
+    assert nice_axis_scale(0.0, 0.07) == pytest.approx((0.0, 0.08, 0.01))
+
+
+def test_every_decade_of_the_double_range_is_found_exactly():
+    """The contract, stated on the helper rather than on a chart.
+
+    Ten to the something, at or below the value, with the next one up above it: that is
+    the whole of it, and it is what the axis rules are written against.  Swept over the
+    double range rather than sampled near one, because the failure being guarded against
+    is not a small one -- an exponent out by one is an axis out by a factor of ten, and
+    `log10` is no more exact at 1e-300 than it is at 100.
+    """
+    for exponent in range(-300, 301):
+        power = float(f"1e{exponent}")
+        for value in (power, power * 1.000001, power * 5, power * 9.999):
+            assert _decade(value) == power, (value, exponent)
+
+
+def test_a_span_a_hair_under_a_power_of_ten_is_still_that_power_of_ten():
+    """Spans are subtractions, and subtractions of decimals land just under round numbers.
+
+    ``0.24 - 0.14`` is ``0.09999999999999998``.  Nothing about that chart is a hundredth;
+    the axis wanted is the one for a span of 0.1, and :data:`_DECADE_SLACK` is what keeps
+    it.  `log10`'s rounding used to supply a window like this by accident, but a narrower
+    and less even one: it put ``0.24 - 0.14`` (two ulps under a tenth) in the right decade
+    and ``1.13 - 1.03`` (ten ulps under the same tenth) in the one below, an axis stepping
+    by 0.005 for data that spans a tenth.  Data like that is authored every day.
+
+    The slack is not a licence to round.  A span that genuinely falls short of a power of
+    ten still falls short of it: 9.9999999999 misses by a hundred times more than this
+    window reaches, and nothing anyone would author comes close to being that near.
+
+    Its **width** is not measured and cannot be on this oracle -- PowerPoint draws a span
+    of 0.095 and a span one ulp under a tenth identically, so nothing observable moves when
+    the window does.  See :data:`_DECADE_SLACK` and the test below.
+    """
+    assert _decade(0.24 - 0.14) == 0.1
+    assert _decade(1.13 - 1.03) == 0.1
+    assert _decade(1.13 - 0.13) == 1.0
+    assert _decade(9.99) == 1.0
+    assert _decade(9.9999999999) == 1.0
+    # Two ulps apart, and `floor(log10(...))` put them in different decades: the first
+    # rounds to exactly 2.0 and the second to 1.9999999999999998.  Both are a hundred, and
+    # agreeing that they are is also what makes an ulp *up* in `log10` a no-op here --
+    # every value an upward ulp could promote is inside this window already.
+    assert _decade(math.nextafter(100.0, 0.0)) == 100.0
+    assert _decade(math.nextafter(math.nextafter(100.0, 0.0), 0.0)) == 100.0
+
+
+#: Every pair of two-decimal numbers a tenth apart whose ratio leaves a scatter's value
+#: axis unanchored leaves one of exactly four residues in the subtraction: none, ten ulps,
+#: twenty-six, ninety.  PowerPoint was given all four and drew all four **alike**, every
+#: one of them stepping by 0.02, so whatever we do with a residue, the one thing it may
+#: not do is depend on its size.
+AUTHORED_TENTH_PAIRS = ((1.00, 1.10), (1.03, 1.13), (2.16, 2.26), (7.94, 8.04))
+
+
+def test_the_residue_of_an_authored_subtraction_never_changes_the_axis():
+    """The evenness :data:`_DECADE_SLACK` exists for, and PowerPoint agrees it is right.
+
+    ``1.10 - 1.00`` lands a hair *above* a tenth, ``1.13 - 1.03`` ten ulps under it,
+    ``2.26 - 2.16`` twenty-six and ``8.04 - 7.94`` ninety.  Nothing about those four charts
+    differs to a reader, and PowerPoint draws all four with the same unit -- measured, one
+    probe each, ``tools/make_axis_probe.py`` deck ``axis-decade``.  Under
+    ``floor(log10(span))`` the last three fall into the decade of a hundredth and the first
+    does not, so a chart of 1.00..1.10 got an axis by 0.05 and its neighbour 1.03..1.13 one
+    by 0.01: five times the gridlines for a tenth of data either way.
+
+    The unit we pick is PowerPoint's own 0.02 on all four, which it was not while the rule
+    was the power of ten below the span; what a residue is allowed to do is nothing, and it
+    does nothing either way.
+    """
+    for low, high in AUTHORED_TENTH_PAIRS:
+        minimum, maximum, unit = nice_axis_scale(low, high, anchor_zero=False)
+        assert unit == pytest.approx(0.02), (low, high)
+        assert minimum <= low and maximum >= high
+
+
+def test_powerpoint_ignores_the_decade_of_a_span_on_an_unanchored_axis():
+    """A measurement kept as a test because it refutes the shape, not a constant.
+
+    :data:`_DECADE_SLACK` decides which decade a span that falls just under a power of ten
+    belongs to, and the only axis where that decision survives to be drawn is an
+    unanchored one -- a scatter's.  Thirty such probes, with the span under a tenth by a
+    relative 1e-15 through 5e-2, came back from PowerPoint with **one** axis between them:
+
+    ========================  =====================  ======================
+    data                      PowerPoint             ours
+    ========================  =====================  ======================
+    1.03..1.13 (10 ulps)      1.02..1.14 by 0.02     1.0..1.15 by 0.05
+    1.03..1.1299999999        1.02..1.14 by 0.02     1.02..1.13 by 0.01
+    1.03..1.125 (a flat .095) 1.02..1.14 by 0.02     1.02..1.13 by 0.01
+    ========================  =====================  ======================
+
+    A five-per-cent shortfall and a one-ulp shortfall drawn identically is not a wide
+    forgiveness window; it is a rule that never asks which decade the span is in.  So the
+    slack's width is unmeasurable here and no number is fitted to these -- and since the
+    unit is a count of the padded range rather than a decade, all three now come out where
+    PowerPoint drew them.
+    """
+    assert nice_axis_scale(1.03, 1.13, anchor_zero=False) == pytest.approx((1.02, 1.14, 0.02))
+    assert nice_axis_scale(1.03, 1.1299999999, anchor_zero=False) == pytest.approx(
+        (1.02, 1.14, 0.02)
+    )
+    assert nice_axis_scale(1.03, 1.125, anchor_zero=False) == pytest.approx((1.02, 1.14, 0.02))
+    # The extent comes out of the same padded range: 0.3..4.9 is already clear of a 0..5
+    # axis and PowerPoint draws 0..6, which is the pad carrying 4.9 to 5.145.
+    assert nice_axis_scale(0.3, 4.9) == pytest.approx((0.0, 6.0, 1.0))
+
+
+def test_the_decade_helper_survives_the_ends_of_the_double_range():
+    """Where there is no power of ten to return, and what the callers do about it.
+
+    A denormal has none below it, so the helper says 0.0 and `nice_axis_scale` falls back
+    to its 0..1 axis -- the same answer, by the same guard, as before the helper existed.
+    Nothing finite reaches 1e309, so nothing comes back infinite.
+    """
+    assert _decade(5e-324) == 0.0
+    assert nice_axis_scale(0.0, 5e-324) == (0.0, 1.0, 1.0)
+    assert _decade(1e-320) == 1e-320
+    assert _decade(1.7976931348623157e308) == 1e308
+
+
+# -- Number formatting -----------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "value,code,expected",
+    [
+        (3.0, None, "3"),
+        (3.0, "General", "3"),
+        (3.5, "General", "3.5"),
+        (4285.0, "#,##0", "4,285"),
+        (4285.0, "0", "4285"),
+        (0.125, "0.0%", "12.5%"),
+        (-0.125, "0.0%", "-12.5%"),
+        # The text round the number is drawn: PowerPoint labelled data in
+        # '"€"#,##0.0"m"' "€12,4m" (a Dutch Mac's separators).
+        (1.5, '"$"0.00', "$1.50"),
+        # A negative value keeps its own sign when the code has no negative section, and
+        # takes that section's decoration -- brackets, or an explicit minus -- when it has.
+        (-1234.0, "#,##0", "-1,234"),
+        (-5.0, "0.0", "-5.0"),
+        (-1234.0, "#,##0;(#,##0)", "(1,234)"),
+        (-3.0, "#,##0;-#,##0", "-3"),
+        (-3.0, "#,##0;#,##0", "3"),
+    ],
+)
+def test_number_formats(value, code, expected):
+    assert format_number(value, code) == expected
+
+
+# -- Drawing ---------------------------------------------------------------------------
+
+#: Points from the frame's top-left, read out of PowerPoint's PDF export of
+#: authoring-integration.pptx as exact vector coordinates.  The frame is
+#: 299.2126 x 228.3465 pt.  The tolerance is 0.6 pt -- about one pixel at the 1280 px the
+#: fidelity harness scores at -- and the residual actually achieved is noted alongside.
+POWERPOINT = {
+    "plot_left": 21.0725,           # ours 21.1092
+    "plot_right": 288.2131,         # ours 288.2126
+    "plot_top": 40.8025,            # ours 40.8031
+    "plot_bottom": 179.2985,        # ours 179.0754
+    "bar1_left": 47.7625,           # ours 47.8195
+    "bar_width": 35.6187,           # ours 35.6138
+    "bar1_top": 109.9918,           # ours 109.9392
+    "title_baseline": 24.5518,      # ours 24.5261
+    "category_baseline": 194.4718,  # ours 194.6152
+}
+TOLERANCE_PT = 0.6
+
+#: Descents as a fraction of the em.  The chart's own labels are Aptos, its title Arial.
+APTOS_DESCENT = 577 / 2048
+ARIAL_DESCENT = 434 / 2048
+
+
+def _chart_of(path):
+    deck = convert_pptx_to_model(path.read_bytes())
+    charts = [e for e in deck.slides[0].elements if isinstance(e, m.ChartElement)]
+    assert len(charts) == 1
+    return charts[0]
+
+
+def _pt(emu):
+    return emu / 12700.0
+
+
+def _plot_rect(chart):
+    """The plot rectangle, read back off the drawn lines, in points.
+
+    Which line is the value axis and which the category axis depends on `barDir`, and a
+    category axis floats away from the plot's edge once values go negative -- so the rect
+    is taken from the *longest* line each way instead, which spans the plot whichever axis
+    or gridline it happens to be.
+    """
+    lines = [c for c in chart.children if isinstance(c, m.ConnectorElement)]
+    vertical = [line for line in lines if line.transform.extent_width == 0]
+    horizontal = [line for line in lines if line.transform.extent_height == 0]
+    assert vertical and horizontal
+    down = max(vertical, key=lambda line: line.transform.extent_height).transform
+    across = max(horizontal, key=lambda line: line.transform.extent_width).transform
+    return (
+        _pt(across.offset_x),
+        _pt(down.offset_y),
+        _pt(across.offset_x + across.extent_width),
+        _pt(down.offset_y + down.extent_height),
+    )
+
+
+def _baseline(shape, descent_em=APTOS_DESCENT):
+    """A one-line label's baseline, from the box the resolver placed it in.
+
+    The renderer hangs the first baseline off the *bottom* of a 1.2 em line box, so the
+    baseline is ``top + (1.2 - descent) * size``; see
+    ``pptx2svg.text.measure._first_baseline_ratio``.
+    """
+    size = shape.text_body.paragraphs[0].runs[0].properties.font_size
+    return _pt(shape.transform.offset_y) + (1.2 - descent_em) * size
+
+
+def _labels(chart):
+    return {
+        "".join(run.text for p in child.text_body.paragraphs for run in p.runs): child
+        for child in chart.children
+        if isinstance(child, m.ShapeElement) and child.text_body is not None
+    }
+
+
+def _bars(chart):
+    """Every drawn bar, left to right.
+
+    The legend swatch is a filled rectangle too, and in the fixture it is even the same
+    colour; it is an order of magnitude smaller, which is what separates them.
+    """
+    bars = [
+        child
+        for child in chart.children
+        if isinstance(child, m.ShapeElement)
+        and isinstance(child.fill, m.SolidFill)
+        and child.text_body is None
+        and child.transform.extent_width > 10 * 12700
+    ]
+    return sorted(bars, key=lambda bar: bar.transform.offset_x)
+
+
+def test_the_plot_rectangle_matches_powerpoints(authoring):
+    left, top, right, bottom = _plot_rect(_chart_of(authoring))
+    assert left == pytest.approx(POWERPOINT["plot_left"], abs=TOLERANCE_PT)
+    assert right == pytest.approx(POWERPOINT["plot_right"], abs=TOLERANCE_PT)
+    assert top == pytest.approx(POWERPOINT["plot_top"], abs=TOLERANCE_PT)
+    assert bottom == pytest.approx(POWERPOINT["plot_bottom"], abs=TOLERANCE_PT)
+
+
+def test_the_bars_match_powerpoints(authoring):
+    bars = _bars(_chart_of(authoring))
+    assert len(bars) == 3
+
+    assert _pt(bars[0].transform.offset_x) == pytest.approx(
+        POWERPOINT["bar1_left"], abs=TOLERANCE_PT
+    )
+    assert _pt(bars[0].transform.offset_y) == pytest.approx(
+        POWERPOINT["bar1_top"], abs=TOLERANCE_PT
+    )
+    for bar in bars:
+        assert _pt(bar.transform.extent_width) == pytest.approx(
+            POWERPOINT["bar_width"], abs=TOLERANCE_PT
+        )
+    # 3, 4 and 5 on a 6-unit axis, so the heights stand in 1 : 4/3 : 5/3.
+    heights = [bar.transform.extent_height for bar in bars]
+    assert heights[1] / heights[0] == pytest.approx(4 / 3, abs=0.01)
+    assert heights[2] / heights[0] == pytest.approx(5 / 3, abs=0.01)
+
+
+def test_the_title_and_category_baselines_match_powerpoints(authoring):
+    labels = _labels(_chart_of(authoring))
+    # The title takes the deck's plain-text-box face at 18 pt, not the chart's 10 pt
+    # default: PowerPoint drew the axis labels in Aptos and this title in Arial.
+    title = labels["Chart contract"]
+    assert title.text_body.paragraphs[0].runs[0].properties.font_size == 18
+    assert _baseline(title, ARIAL_DESCENT) == pytest.approx(
+        POWERPOINT["title_baseline"], abs=TOLERANCE_PT
+    )
+    assert _baseline(labels["Reader"]) == pytest.approx(
+        POWERPOINT["category_baseline"], abs=TOLERANCE_PT
+    )
+
+
+def test_axis_and_legend_text_takes_the_chart_default_not_the_deck_default(authoring):
+    """10 pt in the theme's minor face, which is not what the title gets."""
+    labels = _labels(_chart_of(authoring))
+    for name in ("0", "6", "Reader", "Coverage"):
+        properties = labels[name].text_body.paragraphs[0].runs[0].properties
+        assert properties.font_size == 10
+        assert properties.font_family == "Aptos"
+
+
+def test_the_fixture_chart_lowers_to_bars_gridlines_and_labels(authoring):
+    element = _chart_of(authoring)
+
+    assert element.chart.kind == "barChart"
+    assert element.chart.title == "Chart contract"
+    assert element.chart.categories == ["Reader", "Writer", "Renderer"]
+    assert [s.values for s in element.chart.series] == [[3.0, 4.0, 5.0]]
+    assert element.chart.series[0].color.hex.upper() == "#F97316"
+    assert element.chart.value_axis == m.ChartAxisScale(
+        minimum=0.0, maximum=6.0, major_unit=1.0
+    )
+    assert element.chart.legend_position == "b"
+
+    # Six gridlines plus two axis lines: the zero gridline is the category axis, drawn
+    # once rather than twice.
+    lines = [c for c in element.children if isinstance(c, m.ConnectorElement)]
+    assert len(lines) == 8
+
+
+def test_a_chart_renders_to_svg_rather_than_an_empty_frame(authoring):
+    from pptx2svg import convert_pptx_to_svg
+
+    svg = convert_pptx_to_svg(authoring.read_bytes())[0]
+    assert "#f97316" in svg.lower()
+    assert "Chart contract" in svg
+    assert "Renderer" in svg
+
+
+def test_a_chart_part_that_is_missing_warns_and_draws_an_empty_frame(authoring):
+    from tests.deckbuilder import derive_deck
+
+    frame = (
+        "<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id='99' name='Broken chart'/>"
+        "<p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>"
+        "<p:xfrm><a:off x='0' y='0'/><a:ext cx='1000000' cy='1000000'/></p:xfrm>"
+        "<a:graphic><a:graphicData "
+        "uri='http://schemas.openxmlformats.org/drawingml/2006/chart'>"
+        "<c:chart xmlns:c='http://schemas.openxmlformats.org/drawingml/2006/chart' "
+        "xmlns:r='http://schemas.openxmlformats.org/officeDocument/2006/relationships' "
+        "r:id='rIdMissing'/></a:graphicData></a:graphic></p:graphicFrame>"
+    )
+    options = ConvertOptions()
+    deck = convert_pptx_to_model(derive_deck(authoring, shapes_xml=frame), options)
+    assert any(warning.code == "chart-unreadable" for warning in options.warnings)
+    assert isinstance(deck.slides[0].elements[-1], m.ShapeElement)
+
+
+def test_a_chart_type_that_is_not_implemented_says_so(authoring):
+    """A plot area with no group element we draw must say so rather than draw nothing.
+
+    **Every group element ECMA-376 defines is drawn now**, ``surfaceChart`` included, so
+    this can no longer be provoked with a real type: what is left is a plot area holding
+    something the reader does not recognise at all, which is what a future schema or a
+    hand-written file can produce.  The warning still has to fire and the frame still has
+    to be positioned and empty.
+    """
+    from tests.deckbuilder import derive_deck
+
+    chart_xml = (
+        "<?xml version='1.0'?>"
+        f"<c:chartSpace {C} {A} {R}><c:chart><c:plotArea><c:hypercubeChart>"
+        "<c:ser><c:val><c:numRef><c:numCache><c:ptCount val='1'/>"
+        "<c:pt idx='0'><c:v>1</c:v></c:pt></c:numCache></c:numRef></c:val></c:ser>"
+        "</c:hypercubeChart></c:plotArea></c:chart></c:chartSpace>"
+    ).encode()
+    frame = (
+        "<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id='97' name='Stock'/>"
+        "<p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>"
+        "<p:xfrm><a:off x='0' y='0'/><a:ext cx='1000000' cy='1000000'/></p:xfrm>"
+        "<a:graphic><a:graphicData "
+        "uri='http://schemas.openxmlformats.org/drawingml/2006/chart'>"
+        "<c:chart xmlns:c='http://schemas.openxmlformats.org/drawingml/2006/chart' "
+        "xmlns:r='http://schemas.openxmlformats.org/officeDocument/2006/relationships' "
+        "r:id='rIdPie'/></a:graphicData></a:graphic></p:graphicFrame>"
+    )
+    chart_type = "application/vnd.openxmlformats-officedocument.drawingml.chart+xml"
+    deck_bytes = derive_deck(
+        authoring,
+        parts={"ppt/charts/chartPie.xml": chart_xml},
+        shapes_xml=frame,
+        slide_relationships=[
+            (
+                "rIdPie",
+                "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart",
+                "../charts/chartPie.xml",
+            )
+        ],
+        overrides={"ppt/charts/chartPie.xml": chart_type},
+    )
+    options = ConvertOptions()
+    convert_pptx_to_model(deck_bytes, options)
+    warning = next(w for w in options.warnings if w.code == "chart-unsupported-type")
+    assert "nothing" in warning.message
+
+
+def _office_chart(label_format: str) -> bytes:
+    """A clustered column chart as Office and ooxml-edit's ``add_chart`` write one: axis
+    and legend text ``tx1`` at 65%, data labels at 75% in their own number format."""
+
+    def tx(mod: int) -> str:
+        return (
+            "<c:txPr><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr sz='1197'><a:solidFill>"
+            f"<a:schemeClr val='tx1'><a:lumMod val='{mod}000'/><a:lumOff val='{100 - mod}000'/>"
+            "</a:schemeClr></a:solidFill></a:defRPr></a:pPr><a:endParaRPr lang='en-US'/></a:p>"
+            "</c:txPr>"
+        )
+
+    return (
+        "<?xml version='1.0'?>"
+        f"<c:chartSpace {C} {A} {R}><c:chart><c:autoTitleDeleted val='1'/><c:plotArea>"
+        "<c:barChart><c:barDir val='col'/><c:grouping val='clustered'/><c:varyColors val='0'/>"
+        "<c:ser><c:idx val='0'/><c:order val='0'/><c:tx><c:strRef><c:strCache>"
+        "<c:ptCount val='1'/><c:pt idx='0'><c:v>North</c:v></c:pt></c:strCache></c:strRef>"
+        f"</c:tx><c:dLbls>{label_format}{tx(75)}<c:showLegendKey val='0'/><c:showVal val='1'/>"
+        "<c:showCatName val='0'/><c:showSerName val='0'/><c:showPercent val='0'/>"
+        "<c:showBubbleSize val='0'/></c:dLbls><c:cat><c:strRef><c:strCache><c:ptCount val='2'/>"
+        "<c:pt idx='0'><c:v>Q1</c:v></c:pt><c:pt idx='1'><c:v>Q2</c:v></c:pt></c:strCache>"
+        "</c:strRef></c:cat><c:val><c:numRef><c:numCache><c:formatCode>#,##0.0</c:formatCode>"
+        "<c:ptCount val='2'/><c:pt idx='0'><c:v>12.4</c:v></c:pt><c:pt idx='1'><c:v>14.9</c:v>"
+        "</c:pt></c:numCache></c:numRef></c:val></c:ser><c:gapWidth val='50'/>"
+        "<c:axId val='1'/><c:axId val='2'/></c:barChart>"
+        f"<c:catAx><c:axId val='1'/><c:delete val='0'/><c:axPos val='b'/>{tx(65)}"
+        "<c:crossAx val='2'/></c:catAx>"
+        f"<c:valAx><c:axId val='2'/><c:delete val='0'/><c:axPos val='l'/>{tx(65)}"
+        "<c:crossAx val='1'/></c:valAx></c:plotArea>"
+        f"<c:legend><c:legendPos val='b'/>{tx(65)}</c:legend></c:chart></c:chartSpace>"
+    ).encode()
+
+
+def _render_chart(authoring, chart_xml: bytes) -> str:
+    from pptx2svg import convert_pptx_to_svg
+    from tests.deckbuilder import derive_deck
+
+    frame = (
+        "<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id='96' name='Revenue'/>"
+        "<p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>"
+        "<p:xfrm><a:off x='0' y='0'/><a:ext cx='6096000' cy='4064000'/></p:xfrm>"
+        "<a:graphic><a:graphicData "
+        "uri='http://schemas.openxmlformats.org/drawingml/2006/chart'>"
+        "<c:chart xmlns:c='http://schemas.openxmlformats.org/drawingml/2006/chart' "
+        "xmlns:r='http://schemas.openxmlformats.org/officeDocument/2006/relationships' "
+        "r:id='rIdLabels'/></a:graphicData></a:graphic></p:graphicFrame>"
+    )
+    deck = derive_deck(
+        authoring,
+        parts={"ppt/charts/chartLabels.xml": chart_xml},
+        shapes_xml=frame,
+        slide_relationships=[(
+            "rIdLabels",
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart",
+            "../charts/chartLabels.xml",
+        )],
+        overrides={
+            "ppt/charts/chartLabels.xml":
+                "application/vnd.openxmlformats-officedocument.drawingml.chart+xml"
+        },
+    )
+    return convert_pptx_to_svg(deck)[0]
+
+
+def _ink(svg: str, text: str) -> str:
+    """The fill the run reading exactly ``text`` is drawn in."""
+    match = re.search(r'fill="(#[0-9a-fA-F]{6})"[^>]*>' + re.escape(text) + "<", svg)
+    assert match, f"{text!r} is not drawn"
+    return match.group(1).upper()
+
+
+def test_chart_labels_are_drawn_in_their_text_properties_colour_and_number_format(authoring):
+    """PowerPoint's PDF of a deck built by ooxml-edit's ``add_chart`` (pptx-agent's p9):
+    tick, category and legend text ``595959``, the ``tx1`` at 65% the chart states, and
+    data labels ``404040`` (75%) reading ``€12,4m`` -- where this drew the first three
+    black and the labels ``12.4``."""
+    euro = "<c:numFmt formatCode='&quot;€&quot;#,##0.0&quot;m&quot;' sourceLinked='0'/>"
+    svg = _render_chart(authoring, _office_chart(euro))
+    assert _ink(svg, "Q1") == _ink(svg, "North") == _ink(svg, "10.0") == "#595959"
+    assert _ink(svg, "€12.4m") == _ink(svg, "€14.9m") == "#404040"
+    # Source-linked, the labels take the cache's format whatever code they carry.
+    linked = euro.replace("sourceLinked='0'", "sourceLinked='1'")
+    svg = _render_chart(authoring, _office_chart(linked))
+    assert "€12.4m" not in svg and _ink(svg, "12.4") == "#404040"
+
+
+# -- The probe sweep -------------------------------------------------------------------
+#
+# Twelve charts differing in exactly one input each, all in a 2800000 x 2300000 EMU frame
+# (220.4724 x 181.1024 pt), exported by PowerPoint 16.106 and measured out of the PDF as
+# exact vector coordinates.  The deck is rebuilt here from the same generator rather than
+# committed, so the inputs stay reviewable as XML.
+#
+# `insets` are points from the frame's four edges to the plot rectangle.  This is the
+# table every constant in `resolve/chart.py` was fitted to, and it is what would notice
+# if one of them drifted.
+
+PROBE_FRAME = (2800000, 2300000)
+
+PROBE_SWEEP = {
+    "bare": (
+        {},
+        {"left": 21.0725, "right": 10.9995, "top": 11.1025, "bottom": 24.9647},
+    ),
+    "title": (
+        {"title": "Chart contract"},
+        {"left": 21.0725, "right": 10.9995, "top": 40.8025, "bottom": 24.9647},
+    ),
+    "legend-b": (
+        {"legend": "b"},
+        {"left": 21.0725, "right": 10.9995, "top": 11.1025, "bottom": 49.0480},
+    ),
+    "legend-r": (
+        {"legend": "r"},
+        {"left": 21.0725, "right": 74.9942, "top": 11.1025, "bottom": 24.9647},
+    ),
+    "legend-t": (
+        {"legend": "t"},
+        {"left": 21.0725, "right": 10.9995, "top": 35.1858, "bottom": 24.9653},
+    ),
+    "legend-l": (
+        {"legend": "l"},
+        {"left": 85.0671, "right": 10.9996, "top": 11.1025, "bottom": 24.9647},
+    ),
+    "font14": (
+        {"text_size": 14},
+        {"left": 26.9067, "right": 10.9995, "top": 13.5451, "bottom": 32.3530},
+    ),
+    "font8": (
+        {"text_size": 8},
+        {"left": 18.1608, "right": 10.9996, "top": 11.0004, "bottom": 21.2719},
+    ),
+    "two-series": (
+        {"legend": "b", "series": 2},
+        {"left": 21.0725, "right": 10.9995, "top": 11.1025, "bottom": 49.0480},
+    ),
+    "gap50": (
+        {"gap_width": 50},
+        {"left": 21.0725, "right": 10.9995, "top": 11.1025, "bottom": 24.9647},
+    ),
+    # A drawn tick mark takes no layout space that an absent one does not: PowerPoint
+    # produced a byte-identical plot rectangle for this and for `bare`.
+    "ticks-out": (
+        {"tick_mark": "out"},
+        {"left": 21.0725, "right": 10.9995, "top": 11.1025, "bottom": 24.9647},
+    ),
+    "title-legend-b": (
+        {"title": "Both", "legend": "b"},
+        {"left": 21.0725, "right": 10.9995, "top": 40.8029, "bottom": 49.0480},
+    ),
+}
+
+#: Worst residual across the sweep is 0.47 pt; 0.6 pt is about one pixel at the 1280 px
+#: the fidelity harness scores at.
+SWEEP_TOLERANCE_PT = 0.6
+
+
+def probe_chart_xml(
+    *,
+    title=None,
+    legend=None,
+    series=1,
+    text_size=None,
+    gap_width=None,
+    tick_mark="none",
+):
+    """One probe chart, in the same shape the exported deck used."""
+    colours = ["F97316", "2563EB"]
+    values = [[3, 4, 5], [2, 1, 4]]
+    names = ["Coverage", "B"]
+    categories = ["Reader", "Writer", "Renderer"]
+
+    series_xml = ""
+    for index in range(series):
+        points = "".join(
+            f"<c:pt idx='{i}'><c:v>{v}</c:v></c:pt>" for i, v in enumerate(values[index])
+        )
+        cats = "".join(
+            f"<c:pt idx='{i}'><c:v>{v}</c:v></c:pt>" for i, v in enumerate(categories)
+        )
+        series_xml += (
+            f"<c:ser><c:idx val='{index}'/><c:order val='{index}'/>"
+            f"<c:tx><c:strRef><c:strCache><c:ptCount val='1'/>"
+            f"<c:pt idx='0'><c:v>{names[index]}</c:v></c:pt></c:strCache></c:strRef></c:tx>"
+            f"<c:spPr><a:solidFill><a:srgbClr val='{colours[index]}'/></a:solidFill></c:spPr>"
+            f"<c:cat><c:strRef><c:strCache><c:ptCount val='3'/>{cats}"
+            "</c:strCache></c:strRef></c:cat>"
+            "<c:val><c:numRef><c:numCache><c:formatCode>General</c:formatCode>"
+            f"<c:ptCount val='3'/>{points}</c:numCache></c:numRef></c:val></c:ser>"
+        )
+
+    title_xml = (
+        "<c:title><c:tx><c:rich><a:bodyPr/><a:lstStyle/><a:p><a:r>"
+        f"<a:rPr lang='en-US'/><a:t>{title}</a:t></a:r></a:p></c:rich></c:tx>"
+        "<c:layout/><c:overlay val='0'/></c:title><c:autoTitleDeleted val='0'/>"
+        if title
+        else "<c:autoTitleDeleted val='1'/>"
+    )
+    legend_xml = (
+        f"<c:legend><c:legendPos val='{legend}'/><c:layout/><c:overlay val='0'/></c:legend>"
+        if legend
+        else ""
+    )
+    tx_pr = (
+        "<c:txPr><a:bodyPr/><a:lstStyle/><a:p><a:pPr>"
+        f"<a:defRPr sz='{int(text_size * 100)}'/></a:pPr></a:p></c:txPr>"
+        if text_size
+        else ""
+    )
+    gap_xml = f"<c:gapWidth val='{gap_width}'/>" if gap_width is not None else ""
+
+    return (
+        "<?xml version='1.0'?>"
+        f"<c:chartSpace {C} {A} {R}>"
+        f"<c:chart>{title_xml}<c:plotArea><c:layout/>"
+        "<c:barChart><c:barDir val='col'/><c:grouping val='clustered'/>"
+        f"<c:varyColors val='0'/>{series_xml}{gap_xml}"
+        "<c:axId val='100002'/><c:axId val='100003'/></c:barChart>"
+        "<c:catAx><c:axId val='100002'/><c:scaling><c:orientation val='minMax'/></c:scaling>"
+        "<c:delete val='0'/><c:axPos val='b'/>"
+        "<c:numFmt formatCode='General' sourceLinked='1'/>"
+        f"<c:majorTickMark val='{tick_mark}'/><c:minorTickMark val='none'/>"
+        "<c:tickLblPos val='nextTo'/><c:crossAx val='100003'/>"
+        "<c:crosses val='autoZero'/><c:auto val='1'/><c:lblAlgn val='ctr'/>"
+        "<c:lblOffset val='100'/></c:catAx>"
+        "<c:valAx><c:axId val='100003'/><c:scaling><c:orientation val='minMax'/></c:scaling>"
+        "<c:delete val='0'/><c:axPos val='l'/><c:majorGridlines/>"
+        "<c:numFmt formatCode='General' sourceLinked='1'/>"
+        f"<c:majorTickMark val='{tick_mark}'/><c:minorTickMark val='none'/>"
+        "<c:tickLblPos val='nextTo'/><c:crossAx val='100002'/>"
+        "<c:crosses val='autoZero'/><c:crossBetween val='between'/></c:valAx>"
+        f"</c:plotArea>{legend_xml}"
+        f"<c:plotVisOnly val='1'/><c:dispBlanksAs val='gap'/></c:chart>{tx_pr}"
+        "</c:chartSpace>"
+    ).encode()
+
+
+@pytest.fixture(scope="module")
+def probe_deck(authoring):
+    """`authoring-integration.pptx` with the twelve probe charts spliced in."""
+    from tests.deckbuilder import derive_deck
+
+    chart_type = "application/vnd.openxmlformats-officedocument.drawingml.chart+xml"
+    parts, relationships, overrides, shapes = {}, [], {}, ""
+    for index, (name, (kwargs, _)) in enumerate(PROBE_SWEEP.items()):
+        part = f"ppt/charts/probe{index}.xml"
+        parts[part] = probe_chart_xml(**kwargs)
+        overrides[part] = chart_type
+        relationships.append(
+            (
+                f"rIdProbe{index}",
+                "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart",
+                f"../charts/probe{index}.xml",
+            )
+        )
+        shapes += (
+            f"<p:graphicFrame><p:nvGraphicFramePr>"
+            f"<p:cNvPr id='{200 + index}' name='{name}'/>"
+            "<p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>"
+            f"<p:xfrm><a:off x='0' y='0'/>"
+            f"<a:ext cx='{PROBE_FRAME[0]}' cy='{PROBE_FRAME[1]}'/></p:xfrm>"
+            "<a:graphic><a:graphicData "
+            "uri='http://schemas.openxmlformats.org/drawingml/2006/chart'>"
+            "<c:chart xmlns:c='http://schemas.openxmlformats.org/drawingml/2006/chart' "
+            "xmlns:r='http://schemas.openxmlformats.org/officeDocument/2006/relationships' "
+            f"r:id='rIdProbe{index}'/></a:graphicData></a:graphic></p:graphicFrame>"
+        )
+
+    deck = convert_pptx_to_model(
+        derive_deck(
+            authoring,
+            parts=parts,
+            shapes_xml=shapes,
+            slide_relationships=relationships,
+            overrides=overrides,
+        )
+    )
+    charts = [e for e in deck.slides[0].elements if isinstance(e, m.ChartElement)]
+    # The fixture's own chart comes first in z-order, then the twelve probes.
+    return dict(zip(PROBE_SWEEP, charts[1:]))
+
+
+@pytest.mark.parametrize("name", list(PROBE_SWEEP))
+def test_the_probe_sweep_reproduces_powerpoints_plot_rectangle(name, probe_deck):
+    chart = probe_deck[name]
+    expected = PROBE_SWEEP[name][1]
+    width = chart.transform.extent_width / 12700.0
+    height = chart.transform.extent_height / 12700.0
+    left, top, right, bottom = _plot_rect(chart)
+    ours = {"left": left, "right": width - right, "top": top, "bottom": height - bottom}
+    for edge, truth in expected.items():
+        assert ours[edge] == pytest.approx(truth, abs=SWEEP_TOLERANCE_PT), (
+            f"{name} {edge}: PowerPoint {truth:.4f}, ours {ours[edge]:.4f}"
+        )
+
+
+def test_gap_width_widens_the_bars(probe_deck):
+    """`c:gapWidth` is the gap between category groups as a percentage of one bar's width.
+
+    At the 150% default one bar fills 1/2.5 of its category band; at 50% it fills 1/1.5.
+    Measured in the probe export as 25.12 pt and 41.867 pt against a 62.80 pt band.
+    """
+    default = _bars(probe_deck["bare"])[0].transform.extent_width / 12700.0
+    widened = _bars(probe_deck["gap50"])[0].transform.extent_width / 12700.0
+    band = 220.4724 - 21.0725 - 10.9995  # the plot width, over three categories
+    assert default == pytest.approx(band / 3 / 2.5, abs=0.1)
+    assert widened == pytest.approx(band / 3 / 1.5, abs=0.1)
+
+
+def test_clustered_series_sit_side_by_side_inside_the_category_band(probe_deck):
+    chart = probe_deck["two-series"]
+    bars = [
+        child
+        for child in chart.children
+        if isinstance(child, m.ShapeElement)
+        and isinstance(child.fill, m.SolidFill)
+        and child.text_body is None
+        and child.transform.extent_width > 10 * 12700
+    ]
+    assert len(bars) == 6
+    widths = {round(bar.transform.extent_width) for bar in bars}
+    assert len(widths) == 1, "clustered bars all share one width"
+    # Two series at gapWidth 150 means a band holds 2 bars plus 1.5 of one more.
+    band = (220.4724 - 21.0725 - 10.9995) / 3
+    assert bars[0].transform.extent_width / 12700.0 == pytest.approx(
+        band / 3.5, abs=0.1
+    )
+
+
+# -- The horizontal legend sweep -------------------------------------------------------
+#
+# `LEGEND_ENTRY_GAP_EM = 0.5` said the gap between entries in a bottom or top legend was a
+# constant, and ROADMAP.md 3.3 refuted it on four charts that solved for four gaps.  It is
+# not a constant, and it is not a residue either: the run is padded by a fifth of its own
+# natural width, split into `n + 1` parts, so the gap grows with the names and a wider
+# frame does not touch it.  See `LEGEND_ENTRY_SLACK`.
+#
+# These are eight of the 88 probe slides behind that rule (`tools/make_legend_probe.py`,
+# read back by `tools/read_legend_probe.py`), chosen to span what the sweep varied: entry
+# count, name width, key type, font size and the 0.9-of-the-frame cap.  Every x is the
+# **drawn key's left edge** in points from the frame's left edge, measured out of
+# PowerPoint's own PDF export as an exact vector coordinate.
+
+#: All eight probes share this frame, so only the entries differ.
+LEGEND_FRAME = (480 * 12700, 260 * 12700)
+
+LEGEND_SWEEP = {
+    # Two entries: the smallest run in the sweep.
+    "n-2": (
+        {"names": ["Wi", "Wii"]},
+        [218.441, 243.867],
+    ),
+    # Seven: the gap has grown from 3.79 pt to 5.16 pt on the same frame, which a constant
+    # gap cannot do and a distributed one would do backwards.
+    "n-7": (
+        {"names": ["Wi", "Wii", "Wiii", "Wiiii", "Wiiiii", "Wiiiiii", "Wiiiiiii"]},
+        [124.901, 152.352, 182.193, 214.423, 249.044, 286.055, 325.456],
+    ),
+    "k-bar": (
+        {"names": ["Wm", "Wmm", "Wmmm"]},
+        [182.505, 216.484, 258.993],
+    ),
+    # The same names with a line key, whose cell is 24.0 pt against the swatch's 10.985 --
+    # so the same three names sit 2 pt further apart as well as 13.7 pt further along.
+    "k-line": (
+        {"names": ["Wm", "Wmm", "Wmmm"], "kind": "line"},
+        [160.683, 209.630, 267.107],
+    ),
+    # 14 pt type: the whole layout is in ems and scales, which is what says the gap is not
+    # a fixed number of points.
+    "z-14": (
+        {"names": ["Wm", "Wmm", "Wmmm"], "size": 1400},
+        [159.206, 206.779, 266.293],
+    ),
+    # **The cap.**  Three long names whose natural padding would take the run past 0.9 of
+    # the frame, so the gap is the leftover instead -- 16.29 pt where the uncapped rule
+    # asks for 18.34.
+    "w-lll": (
+        {"names": ["Wmmmmmmmmmmmm"] * 3},
+        [43.798, 182.364, 320.930],
+    ),
+    # Six entries against the same cap, where it leaves almost nothing: a 0.77 pt gap.
+    "c6-06": (
+        {"names": ["Wmmmmmm"] * 6},
+        [28.281, 100.150, 172.019, 243.888, 315.758, 387.627],
+    ),
+    # A top legend lays out exactly like a bottom one; only the baseline differs.
+    "p-t": (
+        {"names": ["Wm", "Wmm", "Wmmm"], "legend": "t"},
+        [182.505, 216.484, 258.993],
+    ),
+}
+
+#: Worst residual across the eight is 0.05 pt; 0.6 pt is about one pixel at the 1280 px
+#: the fidelity harness scores at.
+LEGEND_TOLERANCE_PT = 0.1
+
+
+def legend_chart_xml(*, names, kind="col", size=1000, legend="b"):
+    """One legend probe chart: one series per name, and nothing else of interest."""
+    series = ""
+    for index, name in enumerate(names):
+        series += (
+            f"<c:ser><c:idx val='{index}'/><c:order val='{index}'/>"
+            "<c:tx><c:strRef><c:strCache><c:ptCount val='1'/>"
+            f"<c:pt idx='0'><c:v>{name}</c:v></c:pt></c:strCache></c:strRef></c:tx>"
+            + (
+                "<c:marker><c:symbol val='circle'/><c:size val='5'/></c:marker>"
+                if kind == "line"
+                else ""
+            )
+            + "<c:cat><c:strRef><c:strCache><c:ptCount val='2'/>"
+            "<c:pt idx='0'><c:v>C1</c:v></c:pt>"
+            "<c:pt idx='1'><c:v>C2</c:v></c:pt></c:strCache></c:strRef></c:cat>"
+            "<c:val><c:numRef><c:numCache><c:formatCode>General</c:formatCode>"
+            "<c:ptCount val='2'/><c:pt idx='0'><c:v>3.0</c:v></c:pt>"
+            "<c:pt idx='1'><c:v>9.0</c:v></c:pt></c:numCache></c:numRef></c:val>"
+            + ("<c:smooth val='0'/>" if kind == "line" else "")
+            + "</c:ser>"
+        )
+    ids = "<c:axId val='100002'/><c:axId val='100003'/>"
+    group = (
+        f"<c:lineChart><c:grouping val='standard'/><c:varyColors val='0'/>{series}"
+        f"<c:marker val='1'/>{ids}</c:lineChart>"
+        if kind == "line"
+        else "<c:barChart><c:barDir val='col'/><c:grouping val='clustered'/>"
+        f"<c:varyColors val='0'/>{series}<c:gapWidth val='150'/>{ids}</c:barChart>"
+    )
+    return (
+        "<?xml version='1.0' encoding='UTF-8' standalone='yes'?>"
+        "<c:chartSpace xmlns:c='http://schemas.openxmlformats.org/drawingml/2006/chart' "
+        "xmlns:a='http://schemas.openxmlformats.org/drawingml/2006/main' "
+        "xmlns:r='http://schemas.openxmlformats.org/officeDocument/2006/relationships'>"
+        "<c:chart><c:autoTitleDeleted val='1'/><c:plotArea><c:layout/>" + group +
+        "<c:catAx><c:axId val='100002'/>"
+        "<c:scaling><c:orientation val='minMax'/></c:scaling>"
+        "<c:delete val='0'/><c:axPos val='b'/>"
+        "<c:numFmt formatCode='General' sourceLinked='1'/>"
+        "<c:majorTickMark val='none'/><c:minorTickMark val='none'/>"
+        "<c:tickLblPos val='nextTo'/><c:crossAx val='100003'/>"
+        "<c:crosses val='autoZero'/><c:auto val='1'/><c:lblAlgn val='ctr'/>"
+        "<c:lblOffset val='100'/></c:catAx>"
+        "<c:valAx><c:axId val='100003'/>"
+        "<c:scaling><c:orientation val='minMax'/></c:scaling>"
+        "<c:delete val='0'/><c:axPos val='l'/><c:majorGridlines/>"
+        "<c:numFmt formatCode='General' sourceLinked='1'/>"
+        "<c:majorTickMark val='none'/><c:minorTickMark val='none'/>"
+        "<c:tickLblPos val='nextTo'/><c:crossAx val='100002'/>"
+        "<c:crosses val='autoZero'/><c:crossBetween val='between'/></c:valAx>"
+        "</c:plotArea>"
+        f"<c:legend><c:legendPos val='{legend}'/><c:overlay val='0'/></c:legend>"
+        "<c:plotVisOnly val='1'/><c:dispBlanksAs val='gap'/></c:chart>"
+        "<c:txPr><a:bodyPr/><a:lstStyle/><a:p><a:pPr>"
+        f"<a:defRPr sz='{size}'/></a:pPr><a:endParaRPr lang='en-US'/></a:p></c:txPr>"
+        "</c:chartSpace>"
+    ).encode()
+
+
+@pytest.fixture(scope="module")
+def legend_deck(authoring):
+    """`authoring-integration.pptx` with the eight legend probe charts spliced in."""
+    from tests.deckbuilder import derive_deck
+
+    chart_type = "application/vnd.openxmlformats-officedocument.drawingml.chart+xml"
+    parts, relationships, overrides, shapes = {}, [], {}, ""
+    for index, (name, (kwargs, _)) in enumerate(LEGEND_SWEEP.items()):
+        part = f"ppt/charts/legend{index}.xml"
+        parts[part] = legend_chart_xml(**kwargs)
+        overrides[part] = chart_type
+        relationships.append(
+            (
+                f"rIdLegend{index}",
+                "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart",
+                f"../charts/legend{index}.xml",
+            )
+        )
+        shapes += (
+            f"<p:graphicFrame><p:nvGraphicFramePr>"
+            f"<p:cNvPr id='{300 + index}' name='{name}'/>"
+            "<p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>"
+            f"<p:xfrm><a:off x='0' y='0'/>"
+            f"<a:ext cx='{LEGEND_FRAME[0]}' cy='{LEGEND_FRAME[1]}'/></p:xfrm>"
+            "<a:graphic><a:graphicData "
+            "uri='http://schemas.openxmlformats.org/drawingml/2006/chart'>"
+            "<c:chart xmlns:c='http://schemas.openxmlformats.org/drawingml/2006/chart' "
+            "xmlns:r='http://schemas.openxmlformats.org/officeDocument/2006/relationships' "
+            f"r:id='rIdLegend{index}'/></a:graphicData></a:graphic></p:graphicFrame>"
+        )
+
+    deck = convert_pptx_to_model(
+        derive_deck(
+            authoring,
+            parts=parts,
+            shapes_xml=shapes,
+            slide_relationships=relationships,
+            overrides=overrides,
+        )
+    )
+    charts = [e for e in deck.slides[0].elements if isinstance(e, m.ChartElement)]
+    # The fixture's own chart comes first in z-order, then the probes.
+    return dict(zip(LEGEND_SWEEP, charts[1:]))
+
+
+def _legend_key_xs(chart):
+    """Every legend key's left edge, in points from the frame's left edge.
+
+    The keys are the marks outside the plot rectangle's rows, all on one line of their
+    own: a swatch is a small square shape and a line key a horizontal connector with the
+    series' marker on it, so the rules are preferred where they exist and the marker is
+    never mistaken for a key.  Keys are taken by the row they share rather than one at a
+    time, because a data label or an axis title would also sit outside the plot.
+    """
+    _, top, _, bottom = _plot_rect(chart)
+    outside = [
+        child
+        for child in chart.children
+        if not (top - 1.0 <= _pt(child.transform.offset_y) <= bottom + 1.0)
+    ]
+    rules = [
+        child
+        for child in outside
+        if isinstance(child, m.ConnectorElement)
+        and child.transform.extent_height == 0
+        and _pt(child.transform.extent_width) > 10.0
+    ]
+    candidates = rules or [
+        child
+        for child in outside
+        if isinstance(child, m.ShapeElement)
+        and child.text_body is None
+        # Square to within the EMU the transform rounds to, and swatch-sized.  Exact
+        # equality fails: the same square at two x positions rounds to two widths.
+        and abs(child.transform.extent_width - child.transform.extent_height) < 300
+        and _pt(child.transform.extent_width) < 12.0
+    ]
+    rows = collections.Counter(round(_pt(c.transform.offset_y), 2) for c in candidates)
+    if not rows:
+        return []
+    band = rows.most_common(1)[0][0]
+    return sorted(
+        _pt(child.transform.offset_x)
+        for child in candidates
+        if abs(_pt(child.transform.offset_y) - band) < 0.05
+    )
+
+
+@pytest.mark.parametrize("name", list(LEGEND_SWEEP))
+def test_the_legend_sweep_reproduces_powerpoints_entry_positions(name, legend_deck):
+    expected = LEGEND_SWEEP[name][1]
+    ours = _legend_key_xs(legend_deck[name])
+    assert len(ours) == len(expected), f"{name}: {len(ours)} keys, expected {len(expected)}"
+    for index, (mine, truth) in enumerate(zip(ours, expected)):
+        assert mine == pytest.approx(truth, abs=LEGEND_TOLERANCE_PT), (
+            f"{name} key {index}: PowerPoint {truth:.3f}, ours {mine:.3f}"
+        )
+
+
+def test_the_legend_gap_grows_with_the_entries_and_ignores_the_frame():
+    """The two facts that separate this rule from the two readings it replaces.
+
+    A **constant** gap would leave the pitch alone as the names grow; a gap
+    **distributed** across an available width would shrink it, and would move when the
+    frame moved.  The measured pitch does neither, and this states it without the export.
+    """
+    from pptx2svg.resolve.chart import LEGEND_BAND_MAX_FRACTION, LEGEND_ENTRY_SLACK
+
+    def gap(widths, frame):
+        total = sum(widths)
+        slack = min(
+            LEGEND_ENTRY_SLACK * total, LEGEND_BAND_MAX_FRACTION * frame - total
+        )
+        return max(slack, 0.0) / (len(widths) + 1)
+
+    narrow = gap([30.0, 40.0, 50.0], 240.0)
+    wide = gap([30.0, 40.0, 50.0], 720.0)
+    assert narrow == pytest.approx(wide)
+
+    # Twice the content, twice the gap -- the sign a distributed layout gets backwards.
+    assert gap([60.0, 80.0, 100.0], 720.0) == pytest.approx(2 * wide)
+
+    # And the cap: entries whose padding would overflow get whatever is left of 0.9 of the
+    # frame, which is what `w-lll` and `c6-06` above measure.
+    assert gap([60.0, 80.0, 100.0], 300.0) == pytest.approx((270.0 - 240.0) / 4)
+
+
+# -- The wrapped legend sweep ----------------------------------------------------------
+#
+# Two regimes the sweep above does not reach, both measured on their own probe decks
+# (`tools/make_legend_probe.py`'s `legend-side`, `legend-row`, `legend-band` and
+# `legend-face` tables, read back by `tools/read_legend_probe.py --side` / `--rows`):
+#
+# * a **side** legend whose entries are too wide for its band, which wraps them and opens
+#   every row's pitch to match the deepest one;
+# * a **horizontal** legend whose entries pass 0.9 of the frame, which PowerPoint lays out
+#   as a grid of equal columns rather than one row.
+#
+# Every number below is a text object's **pen position** in PowerPoint's export, in points
+# from the frame's top-left corner: `x` is where the name's box starts and `baseline` is
+# what its matrix translates to.  A wrapped entry contributes its **first** line, which is
+# the row's own baseline; the continuation lines are drawn by the text renderer inside the
+# width the entry is given and are not what the row arithmetic decides.
+
+#: Frames the two families use.  The side probes are narrow so the 0.4-of-the-frame band
+#: cap binds and the entries have to wrap.
+SIDE_FRAME = (300 * 12700, 260 * 12700)
+ROW_FRAME = (480 * 12700, 260 * 12700)
+
+WORD = "Wmmm"
+
+
+def _phrase(count: int) -> str:
+    return " ".join([WORD] * count)
+
+
+SIDE_LEGEND_SWEEP = {
+    # The control: three entries that fit on one line each.  The shipped rule already got
+    # this right and it has to keep doing so.
+    "sv-n3": (
+        {"names": [WORD] * 3, "legend": "r", "frame": SIDE_FRAME},
+        [(255.365, 114.000), (255.365, 132.240), (255.365, 150.240)],
+    ),
+    # One entry over two lines: every row opens from 18.08 pt to 30.16, and the block of
+    # opened rows is centred on the frame.  Ours used to centre each entry in its *opened*
+    # row, which put the whole block 5.9 pt low.
+    "sw-t3": (
+        {"names": [_phrase(3), WORD, WORD], "legend": "r", "frame": SIDE_FRAME},
+        [(218.825, 96.000), (218.825, 126.240), (218.825, 156.240)],
+    ),
+    # Three lines: the pitch opens twice, which is the reading the old
+    # `LEGEND_WRAPPED_PITCH_EM` only ever extrapolated.
+    "sw-t5": (
+        {"names": [_phrase(5), WORD, WORD], "legend": "r", "frame": SIDE_FRAME},
+        [(218.825, 77.760), (218.825, 120.000), (218.825, 162.240)],
+    ),
+    # The wrapped entry in the middle: every row still takes the deepest entry's pitch, so
+    # the block is the same as `sw-t3`'s with the lines in a different place.
+    "sw-mid": (
+        {"names": [WORD, _phrase(3), WORD], "legend": "r", "frame": SIDE_FRAME},
+        [(218.825, 96.000), (218.825, 126.240), (218.825, 156.240)],
+    ),
+    # Five entries, one of them wrapped: the block grows and stays centred.
+    "sw-n5": (
+        {"names": [_phrase(3)] + [WORD] * 4, "legend": "r", "frame": SIDE_FRAME},
+        [
+            (218.825, 65.760),
+            (218.825, 96.000),
+            (218.825, 126.240),
+            (218.825, 156.240),
+            (218.825, 186.480),
+        ],
+    ),
+    # A **left** legend wraps exactly like a right one, which ours did not: it measured the
+    # wrap against the frame's far edge and so never wrapped at all.
+    "sw-left": (
+        {"names": [_phrase(3), WORD, WORD], "legend": "l", "frame": SIDE_FRAME},
+        [(18.859, 96.000), (18.859, 126.240), (18.859, 156.240)],
+    ),
+}
+
+WRAPPED_ROW_SWEEP = {
+    # Three entries, two to a row: the columns are as wide as the widest entry and packed
+    # with no gap, and the second row starts under the first rather than centring itself.
+    "rw3-16": (
+        {"names": ["W" + "m" * 16] * 3, "frame": ROW_FRAME},
+        [(94.97, 230.640), (251.36, 230.640), (94.97, 248.640)],
+    ),
+    # **Six entries come back 3 + 3, not 4 + 2**, though four of them fit: the row count is
+    # taken first and the entries are then divided over it.  This is the slide that refutes
+    # a greedy fill.
+    "rw6-08": (
+        {"names": ["W" + "m" * 8] * 6, "frame": ROW_FRAME},
+        [
+            (119.14, 230.640),
+            (207.29, 230.640),
+            (295.43, 230.640),
+            (119.14, 248.640),
+            (207.29, 248.640),
+            (295.43, 248.640),
+        ],
+    ),
+    # Seven entries, three to a row: 3 + 3 + 1, which a balanced split would make 3 + 2 + 2.
+    "rw7-14": (
+        {"names": ["W" + "m" * 14] * 7, "frame": ROW_FRAME},
+        [
+            (42.37, 212.400),
+            (181.70, 212.400),
+            (321.02, 212.400),
+            (42.37, 230.640),
+            (181.70, 230.640),
+            (321.02, 230.640),
+            (42.37, 248.640),
+        ],
+    ),
+    # **Unequal entries**, on a frame the model was not fitted to: the column is the widest
+    # entry's width and the short ones sit in the same grid.
+    "rv-5": (
+        {
+            "names": ["W" + "m" * k for k in (6, 14, 3, 18, 9)],
+            "frame": (420 * 12700, 260 * 12700),
+        },
+        [
+            (47.91, 212.400),
+            (221.36, 212.400),
+            (47.91, 230.640),
+            (221.36, 230.640),
+            (47.91, 248.640),
+        ],
+    ),
+    # A **top** legend wraps downward from the same first baseline a single row gets.
+    "rwt-16": (
+        {"names": ["W" + "m" * 16] * 3, "legend": "t", "frame": ROW_FRAME},
+        [(94.97, 17.280), (251.36, 17.280), (94.97, 35.280)],
+    ),
+}
+
+#: Worst residual across the eleven is 0.63 pt on the baseline and 0.02 pt on x.  The
+#: baseline's share is `FontBox.ink_centre`, whose own five measurements span 0.11 em and
+#: which every centred label in this file inherits.
+WRAPPED_TOLERANCE_PT = 0.7
+
+
+def _wrapped_deck(authoring, sweep):
+    """`authoring-integration.pptx` with one probe chart per entry, each at its own frame."""
+    from tests.deckbuilder import derive_deck
+
+    chart_type = "application/vnd.openxmlformats-officedocument.drawingml.chart+xml"
+    parts, relationships, overrides, shapes = {}, [], {}, ""
+    for index, (name, (kwargs, _)) in enumerate(sweep.items()):
+        arguments = dict(kwargs)
+        frame = arguments.pop("frame")
+        part = f"ppt/charts/wrapped{index}.xml"
+        parts[part] = legend_chart_xml(**arguments)
+        overrides[part] = chart_type
+        relationships.append(
+            (
+                f"rIdWrapped{index}",
+                "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart",
+                f"../charts/wrapped{index}.xml",
+            )
+        )
+        shapes += (
+            f"<p:graphicFrame><p:nvGraphicFramePr>"
+            f"<p:cNvPr id='{400 + index}' name='{name}'/>"
+            "<p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>"
+            f"<p:xfrm><a:off x='0' y='0'/>"
+            f"<a:ext cx='{frame[0]}' cy='{frame[1]}'/></p:xfrm>"
+            "<a:graphic><a:graphicData "
+            "uri='http://schemas.openxmlformats.org/drawingml/2006/chart'>"
+            "<c:chart xmlns:c='http://schemas.openxmlformats.org/drawingml/2006/chart' "
+            "xmlns:r='http://schemas.openxmlformats.org/officeDocument/2006/relationships' "
+            f"r:id='rIdWrapped{index}'/></a:graphicData></a:graphic></p:graphicFrame>"
+        )
+
+    deck = convert_pptx_to_model(
+        derive_deck(
+            authoring,
+            parts=parts,
+            shapes_xml=shapes,
+            slide_relationships=relationships,
+            overrides=overrides,
+        )
+    )
+    charts = [e for e in deck.slides[0].elements if isinstance(e, m.ChartElement)]
+    return dict(zip(sweep, charts[1:]))
+
+
+@pytest.fixture(scope="module")
+def side_legend_deck(authoring):
+    return _wrapped_deck(authoring, SIDE_LEGEND_SWEEP)
+
+
+@pytest.fixture(scope="module")
+def wrapped_row_deck(authoring):
+    return _wrapped_deck(authoring, WRAPPED_ROW_SWEEP)
+
+
+def _legend_label_pens(chart, names):
+    """Each legend name's pen position as ``(x, baseline)`` from the frame's top-left.
+
+    A legend entry is drawn as a text box positioned by its *top*, because that is what
+    the renderer takes; the baseline is recovered with the same first-baseline rule the
+    resolver used to place it, so the numbers are comparable with a text object's matrix
+    in PowerPoint's export.  Category labels carry category text and so are never picked
+    up by the name match.
+    """
+    from pptx2svg.resolve.chart import font_box
+
+    wanted = collections.Counter(names)
+    first_baseline = font_box("Aptos", 10.0).first_baseline
+    out = []
+    for child in chart.children:
+        if not isinstance(child, m.ShapeElement) or child.text_body is None:
+            continue
+        text = "".join(
+            run.text
+            for paragraph in child.text_body.paragraphs
+            for run in paragraph.runs
+        )
+        if wanted[text]:
+            out.append(
+                (
+                    _pt(child.transform.offset_x),
+                    _pt(child.transform.offset_y) + first_baseline,
+                )
+            )
+    return sorted(out, key=lambda row: (round(row[1], 1), row[0]))
+
+
+@pytest.mark.parametrize("name", list(SIDE_LEGEND_SWEEP))
+def test_a_wrapped_side_legend_sits_where_powerpoint_puts_it(name, side_legend_deck):
+    arguments, expected = SIDE_LEGEND_SWEEP[name]
+    ours = _legend_label_pens(side_legend_deck[name], arguments["names"])
+    assert len(ours) == len(expected), f"{name}: {len(ours)} entries, want {len(expected)}"
+    for index, (mine, truth) in enumerate(zip(ours, expected)):
+        assert mine[0] == pytest.approx(truth[0], abs=WRAPPED_TOLERANCE_PT), (
+            f"{name} entry {index} x: PowerPoint {truth[0]:.3f}, ours {mine[0]:.3f}"
+        )
+        assert mine[1] == pytest.approx(truth[1], abs=WRAPPED_TOLERANCE_PT), (
+            f"{name} entry {index} baseline: PowerPoint {truth[1]:.3f}, ours {mine[1]:.3f}"
+        )
+
+
+@pytest.mark.parametrize("name", list(WRAPPED_ROW_SWEEP))
+def test_a_horizontal_legend_past_the_cap_wraps_into_powerpoints_grid(
+    name, wrapped_row_deck
+):
+    arguments, expected = WRAPPED_ROW_SWEEP[name]
+    ours = _legend_label_pens(wrapped_row_deck[name], arguments["names"])
+    assert len(ours) == len(expected), f"{name}: {len(ours)} entries, want {len(expected)}"
+    for index, (mine, truth) in enumerate(zip(ours, expected)):
+        assert mine[0] == pytest.approx(truth[0], abs=WRAPPED_TOLERANCE_PT), (
+            f"{name} entry {index} x: PowerPoint {truth[0]:.3f}, ours {mine[0]:.3f}"
+        )
+        assert mine[1] == pytest.approx(truth[1], abs=WRAPPED_TOLERANCE_PT), (
+            f"{name} entry {index} baseline: PowerPoint {truth[1]:.3f}, ours {mine[1]:.3f}"
+        )
+
+
+def test_the_legend_grid_takes_the_row_count_before_the_column_count():
+    """The arithmetic six equal entries refute a greedy fill with.
+
+    Four of them fit across the cap, and PowerPoint still draws **3 + 3**: the rows are
+    counted first and the entries divided over them.  Stated here without the export, the
+    way the gap rule's own invariants are.
+    """
+    from pptx2svg.resolve.chart import ChartBuilder, _Rect
+
+    def grid(count, width, frame):
+        builder = ChartBuilder.__new__(ChartBuilder)
+        builder.frame = _Rect(0.0, 0.0, frame, 260.0)
+        return ChartBuilder._legend_grid(builder, [width] * count)
+
+    # Entries that fit on one row are not a grid at all.
+    assert grid(3, 120.0, 480.0) == (1, 3)
+    # Six at 88.14 pt: four fit across 0.9 * 480, and the answer is two rows of three.
+    assert grid(6, 88.14, 480.0) == (2, 3)
+    # Seven at 139.32: three fit, so three rows -- and the last holds the one left over.
+    assert grid(7, 139.32, 480.0) == (3, 3)
+    # One entry wider than the cap still gets a column of its own rather than none.
+    assert grid(2, 600.0, 480.0) == (2, 1)
+
+
+def test_a_second_legend_row_takes_the_measured_band_off_the_plot(authoring):
+    """What the extra rows cost the plot, differenced the way the probe measured it.
+
+    A chart's plot bottom is its category axis line, and the only thing that differs
+    between these three charts is how many rows their legend needs -- so the difference is
+    the legend's band and nothing else.  PowerPoint's own axis lines sit 49.048, 65.631 and
+    83.714 pt above the frame's bottom edge for one, two and three rows of a 10 pt Aptos
+    legend: **16.583 pt for the second row and 18.083 for the third**, where a plain
+    multiple of the row would make both 18.083.  See `LEGEND_WRAP_BAND_TRIM_PT`.
+    """
+    sweep = {
+        "one": ({"names": ["W" + "m" * 26], "frame": ROW_FRAME}, []),
+        "two": ({"names": ["W" + "m" * 26] * 2, "frame": ROW_FRAME}, []),
+        "three": ({"names": ["W" + "m" * 26] * 3, "frame": ROW_FRAME}, []),
+    }
+    charts = _wrapped_deck(authoring, sweep)
+    bottoms = {name: _plot_rect(chart)[3] for name, chart in charts.items()}
+    assert bottoms["one"] - bottoms["two"] == pytest.approx(16.583, abs=0.1)
+    assert bottoms["two"] - bottoms["three"] == pytest.approx(18.083, abs=0.1)
+
+
+# -- The variant sweep -----------------------------------------------------------------
+#
+# A second six-chart probe covering the barChart variants no deck in the corpus has:
+# horizontal bars, stacked and percent-stacked grouping, negative values with and without
+# `invertIfNegative`, and `varyColors`.  Same frame as the first sweep, same method --
+# exported by PowerPoint and read back out of the PDF as exact vector coordinates.
+
+VARIANT_SWEEP = {
+    "horizontal": (
+        {"bar_dir": "bar"},
+        {"left": 55.413, "right": 13.670, "top": 11.000, "bottom": 24.965},
+        (0.0, 6.0, 2.0),
+    ),
+    "stacked": (
+        {"grouping": "stacked", "series": 2, "overlap": 100},
+        {"left": 26.413, "right": 10.999, "top": 11.103, "bottom": 24.965},
+        (0.0, 10.0, 1.0),
+    ),
+    "percent-stacked": (
+        {"grouping": "percentStacked", "series": 2, "overlap": 100},
+        {"left": 40.012, "right": 10.999, "top": 11.103, "bottom": 24.965},
+        (0.0, 1.0, 0.1),
+    ),
+    # A chart with negative values reserves *no* band under the plot: `tickLblPos`
+    # defaults to `nextTo`, the category axis floats at zero, and the labels go with it.
+    "negative-default": (
+        {"values": [3, -2, 5]},
+        {"left": 24.478, "right": 10.999, "top": 11.103, "bottom": 11.103},
+        (-3.0, 6.0, 1.0),
+    ),
+    "negative-noinvert": (
+        {"values": [3, -2, 5], "invert": False},
+        {"left": 24.478, "right": 10.999, "top": 11.103, "bottom": 11.103},
+        (-3.0, 6.0, 1.0),
+    ),
+    "vary-colors": (
+        {"vary": True, "colour": None},
+        {"left": 21.073, "right": 10.999, "top": 11.103, "bottom": 24.965},
+        (0.0, 6.0, 1.0),
+    ),
+}
+
+
+def variant_chart_xml(
+    *,
+    bar_dir="col",
+    grouping="clustered",
+    series=1,
+    values=None,
+    colour="F97316",
+    vary=False,
+    invert=None,
+    overlap=0,
+):
+    colours = [colour, "2563EB"]
+    data = [values or [3, 4, 5], [2, 1, 4]]
+    categories = ["Reader", "Writer", "Renderer"]
+
+    series_xml = ""
+    for index in range(series):
+        points = "".join(
+            f"<c:pt idx='{i}'><c:v>{v}</c:v></c:pt>" for i, v in enumerate(data[index])
+        )
+        cats = "".join(
+            f"<c:pt idx='{i}'><c:v>{v}</c:v></c:pt>" for i, v in enumerate(categories)
+        )
+        fill = (
+            f"<c:spPr><a:solidFill><a:srgbClr val='{colours[index]}'/></a:solidFill></c:spPr>"
+            if colours[index]
+            else ""
+        )
+        invert_xml = (
+            f"<c:invertIfNegative val='{1 if invert else 0}'/>" if invert is not None else ""
+        )
+        series_xml += (
+            f"<c:ser><c:idx val='{index}'/><c:order val='{index}'/>"
+            f"<c:tx><c:strRef><c:strCache><c:ptCount val='1'/>"
+            f"<c:pt idx='0'><c:v>S{index}</c:v></c:pt></c:strCache></c:strRef></c:tx>"
+            f"{fill}{invert_xml}"
+            f"<c:cat><c:strRef><c:strCache><c:ptCount val='3'/>{cats}"
+            "</c:strCache></c:strRef></c:cat>"
+            "<c:val><c:numRef><c:numCache><c:formatCode>General</c:formatCode>"
+            f"<c:ptCount val='3'/>{points}</c:numCache></c:numRef></c:val></c:ser>"
+        )
+
+    return (
+        "<?xml version='1.0'?>"
+        f"<c:chartSpace {C} {A} {R}>"
+        "<c:chart><c:autoTitleDeleted val='1'/><c:plotArea><c:layout/>"
+        f"<c:barChart><c:barDir val='{bar_dir}'/><c:grouping val='{grouping}'/>"
+        f"<c:varyColors val='{1 if vary else 0}'/>{series_xml}"
+        f"<c:gapWidth val='150'/><c:overlap val='{overlap}'/>"
+        "<c:axId val='100002'/><c:axId val='100003'/></c:barChart>"
+        "<c:catAx><c:axId val='100002'/><c:scaling><c:orientation val='minMax'/></c:scaling>"
+        "<c:delete val='0'/><c:axPos val='b'/>"
+        "<c:numFmt formatCode='General' sourceLinked='1'/>"
+        "<c:majorTickMark val='none'/><c:minorTickMark val='none'/>"
+        "<c:tickLblPos val='nextTo'/><c:crossAx val='100003'/>"
+        "<c:crosses val='autoZero'/><c:auto val='1'/><c:lblAlgn val='ctr'/>"
+        "<c:lblOffset val='100'/></c:catAx>"
+        "<c:valAx><c:axId val='100003'/><c:scaling><c:orientation val='minMax'/></c:scaling>"
+        "<c:delete val='0'/><c:axPos val='l'/><c:majorGridlines/>"
+        "<c:numFmt formatCode='General' sourceLinked='1'/>"
+        "<c:majorTickMark val='none'/><c:minorTickMark val='none'/>"
+        "<c:tickLblPos val='nextTo'/><c:crossAx val='100002'/>"
+        "<c:crosses val='autoZero'/><c:crossBetween val='between'/></c:valAx>"
+        "</c:plotArea>"
+        "<c:plotVisOnly val='1'/><c:dispBlanksAs val='gap'/></c:chart></c:chartSpace>"
+    ).encode()
+
+
+@pytest.fixture(scope="module")
+def variant_deck(authoring):
+    from tests.deckbuilder import derive_deck
+
+    chart_type = "application/vnd.openxmlformats-officedocument.drawingml.chart+xml"
+    parts, relationships, overrides, shapes = {}, [], {}, ""
+    for index, (name, (kwargs, _, _)) in enumerate(VARIANT_SWEEP.items()):
+        part = f"ppt/charts/variant{index}.xml"
+        parts[part] = variant_chart_xml(**kwargs)
+        overrides[part] = chart_type
+        relationships.append(
+            (
+                f"rIdVar{index}",
+                "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart",
+                f"../charts/variant{index}.xml",
+            )
+        )
+        shapes += (
+            f"<p:graphicFrame><p:nvGraphicFramePr>"
+            f"<p:cNvPr id='{300 + index}' name='{name}'/>"
+            "<p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>"
+            f"<p:xfrm><a:off x='0' y='0'/>"
+            f"<a:ext cx='{PROBE_FRAME[0]}' cy='{PROBE_FRAME[1]}'/></p:xfrm>"
+            "<a:graphic><a:graphicData "
+            "uri='http://schemas.openxmlformats.org/drawingml/2006/chart'>"
+            "<c:chart xmlns:c='http://schemas.openxmlformats.org/drawingml/2006/chart' "
+            "xmlns:r='http://schemas.openxmlformats.org/officeDocument/2006/relationships' "
+            f"r:id='rIdVar{index}'/></a:graphicData></a:graphic></p:graphicFrame>"
+        )
+
+    deck = convert_pptx_to_model(
+        derive_deck(
+            authoring,
+            parts=parts,
+            shapes_xml=shapes,
+            slide_relationships=relationships,
+            overrides=overrides,
+        )
+    )
+    charts = [e for e in deck.slides[0].elements if isinstance(e, m.ChartElement)]
+    return dict(zip(VARIANT_SWEEP, charts[1:]))
+
+
+@pytest.mark.parametrize("name", list(VARIANT_SWEEP))
+def test_the_variant_sweep_reproduces_powerpoints_plot_rectangle(name, variant_deck):
+    chart = variant_deck[name]
+    _, expected, _ = VARIANT_SWEEP[name]
+    width = chart.transform.extent_width / 12700.0
+    height = chart.transform.extent_height / 12700.0
+    left, top, right, bottom = _plot_rect(chart)
+    ours = {"left": left, "right": width - right, "top": top, "bottom": height - bottom}
+    for edge, truth in expected.items():
+        assert ours[edge] == pytest.approx(truth, abs=SWEEP_TOLERANCE_PT), (
+            f"{name} {edge}: PowerPoint {truth:.4f}, ours {ours[edge]:.4f}"
+        )
+
+
+@pytest.mark.parametrize("name", list(VARIANT_SWEEP))
+def test_the_variant_sweep_reproduces_powerpoints_axis(name, variant_deck):
+    scale = variant_deck[name].chart.value_axis
+    minimum, maximum, unit = VARIANT_SWEEP[name][2]
+    assert (scale.minimum, scale.maximum, scale.major_unit) == pytest.approx(
+        (minimum, maximum, unit)
+    )
+
+
+def test_a_negative_bar_is_drawn_hollow_only_when_the_file_asks(variant_deck):
+    """Measured: white fill, dark 0.75 pt outline -- and *only* at ``val="1"``.
+
+    This assertion used to be the other way round, on the reading that ECMA-376's
+    CT_Boolean defaults `val` to 1 and therefore an absent `c:invertIfNegative` means
+    inversion.  `real-college-template.pptx` is the first deck in the corpus with a
+    negative datum and no such element, and PowerPoint drew that bar solid.
+
+    Probed properly rather than inferred, because the deck differs from the sweep in two
+    ways at once -- stacked rather than clustered, and no `c:spPr` on the series rather
+    than an explicit fill.  Four variants of that chart were built by rewriting its
+    `ppt/charts/chart1.xml` and exported through PowerPoint:
+
+        stacked   + automatic accent fill -> solid #C00000 (the theme's accent1)
+        stacked   + explicit #2563EB      -> solid #2563EB
+        clustered + automatic accent fill -> solid #C00000
+        clustered + explicit #2563EB      -> solid #2563EB
+
+    Neither axis matters; the element's absence is what decides.  The same chart with
+    `<c:invertIfNegative val="1"/>` added came out white with a dark outline in both
+    fill variants, which is the case this test now pins.
+    """
+    default = _bars(variant_deck["negative-default"])
+    assert [bar.fill.color.hex.upper() for bar in default] == [
+        "#F97316",
+        "#F97316",
+        "#F97316",
+    ]
+
+    kept = _bars(variant_deck["negative-noinvert"])
+    assert {bar.fill.color.hex.upper() for bar in kept} == {"#F97316"}
+
+
+def test_vary_colors_cycles_the_theme_accents_undarkened(variant_deck):
+    """pptx-renderer darkens these to 88%; PowerPoint's export says it does not."""
+    bars = _bars(variant_deck["vary-colors"])
+    assert [bar.fill.color.hex.upper() for bar in bars] == ["#4472C4", "#ED7D31", "#A5A5A5"]
+
+
+def test_a_horizontal_chart_puts_the_first_category_at_the_bottom(variant_deck):
+    chart = variant_deck["horizontal"]
+    bars = sorted(
+        (
+            child
+            for child in chart.children
+            if isinstance(child, m.ShapeElement)
+            and isinstance(child.fill, m.SolidFill)
+            and child.text_body is None
+            and child.transform.extent_width > 10 * 12700
+        ),
+        key=lambda bar: bar.transform.offset_y,
+    )
+    assert len(bars) == 3
+    # Values 3, 4, 5 with "Reader" lowest, so the bars get *shorter* going down.
+    widths = [bar.transform.extent_width for bar in bars]
+    assert widths[0] > widths[1] > widths[2]
+
+
+def test_a_stacked_series_sits_on_top_of_the_one_before_it(variant_deck):
+    chart = variant_deck["stacked"]
+    bars = [
+        child
+        for child in chart.children
+        if isinstance(child, m.ShapeElement)
+        and isinstance(child.fill, m.SolidFill)
+        and child.text_body is None
+        and child.transform.extent_width > 10 * 12700
+    ]
+    first = sorted(
+        (b for b in bars if b.fill.color.hex.upper() == "#F97316"),
+        key=lambda bar: bar.transform.offset_x,
+    )
+    second = sorted(
+        (b for b in bars if b.fill.color.hex.upper() == "#2563EB"),
+        key=lambda bar: bar.transform.offset_x,
+    )
+    assert len(first) == len(second) == 3
+    for lower, upper in zip(first, second):
+        assert lower.transform.offset_x == pytest.approx(upper.transform.offset_x)
+        # The second series' foot is the first series' head.
+        assert upper.transform.offset_y + upper.transform.extent_height == pytest.approx(
+            lower.transform.offset_y, abs=1.0
+        )
+
+
+# -- Malformed and hostile input -------------------------------------------------------
+
+
+def _build(body: str, *, width: float = 200.0, height: float = 150.0):
+    """Lay out a bare chart with no colour or text resolution, and return its children."""
+    return _builder(body, width=width, height=height).build()
+
+
+def _builder(body: str, *, width: float = 200.0, height: float = 150.0):
+    """The builder `_build` uses, for a test that needs to ask it something."""
+    from pptx2svg.resolve.chart import ChartBuilder, ChartStyle
+
+    source = chart(body)
+    return ChartBuilder(
+        source,
+        source.plots[0],
+        width_pt=width,
+        height_pt=height,
+        style=ChartStyle(
+            font_family="Aptos",
+            font_size=10.0,
+            color=m.ResolvedColor(hex="#000000"),
+            accents=[
+                m.ResolvedColor(hex="#4472C4"),
+                m.ResolvedColor(hex="#ED7D31"),
+                m.ResolvedColor(hex="#A5A5A5"),
+            ],
+        ),
+        resolve_fill=_fake_fill,
+        resolve_outline=_fake_outline,
+        resolve_text=lambda rich, text, size, align: m.TextBody(),
+    )
+
+
+def _fake_fill(fill):
+    """Resolve the one fill spelling these tests use, without a whole ResolveContext."""
+    from pptx2svg.parse import source as s
+
+    if isinstance(fill, s.SourceSolidFill) and isinstance(fill.color, s.SrgbColor):
+        return m.SolidFill(color=m.ResolvedColor(hex=f"#{fill.color.hex}"))
+    if isinstance(fill, s.SourceNoFill):
+        return m.NoFill()
+    return None
+
+
+def _fake_outline(outline):
+    if outline is None:
+        return None
+    fill = _fake_fill(outline.fill)
+    if isinstance(fill, m.NoFill) or fill is None:
+        return None
+    return m.Outline(width=outline.width or 12700, fill=fill)
+
+
+@pytest.mark.parametrize(
+    "name,body",
+    [
+        ("no series", "<c:chart><c:plotArea><c:barChart/></c:plotArea></c:chart>"),
+        (
+            "series with no values",
+            "<c:chart><c:plotArea><c:barChart><c:ser/></c:barChart></c:plotArea></c:chart>",
+        ),
+        (
+            "every point blank",
+            bar(
+                "<c:ser><c:val><c:numRef><c:numCache><c:ptCount val='3'/>"
+                "</c:numCache></c:numRef></c:val></c:ser>"
+            ),
+        ),
+        (
+            "every value zero",
+            bar(
+                "<c:ser><c:val><c:numRef><c:numCache><c:ptCount val='2'/>"
+                "<c:pt idx='0'><c:v>0</c:v></c:pt><c:pt idx='1'><c:v>0</c:v></c:pt>"
+                "</c:numCache></c:numRef></c:val></c:ser>"
+            ),
+        ),
+        (
+            "NaN and infinities",
+            bar(
+                "<c:ser><c:val><c:numRef><c:numCache><c:ptCount val='3'/>"
+                "<c:pt idx='0'><c:v>NaN</c:v></c:pt>"
+                "<c:pt idx='1'><c:v>Infinity</c:v></c:pt>"
+                "<c:pt idx='2'><c:v>1e400</c:v></c:pt>"
+                "</c:numCache></c:numRef></c:val></c:ser>"
+            ),
+        ),
+        (
+            "values at the edge of the float range",
+            bar(
+                "<c:ser><c:val><c:numRef><c:numCache><c:ptCount val='2'/>"
+                "<c:pt idx='0'><c:v>1e300</c:v></c:pt>"
+                "<c:pt idx='1'><c:v>-1e300</c:v></c:pt>"
+                "</c:numCache></c:numRef></c:val></c:ser>"
+            ),
+        ),
+        (
+            "zero gap width",
+            bar(
+                "<c:gapWidth val='0'/><c:ser><c:val><c:numRef><c:numCache>"
+                "<c:ptCount val='1'/><c:pt idx='0'><c:v>5</c:v></c:pt>"
+                "</c:numCache></c:numRef></c:val></c:ser>"
+            ),
+        ),
+        (
+            "percent stacked whose totals are zero",
+            bar(
+                "<c:grouping val='percentStacked'/><c:ser><c:val><c:numRef><c:numCache>"
+                "<c:ptCount val='2'/><c:pt idx='0'><c:v>0</c:v></c:pt>"
+                "<c:pt idx='1'><c:v>0</c:v></c:pt>"
+                "</c:numCache></c:numRef></c:val></c:ser>"
+            ),
+        ),
+        (
+            "series of different lengths",
+            bar(
+                "<c:grouping val='stacked'/>"
+                "<c:ser><c:val><c:numRef><c:numCache><c:ptCount val='5'/>"
+                "<c:pt idx='4'><c:v>3</c:v></c:pt></c:numCache></c:numRef></c:val></c:ser>"
+                "<c:ser><c:val><c:numRef><c:numCache><c:ptCount val='1'/>"
+                "<c:pt idx='0'><c:v>2</c:v></c:pt></c:numCache></c:numRef></c:val></c:ser>"
+            ),
+        ),
+        (
+            "area with no series",
+            "<c:chart><c:plotArea><c:areaChart/></c:plotArea></c:chart>",
+        ),
+        (
+            "area whose only value is blank",
+            "<c:chart><c:plotArea><c:areaChart><c:ser><c:val><c:numRef><c:numCache>"
+            "<c:ptCount val='3'/></c:numCache></c:numRef></c:val></c:ser>"
+            "</c:areaChart></c:plotArea></c:chart>",
+        ),
+        (
+            "scatter with no series",
+            "<c:chart><c:plotArea><c:scatterChart/></c:plotArea></c:chart>",
+        ),
+        (
+            "scatter with y values and no x",
+            "<c:chart><c:plotArea><c:scatterChart><c:ser><c:yVal><c:numRef><c:numCache>"
+            "<c:ptCount val='3'/><c:pt idx='0'><c:v>1</c:v></c:pt>"
+            "<c:pt idx='2'><c:v>4</c:v></c:pt>"
+            "</c:numCache></c:numRef></c:yVal></c:ser></c:scatterChart>"
+            "</c:plotArea></c:chart>",
+        ),
+        (
+            "scatter whose x list is shorter than its y list",
+            "<c:chart><c:plotArea><c:scatterChart><c:ser>"
+            "<c:xVal><c:numRef><c:numCache><c:ptCount val='1'/>"
+            "<c:pt idx='0'><c:v>7</c:v></c:pt></c:numCache></c:numRef></c:xVal>"
+            "<c:yVal><c:numRef><c:numCache><c:ptCount val='4'/>"
+            "<c:pt idx='0'><c:v>1</c:v></c:pt><c:pt idx='3'><c:v>4</c:v></c:pt>"
+            "</c:numCache></c:numRef></c:yVal></c:ser></c:scatterChart>"
+            "</c:plotArea></c:chart>",
+        ),
+        (
+            "scatter whose x values are all the same",
+            "<c:chart><c:plotArea><c:scatterChart><c:ser>"
+            "<c:xVal><c:numRef><c:numCache><c:ptCount val='2'/>"
+            "<c:pt idx='0'><c:v>2</c:v></c:pt><c:pt idx='1'><c:v>2</c:v></c:pt>"
+            "</c:numCache></c:numRef></c:xVal>"
+            "<c:yVal><c:numRef><c:numCache><c:ptCount val='2'/>"
+            "<c:pt idx='0'><c:v>1</c:v></c:pt><c:pt idx='1'><c:v>4</c:v></c:pt>"
+            "</c:numCache></c:numRef></c:yVal></c:ser></c:scatterChart>"
+            "</c:plotArea></c:chart>",
+        ),
+        (
+            "scatter whose x values are NaN and infinite",
+            "<c:chart><c:plotArea><c:scatterChart><c:ser>"
+            "<c:xVal><c:numRef><c:numCache><c:ptCount val='2'/>"
+            "<c:pt idx='0'><c:v>NaN</c:v></c:pt><c:pt idx='1'><c:v>1e400</c:v></c:pt>"
+            "</c:numCache></c:numRef></c:xVal>"
+            "<c:yVal><c:numRef><c:numCache><c:ptCount val='2'/>"
+            "<c:pt idx='0'><c:v>1</c:v></c:pt><c:pt idx='1'><c:v>4</c:v></c:pt>"
+            "</c:numCache></c:numRef></c:yVal></c:ser></c:scatterChart>"
+            "</c:plotArea></c:chart>",
+        ),
+    ],
+)
+def test_malformed_charts_lay_out_rather_than_raise(name, body):
+    children, data = _build(body)
+    assert data.value_axis.maximum > data.value_axis.minimum
+    assert data.value_axis.major_unit > 0
+    for child in children:
+        assert child.transform.extent_width >= 0
+        assert child.transform.extent_height >= 0
+
+
+def test_a_hostile_major_unit_cannot_generate_unbounded_ticks():
+    """`c:majorUnit` is attacker-controlled; 1e-7 over a 1.5e12 axis is 10^19 gridlines."""
+    children, data = _build(
+        "<c:chart><c:plotArea>"
+        "<c:barChart><c:axId val='1'/><c:axId val='2'/>"
+        "<c:ser><c:val><c:numRef><c:numCache><c:ptCount val='1'/>"
+        "<c:pt idx='0'><c:v>1e12</c:v></c:pt></c:numCache></c:numRef></c:val></c:ser>"
+        "</c:barChart><c:catAx><c:axId val='1'/></c:catAx>"
+        "<c:valAx><c:axId val='2'/><c:majorGridlines/><c:majorUnit val='0.0000001'/>"
+        "</c:valAx></c:plotArea></c:chart>"
+    )
+    assert len(children) < 50
+
+
+def test_an_axis_minimum_above_its_maximum_still_spans_something():
+    _, data = _build(
+        "<c:chart><c:plotArea>"
+        "<c:barChart><c:axId val='1'/><c:axId val='2'/>"
+        "<c:ser><c:val><c:numRef><c:numCache><c:ptCount val='1'/>"
+        "<c:pt idx='0'><c:v>5</c:v></c:pt></c:numCache></c:numRef></c:val></c:ser>"
+        "</c:barChart><c:catAx><c:axId val='1'/></c:catAx>"
+        "<c:valAx><c:axId val='2'/><c:scaling><c:min val='100'/><c:max val='1'/>"
+        "</c:scaling></c:valAx></c:plotArea></c:chart>"
+    )
+    assert data.value_axis.maximum > data.value_axis.minimum
+
+
+def test_an_explicit_axis_range_wins_over_the_computed_one():
+    _, data = _build(
+        "<c:chart><c:plotArea>"
+        "<c:barChart><c:axId val='1'/><c:axId val='2'/>"
+        "<c:ser><c:val><c:numRef><c:numCache><c:ptCount val='1'/>"
+        "<c:pt idx='0'><c:v>5</c:v></c:pt></c:numCache></c:numRef></c:val></c:ser>"
+        "</c:barChart><c:catAx><c:axId val='1'/></c:catAx>"
+        "<c:valAx><c:axId val='2'/><c:scaling><c:min val='-10'/><c:max val='40'/>"
+        "</c:scaling><c:majorUnit val='10'/></c:valAx></c:plotArea></c:chart>"
+    )
+    assert (data.value_axis.minimum, data.value_axis.maximum, data.value_axis.major_unit) == (
+        -10.0,
+        40.0,
+        10.0,
+    )
+
+
+def test_a_source_linked_axis_takes_the_cells_format():
+    """`sourceLinked="1"` means "whatever the cell says", and the cache records that."""
+    _, data = _build(
+        "<c:chart><c:plotArea>"
+        "<c:barChart><c:axId val='1'/><c:axId val='2'/>"
+        "<c:ser><c:val><c:numRef><c:numCache><c:formatCode>#,##0</c:formatCode>"
+        "<c:ptCount val='1'/><c:pt idx='0'><c:v>4285</c:v></c:pt>"
+        "</c:numCache></c:numRef></c:val></c:ser></c:barChart>"
+        "<c:catAx><c:axId val='1'/></c:catAx>"
+        "<c:valAx><c:axId val='2'/><c:numFmt formatCode='General' sourceLinked='1'/>"
+        "</c:valAx></c:plotArea></c:chart>"
+    )
+    assert data.series[0].format_code == "#,##0"
+
+
+def test_an_axis_that_chose_general_does_not_inherit_the_cells_format():
+    """`sourceLinked="0"` is a choice, including when the choice is General.
+
+    `real-financial-report.pptx` writes exactly this and PowerPoint prints "1000", not
+    "1,000" -- even though the same chart's data labels ask for `#,##0`.
+    """
+    chart_xml = (
+        "<c:chart><c:plotArea>"
+        "<c:barChart><c:axId val='1'/><c:axId val='2'/>"
+        "<c:ser><c:val><c:numRef><c:numCache><c:formatCode>#,##0</c:formatCode>"
+        "<c:ptCount val='1'/><c:pt idx='0'><c:v>4285</c:v></c:pt>"
+        "</c:numCache></c:numRef></c:val></c:ser></c:barChart>"
+        "<c:catAx><c:axId val='1'/></c:catAx>"
+        "<c:valAx><c:axId val='2'/><c:numFmt formatCode='General' sourceLinked='0'/>"
+        "</c:valAx></c:plotArea></c:chart>"
+    )
+    children, _ = _build(chart_xml)
+    printed = {
+        "".join(run.text for p in child.text_body.paragraphs for run in p.runs)
+        for child in children
+        if isinstance(child, m.ShapeElement) and child.text_body is not None
+    }
+    assert "5000" in printed
+    assert not any("," in label for label in printed)
+
+
+# -- Findings from review ---------------------------------------------------------------
+#
+# Each of these reproduced a real defect before its fix.  Several are orientation bugs the
+# probe sweep could not see, because it checks the plot *rectangle* and these get the
+# rectangle right while drawing the wrong thing inside it.
+
+
+def _lines(children):
+    return [c for c in children if isinstance(c, m.ConnectorElement)]
+
+
+def _rules(children):
+    """The axis lines and gridlines, without the tick marks standing on them.
+
+    An unstated ``c:majorTickMark`` or ``c:minorTickMark`` is ``cross``, so a bare
+    fixture draws both sets of ticks; they are a few points long and every rule in these
+    frames is tens of points long.
+    """
+    return [
+        line
+        for line in _lines(children)
+        if max(line.transform.extent_width, line.transform.extent_height) > 20 * 12700
+    ]
+
+
+def test_a_horizontal_charts_gridlines_are_vertical():
+    """The value axis runs along the bottom, so its gridlines run up the plot.
+
+    Measured on the horizontal probe: three vertical lines, at the ticks for 2, 4 and 6.
+    The one for 0 is left out because the category axis already draws it -- the same
+    rule a column chart applies to its zero gridline.
+    """
+    children, _ = _build(
+        "<c:chart><c:plotArea><c:barChart><c:barDir val='bar'/>"
+        "<c:axId val='1'/><c:axId val='2'/>"
+        "<c:ser><c:val><c:numRef><c:numCache><c:ptCount val='3'/>"
+        "<c:pt idx='0'><c:v>3</c:v></c:pt><c:pt idx='1'><c:v>4</c:v></c:pt>"
+        "<c:pt idx='2'><c:v>5</c:v></c:pt></c:numCache></c:numRef></c:val></c:ser>"
+        "</c:barChart><c:catAx><c:axId val='1'/></c:catAx>"
+        "<c:valAx><c:axId val='2'/><c:majorGridlines/></c:valAx></c:plotArea></c:chart>"
+    )
+    lines = _rules(children)
+    gridlines = [line for line in lines if line.transform.extent_width == 0]
+    # Three gridlines plus the category axis, all vertical; one horizontal value axis.
+    assert len(gridlines) == 4
+    assert len([line for line in lines if line.transform.extent_height == 0]) == 1
+
+
+def test_barDir_decides_which_axis_line_is_which():
+    """`c:delete` and `c:spPr` have to follow their own axis, not a fixed side."""
+    body = (
+        "<c:chart><c:plotArea><c:barChart><c:barDir val='bar'/>"
+        "<c:axId val='1'/><c:axId val='2'/>"
+        "<c:ser><c:val><c:numRef><c:numCache><c:ptCount val='1'/>"
+        "<c:pt idx='0'><c:v>3</c:v></c:pt></c:numCache></c:numRef></c:val></c:ser>"
+        "</c:barChart><c:catAx><c:axId val='1'/></c:catAx>"
+        "<c:valAx><c:axId val='2'/>{deleted}</c:valAx></c:plotArea></c:chart>"
+    )
+    both = _rules(_build(body.format(deleted=""))[0])
+    assert {line.transform.extent_height == 0 for line in both} == {True, False}
+
+    # Deleting the *value* axis must drop the horizontal line, not the vertical one.
+    remaining = _rules(_build(body.format(deleted="<c:delete val='1'/>"))[0])
+    assert len(remaining) == 1
+    assert remaining[0].transform.extent_width == 0
+
+
+def test_an_axis_whose_spPr_says_noFill_draws_no_line():
+    """`<a:ln><a:noFill/></a:ln>` is "no line", not "no opinion".
+
+    `real-college-template`'s chart says it on the value axis -- ``<a:ln w="25400">
+    <a:noFill/></a:ln>`` -- and PowerPoint draws nothing up the left of that plot.  We
+    drew the default black axis line, full plot height, because
+    ``resolve.view._resolve_outline`` collapses "noFill" and "absent" to the same
+    ``None``.  Its category axis, which *does* state a stroke, still draws.
+    """
+    body = (
+        "<c:chart><c:plotArea><c:barChart><c:barDir val='col'/>"
+        "<c:axId val='1'/><c:axId val='2'/>"
+        "<c:ser><c:val><c:numRef><c:numCache><c:ptCount val='1'/>"
+        "<c:pt idx='0'><c:v>3</c:v></c:pt></c:numCache></c:numRef></c:val></c:ser>"
+        "</c:barChart>"
+        "<c:catAx><c:axId val='1'/></c:catAx>"
+        "<c:valAx><c:axId val='2'/>{spPr}</c:valAx></c:plotArea></c:chart>"
+    )
+    both = _rules(_build(body.format(spPr=""))[0])
+    assert len(both) == 2
+
+    quiet = _rules(_build(body.format(spPr="<c:spPr><a:ln w='25400'><a:noFill/></a:ln></c:spPr>"))[0])
+    # Only the category axis is left, and a column chart draws that one horizontally.
+    assert len(quiet) == 1
+    assert quiet[0].transform.extent_height == 0
+
+
+def test_a_negative_gap_width_does_not_divide_by_zero():
+    """`c:gapWidth` is schema-bounded to 0..500 and a file need not obey.
+
+    At -100 on a single series the bar-width divisor is exactly zero, which used to abort
+    the whole conversion rather than the one chart.
+    """
+    children, _ = _build(
+        bar(
+            "<c:gapWidth val='-100'/><c:ser><c:val><c:numRef><c:numCache>"
+            "<c:ptCount val='1'/><c:pt idx='0'><c:v>3</c:v></c:pt>"
+            "</c:numCache></c:numRef></c:val></c:ser>"
+        )
+    )
+    assert children
+
+
+@pytest.mark.parametrize("value", ["1.5e308", "-1.5e308"])
+def test_a_datum_near_the_float_ceiling_does_not_overflow(value):
+    """The axis maximum is rounded strictly outwards, which takes 1.5e308 to infinity."""
+    _, data = _build(
+        bar(
+            "<c:ser><c:val><c:numRef><c:numCache><c:ptCount val='1'/>"
+            f"<c:pt idx='0'><c:v>{value}</c:v></c:pt>"
+            "</c:numCache></c:numRef></c:val></c:ser>"
+        )
+    )
+    assert data.value_axis.maximum > data.value_axis.minimum
+
+
+def test_a_denormal_span_does_not_underflow_the_unit_to_zero():
+    minimum, maximum, unit = nice_axis_scale(0.0, 5e-324)
+    assert unit > 0 and maximum > minimum
+
+
+def test_each_axis_styles_its_own_labels():
+    """`c:catAx/c:txPr` was parsed and then never consulted; both axes have one."""
+    children, _ = _build(
+        "<c:chart><c:plotArea><c:barChart><c:axId val='1'/><c:axId val='2'/>"
+        "<c:ser><c:cat><c:strRef><c:strCache><c:ptCount val='1'/>"
+        "<c:pt idx='0'><c:v>Reader</c:v></c:pt></c:strCache></c:strRef></c:cat>"
+        "<c:val><c:numRef><c:numCache><c:ptCount val='1'/>"
+        "<c:pt idx='0'><c:v>3</c:v></c:pt></c:numCache></c:numRef></c:val></c:ser>"
+        "</c:barChart>"
+        "<c:catAx><c:axId val='1'/><c:txPr><a:bodyPr/><a:p><a:pPr>"
+        "<a:defRPr sz='2400'/></a:pPr></a:p></c:txPr></c:catAx>"
+        "<c:valAx><c:axId val='2'/><c:txPr><a:bodyPr/><a:p><a:pPr>"
+        "<a:defRPr sz='800'/></a:pPr></a:p></c:txPr></c:valAx></c:plotArea></c:chart>"
+    )
+    sizes = {
+        "".join(r.text for p in child.text_body.paragraphs for r in p.runs): (
+            child.text_body.paragraphs[0].runs[0].properties.font_size
+        )
+        for child in children
+        if isinstance(child, m.ShapeElement) and child.text_body is not None
+    }
+    assert sizes["Reader"] == 24
+    assert sizes["0"] == 8
+
+
+def test_an_overlaid_legend_does_not_shrink_the_plot():
+    """`c:overlay` draws the legend *over* the plot, so it takes no space away."""
+    body = (
+        "<c:chart><c:plotArea><c:barChart><c:axId val='1'/><c:axId val='2'/>"
+        "<c:ser><c:tx><c:strRef><c:strCache><c:ptCount val='1'/>"
+        "<c:pt idx='0'><c:v>Coverage</c:v></c:pt></c:strCache></c:strRef></c:tx>"
+        "<c:val><c:numRef><c:numCache><c:ptCount val='1'/>"
+        "<c:pt idx='0'><c:v>3</c:v></c:pt></c:numCache></c:numRef></c:val></c:ser>"
+        "</c:barChart><c:catAx><c:axId val='1'/></c:catAx>"
+        "<c:valAx><c:axId val='2'/></c:valAx></c:plotArea>"
+        "<c:legend><c:legendPos val='b'/><c:overlay val='{overlay}'/></c:legend></c:chart>"
+    )
+    beside = _build(body.format(overlay="0"))[0]
+    over = _build(body.format(overlay="1"))[0]
+    assert _plot_bottom(over) > _plot_bottom(beside)
+
+
+def _plot_bottom(children):
+    lines = [c for c in children if isinstance(c, m.ConnectorElement)]
+    down = max(lines, key=lambda line: line.transform.extent_height).transform
+    return down.offset_y + down.extent_height
+
+
+def _plot_top(children):
+    """The plot's top edge: the same value-axis line's other end."""
+    lines = [c for c in children if isinstance(c, m.ConnectorElement)]
+    return max(lines, key=lambda line: line.transform.extent_height).transform.offset_y
+
+
+def test_a_series_longer_than_the_labelled_one_still_draws_every_bar():
+    """Bars are indexed by the category list, so a short list used to lose their tails."""
+    children, data = _build(
+        bar(
+            "<c:ser><c:idx val='0'/><c:order val='0'/>"
+            "<c:cat><c:strRef><c:strCache><c:ptCount val='2'/>"
+            "<c:pt idx='0'><c:v>a</c:v></c:pt><c:pt idx='1'><c:v>b</c:v></c:pt>"
+            "</c:strCache></c:strRef></c:cat>"
+            "<c:val><c:numRef><c:numCache><c:ptCount val='2'/>"
+            "<c:pt idx='0'><c:v>1</c:v></c:pt><c:pt idx='1'><c:v>2</c:v></c:pt>"
+            "</c:numCache></c:numRef></c:val></c:ser>"
+            "<c:ser><c:idx val='1'/><c:order val='1'/>"
+            "<c:val><c:numRef><c:numCache><c:ptCount val='4'/>"
+            "<c:pt idx='0'><c:v>3</c:v></c:pt><c:pt idx='1'><c:v>4</c:v></c:pt>"
+            "<c:pt idx='2'><c:v>5</c:v></c:pt><c:pt idx='3'><c:v>6</c:v></c:pt>"
+            "</c:numCache></c:numRef></c:val></c:ser>"
+        )
+    )
+    assert data.categories == ["a", "b", "3", "4"]
+    bars = [
+        child
+        for child in children
+        if isinstance(child, m.ShapeElement)
+        and isinstance(child.fill, m.SolidFill)
+        and child.text_body is None
+    ]
+    assert len(bars) == 6
+
+
+def _filled_bars(series: str):
+    """Every filled rectangle a bare `c:barChart` draws, left to right.
+
+    No `c:legend` in these bodies, so nothing but the bars themselves is filled.
+    """
+    children, _ = _build(bar(series))
+    return sorted(
+        (
+            child
+            for child in children
+            if isinstance(child, m.ShapeElement)
+            and isinstance(child.fill, m.SolidFill)
+            and child.text_body is None
+        ),
+        key=lambda bar: bar.transform.offset_x,
+    )
+
+
+def test_an_explicit_invert_if_negative_draws_the_bar_hollow():
+    """The other half of the probe above: `val="1"` really is white-with-an-outline.
+
+    Measured on `probe-invert-on-auto` / `probe-invert-on-fill` -- the deck's own chart
+    with `<c:invertIfNegative val="1"/>` added to the series carrying the -1.0.  Both
+    came out white, so the hollow drawing survives; only its default changed.
+    """
+    bars = _filled_bars(
+        "<c:ser><c:idx val='0'/><c:order val='0'/>"
+        "<c:spPr><a:solidFill><a:srgbClr val='F97316'/></a:solidFill></c:spPr>"
+        "<c:invertIfNegative val='1'/><c:val><c:numRef><c:numCache>"
+        "<c:ptCount val='3'/><c:pt idx='0'><c:v>3</c:v></c:pt>"
+        "<c:pt idx='1'><c:v>-2</c:v></c:pt><c:pt idx='2'><c:v>5</c:v></c:pt>"
+        "</c:numCache></c:numRef></c:val></c:ser>"
+    )
+    assert [bar.fill.color.hex.upper() for bar in bars] == [
+        "#F97316",
+        "#FFFFFF",
+        "#F97316",
+    ]
+    inverted = bars[1]
+    assert inverted.outline is not None
+    assert inverted.outline.fill.color.hex.upper() == "#000000"
+    assert inverted.outline.width == 9525
+
+
+def test_a_series_takes_the_accent_its_c_idx_names_not_its_position():
+    """`real-college-template`'s chart: (idx 2, order 0) then (idx 0, order 1).
+
+    The second series states no fill and PowerPoint drew it in accent1, not accent2 --
+    so the accent cycle is indexed by `c:idx`.  Every probe before this deck had
+    idx == order, which is why the two readings were indistinguishable.
+    """
+    bars = _filled_bars(
+        "<c:ser><c:idx val='2'/><c:order val='0'/><c:val><c:numRef><c:numCache>"
+        "<c:ptCount val='1'/><c:pt idx='0'><c:v>3</c:v></c:pt>"
+        "</c:numCache></c:numRef></c:val></c:ser>"
+        "<c:ser><c:idx val='0'/><c:order val='1'/><c:val><c:numRef><c:numCache>"
+        "<c:ptCount val='1'/><c:pt idx='0'><c:v>4</c:v></c:pt>"
+        "</c:numCache></c:numRef></c:val></c:ser>"
+    )
+    # Accents are [#4472C4, #ED7D31, #A5A5A5]: idx 2 is the third, idx 0 the first.
+    assert [bar.fill.color.hex.upper() for bar in bars] == ["#A5A5A5", "#4472C4"]
+
+
+def test_vary_colors_does_not_suppress_the_negative_bar_inversion():
+    """A varyColors fill is not a `c:dPt`, so `c:invertIfNegative` still applies to it."""
+    children, _ = _build(
+        bar(
+            "<c:varyColors val='1'/><c:ser><c:invertIfNegative val='1'/>"
+            "<c:val><c:numRef><c:numCache>"
+            "<c:ptCount val='3'/><c:pt idx='0'><c:v>3</c:v></c:pt>"
+            "<c:pt idx='1'><c:v>-2</c:v></c:pt><c:pt idx='2'><c:v>5</c:v></c:pt>"
+            "</c:numCache></c:numRef></c:val></c:ser>"
+        )
+    )
+    bars = sorted(
+        (
+            child
+            for child in children
+            if isinstance(child, m.ShapeElement)
+            and isinstance(child.fill, m.SolidFill)
+            and child.text_body is None
+        ),
+        key=lambda bar: bar.transform.offset_x,
+    )
+    assert [bar.fill.color.hex.upper() for bar in bars] == [
+        "#4472C4",
+        "#FFFFFF",
+        "#A5A5A5",
+    ]
+
+
+def test_a_deleted_legend_entry_reserves_no_band_width():
+    """`c:legendEntry`/`c:delete` removes the label, so it must not shift the plot."""
+    body = (
+        "<c:chart><c:plotArea><c:barChart><c:axId val='1'/><c:axId val='2'/>"
+        "<c:ser><c:idx val='0'/><c:order val='0'/>"
+        "<c:tx><c:strRef><c:strCache><c:ptCount val='1'/>"
+        "<c:pt idx='0'><c:v>ab</c:v></c:pt></c:strCache></c:strRef></c:tx>"
+        "<c:val><c:numRef><c:numCache><c:ptCount val='1'/>"
+        "<c:pt idx='0'><c:v>3</c:v></c:pt></c:numCache></c:numRef></c:val></c:ser>"
+        "<c:ser><c:idx val='1'/><c:order val='1'/>"
+        "<c:tx><c:strRef><c:strCache><c:ptCount val='1'/>"
+        "<c:pt idx='0'><c:v>a very long series name indeed</c:v></c:pt>"
+        "</c:strCache></c:strRef></c:tx>"
+        "<c:val><c:numRef><c:numCache><c:ptCount val='1'/>"
+        "<c:pt idx='0'><c:v>2</c:v></c:pt></c:numCache></c:numRef></c:val></c:ser>"
+        "</c:barChart><c:catAx><c:axId val='1'/></c:catAx>"
+        "<c:valAx><c:axId val='2'/></c:valAx></c:plotArea>"
+        "<c:legend><c:legendPos val='r'/>{entry}</c:legend></c:chart>"
+    )
+    kept = _build(body.format(entry=""))[0]
+    struck = _build(
+        body.format(
+            entry="<c:legendEntry><c:idx val='1'/><c:delete val='1'/></c:legendEntry>"
+        )
+    )[0]
+
+    def plot_width(children):
+        lines = [c for c in children if isinstance(c, m.ConnectorElement)]
+        across = max(lines, key=lambda line: line.transform.extent_width)
+        return across.transform.extent_width
+
+    assert plot_width(struck) > plot_width(kept)
+
+
+def test_a_multi_level_category_cache_without_ptCount_keeps_its_labels():
+    """`c:ptCount` is minOccurs=0, and a multi-level cache has no direct `c:pt` children."""
+    parsed = chart(
+        bar(
+            "<c:ser><c:cat><c:multiLvlStrRef><c:multiLvlStrCache><c:lvl>"
+            "<c:pt idx='0'><c:v>Q1</c:v></c:pt><c:pt idx='1'><c:v>Q2</c:v></c:pt>"
+            "</c:lvl></c:multiLvlStrCache></c:multiLvlStrRef></c:cat>"
+            "<c:val><c:numRef><c:numCache><c:ptCount val='2'/>"
+            "<c:pt idx='0'><c:v>1</c:v></c:pt></c:numCache></c:numRef></c:val></c:ser>"
+        )
+    )
+    assert parsed.plots[0].series[0].categories == ["Q1", "Q2"]
+
+
+def test_the_metrics_less_fallback_line_box_matches_the_renderers():
+    """A face with no metrics table still has to lay out in the 1.2 em the renderer uses.
+
+    A shorter fallback box made an unmetricked title's band come out short of its own
+    text, which is the one thing `FontBox` exists to keep in step.
+    """
+    from pptx2svg.resolve.chart import font_box
+    from pptx2svg.text.measure import DEFAULT_LINE_HEIGHT_RATIO
+
+    box = font_box("a face nothing has metrics for", 18.0)
+    assert box.line_height == pytest.approx(DEFAULT_LINE_HEIGHT_RATIO * 18.0)
+    assert box.first_baseline < box.line_height
+
+
+# -- Line charts -----------------------------------------------------------------------
+#
+# Measured on a six-chart probe deck exported by PowerPoint, plus the real line chart in
+# `real-financial-report.pptx`.  Coordinates are frame-relative points read out of the
+# PDF as exact vectors.
+
+LINE_CATS = ["Reader", "Writer", "Renderer"]
+
+
+def line_chart_xml(
+    *,
+    values=(3, 4, 5),
+    line="<a:ln w='25400'><a:solidFill><a:srgbClr val='F97316'/></a:solidFill></a:ln>",
+    marker="<c:marker><c:symbol val='none'/></c:marker>",
+    # `<c:smooth val="0"/>`, because **an absent element means smooth** -- see
+    # `test_an_absent_smooth_element_smooths`.  Every test below that asserts a straight
+    # line wants the element, and PowerPoint's own writer emits it on every series.
+    smooth=False,
+    blanks="gap",
+):
+    points = "".join(
+        f"<c:pt idx='{i}'><c:v>{v}</c:v></c:pt>"
+        for i, v in enumerate(values)
+        if v is not None
+    )
+    cats = "".join(
+        f"<c:pt idx='{i}'><c:v>{v}</c:v></c:pt>" for i, v in enumerate(LINE_CATS)
+    )
+    smooth_xml = "" if smooth is None else f"<c:smooth val='{1 if smooth else 0}'/>"
+    return (
+        "<c:chart><c:plotArea><c:layout/>"
+        "<c:lineChart><c:grouping val='standard'/><c:varyColors val='0'/>"
+        "<c:ser><c:idx val='0'/><c:order val='0'/>"
+        "<c:tx><c:strRef><c:strCache><c:ptCount val='1'/>"
+        "<c:pt idx='0'><c:v>A</c:v></c:pt></c:strCache></c:strRef></c:tx>"
+        f"<c:spPr><a:solidFill><a:srgbClr val='F97316'/></a:solidFill>{line}</c:spPr>"
+        f"{marker}"
+        f"<c:cat><c:strRef><c:strCache><c:ptCount val='3'/>{cats}"
+        "</c:strCache></c:strRef></c:cat>"
+        "<c:val><c:numRef><c:numCache><c:formatCode>General</c:formatCode>"
+        f"<c:ptCount val='{len(values)}'/>{points}</c:numCache></c:numRef></c:val>"
+        f"{smooth_xml}</c:ser>"
+        "<c:axId val='1'/><c:axId val='2'/></c:lineChart>"
+        "<c:catAx><c:axId val='1'/></c:catAx>"
+        "<c:valAx><c:axId val='2'/><c:majorGridlines/>"
+        "<c:crossBetween val='between'/></c:valAx>"
+        f"</c:plotArea><c:dispBlanksAs val='{blanks}'/></c:chart>"
+    )
+
+
+def _polylines(children):
+    return [
+        child
+        for child in children
+        if isinstance(child, m.ShapeElement)
+        and isinstance(child.geometry, m.CustomGeometry)
+    ]
+
+
+def _markers(children):
+    return sorted(
+        (
+            child
+            for child in children
+            if isinstance(child, m.ShapeElement)
+            and isinstance(child.geometry, m.PresetGeometry)
+            and child.geometry.preset in ("ellipse", "diamond", "triangle", "star5")
+        ),
+        key=lambda child: child.transform.offset_x,
+    )
+
+
+def _vertices(shape):
+    """A polyline's vertices in frame coordinates, from its box and its path data."""
+    transform = shape.transform
+    path = shape.geometry.paths[0]
+    scale_x = transform.extent_width / 12700.0 / path.width if path.width else 1.0
+    scale_y = transform.extent_height / 12700.0 / path.height if path.height else 1.0
+    out = []
+    for token in re.finditer(r"[ML] ([-\d.]+) ([-\d.]+)", path.commands):
+        out.append(
+            (
+                round(transform.offset_x / 12700.0 + float(token.group(1)) * scale_x, 3),
+                round(transform.offset_y / 12700.0 + float(token.group(2)) * scale_y, 3),
+            )
+        )
+    return out
+
+
+def test_a_line_chart_draws_a_polyline_through_the_band_centres():
+    """Measured on the probe: vertices at 52.473, 115.273 and 178.05 pt across the frame.
+
+    `c:crossBetween="between"` puts a point in the middle of its category band, exactly
+    where a bar would be -- the real line chart in `real-financial-report.pptx` says the
+    same and PowerPoint drew it the same way.
+    """
+    children, data = _build(line_chart_xml(), width=220.4724, height=181.1024)
+    assert data.kind == "lineChart"
+    polylines = _polylines(children)
+    assert len(polylines) == 1
+    vertices = _vertices(polylines[0])
+    assert [v[0] for v in vertices] == pytest.approx([52.473, 115.273, 178.052], abs=0.6)
+    # Values 3, 4 and 5 on a 0..6 axis, so the vertices climb by equal steps.
+    steps = [vertices[i][1] - vertices[i + 1][1] for i in range(2)]
+    assert steps[0] == pytest.approx(steps[1], abs=0.01)
+
+
+def test_a_line_takes_its_colour_from_a_ln_and_not_from_a_solid_fill():
+    """Measured: a series stating only `a:solidFill` was drawn in accent1, fill ignored.
+
+    A bar chart takes `a:solidFill` as its bar colour, so reusing that rule here would
+    paint the line the wrong colour on any deck that sets both.
+    """
+    explicit, _ = _build(line_chart_xml(), width=220.0, height=181.0)
+    assert _polylines(explicit)[0].outline.fill.color.hex.upper() == "#F97316"
+
+    bare, _ = _build(line_chart_xml(line=""), width=220.0, height=181.0)
+    assert _polylines(bare)[0].outline.fill.color.hex.upper() == "#4472C4"
+
+
+def test_a_line_series_that_states_no_width_gets_one_and_a_half_points():
+    bare, _ = _build(line_chart_xml(line=""), width=220.0, height=181.0)
+    assert _polylines(bare)[0].outline.width == 19050
+    # And a stated width is taken literally.
+    stated, _ = _build(line_chart_xml(), width=220.0, height=181.0)
+    assert _polylines(stated)[0].outline.width == 25400
+
+
+def test_a_line_stroke_has_round_caps():
+    """Measured: PowerPoint emits `1 J` on a line series whether or not `a:ln` says so."""
+    children, _ = _build(line_chart_xml(), width=220.0, height=181.0)
+    assert _polylines(children)[0].outline.line_cap == "round"
+
+
+def test_marker_size_is_a_diameter_in_points():
+    """`c:size val="7"` measured 6.96 pt across in the probe."""
+    children, _ = _build(
+        line_chart_xml(
+            marker="<c:marker><c:symbol val='circle'/><c:size val='7'/></c:marker>"
+        ),
+        width=220.0,
+        height=181.0,
+    )
+    markers = _markers(children)
+    assert len(markers) == 3
+    for marker in markers:
+        assert marker.geometry.preset == "ellipse"
+        assert marker.transform.extent_width / 12700.0 == pytest.approx(7.0, abs=0.01)
+
+
+def test_symbol_none_draws_no_marker():
+    children, _ = _build(line_chart_xml(), width=220.0, height=181.0)
+    assert _markers(children) == []
+
+
+def test_a_series_with_no_marker_element_still_gets_one():
+    """Measured: PowerPoint drew a **diamond** for series 0 of a marker-less line chart.
+
+    The rest of the cycle is from the specification and is not measured.
+    """
+    children, _ = _build(line_chart_xml(marker=""), width=220.0, height=181.0)
+    markers = _markers(children)
+    assert len(markers) == 3
+    assert {marker.geometry.preset for marker in markers} == {"diamond"}
+
+
+def test_a_blank_breaks_the_line_in_two():
+    """`dispBlanksAs="gap"` is the default and really leaves a gap."""
+    children, _ = _build(
+        line_chart_xml(values=(3, None, 5)), width=220.0, height=181.0
+    )
+    assert len(_polylines(children)) == 0  # two isolated points, no run of two
+
+    spanned, _ = _build(
+        line_chart_xml(values=(3, None, 5), blanks="span"), width=220.0, height=181.0
+    )
+    assert len(_vertices(_polylines(spanned)[0])) == 2
+
+
+def test_smoothing_emits_curves_rather_than_segments():
+    """`c:smooth` is drawn as a spline; the probe's control points are not collinear."""
+    straight, _ = _build(line_chart_xml(), width=220.0, height=181.0)
+    assert "C " not in _polylines(straight)[0].geometry.paths[0].commands
+
+    curved, _ = _build(
+        line_chart_xml(values=(3, 5, 2), smooth=True), width=220.0, height=181.0
+    )
+    assert "C " in _polylines(curved)[0].geometry.paths[0].commands
+
+
+def test_an_absent_smooth_element_smooths():
+    """A chart boolean: the element missing is **not** the same as `val="0"`.
+
+    Three probes at one frame size: a line chart with `<c:smooth val="1"/>`, one with no
+    `c:smooth` at all and one with `val="0"` came back from PowerPoint as four cubics, the
+    *same* four cubics, and a four-segment polyline.  This reader used `bool(None)` and so
+    drew the middle case straight.
+    """
+    absent, _ = _build(
+        line_chart_xml(values=(3, 5, 2), smooth=None), width=220.0, height=181.0
+    )
+    stated, _ = _build(
+        line_chart_xml(values=(3, 5, 2), smooth=True), width=220.0, height=181.0
+    )
+    assert (
+        _polylines(absent)[0].geometry.paths[0].commands
+        == _polylines(stated)[0].geometry.paths[0].commands
+    )
+
+
+def test_the_spline_tension_is_powerpoints():
+    """The control points, not just the shape: PowerPoint's Catmull-Rom is the plain 1/6.
+
+    A five-point series over 3, 4, 5, 2, 6 exports as four cubics.  PowerPoint's thirteen
+    ordinates, read out of the PDF and put back through its own 0..7 axis, are the exact
+    thirds and sixths below -- which pin both halves of the rule: the interior controls are
+    a sixth of the *neighbours'* chord from their vertex, and the two terminal ones are a
+    **third** of their own chord, which duplicating the end point gets wrong by a factor of
+    two.  Read in value space so the assertion does not depend on the frame.
+    """
+    children, _ = _build(
+        line_chart_xml(values=(3, 4, 5, 2, 6), smooth=True),
+        width=220.4724,
+        height=181.1024,
+    )
+    commands = _polylines(children)[0].geometry.paths[0].commands
+    numbers = [float(value) for value in commands.replace("M", "").replace("C", "").split()]
+    ys = numbers[1::2]
+    # The first and last vertices are the data's own 3 and 6, which calibrates the axis.
+    values = [3.0 + (ys[0] - y) * 3.0 / (ys[0] - ys[-1]) for y in ys]
+    assert values == pytest.approx(
+        [
+            3.0, 3 + 1 / 3, 3 + 2 / 3,
+            4.0, 4 + 1 / 3, 5 + 1 / 3,
+            5.0, 4 + 2 / 3, 1 + 5 / 6,
+            2.0, 2 + 1 / 6, 4 + 2 / 3,
+            6.0,
+        ],
+        abs=0.01,
+    )
+
+
+def test_the_real_line_chart_renders():
+    """`real-financial-report.pptx` slide 2 holds the only line chart in the corpus."""
+    from tests.conftest import FIXTURE_DIR
+
+    deck = convert_pptx_to_model(
+        (FIXTURE_DIR / "real-financial-report.pptx").read_bytes()
+    )
+    charts = [
+        element
+        for slide in deck.slides
+        for element in slide.elements
+        if isinstance(element, m.ChartElement) and element.chart.kind == "lineChart"
+    ]
+    assert len(charts) == 1
+    chart = charts[0]
+    assert len(chart.chart.series) == 3
+    assert len(_polylines(chart.children)) == 3
+    # Nine data points, plus one more marker per series in the legend: a line chart's
+    # legend key is a rule with the series' marker on its midpoint, not a swatch.
+    assert len(_markers(chart.children)) == 9 + 3
+
+
+# -- Data labels -----------------------------------------------------------------------
+#
+# Positions measured on a six-chart probe exported by PowerPoint.  Values are
+# frame-relative points for the *first* bar's label, which is 25.2 pt wide and spans
+# y 72.607..145.035 in a 220.4724 x 181.1024 pt frame.
+
+#: (baseline, left edge of the glyph run), frame-relative points.
+DATA_LABEL_TRUTH = {
+    "outEnd": (76.029, 49.803),   # ours 76.007, 49.832
+    "inEnd": (97.149, 49.803),    # ours 97.114, 49.832
+    "ctr": (122.829, 49.802),     # ours 122.660, 49.832
+    "inBase": (148.413, 49.803),  # ours 148.578, 49.832
+}
+DATA_LABEL_TOLERANCE_PT = 0.4
+
+
+def dlbl_chart_xml(*, show=("Val",), pos=None, fmt=None, size=None, values=(3, 4, 5),
+                   name="A"):
+    flags = "".join(
+        f"<c:show{flag} val='{1 if flag in show else 0}'/>"
+        for flag in ("LegendKey", "Val", "CatName", "SerName", "Percent", "BubbleSize")
+    )
+    fmt_xml = f"<c:numFmt formatCode='{fmt}' sourceLinked='0'/>" if fmt else ""
+    tx = (
+        f"<c:txPr><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr sz='{size * 100}'/>"
+        "</a:pPr></a:p></c:txPr>"
+        if size
+        else ""
+    )
+    pos_xml = f"<c:dLblPos val='{pos}'/>" if pos else ""
+    points = "".join(f"<c:pt idx='{i}'><c:v>{v}</c:v></c:pt>" for i, v in enumerate(values))
+    cats = "".join(
+        f"<c:pt idx='{i}'><c:v>{v}</c:v></c:pt>"
+        for i, v in enumerate(["Reader", "Writer", "Renderer"])
+    )
+    return (
+        "<c:chart><c:plotArea><c:layout/>"
+        "<c:barChart><c:barDir val='col'/><c:grouping val='clustered'/>"
+        "<c:varyColors val='0'/>"
+        "<c:ser><c:idx val='0'/><c:order val='0'/>"
+        "<c:tx><c:strRef><c:strCache><c:ptCount val='1'/>"
+        f"<c:pt idx='0'><c:v>{name}</c:v></c:pt></c:strCache></c:strRef></c:tx>"
+        "<c:spPr><a:solidFill><a:srgbClr val='F97316'/></a:solidFill></c:spPr>"
+        f"<c:dLbls>{fmt_xml}{tx}{pos_xml}{flags}</c:dLbls>"
+        f"<c:cat><c:strRef><c:strCache><c:ptCount val='3'/>{cats}"
+        "</c:strCache></c:strRef></c:cat>"
+        "<c:val><c:numRef><c:numCache><c:formatCode>General</c:formatCode>"
+        f"<c:ptCount val='{len(values)}'/>{points}</c:numCache></c:numRef></c:val></c:ser>"
+        "<c:gapWidth val='150'/><c:overlap val='0'/>"
+        "<c:axId val='1'/><c:axId val='2'/></c:barChart>"
+        "<c:catAx><c:axId val='1'/></c:catAx>"
+        "<c:valAx><c:axId val='2'/><c:majorGridlines/></c:valAx>"
+        "</c:plotArea></c:chart>"
+    )
+
+
+def _data_labels(children, frame_height=181.1024):
+    """Every text that is neither an axis label nor a category label.
+
+    Axis labels are laid out in a box starting at the frame's left edge; category labels
+    sit in the band under the plot.
+    """
+    out = []
+    for child in children:
+        if not isinstance(child, m.ShapeElement) or child.text_body is None:
+            continue
+        if child.transform.offset_x / 12700.0 < 1.0:
+            continue
+        if child.transform.offset_y / 12700.0 > frame_height - 30:
+            continue
+        out.append(child)
+    return sorted(out, key=lambda child: (child.transform.offset_x, child.transform.offset_y))
+
+
+def _label_baseline(shape):
+    size = shape.text_body.paragraphs[0].runs[0].properties.font_size
+    return shape.transform.offset_y / 12700.0 + (1.2 - APTOS_DESCENT) * size
+
+
+def _label_text_left(shape, font_family="Aptos"):
+    """Where the glyphs start: the box is wider than the run and the run is centred."""
+    from pptx2svg.resolve.chart import text_width
+
+    size = shape.text_body.paragraphs[0].runs[0].properties.font_size
+    text = "".join(r.text for p in shape.text_body.paragraphs for r in p.runs)
+    box = shape.transform.extent_width / 12700.0
+    run = text_width(text, font_family, size)
+    align = shape.text_body.paragraphs[0].properties.alignment
+    left = shape.transform.offset_x / 12700.0
+    if align == "ctr":
+        return left + (box - run) / 2
+    if align == "r":
+        return left + box - run
+    return left
+
+
+@pytest.mark.parametrize("position", list(DATA_LABEL_TRUTH))
+def test_each_data_label_position_matches_powerpoints(position):
+    children, _ = _build(
+        dlbl_chart_xml(pos=None if position == "outEnd" else position),
+        width=220.4724,
+        height=181.1024,
+    )
+    labels = _data_labels(children)
+    assert labels, f"{position} drew no data label"
+    first = labels[0]
+    baseline, left = DATA_LABEL_TRUTH[position]
+    assert _label_baseline(first) == pytest.approx(baseline, abs=DATA_LABEL_TOLERANCE_PT)
+    assert _label_text_left(first) == pytest.approx(left, abs=DATA_LABEL_TOLERANCE_PT)
+
+
+def test_outEnd_is_the_default_for_a_bar():
+    explicit, _ = _build(dlbl_chart_xml(pos="outEnd"), width=220.4724, height=181.1024)
+    implicit, _ = _build(dlbl_chart_xml(), width=220.4724, height=181.1024)
+    assert _label_baseline(_data_labels(explicit)[0]) == pytest.approx(
+        _label_baseline(_data_labels(implicit)[0])
+    )
+
+
+def test_a_label_at_a_larger_size_keeps_the_same_fixed_gap():
+    """The gap to the bar is a fixed 4.85 pt, not a multiple of the font size.
+
+    Measured 4.86 pt at 10 pt and 4.70 pt at 14 pt; an em-proportional gap would have
+    grown to 6.8 pt and put the 14 pt label two points too high.
+    """
+    children, _ = _build(
+        dlbl_chart_xml(fmt="#,##0", size=14, values=(3000, 4000, 5000)),
+        width=220.4724,
+        height=181.1024,
+    )
+    label = _data_labels(children)[0]
+    assert "".join(
+        r.text for p in label.text_body.paragraphs for r in p.runs
+    ) == "3,000"
+    assert _label_baseline(label) == pytest.approx(74.973, abs=DATA_LABEL_TOLERANCE_PT)
+
+
+def test_the_parts_of_a_multi_part_label_stack_on_separate_lines():
+    """Measured: series name, category name then value, top to bottom, one line each.
+
+    PowerPoint wraps a long category onto two lines; we do not, which is recorded in the
+    roadmap rather than asserted here.
+    """
+    children, _ = _build(
+        dlbl_chart_xml(show=("Val", "CatName", "SerName"), name="Coverage"),
+        width=220.4724,
+        height=181.1024,
+    )
+    first_bar = [
+        label
+        for label in _data_labels(children)
+        if abs(label.transform.offset_x / 12700.0 - 27.003) < 1.0
+    ]
+    texts = [
+        "".join(r.text for p in label.text_body.paragraphs for r in p.runs)
+        for label in sorted(first_bar, key=lambda label: label.transform.offset_y)
+    ]
+    assert texts == ["Coverage", "Reader", "3"]
+
+
+def test_dLbls_that_switch_everything_off_draw_nothing():
+    """Four of the five charts in `real-financial-report.pptx` do exactly this.
+
+    Every `c:show*` flag is stated as 0, so the correct output is no label at all -- the
+    presence of a `c:dLbls` block says nothing about whether anything is printed.
+    """
+    children, _ = _build(dlbl_chart_xml(show=()), width=220.4724, height=181.1024)
+    assert _data_labels(children) == []
+
+
+def test_a_point_can_delete_its_own_label():
+    body = dlbl_chart_xml().replace(
+        "<c:dLbls>",
+        "<c:dLbls><c:dLbl><c:idx val='1'/><c:delete val='1'/></c:dLbl>",
+        1,
+    )
+    children, _ = _build(body, width=220.4724, height=181.1024)
+    texts = {
+        "".join(r.text for p in label.text_body.paragraphs for r in p.runs)
+        for label in _data_labels(children)
+    }
+    assert texts == {"3", "5"}
+
+
+def test_a_line_chart_puts_its_labels_to_the_right_of_the_point():
+    """ECMA's default for a line series is `r`, which is what PowerPoint drew."""
+    body = line_chart_xml(
+        marker="<c:marker><c:symbol val='circle'/><c:size val='7'/></c:marker>"
+    ).replace(
+        "<c:cat>",
+        "<c:dLbls><c:showLegendKey val='0'/><c:showVal val='1'/>"
+        "<c:showCatName val='0'/><c:showSerName val='0'/>"
+        "<c:showPercent val='0'/><c:showBubbleSize val='0'/></c:dLbls><c:cat>",
+        1,
+    )
+    children, _ = _build(body, width=220.4724, height=181.1024)
+    labels = _data_labels(children)
+    assert len(labels) == 3
+    # The point is at x 52.473; the label starts one marker radius plus a gap right of it.
+    assert _label_text_left(labels[0]) == pytest.approx(
+        306.067 - 244.094, abs=DATA_LABEL_TOLERANCE_PT
+    )
+
+
+# -- Pie and doughnut ------------------------------------------------------------------
+#
+# The core geometry is measured on `real-financial-report.pptx`'s own doughnut; the rest
+# on a twelve-chart probe.  Frame-relative points throughout.
+
+#: chart4 of real-financial-report: a 285 x 150 pt frame with a right-hand legend.
+REAL_DOUGHNUT = {
+    "centre": (91.008, 75.000),
+    "outer": 64.000,
+    "inner": 32.000,          # c:holeSize = 50, so half the outer radius
+    "legend_band": 113.98,    # the same band that deck's bar charts reserve
+}
+
+PIE_TOLERANCE_PT = 0.4
+
+
+def pie_chart_xml(
+    *,
+    kind="pieChart",
+    values=(43, 30, 19, 8),
+    cats=("Alpha", "Beta", "Gamma", "Delta"),
+    first_angle=None,
+    hole=None,
+    explosion=None,
+    vary=None,
+    dlbl_show=(),
+    dlbl_pos=None,
+    series=1,
+    legend=None,
+):
+    body = ""
+    for index in range(series):
+        points = "".join(
+            f"<c:pt idx='{i}'><c:v>{v}</c:v></c:pt>" for i, v in enumerate(values)
+        )
+        cpts = "".join(f"<c:pt idx='{i}'><c:v>{v}</c:v></c:pt>" for i, v in enumerate(cats))
+        exp = "" if explosion is None else f"<c:explosion val='{explosion}'/>"
+        labels = ""
+        if dlbl_show:
+            flags = "".join(
+                f"<c:show{flag} val='{1 if flag in dlbl_show else 0}'/>"
+                for flag in ("LegendKey", "Val", "CatName", "SerName", "Percent",
+                             "BubbleSize")
+            )
+            pos = "" if dlbl_pos is None else f"<c:dLblPos val='{dlbl_pos}'/>"
+            labels = f"<c:dLbls>{pos}{flags}</c:dLbls>"
+        body += (
+            f"<c:ser><c:idx val='{index}'/><c:order val='{index}'/>"
+            "<c:tx><c:strRef><c:strCache><c:ptCount val='1'/>"
+            f"<c:pt idx='0'><c:v>S{index}</c:v></c:pt></c:strCache></c:strRef></c:tx>"
+            f"{exp}{labels}"
+            f"<c:cat><c:strRef><c:strCache><c:ptCount val='{len(cats)}'/>{cpts}"
+            "</c:strCache></c:strRef></c:cat>"
+            "<c:val><c:numRef><c:numCache><c:formatCode>General</c:formatCode>"
+            f"<c:ptCount val='{len(values)}'/>{points}"
+            "</c:numCache></c:numRef></c:val></c:ser>"
+        )
+    vary_xml = "" if vary is None else f"<c:varyColors val='{1 if vary else 0}'/>"
+    ang = "" if first_angle is None else f"<c:firstSliceAng val='{first_angle}'/>"
+    hole_xml = "" if hole is None else f"<c:holeSize val='{hole}'/>"
+    legend_xml = (
+        f"<c:legend><c:legendPos val='{legend}'/><c:overlay val='0'/></c:legend>"
+        if legend
+        else ""
+    )
+    return (
+        f"<c:chart><c:plotArea><c:layout/><c:{kind}>{vary_xml}{body}{ang}{hole_xml}"
+        f"</c:{kind}></c:plotArea>{legend_xml}</c:chart>"
+    )
+
+
+def _slices(children):
+    return [
+        child
+        for child in children
+        if isinstance(child, m.ShapeElement)
+        and isinstance(child.geometry, m.CustomGeometry)
+    ]
+
+
+def _path_points(shape):
+    transform = shape.transform
+    path = shape.geometry.paths[0]
+    sx = transform.extent_width / 12700.0 / path.width if path.width else 1.0
+    sy = transform.extent_height / 12700.0 / path.height if path.height else 1.0
+    points = []
+    for token in re.finditer(r"([MLC])((?: -?[\d.]+)+)", path.commands):
+        numbers = [float(v) for v in token.group(2).split()]
+        for i in range(0, len(numbers) - 1, 2):
+            points.append(
+                (
+                    transform.offset_x / 12700.0 + numbers[i] * sx,
+                    transform.offset_y / 12700.0 + numbers[i + 1] * sy,
+                )
+            )
+    return points
+
+
+def _radii(shape, centre):
+    return sorted({round(math.hypot(x - centre[0], y - centre[1]), 2)
+                   for x, y in _path_points(shape)})
+
+
+def test_the_real_doughnut_matches_powerpoints_geometry():
+    """chart4 of `real-financial-report.pptx`, whose export pins every polar rule."""
+    from tests.conftest import FIXTURE_DIR
+
+    deck = convert_pptx_to_model((FIXTURE_DIR / "real-financial-report.pptx").read_bytes())
+    charts = [
+        element
+        for slide in deck.slides
+        for element in slide.elements
+        if isinstance(element, m.ChartElement)
+        and element.chart.kind == "doughnutChart"
+    ]
+    assert len(charts) == 1
+    parts = _slices(charts[0].children)
+    assert len(parts) == 4
+    centre = REAL_DOUGHNUT["centre"]
+    for part in parts:
+        radii = _radii(part, centre)
+        # The path visits both arcs; its Bezier control points sit off them either way, so
+        # the test is that each radius is present rather than that it bounds the set.
+        for wanted in (REAL_DOUGHNUT["inner"], REAL_DOUGHNUT["outer"]):
+            assert any(abs(r - wanted) < PIE_TOLERANCE_PT for r in radii), (wanted, radii)
+
+
+def test_angle_zero_is_twelve_oclock_and_slices_run_clockwise():
+    """The real doughnut's first slice, a 43% share, ends at 154.80 deg = 43% of 360."""
+    children, _ = _build(
+        pie_chart_xml(values=(43, 30, 19, 8)), width=220.4724, height=181.1024
+    )
+    first = _slices(children)[0]
+    centre = (110.236, 90.551)
+    start = _path_points(first)[0]
+    angle = math.degrees(
+        math.atan2(start[0] - centre[0], -(start[1] - centre[1]))
+    ) % 360
+    assert angle == pytest.approx(0.0, abs=0.5) or angle == pytest.approx(360.0, abs=0.5)
+
+
+def test_first_slice_angle_rotates_clockwise_from_twelve():
+    children, _ = _build(
+        pie_chart_xml(first_angle=90), width=220.4724, height=181.1024
+    )
+    start = _path_points(_slices(children)[0])[0]
+    centre = (110.236, 90.551)
+    angle = math.degrees(
+        math.atan2(start[0] - centre[0], -(start[1] - centre[1]))
+    ) % 360
+    assert angle == pytest.approx(90.0, abs=0.5)
+
+
+def test_hole_size_is_a_percentage_of_the_outer_radius():
+    children, _ = _build(
+        pie_chart_xml(kind="doughnutChart", hole=25), width=220.4724, height=181.1024
+    )
+    centre = (110.236, 90.551)
+    radii = _radii(_slices(children)[0], centre)
+    for wanted in (79.551, 0.25 * 79.551):
+        assert any(abs(r - wanted) < PIE_TOLERANCE_PT for r in radii), (wanted, radii)
+
+
+def test_a_doughnut_with_no_hole_size_draws_as_a_pie():
+    """ECMA-376 documents a default of 10; PowerPoint's export has no inner arc at all."""
+    children, _ = _build(
+        pie_chart_xml(kind="doughnutChart"), width=220.4724, height=181.1024
+    )
+    centre = (110.236, 90.551)
+    assert min(_radii(_slices(children)[0], centre)) == pytest.approx(0.0, abs=0.05)
+
+
+def test_several_series_make_concentric_rings():
+    children, _ = _build(
+        pie_chart_xml(kind="doughnutChart", series=2), width=220.4724, height=181.1024
+    )
+    parts = _slices(children)
+    assert len(parts) == 8
+    centre = (110.236, 90.551)
+    band = 79.551 / 2
+    assert any(abs(r - band) < PIE_TOLERANCE_PT for r in _radii(parts[0], centre))
+    outer_ring = _radii(parts[4], centre)
+    for wanted in (band, 79.551):
+        assert any(abs(r - wanted) < PIE_TOLERANCE_PT for r in outer_ring), (
+            wanted, outer_ring
+        )
+
+
+def test_explosion_shrinks_the_radius_and_pushes_each_slice_out():
+    """Measured: radius x 1/(1+e), offset e x the *shrunk* radius along the bisector."""
+    children, _ = _build(pie_chart_xml(explosion=20), width=220.4724, height=181.1024)
+    centre = (110.236, 90.551)
+    radius = 79.551 / 1.2
+    first = _slices(children)[0]
+    points = _path_points(first)
+    # The wedge's apex is the exploded centre.
+    apex = min(points, key=lambda p: math.hypot(p[0] - centre[0], p[1] - centre[1]))
+    offset = math.hypot(apex[0] - centre[0], apex[1] - centre[1])
+    assert offset == pytest.approx(radius * 0.2, abs=PIE_TOLERANCE_PT)
+    far = max(math.hypot(x - apex[0], y - apex[1]) for x, y in points)
+    assert far >= radius - PIE_TOLERANCE_PT
+
+
+def test_a_pie_varies_its_colours_by_point_without_being_asked():
+    """A bar chart with no `c:varyColors` draws one colour; a pie cycles the accents."""
+    children, _ = _build(pie_chart_xml(), width=220.4724, height=181.1024)
+    fills = [
+        part.fill.color.hex.upper()
+        for part in _slices(children)
+        if isinstance(part.fill, m.SolidFill)
+    ]
+    assert fills == ["#4472C4", "#ED7D31", "#A5A5A5", "#4472C4"]
+
+
+def test_percentages_add_up_to_one_hundred():
+    """Measured: three equal values are labelled 34%, 33%, 33%, not 33% three times."""
+    from pptx2svg.resolve.chart import _percent_shares
+
+    assert _percent_shares([1, 1, 1]) == [34, 33, 33]
+    assert sum(_percent_shares([1, 1, 1, 1, 1, 1])) == 100
+    assert _percent_shares([43, 30, 19, 8]) == [43, 30, 19, 8]
+    assert _percent_shares([0, 0]) == [0, 0]
+
+
+def test_a_slice_label_sits_at_the_measured_fraction_of_the_radius():
+    centre = (110.236, 90.551)
+    radius = 79.551
+    for position, fraction in (("ctr", 0.500), ("inEnd", 0.856),
+                               ("outEnd", 1.020), ("bestFit", 0.710)):
+        children, _ = _build(
+            pie_chart_xml(dlbl_show=("Val",), dlbl_pos=position),
+            width=220.4724,
+            height=181.1024,
+        )
+        labels = [
+            child
+            for child in children
+            if isinstance(child, m.ShapeElement) and child.text_body is not None
+        ]
+        assert len(labels) == 4, position
+        # The first slice spans 0..154.8 deg, so its bisector is at 77.4.
+        first = labels[0]
+        size = first.text_body.paragraphs[0].runs[0].properties.font_size
+        cx = first.transform.offset_x / 12700.0 + first.transform.extent_width / 25400.0
+        cy = first.transform.offset_y / 12700.0 + (1.2 - APTOS_DESCENT) * size - size * 0.3
+        distance = math.hypot(cx - centre[0], cy - centre[1])
+        assert distance / radius == pytest.approx(fraction, abs=0.06), position
+
+
+def test_a_pie_legends_its_categories_not_its_series():
+    children, _ = _build(
+        pie_chart_xml(legend="r"), width=220.4724, height=181.1024
+    )
+    texts = {
+        "".join(r.text for p in child.text_body.paragraphs for r in p.runs)
+        for child in children
+        if isinstance(child, m.ShapeElement) and child.text_body is not None
+    }
+    assert {"Alpha", "Beta", "Gamma", "Delta"} <= texts
+    assert "S0" not in texts
+# -- Radar ------------------------------------------------------------------------------
+#
+# Measured on eighteen probe charts across three decks, all in the same
+# 220.4724 x 181.1024 pt frame, exported by PowerPoint 16.106 and read back out of the PDF
+# as exact vector coordinates -- plus `real-financial-report.pptx`'s own radar, whose
+# export is in the corpus and whose web, spokes, rings and polygons are all measurable
+# there despite the deck being skipped by the fidelity harness for want of Noto Sans JP.
+# Vector geometry does not move when a font is substituted, which is why the corpus can
+# pin the polar conventions that the brief for this work assumed only probes could.
+#
+# Frame-relative points throughout.  The frame centre is (110.2362, 90.5512).
+
+RADAR_CENTRE = (110.2362, 90.5512)
+RADAR_TOLERANCE_PT = 0.35
+
+#: PowerPoint's own radius for each probe, in points, against a plot region whose half
+#: height is 79.5512 pt and half width 99.2362 pt.  Five of these are bound by the
+#: vertical label reserve and three by the horizontal one; `no-cat-axis` has no labels at
+#: all and is the anchor that says the reserve goes to zero.
+RADAR_RADIUS = {
+    "standard": ({}, 69.47),
+    "aptos-8": ({"size": 8.0}, 72.48),
+    "aptos-14": ({"size": 14.0}, 63.36),
+    "arial-10": ({"size": 10.0, "face": "Arial"}, 70.80),
+    "arial-14": ({"size": 14.0, "face": "Arial"}, 65.04),
+    "no-cat-axis": ({"delete_cat": True}, 79.44),
+    "long-labels": (
+        {
+            "cats": (
+                "Category One", "Category Two", "Category Three",
+                "Category Four", "Category Five",
+            )
+        },
+        60.24,
+    ),
+    "two-line": (
+        {"cats": ("One Two", "Two Three", "Red Blue", "Six Ten", "Sun Moon")},
+        55.44,
+    ),
+    "four-cats": ({"cats": ("A", "B", "C", "D"), "values": ((3, 4, 5, 2),)}, 69.47),
+    "eight-cats": (
+        {"cats": tuple("ABCDEFGH"), "values": ((3, 4, 5, 2, 1, 3, 4, 2),)},
+        69.47,
+    ),
+}
+
+
+def radar_chart_xml(
+    *,
+    style="standard",
+    cats=("A", "B", "C", "D", "E"),
+    values=((3, 4, 5, 2, 1),),
+    legend=None,
+    size=None,
+    face=None,
+    delete_cat=False,
+    delete_val=False,
+    gridlines=True,
+    cat_axis_line=False,
+    val_axis_line=False,
+    series_line=None,
+    dlbl_show=(),
+):
+    """One radar probe, in the same shape the exported decks used.
+
+    ``val_axis_line``: ``True`` for a #00B050 1.5 pt line, ``"none"`` for ``a:noFill``."""
+    body = ""
+    for index, row in enumerate(values):
+        points = "".join(
+            f"<c:pt idx='{i}'><c:v>{v}</c:v></c:pt>" for i, v in enumerate(row)
+        )
+        cpts = "".join(
+            f"<c:pt idx='{i}'><c:v>{v}</c:v></c:pt>" for i, v in enumerate(cats)
+        )
+        sp = (
+            f"<c:spPr><a:solidFill><a:srgbClr val='2563EB'/></a:solidFill>"
+            f"<a:ln w='{series_line}'>"
+            "<a:solidFill><a:srgbClr val='2563EB'/></a:solidFill></a:ln></c:spPr>"
+            if series_line
+            else ""
+        )
+        labels = ""
+        if dlbl_show:
+            flags = "".join(
+                f"<c:show{flag} val='{1 if flag in dlbl_show else 0}'/>"
+                for flag in ("LegendKey", "Val", "CatName", "SerName", "Percent",
+                             "BubbleSize")
+            )
+            labels = f"<c:dLbls>{flags}</c:dLbls>"
+        # CT_RadarSer's sequence is strict: idx, order, tx, spPr, marker, dPt, dLbls,
+        # cat, val.  Out of order is one of the four known PowerPoint hang signatures.
+        body += (
+            f"<c:ser><c:idx val='{index}'/><c:order val='{index}'/>"
+            "<c:tx><c:strRef><c:strCache><c:ptCount val='1'/>"
+            f"<c:pt idx='0'><c:v>Series {index + 1}</c:v></c:pt>"
+            "</c:strCache></c:strRef></c:tx>"
+            f"{sp}{labels}"
+            f"<c:cat><c:strRef><c:strCache><c:ptCount val='{len(cats)}'/>{cpts}"
+            "</c:strCache></c:strRef></c:cat>"
+            "<c:val><c:numRef><c:numCache><c:formatCode>General</c:formatCode>"
+            f"<c:ptCount val='{len(row)}'/>{points}"
+            "</c:numCache></c:numRef></c:val></c:ser>"
+        )
+    legend_xml = (
+        f"<c:legend><c:legendPos val='{legend}'/><c:overlay val='0'/></c:legend>"
+        if legend
+        else ""
+    )
+    tx_pr = (
+        "<c:txPr><a:bodyPr/><a:lstStyle/><a:p><a:pPr>"
+        f"<a:defRPr sz='{int(size * 100)}'>"
+        + (f"<a:latin typeface='{face}'/>" if face else "")
+        + "</a:defRPr></a:pPr><a:endParaRPr lang='en-US'/></a:p></c:txPr>"
+        if size
+        else ""
+    )
+    cat_line = (
+        "<c:spPr><a:ln w='12700'><a:solidFill><a:srgbClr val='888888'/></a:solidFill>"
+        "</a:ln></c:spPr>"
+        if cat_axis_line
+        else ""
+    )
+    val_line = {
+        True: "<c:spPr><a:ln w='19050'><a:solidFill><a:srgbClr val='00B050'/></a:solidFill>"
+              "</a:ln></c:spPr>",
+        "none": "<c:spPr><a:ln><a:noFill/></a:ln></c:spPr>",
+        False: "",
+    }[val_axis_line]
+    grid = "<c:majorGridlines/>" if gridlines else ""
+    return (
+        "<c:chart><c:autoTitleDeleted val='1'/><c:plotArea><c:layout/>"
+        f"<c:radarChart><c:radarStyle val='{style}'/><c:varyColors val='0'/>{body}"
+        "<c:axId val='100002'/><c:axId val='100003'/></c:radarChart>"
+        "<c:catAx><c:axId val='100002'/>"
+        "<c:scaling><c:orientation val='minMax'/></c:scaling>"
+        f"<c:delete val='{1 if delete_cat else 0}'/><c:axPos val='b'/>"
+        "<c:numFmt formatCode='General' sourceLinked='1'/>"
+        f"<c:majorTickMark val='out'/><c:minorTickMark val='none'/>"
+        f"<c:tickLblPos val='nextTo'/>{cat_line}<c:crossAx val='100003'/>"
+        "<c:crosses val='autoZero'/><c:auto val='1'/><c:lblAlgn val='ctr'/>"
+        "<c:lblOffset val='100'/></c:catAx>"
+        "<c:valAx><c:axId val='100003'/>"
+        "<c:scaling><c:orientation val='minMax'/></c:scaling>"
+        f"<c:delete val='{1 if delete_val else 0}'/><c:axPos val='l'/>{grid}"
+        "<c:numFmt formatCode='General' sourceLinked='1'/>"
+        "<c:majorTickMark val='out'/><c:minorTickMark val='none'/>"
+        f"<c:tickLblPos val='nextTo'/>{val_line}<c:crossAx val='100002'/>"
+        "<c:crosses val='autoZero'/><c:crossBetween val='between'/></c:valAx>"
+        f"</c:plotArea>{legend_xml}<c:plotVisOnly val='1'/>"
+        f"<c:dispBlanksAs val='gap'/></c:chart>{tx_pr}"
+    )
+
+
+def _radar(**kwargs):
+    children, _ = _build(
+        radar_chart_xml(**kwargs), width=220.4724, height=181.1024
+    )
+    return children
+
+
+def _paths(children):
+    """Every custom-geometry shape, with its points in frame coordinates."""
+    out = []
+    for child in children:
+        if not isinstance(child, m.ShapeElement):
+            continue
+        if not isinstance(child.geometry, m.CustomGeometry):
+            continue
+        out.append((child, _path_points(child)))
+    return out
+
+
+def _radius_of(children, centre=RADAR_CENTRE):
+    points = [point for _, points in _paths(children) for point in points]
+    return max(math.hypot(x - centre[0], y - centre[1]) for x, y in points)
+
+
+@pytest.mark.parametrize("name", list(RADAR_RADIUS))
+def test_the_radar_radius_matches_powerpoints(name):
+    """The whole layout in one number, across two faces, three sizes and four shapes."""
+    kwargs, expected = RADAR_RADIUS[name]
+    ours = _radius_of(_radar(**kwargs))
+    assert ours == pytest.approx(expected, abs=RADAR_TOLERANCE_PT), (
+        f"{name}: PowerPoint {expected:.2f}, ours {ours:.2f}"
+    )
+
+
+def test_the_web_is_polygonal_and_follows_the_category_count():
+    """Three, five, six and eight categories gave triangles, pentagons, hexagons, octagons."""
+    for count, cats in ((3, "ABC"), (5, "ABCDE"), (6, "ABCDEF"), (8, "ABCDEFGH")):
+        values = tuple((index % 5) + 1 for index in range(count))
+        rings = [
+            points
+            for shape, points in _paths(_radar(cats=tuple(cats), values=(values,)))
+            if isinstance(shape.fill, m.NoFill)
+        ]
+        assert rings, count
+        # A ring closes, so it visits one more point than it has corners.
+        assert all(len(points) == count + 1 for points in rings), (
+            count, [len(p) for p in rings]
+        )
+
+
+def test_angle_zero_is_twelve_oclock_and_categories_run_clockwise():
+    """Measured on the four-category probe: due north, east, south then west."""
+    children = _radar(cats=("A", "B", "C", "D"), values=((5, 5, 5, 5),))
+    ring = max(
+        (
+            points
+            for shape, points in _paths(children)
+            if isinstance(shape.fill, m.NoFill)
+        ),
+        key=lambda points: max(
+            math.hypot(x - RADAR_CENTRE[0], y - RADAR_CENTRE[1]) for x, y in points
+        ),
+    )
+    radius = max(
+        math.hypot(x - RADAR_CENTRE[0], y - RADAR_CENTRE[1]) for x, y in ring
+    )
+    expected = [
+        (RADAR_CENTRE[0], RADAR_CENTRE[1] - radius),
+        (RADAR_CENTRE[0] + radius, RADAR_CENTRE[1]),
+        (RADAR_CENTRE[0], RADAR_CENTRE[1] + radius),
+        (RADAR_CENTRE[0] - radius, RADAR_CENTRE[1]),
+    ]
+    for wanted in expected:
+        assert any(
+            abs(x - wanted[0]) < 0.05 and abs(y - wanted[1]) < 0.05 for x, y in ring
+        ), (wanted, ring)
+
+
+def test_a_point_sits_at_its_fraction_of_the_radius():
+    """Values 3, 4, 5, 2, 1 on a 0..5 axis: 0.6, 0.8, 1.0, 0.4 and 0.2 of the radius."""
+    children = _radar()
+    radius = _radius_of(children)
+    series = [
+        points
+        for shape, points in _paths(children)
+        if isinstance(shape.fill, m.NoFill) and len(points) == 6
+    ]
+    # Rings and the series polygon are all five-sided; the series is the one whose
+    # vertices are at different radii.
+    ragged = [
+        points
+        for points in series
+        if len({
+            round(math.hypot(x - RADAR_CENTRE[0], y - RADAR_CENTRE[1]), 1)
+            for x, y in points
+        }) > 1
+    ]
+    assert len(ragged) == 1
+    distances = [
+        math.hypot(x - RADAR_CENTRE[0], y - RADAR_CENTRE[1]) for x, y in ragged[0][:5]
+    ]
+    assert [d / radius for d in distances] == pytest.approx(
+        [0.6, 0.8, 1.0, 0.4, 0.2], abs=0.01
+    )
+
+
+def test_a_radars_axis_stops_at_the_data_where_a_bars_goes_past_it():
+    """0..5 of data draws five rings where a bar chart's axis goes to six.
+
+    A radar pads nothing -- that is the same measurement as its extent stopping at the
+    data -- so both halves of `strict=False` are exercised here.  The unit then follows the
+    radius: five rings on a radius with room for five or six intervals, and ten rings on
+    one with room for ten, which is what the `axis-ring` deck drew at 0..5 on its widest
+    frame.
+    """
+    from pptx2svg.resolve.chart import nice_axis_scale
+
+    assert nice_axis_scale(0, 5) == (0.0, 6.0, 1.0)
+    assert nice_axis_scale(0, 5, intervals=5, strict=False) == (0.0, 5.0, 1.0)
+    assert nice_axis_scale(0, 5, intervals=10, strict=False) == (0.0, 5.0, 0.5)
+
+    children = _radar()
+    rings = [
+        points
+        for shape, points in _paths(children)
+        if isinstance(shape.fill, m.NoFill) and len(points) == 6
+    ]
+    # Five rings plus the series polygon.
+    assert len(rings) == 6
+
+
+def test_standard_and_marker_draw_the_same_picture():
+    """ECMA-376 says `standard` has no markers; PowerPoint's two exports are identical."""
+    def summary(style):
+        children = _radar(style=style)
+        return [
+            (
+                type(child).__name__,
+                round(child.transform.offset_x / 12700.0, 3),
+                round(child.transform.offset_y / 12700.0, 3),
+            )
+            for child in children
+        ]
+
+    assert len(summary("standard")) > 10, "nothing drawn, so the comparison is vacuous"
+    assert summary("standard") == summary("marker")
+
+
+def test_a_filled_radar_fills_and_does_not_stroke_or_mark():
+    """Measured: the probe, which states no `a:ln`, emits a bare `f` and no markers."""
+    filled = [
+        shape
+        for shape, _ in _paths(_radar(style="filled"))
+        if isinstance(shape.fill, m.SolidFill)
+    ]
+    assert len(filled) == 1
+    assert filled[0].outline is None
+    # No markers either: every remaining shape is a web ring.
+    markers = [
+        child
+        for child in _radar(style="filled")
+        if isinstance(child, m.ShapeElement)
+        and isinstance(child.geometry, m.PresetGeometry)
+        and child.geometry.preset in ("diamond", "ellipse", "rect")
+        and child.text_body is None
+    ]
+    assert markers == []
+
+
+def test_a_filled_radar_strokes_when_the_series_states_a_line():
+    """The other half of the pair: the corpus radar says `w="25400"` and is stroked."""
+    filled = [
+        shape
+        for shape, _ in _paths(_radar(style="filled", series_line=25400))
+        if isinstance(shape.fill, m.SolidFill)
+    ]
+    assert len(filled) == 1
+    assert filled[0].outline is not None
+    assert filled[0].outline.width == 25400
+
+
+def test_the_web_is_drawn_without_major_gridlines_and_with_the_value_axis_deleted():
+    """Both probes still drew every ring, so the web is not the value axis' gridlines."""
+    def rings(**kwargs):
+        return [
+            points
+            for shape, points in _paths(_radar(**kwargs))
+            if isinstance(shape.fill, m.NoFill) and len(points) == 6
+        ]
+
+    assert len(rings()) == len(rings(gridlines=False)) == len(rings(delete_val=True))
+
+
+def _spokes(children):
+    return [c for c in children if isinstance(c, m.ConnectorElement)]
+
+
+def test_spokes_are_the_value_axis_line_and_drawn_only_when_it_states_one():
+    """``tools/make_exposed_probe.py``: with the category axis' line red and the value
+    axis' green, PowerPoint drew the spokes green and nothing red; with the value axis'
+    line alone it drew them, with the category axis' alone, neither, the value axis'
+    ``a:noFill`` or the value axis deleted it drew none."""
+    assert _spokes(_radar()) == []
+    assert _spokes(_radar(cat_axis_line=True)) == []
+    assert _spokes(_radar(val_axis_line="none", cat_axis_line=True)) == []
+    assert _spokes(_radar(val_axis_line=True, delete_val=True)) == []
+    for kwargs in ({"val_axis_line": True}, {"val_axis_line": True, "cat_axis_line": True}):
+        spokes = _spokes(_radar(**kwargs))
+        assert len(spokes) == 5
+        assert all(spoke.outline.width == 19050 for spoke in spokes)
+        assert all(spoke.outline.fill.color.hex.upper() == "#00B050" for spoke in spokes)
+
+
+@pytest.mark.parametrize("style, over", [("filled", True), ("standard", False), ("marker", False)])
+def test_spokes_go_over_a_filled_radar_and_under_every_other(style, over):
+    """The probe's paint order: rings, then the spokes, the series and their markers --
+    except ``filled``, whose spokes come after its series (``real-financial-report``
+    slide 4's filled radar showed its spokes over the fill, and ours hid them)."""
+    children = _radar(style=style, val_axis_line=True, series_line=25400)
+    order = [
+        "spoke" if isinstance(c, m.ConnectorElement)
+        else "series" if isinstance(c, m.ShapeElement) and isinstance(c.geometry, m.CustomGeometry)
+        and c.outline is not None and c.outline.width == 25400
+        else None
+        for c in children
+    ]
+    order = [kind for kind in order if kind]
+    spokes = [index for index, kind in enumerate(order) if kind == "spoke"]
+    series = [index for index, kind in enumerate(order) if kind == "series"]
+    assert spokes and series
+    assert (min(spokes) > max(series)) is over
+    assert (max(spokes) < min(series)) is (not over)
+
+
+def test_the_value_labels_are_right_aligned_two_digits_left_of_the_spoke():
+    """Measured on six charts across two faces and three sizes, worst residual 0.14 pt."""
+    from pptx2svg.resolve.chart import text_width
+
+    for size, face, pen in ((10.0, None, 94.216), (8.0, None, 97.411),
+                            (14.0, None, 87.796), (10.0, "Arial", 93.556),
+                            (14.0, "Arial", 86.881)):
+        family = face or "Aptos"
+        children = _radar(size=size, face=face)
+        labels = [
+            child
+            for child in children
+            if isinstance(child, m.ShapeElement) and child.text_body is not None
+            and "".join(
+                r.text for p in child.text_body.paragraphs for r in p.runs
+            ) == "0"
+        ]
+        assert len(labels) == 1, (size, face)
+        box = labels[0].transform
+        # The text is right-aligned in its box with no right inset, so the box's right
+        # edge is the text's.  PowerPoint's pen x plus the digit's advance is where that
+        # edge landed.
+        right = (box.offset_x + box.extent_width) / 12700.0
+        expected = pen + text_width("0", family, size)
+        assert right == pytest.approx(expected, abs=0.2), (size, face)
+        # And that edge is two digit widths left of the spoke, which is the rule itself.
+        assert right == pytest.approx(
+            RADAR_CENTRE[0] - 2 * text_width("0", family, size), abs=0.01
+        ), (size, face)
+
+
+def test_a_category_label_wraps_rather_than_rotating():
+    """Every `rot` in the long-label probe is zero, and "Category Three" is two lines."""
+    from pptx2svg.resolve.chart import _wrap_to_width, font_box, ChartFont
+
+    font = ChartFont(family="Aptos", box=font_box("Aptos", 10.0))
+    cap = 198.4724 * 0.25
+    assert _wrap_to_width("Category Three", font, cap) == ["Category", "Three"]
+    # The bracket: 43.72 pt stayed on one line, 59.10 pt wrapped.
+    assert _wrap_to_width("Two Three", font, cap) == ["Two Three"]
+    assert _wrap_to_width("Category One", font, cap) == ["Category", "One"]
+    # A single word is never split.
+    assert _wrap_to_width("Supercalifragilistic", font, 10.0) == [
+        "Supercalifragilistic"
+    ]
+
+
+def test_a_side_category_label_is_anchored_at_the_vertex():
+    """Measured pen positions: B at 178.945, C at 152.701, D right edge 68.132."""
+    children = _radar()
+    found = {}
+    for child in children:
+        if not isinstance(child, m.ShapeElement) or child.text_body is None:
+            continue
+        text = "".join(r.text for p in child.text_body.paragraphs for r in p.runs)
+        if text in ("B", "C", "D", "E"):
+            size = child.text_body.paragraphs[0].runs[0].properties.font_size
+            left = child.transform.offset_x / 12700.0 + size / 2
+            found[text] = (left, left + child.transform.extent_width / 12700.0 - size)
+    assert found["B"][0] == pytest.approx(178.945, abs=0.4)
+    assert found["C"][0] == pytest.approx(152.701, abs=0.4)
+    assert found["D"][1] == pytest.approx(68.132, abs=0.5)
+    assert found["E"][1] == pytest.approx(42.637, abs=1.2)
+
+
+def test_a_line_style_radar_legends_with_a_line_and_marker_not_a_swatch():
+    """Measured: a 19.200 pt rule with the marker on it, then 2.025 pt before the text."""
+    children = _radar(legend="r")
+    keys = [c for c in children if isinstance(c, m.ConnectorElement)]
+    assert len(keys) == 1
+    assert keys[0].transform.extent_width / 12700.0 == pytest.approx(19.2, abs=0.01)
+    assert keys[0].transform.offset_x / 12700.0 == pytest.approx(154.957, abs=0.4)
+    # A filled radar takes the ordinary swatch instead.
+    assert [
+        c for c in _radar(style="filled", legend="r")
+        if isinstance(c, m.ConnectorElement)
+    ] == []
+
+
+def test_a_radar_legends_its_series_not_its_categories():
+    texts = {
+        "".join(r.text for p in child.text_body.paragraphs for r in p.runs)
+        for child in _radar(legend="r")
+        if isinstance(child, m.ShapeElement) and child.text_body is not None
+    }
+    assert "Series 1" in texts
+
+
+def test_a_radar_series_with_no_marker_size_gets_six_points_not_seven():
+    """Measured 6.0 pt square on the probe's second series; ECMA-376's default is 7."""
+    markers = [
+        child
+        for child in _radar(values=((3, 4, 5, 2, 1), (1, 2, 3, 4, 5)))
+        if isinstance(child, m.ShapeElement)
+        and isinstance(child.geometry, m.PresetGeometry)
+        and child.geometry.preset in ("diamond", "rect")
+        and child.text_body is None
+    ]
+    assert markers, "no markers drawn"
+    assert all(
+        marker.transform.extent_width / 12700.0 == pytest.approx(6.0, abs=0.01)
+        for marker in markers
+    )
+    # The cycle is diamond then square, the same one a line chart uses.
+    presets = [marker.geometry.preset for marker in markers]
+    assert presets[:5] == ["diamond"] * 5
+    assert presets[5:] == ["rect"] * 5
+
+
+def test_a_blank_leaves_the_radar_ring_open():
+    """Not measured -- mirrors the line chart, whose blank behaviour was.
+
+    A whole ring visits six points (five corners and the close).  A blank at one corner
+    leaves **one** open run of four, not two runs of two and three: the ring is a cycle,
+    so the stretch that passes through index 0 is a single run.  No marker is drawn for
+    the missing point.
+    """
+    children = _radar(values=((3, 4, None, 2, 1),))
+    runs = sorted(
+        len(points)
+        for shape, points in _paths(children)
+        if isinstance(shape.fill, m.NoFill) and len(points) != 6
+    )
+    assert runs == [4]
+    markers = [
+        child
+        for child in children
+        if isinstance(child, m.ShapeElement)
+        and isinstance(child.geometry, m.PresetGeometry)
+        and child.geometry.preset == "diamond"
+    ]
+    assert len(markers) == 4
+
+
+def test_the_real_radar_matches_powerpoints_geometry():
+    """chart5 of `real-financial-report.pptx`, the only radar in the corpus.
+
+    PowerPoint's own export puts the centre at (132.72, 75.60) with a radius of 45.56 pt,
+    so its label reserve is 18.44 pt of the 64 pt half-region.
+
+    **The radius was 6.83 pt out and most of that is now gone.**  The category labels are
+    Japanese; the chart names `<a:latin typeface="Arial"/>` and no `<a:ea>` at all, and
+    `font_box` used to read the Latin face for a label the Latin face cannot draw a single
+    glyph of.  Arial's line box is 1.117 em, which the fitted reserve turns into 11.61 pt.
+    The face PowerPoint actually drew those labels in is the theme's
+    `<a:font script="Jpan" typeface="游ゴシック"/>` -- its export embeds YuGothic-Regular
+    for them -- and our table for it has a 1.448 em line box, giving 16.61 pt and a radius
+    of 47.39.
+
+    The 1.83 pt left is the fitted reserve itself, not the face: `RADAR_LABEL_RESERVE_*`
+    was fitted to five Latin probes and reproducing PowerPoint's 18.44 exactly would want
+    a 1.5696 em line box, which is neither Noto Sans JP's 1.448 nor Yu Gothic's own hhea
+    figure.  Whether the reserve has a term that only CJK exercises is unmeasured; there
+    is one CJK radar in the corpus and no probe deck for it.
+    """
+    from tests.conftest import FIXTURE_DIR
+
+    deck = convert_pptx_to_model((FIXTURE_DIR / "real-financial-report.pptx").read_bytes())
+    charts = [
+        element
+        for slide in deck.slides
+        for element in slide.elements
+        if isinstance(element, m.ChartElement) and element.chart.kind == "radarChart"
+    ]
+    assert len(charts) == 1
+    chart = charts[0]
+    assert chart.chart.value_axis.minimum == 0.0
+    assert chart.chart.value_axis.maximum == 100.0
+    assert chart.chart.value_axis.major_unit == 50.0
+
+    points = [point for _, points in _paths(chart.children) for point in points]
+    xs = [x for x, _ in points]
+    ys = [y for _, y in points]
+    assert (min(xs) + max(xs)) / 2 == pytest.approx(132.720, abs=0.2)
+    assert (min(ys) + max(ys)) / 2 == pytest.approx(75.600, abs=0.7)
+    # The outer ring is the 100 % series, so its half-height is the drawn radius.
+    radius = (max(ys) - min(ys)) / 2
+    assert radius == pytest.approx(47.39, abs=0.1)
+    assert abs(radius - 45.56) < abs(52.39 - 45.56)
+
+    # Two filled series, both stroked because the file states `a:ln w="25400"`, and six
+    # spokes because its value axis states a #888888 line.
+    filled = [
+        shape for shape, _ in _paths(chart.children)
+        if isinstance(shape.fill, m.SolidFill)
+    ]
+    assert [shape.fill.color.hex.upper() for shape in filled] == ["#2563EB", "#94A3B8"]
+    assert all(shape.outline is not None for shape in filled)
+    assert len([c for c in chart.children if isinstance(c, m.ConnectorElement)]) == 6
+
+
+# -- Rotated category labels ------------------------------------------------------------
+#
+# Two probe decks of six bar charts, all in the same 220.4724 x 181.1024 pt frame with
+# five categories and 10 pt Aptos labels, exported by PowerPoint 16.106 and read back out
+# of the PDF as exact vector coordinates.  The first sweeps the label from a fifth of its
+# band to four times it; the second straddles exactly one band width, which is what turns
+# the threshold from a guess into a 5% window.
+#
+# `real-financial-report.pptx`'s own chart3 is the third source: its export rotates too,
+# at 12 pt, which is where the 45 degrees is confirmed off a real deck rather than a probe.
+
+#: The band every chart in both decks has: (209.47 - 21.07) / 5, measured off the
+#: gridlines.
+ROTATION_BAND_PT = 37.68
+
+#: name -> (categories, widest label's width in pt, does PowerPoint turn them,
+#: PowerPoint's bottom inset in pt).  The width is the widest of the five, which is what
+#: sets the band -- the deck whose five labels differ only by a trailing letter showed
+#: that to 1.01 pt, and using the first label instead left a 0.73 pt residual everywhere.
+ROTATION_SWEEP = {
+    # The straddle: 36.62 pt on a 37.68 pt band stays level, 38.59 pt turns.
+    "r085": (("000000",) * 5, 32.05, False, 24.965),
+    "r092": (("CCCCC",) * 5, 34.62, False, 24.965),
+    "r097": (("OOOOO",) * 5, 36.62, False, 24.965),
+    "r102": (("hhhhhhh",) * 5, 38.59, True, 48.688),
+    "r108": (("vvvvvvvvv",) * 5, 40.69, True, 50.155),
+    "r115": (("wwwwww",) * 5, 43.24, True, 51.959),
+    # The range.
+    "w1": (tuple("ABCDE"), 6.90, False, 24.965),
+    "w2": (tuple(f"Cat{n}" for n in "ABCDE"), 22.37, False, 24.965),
+    "w3": (tuple(f"Category{n}" for n in "ABCDE"), 45.87, True, 53.843),
+    "w4": (tuple(f"CategoryLong{n}" for n in "ABCDE"), 66.74, True, 68.604),
+    "w5": (tuple(f"CategoryLongerStill{n}" for n in "ABCDE"), 91.84, True, 86.356),
+}
+
+#: The unrotated band is a different formula and was fitted separately, so it keeps the
+#: older sweep's tolerance; the rotated one lands an order of magnitude closer.
+ROTATION_TOLERANCE_PT = 0.15
+LEVEL_TOLERANCE_PT = 0.2
+
+
+def rotation_chart_xml(cats, values=None):
+    """A plain clustered column chart whose only variable is its category labels."""
+    values = values or tuple(3 + (index % 3) for index in range(len(cats)))
+    points = "".join(
+        f"<c:pt idx='{i}'><c:v>{v}</c:v></c:pt>" for i, v in enumerate(values)
+    )
+    cpts = "".join(f"<c:pt idx='{i}'><c:v>{v}</c:v></c:pt>" for i, v in enumerate(cats))
+    return (
+        "<c:chart><c:autoTitleDeleted val='1'/><c:plotArea><c:layout/>"
+        "<c:barChart><c:barDir val='col'/><c:grouping val='clustered'/>"
+        "<c:varyColors val='0'/>"
+        "<c:ser><c:idx val='0'/><c:order val='0'/>"
+        "<c:tx><c:strRef><c:strCache><c:ptCount val='1'/>"
+        "<c:pt idx='0'><c:v>Coverage</c:v></c:pt></c:strCache></c:strRef></c:tx>"
+        "<c:spPr><a:solidFill><a:srgbClr val='2563EB'/></a:solidFill></c:spPr>"
+        f"<c:cat><c:strRef><c:strCache><c:ptCount val='{len(cats)}'/>{cpts}"
+        "</c:strCache></c:strRef></c:cat>"
+        "<c:val><c:numRef><c:numCache><c:formatCode>General</c:formatCode>"
+        f"<c:ptCount val='{len(values)}'/>{points}"
+        "</c:numCache></c:numRef></c:val></c:ser>"
+        "<c:axId val='100002'/><c:axId val='100003'/></c:barChart>"
+        "<c:catAx><c:axId val='100002'/>"
+        "<c:scaling><c:orientation val='minMax'/></c:scaling>"
+        "<c:delete val='0'/><c:axPos val='b'/>"
+        "<c:numFmt formatCode='General' sourceLinked='1'/>"
+        "<c:majorTickMark val='none'/><c:minorTickMark val='none'/>"
+        "<c:tickLblPos val='nextTo'/><c:crossAx val='100003'/>"
+        "<c:crosses val='autoZero'/><c:auto val='1'/><c:lblAlgn val='ctr'/>"
+        "<c:lblOffset val='100'/></c:catAx>"
+        "<c:valAx><c:axId val='100003'/>"
+        "<c:scaling><c:orientation val='minMax'/></c:scaling>"
+        "<c:delete val='0'/><c:axPos val='l'/><c:majorGridlines/>"
+        "<c:numFmt formatCode='General' sourceLinked='1'/>"
+        "<c:majorTickMark val='none'/><c:minorTickMark val='none'/>"
+        "<c:tickLblPos val='nextTo'/><c:crossAx val='100002'/>"
+        "<c:crosses val='autoZero'/><c:crossBetween val='between'/></c:valAx>"
+        "</c:plotArea><c:plotVisOnly val='1'/>"
+        "<c:dispBlanksAs val='gap'/></c:chart>"
+    )
+
+
+def _rotation_probe(cats, **kwargs):
+    return _build(
+        rotation_chart_xml(cats, **kwargs), width=220.4724, height=181.1024
+    )[0]
+
+
+def _turned(children):
+    """Every label the resolver rotated, left to right."""
+    turned = [
+        child
+        for child in children
+        if isinstance(child, m.ShapeElement)
+        and child.text_body is not None
+        and child.transform.rotation
+    ]
+    return sorted(turned, key=lambda shape: shape.transform.offset_x)
+
+
+def _runs(shapes):
+    """Every text run in the given shapes, in order."""
+    return [
+        run
+        for shape in shapes
+        for paragraph in shape.text_body.paragraphs
+        for run in paragraph.runs
+    ]
+
+
+def _bottom_inset(children, frame_height=181.1024):
+    return frame_height - _pt(_plot_bottom(children))
+
+
+@pytest.mark.parametrize("name", list(ROTATION_SWEEP))
+def test_a_category_label_turns_when_it_is_wider_than_its_band(name):
+    """The threshold, and the 5% window the probe pins it inside.
+
+    ``OOOOO`` is 36.62 pt on a 37.68 pt band and PowerPoint left it level; ``hhhhhhh`` is
+    38.59 pt on the same band and PowerPoint turned it.  One band width is not a round
+    guess -- it is the middle of (0.972, 1.024].
+    """
+    cats, width, turns, _ = ROTATION_SWEEP[name]
+    children = _rotation_probe(cats)
+    assert bool(_turned(children)) is turns, (
+        f"{name}: widest label {width:.2f} pt on a {ROTATION_BAND_PT:.2f} pt band, "
+        f"{width / ROTATION_BAND_PT:.3f} of it"
+    )
+
+
+@pytest.mark.parametrize("name", list(ROTATION_SWEEP))
+def test_the_band_under_the_plot_matches_powerpoints(name):
+    """Both formulas in one number: the level band and the turned one.
+
+    Turned, it is ``21.39 + width * sin 45``, and the six rotated rows land within
+    0.015 pt of PowerPoint.  Level, it is the older ``6.5 + lineHeight + 0.615 em``,
+    which is 0.11 pt light and was fitted before this sweep existed.
+    """
+    cats, _, turns, expected = ROTATION_SWEEP[name]
+    ours = _bottom_inset(_rotation_probe(cats))
+    tolerance = ROTATION_TOLERANCE_PT if turns else LEVEL_TOLERANCE_PT
+    assert ours == pytest.approx(expected, abs=tolerance), (
+        f"{name}: PowerPoint {expected:.3f}, ours {ours:.3f}"
+    )
+
+
+def test_a_turned_label_snaps_to_forty_five_degrees():
+    """Twelve probes from 1.02 band widths to 4.18 all came out at exactly 45.
+
+    No intermediate angle appeared anywhere in that range and nothing went to 90, so the
+    angle is a constant rather than a function of the crowding.
+    """
+    for name, (cats, _, turns, _inset) in ROTATION_SWEEP.items():
+        if not turns:
+            continue
+        turned = _turned(_rotation_probe(cats))
+        assert len(turned) == 5, name
+        assert {shape.transform.rotation for shape in turned} == {-45.0}, name
+
+
+def test_a_turned_label_lands_where_powerpoint_put_it():
+    """The anchor is the far end of the rotated baseline, not the box.
+
+    PowerPoint's pens for ``CategoryA``..``CategoryE`` are 10.781, 48.238, 85.171,
+    122.776 and 161.254, all on frame row 171.600.  Recovering ours means undoing the
+    rotation about the box centre, which is the same arithmetic the resolver does forwards.
+    """
+    from pptx2svg.resolve.chart import font_box
+
+    children = _rotation_probe(tuple(f"Category{n}" for n in "ABCDE"))
+    box = font_box("Aptos", 10.0)
+    radians = math.radians(-45.0)
+    cos, sin = math.cos(radians), math.sin(radians)
+    pens = []
+    for shape in _turned(children):
+        transform = shape.transform
+        width = _pt(transform.extent_width)
+        height = _pt(transform.extent_height)
+        centre_x = _pt(transform.offset_x) + width / 2
+        centre_y = _pt(transform.offset_y) + height / 2
+        # The *left* end of the right-aligned baseline, inside the unrotated box.
+        offset_x = -width / 2 + box.size / 2
+        offset_y = box.first_baseline - height / 2
+        pens.append(
+            (
+                centre_x + offset_x * cos - offset_y * sin,
+                centre_y + offset_x * sin + offset_y * cos,
+            )
+        )
+    expected = [10.781, 48.238, 85.171, 122.776, 161.254]
+    assert len(pens) == len(expected)
+    for (x, y), truth in zip(pens, expected):
+        assert x == pytest.approx(truth, abs=0.6), (x, truth)
+        # **1.0 pt is the standing residual on this row, and it is the probe deck's own
+        # inconsistency rather than slack.**  Those six probes gave three numbers -- a
+        # 21.39 pt band, a 12.7 pt drop to the anchor and this pen row -- and the first two
+        # leave 8.69 pt under the pen where the row itself says 9.50.  The label decks read
+        # the pen directly on 88 charts and put it at 8.78 for 10 pt Aptos, which agrees
+        # with the band and the anchor and not with this row.
+        assert y == pytest.approx(171.600, abs=1.1), y
+
+
+def test_a_label_four_times_its_band_reserves_less_than_the_one_below_it():
+    """The measurement that named the cap, reproduced including its inversion.
+
+    PowerPoint reserved 85.628 pt for a 130.90 pt label -- *less* than the 86.356 pt it
+    gave the 91.86 pt label one step below it.  No clamp on the width produces both, and
+    for three decks that stood in ``_bottom_label_band`` as an unidentified cap.  It is a
+    **truncation**: the narrower label fits its 101.13 pt allowance and is drawn whole,
+    the wider one does not and is cut to ``CategoryLongerStillA`` at 90.83 pt, and a cut
+    prefix is necessarily a hair narrower than a whole label that just fits.
+
+    Both numbers, and the 0.728 pt between them, come out of a rule fitted without either.
+    """
+    wide = tuple(f"CategoryLongerStillAndMore{n}" for n in "ABCDE")
+    near = tuple(f"CategoryLongerStill{n}" for n in "ABCDE")
+    ours, below = _bottom_inset(_rotation_probe(wide)), _bottom_inset(_rotation_probe(near))
+    assert ours == pytest.approx(85.628, abs=0.15)
+    assert below == pytest.approx(86.356, abs=0.15)
+    # The inversion itself, which is the part no cap on the width survives.
+    assert ours < below
+    assert below - ours == pytest.approx(0.728, abs=0.02)
+    # And the wider label is the one that comes back cut.
+    assert {run.text for run in _runs(_turned(_rotation_probe(wide)))} == {
+        "CategoryLongerStillA…"
+    }
+    assert {run.text for run in _runs(_turned(_rotation_probe(near)))} == set(near)
+
+
+def test_the_allowance_is_a_height_rule_and_ignores_the_width():
+    """Six frame widths and three category counts reserved *identically*, measured.
+
+    This is the trap the tick sweep walked into and it is checked the same way: the band
+    and the plot both move with the frame's width, so a rule fitted to either would fit
+    the probe deck and break on the corpus.  Frame widths of 150, 180, 250, 320, 400 and
+    500 pt and category counts of 3, 5 and 8 all came back with the same 83.343 pt reserve
+    and the same 32 characters kept.
+    """
+    def band_for(count, width):
+        cats = tuple("I" * 90 for _ in range(count))
+        children, _ = _build(
+            wrap_chart_xml(cats, face="Arial"), width=width, height=181.1024
+        )
+        return _bottom_inset(children)
+
+    bands = [band_for(5, width) for width in (150.0, 180.0, 250.0, 320.0, 400.0, 500.0)]
+    bands += [band_for(count, 220.4724) for count in (3, 5, 8)]
+    for band in bands:
+        assert band == pytest.approx(bands[0], abs=0.001)
+    # And the number itself is PowerPoint's, on the frame all nine share.
+    assert bands[0] == pytest.approx(83.343, abs=0.4)
+
+
+def test_a_label_is_cut_by_width_and_not_by_character_count():
+    """``MMMM...IIII`` and ``IIII...MMMM`` are the same 32 characters and the same 177.7 pt.
+
+    PowerPoint kept **10** of the first and **21** of the second, and reserved 79.34 and
+    81.34 pt for them.  A cut counted in characters gives one number for both.
+    """
+    from pptx2svg.resolve.chart import ChartFont, font_box, truncate_label
+
+    font = ChartFont(family="Arial", box=font_box("Arial", 10.0))
+    wide, narrow = "M" * 16 + "I" * 16, "I" * 16 + "M" * 16
+    assert font.width(wide) == pytest.approx(font.width(narrow), abs=0.001)
+    # The allowance the probe frame gives, read back out of the rule.
+    allowance = 101.13
+    assert truncate_label(wide, font, allowance) == "M" * 10 + "…"
+    assert truncate_label(narrow, font, allowance) == "I" * 16 + "M" * 5 + "…"
+    # A label that fits is left alone, and one character always survives.
+    assert truncate_label("MMM", font, allowance) == "MMM"
+    assert truncate_label("MMM", font, 1.0) == "M…"
+
+
+def test_a_horizontal_chart_does_not_turn_the_labels_under_it():
+    """Its bottom band holds *value* ticks, and no probe measured those rotating.
+
+    The same labels on a ``col`` chart do turn, which is what makes this a statement
+    about orientation rather than a test that passes because nothing rotates anywhere.
+    """
+    cats = tuple(f"CategoryLongerStill{n}" for n in "ABCDE")
+    assert len(_turned(_rotation_probe(cats))) == 5
+    body = rotation_chart_xml(cats).replace(
+        "<c:barDir val='col'/>", "<c:barDir val='bar'/>"
+    )
+    children, _ = _build(body, width=220.4724, height=181.1024)
+    assert _turned(children) == []
+
+
+def test_the_real_bar_chart_with_long_labels_turns_them():
+    """chart3 of `real-financial-report.pptx`, the corpus deck this was worth doing for.
+
+    PowerPoint turns its Japanese category labels 45 degrees -- its export's text matrix
+    is 8.4853 at 12 pt, which is ``12 * cos 45`` -- and reserves **69.538 pt** under the
+    plot.  We turn them too, which we did not before, and reserve 89.3.
+
+    **The remaining 19.8 pt is not the width, and that was the standing diagnosis until
+    PowerPoint's own export was read.**  This file used to say ``プラットフォーム`` came
+    out 96 pt where PowerPoint laid it out "at about 68"; the 68 was this formula inverted
+    through PowerPoint's inset, never a measurement.  The export settles it: every glyph
+    of every Japanese label on this chart advances exactly 12.000 pt -- one em of the
+    YuGothic-Regular it embeds for them -- so the string is 96 pt drawn and 96 pt
+    measured, and ``デジタル`` (48), ``グローバル`` (60) and ``その他`` (36) match to
+    0.000 pt as well.
+
+    What the export shows besides is the mechanism: **PowerPoint truncated the label.**  It
+    drew ``プラット…`` -- four katakana and an ellipsis -- where the category is eight
+    characters, and left ``グローバル`` at five whole.  Both follow from one allowance,
+    62.3 pt on this 135 pt frame, and this chart was *not* in the sweep that measured it:
+    it reserves **68.59** against PowerPoint's 69.538, where it reserved 89.3 uncapped and
+    27.29 before the labels turned at all.
+    """
+    from tests.conftest import FIXTURE_DIR
+
+    deck = convert_pptx_to_model(
+        (FIXTURE_DIR / "real-financial-report.pptx").read_bytes()
+    )
+    charts = [
+        element
+        for element in deck.slides[2].elements
+        if isinstance(element, m.ChartElement) and element.chart.kind == "barChart"
+    ]
+    assert len(charts) == 1
+    children = charts[0].children
+    turned = _turned(children)
+    assert len(turned) == 4
+    assert {shape.transform.rotation for shape in turned} == {-45.0}
+    inset = _bottom_inset(children, frame_height=135.0)
+    assert inset == pytest.approx(68.59, abs=0.15)
+    assert abs(inset - 69.538) < 1.0
+    # The label PowerPoint cut, cut in the same place, and the one it kept, kept.
+    drawn = {run.text for run in _runs(turned)}
+    assert "プラット…" in drawn
+    assert "グローバル" in drawn
+
+
+def test_labels_that_float_inside_the_plot_do_not_turn():
+    """Negative values lift the category axis off the plot's floor.
+
+    `_plot_rect` then reserves no band under the plot at all -- measured, on the negative
+    probe -- and prints the labels beside the zero line instead.  Turning them there would
+    draw into space nothing set aside, and no probe measured that corner, so the two stay
+    in step: the labels turn only where a band was reserved for them.
+    """
+    cats = tuple(f"CategoryLongerStill{n}" for n in "ABCDE")
+    # The same labels over positive data do turn, so this is about the axis floating.
+    assert len(_turned(_rotation_probe(cats))) == 5
+    children = _rotation_probe(cats, values=(3, -4, 5, -2, 1))
+    assert _turned(children) == []
+    # And they are still all drawn, level, rather than dropped.
+    labels = {
+        "".join(run.text for p in child.text_body.paragraphs for run in p.runs)
+        for child in children
+        if isinstance(child, m.ShapeElement) and child.text_body is not None
+    }
+    assert set(cats) <= labels
+
+
+# -- Wrapped category labels -------------------------------------------------------------
+#
+# Three probe decks of 57 bar charts in the same 220.4724 x 181.1024 pt frame as the
+# rotation sweep, five categories each, exported by PowerPoint 16.106 and read back out of
+# the PDF as exact vector coordinates.  The category labels are pinned to Arial except
+# where a row names another face, because the question these ask is what PowerPoint does
+# with a *face's* line box and Aptos alone cannot answer that.
+#
+# What they establish, in order of how much they change:
+#
+# * **Wrapping comes before rotation.**  `MMM MM` is 44.43 pt on a 37.761 pt band and came
+#   back level on two lines; `MMMMM` is 41.65 pt on the same band and turned.  The rule is
+#   the widest *unbreakable token*, not the widest label.
+# * **A label breaks at a space and nowhere else.**  Hyphen, slash, comma, underscore, en
+#   dash and CJK are all not break opportunities; U+00A0 is.
+# * **The band grows by one line box per extra line**, measured on a four-rung ladder in
+#   five faces.
+# * **One label that must turn turns all of them**, wrappable neighbours included.
+
+#: The band every chart in these decks has, read off the axis rule: 188.807 / 5.
+WRAP_BAND_PT = 37.761
+
+
+def wrap_chart_xml(cats, face="Arial", size=10.0, values=None, value_size=10.0):
+    """The rotation sweep's chart with its label face and size pinned.
+
+    ``value_size`` is the *value* axis' own size, which the wrap probes hold at 10 pt and
+    the inset probes set to the same size as the categories -- the value label is what
+    :meth:`ChartBuilder._top_inset` reads.
+    """
+    text = (
+        f"<c:txPr><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr sz='{int(size * 100)}'>"
+        f"<a:latin typeface='{face}'/><a:cs typeface='{face}'/></a:defRPr></a:pPr>"
+        "</a:p></c:txPr>"
+    )
+    value_text = text.replace(f"sz='{int(size * 100)}'", f"sz='{int(value_size * 100)}'")
+    body = rotation_chart_xml(cats, values=values)
+    body = body.replace("<c:lblOffset val='100'/>", f"{text}<c:lblOffset val='100'/>")
+    return body.replace(
+        "<c:crossBetween val='between'/>", f"{value_text}<c:crossBetween val='between'/>"
+    )
+
+
+def _wrap_probe(cats, **kwargs):
+    return _build(wrap_chart_xml(cats, **kwargs), width=220.4724, height=181.1024)[0]
+
+
+def _label_rows(children):
+    """Every level category label's text, grouped by baseline, top row first.
+
+    Taken as "below the plot", which is what separates a category label from a value one
+    without having to know either font.
+    """
+    floor = _pt(_plot_bottom(children))
+    rows: dict[float, list[str]] = {}
+    for child in children:
+        if not isinstance(child, m.ShapeElement) or child.text_body is None:
+            continue
+        if child.transform.rotation or _pt(child.transform.offset_y) < floor:
+            continue
+        text = "".join(run.text for p in child.text_body.paragraphs for run in p.runs)
+        rows.setdefault(round(_pt(child.transform.offset_y), 3), []).append(text)
+    return [rows[key] for key in sorted(rows)]
+
+
+#: name -> (categories, the widest unbreakable token in pt, does PowerPoint turn them).
+#: Every row is one probe chart.  The two that bracket the threshold are `token-under` and
+#: `token-over`: 37.22 pt wrapped and 38.33 pt turned on a 37.761 pt band, which puts the
+#: ratio inside (0.9857, 1.0151] -- and one band width is the only value that is also
+#: inside the unbroken sweep's (0.972, 1.024].
+WRAP_DECISION = {
+    # Wrapping wins whenever breaking the label saves it.
+    "space-break": (("MMM MM",) * 5, 24.99, False),
+    "three-lines": (("MM MM MM MM MM MM",) * 5, 16.66, False),
+    "just-over": (("MMMM m",) * 5, 33.32, False),
+    "just-under": (("MMM m",) * 5, 24.99, False),
+    "one-wraps": (("Aa", "Bb", "MMM MM", "Cc", "Dd"), 24.99, False),
+    "widest-wraps": (("MMM MM",) * 4 + ("MMMM MMMM",), 33.32, False),
+    "token-under": (("xxxxxxxi M",) * 5, 37.22, False),
+    # A no-break space breaks.  It is the one character here that surprises.
+    "nbsp": (("MMM\u00a0MM",) * 5, 24.99, False),
+    # Rotation is what is left when breaking does not help.
+    "single-token": (("MMMMM",) * 5, 41.65, True),
+    "token-over": (("HHHHHi M",) * 5, 38.33, True),
+    "all-tokens-wide": (("MMMMM MMMMM",) * 5, 41.65, True),
+    "one-rotates": (("Aa", "Bb", "MMMMM", "Cc", "Dd"), 41.65, True),
+    # The case that separates "widest token" from every other candidate rule: two spaces
+    # in it, and PowerPoint turned it anyway because the middle token is 99.96 pt.
+    "wide-token-and-space": (("Fiscal MMMMMMMMMMMM 2012",) * 5, 99.96, True),
+    # Not break opportunities.
+    "hyphen": (("MMM-MM",) * 5, 44.98, True),
+    "slash": (("MMM/MM",) * 5, 44.43, True),
+    "comma": (("MMM,MM",) * 5, 44.43, True),
+    "underscore": (("MMM_MM",) * 5, 47.21, True),
+    "en-dash": (("MMM–MM",) * 5, 47.21, True),
+    "cjk": (("プラットフォーム",) * 5, 80.00, True),
+}
+
+
+@pytest.mark.parametrize("name", list(WRAP_DECISION))
+def test_a_label_is_broken_before_it_is_turned(name):
+    """Twenty probes: PowerPoint wraps where it can and turns only where it cannot."""
+    cats, token, turns = WRAP_DECISION[name]
+    children = _wrap_probe(cats)
+    assert bool(_turned(children)) is turns, (
+        f"{name}: widest token {token:.2f} pt on a {WRAP_BAND_PT:.2f} pt band, "
+        f"{token / WRAP_BAND_PT:.4f} of it"
+    )
+
+
+def test_one_label_that_must_turn_turns_the_ones_that_could_have_wrapped():
+    """Rotation is a decision for the axis, not for each label.
+
+    Four ``MMM MM`` -- which wrap on their own -- beside one ``MMMMM``, and PowerPoint
+    turned all five, none of them broken.
+    """
+    children = _wrap_probe(("MMM MM", "MMM MM", "MMMMM", "MMM MM", "MMM MM"))
+    turned = _turned(children)
+    assert len(turned) == 5
+    assert {shape.transform.rotation for shape in turned} == {-45.0}
+    assert _label_rows(children) == []
+
+
+#: name -> (face, categories, lines PowerPoint used, the band it reserved in pt).  One
+#: token per line by construction, so the token count is the line count.  Read off the
+#: axis rule against the frame's foot.
+WRAP_LADDER = {
+    "arial-1": ("Arial", ("MMM",) * 5, 1, 23.712),
+    "arial-2": ("Arial", ("MMM MMM",) * 5, 2, 35.212),
+    "arial-3": ("Arial", ("MMM MMM MMM",) * 5, 3, 46.712),
+    "arial-4": ("Arial", ("MMM MMM MMM MMM",) * 5, 4, 58.212),
+    "calibri-1": ("Calibri", ("MMM",) * 5, 1, 25.052),
+    "calibri-2": ("Calibri", ("MMM MMM",) * 5, 2, 37.257),
+    "calibri-3": ("Calibri", ("MMM MMM MMM",) * 5, 3, 49.462),
+    "calibri-4": ("Calibri", ("MMM MMM MMM MMM",) * 5, 4, 61.667),
+    "aptos-1": ("Aptos", ("MMM",) * 5, 1, 24.965),
+    "aptos-2": ("Aptos", ("MMM MMM",) * 5, 2, 37.170),
+    "aptos-3": ("Aptos", ("MMM MMM MMM",) * 5, 3, 49.375),
+    "aptos-4": ("Aptos", ("MMM MMM MMM MMM",) * 5, 4, 61.580),
+    "times-1": ("Times New Roman", ("MMM",) * 5, 1, 23.515),
+    "times-2": ("Times New Roman", ("MMM MMM",) * 5, 2, 34.590),
+    "times-3": ("Times New Roman", ("MMM MMM MMM",) * 5, 3, 45.665),
+    "times-4": ("Times New Roman", ("MMM MMM MMM MMM",) * 5, 4, 56.740),
+    "courier-1": ("Courier New", ("MMMMM",) * 5, 1, 23.380),
+    "courier-2": ("Courier New", ("MMMMM MMMMM",) * 5, 2, 34.710),
+    "courier-3": ("Courier New", ("MMMMM MMMMM MMMMM",) * 5, 3, 46.040),
+    "courier-4": ("Courier New", ("MMMMM MMMMM MMMMM MMMMM",) * 5, 4, 57.370),
+}
+
+#: Every face lands inside this at every rung, and it is now **0.01 pt**.  It used to be
+#: 0.65 to allow the level band's own per-face bias -- 0.11 pt heavy on Arial through 0.60
+#: on Courier New -- which was the em term standing in for two thirds of the ascent; see
+#: :data:`~pptx2svg.resolve.chart.CATEGORY_LABEL_GAP_ASCENT`.  These twenty readings are a
+#: deck the ascent law was not fitted on, they cover a fifth face (Calibri), and the bias
+#: they had is gone rather than reduced.
+WRAP_BAND_TOLERANCE_PT = 0.01
+
+#: Arial's ``hhea`` lineGap at 10 pt: 67 units of 2048, 0.0327 em.  It used to be how far
+#: short of PowerPoint our band fell for each line after the first -- Arial is the only one
+#: of the five probe faces whose gap is not zero -- and
+#: :class:`~pptx2svg.text.metrics.FontMetrics` now carries it, so the tests below assert
+#: its *absence* from the residual rather than its presence.
+ARIAL_LINE_GAP_PT_PER_LINE = 0.328
+
+
+@pytest.mark.parametrize("name", list(WRAP_LADDER))
+def test_the_wrapped_band_grows_by_one_line_pitch_a_line(name):
+    """Four rungs in five faces, and the slope is the face's own baseline-to-baseline pitch.
+
+    PowerPoint's band grew by exactly the same amount from one line to two, two to three
+    and three to four in every face, so the residual is flat rather than fanning -- which
+    is what says the per-line term is right and the constant is the level band's older fit.
+    """
+    face, cats, lines, expected = WRAP_LADDER[name]
+    children = _wrap_probe(cats, face=face)
+    assert not _turned(children), f"{name} turned; it should have wrapped"
+    assert len(_label_rows(children)) == lines
+    assert _bottom_inset(children) == pytest.approx(expected, abs=WRAP_BAND_TOLERANCE_PT)
+
+
+def test_arial_carries_its_line_gap_and_the_residual_goes_flat():
+    """The face that identified the term, pinned so the term cannot be dropped again.
+
+    Arial is the only one of the five probe faces whose ``hhea`` lineGap is not zero, and
+    PowerPoint adds it: 67 units of 2048 is 0.328 pt at 10 pt, which is exactly how far our
+    band used to fall short per extra line.  With the gap carried -- Arial's own, read from
+    ``arial.ttf`` rather than from the Arimo we draw with -- the residual stops growing.
+
+    It used to settle on the level band's own +0.11 pt bias and it now settles on nothing:
+    the band's gap term is two thirds of the **ascent** rather than 0.615 of the em, and
+    all twenty rungs of this ladder land within 0.01 pt of PowerPoint.
+
+    The assertion is the *flatness* as much as the value: a slope would mean the per-line
+    term is wrong again, and it is the slope that the substitute's 87-unit gap would have
+    got wrong in the other direction.
+    """
+    residuals = []
+    for name in ("arial-1", "arial-2", "arial-3", "arial-4"):
+        _, cats, lines, expected = WRAP_LADDER[name]
+        residuals.append(_bottom_inset(_wrap_probe(cats)) - expected)
+    for residual in residuals:
+        assert residual == pytest.approx(0.0, abs=WRAP_BAND_TOLERANCE_PT)
+    # A dropped gap would fan these out by 0.328 pt a rung; Tinos' 87-unit gap would fan
+    # them the other way by 0.098.  Either is an order of magnitude outside this.
+    assert max(residuals) - min(residuals) < 0.01
+
+
+#: The plot rectangle PowerPoint draws, as ``(top inset, bottom band)`` from the frame's
+#: own edges, per ``(face, label size)``.  Read off the ``axis-inset`` deck's **gridlines**
+#: -- the topmost major gridline is the plot's top edge and the category axis line its
+#: bottom -- on a 684 x 195 pt frame with five ``C1``..``C5`` categories and both axes in
+#: the same face and size.
+#:
+#: The gridlines are the instrument, and that is the point of the deck: every earlier
+#: reading of this rectangle came off the extreme tick labels' *centres*, which differ
+#: from the tick by whatever a PDF text rect's centre is -- about a point here -- and by
+#: whatever our own text box's centre is, about 2.7 pt the other way at 10 pt.  Those two
+#: unknowns had this library's plot rectangle recorded as 3.7 pt low for a while; it is
+#: not, and these 24 readings are why.
+PLOT_RECTANGLE = {
+    ("Aptos", 6.0): (11.000, 17.582),
+    ("Aptos", 8.0): (11.000, 21.272),
+    ("Aptos", 10.0): (11.103, 24.965),
+    ("Aptos", 12.0): (12.325, 28.663),
+    ("Aptos", 14.0): (13.545, 32.353),
+    ("Aptos", 18.0): (15.985, 39.737),
+    ("Aptos", 24.0): (19.647, 50.818),
+    ("Aptos", 28.0): (22.090, 58.207),
+    ("Arial", 6.0): (11.000, 16.820),
+    ("Arial", 8.0): (11.000, 20.262),
+    ("Arial", 10.0): (11.000, 23.712),
+    ("Arial", 12.0): (11.705, 27.153),
+    ("Arial", 14.0): (12.820, 30.590),
+    ("Arial", 18.0): (15.055, 37.473),
+    ("Arial", 24.0): (18.405, 47.793),
+    ("Arial", 28.0): (20.642, 54.685),
+    ("Times New Roman", 8.0): (11.000, 20.113),
+    ("Times New Roman", 10.0): (11.000, 23.515),
+    ("Times New Roman", 14.0): (12.753, 30.322),
+    ("Times New Roman", 24.0): (18.288, 47.332),
+    ("Courier New", 8.0): (11.000, 20.000),
+    ("Courier New", 10.0): (11.000, 23.380),
+    ("Courier New", 14.0): (12.930, 30.130),
+    ("Courier New", 24.0): (18.592, 47.005),
+}
+
+#: What the export's own coordinates are quantised to, near enough: every one of the 24
+#: readings above is reproduced inside this.
+PLOT_RECTANGLE_TOLERANCE_PT = 0.01
+
+
+def _inset_probe(face, size):
+    """``axis-inset``'s own chart: one face, one size, both axes, a 684 x 195 pt frame."""
+    body = wrap_chart_xml(
+        tuple(f"C{index + 1}" for index in range(5)),
+        face=face,
+        size=size,
+        value_size=size,
+    )
+    return _build(body, width=684.0, height=195.0)[0]
+
+
+@pytest.mark.parametrize(("face", "size"), list(PLOT_RECTANGLE))
+def test_the_plot_rectangle_is_where_powerpoint_draws_its_gridlines(face, size):
+    """Both insets, four faces, eight sizes, against the drawn rectangle itself.
+
+    The top is ``max(11, 5 + lineBox/2)`` and the floor is real: it binds for every face
+    at 6 and 8 pt and for all but Aptos at 10, and each of those draws its top gridline at
+    exactly 11.000 pt.  The bottom is ``6.5 + (5/3) * ascent + descent``, which is the one
+    of the two that had to move -- on Aptos alone an em term and an ascent term are the
+    same number to a hundredth, and Aptos is what every earlier reading was drawn in.
+    """
+    top, bottom = PLOT_RECTANGLE[(face, size)]
+    children = _inset_probe(face, size)
+    assert _pt(_plot_top(children)) == pytest.approx(top, abs=PLOT_RECTANGLE_TOLERANCE_PT)
+    assert _bottom_inset(children, frame_height=195.0) == pytest.approx(
+        bottom, abs=PLOT_RECTANGLE_TOLERANCE_PT
+    )
+
+
+def test_the_label_needing_the_most_lines_sets_the_band():
+    """One three-line label among four that fit lifts the whole band to three lines.
+
+    Measured: the band came out 46.712 pt, the same as a chart where every label needed
+    three lines, and the four short ones sat on the *first* row with nothing under them.
+    """
+    cats = ("MM MM", "MM MM", "MM MM MM MM MM MM", "MM MM", "MM MM")
+    children = _wrap_probe(cats)
+    assert _bottom_inset(children) == pytest.approx(
+        46.712, abs=WRAP_BAND_TOLERANCE_PT
+    )
+    rows = _label_rows(children)
+    assert [len(row) for row in rows] == [5, 1, 1]
+
+
+def test_a_wrapped_block_hangs_from_the_top_like_a_one_line_label():
+    """Adding lines does not move the first baseline; the lines are added below it.
+
+    The Arial ladder put the first baseline 15.03, 15.05 and 15.07 pt under the axis at
+    one, two and three lines -- one number inside PowerPoint's 0.12 pt output grid.
+    """
+    tops = [
+        _first_label_top(_wrap_probe(cats))
+        for cats in (("MMM",) * 5, ("MMM MMM",) * 5, ("MMM MMM MMM",) * 5)
+    ]
+    assert tops[1] == pytest.approx(tops[0], abs=0.01)
+    assert tops[2] == pytest.approx(tops[0], abs=0.01)
+
+
+def _first_label_top(children):
+    """Where the first row of the category-label block sits, relative to the plot."""
+    floor = _pt(_plot_bottom(children))
+    return min(
+        _pt(child.transform.offset_y) - floor
+        for child in children
+        if isinstance(child, m.ShapeElement)
+        and child.text_body is not None
+        and _pt(child.transform.offset_y) >= floor
+    )
+
+
+def test_the_band_stops_growing_where_the_measurements_stop():
+    """Six lines is the last rung PowerPoint laid out; past it, it stops wrapping.
+
+    An eight-token label came back on **two** lines, each four band widths wide and
+    overlapping its neighbours, in a 35.212 pt band -- and a twelve- and a twenty-four-token
+    label did exactly the same.  No rule reproduces the linear part and that collapse, so
+    the band stops where the ladder stops, and this test records how far the disagreement
+    goes rather than leaving it latent.
+    """
+    six = _bottom_inset(_wrap_probe((" ".join(["MMM"] * 6),) * 5))
+    assert six == pytest.approx(
+        81.212, abs=WRAP_BAND_TOLERANCE_PT
+    )
+    for tokens in (8, 12, 24):
+        children = _wrap_probe((" ".join(["MMM"] * tokens),) * 5)
+        assert len(_label_rows(children)) == 6
+        # PowerPoint reserved 35.212 pt for all three of these.  We are 44 pt over, and
+        # that is the recorded price of not extrapolating a rule it refutes.
+        assert _bottom_inset(children) == pytest.approx(six, abs=0.01)
+
+
+def test_a_label_breaks_only_where_powerpoint_breaks_it():
+    """The break set, straight off the probes, without going through the band."""
+    from pptx2svg.resolve.chart import ChartFont, font_box, wrap_label
+
+    font = ChartFont(family="Arial", box=font_box("Arial", 10.0))
+    assert wrap_label("MMM MM", font, WRAP_BAND_PT) == ["MMM", "MM"]
+    # The no-break space breaks, which is the one character here that surprises.
+    assert wrap_label("MMM\u00a0MM", font, WRAP_BAND_PT) == ["MMM", "MM"]
+    for unbroken in ("MMM-MM", "MMM/MM", "MMM,MM", "MMM_MM", "MMM\u2013MM"):
+        assert wrap_label(unbroken, font, WRAP_BAND_PT) == [unbroken]
+    # Greedy, and a token too wide to sit alone still gets its own line rather than
+    # being split -- the state `_labels_rotate` has already turned the axis for.
+    assert wrap_label("MM MM MM", font, WRAP_BAND_PT) == ["MM MM", "MM"]
+    assert wrap_label("Fiscal MMMMMMMMMMMM 2012", font, WRAP_BAND_PT) == [
+        "Fiscal",
+        "MMMMMMMMMMMM",
+        "2012",
+    ]
+
+
+# -- A line chart's legend key -----------------------------------------------------------
+
+
+def test_a_line_chart_legends_with_a_rule_and_its_marker():
+    """Confirmed on four line-chart legends after the radar measured it once.
+
+    19.200 pt of rule with the series' marker on its midpoint, then 2.025 pt before the
+    text -- the same on a right-hand legend and a bottom one, the same for a series whose
+    marker is ``none``, and **the same at 14 pt**, which is what says these are points and
+    not the ems the radar's single 10 pt measurement was carried as.
+    """
+    from pptx2svg.resolve.chart import (
+        LINE_LEGEND_KEY_GAP_PT,
+        LINE_LEGEND_KEY_PT,
+        ChartBuilder,
+        ChartFont,
+        font_box,
+    )
+
+    for size in (10.0, 14.0):
+        font = ChartFont(family="Arial", box=font_box("Arial", size))
+        key, gap = ChartBuilder._legend_key_size(_FakeLine(), font)
+        assert (key, gap) == (LINE_LEGEND_KEY_PT, LINE_LEGEND_KEY_GAP_PT)
+        assert (key, gap) == (19.200, 2.025)
+
+
+class _FakeLine:
+    """Just enough of a builder for `_legend_key_size` to answer "a line chart"."""
+
+    from pptx2svg.resolve.chart import ChartBuilder as _Builder
+
+    #: Set by a combo whose groups disagree; this one answers for itself.
+    line_legend_keys = False
+    _is_line = True
+
+    class plot:  # noqa: N801 - stands in for the builder's `plot` attribute
+        #: A flat line chart: a `line3DChart` legends with the swatch.
+        kind = "lineChart"
+
+    _is_scatter = False
+    _is_bubble = False
+    _is_radar = False
+    _radar_style = "marker"
+    #: The predicates `_legend_key_size` asks, borrowed rather than restated so the fake
+    #: cannot drift from the rules it is standing in for.  A group with no rule to draw
+    #: takes the swatch instead; these fakes all have one.
+    _line_legend_key = _Builder._line_legend_key
+    _is_line_keyed = _Builder._is_line_keyed
+    _draws_a_rule = staticmethod(lambda: True)
+
+
+
+def test_a_chart_measures_and_draws_its_japanese_in_the_themes_script_face():
+    """The defect this file used to attribute to the label width, and where it lived.
+
+    `real-financial-report.pptx`'s charts name `<a:latin typeface="Arial"/>` and nothing
+    else; its theme writes `<a:ea typeface=""/>` in both collections and
+    `<a:font script="Jpan" typeface="游ゴシック"/>` beside it.  PowerPoint's own export
+    embeds **YuGothic-Regular** for every Japanese category label and **ArialMT** for the
+    Latin runs inside the same labels, so the script list beats the Latin face and the two
+    split within one label.
+
+    `ChartFont` used to carry one face, which left a label measured through Arial -- which
+    has no Japanese glyph at all -- and drawn in whatever the rasteriser happened to find.
+    Both halves are asserted here: the resolved run names the East Asian face, and the
+    widths are the ones PowerPoint drew, 48.000, 96.000, 60.000 and 36.000 pt.
+    """
+    from tests.conftest import FIXTURE_DIR
+
+    deck = convert_pptx_to_model(
+        (FIXTURE_DIR / "real-financial-report.pptx").read_bytes()
+    )
+    charts = [
+        element
+        for element in deck.slides[2].elements
+        if isinstance(element, m.ChartElement) and element.chart.kind == "barChart"
+    ]
+    assert len(charts) == 1
+    labels = {
+        run.text: run.properties
+        for shape in _turned(charts[0].children)
+        for paragraph in shape.text_body.paragraphs
+        for run in paragraph.runs
+    }
+    # `プラットフォーム` is drawn cut, which is what PowerPoint's own export drew -- see
+    # `test_the_real_bar_chart_with_long_labels_turns_them`.  The *measured* width below is
+    # still the whole string's, because the cut is a consequence of measuring it.
+    assert set(labels) == {"デジタル", "プラット…", "グローバル", "その他"}
+    for properties in labels.values():
+        assert properties.font_family == "Arial"
+        assert properties.font_family_ea == "游ゴシック"
+
+    from pptx2svg.resolve.chart import ChartFont, font_box
+
+    font = ChartFont(
+        family="Arial",
+        box=font_box("Arial", 12.0),
+        family_ea="游ゴシック",
+        box_ea=font_box("游ゴシック", 12.0),
+    )
+    for text, drawn in (
+        ("デジタル", 48.0),
+        ("プラットフォーム", 96.0),
+        ("グローバル", 60.0),
+        ("その他", 36.0),
+    ):
+        assert font.width(text) == pytest.approx(drawn, abs=0.001), text
+    # The radar's two mixed labels, from the same export: Arial for the Latin half.
+    assert font.width("DX投資額") == pytest.approx(52.669, abs=0.01)
+    assert font.width("CO2削減") == pytest.approx(48.674, abs=0.01)
+    # A Latin-only label is untouched by any of it.
+    assert font.width("Q1") == pytest.approx(16.008, abs=0.001)
+    # And the line box the reserves read is the face that draws the label, per label.
+    assert font.box_for("Q1").line_height == pytest.approx(13.406, abs=0.001)
+    assert font.box_for("その他").line_height == pytest.approx(17.376, abs=0.001)
+
+
+def test_a_chart_label_that_mixes_scripts_is_drawn_in_two_chunks():
+    """resvg falls back per text chunk, not per glyph, so the split has to be in the SVG.
+
+    One `<tspan>` naming both faces would be drawn entirely in whichever one the
+    rasteriser settles on, at a width nothing computed.  `ChartFont.width` measures
+    `DX投資額` as Arial plus 游ゴシック, so the emitted markup has to say the same thing.
+    """
+    from pptx2svg import convert_pptx_to_svg
+    from tests.conftest import FIXTURE_DIR
+
+    svg = convert_pptx_to_svg(
+        str(FIXTURE_DIR / "real-financial-report.pptx"),
+        ConvertOptions(warn_on_font_substitution=False),
+    )[3]
+    chunks = re.findall(
+        r'<tspan[^>]*font-family="([^"]*)"[^>]*>(DX|投資額)</tspan>', svg
+    )
+    assert [text for _, text in chunks] == ["DX", "投資額"]
+    latin, east_asian = (family for family, _ in chunks)
+    assert latin.startswith("Arial")
+    assert east_asian.startswith("游ゴシック")
+# -- Area charts -----------------------------------------------------------------------
+#
+# Eighteen charts differing in one input each, in the same 2800000 x 2300000 EMU frame the
+# bar sweep uses, exported by PowerPoint 16.106 and read back out of the PDF as exact path
+# vertices.  The generator below is the deck; nothing binary is committed.
+
+AREA_CATEGORIES = ("Reader", "Writer", "Renderer")
+FRAME_W = 220.4724
+FRAME_H = 181.1024
+
+
+def area_chart_xml(
+    *,
+    values=((3, 4, 5),),
+    names=("Alpha", "Beta"),
+    categories=AREA_CATEGORIES,
+    grouping="standard",
+    fills=(None, None),
+    outline="",
+    legend=None,
+    title=None,
+    text_size=None,
+    cross_between="between",
+    blanks="gap",
+    dlbls="",
+):
+    """One area chart, in the shape the exported probe deck used.
+
+    ``cross_between=None`` leaves the element out, which is **not** the same as ``between``
+    -- see :func:`test_an_area_with_no_cross_between_draws_as_midcat`.
+    """
+    series_xml = ""
+    for index, column in enumerate(values):
+        points = "".join(
+            f"<c:pt idx='{i}'><c:v>{v}</c:v></c:pt>"
+            for i, v in enumerate(column)
+            if v is not None
+        )
+        cats = "".join(
+            f"<c:pt idx='{i}'><c:v>{v}</c:v></c:pt>" for i, v in enumerate(categories)
+        )
+        fill = fills[index] if index < len(fills) else None
+        sp_pr = (
+            f"<c:spPr><a:solidFill><a:srgbClr val='{fill}'/></a:solidFill>{outline}</c:spPr>"
+            if fill
+            else (f"<c:spPr>{outline}</c:spPr>" if outline else "")
+        )
+        series_xml += (
+            f"<c:ser><c:idx val='{index}'/><c:order val='{index}'/>"
+            f"<c:tx><c:strRef><c:strCache><c:ptCount val='1'/>"
+            f"<c:pt idx='0'><c:v>{names[index]}</c:v></c:pt>"
+            "</c:strCache></c:strRef></c:tx>"
+            f"{sp_pr}"
+            f"<c:cat><c:strRef><c:strCache><c:ptCount val='{len(categories)}'/>{cats}"
+            "</c:strCache></c:strRef></c:cat>"
+            "<c:val><c:numRef><c:numCache><c:formatCode>General</c:formatCode>"
+            f"<c:ptCount val='{len(column)}'/>{points}</c:numCache></c:numRef></c:val>"
+            "</c:ser>"
+        )
+
+    title_xml = (
+        "<c:title><c:tx><c:rich><a:bodyPr/><a:lstStyle/><a:p><a:r>"
+        f"<a:rPr lang='en-US'/><a:t>{title}</a:t></a:r></a:p></c:rich></c:tx>"
+        "<c:layout/><c:overlay val='0'/></c:title><c:autoTitleDeleted val='0'/>"
+        if title
+        else "<c:autoTitleDeleted val='1'/>"
+    )
+    legend_xml = (
+        f"<c:legend><c:legendPos val='{legend}'/><c:layout/><c:overlay val='0'/></c:legend>"
+        if legend
+        else ""
+    )
+    cross = f"<c:crossBetween val='{cross_between}'/>" if cross_between else ""
+    tx_pr = (
+        "<c:txPr><a:bodyPr/><a:lstStyle/><a:p><a:pPr>"
+        f"<a:defRPr sz='{int(text_size * 100)}'/></a:pPr></a:p></c:txPr>"
+        if text_size
+        else ""
+    )
+    return (
+        f"<c:chart>{title_xml}<c:plotArea><c:layout/>"
+        f"<c:areaChart><c:grouping val='{grouping}'/><c:varyColors val='0'/>"
+        f"{series_xml}{dlbls}"
+        "<c:axId val='100002'/><c:axId val='100003'/></c:areaChart>"
+        "<c:catAx><c:axId val='100002'/><c:scaling><c:orientation val='minMax'/></c:scaling>"
+        "<c:delete val='0'/><c:axPos val='b'/>"
+        "<c:numFmt formatCode='General' sourceLinked='1'/>"
+        "<c:majorTickMark val='none'/><c:minorTickMark val='none'/>"
+        "<c:tickLblPos val='nextTo'/><c:crossAx val='100003'/>"
+        "<c:crosses val='autoZero'/><c:auto val='1'/><c:lblAlgn val='ctr'/>"
+        "<c:lblOffset val='100'/><c:noMultiLvlLbl val='0'/></c:catAx>"
+        "<c:valAx><c:axId val='100003'/><c:scaling><c:orientation val='minMax'/></c:scaling>"
+        "<c:delete val='0'/><c:axPos val='l'/><c:majorGridlines/>"
+        "<c:numFmt formatCode='General' sourceLinked='1'/>"
+        "<c:majorTickMark val='none'/><c:minorTickMark val='none'/>"
+        "<c:tickLblPos val='nextTo'/><c:crossAx val='100002'/>"
+        f"<c:crosses val='autoZero'/>{cross}</c:valAx>"
+        f"</c:plotArea>{legend_xml}"
+        f"<c:plotVisOnly val='1'/><c:dispBlanksAs val='{blanks}'/></c:chart>{tx_pr}"
+    )
+
+
+def area_dlbls(*flags):
+    """``c:dLbls`` with the named ``c:show*`` flags on.
+
+    Deliberately **no** ``c:dLblPos``: PowerPoint opens a deck whose area chart carries one
+    as ``[Repaired]`` and will not export it, for ``ctr`` -- the only value ECMA-376 lists
+    for an area series -- as much as for anything else.  So an area label has exactly one
+    placement and the file cannot ask for another.
+    """
+    body = "".join(
+        f"<c:show{flag} val='{1 if flag in flags else 0}'/>"
+        for flag in ("LegendKey", "Val", "CatName", "SerName", "Percent", "BubbleSize")
+    )
+    return f"<c:dLbls>{body}</c:dLbls>"
+
+
+#: Points from the frame's four edges to the plot rectangle, measured off PowerPoint's
+#: export of the probe deck.  Worst residual across the eighteen is 0.23 pt.
+AREA_SWEEP = {
+    "bare": ({}, {"left": 21.073, "right": 11.000, "top": 11.102, "bottom": 24.965}),
+    "midcat": (
+        {"cross_between": "midCat"},
+        {"left": 26.433, "right": 30.840, "top": 11.102, "bottom": 24.965},
+    ),
+    "no-crossbetween": (
+        {"cross_between": None},
+        {"left": 26.433, "right": 30.840, "top": 11.102, "bottom": 24.965},
+    ),
+    "two": (
+        {"values": ((3, 4, 5), (2, 5, 1)), "legend": "b"},
+        {"left": 21.072, "right": 11.000, "top": 11.102, "bottom": 49.048},
+    ),
+    "stacked": (
+        {"values": ((3, 4, 5), (2, 5, 1)), "grouping": "stacked", "legend": "b"},
+        {"left": 26.413, "right": 11.000, "top": 11.103, "bottom": 49.048},
+    ),
+    "percent": (
+        {"values": ((3, 4, 5), (2, 5, 1)), "grouping": "percentStacked", "legend": "b"},
+        {"left": 40.012, "right": 11.000, "top": 11.103, "bottom": 49.048},
+    ),
+    "negative": (
+        {"values": ((3, -2, 5),)},
+        {"left": 24.478, "right": 11.000, "top": 11.102, "bottom": 11.102},
+    ),
+    "five-cats": (
+        {"values": ((3, 4, 5, 2, 6),), "categories": ("A", "B", "C", "D", "E")},
+        {"left": 21.073, "right": 11.000, "top": 11.103, "bottom": 24.965},
+    ),
+    "legend-r": (
+        {"values": ((3, 4, 5), (2, 5, 1)), "legend": "r"},
+        {"left": 21.073, "right": 58.925, "top": 11.102, "bottom": 24.965},
+    ),
+    "font14": (
+        {"text_size": 14},
+        {"left": 26.907, "right": 11.000, "top": 13.545, "bottom": 32.353},
+    ),
+    # The `title` probe measured a 40.803 pt top inset, exactly what a bar chart's title
+    # band gives -- but the title's *face* comes from the deck's own cascade, which
+    # `_build` stubs out, so the number is only reproducible through the full pipeline.
+    # It is the bar sweep's constant and the bar sweep asserts it.
+}
+
+
+def _rect_of(children):
+    """The plot rectangle, off the longest drawn line each way; see `_plot_rect`."""
+    lines = [c for c in children if isinstance(c, m.ConnectorElement)]
+    vertical = [line for line in lines if line.transform.extent_width == 0]
+    horizontal = [line for line in lines if line.transform.extent_height == 0]
+    assert vertical and horizontal
+    down = max(vertical, key=lambda line: line.transform.extent_height).transform
+    across = max(horizontal, key=lambda line: line.transform.extent_width).transform
+    return (
+        _pt(across.offset_x),
+        _pt(down.offset_y),
+        _pt(across.offset_x + across.extent_width),
+        _pt(down.offset_y + down.extent_height),
+    )
+
+
+def _insets(children, width=FRAME_W, height=FRAME_H):
+    left, top, right, bottom = _rect_of(children)
+    return {
+        "left": left,
+        "right": width - right,
+        "top": top,
+        "bottom": height - bottom,
+    }
+
+
+def _custom_paths(children):
+    """Every custom-geometry shape, in draw order, with absolute vertices."""
+    out = []
+    for child in children:
+        if not isinstance(child, m.ShapeElement):
+            continue
+        if not isinstance(child.geometry, m.CustomGeometry):
+            continue
+        ox = _pt(child.transform.offset_x)
+        oy = _pt(child.transform.offset_y)
+        points = []
+        for token in re.finditer(
+            r"([MLC])((?:\s+-?[\d.]+)+)", child.geometry.paths[0].commands
+        ):
+            nums = [float(value) for value in token.group(2).split()]
+            for index in range(0, len(nums), 2):
+                points.append((ox + nums[index], oy + nums[index + 1]))
+        out.append((child, points))
+    return out
+
+
+def _areas(children):
+    return [pair for pair in _custom_paths(children) if not isinstance(pair[0].fill, m.NoFill)]
+
+
+def _labels_by_text(children):
+    return {
+        "".join(run.text for p in child.text_body.paragraphs for run in p.runs): child
+        for child in children
+        if isinstance(child, m.ShapeElement) and child.text_body is not None
+    }
+
+
+@pytest.mark.parametrize("name", list(AREA_SWEEP))
+def test_the_area_sweep_reproduces_powerpoints_plot_rectangle(name):
+    kwargs, expected = AREA_SWEEP[name]
+    children, data = _build(area_chart_xml(**kwargs), width=FRAME_W, height=FRAME_H)
+    assert data.kind == "areaChart"
+    ours = _insets(children)
+    for edge, truth in expected.items():
+        assert ours[edge] == pytest.approx(truth, abs=SWEEP_TOLERANCE_PT), (
+            f"{name} {edge}: PowerPoint {truth:.4f}, ours {ours[edge]:.4f}"
+        )
+
+
+def test_an_area_closes_to_the_zero_line_and_not_to_the_plot_floor():
+    """Measured on the negative probe: the polygon's return edge is the value axis' zero.
+
+    Its three vertices are at 64.029, 152.345 and 28.758 pt down the frame and its bottom
+    edge runs along 117.069 -- which is where a -3..6 axis puts 0, with the plot's own
+    floor 53 pt lower.  The path therefore crosses itself where the line crosses zero, and
+    PowerPoint leaves the bow tie exactly as it falls: it fills nonzero-winding, which is
+    the renderer's default.
+    """
+    children, _ = _build(
+        area_chart_xml(values=((3, -2, 5),)), width=FRAME_W, height=FRAME_H
+    )
+    ((_, points),) = _areas(children)
+    assert [y for _, y in points[:3]] == pytest.approx([64.029, 152.345, 28.758], abs=0.6)
+    assert [y for _, y in points[3:]] == pytest.approx([117.069] * 3, abs=0.6)
+
+
+def test_area_vertices_sit_at_the_band_centres():
+    """`c:crossBetween="between"`: 52.473, 115.292 and 178.072 pt across the frame."""
+    children, _ = _build(area_chart_xml(), width=FRAME_W, height=FRAME_H)
+    ((_, points),) = _areas(children)
+    assert [x for x, _ in points[:3]] == pytest.approx(
+        [52.473, 115.292, 178.072], abs=0.6
+    )
+
+
+def test_an_area_with_no_cross_between_draws_as_midcat():
+    """**An absent `c:crossBetween` is `midCat` on an area chart**, not `between`.
+
+    Three probes settle it: `between` put the three vertices at the band centres, while
+    `midCat` and **no element at all** were byte-identical to each other at 26.433,
+    108.015 and 189.632 -- the plot's left edge, its midpoint and its right edge.  The
+    plot itself narrows to make room for the half of the first and last category label
+    that now hangs outside it, which the sweep above asserts.
+
+    A *line* chart's absent case is not measured, and the default there is left alone.
+    """
+    absent, _ = _build(area_chart_xml(cross_between=None), width=FRAME_W, height=FRAME_H)
+    stated, _ = _build(
+        area_chart_xml(cross_between="midCat"), width=FRAME_W, height=FRAME_H
+    )
+    ((_, theirs),) = _areas(stated)
+    ((_, points),) = _areas(absent)
+    assert points == theirs
+    assert [x for x, _ in points[:3]] == pytest.approx(
+        [26.433, 108.015, 189.632], abs=0.6
+    )
+
+
+def test_midcat_centres_each_category_label_on_its_tick():
+    """Measured: `Reader` centred on the plot's left edge, 26.433 pt across the frame.
+
+    `Writer` lands on the plot's midpoint and `Renderer` on its right edge.  A `between`
+    label is centred in a *band* instead, which is what every other test here exercises.
+    """
+    children, _ = _build(
+        area_chart_xml(cross_between="midCat"), width=FRAME_W, height=FRAME_H
+    )
+    labels = _labels_by_text(children)
+    for text, expected in (
+        ("Reader", 26.433),
+        ("Writer", 108.015),
+        ("Renderer", 189.632),
+    ):
+        box = labels[text].transform
+        centre = _pt(box.offset_x) + _pt(box.extent_width) / 2
+        assert centre == pytest.approx(expected, abs=0.6), text
+
+
+def test_areas_are_painted_in_series_order_with_the_first_at_the_back():
+    """Two probes say it is order and not size, and the fills are fully opaque.
+
+    Swapping the two series' values swapped which one ended up hidden, and a probe whose
+    first series covers the second entirely still emitted the first path first.  Every one
+    of the eighteen area fills came back at alpha 255, so the front series really does
+    hide what is behind it -- that is PowerPoint's picture, not an omission here.
+    """
+    children, _ = _build(
+        area_chart_xml(values=((6, 6, 6), (2, 3, 1)), legend="b"),
+        width=FRAME_W,
+        height=FRAME_H,
+    )
+    shapes = [shape for shape, _ in _areas(children)]
+    assert [shape.fill.color.hex for shape in shapes] == ["#4472C4", "#ED7D31"]
+
+
+def test_a_stacked_area_rides_on_the_running_total():
+    """The band's lower edge is the total *without* this series, traced backwards.
+
+    Measured on the stacked probe, whose second series' polygon returns along the first
+    series' own line rather than along the axis.
+    """
+    children, _ = _build(
+        area_chart_xml(values=((3, 4, 5), (2, 5, 1)), grouping="stacked"),
+        width=FRAME_W,
+        height=FRAME_H,
+    )
+    first, second = _areas(children)
+    tops = [y for _, y in first[1][:3]]
+    returns = [y for _, y in second[1][3:]]
+    assert returns == pytest.approx(list(reversed(tops)), abs=0.01)
+
+
+def test_a_percent_stacked_area_fills_the_whole_plot():
+    """The last series reaches 100% in every category, so its top edge is the plot's."""
+    children, _ = _build(
+        area_chart_xml(values=((3, 4, 5), (2, 5, 1)), grouping="percentStacked"),
+        width=FRAME_W,
+        height=FRAME_H,
+    )
+    _, top, _, _ = _rect_of(children)
+    _, second = _areas(children)
+    assert [y for _, y in second[1][:3]] == pytest.approx([top] * 3, abs=0.01)
+
+
+def test_a_blank_area_run_of_one_point_draws_nothing():
+    """The `dispBlanksAs="gap"` probe drew **no area at all**.
+
+    Its middle value is missing, which leaves two runs of one point each, and a single
+    point has no area.  That is the whole rule -- a blank splits an area exactly as it
+    splits a line -- but it is worth an assertion because "draw nothing" is also what a
+    silent failure looks like.  With `zero` the same file draws one unbroken area dipping
+    to the axis.
+    """
+    children, _ = _build(
+        area_chart_xml(values=((3, None, 5),)), width=FRAME_W, height=FRAME_H
+    )
+    assert _areas(children) == []
+
+    zeroed, _ = _build(
+        area_chart_xml(values=((3, None, 5),), blanks="zero"),
+        width=FRAME_W,
+        height=FRAME_H,
+    )
+    ((_, points),) = _areas(zeroed)
+    _, _, _, bottom = _rect_of(zeroed)
+    assert points[1][1] == pytest.approx(bottom, abs=0.6)
+
+
+def test_an_area_takes_no_outline_unless_the_file_states_one():
+    """Eight probes stating none got a bare fill; one stating `w="25400"` got 2 pt."""
+    plain, _ = _build(area_chart_xml(), width=FRAME_W, height=FRAME_H)
+    ((shape, _),) = _areas(plain)
+    assert shape.outline is None
+
+    stroked, _ = _build(
+        area_chart_xml(
+            fills=("F97316",),
+            outline=(
+                "<a:ln w='25400'><a:solidFill><a:srgbClr val='111827'/>"
+                "</a:solidFill></a:ln>"
+            ),
+        ),
+        width=FRAME_W,
+        height=FRAME_H,
+    )
+    ((shape, _),) = _areas(stroked)
+    assert shape.fill.color.hex == "#F97316"
+    assert shape.outline.width == 25400
+    assert shape.outline.fill.color.hex == "#111827"
+
+
+def test_an_area_label_sits_at_the_centre_of_its_own_band():
+    """Measured on two probes, to within 0.21 pt.
+
+    An unstacked 3/4/5 put its labels at 1.5, 2.0 and 2.5 on the value axis -- the
+    midpoints between the line and the zero it fills to -- and a stacked pair put the
+    second series' at 4, 6.5 and 5.5, the midpoints of its *segments* and not of the
+    stack.
+    """
+    children, _ = _build(
+        area_chart_xml(dlbls=area_dlbls("Val")), width=FRAME_W, height=FRAME_H
+    )
+    labels = _labels_by_text(children)
+    assert _baseline(labels["3"]) == pytest.approx(122.762, abs=0.6)
+    assert _baseline(labels["4"]) == pytest.approx(110.762, abs=0.6)
+    assert _baseline(labels["5"]) == pytest.approx(98.522, abs=0.6)
+
+
+def test_an_area_legends_with_a_swatch_and_not_a_rule():
+    """Measured: a 5.492 pt square -- the bar chart's key, not the line chart's rule."""
+    from pptx2svg.resolve.chart import LEGEND_SWATCH_EM
+
+    children, _ = _build(
+        area_chart_xml(values=((3, 4, 5), (2, 5, 1)), legend="b"),
+        width=FRAME_W,
+        height=FRAME_H,
+    )
+    swatches = [
+        child
+        for child in children
+        if isinstance(child, m.ShapeElement)
+        and child.text_body is None
+        and isinstance(child.geometry, m.PresetGeometry)
+        and child.geometry.preset == "rect"
+    ]
+    assert len(swatches) == 2
+    for swatch in swatches:
+        assert _pt(swatch.transform.extent_width) == pytest.approx(
+            LEGEND_SWATCH_EM * 10.0, abs=0.05
+        )
+
+
+# -- Scatter charts --------------------------------------------------------------------
+#
+# Twenty-four charts across two decks, same frame, exported by PowerPoint 16.106.  A
+# scatter is the one Cartesian kind with **two value axes and no category axis**, so
+# nothing about a category band -- the wrap, the 45 degree turn, the reserve those ask for
+# -- applies to it; what its bottom band actually is, measured, is the horizontal bar
+# chart's row of value labels.
+
+SCATTER_XS = (1, 2, 3, 4, 5)
+SCATTER_YS = (3, 4, 5, 2, 6)
+SCATTER_YS2 = (1, 5, 2, 6, 3)
+
+
+def scatter_chart_xml(
+    *,
+    series=((SCATTER_XS, SCATTER_YS),),
+    names=("Alpha", "Beta"),
+    style="lineMarker",
+    markers=(None, None),
+    lines=(None, None),
+    smooth=(0, 0),
+    legend=None,
+    text_size=None,
+    x_gridlines=False,
+    x_delete=False,
+    dlbls=("",),
+):
+    """One scatter chart, in the shape the exported probe deck used."""
+    series_xml = ""
+    for index, (xs, ys) in enumerate(series):
+
+        def _cache(values):
+            points = "".join(
+                f"<c:pt idx='{i}'><c:v>{v}</c:v></c:pt>"
+                for i, v in enumerate(values)
+                if v is not None
+            )
+            return (
+                "<c:numRef><c:numCache><c:formatCode>General</c:formatCode>"
+                f"<c:ptCount val='{len(values)}'/>{points}</c:numCache></c:numRef>"
+            )
+
+        line = lines[index] if index < len(lines) else None
+        marker = markers[index] if index < len(markers) else None
+        smooth_value = smooth[index] if index < len(smooth) else 0
+        labels = dlbls[index] if index < len(dlbls) else ""
+        series_xml += (
+            f"<c:ser><c:idx val='{index}'/><c:order val='{index}'/>"
+            f"<c:tx><c:strRef><c:strCache><c:ptCount val='1'/>"
+            f"<c:pt idx='0'><c:v>{names[index]}</c:v></c:pt>"
+            "</c:strCache></c:strRef></c:tx>"
+            + (f"<c:spPr>{line}</c:spPr>" if line else "")
+            + (marker or "")
+            + labels
+            + f"<c:xVal>{_cache(xs)}</c:xVal><c:yVal>{_cache(ys)}</c:yVal>"
+            + ("" if smooth_value is None else f"<c:smooth val='{smooth_value}'/>")
+            + "</c:ser>"
+        )
+
+    def _axis(axis_id, cross_id, position, *, gridlines, delete=False):
+        grid = "<c:majorGridlines/>" if gridlines else ""
+        return (
+            f"<c:valAx><c:axId val='{axis_id}'/>"
+            "<c:scaling><c:orientation val='minMax'/></c:scaling>"
+            f"<c:delete val='{1 if delete else 0}'/><c:axPos val='{position}'/>{grid}"
+            "<c:numFmt formatCode='General' sourceLinked='1'/>"
+            "<c:majorTickMark val='none'/><c:minorTickMark val='none'/>"
+            "<c:tickLblPos val='nextTo'/>"
+            f"<c:crossAx val='{cross_id}'/><c:crosses val='autoZero'/>"
+            "<c:crossBetween val='midCat'/></c:valAx>"
+        )
+
+    legend_xml = (
+        f"<c:legend><c:legendPos val='{legend}'/><c:layout/><c:overlay val='0'/></c:legend>"
+        if legend
+        else ""
+    )
+    tx_pr = (
+        "<c:txPr><a:bodyPr/><a:lstStyle/><a:p><a:pPr>"
+        f"<a:defRPr sz='{int(text_size * 100)}'/></a:pPr></a:p></c:txPr>"
+        if text_size
+        else ""
+    )
+    return (
+        "<c:chart><c:autoTitleDeleted val='1'/><c:plotArea><c:layout/>"
+        f"<c:scatterChart><c:scatterStyle val='{style}'/><c:varyColors val='0'/>"
+        f"{series_xml}"
+        "<c:axId val='100002'/><c:axId val='100003'/></c:scatterChart>"
+        + _axis("100002", "100003", "b", gridlines=x_gridlines, delete=x_delete)
+        + _axis("100003", "100002", "l", gridlines=True)
+        + f"</c:plotArea>{legend_xml}"
+        f"<c:plotVisOnly val='1'/><c:dispBlanksAs val='gap'/></c:chart>{tx_pr}"
+    )
+
+
+def scatter_dlbls(*flags, position=None):
+    pos = f"<c:dLblPos val='{position}'/>" if position else ""
+    body = pos + "".join(
+        f"<c:show{flag} val='{1 if flag in flags else 0}'/>"
+        for flag in ("LegendKey", "Val", "CatName", "SerName", "Percent", "BubbleSize")
+    )
+    return f"<c:dLbls>{body}</c:dLbls>"
+
+
+#: Insets from the frame's four edges, measured off PowerPoint's export.  Worst residual
+#: across the eighteen scatter probes is 0.32 pt.
+SCATTER_SWEEP = {
+    "bare": ({}, {"left": 21.073, "right": 13.670, "top": 11.102, "bottom": 24.965}),
+    "x-wide": (
+        {"series": (((10, 20, 30, 40, 50), SCATTER_YS),)},
+        {"left": 21.073, "right": 16.340, "top": 11.102, "bottom": 24.965},
+    ),
+    # A negative x range floats the value axis into the plot, so the y labels go with it
+    # and the left inset is the *first x label's* overhang instead of a label column.
+    "x-neg": (
+        {"series": (((-2, -1, 0, 1, 2), SCATTER_YS),)},
+        {"left": 15.373, "right": 13.670, "top": 11.102, "bottom": 24.965},
+    ),
+    # A negative y range does the mirror image: no band under the plot at all.
+    "y-neg": (
+        {"series": ((SCATTER_XS, (3, -2, 5, -1, 4)),)},
+        {"left": 24.478, "right": 13.670, "top": 11.102, "bottom": 11.102},
+    ),
+    "x-deleted": (
+        {"x_delete": True},
+        {"left": 21.072, "right": 11.000, "top": 11.103, "bottom": 11.102},
+    ),
+    "two": (
+        {"series": ((SCATTER_XS, SCATTER_YS), (SCATTER_XS, SCATTER_YS2)), "legend": "b"},
+        {"left": 21.072, "right": 13.670, "top": 11.103, "bottom": 49.048},
+    ),
+    "font14": (
+        {"text_size": 14},
+        {"left": 26.907, "right": 14.740, "top": 13.545, "bottom": 32.353},
+    ),
+}
+
+
+def _polyline_points(children):
+    return [points for shape, points in _custom_paths(children)
+            if isinstance(shape.fill, m.NoFill)]
+
+
+def _marker_boxes(children):
+    """Every marker, left to right: a preset shape with no text in it."""
+    markers = [
+        child
+        for child in children
+        if isinstance(child, m.ShapeElement)
+        and child.text_body is None
+        and isinstance(child.geometry, m.PresetGeometry)
+    ]
+    return sorted(markers, key=lambda shape: shape.transform.offset_x)
+
+
+@pytest.mark.parametrize("name", list(SCATTER_SWEEP))
+def test_the_scatter_sweep_reproduces_powerpoints_plot_rectangle(name):
+    kwargs, expected = SCATTER_SWEEP[name]
+    children, data = _build(scatter_chart_xml(**kwargs), width=FRAME_W, height=FRAME_H)
+    assert data.kind == "scatterChart"
+    ours = _insets(children)
+    for edge, truth in expected.items():
+        assert ours[edge] == pytest.approx(truth, abs=SWEEP_TOLERANCE_PT), (
+            f"{name} {edge}: PowerPoint {truth:.4f}, ours {ours[edge]:.4f}"
+        )
+
+
+def test_a_scatter_has_no_category_axis_and_takes_the_coarse_bottom_axis():
+    """Both axes are value axes, and **the one along the bottom comes out coarser**.
+
+    The same 1..5 of data that the y axis draws as 0..7 by 1 the x axis draws as 0..6 by
+    2, which is the rule a horizontal bar chart's value axis already follows.  Four x-axis
+    probes bracket the cap at four intervals: `x-float`, whose 0.5..4.5 rounds to a *five*
+    interval 0..5 at unit 1, was coarsened to 0..6 by 2 anyway, and `x-neg`'s four-interval
+    -4..4 by 2 was kept.
+    """
+    children, _ = _build(scatter_chart_xml(), width=FRAME_W, height=FRAME_H)
+    labels = _labels_by_text(children)
+    assert set("01234567") <= set(labels)
+    _, top, _, bottom = _rect_of(children)
+    # Four x labels, 0/2/4/6, along the bottom band.
+    along_bottom = [
+        text
+        for text, shape in labels.items()
+        if _pt(shape.transform.offset_y) > bottom
+    ]
+    assert sorted(along_bottom) == ["0", "2", "4", "6"]
+
+    floats, _ = _build(
+        scatter_chart_xml(series=(((0.5, 1.5, 2.5, 3.5, 4.5), SCATTER_YS),)),
+        width=FRAME_W,
+        height=FRAME_H,
+    )
+    _, _, _, floats_bottom = _rect_of(floats)
+    assert sorted(
+        text
+        for text, shape in _labels_by_text(floats).items()
+        if _pt(shape.transform.offset_y) > floats_bottom
+    ) == ["0", "2", "4", "6"]
+
+
+def test_a_scatter_point_maps_through_both_value_axes():
+    """Measured: x = 1..5 on a 0..6 axis and y = 3, 4, 5, 2, 6 on a 0..7 one."""
+    children, _ = _build(
+        scatter_chart_xml(), width=FRAME_W, height=FRAME_H
+    )
+    (points,) = _polyline_points(children)
+    assert points[0] == pytest.approx((52.027, 93.980), abs=0.6)
+    assert points[-1] == pytest.approx((175.847, 31.822), abs=0.6)
+
+
+def test_scatter_style_decides_nothing_and_the_series_markup_decides_everything():
+    """`marker`, `line` and `lineMarker` came back **byte-identical**: line and markers.
+
+    So `c:scatterStyle` is not what turns either off.  What does is the series' own
+    markup, each measured: `<a:ln><a:noFill/></a:ln>` leaves the markers alone on the
+    plot, and `<c:symbol val="none"/>` leaves the line alone.
+    """
+    shapes = {}
+    for style in ("marker", "line", "lineMarker"):
+        children, _ = _build(
+            scatter_chart_xml(style=style), width=FRAME_W, height=FRAME_H
+        )
+        shapes[style] = (len(_polyline_points(children)), len(_marker_boxes(children)))
+    assert shapes["marker"] == shapes["line"] == shapes["lineMarker"] == (1, 5)
+
+    no_line, _ = _build(
+        scatter_chart_xml(lines=("<a:ln><a:noFill/></a:ln>",)),
+        width=FRAME_W,
+        height=FRAME_H,
+    )
+    assert _polyline_points(no_line) == []
+    assert len(_marker_boxes(no_line)) == 5
+
+    no_marker, _ = _build(
+        scatter_chart_xml(markers=("<c:marker><c:symbol val='none'/></c:marker>",)),
+        width=FRAME_W,
+        height=FRAME_H,
+    )
+    assert len(_polyline_points(no_marker)) == 1
+    assert _marker_boxes(no_marker) == []
+
+
+def test_a_scatter_marker_with_no_size_is_six_points():
+    """Not ECMA-376's seven.  The second series' **square** measured 6.000 x 6.000.
+
+    A square is axis-aligned, so unlike the diamond the radar measured -- 5.76 pt across,
+    which is a 6 pt box with its tips inside PowerPoint's 0.24 pt output grid -- there is
+    nothing to argue about.  A line chart with an explicit `c:size val="6"` square measured
+    the same 6.000 on the same export.
+    """
+    from pptx2svg.resolve.chart import DEFAULT_MARKER_SIZE_PT
+
+    assert DEFAULT_MARKER_SIZE_PT == 6.0
+    children, _ = _build(scatter_chart_xml(), width=FRAME_W, height=FRAME_H)
+    for marker in _marker_boxes(children):
+        assert _pt(marker.transform.extent_width) == pytest.approx(6.0, abs=0.01)
+        assert _pt(marker.transform.extent_height) == pytest.approx(6.0, abs=0.01)
+
+    sized, _ = _build(
+        scatter_chart_xml(
+            markers=("<c:marker><c:symbol val='circle'/><c:size val='12'/></c:marker>",)
+        ),
+        width=FRAME_W,
+        height=FRAME_H,
+    )
+    assert _pt(_marker_boxes(sized)[0].transform.extent_width) == pytest.approx(
+        12.0, abs=0.01
+    )
+
+
+def test_a_scatter_joins_its_points_in_the_order_the_file_lists_them():
+    """The unsorted-x probe's path runs 3, 1, 5, 2, 4 -- data order, not sorted by x."""
+    children, _ = _build(
+        scatter_chart_xml(series=(((3, 1, 5, 2, 4), SCATTER_YS),)),
+        width=FRAME_W,
+        height=FRAME_H,
+    )
+    (points,) = _polyline_points(children)
+    assert [x for x, _ in points] == pytest.approx(
+        [113.937, 52.027, 175.847, 82.982, 144.892], abs=0.6
+    )
+
+
+def test_a_blank_breaks_a_scatter_into_two_strokes():
+    """And the vertex list alone does not say so -- only the path *operators* do.
+
+    The probe with a missing middle y, under `dispBlanksAs="gap"`, exports as one path
+    object with four points, which reads as unbroken; its segment kinds are move, line,
+    move, line.  Two disjoint strokes with a gap where the blank is, and five markers
+    become four.  Reading coordinates without reading the operators is how that gets
+    missed -- it was, until the render was put beside PowerPoint's.
+    """
+    children, _ = _build(
+        scatter_chart_xml(series=((SCATTER_XS, (3, 4, None, 2, 6)),)),
+        width=FRAME_W,
+        height=FRAME_H,
+    )
+    runs = _polyline_points(children)
+    assert [len(run) for run in runs] == [2, 2]
+    assert [x for x, _ in runs[0]] == pytest.approx([52.027, 82.978], abs=0.6)
+    assert [x for x, _ in runs[1]] == pytest.approx([144.898, 175.847], abs=0.6)
+    assert len(_marker_boxes(children)) == 4
+
+
+SCATTER_LABEL_BASELINES = {
+    # position -> (left edge, baseline) of the label on the first point, measured.
+    None: (61.027, 96.842),
+    "l": (37.687, 96.842),
+    "t": (49.357, 83.162),
+    "b": (49.357, 110.522),
+    "ctr": (49.357, 96.909),
+}
+
+
+@pytest.mark.parametrize("position", list(SCATTER_LABEL_BASELINES))
+def test_each_scatter_label_position_matches_powerpoints(position):
+    """All five, one probe each, against a point at (52.027, 93.980) with a 6 pt marker.
+
+    Every one is the line chart's own geometry read off a different edge of the marker:
+    `r` -- the default when the file states none -- and `l` put the label's near edge a
+    marker radius plus 0.6 em from the point, which is 9.000 pt measured and 9.000 pt
+    predicted on both sides; `t` and `b` put its line box a radius plus the bar chart's
+    4.85 pt gap away; `ctr` is the ink centre.
+
+    `b` is the one loose number, 0.9 pt low, and it is the slack this file records
+    elsewhere: PowerPoint's line box runs about a point taller than our metrics give, so a
+    placement hung off the *ascent* inherits all of the difference where one hung off the
+    descent inherits none.
+    """
+    expected_left, expected_baseline = SCATTER_LABEL_BASELINES[position]
+    children, _ = _build(
+        scatter_chart_xml(dlbls=(scatter_dlbls("Val", position=position),)),
+        width=FRAME_W,
+        height=FRAME_H,
+    )
+    # The first point's label is the "3"; the y axis' own "3" is the one at the far left.
+    threes = [
+        shape
+        for text, shape in _labels_by_text(children).items()
+        if text == "3"
+    ]
+    assert threes, "no data label drawn"
+    label = max(threes, key=lambda shape: shape.transform.offset_x)
+    body = label.text_body
+    align = body.paragraphs[0].properties.alignment
+    box_left = _pt(label.transform.offset_x)
+    width = _pt(label.transform.extent_width)
+    from pptx2svg.resolve.chart import text_width
+
+    ink = text_width("3", "Aptos", 10.0)
+    if align == "ctr":
+        box_left += (width - ink) / 2
+    elif align == "r":
+        box_left += width - ink
+    assert box_left == pytest.approx(expected_left, abs=0.6)
+    assert _baseline(label) == pytest.approx(expected_baseline, abs=1.0)
+
+
+def test_a_scatter_legends_with_a_rule_and_its_marker():
+    """The line chart's key, not the bar's swatch: 19.200 pt of rule, marker on its middle."""
+    from pptx2svg.resolve.chart import (
+        LINE_LEGEND_KEY_GAP_PT,
+        LINE_LEGEND_KEY_PT,
+        ChartBuilder,
+        ChartFont,
+        font_box,
+    )
+
+    class _FakeScatter:
+        line_legend_keys = False
+        _is_line = False
+        _is_scatter = True
+        _is_bubble = False
+        _is_radar = False
+        _radar_style = "marker"
+        _line_legend_key = ChartBuilder._line_legend_key
+        _is_line_keyed = ChartBuilder._is_line_keyed
+        _draws_a_rule = staticmethod(lambda: True)
+
+    font = ChartFont(family="Aptos", box=font_box("Aptos", 10.0))
+    assert ChartBuilder._legend_key_size(_FakeScatter(), font) == (
+        LINE_LEGEND_KEY_PT,
+        LINE_LEGEND_KEY_GAP_PT,
+    )
+
+    children, _ = _build(
+        scatter_chart_xml(
+            series=((SCATTER_XS, SCATTER_YS), (SCATTER_XS, SCATTER_YS2)), legend="b"
+        ),
+        width=FRAME_W,
+        height=FRAME_H,
+    )
+    keys = [
+        child
+        for child in children
+        if isinstance(child, m.ConnectorElement)
+        and _pt(child.transform.extent_width) == pytest.approx(19.2, abs=0.01)
+    ]
+    assert len(keys) == 2
+
+
+def test_a_scatter_with_negative_x_puts_its_value_labels_beside_the_axis():
+    """`tickLblPos="nextTo"` means next to the *axis*, and the axis is at x = 0.
+
+    Measured: the value axis is drawn at 111.088 pt -- the zero tick -- with the plot's own
+    left edge 95.7 pt away, and the y labels are right-aligned 9.23 pt to its left, which
+    is the same `descent + 0.645 em` the column always uses.
+    """
+    children, _ = _build(
+        scatter_chart_xml(series=(((-2, -1, 0, 1, 2), SCATTER_YS),)),
+        width=FRAME_W,
+        height=FRAME_H,
+    )
+    verticals = [
+        child
+        for child in children
+        if isinstance(child, m.ConnectorElement) and child.transform.extent_width == 0
+    ]
+    axis = max(verticals, key=lambda line: line.transform.extent_height)
+    assert _pt(axis.transform.offset_x) == pytest.approx(111.088, abs=0.6)
+    # Two labels read "0" -- the y axis' own and the x axis' -- so pick the one that is
+    # not in the band under the plot.
+    _, _, _, bottom = _rect_of(children)
+    zero = next(
+        child
+        for child in children
+        if isinstance(child, m.ShapeElement)
+        and child.text_body is not None
+        and "".join(
+            run.text for p in child.text_body.paragraphs for run in p.runs
+        ) == "0"
+        and _pt(child.transform.offset_y) < bottom
+    )
+    right = _pt(zero.transform.offset_x) + _pt(zero.transform.extent_width)
+    assert right == pytest.approx(111.088 - 9.267, abs=0.6)
+
+
+#: ``(x data, PowerPoint's x axis)`` for the six probes that ask whether a scatter's axis
+#: has to start at zero.  The bracket on the threshold is [0.80, 0.84): 40/50 keeps zero
+#: and 42/50 does not, with Excel's folklore 5/6 = 0.8333 inside it.
+SCATTER_ZERO_ANCHOR = {
+    "years": ((2010, 2012, 2014, 2016, 2020), (2005.0, 2025.0, 5.0)),
+    "40-50-keeps-zero": ((40, 42, 44, 46, 50), (0.0, 60.0, 20.0)),
+    "42-50-drops-zero": ((42, 44, 46, 48, 50), (40.0, 55.0, 5.0)),
+    "tight-and-far": ((100, 101, 102, 103, 104), (98.0, 106.0, 2.0)),
+    "all-negative": ((-50, -40, -30, -20, -10), (-60.0, 0.0, 20.0)),
+    "near-zero-keeps-it": ((10, 20, 30, 40, 50), (0.0, 60.0, 20.0)),
+}
+
+
+@pytest.mark.parametrize("name", list(SCATTER_ZERO_ANCHOR))
+def test_a_scatters_axis_leaves_zero_out_when_the_data_sits_far_from_it(name):
+    """**A scatter is the one type whose axis is not anchored at zero.**
+
+    A bar must start at its axis -- a bar that does not is a different picture -- and
+    `nice_axis_scale` anchors every other type there.  Applied to a scatter it destroys the
+    chart: years 2010..2020 against a measurement collapse into a 1% sliver of a 0..3000
+    axis.  PowerPoint agrees, and the six probes here bracket when it lets go: the near end
+    has to be past 5/6 of the far one, measured to [0.80, 0.84) by the two that straddle
+    it.
+
+    The unanchored extent rounds strictly outward at **both** ends, where an anchored one
+    holds its low end at zero: 100..104 came back 98..106 and 2010..2020 came back
+    2005..2025, each a whole unit clear of the data.
+    """
+    from pptx2svg.resolve.chart import nice_axis_scale
+
+    xs, expected = SCATTER_ZERO_ANCHOR[name]
+    # Four intervals is what a 220.47 pt frame gives a bottom axis with 10 pt labels --
+    # `bottom_axis_intervals` -- which is the frame every one of these probes was drawn on.
+    assert nice_axis_scale(
+        min(xs), max(xs), intervals=4, anchor_zero=False
+    ) == pytest.approx(expected)
+
+    # And it reaches the drawing: the first and last x labels are the axis' own ends.
+    children, _ = _build(
+        scatter_chart_xml(series=((xs, SCATTER_YS),)), width=FRAME_W, height=FRAME_H
+    )
+    _, _, _, bottom = _rect_of(children)
+    along_bottom = sorted(
+        (
+            _pt(shape.transform.offset_x),
+            "".join(r.text for p in shape.text_body.paragraphs for r in p.runs),
+        )
+        for shape in children
+        if isinstance(shape, m.ShapeElement)
+        and shape.text_body is not None
+        and _pt(shape.transform.offset_y) > bottom
+    )
+    assert float(along_bottom[0][1]) == pytest.approx(expected[0])
+    assert float(along_bottom[-1][1]) == pytest.approx(expected[1])
+
+
+def test_the_zero_anchor_still_holds_for_every_other_chart_type():
+    """Only a scatter was measured, so only a scatter lets go.
+
+    `real-financial-report.pptx`'s radar has 65..100 of data and PowerPoint draws it from
+    zero; so does every bar in the corpus.  A line chart of temperatures has the same
+    problem a scatter does and **no probe has ever shown what PowerPoint does with one**.
+    """
+    from pptx2svg.resolve.chart import nice_axis_scale
+
+    assert nice_axis_scale(2010, 2020) == pytest.approx((0.0, 2500.0, 500.0))
+    assert nice_axis_scale(2010, 2020, intervals=4, anchor_zero=False) == pytest.approx(
+        (2005.0, 2025.0, 5.0)
+    )
+
+
+def test_the_two_observations_that_refuted_every_ladder_now_come_out_together():
+    """The pair that no ratio rule could order, and both are the tick count.
+
+    A scatter probe of 120..160 came back 0..180 **by 20** on a 145 pt axis where halving
+    the power of ten gave 0..200 by 50, and `real-financial-report.pptx`'s radar came back
+    0..100 by 50 -- two rings at radii 22.78 and 45.56 -- where the ladder that reproduced
+    the scatter gave five.  A ratio threshold has to accept 2.0 and refuse 3.2 at once,
+    which is why three of them were written and reverted.
+
+    Neither is about the ratio.  The scatter's y axis has a 181.1 pt frame at 10 pt labels,
+    which is room for ten intervals, and 168 padded over ten rounds up to 20.  The radar's
+    radius is 45.56 pt at 13.406 pt of line box, which is room for four, and a hundred over
+    four rounds up the 1-2-5 ladder to 50.
+    """
+    from pptx2svg.resolve.chart import nice_axis_scale
+
+    assert nice_axis_scale(120, 160, intervals=10) == pytest.approx((0.0, 180.0, 20.0))
+    assert nice_axis_scale(65, 100, intervals=4, strict=False) == pytest.approx(
+        (0.0, 100.0, 50.0)
+    )
+
+
+def test_a_midcat_bar_chart_keeps_its_labels_in_the_bands_with_its_bars():
+    """Excel writes `midCat` on a column chart's value axis, and the bars do not move.
+
+    It is the "Axis position: on tick marks" checkbox, so a perfectly ordinary column chart
+    carries it.  Only `_draw_lines` and `_draw_areas` put their marks on the ticks, so
+    reading it on a bar chart would place every label up to 41 pt from the bar it names and
+    push the first one outside the plot.  What PowerPoint does with such a file is **not
+    measured**; keeping the bars and their labels in the bands together is the one reading
+    that cannot contradict itself.
+    """
+    body = bar(
+        "<c:ser><c:cat><c:strRef><c:strCache><c:ptCount val='3'/>"
+        "<c:pt idx='0'><c:v>Alpha</c:v></c:pt><c:pt idx='1'><c:v>Beta</c:v></c:pt>"
+        "<c:pt idx='2'><c:v>Gamma</c:v></c:pt></c:strCache></c:strRef></c:cat>"
+        "<c:val><c:numRef><c:numCache><c:ptCount val='3'/>"
+        "<c:pt idx='0'><c:v>3</c:v></c:pt><c:pt idx='1'><c:v>4</c:v></c:pt>"
+        "<c:pt idx='2'><c:v>5</c:v></c:pt></c:numCache></c:numRef></c:val></c:ser>"
+    ).replace("<c:valAx>", "<c:valAx><c:crossBetween val='midCat'/>")
+    children, _ = _build(body, width=FRAME_W, height=FRAME_H)
+    labels = _labels_by_text(children)
+    bars = sorted(
+        (
+            child
+            for child in children
+            if isinstance(child, m.ShapeElement)
+            and isinstance(child.fill, m.SolidFill)
+            and child.text_body is None
+        ),
+        key=lambda shape: shape.transform.offset_x,
+    )
+    assert len(bars) == 3
+    for shape, text in zip(bars, ("Alpha", "Beta", "Gamma")):
+        bar_centre = _pt(shape.transform.offset_x) + _pt(shape.transform.extent_width) / 2
+        box = labels[text].transform
+        label_centre = _pt(box.offset_x) + _pt(box.extent_width) / 2
+        assert label_centre == pytest.approx(bar_centre, abs=0.5), text
+    # And nothing is pushed outside the frame the way the tick placement would.
+    assert min(_pt(labels[t].transform.offset_x) for t in ("Alpha", "Beta", "Gamma")) > 10.0
+
+
+def test_an_axis_states_where_it_itself_crosses_the_other_one():
+    """`c:crosses` belongs to the axis it is written on, on a scatter as on a bar.
+
+    `<c:crosses val="max"/>` on the **bottom** axis moves the *horizontal* line to the top
+    of the plot, not the vertical line to the right of it -- which is how the sibling
+    `_category_axis_position` has always read it.  Reading each axis' own `c:crosses` for
+    the perpendicular line put the value axis at the plot's right edge and dragged the y
+    tick labels across the plot with it.  Only `autoZero` is measured; this pins the
+    reading rather than a second one invented for scatters.
+    """
+    xml = scatter_chart_xml()
+    at_max = xml.replace(
+        "<c:crossAx val='100003'/><c:crosses val='autoZero'/>",
+        "<c:crossAx val='100003'/><c:crosses val='max'/>",
+        1,
+    )
+    assert at_max != xml
+    children, _ = _build(at_max, width=FRAME_W, height=FRAME_H)
+    left, top, right, bottom = _rect_of(children)
+    vertical = [
+        c for c in children
+        if isinstance(c, m.ConnectorElement) and c.transform.extent_width == 0
+    ]
+    horizontal = [
+        c for c in children
+        if isinstance(c, m.ConnectorElement) and c.transform.extent_height == 0
+    ]
+    # The bottom axis said `max`, so the *horizontal* line went to the plot's top edge.
+    axis = min(horizontal, key=lambda c: c.transform.offset_y)
+    assert _pt(axis.transform.offset_y) == pytest.approx(top, abs=0.01)
+    # The vertical line stayed where the y axis' own `autoZero` puts it.
+    assert _pt(
+        min(vertical, key=lambda c: c.transform.offset_x).transform.offset_x
+    ) == pytest.approx(left, abs=0.01)
+
+
+def test_a_scatter_honours_crosses_at():
+    """`c:crossesAt` is a value on the axis being crossed.
+
+    `_category_axis_position` honours it and the scatter's own crossing used to drop it
+    silently.  Unmeasured -- no probe states it -- but implemented from the same schema
+    reading its sibling uses rather than from a second one.
+    """
+    xml = scatter_chart_xml().replace(
+        "<c:crossAx val='100003'/><c:crosses val='autoZero'/>",
+        "<c:crossAx val='100003'/><c:crosses val='val'/><c:crossesAt val='4'/>",
+        1,
+    )
+    children, _ = _build(xml, width=FRAME_W, height=FRAME_H)
+    left, top, right, bottom = _rect_of(children)
+    crossing = bottom - (bottom - top) * 4 / 7
+    # A gridline and the axis line are both black rules across the whole plot, so the axis
+    # cannot be told apart by geometry -- but its tick labels hang off it, and `nextTo`
+    # means next to the axis.  They move up with it.
+    assert any(
+        abs(_pt(c.transform.offset_y) - crossing) < 0.2
+        for c in children
+        if isinstance(c, m.ConnectorElement) and c.transform.extent_height == 0
+    )
+    zero = min(
+        (
+            shape
+            for shape in children
+            if isinstance(shape, m.ShapeElement)
+            and shape.text_body is not None
+            and "".join(r.text for p in shape.text_body.paragraphs for r in p.runs) == "0"
+            # The y axis has a "0" too, right-aligned in a column that starts at the
+            # frame's own left edge; the x axis' is centred on its tick.
+            and shape.transform.offset_x > 1.0
+        ),
+        key=lambda shape: shape.transform.offset_x,
+    )
+    assert _baseline(zero) == pytest.approx(crossing + 15.17, abs=0.6)
+
+
+def test_a_scatter_data_label_can_print_its_x_value_as_the_category_name():
+    """`parse/chart` already caches a scatter's `c:xVal` as its categories; this dropped it.
+
+    `<c:showCatName val="1"/>` printed nothing at all, because the label text was built
+    against an empty category list.
+    """
+    children, _ = _build(
+        scatter_chart_xml(dlbls=(scatter_dlbls("CatName"),)),
+        width=FRAME_W,
+        height=FRAME_H,
+    )
+    _, _, _, bottom = _rect_of(children)
+    inside = {
+        "".join(r.text for p in shape.text_body.paragraphs for r in p.runs)
+        for shape in children
+        if isinstance(shape, m.ShapeElement)
+        and shape.text_body is not None
+        and _pt(shape.transform.offset_x) > 30.0
+        and _pt(shape.transform.offset_y) < bottom
+    }
+    assert {"1", "2", "3", "4", "5"} <= inside
+
+
+def test_a_label_below_its_point_stacks_downward():
+    """`b` is the one placement that hangs *under* its anchor, so its block grows down.
+
+    Every other placement stacks upward, which for `b` put the first line back on the
+    marker it was supposed to clear.
+    """
+    children, _ = _build(
+        scatter_chart_xml(dlbls=(scatter_dlbls("SerName", "Val", position="b"),)),
+        width=FRAME_W,
+        height=FRAME_H,
+    )
+    def leftmost(text):
+        return min(
+            (
+                shape
+                for shape in children
+                if isinstance(shape, m.ShapeElement)
+                and shape.text_body is not None
+                and "".join(r.text for p in shape.text_body.paragraphs for r in p.runs)
+                == text
+                and _pt(shape.transform.offset_x) > 30.0
+            ),
+            key=lambda shape: shape.transform.offset_x,
+        )
+
+    # Point one is (52.027, 93.980); "Alpha" is the first line and "3" the second, so the
+    # block starts where a one-line `b` label would and grows *away* from the marker.
+    name, value = leftmost("Alpha"), leftmost("3")
+    assert _baseline(name) == pytest.approx(110.522, abs=1.0)
+    assert _baseline(value) == pytest.approx(_baseline(name) + 12.207, abs=0.1)
+    assert _baseline(name) > 93.980 + 3
+
+
+def test_area_and_scatter_draw_rather_than_warning():
+    """The gate in `resolve/view.py`, which is what turns a warning into a picture."""
+    from pptx2svg.resolve.view import DRAWABLE_CHART_KINDS
+
+    assert {"areaChart", "scatterChart"} <= DRAWABLE_CHART_KINDS
+    # `area3DChart` degrades to `areaChart` through `flat_chart_kind`, so it draws flat.
+    assert flat_chart_kind("area3DChart") == "areaChart"
+
+
+
+# -- bubbleChart -----------------------------------------------------------------------
+#
+# Thirty probe charts across three decks in the same 220.4724 x 181.1024 pt frame as the
+# scatter sweep, exported by PowerPoint 16.106 and read back as exact path vertices.  Every
+# drawn circle was axis-aligned and square to 0.001 pt, so its bounding box *is* its
+# diameter.  The tables below are PowerPoint's own numbers.
+
+BUBBLE_XS = (1, 2, 3)
+BUBBLE_YS = (3, 4, 5)
+
+
+def bubble_chart_xml(
+    *,
+    series=((BUBBLE_XS, BUBBLE_YS, (1, 4, 9)),),
+    names=("Alpha", "Beta"),
+    scale=None,
+    represents=None,
+    show_neg=None,
+    legend=None,
+    title=None,
+    dlbls=("",),
+    text_size=None,
+    fixed=True,
+):
+    """One bubble chart, in the shape the exported probe deck used."""
+
+    def cache(values):
+        points = "".join(
+            f"<c:pt idx='{i}'><c:v>{v}</c:v></c:pt>"
+            for i, v in enumerate(values)
+            if v is not None
+        )
+        return (
+            "<c:numRef><c:numCache><c:formatCode>General</c:formatCode>"
+            f"<c:ptCount val='{len(values)}'/>{points}</c:numCache></c:numRef>"
+        )
+
+    body = ""
+    for index, (xs, ys, sizes) in enumerate(series):
+        body += (
+            f"<c:ser><c:idx val='{index}'/><c:order val='{index}'/>"
+            "<c:tx><c:strRef><c:strCache><c:ptCount val='1'/>"
+            f"<c:pt idx='0'><c:v>{names[index]}</c:v></c:pt></c:strCache></c:strRef></c:tx>"
+            + (dlbls[index] if index < len(dlbls) else "")
+            + f"<c:xVal>{cache(xs)}</c:xVal><c:yVal>{cache(ys)}</c:yVal>"
+            + f"<c:bubbleSize>{cache(sizes)}</c:bubbleSize></c:ser>"
+        )
+
+    tail = ""
+    if scale is not None:
+        tail += f"<c:bubbleScale val='{scale}'/>"
+    if show_neg is not None:
+        tail += f"<c:showNegBubbles val='{show_neg}'/>"
+    if represents is not None:
+        tail += f"<c:sizeRepresents val='{represents}'/>"
+
+    def axis(axis_id, cross_id, position, low, high, gridlines):
+        scaling = "<c:orientation val='minMax'/>"
+        if fixed:
+            scaling += f"<c:max val='{high}'/><c:min val='{low}'/>"
+        return (
+            f"<c:valAx><c:axId val='{axis_id}'/><c:scaling>{scaling}</c:scaling>"
+            f"<c:delete val='0'/><c:axPos val='{position}'/>"
+            + ("<c:majorGridlines/>" if gridlines else "")
+            + "<c:numFmt formatCode='General' sourceLinked='1'/>"
+            "<c:majorTickMark val='none'/><c:minorTickMark val='none'/>"
+            "<c:tickLblPos val='nextTo'/>"
+            f"<c:crossAx val='{cross_id}'/><c:crosses val='autoZero'/>"
+            "<c:crossBetween val='midCat'/></c:valAx>"
+        )
+
+    legend_xml = (
+        f"<c:legend><c:legendPos val='{legend}'/><c:layout/><c:overlay val='0'/></c:legend>"
+        if legend
+        else ""
+    )
+    title_xml = (
+        "<c:title><c:tx><c:rich><a:bodyPr/><a:lstStyle/><a:p><a:r>"
+        f"<a:rPr lang='en-US'/><a:t>{title}</a:t></a:r></a:p></c:rich></c:tx>"
+        "<c:layout/><c:overlay val='0'/></c:title><c:autoTitleDeleted val='0'/>"
+        if title
+        else "<c:autoTitleDeleted val='1'/>"
+    )
+    tx_pr = (
+        "<c:txPr><a:bodyPr/><a:lstStyle/><a:p><a:pPr>"
+        f"<a:defRPr sz='{int(text_size * 100)}'/></a:pPr></a:p></c:txPr>"
+        if text_size
+        else ""
+    )
+    return (
+        f"<c:chart>{title_xml}<c:plotArea><c:layout/>"
+        f"<c:bubbleChart><c:varyColors val='0'/>{body}{tail}"
+        "<c:axId val='100002'/><c:axId val='100003'/></c:bubbleChart>"
+        + axis("100002", "100003", "b", 0, 4, False)
+        + axis("100003", "100002", "l", 0, 6, True)
+        + f"</c:plotArea>{legend_xml}"
+        f"<c:plotVisOnly val='1'/><c:dispBlanksAs val='gap'/></c:chart>{tx_pr}"
+    )
+
+
+def _discs(children):
+    """Every drawn bubble, smallest first: ``(diameter, centre x, centre y, fill)``."""
+    out = []
+    for child in children:
+        if not isinstance(child, m.ShapeElement):
+            continue
+        if not isinstance(child.geometry, m.PresetGeometry):
+            continue
+        if child.geometry.preset != "ellipse":
+            continue
+        t = child.transform
+        out.append((
+            _pt(t.extent_width),
+            _pt(t.offset_x) + _pt(t.extent_width) / 2,
+            _pt(t.offset_y) + _pt(t.extent_height) / 2,
+            child.fill,
+        ))
+    return sorted(out, key=lambda disc: disc[0])
+
+
+#: ``c:bubbleScale`` against the diameter PowerPoint drew, on an identical chart whose
+#: sizing region is the 181.1024 pt frame less 5 pt a side.  A *linear* reading is refuted
+#: at both ends: it predicts 19.74 at 50 where PowerPoint drew 22.318, and 78.97 at 200
+#: where it drew 64.163.
+BUBBLE_SCALE_SWEEP = {
+    1: 0.512,
+    10: 4.983,
+    25: 11.937,
+    50: 22.318,
+    75: 31.427,
+    100: 39.485,
+    150: 53.101,
+    200: 64.163,
+    300: 81.048,
+}
+
+
+@pytest.mark.parametrize("scale", list(BUBBLE_SCALE_SWEEP))
+def test_bubble_scale_is_a_soft_clamp_not_a_multiplier(scale):
+    kwargs = {} if scale == 100 else {"scale": scale}
+    children, data = _build(bubble_chart_xml(**kwargs), width=FRAME_W, height=FRAME_H)
+    assert data.kind == "bubbleChart"
+    largest = _discs(children)[-1][0]
+    assert largest == pytest.approx(BUBBLE_SCALE_SWEEP[scale], abs=0.01)
+
+
+def test_a_bubbles_area_is_proportional_to_its_size():
+    """Sizes 1, 4, 9 drew 13.162, 26.323 and 39.485 -- exactly 1:2:3."""
+    children, _ = _build(bubble_chart_xml(), width=FRAME_W, height=FRAME_H)
+    diameters = [disc[0] for disc in _discs(children)]
+    assert diameters == pytest.approx([13.162, 26.323, 39.485], abs=0.01)
+
+
+def test_size_represents_w_makes_the_diameter_proportional_instead():
+    """The same sizes with ``<c:sizeRepresents val="w"/>`` drew 4.387, 17.549, 39.485."""
+    children, _ = _build(bubble_chart_xml(represents="w"), width=FRAME_W, height=FRAME_H)
+    diameters = [disc[0] for disc in _discs(children)]
+    assert diameters == pytest.approx([4.387, 17.549, 39.485], abs=0.01)
+
+
+def test_the_largest_bubble_is_the_reference_and_it_is_global():
+    """Four size distributions all drew 39.485 for their biggest, so the reference is the
+    maximum and not the sum; and a two-series probe shares one maximum across both -- a
+    series topping out at 9 drew 27.920 beside one topping out at 18."""
+    for sizes in ((1, 2, 3), (1, 4, 9), (5, 5, 5), (1, 2, 100)):
+        children, _ = _build(
+            bubble_chart_xml(series=((BUBBLE_XS, BUBBLE_YS, sizes),)),
+            width=FRAME_W,
+            height=FRAME_H,
+        )
+        assert _discs(children)[-1][0] == pytest.approx(39.485, abs=0.01)
+
+    children, _ = _build(
+        bubble_chart_xml(
+            series=(
+                (BUBBLE_XS, BUBBLE_YS, (1, 4, 9)),
+                (BUBBLE_XS, (2, 3, 4), (2, 8, 18)),
+            )
+        ),
+        width=FRAME_W,
+        height=FRAME_H,
+    )
+    diameters = [disc[0] for disc in _discs(children)]
+    assert diameters == pytest.approx(
+        [9.307, 13.162, 18.613, 26.323, 27.920, 39.485], abs=0.02
+    )
+
+
+def test_a_zero_size_draws_nothing_and_a_negative_one_draws_hollow():
+    """Sizes -4, 0, 9 drew **two** circles: the 9 in the series colour and the -4 at its
+    magnitude, white with a black 0.75 pt outline -- a negative bar's drawing.
+    ``<c:showNegBubbles val="0"/>`` removes it; the element absent or 1 keeps it."""
+    negative = ((BUBBLE_XS, BUBBLE_YS, (-4, 0, 9)),)
+    for kwargs in ({}, {"show_neg": 1}):
+        children, _ = _build(
+            bubble_chart_xml(series=negative, **kwargs), width=FRAME_W, height=FRAME_H
+        )
+        discs = _discs(children)
+        assert [disc[0] for disc in discs] == pytest.approx([26.323, 39.485], abs=0.01)
+        assert isinstance(discs[0][3], m.SolidFill)
+        assert discs[0][3].color.hex.upper() == "#FFFFFF"
+
+    children, _ = _build(
+        bubble_chart_xml(series=negative, show_neg=0), width=FRAME_W, height=FRAME_H
+    )
+    assert [disc[0] for disc in _discs(children)] == pytest.approx([39.485], abs=0.01)
+
+
+def test_a_bubbles_plot_rectangle_is_a_scatters():
+    """``bare`` in the scatter sweep is 21.073 / 13.670 / 11.102 / 24.965, and a bubble
+    with automatic axes over the same data reproduces it."""
+    children, _ = _build(
+        bubble_chart_xml(series=((BUBBLE_XS, BUBBLE_YS, (1, 2, 3)),), fixed=False),
+        width=FRAME_W,
+        height=FRAME_H,
+    )
+    ours = _insets(children)
+    for edge, truth in (
+        ("left", 21.073), ("right", 13.670), ("top", 11.102), ("bottom", 24.965)
+    ):
+        assert ours[edge] == pytest.approx(truth, abs=SWEEP_TOLERANCE_PT)
+
+
+def test_the_region_a_bubble_is_sized_against_is_not_the_plot():
+    """Two probes move every plot edge and draw the **same** bubble, and two move only the
+    legend band and change it.  ``font14`` and ``font8`` both drew 39.485; a right legend
+    drew 37.511 and a bottom one 33.928.
+
+    The title probe is measured too -- 32.631 pt, which the full pipeline reproduces to
+    0.001 -- and is **not** asserted here: this harness stubs text resolution, so its title
+    font is not the 18 pt fallback PowerPoint gave an unstyled ``c:title`` and its band is
+    2.2 pt out.  That is a property of the stub, not of the rule.
+    """
+    for kwargs, expected in (
+        ({"text_size": 14}, 39.485),
+        ({"text_size": 8}, 39.485),
+        ({"legend": "r"}, 37.511),
+        ({"legend": "b"}, 33.928),
+    ):
+        children, _ = _build(bubble_chart_xml(**kwargs), width=FRAME_W, height=FRAME_H)
+        assert _discs(children)[-1][0] == pytest.approx(expected, abs=0.15), kwargs
+
+
+def test_a_bubble_legends_with_a_swatch_not_a_rule():
+    """The one place a bubble's legend parts company with the scatter it copies.  Both
+    legend probes drew a 5.492 pt key, and the reserve feeds the sizing region too: with
+    the line key the drawn bubble came out 3.1 pt small and the plot 13.4 pt narrow."""
+    from pptx2svg.resolve.chart import (
+        ChartBuilder,
+        ChartFont,
+        LEGEND_SWATCH_EM,
+        font_box,
+    )
+
+    class _FakeBubble:
+        line_legend_keys = False
+        _is_line = False
+        _is_scatter = True
+        _is_bubble = True
+        _is_radar = False
+        _radar_style = "marker"
+        _line_legend_key = ChartBuilder._line_legend_key
+        _is_line_keyed = ChartBuilder._is_line_keyed
+        _draws_a_rule = staticmethod(lambda: True)
+
+    font = ChartFont(family="Aptos", box=font_box("Aptos", 10.0))
+    key, _ = ChartBuilder._legend_key_size(_FakeBubble(), font)
+    assert key == pytest.approx(LEGEND_SWATCH_EM * 10.0, abs=0.01)
+
+
+def test_a_bubble_draws_no_line_and_no_marker():
+    """Every one of the thirty probes emitted bare discs -- no connecting stroke, no
+    marker, and no outline unless the series states one."""
+    children, _ = _build(bubble_chart_xml(), width=FRAME_W, height=FRAME_H)
+    assert _polyline_points(children) == []
+    presets = [
+        child.geometry.preset
+        for child in children
+        if isinstance(child, m.ShapeElement)
+        and isinstance(child.geometry, m.PresetGeometry)
+        and child.text_body is None
+    ]
+    assert presets.count("ellipse") == 3
+    assert set(presets) <= {"ellipse"}
+
+
+# -- the bubble axis' clearance --------------------------------------------------------
+#
+# `tools/make_bubble_probe.py` writes a 40-slide deck and `tools/read_bubble_probe.py`
+# reads the drawn domain back off its tick labels.  38 of the 40 agree exactly, units
+# included; the two that do not are at `bubbleScale` 250 and 300 and are named in
+# ROADMAP.md 3.2a.  The gallery's own data is what the numbers below are.
+
+#: ``chart-gallery`` slide 6's two series, which is the data ``bubble-axis``' ``z`` family
+#: sweeps: x of 2..10 and y of 2..9.  On the probe's bare 480 x 260 pt frame PowerPoint
+#: runs **both** axes 0..12 by 2 at the default scale.
+GALLERY_BUBBLES = (
+    ((2.0, 4.0, 6.0, 8.0, 10.0), (5.0, 8.0, 4.0, 9.0, 6.0), (14.0, 32.0, 9.0, 40.0, 21.0)),
+    ((3.0, 5.5, 7.0, 9.5), (2.0, 6.5, 7.5, 3.5), (25.0, 12.0, 30.0, 18.0)),
+)
+
+
+def _drawn_ticks(children, vertical: bool) -> list[float]:
+    """The numbers one axis drew, low to high.
+
+    Both axes of a bubble chart are value axes and routinely draw the *same* numbers, so
+    they are told apart by position: the x axis is the one row of labels sharing a y, and
+    everything numeric that is not on it belongs to the y axis.
+    """
+    out = []
+    for child in children:
+        if not isinstance(child, m.ShapeElement) or child.text_body is None:
+            continue
+        text = "".join(
+            run.text for p in child.text_body.paragraphs for run in p.runs
+        )
+        try:
+            value = float(text)
+        except ValueError:
+            continue
+        out.append((child.transform.offset_x, child.transform.offset_y, value))
+    if not out:
+        return []
+    row = max((y for _, y, _ in out), key=lambda y: sum(other == y for _, other, _ in out))
+    across = [item for item in out if item[1] == row]
+    if vertical:
+        rest = [item for item in out if item[1] != row]
+        return [value for _, _, value in sorted(rest, key=lambda item: -item[1])]
+    return [value for _, _, value in sorted(across)]
+
+
+def _bubble_axes(**kwargs):
+    children, data = _build(
+        bubble_chart_xml(
+            series=GALLERY_BUBBLES, names=("Region", "Channel"), fixed=False, **kwargs
+        ),
+        width=480.0,
+        height=260.0,
+    )
+    assert data.kind == "bubbleChart"
+    return _drawn_ticks(children, False), _drawn_ticks(children, True)
+
+
+def test_a_bubble_axis_clears_the_bubbles_and_not_their_centres():
+    """``chart-gallery`` slide 6's data is what found this: PowerPoint runs both axes
+    0..12 by 2 where padding for the data points alone gives 0..10 by 1."""
+    x, y = _bubble_axes()
+    assert y == [0, 2, 4, 6, 8, 10, 12]
+    assert x == [0, 2, 4, 6, 8, 10, 12]
+
+
+def test_the_bubble_axis_moves_with_the_scale_and_the_data_does_not():
+    """The experiment that separates padding for ink from padding for numbers.
+
+    ``bubble-axis``' ``z`` family holds one chart's data and sweeps ``c:bubbleScale``:
+    the y axis is 0..10 by 1 at 10, 25 and 50 and 0..12 by 2 at 75, 100 and above.  The
+    step between those two is the whole finding -- no rule reading the *values* can move
+    an axis when no value moved.
+    """
+    assert _bubble_axes(scale=50)[1] == [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    assert _bubble_axes(scale=75)[1] == [0, 2, 4, 6, 8, 10, 12]
+
+
+def test_the_bubble_clearance_leaves_room_for_the_largest_bubble_wherever_it_sits():
+    """``d-inner`` against ``d-outer``: the same four points, with the 100-size bubble in
+    the middle of both ranges and then on the y maximum.  PowerPoint draws 0..12 for both,
+    so the room is made for the **chart's** largest radius and not for the extreme point's
+    own -- reading the extreme point's radius gives 0..10 on ``d-inner``."""
+    xs, ys = (2.0, 5.0, 8.0, 9.0), (2.0, 9.0, 5.0, 3.0)
+    for sizes in ((5.0, 5.0, 100.0, 5.0), (5.0, 100.0, 5.0, 5.0)):
+        children, _ = _build(
+            bubble_chart_xml(series=((xs, ys, sizes),), fixed=False),
+            width=480.0,
+            height=260.0,
+        )
+        assert _drawn_ticks(children, True) == [0, 2, 4, 6, 8, 10, 12], sizes
+
+
+def test_the_clearance_never_adds_itself_to_the_five_per_cent_headroom():
+    """They are a maximum, not a sum, and ``bubble-axis`` settles it outright: at
+    ``bubbleScale=50`` the sum rounds the axis to 0..12 and PowerPoint draws 0..10."""
+    from pptx2svg.resolve.chart import nice_axis_scale
+
+    # 0..9 of data on a plot whose largest radius is 7.3% of its height.
+    assert nice_axis_scale(2.0, 9.0, intervals=10, anchor_zero=False, clearance=0.0728) == (
+        pytest.approx(0.0),
+        pytest.approx(10.0),
+        pytest.approx(1.0),
+    )
+    # A scatter -- no clearance at all -- is untouched by any of this.
+    assert nice_axis_scale(2.0, 9.0, intervals=10, anchor_zero=False) == (
+        pytest.approx(0.0),
+        pytest.approx(10.0),
+        pytest.approx(1.0),
+    )
+
+
+def test_the_clearance_is_rechecked_after_the_domain_is_rounded():
+    """Rounding outwards makes the span larger, and the room a bubble needs is a fraction
+    of that span, so a domain that cleared the ink before rounding can fail after.
+    ``bubble-axis`` at ``bubbleScale=150`` solves to 0..10.885, rounds to 0..12, and the
+    bubble sitting on the data minimum of 2 then hangs 0.08 units below the floor --
+    PowerPoint draws -2..12."""
+    from pptx2svg.resolve.chart import nice_axis_scale
+
+    assert nice_axis_scale(
+        2.0, 9.0, intervals=10, anchor_zero=False, clearance=0.17323
+    ) == (pytest.approx(-2.0), pytest.approx(12.0), pytest.approx(2.0))
+
+
+def test_a_bubbles_label_stands_further_off_than_a_markers():
+    """``r`` puts the label box's near edge 8.494 pt past the **disc's** edge at 10 pt, on
+    three bubbles of radius 6.581, 13.162 and 19.742 -- not the scatter's 6.0 off a 3 pt
+    marker."""
+    children, _ = _build(
+        bubble_chart_xml(dlbls=(scatter_dlbls("Val", position="r"),)),
+        width=FRAME_W,
+        height=FRAME_H,
+    )
+    # The axis labels are text too, so keep only what sits beside a bubble: the y labels
+    # are at x < 20 and the x labels below y = 160.
+    boxes = [
+        _pt(shape.transform.offset_x)
+        for shape in children
+        if isinstance(shape, m.ShapeElement)
+        and shape.text_body is not None
+        and _pt(shape.transform.offset_x) > 40.0
+        and _pt(shape.transform.offset_y) < 150.0
+    ]
+    assert max(boxes) == pytest.approx(160.370 + 39.485 / 2 + 8.494, abs=0.4)
+
+
+# -- ofPieChart ------------------------------------------------------------------------
+#
+# Twenty-four probe charts across two decks, same frame, exported by PowerPoint 16.106.
+# The numbers below are read off its own path vertices: a wedge closes through the pie's
+# centre, which is the second-to-last point of the emitted path, so the radius and both
+# edge angles come out exactly.
+
+OF_PIE_VALUES = (40, 25, 15, 10, 6, 4)
+
+
+def of_pie_chart_xml(
+    *,
+    values=OF_PIE_VALUES,
+    of_pie_type="pie",
+    split_type=None,
+    split_pos=None,
+    cust_split=None,
+    second_size=None,
+    gap_width=None,
+    ser_lines=None,
+    legend=None,
+    dlbls="",
+):
+    """One ofPie chart, in the shape the exported probe deck used."""
+    cats = "".join(
+        f"<c:pt idx='{i}'><c:v>Cat{i}</c:v></c:pt>" for i in range(len(values))
+    )
+    points = "".join(f"<c:pt idx='{i}'><c:v>{v}</c:v></c:pt>" for i, v in enumerate(values))
+    series = (
+        "<c:ser><c:idx val='0'/><c:order val='0'/>"
+        "<c:tx><c:strRef><c:strCache><c:ptCount val='1'/>"
+        "<c:pt idx='0'><c:v>Share</c:v></c:pt></c:strCache></c:strRef></c:tx>"
+        f"<c:cat><c:strRef><c:strCache><c:ptCount val='{len(values)}'/>{cats}"
+        "</c:strCache></c:strRef></c:cat>"
+        "<c:val><c:numRef><c:numCache><c:formatCode>General</c:formatCode>"
+        f"<c:ptCount val='{len(values)}'/>{points}</c:numCache></c:numRef></c:val></c:ser>"
+    )
+    tail = "" if gap_width is None else f"<c:gapWidth val='{gap_width}'/>"
+    if split_type is not None:
+        tail += f"<c:splitType val='{split_type}'/>"
+    if split_pos is not None:
+        tail += f"<c:splitPos val='{split_pos}'/>"
+    if cust_split is not None:
+        body = "".join(f"<c:secondPiePt val='{i}'/>" for i in cust_split)
+        tail += f"<c:custSplit>{body}</c:custSplit>"
+    if second_size is not None:
+        tail += f"<c:secondPieSize val='{second_size}'/>"
+    if ser_lines is not None:
+        tail += f"<c:serLines>{ser_lines}</c:serLines>"
+    legend_xml = (
+        f"<c:legend><c:legendPos val='{legend}'/><c:layout/><c:overlay val='0'/></c:legend>"
+        if legend
+        else ""
+    )
+    return (
+        "<c:chart><c:autoTitleDeleted val='1'/><c:plotArea><c:layout/>"
+        f"<c:ofPieChart><c:ofPieType val='{of_pie_type}'/>{series}{dlbls}{tail}"
+        f"</c:ofPieChart></c:plotArea>{legend_xml}"
+        "<c:plotVisOnly val='1'/><c:dispBlanksAs val='gap'/></c:chart>"
+    )
+
+
+def _wedges(children):
+    """Every drawn wedge as ``(centre, radius, start, sweep)``, in draw order.
+
+    The path is ``M`` at the arc's start, cubics round it, then ``L`` to the centre; the
+    centre is therefore the last emitted point, which is what makes the two plots
+    separable without knowing the layout rule.
+    """
+    out = []
+    for shape, points in _custom_paths(children):
+        if len(points) < 4:
+            continue
+        centre = points[-1]
+        radius = math.hypot(points[0][0] - centre[0], points[0][1] - centre[1])
+        end = points[-2]
+
+        def clockwise(point):
+            return math.degrees(
+                math.atan2(point[0] - centre[0], centre[1] - point[1])
+            ) % 360
+
+        start = clockwise(points[0])
+        sweep = (clockwise(end) - start) % 360
+        out.append((centre, radius, start, sweep or 360.0, shape))
+    return out
+
+
+def _plots(children):
+    """The wedges grouped by the centre they share, left plot first."""
+    groups = {}
+    for centre, radius, start, sweep, shape in _wedges(children):
+        groups.setdefault((round(centre[0], 1), round(centre[1], 1)), []).append(
+            (radius, start, sweep, shape)
+        )
+    return [groups[key] for key in sorted(groups)]
+
+
+#: How many points ``auto`` moves to the second plot, at five point counts.  ``round(n/3)``
+#: is refuted twice: it predicts 1 at n=4 and 2 at n=7.
+OF_PIE_AUTO_SPLIT = {3: 1, 4: 2, 6: 2, 7: 3, 8: 3}
+
+
+@pytest.mark.parametrize("count", list(OF_PIE_AUTO_SPLIT))
+def test_an_of_pie_with_no_split_type_moves_the_last_third(count):
+    values = tuple(range(count, 0, -1))
+    children, data = _build(
+        of_pie_chart_xml(values=values), width=FRAME_W, height=FRAME_H
+    )
+    assert data.kind == "ofPieChart"
+    moved = OF_PIE_AUTO_SPLIT[count]
+    first, second = _plots(children)
+    # The first plot keeps the rest and gains one aggregated slice.
+    assert len(first) == count - moved + 1
+    assert len(second) == moved
+
+
+def test_the_four_stated_split_rules():
+    """40/25/15/10/6/4, one probe each.
+
+    * ``pos`` moves the **last** ``c:splitPos`` points;
+    * ``val`` moves every point **below** ``c:splitPos`` -- 12 moved 10, 6 and 4;
+    * ``percent`` is the same test on the share, and it is strict: 15 kept the 15%;
+    * ``cust`` moves exactly the listed indices.
+    """
+    for kwargs, kept, moved in (
+        ({"split_type": "pos", "split_pos": 4}, 2, 4),
+        ({"split_type": "val", "split_pos": 12}, 3, 3),
+        ({"split_type": "percent", "split_pos": 15}, 3, 3),
+        ({"split_type": "cust", "cust_split": (0, 3)}, 4, 2),
+    ):
+        children, _ = _build(of_pie_chart_xml(**kwargs), width=FRAME_W, height=FRAME_H)
+        first, second = _plots(children)
+        assert (len(first), len(second)) == (kept + 1, moved), kwargs
+
+
+def test_the_aggregated_slice_is_centred_at_three_oclock():
+    """Five probes, every one of them centred on 90 degrees clockwise from twelve: the
+    slice runs 72..108 here, and 27..153, 54..126, 0..180 and 54..126 on the others."""
+    children, _ = _build(of_pie_chart_xml(), width=FRAME_W, height=FRAME_H)
+    first, second = _plots(children)
+    # The aggregated slice is the last one drawn on the first plot.
+    _, start, sweep, _ = first[-1]
+    assert (start + sweep / 2) % 360 == pytest.approx(90.0, abs=0.01)
+    assert start == pytest.approx(72.0, abs=0.01)
+    assert sweep == pytest.approx(36.0, abs=0.01)
+    # Both plots start at the same angle.
+    assert first[0][1] == pytest.approx(108.0, abs=0.01)
+    assert second[0][1] == pytest.approx(108.0, abs=0.01)
+
+
+#: ``(kwargs, first radius, first centre x, second radius, second centre x)`` -- the
+#: packing law, read off six probes.  ``r = W / (2 + 2s + g/100)`` on a 198.472 pt region.
+OF_PIE_LAYOUT = {
+    "default": ({}, 44.105, 55.105, 33.079, 176.394),
+    "size50": ({"second_size": 50}, 49.618, 60.618, 24.809, 184.663),
+    "size100": ({"second_size": 100}, 39.694, 50.694, 39.694, 169.778),
+    "size25": ({"second_size": 25}, 56.706, 67.706, 14.177, 195.295),
+    "gap300": ({"gap_width": 300}, 30.534, 41.534, 22.901, 186.571),
+    "gap0": ({"gap_width": 0}, 56.706, 67.706, 42.530, 166.942),
+}
+
+
+@pytest.mark.parametrize("name", list(OF_PIE_LAYOUT))
+def test_the_two_plots_are_packed_across_the_polar_region(name):
+    kwargs, radius, centre_x, second_radius, second_x = OF_PIE_LAYOUT[name]
+    children, _ = _build(of_pie_chart_xml(**kwargs), width=FRAME_W, height=FRAME_H)
+    first, second = _plots(children)
+    assert first[0][0] == pytest.approx(radius, abs=0.02)
+    assert second[0][0] == pytest.approx(second_radius, abs=0.02)
+    centres = sorted({round(_wedge[0][0], 1) for _wedge in _wedges(children)})
+    assert centres[0] == pytest.approx(centre_x, abs=0.05)
+    assert centres[-1] == pytest.approx(second_x, abs=0.05)
+
+
+def test_a_short_ofpie_centres_its_run_instead_of_stretching_it():
+    """The defect ``chart-gallery`` slide 9 turned out to be, and the clamp's first
+    measurement.
+
+    ``ofpie-clamp``'s 520 x 200 pt frame leaves a 498 x 178 pt region, whose width law asks
+    for a radius of 153.2 and whose height allows 89.0 -- exactly half of it, which is what
+    PowerPoint drew.  The run is then ``divisor * radius`` wide and **centred**, so its left
+    edge sits 104.375 pt inside the region rather than on it; pinning the two plots to the
+    region's edges put them 104 pt out here and 160 pt out on a 600 pt frame.
+
+    Nine such slides across five frames and both forms agree to 0.005 pt.  The
+    ``ofpie-pack`` sweep is the other half of the same reading: while the width binds, the
+    drawn span *is* the region's width on all 23 of its slides, so the two rules are one.
+    """
+    for of_pie_type, first_x, second_x in (("bar", 204.375, None), ("pie", 148.75, 393.5)):
+        children, _ = _build(
+            of_pie_chart_xml(of_pie_type=of_pie_type), width=520.0, height=200.0
+        )
+        radius = _plots(children)[0][0][0]
+        assert radius == pytest.approx(89.0, abs=0.02), of_pie_type
+        # `region.left + (region.width - divisor * radius) / 2 + radius`, with the divisor
+        # 3.25 for the bar form and 4.5 for the pie one.  `_wedges` rounds to a tenth.
+        centres = sorted({round(wedge[0][0], 1) for wedge in _wedges(children)})
+        assert centres[0] == pytest.approx(first_x, abs=0.1), of_pie_type
+        if second_x is not None:
+            assert centres[-1] == pytest.approx(second_x, abs=0.1)
+
+
+def test_the_bar_form_packs_by_a_different_divisor():
+    """``r = W / (2 + s + g/200)``: 61.068 at the default 75% and 66.157 at 50%, and the
+    bar itself is ``s*r`` wide by ``2*s*r`` tall with the first moved point on top."""
+    for kwargs, radius, width, height in (
+        ({}, 61.068, 45.801, 91.602),
+        ({"second_size": 50}, 66.157, 33.078, 66.157),
+    ):
+        children, _ = _build(
+            of_pie_chart_xml(of_pie_type="bar", **kwargs), width=FRAME_W, height=FRAME_H
+        )
+        first = _plots(children)[0]
+        assert first[0][0] == pytest.approx(radius, abs=0.02), kwargs
+        bars = sorted(
+            (
+                child
+                for child in children
+                if isinstance(child, m.ShapeElement)
+                and isinstance(child.geometry, m.PresetGeometry)
+                and child.geometry.preset == "rect"
+            ),
+            key=lambda shape: shape.transform.offset_y,
+        )
+        assert len(bars) == 2
+        assert _pt(bars[0].transform.extent_width) == pytest.approx(width, abs=0.02)
+        total = sum(_pt(bar.transform.extent_height) for bar in bars)
+        assert total == pytest.approx(height, abs=0.02)
+        # 6 and 4 of 10: the 60% segment sits above the 40% one.
+        assert _pt(bars[0].transform.extent_height) == pytest.approx(
+            height * 0.6, abs=0.02
+        )
+        assert _pt(bars[0].transform.offset_x) + width == pytest.approx(
+            FRAME_W - 11.0, abs=0.05
+        )
+
+
+def test_ser_lines_are_tangent_to_the_second_pie():
+    """Measured: each connector leaves a **corner of the aggregated slice** and touches
+    the second pie.  The upper one ran (97.051, 76.922) to (168.104, 58.528), where the
+    radius and the line are perpendicular to 0.000 and the length is sqrt(d^2 - r^2).
+
+    Presence is the switch -- a probe with no ``c:serLines`` drew none -- and the default
+    is black at 0.5 pt, the axis default.
+    """
+    children, _ = _build(of_pie_chart_xml(), width=FRAME_W, height=FRAME_H)
+    assert _lines(children) == []
+
+    children, _ = _build(of_pie_chart_xml(ser_lines=""), width=FRAME_W, height=FRAME_H)
+    lines = _lines(children)
+    assert len(lines) == 2
+    boxes = sorted(
+        (
+            (
+                _pt(line.transform.offset_x),
+                _pt(line.transform.offset_y),
+                _pt(line.transform.offset_x + line.transform.extent_width),
+                _pt(line.transform.offset_y + line.transform.extent_height),
+            )
+            for line in lines
+        ),
+        key=lambda box: box[1],
+    )
+    assert boxes[0] == pytest.approx((97.051, 58.528, 168.104, 76.922), abs=0.05)
+    assert boxes[1] == pytest.approx((97.051, 104.180, 168.104, 122.574), abs=0.05)
+
+
+def test_past_six_colours_the_accent_cycle_is_shaded_then_tinted():
+    """Found on the ofPie probes, which always need one colour more than they have points.
+
+    Seven slices came back as accent1..accent6 *darkened* and a light accent1; nine
+    repeated the same darkened six and then three light ones, so the variation is per cycle
+    of six and not a function of the count.  Both factors are exact against 27 measured
+    channels; the round numbers either side are off by up to 1 and 5.
+    """
+    from pptx2svg.resolve.chart import _cycle_shift
+
+    accents = ["#4472C4", "#ED7D31", "#A5A5A5", "#FFC000", "#5B9BD5", "#70AD47"]
+    shaded = ["#3b64ad", "#d26e2a", "#929292", "#e2aa00", "#5089bc", "#62993e"]
+    tinted = ["#8fa2d4", "#f1a78a", "#bfbfbf"]
+    assert [_cycle_shift(value, 0) for value in accents] == shaded
+    assert [_cycle_shift(value, 1) for value in accents[:3]] == tinted
+
+
+def test_an_of_pie_that_moves_nothing_or_everything_still_draws():
+    """``val`` with a threshold under the smallest value leaves a plain pie, and one over
+    the largest leaves the first plot a single whole-circle slice.  PowerPoint draws a dark
+    filled disc where the empty second plot would be; this draws nothing there, which is
+    the divergence and is recorded rather than reproduced."""
+    children, _ = _build(
+        of_pie_chart_xml(split_type="val", split_pos=1), width=FRAME_W, height=FRAME_H
+    )
+    plots = _plots(children)
+    assert len(plots) == 1
+    assert len(plots[0]) == len(OF_PIE_VALUES)
+
+    children, _ = _build(
+        of_pie_chart_xml(split_type="val", split_pos=100), width=FRAME_W, height=FRAME_H
+    )
+    first, second = _plots(children)
+    assert len(first) == 1
+    assert first[0][2] == pytest.approx(360.0, abs=0.01)
+    assert len(second) == len(OF_PIE_VALUES)
+
+
+# -- stockChart ------------------------------------------------------------------------
+#
+# Twelve probe charts.  The plot rectangle, the axis, the bands and the legend key came
+# back a line chart's in every one.
+
+STOCK_CATS = ("Mon", "Tue", "Wed", "Thu", "Fri")
+STOCK_OPEN = (10, 12, 11, 14, 13)
+STOCK_HIGH = (15, 16, 14, 18, 17)
+STOCK_LOW = (8, 9, 10, 12, 11)
+STOCK_CLOSE = (12, 11, 13, 13, 16)
+STOCK_OHLC = (
+    ("Open", STOCK_OPEN), ("High", STOCK_HIGH), ("Low", STOCK_LOW), ("Close", STOCK_CLOSE)
+)
+STOCK_HLC = (("High", STOCK_HIGH), ("Low", STOCK_LOW), ("Close", STOCK_CLOSE))
+
+
+def stock_chart_xml(
+    *,
+    series=STOCK_OHLC,
+    hi_low=None,
+    up_down=None,
+    up_down_gap=None,
+    up_fill=None,
+    down_fill=None,
+    legend=None,
+):
+    """One stock chart, in the shape the exported probe deck used."""
+    cats = "".join(f"<c:pt idx='{i}'><c:v>{v}</c:v></c:pt>" for i, v in enumerate(STOCK_CATS))
+    body = ""
+    for index, (name, values) in enumerate(series):
+        points = "".join(f"<c:pt idx='{i}'><c:v>{v}</c:v></c:pt>" for i, v in enumerate(values))
+        body += (
+            f"<c:ser><c:idx val='{index}'/><c:order val='{index}'/>"
+            "<c:tx><c:strRef><c:strCache><c:ptCount val='1'/>"
+            f"<c:pt idx='0'><c:v>{name}</c:v></c:pt></c:strCache></c:strRef></c:tx>"
+            f"<c:cat><c:strRef><c:strCache><c:ptCount val='{len(STOCK_CATS)}'/>{cats}"
+            "</c:strCache></c:strRef></c:cat>"
+            "<c:val><c:numRef><c:numCache><c:formatCode>General</c:formatCode>"
+            f"<c:ptCount val='{len(values)}'/>{points}</c:numCache></c:numRef></c:val></c:ser>"
+        )
+    tail = "" if hi_low is None else f"<c:hiLowLines>{hi_low}</c:hiLowLines>"
+    if up_down is not None:
+        inner = "" if up_down_gap is None else f"<c:gapWidth val='{up_down_gap}'/>"
+        if up_fill is not None:
+            inner += f"<c:upBars>{up_fill}</c:upBars>"
+        if down_fill is not None:
+            inner += f"<c:downBars>{down_fill}</c:downBars>"
+        tail += f"<c:upDownBars>{inner}</c:upDownBars>"
+    legend_xml = (
+        f"<c:legend><c:legendPos val='{legend}'/><c:layout/><c:overlay val='0'/></c:legend>"
+        if legend
+        else ""
+    )
+    return (
+        "<c:chart><c:autoTitleDeleted val='1'/><c:plotArea><c:layout/>"
+        f"<c:stockChart>{body}{tail}"
+        "<c:axId val='100002'/><c:axId val='100003'/></c:stockChart>"
+        "<c:catAx><c:axId val='100002'/><c:scaling><c:orientation val='minMax'/></c:scaling>"
+        "<c:delete val='0'/><c:axPos val='b'/>"
+        "<c:numFmt formatCode='General' sourceLinked='1'/>"
+        "<c:majorTickMark val='none'/><c:minorTickMark val='none'/>"
+        "<c:tickLblPos val='nextTo'/><c:crossAx val='100003'/>"
+        "<c:crosses val='autoZero'/><c:auto val='1'/><c:lblAlgn val='ctr'/>"
+        "<c:lblOffset val='100'/></c:catAx>"
+        "<c:valAx><c:axId val='100003'/><c:scaling><c:orientation val='minMax'/></c:scaling>"
+        "<c:delete val='0'/><c:axPos val='l'/><c:majorGridlines/>"
+        "<c:numFmt formatCode='General' sourceLinked='1'/>"
+        "<c:majorTickMark val='none'/><c:minorTickMark val='none'/>"
+        "<c:tickLblPos val='nextTo'/><c:crossAx val='100002'/>"
+        "<c:crosses val='autoZero'/><c:crossBetween val='between'/></c:valAx>"
+        f"</c:plotArea>{legend_xml}"
+        "<c:plotVisOnly val='1'/><c:dispBlanksAs val='gap'/></c:chart>"
+    )
+
+
+def _up_down_bars(children):
+    """The open-to-close bodies, left to right, as ``(box, fill hex)``."""
+    out = []
+    for child in children:
+        if not isinstance(child, m.ShapeElement) or child.text_body is not None:
+            continue
+        if not isinstance(child.geometry, m.PresetGeometry):
+            continue
+        if child.geometry.preset != "rect" or not isinstance(child.fill, m.SolidFill):
+            continue
+        t = child.transform
+        # A square marker is a 6 pt rect with a solid fill too; the narrowest bar these
+        # probes draw is 9.154 pt, at `gapWidth=300`.
+        if _pt(t.extent_width) < 8.0:
+            continue
+        out.append((
+            (_pt(t.offset_x), _pt(t.offset_y), _pt(t.extent_width), _pt(t.extent_height)),
+            child.fill.color.hex.upper(),
+        ))
+    return sorted(out)
+
+
+def test_a_stock_chart_with_no_decorations_is_a_line_chart():
+    """Measured, and it is the opposite of what the schema's name suggests: PowerPoint
+    drew one 1.5 pt polyline per series with the ordinary marker cycle on it.  What a real
+    stock chart hides is hidden by the *file*, with `<a:ln><a:noFill/></a:ln>`."""
+    children, data = _build(stock_chart_xml(), width=FRAME_W, height=FRAME_H)
+    assert data.kind == "stockChart"
+    assert len(_polyline_points(children)) == 4
+    assert _up_down_bars(children) == []
+
+
+def test_hi_low_lines_span_the_category_and_only_when_asked():
+    """The probe's line runs from the largest value in the category to the smallest -- 15
+    down to 8 in the first -- at the band centre, in black at 0.5 pt."""
+    children, _ = _build(stock_chart_xml(), width=FRAME_W, height=FRAME_H)
+    plot = _rect_of(children)
+    before = len(_lines(children))
+
+    children, _ = _build(stock_chart_xml(hi_low=""), width=FRAME_W, height=FRAME_H)
+    added = [
+        line
+        for line in _lines(children)
+        if line.transform.extent_width == 0
+        and _pt(line.transform.offset_x) > plot[0] + 1.0
+    ]
+    assert len(added) == 5
+    assert len(_lines(children)) == before + 5
+    # 0..20 on this plot, so one unit is height/20; the first category spans 15 to 8.
+    left, top, right, bottom = plot
+    unit = (bottom - top) / 20.0
+    first = min(added, key=lambda line: line.transform.offset_x)
+    assert _pt(first.transform.offset_x) == pytest.approx(left + (right - left) / 10, abs=0.2)
+    assert _pt(first.transform.offset_y) == pytest.approx(bottom - 15 * unit, abs=0.2)
+    assert _pt(first.transform.extent_height) == pytest.approx(7 * unit, abs=0.2)
+
+
+#: ``c:upDownBars/c:gapWidth`` against the width PowerPoint drew on a 36.612 pt band.
+STOCK_GAP_SWEEP = {None: 14.646, 50: 24.410, 150: 14.646, 300: 9.154}
+
+
+@pytest.mark.parametrize("gap", list(STOCK_GAP_SWEEP))
+def test_up_down_bar_width_follows_the_gap_width(gap):
+    children, _ = _build(
+        stock_chart_xml(up_down="", up_down_gap=gap), width=FRAME_W, height=FRAME_H
+    )
+    bars = _up_down_bars(children)
+    assert len(bars) == 5
+    assert bars[0][0][2] == pytest.approx(STOCK_GAP_SWEEP[gap], abs=0.05)
+
+
+def test_up_down_bars_take_the_first_and_last_series_whatever_they_are_called():
+    """**The series order carries the meaning and the labels carry none.**  A three-series
+    High/Low/Close chart with ``c:upDownBars`` drew all five bars *down*, from each
+    category's High to its Close; four series drew three up and two down.  The defaults are
+    #F9F9F9 and #3F3F3F, which are not theme accents."""
+    children, _ = _build(stock_chart_xml(up_down=""), width=FRAME_W, height=FRAME_H)
+    fills = [fill for _, fill in _up_down_bars(children)]
+    assert fills == ["#F9F9F9", "#3F3F3F", "#F9F9F9", "#3F3F3F", "#F9F9F9"]
+
+    children, _ = _build(
+        stock_chart_xml(series=STOCK_HLC, up_down=""), width=FRAME_W, height=FRAME_H
+    )
+    bars = _up_down_bars(children)
+    assert [fill for _, fill in bars] == ["#3F3F3F"] * 5
+    left, top, right, bottom = _rect_of(children)
+    unit = (bottom - top) / 20.0
+    # The first bar runs High 15 down to Close 12.
+    assert bars[0][0][1] == pytest.approx(bottom - 15 * unit, abs=0.2)
+    assert bars[0][0][3] == pytest.approx(3 * unit, abs=0.2)
+
+
+def test_up_and_down_bar_fills_come_from_the_file_when_it_states_them():
+    red = "<c:spPr><a:solidFill><a:srgbClr val='FF0000'/></a:solidFill></c:spPr>"
+    blue = "<c:spPr><a:solidFill><a:srgbClr val='0000FF'/></a:solidFill></c:spPr>"
+    children, _ = _build(
+        stock_chart_xml(up_down="", up_fill=red, down_fill=blue),
+        width=FRAME_W,
+        height=FRAME_H,
+    )
+    fills = {fill for _, fill in _up_down_bars(children)}
+    assert fills == {"#FF0000", "#0000FF"}
+
+
+def test_every_group_element_is_drawable_now():
+    """The gate in `resolve/view.py`, which is what turns a warning into a picture.
+
+    ``surfaceChart`` was the last one out and is in now: PowerPoint draws it as a lit 3-D
+    mesh coloured by value band -- both spellings of it -- and that is what is drawn here.
+    Both spellings land on this one entry, `flat_chart_kind` mapping the suffixed one to
+    the plain one.
+    """
+    from pptx2svg.parse.chart import CHART_GROUP_ELEMENTS
+    from pptx2svg.resolve.view import DRAWABLE_CHART_KINDS
+
+    assert {"bubbleChart", "ofPieChart", "stockChart", "surfaceChart"} <= (
+        DRAWABLE_CHART_KINDS
+    )
+    assert flat_chart_kind("surface3DChart") == "surfaceChart"
+    assert {flat_chart_kind(kind) for kind in CHART_GROUP_ELEMENTS} == DRAWABLE_CHART_KINDS
+
+
+#: Numbers a file controls, at three frame sizes including a 1 x 1 pt one.  Every one of
+#: these was run before the rule it exercises was written; the lesson the last review left
+#: is that a measurement pins the frame and says nothing about what a hand-written number
+#: does inside it.
+DEGENERATE_CHARTS = {
+    "bubble with no sizes": lambda: bubble_chart_xml(
+        series=((BUBBLE_XS, BUBBLE_YS, (None, None, None)),)
+    ),
+    "bubble all zero": lambda: bubble_chart_xml(
+        series=((BUBBLE_XS, BUBBLE_YS, (0, 0, 0)),)
+    ),
+    "bubble scale 0": lambda: bubble_chart_xml(scale=0),
+    "of pie all zero": lambda: of_pie_chart_xml(values=(0, 0, 0)),
+    "of pie gap 5000": lambda: of_pie_chart_xml(gap_width=5000, ser_lines=""),
+    "of pie gap -500": lambda: of_pie_chart_xml(gap_width=-500, ser_lines=""),
+    "of pie second size 0": lambda: of_pie_chart_xml(
+        of_pie_type="bar", second_size=0, ser_lines=""
+    ),
+    "of pie custom split out of range": lambda: of_pie_chart_xml(
+        split_type="cust", cust_split=(99, -3)
+    ),
+    "of pie split position past the end": lambda: of_pie_chart_xml(
+        split_type="pos", split_pos=900
+    ),
+    "of pie unknown split type": lambda: of_pie_chart_xml(split_type="nonsense"),
+    "stock with one series": lambda: stock_chart_xml(
+        series=(("Only", STOCK_CLOSE),), hi_low="", up_down=""
+    ),
+    "stock gap -100": lambda: stock_chart_xml(up_down="", up_down_gap=-100),
+}
+
+
+@pytest.mark.parametrize("name", list(DEGENERATE_CHARTS))
+@pytest.mark.parametrize("size", [(FRAME_W, FRAME_H), (1.0, 1.0), (4000.0, 3.0)])
+def test_a_file_controlled_number_does_not_crash_the_new_types(name, size):
+    children, data = _build(
+        DEGENERATE_CHARTS[name](), width=size[0], height=size[1]
+    )
+    assert data.kind in ("bubbleChart", "ofPieChart", "stockChart")
+
+
+def test_a_split_that_moves_nothing_leaves_no_second_plot_and_no_connector():
+    """``cust`` with only out-of-range indices is the shape of an empty split, and the two
+    connector lines have nothing to point at."""
+    children, _ = _build(
+        of_pie_chart_xml(split_type="cust", cust_split=(99,), ser_lines=""),
+        width=FRAME_W,
+        height=FRAME_H,
+    )
+    assert len(_plots(children)) == 1
+    assert _lines(children) == []
+
+
+def test_an_office_2016_chartex_frame_says_what_it_is(authoring):
+    """A ``cx:chartSpace`` frame used to warn ``chart-unreadable``: "names no chart part".
+
+    That is true of the `c:` relationship and false about the file -- the frame's own first
+    child is *also* called ``chart``, so it fell through to the ordinary chart path with no
+    relationship id.  The family (treemap, sunburst, histogram, box-and-whisker, waterfall,
+    funnel, map) shares no markup with ``c:chartSpace``: different namespace, different
+    data model, no ``c:*Chart`` group anywhere in it.  The picture was always right -- an
+    empty positioned frame -- and only the diagnosis was wrong.
+    """
+    from tests.deckbuilder import derive_deck
+
+    cx = "http://schemas.microsoft.com/office/drawing/2014/chartex"
+    part = (
+        "<?xml version='1.0'?>"
+        f"<cx:chartSpace xmlns:cx='{cx}' "
+        "xmlns:r='http://schemas.openxmlformats.org/officeDocument/2006/relationships'>"
+        "<cx:chart><cx:plotArea><cx:plotAreaRegion>"
+        "<cx:series layoutId='treemap'/>"
+        "</cx:plotAreaRegion></cx:plotArea></cx:chart></cx:chartSpace>"
+    ).encode()
+    frame = (
+        "<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id='91' name='Treemap'/>"
+        "<p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>"
+        "<p:xfrm><a:off x='0' y='0'/><a:ext cx='2800000' cy='2300000'/></p:xfrm>"
+        f"<a:graphic><a:graphicData uri='{cx}'>"
+        f"<cx:chart xmlns:cx='{cx}' "
+        "xmlns:r='http://schemas.openxmlformats.org/officeDocument/2006/relationships' "
+        "r:id='rIdCx'/></a:graphicData></a:graphic></p:graphicFrame>"
+    )
+    deck = derive_deck(
+        authoring,
+        parts={"ppt/charts/chartEx1.xml": part},
+        shapes_xml=frame,
+        slide_relationships=[
+            (
+                "rIdCx",
+                "http://schemas.microsoft.com/office/2014/relationships/chartEx",
+                "../charts/chartEx1.xml",
+            )
+        ],
+        overrides={"ppt/charts/chartEx1.xml": "application/vnd.ms-office.chartex+xml"},
+    )
+    options = ConvertOptions()
+    model = convert_pptx_to_model(deck, options)
+    warning = next(w for w in options.warnings if w.code == "chart-unsupported-type")
+    assert "Office 2016" in warning.message
+    assert not any(w.code == "chart-unreadable" for w in options.warnings)
+    assert isinstance(model.slides[0].elements[-1], m.ShapeElement)
+
+
+# --------------------------------------------------------------------------------------
+# The chart gallery fixture
+# --------------------------------------------------------------------------------------
+
+#: Slide number -> the ``c:*Chart`` group element it leads with, in the order
+#: `chart-gallery.pptx` puts them.  Written down here rather than read back out of the
+#: deck so that a slide reordered in `tools/make_chart_gallery.py` fails this test instead
+#: of silently renumbering what every other assertion about that deck means.
+GALLERY_SLIDES = (
+    "barChart",
+    "barChart",
+    "lineChart",
+    "areaChart",
+    "scatterChart",
+    "bubbleChart",
+    "pieChart",
+    "doughnutChart",
+    "ofPieChart",
+    "radarChart",
+    "stockChart",
+    "surfaceChart",
+    "bar3DChart",
+    "line3DChart",
+    "pie3DChart",
+    "area3DChart",
+    "barChart",  # the combo's first group; its `lineChart` is the one we drop
+)
+
+
+def test_the_chart_gallery_holds_one_of_every_group_element(chart_gallery):
+    """The fixture's coverage claim, checked against the file rather than its README.
+
+    Every ``c:*Chart`` element `parse/chart.CHART_GROUP_ELEMENTS` recognises has to appear
+    in this deck, because that is the whole reason it exists: the chart renderer is the
+    largest body of measured behaviour here and no other committed deck exercises more
+    than four of its types.  A group element added to the reader without a slide here is
+    a type nothing renders end to end.
+    """
+    from pptx2svg.parse.chart import CHART_GROUP_ELEMENTS
+
+    with zipfile.ZipFile(chart_gallery) as archive:
+        names = sorted(
+            (name for name in archive.namelist() if re.fullmatch(r"ppt/charts/chart\d+\.xml", name)),
+            key=lambda name: int(re.search(r"(\d+)", name).group(1)),
+        )
+        parts = [archive.read(name).decode("utf-8") for name in names]
+    assert len(parts) == len(GALLERY_SLIDES)
+    for number, (part, expected) in enumerate(zip(parts, GALLERY_SLIDES), start=1):
+        groups = re.findall(r"<c:(\w+Chart)[ >]", part)
+        assert groups[0] == expected, f"slide {number} leads with {groups[0]}"
+
+    present = {group for part in parts for group in re.findall(r"<c:(\w+Chart)[ >]", part)}
+    # `surface3DChart` is the one group element with no slide of its own: the two
+    # spellings draw the identical picture -- measured, see `SURFACE_CHART_KINDS` -- and
+    # `flat_chart_kind` maps them to one answer.
+    assert set(CHART_GROUP_ELEMENTS) - present == {"surface3DChart"}
+
+
+def test_every_gallery_slide_draws_a_chart(chart_gallery):
+    """All seventeen slides draw, and nothing warns that a type is unsupported.
+
+    Slide 12's ``surfaceChart`` was the one refusal in the deck and is drawn now -- a lit
+    mesh over the value bands -- so ``chart-unsupported-type`` fires nowhere in the
+    gallery at all.  This is the tripwire in the other direction now: a type going back to
+    refused fails here.
+    """
+    options = ConvertOptions()
+    model = convert_pptx_to_model(chart_gallery, options)
+
+    assert not [w for w in options.warnings if w.code == "chart-unsupported-type"]
+    assert not any(w.code == "chart-unreadable" for w in options.warnings)
+    for number, slide in enumerate(model.slides, start=1):
+        assert isinstance(slide.elements[-1], m.ChartElement), f"slide {number}"
+
+    # The surface's own picture: a band legend rather than a series one, and a mesh whose
+    # facets are polygons.  Nine bands over a 0..45 axis, named for the two ticks each
+    # runs between, and PowerPoint's own export names the same nine.
+    surface = model.slides[11].elements[-1]
+    names = [
+        "".join(run.text for p in element.text_body.paragraphs for run in p.runs)
+        for element in surface.children
+        if isinstance(element, m.ShapeElement) and element.text_body is not None
+    ]
+    assert "40-45" in names and "0-5" in names
+    assert sum(1 for name in names if "-" in name and name[0].isdigit()) == 9
+
+
+# -- Combo charts ----------------------------------------------------------------------
+#
+# Every number asserted here was read out of a PowerPoint export of the probe decks
+# `tools/make_combo_probe.py` writes; `tools/read_combo_probe.py --check` is the same
+# comparison over all 76 probe slides at once.
+
+COMBO_CATS = ("C1", "C2", "C3", "C4", "C5")
+COMBO_AXES = (90000, 90001, 90002, 90003)
+
+
+def combo_series(index: int, name: str, values) -> str:
+    points = "".join(f"<c:pt idx='{i}'><c:v>{v!r}</c:v></c:pt>" for i, v in enumerate(values))
+    cats = "".join(
+        f"<c:pt idx='{i}'><c:v>{name}</c:v></c:pt>" for i, name in enumerate(COMBO_CATS)
+    )
+    return (
+        f"<c:ser><c:idx val='{index}'/><c:order val='{index}'/>"
+        "<c:tx><c:strRef><c:strCache><c:ptCount val='1'/>"
+        f"<c:pt idx='0'><c:v>{name}</c:v></c:pt></c:strCache></c:strRef></c:tx>"
+        f"<c:cat><c:strRef><c:strCache><c:ptCount val='5'/>{cats}"
+        "</c:strCache></c:strRef></c:cat>"
+        "<c:val><c:numRef><c:numCache><c:formatCode>General</c:formatCode>"
+        f"<c:ptCount val='5'/>{points}</c:numCache></c:numRef></c:val></c:ser>"
+    )
+
+
+def combo_group(kind: str, series: str, *, secondary: bool = False, extra: str = "") -> str:
+    cat_id, val_id = (
+        (COMBO_AXES[2], COMBO_AXES[3]) if secondary else (COMBO_AXES[0], COMBO_AXES[1])
+    )
+    ids = f"<c:axId val='{cat_id}'/><c:axId val='{val_id}'/>"
+    if kind == "bar":
+        return (
+            "<c:barChart><c:barDir val='col'/><c:grouping val='clustered'/>"
+            f"{series}{extra}{ids}</c:barChart>"
+        )
+    if kind == "hbar":
+        return (
+            "<c:barChart><c:barDir val='bar'/><c:grouping val='clustered'/>"
+            f"{series}{extra}{ids}</c:barChart>"
+        )
+    if kind == "line":
+        return f"<c:lineChart><c:grouping val='standard'/>{series}{extra}{ids}</c:lineChart>"
+    if kind == "area":
+        return f"<c:areaChart><c:grouping val='standard'/>{series}{extra}{ids}</c:areaChart>"
+    raise AssertionError(kind)
+
+
+def combo_axes(
+    *,
+    second: bool = True,
+    second_crosses: str = "max",
+    second_delete: bool = False,
+    second_gridlines: bool = False,
+) -> str:
+    def cat(ax_id, cross_id, delete=False):
+        return (
+            f"<c:catAx><c:axId val='{ax_id}'/><c:delete val='{1 if delete else 0}'/>"
+            f"<c:axPos val='b'/><c:tickLblPos val='nextTo'/>"
+            f"<c:crossAx val='{cross_id}'/><c:crosses val='autoZero'/></c:catAx>"
+        )
+
+    def val(ax_id, cross_id, position, crosses, delete=False, gridlines=True):
+        return (
+            f"<c:valAx><c:axId val='{ax_id}'/><c:delete val='{1 if delete else 0}'/>"
+            f"<c:axPos val='{position}'/>"
+            + ("<c:majorGridlines/>" if gridlines else "")
+            + "<c:tickLblPos val='nextTo'/>"
+            f"<c:crossAx val='{cross_id}'/><c:crosses val='{crosses}'/>"
+            "<c:crossBetween val='between'/></c:valAx>"
+        )
+
+    out = cat(COMBO_AXES[0], COMBO_AXES[1]) + val(
+        COMBO_AXES[1], COMBO_AXES[0], "l", "autoZero"
+    )
+    if second:
+        out += val(
+            COMBO_AXES[3],
+            COMBO_AXES[2],
+            "r",
+            second_crosses,
+            delete=second_delete,
+            gridlines=second_gridlines,
+        )
+        out += cat(COMBO_AXES[2], COMBO_AXES[3], delete=True)
+    return out
+
+
+def combo_xml(groups: str, *, legend: str | None = None, **axes) -> str:
+    return (
+        "<c:chart><c:autoTitleDeleted val='1'/><c:plotArea><c:layout/>"
+        + groups
+        + combo_axes(**axes)
+        + "</c:plotArea>"
+        + (f"<c:legend><c:legendPos val='{legend}'/></c:legend>" if legend else "")
+        + "</c:chart>"
+    )
+
+
+def _chart_builder(body: str, *, width: float = 480.0, height: float = 260.0):
+    """The builder :func:`_build_all` would have driven, for asking it a question directly."""
+    from pptx2svg.resolve.chart import ChartBuilder, ChartStyle
+
+    source = chart(body)
+    return ChartBuilder(
+        source,
+        source.plots[0],
+        plots=list(source.plots),
+        width_pt=width,
+        height_pt=height,
+        style=ChartStyle(
+            font_family="Aptos",
+            font_size=10.0,
+            color=m.ResolvedColor(hex="#000000"),
+            accents=[
+                m.ResolvedColor(hex="#4472C4"),
+                m.ResolvedColor(hex="#ED7D31"),
+                m.ResolvedColor(hex="#A5A5A5"),
+            ],
+        ),
+        resolve_fill=_fake_fill,
+        resolve_outline=_fake_outline,
+        resolve_text=lambda rich, text, size, align: m.TextBody(),
+    )
+
+
+def _build_all(body: str, *, width: float = 480.0, height: float = 260.0):
+    """Lay out a chart the way `resolve/view` does: every drawable group, not only the first."""
+    from pptx2svg.resolve.chart import ChartBuilder, ChartStyle
+
+    source = chart(body)
+    return ChartBuilder(
+        source,
+        source.plots[0],
+        plots=list(source.plots),
+        width_pt=width,
+        height_pt=height,
+        style=ChartStyle(
+            font_family="Aptos",
+            font_size=10.0,
+            color=m.ResolvedColor(hex="#000000"),
+            accents=[
+                m.ResolvedColor(hex="#4472C4"),
+                m.ResolvedColor(hex="#ED7D31"),
+                m.ResolvedColor(hex="#A5A5A5"),
+            ],
+        ),
+        resolve_fill=_fake_fill,
+        resolve_outline=_fake_outline,
+        resolve_text=lambda rich, text, size, align: m.TextBody(),
+    ).build()
+
+
+BAR_ONLY = combo_group("bar", combo_series(0, "Bars", (2.7, 9.0, 5.0, 7.2, 4.1)))
+LINE_SECOND = combo_group(
+    "line", combo_series(1, "Line", (1.5, 5.0, 2.8, 4.0, 2.3)), secondary=True
+)
+
+
+def _combo_bars(children):
+    """Every drawn bar, left to right.
+
+    A legend key is a filled shape too, and in a combo it is 19.2 pt wide -- wider than
+    the ``> 10 pt`` `_bars` separates on -- so this asks for height as well.  A marker is
+    6 pt in both.
+    """
+    return sorted(
+        (
+            child
+            for child in children
+            if isinstance(child, m.ShapeElement)
+            and isinstance(child.fill, m.SolidFill)
+            and child.text_body is None
+            and child.transform.extent_width > 10 * 12700
+            and child.transform.extent_height > 10 * 12700
+        ),
+        key=lambda child: child.transform.offset_x,
+    )
+
+
+def _combo_bar_widths(children):
+    return sorted({round(bar.transform.extent_width / 12700, 2) for bar in _combo_bars(children)})
+
+
+def _plot_edges(children):
+    """The plot rectangle's left and right, read off the gridlines that span it."""
+    lines = [
+        child
+        for child in children
+        if isinstance(child, m.ConnectorElement)
+        and child.transform.extent_height == 0
+        and child.transform.extent_width > 100 * 12700
+    ]
+    return (
+        min(line.transform.offset_x for line in lines) / 12700,
+        max(
+            line.transform.offset_x + line.transform.extent_width for line in lines
+        )
+        / 12700,
+    )
+
+
+def _legend_keys(children, *, below: float):
+    """The filled legend swatches: the solid shapes in the band under the plot.
+
+    A line entry's *marker* is a filled shape in that band too, and 6 pt across, which is
+    what the width bound is for.
+    """
+    return [
+        child
+        for child in children
+        if isinstance(child, m.ShapeElement)
+        and isinstance(child.fill, m.SolidFill)
+        and child.text_body is None
+        and child.transform.offset_y / 12700 > below
+        and child.transform.extent_width > 10 * 12700
+    ]
+
+
+def _text_at(children):
+    """Every text run as ``(x, text)``.
+
+    A list and not a dict: the two value axes of a combo print the same numbers, and
+    keying on the text loses one column into the other.
+    """
+    return [
+        (
+            child.transform.offset_x / 12700,
+            "".join(run.text for p in child.text_body.paragraphs for run in p.runs),
+        )
+        for child in children
+        if isinstance(child, m.ShapeElement) and child.text_body is not None
+    ]
+
+
+def test_a_combo_draws_every_group_and_not_only_the_first():
+    """The defect ROADMAP.md 3.3 recorded: the renderer drew one group and dropped the rest."""
+    children, data = _build_all(combo_xml(BAR_ONLY + LINE_SECOND))
+    assert [s.name for s in data.series] == ["Bars", "Line"]
+    assert len(_combo_bars(children)) == 5
+    assert _polyline_points(children), "the line group drew nothing"
+
+
+def test_a_combo_paints_bars_over_areas_and_lines_over_bars():
+    """**A precedence by type, not the document order.**
+
+    Measured on ``combo-order``: three pairs authored twice with the two ``c:*Chart``
+    elements swapped came back as three pictures, not six.  The area is under the bars in
+    both spellings, the line over the bars in both, and over the area in both.
+    """
+    from pptx2svg.resolve.chart import COMBO_CHART_KINDS
+
+    assert COMBO_CHART_KINDS == ("areaChart", "barChart", "lineChart")
+
+    bars = combo_group("bar", combo_series(0, "Bars", (2.7, 9.0, 5.0, 7.2, 4.1)))
+    line = combo_group("line", combo_series(1, "Line", (1.5, 5.0, 2.8, 4.0, 2.3)))
+    forward, _ = _build_all(combo_xml(bars + line))
+    backward, _ = _build_all(combo_xml(line + bars))
+
+    def order(children):
+        bars = {id(bar) for bar in _combo_bars(children)}
+        kinds = []
+        for child in children:
+            if not isinstance(child, m.ShapeElement) or child.text_body is not None:
+                continue
+            if id(child) in bars:
+                kinds.append("bar")
+            elif isinstance(child.geometry, m.CustomGeometry) and isinstance(child.fill, m.NoFill):
+                kinds.append("line")
+        return [kind for index, kind in enumerate(kinds) if index == 0 or kinds[index - 1] != kind]
+
+    assert order(forward) == ["bar", "line"]
+    # Swapping the two groups in the file changes nothing about who covers whom.
+    assert order(backward) == ["bar", "line"]
+
+
+def test_a_combo_colours_its_series_in_document_order_not_paint_order():
+    """``c:idx`` numbers the series; the paint precedence only decides who covers whom.
+
+    Measured on ``combo-order``'s ``o-line-col``, where the line group written first took
+    accent1 and the bar group after it accent2 -- while the bars were still painted first.
+    """
+    line = combo_group("line", combo_series(0, "Line", (1.5, 5.0, 2.8, 4.0, 2.3)))
+    bars = combo_group("bar", combo_series(1, "Bars", (2.7, 9.0, 5.0, 7.2, 4.1)))
+    children, data = _build_all(combo_xml(line + bars))
+    assert {bar.fill.color.hex.upper() for bar in _combo_bars(children)} == {"#ED7D31"}
+    # `data.series` is in paint order, as the legend is, so the line is named rather than
+    # indexed -- its accent follows `c:idx`, which the file wrote first.
+    drawn = {item.name: item.color.hex.upper() for item in data.series}
+    assert drawn == {"Line": "#4472C4", "Bars": "#ED7D31"}
+
+
+@pytest.mark.parametrize("high,ticks", [(5.0, 7), (50.0, 7), (500.0, 7), (0.5, 7)])
+def test_a_secondary_axis_does_not_move_the_primary_one(high, ticks):
+    """**A value axis' domain comes from the series attached to it**, not from the chart.
+
+    Measured on ``combo-domain``: the bar group's 0..10 left axis held while the line
+    group beside it ran 0..0.6, 0..6, 0..60 and 0..600 on the right.
+    """
+    line = combo_group(
+        "line",
+        combo_series(1, "Line", (high * 0.3, high, high * 0.55, high * 0.8, high * 0.45)),
+        secondary=True,
+    )
+    _, data = _build_all(combo_xml(BAR_ONLY + line))
+    assert (data.value_axis.minimum, data.value_axis.maximum, data.value_axis.major_unit) == (
+        0.0,
+        10.0,
+        1.0,
+    )
+
+
+def test_two_groups_on_one_axis_do_move_it():
+    """The control for the test above: a shared axis reaches both groups.
+
+    ``combo-domain``'s ``d-shared50`` and ``d-shared500`` drew 0..60 by 10 and 0..600 by
+    100 for the same bar group whose own reach is 9.
+    """
+    line = combo_group("line", combo_series(1, "Line", (15.0, 50.0, 27.5, 40.0, 22.5)))
+    _, data = _build_all(combo_xml(BAR_ONLY + line, second=False))
+    assert (data.value_axis.maximum, data.value_axis.major_unit) == (60.0, 10.0)
+
+
+def test_the_two_axes_do_not_share_a_tick_count():
+    """PowerPoint does not force the secondary axis onto the primary's gridlines.
+
+    ``combo-side``'s ``s150-C``: six labels down the left and nine down the right, over
+    one plot, meeting only at the two ends.  What they share is the interval count the
+    *frame* asks for -- both axes are divided by ``side_axis_intervals`` of the same
+    band -- which is a different thing from the count of ticks that ends up drawn.
+    """
+    line = combo_group(
+        "line", combo_series(1, "Line", (1.14, 3.8, 2.09, 3.04, 1.71)), secondary=True
+    )
+    children, _ = _build_all(combo_xml(BAR_ONLY + line), height=150.0)
+    numbers = [
+        (x, text)
+        for x, text in _text_at(children)
+        if text.replace(".", "").replace("-", "").isdigit()
+    ]
+    left = sorted(float(text) for x, text in numbers if x < 100)
+    right = sorted(float(text) for x, text in numbers if x > 300)
+    assert left == [0.0, 2.0, 4.0, 6.0, 8.0, 10.0]
+    assert right == [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0]
+
+
+def test_a_secondary_axis_reserves_the_same_band_on_the_right_as_the_left_one():
+    """Measured to 0.04 pt over five label widths on ``combo-domain`` and ``combo-plot``."""
+    for high, reserve in ((5.0, 21.07), (50.0, 26.41), (500.0, 31.75)):
+        line = combo_group(
+            "line",
+            combo_series(1, "Line", (high * 0.3, high, high * 0.55, high * 0.8, high * 0.45)),
+            secondary=True,
+        )
+        children, _ = _build_all(combo_xml(BAR_ONLY + line))
+        assert 480.0 - _plot_edges(children)[1] == pytest.approx(reserve, abs=0.06)
+
+
+def test_a_deleted_secondary_axis_reserves_nothing_and_still_scales_its_series():
+    """``p-secdel``: the plot runs to the plain 11.0 pt inset and the line is still drawn."""
+    children, data = _build_all(
+        combo_xml(BAR_ONLY + LINE_SECOND, second_delete=True)
+    )
+    assert 480.0 - _plot_edges(children)[1] == pytest.approx(11.0, abs=0.06)
+    assert [s.name for s in data.series] == ["Bars", "Line"]
+    assert _polyline_points(children)
+
+
+def test_two_value_axes_on_one_side_fall_back_to_one_group():
+    """``p-seczero`` -- a secondary axis that ``crosses="autoZero"`` -- is **not drawn**.
+
+    PowerPoint stacks the two label columns on the left and narrows the plot for both.
+    Its inner column measured 21.42 pt against the outer one's 26.41 for the same label,
+    and one reading is not a rule, so this draws the first group alone rather than a
+    plausible guess.  ROADMAP.md 3.3 records it.
+    """
+    _, data = _build_all(combo_xml(BAR_ONLY + LINE_SECOND, second_crosses="autoZero"))
+    assert [s.name for s in data.series] == ["Bars"]
+
+
+def test_a_horizontal_bar_in_a_combo_falls_back_to_one_group():
+    """`barDir="bar"` puts the value axis along the bottom and the secondary along the
+    top, which no probe has measured."""
+    bars = combo_group("hbar", combo_series(0, "Bars", (2.7, 9.0, 5.0, 7.2, 4.1)))
+    _, data = _build_all(combo_xml(bars + LINE_SECOND))
+    assert [s.name for s in data.series] == ["Bars"]
+
+
+def test_a_pie_beside_a_bar_falls_back_to_one_group():
+    """Only the three group types that share a category axis are drawn together."""
+    pie = (
+        "<c:pieChart>"
+        + combo_series(1, "Pie", (1.0, 2.0, 3.0, 4.0, 5.0))
+        + "</c:pieChart>"
+    )
+    _, data = _build_all(combo_xml(BAR_ONLY + pie))
+    assert [s.name for s in data.series] == ["Bars"]
+
+
+def test_each_bar_group_keeps_its_own_gap_width_and_the_whole_category_band():
+    """Measured on ``combo-bar``.
+
+    ``g-bar-line``: the bar group of a bar-plus-line combo draws the same 34.18 pt bar it
+    draws alone -- the line group takes no slot.  ``g-gap-clash``: two bar groups stating
+    ``gapWidth`` 50 and 300 drew 57.6 and 21.6 pt bars in one band, so neither group's
+    value wins and each divides the band by its own.
+    """
+    wide = combo_group(
+        "bar",
+        combo_series(0, "Wide", (2.7, 9.0, 5.0, 7.2, 4.1)),
+        extra="<c:gapWidth val='50'/>",
+    )
+    narrow = combo_group(
+        "bar",
+        combo_series(1, "Narrow", (2.1, 7.0, 3.9, 5.6, 3.2)),
+        secondary=True,
+        extra="<c:gapWidth val='300'/>",
+    )
+    children, _ = _build_all(combo_xml(wide + narrow))
+    left, right = _plot_edges(children)
+    band = (right - left) / 5
+    assert _combo_bar_widths(children) == [
+        pytest.approx(band / 4.0, abs=0.02),
+        pytest.approx(band / 1.5, abs=0.02),
+    ]
+
+
+def test_overlap_narrows_the_bars_it_slides_together():
+    """``c:overlap`` is in the divisor, which two charts say and this used to miss.
+
+    ``chart-gallery`` slide 1 -- five categories, two series, ``gapWidth`` 150,
+    ``overlap`` -27 on a 250.59 pt plot -- drew 13.2 pt bars where the divisor without the
+    overlap term asks for 14.32 and with it for 13.29, and ``combo-bar``'s ``g-overlap``
+    agrees on a 427.18 pt plot with 22.56 against 24.41 and 22.66.  Both are inside the
+    0.24 pt PowerPoint quantises a bar width to.
+    """
+    series = combo_series(0, "One", (2.7, 9.0, 5.0, 7.2, 4.1)) + combo_series(
+        1, "Two", (2.1, 7.0, 3.9, 5.6, 3.2)
+    )
+    bars = combo_group(
+        "bar", series, extra="<c:gapWidth val='150'/><c:overlap val='-27'/>"
+    )
+    children, _ = _build_all(combo_xml(bars, second=False))
+    left, right = _plot_edges(children)
+    band = (right - left) / 5
+    assert _combo_bar_widths(children) == [
+        pytest.approx(band / (2 + 1.5 + 0.27), abs=0.02)
+    ]
+
+
+def test_a_stacked_group_is_untouched_by_the_overlap_term():
+    """``slots`` is one, so ``(slots - 1) * overlap`` is zero.  This is what keeps
+    ``real-college-template``'s ``overlap=100`` stacked chart where it was."""
+    series = combo_series(0, "One", (2.7, 9.0, 5.0, 7.2, 4.1)) + combo_series(
+        1, "Two", (2.1, 7.0, 3.9, 5.6, 3.2)
+    )
+    stacked = (
+        "<c:barChart><c:barDir val='col'/><c:grouping val='stacked'/>"
+        + series
+        + "<c:gapWidth val='75'/><c:overlap val='100'/>"
+        f"<c:axId val='{COMBO_AXES[0]}'/><c:axId val='{COMBO_AXES[1]}'/></c:barChart>"
+    )
+    children, _ = _build_all(combo_xml(stacked, second=False))
+    left, right = _plot_edges(children)
+    band = (right - left) / 5
+    assert _combo_bar_widths(children) == [pytest.approx(band / 1.75, abs=0.02)]
+
+
+def test_a_combo_legends_in_paint_order_and_widens_every_key_to_the_line_key():
+    """Measured on ``combo-legend``.
+
+    ``l-bottom`` and ``l-reversed`` are the same two groups written both ways round and
+    they legend identically -- bars first, line last, at the same x -- so the legend
+    follows the paint precedence and not the document order.  And the bar keys came back
+    **19.200 pt wide and 5.49 pt tall**: the width is the chart's, the height the swatch's.
+    """
+    from pptx2svg.resolve.chart import LEGEND_SWATCH_EM, LINE_LEGEND_KEY_PT
+
+    bars = combo_group(
+        "bar",
+        combo_series(0, "Bar one", (2.7, 9.0, 5.0, 7.2, 4.1))
+        + combo_series(1, "Bar two", (2.1, 7.0, 3.9, 5.6, 3.2)),
+    )
+    line = combo_group(
+        "line", combo_series(2, "Line one", (1.5, 5.0, 2.8, 4.0, 2.3)), secondary=True
+    )
+    forward, _ = _build_all(combo_xml(bars + line, legend="b"))
+    backward, _ = _build_all(combo_xml(line + bars, legend="b"))
+
+    def entries(children):
+        return [
+            (text, round(x, 2)) for x, text in _text_at(children)
+            if text.startswith(("Bar", "Line"))
+        ]
+
+    assert [name for name, _ in entries(forward)] == ["Bar one", "Bar two", "Line one"]
+    assert entries(backward) == entries(forward)
+
+    keys = _legend_keys(forward, below=230.0)
+    assert len(keys) == 2
+    for key in keys:
+        assert key.transform.extent_width / 12700 == pytest.approx(LINE_LEGEND_KEY_PT)
+        assert key.transform.extent_height / 12700 == pytest.approx(LEGEND_SWATCH_EM * 10.0)
+
+
+def test_a_line_chart_with_no_line_draws_no_legend_key_at_all():
+    """The stock chart's case, measured on ``legend-nokey`` -- ROADMAP.md 3.2a.
+
+    A series whose own group legends with a rule but which states
+    ``<a:ln><a:noFill/></a:ln>`` has no rule to draw, and PowerPoint draws **nothing**
+    there: three bare line series came back with no key path on the page.  We used to draw
+    a filled square, which on ``chart-gallery``'s stock chart was most of the slide's ink.
+    """
+    series = combo_series(0, "Flat", (1.5, 5.0, 2.8, 4.0, 2.3)).replace(
+        "<c:cat>", "<c:spPr><a:ln><a:noFill/></a:ln></c:spPr><c:cat>"
+    )
+    line = combo_group("line", series)
+    children, _ = _build_all(combo_xml(line, second=False, legend="b"))
+    assert _legend_keys(children, below=230.0) == []
+
+
+def test_a_chart_with_no_rule_anywhere_lays_its_legend_out_on_the_swatch_cell():
+    """The other half of the same reading, and the one that moves the *labels*.
+
+    ``legend-nokey`` solves each slide for the cell the layout advances by, from the pitch
+    between labels and from the run's centring independently.  A line chart whose every
+    series is bare comes back on the **1.0984 em swatch cell** rather than the 24.0 pt line
+    cell, at three frame widths and at two, three, four and five entries; one series
+    keeping its rule puts the whole chart back on 24.002 pt.
+    """
+    from pptx2svg.resolve.chart import (
+        LEGEND_ENTRY_KEY_EM,
+        LEGEND_SWATCH_EM,
+        LEGEND_SWATCH_GAP_EM,
+        LINE_LEGEND_ENTRY_KEY_PT,
+        LINE_LEGEND_KEY_GAP_PT,
+        LINE_LEGEND_KEY_PT,
+        ChartFont,
+        font_box,
+    )
+
+    bare = combo_series(0, "Flat", (1.5, 5.0, 2.8, 4.0, 2.3)).replace(
+        "<c:cat>", "<c:spPr><a:ln><a:noFill/></a:ln></c:spPr><c:cat>"
+    )
+    ruled = combo_series(1, "Ruled", (2.5, 4.0, 3.8, 3.0, 1.3))
+    font = ChartFont(family="Aptos", box=font_box("Aptos", 10.0))
+
+    builder = _chart_builder(combo_xml(combo_group("line", bare), second=False, legend="b"))
+    assert builder._legend_key_size(font) == (
+        pytest.approx(LEGEND_SWATCH_EM * 10.0),
+        pytest.approx(LEGEND_SWATCH_GAP_EM * 10.0),
+    )
+    assert builder._legend_key_cell(font) == pytest.approx(LEGEND_ENTRY_KEY_EM * 10.0)
+
+    both = _chart_builder(
+        combo_xml(combo_group("line", bare + ruled), second=False, legend="b")
+    )
+    assert both._legend_key_size(font) == (LINE_LEGEND_KEY_PT, LINE_LEGEND_KEY_GAP_PT)
+    assert both._legend_key_cell(font) == pytest.approx(LINE_LEGEND_ENTRY_KEY_PT)
+
+
+# -- 3-D charts, drawn flat --------------------------------------------------------------
+#
+# `tools/make_view3d_probe.py` writes two decks -- 59 and 54 slides -- and
+# `tools/read_view3d_probe.py` reads the axis and the plot rectangle back out of
+# PowerPoint's export of them.  PowerPoint rasterises the 3-D scene but leaves every
+# string vector, so the axis is exactly measurable although the picture is not.  What
+# those 113 probes settled, and what they left open, is ROADMAP.md 3.4.
+
+VIEW_3D = (
+    "<c:view3D><c:rotX val='15'/><c:rotY val='20'/><c:depthPercent val='100'/>"
+    "<c:rAngAx val='1'/></c:view3D>"
+)
+
+
+def three_d_chart_xml(
+    kind: str = "bar3DChart",
+    *,
+    high: float = 50.0,
+    view: str = VIEW_3D,
+    cross_between: str = "between",
+    series_count: int = 1,
+    categories: int = 5,
+) -> str:
+    """One 3-D group of *kind* whose largest value is *high*, with a value axis.
+
+    The maximum is what the padding question turns on: 0..50 padded by 5% at each end
+    comes to 52.5, which at ten intervals asks for a unit of 10 and an axis running to 60.
+    Unpadded it asks for 5 and stops at 50, and 50 is what PowerPoint draws.
+
+    **Five categories, which is the probe decks' own count and is not decoration**: a 3-D
+    bar is as deep as it is wide and its width is a share of one band, so the category
+    count is an input to the scene's depth and therefore to the drawn axis.  See
+    :func:`~pptx2svg.resolve.chart.three_d_scene_depth`.
+
+    *cross_between* is the value axis' own, and it is an input to a ``line3DChart``'s and
+    an ``area3DChart``'s **aspect**: the scene is as tall as half the sum of the face's
+    category intervals and its rows, and ``midCat`` spans one interval fewer.  The probe
+    decks write it the way PowerPoint does -- ``midCat`` for an area and ``between`` for
+    everything else -- so a case that names a probe has to state it too.
+    """
+    shape = (0.3, 1.0, 0.55, 0.8, 0.45, 0.9, 0.6, 0.35)[:categories]
+    points_for = lambda scale: "".join(  # noqa: E731
+        f"<c:pt idx='{i}'><c:v>{high * factor * scale!r}</c:v></c:pt>"
+        for i, factor in enumerate(shape)
+    )
+    cats = "".join(f"<c:pt idx='{i}'><c:v>Q{i + 1}</c:v></c:pt>" for i in range(categories))
+    series = "".join(
+        f"<c:ser><c:idx val='{index}'/><c:order val='{index}'/>"
+        "<c:cat><c:strRef><c:strCache>"
+        f"<c:ptCount val='{categories}'/>{cats}</c:strCache></c:strRef></c:cat>"
+        "<c:val><c:numRef><c:numCache><c:formatCode>General</c:formatCode>"
+        f"<c:ptCount val='{categories}'/>{points_for(1.0 - 0.2 * index)}"
+        "</c:numCache></c:numRef></c:val></c:ser>"
+        for index in range(series_count)
+    )
+    dimension = "<c:barDir val='col'/>" if kind.startswith("bar") else ""
+    depth = "<c:axId val='100004'/>" if kind.endswith("3DChart") else ""
+    serial_axis = (
+        "<c:serAx><c:axId val='100004'/>"
+        "<c:scaling><c:orientation val='minMax'/></c:scaling>"
+        "<c:delete val='1'/><c:axPos val='b'/><c:crossAx val='100003'/></c:serAx>"
+        if depth
+        else ""
+    )
+    return (
+        f"<c:chart>{view}<c:autoTitleDeleted val='1'/><c:plotArea><c:layout/>"
+        f"<c:{kind}>{dimension}<c:grouping val='clustered'/><c:varyColors val='0'/>"
+        f"{series}<c:axId val='100002'/><c:axId val='100003'/>{depth}</c:{kind}>"
+        "<c:catAx><c:axId val='100002'/>"
+        "<c:scaling><c:orientation val='minMax'/></c:scaling>"
+        "<c:delete val='0'/><c:axPos val='b'/><c:tickLblPos val='nextTo'/>"
+        "<c:crossAx val='100003'/><c:crosses val='autoZero'/></c:catAx>"
+        "<c:valAx><c:axId val='100003'/>"
+        "<c:scaling><c:orientation val='minMax'/></c:scaling>"
+        "<c:delete val='0'/><c:axPos val='l'/><c:majorGridlines/>"
+        "<c:numFmt formatCode='General' sourceLinked='1'/>"
+        "<c:tickLblPos val='nextTo'/><c:crossAx val='100002'/>"
+        f"<c:crosses val='autoZero'/><c:crossBetween val='{cross_between}'/></c:valAx>"
+        f"{serial_axis}</c:plotArea>"
+        "<c:plotVisOnly val='1'/><c:dispBlanksAs val='gap'/></c:chart>"
+    )
+
+
+def test_view_3d_is_read_element_by_element():
+    parsed = chart(
+        three_d_chart_xml(
+            view=(
+                "<c:view3D><c:rotX val='20'/><c:hPercent val='75'/><c:rotY val='340'/>"
+                "<c:depthPercent val='250'/><c:rAngAx val='0'/>"
+                "<c:perspective val='45'/></c:view3D>"
+            )
+        )
+    )
+    view = parsed.view_3d
+    assert (view.rot_x, view.rot_y) == (20.0, 340.0)
+    assert (view.depth_percent, view.h_percent) == (250.0, 75.0)
+    assert view.right_angle_axes is False
+    assert view.perspective == 45.0
+
+
+def test_an_empty_view_3d_is_not_an_absent_one():
+    """Measured: the two are different pictures, so they must be different records.
+
+    ``view3d-view``'s ``absent`` and ``empty`` probes are the same chart on the same
+    195 pt frame; PowerPoint drew a 94.08 pt value axis for the first and a 155.04 pt one
+    for the second.  A reader that defaulted the missing element could not tell them
+    apart.
+    """
+    assert chart(three_d_chart_xml(view="")).view_3d is None
+    empty = chart(three_d_chart_xml(view="<c:view3D/>")).view_3d
+    assert empty is not None
+    assert empty.rot_x is None and empty.depth_percent is None
+    assert empty.right_angle_axes is None
+
+
+def test_the_three_d_spelling_survives_the_flattening():
+    from pptx2svg.parse.chart import THREE_D_CHART_KINDS, is_three_d_kind
+
+    assert THREE_D_CHART_KINDS == {
+        "bar3DChart",
+        "line3DChart",
+        "area3DChart",
+        "pie3DChart",
+        "surface3DChart",
+        # **The un-suffixed surface is a 3-D spelling too**, which is measured rather than
+        # inferred from its name: with no `c:view3D` at all the two spellings draw the
+        # identical projected surface.  See `SURFACE_CHART_KINDS`.
+        "surfaceChart",
+    }
+    assert is_three_d_kind("bar3DChart") and not is_three_d_kind("barChart")
+    assert is_three_d_kind("surfaceChart")
+
+    _, data = _build(three_d_chart_xml(), width=684.0, height=195.0)
+    assert data.kind == "barChart"
+    assert data.three_d is True
+    assert data.view_3d.rot_x == 15.0
+    assert data.view_3d.depth_percent == 100.0
+
+    _, flat = _build(three_d_chart_xml("barChart", view=""), width=684.0, height=195.0)
+    assert flat.three_d is False
+    assert flat.view_3d is None
+
+
+@pytest.mark.parametrize(
+    "kind,cross,top,unit,wide_unit",
+    [
+        # A `bar3DChart`'s camera is applied, so its axis is divided by the count the
+        # *drawn* plot leaves room for; ``view3d-meter``'s ``m195-F`` and ``m195-G`` are
+        # these two charts and PowerPoint drew them 0..50 by 10 and 0..100 by 20.
+        ("bar3DChart", "between", 50.0, 10.0, 20.0),
+        # And so are a `line3DChart`'s and an `area3DChart`'s, now that their scenes are
+        # measured too (`three_d_scene_shape`).  Both used to be divided by the count the
+        # whole *frame* leaves room for and came out finer than PowerPoint on all four
+        # readings; ``view3d-meter``'s ``type-line3D-F/G`` and ``type-area3D-F/G`` are
+        # those readings and every one of them is drawn exactly.
+        ("line3DChart", "between", 50.0, 10.0, 20.0),
+        # ``type-area3D-F/G``, which is an area chart and therefore ``midCat``: its face
+        # spans four category intervals where the line's spans five, so its scene is
+        # ``floor((4 + 1) / 2) / 5`` of the region's aspect where the line's is
+        # ``floor((5 + 1) / 2) / 5``.  That leaves room for three intervals where the line
+        # has room for five -- and **PowerPoint stops at 60 rather than 50**, because the
+        # bare rule rounds the extent outwards to whole units and at a unit of 20 that is
+        # 60.  That is the rule working, not a headroom: ``type-area3D-F`` is drawn 0..60
+        # by 20 and its 59.04 pt plot is reproduced to 0.03 pt.
+        ("area3DChart", "midCat", 60.0, 20.0, 50.0),
+        # The same area chart spelled ``between``, which is legal and which gallery slide
+        # 16 is: one more interval across, so the scene is the line's and so is the axis.
+        # Measured on ``view3d-band``, whose ``between`` area probes read one step up the
+        # ladder from their ``midCat`` twins at every category count that separates them.
+        ("area3DChart", "between", 50.0, 10.0, 20.0),
+    ],
+)
+def test_a_three_d_value_axis_is_not_padded(kind, cross, top, unit, wide_unit):
+    """The measured half of the 3-D axis: the extent is not padded before it is rounded.
+
+    ``view3d-meter`` draws 0..50 and 0..96 on seven frames and three group elements.
+    PowerPoint drew 0..50 and 0..100 every time -- never the 0..55/0..60 and 0..120 a 5%
+    headroom produces -- and fed back through `nice_axis_scale` the padded rule has **no
+    solution at any interval count** on 34 of the two decks' 52 3-D cells, where the bare
+    rule solves all 52.  The two flat controls on the same deck are the other way round.
+
+    The **unit** is the other half, and it is the depth reservation rather than the range:
+    see :func:`~pptx2svg.resolve.chart.three_d_plot_rect`.  The two interact, which is why
+    one row here stops at 60 rather than 50: the bare rule rounds the extent outwards to
+    whole units, so a coarse enough unit clears the data without any headroom being added.
+    PowerPoint does the same on the same chart.
+    """
+    _, data = _build(
+        three_d_chart_xml(kind, high=50.0, cross_between=cross),
+        width=684.0,
+        height=195.0,
+    )
+    assert data.value_axis == m.ChartAxisScale(
+        minimum=0.0, maximum=top, major_unit=unit
+    )
+
+    _, wider = _build(
+        three_d_chart_xml(kind, high=96.0, cross_between=cross),
+        width=684.0,
+        height=195.0,
+    )
+    assert wider.value_axis == m.ChartAxisScale(
+        minimum=0.0, maximum=100.0, major_unit=wide_unit
+    )
+
+
+def test_the_same_data_on_a_flat_chart_keeps_its_headroom():
+    """The control, and the reason this is gated on the spelling rather than applied.
+
+    The 2-D rule is 611 readings of the axis sweep and is not in question; what the 3-D
+    probes refute is only its application to a 3-D chart.
+    """
+    _, data = _build(three_d_chart_xml("barChart", view=""), width=684.0, height=195.0)
+    assert data.value_axis == m.ChartAxisScale(minimum=0.0, maximum=60.0, major_unit=10.0)
+
+
+#: ``view3d-view``'s own readings, in points: the value axis PowerPoint drew on a 684 by
+#: 195 pt frame, whose flat plot rectangle is 652.54 by 159.12 for a one-character tick
+#: label.  Each is the distance between the extreme tick labels' centres in
+#: ``view3d-view.pdf``, which lands on the 0.24 pt grid of the 300 dpi raster beside it.
+VIEW_3D_REGION = (652.54, 159.12)
+VIEW_3D_READINGS = [
+    ("default", dict(rot_x=15, rot_y=20, depth_percent=100), 127.68),
+    # `rotX=0` leaves no vertical depth at all, so the *width* binds instead and the
+    # scene shrinks from the other side.  This is the second branch.
+    ("rotX=0", dict(rot_x=0, rot_y=20, depth_percent=100), 147.60),
+    ("rotX=90", dict(rot_x=90, rot_y=20, depth_percent=100), 84.96),
+    ("rotX=-15", dict(rot_x=-15, rot_y=20, depth_percent=100), 127.44),
+    ("depth=20%", dict(rot_x=15, rot_y=20, depth_percent=20), 147.36),
+    ("depth=2000%", dict(rot_x=15, rot_y=20, depth_percent=2000), 30.24),
+    ("hPercent=50", dict(rot_x=15, rot_y=20, depth_percent=100, h_percent=50), 141.84),
+    ("hPercent=200", dict(rot_x=15, rot_y=20, depth_percent=100, h_percent=200), 154.32),
+    # A half turn of yaw puts the depth in front of the scene rather than behind it.
+    ("rotY=180", dict(rot_x=15, rot_y=180, depth_percent=100), 127.44),
+    ("rotY=90", dict(rot_x=15, rot_y=90, depth_percent=100), 127.68),
+]
+
+
+@pytest.mark.parametrize(
+    "name,view,drawn", VIEW_3D_READINGS, ids=[row[0] for row in VIEW_3D_READINGS]
+)
+def test_the_three_d_camera_reproduces_the_probe_decks(name, view, drawn):
+    """The fit, against the readings it was fitted to, one probe at a time.
+
+    The whole camera is two constants and a ``min``.  A tolerance of one point is three
+    times the raster's own 0.24 pt grid and a hundredth of the frame; the fit's residual
+    over all 107 readings is 0.26 pt rms.
+    """
+    from pptx2svg.parse.chart import SourceChartView3D
+    from pptx2svg.resolve.chart import _Rect, three_d_plot_rect
+
+    width, height = VIEW_3D_REGION
+    region = _Rect(0.0, 0.0, width, height)
+    face = three_d_plot_rect(region, SourceChartView3D(right_angle_axes=True, **view))
+    assert face.height == pytest.approx(drawn, abs=1.0)
+    # The face is inside its region, and it is the region that shrank rather than moved.
+    assert region.left <= face.left and face.right <= region.right
+    assert region.top <= face.top and face.bottom <= region.bottom
+
+
+def test_an_empty_view_3d_still_reserves_the_margin():
+    """``<c:view3D/>`` is rotX 0, rotY 0, depth 100% -- and still 0.8% short of its region.
+
+    PowerPoint drew a 155.04 pt axis for it where the region is 159.12 pt tall.  That
+    residue is :data:`~pptx2svg.resolve.chart.VIEW_3D_SCENE_MARGIN`, and it is what says
+    the reservation is not only the depth.
+    """
+    from pptx2svg.parse.chart import SourceChartView3D
+    from pptx2svg.resolve.chart import _Rect, three_d_plot_rect
+
+    width, height = VIEW_3D_REGION
+    face = three_d_plot_rect(_Rect(0.0, 0.0, width, height), SourceChartView3D())
+    assert face.height == pytest.approx(155.04, abs=1.0)
+    assert face.height < height
+
+
+#: ``view3d-series``' own readings on the same 684 by 195 pt frame, one to five series.
+#: The two-character region is 647.97 pt wide because those two probes drew a ``10``.
+VIEW_3D_SERIES_READINGS = [
+    (1, 150, 652.54, 127.68),
+    (2, 150, 652.54, 133.92),
+    (3, 150, 652.54, 138.00),
+    (4, 150, 652.54, 140.64),
+    (5, 150, 652.54, 142.56),
+    (1, 0, 652.54, 142.08),
+    (1, 50, 652.54, 136.80),
+    (1, 300, 647.97, 115.92),
+    (1, 500, 647.97, 103.20),
+]
+
+
+@pytest.mark.parametrize(
+    "series,gap,region_width,drawn",
+    VIEW_3D_SERIES_READINGS,
+    ids=[f"n{n}-gap{g}" for n, g, _, _ in VIEW_3D_SERIES_READINGS],
+)
+def test_the_depth_is_divided_between_the_series(series, gap, region_width, drawn):
+    """``c:gapDepth`` and the series count both scale the depth, and only the depth.
+
+    Adding series makes the scene **shallower**, which is the opposite of the row-per-
+    series picture and is measured on two frames.  The scene's shape does not move with
+    them: the drawn face's height over its width held 0.2440 +- 0.0003 across all five.
+    """
+    from pptx2svg.parse.chart import SourceChartView3D
+    from pptx2svg.resolve.chart import _Rect, three_d_plot_rect
+
+    region = _Rect(0.0, 0.0, region_width, VIEW_3D_REGION[1])
+    face = three_d_plot_rect(
+        region,
+        SourceChartView3D(rot_x=15, rot_y=20, depth_percent=100, right_angle_axes=True),
+        series=series,
+        gap_depth=gap,
+    )
+    assert face.height == pytest.approx(drawn, abs=1.0)
+
+
+def test_gap_depth_is_read_off_the_group():
+    """``c:gapDepth`` was not parsed before the camera needed it.
+
+    Absent it is ``None`` here and 150% where it is used, which is both ECMA-376's default
+    and the one the measurement agrees with.
+    """
+    assert chart(three_d_chart_xml()).plots[0].gap_depth is None
+    with_gap = chart(
+        three_d_chart_xml().replace(
+            "<c:axId val='100002'/>", "<c:gapDepth val='40'/><c:axId val='100002'/>", 1
+        )
+    )
+    assert with_gap.plots[0].gap_depth == 40.0
+
+
+def test_the_face_sits_at_the_corner_the_depth_leads_away_from():
+    """Which side the room is taken from, measured on the yaw and pitch sweeps.
+
+    ``rotY`` from 0 to 135 degrees all reserved at the top and 180, 270 and 340 all at the
+    bottom, so the vertical turn is at the half turn and not at ``cos(rotY)``'s quarter.
+    Sideways it is the sine: a yaw past 180 puts the depth to the left and the face to the
+    right of it.
+    """
+    from pptx2svg.parse.chart import SourceChartView3D as View
+    from pptx2svg.resolve.chart import _Rect, three_d_plot_rect
+
+    region = _Rect(0.0, 0.0, *VIEW_3D_REGION)
+
+    def face(**view):
+        return three_d_plot_rect(region, View(right_angle_axes=True, **view))
+
+    up = face(rot_x=15, rot_y=20, depth_percent=100)
+    down = face(rot_x=-15, rot_y=20, depth_percent=100)
+    assert up.height == pytest.approx(down.height, abs=0.5)
+    assert up.top > down.top
+
+    half_turn = face(rot_x=15, rot_y=200, depth_percent=100)
+    assert half_turn.top < up.top
+
+    right = face(rot_x=15, rot_y=90, depth_percent=100)
+    left = face(rot_x=15, rot_y=270, depth_percent=100)
+    assert right.width == pytest.approx(left.width, abs=0.5)
+    assert right.left < left.left
+
+
+def test_the_camera_is_applied_only_where_it_is_measured():
+    """A ``line3DChart``, an ``area3DChart`` and a perspective scene keep the flat rect.
+
+    The gate is not caution for its own sake.  On one frame and one view a ``bar3DChart``
+    drew a 127.68 pt value axis where a ``line3DChart`` drew 88.56 and an ``area3DChart``
+    59.04, so one camera cannot serve all three; and ``rAngAx="0"`` -- which an absent
+    ``c:view3D`` selects, against ECMA-376's own default -- draws a perspective scene this
+    does not model at all.
+    """
+    from pptx2svg.parse.chart import SourceChartView3D
+    from pptx2svg.resolve.chart import three_d_camera
+
+    right_angled = SourceChartView3D(
+        rot_x=15, rot_y=20, depth_percent=100, right_angle_axes=True
+    )
+    assert three_d_camera(right_angled, "bar3DChart") is right_angled
+    assert three_d_camera(SourceChartView3D(), "bar3DChart") is not None
+    # A `line3DChart` and an `area3DChart` pass now: their scene is a law in the category
+    # count, the axis' own crossing and the series count, read over seven category counts.
+    assert three_d_camera(right_angled, "line3DChart") is right_angled
+    assert three_d_camera(right_angled, "area3DChart") is right_angled
+    # **At any series count**, which the ladder this replaced could not do: five and six
+    # series were read directly and the law has no staircase to run off the end of.
+    assert three_d_camera(right_angled, "line3DChart", series=5) is right_angled
+    assert three_d_camera(right_angled, "area3DChart", series=9) is right_angled
+    # Stacked is the one that still keeps its flat rectangle, and not for want of a
+    # measurement any more: see `three_d_scene_shape`.
+    assert (
+        three_d_camera(right_angled, "area3DChart", series=2, grouping="stacked") is None
+    )
+    assert three_d_camera(right_angled, "bar3DChart", series=9) is not None
+    # A pie's flat rectangle is already PowerPoint's: its scene raster is the plot region
+    # itself at every camera, and neither `rotY` nor `depthPercent` moves the ink in it.
+    assert three_d_camera(right_angled, "pie3DChart") is None
+    assert three_d_camera(right_angled, "barChart") is None
+    assert three_d_camera(None, "bar3DChart") is None
+    assert (
+        three_d_camera(
+            SourceChartView3D(
+                rot_x=15, rot_y=20, depth_percent=100, right_angle_axes=False
+            ),
+            "bar3DChart",
+        )
+        is None
+    )
+
+
+def test_a_three_d_bar_chart_draws_in_the_faces_rectangle():
+    """End to end: the drawn plot is displaced and shrunk, and the flat one is not.
+
+    ``view3d-meter``'s ``m195-B`` and ``flat195-F`` are these two charts on the same
+    frame.  PowerPoint drew the 3-D one's value axis 127.68 pt long against the flat
+    chart's 159.12, and put its bottom edge within a point of the flat chart's own.
+    """
+    flat_children, _ = _build(
+        three_d_chart_xml("barChart", view=""), width=684.0, height=195.0
+    )
+    children, _ = _build(three_d_chart_xml(), width=684.0, height=195.0)
+
+    def rect(drawn):
+        lines = [c for c in drawn if isinstance(c, m.ConnectorElement)]
+        down = max(lines, key=lambda line: line.transform.extent_height).transform
+        across = max(lines, key=lambda line: line.transform.extent_width).transform
+        return (
+            _pt(across.offset_x),
+            _pt(down.offset_y),
+            _pt(across.offset_x + across.extent_width),
+            _pt(down.offset_y + down.extent_height),
+        )
+
+    flat_left, flat_top, flat_right, flat_bottom = rect(flat_children)
+    left, top, right, bottom = rect(children)
+    assert (flat_bottom - flat_top) == pytest.approx(159.0, abs=1.0)
+    assert (bottom - top) == pytest.approx(127.7, abs=1.5)
+    # The face keeps the region's floor and gives up the room above it.
+    assert bottom == pytest.approx(flat_bottom, abs=3.0)
+    assert top > flat_top
+    assert left > flat_left and right < flat_right
+
+
+#: ``view3d-cat`` (112 probes), ``view3d-count`` (72) and ``view3d-band`` (80), solved:
+#: per group element, **category count**, category intervals across the face and series
+#: count, the scene's aspect as a multiple of the region's **times the category count** --
+#: which the law says is the integer ``floor((across + series) / 2)``.
+#:
+#: Each row is four cameras fitted together on the first two decks and two on the third,
+#: two of them width-bound and two height-bound, which is what makes the aspect and the
+#: depth separable at all.  The reading is the value axis' own tick labels rather than the
+#: scene raster's box -- the instrument the whole depth reservation was measured with --
+#: and every row lands within 0.05 of its integer.
+#:
+#: **The category count is swept independently of the series count here, and that is the
+#: point.**  The ladder these replace, ``0.4 + 0.2 * ceil(m / 2)``, was fitted on
+#: five-category decks alone, where it is this law; three categories contradicted it.
+VIEW_3D_SHAPE_READINGS = [
+    # kind, categories, across, series, k
+    ("area3DChart", 2, 1, 1, 0.998), ("area3DChart", 2, 1, 2, 0.997),
+    ("area3DChart", 2, 1, 3, 1.998), ("area3DChart", 3, 2, 1, 0.998),
+    ("area3DChart", 3, 2, 2, 1.994), ("area3DChart", 3, 2, 3, 1.998),
+    ("area3DChart", 3, 2, 4, 2.997), ("area3DChart", 3, 2, 5, 2.998),
+    ("area3DChart", 3, 2, 6, 4.000), ("area3DChart", 5, 4, 1, 1.997),
+    ("area3DChart", 5, 4, 2, 2.991), ("area3DChart", 5, 4, 3, 2.993),
+    ("area3DChart", 5, 4, 4, 3.991), ("area3DChart", 5, 4, 5, 3.996),
+    ("area3DChart", 5, 4, 6, 5.011), ("area3DChart", 8, 7, 1, 3.988),
+    ("area3DChart", 8, 7, 2, 3.981), ("area3DChart", 8, 7, 3, 4.985),
+    ("line3DChart", 2, 2, 1, 0.999), ("line3DChart", 2, 2, 2, 1.996),
+    ("line3DChart", 2, 2, 3, 1.997), ("line3DChart", 3, 3, 1, 1.993),
+    ("line3DChart", 3, 3, 2, 1.995), ("line3DChart", 3, 3, 3, 2.994),
+    ("line3DChart", 3, 3, 4, 2.999), ("line3DChart", 3, 3, 5, 4.002),
+    ("line3DChart", 3, 3, 6, 3.998), ("line3DChart", 5, 5, 1, 2.988),
+    ("line3DChart", 5, 5, 2, 2.992), ("line3DChart", 5, 5, 3, 3.989),
+    ("line3DChart", 5, 5, 4, 3.991), ("line3DChart", 5, 5, 5, 4.999),
+    ("line3DChart", 5, 5, 6, 5.006), ("line3DChart", 8, 8, 1, 3.988),
+    ("line3DChart", 8, 8, 2, 4.985), ("line3DChart", 8, 8, 3, 4.983),
+    # ``view3d-band``: three more category counts, so that the floor's own parity is read
+    # rather than inferred from two counts either side of it.
+    ("area3DChart", 4, 3, 1, 1.987), ("area3DChart", 4, 3, 2, 1.992),
+    ("area3DChart", 4, 3, 3, 2.992), ("area3DChart", 6, 5, 1, 2.991),
+    ("area3DChart", 6, 5, 2, 2.989), ("area3DChart", 6, 5, 3, 3.965),
+    ("area3DChart", 7, 6, 1, 2.994), ("area3DChart", 7, 6, 2, 3.980),
+    ("area3DChart", 7, 6, 3, 3.996), ("line3DChart", 4, 4, 1, 1.991),
+    ("line3DChart", 4, 4, 2, 2.979), ("line3DChart", 4, 4, 3, 2.981),
+    ("line3DChart", 6, 6, 1, 3.001), ("line3DChart", 6, 6, 2, 3.984),
+    ("line3DChart", 6, 6, 3, 3.963), ("line3DChart", 7, 7, 1, 3.994),
+    ("line3DChart", 7, 7, 2, 3.987), ("line3DChart", 7, 7, 3, 4.954),
+    # The same area chart spelled ``crossBetween="between"``, which spans one interval
+    # more: these are the probes that say *across* is the axis' and not the type's, three
+    # of them landing a whole step above their ``midCat`` twins above.
+    ("area3DChart", 3, 3, 1, 1.992), ("area3DChart", 3, 3, 2, 1.981),
+    ("area3DChart", 5, 5, 1, 2.984), ("area3DChart", 5, 5, 2, 2.994),
+    ("area3DChart", 8, 8, 1, 3.992), ("area3DChart", 8, 8, 2, 4.987),
+]
+
+
+def test_each_group_elements_scene_is_the_shape_its_raster_says():
+    """`three_d_scene_shape` against the faces PowerPoint drew, over 60 cells.
+
+    The aspect is ``floor((across + series) / 2) / categories`` of the region's own and
+    the depth is ``series / categories`` of the scene's width, and neither could be read
+    without the other: on five categories -- every earlier deck's count -- the depth's old
+    fitted constant and ``1 / categories`` are the same number, so the aspect fitted
+    against it came out as a ladder in the series count that held only there.
+    """
+    from pptx2svg.resolve.chart import three_d_scene_shape
+
+    for kind, categories, across, series, k in VIEW_3D_SHAPE_READINGS:
+        shape = three_d_scene_shape(
+            kind, series, categories=categories, across=across
+        )
+        assert shape is not None, (kind, categories, series)
+        assert shape[0] * categories == pytest.approx(k, abs=0.05), (
+            kind, categories, across, series
+        )
+        # One row of depth per series, where a `bar3DChart` divides one row between them.
+        assert shape[1] == float(series)
+    assert three_d_scene_shape("bar3DChart", 3) == (1.0, None)
+
+
+def test_a_stacked_area_chart_is_measured_and_still_keeps_its_flat_rectangle():
+    """The one 3-D group element whose scene is known and not drawn, and why.
+
+    A stacked ``area3DChart`` reads **``across / categories``** of the region's aspect on
+    **one shared row** of depth whatever its series count -- 0.998 at two categories,
+    1.994 at three, 3.990 at five and 6.965 at eight against ``across`` of 1, 2, 4 and 7,
+    with the ``between`` pair at 2.954 and 4.879 against 3 and 5, and two and three series
+    reading identically.  Its four cameras fit that box as well as any other cell's, which
+    is a change: the raster instrument could not fit it better than 1.6 pt and this one
+    does it inside 0.6.
+
+    It keeps the flat rectangle anyway, because what a camera is *for* is the axis, and
+    gallery slide 16 -- a stacked ``area3DChart`` -- already draws PowerPoint's own 0..50
+    by 5 without one.  Giving it a reservation moves that axis, so the measurement is
+    recorded and not shipped.  See ROADMAP.md 3.4.
+    """
+    from pptx2svg.parse.chart import SourceChartView3D
+    from pptx2svg.resolve.chart import three_d_camera, three_d_scene_shape
+
+    view = SourceChartView3D(rot_x=15, rot_y=20, depth_percent=100, right_angle_axes=True)
+    for grouping in ("stacked", "percentStacked"):
+        assert three_d_scene_shape("area3DChart", 2, grouping, categories=5) is None
+        assert three_d_camera(view, "area3DChart", series=2, grouping=grouping) is None
+
+
+def test_a_pie_needs_no_camera_because_its_rectangle_is_already_powerpoints():
+    """The other half of the per-type measurement, and it is a refusal.
+
+    A ``pie3DChart``'s scene raster is the plot region itself -- 662.40 x 173.28 pt on a
+    195 pt frame -- at **every** camera: six yaws from 0 to 270 degrees and depths of 20%
+    and 500% all drew the same 481.92 x 168.24 pt of ink inside it, to the hundredth of a
+    point.  So neither ``rotY`` nor ``depthPercent`` moves a pie at all, and there is no
+    displacement for a camera to apply.  That also refutes, for PowerPoint, the reference
+    renderer's pie: `@silurus/ooxml` folds ``rotY`` into the camera and rotates the whole
+    solid with it.
+    """
+    from pptx2svg.parse.chart import SourceChartView3D
+    from pptx2svg.resolve.chart import three_d_camera, three_d_scene_shape
+
+    view = SourceChartView3D(rot_x=15, rot_y=20, depth_percent=100, right_angle_axes=True)
+    assert three_d_scene_shape("pie3DChart", 1) is None
+    assert three_d_camera(view, "pie3DChart") is None
+
+
+#: What ``view3d-colour``'s rasters draw, per stated fill and per face, at **every one of
+#: the forty-two cameras that shows that face**: twelve pitches from -45 to 90 degrees,
+#: fifteen yaws from 0 to 315, eight diagonals, two depths, two stated heights and three
+#: series counts.  Not one of them moves a byte -- which is the whole of Stage 2's colour
+#: question, and the answer is "constants".  The fills are chosen for channel spread,
+#: because what separates a multiply in sRGB from one in linear light is an offset that
+#: only shows on a dark channel.
+VIEW_3D_FACE_READINGS = {
+    "4472C4": {"top": "345695", "right": "2A487E", "left": "1A2C4E"},
+    "ED7D31": {"top": "B55E24", "right": "97501E", "left": "5E3212"},
+    "FF3300": {"top": "C12600", "right": "A32000", "left": "661400"},
+    "103070": {"top": "0C2456", "right": "0A1E48", "left": "06122C"},
+}
+
+
+def test_a_prisms_faces_are_constants_and_not_a_lighting_model():
+    """`VIEW_3D_FACE_SHADES` against the rasters it was read off.
+
+    Every value here is a multiple of the fill **per sRGB channel**, and it reproduces the
+    twelve channels of all four fills to within one level -- which is what the export's own
+    rounding moves a flat fill by, so it is the floor rather than a residual.
+
+    The negative result is the point.  `@silurus/ooxml`'s `meshMaterialFactor` evaluates a
+    clamped Lambert term on the **camera-space** normal, so its face factors move with
+    `rotX` and `rotY`; PowerPoint's do not move at all, at any of the cameras
+    ``view3d-colour`` sweeps.  The model is refuted for PowerPoint and the shape of the
+    rule -- one flat factor per face, multiplying the triple -- survives.
+    """
+    from pptx2svg.resolve.chart import VIEW_3D_FACE_SHADES
+
+    assert VIEW_3D_FACE_SHADES["left"] == VIEW_3D_FACE_SHADES["bottom"]
+    for fill, faces in VIEW_3D_FACE_READINGS.items():
+        base = [int(fill[i : i + 2], 16) for i in (0, 2, 4)]
+        assert [round(VIEW_3D_FACE_SHADES["front"] * c) for c in base] == base
+        for face, drawn in faces.items():
+            want = [int(drawn[i : i + 2], 16) for i in (0, 2, 4)]
+            got = [round(VIEW_3D_FACE_SHADES[face] * c) for c in base]
+            assert all(abs(a - b) <= 1 for a, b in zip(got, want)), (
+                f"{fill} {face}: {got} against the drawn {want}"
+            )
+
+
+def test_the_face_shades_are_a_multiply_in_srgb_and_not_in_linear_light():
+    """The colour *space*, which this project has the opposite answer for next door.
+
+    ROADMAP.md 3.2 measured PowerPoint's chart accent cycle modulating the linear-light
+    value of each channel.  A 3-D face does not: scaling the linear light and converting
+    back is an affine map in sRGB, ``k * c - 0.055 * (1 - k)``, whose offset is invisible
+    on a bright channel and a tenth of a dark one -- and the dark channels are where it
+    misses.  ``103070``'s top face is drawn ``#0C2456``; a linear scaling that gets its
+    blue right puts its red at 10 where PowerPoint drew 12, and one that gets the red right
+    puts the blue at 95 against 86.
+    """
+    from pptx2svg.resolve.chart import VIEW_3D_FACE_SHADES
+
+    def to_linear(c):
+        c /= 255.0
+        return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+    def to_srgb(v):
+        v = 12.92 * v if v <= 0.0031308 else 1.055 * v ** (1 / 2.4) - 0.055
+        return v * 255.0
+
+    worst_srgb = worst_linear = 0.0
+    for face in ("top", "right", "left"):
+        # The best linear-light scaling for this face, fitted the same way the sRGB one was
+        top = sum(
+            to_linear(int(VIEW_3D_FACE_READINGS[fill][face][i : i + 2], 16))
+            * to_linear(int(fill[i : i + 2], 16))
+            for fill in VIEW_3D_FACE_READINGS
+            for i in (0, 2, 4)
+        )
+        bottom = sum(
+            to_linear(int(fill[i : i + 2], 16)) ** 2
+            for fill in VIEW_3D_FACE_READINGS
+            for i in (0, 2, 4)
+        )
+        k = top / bottom
+        for fill, faces in VIEW_3D_FACE_READINGS.items():
+            for i in (0, 2, 4):
+                base = int(fill[i : i + 2], 16)
+                drawn = int(faces[face][i : i + 2], 16)
+                worst_srgb = max(worst_srgb, abs(drawn - VIEW_3D_FACE_SHADES[face] * base))
+                worst_linear = max(
+                    worst_linear, abs(drawn - to_srgb(min(1.0, k * to_linear(base))))
+                )
+    assert worst_srgb < 1.5
+    assert worst_linear > 4.0
+
+
+def test_the_three_d_warning_says_whether_the_camera_was_applied(chart_gallery):
+    """The warning is a claim about what was drawn, so it has to track the gate.
+
+    A chart whose plot rectangle is PowerPoint's and whose scene is missing has a
+    different defect from one drawn in a rectangle PowerPoint never used, and the two of
+    the gallery's 3-D slides that still warn are one of each: 15's ``pie3DChart`` needs no
+    camera -- its flat rectangle is already PowerPoint's -- and 16's **stacked**
+    ``area3DChart`` is measured now and deliberately not given one, because its axis is
+    already right without.  13's ``bar3DChart`` and 14's ``line3DChart`` no longer warn at
+    all, because their scenes are drawn.
+
+    The gate reads the series count and the grouping, so this has to pass them: a plot's
+    kind alone would say "camera" for slide 16, which is the wrong claim about a chart
+    whose rectangle did not move.
+    """
+    options = ConvertOptions()
+    convert_pptx_to_model(chart_gallery, options)
+    flattened = [w for w in options.warnings if w.code == "chart-3d-flattened"]
+    assert {w.slide_number for w in flattened} == {15, 16}
+    placed = {
+        w.slide_number
+        for w in flattened
+        if "camera places and sizes" in w.message
+    }
+    assert placed == set()
+    assert all("is drawn flat" in w.message for w in flattened)
+
+
+def test_the_gallerys_three_d_axes_are_powerpoints_own(chart_gallery):
+    """Slides 13, 14 and 16, against the numbers read out of `chart-gallery.pdf`.
+
+    Slide 16 is the defect ROADMAP.md 3.4 recorded: PowerPoint draws 0..50 by 5 where the
+    flat fallback drew 0..60 by 10.  Its cause is **not** the depth reservation the
+    roadmap named -- that chart's 336 pt frame is at the interval cap either way -- but
+    the headroom, which a 3-D axis does not have.  Slides 13 and 14 agreed before and
+    still do, which is what says the change is gated where it should be.
+    """
+    model = convert_pptx_to_model(chart_gallery)
+    axes = {
+        number: model.slides[number - 1].elements[-1].chart.value_axis
+        for number in (13, 14, 16)
+    }
+    assert axes[13] == m.ChartAxisScale(minimum=0.0, maximum=60.0, major_unit=10.0)
+    assert axes[14] == m.ChartAxisScale(minimum=0.0, maximum=30.0, major_unit=5.0)
+    assert axes[16] == m.ChartAxisScale(minimum=0.0, maximum=50.0, major_unit=5.0)
+
+
+def test_a_three_d_chart_says_it_is_drawn_flat(chart_gallery):
+    """`chart-3d-flattened`: drawn, and simplified.  Not `chart-unsupported-type`.
+
+    The two codes mean different things -- one is "here is a picture that leaves the
+    scene out", the other "there is no picture" -- and a build that fails on the second
+    should not be made to fail on the first.
+
+    **The warning is a claim about what this library drew**, so it has to stop when the
+    drawing stops being flat: the gallery's ``bar3DChart`` draws its prisms, its floor
+    and its walls, its ``line3DChart`` draws its ribbons in the same scene, and leaving
+    the warning on either would be as wrong as omitting it from the two that are still
+    flat.
+    """
+    options = ConvertOptions()
+    model = convert_pptx_to_model(chart_gallery, options)
+
+    flattened = [w for w in options.warnings if w.code == "chart-3d-flattened"]
+    assert {
+        kind
+        for warning in flattened
+        for kind in ("bar3DChart", "line3DChart", "pie3DChart", "area3DChart")
+        if kind in warning.message
+    } == {"pie3DChart", "area3DChart"}
+    assert all("drawn flat" in warning.message for warning in flattened)
+
+    # Drawn, not refused: each of the four is a real chart element with children in it.
+    for number in (13, 14, 15, 16):
+        element = model.slides[number - 1].elements[-1]
+        assert isinstance(element, m.ChartElement)
+        assert element.children
+        assert element.chart.three_d is True
+
+
+# -- The 3-D scene ---------------------------------------------------------------------
+#
+# Stage 2 of the 3-D work: the mesh, not the camera.  ``view3d-mesh`` (51 slides) reads
+# each prism's own three faces off PowerPoint's raster by their exact drawn colours, which
+# gives two things no reading of the scene's *box* can: where in its row of depth a solid
+# stands, and how deep the solid is against the bar it came from.  See ROADMAP.md 3.4.
+
+
+#: ``view3d-mesh``'s ``c:gapWidth`` sweep: the value axis PowerPoint drew, in points, for
+#: one series over three categories on a 684 by 250 pt frame.  **This is the reading that
+#: refutes the old depth law**, which has no ``gapWidth`` in it and so predicts 166.08
+#: four times.
+VIEW_3D_GAP_WIDTH_READINGS = [(0, 127.20), (50, 146.16), (150, 166.08), (300, 179.76)]
+
+
+@pytest.mark.parametrize(
+    "gap_width,drawn",
+    VIEW_3D_GAP_WIDTH_READINGS,
+    ids=[f"gapWidth{g}" for g, _ in VIEW_3D_GAP_WIDTH_READINGS],
+)
+def test_the_scenes_depth_is_one_bars_width(gap_width, drawn):
+    """A 3-D bar is as deep as it is wide, so anything that narrows it shallows the scene.
+
+    The region here is solved from the default probe of the same sweep rather than
+    measured, because the deck has no flat control on that frame; what the other three
+    then test is the *shape* of the law, which is the whole of what ``gapWidth`` says.
+    """
+    from pptx2svg.parse.chart import SourceChartView3D
+    from pptx2svg.resolve.chart import _Rect, three_d_plot_rect
+
+    region = _Rect(0.0, 0.0, 653.22, 213.86)
+    view = SourceChartView3D(rot_x=15, rot_y=20, depth_percent=100, right_angle_axes=True)
+    face = three_d_plot_rect(
+        region, view, categories=3, gap_width=float(gap_width), kind="bar3DChart"
+    )
+    assert face.height == pytest.approx(drawn, abs=1.0)
+
+
+def test_the_category_count_is_an_input_to_the_depth():
+    """Five categories and three, same chart: the fewer the categories the deeper the box.
+
+    This is what ``VIEW_3D_DEPTH_PROJECTION``'s unidentified "fifth" turned out to be --
+    every deck it was fitted on drew five categories -- so it has to be a variable rather
+    than baked in.
+    """
+    from pptx2svg.parse.chart import SourceChartView3D
+    from pptx2svg.resolve.chart import three_d_scene_depth
+
+    view = SourceChartView3D(rot_x=15, rot_y=20, depth_percent=100, right_angle_axes=True)
+    five = three_d_scene_depth("bar3DChart", view, categories=5)
+    three = three_d_scene_depth("bar3DChart", view, categories=3)
+    assert five == pytest.approx(1.0 / 5.0)
+    assert three == pytest.approx(five * 5 / 3)
+
+    # A stacked group stands its series on top of each other, so it takes one slot of the
+    # band and is as wide -- and as deep -- as a single series'.  Measured: `m-stack2` and
+    # `m-stack3` draw the same 23.04 by 17.28 pt depth vector as the one-series probe.
+    one = three_d_scene_depth("bar3DChart", view, categories=5, series=1)
+    for count in (2, 3, 4):
+        assert three_d_scene_depth(
+            "bar3DChart", view, categories=5, series=count, grouping="stacked"
+        ) == pytest.approx(one)
+        assert three_d_scene_depth("bar3DChart", view, categories=5, series=count) < one
+
+
+def _faces(children):
+    """Every drawn polygon, as ``(fill hex, points)`` in points, in paint order."""
+    out = []
+    for element in children:
+        geometry = getattr(element, "geometry", None)
+        if not isinstance(geometry, m.CustomGeometry) or not geometry.paths:
+            continue
+        fill = element.fill
+        if not isinstance(fill, m.SolidFill):
+            continue
+        commands = geometry.paths[0].commands
+        if not commands.endswith(" Z"):
+            continue
+        numbers = [
+            float(token)
+            for token in commands.replace("M", " ").replace("L", " ").replace("Z", " ").split()
+        ]
+        left = _pt(element.transform.offset_x)
+        top = _pt(element.transform.offset_y)
+        points = [
+            (left + numbers[i], top + numbers[i + 1]) for i in range(0, len(numbers), 2)
+        ]
+        out.append((fill.color.hex, points))
+    return out
+
+
+# -- The surface -----------------------------------------------------------------------
+#
+# Every number here was read out of a PowerPoint export of one of the five surface probe
+# decks `tools/make_view3d_probe.py` writes -- `view3d-surfshape` (110 slides, the scene's
+# shape), `view3d-surfmesh` (28, where the lattice's rows stand), `view3d-surflight` (34)
+# and `view3d-surflit` (29, the light), and `view3d-surfband` (22, the bands and their
+# legend).  See ROADMAP.md 3.4.
+
+#: A legend on the right, which is where gallery slide 12 puts its bands.
+SURFACE_LEGEND = "<c:legend><c:legendPos val='r'/><c:overlay val='0'/></c:legend>"
+
+#: The six Office accents, which the band ramp cycles through and the three-accent style
+#: `_builder` carries cannot show.
+SURFACE_ACCENTS = ("#4472C4", "#ED7D31", "#A5A5A5", "#FFC000", "#5B9BD5", "#70AD47")
+
+
+def surface_chart_xml(
+    *,
+    kind: str = "surfaceChart",
+    rows: tuple[tuple[float, ...], ...] = ((10.0, 16.0), (18.0, 26.0)),
+    view: str = VIEW_3D,
+    cross_between: str | None = None,
+    wireframe: str = "",
+    band_fmts: str = "",
+    legend: str = "",
+) -> str:
+    """One surface group over *rows*, a row per series, with its three axes.
+
+    A surface states three ``c:axId`` children like every other 3-D group, and its value
+    axis' ``c:crossBetween`` is left out by default because that is what a real deck
+    writes -- and what PowerPoint reads as ``midCat``, measured.
+    """
+    categories = len(rows[0])
+    cats = "".join(
+        f"<c:pt idx='{i}'><c:v>C{i + 1}</c:v></c:pt>" for i in range(categories)
+    )
+    series = "".join(
+        f"<c:ser><c:idx val='{index}'/><c:order val='{index}'/>"
+        "<c:tx><c:strRef><c:strCache><c:ptCount val='1'/>"
+        f"<c:pt idx='0'><c:v>S{index + 1}</c:v></c:pt></c:strCache></c:strRef></c:tx>"
+        "<c:cat><c:strRef><c:strCache>"
+        f"<c:ptCount val='{categories}'/>{cats}</c:strCache></c:strRef></c:cat>"
+        "<c:val><c:numRef><c:numCache><c:formatCode>General</c:formatCode>"
+        f"<c:ptCount val='{categories}'/>"
+        + "".join(f"<c:pt idx='{i}'><c:v>{v!r}</c:v></c:pt>" for i, v in enumerate(row))
+        + "</c:numCache></c:numRef></c:val></c:ser>"
+        for index, row in enumerate(rows)
+    )
+    between = (
+        f"<c:crossBetween val='{cross_between}'/>" if cross_between else ""
+    )
+    return (
+        f"<c:chart>{view}<c:autoTitleDeleted val='1'/><c:plotArea><c:layout/>"
+        f"<c:{kind}>{wireframe}{series}{band_fmts}"
+        "<c:axId val='100002'/><c:axId val='100003'/><c:axId val='100004'/>"
+        f"</c:{kind}>"
+        "<c:catAx><c:axId val='100002'/>"
+        "<c:scaling><c:orientation val='minMax'/></c:scaling>"
+        "<c:delete val='0'/><c:axPos val='b'/><c:tickLblPos val='nextTo'/>"
+        "<c:crossAx val='100003'/><c:crosses val='autoZero'/></c:catAx>"
+        "<c:valAx><c:axId val='100003'/>"
+        "<c:scaling><c:orientation val='minMax'/></c:scaling>"
+        "<c:delete val='0'/><c:axPos val='l'/><c:majorGridlines/>"
+        "<c:numFmt formatCode='General' sourceLinked='1'/>"
+        "<c:tickLblPos val='nextTo'/><c:crossAx val='100002'/>"
+        f"<c:crosses val='autoZero'/>{between}</c:valAx>"
+        "<c:serAx><c:axId val='100004'/>"
+        "<c:scaling><c:orientation val='minMax'/></c:scaling>"
+        "<c:delete val='1'/><c:axPos val='b'/><c:crossAx val='100003'/></c:serAx>"
+        f"</c:plotArea>{legend}"
+        "<c:plotVisOnly val='1'/><c:dispBlanksAs val='gap'/></c:chart>"
+    )
+
+
+def _surface(width: float = 684.0, height: float = 250.0, **kwargs):
+    """One surface chart, drawn, with the six-accent style the band ramp needs."""
+    return _surface_builder(width=width, height=height, **kwargs).build()
+
+
+def _surface_builder(width: float = 684.0, height: float = 250.0, **kwargs):
+    """The builder behind :func:`_surface`, for a test that needs its scene."""
+    from pptx2svg.resolve.chart import ChartBuilder, ChartStyle
+
+    source = chart(surface_chart_xml(**kwargs))
+    builder = ChartBuilder(
+        source,
+        source.plots[0],
+        width_pt=width,
+        height_pt=height,
+        style=ChartStyle(
+            font_family="Aptos",
+            font_size=10.0,
+            color=m.ResolvedColor(hex="#000000"),
+            accents=[m.ResolvedColor(hex=hex_) for hex_ in SURFACE_ACCENTS],
+        ),
+        resolve_fill=_fake_fill,
+        resolve_outline=_fake_outline,
+        resolve_text=lambda rich, text, size, align: m.TextBody(),
+    )
+    return builder
+
+
+def test_a_surface_scene_is_a_line3d_scene():
+    """The aspect and the depth, over the cells ``view3d-surfshape`` reads back.
+
+    The instrument is the face itself: a surface's categories sit **on** the ticks, so the
+    first and last category labels stand on the drawn face's left and right edges and the
+    extreme value labels on its top and bottom ones.  Every cell's free fit lands on the
+    integer below, and the depth on ``series / categories``.
+    """
+    from pptx2svg.resolve.chart import three_d_scene_shape
+
+    # (categories, series) -> the drawn aspect over the region's own, read off the deck.
+    measured = {
+        (2, 2): 0.1239, (2, 3): 0.2477, (2, 4): 0.2471, (2, 5): 0.3693, (2, 6): 0.3704,
+        (3, 2): 0.1651, (3, 3): 0.1657, (3, 4): 0.2474, (3, 5): 0.2466, (3, 6): 0.3301,
+        (4, 2): 0.1237, (4, 3): 0.1858,
+        (8, 2): 0.1237, (8, 3): 0.1550, (8, 4): 0.1547, (8, 5): 0.1854, (8, 6): 0.1858,
+    }
+    # The region's own aspect on that deck's 195 pt frame, which every cell shares.
+    region = 0.2476
+    for (categories, series), aspect in measured.items():
+        shape = three_d_scene_shape(
+            "surfaceChart", series, categories=categories, across=categories - 1
+        )
+        assert shape is not None
+        assert shape[0] * region == pytest.approx(aspect, abs=0.0025), (
+            f"{categories} categories, {series} series"
+        )
+        assert shape[1] == float(series)
+
+    # `across` follows `c:crossBetween`, which the eight-category pair separates: spelled
+    # `between` the face spans eight intervals and reads 5 where its `midCat` twin reads 4.
+    plain = three_d_scene_shape("surfaceChart", 2, categories=8, across=7)
+    between = three_d_scene_shape("surfaceChart", 2, categories=8, across=8)
+    assert plain[0] * 8 == pytest.approx(4.0)
+    assert between[0] * 8 == pytest.approx(5.0)
+    # Both spellings are one scene: the flattened kind is what the law is keyed on.
+    assert three_d_scene_shape("surface3DChart", 3, categories=5) == three_d_scene_shape(
+        "surfaceChart", 3, categories=5
+    )
+
+
+def test_the_surface_light_is_the_corner_one():
+    """A level sheet, and the sweeps either side of it, in 8-bit levels.
+
+    The prism's light puts a level facet at 0.7587; PowerPoint draws 0.8275, which is the
+    corner light exactly.  Each of these is a facet whose normal the drawn geometry gives
+    and whose tone was read off the raster.
+    """
+    from pptx2svg.resolve.chart import (
+        VIEW_3D_LIGHT,
+        VIEW_3D_SURFACE_LIGHT,
+        three_d_lambert,
+    )
+
+    level = (0.0, 1.0, 0.0)
+    assert three_d_lambert(level, VIEW_3D_SURFACE_LIGHT) == pytest.approx(
+        211 / 255, abs=0.004
+    )
+    assert three_d_lambert(level) == pytest.approx(0.7587, abs=0.001)
+
+    # (normal, the tone PowerPoint drew) -- two facets sloped in the front plane, two
+    # through the depth, and one steep enough to saturate.
+    for normal, tone in (
+        ((-0.3167, 0.9485, 0.0), 171),
+        ((0.3167, 0.9485, 0.0), 241),
+        ((0.0, 0.9938, 0.1108), 223),
+        ((0.0, 0.9938, -0.1108), 199),
+        ((0.0, 0.8312, 0.5559), 255),
+    ):
+        drawn = three_d_lambert(normal, VIEW_3D_SURFACE_LIGHT)
+        assert round(drawn * 255) == pytest.approx(tone, abs=2), normal
+
+    # A facet the light misses is the ambient, and the clamp is what puts it there.
+    assert three_d_lambert((0.0, -1.0, 0.0), VIEW_3D_SURFACE_LIGHT) == pytest.approx(
+        0.3947, abs=0.001
+    )
+    assert VIEW_3D_SURFACE_LIGHT != VIEW_3D_LIGHT
+
+
+def test_the_lattice_stands_row_by_row_across_the_whole_depth():
+    """Series one on the front plane, the last on the back wall, the rest evenly between.
+
+    ``view3d-surfmesh`` paints every band one red so the sheet is separable from the floor
+    by colour alone and stands each row flat at a value of its own; two, three, four and
+    five rows come back at ``0, 1``, ``0, 1/2, 1``, ``0, 1/3, 2/3, 1`` and
+    ``0, 1/4, 1/2, 3/4, 1`` of a depth that is itself ``series / categories`` of the
+    face's width.  A **level** sheet is the cleanest reading of that here: its drawn
+    quadrilateral is the face's own width displaced through the whole depth, so its four
+    extremes name the front row, the back row and the two ends at once.
+    """
+    builder = _surface_builder(
+        rows=((20.0, 20.0, 20.0), (20.0, 20.0, 20.0), (20.0, 20.0, 20.0))
+    )
+    children, _ = builder.build()
+    scene = builder.scene
+    faces = _faces(children)
+    assert faces, "the mesh is drawn"
+    xs = [x for _, points in faces for x, _ in points]
+    ys = [y for _, points in faces for _, y in points]
+    # The categories sit **on** the ticks, so the sheet starts at the face's left edge and
+    # ends at its right one -- and it is displaced by the whole depth, front row to back.
+    assert min(xs) == pytest.approx(scene.face.left, abs=0.01)
+    assert max(xs) == pytest.approx(scene.face.right + scene.depth[0], abs=0.01)
+    assert max(ys) - min(ys) == pytest.approx(abs(scene.depth[1]), abs=0.01)
+    # Every facet of a level sheet has the same normal, so they are all one tone -- the
+    # light's own level reading.
+    assert len({fill for fill, _ in faces}) == 1
+    # Two rows of cells across two category intervals, two triangles each.
+    assert len(faces) == 2 * 2 * 2
+
+    # Three rows and the middle one raised: its own corners sit at half the depth.
+    builder = _surface_builder(
+        rows=((20.0, 20.0), (20.0, 20.0), (20.0, 20.0)), width=684.0
+    )
+    children, _ = builder.build()
+    scene = builder.scene
+    xs = sorted({round(x, 3) for _, points in _faces(children) for x, _ in points})
+    middle = scene.face.left + scene.depth[0] / 2
+    assert any(x == pytest.approx(middle, abs=0.01) for x in xs)
+
+
+def test_a_surface_is_coloured_by_band_and_legends_them():
+    """The bands are the value axis' own intervals, named for the ticks they run between.
+
+    Measured on ``view3d-surfband``: eleven axes from ``-20..20 by 10`` to ``0..1,4 by
+    0,2`` and the band legend names every boundary, always the two ticks joined by a
+    hyphen.
+    """
+    children, data = _surface(
+        rows=((0.0, 2.0, 4.0), (6.0, 8.0, 10.0)), legend=SURFACE_LEGEND
+    )
+    names = [
+        "".join(run.text for p in element.text_body.paragraphs for run in p.runs)
+        for element in children
+        if isinstance(element, m.ShapeElement) and element.text_body is not None
+    ]
+    bands = [name for name in names if "-" in name]
+    # A 3-D axis is not padded, so 0..10 of data draws 0..10 -- five bands of two, the
+    # highest at the top of a legend at the side.
+    assert bands == ["8-10", "6-8", "4-6", "2-4", "0-2"]
+    assert (data.value_axis.minimum, data.value_axis.maximum) == (0.0, 10.0)
+    assert data.value_axis.major_unit == 2.0
+
+
+def test_the_band_ramp_turns_two_bands_early():
+    """Four bands draw the plain accents and five draw the darkened ones.
+
+    The band legend's swatches are vector and are the fills exactly, which is what made
+    this readable: 3 and 4 bands come back ``#4472C4 #ED7D31 #A5A5A5 #FFC000``, 5 and 6
+    come back darkened, and 9 bands add light accent1, accent2 and accent3 after the six.
+    See `BAND_COLOR_CYCLE_SLACK`.
+    """
+    from pptx2svg.resolve.chart import BAND_COLOR_CYCLE_SLACK
+
+    assert BAND_COLOR_CYCLE_SLACK == 2
+
+    def band_fills(rows):
+        children, _ = _surface(rows=rows, legend=SURFACE_LEGEND)
+        keys = [
+            element.fill.color.hex.upper()
+            for element in children
+            if isinstance(element, m.ShapeElement)
+            and isinstance(element.geometry, m.PresetGeometry)
+            and isinstance(element.fill, m.SolidFill)
+            and element.transform.extent_width == element.transform.extent_height
+        ]
+        return keys
+
+    # 0..20 by 5 -- four bands, and the plain accents.
+    four = band_fills(((0.0, 5.0), (10.0, 20.0)))
+    assert four[-4:] == ["#FFC000", "#A5A5A5", "#ED7D31", "#4472C4"]
+    # 0..10 by 2 -- five bands, and every one of them darkened.
+    five = band_fills(((0.0, 2.0), (6.0, 10.0)))
+    assert five[-1] == "#3B64AD" and five[-2] == "#D26E2A"
+
+
+def test_band_formats_override_the_ramp_and_the_legend_with_it():
+    """``c:bandFmts`` numbers the bands from the axis' minimum up.
+
+    Measured on a probe stating band 0 red and band 2 green: PowerPoint painted the lowest
+    band red and the third green, left the ramp on the rest, and put the two stated fills
+    in the legend as well.
+    """
+    band_fmts = (
+        "<c:bandFmts>"
+        "<c:bandFmt><c:idx val='0'/><c:spPr><a:solidFill><a:srgbClr val='FF0000'/>"
+        "</a:solidFill></c:spPr></c:bandFmt>"
+        "<c:bandFmt><c:idx val='2'/><c:spPr><a:solidFill><a:srgbClr val='00CC00'/>"
+        "</a:solidFill></c:spPr></c:bandFmt>"
+        "</c:bandFmts>"
+    )
+    children, _ = _surface(
+        rows=((0.0, 2.0), (6.0, 10.0)), band_fmts=band_fmts, legend=SURFACE_LEGEND
+    )
+    keys = [
+        element.fill.color.hex.upper()
+        for element in children
+        if isinstance(element, m.ShapeElement)
+        and isinstance(element.geometry, m.PresetGeometry)
+        and isinstance(element.fill, m.SolidFill)
+        and element.transform.extent_width == element.transform.extent_height
+    ]
+    assert keys[-1] == "#FF0000"
+    assert keys[-3] == "#00CC00"
+
+
+def test_a_wireframe_replaces_the_fill():
+    """``c:wireframe val="1"`` strokes the lattice and fills nothing.
+
+    Measured twice over: the drawn mesh comes back as strokes in the **accent** ramp even
+    on a probe whose `c:bandFmts` state a red fill for every band -- so the stroke follows
+    the band's line and not its fill -- and the legend keys are the same 5.49 pt squares
+    with a stroke and no fill at all.
+    """
+    filled, _ = _surface(rows=((0.0, 2.0), (6.0, 10.0)))
+    wire, _ = _surface(
+        rows=((0.0, 2.0), (6.0, 10.0)), wireframe="<c:wireframe val='1'/>"
+    )
+    assert _faces(filled), "the filled surface draws solid facets"
+    assert not _faces(wire), "the wireframe draws none"
+    strokes = [
+        element
+        for element in wire
+        if isinstance(element, m.ShapeElement)
+        and isinstance(element.geometry, m.CustomGeometry)
+        and element.outline is not None
+    ]
+    assert strokes
+
+
+def test_a_one_series_surface_draws_no_mesh():
+    """A lattice needs two rows to stretch a sheet between, and PowerPoint draws none.
+
+    Its one-series probes come back an empty scene -- floor, walls, gridlines, no sheet --
+    which is what this draws too.  What is *not* reproduced is the degenerate 0..1,5 axis
+    PowerPoint puts under it; see ROADMAP.md 3.4.
+    """
+    children, _ = _surface(rows=((10.0, 16.0, 22.0),))
+    assert not _faces(children)
+    # The scene itself is still drawn: the floor is a polygon with a stroke and no fill.
+    assert any(
+        isinstance(element, m.ShapeElement)
+        and isinstance(element.geometry, m.CustomGeometry)
+        for element in children
+    )
+
+
+def test_a_surface_with_no_camera_draws_no_mesh_and_says_so():
+    """``c:rAngAx="0"`` and an absent ``c:view3D`` both select a perspective scene.
+
+    Neither is modelled, and a surface has no flat mark to fall back on -- so the frame
+    keeps its axis and its legend and `chart-3d-flattened` declares the gap, which is the
+    same contract a `bar3DChart` under the same camera gets.
+    """
+    children, _ = _surface(rows=((0.0, 2.0), (6.0, 10.0)), view="")
+    assert not _faces(children)
+    builder_children, _ = _surface(
+        rows=((0.0, 2.0), (6.0, 10.0)),
+        view="<c:view3D><c:rotX val='15'/><c:rAngAx val='0'/></c:view3D>",
+    )
+    assert not _faces(builder_children)
+
+
+def _prism_scene(**kwargs):
+    """One single-series 3-D bar chart, drawn, with its faces read back."""
+    children, _ = _build(three_d_chart_xml(**kwargs), width=684.0, height=250.0)
+    return children, _faces(children)
+
+
+def test_a_bar_is_drawn_as_three_faces_shaded_by_the_measured_constants():
+    """The front face is the fill, the top 0.7587 of it and the right 0.6364 -- no more.
+
+    A box seen obliquely shows three of its six faces and PowerPoint draws exactly those
+    three, with no stroke between them: a colour census of gallery slide 13's scene finds
+    the two fills, two shades of each, and nothing else.
+    """
+    _, faces = _prism_scene()
+    # Five categories, three faces each.
+    assert len(faces) == 15
+    assert {hex_ for hex_, _ in faces} == {"#4472C4", "#345695", "#2B497D"}
+
+
+def test_a_bar_stands_in_the_middle_of_its_row_of_depth():
+    """0.3 to 0.7 of the scene's depth at the default ``c:gapDepth``, and 0 to 1 at zero.
+
+    ROADMAP.md 3.4 read the 0.3 off gallery slide 13 by hand and could not say whether it
+    was a number or a range.  It is ``gapDepth / 2 / (1 + gapDepth)``, measured over five
+    gaps on ``view3d-mesh``: the bar's share of its scene comes back 0.985, 0.689, 0.406,
+    0.252 and 0.166 at 0, 50, 150, 300 and 500% against the rule's 1.0, 0.667, 0.4, 0.25
+    and 0.167.
+    """
+    def span(gap: str) -> tuple[float, float]:
+        body = three_d_chart_xml().replace(
+            "<c:axId val='100002'/>", f"{gap}<c:axId val='100002'/>", 1
+        )
+        return _builder(body, width=684.0, height=250.0)._scene_depth_span()
+
+    assert span("") == pytest.approx((0.3, 0.7))
+    assert span("<c:gapDepth val='0'/>") == pytest.approx((0.0, 1.0))
+    assert span("<c:gapDepth val='500'/>") == pytest.approx((5 / 12, 5 / 12 + 1 / 6))
+
+
+def test_the_prisms_are_painted_left_to_right():
+    """The painter's sort, and why an average-depth sort is not it.
+
+    Every bar of a clustered ``bar3DChart`` stands in the **same** row of depth, so a sort
+    on depth alone leaves their order undefined -- and they do hide each other: a bar's
+    right face runs back along the depth vector and the bar to its right is drawn over it.
+    Measured on gallery slide 13, where the blue series' right face is visible in exactly
+    the two categories where blue outruns the orange beside it.
+    """
+    _, faces = _prism_scene()
+    fronts = [points for hex_, points in faces if hex_ == "#4472C4"]
+    lefts = [min(x for x, _ in points) for points in fronts]
+    assert lefts == sorted(lefts)
+    # And the front face is painted last of its own three, over the two that meet it.
+    assert [hex_ for hex_, _ in faces[:3]] == ["#2B497D", "#345695", "#4472C4"]
+
+
+def test_a_solid_that_is_not_a_box_keeps_the_flat_rectangle():
+    """``c:shape`` of a cylinder is a different solid, and a box is not an approximation.
+
+    A cone drawn as a box is a wrong picture rather than a simplified one, which is the
+    distinction ``chart-3d-flattened`` exists to make -- so the mesh refuses and the
+    warning stays.
+    """
+    _, boxes = _prism_scene()
+    assert boxes != []
+    body = three_d_chart_xml().replace(
+        "<c:axId val='100002'/>", "<c:shape val='cylinder'/><c:axId val='100002'/>", 1
+    )
+    children, _ = _build(body, width=684.0, height=250.0)
+    assert _faces(children) == []
+    # The flat rectangle it keeps is still the camera's front face, which is measured.
+    assert any(isinstance(child, m.ShapeElement) for child in children)
+
+
+# -- A line3DChart's legend key -----------------------------------------------------------
+
+
+EMU_PER_POINT = 12700
+
+
+def _line3d_legend_body(position: str, marker: bool = False) -> str:
+    rows = (("North", (14, 21, 19, 27)), ("South", (9, 13, 22, 18)), ("East", (5, 8, 12, 9)))
+    cats = "".join(f"<c:pt idx='{i}'><c:v>Q{i + 1}</c:v></c:pt>" for i in range(4))
+    series = "".join(
+        f"<c:ser><c:idx val='{i}'/><c:order val='{i}'/>"
+        f"<c:tx><c:strRef><c:strCache><c:ptCount val='1'/><c:pt idx='0'><c:v>{name}</c:v></c:pt>"
+        "</c:strCache></c:strRef></c:tx>"
+        + ("<c:marker><c:symbol val='circle'/><c:size val='7'/></c:marker>" if marker else "")
+        + f"<c:cat><c:strRef><c:strCache><c:ptCount val='4'/>{cats}</c:strCache></c:strRef></c:cat>"
+        "<c:val><c:numRef><c:numCache><c:formatCode>General</c:formatCode><c:ptCount val='4'/>"
+        + "".join(f"<c:pt idx='{j}'><c:v>{v}</c:v></c:pt>" for j, v in enumerate(row))
+        + "</c:numCache></c:numRef></c:val><c:smooth val='0'/></c:ser>"
+        for i, (name, row) in enumerate(rows)
+    )
+    axis = ("<c:scaling><c:orientation val='minMax'/></c:scaling><c:delete val='{d}'/>"
+            "<c:axPos val='{p}'/>{g}<c:numFmt formatCode='General' sourceLinked='1'/>"
+            "<c:majorTickMark val='out'/><c:minorTickMark val='none'/><c:tickLblPos val='nextTo'/>")
+    return (
+        "<c:chart><c:view3D><c:rotX val='15'/><c:rotY val='20'/><c:depthPercent val='100'/>"
+        "<c:rAngAx val='1'/></c:view3D><c:autoTitleDeleted val='1'/><c:plotArea><c:layout/>"
+        "<c:line3DChart><c:grouping val='standard'/><c:varyColors val='0'/>" + series
+        + "<c:gapDepth val='150'/><c:axId val='1'/><c:axId val='2'/><c:axId val='3'/></c:line3DChart>"
+        "<c:catAx><c:axId val='1'/>" + axis.format(d=0, p="b", g="")
+        + "<c:crossAx val='2'/><c:crosses val='autoZero'/><c:auto val='1'/><c:lblAlgn val='ctr'/>"
+        "<c:lblOffset val='100'/></c:catAx>"
+        "<c:valAx><c:axId val='2'/>" + axis.format(d=0, p="l", g="<c:majorGridlines/>")
+        + "<c:crossAx val='1'/><c:crosses val='autoZero'/><c:crossBetween val='between'/></c:valAx>"
+        "<c:serAx><c:axId val='3'/>" + axis.format(d=1, p="b", g="")
+        + "<c:crossAx val='2'/><c:crosses val='autoZero'/></c:serAx>"
+        f"</c:plotArea><c:legend><c:legendPos val='{position}'/><c:overlay val='0'/></c:legend>"
+        "<c:plotVisOnly val='1'/><c:dispBlanksAs val='gap'/></c:chart>"
+    )
+
+
+#: ``tools/make_exposed_probe.py``'s ``legend3d-`` charts, 520 x 336 pt, 10 pt Aptos: each
+#: key's left and top edge in the frame, read off PowerPoint's PDF.  A 5.492 pt square
+#: every time, with or without a ``c:marker``.
+LINE3D_LEGEND_KEYS = {
+    ("b", False): ((207.342, 318.212), (248.101, 318.212), (289.701, 318.212)),
+    ("b", True): ((207.342, 318.212), (248.101, 318.212), (289.701, 318.212)),
+    ("r", False): ((476.502, 147.171), (476.502, 165.254), (476.502, 183.337)),
+}
+
+
+@pytest.mark.parametrize("position, marker", list(LINE3D_LEGEND_KEYS))
+def test_a_line3d_chart_keys_its_legend_with_the_swatch(position, marker):
+    """PowerPoint draws a ``line3DChart``'s legend key as the bar's 5.492 pt square on the
+    bar's cell, not as a line key's 19.2 pt rule -- which is what our keys used to be as
+    wide as, a ribbon of swatch (``chart-gallery`` slide 14)."""
+    children, _ = _build(_line3d_legend_body(position, marker), width=520, height=336)
+    keys = [
+        child for child in children
+        if isinstance(child, m.ShapeElement) and isinstance(child.fill, m.SolidFill)
+        and isinstance(child.geometry, m.PresetGeometry)
+        and child.transform.extent_width < 20 * EMU_PER_POINT
+        and child.transform.extent_height < 20 * EMU_PER_POINT
+    ]
+    got = [(k.transform.offset_x / EMU_PER_POINT, k.transform.offset_y / EMU_PER_POINT) for k in keys]
+    assert len(got) == 3
+    for (x, y), (want_x, want_y) in zip(got, LINE3D_LEGEND_KEYS[(position, marker)]):
+        assert x == pytest.approx(want_x, abs=0.1)
+        assert y == pytest.approx(want_y, abs=0.1)
+    for key in keys:
+        assert key.transform.extent_width / EMU_PER_POINT == pytest.approx(5.492, abs=0.01)
+        assert key.transform.extent_height / EMU_PER_POINT == pytest.approx(5.492, abs=0.01)
+
+
+
+# -- Tick marks ------------------------------------------------------------------------
+#
+# Every rule below was measured on the ``tick-marks``, ``tick-length``, ``tick-check`` and
+# ``tick-radar`` probe decks (``tools/make_tick_probe.py``); see
+# ``ChartBuilder._draw_axis_ticks`` for the readings.
+
+
+def _tick_values(count: int = 5) -> str:
+    points = "".join(
+        f"<c:pt idx='{i}'><c:v>{v}</c:v></c:pt>"
+        for i, v in enumerate((3, 9, 5, 7, 4, 6, 8, 2)[:count])
+    )
+    return (
+        "<c:ser><c:idx val='0'/><c:order val='0'/><c:val><c:numRef><c:numCache>"
+        f"<c:ptCount val='{count}'/>{points}</c:numCache></c:numRef></c:val></c:ser>"
+    )
+
+
+def _ticked(
+    cat: str = "",
+    val: str = "",
+    *,
+    direction: str = "col",
+    count: int = 5,
+    kind: str = "barChart",
+):
+    """A chart whose two axes carry ``cat`` and ``val`` in the schema's tick slot."""
+    head = f"<c:barDir val='{direction}'/>" if kind in ("barChart", "bar3DChart") else ""
+    return _build(
+        f"<c:chart><c:plotArea><c:{kind}>{head}{_tick_values(count)}"
+        f"<c:axId val='1'/><c:axId val='2'/></c:{kind}>"
+        f"<c:catAx><c:axId val='1'/>{cat}</c:catAx>"
+        f"<c:valAx><c:axId val='2'/>{val}</c:valAx></c:plotArea></c:chart>",
+        width=400.0,
+        height=250.0,
+    )[0]
+
+
+def _ticks(children, *, across: str):
+    """Tick segments as ``(position along the axis, low, high)`` in points.
+
+    ``across="x"`` reads ticks standing across a *vertical* axis -- horizontal strokes --
+    and ``"y"`` those across a horizontal one.
+    """
+    out = []
+    for line in _lines(children):
+        t = line.transform
+        w, h = t.extent_width / 12700, t.extent_height / 12700
+        x, y = t.offset_x / 12700, t.offset_y / 12700
+        if max(w, h) > 20:
+            continue
+        if across == "x" and h == 0:
+            out.append((round(y, 3), round(x, 3), round(x + w, 3)))
+        elif across == "y" and w == 0:
+            out.append((round(x, 3), round(y, 3), round(y + h, 3)))
+    return sorted(out)
+
+
+def _axis_at(children, *, vertical: bool) -> float:
+    for line in _rules(children):
+        t = line.transform
+        if vertical and t.extent_width == 0:
+            return t.offset_x / 12700
+        if not vertical and t.extent_height == 0:
+            return t.offset_y / 12700
+    raise AssertionError("no axis line")
+
+
+NO_TICKS = "<c:majorTickMark val='none'/><c:minorTickMark val='none'/>"
+
+
+def test_an_absent_tick_mark_is_cross_as_is_one_with_no_val():
+    from pptx2svg.resolve.chart import tick_marks
+
+    absent = chart(bar(_tick_values(), "<c:valAx><c:axId val='2'/></c:valAx>")).axes[0]
+    assert tick_marks(absent) == ("cross", "cross")
+    bare = chart(
+        bar(_tick_values(), "<c:valAx><c:axId val='2'/><c:majorTickMark/><c:minorTickMark/></c:valAx>")
+    ).axes[0]
+    assert tick_marks(bare) == ("cross", "cross")
+    odd = chart(
+        bar(
+            _tick_values(),
+            "<c:valAx><c:axId val='2'/><c:majorTickMark val='sideways'/>"
+            "<c:minorTickMark val='in'/></c:valAx>",
+        )
+    ).axes[0]
+    assert tick_marks(odd) == ("none", "in")
+
+
+def test_out_points_away_from_the_plot_and_in_into_it():
+    out = _ticked(NO_TICKS, "<c:majorTickMark val='out'/><c:minorTickMark val='none'/>")
+    axis = _axis_at(out, vertical=True)
+    ticks = _ticks(out, across="x")
+    assert ticks and all(high == pytest.approx(axis, abs=1e-3) for _, _, high in ticks)
+    assert all(low < axis for _, low, _ in ticks)
+
+    inward = _ticked(NO_TICKS, "<c:majorTickMark val='in'/><c:minorTickMark val='none'/>")
+    assert all(low == pytest.approx(axis, abs=1e-3) for _, low, _ in _ticks(inward, across="x"))
+
+    down = _ticked("<c:majorTickMark val='out'/><c:minorTickMark val='none'/>", NO_TICKS)
+    axis_y = _axis_at(down, vertical=False)
+    assert all(low == pytest.approx(axis_y, abs=1e-3) for _, low, _ in _ticks(down, across="y"))
+
+
+def test_a_major_tick_is_a_third_of_the_label_ascent_and_a_minor_one_a_quarter():
+    """3.130 and 2.347 pt at 10 pt Aptos, whose ascent is 0.939 em."""
+    crossing = _ticked(NO_TICKS, "<c:majorTickMark val='cross'/><c:minorTickMark val='none'/>")
+    lengths = [high - low for _, low, high in _ticks(crossing, across="x")]
+    assert lengths and all(length == pytest.approx(2 * 3.130, abs=0.01) for length in lengths)
+    minor = _ticked(NO_TICKS, "<c:majorTickMark val='none'/><c:minorTickMark val='out'/>")
+    lengths = [high - low for _, low, high in _ticks(minor, across="x")]
+    assert lengths and all(length == pytest.approx(2.347, abs=0.01) for length in lengths)
+
+
+def test_the_tick_follows_its_own_axis_text_size():
+    big = (
+        "<c:majorTickMark val='out'/><c:minorTickMark val='none'/><c:txPr><a:bodyPr/>"
+        "<a:lstStyle/><a:p><a:pPr><a:defRPr sz='2000'/></a:pPr></a:p></c:txPr>"
+    )
+    children = _ticked(big, "<c:majorTickMark val='out'/><c:minorTickMark val='none'/>")
+    category = [high - low for _, low, high in _ticks(children, across="y")]
+    value = [high - low for _, low, high in _ticks(children, across="x")]
+    assert category and all(length == pytest.approx(6.26, abs=0.01) for length in category)
+    assert value and all(length == pytest.approx(3.13, abs=0.01) for length in value)
+
+
+def test_a_value_axis_ticks_every_major_and_a_fifth_of_it_for_the_minors():
+    children = _ticked(NO_TICKS, "<c:majorTickMark val='out'/><c:minorTickMark val='out'/>")
+    ticks = _ticks(children, across="x")
+    majors = [t for t in ticks if t[2] - t[1] > 3.0]
+    minors = [t for t in ticks if t[2] - t[1] < 3.0]
+    # 0..10 by 1: eleven majors and fifty-one minors, both ends included.
+    assert (len(majors), len(minors)) == (11, 51)
+
+
+def test_a_category_axis_ticks_the_band_edges_and_puts_its_last_minor_on_the_end():
+    children = _ticked("<c:majorTickMark val='out'/><c:minorTickMark val='out'/>", NO_TICKS)
+    ticks = _ticks(children, across="y")
+    majors = [x for x, low, high in ticks if high - low > 3.0]
+    minors = [x for x, low, high in ticks if high - low < 3.0]
+    assert len(majors) == 6
+    step = majors[1] - majors[0]
+    assert minors[:5] == pytest.approx([x + step / 2 for x in majors[:5]], abs=1e-2)
+    # The sixth minor would be half a band past the plot; PowerPoint puts it on the end.
+    assert minors[5] == pytest.approx(majors[5], abs=1e-3)
+
+
+def test_tick_mark_skip_thins_the_majors_and_the_minors_with_them():
+    children = _ticked(
+        "<c:majorTickMark val='out'/><c:minorTickMark val='out'/><c:tickMarkSkip val='2'/>",
+        NO_TICKS,
+    )
+    ticks = _ticks(children, across="y")
+    majors = [x for x, low, high in ticks if high - low > 3.0]
+    minors = [x for x, low, high in ticks if high - low < 3.0]
+    assert len(majors) == 3 and len(minors) == 3
+    band = (majors[1] - majors[0]) / 2
+    # Band edges 0, 2 and 4 for the majors, 1, 3 and 5 for the minors.
+    assert minors == pytest.approx([x + band for x in majors], abs=1e-2)
+
+
+def test_an_axis_moved_to_the_far_side_turns_its_ticks_round():
+    children = _ticked(
+        "<c:majorTickMark val='out'/><c:minorTickMark val='none'/><c:crosses val='max'/>",
+        NO_TICKS,
+    )
+    axis_y = min(line.transform.offset_y for line in _rules(children)) / 12700
+    ticks = _ticks(children, across="y")
+    assert ticks and all(high == pytest.approx(axis_y, abs=1e-3) for _, _, high in ticks)
+
+
+def test_a_bar_chart_ticks_its_categories_up_the_side_from_the_bottom():
+    children = _ticked(
+        "<c:majorTickMark val='out'/><c:minorTickMark val='out'/>", NO_TICKS, direction="bar"
+    )
+    ticks = _ticks(children, across="x")
+    minors = [y for y, low, high in ticks if high - low < 3.0]
+    majors = [y for y, low, high in ticks if high - low > 3.0]
+    # The clamped minor is at the *top* end: the categories run upwards.
+    assert min(minors) == pytest.approx(min(majors), abs=1e-3)
+    axis = _axis_at(children, vertical=True)
+    assert all(high == pytest.approx(axis, abs=1e-3) for _, _, high in ticks)
+
+
+@pytest.mark.parametrize(
+    "spec",
+    [
+        "<c:delete val='1'/><c:majorTickMark val='out'/>",
+        "<c:majorTickMark val='out'/><c:spPr><a:ln><a:noFill/></a:ln></c:spPr>",
+    ],
+)
+def test_a_deleted_or_unlined_axis_draws_no_ticks(spec):
+    assert _ticks(_ticked(NO_TICKS, spec), across="x") == []
+
+
+def test_ticks_take_the_axis_lines_stroke():
+    red = (
+        "<c:majorTickMark val='out'/><c:minorTickMark val='none'/>"
+        "<c:spPr><a:ln w='38100'><a:solidFill><a:srgbClr val='FF0000'/></a:solidFill>"
+        "</a:ln></c:spPr>"
+    )
+    children = _ticked(NO_TICKS, red)
+    strokes = {
+        (line.outline.width, line.outline.fill.color.hex)
+        for line in _lines(children)
+        if line.transform.extent_height == 0 and line.transform.extent_width < 20 * 12700
+    }
+    assert strokes == {(38100, "#FF0000")}
+
+
+def test_low_labels_leave_the_category_axis_line_on_the_zero_line():
+    """``col-neg-low``: the line and its ticks stay at zero, only the labels go down."""
+    points = "".join(
+        f"<c:pt idx='{i}'><c:v>{v}</c:v></c:pt>" for i, v in enumerate((3, -4, 5, -2, 6))
+    )
+    series = (
+        "<c:ser><c:idx val='0'/><c:order val='0'/><c:val><c:numRef><c:numCache>"
+        f"<c:ptCount val='5'/>{points}</c:numCache></c:numRef></c:val></c:ser>"
+    )
+    children = _build(
+        f"<c:chart><c:plotArea><c:barChart><c:barDir val='col'/>{series}"
+        "<c:axId val='1'/><c:axId val='2'/></c:barChart>"
+        "<c:catAx><c:axId val='1'/><c:majorTickMark val='out'/><c:minorTickMark val='none'/>"
+        "<c:tickLblPos val='low'/></c:catAx>"
+        f"<c:valAx><c:axId val='2'/>{NO_TICKS}</c:valAx></c:plotArea></c:chart>",
+        width=400.0,
+        height=250.0,
+    )[0]
+    axis_y = _axis_at(children, vertical=False)
+    plot_bottom = max(
+        (line.transform.offset_y + line.transform.extent_height) / 12700
+        for line in _rules(children)
+    )
+    assert axis_y < plot_bottom - 20
+    ticks = _ticks(children, across="y")
+    assert ticks and all(low == pytest.approx(axis_y, abs=1e-3) for _, low, _ in ticks)
+
+
+def test_a_three_d_chart_draws_no_ticks():
+    children = _ticked(
+        "<c:majorTickMark val='out'/>", "<c:majorTickMark val='out'/>", kind="bar3DChart"
+    )
+    assert _ticks(children, across="x") == [] and _ticks(children, across="y") == []
+
+
+def _ticked_radar(val: str, cat: str = NO_TICKS):
+    return _build(
+        "<c:chart><c:plotArea><c:radarChart><c:radarStyle val='marker'/>"
+        f"{_tick_values(5)}<c:axId val='1'/><c:axId val='2'/></c:radarChart>"
+        f"<c:catAx><c:axId val='1'/>{cat}</c:catAx>"
+        f"<c:valAx><c:axId val='2'/>{val}</c:valAx></c:plotArea></c:chart>",
+        width=400.0,
+        height=250.0,
+    )[0]
+
+
+def _tick_strokes(children):
+    return [
+        line
+        for line in _lines(children)
+        if math.hypot(line.transform.extent_width, line.transform.extent_height) < 10 * 12700
+    ]
+
+
+def test_a_radar_ticks_its_value_axis_on_every_spoke():
+    ticks = _tick_strokes(_ticked_radar("<c:majorTickMark val='out'/><c:minorTickMark val='none'/>"))
+    assert ticks and len(ticks) % 5 == 0
+    assert _tick_strokes(_ticked_radar(NO_TICKS)) == []
+    # The category axis' own ticks are never drawn.
+    assert _tick_strokes(_ticked_radar(NO_TICKS, "<c:majorTickMark val='out'/>")) == []
+
+
+def test_a_radar_ticks_to_the_left_of_each_spoke_turned_with_it():
+    """72 degrees round, the ``out`` tick runs up and to the left, as measured."""
+    ticks = _tick_strokes(_ticked_radar("<c:majorTickMark val='out'/><c:minorTickMark val='none'/>"))
+    slanted = [
+        line
+        for line in ticks
+        if line.transform.extent_width > 0 and line.transform.extent_height > 0
+    ]
+    rising = [line for line in slanted if line.transform.flip_v]
+    # Five spokes: the vertical one's ticks are level, and of the four slanted spokes'
+    # ticks two sets rise to the right and two fall -- which only comes out as itself if
+    # the rising ones are flipped.
+    assert slanted and len(rising) * 2 == len(slanted)
+
+
+def test_a_radar_web_takes_the_place_of_its_major_ticks_but_not_its_minor_ones():
+    majors = _tick_strokes(
+        _ticked_radar("<c:majorGridlines/><c:majorTickMark val='out'/><c:minorTickMark val='none'/>")
+    )
+    assert majors == []
+    minors = _tick_strokes(
+        _ticked_radar("<c:majorGridlines/><c:majorTickMark val='out'/><c:minorTickMark val='out'/>")
+    )
+    assert minors
+
+
+def test_a_scatter_ticks_both_value_axes():
+    points = "".join(f"<c:pt idx='{i}'><c:v>{v}</c:v></c:pt>" for i, v in enumerate((1, 2, 3)))
+    cache = f"<c:numRef><c:numCache><c:ptCount val='3'/>{points}</c:numCache></c:numRef>"
+    children = _build(
+        "<c:chart><c:plotArea><c:scatterChart><c:ser><c:idx val='0'/><c:order val='0'/>"
+        f"<c:xVal>{cache}</c:xVal><c:yVal>{cache}</c:yVal></c:ser>"
+        "<c:axId val='1'/><c:axId val='2'/></c:scatterChart>"
+        "<c:valAx><c:axId val='1'/><c:axPos val='b'/><c:majorTickMark val='out'/>"
+        "<c:minorTickMark val='none'/></c:valAx>"
+        "<c:valAx><c:axId val='2'/><c:axPos val='l'/><c:majorTickMark val='out'/>"
+        "<c:minorTickMark val='none'/><c:crosses val='max'/></c:valAx>"
+        "</c:plotArea></c:chart>",
+        width=400.0,
+        height=250.0,
+    )[0]
+    across_x = _ticks(children, across="x")
+    assert across_x and _ticks(children, across="y")
+    # The y axis crosses at the maximum, so it stands at the right and ticks rightwards.
+    axis = max(
+        line.transform.offset_x for line in _rules(children) if line.transform.extent_width == 0
+    )
+    assert all(low == pytest.approx(axis / 12700, abs=1e-3) for _, low, _ in across_x)
+
+
+def test_a_tick_mark_element_with_no_val_is_cross_and_an_absent_one_is_nothing_yet():
+    """The parser keeps "absent" apart, because what it means depends on the producer."""
+    axis = chart(
+        bar(
+            _tick_values(),
+            "<c:catAx><c:axId val='1'/><c:majorTickMark/></c:catAx>",
+        )
+    ).axes[0]
+    assert (axis.major_tick_mark, axis.minor_tick_mark) == ("cross", None)
+
+
+@pytest.mark.parametrize(
+    "version,expected",
+    [
+        ("12.0000", True),
+        (" 12.0000 ", True),
+        ("14.0000", False),
+        ("16.0000", False),
+        ("", False),
+        (None, False),
+    ],
+)
+def test_only_a_2007_app_version_is_read_as_office_2007(version, expected):
+    from pptx2svg.resolve.chart import written_by_office_2007
+
+    assert written_by_office_2007(version) is expected
+
+
+def test_office_2007_reads_a_missing_major_as_out_and_a_missing_minor_as_none():
+    from pptx2svg.resolve.chart import tick_marks
+
+    absent = chart(bar(_tick_values(), "<c:valAx><c:axId val='2'/></c:valAx>")).axes[0]
+    assert tick_marks(absent, office_2007=True) == ("out", "none")
+    assert tick_marks(absent, office_2007=False) == ("cross", "cross")
+    stated = chart(
+        bar(
+            _tick_values(),
+            "<c:valAx><c:axId val='2'/><c:majorTickMark val='in'/>"
+            "<c:minorTickMark val='cross'/></c:valAx>",
+        )
+    ).axes[0]
+    assert tick_marks(stated, office_2007=True) == ("in", "cross")
+
+
+def _office_2007_deck(authoring, *, version: str) -> bytes:
+    """``authoring-integration.pptx`` with its chart's tick marks taken out, written by
+    the PowerPoint that ``version`` names."""
+    from deckbuilder import derive_deck
+
+    source = zipfile.ZipFile(authoring)
+    chart_xml = source.read("ppt/charts/chart1.xml").decode()
+    chart_xml = re.sub(r"<c:(major|minor)TickMark val=\"none\"/>", "", chart_xml)
+    app = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/'
+        'extended-properties"><Application>Microsoft Office PowerPoint</Application>'
+        f"<AppVersion>{version}</AppVersion></Properties>"
+    )
+    return derive_deck(
+        authoring,
+        parts={"docProps/app.xml": app.encode(), "ppt/charts/chart1.xml": chart_xml.encode()},
+    )
+
+
+def _chart_strokes(presentation):
+    found = []
+
+    def walk(elements, inside):
+        for element in elements:
+            if isinstance(element, m.ChartElement):
+                walk(element.children, True)
+            elif isinstance(element, m.GroupElement):
+                walk(element.children, inside)
+            elif inside and isinstance(element, m.ConnectorElement):
+                found.append(element)
+
+    walk(presentation.slides[0].elements, False)
+    return found
+
+
+def _extent(line) -> float:
+    return max(line.transform.extent_width, line.transform.extent_height) / 12700
+
+
+def test_a_2007_deck_draws_out_ticks_and_grey_default_strokes(authoring):
+    """``tick-app-12``: a lone ``out`` tick, and every default stroke ``#898989``."""
+    deck = _office_2007_deck(authoring, version="12.0000")
+    strokes = _chart_strokes(convert_pptx_to_model(deck, ConvertOptions()))
+    assert {line.outline.fill.color.hex for line in strokes} == {"#898989"}
+    ticks = [line for line in strokes if _extent(line) < 20]
+    # `out` and nothing else: no tick is longer than a third of the ascent.
+    assert ticks and max(_extent(line) for line in ticks) < 4.0
+
+    deck = _office_2007_deck(authoring, version="16.0000")
+    new = convert_pptx_to_model(deck, ConvertOptions())
+    strokes = _chart_strokes(new)
+    assert {line.outline.fill.color.hex for line in strokes} == {"#000000"}
+    crossing = [line for line in strokes if _extent(line) < 20]
+    # Both sets, across the axis: the majors are twice the outside length.
+    assert len(crossing) > len(ticks)

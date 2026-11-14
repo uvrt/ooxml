@@ -1,0 +1,796 @@
+# Fonts: will my deck draw correctly?
+
+One question, answered in one place: **the deck names font X — will pptx2svg draw it at
+the widths PowerPoint laid it out at, and if not, what do I do?**
+
+The invariant everything below serves is short. Layout — wrapping, line heights,
+vertical centring — is computed from a table of advance widths *before* the SVG is handed
+to a rasteriser. If the face that is finally drawn has different advance widths from the
+face that was measured, every line break is in the wrong place and nothing says so. resvg
+does not warn when it substitutes: rendering one string in Calibri, Carlito, Aptos, Noto
+Sans JP and Lato on a machine with none of them produces five byte-identical PNGs.
+
+So there is exactly one thing to know about your font: **is it measured and drawn with the
+same widths?**
+
+Skip to the answer: [find your font](#find-your-font) · [ask the tool](#ask-the-tool-pptx2svg-fonts---check)
+· [Aptos](#aptos) · [what to do about a font we cannot draw](#the-escape-hatches)
+
+## Find your font
+
+| The deck names… | How it is drawn | Grade | What to do |
+| --- | --- | --- | --- |
+| **Anything the deck embeds** (`<p:embeddedFontLst>`) | Measured *and* drawn from the deck's own file — unless the same family is installed where PowerPoint looks, which it then draws instead, and so do we | `exact` | Nothing. This is the best outcome there is — [why](#1-the-deck-carries-it-best) |
+| **Arimo, Caladea, Carlito, Cousine, Lato, Noto Sans JP, Raleway, Tinos** | The bundle ships that exact family | `exact` | `pip install 'pptx2svg[fonts]'` |
+| **Symbol, Wingdings, Wingdings 2, Wingdings 3, Webdings** (absent) | Drawn as the Unicode characters their codes stand for (`q` in Wingdings as ❑ U+2751), in the host's symbol faces or Noto Sans Symbols 2, which the bundle ships for this alone; Symbol and Wingdings laid out at their own advances, recorded from Word's copies; a `symbol-font-mapped` warning | `missing` | Nothing for the common bullets and marks. Where the face is installed (a Mac with Office), embedded or in `font_dirs`, it draws itself |
+| **Calibri, Calibri Light** | Carlito | `compatible` | Nothing. Same advance widths; only outlines change |
+| **Arial, Helvetica** | Arimo | `compatible` | Nothing |
+| **Times New Roman, Times** | Tinos | `compatible` | Nothing |
+| **Courier New, Courier** | Cousine | `compatible` | Nothing |
+| **Liberation Sans / Serif / Mono** | Arimo / Tinos / Cousine | `compatible` | Nothing. Same designs under another name |
+| **Cambria** | Measured as Cambria, drawn with Caladea | `approximate` | Caladea is **not** metric-compatible — [why this row is the important one](#3-the-bundle-supplies-a-metric-compatible-clone) |
+| **Aptos, Aptos Display, Aptos Narrow** | Measured as Aptos, drawn with Carlito | `approximate` | No clone exists anywhere. Install real Aptos — [Aptos](#aptos); on a Mac with PowerPoint, PowerPoint's own is used — [read in place](#a-mac-with-powerpoint-the-faces-powerpoint-draws-read-in-place) |
+| **MS Gothic, MS Mincho, MS PGothic, MS PMincho** | Measured from their own tables, drawn with Noto Sans JP | `approximate` | The ideographs and kana already measure exactly; the Latin sub-run does not — [CJK](#a-note-on-cjk-the-approximate-grade-understates-it) |
+| **Meiryo, Yu Gothic, Yu Mincho, Hiragino, Noto Serif JP** | Measured *and* drawn with Noto Sans JP | `approximate` | Same: exact on CJK, off on the Latin sub-run — [CJK](#a-note-on-cjk-the-approximate-grade-understates-it) |
+| **SimSun, NSimSun, SimHei, KaiTi, FangSong, MingLiU, MingLiU_HKSCS** | Measured from their own fixed-pitch tables, drawn with Noto Sans JP | `approximate` | Widths exact (0.5 em Latin, 1.0 em ideographic); Noto Sans JP lacks about 8,200 of each face's ideographs and its Latin is proportional |
+| **BatangChe, GulimChe, DotumChe, GungsuhChe** | Measured from their own fixed-pitch tables, drawn with Noto Sans JP | `approximate` | Widths exact, but **Noto Sans JP draws no Hangul at all** — supply a Korean face yourself — [escape hatches](#the-escape-hatches) |
+| **Lucida Console, Lucida Sans Typewriter** | Measured at 0.602539 em, drawn with Cousine at 0.600098 | `approximate` | Nothing worth doing; each drawn line is 0.41% narrow |
+| **Consolas** | Measured at 0.549805 em, drawn with Cousine at 0.600098 | `approximate` | Install real Consolas; each drawn line is 9.1% wide. Measured because PowerPoint lays the line out at Consolas's pitch |
+| **Book Antiqua, Palatino Linotype, Century, Century Schoolbook, Century Gothic, Bookman Old Style, Monotype Corsiva, Arial Narrow, Monotype Sorts, Comic Sans MS** | Widths guessed; drawn with the generic family | `missing` | A measured open clone exists but pptx2svg does not ship or map it — [tier 4](#4-a-clone-exists-but-is-not-bundled) |
+| **Anything else** — Gill Sans MT, Verdana, Segoe UI, Georgia, Garamond, Tahoma, Trebuchet MS, the Indic and Thai faces… | Widths guessed; drawn with the generic family | `missing` | [Embed the font in the deck](#1-the-deck-carries-it-best), or supply it yourself — [escape hatches](#the-escape-hatches) |
+
+`exact` and `compatible` are faithful. `approximate` and `missing` are not, and
+`pptx2svg fonts --check` exits non-zero on them.
+
+Run `pptx2svg fonts` for the full table — 70 names, of which 20 grade faithful.
+
+## The five ways a font gets drawn
+
+Best outcome first.
+
+### 1. The deck carries it (best)
+
+A deck saved with *Embed fonts in the file* carries its typefaces in `ppt/fonts/*.fntdata`,
+listed by `<p:embeddedFontLst>` in `ppt/presentation.xml`. pptx2svg decodes them (a pure-Python
+MicroType Express decoder in the core — no extra needed) and uses them for **both
+measurement and drawing**. Nothing is substituted, so no advance width is approximated.
+
+```
+$ pptx2svg fonts --check tests/fixtures/real-basic-theme.pptx
+mode:   bundled from .../pptx2svg_fonts/files
+        this machine's own fonts are ignored, so output is reproducible
+        families: Arimo, Caladea, Carlito, Cousine, Lato, Noto Sans JP, Raleway, Tinos
+
+face                       verdict      drawn with     note
+Lato                       exact        Lato           drawn with the face the deck embedded
+Raleway                    exact        Raleway        drawn with the face the deck embedded
+Arial                      compatible   Arimo          Arimo has Arial's advance widths
+
+all 3 faces resolve to the metrics they were measured at.
+```
+
+**This beats a bundled face of the same name**, which is not obvious and was decided on a
+measurement. `real-basic-theme.pptx` embeds Raleway 4.026; the bundle ships a later
+release. Over the 340 characters both tables describe, **338 advance widths differ**, and
+`"Hamburgefonstiv 12345"` at 18 pt measures 261.000 px from the deck's own file against
+251.184 px from the bundle's — 3.9 % apart. The author laid the deck out with the file
+inside it, so that is the file to measure with. An embedded face therefore grades `exact`
+and takes precedence over the substitution table even where a substitute exists.
+
+It also beats *no* answer, which is the usual case. Template vendors pick arbitrary Google
+Fonts, of which there are roughly 1,800 families; two commercial templates measured here
+embed Anton, Arimo, Literata, Merriweather Sans, Merriweather Sans Light and Inclusive
+Sans, and every one of them used to report "no substitute known; widths guessed" while
+sitting inside the file being rendered. Scored against PowerPoint's own PDF export,
+reading the embedded fonts raised SSIM on all twelve slides measured — the largest by
+0.123, the mean by 0.058.
+
+**If you control the deck, this is the fix for every `missing` row in the table above.**
+Tick *Embed fonts in the file* in PowerPoint and the question stops being ours.
+
+**An installed copy of the same family beats it, as it does in PowerPoint.** Measured
+with `tools/make_font_resolution_probe.py` (the observations are
+`tests/fixtures/font-resolution-probe.json`): `real-basic-theme.pptx` embeds Lato 1.104, a
+272-glyph subset, and Office's cloud cache holds Lato 2.015, whose advances differ. In
+PowerPoint's PDF export the glyph origins of a 20-character line sit 0.12 pt from 2.015's
+advances and 0.55 pt from 1.104's (bold: 0.09 pt against 0.95 pt), and the deck's `●`
+bullets — which the subset does not have — are drawn in Lato-Regular, the installed face.
+It is not a version contest: an embedded copy rewritten to claim version 9.000 loses the
+same way. The same face embedded under a name nothing installs (`Latoprobe`) *is* drawn
+from the deck, and where its subset lacks a glyph PowerPoint falls back per character (to
+Arial for a sans face, Times New Roman for Raleway, whose PANOSE says nothing).
+
+So, wherever this library uses the host's faces — by default on a Mac with Office
+([below](#a-mac-with-powerpoint-the-faces-powerpoint-draws-read-in-place)) — a family the
+deck embeds that is also installed where PowerPoint looks is measured and drawn from the
+installed face, and the embedded copy is not decoded. A bundled family installed there
+(Raleway, Lato) is measured from the installed release too. Without the host's faces —
+the reproducible render — there is no installed copy to prefer, and the deck's own face
+wins as described above.
+
+Three things it does not do:
+
+- **Use a font whose licence refuses.** Every face is checked against its OS/2 `fsType`
+  twice — in the EOT header, written by the embedder, and again in the decoded font,
+  written by the foundry. The rule is LibreOffice's `EmbeddedFontsHelper::sufficientTTFRights`:
+  refuse only a face whose permission field says *restricted licence* (0x0002) and nothing
+  else, since rendering to a fixed image is a viewing use. `0x0200` (bitmap embedding only)
+  is also refused, because we draw outlines. A refused face warns
+  `font-embedded-restricted`, naming the restriction, and falls back to substitution.
+- **Fail.** An undecodable payload warns `font-embedded-undecodable` (or
+  `font-embedded-unreadable` where the part itself is absent) and the deck renders as it
+  would have without it.
+- **Cost nothing.** Decoding is 0.15–1.1 s per face, cached by content digest, and only
+  the families a slide actually asks for are decoded. `--no-embedded-fonts`, or
+  `ConvertOptions(use_embedded_fonts=False)`, turns it off.
+
+### 2. The bundle supplies it exactly
+
+Eight families, from `pip install 'pptx2svg[fonts]'`:
+
+**Arimo, Caladea, Carlito, Cousine, Lato, Noto Sans JP, Raleway, Tinos.**
+
+The bundle also ships Noto Sans Symbols 2, which no deck names: it draws the Unicode
+equivalents of an absent symbol face's glyphs (Wingdings' `q` as ❑), and nothing else.
+
+A deck that names one of these directly gets that exact file, measured from that exact
+file. Decks reach these names by ordinary routes: Carlito and Caladea are LibreOffice's
+own Calibri and Cambria substitutes, so anything round-tripped through LibreOffice names
+them; Arimo, Tinos and Cousine are the Chrome OS core fonts that Debian packages as
+`fonts-croscore`; Lato and Raleway are Google Fonts that Office offers from the cloud.
+
+The list is not prose — it is
+[`pptx2svg.fonts.BUNDLED_FAMILIES`](src/pptx2svg/fonts/__init__.py), and the identity rows
+in the substitution table are generated from it, so a ninth family cannot ship without
+being reachable by its own name.
+
+Without the bundle, `pptx2svg` still renders, using the host's fonts, and emits one
+`font-bundle-missing` warning saying that output is not reproducible. Every face then
+grades `missing`, because in `system` mode we genuinely do not know what the rasteriser
+will pick and claiming otherwise would be the confident-but-wrong answer this subsystem
+exists to remove.
+
+### 3. The bundle supplies a metric-compatible clone
+
+*Metric-compatible* means one thing and one thing only: **the same advance widths**, so
+line breaks, autofit and centring land where PowerPoint put them. Shape, colour, hinting
+and x-height are all irrelevant to layout. A face can look nothing like the original and
+still be a perfect substitute; a face can be a scholarly revival of the very same design
+and still reflow every line.
+
+| Office face | Drawn with | Verified |
+| --- | --- | --- |
+| Calibri | Carlito | ratio 1.0000 over four representative strings |
+| Arial, Helvetica | Arimo | ratio 1.0000 |
+| Times New Roman, Times | Tinos | ratio 1.0000 |
+| Courier New, Courier | Cousine | ratio 1.0000 |
+| Liberation Sans / Serif / Mono | Arimo / Tinos / Cousine | Liberation 2.x is built *from* the Chrome OS core fonts. The equality is inherited rather than re-measured here — 0 of 191 advances differ, and resvg draws Arimo at `wght=700` pixel-identically to static Liberation Sans Bold |
+
+One caveat inside this tier: **Calibri Light** is a distinct face and Carlito has no light
+cut, so Carlito draws it 1.3 % wide. It still grades `compatible`, because the verdict is
+about internal consistency — we measure with Carlito and we draw with Carlito.
+
+#### Cambria → Caladea is *not* in this tier
+
+This is the clearest illustration in the codebase of why the distinction matters, and the
+reason `Substitution.metric_compatible` is a field rather than an assumption.
+
+Caladea is universally described as metric-compatible with Cambria. It is not. Measured
+from the repository's own generated tables, over the 95 printable ASCII characters:
+
+- **no advance matches exactly** — 95 of 95 differ;
+- 57 of 95 differ by more than one design unit, which is the threshold this project uses
+  to separate design from rounding;
+- the **mean ratio is 0.9592**, range 0.530–1.089.
+
+Against four representative strings the same error reads 0.9555, 0.9384, 0.9525, 0.9542 —
+roughly 4.5 % narrow.
+
+So Cambria gets the Aptos treatment instead: **measured with Cambria's own advance widths,
+drawn with Caladea**, which is the closest serif that can be shipped. Line breaks match
+PowerPoint; each drawn line is a few percent short. `fonts --check` grades it
+`approximate` and `--check` exits non-zero on it.
+
+Reproduce it:
+
+```python
+from pptx2svg.text.metrics import METRICS
+
+cambria, caladea = METRICS["Cambria"], METRICS["Caladea"]
+ratios = [
+    (caladea.widths[c] / caladea.units_per_em) / (cambria.widths[c] / cambria.units_per_em)
+    for c in map(chr, range(0x20, 0x7F))
+]
+print(sum(ratios) / len(ratios))   # 0.9592...
+```
+
+Publishing advance widths of a proprietary face is not redistributing it — they are facts
+about a design, which is the footing on which Carlito, Arimo and Liberation exist at all.
+No Cambria or Aptos outline, table or file is in this repository.
+
+#### A note on CJK: the `approximate` grade understates it
+
+Noto Sans JP is what every Japanese face is drawn with, and every one of them grades
+`approximate`. For the CJK portion of a CJK run that grade is pessimistic. **Every
+Microsoft CJK face gives every ideograph and every kana an advance of exactly 1.000 em** —
+MS Gothic, MS Mincho, Meiryo, Yu Gothic, Microsoft YaHei, Malgun Gothic, DengXian, all of
+them — and so does Noto Sans JP. Measured over 1,570 shared ideographs and kana, Noto Sans
+JP differs from Meiryo, Yu Gothic, Microsoft YaHei, Malgun Gothic and DengXian on **zero**
+codepoints. The divergence is confined to the Latin sub-run, which is 0.83 of Meiryo's
+widths and 0.90 of Yu Gothic's.
+
+The exceptions prove the rule: **MS PGothic makes kana proportional too** — its katakana
+run from 0.648 em to 1.0 while Noto Sans JP's are uniformly 1.0 — which is why the four MS
+faces are measured from their own tables rather than from Noto's. Details, and the thirteen
+fixed-pitch families that Noto Sans Mono CJK JP matches on 0 of 1,106–2,264 shared
+codepoints, are in
+[ROADMAP ▸ CJK compatibility is nearly free](ROADMAP.md#cjk-compatibility-is-nearly-free-and-mostly-already-held).
+
+### 4. A clone exists but is not bundled
+
+A survey of the 186 family names a PowerPoint install can put in `a:latin/@typeface`
+measured which of them have a genuine open metric clone. **26 do.** They are not in the
+bundle, because the bundle *redistributes* and their licences (mostly AGPL-3.0 with a
+PostScript/PDF-embedding exception that does not cover redistributing the files) do not
+permit that. Installing them from Debian's archive is a different act, which is what
+`tools/install-fonts-debian.sh --clones` does.
+
+Headline rows, so you need not open the roadmap to learn your Palatino deck is covered:
+
+| Family | Clone | Measured |
+| --- | --- | --- |
+| Book Antiqua | URW P052 | 0 of 74 text characters differ; 1 of 95 ASCII (`#`) |
+| Palatino Linotype | URW P052 | 0 of 74 text; 10 of 95 ASCII — Microsoft regularised the math operators, URW kept Palatino's |
+| Century Schoolbook, Century | URW C059 | 0 of 74 text; the 3 ASCII "differences" are one unit in 2048 |
+| Century Gothic | URW Gothic | 0 of 74 text; 2 of 95 ASCII |
+| Bookman Old Style | URW Bookman Light/Demi | 1 of 74 text (`Q`, +2.5 %) |
+| Monotype Corsiva | URW Z003 | 0 of 74 text; 1 of 95. Surprising, and checked twice |
+| Arial Narrow | Nimbus Sans Narrow, or TeX Gyre Heros Cn | 0 of 95 ASCII, all four cuts |
+| Symbol | **Symbol Neu** (Apache-2.0) | **0 of 188 by legacy code, 0 of 189 by glyph name, mean 1.0000** |
+| Monotype Sorts | URW D050000L | 9 of 202 differ, mean 0.9938 |
+| Comic Sans MS | **Comic Relief** (OFL) | **0 of 95 ASCII, regular and bold.** The cleanest result in the survey |
+| 13 CJK families (MS Gothic, MS Mincho, SimSun, NSimSun, SimHei, KaiTi, FangSong, MingLiU, MingLiU_HKSCS, BatangChe, GulimChe, DotumChe, GungsuhChe) | Noto Sans Mono CJK JP | **0 differing over 1,106–2,264 shared codepoints each.** All thirteen now have measured tables of their own and rows in the table above; a clone would change what *draws* them, not what measures them |
+
+The full survey — including the faces the internet *suggests* and which all measurably
+reflow (Gill Sans MT → Libre Franklin, mean 1.0774; Verdana → DejaVu Sans, 57 of 95 differ;
+Garamond → EB Garamond, 91 of 95) and the families with no open equivalent at all — is
+[ROADMAP ▸ The clone landscape](ROADMAP.md#the-clone-landscape--survey-measured).
+
+**Installing a tier-4 clone does less than you would expect, and the reason is worth
+knowing.** pptx2svg's substitution table has no row for any of these names, so:
+
+- `pptx2svg fonts --check` still reports `missing`;
+- measurement still guesses (see [tier 5](#5-nothing-matches-widths-are-guessed));
+- the emitted SVG stack for a deck naming Palatino Linotype is
+  `'Palatino Linotype', serif` — nothing in it names P052, so the rasteriser will not pick
+  the clone up by itself.
+
+Two different situations follow, and only one of them is a one-liner.
+
+**You installed the *real* face.** Then the deck's own name is already first in the stack,
+so `--system-fonts` draws with it. For Aptos and Cambria this is the **complete** fix,
+because those two are already measured from their own tables — measurement and drawing
+agree again:
+
+```bash
+tools/install-fonts-debian.sh --aptos        # Microsoft's own download, their terms
+pptx2svg deck.pptx -f png --system-fonts     # measured as Aptos, now drawn as Aptos too
+```
+
+`fonts --check` will still say `approximate`: in `system` mode it reports the bundle's
+answer, not fontconfig's, deliberately. Verify with the render, not the report.
+
+**You installed a clone under a different name** (URW P052 for Palatino Linotype). Then you
+need to say so twice — once for drawing, once for measurement:
+
+```python
+from pptx2svg import ConvertOptions, FontToolsTextMeasurer, convert_pptx_to_png
+
+convert_pptx_to_png(
+    "deck.pptx",
+    ConvertOptions(
+        font_mapping={"Palatino Linotype": "P052"},      # what to draw with
+        measurer=FontToolsTextMeasurer(                   # what to measure with
+            {"Palatino Linotype": "/path/to/P052-Roman.otf"}
+        ),
+    ),
+    skip_system_fonts=False,
+)
+```
+
+`font_mapping` alone gives right glyphs at guessed widths. See
+[the escape hatches](#the-escape-hatches).
+
+### 5. Nothing matches: widths are guessed
+
+No embedded face, no bundled family, no substitution row. This is where Gill Sans MT,
+Verdana, Segoe UI, Georgia, Garamond and about 150 other PowerPoint families land.
+
+**What actually happens.** `metrics_for()` returns `None` and every character is measured
+by category instead: 0.3 em for a narrow character, **0.6 em for an ordinary one**, 1.0 em
+for anything East Asian. The SVG names the requested family and a CSS generic
+(`'Gill Sans MT', sans-serif`), and the generic points back at the bundle, so the text
+draws at roughly the right size rather than not at all.
+
+**What it costs.** Not glyph shapes — *line breaks*. Measured at 18 pt on
+`"Hamburgefonstiv 12345"`, the guess returns 280.800 px for every unknown face. Against
+the real tables:
+
+| Face | Real width | The guess is |
+| --- | --- | --- |
+| Caladea | 231.312 px | **+21.4 %** |
+| Tinos | 233.965 px | +20.0 % |
+| Carlito | 235.055 px | +19.5 % |
+| Raleway | 251.184 px | +11.8 % |
+| Arimo | 254.824 px | +10.2 % |
+| Lato | 258.996 px | +8.4 % |
+| Cousine | 302.449 px | **−7.2 %** |
+
+Cousine is the row that shows the guess is not even wrong in a consistent direction:
+monospaced, it is 7.7 % *wider* than the fallback assumes, while Caladea is 17.6 %
+narrower. A 20 % width error is not a cosmetic difference. It moves wrap points, changes
+how many lines a paragraph occupies, and with them how far the text overflows its box,
+and moves every vertically centred block.
+
+**How to detect it.** Two ways, both loud by design:
+
+```
+$ pptx2svg fonts --check deck.pptx
+face                       verdict      drawn with     note
+Arial                      compatible   Arimo          Arimo has Arial's advance widths
+Courier New                compatible   Cousine        Cousine has Courier New's advance widths
+ＭＳ Ｐゴシック                   approximate  Noto Sans JP   measured as ＭＳ Ｐゴシック, drawn as Noto Sans JP; no metric-compatible clone exists
+Gill Sans MT               missing      -              no substitute known; widths guessed, drawn with the generic family
+
+2 of 4 faces will not be drawn at the widths they were measured at.
+```
+
+and, for library callers, a warning on `ConvertOptions.warnings`:
+
+```python
+opts = ConvertOptions()
+convert_pptx_to_svg("deck.pptx", opts)
+[w.message for w in opts.warnings if w.code == "font-substituted"]
+# ['Aptos: measured as Aptos, drawn as Carlito; no metric-compatible clone exists', ...]
+```
+
+`ConvertOptions(warn_on_font_substitution=False)` silences it, which you should not do.
+
+**What to do.** In order of how well it works: embed the font in the deck
+([tier 1](#1-the-deck-carries-it-best)); install the real face and render with
+`--system-fonts`; or map and measure it yourself
+([escape hatches](#the-escape-hatches)).
+
+## Which face draws the Japanese?
+
+The five routes above answer *what do we draw this family with*. A run carrying kana or
+ideographs has an earlier question to answer first — **which family** — and it is
+answered as PowerPoint for Mac answers it, measured with
+`tools/make_font_resolution_probe.py` (one line of kana and ideographs per box, the run's
+Latin face, East Asian face, `lang`, table cell or text box and the theme varied one at a
+time; the observations are `tests/fixtures/font-resolution-probe.json`, and
+`tests/test_font_resolution.py` holds the library to every one of them):
+
+1. **The name.** The run's own `<a:ea>`, inherited as any typeface is. A `+mn-ea` /
+   `+mj-ea` pointer — or no `<a:ea>` at all, which every default text style spells
+   `+mn-ea` — names the theme's `<a:font script="Jpan"/>` entry **for a Japanese run**
+   (`lang="ja-JP"`, or `altLang="ja-JP"` beside a non-East-Asian `lang`), and the theme's
+   `<a:ea>` for any other. The script list is *not* a fallback behind an empty `<a:ea>`:
+   over `<a:ea typeface=""/>` and `Jpan` 游ゴシック, an `en-US` run draws MS Gothic and a
+   `ja-JP` run YuGothic-Regular; over `<a:ea>` 游ゴシック and `Jpan` ＭＳ Ｐゴシック, the
+   first draws YuGothic-Regular and the second MS-PGothic.
+2. **Whether it can draw Japanese.** An installed face found by that name with kana in
+   it draws the run. ＭＳ Ｐゴシック resolves perfectly well — named in a run's `<a:ea>`,
+   by its full-width Japanese name or as `MS PGothic`, PowerPoint draws MS-PGothic. A run
+   that names no East Asian face, but whose *Latin* face has kana (Noto Sans JP,
+   ＭＳ Ｐゴシック, 游ゴシック…), is drawn in its Latin face.
+3. **Otherwise MS Gothic or MS Mincho**, by the PANOSE of the face the run *does* name —
+   its `<a:ea>` if it names one, else its Latin face: MS Gothic for a sans serif (PANOSE
+   family 2, serif style 11–15, not monospaced), MS Mincho for anything else, MS Gothic
+   for a face that is not installed. Over 35 Latin faces the split is exact: Calibri,
+   Arial, Aptos, Verdana, Segoe UI, Lato, Futura… draw MS Gothic; Times New Roman,
+   Cambria, Georgia, Courier New, Consolas, Menlo, Comic Sans MS, Helvetica Neue
+   (PANOSE serif style "any"), Raleway (PANOSE all zero)… draw MS Mincho.
+
+Text boxes, placeholders and table cells all follow it, bold included. **Charts do not**:
+a chart's labels fall through to the theme's `Jpan` entry —
+`real-financial-report.pptx`'s chart labels are YuGothic-Regular while the same deck's
+table cells, which name no East Asian face and no Japanese `lang`, are MS-Gothic.
+
+This is what the two decks that used to be unscorable were showing. `sample.pptx`
+names ＭＳ Ｐゴシック only as its theme's `Jpan` entry, and its runs carry no `lang`: they
+draw MS Gothic, and its one Courier New run MS Mincho. `real-basic-theme.pptx`'s runs
+name Lato and Raleway as their own `<a:ea>` (Latin faces, `lang="ja"`): the body draws MS
+Gothic and the titles MS Mincho. Nothing there is a failed lookup of ＭＳ Ｐゴシック.
+
+Which names find an installed face is measured the same way: name ID 1 in every language
+(`ヒラギノ角ゴシック W3`, `黒体-繁`, `游明朝 Demibold` all resolve), and name ID 16 in
+English only (`Hiragino Sans` and `Noto Sans JP` resolve, `ヒラギノ角ゴシック` does not and
+draws MS Gothic). One exception is unexplained — PowerPoint does not find Hiragino Kaku
+Gothic ProN by its family name though its records look like Hiragino Sans's — and this
+library finds it.
+
+**Synthetic bold.** MS Gothic and MS Mincho have no bold cut. PowerPoint fills and
+strokes the regular outline (0.12 pt + 2% of the size), and the stroke widens each advance
+by 0.125 pt — but only from 16 pt: up to 15.5 pt a bold kana advances exactly its size.
+Both are reproduced; a bold run in either face is drawn stroked rather than asked for as
+`font-weight="bold"`.
+
+With the host's faces in use, "installed" is answered from this machine as PowerPoint
+would answer it. In the reproducible render it is answered from what the library knows:
+the Japanese faces of the substitution table draw Japanese, and a Latin face's PANOSE is
+read from the bundled face that draws it (Carlito's for Calibri), or taken from its CSS
+generic.
+
+One run can therefore be two faces, and it is split into separate `<tspan>` chunks that
+each name their own, because rasterisers fall back per chunk rather than per glyph.
+Measurement splits at exactly the same character boundaries, which is the same
+measure-equals-draw rule the rest of this page is about.
+
+## Ask the tool: `pptx2svg fonts --check`
+
+This is the thing that answers the question for a *specific* deck, and it is the reason
+this document does not have to enumerate 186 families.
+
+```bash
+pptx2svg fonts                       # every name the substitution table knows
+pptx2svg fonts --check deck.pptx     # exit 1 if this deck cannot be drawn faithfully
+```
+
+A real run, on a fixture that uses Office's current default:
+
+```
+$ pptx2svg fonts --check tests/fixtures/authoring-integration.pptx
+mode:   bundled from .../pptx2svg_fonts/files
+        this machine's own fonts are ignored, so output is reproducible
+        families: Arimo, Caladea, Carlito, Cousine, Lato, Noto Sans JP, Raleway, Tinos
+
+face                       verdict      drawn with     note
+Arial                      compatible   Arimo          Arimo has Arial's advance widths
+Aptos                      approximate  Carlito        measured as Aptos, drawn as Carlito; no metric-compatible clone exists
+Aptos Display              approximate  Carlito        measured as Aptos Display, drawn as Carlito; no metric-compatible clone exists
+
+2 of 3 faces will not be drawn at the widths they were measured at.
+$ echo $?
+1
+```
+
+and one that passes:
+
+```
+$ pptx2svg fonts --check tests/fixtures/real-basic-theme.pptx
+...
+all 3 faces resolve to the metrics they were measured at.
+$ echo $?
+0
+```
+
+### The four grades
+
+| Grade | Means | Faithful? |
+| --- | --- | --- |
+| `exact` | We draw the very family the deck asked for — bundled, or embedded in the deck | yes |
+| `compatible` | We draw a clone built to the same advance widths. Outlines differ; nothing else does | yes |
+| `approximate` | We draw *something*, but its widths are not the ones we measured with. Aptos drawn as Carlito, Cambria as Caladea, Mincho as a Gothic | **no** |
+| `missing` | We know nothing about the face, or the bundle is not installed. The rasteriser gets the generic family; widths were guessed | **no** |
+
+`--check` exits non-zero on `approximate` and `missing`, so a deck that cannot be rendered
+faithfully fails a build instead of shipping wrong pixels.
+
+Two properties are kept apart on purpose. `FontReport.faithful` asks "will every face draw
+at the widths we measured?"; `FontReport.reproducible` asks "will two machines produce the
+same pixels?" A deck can be faithful and not reproducible (system fonts that happen to be
+right today), and perfectly reproducible while drawing Aptos as Carlito. Conflating the two
+is how "it looks fine on my machine" becomes a production incident.
+
+The faces reported are taken from the *resolved* model, not by grepping the XML for
+`typeface="..."` — a theme lists forty-odd script fallbacks a deck never uses, and
+`+mj-lt` is a pointer, not a face. What is reported is what a run ends up asking for after
+the inheritance cascade has run, which is exactly what goes into the SVG.
+
+## The escape hatches
+
+```python
+# The host's fonts as well as the bundle
+convert_pptx_to_png("deck.pptx", skip_system_fonts=False)
+
+# Your own faces only
+convert_pptx_to_png("deck.pptx", font_dirs=["./corporate-fonts"], use_bundled_fonts=False)
+
+# Map a face to a substitute you do have
+ConvertOptions(font_mapping={"Helvetica Neue": "Inter"})
+```
+
+On the command line: `--system-fonts`, `--no-bundled-fonts`, `--font-dir DIR`.
+
+Any of these that lets the host's fonts take part also brings in PowerPoint's own on a Mac
+that has it — [read in place](#a-mac-with-powerpoint-the-faces-powerpoint-draws-read-in-place),
+for measurement as well as drawing.
+
+### Your own folder: measured and drawn
+
+**`font_dirs` and `--font-dir` reach measurement as well as the rasteriser.** A face in
+the folder is drawn from its file and, where the static tables do not measure its family
+as itself, measured from it too (`pptx2svg.fonts.office.user_layout_metrics`), whether or
+not the host's faces are in use; `font-substituted` no longer fires for it -- it grades
+`exact`, "drawn with the face the application supplied". A family the tables measure as
+itself (Aptos, Calibri, Cambria) keeps its table, which was measured against PowerPoint.
+
+The folder can also come from the environment: **`OOXML_FONT_DIRS`**, folders separated
+by `os.pathsep` (`:` on macOS and Linux, `;` on Windows), read by pptx2svg and docx2svg
+alike. Precedence: `convert_pptx_to_png`'s `font_dirs` argument, then
+`ConvertOptions.font_dirs`, then `OOXML_FONT_DIRS`; an explicit empty list means none.
+Whichever applies is added to the bundle and the system's folders and searched before
+them, never in their place, and the folders under it are read too. (pptx2svg reads no
+other variable for this: a `PPTX_FONT_DIR` an application sets for itself has no effect
+here unless the application passes it on as `font_dirs`.)
+
+```python
+convert_pptx_to_png("deck.pptx", ConvertOptions(font_dirs=["./corporate-fonts"]))
+```
+
+`font_files` still feeds the rasteriser only: name the folder instead, or pair the files
+with a measurer, which needs `pip install 'pptx2svg[measure]'` (fontTools):
+
+```python
+import pathlib
+
+from pptx2svg import ConvertOptions, FontToolsTextMeasurer, convert_pptx_to_png
+
+fonts = pathlib.Path("./corporate-fonts")
+measurer = FontToolsTextMeasurer({"Gill Sans MT": str(fonts / "GillSansMT.ttf")})
+
+convert_pptx_to_png(
+    "deck.pptx",
+    ConvertOptions(measurer=measurer),   # measured from the real file
+    font_files=[str(fonts / "GillSansMT.ttf")],   # and drawn from it
+)
+```
+
+### On the command line
+
+`--font-dir DIR` (repeatable; default `$OOXML_FONT_DIRS`) is the same folder, measured
+from and drawn with. There is no measurer flag; a folder is the command line's route to
+a face pptx2svg does not know.
+
+## Aptos
+
+Office's default face since 2023, shipped in six weights on a current PowerPoint install,
+and the single most likely font in a deck saved this year.
+
+**There is no metric-compatible open clone of Aptos.** Not Carlito, not Arimo, not Source
+Sans, not anything. Pretending otherwise would be the same class of error as the Caladea
+claim.
+
+So the choice pptx2svg makes is explicit and is not a compromise between the two options —
+it picks one:
+
+- **Measured** with Aptos's own advance widths, so line breaks, autofit and centring match
+  PowerPoint's.
+- **Drawn** with Carlito, whose widths sit closest of anything shippable. On *"The quick
+  brown fox jumps over the lazy dog"* at 18 pt, Carlito is **−3.6 %** against Aptos's own
+  table, Arimo **+5.2 %** and Tinos **−2.8 %** — and Tinos is a serif, so it loses on shape
+  what it gains on width.
+
+Each drawn line is a few percent short, in the right place. That scores better than
+re-wrapping the paragraph somewhere else. `fonts --check` grades it `approximate` and
+exits non-zero, so nobody finds out from a screenshot.
+
+**The question is settled, and settled negative.** Checked again in September 2026. The
+Document Foundation's own public position concedes that its proposed replacements "are not
+metrically compatible" — Aptos is a 2048-upem design and Source Sans, the usual suggestion,
+is 1000. The open request to adopt one anyway (tdf#162872, September 2024) has produced
+nothing. **Every non-Microsoft renderer reflows Aptos text today**, LibreOffice included,
+whose built-in replacement table is empty by default. *(The bugzilla thread itself is behind
+Anubis and could not be fetched; the TDF position statement is the citation here, not the
+ticket discussion.)*
+
+**What to do about it.** Microsoft publishes Aptos for download under its own terms. Install
+it and render with `--system-fonts`, and the invariant is restored — pptx2svg already
+measures with Aptos's table, so the real file makes measurement and drawing agree:
+
+```bash
+tools/install-fonts-debian.sh --aptos
+pptx2svg deck.pptx -f png --system-fonts
+```
+
+The script pins the download by SHA-256 and refuses a changed payload rather than
+substituting silently. You accept Microsoft's terms; this project does not grant you any
+right to the file.
+
+**On a Mac with PowerPoint there is nothing to install** — see the next section.
+
+## A Mac with PowerPoint: the faces PowerPoint draws, read in place
+
+PowerPoint for Mac does not draw Aptos from a font macOS knows about. It draws it from its
+own bundle, `Microsoft PowerPoint.app/Contents/Resources/DFonts`, and it draws Aptos
+Display — the heading face of every deck PowerPoint 365 makes — from Office's cloud-font
+cache, `~/Library/Group Containers/UBF8T346G9.Office/FontCache/4/CloudFonts`. A rasteriser
+asking "the system" for Aptos finds neither, so a deck rendered on the very machine
+PowerPoint drew it on used to come out in a substitute (Noto Sans JP's Latin, where that
+happened to be installed: the last name in the stack that resolved).
+
+`pptx2svg.fonts.office` finds a family where PowerPoint does, **in the order PowerPoint
+does**, and reads it where it is installed:
+
+1. **PowerPoint's bundle**;
+2. **macOS's fonts** (`/System/Library/Fonts`, `Supplemental`, `/Library/Fonts`, `~/Library/Fonts`);
+3. **Office's cloud-font cache**, one folder per family.
+
+The order is measured (`tools/make_face_source_probe.py`, `tools/read_face_source_probe.py`).
+Of the 29 family-and-style pairs installed both in macOS and in the bundle, two can be told
+apart in PowerPoint's PDF export, and PowerPoint took **the bundle's** copy of both:
+Rockwell (macOS's 13.0 and the bundle's 1.65 differ on every ASCII advance and outline; all
+19 outlines PowerPoint embedded are the bundle's, and its glyphs sit within 0.5–1.5 pt of
+the bundle's advances over a 20-character line against 21–26 pt for macOS's) and Symbol
+(the bundle's is symbol-encoded, macOS's is not; PowerPoint drew SymbolMT at the bundle's
+advances, 0.09 pt). The other 27 — Arial, Times New Roman, Verdana, Tahoma, Wingdings and
+the like — have equal advances and identical outlines where checked, so either copy draws
+the same. No family is in the cloud cache and anywhere else, so its place is moot today.
+
+**When it applies: by default, wherever Office's fonts are installed** — PowerPoint's
+bundle or Office's cloud-font cache is on the machine — **with or without the font
+bundle**, because drawing and measuring with the faces PowerPoint uses is what most
+closely resembles PowerPoint. **The output then depends on the machine**: a Mac with Office
+and a build server with only the bundle draw the same deck differently, and two Macs with
+different Office versions can too. Elsewhere it applies when the PNG is drawn from this
+machine's fonts anyway — without the bundle, or with `--system-fonts` /
+`skip_system_fonts=False`.
+
+**The reproducible render is the escape hatch:** `ConvertOptions(host_fonts=False)` and
+`svg_to_png(..., host_fonts=False)` read no host face, and `PPTX2SVG_OFFICE_FONTS=0` turns
+the lookup off for the whole process (and for the CLI); with the bundle installed, either
+gives the same pixels on every machine. `host_fonts=True` opts in where the default would
+not. Where the folders do not exist — Linux, Windows, a Mac without Office, CI — nothing
+changes. `pptx2svg fonts` says which applies on the machine it runs on.
+
+**Both halves, so measure still equals draw:**
+
+* *Drawing.* `svg_to_png` hands resvg the files of each family the SVG names, ahead of
+  everything but the caller's own `font_files`/`font_dirs` (and a deck's embedded faces,
+  which still win). Where one of them answers to the same name as a macOS face, macOS's
+  folders are handed over after them rather than loaded first, because resvg keeps the
+  first face it loads. **Aptos Display and Aptos cannot be told apart by resvg** — both
+  files call themselves "Aptos" (name ID 16), at weight 400, normal width and style — and
+  renaming one would mean copying a Microsoft font, which this library does not do. So a
+  slide that uses both is drawn in two passes: everything with Aptos loaded, the Aptos
+  Display text hidden; then that text alone, with Aptos Display loaded, over the first
+  pass. Hidden glyphs keep their advance, so nothing moves, and the composite is the
+  single render pixel for pixel wherever the faces do not collide.
+* *Measuring.* A family the static tables measure as itself — Aptos, Aptos Display,
+  Cambria, and the metric-compatible rows — keeps its table, kern pairs included. A family
+  they only guess at (Rockwell, Gill Sans MT, Segoe UI, Century Gothic…), or measure from
+  another face (Aptos Narrow from Aptos, Aptos Light, Yu Gothic from Noto Sans JP), is
+  measured from the installed file instead, its legacy `kern` table included.
+
+**Kerned as PowerPoint kerns.** PowerPoint lays a static face out with its legacy `kern`
+table and never with its OpenType (GPOS) pairs, and a variable face with its GPOS pairs —
+measured with `tools/make_kern_source_probe.py` / `tools/read_kern_source_probe.py`, 29
+lines of pairs in 15 faces from PowerPoint's bundle, Office's cloud cache and macOS's
+folders (`ooxml_common.text.kerning` has the numbers). So Aptos's `ss`, which only GPOS
+holds, is not charged: "Pass" at 18 pt is 0.29 pt wider than the GPOS-kerned word, and
+PowerPoint breaks it "Pas / s" in a box that fits the latter. The static tables carry both
+kinds of pair — Calibri's legacy pairs for Carlito's entry, as its line gap is Calibri's —
+and pptx2svg measures with PowerPoint's choice (`DrawingRules.kerning`), whichever fonts
+draw.
+
+**Emoji.** Where a run's face has no glyph for an emoji, PowerPoint draws it in macOS's
+Apple Color Emoji, in colour — measured for ⚡ 📱 🔒 ✅ ❤ 😀 ✔ in Calibri, Aptos, Lato and
+Noto Sans JP alike, while a character the run's face has stays in it (Noto Sans JP's ★).
+With the host's faces in use, `svg_to_png` does the same: such a character is named in
+Apple Color Emoji, and the file — read in place, never copied — is handed to resvg last.
+It is named rather than left to resvg's fallback, which takes the first face it loaded
+with a glyph and drew ↔ ♥ ⚠ as emoji that the bundle's Noto Sans JP has. Other symbols
+fall back elsewhere in PowerPoint (★ ✓ ◆ to Segoe UI Symbol, ⇒ to Cambria Math, ■ to
+Arial); those are not reproduced.
+
+The SVG still names families and embeds nothing; only the rasteriser is given files, and
+only by path. No font is copied anywhere.
+
+Measured on trial 2's six PowerPoint outputs (66 slides, our render against PowerPoint's
+own PDF at the same size): mean SSIM 0.484 before, 0.828 after; 46 slides better, none
+worse.
+
+## Making the oracle draw Japanese (developer setup)
+
+`tools/fidelity.py` scores our render against PowerPoint's, and it refuses to score a
+deck whose two renderers drew different faces. Three decks in the corpus name **Noto Sans
+JP**, and on a machine that does not have it PowerPoint substitutes a face of its own, so
+all three were skipped rather than scored. The fix is to give PowerPoint the same file we
+ship — which is ours to install, because it is the OFL copy in this repository.
+
+```bash
+# install, from our own bundled file, for this user only
+cp "packages/pptx2svg-fonts/src/pptx2svg_fonts/files/NotoSansJP[wght].ttf" ~/Library/Fonts/
+
+# undo
+rm "~/Library/Fonts/NotoSansJP[wght].ttf"
+```
+
+**User-level (`~/Library/Fonts`), not `/Library/Fonts`.** The profile that
+`tools/fidelity.py --write-profile` writes is per-machine already; a system-wide install
+changes what every other application sees for no gain here. Restart PowerPoint afterwards
+— it reads the font list once at launch. Then:
+
+```bash
+python3 tools/fidelity.py --write-profile      # the profile must be rewritten
+osascript tools/powerpoint_export_pdf.applescript "$HOME/pptx2svg-oracle/DECK.pptx" \
+                                                  "$HOME/pptx2svg-oracle/DECK.pdf"
+```
+
+Copy the file; do not symlink it. Confirm it took by reading the re-exported PDF's
+`/BaseFont` entries — they should name `NotoSansJP-Thin_Regular` and
+`NotoSansJP-Thin_Bold`.
+
+Those names look alarming and are correct. `NotoSansJP[wght].ttf` is a variable font
+whose **default instance is Thin**, so its PostScript name is `NotoSansJP-Thin` and Core
+Text names each instance it draws `{that}_{Style}`. The widths in the export match this
+file at `wght=400` and `wght=700` exactly and no other weight at all, and resvg
+instantiates the same axis: rendering through the variable font at `font-weight: 400` is
+byte-identical to rendering through a statically instantiated 400 cut. Both sides draw
+Regular and Bold; neither draws Thin.
+
+**Installing this font does not change our SVG output.** The SVG path opens no font file
+— widths come from the generated tables in `text/metrics.py` — so all 33 committed VRT
+snapshots stay byte-identical across the install. If one moves, the install is not the
+reason.
+
+The other two Japanese decks, `sample.pptx` and `real-basic-theme.pptx`, need nothing
+installed: PowerPoint draws their Japanese in MS Gothic and MS Mincho by the rule in
+[Which face draws the Japanese?](#which-face-draws-the-japanese), and so does this library
+now, so `tools/fidelity.py` scores them. `tools/make_cjk_deck.py` still derives
+`sample-cjk.pptx`, which names a face both renderers draw.
+
+---
+
+## The licensing boundary
+
+Short, and it has no exceptions.
+
+**No Microsoft font is bundled or committed, ever.** Not in the wheel, not in the
+repository, not in a test fixture. What this project does publish is *measurements* —
+Aptos's and Cambria's advance widths live in `text/metrics.py`. Advance widths are facts
+about a design, which is the footing on which Carlito, Arimo and Liberation exist at all;
+no outline, table or file is here.
+
+**Everything the bundle ships is OFL.** `pptx2svg-fonts` declares `MIT AND OFL-1.1` and
+carries eight SIL Open Font License families. A face is in it only if it can be
+redistributed inside a wheel.
+
+**The installer's non-free tiers are you accepting someone else's terms, not us
+redistributing anything.** `tools/install-fonts-debian.sh` has five tiers. Tier 1 installs
+the same designs the bundle ships, from apt. Tier 2 (`--clones`) adds open faces whose
+licences permit installation but not redistribution-in-a-wheel — `fonts-urw-base35` (AGPL-3.0
+with a PostScript/PDF-embedding exception that covers embedding a glyph in a PS or PDF file
+and **not** shipping the font files), `fonts-liberation-sans-narrow` (GPL-2 with a font
+exception), plus hash-pinned Comic Relief and Symbol Neu. Tiers 3–5 (`--aptos`,
+`--mscorefonts`, `--ppviewer`, `--office-dir`) reach Microsoft's own downloads, Debian's
+contrib packaging of Microsoft's EULA'd fonts, and a licensed Office installation you point
+at. The script installs from an archive or copies files you already hold. It redistributes
+nothing and grants you nothing.
+
+That asymmetry is the whole reason tier 2 exists separately from the bundle: the wheel
+*redistributes* and must be conservative; the script *installs* and need not be.
+
+---
+
+## Reproducing anything on this page
+
+```bash
+pip install 'pptx2svg[fonts,measure]'
+pptx2svg fonts
+pptx2svg fonts --check tests/fixtures/authoring-integration.pptx
+```
+
+Every measured number here comes from the repository: the substitution table is
+[`src/pptx2svg/text/fontmap.py`](src/pptx2svg/text/fontmap.py), the grades are
+[`src/pptx2svg/fonts/check.py`](src/pptx2svg/fonts/check.py), the advance-width tables are
+[`src/pptx2svg/text/metrics.py`](src/pptx2svg/text/metrics.py) and are generated from the
+shipped font files by `tools/extract_font_metrics.py` (a test re-runs it and fails on
+drift). The clone survey is
+[ROADMAP ▸ The clone landscape](ROADMAP.md#the-clone-landscape--survey-measured); the
+installer's tiers are documented in the header of
+[`tools/install-fonts-debian.sh`](tools/install-fonts-debian.sh).
+
+A claim of metric compatibility with no measurement behind it is exactly what this project
+does not ship.

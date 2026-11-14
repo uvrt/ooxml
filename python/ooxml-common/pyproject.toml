@@ -1,0 +1,108 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ooxml-common"
+version = "0.45.0"
+description = "Format-neutral OOXML pieces shared by pptx2svg and docx2svg: OPC, units, DrawingML data, fonts and measured text metrics"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Evert Koks" }]
+keywords = ["ooxml", "opc", "drawingml", "fonts", "text-metrics", "pptx", "docx"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Programming Language :: Python :: 3.15",
+  "Programming Language :: Python :: Free Threading :: 2 - Beta",
+  "Topic :: Multimedia :: Graphics :: Graphics Conversion",
+  "Topic :: Office/Business :: Office Suites",
+  "Typing :: Typed",
+]
+# Standard-library only at runtime, and this empty list is the statement of that.  Both
+# consumers make the same promise, and it only holds if the package under them keeps it.
+dependencies = []
+
+[project.optional-dependencies]
+# The OFL font files the metric tables were measured from, so a rasteriser draws with
+# the same faces the layout was computed for.  Found by import name only (see
+# ooxml_common.fonts.bundle_dir); nothing here imports it.  The distribution keeps the
+# name it was created under in the pptx2svg repository -- see README, "Font files".
+fonts = ["pptx2svg-fonts>=0.1"]
+# Measure with real installed fonts instead of the generated tables (FontToolsTextMeasurer).
+measure = ["fonttools>=4.40"]
+dev = [
+  "pytest>=7",
+  "fonttools>=4.40",
+  # tests/test_outlines.py rasterises an outlined SVG against its text (skipped without it).
+  "resvg-py>=0.5",
+  # Pinned, and CI's build job installs the same versions: a new release's new findings
+  # then arrive as a pull request that bumps these, not as a red main.
+  "ruff==0.17.2",
+  "mypy==2.4.0",
+]
+# `pptx2svg-fonts` is deliberately NOT in `dev`, for the reason pptx2svg's pyproject gives:
+# it is not on PyPI, so naming it there makes `pip install -e '.[dev]'` fail against the
+# index.  Install it from a checkout of pptx2svg instead:
+#
+#     pip install -e ../pptx2svg/packages/pptx2svg-fonts
+#
+# The tests that need the files skip, with a reason, when it is absent.
+
+[project.urls]
+Repository = "https://github.com/uvrt/ooxml-common"
+Issues = "https://github.com/uvrt/ooxml-common/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# PEP 561: the package's annotations are its types for a checker in a project that uses it.
+[tool.setuptools.package-data]
+ooxml_common = ["py.typed", "stylenames.json"]
+
+# `ruff check .` (CI's build job).  A small set of rules that find bugs, not style:
+# pyflakes (F), syntax errors (E9), mutable or call defaults (B006, B008), a return or
+# break in `finally` (B012), a comparison whose result is thrown away (B015) and
+# pylint's errors (PLE).  Nothing reformats the code.
+[tool.ruff]
+target-version = "py310"
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["F", "E9", "B006", "B008", "B012", "B015", "PLE"]
+
+# `mypy` (CI's build job): the package, not strict -- the annotations as written are
+# checked, an unannotated function's body is not.  The optional imports (fontTools for
+# the measure extra, the rasterisers) are found only where they are installed.
+[tool.mypy]
+python_version = "3.10"
+files = ["src/ooxml_common"]
+mypy_path = "src"
+disable_error_code = ["annotation-unchecked"]
+
+[[tool.mypy.overrides]]
+module = ["fontTools.*", "resvg_py", "cairosvg"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+# `python -m coverage run -m pytest` then `python -m coverage report` (CI's test job, one
+# leg).  text/kerning.py is a generated table of 55 statements, every one run on import;
+# tracing that import line by line costs about 40 s, so it is not traced.
+[tool.coverage.run]
+source = ["ooxml_common"]
+omit = ["*/ooxml_common/text/kerning.py"]
+
+[tool.coverage.report]
+show_missing = false
+skip_covered = false

@@ -1,0 +1,292 @@
+{
+ "task": "w9-volume-chart",
+ "clock": "2026-10-07T09:00:00+00:00",
+ "open": [
+  "operations-report.docx"
+ ],
+ "blobs": [
+  "monthly-volumes.csv"
+ ],
+ "calls": [
+  {
+   "tool": "describe",
+   "arguments": {
+    "doc": "d1"
+   },
+   "expect": {
+    "ok": true,
+    "summary": "Described operations-report.docx",
+    "data_sha": "abeb5e9c85550b9e",
+    "data_keys": [
+     "comments",
+     "comments.by_author",
+     "comments.open",
+     "comments.threads",
+     "compatibility_mode",
+     "controls",
+     "drawings",
+     "fields",
+     "headings",
+     "name",
+     "notes",
+     "pages",
+     "problems",
+     "properties",
+     "properties.author",
+     "properties.subject",
+     "properties.title",
+     "revisions",
+     "revisions.by_author",
+     "revisions.changes",
+     "revisions.records",
+     "sections",
+     "styles_in_use",
+     "tables",
+     "tracking"
+    ],
+    "data_sha_core": "460cd7d7c61b3eb8"
+   }
+  },
+  {
+   "tool": "read_blob",
+   "arguments": {
+    "blob": "b1"
+   },
+   "expect": {
+    "ok": true,
+    "summary": "Read 149 of 149 characters of monthly-volumes.csv",
+    "data_sha": "e96205394e3f2b7d",
+    "data_keys": [
+     "blob",
+     "chars",
+     "from",
+     "lines",
+     "mime",
+     "name",
+     "text"
+    ],
+    "data_sha_core": "e96205394e3f2b7d"
+   }
+  },
+  {
+   "tool": "find_text",
+   "arguments": {
+    "doc": "d1",
+    "text": "shown in the chart below"
+   },
+   "expect": {
+    "ok": true,
+    "summary": "1 match(es)",
+    "data_sha": "0d9e34865c4b99ef",
+    "data_keys": [
+     "[].address",
+     "[].context",
+     "[].kind",
+     "[].text"
+    ],
+    "data_sha_core": "0d9e34865c4b99ef"
+   }
+  },
+  {
+   "tool": "batch",
+   "arguments": {
+    "ops": [
+     {
+      "tool": "edit_chart",
+      "arguments": {
+       "doc": "d1",
+       "target": "p:12972045",
+       "action": "add",
+       "chart_type": "line",
+       "categories": [
+        "Jan",
+        "Feb",
+        "Mar",
+        "Apr",
+        "May",
+        "Jun",
+        "Jul",
+        "Aug",
+        "Sep"
+       ],
+       "data": [
+        {
+         "name": "Inbound",
+         "values": [
+          41.2,
+          40.8,
+          43.5,
+          45.1,
+          46.9,
+          52.3,
+          54.0,
+          53.2,
+          55.8
+         ]
+        },
+        {
+         "name": "Outbound",
+         "values": [
+          38.5,
+          39.1,
+          40.2,
+          41.8,
+          43.6,
+          45.0,
+          50.7,
+          52.4,
+          53.1
+         ]
+        }
+       ],
+       "ref": "chart"
+      }
+     },
+     {
+      "tool": "edit_chart",
+      "arguments": {
+       "doc": "d1",
+       "target": "$chart",
+       "action": "set_axis_title",
+       "axis": "category",
+       "text": "Month"
+      }
+     },
+     {
+      "tool": "edit_chart",
+      "arguments": {
+       "doc": "d1",
+       "target": "$chart",
+       "action": "set_axis_title",
+       "axis": "value",
+       "text": "Thousand units"
+      }
+     }
+    ]
+   },
+   "expect": {
+    "ok": true,
+    "summary": "Ran 3 op(s) as one step: Inserted a line chart d:1 in p:058B17C9; set_axis_title on d:1; set_axis_title on d:1",
+    "changed": [
+     "d:1"
+    ],
+    "created": [
+     "p:058B17C9",
+     "d:1"
+    ],
+    "refs": {
+     "chart": "d:1"
+    },
+    "data_sha": "36238cab635324a9",
+    "data_keys": [
+     "ops"
+    ],
+    "data_sha_core": "36238cab635324a9"
+   }
+  },
+  {
+   "tool": "word_fields",
+   "arguments": {
+    "doc": "d1",
+    "action": "insert_caption",
+    "after": "p:058B17C9",
+    "label": "Figure",
+    "text": ": Monthly shipment volumes, January to September 2026"
+   },
+   "expect": {
+    "ok": true,
+    "summary": "Inserted a caption",
+    "created": [
+     "p:6A70E1A8",
+     "fld:body/0"
+    ]
+   }
+  },
+  {
+   "tool": "render",
+   "arguments": {
+    "doc": "d1",
+    "pages": [
+     1
+    ]
+   },
+   "expect": {
+    "ok": true,
+    "summary": "Rendered page(s) 1 (final view: changes accepted, comments hidden)",
+    "data_sha": "cab9ec6f55064fc8",
+    "data_keys": [
+     "cached",
+     "coverage",
+     "coverage.blocks_laid_out",
+     "coverage.complete",
+     "coverage.pages",
+     "coverage.status",
+     "pages"
+    ],
+    "data_sha_core": "cca0736c36c5e91b"
+   }
+  },
+  {
+   "tool": "check",
+   "arguments": {
+    "doc": "d1"
+   },
+   "expect": {
+    "ok": true,
+    "summary": "Checked validate, reflow, fields",
+    "data_sha": "f47c6c63874022f0",
+    "data_keys": [
+     "fields",
+     "fields.counts",
+     "fields.note",
+     "reflow",
+     "reflow.complete",
+     "reflow.coverage",
+     "reflow.pages",
+     "validate",
+     "validate.baseline",
+     "validate.fixed",
+     "validate.new",
+     "validate.problems",
+     "validation",
+     "validation.baseline",
+     "validation.new"
+    ],
+    "data_sha_core": "8497b3ca215ae154"
+   }
+  },
+  {
+   "tool": "save_document",
+   "arguments": {
+    "doc": "d1",
+    "name": "operations-report.docx",
+    "format": "docx"
+   },
+   "expect": {
+    "ok": true,
+    "summary": "Saved operations-report.docx for the application",
+    "data_sha": "9483d5e1805dfbc9",
+    "data_keys": [
+     "coverage",
+     "coverage.blocks_laid_out",
+     "coverage.complete",
+     "coverage.pages",
+     "coverage.status",
+     "doc",
+     "format",
+     "name",
+     "size",
+     "validate",
+     "validate.baseline",
+     "validate.fixed",
+     "validate.new"
+    ],
+    "data_sha_core": "5d62e2a37c389aa1"
+   }
+  }
+ ],
+ "output": {
+  "name": "operations-report.docx",
+  "sha256": "8a4f159e0130f451039e24bfe0655b0e16d9620e778b4100785f1619e3af6cc5"
+ }
+}

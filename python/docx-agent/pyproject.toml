@@ -1,0 +1,68 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "docx-agent"
+version = "0.1.113"
+description = "An AI-editable Word layer: inspect, edit and re-render .docx documents losslessly"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+authors = [{ name = "Evert Koks" }]
+keywords = ["docx", "word", "ooxml", "agent", "llm", "editing"]
+classifiers = [
+  "Development Status :: 2 - Pre-Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Programming Language :: Python :: 3.15",
+  "Topic :: Office/Business :: Office Suites",
+  "Topic :: Text Processing :: Markup :: XML",
+]
+# Why each dependency, and why at its version: CONTRIBUTING.md, "Dependencies".
+dependencies = ["lxml>=4.9", "ooxml-edit>=0.116.1", "ooxml-common>=0.34.0", "docx2svg>=0.11.12", "markdown-it-py>=3.0", "mdit-py-plugins>=0.4"]
+
+[project.optional-dependencies]
+# PNG output goes through docx2svg's rasteriser extra.
+png = ["docx2svg[png]>=0.11.12"]
+# ruff: the linter, which CI's build job runs at the same pin ([tool.ruff] below).
+dev = ["pytest>=7", "pytest-xdist>=3", "ruff==0.17.2"]
+
+[project.urls]
+Repository = "https://github.com/uvrt/docx-agent"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# py.typed: the package's annotations are for its callers' type checkers (PEP 561).
+# samples/*.docx: documents with shapes docx-agent's own edits never make (docx_agent.samples).
+[tool.setuptools.package-data]
+docx_agent = ["py.typed", "samples/*.docx"]
+
+# A small set of bug-finding rules, not a style: pyflakes (F), syntax errors (E9),
+# mutable or called defaults (B006, B008), return in finally (B012), comparisons that do
+# nothing (B015) and pylint's errors (PLE).  No formatter and no import sorting.
+[tool.ruff]
+target-version = "py310"
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["F", "E9", "B006", "B008", "B012", "B015", "PLE"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# The oracle drives the real Microsoft Word, one instance per machine; opt in with
+# `pytest -m oracle` (ROADMAP.md, "Word is one instance per machine").
+addopts = "-m 'not oracle'"
+markers = [
+  "oracle: drives Microsoft Word on macOS (one instance per machine); skips when Word is in use",
+  "slow: an exhaustive sweep, run with --run-slow (ROADMAP.md, \"Testing strategy\")",
+  "provider: calls a model provider's API online; skipped without its API key",
+  "any_faces: holds without Office's faces, so tests/conftest.py does not skip it where one is absent",
+]

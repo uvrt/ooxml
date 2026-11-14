@@ -1,0 +1,126 @@
+# Committed render snapshots
+
+One SVG per slide of every deck in `tests/fixtures/`, exactly as `convert_pptx_to_svg`
+produced it on the day it was captured. `tests/test_vrt.py` renders the same decks and
+compares byte for byte.
+
+## Read this before you read a file in here as an assertion of correctness
+
+**These files are not ground truth. They are a photograph of our own output, bugs
+included.** A snapshot can tell you that the render *changed*; it can never tell you that
+it is *right*. Correctness comes from the other layer — `tools/fidelity.py` scores a
+render against PowerPoint's own PDF export — and that layer needs PowerPoint, so it runs
+on one Mac while this one runs on all twelve CI legs.
+
+The distinction is not academic here, because **the oracle scored only three of these
+decks for most of this project's life**. `tests/fidelity-baselines.json` records where
+each one stands now. Installing the bundled Noto Sans JP into `~/Library/Fonts` and
+re-exporting (see FONTS.md ▸ *Making the oracle draw Japanese*) brought
+`real-financial-report` and `sample-issue-387` in; `sample-cjk` was derived to bring a
+Japanese deck in. The last three came in when this library learned to resolve a run's
+Japanese face as PowerPoint does: `real-basic-theme` and `sample` draw theirs in MS
+Gothic and MS Mincho on both sides, and `real-product-page`'s emoji in Apple Color Emoji
+(FONTS.md ▸ *Which face draws the Japanese?*).
+
+Nothing scores 1.0: `authoring-integration` is at SSIM 0.9327, `table test` at 0.9895,
+`sample-issue-387` at 0.9897, `real-financial-report` at 0.9112, `sample-cjk` at 0.6788
+and `chart-gallery` at 0.6747 — the last being a deck built to be scored, whose low mean
+is mostly the chart types we knowingly do not draw plus SSIM's severity on sparse line
+art. ROADMAP.md *3.2a* breaks it down per slide.
+
+## Defects that are baked into these files
+
+From `ROADMAP.md`, *What the corpus says is wrong now*. Two of that list are in these
+files, both on `real-financial-report.pptx` and both checked against the committed bytes
+rather than assumed:
+
+| Defect | Frozen into |
+| --- | --- |
+| The rotated-label reserve has no cap, where PowerPoint's does — slide 3 reserves too little under its plot | `real-financial-report/slide-03.svg` |
+| PowerPoint ellipsis-truncates a category label that will not fit; we draw it in full | `slide-03.svg` draws `プラットフォーム` where PowerPoint's export drew `プラット…`; `slide-04.svg` draws `海外売上比率` and `従業員満足度` where it drew `海外売上…` and `従業員満…` |
+
+`chart-gallery.pptx` adds three more, all of them deliberate — it is a fixture built to
+pin what charts do now, including where that is wrong. Named here so nobody reads one of
+its snapshots as an assertion that we are right:
+
+| Defect | Frozen into |
+| --- | --- |
+| A combo chart draws only its first group — no line series and no secondary value axis | `slide-17.svg` |
+| A `pie3DChart` and a stacked `area3DChart` are drawn flat; PowerPoint draws a real scene under both. The other three 3-D spellings draw theirs — `bar3DChart`, `line3DChart` and, since the surface landed, `surfaceChart` on slide 12 | `slide-15.svg`, `slide-16.svg` |
+| A `stockChart`'s gridlines and axis sit about a pixel off PowerPoint's, which is the plot-rectangle defect slide 1 carries and not a legend one | `slide-11.svg` |
+
+The three defects this list used to name on slides 6, 9 and 11 are **fixed** — see
+ROADMAP.md 3.2b — and those bytes are an assertion that we are right about them now.
+
+`feature-sweep.pptx` adds seven more, and they are the whole reason it exists. It is a
+deck built to make *unexercised* markup visible — one feature per slide, six of them
+fixed by the sweep that created it and seven deliberately not. A snapshot of a pinned
+slide records what this library does today and nothing else:
+
+| Defect | Frozen into |
+| --- | --- |
+| `a:ln@cmpd` — `dbl`, `thickThin`, `thinThick` and `tri` all draw as one stroke of the full width. SVG gives a path one centred stroke and cannot offset one outward from an arbitrary path. Declared by `line-compound-flattened` | `slide-07.svg`, and on table cell borders `slide-08.svg` |
+| `a:path@path` is read nowhere, so `circle`, `rect` and `shape` gradients all come out as the same radial | `slide-09.svg` |
+| `a:tile@flip` and `@algn` are dropped — an SVG `<pattern>` repeats one tile unchanged and cannot mirror alternate ones | `slide-10.svg` |
+| **The tile is about 8.3x too big.** `a:tile@sx` scales the picture's *native* size; we treat it as a fraction of the shape's bounding box. Measured against PowerPoint's export: 9.900 pt period in a 136.8 pt box, against our 82.08 pt | `slide-10.svg` |
+| `a:bodyPr@anchorCtr` appears nowhere in `src/`, so a text block is never centred as a block. The corpus has 654 of them and every one is the `"0"` default, so this slide is the only place it is ever set | `slide-11.svg` |
+| `a:outerShdw@rotWithShape='0'` and `a:blur@grow` are both ignored: the shadow always turns with the shape, and the blur is always clipped at the picture's edge | `slide-12.svg` |
+| **`a:pattFill` tiles finer than PowerPoint does** — about twice the line frequency on `horz`, and `dkDnDiag` differs in appearance as well as density. This one is a *rendered* feature that no deck in the corpus exercised | `slide-13.svg` |
+
+Slide 10's first defect was found by building this deck: tiled image fills drew a flat
+block of colour rather than tiling at all, because the `<pattern>` had no `viewBox` and
+its `<image width="100%">` resolved against the viewport instead of the tile. That is
+fixed; the size defect above is what is left.
+
+The rest of that list — the manually laid out legend, and body copy landing 1–2 px off —
+was measured on `real-college-template.pptx`, which is not committed and not snapshotted.
+Whether the same 1–2 px displacement is in these files is *unknown*, because five of the
+seven decks have never been scored against PowerPoint at all.
+
+Fixing any of this will turn the suite red. That is the suite working. Rebaseline, and say
+in the commit message which defect the new bytes fix.
+
+## Rebaselining
+
+```
+python -m pytest tests/test_vrt.py --update-snapshots
+```
+
+It skips rather than passes, so the flag can never produce a green run. Read the diff
+before committing it: every changed line is a change in what a user sees. On a failure
+the new render is written to `tests/vrt/diffs/` (gitignored) so the two can be opened side
+by side in a browser.
+
+## Why SVG, and not PNG
+
+The SVG is our own output, from standard-library code alone. A PNG additionally encodes
+the rasteriser: bump `resvg-py` and every fixture goes red at once, which teaches people
+to rebaseline without looking. Measured on this corpus, PNG is also 587 kB against the
+SVG's 195 kB, and being already compressed those bytes never shrink — in the pack file or
+in history, on every rebaseline, forever. resvg 0.5.0 does render byte-identically
+between processes here, so a PNG layer with a tolerance is *possible*; it is just a
+second, weaker gate paid for in permanent repository weight.
+
+## Why there is no snapshot of `real-college-template.pptx`
+
+It is not ours to redistribute (see `tests/fixtures/README.md`), and a rendered SVG of it
+contains its text and its images — redistributing the render would redistribute the deck.
+`tools/fidelity.py` measures it locally; nothing about it is committed.
+
+## What is deliberately not snapshotted
+
+`ConvertOptions.warnings`. They depend on whether the `pptx2svg-fonts` bundle is
+installed, which is a property of the machine, not of the deck. The SVG itself does not —
+verified across the whole corpus and held there by
+`test_the_render_does_not_depend_on_the_font_bundle`.
+
+## If one CI leg goes red and the others do not
+
+That is not a rendering change — nothing in the render depends on the platform by design.
+Look at `tests/test_vrt.py`'s own tests first; they name the three ways it could happen
+(line endings, `PYTHONHASHSEED`, and a libm that disagrees about `log10` of a power of
+ten — which used to move `real-financial-report/slide-04.svg` and nothing else, and no
+longer moves anything: `resolve/chart.py` verifies that exponent rather than trusting it,
+and `test_a_one_ulp_error_in_log10_does_not_move_a_snapshot` renders that deck with
+`log10` nudged both ways to prove it). Do not rebaseline: a snapshot captured on one
+platform to satisfy another is a snapshot that has stopped meaning anything.

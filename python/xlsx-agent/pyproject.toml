@@ -1,0 +1,79 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "xlsx-agent"
+version = "0.1.40"
+description = "Workbooks as a source an agent can describe, query and derive from, every figure traceable to its cells"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+authors = [{ name = "Evert Koks" }]
+keywords = ["xlsx", "excel", "spreadsheet", "ooxml", "agent", "llm"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Programming Language :: Python :: 3.15",
+  "Topic :: Office/Business :: Financial :: Spreadsheet",
+  "Topic :: Text Processing :: Markup :: XML",
+]
+# lxml, ooxml-edit and ooxml-common, and nothing else at runtime; why each, and why at its
+# version: CHANGELOG.md, "Dependencies".
+dependencies = ["lxml>=4.9", "ooxml-edit>=0.113.0", "ooxml-common>=0.44.0"]
+
+[project.optional-dependencies]
+# pptx-agent (and pptx2svg, which its layout checks measure text with) for the tests only:
+# a deck filled from a workbook's table in one session (tests/test_sources_deck.py).
+test = ["pytest>=7", "pptx-agent", "pptx2svg>=0.2.0", "docx-agent"]
+# The test requirements plus the linter and type checker, at the versions CI's build job
+# installs (.github/workflows/ci.yml): change both together.
+dev = ["pytest>=7", "pptx-agent", "pptx2svg>=0.2.0", "docx-agent", "ruff==0.17.2", "mypy==2.4.0"]
+
+[project.urls]
+Repository = "https://github.com/uvrt/xlsx-agent"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# py.typed (PEP 561): the package's annotations are its types for a checker that imports it.
+[tool.setuptools.package-data]
+xlsx_agent = ["py.typed"]
+
+# Lint with a small set of bug-finding rules, not style: pyflakes (F), syntax errors (E9),
+# mutable or call defaults (B006, B008), a return/break in finally (B012), a comparison
+# whose result is dropped (B015) and pylint's errors (PLE).  No formatter, no import sorting.
+[tool.ruff]
+target-version = "py311"
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["F", "E9", "B006", "B008", "B012", "B015", "PLE"]
+
+# Type checking, non-strict.  lxml has no annotations (no stubs are installed), and the
+# siblings are checked by their own repositories: their types are used where they ship
+# py.typed, and a missing marker is not an error here.
+[tool.mypy]
+python_version = "3.11"
+files = ["src/xlsx_agent"]
+mypy_path = "src"
+
+[[tool.mypy.overrides]]
+module = ["lxml", "lxml.*", "ooxml_common", "ooxml_common.*", "ooxml_edit", "ooxml_edit.*",
+          "pptx_agent", "pptx_agent.*", "pptx2svg", "pptx2svg.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# The Excel oracle drives the real Microsoft Excel for Mac, one instance per machine; opt in
+# with `pytest -m oracle` (tests/oracle.py).
+addopts = "-m 'not oracle'"
+markers = ["slow: a long measurement, run with --run-slow",
+           "provider: calls a model provider's API online; skipped without its API key",
+           "oracle: drives Microsoft Excel for Mac (one instance per machine); skips when Excel is in use"]

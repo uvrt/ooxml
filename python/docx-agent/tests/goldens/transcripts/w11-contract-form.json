@@ -1,0 +1,190 @@
+{
+ "task": "w11-contract-form",
+ "clock": "2026-10-07T09:00:00+00:00",
+ "open": [
+  "services-agreement.docx"
+ ],
+ "calls": [
+  {
+   "tool": "describe",
+   "arguments": {
+    "doc": "d1"
+   },
+   "expect": {
+    "ok": true,
+    "summary": "Described services-agreement.docx",
+    "data_sha": "accaefa6c2bb06b3",
+    "data_keys": [
+     "comments",
+     "comments.by_author",
+     "comments.open",
+     "comments.threads",
+     "compatibility_mode",
+     "controls",
+     "drawings",
+     "fields",
+     "headings",
+     "name",
+     "notes",
+     "pages",
+     "problems",
+     "properties",
+     "properties.author",
+     "properties.subject",
+     "properties.title",
+     "revisions",
+     "revisions.by_author",
+     "revisions.changes",
+     "revisions.records",
+     "sections",
+     "styles_in_use",
+     "tables",
+     "tagged",
+     "tracking"
+    ],
+    "data_sha_core": "3d957aec82d92528"
+   }
+  },
+  {
+   "tool": "word_controls",
+   "arguments": {
+    "doc": "d1",
+    "action": "list"
+   },
+   "expect": {
+    "ok": true,
+    "summary": "Content controls",
+    "data_sha": "3c22932b6108ebd2",
+    "data_keys": [
+     "[].id",
+     "[].kind",
+     "[].tag",
+     "[].title",
+     "[].value"
+    ],
+    "data_sha_core": "3c22932b6108ebd2"
+   }
+  },
+  {
+   "tool": "batch",
+   "arguments": {
+    "ops": [
+     {
+      "tool": "word_controls",
+      "arguments": {
+       "doc": "d1",
+       "action": "fill",
+       "control": "cc:549641114",
+       "value": "Halden Group AS"
+      }
+     },
+     {
+      "tool": "word_controls",
+      "arguments": {
+       "doc": "d1",
+       "action": "fill",
+       "control": "cc:1847487812",
+       "value": "2026-11-03"
+      }
+     },
+     {
+      "tool": "word_controls",
+      "arguments": {
+       "doc": "d1",
+       "action": "fill",
+       "control": "cc:932414698",
+       "value": "24 months"
+      }
+     },
+     {
+      "tool": "word_controls",
+      "arguments": {
+       "doc": "d1",
+       "action": "fill",
+       "control": "cc:526902900",
+       "value": "18,400"
+      }
+     },
+     {
+      "tool": "word_controls",
+      "arguments": {
+       "doc": "d1",
+       "action": "fill",
+       "control": "cc:1688320314",
+       "value": "true"
+      }
+     }
+    ]
+   },
+   "expect": {
+    "ok": true,
+    "summary": "Ran 5 op(s) as one step: Filled cc:549641114; Filled cc:1847487812; Filled cc:932414698; Filled cc:526902900; Filled cc:1688320314",
+    "changed": [
+     "cc:549641114",
+     "cc:1847487812",
+     "cc:932414698",
+     "cc:526902900",
+     "cc:1688320314"
+    ],
+    "data_sha": "d590acad693a716d",
+    "data_keys": [
+     "ops"
+    ],
+    "data_sha_core": "d590acad693a716d"
+   }
+  },
+  {
+   "tool": "word_controls",
+   "arguments": {
+    "doc": "d1",
+    "action": "list"
+   },
+   "expect": {
+    "ok": true,
+    "summary": "Content controls",
+    "data_sha": "9b035482c6d5a941",
+    "data_keys": [
+     "[].id",
+     "[].kind",
+     "[].tag",
+     "[].title",
+     "[].value"
+    ],
+    "data_sha_core": "9b035482c6d5a941"
+   }
+  },
+  {
+   "tool": "save_document",
+   "arguments": {
+    "doc": "d1",
+    "name": "services-agreement-halden.docx",
+    "format": "docx"
+   },
+   "expect": {
+    "ok": true,
+    "summary": "Saved services-agreement-halden.docx for the application",
+    "data_sha": "4c563e25ef16dcff",
+    "data_keys": [
+     "coverage",
+     "coverage.blocks_laid_out",
+     "coverage.complete",
+     "coverage.pages",
+     "coverage.status",
+     "doc",
+     "format",
+     "name",
+     "size",
+     "validate",
+     "validate.baseline",
+     "validate.fixed",
+     "validate.new"
+    ],
+    "data_sha_core": "405ae5f8a7438cab"
+   }
+  }
+ ],
+ "output": {
+  "name": "services-agreement-halden.docx",
+  "sha256": "68db7846b3e2f9e396fa505a0c7b0c2773bb71004407a8b152b5a7d2a260a52b"
+ }
+}

@@ -1,0 +1,114 @@
+name: Release
+
+# Prebuilt packages on GitHub Releases (not PyPI).  A tag `v<YYYY>.<MM>.<DD>` -- with
+# `.<N>` for a second release the same day -- builds the sdists and wheels of every
+# distribution in this repository (the seven packages and pptx2svg's font bundle, each at
+# the version its pyproject.toml names), checks that they install from one page as the
+# README says, and attaches them to the GitHub Release of that tag, with notes listing
+# each distribution and its version (tools/release_notes.py).
+#
+# A manual run (workflow_dispatch, on any branch: `gh workflow run release.yml --ref
+# <branch>`) and a pull request that changes this file or the scripts it runs do everything
+# but the release: they build, check and upload the files as the run's artifacts.
+#
+# Every run rebuilds from a clean checkout of the tagged commit, so what ships is exactly
+# what that source produces.
+
+on:
+  push:
+    tags: ["v[0-9][0-9][0-9][0-9].[0-9][0-9].[0-9][0-9]", "v[0-9][0-9][0-9][0-9].[0-9][0-9].[0-9][0-9].*"]
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - tools/release_notes.py
+      - tools/check_release_install.sh
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  python:
+    name: build (python)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Pure Python: one wheel and one sdist each.
+      - name: Build
+        run: |
+          python -m pip install --upgrade pip build twine
+          for d in ooxml-common ooxml-edit docx2svg pptx2svg pptx2svg/packages/pptx2svg-fonts docx-agent pptx-agent xlsx-agent; do
+            python -m build --outdir dist "python/$d"
+          done
+          python -m twine check dist/*
+          ls -l dist
+
+      # Kept from pptx2svg's own release workflow: the wheel installs and works.
+      - name: The pptx2svg wheel installs and works
+        run: |
+          python -m venv /tmp/verify
+          /tmp/verify/bin/pip install --find-links dist "pptx2svg[png]"
+          cd /tmp
+          /tmp/verify/bin/python -c "
+          import pptx2svg
+          print('version', pptx2svg.__version__)
+          print('backends', pptx2svg.available_backends())
+          "
+          /tmp/verify/bin/pptx2svg --version
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-python
+          path: dist/
+
+  # The files of every build job, gathered; then the install the README gives, from a local
+  # page that lists them as the release page will.
+  check:
+    name: check the install
+    needs: [python]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+          path: dist/
+      - name: Every distribution has its files
+        run: python tools/release_notes.py check-only dist > /dev/null
+      - name: pip install --find-links <page> resolves the packages from it
+        run: bash tools/check_release_install.sh dist
+      - name: Release notes
+        run: |
+          python tools/release_notes.py "${GITHUB_REF_NAME}" dist | tee notes.md
+          cat notes.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release
+          path: |
+            dist/
+            notes.md
+
+  release:
+    name: release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [check]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release
+          path: .
+      - name: Create the release with its files
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --notes-file notes.md --verify-tag dist/*

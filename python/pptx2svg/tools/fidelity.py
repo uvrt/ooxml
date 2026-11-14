@@ -1,0 +1,2131 @@
+#!/usr/bin/env python3
+"""Score our render against PowerPoint's, in a way that tracks what actually broke.
+
+The obvious metric -- what fraction of pixels differ by more than a threshold -- was
+used here for a while and it is actively misleading.  Text is thin, high-contrast and
+everywhere, so moving a baseline by one pixel lights up every glyph on the slide and
+scores like a catastrophe, while filling a whole table header with the wrong colour
+moves the number barely at all.  A correct fix to the table gridlines scored as a
+regression that way, which is what prompted this file.
+
+So there are two gates here instead, both borrowed from ``aiden0z/pptx-renderer``:
+
+* **SSIM >= 0.95.**  Structural similarity compares local means, variances and
+  covariance, so it answers "is the same thing in the same place" rather than "are these
+  bytes equal".  Wrong geometry, missing elements and layout shifts move it; a half-pixel
+  of anti-aliasing does not.
+* **Colour histogram correlation >= 0.80.**  SSIM on greyscale is nearly blind to hue,
+  and the bugs this project keeps hitting -- theme colour resolution, gradients, tint and
+  shade -- are precisely hue bugs.  Correlating per-channel histograms catches those
+  while ignoring position entirely, which makes it a good complement rather than a
+  second opinion on the same thing.
+
+Both are computed over **foreground pixels only** (grey < 245 in either image).  A slide
+that is mostly white background otherwise scores near-perfect no matter what happens to
+the content.  When foreground coverage is under 1.5% the slide is too sparse to say
+anything useful and the score is defined as 1.0 rather than left to noise.
+
+**A correction that deletes wrong ink can lower SSIM while improving the picture**, and
+the mask is why.  The score is a mean over the pixels that are ink in *either* image, so
+removing something we drew and PowerPoint did not shrinks the denominator as well as the
+error.  If the region removed was scoring *better* than the slide's average -- which wrong
+ink in roughly the right place usually is -- the mean falls even though the total loss
+drops.  Measured on ``chart-gallery`` slide 11 (under the pdfium truth, below): deleting
+three legend swatches PowerPoint does not draw took SSIM 0.0499 to 0.0384 while the
+unnormalised structural loss fell 42577 to 39502, the legend row's own share of it fell
+3334 to 259, and every other column improved (histogram 0.9593 to 0.9608, mean absolute
+error 5.53 to 5.02, pixels over 10% 4.81 to 4.40).  The renders are visually
+indistinguishable.
+
+So when SSIM falls alone while the other columns rise, look at the pictures before
+believing the number -- and prefer the unnormalised loss (``loss``: the sum of ``1 -
+SSIM`` over the mask, recorded per slide) for that comparison.  This is the same class of
+problem as the pixel-difference metric described above, which is why it is recorded here
+rather than fixed: no single scalar survives a change in what counts as foreground.  The
+one-rasteriser truth below does not remove it -- the mask is still the union of both
+images' ink -- but it removes the other thing that moved a sparse slide's mean: the two
+rasterisers' disagreement at every edge, which was most of what a line chart's 0.67 was.
+
+**One rasteriser for both sides** (``--truth``).  PowerPoint's PDF used to be rasterised
+by pdfium and our SVG by resvg, so part of every score was pdfium against resvg: pdfium
+grid-fits glyph outlines (a stem moves by up to a pixel) and widens an axis-aligned fill
+to whole pixels.  The sibling ``docx2svg`` measured it on Word's own page: pdfium against
+MuPDF on the *same* PDF scores 0.890, MuPDF against resvg 0.996.  The default truth is
+now ``svg``: PowerPoint's page converted to SVG by ``tools/pdf_svg.py`` (PyMuPDF, glyphs
+redrawn unhinted from the embedded programs, validated against the PDF page by page) and
+rasterised by resvg like ours, so a pixel that differs is a layout or drawing difference.
+Where PowerPoint embedded a *bitmap* -- a 3-D chart's scene, an effect it rasterised --
+the truth is still that bitmap, and our vector drawing is scored against it; ``pdf_svg.py
+--bitmaps`` lists those regions.  ``--truth pdfium`` is the old instrument, kept for
+comparison (ROADMAP.md, "0.5 The instrument: one rasteriser for both sides").  **It runs
+only when asked for** -- ``--truth pdfium``, or ``--truth both`` -- and so do its
+baselines: ``tests/fidelity-baselines.json`` keeps a ``pdfium`` entry inside each deck's,
+a default run neither compares nor changes them (``--update`` carries every one over as
+it is: :func:`baselines_payload`), and ``--update --truth both`` re-records them.  The
+converted pages hold Microsoft's glyph outlines, so they are cached only in the oracle
+directory's ``svg/``, never in the repository.
+
+Foreground IoU was considered and deliberately left out: the upstream project dropped it
+because thin-stroke shapes lose about half their IoU to one pixel of anti-aliasing even
+when the geometry is exactly right, and table gridlines -- the thing that started this --
+are exactly that shape of problem.
+
+**Both sides draw with the real fonts.**  Comparing text metrics only means something
+when both renderers draw the same outlines.  PowerPoint always draws with Microsoft's own
+Calibri, Cambria and Aptos; if we draw with Carlito and Caladea instead, every score also
+contains a glyph-shape term that has nothing to do with this library, and the two decks
+that use Aptos -- for which no clone exists at all -- are not measurable at all.
+
+So the harness renders *our* side with the same licensed faces PowerPoint used, read in
+place from wherever Office installed them.  Those fonts are not ours to redistribute, so
+their locations live in ``tests/font-profile.local.json``, which is written by
+``--write-profile``, is specific to the machine that wrote it, and is gitignored.  With no
+profile, or with a face the profile cannot supply, the deck is **skipped with a reason**
+rather than scored against substitutes: a baseline taken under one font profile compared
+against a run under another is exactly the apples-to-oranges number this file exists to
+stop, which is what the profile hash in every baseline entry guards.
+
+"The same faces" turned out to need asking three ways, not one, and the other two were
+both learned from decks that this harness was happily scoring:
+
+1. **A face the deck names that this machine lacks.**  The original check.  PowerPoint
+   lacked it too, so its export is already drawn with a substitute of its own.
+2. **Text that no face the deck names can draw.**  A name-based check cannot see this --
+   there is no name to look up.  A theme saying ``<a:ea typeface=""/>`` over Japanese
+   body text obliges *both* renderers to invent a face, and two independently-invented
+   fallbacks are not a measurement of anything.  So coverage is read from the faces'
+   own cmaps instead.
+3. **A face PowerPoint drew that the deck never named.**  Coverage is necessary and not
+   sufficient.  ``sample.pptx`` resolves its Japanese through ＭＳ Ｐゴシック, this machine
+   has that face, and PowerPoint's export embeds ``MS-Gothic`` and ``MS-Mincho`` --
+   never ``MS-PGothic``.  Those are two different faces inside one ``.ttc``: MS Gothic
+   advances every CJK glyph a full em, MS PGothic is proportional and runs 0.648 em to
+   1.0 for katakana.  Nothing this renderer does can close a gap that begins with
+   different outlines at different widths.
+
+Check 3 reads ``/BaseFont`` out of PowerPoint's PDF, which is the thing the comment above
+:func:`font_profile` warns against doing -- for a different purpose.  It warns against
+*adopting* PowerPoint's fallback as our own, and that still stands.  Using the same fact
+to decide whether a comparison means anything is the argument of that comment, not an
+exception to it.
+
+The cost is real and worth stating: two decks that used to score, ``sample`` (0.06) and
+``real-basic-theme`` (0.97), are now skipped.  The 0.97 was not wrong so much as not
+about this library -- its Japanese runs were our MS PGothic against PowerPoint's MS
+Gothic, and it passed because there is not much Japanese on those slides.
+
+Both are scored again since this library resolves a run's East Asian face as PowerPoint
+does (``pptx2svg.resolve.east_asian``, measured by ``tools/make_font_resolution_probe.py``):
+ＭＳ Ｐゴシック was never a face either renderer could not find -- it is a ``Jpan`` entry
+PowerPoint consults only for Japanese ``lang`` -- and both decks' Japanese is drawn in MS
+Gothic and MS Mincho on both sides.  Check 3 therefore holds the export to the faces *our
+conversion* draws (:func:`our_faces`), not to every name the XML spells, and an emoji both
+renderers draw in Apple Color Emoji counts as covered (``real-product-page``).
+
+The bundled substitutes are what we *ship*; ``pptx2svg fonts --check`` and
+``tests/test_fonts.py`` cover those.  They are deliberately not the reference here.
+
+Dev-only.  This needs numpy, pillow, pypdfium2, fontTools and a rasteriser, and PyMuPDF
+for the ``svg`` truth (the ``fidelity`` extra, in the project's ``.venv``: docs/fidelity.md); the
+library itself stays standard-library-only, which is why this lives in ``tools/`` and not
+in ``src/``.
+
+Setting the machine up -- which fonts to install where, and how to undo it -- is in
+``FONTS.md`` under "Making the oracle draw Japanese".  It is there rather than here
+because it is a change to the machine, not to this file, and because the next person to
+wonder why a Japanese deck is skipped will be reading that page.
+
+Usage::
+
+    python3 tools/fidelity.py --write-profile                        # once per machine
+    .venv/bin/python tools/fidelity.py --oracle ~/pptx2svg-oracle    # score and compare (svg truth)
+    .venv/bin/python tools/fidelity.py --truth pdfium                # the old instrument
+    .venv/bin/python tools/fidelity.py --truth both                  # both instruments
+    .venv/bin/python tools/fidelity.py --slides                      # every slide's score
+    .venv/bin/python tools/fidelity.py --update                      # rewrite the svg baselines
+    .venv/bin/python tools/fidelity.py --update --truth both         # ... and the pdfium ones
+    .venv/bin/python tools/fidelity.py --jobs 1                      # serially (default: every core)
+    .venv/bin/python tools/fidelity.py --verify-cache                # re-draw everything, hold the cache
+    .venv/bin/python tools/fidelity.py --no-cache                    # draw everything, cache nothing
+
+Slides are scored in parallel, a slide per task, over ``--jobs`` processes (every logical
+core by default, capped by memory: :func:`default_jobs`).  Each slide is computed whole in
+one process and the results are reassembled in deck and slide order, so every score,
+every baseline field and the printed table are the serial run's bit for bit; ``--jobs 1``
+is the serial path itself, with no pool.  PowerPoint is never involved: scoring reads its
+exports and nothing else.  Each deck is converted once (a deck per task), not once per
+slide: every slide's SVG is the same bytes either way.
+
+**Rasters are cached, and the cache is checked on every run** (``tools/raster_cache.py``).
+Our raster and PowerPoint's are kept in ``ORACLE/svg/rasters/`` -- outside the repository,
+since a raster of PowerPoint's page holds Microsoft's glyph shapes -- under a key of every
+input that moves their pixels (:func:`our_components`, :func:`truth_components`: the SVG's
+and the PDF's bytes, the *contents* of every font file resvg is handed, the converter, the
+rasteriser and decoder versions, the resolution and options, :data:`HARNESS_VERSION`),
+stored beside each raster and compared on every read.  A key is only as complete as what
+its author knew moves pixels, so every run also re-draws :data:`VERIFY_SAMPLE` slides,
+spread across the decks and rotated by date, and holds them to the cache byte for byte:
+**any difference discards the whole cache and stops the run** without scoring.
+``--verify-cache`` re-draws every slide; ``--no-cache`` bypasses the cache.
+
+**SSIM is computed over the content only** (:func:`content_box`): the bounding box of the
+union of both images' foreground, grown by the SSIM window's radius.  That is exact, not
+an approximation -- the same floats in the same order -- and the same sampled slides are
+scored both ways on every run and held equal, bit for bit.
+"""
+
+from __future__ import annotations
+
+import argparse
+import glob
+import hashlib
+import io
+import json
+import os
+import re
+import sys
+import zipfile
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+ROOT = HERE.parent
+sys.path.insert(0, str(HERE))
+
+import parallel  # noqa: E402  (tools/parallel.py: standard library only)
+from parallel import pool_map  # noqa: E402
+BASELINE_PATH = ROOT / "tests" / "fidelity-baselines.json"
+
+#: Which checkout to import the library from.  ``--src`` repoints it at an older tree so
+#: a before/after table can be produced without switching the working copy.
+SOURCE_ROOT = str(ROOT / "src")
+
+#: Render width for every comparison.  Large enough that a 1 pt rule is a few pixels,
+#: small enough that a seven-deck pass is seconds rather than minutes.
+WIDTH = 1280
+
+#: Pass marks.  A slide below either of these is a failure, not a warning.
+MIN_SSIM = 0.95
+MIN_HISTOGRAM = 0.80
+
+#: A stored score may drop by this much before it counts as a regression.  Rasterisers
+#: differ in the last bit of anti-aliasing between versions, so an exact match is not a
+#: reasonable thing to demand.
+MAX_SSIM_DROP = 0.02
+
+#: Pixels at least this bright in *both* images are background and take no part in the
+#: score.  245 rather than 255 so the pale greys Office uses for card fills still count.
+FOREGROUND_MAX = 245
+#: Below this much foreground the slide is too sparse to score; treat it as a pass.
+MIN_FOREGROUND = 0.015
+
+#: How PowerPoint's page is rasterised: ``svg`` -- converted by ``tools/pdf_svg.py`` and
+#: drawn by resvg, like ours (the default); ``pdfium`` -- the PDF drawn by pdfium (the old
+#: instrument, kept for comparison).  See the module docstring.
+TRUTHS = ("svg", "pdfium")
+DEFAULT_TRUTH = "svg"
+
+
+# --------------------------------------------------------------------------------------
+# Metrics
+# --------------------------------------------------------------------------------------
+
+#: The SSIM window's radius: an 11-tap Gaussian.  A pixel's SSIM depends on the pixels
+#: within this many rows and columns of it and on nothing else, which is what makes
+#: cropping to the content exact (:func:`content_box`).
+SSIM_RADIUS = 5
+
+
+def _gaussian_kernel(sigma: float = 1.5, radius: int = SSIM_RADIUS):
+    import numpy as np
+
+    x = np.arange(-radius, radius + 1, dtype=np.float64)
+    k = np.exp(-(x**2) / (2 * sigma**2))
+    return k / k.sum()
+
+
+def _blur(image, kernel):
+    """Separable Gaussian blur with edge padding, in plain numpy.
+
+    SSIM is normally taken with scipy's ``uniform_filter`` or skimage; neither is a
+    dependency here, and a separable convolution is a dozen lines.
+    """
+    import numpy as np
+
+    radius = len(kernel) // 2
+    padded = np.pad(image, ((radius, radius), (0, 0)), mode="edge")
+    out = np.zeros_like(image, dtype=np.float64)
+    for i, weight in enumerate(kernel):
+        out += weight * padded[i : i + image.shape[0], :]
+    padded = np.pad(out, ((0, 0), (radius, radius)), mode="edge")
+    out = np.zeros_like(image, dtype=np.float64)
+    for i, weight in enumerate(kernel):
+        out += weight * padded[:, i : i + image.shape[1]]
+    return out
+
+
+def ssim_map(a, b, data_range: float = 255.0):
+    """Per-pixel structural similarity between two greyscale arrays."""
+    import numpy as np
+
+    a = a.astype(np.float64)
+    b = b.astype(np.float64)
+    kernel = _gaussian_kernel()
+    c1 = (0.01 * data_range) ** 2
+    c2 = (0.03 * data_range) ** 2
+
+    mu_a = _blur(a, kernel)
+    mu_b = _blur(b, kernel)
+    # Var(X) = E[X^2] - E[X]^2, clipped because the subtraction can go slightly negative
+    # on flat regions and a negative variance makes the formula produce nonsense.
+    var_a = np.maximum(_blur(a * a, kernel) - mu_a * mu_a, 0.0)
+    var_b = np.maximum(_blur(b * b, kernel) - mu_b * mu_b, 0.0)
+    cov = _blur(a * b, kernel) - mu_a * mu_b
+
+    numerator = (2 * mu_a * mu_b + c1) * (2 * cov + c2)
+    denominator = (mu_a**2 + mu_b**2 + c1) * (var_a + var_b + c2)
+    return numerator / denominator
+
+
+def foreground_mask(a_rgb, b_rgb):
+    """Pixels that are content in either image."""
+    import numpy as np
+
+    a_gray = a_rgb.mean(axis=2)
+    b_gray = b_rgb.mean(axis=2)
+    return (a_gray < FOREGROUND_MAX) | (b_gray < FOREGROUND_MAX), np.float64(0)
+
+
+def histogram_correlation(a_rgb, b_rgb, mask) -> float:
+    """Pearson correlation of the two images' per-channel colour histograms.
+
+    Position-blind on purpose: this is the gate for "did we resolve the right colours",
+    and it must not also fail when the right colours are a pixel to the left.
+    """
+    import numpy as np
+
+    bins = 64
+    vectors = []
+    for image in (a_rgb, b_rgb):
+        parts = []
+        for channel in range(3):
+            values = image[:, :, channel][mask]
+            counts, _ = np.histogram(values, bins=bins, range=(0, 256))
+            parts.append(counts.astype(np.float64))
+        vectors.append(np.concatenate(parts))
+
+    first, second = vectors
+    first = first - first.mean()
+    second = second - second.mean()
+    denominator = np.sqrt((first**2).sum() * (second**2).sum())
+    if denominator == 0:
+        # Both histograms are flat, which means both images are a single colour over the
+        # mask.  Identical-and-featureless is a match, not a failure.
+        return 1.0
+    return float((first * second).sum() / denominator)
+
+
+def content_box(mask, margin: int = SSIM_RADIUS) -> tuple[slice, slice]:
+    """The rows and columns SSIM has to be computed over for the pixels of ``mask``: the
+    bounding box of ``mask`` grown by ``margin`` on every side, clamped to the page.
+
+    ``mask`` is :func:`foreground_mask` -- the **union** of both images' ink, never one
+    side's -- and it is the only place the score reads SSIM from.  Exact, not approximate:
+    :func:`_blur` is separable, so a pixel's blurred value is a fixed-order sum over the
+    pixels within :data:`SSIM_RADIUS` of it, and with ``margin`` at least that, every one
+    of them lies inside the box -- or, at a clamped edge, is the page's own edge row,
+    which the blur's edge padding replicates identically either way.  Every masked pixel's
+    SSIM is therefore the same float cropped or not, and the masked values come out in the
+    same order, so the mean and the loss are the same sums.  ``tests/test_fidelity.py``
+    holds that on every scored slide, and every run re-checks a sample (:func:`run`).
+
+    A page whose foreground reaches every edge -- a background picture, a page colour, a
+    full-bleed image -- gets the whole page back: no speed-up, and nothing cut."""
+    import numpy as np
+
+    rows = np.flatnonzero(mask.any(axis=1))
+    cols = np.flatnonzero(mask.any(axis=0))
+    if not len(rows):
+        return slice(0, mask.shape[0]), slice(0, mask.shape[1])
+    return (slice(max(int(rows[0]) - margin, 0), min(int(rows[-1]) + margin + 1, mask.shape[0])),
+            slice(max(int(cols[0]) - margin, 0), min(int(cols[-1]) + margin + 1, mask.shape[1])))
+
+
+def score(ours_rgb, truth_rgb, crop: bool = True) -> dict:
+    """SSIM, histogram correlation, the unnormalised structural loss and the legacy pixel
+    percentages for one slide.
+
+    ``crop`` computes SSIM over :func:`content_box` only, which gives the full page's
+    numbers bit for bit (see there); ``crop=False`` is the full-page computation, kept for
+    the checks that hold the two equal."""
+    import numpy as np
+
+    mask, _ = foreground_mask(ours_rgb, truth_rgb)
+    coverage = float(mask.mean())
+
+    ours_gray = ours_rgb.mean(axis=2)
+    truth_gray = truth_rgb.mean(axis=2)
+    difference = np.abs(ours_rgb.astype(np.int16) - truth_rgb.astype(np.int16))
+
+    result = {
+        "coverage": round(coverage, 4),
+        "over10": round(100 * float((difference.max(axis=2) > 10).mean()), 3),
+        "over64": round(100 * float((difference.max(axis=2) > 64).mean()), 3),
+        "mean_abs": round(float(difference.mean()), 3),
+    }
+    if coverage < MIN_FOREGROUND:
+        # Too little content to say anything; scoring noise here would be worse than
+        # declining to score at all.
+        result["ssim"] = 1.0
+        result["histogram"] = 1.0
+        result["loss"] = 0.0
+        result["sparse"] = True
+        return result
+
+    box = content_box(mask) if crop else (slice(None), slice(None))
+    ssim = ssim_map(ours_gray[box], truth_gray[box])[mask[box]]
+    result["ssim"] = round(float(ssim.mean()), 4)
+    # The unnormalised structural loss: what SSIM's mean hides when the mask changes (see
+    # the module docstring).
+    result["loss"] = round(float((1 - ssim).sum()), 1)
+    result["histogram"] = round(histogram_correlation(ours_rgb, truth_rgb, mask), 4)
+    result["sparse"] = False
+    return result
+
+
+# --------------------------------------------------------------------------------------
+# Font profile
+# --------------------------------------------------------------------------------------
+
+#: Where the licensed Microsoft faces live on this machine.  Office keeps its own copies
+#: inside the application bundle -- that is the *point*: PowerPoint can use them and
+#: nothing else can, and rendering our side without them is what made every score here a
+#: measurement of font availability rather than of this library.
+#:
+#: Nothing is ever copied out of these directories.  ``--write-profile`` records paths and
+#: hashes into ``tests/font-profile.local.json``, which is gitignored because it names a
+#: particular machine, and because the fonts it points at are not ours to redistribute.
+LICENSED_FONT_DIRECTORIES = (
+    "/Applications/Microsoft PowerPoint.app/Contents/Resources/DFonts",
+    # Office downloads some faces on demand instead of installing them: Aptos Display,
+    # Lato, Raleway and Segoe UI live only here, under opaque numeric filenames.  Missing
+    # this directory is why "Aptos Display" looked unavailable while PowerPoint was
+    # happily embedding it in the exported PDF -- and why the two Aptos decks, the worst
+    # scoring in the corpus, could not be measured at all.
+    "~/Library/Group Containers/UBF8T346G9.Office/FontCache",
+    "/Applications/Microsoft Word.app/Contents/Resources/DFonts",
+    "/System/Library/Fonts/Supplemental",   # macOS ships Arial, Times New Roman, Courier
+    "/Library/Fonts",
+    "~/Library/Fonts",
+    "/usr/share/fonts/truetype/msttcorefonts",
+    "~/.local/share/fonts/ppviewer",        # tools/install-fonts-debian.sh puts them here
+    "/usr/local/share/fonts",
+)
+
+PROFILE_PATH = ROOT / "tests" / "font-profile.local.json"
+
+
+def _instance_names(font, postscript: str) -> tuple[set[str], list[str]]:
+    """``(extra family names, instance PostScript names)`` for a variable font.
+
+    Everything else in this file reads a font file as one static face, which is what
+    nameID 1 and nameID 6 describe.  A variable font breaks that in both directions at
+    once, and ``NotoSansJP[wght].ttf`` -- the one this project ships -- is the worst case
+    of it: its default instance is **Thin**, so nameID 1 says "Noto Sans JP Thin" and
+    nameID 6 says "NotoSansJP-Thin", while the file supplies the whole 100--900 family
+    and every renderer here draws Regular and Bold out of it.
+
+    Read as a static, then, the file answers to a name no deck asks for and claims a
+    PostScript name no export contains, so a deck naming "Noto Sans JP" reports the face
+    *missing* while it sits in ``~/Library/Fonts``, and the ``/BaseFont`` check calls
+    PowerPoint's Regular a substitution.  Both are wrong, and both are wrong in the
+    confident direction.
+
+    So for a font with an ``fvar`` table:
+
+    * nameID 16 -- the typographic family, "Noto Sans JP" -- is a name the file really
+      does supply, because the axis reaches every weight of it.  This is the one place
+      nameID 16 is a *fact* rather than fontdb's preference; see
+      :func:`addressable_font_files` for the other, opposite one.
+    * each named instance contributes the PostScript name an export will carry.  Core
+      Text synthesises that as ``{nameID 6}_{instance subfamily}`` when the instance
+      declares no ``postScriptNameID`` of its own, which is why PowerPoint's PDFs name
+      ``NotoSansJP-Thin_Regular`` and ``NotoSansJP-Thin_Bold``.  Measured from the
+      exports, not assumed: the widths in ``real-product-page.pdf`` match this file at
+      ``wght=400`` and ``wght=700`` exactly and no other weight at all.
+    """
+    if "fvar" not in font:
+        return set(), []
+    names: set[str] = set()
+    instances: list[str] = []
+    table = font["name"]
+    for record in table.names:
+        if record.nameID != 16:
+            continue
+        try:
+            value = (record.toUnicode() or "").strip()
+        except Exception:
+            continue
+        if value:
+            names.add(value)
+    for instance in font["fvar"].instances:
+        declared = getattr(instance, "postscriptNameID", 0xFFFF)
+        if declared not in (0, 0xFFFF):
+            own = table.getDebugName(declared)
+            if own:
+                instances.append(own.strip())
+                continue
+        subfamily = table.getDebugName(instance.subfamilyNameID)
+        if postscript and subfamily:
+            instances.append(f"{postscript}_{subfamily.strip().replace(' ', '')}")
+    return names, instances
+
+
+def _faces_in(path: str) -> list[tuple[set[str], str, int, str, list[str]]]:
+    """``(family names, style, weight, PostScript name, instance names)`` per face.
+
+    Style is one of ``regular``/``bold``/``italic``/``bolditalic``, taken from the OS/2
+    selection flags rather than the subfamily string, which is localised and creative
+    ("Negrita", "Fett", "Semibold" where the file is really the bold cut).
+
+    Filenames lie -- ``calibril.ttf`` is "Calibri Light", ``YuGothR.ttc`` is "Yu Gothic"
+    -- and matching a deck's ``typeface="Calibri Light"`` against a filename stem is how
+    the old profile decided Calibri Light was missing while it sat right there.
+
+    A variable font is a family in one file rather than a face, so it contributes more
+    names than its nameID 1 and more PostScript names than its nameID 6 -- see
+    :func:`_instance_names`, which is empty for every static.
+    """
+    from fontTools.ttLib import TTCollection, TTFont
+
+    try:
+        fonts = (
+            TTCollection(path, lazy=True).fonts
+            if path.lower().endswith((".ttc", ".otc"))
+            else [TTFont(path, lazy=True, fontNumber=0)]
+        )
+    except Exception:  # unreadable, bitmap-only, or a format fontTools declines
+        return []
+
+    result: list[tuple[set[str], str, int, str, list[str]]] = []
+    for font in fonts:
+        try:
+            table = font["name"]
+        except Exception:
+            continue
+        names: set[str] = set()
+        postscript = ""
+        # Every language record, not just the English one.  A Japanese deck asks for
+        # "游ゴシック"; the file calls itself "Yu Gothic" in English and
+        # "游ゴシック" in Japanese, and only reading both makes the two meet.
+        # getDebugName() returns the English record alone, which is why the profile used
+        # to report every Japanese face as missing while it sat in DFonts.
+        # nameID 1 (the legacy family) only, deliberately.  nameID 16 -- the
+        # typographic family -- groups every weight of a superfamily under one name, so
+        # Aptos-Light.ttf and Aptos-Black.ttf both answer to "Aptos" there and the first
+        # one scanned would become "Aptos regular".  nameID 1 keeps them apart as
+        # "Aptos Light" and "Aptos Black", so it is the name a deck is actually asking
+        # for.
+        #
+        # This used to add "and that is how fontdb matches a font-family string too".
+        # That is false, and it cost `table-test` the gate: fontdb indexes a face under
+        # nameID 16 *whenever the face has one*, and never under nameID 1.  Measured with
+        # only Aptos-Light.ttf loaded, resvg draws nothing for font-family="Aptos Light"
+        # and draws the Light face for font-family="Aptos".  So the name a deck asks for
+        # and the name our rasteriser answers to are two different questions, and
+        # :func:`addressable_font_files` is what reconciles them.
+        for record in table.names:
+            if record.nameID not in (1, 6):
+                continue
+            try:
+                value = record.toUnicode()
+            except Exception:
+                continue
+            if not value:
+                continue
+            if record.nameID == 6:
+                # nameID 6 is what a PDF writes in /BaseFont, so it is the only name that
+                # can be matched against an exported PDF without guessing.  It is also
+                # what tells MS PGothic apart from MS Gothic, which share a file and
+                # therefore share everything the path can say about them.
+                postscript = postscript or value.strip()
+            else:
+                names.add(value.strip())
+        extra, instances = _instance_names(font, postscript)
+        names |= extra
+        if not names:
+            continue
+        try:
+            os2 = font["OS/2"]
+            selection, weight = os2.fsSelection, os2.usWeightClass
+        except Exception:
+            selection, weight = 0x40, 400
+        bold = bool(selection & 0x20)
+        italic = bool(selection & 0x01)
+        style = ("bold" if bold else "") + ("italic" if italic else "") or "regular"
+        result.append((names, style, weight, postscript, instances))
+    return result
+
+
+def scan_licensed_fonts() -> dict[str, dict]:
+    """Family name -> ``{style: {path, sha256}}`` for every licensed face this machine has.
+
+    Styles are kept apart because ``tools/extract_font_metrics.py`` needs the *bold* file
+    of a measured-only face (Aptos, Cambria), and because a family whose bold cut is
+    missing is a different thing from one that is fully present.
+
+    The full file is hashed, not just its head: the baseline's whole purpose is to refuse
+    a comparison across a font change, and a 64 kB prefix would miss a hinting update
+    that moves glyphs.
+    """
+    found: dict[str, dict] = {}
+    for directory in LICENSED_FONT_DIRECTORIES:
+        base = os.path.expanduser(directory)
+        if not os.path.isdir(base):
+            continue
+        for path in sorted(glob.glob(os.path.join(base, "**", "*"), recursive=True)):
+            if not path.lower().endswith((".ttf", ".otf", ".ttc", ".otc")):
+                continue
+            faces = _faces_in(path)
+            if not faces:
+                continue
+            digest = hashlib.sha256()
+            with open(path, "rb") as handle:
+                digest.update(handle.read())
+            for families, style, weight, postscript, instances in faces:
+                entry = {
+                    "path": path,
+                    "sha256": digest.hexdigest()[:16],
+                    "weight": weight,
+                    "postscript": postscript,
+                    "instances": instances,
+                }
+                for family in families:
+                    styles = found.setdefault(family, {})
+                    previous = styles.get(style)
+                    # First directory wins -- PowerPoint's own DFonts are listed first,
+                    # because they are the copies PowerPoint actually draws with -- but
+                    # within a directory prefer the canonical weight, so a family that
+                    # also ships Light and Black cuts does not hand us one of those as
+                    # its "regular".
+                    target = 700 if "bold" in style else 400
+                    if previous is None or abs(weight - target) < abs(
+                        previous["weight"] - target
+                    ):
+                        styles[style] = entry
+    return found
+
+
+#: Every field :func:`scan_licensed_fonts` puts in a face entry, and the top-level keys
+#: :func:`write_profile` writes.  Both are hashed into :data:`PROFILE_SCHEMA`.
+#:
+#: This exists because a profile that is merely *old* is far more dangerous than one that
+#: is missing.  ``postscript`` was added to the face entry when the coverage-based skip
+#: rule landed, and the ``/BaseFont`` comparison needs it to notice that PowerPoint drew
+#: a face other than the one the deck named.  A profile written before that change has
+#: the field nowhere, so the check could not fire -- and the harness scored two decks it
+#: cannot measure as though they were fine, one of them at a passing 0.9674.  Same
+#: commit, same decks, same PDFs, opposite verdicts, no error anywhere.  A wrong answer
+#: in the direction of confidence is the worst kind, so this one is fatal, not a warning.
+#:
+#: ``instances`` was added the same way and for the same reason, when the bundled Noto
+#: Sans JP was installed to make three Japanese decks measurable: a variable font's
+#: nameID 6 is its *default* instance, PowerPoint's export names the instance it drew,
+#: and a profile without this field makes every such export look like a substitution.
+#:
+#: Declared rather than derived from a sample so that the writer can *assert* against it:
+#: add a field to a face entry without listing it here and ``--write-profile`` fails on
+#: the spot, which is the moment the schema really changed.  Listing it then changes the
+#: hash, which retires every profile written under the old shape.
+_FACE_FIELDS = ("instances", "path", "postscript", "sha256", "weight")
+_PROFILE_FIELDS = ("directories", "faces", "schema")
+
+#: Fingerprint of the shape above.  Stamped into every profile and refused on mismatch.
+PROFILE_SCHEMA = hashlib.sha256(
+    ("|".join(_FACE_FIELDS) + "//" + "|".join(_PROFILE_FIELDS)).encode()
+).hexdigest()[:12]
+
+
+class StaleProfile(Exception):
+    """A profile on disk that was written under a different schema."""
+
+
+def write_profile() -> dict:
+    faces = scan_licensed_fonts()
+    for family, styles in faces.items():
+        for style, entry in styles.items():
+            if tuple(sorted(entry)) != tuple(sorted(_FACE_FIELDS)):
+                raise AssertionError(
+                    f"face entry for {family} {style} has fields {sorted(entry)}, but "
+                    f"_FACE_FIELDS says {sorted(_FACE_FIELDS)}.  Update _FACE_FIELDS -- "
+                    "that is what retires profiles written under the old shape."
+                )
+    profile = {
+        "schema": PROFILE_SCHEMA,
+        # resvg is pointed at whole directories rather than individual files: a face is
+        # four files (regular, bold, italic, bold-italic) and the deck decides at render
+        # time which it needs, so naming only the upright would silently drop bold.
+        "directories": sorted(
+            {
+                os.path.dirname(entry["path"])
+                for styles in faces.values()
+                for entry in styles.values()
+            }
+        ),
+        "faces": faces,
+    }
+    PROFILE_PATH.write_text(
+        json.dumps(profile, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    return profile
+
+
+#: Where name-normalised copies of superfamily faces are staged.  Gitignored, like the
+#: profile that points at their originals, and for the same reason: they are derived from
+#: licensed Office fonts and are not ours to redistribute.
+SHADOW_DIR = ROOT / "tests" / "local-fonts"
+
+
+def _typographic_name(path: str) -> str | None:
+    """nameID 16 of the first face in ``path``, or ``None`` if it has none."""
+    from fontTools.ttLib import TTCollection, TTFont
+
+    try:
+        fonts = (
+            TTCollection(path, lazy=True).fonts
+            if path.lower().endswith((".ttc", ".otc"))
+            else [TTFont(path, lazy=True, fontNumber=0)]
+        )
+        for record in fonts[0]["name"].names:
+            if record.nameID == 16:
+                return (record.toUnicode() or "").strip() or None
+    except Exception:
+        return None
+    return None
+
+
+def _has_family(font, family: str) -> bool:
+    """Whether ``font`` answers to ``family`` as its nameID 1, in any language."""
+    for record in font["name"].names:
+        if record.nameID != 1:
+            continue
+        try:
+            if (record.toUnicode() or "").strip() == family:
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def addressable_font_files(profile: dict, names) -> list[str]:
+    """Copies of ``names``' faces that resvg will answer to *by that name*.
+
+    This file's premise is that both sides draw with the same faces.  The premise had a
+    hole in it: a face being installed is not the same as the rasteriser being able to
+    reach it, and for a superfamily member it usually is not.
+
+    OpenType carries two family names.  nameID 1 is the four-style family a deck spells --
+    "Aptos Display", "Calibri Light".  nameID 16 is the *typographic* family that gathers
+    the whole superfamily -- "Aptos", "Calibri" -- with the distinguishing style in
+    nameID 17.  fontdb, which is what resvg matches ``font-family`` against, files a face
+    under nameID 16 whenever it has one and **never** under nameID 1.  Measured, not
+    assumed: with only ``Aptos-Light.ttf`` loaded, resvg draws nothing at all for
+    ``font-family="Aptos Light"`` and draws the Light face for ``font-family="Aptos"``.
+    64 of the 580 families installed on this machine are unreachable that way.
+
+    That is not a small error dressed up as a font question.  ``table-test``'s title is
+    Aptos Display 44 pt; PowerPoint inked it 227 px wide and we inked it 249, because we
+    measured with Aptos Display's real advance widths and resvg drew with its default
+    sans-serif -- the request fell past *every* named face in the stack to the generic.
+    Nothing in the score said "wrong face".  It said SSIM 0.9494, just under the gate.
+
+    The deck's spelling is not negotiable and neither is fontdb's rule, so the fix goes
+    between them: each affected face is copied once into :data:`SHADOW_DIR` with its
+    nameID 16 and 17 records dropped, which leaves fontdb no choice but to index it under
+    nameID 1 -- the name the deck asked for.  Nothing else is touched; same outlines, same
+    ``hmtx``, same everything the comparison is about.
+
+    Only faces a deck actually names are staged, and only where the name is genuinely
+    unreachable.  Handing the copies to resvg as ``font_files`` *alongside* the untouched
+    ``font_dirs`` is deliberate: the originals go on answering to their typographic name,
+    so a slide using both Aptos Display and Aptos -- which ``table-test`` does -- gets
+    each of them instead of one at the other's expense.
+    """
+    from fontTools.ttLib import TTCollection, TTFont
+
+    wanted = {name.casefold() for name in names}
+    staged: list[str] = []
+    for family, styles in sorted(profile["faces"].items()):
+        if family.casefold() not in wanted:
+            continue
+        for style, entry in sorted(styles.items()):
+            source = entry["path"]
+            typographic = _typographic_name(source)
+            if not typographic or typographic == family:
+                # Reachable already: either there is no typographic name for fontdb to
+                # prefer, or the one it prefers is the name being asked for anyway.
+                continue
+            target = SHADOW_DIR / f"{entry['sha256']}-{style}.ttf"
+            if not target.exists():
+                SHADOW_DIR.mkdir(parents=True, exist_ok=True)
+                if source.lower().endswith((".ttc", ".otc")):
+                    collection = TTCollection(source).fonts
+                    # One .ttc holds several unrelated faces -- msgothic.ttc holds both
+                    # MS Gothic and MS PGothic -- so the right one is found by name, not
+                    # by position.
+                    font = next(
+                        (f for f in collection if _has_family(f, family)), collection[0]
+                    )
+                else:
+                    font = TTFont(source)
+                font["name"].names = [
+                    record
+                    for record in font["name"].names
+                    if record.nameID not in (16, 17)
+                ]
+                # Written aside and renamed into place: a worker that finds the target
+                # (--jobs) must never read half a font.
+                partial = target.with_name(f".{target.name}.{os.getpid()}.tmp")
+                font.save(str(partial))
+                os.replace(partial, target)
+            staged.append(str(target))
+    return staged
+
+
+def load_profile() -> dict | None:
+    """The profile on disk, or ``None`` if there is none.
+
+    Raises :class:`StaleProfile` for one written under a different schema rather than
+    using it -- see :data:`PROFILE_SCHEMA` for what that silently cost.
+    """
+    if not PROFILE_PATH.exists():
+        return None
+    profile = json.loads(PROFILE_PATH.read_text(encoding="utf-8"))
+    found = profile.get("schema")
+    if found != PROFILE_SCHEMA:
+        raise StaleProfile(
+            f"{PROFILE_PATH.name} was written under schema {found or 'none'}, but this "
+            f"checkout expects {PROFILE_SCHEMA}.\n"
+            "The profile records one fact per face and the skip rules read all of them; "
+            "an older one is missing\nfields those rules need, and the harness then "
+            "scores decks it cannot measure as though they were fine.\n"
+            "Regenerate it:\n"
+            "    python3 tools/fidelity.py --write-profile"
+        )
+    return profile
+
+
+#: A theme's font scheme ends with a long ``<a:font script="Arab" typeface="..."/>`` list
+#: -- forty-odd faces for scripts the deck never uses.  Counting those as "requested"
+#: buries the two or three faces that actually get drawn, so they are skipped.
+#:
+#: With one exception, added after this comment turned out to be wrong about a deck in
+#: the corpus.  ``sample.pptx`` writes ``<a:ea typeface=""/>`` in both font collections
+#: and sets Japanese body text anyway, so ``+mn-ea`` has nothing to expand to -- and the
+#: face *this renderer* resolves through is ``<a:font script="Jpan" typeface="ＭＳ Ｐゴシック"/>``
+#: in that same skipped list.  For an East Asian script the list is not noise, it is a
+#: resolution path, so those four entries are read separately by
+#: :func:`script_faces` instead of being discarded with the rest.
+#:
+#: "A resolution path", not "the" one.  PowerPoint 16.x on macOS reaches the list for
+#: ``real-financial-report`` and does not reach it for ``sample``; both were measured by
+#: rewriting the entry and re-exporting, and :func:`font_profile` has the table.  Reading
+#: it here is still right -- it is what *we* draw, and a face we draw and PowerPoint does
+#: not is exactly the input difference the skip rules exist to notice.
+#:
+#: Matches the whole element so it can be *removed*.  This used to truncate the theme at
+#: the first script font instead, which threw away everything after it -- including the
+#: entire ``<a:minorFont>`` block, since the major scheme's script list sits between the
+#: two.  That is why ``table-test`` reported only "Aptos Display" as requested while its
+#: body text is Aptos, and why PowerPoint embedding Aptos looked like a substitution.
+_SCRIPT_FONT = re.compile(rb"<a:font\s+script=\"[^\"]*\"\s+typeface=\"[^\"]*\"\s*/>")
+
+#: Scripts whose theme fallback entry is a real resolution path for ``+mj-ea``/``+mn-ea``.
+_EAST_ASIAN_SCRIPTS = ("Jpan", "Hans", "Hant", "Hang")
+
+_THEME_PARTS = ("ppt/slides/slide", "ppt/slideLayouts/", "ppt/slideMasters/", "ppt/theme/")
+
+
+def _deck_parts(deck: Path):
+    with zipfile.ZipFile(deck) as archive:
+        for name in archive.namelist():
+            if name.startswith(_THEME_PARTS):
+                yield name, archive.read(name)
+
+
+def requested_faces(deck: Path) -> list[str]:
+    """The faces a deck names outright: slides, layouts, masters, theme.
+
+    ``a:latin`` / ``a:ea`` / ``a:cs``, plus ``a:buFont``, which names the face a bullet
+    glyph is drawn in and is a face PowerPoint really does embed -- ``sample.pptx``'s
+    bullets are Arial and its PDF says so.  Theme script fallbacks are excluded (see
+    :data:`_SCRIPT_FONT` and :func:`script_faces`), as are ``+mj-lt``-style theme
+    references, which are pointers rather than names.
+    """
+    names: set[str] = set()
+    pattern = re.compile(rb'<a:(?:latin|ea|cs|buFont)\s+typeface="([^"]*)"')
+    for name, body in _deck_parts(deck):
+        if name.startswith("ppt/theme/"):
+            body = _SCRIPT_FONT.sub(b"", body)
+        for match in pattern.findall(body):
+            value = match.decode("utf-8", "replace")
+            if value and not value.startswith("+"):
+                names.add(value)
+    return sorted(names)
+
+
+def script_faces(deck: Path) -> dict[str, str]:
+    """The theme's ``a:font script="..."`` East Asian entries, keyed by script.
+
+    Kept apart from :func:`requested_faces` because they are *conditional*: a stock
+    Office theme carries all four whether or not the deck sets a word of East Asian text,
+    so counting them as requested would skip a Latin-only deck for want of 宋体.  Which
+    one is in play is decided by the characters -- see :func:`deck_script`.
+    """
+    found: dict[str, str] = {}
+    pattern = re.compile(
+        rb'<a:font\s+script="(' + b"|".join(s.encode() for s in _EAST_ASIAN_SCRIPTS)
+        + rb')"\s+typeface="([^"]*)"'
+    )
+    for name, body in _deck_parts(deck):
+        if not name.startswith("ppt/theme/"):
+            continue
+        for script, match in pattern.findall(body):
+            value = match.decode("utf-8", "replace")
+            if value:
+                found.setdefault(script.decode(), value)
+    return found
+
+
+#: Characters that name their script outright, as (script, first, last) ranges.
+#:
+#: Han is deliberately absent: 概 is a Chinese, Japanese and Korean character at once and
+#: says nothing about which face should draw it.  Kana and Hangul do say, and that is
+#: enough to tell the two decks here apart from a Chinese one.
+_SCRIPT_RANGES = (
+    ("Jpan", 0x3040, 0x30FF),   # hiragana and katakana
+    ("Hang", 0x1100, 0x11FF),   # hangul jamo
+    ("Hang", 0x3130, 0x318F),   # hangul compatibility jamo
+    ("Hang", 0xAC00, 0xD7A3),   # hangul syllables
+)
+
+
+def deck_script(text: str) -> str | None:
+    """Which East Asian script this text is, when its characters are unambiguous."""
+    for char in text:
+        code = ord(char)
+        for script, first, last in _SCRIPT_RANGES:
+            if first <= code <= last:
+                return script
+    return None
+
+
+def deck_text(deck: Path) -> str:
+    """Every ``a:t`` run of text on the slides -- what actually has to be drawn."""
+    pattern = re.compile(rb"<a:t>(.*?)</a:t>", re.S)
+    out: list[str] = []
+    for name, body in _deck_parts(deck):
+        if not name.startswith("ppt/slides/slide"):
+            continue
+        for match in pattern.findall(body):
+            out.append(match.decode("utf-8", "replace"))
+    return "".join(out)
+
+
+def _face_cmaps(faces: dict, names: list[str]) -> dict[str, set[int]]:
+    """Code points each named face can draw, read from its own cmap.
+
+    Per face rather than unioned, because the interesting question is not only "can
+    anything draw this character" but "is there exactly one face that can" -- see
+    :func:`font_profile`.
+    """
+    from fontTools.ttLib import TTCollection, TTFont
+
+    result: dict[str, set[int]] = {}
+    cache: dict[str, set[int]] = {}
+    for name in names:
+        covered: set[int] = set()
+        for entry in (faces.get(name) or {}).values():
+            path = entry["path"]
+            if path not in cache:
+                points: set[int] = set()
+                try:
+                    fonts = (
+                        TTCollection(path, lazy=True).fonts
+                        if path.lower().endswith((".ttc", ".otc"))
+                        else [TTFont(path, lazy=True, fontNumber=0)]
+                    )
+                except Exception:
+                    fonts = []
+                for font in fonts:
+                    try:
+                        points.update(font.getBestCmap())
+                    except Exception:
+                        continue
+                cache[path] = points
+            covered |= cache[path]
+        if covered:
+            result[name] = covered
+    return result
+
+
+def our_faces(deck: Path) -> set[str] | None:
+    """The faces our conversion draws ``deck`` with (``pptx2svg.fonts.check.resolved_families``),
+    as the default conversion resolves them; ``None`` where the checkout under test cannot
+    say."""
+    sys.path.insert(0, SOURCE_ROOT)
+    try:
+        from pptx2svg import ConvertOptions, convert_pptx_to_model
+        from pptx2svg.fonts.check import resolved_families
+        from pptx2svg.resolve import east_asian  # noqa: F401 -- the rule this relies on
+    except ImportError:
+        return None
+    return set(resolved_families(convert_pptx_to_model(str(deck), ConvertOptions())))
+
+
+def _emoji_cmap() -> set[int] | None:
+    """The code points macOS's Apple Color Emoji maps, where it is installed and the
+    checkout under test draws with it."""
+    sys.path.insert(0, SOURCE_ROOT)
+    try:
+        from pptx2svg.fonts import office
+    except ImportError:
+        return None
+    face = office.emoji_face() if hasattr(office, "emoji_face") else None
+    return set(office._cmap(face)) if face is not None else None
+
+
+def _pdf_base_fonts(pdf: Path) -> set[str]:
+    """The PostScript names in the export's ``/BaseFont`` entries.
+
+    Read from the file rather than through a text API so that a face used for a single
+    glyph still shows up.  The ``AAAAAE+`` subset prefix an embedded font carries is
+    stripped; it is assigned per document and means nothing across exports.
+
+    ``_`` is in the character class because Core Text puts it there: an instance of a
+    variable font is named ``NotoSansJP-Thin_Regular``.  Leaving it out truncated that to
+    ``NotoSansJP-Thin``, which happened to be the file's own nameID 6 and so happened to
+    match -- a right answer for a wrong reason, and only for this one font.  A PDF name
+    is a PDF name; read all of it and let :func:`_instance_names` supply the other side.
+    """
+    data = pdf.read_bytes()
+    found: set[str] = set()
+    for match in re.finditer(rb"/BaseFont\s*/([A-Za-z0-9_+#,.\-]+)", data):
+        name = match.group(1).decode("latin-1")
+        if len(name) > 7 and name[6] == "+":
+            name = name[7:]
+        found.add(name)
+    return found
+
+
+def _postscript_names(styles: dict) -> set[str]:
+    """Every PostScript name a profile family can appear under in an export.
+
+    One per static cut, plus one per named instance of a variable font: the export names
+    the *instance* PowerPoint drew, not the file's default.  Comparing only the default
+    is how ``NotoSansJP-Thin_Regular`` would read as a substitution for Noto Sans JP.
+    """
+    names: set[str] = set()
+    for entry in styles.values():
+        if entry.get("postscript"):
+            names.add(entry["postscript"])
+        names.update(entry.get("instances") or ())
+    return names
+
+
+#: Why there is still no "PowerPoint fell back to X, so we will too" table here.
+#:
+#: It is tempting: read ``/BaseFont`` out of the exported PDF, see that PowerPoint drew
+#: MS Gothic where the deck asked for MS PGothic, and point our render at MS Gothic as
+#: well.  It would make two more decks scoreable.  It would also be measuring the wrong
+#: thing twice over -- our layout would still be computed from MS PGothic's advance
+#: widths while drawing MS Gothic's, so the comparison would contain a deliberate
+#: metrics/outline mismatch of our own making, and any conclusion drawn from it would be
+#: about the fudge rather than about the renderer.  Worse, it would bake one machine's
+#: font matching into the library: PowerPoint on Windows, where MS PGothic is a
+#: separately addressable family, would have drawn what the deck asked for.
+#:
+#: What *is* read out of the PDF is the far weaker question of whether the comparison is
+#: meaningful at all -- see :func:`font_profile`.  That is the same instinct this comment
+#: was always about: a deck PowerPoint drew differently is not a failing deck, it is an
+#: unmeasurable one, and the honest thing is to say so rather than either score it or
+#: quietly copy PowerPoint's choice.
+
+
+def font_profile(deck: Path, profile: dict | None, pdf: Path | None = None) -> dict:
+    """Whether this deck can be compared at all, and a hash of the answer.
+
+    Three ways a comparison stops being about this renderer, all of which end in a
+    skip-with-a-reason rather than a score:
+
+    * **A named face this machine does not have.**  PowerPoint did not have it either,
+      so its PDF is already drawn with a substitute of its own choosing, and scoring
+      against it compares our fallback to Microsoft's.
+
+    * **Text no named face can draw.**  The check has to be coverage-based because a
+      name-based one cannot see this case: there is no name to look up.  A deck whose
+      theme says ``<a:ea typeface=""/>`` and then sets Japanese body text obliges *both*
+      renderers to invent a face, and two independently-invented fallbacks are not a
+      measurement of anything.
+
+    * **PowerPoint drew a face the deck never named.**  Cmap coverage is necessary and
+      not sufficient: the deck can name a face, this machine can have it, and PowerPoint
+      can still have resolved the name to something else.  ``sample.pptx`` asks for
+      ＭＳ Ｐゴシック through its theme's ``Jpan`` entry, this machine has it, and
+      PowerPoint's export embeds ``MS-Gothic`` and ``MS-Mincho`` -- never ``MS-PGothic``.
+      Those are different faces, not different names for one: MS Gothic advances every
+      CJK glyph a full em and MS PGothic is proportional, 0.648 em to 1.0 for katakana.
+      Nothing our renderer does can close a gap that starts with different outlines at
+      different widths, and reporting it as an SSIM failure says the opposite.
+
+      Measured, because "it resolved the name differently" invites the question of *how*,
+      and the answer decides whether there is a rule here worth reproducing.  Fitting a
+      least-squares em to the glyph origins -- origins, not ink boxes, which differ by the
+      side bearings and had me briefly believing the opposite -- every Japanese run in
+      both exports fits MS Gothic with a worst residual of 0.000 pt, at exactly the
+      nominal size.  MS PGothic and MS UI Gothic are out by 2 to 7 pt on the same runs.
+
+      And ``real-basic-theme``'s theme names ＭＳ Ｐゴシック as the ``Jpan`` face of *both*
+      the major and the minor scheme -- one name -- while the export draws the headings in
+      MS Mincho and the body in MS Gothic.  One name in, two faces out, split along the
+      major/minor axis.  That rules out a ``.ttc`` face-selection quirk, which would have
+      given the same face for both, and it rules out any resolution rule at all: it is
+      PowerPoint falling back to its own built-in Japanese defaults, serif for the heading
+      role and sans for the body role, having failed to resolve the name.  There is
+      therefore no behaviour here to reproduce -- only a font this copy of PowerPoint
+      cannot see.
+
+      Which raises the practical question of what, if anything, a deck could say to make
+      this PowerPoint draw a Japanese face on purpose.  Seven exports answer it, each a
+      copy of a corpus deck with one theme string changed, each read back through its
+      PDF's ``/BaseFont`` entries:
+
+      =====================  =============================  ========================
+      deck                   theme edit                     what PowerPoint drew
+      =====================  =============================  ========================
+      ``real-basic-theme``   -- (as committed)              MS-Gothic, MS-Mincho
+      ``real-basic-theme``   ``Jpan`` -> ``MS PGothic``     MS-Gothic, MS-Mincho
+      ``real-basic-theme``   ``Jpan`` -> ``MS Gothic``      MS-Gothic, MS-Mincho
+      ``real-basic-theme``   ``a:ea`` -> ＭＳ Ｐゴシック         MS-Gothic, MS-Mincho
+      ``real-basic-theme``   ``a:ea`` -> ``Noto Sans JP``   MS-Gothic, MS-Mincho
+      ``sample``             ``Jpan`` -> ``Noto Sans JP``   MS-Gothic, MS-Mincho
+      ``sample``             ``a:ea`` -> ``Noto Sans JP``   ``NotoSansJP-Thin_*``
+      =====================  =============================  ========================
+
+      ＭＳ Ｐゴシック is unresolvable here under either spelling, so the authored face can
+      never be drawn on this machine -- that much was already known.  What is new is that
+      **nothing writable in ``real-basic-theme``'s theme changes its answer**, including
+      a face this PowerPoint draws happily in three other decks.  Its Japanese runs name
+      a *Latin* face as their own ``a:ea`` -- Lato, Arial, Raleway -- and PowerPoint
+      discards that and supplies its own Japanese default without consulting the theme.
+      ``sample``'s runs say ``+mn-ea``, and there the scheme's ``<a:ea>`` slot is the
+      lever that works while its ``Jpan`` entry is not consulted at all.
+
+      That last part does not generalise: ``real-financial-report``'s ``Jpan`` entries
+      *are* consulted -- rewriting its 游ゴシック pair to ``MS Mincho`` takes
+      YuGothic-Regular out of the export and puts MS-Mincho in.  Why one deck reaches the
+      script list and another does not is unsettled, and it does not need settling to act
+      on the part that is measured: the way to make a Japanese deck scorable here is to
+      name, in ``<a:ea>``, a face both renderers draw.  That is
+      ``tools/make_cjk_deck.py`` and the ``sample-cjk`` deck it derives -- taken without
+      editing the two decks that record the real-world case.
+    """
+    faces = (profile or {}).get("faces", {})
+    named = requested_faces(deck)
+    text = deck_text(deck)
+    script = deck_script(text)
+    # Only the script the deck actually writes in.  A theme offering Jpan, Hans, Hant and
+    # Hang -- which is every stock Office theme -- otherwise hands four faces to a deck
+    # that uses one, and four faces between them cover every CJK character, so nothing
+    # ever looks load-bearing.
+    conditional = [script_faces(deck)[script]] if script in script_faces(deck) else []
+    available: list[str] = []
+    missing: list[str] = []
+    for face in named:
+        (available if face in faces else missing).append(face)
+
+    usable = available + [face for face in conditional if face in faces]
+    # The faces our own render draws with, where that can be asked: a name the deck
+    # spells but PowerPoint resolves past -- ＭＳ Ｐゴシック as a `Jpan` entry no run
+    # reaches -- is not drawn by us either, and the faces both draw instead (MS Gothic, MS
+    # Mincho) are the ones to hold the export to (pptx2svg.resolve.east_asian).
+    ours = our_faces(deck)
+    if ours is not None:
+        usable = [face for face in usable if face in ours] + sorted(
+            face for face in ours if face in faces and face not in usable)
+    uncovered = ""
+    substituted: list[str] = []
+    instead: list[str] = []
+    if not missing and profile:
+        cmaps = _face_cmaps(faces, usable)
+        drawn = _pdf_base_fonts(pdf) if pdf is not None and pdf.exists() else set()
+        emoji = _emoji_cmap() if "AppleColorEmoji" in drawn else None
+        if emoji:
+            # Both renderers draw an emoji no named face has in macOS's colour emoji face
+            # (pptx2svg.fonts.office.with_emoji): the same fallback, not two inventions.
+            cmaps["Apple Color Emoji"] = emoji
+        wanted = {ord(char) for char in text if not char.isspace()}
+        unmatched = sorted(
+            code for code in wanted if not any(code in c for c in cmaps.values())
+        )
+        uncovered = "".join(chr(code) for code in unmatched[:8])
+
+        if pdf is not None and pdf.exists() and not uncovered:
+            # A face is *load-bearing* when some character in the deck can be drawn by
+            # it and by nothing else the deck names.  Only those are worth checking
+            # against the export: a Latin face the deck shares with two others tells us
+            # nothing, and a face PowerPoint used for content we do not render at all --
+            # Arial for a chart's axis labels, say -- is a missing feature of ours, not a
+            # font-matching difference, and must not be dressed up as one.
+            for face, covered in cmaps.items():
+                others = [c for name, c in cmaps.items() if name != face]
+                exclusive = any(
+                    code in covered and not any(code in other for other in others)
+                    for code in wanted
+                )
+                if not exclusive:
+                    continue
+                postscript = _postscript_names(faces[face]) if face in faces else {"AppleColorEmoji"}
+                if postscript and not (postscript & drawn):
+                    substituted.append(face)
+            substituted.sort()
+            # What it drew *instead*, so the skip line says something a reader can act
+            # on.  Only the faces the deck never named: those are the substitutes.
+            if substituted:
+                named_ps: set[str] = set()
+                for face in usable:
+                    named_ps |= _postscript_names(faces[face])
+                if emoji:
+                    named_ps.add("AppleColorEmoji")
+                instead = sorted(drawn - named_ps)
+
+    digest = hashlib.sha256()
+    for face in available:
+        for style, entry in sorted(faces[face].items()):
+            digest.update(f"{face}:{style}:{entry['sha256']}\n".encode())
+    return {
+        "available": available,
+        "missing": missing,
+        "conditional": conditional,
+        "uncovered": uncovered,
+        "substituted": substituted,
+        "instead": instead,
+        "hash": digest.hexdigest()[:12],
+    }
+
+
+# --------------------------------------------------------------------------------------
+# Running a corpus
+# --------------------------------------------------------------------------------------
+
+#: What one worker may hold at once, with headroom.  Measured: a scoring worker peaks at
+#: 0.25 GB, a validation worker at 1.48 GB (a 300 dpi page validated at 2x is the largest
+#: raster any of them draws), and four of them at 4.6 GB.  ``--jobs`` defaults to no more
+#: workers than the machine's memory holds at this size (:func:`default_jobs`).
+WORKER_MEMORY = 2_000_000_000
+
+
+def default_jobs() -> int:
+    """Every logical core, unless memory holds fewer workers of :data:`WORKER_MEMORY`."""
+    return parallel.default_jobs(WORKER_MEMORY)
+
+
+def _supported(target, **kwargs) -> dict:
+    """Drop keyword arguments ``target`` does not accept."""
+    import inspect
+
+    accepted = set(inspect.signature(target).parameters)
+    return {name: value for name, value in kwargs.items() if name in accepted}
+
+
+_TRUTH_CACHE: dict = {}
+
+
+def truth_svg(pdf: Path, slide_index: int) -> str:
+    """PowerPoint's page ``slide_index`` converted by ``tools/pdf_svg.py`` (cached in the
+    oracle directory's ``svg/``, the PDF's own directory)."""
+    import pdf_svg
+
+    if not pdf_svg.available():
+        raise RuntimeError("the svg truth needs PyMuPDF (the fidelity extra): see docs/fidelity.md"
+                           ", or pass --truth pdfium")
+    key = (str(Path(pdf).resolve()), Path(pdf).stat().st_mtime_ns)
+    if key not in _TRUTH_CACHE:
+        _TRUTH_CACHE.clear()  # one deck at a time: run() walks them in order
+        _TRUTH_CACHE[key] = pdf_svg.page_svgs(Path(pdf), oracle=Path(pdf).parent)
+    return _TRUTH_CACHE[key][slide_index]
+
+
+def truth_image(pdf: Path, slide_index: int, truth: str = DEFAULT_TRUTH):
+    """PowerPoint's page ``slide_index`` as an RGB array :data:`WIDTH` px across.
+
+    ``svg``: converted by ``tools/pdf_svg.py`` (:func:`truth_svg`) and drawn by resvg on
+    the device grid, as ours is.  ``pdfium``: the PDF drawn by pdfium at the scale that
+    makes it :data:`WIDTH` wide."""
+    import numpy as np
+
+    if truth == "svg":
+        import pdf_svg
+
+        svg = truth_svg(pdf, slide_index)
+        return pdf_svg.rasterise(svg, pdf_svg.dpi_for_width(svg, WIDTH))
+    if truth != "pdfium":
+        raise ValueError(f"unknown truth {truth!r}: one of {TRUTHS}")
+    import pypdfium2 as pdfium
+
+    page = pdfium.PdfDocument(str(pdf))[slide_index]
+    return np.asarray(page.render(scale=WIDTH / page.get_size()[0]).to_pil().convert("RGB"))
+
+
+def our_svgs(deck: Path) -> list[str]:
+    """Every slide of ``deck`` as our SVG, :data:`WIDTH` px across, from one conversion of
+    the whole deck.  (The harness used to convert the whole deck once *per slide* and keep
+    one slide of each result; every slide's SVG is the same bytes either way.)"""
+    sys.path.insert(0, SOURCE_ROOT)
+    from pptx2svg import ConvertOptions, convert_pptx_to_svg
+
+    # --src can point this at an older checkout for a before/after table, and older
+    # checkouts do not have these keywords.  Filtering by signature keeps the comparison
+    # possible instead of making it a TypeError.
+    convert_kwargs = _supported(ConvertOptions, warn_on_font_substitution=False)
+    svgs = list(convert_pptx_to_svg(str(deck), ConvertOptions(width=WIDTH, **convert_kwargs)))
+    # What svg_to_png does to an SVG drawn with the host's faces, done here because the
+    # rasterisation below hands over the profile's faces itself (our_raster_options):
+    # an emoji no face of its run has is named in Apple Color Emoji, as PowerPoint draws it.
+    from pptx2svg.fonts import office
+
+    if hasattr(office, "with_emoji"):
+        svgs = [office.with_emoji(svg)[0] for svg in svgs]
+    return svgs
+
+
+def our_raster_options(deck: Path, profile: dict) -> dict:
+    """What our SVG is rasterised with: the profile's directories, the staged superfamily
+    faces, and nothing else (see :func:`render_pair`)."""
+    sys.path.insert(0, SOURCE_ROOT)
+    from pptx2svg.png import svg_to_png
+
+    return _supported(
+        svg_to_png,
+        font_dirs=profile["directories"],
+        # Superfamily members -- Aptos Display, Calibri Light -- are installed but not
+        # addressable by the name the deck spells.  See :func:`addressable_font_files`.
+        font_files=addressable_font_files(
+            profile, requested_faces(deck) + list(script_faces(deck).values())
+        ) + _emoji_files(),
+        skip_system_fonts=True,
+        use_bundled_fonts=False,
+        # The profile's faces are handed over above; Office's faces drawing by default
+        # (svg_to_png's host_fonts, on wherever Office is installed) would load the same
+        # files a second time, ahead of them.  The SVG is still measured as the default
+        # conversion measures it -- with them (our_svgs).
+        host_fonts=False,
+    )
+
+
+def _emoji_files() -> list[str]:
+    """Apple Color Emoji, read in place, where the checkout under test names it
+    (:func:`our_svgs`): last, so it shadows nothing."""
+    sys.path.insert(0, SOURCE_ROOT)
+    from pptx2svg.fonts import office
+
+    face = office.emoji_face() if hasattr(office, "emoji_face") else None
+    return [face.path] if face is not None else []
+
+
+def rasterise_ours(svg: str, options: dict):
+    """Our SVG drawn by resvg with ``options`` (:func:`our_raster_options`), as RGB."""
+    import numpy as np
+    from PIL import Image
+
+    sys.path.insert(0, SOURCE_ROOT)
+    from pptx2svg.png import svg_to_png
+
+    return np.asarray(Image.open(io.BytesIO(svg_to_png(svg, backend="resvg", **options))).convert("RGB"))
+
+
+def our_image(deck: Path, slide_index: int, profile: dict):
+    """Our PNG of slide ``slide_index``, :data:`WIDTH` px across, drawn with the profile's
+    faces (see :func:`render_pair`)."""
+    return rasterise_ours(our_svgs(deck)[slide_index], our_raster_options(deck, profile))
+
+
+# --------------------------------------------------------------------------------------
+# The raster cache's keys (tools/raster_cache.py)
+# --------------------------------------------------------------------------------------
+
+#: Bump when anything this file does to a raster changes in a way no other component of
+#: the key records.  Part of every cache key.
+HARNESS_VERSION = 1
+
+#: Slides a run re-draws to hold the raster cache to what drawing gives today, and to
+#: hold the cropped SSIM to the full page's (:func:`run`): spread through the corpus and
+#: rotated by date, so that every slide is re-drawn within ``ceil(slides /
+#: VERIFY_SAMPLE)`` days -- nine, at the 52 slides scored today.
+VERIFY_SAMPLE = 6
+
+#: Font files as resvg's font database loads them from a directory: recursively, by
+#: these extensions (it takes them in lower or upper case; every case is hashed here).
+_FONT_SUFFIXES = (".ttf", ".ttc", ".otf", ".otc")
+
+
+def raster_cache_root(oracle_dir: Path) -> Path:
+    """Where rasters are cached: beside the converted pages, outside any repository --
+    PowerPoint's rasters hold Microsoft's glyph shapes, and ours are drawn with its fonts."""
+    return Path(oracle_dir) / "svg" / "rasters"
+
+
+def font_digests(profile: dict, font_files) -> dict:
+    """The *content* digests of every font resvg is handed: each file under the profile's
+    directories that resvg would load, summarised as one digest, and each staged file.
+
+    Content, not path or date: an Office update can change a face in place."""
+    import raster_cache
+
+    found = []
+    for directory in profile["directories"]:
+        for root, _dirs, files in os.walk(directory, followlinks=True):
+            found += [os.path.join(root, name) for name in files if name.lower().endswith(_FONT_SUFFIXES)]
+    font_files = [str(path) for path in font_files]
+    digests = raster_cache.digest_files(found + font_files)
+    summary = hashlib.sha256()
+    for path in sorted(found):
+        summary.update(f"{path}\0{digests[path]}\n".encode())
+    return {"dirs": summary.hexdigest(), "dir_files": len(found),
+            "files": {path: digests[path] for path in font_files}}
+
+
+_VERSIONS: dict = {}
+
+
+def _rasteriser_versions() -> dict:
+    """resvg-py's version and the digest of its compiled module; Pillow's version (it
+    decodes resvg's PNG into the array that is cached)."""
+    if not _VERSIONS:
+        import importlib.metadata
+
+        import PIL
+        import raster_cache
+        import resvg_py
+
+        binaries = sorted(path for path in Path(resvg_py.__file__).parent.iterdir()
+                          if path.suffix in (".so", ".pyd", ".dylib"))
+        _VERSIONS.update(resvg=importlib.metadata.version("resvg-py"),
+                         resvg_binary=[raster_cache.digest_file(path) for path in binaries],
+                         pillow=PIL.__version__)
+    return dict(_VERSIONS)
+
+
+_SOURCE_DIGESTS: dict = {}
+
+
+def _source_digest(path) -> str:
+    import raster_cache
+
+    path = str(path)
+    if path not in _SOURCE_DIGESTS:
+        _SOURCE_DIGESTS[path] = raster_cache.digest_file(path)
+    return _SOURCE_DIGESTS[path]
+
+
+def our_components(svg: str, options: dict, fonts: dict) -> dict:
+    """Every input that decides our raster's pixels: the SVG's bytes, the fonts' contents
+    (:func:`font_digests`), the options, the code that turns them into resvg's call
+    (``pptx2svg/png.py``, and the pictures' colour conversion it runs first:
+    ``pptx2svg/iccimages.py`` with ``ooxml_common``'s ``icc.py`` and ``imagemeta.py``),
+    resvg and Pillow, the width and :data:`HARNESS_VERSION`."""
+    import raster_cache
+
+    sys.path.insert(0, SOURCE_ROOT)
+    import ooxml_common.icc
+    import ooxml_common.imagemeta
+    import ooxml_common.raster
+    import pptx2svg.iccimages
+    import pptx2svg.png
+
+    return {
+        "side": "ours", "harness": HARNESS_VERSION, "width": WIDTH,
+        "svg": raster_cache.digest_bytes(svg.encode("utf-8")),
+        "options": {name: value for name, value in sorted(options.items())
+                    if name not in ("font_dirs", "font_files")} | {"backend": "resvg"},
+        "font_dirs": list(options.get("font_dirs") or ()),
+        "font_dirs_content": fonts["dirs"],
+        "font_files": [[str(path), fonts["files"][str(path)]] for path in options.get("font_files") or ()],
+        "png_py": _source_digest(pptx2svg.png.__file__),
+        # The backends' call and the passes are ooxml-common's, from 0.33.0.
+        "raster_py": _source_digest(ooxml_common.raster.__file__),
+        "icc_py": [_source_digest(module.__file__) for module in
+                   (pptx2svg.iccimages, ooxml_common.icc, ooxml_common.imagemeta)],
+        **_rasteriser_versions(),
+    }
+
+
+_PDF_DIGESTS: dict = {}
+
+
+def truth_components(pdf: Path, slide_index: int, svg: str) -> dict:
+    """Every input that decides PowerPoint's raster under the ``svg`` truth: the PDF's
+    bytes, the converted page's bytes, the converter's version and source, PyMuPDF's
+    version, the resolution and options, resvg and Pillow, and :data:`HARNESS_VERSION`."""
+    import pdf_svg
+    import pymupdf
+    import raster_cache
+
+    if str(pdf) not in _PDF_DIGESTS:
+        _PDF_DIGESTS[str(pdf)] = raster_cache.digest_file(pdf)
+    return {
+        "side": "truth", "harness": HARNESS_VERSION, "width": WIDTH,
+        "pdf": _PDF_DIGESTS[str(pdf)], "page": slide_index,
+        "svg": raster_cache.digest_bytes(svg.encode("utf-8")),
+        "converter": pdf_svg.converter_version(),
+        "pdf_svg_py": _source_digest(pdf_svg.__file__),
+        "pymupdf": pymupdf.VersionBind,
+        "dpi": repr(pdf_svg.dpi_for_width(svg, WIDTH)),
+        "options": {"device_grid": True, "zoom": 1.0, "background": "white", "skip_system_fonts": True},
+        **_rasteriser_versions(),
+    }
+
+
+def _same_size(truth, ours, name: str):
+    """``truth`` at ``ours``' size.  The two are drawn at one scale, so they may differ
+    only by a row or column of rounding, which is cropped or padded with white; anything
+    more is refused rather than resampled -- a resampled truth scores the resampling."""
+    import numpy as np
+
+    rows, cols = ours.shape[:2]
+    if abs(truth.shape[0] - rows) > 1 or abs(truth.shape[1] - cols) > 1:
+        raise ValueError(f"{name}: PowerPoint's page is {truth.shape[1]} x {truth.shape[0]} px and ours "
+                         f"{cols} x {rows}; they should be drawn at one scale")
+    out = np.full_like(ours, 255)
+    r, c = min(rows, truth.shape[0]), min(cols, truth.shape[1])
+    out[:r, :c] = truth[:r, :c]
+    return out
+
+
+def render_pair(deck: Path, pdf: Path, slide_index: int, profile: dict, truth: str = DEFAULT_TRUTH):
+    """Our PNG and PowerPoint's, as equally sized RGB arrays.
+
+    Our side is rendered with the *licensed* faces from the profile and nothing else --
+    not the host's fonts, not the bundled substitutes.  That is the only configuration in
+    which a difference between the two images is attributable to this library: PowerPoint
+    drew with Microsoft's Calibri, so we draw with Microsoft's Calibri, and what is left
+    over is layout.  PowerPoint's side is rasterised as ``truth`` says (:data:`TRUTHS`).
+    """
+    ours = our_image(deck, slide_index, profile)
+    return ours, _matched(truth_image(pdf, slide_index, truth), ours, truth, f"{deck.stem} slide {slide_index + 1}")
+
+
+def _matched(reference, ours, truth: str, name: str):
+    """PowerPoint's raster at ours' size (:func:`_same_size`); under ``pdfium``, the old
+    instrument's own fallback -- a Lanczos resample -- kept so that its numbers stay its
+    numbers."""
+    if truth == "pdfium" and reference.shape != ours.shape:
+        import numpy as np
+        from PIL import Image
+
+        return np.asarray(Image.fromarray(reference).resize((ours.shape[1], ours.shape[0]), Image.LANCZOS))
+    return _same_size(reference, ours, name)
+
+
+def skip_reason(fonts: dict) -> str | None:
+    """Why this deck cannot be compared, or ``None`` if it can.
+
+    Each of these is a difference between the two renderers' *inputs*, not their output.
+    Scoring through one records a font difference as a rendering regression, which is the
+    failure this whole file was built to stop.
+    """
+    if fonts["missing"]:
+        # PowerPoint did not have these faces either, so its PDF is already drawn with
+        # substitutes of its own choosing.  Scoring would compare our fallback to
+        # Microsoft's.
+        return (
+            "PowerPoint substituted too: no "
+            + ", ".join(fonts["missing"])
+            + " on this machine"
+        )
+    if fonts["uncovered"]:
+        # No name to check, so the name-based rule above cannot see this one.
+        return (
+            "no named face can draw "
+            + fonts["uncovered"]
+            + "; both renderers invented a fallback"
+        )
+    if fonts["substituted"]:
+        drew = fonts.get("instead")
+        return (
+            "PowerPoint did not draw "
+            + ", ".join(fonts["substituted"])
+            + ", which nothing else here covers; it drew "
+            + (", ".join(drew) if drew else "something else")
+            + " instead"
+        )
+    return None
+
+
+def slide_count(deck: Path) -> int:
+    with zipfile.ZipFile(deck) as archive:
+        return sum(
+            1
+            for name in archive.namelist()
+            if re.fullmatch(r"ppt/slides/slide\d+\.xml", name)
+        )
+
+
+def _means(slides: list[dict]) -> dict:
+    """The deck's means over the slides whose truth is trusted: a slide whose converted
+    page failed validation (``"unvalidated"``) is scored and printed, never averaged."""
+    kept = [s for s in slides if "unvalidated" not in s]
+    if not kept:
+        return {"ssim": None, "histogram": None, "loss": None, "slides_scored": 0}
+    return {
+        "ssim": round(sum(s["ssim"] for s in kept) / len(kept), 4),
+        "histogram": round(sum(s["histogram"] for s in kept) / len(kept), 4),
+        "loss": round(sum(s["loss"] for s in kept), 1),
+        "slides_scored": len(kept),
+    }
+
+
+def truth_verdict(pdf: Path, slide_index: int, truth: str = DEFAULT_TRUTH) -> str | None:
+    """Why PowerPoint's page ``slide_index`` may not be trusted as ``truth``, or ``None``.
+
+    Under ``svg`` the converted page must have passed ``tools/pdf_svg.py``'s validation
+    (at 300 dpi and at the scoring resolution; computed once and cached beside the
+    conversion).  A page that fails is reported with the reason, not silently scored."""
+    if truth != "svg":
+        return None
+    import pdf_svg
+
+    verdict = pdf_svg.verdicts(Path(pdf), oracle=Path(pdf).parent, width=WIDTH).get(slide_index + 1)
+    if verdict is None:
+        return "no validation of this page"
+    return None if verdict["faithful"] else "converted page failed validation: " + verdict["why"]
+
+
+class CropMismatch(Exception):
+    """A slide whose SSIM cropped to the content is not the full page's, bit for bit."""
+
+
+#: How a run uses the raster cache (``--no-cache``, ``--verify-cache``): ``use`` reads and
+#: fills it, and re-draws :data:`VERIFY_SAMPLE` slides to hold it to what drawing gives;
+#: ``verify`` re-draws every slide and holds every cached raster so; ``read`` reads it and
+#: writes nothing (the tests); ``off`` neither reads nor writes it.
+CACHE_MODES = ("use", "verify", "read", "off")
+
+
+def _raster(kind: str, components_of, draw, verify: bool, checks: list, label: str):
+    """A raster from the worker's cache (:data:`_WORKER`), or drawn -- and, when
+    ``verify``, drawn *and* compared byte for byte with what the cache holds."""
+    cache, mode = _WORKER.get("cache"), _WORKER.get("cache_mode", "off")
+    if cache is None or mode == "off":
+        return draw()
+    components = components_of()
+    if verify:
+        fresh = draw()
+        status = cache.verify(kind, components, fresh, store=mode != "read", label=label)
+        checks.append({"slide": label, "kind": kind, "cache": status})
+        return fresh
+    cached = cache.get(kind, components)
+    if cached is not None:
+        checks.append({"slide": label, "kind": kind, "cache": "hit"})
+        return cached
+    fresh = draw()
+    if mode != "read":
+        cache.put(kind, components, fresh, label)
+    checks.append({"slide": label, "kind": kind, "cache": "drawn"})
+    return fresh
+
+
+def score_slide(deck: Path, pdf: Path, index: int, profile: dict, truths, svg: str | None = None,
+                recheck: bool = False, crop_check: bool = False, checks: list | None = None) -> dict:
+    """Slide ``index``'s row under each of ``truths``, ours rendered once: ``{truth: row}``.
+
+    ``svg`` is our SVG of the slide (:func:`our_svgs`; converted here when not given).
+    The spot-checks, each recorded in ``checks`` and raised on a mismatch: ``recheck``
+    re-draws the slide's rasters and holds them to the cache byte for byte
+    (:func:`_raster`); ``crop_check`` computes its SSIM cropped and over the full page and
+    holds the two rows equal, bit for bit (:func:`content_box`)."""
+    checks = [] if checks is None else checks
+    label = f"{deck.stem} slide {index + 1}"
+    if svg is None:
+        svg = our_svgs(deck)[index]
+    options = our_raster_options(deck, profile)
+    ours = _raster("ours", lambda: our_components(svg, options, _WORKER["fonts"]),
+                   lambda: rasterise_ours(svg, options), recheck, checks, label)
+    rows = {}
+    for truth in truths:
+        if truth == "svg":
+            import pdf_svg
+
+            page = truth_svg(pdf, index)
+            reference = _raster("truth", lambda: truth_components(pdf, index, page),
+                                lambda: pdf_svg.rasterise(page, pdf_svg.dpi_for_width(page, WIDTH)),
+                                recheck, checks, label)
+        else:
+            reference = truth_image(pdf, index, truth)
+        reference = _matched(reference, ours, truth, label)
+        row = score(ours, reference)
+        if crop_check:
+            full = score(ours, reference, crop=False)
+            if full != row:
+                raise CropMismatch(f"{label} ({truth} truth): cropped {row} but full page {full}")
+            checks.append({"slide": label, "kind": f"crop-{truth}", "crop": "equal"})
+        why = truth_verdict(pdf, index, truth)
+        if why:
+            row["unvalidated"] = why
+        rows[truth] = row
+    return rows
+
+
+#: A worker's copy of what every task shares, set once by :func:`_init_worker` rather than
+#: pickled into each task: the profile runs to a quarter of a megabyte.
+_WORKER: dict = {}
+
+
+def _init_worker(source_root: str, profile: dict, cache_root: str | None = None, cache_mode: str = "off",
+                 fonts: dict | None = None) -> None:
+    global SOURCE_ROOT
+    SOURCE_ROOT = source_root  # --src, which a fresh interpreter has not parsed
+    _WORKER["profile"] = profile
+    _WORKER["cache_mode"] = cache_mode
+    _WORKER["fonts"] = fonts
+    if cache_root is not None and cache_mode != "off":
+        import raster_cache
+
+        _WORKER["cache"] = raster_cache.RasterCache(Path(cache_root), ROOT)
+    else:
+        _WORKER.pop("cache", None)
+
+
+def _convert_task(deck: Path) -> list[str]:
+    return our_svgs(deck)
+
+
+def _score_task(task) -> dict:
+    """One slide, as a pool task: its rows, and what its checks found.  A mismatch is
+    returned rather than raised, so that :func:`run` can name every one of them."""
+    import raster_cache
+
+    deck, pdf, index, truths, svg, recheck, crop_check = task
+    checks: list = []
+    try:
+        rows = score_slide(deck, pdf, index, _WORKER["profile"], truths, svg, recheck, crop_check, checks)
+    except raster_cache.CacheMismatch as mismatch:
+        return {"rows": None, "checks": checks, "cache_mismatch": f"{deck.stem} slide {index + 1}: {mismatch}"}
+    except CropMismatch as mismatch:
+        return {"rows": None, "checks": checks, "crop_mismatch": str(mismatch)}
+    return {"rows": rows, "checks": checks}
+
+
+def _prepare_truths(pdfs: list[Path], jobs: int) -> None:
+    """Convert and validate, across the pool, every page of ``pdfs`` whose verdicts are
+    not cached yet, so that scoring only reads them.
+
+    Serially this happens lazily, a PDF at a time, the first time a slide of it is scored
+    (:func:`truth_verdict`).  In parallel that would have every worker holding a slide of
+    one deck validate the whole deck at once -- the same half a minute a page, done by
+    each of them -- so it is done here first, a page per task, and recorded exactly as
+    the lazy path records it (:func:`pdf_svg.record_verdicts`)."""
+    import pdf_svg
+
+    pending = [pdf for pdf in pdfs
+               if not (pdf_svg.cache_dir(pdf, pdf.parent) / f"validation-{WIDTH}.json").exists()]
+    if not pending:
+        return
+    pool_map(pdf_svg.convert_task, [(pdf, pdf.parent) for pdf in pending], jobs)
+    # Exactly what verdicts() validates: every page, at pdf_svg.DPI and at WIDTH px across.
+    tasks = [(pdf, page, 0, True, pdf.parent, (pdf_svg.DPI,), WIDTH)
+             for pdf in pending for page in range(len(pdf_svg.convert(pdf, oracle=pdf.parent)))]
+    by_pdf: dict[Path, list] = {pdf: [] for pdf in pending}
+    for task, rows in zip(tasks, pool_map(pdf_svg.validate_page, tasks, jobs)):
+        by_pdf[task[0]].extend(rows)  # page order, as validate() returns them
+    for pdf, rows in by_pdf.items():
+        pdf_svg.record_verdicts(pdf, rows, pdf.parent, WIDTH)
+
+
+def run(oracle_dir: Path, profile: dict, truths=(DEFAULT_TRUTH,), jobs: int = 1, cache_mode: str = "use",
+        stats: dict | None = None, day: int | None = None, crop_all: bool = False) -> dict:
+    """Score every deck in ``oracle_dir`` that has a matching exported PDF, against each
+    of ``truths`` (:data:`TRUTHS`), rendering ours once: ``{truth: {deck: entry}}``.
+
+    A deck whose faces the profile cannot supply is recorded as ``skipped`` rather than
+    scored.  Comparing it anyway would mean our render used substitute outlines while
+    PowerPoint used Microsoft's, and every glyph would differ for a reason that has
+    nothing to do with the renderer.
+
+    ``jobs`` processes convert the decks, a deck per task, then score the slides, a slide
+    per task (:func:`pool_map`); the results, and their order, are the serial run's bit
+    for bit.  Deciding what to skip stays in this process: it is cheap, and it is what
+    every task depends on.
+
+    Rasters come from the cache under ``oracle_dir`` as ``cache_mode`` says
+    (:data:`CACHE_MODES`, ``tools/raster_cache.py``).  Every run spot-checks
+    :data:`VERIFY_SAMPLE` slides, chosen by :func:`raster_cache.rotating_sample` for
+    ``day`` (today): each is re-drawn and held to the cache byte for byte, and scored
+    cropped and full-page and held equal.  ``verify`` re-draws every slide, and
+    ``crop_all`` holds every slide's crop.  **Any cache
+    mismatch discards the whole cache and raises** :class:`raster_cache.CacheMismatch`;
+    a crop mismatch raises :class:`CropMismatch`.  Neither is a warning: nothing is scored.
+    ``stats``, when given, receives what the checks found."""
+    import threading
+
+    import raster_cache
+
+    if cache_mode not in CACHE_MODES:
+        raise ValueError(f"unknown cache mode {cache_mode!r}: one of {CACHE_MODES}")
+    decks = []
+    for deck in sorted(oracle_dir.glob("*.pptx")):
+        pdf = deck.with_suffix(".pdf")
+        if not pdf.exists():
+            continue
+        fonts = font_profile(deck, profile, pdf)
+        decks.append((deck, pdf, fonts, skip_reason(fonts)))
+
+    scored = [(deck, pdf) for deck, pdf, _fonts, reason in decks if not reason]
+    if jobs > 1 and "svg" in truths:
+        _prepare_truths([pdf for _deck, pdf in scored], jobs)
+    # Staged once here, not raced for by every worker (addressable_font_files).
+    staged = sorted({path for deck, _pdf in scored
+                     for path in addressable_font_files(profile, requested_faces(deck)
+                                                        + list(script_faces(deck).values()))}
+                    | set(_emoji_files()))
+    cache = None
+    digests: dict = {}
+    hashing = None
+    if cache_mode != "off":
+        cache = raster_cache.RasterCache(raster_cache_root(oracle_dir), ROOT)
+        # Hundreds of megabytes of fonts, read while the decks convert.
+        hashing = threading.Thread(target=lambda: digests.update(font_digests(profile, staged)))
+        hashing.start()
+    try:
+        svgs = pool_map(_convert_task, [deck for deck, _pdf in scored], jobs, _init_worker, (SOURCE_ROOT, profile))
+    finally:
+        if hashing is not None:
+            hashing.join()
+
+    tasks = [(deck, pdf, index, tuple(truths), deck_svgs[index])
+             for (deck, pdf), deck_svgs in zip(scored, svgs) for index in range(len(deck_svgs))]
+    for (deck, _pdf), deck_svgs in zip(scored, svgs):
+        if len(deck_svgs) != slide_count(deck):
+            raise RuntimeError(f"{deck.name}: {len(deck_svgs)} slides converted, {slide_count(deck)} in the package")
+    everything = set(range(len(tasks)))
+    sampled = set(raster_cache.rotating_sample(list(range(len(tasks))), VERIFY_SAMPLE, day))
+    recheck = everything if cache_mode == "verify" else sampled
+    cropped = everything if crop_all or cache_mode == "verify" else sampled
+    outcomes = pool_map(_score_task, [task + (number in recheck, number in cropped)
+                                      for number, task in enumerate(tasks)], jobs,
+                        _init_worker, (SOURCE_ROOT, profile, str(cache.root) if cache else None, cache_mode,
+                                       digests or None))
+
+    checks = [check for outcome in outcomes for check in outcome["checks"]]
+    if stats is not None:
+        stats.update(slides=len(tasks), sampled=[f"{t[0].stem} slide {t[2] + 1}" for n, t in enumerate(tasks)
+                                                 if n in recheck | cropped],
+                     checks=checks, font_files=digests.get("dir_files", 0) + len(staged))
+    cache_mismatches = [outcome["cache_mismatch"] for outcome in outcomes if "cache_mismatch" in outcome]
+    if cache_mismatches:
+        cache.discard()
+        raise raster_cache.CacheMismatch(
+            f"the raster cache under {cache.root} does not hold what drawing gives today:\n  "
+            + "\n  ".join(cache_mismatches)
+            + "\nSome input that moves pixels is missing from the cache key (tools/fidelity.py, "
+            "our_components / truth_components), or the cache was corrupted.  The whole cache has been "
+            "discarded and nothing was scored.  Find the input before trusting a cached run again; "
+            "--verify-cache re-draws every slide and compares.")
+    crop_mismatches = [outcome["crop_mismatch"] for outcome in outcomes if "crop_mismatch" in outcome]
+    if crop_mismatches:
+        raise CropMismatch("SSIM cropped to the content is not the full page's:\n  " + "\n  ".join(crop_mismatches)
+                           + "\nNothing was scored.  content_box() must never cut a pixel the score depends on.")
+
+    rows = iter(outcome["rows"] for outcome in outcomes)
+    results: dict[str, dict] = {truth: {} for truth in truths}
+    for deck, pdf, fonts, reason in decks:
+        entries = {truth: {"fonts": fonts, "slides": []} for truth in truths}
+        if reason:
+            for truth in truths:
+                entries[truth]["skipped"] = reason
+                results[truth][deck.stem] = entries[truth]
+            continue
+        for _index in range(slide_count(deck)):
+            row = next(rows)
+            for truth in truths:
+                entries[truth]["slides"].append(row[truth])
+        for truth in truths:
+            entries[truth].update(_means(entries[truth]["slides"]))
+            results[truth][deck.stem] = entries[truth]
+    return results
+
+
+def baseline_for(baselines: dict | None, name: str, truth: str) -> dict | None:
+    """The recorded entry of deck ``name`` under ``truth``: the top-level entry is the
+    default truth's (``"truth"`` says which), and ``"pdfium"`` inside it the old
+    instrument's.  ``None`` where nothing comparable was recorded."""
+    if not baselines or name not in baselines:
+        return None
+    entry = baselines[name]
+    if entry.get("truth", "pdfium") == truth:
+        return entry
+    other = entry.get(truth)
+    if other is None:
+        return None
+    return {**other, "fonts": entry["fonts"]}
+
+
+class KeptBaselineMismatch(Exception):
+    """A recorded ``pdfium`` entry that a run without pdfium cannot keep honestly."""
+
+
+def baselines_payload(results: dict, previous: dict | None = None) -> dict:
+    """What ``--update`` writes: per deck, the default truth's entry, stamped with the
+    truth and the converter's version, holding the ``pdfium`` truth's slides and means
+    beside it.
+
+    **The pdfium entries are recorded only when pdfium was scored** (``--truth both``).
+    A run without it -- the default -- carries every deck's recorded ``pdfium`` entry
+    from ``previous`` over *as it is*: never deleted, never changed.  It refuses
+    (:class:`KeptBaselineMismatch`) where keeping one would misdescribe it: the deck's
+    font profile changed (the entry shares the deck's ``fonts``), its slide count
+    changed, it is now skipped, or it is gone from the oracle.  Re-record those with
+    ``--truth both``."""
+    import pdf_svg
+
+    out = {}
+    for name, entry in results[DEFAULT_TRUTH].items():
+        record = dict(entry, truth=DEFAULT_TRUTH, converter=pdf_svg.converter_version())
+        if "pdfium" in results:
+            if not entry.get("skipped"):
+                old = results["pdfium"][name]
+                record["pdfium"] = {k: old[k] for k in ("slides", "ssim", "histogram", "loss")}
+        else:
+            prior = (previous or {}).get(name) or {}
+            kept = prior.get("pdfium")
+            if kept is not None:
+                why = ("it is skipped now" if entry.get("skipped")
+                       else "its font profile changed" if prior["fonts"]["hash"] != entry["fonts"]["hash"]
+                       else "its slide count changed" if len(kept["slides"]) != len(entry["slides"]) else None)
+                if why:
+                    raise KeptBaselineMismatch(
+                        f"{name}: its recorded pdfium baseline cannot be kept as it is, because {why}.  "
+                        "Re-record both truths: --update --truth both")
+                record["pdfium"] = kept
+        out[name] = record
+    if "pdfium" not in results:
+        gone = sorted(name for name, entry in (previous or {}).items() if "pdfium" in entry and name not in out)
+        if gone:
+            raise KeptBaselineMismatch(
+                f"{', '.join(gone)}: recorded with a pdfium baseline but not in this run; a run without pdfium "
+                "does not delete one.  Re-record both truths: --update --truth both")
+    return out
+
+
+def report(results: dict, baselines: dict | None = None, truth: str = DEFAULT_TRUTH,
+           slides: bool = False) -> int:
+    """Print a table of ``results`` (one truth's) and return the number of failures."""
+    failures = 0
+    print(f"[truth: {truth}]")
+    print(f"{'deck':26} {'SSIM':>7} {'hist':>7} {'>10%':>7} {'fonts':>7}  verdict")
+    for name, entry in results.items():
+        fonts = entry["fonts"]
+        supply = f"{len(fonts['available'])}/{len(fonts['available']) + len(fonts['missing'])}"
+        if entry.get("skipped"):
+            print(f"{name:26} {'-':>7} {'-':>7} {'-':>7} {supply:>7}  SKIPPED: {entry['skipped']}")
+            continue
+        kept = [s for s in entry["slides"] if "unvalidated" not in s] or entry["slides"]
+        over10 = sum(s["over10"] for s in kept) / len(kept)
+        notes = []
+        if entry["ssim"] < MIN_SSIM:
+            notes.append(f"SSIM<{MIN_SSIM}")
+        if entry["histogram"] < MIN_HISTOGRAM:
+            notes.append(f"hist<{MIN_HISTOGRAM}")
+        previous = baseline_for(baselines, name, truth)
+        if baselines and name in baselines and previous is None:
+            notes.append(f"no baseline under the {truth} truth; nothing to compare")
+        if previous is not None:
+            if previous.get("skipped"):
+                notes.append("baseline was skipped; nothing to compare")
+            elif previous["fonts"]["hash"] != fonts["hash"]:
+                # Different faces on the two runs.  The scores are both valid and they
+                # are not comparable; saying so is the whole reason the hash is stored.
+                notes.append("font profile changed; baseline not comparable")
+            elif entry["ssim"] < previous["ssim"] - MAX_SSIM_DROP:
+                notes.append(f"REGRESSED from {previous['ssim']}")
+                failures += 1
+        if any(note.startswith(("SSIM", "hist")) for note in notes):
+            failures += 1
+        verdict = "; ".join(notes) if notes else "ok"
+        print(
+            f"{name:26} {entry['ssim']:7.4f} {entry['histogram']:7.4f} "
+            f"{over10:7.2f} {supply:>7}  {verdict}"
+        )
+        if slides:
+            for index, slide in enumerate(entry["slides"]):
+                print(f"{'':4}slide {index + 1:>2}: SSIM {slide['ssim']:.4f}  hist {slide['histogram']:.4f}  "
+                      f"loss {slide['loss']:>8}  mean |diff| {slide['mean_abs']:>6}  >10% {slide['over10']:>6}"
+                      + ("  (sparse)" if slide["sparse"] else "")
+                      + (f"  NOT AVERAGED: {slide['unvalidated']}" if "unvalidated" in slide else ""))
+        else:
+            for index, slide in enumerate(entry["slides"]):
+                if "unvalidated" in slide:
+                    print(f"{'':4}slide {index + 1} not averaged: {slide['unvalidated']}")
+
+    return failures
+
+
+def _truths(choice: str) -> tuple[str, ...]:
+    """``--truth``: one instrument, or ``both`` (the default truth first)."""
+    return TRUTHS if choice == "both" else (choice,)
+
+
+def _describe_checks(stats: dict, cache_mode: str, root: Path) -> str:
+    """One line on what the run's spot-checks found, for stderr."""
+    import raster_cache
+
+    checks = stats.get("checks", [])
+    count = {}
+    for check in checks:
+        if "cache" in check:
+            count[check["cache"]] = count.get(check["cache"], 0) + 1
+    crops = sum(1 for check in checks if "crop" in check)
+    entries, size = raster_cache.RasterCache(root, ROOT).size() if cache_mode != "off" else (0, 0)
+    parts = [f"{len(stats.get('sampled', []))} of {stats.get('slides', 0)} slides spot-checked"
+             + (" (" + ", ".join(stats["sampled"]) + ")" if cache_mode != "verify" else ""),
+             f"rasters re-drawn and identical to the cache: {count.get('match', 0)}",
+             f"crop equal to full page: {crops}"]
+    if cache_mode != "off":
+        parts.append(f"cache: {count.get('hit', 0)} hits, {count.get('drawn', 0) + count.get('stored', 0)} drawn; "
+                     f"{entries} rasters, {size / 1e6:.1f} MB in {root}")
+    else:
+        parts.append("cache: off")
+    return "; ".join(parts)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--oracle",
+        default="~/pptx2svg-oracle",
+        help="directory of deck.pptx / deck.pdf pairs exported through PowerPoint",
+    )
+    parser.add_argument("--update", action="store_true",
+                        help="rewrite the stored baselines of the truths scored: by default svg only, and every "
+                        "recorded pdfium entry is kept exactly as it is; --truth both re-records those too")
+    parser.add_argument(
+        "--write-profile",
+        action="store_true",
+        help="record this machine's licensed fonts into tests/font-profile.local.json",
+    )
+    parser.add_argument(
+        "--truth",
+        choices=TRUTHS + ("both",),
+        default=DEFAULT_TRUTH,
+        help="how PowerPoint's page is rasterised (default svg: converted by tools/pdf_svg.py, "
+        "then resvg like ours; pdfium: the old instrument, scored only when asked for; both)",
+    )
+    parser.add_argument("--slides", action="store_true", help="also print every slide's score")
+    parser.add_argument("--json", action="store_true", help="dump raw scores instead of a table")
+    parser.add_argument("--src", help="import pptx2svg from this tree instead of ./src")
+    parser.add_argument("--jobs", "-j", type=int, default=default_jobs(),
+                        help="processes to score slides in (default: every logical core, %(default)s here, "
+                        "fewer if memory is short); 1 is the serial path.  Scores are identical either way")
+    caching = parser.add_mutually_exclusive_group()
+    caching.add_argument("--no-cache", action="store_true",
+                         help="draw every raster; neither read nor write the raster cache")
+    caching.add_argument("--verify-cache", action="store_true",
+                         help="re-draw every raster and compare it with the cache byte for byte (and every "
+                         "slide's cropped SSIM with the full page's); any difference discards the cache and fails")
+    args = parser.parse_args()
+    if args.jobs < 1:
+        parser.error("--jobs must be at least 1")
+    truths = _truths(args.truth)
+    if args.update and "svg" not in truths:
+        parser.error("--update --truth pdfium: the pdfium entries sit inside the svg entries and share their "
+                     "fonts; re-record them with --update --truth both")
+
+    if args.write_profile:
+        profile = write_profile()
+        print(
+            f"wrote {PROFILE_PATH.relative_to(ROOT)}: "
+            f"{len(profile['faces'])} families across {len(profile['directories'])} "
+            "directories"
+        )
+        for face in ("Calibri", "Calibri Light", "Cambria", "Aptos", "Arial",
+                     "Times New Roman", "Courier New"):
+            mark = "yes" if face in profile["faces"] else "NO"
+            print(f"  {face:18} {mark}")
+        return 0
+
+    if args.src:
+        global SOURCE_ROOT
+        SOURCE_ROOT = os.path.abspath(os.path.expanduser(args.src))
+
+    try:
+        profile = load_profile()
+    except StaleProfile as stale:
+        print(stale, file=sys.stderr)
+        return 2
+    if profile is None:
+        print(
+            f"no font profile at {PROFILE_PATH}.\n"
+            "The corpus is scored against PowerPoint's own export, which draws with "
+            "Microsoft's fonts;\nrendering our side with anything else measures font "
+            "availability rather than this library.\n"
+            "On a machine with Office installed, run:\n"
+            "    python3 tools/fidelity.py --write-profile",
+            file=sys.stderr,
+        )
+        return 2
+
+    oracle_dir = Path(os.path.expanduser(args.oracle))
+    if not oracle_dir.is_dir():
+        print(f"no such directory: {oracle_dir}", file=sys.stderr)
+        return 2
+
+    if "svg" in truths:
+        import pdf_svg
+
+        if not pdf_svg.available():
+            print(
+                "the svg truth needs PyMuPDF, which is not installed in this interpreter.\n"
+                "Install the fidelity extra into the project's .venv (docs/fidelity.md)"
+                ",\nor score with the old instrument: --truth pdfium",
+                file=sys.stderr,
+            )
+            return 2
+    import raster_cache
+
+    cache_mode = "off" if args.no_cache else "verify" if args.verify_cache else "use"
+    stats: dict = {}
+    try:
+        results = run(oracle_dir, profile, truths, args.jobs, cache_mode, stats)
+    except (raster_cache.CacheMismatch, CropMismatch) as mismatch:
+        print(f"FIDELITY RUN ABORTED: {mismatch}", file=sys.stderr)
+        return 3
+    print(_describe_checks(stats, cache_mode, raster_cache_root(oracle_dir)), file=sys.stderr)
+    if not results[truths[0]]:
+        print(f"no deck.pptx/deck.pdf pairs in {oracle_dir}", file=sys.stderr)
+        return 2
+
+    if args.json:
+        print(json.dumps(results if len(truths) > 1 else results[truths[0]], indent=2, sort_keys=True))
+        return 0
+
+    baselines = None
+    if BASELINE_PATH.exists():
+        baselines = json.loads(BASELINE_PATH.read_text(encoding="utf-8"))
+    failures = 0
+    for truth in truths:
+        failures += report(results[truth], None if args.update else baselines, truth, args.slides)
+
+    if args.update:
+        try:
+            payload = baselines_payload(results, baselines)
+        except KeptBaselineMismatch as refused:
+            print(f"\nnot written: {refused}", file=sys.stderr)
+            return 2
+        BASELINE_PATH.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        kept = "" if "pdfium" in truths else "; every pdfium entry kept as recorded (--truth both re-records them)"
+        print(f"\nwrote {BASELINE_PATH.relative_to(ROOT)}{kept}")
+        return 0
+    return 1 if failures else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

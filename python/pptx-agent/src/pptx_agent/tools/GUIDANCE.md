@@ -1,0 +1,259 @@
+# Guidance for the application's thinking layer (decks)
+
+`pptx_agent.tools` gives a model the means to edit a deck and the facts about the result.
+It ships no judgement: no house style, no palette rules, no density limits. What a good slide
+is for *your* users is the application's to say, in its own prompt and in its own review
+pass. This page is for the developer of that layer: how to use the facts the tools return,
+how to run a review pass, which model to route to, and where house rules go. The numbers
+come from trial 3 (Sonnet 5.5, 46 runs), its fix round and the Haiku 5.5 trial (46 runs);
+the tool roadmap in `ooxml-edit` (`docs/TOOLS-ROADMAP.md`) has the detail.
+
+## The facts the tools return
+
+Every changing call returns `checks` for the slides it touched. All of them are facts about
+the deck as PowerPoint will show it, with shape addresses:
+
+| Fact | Where | What it says |
+|---|---|---|
+| `overflows` | every changing call, `check` | text that does not fit its box: `needed`, `available`, `overflow` in points |
+| `within_allowance` | every changing call | over by less than the empty bottom of the last line: not an overflow (`allowance_note` says why) |
+| `near_wrap` | every changing call | a line with under 0.16 pt to spare: PowerPoint may break it where the measurement does not |
+| `collisions` | every changing call, `check` | text over text, a line through text (`crossing`, pt), boxes overlapping (`check` with `boxes: true`) |
+| `off_slide` | every changing call, `check` | a shape past the slide's edge, by how much; for a table whose rows grew past the bottom, `rows_past` (first and last, 1-based) and `rows_fit` -- where to split it (`rows_note`) |
+| `layout` | changing calls that touched shapes | at most five: a box 1-3 pt off the line its like neighbours are on; one uneven gap in a row of like boxes; a paragraph size unlike its like boxes'; a label much farther from its marker than the others of its kind. Each carries `fix`, the exact call that makes it agree (`ppt_set_shape 256.6 y=150`) |
+| `empty_placeholders` | every changing call, `check` (with `fit`, the default) | placeholders that hold nothing (`shape`, `type`, `idx`). Measured in PowerPoint: an empty one (no text, or one empty paragraph) shows "Click to add text" (or "...title", a content placeholder's icons) while editing and no prompt in a show or export; a whitespace-only one shows no prompt but a stray bullet, exported too; several empty paragraphs show nothing. A placeholder holding a picture, table, chart or SmartArt is not empty; titles and subtitles count; date, footer and slide number do not. Fill them, or delete them with `ppt_manage_slides` `delete_empty_placeholders`, which keeps an empty title (fill it: a title names the slide in navigation and to a screen reader) and one with a fill or outline (PowerPoint draws that box in the export too) |
+| `spacing` | `check` with `spacing` (pt, e.g. `8`) | the tightest spacings below that many pt, nearest first, at most 12 a slide (`spacing_left_out` counts the rest): `between` two neighbours facing on an `axis` (each shape's nearest, in the same container), `inside` a filled or outlined shape (the content's `padding` to an `edge`, `also` others as near it), `clearance` to a `footer`, `slide_number` or `date`, or `content_area` (past the layout's, `gap` negative). Text as drawn, not its box; overlaps are `collisions`; full-slide backgrounds, lines and connectors are left out |
+| `contrast` | `check` with `contrast` (a ratio, e.g. `4.5`) | text drawn below that WCAG 2 contrast ratio with what is behind it, lowest first, at most 12 a slide (`contrast_left_out`): `shape`, `text`, `color` (as drawn), `behind`, `ratio`, `source` (where the colour comes from: `run`, `defaultTextStyle lvl1`, `style fontRef`...), `over` (`fill`, the shape beneath, `background`), `large` (18 pt, or 14 pt bold: held to 2/3 of the ratio). A picture, table or chart behind: `behind: "unknown"`, no ratio |
+| `numbers` | `check` with `include: ["numbers"]` (opt in; `slides` narrow it) | per shape or typed table cell (`at`, `slide`): `unverified`, decimals and percentages that no value of the session's datasets or open workbooks' tables matches within the rounding the text shows (`2,7` matches 2.66), each with the two nearest values (`value`, `from`, `sources`); `typed`, numbers a value matches that were typed, with `from` and, when it writes the same number, the `fix` -- a `replace_text` call writing it by reference (`fix_hint`: several in one `batch`). Unverified is not wrong: say what the data hold. Left aside and counted (`left_aside`): dates, times, years, list numbers, ids, whole numbers (the application's setting), the application's ignore list; text written by reference, tables and charts placed with `from`, charts, SmartArt and footers are not read. At most 20 texts, 5 numbers a list (`texts_left_out`, `more`) |
+| `layout.empty_paragraphs` | `check` with `include: ["layout"]` | per text box or table cell (`at`), the empty paragraphs (no text but spaces, no break or field) between two paragraphs of text: blank lines used for spacing (`paragraphs`, 0-based as `/p1` counts). Leading and trailing ones are not listed. `fix` is the `ppt_set_text` call that writes the text back without them; the other paragraphs keep their formatting |
+| `validate` | every changing call, `check` | validation problems the call added (`new`) or removed (`fixed`) against the deck as opened |
+| `missing_glyphs` | `render` | text the image leaves out because the renderer has no font for it (`face`, `script`, `sample`); the deck is unchanged and PowerPoint draws it (`missing_glyphs_note`): install `pptx2svg-fonts` where the tools run |
+| `unresolved` | `save_document` | the overflows, collisions, off-slide shapes and empty placeholders still in the deck when it was saved (the save goes ahead) |
+| copies follow a revised sample | `ppt_follow_sample` | the sample's design on every copy (found by what duplicated slides keep, or listed): boxes, shapes added or removed, fills, outlines, tables, text formatting; each copy's text, values and pictures kept; per copy what changed, what could not follow and why, new overflows; preview; one undo step |
+| like slides compared | `ppt_compare_slides` | per corresponding shape on a run of slides: name, box, text size, colour, font, text layout (alignment, line spacing, space before and after, bullets, anchor, insets, autofit, direction; as drawn, inherited values resolved), fill, outline and tables against the majority or a `reference` slide (a sample, another open deck's too); near-misses and every layout difference with a fix, larger differences, shapes missing or only on some (a shape renamed on one slide is matched by kind and place, its name listed as a difference) |
+| design facts | `ppt_design_facts`, `check` with `design` | palette and theme roles, sets of like shapes with their colours and whether a legend covers them, the largest empty regions, alignment lines and near-misses, shape vocabulary, text sizes, lines over text |
+| problem facts | `check` with `facts` | colours that are not theme colours; wrap margins of titles and text boxes |
+
+How to use them:
+
+- **Fit and collisions are what the deck is; a render is not.** A model told to read `checks`
+  after every change resolves most overflows itself. Trial 3's one structural miss on save
+  (a line crossing bar text) was listed in the call's result and in `check`, and the model
+  saved anyway; Haiku 5.5 did the same twice and then reported "no collisions". So check
+  `save_document`'s `unresolved` in the application, not only in the model's prompt (see
+  "Gates" below).
+- **Layout facts are measured against the slide's own shapes.** They say that a box is 2 pt
+  off a line three like boxes are on, not that it should be on it. Most of the time it should;
+  sometimes the offset is the point (an indented sub-item). Tell the model to apply the `fix`
+  unless the difference is intended, and say so in its reply. On 85 trial decks the facts
+  fired three times in all (two labels far from their bubbles, one header 1 pt larger than its
+  like boxes'), and never on the fixture decks with every shape touched: they are rare by
+  design, so when one appears it is worth a look.
+- **Spacing is measured, so cite the number.** A reviewer reading a slide and a render
+  passed a heading 4 pt under its panel and chips 3 pt under their card's text, told "a gap
+  under 6 pt fails, cite the gap". `check` with `spacing: 8` lists those gaps in points;
+  put your threshold in the house rules and tell the model to quote the entry
+  (`{"between": ["257.6", "257.34"], "axis": "y", "gap": 4.0}`) when it passes or fails one.
+  Whether a tight gap is intended (a caption under its picture) is the model's call.
+- **Contrast is measured, so cite the ratio.** White text from a template's default text
+  style on a white slide is invisible and reads fine in the XML; `check` with
+  `contrast: 4.5` lists it (`"color": "#FFFFFF", "behind": "#FFFFFF", "ratio": 1.0,
+  "source": "defaultTextStyle lvl1"`), and the source says where to fix it -- the run, or
+  the template. Over a picture the ratio is unknown: look at the render.
+- **Design facts are inputs to your rules.** `ppt_design_facts` reports that a set of four
+  like boxes uses four accent hues and that no legend covers them; whether that is a
+  "rainbow" to fix is your house rule. Ask for it on slides with a graphic, before saving.
+  Sonnet 5.5 called it in 13 of 16 graphics runs when the house rules asked; Haiku 5.5 in 6
+  of 16.
+
+## A review pass
+
+A review pass is the application looking at the result before it accepts it. It runs
+outside the model's tool loop: the application calls the tools itself, through
+`toolbox.dispatch`, and decides what to do with what it finds.
+
+```python
+def review(toolbox, session, doc, numbers, house_rules, model_call):
+    """Facts and renders for the slides the task changed (numbers from 1), judged by the
+    application's own rules in its own model call."""
+    facts = toolbox.dispatch(session, "check", {"doc": doc, "slides": numbers,
+                                                "include": ["fit", "collisions", "validate", "facts"]})
+    deck = toolbox.dispatch(session, "describe", {"doc": doc}).data
+    ids = [deck["slides"][n - 1]["id"] for n in numbers]
+    design = [toolbox.dispatch(session, "ppt_design_facts", {"doc": doc, "slide": sid}).data
+              for sid in ids]
+    images = toolbox.dispatch(session, "render", {"doc": doc, "slides": numbers[:4]}).images
+    return model_call(images=images, facts={"check": facts.data, "design": design},
+                      rules=house_rules)
+```
+
+- **Run it as a step of the application, not a choice of the model.** In a production
+  user's live runs on Azure OpenAI (Oct 2026, both libraries, 8 runs), gpt6-luna looked at
+  the render in every run; gpt6.1-sol skipped "look at the render" in all four of its runs.
+  A prompt that asks for a review is not a review pass: the application calls `render` and
+  `check` itself after the edit loop (or requires a review turn before `save_document`), and
+  treats facts still unresolved as blocking or reports them (see "Gates" below).
+- **When:** after the model reports it is done, and before the application hands the file
+  on. One pass, and at most one more after the model has fixed what it found: in the trials
+  a second render rarely changed anything a first one had not.
+- **What to send the reviewer:** the renders (`render`, 1280 px: about 1,200 tokens a slide on
+  Claude), the `check` facts and the design facts as JSON, the task's brief, and your house
+  rules. Ask for findings with shape addresses, each tied to a fact or a rule, not general
+  impressions. The reviewer can be the same model or a cheaper one; give it no tools.
+  For a whole deck, `render` with `sheet` gives up to 30 slides as one labelled image
+  (4 columns of 360 px: about 1,800 tokens for 16 slides on Claude) to find the slides worth
+  a full render.
+- **What to do with findings:** send them back to the editing model as one user turn ("The
+  review found: ... Fix these, or say why a finding does not apply.") and let it work through
+  the tools again.
+- **An agent with tools reads in one call.** `read_batch` (ooxml-edit 0.78.0) changes
+  nothing (`mutates` is false) and is the `review` role's: give it to a read-only agent with
+  the other reading tools, and to builders. Many reads -- `describe`, slides, design facts, a
+  `check` -- go in one call, each answered as alone within its own `max_result_chars`, the
+  reply within 96,000 characters; what did not fit is listed with the call that asks for it.
+  Production builders made 40-90 reads a run, a model turn each, before it.
+- `check`'s `include: ["app"]` is reserved for a critique hook the application registers;
+  no hook is registered for decks today (`check` says so in its `notes`). Run the pass
+  yourself as above.
+
+### Gates
+
+The tools never refuse a save over a fit or layout fact: they report. If your application
+must not hand on a deck with an overflow or a line through text, gate it yourself:
+
+```python
+saved = toolbox.dispatch(session, "save_document", {"doc": doc, "name": name, "format": "pptx"})
+left = (saved.data or {}).get("unresolved")
+if left:
+    # Re-prompt with the facts, or refuse the output: a plain listing is not enough for
+    # every model (Haiku 5.5 saved over reported collisions and said there were none).
+    ...
+```
+
+Validation is already a gate: `save_document` refuses a deck with new validation problems,
+and only the application can allow them (`Toolbox(allow_new_problems=True)`).
+
+## Masters and layouts: when to edit them, and `affects`
+
+Text that every slide shows -- a legal line, the footer's year and entity, a classification
+mark, a placeholder's prompt -- lives on the slide master or a layout, not on the slides.
+`describe` lists it (`masters[].text`, `layouts[].text`, prompts on the placeholders) and
+`find_text` / `replace_text` reach it with `stories: all` (addresses `M0.7`, `L2.5`).
+
+- **Edit the master or layout when the change is the deck's, not one slide's**: next year's
+  footer, the legal text in the deck's language, prompt text, a logo. One edit, every slide.
+  Edit a slide when only that slide should differ: a slide's own placeholder text and
+  formatting override the layout's and stay as they are.
+- **Header & Footer is `ppt_edit_master set_footer`**, not text typed into slides: it fills
+  the master's and layouts' placeholders and puts the layout's footer, number and date
+  placeholders on each slide, as PowerPoint does, so a later layout change still reaches them.
+- **A run of like slides with boxes in fixed places** (a note, a score, a photo): give a
+  copy of their layout the boxes (`ppt_edit_master add_placeholder`, a `type` and `box`
+  each), then add the slides on it and fill each box (`ppt_set_text`; a picture with
+  `ppt_add_picture target`). They line up by construction; nothing is placed per slide.
+  Slides already on the layout get the box only when listed in `slides`.  Read the layout
+  back as a slide: `ppt_read_slides` with `slides: ["L2"]` (`compact` or `geometry`) lists
+  its shapes, `L2.6` and so on, each placeholder with its type and idx.
+- **After a run of like slides is built** (by one agent or several), `ppt_compare_slides` with
+  their ids matches their shapes and lists where name, box, text size, colour, font, text
+  layout, fill or outline differ from the majority (a slide rebuilt with other shape names
+  is matched by kind and place, the names listed) -- 1 pt drifts and a size set on one slide
+  against the layout's as near-misses with the one call that fixes them, a heading centred
+  on three slides of nine with the `ppt_format_text` items that align it as the six. It only measures: a slide
+  that is meant to differ stays as it is.  Copies of a sample slide (`ppt_manage_slides
+  import` from a deck of samples) are compared with `reference: {"doc": "d2", "slide":
+  "s:300"}`: the sample's values are the expected ones, so two copies drifting the same way
+  are reported, not the copy left alone.
+- **After the sample of a run of copies is revised**, `ppt_follow_sample` with the sample
+  (and `copies`, or none for every slide made from it) gives every copy the sample's design
+  in one call and keeps each copy's text, values and pictures; run it with `preview: true`
+  first. Handle only what each copy lists under `not_followed` and `overflows` (a table with
+  other columns, a shape the copy filled with something else, text that no longer fits);
+  `changed: false` means a copy already follows. Each `not_followed` entry has a `kind`:
+  `own` (the copy's own content kept, such as its footer: usually nothing to do),
+  `changed_by_copy` (a shape taken off this copy), `structure` (other table columns, merged
+  cells, group members, a paragraph level the sample lacks); `report: "actionable"` leaves
+  the `own` ones out and counts them per copy.
+- **A slide from another open deck is `ppt_manage_slides import`** (`source_doc`, `slide`,
+  `to`): it comes with its pictures, charts, SmartArt and notes (`notes` replaces them, as on
+  a duplicate), on this deck's layout of the same name (`layout: "source"` copies a missing
+  one in); shape names stay, and `renamed` maps `d2/300.4` to the copy's `412.4`.
+- **A finished slide onto another layout is `ppt_manage_slides set_layout`**, PowerPoint's
+  Layout menu: placeholders move by kind and idx and take the new layout's boxes -- a box
+  set on the slide is dropped (`boxes_dropped`), its text formatting kept. Content the
+  layout has no place for comes back in `orphans`; deal with each (move its text into a
+  placeholder, or keep it) before going on.
+- **Every result says which slides an edit `affects`** (`checks.affects`: `{"M0": ["s:256",
+  ...]}`) and runs its fit, collision and empty-placeholder checks on all of them -- a longer
+  legal line can collide on one slide only. Render one or two of them; the layout itself has
+  no render of its own.
+- **Deleting what slides inherit from is refused**: a layout placeholder slides take their
+  position and format from, a master placeholder layouts take theirs from, a layout in use
+  (move its slides first: `delete_layout` with `reassign_to`).
+- **Undo**: plain `undo` takes back a master or layout edit like any other. Undo by slide
+  (`scope`) refuses one (`entangled`), because it is every slide's change, not that slide's.
+
+## Model routing
+
+| Work | Model | Evidence (main arm, per run) |
+|---|---|---|
+| Word documents (w1-w9) | **Haiku 5.5** | 18/18 succeed, every one graded 10; USD 0.006 against Sonnet 5.5's 0.113 (about 5%) |
+| Deck edits without a designed graphic (p1-p6: a deck from an outline and template, restating figures and charts, splitting a slide, a flow chart, a rebrand, a restructure) | **Haiku 5.5** | 12/12, every one graded 10; USD 0.008 against 0.147 |
+| Designed graphics from a brief (a phased approach, a Gantt, an org chart, a 2x2 matrix) | **Sonnet 5.5** | Sonnet 6/8 succeed, mean grade 9.13, USD 0.27; Haiku 4/8, mean 7.75, USD 0.016 |
+
+- **Why graphics go to Sonnet:** Haiku misread a design requirement as optional (one colour
+  for every workstream, 3 of 4 p8 runs), saved over collisions it had been told about, and
+  skipped the house rules more often. Its geometry was exact; its judgement was not.
+- **A routing signal:** the brief asks for a new graphic built from shapes (a timeline,
+  chart-like diagram, org chart, matrix, process with more than a few steps), or the edit
+  creates more than a handful of shapes on one slide. Everything else -- text, tables,
+  charts from data, slides from layouts, theme and rebrand work, comments -- goes to Haiku.
+- **Haiku first, Sonnet on failure** is plausible for graphics behind a hard gate (unresolved
+  facts, failed checks), but the trials did not test it.
+- Both models found deferred tools through tool search (Sonnet 65 of 66 searches, Haiku every
+  search); use the default `toolbox.definitions("anthropic")`.
+
+## House rules: in the application's prompt
+
+House rules -- a palette, when a legend is needed, minimum text sizes, how much empty space
+is too much -- go in the application's own guidance, appended after the shipped fragments.
+They are written against the facts the tools report, so the model (and your reviewer) can
+check them. The documented example, from `pptx_agent.tools` (documentation only; nothing
+like it ships):
+
+```python
+HOUSE_RULES = '''House rules (Acme):
+- Before saving a slide with a graphic, call ppt_design_facts on it.
+- If a set of like shapes uses more than two accent hues and has no legend, recolour
+  it to tints of one accent, or add a legend if the colours carry meaning.
+- Leave no empty region larger than a quarter of the content area.
+- Body text is at least 12 pt.'''
+system = toolbox.system_prompt(extra=HOUSE_RULES)
+```
+
+- **A minimum text size** can be checked rather than only asked for:
+  `Toolbox(TOOLS, formats=[deck_format(min_text_size=12)], groups=GROUPS)` makes `check`,
+  the checks after every change and `save_document` report `small_text` -- each shape
+  drawn smaller, with its size and where the size comes from, inherited sizes included
+  (`"from": "layout 'Title and Content' content placeholder"`); a table once (how many
+  cells, the smallest size) and a chart once per part of its text. A mapping sets it per
+  kind, `deck_format(min_text_size={"body": 12, "table": 10, "chart": 10})`; a kind left
+  out is not checked. It is the application's setting, not a tool argument, so the
+  definitions do not change.
+
+- Keep rules **checkable**: each names a fact (`ppt_design_facts`' groups and legends, empty
+  regions, text sizes) and what to do about it. "Make it look professional" gives the model
+  nothing to measure.
+- Keep them **short**: the trial graphics tasks used the four lines above, and Sonnet followed
+  them in 13 of 16 runs.
+- Put the same rules in the reviewer's brief, so editing and review judge alike.
+- Do not put house rules in tool descriptions or patch them into the libraries: the tools
+  stay the same for every application, and a rule belongs to one.
+- **A rule that requires equal spacing or alignment** -- tiles in a row, process steps,
+  icon and label pairs -- should name the call that guarantees it: "Space rows of like
+  shapes with `ppt_arrange` `distribute` (`within: content_area` to span it, or a `gap`)
+  and line them up with `align`; lay tile and card grids out with `ppt_arrange` `grid`
+  (`columns`, `gap`), not box by box." Without it the model places each shape by hand and
+  learns of uneven gaps only from `checks.layout` afterwards, a turn per row; models did
+  not call separate layout tools unprompted, which is why these are `ppt_arrange` actions
+  and the rule says when to use them.

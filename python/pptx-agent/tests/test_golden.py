@@ -1,0 +1,135 @@
+"""Golden transcripts: the trial's PowerPoint tasks p1-p6, the graphics spike's p7, p8, o1
+and m1 (positions computed by the caller, in points, since the layout tools went), T4's p9 (a
+chart slide from a CSV), p10 (a review in comments), p11 (SmartArt updated in place),
+p12 (a rebrand through the theme), p13 (a radar chart from a CSV), round 3's p14 (a chart
+slide with its empty placeholder deleted, and a table in the template's own style without
+banding) and p15 (a maturity gap chart -- columns, a highlighted point, target markers, a
+fixed axis, no gridlines, 10 pt text -- and an effort-against-impact bubble matrix labelled
+from the workbook), p16 (an approach slide: four phases, each an SVG icon above its label,
+spaced equally across the content area with ppt_arrange's distribute and align) and p17 (a
+corporate template made ready for 2027 in Dutch: the master's legal line, a layout's legal
+notice and name, a layout's prompt, Header & Footer), done with the tools alone and replayed.
+
+Each transcript in ``golden/transcripts`` is a reference solution as tool calls -- what a
+model would send, with no code and no files -- recorded with what every call returned.
+Replaying it on a fresh session (fixed clock) must give the same results, the same output
+bytes, and an output that passes the task's own check from the trial (``golden/grading``).
+This is the regression test for "the tools can do every trial task without Python".
+
+The inputs are rebuilt by the trial's builder (``golden_inputs.py``) from this repository's
+fixtures, and must hash as they did when the transcripts were recorded.  A package is held to
+its entries everywhere (``content_sha256``) and to its bytes too where deflate is zlib's own
+(``zip_content.py``): CPython 3.14's Windows builds deflate with zlib-ng, whose bytes differ.
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+import hashlib
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+from ooxml_edit.tools import Toolbox
+
+from pptx_agent.tools import FORMAT, GROUPS, TOOLS
+
+import golden_inputs
+from zip_content import content_sha256, is_zip, stock_deflate, zlib_ng
+
+HERE = Path(__file__).resolve().parent
+GOLDEN = HERE / "golden"
+FIXTURES = HERE / "fixtures"
+CLOCK = dt.datetime(2026, 10, 7, 12, 0, tzinfo=dt.timezone.utc)
+TRANSCRIPTS = sorted((GOLDEN / "transcripts").glob("*.json"))
+
+
+def _expectation(result) -> dict:
+    data = {"ok": result.ok}
+    if not result.ok:
+        data["error"] = result.error.code
+        return data
+    for key in ("created", "removed"):
+        value = getattr(result, key)
+        if value:
+            data[key] = value
+    if result.refs:
+        data["refs"] = result.refs
+    return data
+
+
+def _same(data: bytes, recorded: dict) -> bool:
+    """``data`` is what was recorded: a package's entries, and its bytes where deflate is
+    zlib's; anything else (a CSV, an image), its bytes."""
+    if not is_zip(data):
+        return hashlib.sha256(data).hexdigest() == recorded["sha256"]
+    assert "content_sha256" in recorded, "a package's record names its entries' hash"
+    if content_sha256(data) != recorded["content_sha256"]:
+        return False
+    return not STOCK_DEFLATE or hashlib.sha256(data).hexdigest() == recorded["sha256"]
+
+
+STOCK_DEFLATE = stock_deflate()
+
+
+def test_deflate_is_zlibs_unless_this_python_says_zlib_ng():
+    """The bytes are skipped only where they cannot match: never by a probe gone wrong."""
+    assert STOCK_DEFLATE or zlib_ng()
+
+
+@pytest.fixture(scope="module")
+def inputs(tmp_path_factory):
+    root = tmp_path_factory.mktemp("golden-inputs")
+    for task in golden_inputs.BUILDERS:
+        golden_inputs.build(task, root)
+    return root
+
+
+@pytest.mark.parametrize("path", TRANSCRIPTS, ids=lambda path: path.stem)
+def test_a_golden_transcript_replays_to_a_passing_check(path, inputs, tmp_path):
+    transcript = json.loads(path.read_text(encoding="utf-8"))
+    task = transcript["task"]
+    with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS) as toolbox:
+        session = toolbox.session(clock=lambda: CLOCK)
+        for item in transcript["inputs"]:
+            source = (FIXTURES if item.get("root") == "fixtures" else inputs / task) / item["file"]
+            data = source.read_bytes()
+            assert _same(data, item), \
+                f"{item['file']} is not the input the transcript was recorded with"
+            if item["as"] == "document":
+                session.open(data, source.name)
+            else:
+                session.add_blob(data, source.name)
+        for index, step in enumerate(transcript["calls"]):
+            result = toolbox.dispatch(session, step["tool"], step["arguments"])
+            assert _expectation(result) == step["expect"], (index, step["tool"], result.to_json())
+        (output,) = session.take_outputs()
+    assert output.name == transcript["output"]["name"]
+    assert _same(output.data, transcript["output"])
+
+    deck = tmp_path / output.name
+    deck.write_bytes(output.data)
+    check = GOLDEN / "grading" / f"check_{task.split('-')[0]}.py"
+    proc = subprocess.run([sys.executable, str(check), str(deck)], capture_output=True,
+                          text=True, encoding="utf-8",
+                          env={**os.environ, "GOLDEN_INPUTS": str(inputs), "PYTHONUTF8": "1"},
+                          timeout=600)
+    assert proc.stdout, proc.stderr
+    report = json.loads(proc.stdout)
+    failed = [r for r in report["results"] if not r["ok"]]
+    assert not failed, failed
+    assert report["passed"] == report["total"] == transcript["check"]["total"]
+
+
+def test_the_goldens_cover_every_task_in_few_calls():
+    tasks = {json.loads(p.read_text())["task"].split("-")[0]: json.loads(p.read_text())
+             for p in TRANSCRIPTS}
+    assert sorted(tasks) == ["m1", "o1", "p1", "p10", "p11", "p12", "p13", "p14", "p15", "p16",
+                             "p17", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9"]
+    for transcript in tasks.values():
+        assert len(transcript["calls"]) <= 10
+        assert all(step["tool"] in {tool.name for tool in TOOLS} for step in transcript["calls"])

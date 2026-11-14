@@ -1,0 +1,1511 @@
+"""The Word tools (``docx_agent.tools``) one by one: the happy path, the error codes with their
+valid options, undo, idempotence, tracking mode, refs and batches, and the checks."""
+
+from __future__ import annotations
+
+import datetime as dt
+import io
+import json
+import struct
+import zipfile
+import zlib
+from pathlib import Path
+
+import pytest
+
+pytest.importorskip("ooxml_edit.tools.shared", reason="needs ooxml-edit 0.4 (the shared tools)")
+
+from ooxml_edit.tools import Toolbox  # noqa: E402
+
+from docx_agent import Document  # noqa: E402
+from docx_agent.tools import FORMAT, GROUPS, TOOLS  # noqa: E402
+
+FIXTURES = Path(__file__).parent / "fixtures"
+AGREEMENT = FIXTURES / "generated" / "pilot" / "agreement-summary.docx"
+CHARTS = FIXTURES / "generated" / "charts" / "charts.docx"
+SMARTART = FIXTURES / "generated" / "charts" / "smartart.docx"
+BRAND = FIXTURES / "generated" / "templates" / "brand.dotx"
+W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+CLOCK_AT = dt.datetime(2026, 10, 7, 9, 0, tzinfo=dt.timezone.utc)
+
+
+def png(width: int = 40, height: int = 20) -> bytes:
+    row = b"\x00" + bytes((40, 90, 160)) * width
+
+    def chunk(kind: bytes, body: bytes) -> bytes:
+        return (struct.pack(">I", len(body)) + kind + body
+                + struct.pack(">I", zlib.crc32(kind + body) & 0xFFFFFFFF))
+
+    header = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", zlib.compress(row * height))
+            + chunk(b"IEND", b""))
+
+
+@pytest.fixture(scope="module")
+def box():
+    with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS) as toolbox:
+        yield toolbox
+
+
+@pytest.fixture
+def session(box):
+    return box.session(clock=lambda: CLOCK_AT)
+
+
+def open_doc(session, path: Path = AGREEMENT) -> str:
+    return session.open(path.read_bytes(), path.name)
+
+
+def ok(box, session, tool: str, /, **arguments):
+    result = box.dispatch(session, tool, arguments)
+    assert result.ok, (tool, result.error and result.error.to_json())
+    return result
+
+
+def fails(box, session, tool: str, code: str, /, **arguments):
+    result = box.dispatch(session, tool, arguments)
+    assert not result.ok and result.error.code == code, (tool, result.to_json())
+    return result.error
+
+
+def document(session, doc: str = "d1") -> Document:
+    return session.entry(doc).document
+
+
+def _empty_batches_record_nothing() -> bool:
+    from ooxml_edit.history import History
+
+    class Value:
+        def snapshot(self):
+            return 0
+
+        def restore(self, snapshot):
+            pass
+
+    history = History(Value())
+    with history.batch():
+        pass
+    return history.version == 0
+
+
+# -- the format and the definitions --------------------------------------------------------------
+
+
+def test_every_word_tool_is_docx_or_shared_and_in_a_group():
+    names = {t.name for t in TOOLS}
+    word = [t for t in TOOLS if t.name.startswith("word_")]
+    # W1-W27 and W29 (W28 waits for LE3), less word_describe (the shared describe), and
+    # word_review_changes and word_insert_picture (actions of word_changes, word_drawings),
+    # and word_insert_table (post-T4: a new table is Markdown); and word_design_facts (round 16, F9)
+    # and word_compare_blocks (round 17, P3) and word_follow_sample (round 31, R8)
+    assert len(word) == 27
+    assert "describe" in names and not names & {"word_describe", "word_review_changes",
+                                                "word_insert_picture", "read_chart",
+                                                "word_insert_table", "list_documents"}
+    assert "word_insert_chart" not in names
+    groups = {g.name for g in GROUPS} | {"core"}
+    assert all(t.group in groups for t in TOOLS)
+    core = sorted(t.name for t in TOOLS if t.group == "core")
+    assert {"describe", "word_read", "word_set_text"} <= set(core) and "word_format" not in core
+
+
+def test_the_format_detects_opens_and_validates_from_bytes():
+    data = AGREEMENT.read_bytes()
+    assert FORMAT.detect(data, "x.docx") and FORMAT.detect(data, "no-extension")
+    assert not FORMAT.detect(b"%PDF-1.7", "x.pdf")
+    assert FORMAT.problems(FORMAT.open(data)) == []
+    assert "Word documents" in FORMAT.prompt and "house" not in FORMAT.prompt.lower()
+
+
+# -- reading -------------------------------------------------------------------------------------
+
+
+def test_describe_lists_headings_sections_comments_and_pages(box, session):
+    d = open_doc(session)
+    data = ok(box, session, "describe", doc=d).data
+    assert data["pages"] == 1 and data["headings"][0] == {
+        "id": "p:4C32E1FB", "level": 1, "text": "Supplier agreement summary", "blocks": 11}
+    assert data["sections"][0]["id"] == "s:body" and data["comments"]["threads"] >= 1
+
+
+def test_describe_lists_the_sessions_datasets_without_their_values(box, session):
+    """Round 5, T11: a dataset a document may place from is in describe (ooxml-edit
+    0.30.0)."""
+    from ooxml_edit.tools import Dataset, DatasetEntry
+
+    d = open_doc(session)
+    assert "datasets" not in ok(box, session, "describe", doc=d).data
+    session.keep_datasets([DatasetEntry("owners", Dataset.from_records(
+        [{"Owner": "Kim", "n": 2}, {"Owner": "Lee", "n": 1}], types={"n": "number"}))])
+    data = ok(box, session, "describe", doc=d).data
+    assert data["datasets"] == [{"id": "d:owners", "columns": ["Owner", "n"],
+                                 "types": {"n": "number"}, "rows": 2, "from": "application"}]
+    assert "Kim" not in json.dumps(data["datasets"])
+
+
+def test_read_pages_with_a_cursor_and_reads_a_range(box, session):
+    d = session.open(Path(FIXTURES / "samplelib" / "sample-long.docx").read_bytes(), "long.docx")
+    first = ok(box, session, "word_read", doc=d)
+    assert first.next_cursor and first.total > len(first.data)
+    second = ok(box, session, "word_read", doc=d, cursor=first.next_cursor)
+    assert second.data and second.data != first.data
+    one = ok(box, session, "word_read", doc=d, range="p@body/3")
+    assert one.data.startswith("<!-- p@body/3") and one.next_cursor is None
+    fails(box, session, "word_read", "invalid_arguments", doc=d, cursor="nope")
+
+
+def test_inspect_gives_effective_formatting(box, session):
+    d = open_doc(session)
+    data = ok(box, session, "word_inspect", doc=d, target="p:16425160").data
+    assert data["blocks"][0]["effective"]["sz"] > 0
+
+
+# -- text ----------------------------------------------------------------------------------------
+
+
+def test_set_text_tracked_records_only_the_changed_words(box, session):
+    d = open_doc(session)
+    ok(box, session, "word_set_tracking", doc=d, on=True, author="Claude")
+    paragraph = document(session).paragraph("p:3B212964")
+    result = ok(box, session, "word_set_text", doc=d, target="p:3B212964",
+                text=paragraph.text.replace("24 months", "36 months"))
+    assert result.changed == ["p:3B212964"]
+    changes = document(session).changes(author="Claude")
+    assert [(c.kind, c.old_text, c.text) for c in changes] == [("replacement", "24", "36")]
+    assert result.checks["validate"]["new"] == []
+
+
+def test_a_tracked_call_splitting_a_recorded_run_gives_the_copy_an_id_of_its_own(box, session):
+    """Round 50: a tool call is one batch; a record an edit in it repeated (a run with a
+    property change split by a tracked text change) gets an id of its own when it ends, as a
+    library edit's does -- every revision id once."""
+    import re
+
+    d = open_doc(session)
+    ok(box, session, "word_set_tracking", doc=d, on=True, author="Claude")
+    ok(box, session, "word_format", doc=d, targets=["p:3B212964"], bold=True)
+    paragraph = document(session).paragraph("p:3B212964")
+    ok(box, session, "word_set_text", doc=d, target="p:3B212964",
+       text=paragraph.text.replace("24 months", "36 months"))
+    data = document(session).package.read("word/document.xml")
+    ids = re.findall(rb'<w:(?:ins|del|rPrChange|pPrChange)\b[^>]*?\bw:id="(\d+)"', data)
+    assert len(ids) > 3 and len(ids) == len(set(ids))
+
+
+def test_set_text_takes_items_and_refuses_both_forms(box, session):
+    d = open_doc(session)
+    ok(box, session, "word_set_text", doc=d, items=[{"target": "p:16425160", "text": "Scope of work"},
+                                                    {"target": "p:12972045", "text": "Prices"}])
+    assert [document(session).paragraph(i).text for i in ("p:16425160", "p:12972045")] == ["Scope of work", "Prices"]
+    fails(box, session, "word_set_text", "invalid_arguments", doc=d, target="p:16425160", text="x",
+          items=[{"target": "p:16425160", "text": "y"}])
+
+
+SCOPE = {"part": "word/document.xml", "heading": "p:16425160", "level": 2, "blocks": ["p:16425160", "p:3B212964"]}
+
+
+def test_a_change_says_which_parts_it_changed_for_the_application(box, session):
+    # Round 13, R2: ooxml-edit's Result.touched; round 16, F12: a body change names the
+    # heading section it is in. Never in what the model reads.
+    d = open_doc(session)
+    result = ok(box, session, "word_set_text", doc=d, target="p:16425160", text="Scope of the work")
+    assert result.touched == [{"doc": d, **SCOPE}]
+    assert "touched" not in result.to_json()
+    assert ok(box, session, "undo", doc=d).touched == result.touched
+    assert ok(box, session, "describe", doc=d).touched == []
+
+
+def test_a_body_change_names_its_heading_sections(box, session):
+    """Round 16, F12: the innermost heading section of each changed block, by the ids it
+    has after the call; a new heading's section and the one it splits; blocks before the
+    first heading as heading None; a change in no block (the last section's page setup)
+    as the part alone; other parts as before."""
+    d = open_doc(session)
+    body = "word/document.xml"
+    changed = ok(box, session, "word_set_text", doc=d, target="p:3B212964", text="The supplier delivers.")
+    assert changed.touched == [{"doc": d, **SCOPE}]
+    inserted = ok(box, session, "word_insert_markdown", doc=d, at="after:p:3B212964",
+                  markdown="More scope.\n\n### Exclusions\n\nNone.")
+    new, none = (p.id for p in document(session).paragraphs()[5:7])
+    # "More scope." is Scope's; Exclusions is its own, and Scope's too (a deeper heading).
+    assert [(t["heading"], t["level"], t["blocks"]) for t in inserted.touched] == [
+        ("p:16425160", 2, ["p:16425160", none]), (new, 3, [new, none])]
+    first = ok(box, session, "word_set_text", doc=d, target="p:5FCB534E", text="Draft")
+    assert first.touched == [{"doc": d, "part": body, "heading": None, "level": 0,
+                              "blocks": ["p:5FCB534E", "p:5FCB534E"]}]
+    # The heading alone, its "None." kept (round 36, R33: deleting it alone is forced).
+    removed = ok(box, session, "word_delete", doc=d, target=new, force=True)
+    assert [t["heading"] for t in removed.touched] == ["p:16425160"]
+    setup = ok(box, session, "word_sections", doc=d, action="set", section="s:body", orientation="landscape")
+    assert {"doc": d, "part": body} in setup.touched
+    styled = ok(box, session, "word_format", doc=d, targets=["p:7C9523C2"], bold=True)
+    assert [t.get("heading") for t in styled.touched] == ["p:73D22116"]
+
+
+def test_touched_reads_the_body_as_a_parse_would():
+    """The blocks found from the bytes alone are those a parse finds, with the same ids
+    and heading levels, on every fixture after its first (stamping) edit."""
+    from docx_agent.tools import touched as _touched
+
+    checked = 0
+    for path in sorted(FIXTURES.rglob("*.docx")):
+        try:
+            doc = Document.open(path.read_bytes())
+            paragraph = doc.paragraphs()[0]
+            paragraph.text = paragraph.text + "x"
+        except Exception:  # noqa: BLE001 -- a fixture this edit does not fit
+            continue
+        data = doc.package.read(doc.package.document_part())
+        fast = _touched._scan(data)
+        if fast is None:
+            continue
+        ids, levels, digests, _rest = _touched._parsed(data, doc)
+        assert (fast.ids(), fast.levels(doc), len(fast.digests)) == (ids, levels, len(digests)), path.name
+        checked += 1
+    assert checked >= 20
+
+
+def test_insert_text_returns_the_inserted_range_and_names_it(box, session):
+    d = open_doc(session)
+    result = ok(box, session, "word_insert_text", doc=d, find="EUR 12,500", text=", excluding VAT", ref="vat")
+    rng = result.data["ranges"][0]
+    assert document(session).range(rng).text == ", excluding VAT" and result.refs == {"vat": rng}
+    ok(box, session, "word_format", doc=d, targets=["$vat"], bold=True)
+    assert document(session).range(rng).text == ", excluding VAT"
+
+
+def test_an_anchor_found_twice_is_ambiguous_with_every_candidate(box, session):
+    d = open_doc(session)
+    error = fails(box, session, "word_insert_text", "ambiguous", doc=d, find="the", text="x")
+    assert len(error.valid_options) > 2 and all("@" in option for option in error.valid_options)
+    fails(box, session, "word_insert_text", "not_found", doc=d, find="no such words", text="x")
+
+
+def test_delete_text_blocks_and_spans(box, session):
+    d = open_doc(session)
+    ok(box, session, "word_delete", doc=d, find="starting on 1 January 2027", collapse_space=True)
+    assert "1 January" not in document(session).paragraph("p:3B212964").text
+    before = len(document(session).paragraphs())
+    blocks = ok(box, session, "word_insert_markdown", doc=d, markdown="One.\n\nTwo.", at="end").data["blocks"]
+    ok(box, session, "word_delete", doc=d, target=f"{blocks[0]}..{blocks[-1]}")
+    assert len(document(session).paragraphs()) == before
+    error = fails(box, session, "word_delete", "refused", doc=d, target="p:73D22116..p:7C9523C2")
+    assert "comment" in error.message
+
+
+def test_insert_markdown_in_the_documents_styles_with_a_style_map(box, session):
+    d = open_doc(session)
+    result = ok(box, session, "word_insert_markdown", doc=d, at="after:p:3B212964",
+                markdown="## Extra\n\nOne **bold** point.\n\n- a\n- b\n",
+                style_map=[{"element": "paragraph", "style": "Normal"}])
+    assert len(result.data["blocks"]) == 4
+    error = fails(box, session, "word_insert_markdown", "invalid_arguments", doc=d, at="end",
+                  markdown="x", style_map=[{"element": "h7", "style": "Normal"}])
+    assert "h1" in error.valid_options
+
+
+def test_insert_markdown_from_a_blob_with_an_image_blob(box, session):
+    d = open_doc(session)
+    image = session.add_blob(png(), "logo.png")
+    md = session.add_blob(f"Logo: ![Company logo]({image})".encode(), "part.md")
+    result = ok(box, session, "word_insert_markdown", doc=d, blob=md, at="end")
+    assert document(session).pictures()[-1].alt_text == "Company logo" and result.data["blocks"]
+
+
+def test_format_sets_run_and_paragraph_properties_in_points(box, session):
+    d = open_doc(session)
+    ok(box, session, "word_format", doc=d, targets=["p:3B212964"], size=12, space_after=9, indent_first=-18,
+       alignment="justify")
+    paragraph = document(session).paragraph("p:3B212964")
+    assert (paragraph.space_after, paragraph.hanging, paragraph.alignment) == (9, 18, "justify")
+    ok(box, session, "word_format", doc=d, targets=["p:3B212964@4:12"], italic=True, color="accent1")
+    error = fails(box, session, "word_format", "not_found", doc=d, targets=["p:3B212964"],
+                  paragraph_style="No Such Style")
+    assert "Normal" in error.valid_options
+    fails(box, session, "word_format", "invalid_arguments", doc=d, targets=["p:3B212964"])
+
+
+# -- review --------------------------------------------------------------------------------------
+
+
+def test_tracking_mode_dates_revisions_by_the_session_clock(box, session):
+    d = open_doc(session)
+    fails(box, session, "word_set_tracking", "invalid_arguments", doc=d, on=True)
+    ok(box, session, "word_set_tracking", doc=d, on=True, author="Claude", word_switch=True)
+    ok(box, session, "replace_text", doc=d, find="3%", replace="2.5%", expect="one")
+    revisions = document(session).revisions(author="Claude")
+    assert revisions and {r.date for r in revisions} == {"2026-10-07T09:00:00Z"}
+    assert document(session).word_tracks_changes
+    ok(box, session, "word_set_tracking", doc=d, on=False)
+    ok(box, session, "replace_text", doc=d, find="99.5%", replace="99.9%", expect="one")
+    assert len(document(session).revisions(author="Claude")) == len(revisions)
+
+
+def test_changes_and_reviewing_by_author_and_by_id(box, session):
+    d = open_doc(session)
+    ok(box, session, "word_set_tracking", doc=d, on=True, author="Claude")
+    ok(box, session, "replace_text", doc=d, find="24 months", replace="36 months", expect="one")
+    ok(box, session, "replace_text", doc=d, find="3%", replace="2.5%", expect="one")
+    listing = ok(box, session, "word_changes", doc=d, action="list", author="Claude")
+    assert listing.checks == {} and listing.version == 2            # list changes nothing
+    listed = listing.data
+    assert [c["kind"] for c in listed] == ["replacement", "replacement"]
+    review = ok(box, session, "word_changes", doc=d, action="reject", ids=[listed[0]["id"]])
+    assert review.data["records"] == 2 and review.data["changes_left"] == 1
+    ok(box, session, "word_changes", doc=d, action="accept", author="Claude")
+    assert document(session).revisions() == [] and "2.5%" in document(session).paragraph("p:4B50F4CD").text
+    fails(box, session, "word_changes", "invalid_arguments", doc=d, action="accept")
+    fails(box, session, "word_changes", "invalid_arguments", doc=d, action="list", all=True)
+    fails(box, session, "word_changes", "invalid_arguments", doc=d, action="accept", all=True,
+          detail="records")
+
+
+def test_comments_add_reply_resolve_in_items_with_refs(box, session):
+    d = open_doc(session)
+    added = ok(box, session, "word_comments", doc=d, action="add", author="Claude",
+               items=[{"find": "99.5%", "text": "Per month?", "ref": "q1"},
+                      {"target": "p:3B212964@92:101", "text": "Term?", "ref": "q2"}])
+    assert len(added.created) == 2 and set(added.refs) == {"q1", "q2"}
+    ok(box, session, "word_comments", doc=d, action="reply", author="Claude",
+       items=[{"comment": "$q1", "text": "Monthly.", "resolve": True}])
+    threads = {c["id"]: c for c in ok(box, session, "word_comments", doc=d, action="list").data}
+    assert threads[added.refs["q1"]]["done"] and threads[added.refs["q1"]]["replies"][0]["text"] == "Monthly."
+    assert not threads[added.refs["q2"]]["done"]
+    fails(box, session, "word_comments", "not_found", doc=d, action="resolve", items=[{"comment": "$nope"}])
+
+
+@pytest.mark.skipif(not _empty_batches_record_nothing(), reason="needs ooxml-edit's empty-batch fix (PR #7)")
+def test_a_list_action_records_no_undo_step(box, session):
+    d = open_doc(session)
+    version = session.entry(d).version
+    ok(box, session, "word_comments", doc=d, action="list")
+    ok(box, session, "word_fields", doc=d, action="list")
+    assert session.entry(d).version == version
+    fails(box, session, "undo", "refused", doc=d)
+
+
+# -- structure -----------------------------------------------------------------------------------
+
+
+def test_move_a_section_after_another_section(box, session):
+    d = open_doc(session)
+    ok(box, session, "word_move", doc=d, section_heading="p:73D22116", after_section="p:16425160")
+    texts = [p.text for p in document(session).paragraphs()]
+    assert texts.index("Contacts") == texts.index("Scope") + 2
+    fails(box, session, "word_move", "invalid_arguments", doc=d, section_heading="p:73D22116")
+
+
+def test_copy_from_another_document_maps_styles(box, session):
+    d1 = open_doc(session)
+    b = session.add_blob(AGREEMENT.read_bytes(), "second.docx")
+    d2 = ok(box, session, "open_document", blob=b).created[0]
+    result = ok(box, session, "word_copy_from", doc=d1, source_doc=d2, section_heading="p:73D22116",
+                at="end", style_map=[{"source": "heading 2", "destination": "Heading 1"}])
+    heading = result.data["copied"]["p:73D22116"]
+    assert document(session).paragraph(heading).style_name.lower() == "heading 1"
+
+
+def test_copy_from_the_same_document_copies_it_as_it_was_and_undoes_in_one_step(box, session):
+    """Round 17, P4: source_doc may be doc."""
+    d = open_doc(session, FIXTURES / "generated" / "markdown" / "constructs.docx")
+    table = document(session).tables()[0].id
+    before = document(session).to_bytes()
+    count = len(document(session).tables())
+    result = ok(box, session, "word_copy_from", doc=d, source_doc=d, range=table, at=f"after:{table}")
+    copy = result.data["copied"][table]
+    assert copy != table and result.data["blocks"] == [copy] and copy in result.created
+    tables = [t.id for t in document(session).tables()]
+    assert len(tables) == count + 1 and tables[tables.index(table) + 1] == copy
+    ok(box, session, "undo", doc=d)
+    assert document(session).to_bytes() == before
+
+
+def test_sections_break_and_page_setup_in_points(box, session):
+    d = open_doc(session)
+    broke = ok(box, session, "word_sections", doc=d, action="insert_break", after="p:3B212964", start="nextPage")
+    ok(box, session, "word_sections", doc=d, action="set", section="s:body", orientation="landscape",
+       margins={"left": 54, "right": 54})
+    sections = ok(box, session, "word_sections", doc=d, action="list").data
+    assert len(sections) == 2 and sections[1]["orientation"] == "landscape"
+    assert sections[1]["margins"]["left"] == 54 and broke.data["section"] == sections[0]["id"]
+
+
+def test_read_a_section_by_its_number_or_s_body(box, session):
+    """Round 23, V4: word_read (and word_inspect, the same resolver) take s:<n>, counting
+    from 1, and s:body, the last section, as a span of that section's blocks."""
+    d = open_doc(session)
+    ok(box, session, "word_sections", doc=d, action="insert_break", after="p:3B212964", start="nextPage")
+    first = ok(box, session, "word_read", doc=d, range="s:1").data
+    second = ok(box, session, "word_read", doc=d, range="s:2").data
+    assert "p:3B212964" in first and "p:3B212964" not in second
+    assert ok(box, session, "word_read", doc=d, range="s:body").data == second
+    assert ok(box, session, "word_inspect", doc=d, target="s:2").data["blocks"]
+    error = fails(box, session, "word_read", "not_found", doc=d, range="s:3")
+    assert "has 2 (s:1 to s:2)" in error.message
+    ok(box, session, "word_sections", doc=d, action="set", section="s:2", orientation="landscape")
+    assert ok(box, session, "word_sections", doc=d, action="list").data[1]["orientation"] == "landscape"
+
+
+def test_s_body_reads_a_body_without_a_section_of_its_own(box, session):
+    blank = Document.new()
+    blank.insert_markdown("One.\n\nTwo.\n")
+    body = blank.package.tree(blank.package.document_part()).find(f"{W}body")
+    body.remove(body.find(f"{W}sectPr"))
+    blank.package.mark_dirty(blank.package.document_part())
+    d = session.open(blank.to_bytes(), "plain.docx")
+    assert "Two." in ok(box, session, "word_read", doc=d, range="s:body").data
+    assert "One." in ok(box, session, "word_read", doc=d, range="s:1").data
+
+
+def test_block_tools_take_a_block_level_control(box, session):
+    """Round 23, V2: word_delete, word_move and word_copy_from take a control's id."""
+    d = open_doc(session)
+    control = document(session).insert_control(None, "rich-text", after="p:3B212964", text="Held text").id
+    ok(box, session, "word_move", doc=d, blocks=control, after="p:4B50F4CD")
+    copy = ok(box, session, "word_copy_from", doc=d, source_doc=d, range=control, at="end")
+    assert copy.data["blocks"][0].startswith("cc:")
+    deleted = ok(box, session, "word_delete", doc=d, target=control)
+    assert control in deleted.removed
+    assert "Held text" in ok(box, session, "word_read", doc=d).data      # the copy is left
+
+
+def test_headers_and_footers_with_page_x_of_y(box, session):
+    d = open_doc(session)
+    footer = ok(box, session, "word_headers_footers", doc=d, section="s:body", which="footer", action="set",
+                page_number="page_x_of_y").data["story"]
+    assert document(session).paragraphs(footer)[0].text == "Page 1 of 1"
+    # Trial 3: "Confidential" with page_x_of_y gave "Confidential1 of 5".
+    ok(box, session, "word_headers_footers", doc=d, section="s:body", which="footer", action="set",
+       text="Confidential", page_number="page_x_of_y")
+    assert [p.text for p in document(session).paragraphs(footer)] == ["Confidential | Page 1 of 1"]
+    ok(box, session, "word_headers_footers", doc=d, section="s:body", which="footer", action="set",
+       text="Draft - ", page_number="page_x_of_y")
+    assert [p.text for p in document(session).paragraphs(footer)] == ["Draft - Page 1 of 1"]
+    ok(box, session, "word_headers_footers", doc=d, section="s:body", which="footer", action="set",
+       text="Page ", page_number="after_text")
+    assert [p.text for p in document(session).paragraphs(footer)] == ["Page 1"]
+    ok(box, session, "word_headers_footers", doc=d, section="s:body", which="footer", action="set", text="Draft")
+    assert [p.text for p in document(session).paragraphs(footer)] == ["Draft"]
+    ok(box, session, "word_headers_footers", doc=d, section="s:body", which="footer", action="remove")
+    # \n makes paragraphs, in a new story as in an existing one (it was refused with code unit).
+    header = ok(box, session, "word_headers_footers", doc=d, section="s:body", which="header", action="set",
+                text="Acme Ltd\nBoard paper", page_number="page_x_of_y").data["story"]
+    assert [p.text for p in document(session).paragraphs(header)] == ["Acme Ltd", "Board paper | Page 1 of 1"]
+    ok(box, session, "word_headers_footers", doc=d, section="s:body", which="header", action="set",
+       text="One\nTwo\nThree")
+    assert [p.text for p in document(session).paragraphs(header)] == ["One", "Two", "Three"]
+
+
+def test_word_read_refuses_a_range_with_every_story_as_invalid_arguments(box, session):
+    d = open_doc(session)
+    first = document(session).paragraphs()[0].id
+    error = fails(box, session, "word_read", "invalid_arguments", doc=d, range=first, stories="all")
+    assert error.field == "range"
+
+
+def test_fields_toc_update_and_cross_reference(box, session):
+    d = open_doc(session)
+    ok(box, session, "word_links", doc=d, action="add_bookmark", target="p:12972045", bookmark="Pricing")
+    ok(box, session, "word_fields", doc=d, action="insert_cross_reference", find="EUR 12,500",
+       bookmark="Pricing", kind="text")
+    toc = ok(box, session, "word_fields", doc=d, action="insert_toc", before="p:16425160", levels="1-2")
+    assert toc.warnings == []
+    listed = ok(box, session, "word_fields", doc=d, action="list").data
+    assert {f["keyword"] for f in listed} >= {"TOC", "REF"}
+    ok(box, session, "word_fields", doc=d, action="update")
+    fails(box, session, "word_fields", "invalid_arguments", doc=d, action="insert_toc", before="p:16425160",
+          levels="3-1")
+
+
+def test_an_empty_toc_is_a_warning_and_a_fact(box, session):
+    d = ok(box, session, "new_document", kind="docx").created[0]
+    first = document(session, d).paragraphs()[0].id
+    toc = ok(box, session, "word_fields", doc=d, action="insert_toc", before=first)
+    assert toc.warnings and "no entries" in toc.warnings[0]
+    facts = ok(box, session, "check", doc=d, include=["fields"]).data["fields"]
+    assert facts["empty_toc"]
+
+
+def test_notes_and_links(box, session):
+    d = open_doc(session)
+    note = ok(box, session, "word_notes", doc=d, action="insert", find="99.5%", text="Measured monthly.", ref="n1")
+    ok(box, session, "word_notes", doc=d, action="edit", note="$n1", text="Measured each month.")
+    assert [n["text"] for n in ok(box, session, "word_notes", doc=d, action="list").data] == ["Measured each month."]
+    ok(box, session, "word_links", doc=d, action="add_hyperlink", find="cloud hosting", url="https://example.com/")
+    links = ok(box, session, "word_links", doc=d, action="list").data["hyperlinks"]
+    assert links[0]["url"] == "https://example.com/"
+    ok(box, session, "word_notes", doc=d, action="delete", note=note.created[0])
+
+
+# -- objects -------------------------------------------------------------------------------------
+
+
+def test_tables_insert_edit_by_label_and_format(box, session):
+    d = open_doc(session)
+    # A new table is Markdown (word_insert_table went post-T4: no model called it).
+    made = ok(box, session, "word_insert_markdown", doc=d, at="after:p:3B212964",
+              markdown="| Item | Fee |\n|---|---|\n| Hosting | 12,500 |\n| Support | 1,000 |\n")
+    table = made.created[0]
+    assert table.startswith("t:")
+    edited = ok(box, session, "word_edit_table", doc=d, table=table, action="set_cells",
+                cells=[{"row_label": "Support", "col_label": "Fee", "text": "1,500"}])
+    assert "1,500" in edited.data["markdown"]
+    ok(box, session, "word_edit_table", doc=d, table=table, action="insert_row")
+    ok(box, session, "word_format_table", doc=d, table=table, scope="table", width_percent=80, alignment="center")
+    ok(box, session, "word_format_table", doc=d, table=table, scope="row", row=0, shading="D9E2F3", height=20)
+    ok(box, session, "word_format_table", doc=d, table=table, scope="column", column=1, width=120)
+    assert document(session).table_properties(table)["alignment"] == "center"
+    error = fails(box, session, "word_edit_table", "not_found", doc=d, table=table, action="set_cells",
+                  cells=[{"row_label": "Nope", "col": 1, "text": "x"}])
+    assert "Hosting" in error.valid_options
+
+
+def test_a_table_without_a_header_row_its_look_and_rows_kept_whole(box, session):
+    # Round 24, W2: an empty header row is none -- no tblHeader, the style's first-row
+    # look off (Word draws that look from w:tblLook's firstRow, not from tblHeader: measured).
+    d = open_doc(session)
+    made = ok(box, session, "word_insert_markdown", doc=d, at="after:p:3B212964",
+              markdown="| | |\n|---|---|\n| Term | Twelve months |\n| Notice | Thirty days |\n")
+    table = made.created[0]
+    properties = document(session).table_properties(table)
+    assert properties["look"]["first_row"] is False and properties["header_rows"] == 0
+    assert len(document(session).table(table).rows) == 2
+    assert "|  |  |\n| --- | --- |\n| Term | Twelve months |" in document(session).to_markdown(table, ids=False)
+    # The look switched back on (and the rest as given), rows kept on one page.
+    ok(box, session, "word_format_table", doc=d, table=table, scope="table", look=["header_row", "banded_rows"])
+    look = document(session).table_properties(table)["look"]
+    assert look == {"first_row": True, "last_row": False, "first_column": False, "last_column": False,
+                    "banded_rows": True, "banded_columns": False}
+    ok(box, session, "word_format_table", doc=d, table=table, scope="row", row=1, cant_split=True)
+    split = [document(session).row_properties(table, r)["cant_split"] for r in range(2)]
+    assert split == [False, True]
+    ok(box, session, "word_format_table", doc=d, table=table, scope="table", cant_split=True)
+    assert all(document(session).row_properties(table, r)["cant_split"] for r in range(2))
+    ok(box, session, "word_format_table", doc=d, table=table, scope="table", look=[])
+    assert not any(document(session).table_properties(table)["look"].values())
+    fails(box, session, "word_format_table", "invalid_arguments", doc=d, table=table, scope="row", row=0,
+          look=["header_row"])
+    fails(box, session, "word_format_table", "invalid_arguments", doc=d, table=table, scope="cell", row=0,
+          column=0, cant_split=True)
+
+
+def test_picture_from_a_blob_floating_and_drawings(box, session):
+    d = open_doc(session)
+    image = session.add_blob(png(80, 40), "logo.png")
+    made = ok(box, session, "word_drawings", doc=d, action="insert_picture", image=image, at="p:3B212964@0",
+              width=72, alt_text="Logo", wrap="square", align="right", against="margin", ref="logo")
+    assert made.refs == {"logo": made.data["id"]}
+    picture = made.data["id"]
+    assert made.data["size"] == [72.0, 36.0]
+    ok(box, session, "word_drawings", doc=d, action="resize", target=picture, width=144)
+    listed = ok(box, session, "word_drawings", doc=d, action="list").data
+    assert listed[0]["alt_text"] == "Logo" and not listed[0]["inline"]
+    box_made = ok(box, session, "word_drawings", doc=d, action="insert_text_box", find="99.5%", text="Note",
+                  width=100, height=40)
+    assert box_made.data["id"].startswith("d:")
+    text = session.add_blob(b"# not an image", "x.md")
+    fails(box, session, "word_drawings", "invalid_arguments", doc=d, action="insert_picture", image=text,
+          at="p:3B212964@0", alt_text="x")
+    fails(box, session, "word_drawings", "not_found", doc=d, action="insert_picture", image="b99",
+          at="p:3B212964@0", alt_text="x")
+    fails(box, session, "word_drawings", "invalid_arguments", doc=d, action="insert_picture", image=image,
+          at="p:3B212964@0")                                     # a picture needs alt text
+    fails(box, session, "word_drawings", "invalid_arguments", doc=d, action="insert_picture", image=image,
+          at="p:3B212964@0", alt_text="x", align="left")         # placing it needs wrap
+
+
+def test_content_controls(box, session):
+    d = open_doc(session)
+    made = ok(box, session, "word_controls", doc=d, action="insert", find="Scope", type="drop-down",
+              items=["Draft", "Final"], title="Status")
+    ok(box, session, "word_controls", doc=d, action="fill", control=made.data["id"], value="Final")
+    listed = ok(box, session, "word_controls", doc=d, action="list").data
+    assert listed[0]["title"] == "Status" and listed[0]["value"] == "Final"
+
+
+# -- style ---------------------------------------------------------------------------------------
+
+
+def test_lists_add_restart_and_format(box, session):
+    d = open_doc(session)
+    ok(box, session, "word_lists", doc=d, targets=["p:3B212964", "p:4B50F4CD"], action="add", kind="number")
+    data = ok(box, session, "word_lists", doc=d, targets=["p:4B50F4CD"], action="level", level=1).data
+    assert data[0]["list"]["level"] == 1
+    ok(box, session, "word_lists", doc=d, targets=["p:3B212964"], action="format", number_format="upperRoman")
+
+
+def test_styles_add_modify_describe_remove(box, session):
+    d = open_doc(session)
+    ok(box, session, "word_styles", doc=d, action="add", name="Note Body", based_on="Normal", size=9, italic=True,
+       space_after=4)
+    described = ok(box, session, "word_styles", doc=d, action="describe", name="Note Body").data
+    assert described["declared"]["size"] == 9 and described["declared"]["italic"] is True
+    ok(box, session, "word_styles", doc=d, action="modify", name="Note Body", size=10)
+    # Round 24, W6: shading -- a fill, a theme colour lighter or darker; on a character style too.
+    ok(box, session, "word_styles", doc=d, action="modify", name="Note Body", shading="accent1 lighter 80%")
+    assert ok(box, session, "word_styles", doc=d, action="describe",
+              name="Note Body").data["declared"]["shading"] == "accent1 lighter 80%"
+    ok(box, session, "word_styles", doc=d, action="add", name="Flag", kind="character", shading="FFD966")
+    assert ok(box, session, "word_styles", doc=d, action="describe",
+              name="Flag").data["declared"]["shading"] == "FFD966"
+    ok(box, session, "word_styles", doc=d, action="modify", name="Flag", shading="none")
+    assert "shading" not in ok(box, session, "word_styles", doc=d, action="describe", name="Flag").data["declared"]
+    fails(box, session, "word_styles", "refused", doc=d, action="modify", name="Flag", shading="teal-ish")
+    ok(box, session, "word_format", doc=d, targets=["p:3B212964"], paragraph_style="Note Body")
+    fails(box, session, "word_styles", "refused", doc=d, action="remove", name="Note Body")
+    ok(box, session, "word_styles", doc=d, action="remove", name="Note Body", replacement="Normal")
+    error = fails(box, session, "word_styles", "not_found", doc=d, action="describe", name="Nope")
+    assert error.valid_options
+
+
+def test_a_template_is_saved_by_save_document(box, session):
+    d = open_doc(session)
+    result = ok(box, session, "save_document", doc=d, name="brand-copy.dotx", format="dotx")
+    out = session.take_outputs()[-1]
+    assert result.data["format"] == "dotx" and out.name == "brand-copy.dotx"
+    with pytest.warns(UserWarning, match="template"):
+        assert Document.open(out.data).package.kind == "dotx"
+    fails(box, session, "word_template", "invalid_arguments", doc=d, action="save_as_template", name="x.dotx")
+
+
+def test_upgrade_reports_the_reflow(box, session):
+    d = session.open((FIXTURES / "generated" / "mode14.docx").read_bytes(), "old.docx")
+    data = ok(box, session, "word_template", doc=d, action="upgrade_to_modern").data
+    assert data["mode"] == 15 and "changed" in data["reflow"]
+
+
+# -- the shared tools' Word handlers -------------------------------------------------------------
+
+
+def test_new_document_from_a_template_blob_and_save_formats(box, session):
+    template = session.add_blob(BRAND.read_bytes(), "brand.dotx")
+    made = ok(box, session, "new_document", kind="docx", template_blob=template, title="T", author="A",
+              name="report.docx")
+    d = made.created[0]
+    assert made.doc == d and made.to_json()["doc"] == d      # round 16, F10: not None
+    assert document(session, d).properties["title"] == "T"
+    ok(box, session, "word_insert_markdown", doc=d, markdown="# Report\n\nText.", at="end")
+    ok(box, session, "save_document", doc=d, name="report.docx", format="docx")
+    ok(box, session, "save_document", doc=d, name="report.md", format="markdown")
+    outputs = session.take_outputs()
+    assert Document.open(outputs[0].data).package.kind == "docx"
+    assert outputs[1].data.decode().startswith("# Report")
+    fails(box, session, "save_document", "invalid_arguments", doc=d, name="x.pptx", format="pptx")
+    for fmt in ("xlsx", "xlsm", "xltx"):      # in the shared enum from ooxml-edit 0.18
+        error = fails(box, session, "save_document", "invalid_arguments", doc=d, name=f"x.{fmt}", format=fmt)
+        assert error.field == "format"
+    assert session.take_outputs() == []
+    fails(box, session, "save_document", "invalid_arguments", doc=d, name="x.dotx", format="docx")
+    fails(box, session, "new_document", "invalid_arguments", kind="docx", size="16:9")
+
+
+def test_save_refuses_a_new_validation_problem(box, session, monkeypatch):
+    d = open_doc(session)
+    from docx_agent.validate import Problem
+
+    monkeypatch.setattr(Document, "validate", lambda self, target=None: [Problem("x", "word/document.xml", "bad")])
+    error = fails(box, session, "save_document", "refused", doc=d, name="a.docx", format="docx")
+    assert error.valid_options and session.take_outputs() == []
+
+
+def test_find_and_replace_one_or_all_body_or_all_stories(box, session):
+    d = open_doc(session)
+    found = ok(box, session, "find_text", doc=d, text="months")
+    assert found.total >= 2 and found.data[0]["address"].startswith("p:")
+    fails(box, session, "find_text", "invalid_arguments", doc=d, text="x", slides=[1])
+    fails(box, session, "replace_text", "ambiguous", doc=d, find="months", replace="weeks", expect="one")
+    result = ok(box, session, "replace_text", doc=d, find="months", replace="weeks", expect="all")
+    assert result.data["count"] == found.total
+    fails(box, session, "replace_text", "not_found", doc=d, find="months", replace="x", expect="all")
+
+
+def test_replace_text_within_a_span_of_paragraphs_and_a_table(box, session):
+    d = open_doc(session)
+    markdown = "Kept one.\n\nFirst one.\n\n| Item | Note |\n|---|---|\n| one | two one |\n\nLast one.\n\nAfter one."
+    blocks = ok(box, session, "word_insert_markdown", doc=d, markdown=markdown, at="end").data["blocks"]
+    assert blocks[2].startswith("t:")
+    span = f"{blocks[1]}..{blocks[3]}"
+    # expect counts over the whole span: four places, so one is ambiguous.
+    fails(box, session, "replace_text", "ambiguous", doc=d, find="one", replace="1", expect="one", range=span)
+    found = ok(box, session, "find_text", doc=d, text="one", range=span)
+    assert found.total == 4
+    result = ok(box, session, "replace_text", doc=d, find="one", replace="1", expect="all", range=span)
+    assert result.data["count"] == 4
+    text = document(session).to_markdown(ids=False)
+    assert "Kept one." in text and "After one." in text
+    assert "First 1." in text and "Last 1." in text and "two 1" in text
+    # A reversed or unknown span fails as it does for the block tools (word_delete).
+    reversed_span = f"{blocks[3]}..{blocks[1]}"
+    for name, arguments in (("replace_text", {"find": "1", "replace": "x", "expect": "all", "range": reversed_span}),
+                            ("word_delete", {"target": reversed_span})):
+        assert "ends before it starts" in fails(box, session, name, "refused", doc=d, **arguments).message
+    unknown = f"p:0BADF00D..{blocks[3]}"
+    for name, arguments in (("replace_text", {"find": "1", "replace": "x", "expect": "all", "range": unknown}),
+                            ("word_delete", {"target": unknown})):
+        assert "p:0BADF00D" in fails(box, session, name, "not_found", doc=d, **arguments).message
+
+
+EVERY_ROLE_MARKDOWN = """# One
+## Two
+### Three
+#### Four
+##### Five
+###### Six
+
+Body with *emphasis*, **strong**, `code`, [a link](https://example.com) and a note.[^1]
+
+> A quote.
+
+```
+code block
+```
+
+- bullet
+  - bullet two
+    - bullet three
+
+1. number
+   1. number two
+      1. number three
+
+| Item | Note |
+|---|---|
+| one | two |
+
+[^1]: The note.
+"""
+
+
+@pytest.mark.parametrize("normal", [{"indent_left": 12, "indent_right": -30, "first_line": 9},
+                                    {"indent_left": 18, "indent_right": 24, "hanging": 6}])
+def test_insert_markdown_with_every_style_role_writes_no_direct_formatting(box, session, normal):
+    """Round 21, T4: whatever the styles mapped (each role its own style, inheriting
+    Normal's indents), what insert_markdown writes takes its styles as they are: check
+    finds no direct formatting on it."""
+    from docx_agent.markdown.stylemap import DICT_KEYS, STYLE_KINDS
+    from docx_agent.tools.text import STYLE_KEYS
+
+    d = ok(box, session, "new_document", kind="docx").created[0]
+    doc = document(session, d)
+    doc.styles.modify("Normal", **normal)
+    mapping = []
+    for role in STYLE_KEYS:
+        kind = STYLE_KINDS[DICT_KEYS[role][0]]
+        name = "Table Grid" if kind == "table" else f"Mapped {role}"
+        if kind != "table":
+            doc.styles.add(name, kind, **({"based_on": "Normal"} if kind == "paragraph" else {}))
+        mapping.append({"element": role, "style": name})
+    ok(box, session, "word_insert_markdown", doc=d, at="end", markdown=EVERY_ROLE_MARKDOWN, style_map=mapping)
+    report = ok(box, session, "check", doc=d, include=["validate", "layout"]).data
+    assert report["validate"]["problems"] == []
+    assert report["layout"]["direct_formatting"] == []
+
+
+def test_render_pages_within_limits_and_cached_by_version(box, session):
+    d = open_doc(session)
+    first = ok(box, session, "render", doc=d, pages=[1], width=400)
+    assert first.images[0].width == 400 and first.images[0].data.startswith(b"\x89PNG")
+    again = ok(box, session, "render", doc=d, pages=[1], width=400)
+    assert again.images[0].data == first.images[0].data
+    error = fails(box, session, "render", "not_found", doc=d, pages=[9])
+    assert error.valid_options == [1]
+    # slides on a document is read as pages, with a warning (trial 3: 10 of 18 Word runs
+    # lost their first render to it); given both, pages is used.
+    as_pages = ok(box, session, "render", doc=d, slides=[1], width=400)
+    assert as_pages.images[0].data == first.images[0].data
+    assert as_pages.warnings == ["slides read as pages: a document has pages"]
+    both = ok(box, session, "render", doc=d, slides=[2], pages=[1], width=400)
+    assert both.data["pages"] == [1] and both.warnings == ["slides ignored: a document has pages"]
+    # A deck's slides may be ids (s:256) or numbers written as strings; a document's pages
+    # are numbers only.
+    assert ok(box, session, "render", doc=d, slides=["1"], width=400).images[0].data == first.images[0].data
+    assert fails(box, session, "render", "invalid_arguments", doc=d, slides=["s:256"]).field == "pages"
+    error = fails(box, session, "render", "invalid_arguments", doc=d, pages=["1"])
+    assert error.message == "pages[0] must be a number" and error.field == "pages[0]"
+
+
+def _pages_long(pages: int = 3) -> bytes:
+    """``pages`` pages whatever the fonts measure -- each paragraph after the first starts a
+    page -- in Arial, which every CI runner lays out (Windows has it, Linux and macOS the
+    open substitute): in the new document's Aptos, which none has, docx2svg stops at page 1."""
+    from ooxml_edit.xml import qn
+
+    document = Document.new()
+    theme = document.package.tree("word/theme/theme1.xml")
+    for latin in theme.iter(qn("a:latin")):
+        latin.set("typeface", "Arial")
+    document.package.mark_dirty("word/theme/theme1.xml")
+    for number in range(pages):
+        made = document.append_paragraph(f"Page {number + 1} of a made-up note.")
+        if number:
+            document.format_paragraph(made.id, page_break_before=True)
+    return document.to_bytes()
+
+
+def test_render_sheet_tiles_pages_into_one_labelled_image(box, session):
+    # Production feedback round 9, N1, as for decks: pages tiled in order into one image,
+    # each labelled with its number; sheet.width is each tile's.
+    data = _pages_long()
+    assert b"Aptos" not in zipfile.ZipFile(io.BytesIO(data)).read("word/theme/theme1.xml")
+    d = session.open(data, "long.docx")
+    sheet = ok(box, session, "render", doc=d, pages=[1, 2], sheet={"columns": 2, "width": 200})
+    (image,) = sheet.images
+    single = ok(box, session, "render", doc=d, pages=[1], width=200).images[0]
+    assert image.width == 2 * 200 + 3 * 8 and image.height == single.height + 20 + 2 * 8
+    assert {k: sheet.data[k] for k in ("pages", "sheet", "cached")} == {
+        "pages": [1, 2], "sheet": {"columns": 2, "width": 200}, "cached": False}
+    assert "coverage" in sheet.data
+    assert ok(box, session, "render", doc=d, pages=[1, 2],
+              sheet={"columns": 2, "width": 200}).data["cached"] is True
+    # Pages left out: every page there is, up to 30.
+    every = ok(box, session, "render", doc=d, sheet={"width": 160})
+    assert every.data["pages"] == [1, 2, 3] and len(every.images) == 1
+    error = fails(box, session, "render", "not_found", doc=d, pages=[1, 99], sheet={})
+    assert error.field == "pages"
+    error = fails(box, session, "render", "limit", doc=d, pages=list(range(1, 32)), sheet={})
+    assert "at most 30 pages" in error.message
+    error = fails(box, session, "render", "limit", doc=d, pages=[1, 2, 3, 4, 5])
+    assert "sheet" in error.message
+    error = fails(box, session, "render", "invalid_arguments", doc=d, pages=[1], sheet={"columns": 9})
+    assert error.field == "sheet.columns" and "at most 8" in error.message
+
+
+def test_render_sheet_narrows_tiles_that_do_not_fit_and_says_so(box, session):
+    # Production feedback round 10, O4: tiles that would make the sheet over the 2,576 px
+    # edge are drawn at the widest that fit, not refused; the result says from what and why.
+    d = session.open(_pages_long(), "long.docx")
+    tall = ok(box, session, "render", doc=d, pages=[1, 2], sheet={"columns": 1, "width": 1280})
+    (image,) = tall.images
+    width = tall.data["sheet"]["width"]
+    assert width < 1280 and image.height <= 2576 and image.width == width + 2 * 8
+    assert tall.data["sheet"]["shrunk"]["from"] == 1280
+    assert "px tall, over the 2576 px limit" in tall.data["sheet"]["shrunk"]["why"]
+    assert "narrowed from 1280 px" in tall.summary
+    single = ok(box, session, "render", doc=d, pages=[1], width=200).images[0]
+    wider = ok(box, session, "render", doc=d, pages=[1], width=width + 1).images[0]
+    assert 2 * (wider.height + 20) + 3 * 8 > 2576 >= image.height and single.width == 200
+    # Pages left out: the pages' own heights, known once drawn.
+    every = ok(box, session, "render", doc=d, sheet={"columns": 1, "width": 1280})
+    assert every.data["pages"] == [1, 2, 3] and every.images[0].height <= 2576
+    assert every.data["sheet"]["shrunk"]["from"] == 1280
+    # Two columns of the call's 1,280 px are 2,584 px wide: 1,276 px each.
+    wide = ok(box, session, "render", doc=d, pages=[1, 2], width=1280, sheet={"columns": 2})
+    assert wide.data["sheet"]["width"] == 1276 and wide.images[0].width == 2576
+    assert "2584 px wide" in wide.data["sheet"]["shrunk"]["why"]
+
+
+def test_a_check_lays_out_with_the_lock_let_go(box, session, monkeypatch):
+    """The layout a check reads runs on the document's bytes with the lock let go: an edit
+    made meanwhile does not wait, and the check reports the version it laid out."""
+    import threading
+
+    d = session.open((FIXTURES / "samplelib" / "sample-long.docx").read_bytes(), "long.docx")
+    started, finish = threading.Event(), threading.Event()
+    real = box.pool.run
+    first = {"call": True}
+
+    def slow(fn, *args, timeout=None, **kwargs):
+        if first.pop("call", False):
+            started.set()
+            assert finish.wait(60)
+        return real(fn, *args, timeout=timeout, **kwargs)
+
+    monkeypatch.setattr(box.pool, "run", slow)
+    before = session.entry(d).version
+    out = {}
+
+    def check():
+        try:
+            out["result"] = box.dispatch(session, "check", {"doc": d, "include": ["reflow"]})
+        except BaseException as exc:   # noqa: BLE001 -- a skip (a face absent) re-raised below
+            out["raised"] = exc
+        finally:
+            started.set()
+
+    thread = threading.Thread(target=check)
+    thread.start()
+    assert started.wait(60)
+    if "raised" in out:
+        raise out["raised"]
+    edit = ok(box, session, "replace_text", doc=d, find="dolore", replace="dolores", expect="all")
+    finish.set()
+    thread.join()
+    if "raised" in out:
+        raise out["raised"]
+    checked = out["result"]
+    assert checked.ok, checked.to_json()
+    assert "call" not in first                         # the layout was held while the edit ran
+    assert edit.version == before + 1 and checked.version == before
+    assert checked.data["reflow"]["pages"] == 36
+    again = ok(box, session, "check", doc=d, include=["reflow"])   # the edited version, afresh
+    assert again.version == before + 1 and again.data["reflow"]["pages"] == 36
+
+
+def test_check_reports_validate_reflow_and_fields(box, session):
+    d = open_doc(session)
+    data = ok(box, session, "check", doc=d).data
+    assert data["validate"]["new"] == [] and data["reflow"]["pages"] == 1 and "counts" in data["fields"]
+    fails(box, session, "check", "invalid_arguments", doc=d, include=["collisions"])
+    assert fails(box, session, "check", "invalid_arguments", doc=d,
+                 spacing=8).field == "spacing"
+    assert fails(box, session, "check", "invalid_arguments", doc=d,
+                 contrast=4.5).field == "contrast"
+    assert ok(box, session, "check", doc=d, slides=[1]).warnings == [
+        "slides read as pages: a document has pages"]
+
+
+def test_check_is_sent_without_a_decks_parameters_and_still_refuses_them(box, session):
+    """Round 23, V3: the Word toolbox's check has no slides, boxes, spacing or contrast; an
+    older prompt that passes one gets the refusal it always got (slides: read as pages)."""
+    sent = next(d for d in box.definitions("anthropic", defer=False) if d["name"] == "check")
+    assert set(sent["input_schema"]["properties"]) == {"doc", "pages", "include", "min_size", "styles",
+                                                         "range", "copies", "scale"}
+    d = open_doc(session)
+    refused = fails(box, session, "check", "invalid_arguments", doc=d, boxes=True)
+    assert refused.field == "boxes" and refused.message == "boxes is for decks; for a document use include"
+    for name, value in (("spacing", 8), ("contrast", 4.5)):
+        assert fails(box, session, "check", "invalid_arguments", doc=d, **{name: value}).message == (
+            f"{name} is for decks; for a document use include")
+    include = sent["input_schema"]["properties"]["include"]
+    assert include["items"]["enum"] == ["validate", "reflow", "fields", "layout", "app", "numbers"]
+    assert include["description"] == "Default: validate, reflow, fields."
+    assert fails(box, session, "check", "invalid_arguments", doc=d, include=["fit"]).field == "include"
+
+
+def test_find_replace_and_render_are_sent_without_a_decks_parameters(box, session):
+    """Round 23, V3: no slides, stories without a deck's layouts and masters; a call that
+    passes slides is answered as before."""
+    sent = {d["name"]: d["input_schema"]["properties"] for d in box.definitions("anthropic", defer=False)}
+    assert set(sent["find_text"]) == {"doc", "text", "regex", "range", "stories", "cursor"}
+    assert set(sent["replace_text"]) == {"doc", "find", "replace", "expect", "regex", "range", "stories"}
+    assert set(sent["render"]) == {"doc", "pages", "width", "sheet", "range", "fast"}
+    assert sent["find_text"]["stories"]["enum"] == ["body", "all"]
+    assert "scope" not in sent["undo"] and "clean" in sent["save_document"]
+    d = open_doc(session)
+    refused = fails(box, session, "find_text", "invalid_arguments", doc=d, text="the", slides=["1"])
+    assert refused.field == "slides" and refused.message == "slides is for decks; for a document use range or stories"
+    scoped = fails(box, session, "undo", "invalid_arguments", doc=d, scope="1")   # a document undoes document-wide
+    assert "undoes document-wide" in scoped.message
+
+
+def test_charts_and_smartart(box, session):
+    d = session.open(CHARTS.read_bytes(), "charts.docx")
+    data = ok(box, session, "edit_chart", doc=d, target="d:1", action="set_value", series="South", category="Q2",
+              value=9.5).data
+    assert data["series"][1]["values"][1] == 9.5
+    reading = ok(box, session, "edit_chart", doc=d, target="d:1", action="read")
+    assert reading.checks == {} and not reading.changed              # read changes nothing
+    read = reading.data
+    assert read["workbook"]["series"][1]["values"]["values"][1] == 9.5
+    error = fails(box, session, "edit_chart", "label_not_found", doc=d, target="d:1", action="set_values", series="East",
+                  values=[1, 2, 3, 4])
+    assert "North" in error.valid_options
+    s = session.open(SMARTART.read_bytes(), "smartart.docx")
+    target = document(session, s).diagrams()[0]
+    nodes = ok(box, session, "edit_smartart", doc=s, target=target.address if hasattr(target, "address") else "d:1",
+               action="set_text", node=0, text="First").data["nodes"]
+    assert nodes[0] == {"n": 0, "text": "First", "level": 0}
+
+
+def test_set_properties(box, session):
+    d = open_doc(session)
+    data = ok(box, session, "set_properties", doc=d, title="New title", language="en-GB").data
+    assert data["title"] == "New title" and data["language"] == "en-GB"
+
+
+def test_undo_gives_back_the_original_bytes_and_redo_the_edit(box, session):
+    d = open_doc(session)
+    original = document(session).to_bytes()
+    ok(box, session, "word_set_tracking", doc=d, on=True, author="Claude")
+    ok(box, session, "word_insert_markdown", doc=d, markdown="More.", at="end")
+    edited = document(session).to_bytes()
+    ok(box, session, "undo", doc=d)
+    assert document(session).to_bytes() == original
+    ok(box, session, "undo", doc=d, redo=True)
+    assert document(session).to_bytes() == edited
+    # A document undoes document-wide: every edit shares its body part, so no scope.
+    error = fails(box, session, "undo", "invalid_arguments", doc=d, scope="1")
+    assert error.field == "scope" and document(session).to_bytes() == edited
+
+
+# -- batch and checks ----------------------------------------------------------------------------
+
+
+def test_a_failing_op_rolls_an_atomic_batch_back_whole(box, session):
+    d = open_doc(session)
+    original = document(session).to_bytes()
+    result = box.dispatch(session, "batch", {"atomic": True, "ops": [
+        {"tool": "word_insert_text", "arguments": {"doc": d, "find": "EUR 12,500", "text": "!", "ref": "x"}},
+        {"tool": "word_delete", "arguments": {"doc": d, "find": "no such text"}}]})
+    assert not result.ok and result.error.details["op"] == 1
+    assert document(session).to_bytes() == original and session.entry(d).refs == {}
+
+
+def test_a_batch_skips_a_failing_op_and_applies_the_rest_as_one_step(box, session):
+    # Round 5, T1: one wrong anchor, enum or ref no longer loses the whole batch.
+    d = open_doc(session)
+    original = document(session).to_bytes()
+    version = session.entry(d).version
+    result = ok(box, session, "batch", ops=[
+        {"tool": "word_insert_text", "arguments": {"doc": d, "find": "EUR 12,500", "text": "!", "ref": "x"}},
+        {"tool": "word_delete", "arguments": {"doc": d, "find": "no such text"}},
+        {"tool": "word_insert_markdown", "arguments": {"doc": d, "at": "nowhere", "markdown": "New.",
+                                                      "ref": "added"}},
+        {"tool": "word_set_text", "arguments": {"doc": d, "target": "$added", "text": "Never."}},
+        {"tool": "word_insert_markdown", "arguments": {"doc": d, "at": "end", "markdown": "Kept."}}])
+    assert result.data["applied"] == 2 and result.data["failed"] == [1, 2, 3]
+    errors = {op["op"]: op["error"] for op in result.data["ops"] if "error" in op}
+    assert errors[1]["code"] == "not_found"
+    assert errors[3]["message"].startswith("$added was to be made by ops[2], which failed")
+    assert "ops[1] (word_delete)" in result.summary
+    assert session.entry(d).version == version + 1 and set(session.entry(d).refs) == {"x"}
+    texts = [p.text for p in document(session).paragraphs()]
+    assert texts[-1] == "Kept." and "Never." not in texts and "New." not in texts
+    assert result.checks["validate"]["new"] == []
+    ok(box, session, "undo", doc=d)                     # one step takes back what applied
+    assert document(session).to_bytes() == original and session.entry(d).refs == {}
+
+
+def test_a_batch_none_of_whose_ops_applies_is_an_error_and_no_step(box, session):
+    d = open_doc(session)
+    original = document(session).to_bytes()
+    version = session.entry(d).version
+    result = box.dispatch(session, "batch", {"ops": [
+        {"tool": "word_delete", "arguments": {"doc": d, "find": "no such text"}},
+        {"tool": "word_set_text", "arguments": {"doc": d, "target": "p:00000000", "text": "x"}}]})
+    assert not result.ok and result.error.code == "not_found"
+    assert result.error.message.startswith("none of the 2 ops applied: ops[0] (word_delete)")
+    assert result.error.details["failed"] == [0, 1]
+    assert session.entry(d).version == version and document(session).to_bytes() == original
+
+
+def test_batch_refuses_tracking_changes_and_templates(box, session):
+    d = open_doc(session)
+    for op in ({"tool": "word_set_tracking", "arguments": {"doc": d, "on": True, "author": "C"}},
+               {"tool": "word_template", "arguments": {"doc": d, "action": "upgrade_to_modern"}}):
+        result = box.dispatch(session, "batch", {"ops": [op]})
+        assert not result.ok and result.error.code == "invalid_arguments"
+
+
+def test_checks_report_the_reflow_once_the_document_was_laid_out(box, session):
+    d = open_doc(session)
+    blind = ok(box, session, "word_insert_markdown", doc=d, markdown="One.", at="end")
+    assert blind.checks["reflow"] is None and blind.checks["validate"]["new"] == []
+    ok(box, session, "describe", doc=d)
+    seen = ok(box, session, "word_insert_markdown", doc=d, markdown="Two.\n\n" * 3, at="end")
+    assert seen.checks["reflow"]["changed"] == [1]
+
+
+def test_a_long_document_reports_stale_reflow_beyond_twenty_pages(box, session):
+    d = session.open((FIXTURES / "samplelib" / "sample-long.docx").read_bytes(), "long.docx")
+    ok(box, session, "describe", doc=d)
+    edited = ok(box, session, "word_insert_text", doc=d, target="p@body/3", text=" More.")
+    assert edited.checks["reflow"] == "stale: call check"
+
+
+def test_results_fit_the_size_cap(box, session):
+    d = session.open((FIXTURES / "samplelib" / "sample-long.docx").read_bytes(), "long.docx")
+    for name, arguments in (("word_read", {"doc": d}), ("describe", {"doc": d}),
+                            ("find_text", {"doc": d, "text": "e"})):
+        result = box.dispatch(session, name, arguments)
+        text = json.dumps(result.to_json(), ensure_ascii=False)
+        assert result.ok and len(text) <= box.limits.max_result_chars + 500, (name, len(text))
+
+
+def test_a_creating_call_retried_with_its_key_makes_nothing_new(box, session):
+    d = open_doc(session)
+    table = "| a | b |\n|---|---|\n| 1 | 2 |\n"
+    first = ok(box, session, "word_insert_markdown", doc=d, at="after:p:3B212964", markdown=table, key="t1")
+    again = ok(box, session, "word_insert_markdown", doc=d, at="after:p:3B212964", markdown=table, key="t1")
+    assert again.created == first.created and "already done" in again.summary
+    assert len(document(session).tables()) == 1
+
+
+@pytest.mark.skipif(not _empty_batches_record_nothing(), reason="needs ooxml-edit's empty-batch fix (PR #7)")
+def test_setting_the_same_text_again_changes_nothing_and_records_no_step(box, session):
+    d = open_doc(session)
+    text = document(session).paragraph("p:16425160").text
+    version = session.entry(d).version
+    ok(box, session, "word_set_text", doc=d, target="p:16425160", text=text)
+    assert session.entry(d).version == version
+
+
+def test_a_picture_in_a_paragraph_of_its_own_centred(box, session):
+    d = open_doc(session)
+    image = session.add_blob(png(60, 40), "chart.png")
+    made = ok(box, session, "word_drawings", doc=d, action="insert_picture", image=image,
+              at="after:p:3B212964", width=144, align="center", alt_text="A chart")
+    paragraph = made.data["paragraph"]
+    document_ = document(session)
+    ids = [p.id for p in document_.paragraphs()]
+    assert ids[ids.index("p:3B212964") + 1] == paragraph
+    assert document_.paragraph(paragraph).text == "\ufffc" and made.data["size"] == [144.0, 96.0]
+    inspected = ok(box, session, "word_inspect", doc=d, target=paragraph).data
+    assert inspected["blocks"][0]["effective"]["alignment"] == "center"
+    ok(box, session, "undo", doc=d)
+    assert paragraph not in [p.id for p in document(session).paragraphs()]
+
+
+# -- coverage: "the check passed" against "the check could not see everything" ---------------
+
+
+def _vml_first() -> bytes:
+    """A document whose first paragraph holds a VML shape stating no size, which docx2svg
+    cannot lay out on any machine, whatever faces it has: a placeholder (or, made to stop,
+    its layout's stop)."""
+    import io
+    import zipfile
+
+    w = ('xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
+         'xmlns:v="urn:schemas-microsoft-com:vml"')
+    rel = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+    body = ('<w:p><w:r><w:pict><v:rect style="position:absolute" fillcolor="#4472c4"/>'
+            '</w:pict></w:r><w:r><w:t>A shape.</w:t></w:r></w:p><w:p><w:r><w:t>After it.</w:t></w:r></w:p>')
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("[Content_Types].xml", (
+            '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" '
+            'ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" '
+            'ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/'
+            'vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>'))
+        archive.writestr("_rels/.rels", (
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship '
+            f'Id="rId1" Type="{rel}/officeDocument" Target="word/document.xml"/></Relationships>'))
+        archive.writestr("word/document.xml", f'<w:document {w}><w:body>{body}<w:sectPr/></w:body></w:document>')
+    return buffer.getvalue()
+
+
+def test_check_render_and_save_say_how_much_was_laid_out(box, session):
+    d = open_doc(session)
+    reflow = ok(box, session, "check", doc=d, include=["reflow"]).data["reflow"]
+    coverage = reflow["coverage"]
+    assert isinstance(coverage["complete"], bool) and coverage["pages"] == reflow["pages"]
+    # A complete coverage has no stop; a body stop is the reflow's stop too.
+    assert ("stop" in coverage) == ("stopped" in reflow)
+    assert coverage["complete"] is False or ("stop" not in coverage and "missing_fonts" not in coverage)
+    rendered = ok(box, session, "render", doc=d, pages=[1], width=400)
+    assert rendered.data["coverage"] == coverage
+    saved = ok(box, session, "save_document", doc=d, name="agreement.docx", format="docx")
+    assert saved.data["coverage"] == coverage
+
+
+def test_a_placeholder_makes_the_coverage_partial(box, session):
+    d = session.open(_vml_first(), "shape.docx")
+    reflow = ok(box, session, "check", doc=d, include=["reflow"]).data["reflow"]
+    coverage = reflow["coverage"]
+    assert coverage["complete"] is False and coverage["status"] == "partial"
+    assert "stop" not in coverage and "stopped" not in reflow
+    assert [(p["page"], p["reason"]) for p in coverage["placeholders"]] == [(1, "drawing")]
+    assert coverage["placeholders"][0]["at"].startswith("p")
+    assert coverage["blocks_laid_out"] == [1, 2]
+    assert ok(box, session, "save_document", doc=d, name="shape.docx", format="docx").data["coverage"] == coverage
+
+
+def test_a_layout_that_stops_is_not_complete(monkeypatch):
+    """Made to stop (``CARRY_ON`` off, as docx2svg did before round 16), the coverage says
+    where.  In process: the tools lay out in a worker, where the switch is not set."""
+    from docx2svg import paginate
+
+    from docx_agent import Document
+
+    monkeypatch.setattr(paginate, "CARRY_ON", False)
+    layout = Document.open(_vml_first()).layout()
+    coverage = layout.coverage_facts()
+    assert coverage["complete"] is False and coverage["status"] == "partial"
+    assert coverage["stop"]["reason"] == "drawing" and coverage["stop"]["page"] == 1
+    assert coverage["stop"]["at"] == layout.stopped.at and coverage["stop"]["at"].startswith("p")
+    assert coverage["blocks_laid_out"] == [0, 2]
+
+
+def test_coverage_facts_tell_complete_approximate_and_partial_apart():
+    from docx_agent.layout import coverage_facts
+
+    def data(complete=True, approximations=(), **extra):
+        return {"complete": complete, "pages": 2, "blocks": 9, "blocks_laid_out": 9 if complete else 4,
+                "estimate_source": "layout", "estimated_pages": 2, "stop": None, "story_stops": [],
+                "substituted_fonts": [], "missing_fonts": [], "approximations": list(approximations), **extra}
+
+    path = "w:body/w:tbl[1]/w:tr[1]/w:tc[1]/w:p[1]/w:r[2]/wp:anchor[1]"
+    one = {"code": "layout-approximate:cell-drawing", "reason": "cell-drawing", "page": 1, "path": path,
+           "message": "a floating drawing in a table cell (...) is positioned by character left, which no probe "
+                      "measured in a cell: the cell's text is laid out as if text did not wrap around it"}
+    assert coverage_facts(data())["status"] == "complete" and "approximations" not in coverage_facts(data())
+    facts = coverage_facts(data(approximations=[one]))
+    assert facts["complete"] is True and facts["status"] == "approximate"
+    assert facts["approximations"] == [{"page": 1, "reason": "cell-drawing", "path": path,
+                                        "message": coverage_facts.__globals__["_short"](one["message"])}]
+    assert coverage_facts(data(complete=False, approximations=[one]))["status"] == "partial"
+    # docx2svg's own status, where it gives one, is what the facts say.
+    assert coverage_facts(data(status="approximate", approximations=[one]))["status"] == "approximate"
+    many = coverage_facts(data(approximations=[one] * 7))
+    assert len(many["approximations"]) == 5 and many["approximations_total"] == 7
+
+
+def _cell_drawing_aligned_on_its_character() -> bytes:
+    """A table whose first cell anchors a picture text wraps around, aligned against its
+    character -- a place docx2svg has not measured in a cell: it approximates it rather
+    than stop the table (docx2svg F.25), and says so in its coverage."""
+    import io
+    import struct
+    import zipfile
+    import zlib
+
+    def chunk(kind, payload):
+        return struct.pack(">I", len(payload)) + kind + payload + struct.pack(">I", zlib.crc32(kind + payload))
+
+    png = (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 2, 2, 8, 2, 0, 0, 0))
+           + chunk(b"IDAT", zlib.compress(b"\x00" + b"\xc0\x20\x20" * 2 + b"\x00" + b"\xc0\x20\x20" * 2))
+           + chunk(b"IEND", b""))
+    ns = ('xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
+          'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" '
+          'xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" '
+          'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
+          'xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"')
+    anchor = ('<w:r><w:drawing><wp:anchor distT="0" distB="0" distL="114300" distR="114300" simplePos="0" '
+              'relativeHeight="1" behindDoc="0" locked="0" layoutInCell="1" allowOverlap="1">'
+              '<wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="character"><wp:align>left</wp:align>'
+              '</wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV>'
+              '<wp:extent cx="900000" cy="500000"/><wp:effectExtent l="0" t="0" r="0" b="0"/>'
+              '<wp:wrapSquare wrapText="bothSides"/><wp:docPr id="1" name="Picture 1"/><wp:cNvGraphicFramePr/>'
+              '<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic>'
+              '<pic:nvPicPr><pic:cNvPr id="1" name="p.png"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill>'
+              '<a:blip r:embed="rId2"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm>'
+              '<a:off x="0" y="0"/><a:ext cx="900000" cy="500000"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/>'
+              '</a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r>')
+
+    def cell(text, extra=""):
+        return (f'<w:tc><w:tcPr><w:tcW w:w="4000" w:type="dxa"/><w:vAlign w:val="center"/></w:tcPr>'
+                f'<w:p><w:r><w:t xml:space="preserve">{text} </w:t></w:r>{extra}</w:p></w:tc>')
+
+    table = ('<w:tbl><w:tblPr><w:tblW w:w="8000" w:type="dxa"/><w:tblLayout w:type="fixed"/></w:tblPr>'
+             '<w:tblGrid><w:gridCol w:w="4000"/><w:gridCol w:w="4000"/></w:tblGrid>'
+             f'<w:tr>{cell("Logo", anchor)}{cell("Title")}</w:tr><w:tr>{cell("A")}{cell("B")}</w:tr></w:tbl>')
+    body = table + "".join(f"<w:p><w:r><w:t>After the table {k}.</w:t></w:r></w:p>" for k in range(3))
+    rel = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+    styles = ('<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:docDefaults>'
+              '<w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:cs="Calibri"/>'
+              '<w:sz w:val="22"/></w:rPr></w:rPrDefault></w:docDefaults></w:styles>')
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("[Content_Types].xml", (
+            '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" '
+            'ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" '
+            'ContentType="application/xml"/><Default Extension="png" ContentType="image/png"/>'
+            '<Override PartName="/word/document.xml" ContentType="application/'
+            'vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override '
+            'PartName="/word/styles.xml" ContentType="application/'
+            'vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/></Types>'))
+        archive.writestr("_rels/.rels", (
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship '
+            f'Id="rId1" Type="{rel}/officeDocument" Target="word/document.xml"/></Relationships>'))
+        archive.writestr("word/_rels/document.xml.rels", (
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            f'<Relationship Id="rId1" Type="{rel}/styles" Target="styles.xml"/>'
+            f'<Relationship Id="rId2" Type="{rel}/image" Target="media/p.png"/></Relationships>'))
+        archive.writestr("word/styles.xml", styles)
+        archive.writestr("word/media/p.png", png)
+        archive.writestr("word/document.xml", f"<w:document {ns}><w:body>{body}<w:sectPr/></w:body></w:document>")
+    return buffer.getvalue()
+
+
+def test_a_layout_that_approximates_says_where(box, session):
+    from docx2svg.coverage import Coverage
+
+    if not hasattr(Coverage, "status"):
+        pytest.skip("this docx2svg reports no approximations (it stops at such a table)")
+    d = session.open(_cell_drawing_aligned_on_its_character(), "cover.docx")
+    reflow = ok(box, session, "check", doc=d, include=["reflow"]).data["reflow"]
+    coverage = reflow["coverage"]
+    assert coverage["complete"] is True and coverage["status"] == "approximate" and "stop" not in coverage
+    assert coverage["blocks_laid_out"] == [4, 4]
+    [approximation] = coverage["approximations"]
+    assert approximation["page"] == 1 and approximation["reason"] == "cell-drawing"
+    assert approximation["path"].startswith("w:body/w:tbl[1]/w:tr[1]/w:tc[1]/w:p[1]/")
+    assert "character left" in approximation["message"]
+    assert ok(box, session, "render", doc=d, pages=[1], width=400).data["coverage"] == coverage
+
+
+# -- forgiving the model's small mistakes (round 6: R2, R3, R7) ----------------------------------
+
+
+def test_a_camel_case_or_hyphenated_ref_is_folded_where_defined_and_used(box, session):
+    d = open_doc(session)
+    result = ok(box, session, "word_insert_text", doc=d, find="EUR 12,500", text=", excluding VAT",
+                ref="vatNote")
+    rng = result.data["ranges"][0]
+    assert result.refs == {"vat_note": rng}
+    assert "ref 'vatNote' read as 'vat_note': write $vat_note" in result.warnings
+    formatted = ok(box, session, "word_format", doc=d, targets=["$vat-note"], bold=True)
+    assert formatted.warnings == ["targets[0] '$vat-note' read as '$vat_note'"]
+    note = ok(box, session, "word_notes", doc=d, action="insert", find="99.5%", text="Measured monthly.",
+              ref="noteOne")
+    assert list(note.refs) == ["note_one"]
+    edited = ok(box, session, "word_notes", doc=d, action="edit", note="$noteOne", text="Measured each month.")
+    assert edited.warnings == ["note '$noteOne' read as '$note_one'"]
+
+
+def test_a_folded_ref_that_names_another_range_is_refused(box, session):
+    d = open_doc(session)
+    first = ok(box, session, "word_insert_text", doc=d, find="EUR 12,500", text="!", ref="vat_note")
+    original = document(session).to_bytes()
+    error = fails(box, session, "word_insert_text", "invalid_arguments", doc=d, find="99.5%", text="?",
+                  ref="vatNote")
+    assert error.field == "ref" and "already names" in error.message
+    assert document(session).to_bytes() == original
+    assert session.entry(d).refs == {"vat_note": first.data["ranges"][0]}
+
+
+def test_a_namespaced_tool_in_a_batch_runs(box, session):
+    d = open_doc(session)
+    result = ok(box, session, "batch", ops=[
+        {"tool": "functions.word_set_text", "arguments": {"doc": d, "target": "p:16425160",
+                                                          "text": "Scope of work"}}])
+    assert result.warnings[0] == "ops[0]: tool 'functions.word_set_text' read as 'word_set_text'"
+    assert document(session).paragraph("p:16425160").text == "Scope of work"
+
+
+def test_a_key_one_level_off_says_where_it_belongs(box, session):
+    d = open_doc(session)
+    error = fails(box, session, "word_sections", "invalid_arguments", doc=d, action="set", top=72)
+    assert error.message == "unknown argument 'top'; top belongs one level down: margins.top"
+    error = fails(box, session, "word_sections", "invalid_arguments", doc=d, action="set",
+                  margins={"top": 72, "orientation": "landscape"})
+    assert error.message == ("unknown argument 'margins.orientation'; orientation belongs one "
+                             "level up, at the top level, not in margins")
+
+
+def test_word_format_reads_top_and_bottom_as_paragraph_spacing(box, session):
+    d = open_doc(session)
+    result = ok(box, session, "word_format", doc=d, targets=["p:16425160"], top=6, bottom=12)
+    assert result.warnings == ["top read as space_before", "bottom read as space_after"]
+    effective = document(session).paragraph("p:16425160").effective
+    assert (effective.space_before, effective.space_after) == (6, 12)
+
+
+# -- round 7: the application's own tools in a batch (L6), empty items lists (L7) ----------
+
+from ooxml_edit.tools import Result, string, tool  # noqa: E402
+
+#: What the made-up application tool kept, outside the document.
+KEPT: list[str] = []
+
+
+@tool("app_keep", "Keep a line for the user.", {"text": string("The line.")}, documents=())
+def app_keep(call, text):
+    KEPT.append(text)
+    return Result(summary=f"Kept {text!r}", data={"kept": len(KEPT)})
+
+
+def test_a_batch_runs_a_tool_the_application_registered():
+    KEPT.clear()
+    with Toolbox(TOOLS + [app_keep], formats=[FORMAT], groups=GROUPS) as own:
+        session = own.session(clock=lambda: CLOCK_AT)
+        d = open_doc(session)
+        result = ok(own, session, "batch", ops=[
+            {"tool": "word_set_text", "arguments": {"doc": d, "target": "p:16425160",
+                                                    "text": "Scope of work"}},
+            {"tool": "app_keep", "arguments": {"text": "renamed the heading"}}])
+        assert KEPT == ["renamed the heading"]
+        assert result.data["ops"][1] == {"op": 1, "tool": "app_keep",
+                                         "summary": "Kept 'renamed the heading'",
+                                         "data": {"kept": 1}}
+        assert document(session).paragraph("p:16425160").text == "Scope of work"
+
+
+@pytest.mark.parametrize("tool_name, arguments, done", [
+    ("word_set_text", {}, "written"),
+    ("word_insert_text", {}, "inserted"),
+    ("word_comments", {"action": "add"}, "changed"),
+])
+def test_an_empty_items_list_is_a_no_op_with_a_warning(box, session, tool_name, arguments, done):
+    d = open_doc(session)
+    original = document(session).to_bytes()
+    result = ok(box, session, tool_name, doc=d, items=[], **arguments)
+    assert result.warnings == [f"items is empty: nothing was {done}"]
+    assert result.summary == f"Nothing {done}: items is empty"
+    assert document(session).to_bytes() == original
+    assert not session.entry(d).history.can_undo()
+    batch = ok(box, session, "batch", ops=[{"tool": tool_name,
+                                            "arguments": {"doc": d, "items": [], **arguments}}])
+    assert batch.warnings == [f"ops[0]: items is empty: nothing was {done}"]
+
+
+def test_comments_with_no_items_at_all_still_need_them(box, session):
+    d = open_doc(session)
+    error = fails(box, session, "word_comments", "invalid_arguments", doc=d, action="delete")
+    assert error.message == "delete needs items"
+
+
+def test_cells_take_a_style_whose_indent_does_not_fit_and_say_so(box, session):
+    """Round 21, T4: a cell style inheriting Normal's -170 pt right indent is written as it
+    is -- no direct indent on the cells -- and the result names the style and the indent."""
+    d = ok(box, session, "new_document", kind="docx").created[0]
+    doc = document(session, d)
+    doc.styles.modify("Normal", indent_right=-170)
+    doc.styles.add("Cell text", "paragraph", based_on="Normal")
+    result = ok(box, session, "word_insert_markdown", doc=d, at="end", markdown="| A | B |\n|---|---|\n| 1 | 2 |",
+                style_map=[{"element": "table_cell", "style": "Cell text"}])
+    with zipfile.ZipFile(io.BytesIO(doc.to_bytes())) as archive:
+        assert b"<w:ind" not in archive.read("word/document.xml")
+    warning = [w for w in result.warnings if "Cell text" in w]
+    assert len(warning) == 1 and "indent_right -170 pt (from Normal)" in warning[0]
+    assert ok(box, session, "check", doc=d, include=["layout"]).data["layout"]["direct_formatting"] == []
+
+
+def test_a_table_as_wide_as_the_body_lines_is_not_past_the_margins(box, session):
+    """Round 21, T5: Normal runs its lines 60 pt past the right margin; width_of body makes
+    a table as wide as those lines, on their edges, and check has nothing past the margins
+    -- while a table reaching beyond the lines still is."""
+    d = ok(box, session, "new_document", kind="docx").created[0]
+    doc = document(session, d)
+    doc.styles.modify("Normal", indent_left=12, indent_right=-60)
+    blocks = ok(box, session, "word_insert_markdown", doc=d, at="end",
+                markdown="Body text.\n\n| A | B |\n|---|---|\n| 1 | 2 |").data["blocks"]
+    table = next(b for b in blocks if b.startswith("t:"))
+    lines = doc.body_lines(table)
+    assert (lines["left"], lines["right"]) == (12, -60) and lines["width"] == lines["text_width"] + 48
+    ok(box, session, "word_format_table", doc=d, table=table, scope="table", width_of="body")
+    properties = doc.table_properties(table)
+    assert properties["width"] == lines["width"] and properties["indent"] == 12
+    assert sum(properties["columns"]) == pytest.approx(lines["width"], abs=0.05)
+    assert ok(box, session, "check", doc=d, include=["layout"]).data["layout"]["past_margins"] == []
+    # Half as wide, centred between the lines' edges.
+    ok(box, session, "word_format_table", doc=d, table=table, scope="table", width_of="body", width_percent=50,
+       alignment="center")
+    properties = doc.table_properties(table)
+    assert properties["width"] == pytest.approx(lines["width"] / 2, abs=0.01)
+    assert properties["indent"] == pytest.approx(12 + lines["width"] / 4, abs=0.01)
+    # Past the lines: reported, by how far past the margin.
+    ok(box, session, "word_format_table", doc=d, table=table, scope="table", width_of="body")
+    ok(box, session, "word_format_table", doc=d, table=table, scope="column", column=1,
+       width=properties["columns"][1] * 2 + 40)
+    past = ok(box, session, "check", doc=d, include=["layout"]).data["layout"]["past_margins"]
+    assert [entry["table"] for entry in past] == [table] and past[0]["past"]["right"] > 60
+    fails(box, session, "word_format_table", "invalid_arguments", doc=d, table=table, scope="table",
+          width_of="body", width=300)
+
+
+def test_a_tracked_format_leaves_other_paragraphs_as_they_were(box, session):
+    """Round 50: recording a tracked property change reads every paragraph of the part; a
+    paragraph the edit did not change keeps its bytes (an empty ``w:pPr`` there stays)."""
+    import re
+
+    w = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+    d = open_doc(session)
+    doc = document(session)
+    root = doc.package.tree("word/document.xml")
+    other = next(p for p in root.iter(w + "p")
+                 if p.get("{http://schemas.microsoft.com/office/word/2010/wordml}paraId") == "12972045")
+    properties = other.find(w + "pPr")
+    if properties is None:
+        properties = other.makeelement(w + "pPr", {})
+        other.insert(0, properties)
+    for child in list(properties):
+        properties.remove(child)
+    doc.package.mark_dirty("word/document.xml")
+    pattern = rb'<w:p [^>]*w14:paraId="12972045".*?</w:p>'
+    before = re.search(pattern, doc.package.read("word/document.xml")).group(0)
+    assert b"<w:pPr/>" in before
+    ok(box, session, "word_set_tracking", doc=d, on=True, author="Claude")
+    ok(box, session, "word_format", doc=d, targets=["p:3B212964"], bold=True)
+    assert re.search(pattern, document(session).package.read("word/document.xml")).group(0) == before

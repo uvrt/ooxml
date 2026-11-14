@@ -1,0 +1,385 @@
+{
+ "task": "w3-figures-update",
+ "clock": "2026-10-07T09:00:00+00:00",
+ "open": [
+  "regional-sales-update.docx"
+ ],
+ "blobs": [
+  "sales-2026.csv"
+ ],
+ "note": "The CSV's figures reach the model in the task message: no tool reads a text blob.",
+ "calls": [
+  {
+   "tool": "describe",
+   "arguments": {
+    "doc": "d1"
+   },
+   "expect": {
+    "ok": true,
+    "summary": "Described regional-sales-update.docx",
+    "data_sha": "5a54f2140f6c77d5",
+    "data_keys": [
+     "comments",
+     "comments.by_author",
+     "comments.open",
+     "comments.threads",
+     "compatibility_mode",
+     "controls",
+     "drawings",
+     "fields",
+     "headings",
+     "name",
+     "notes",
+     "pages",
+     "problems",
+     "properties",
+     "properties.author",
+     "properties.subject",
+     "properties.title",
+     "revisions",
+     "revisions.by_author",
+     "revisions.changes",
+     "revisions.records",
+     "sections",
+     "styles_in_use",
+     "tables",
+     "tracking"
+    ],
+    "data_sha_core": "c9b8da46ebbf4133"
+   }
+  },
+  {
+   "tool": "word_read",
+   "arguments": {
+    "doc": "d1"
+   },
+   "expect": {
+    "ok": true,
+    "summary": "Read the document (final)",
+    "data_sha": "dd1cdacb2f87e078",
+    "data_sha_core": "dd1cdacb2f87e078"
+   }
+  },
+  {
+   "tool": "edit_chart",
+   "arguments": {
+    "doc": "d1",
+    "target": "d:1",
+    "action": "read"
+   },
+   "expect": {
+    "ok": true,
+    "summary": "Read d:1",
+    "data_sha": "741a6b61da9866a9",
+    "data_keys": [
+     "axes",
+     "axes.category",
+     "axes.value",
+     "blanks",
+     "categories",
+     "gap_width",
+     "id",
+     "legend",
+     "number_formats",
+     "number_formats.data_labels",
+     "number_formats.value_axis",
+     "number_formats.values",
+     "scales",
+     "scales.category",
+     "scales.value",
+     "series",
+     "title",
+     "type",
+     "types",
+     "workbook",
+     "workbook.categories",
+     "workbook.series",
+     "workbook.sheet",
+     "workbook.workbook"
+    ],
+    "data_sha_core": "741a6b61da9866a9"
+   }
+  },
+  {
+   "tool": "batch",
+   "arguments": {
+    "ops": [
+     {
+      "tool": "word_edit_table",
+      "arguments": {
+       "doc": "d1",
+       "table": "t:60D6847F",
+       "action": "insert_column",
+       "index": 3,
+       "side": "after"
+      }
+     },
+     {
+      "tool": "word_edit_table",
+      "arguments": {
+       "doc": "d1",
+       "table": "t:60D6847F",
+       "action": "set_cells",
+       "cells": [
+        {
+         "row": 0,
+         "col": 4,
+         "text": "Q4"
+        },
+        {
+         "row": 1,
+         "col": 4,
+         "text": "5.9"
+        },
+        {
+         "row": 1,
+         "col": 5,
+         "text": "22.0"
+        },
+        {
+         "row": 3,
+         "col": 4,
+         "text": "5.3"
+        },
+        {
+         "row": 3,
+         "col": 5,
+         "text": "18.5"
+        },
+        {
+         "row": 4,
+         "col": 2,
+         "text": "13.7"
+        },
+        {
+         "row": 4,
+         "col": 4,
+         "text": "15.8"
+        },
+        {
+         "row": 4,
+         "col": 5,
+         "text": "57.1"
+        },
+        {
+         "row_label": "South",
+         "col_label": "Q2",
+         "text": "3.8"
+        },
+        {
+         "row_label": "South",
+         "col_label": "Q4",
+         "text": "4.6"
+        },
+        {
+         "row_label": "South",
+         "col_label": "Total",
+         "text": "16.6"
+        }
+       ]
+      }
+     },
+     {
+      "tool": "edit_chart",
+      "arguments": {
+       "doc": "d1",
+       "target": "d:1",
+       "action": "add_category",
+       "text": "Q4",
+       "values": [
+        5.9,
+        4.6,
+        5.3
+       ]
+      }
+     },
+     {
+      "tool": "edit_chart",
+      "arguments": {
+       "doc": "d1",
+       "target": "d:1",
+       "action": "set_value",
+       "series": "South",
+       "category": "Q2",
+       "value": 3.8
+      }
+     },
+     {
+      "tool": "replace_text",
+      "arguments": {
+       "doc": "d1",
+       "find": "EUR 41.6 million",
+       "replace": "EUR 57.1 million",
+       "expect": "one"
+      }
+     },
+     {
+      "tool": "replace_text",
+      "arguments": {
+       "doc": "d1",
+       "find": "EUR 16.1 million",
+       "replace": "EUR 22.0 million",
+       "expect": "one"
+      }
+     },
+     {
+      "tool": "replace_text",
+      "arguments": {
+       "doc": "d1",
+       "find": "Q3 was the strongest quarter, at EUR 14.5 million",
+       "replace": "Q4 was the strongest quarter, at EUR 15.8 million",
+       "expect": "one"
+      }
+     }
+    ]
+   },
+   "expect": {
+    "ok": true,
+    "summary": "Ran 7 op(s) as one step: insert_column on t:60D6847F; set_cells on t:60D6847F; add_category on d:1; set_value on d:1; Replaced 1 occurrence(s); and 2 more",
+    "changed": [
+     "t:60D6847F",
+     "p:04C2BB95",
+     "p:3CA8E4EB",
+     "p:3EB3FF6C",
+     "p:6B2F1D53",
+     "p:3052721F",
+     "p:20C1ECE5",
+     "p:0890725E",
+     "p:6FCDB881",
+     "p:654112D5",
+     "p:6BD800D7",
+     "p:4329EC82",
+     "d:1",
+     "p:16425160"
+    ],
+    "created": [
+     "p:04C2BB95",
+     "p:3CA8E4EB",
+     "p:6BD800D7",
+     "p:6B2F1D53",
+     "p:0890725E"
+    ],
+    "data_sha": "f1254888b5ae76b9",
+    "data_keys": [
+     "ops"
+    ],
+    "data_sha_core": "f1254888b5ae76b9"
+   }
+  },
+  {
+   "tool": "edit_chart",
+   "arguments": {
+    "doc": "d1",
+    "target": "d:1",
+    "action": "read"
+   },
+   "expect": {
+    "ok": true,
+    "summary": "Read d:1",
+    "data_sha": "ca91f20bb516529c",
+    "data_keys": [
+     "axes",
+     "axes.category",
+     "axes.value",
+     "blanks",
+     "categories",
+     "gap_width",
+     "id",
+     "legend",
+     "number_formats",
+     "number_formats.data_labels",
+     "number_formats.value_axis",
+     "number_formats.values",
+     "scales",
+     "scales.category",
+     "scales.value",
+     "series",
+     "title",
+     "type",
+     "types",
+     "workbook",
+     "workbook.categories",
+     "workbook.series",
+     "workbook.sheet",
+     "workbook.workbook"
+    ],
+    "data_sha_core": "ca91f20bb516529c"
+   }
+  },
+  {
+   "tool": "word_read",
+   "arguments": {
+    "doc": "d1",
+    "range": "t:60D6847F"
+   },
+   "expect": {
+    "ok": true,
+    "summary": "Read t:60D6847F (final)",
+    "data_sha": "8c880172dc03c0c8",
+    "data_sha_core": "8c880172dc03c0c8"
+   }
+  },
+  {
+   "tool": "check",
+   "arguments": {
+    "doc": "d1"
+   },
+   "expect": {
+    "ok": true,
+    "summary": "Checked validate, reflow, fields",
+    "data_sha": "98be2b552b1ff29a",
+    "data_keys": [
+     "fields",
+     "fields.counts",
+     "fields.note",
+     "reflow",
+     "reflow.complete",
+     "reflow.coverage",
+     "reflow.pages",
+     "validate",
+     "validate.baseline",
+     "validate.fixed",
+     "validate.new",
+     "validate.problems",
+     "validation",
+     "validation.baseline",
+     "validation.new"
+    ],
+    "data_sha_core": "23ba4d8504c4cba4"
+   }
+  },
+  {
+   "tool": "save_document",
+   "arguments": {
+    "doc": "d1",
+    "name": "regional-sales-update.docx",
+    "format": "docx"
+   },
+   "expect": {
+    "ok": true,
+    "summary": "Saved regional-sales-update.docx for the application",
+    "data_sha": "e0c780d53c428c80",
+    "data_keys": [
+     "coverage",
+     "coverage.blocks_laid_out",
+     "coverage.complete",
+     "coverage.pages",
+     "coverage.status",
+     "doc",
+     "format",
+     "name",
+     "size",
+     "validate",
+     "validate.baseline",
+     "validate.fixed",
+     "validate.new"
+    ],
+    "data_sha_core": "d18dd06c1290a84b"
+   }
+  }
+ ],
+ "output": {
+  "name": "regional-sales-update.docx",
+  "sha256": "24f446c950107751d682d36f44563da51a1025d1b8e0a6c96d8ee86fc75f6f0e"
+ }
+}

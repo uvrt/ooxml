@@ -1,0 +1,89 @@
+# What is in ooxml-common
+
+Back to the [README](../README.md).
+
+## Modules
+
+| Module | What it is |
+| --- | --- |
+| `ooxml_common.opc` | The OPC container: ZIP parts (kept compressed: `open_part` streams one, `part_size` sizes it), content types, relationships |
+| `ooxml_common.zipparts` | A package's parts kept as their compressed ZIP entries until they are needed (`read_parts`, `PartStore`): a part read whole or streamed from any offset (`ZipPart.read`, `ZipPart.open`), checked as it is inflated -- bounded by its declared size, its CRC-32 at the end (`PartError`) |
+| `ooxml_common.kinds` | The package kinds: which extension names which (`.docx`, `.dotm`, `.potx`, `.xltm`...), whether it is a template and may carry macros, its main part's content type, `kind_mismatch` for a package whose content type its file name does not take, and `identify_package`/`package_kind`: the kind a file's bytes declare, or why it is none (a `.xls`, `.doc`, `.ppt`, an encrypted file named) |
+| `ooxml_common.cfb` | The names of a compound file's streams ([MS-CFB]), read without reading any stream: what tells a `.xls`, `.doc`, `.ppt` or an encrypted package apart |
+| `ooxml_common.xmlutil` | Namespace-agnostic helpers over `xml.etree` |
+| `ooxml_common.units` | EMU, point, pixel and angle conversions |
+| `ooxml_common.locales` | `Locale`, the regional settings a conversion or an edit is in -- decimal, thousands and list separators, date order, language -- with the fixed default `EN_US` and `locale_for` (see the README, "Locale") |
+| `ooxml_common.stylenames` | Word's built-in style names as Word shows them in each measured language (`NAMES`, from `stylenames.json`, measured by `tools/word_style_names.py`), the list separator Word splits a field's list on there (`LIST_SEPARATORS`, `list_separator`), and `find_style`: the style a field's name (`TOC \t`, `STYLEREF`) means, by stored name or alias, then the document language's display names, then English's |
+| `ooxml_common.themetint` | The colour Word draws for a theme colour with `w:themeTint` / `w:themeShade` (and their fill and border forms): `word_theme_tint`, Windows' integer HLS on a scale of 1530, measured |
+| `ooxml_common.dates` | A date's serial printed in its number format code as Office shows it (`format_serial`: `[$-413]d\ mmmm\ yyyy` is `5 januari 2026`), with the month and day names measured per locale (`NAMES`, `LCIDS`; an unprefixed code's per interface language, `INTERFACE_NAMES`) and the 1900 and 1904 date systems |
+| `ooxml_common.fonts` | The font bundle probe, embedded-font decoding (EOT, MicroType Express, SFNT) and the substitution report; `metrics_from_faces` builds an advance table, legacy kern pairs included, from a family's font files |
+| `ooxml_common.fonts.office` | Where Office for Mac finds a face, read in place: the applications' bundles, macOS's folders and Office's cloud-font cache (`cloud_font_dirs`), in each application's measured order (`POWERPOINT`, `WORD`); a header-only index with the names and CSS keys resvg files a face under (`find`, `css_match`), a standard-library face reader (`Face`), and advance tables built from installed faces (`metrics`, `layout_metrics`) |
+| `ooxml_common.text.metrics` | Generated advance-width tables for the faces measured |
+| `ooxml_common.text.kerning` | Kerning class matrices: each face's OpenType feature (`KERNING`, from GPOS) and the legacy `kern` table of the face it stands for (`LEGACY_KERNING`); `KerningSource`, which of the two an application charges |
+| `ooxml_common.text.fontmap` | Clone substitution with its grading (`exact`, `compatible`, `approximate`, `missing`) |
+| `ooxml_common.text.measure` | The `TextMeasurer` protocol and both implementations |
+| `ooxml_common.imagemeta` | A picture's natural size, which a tiled fill is measured in, and the ICC profile it carries |
+| `ooxml_common.icc` | A matrix/TRC RGB profile read, and its colours converted to sRGB exactly, as PowerPoint converts a profiled picture |
+| `ooxml_common.svgimage` | An SVG picture's natural size as PowerPoint reads its root's `width` and `height`, and the SVG with them restated in pixels for a rasteriser (resvg draws nothing for `width="72pt"`) |
+| `ooxml_common.outlines` | Text as outlines: `outline_text(svg, fonts)` draws every `<text>` as the glyph paths resvg would draw it with from the font files a rasterisation is handed (`FontSetup`) -- resvg's font database and fallback (`fontdb`), harfrust's shaping (`shaper`), usvg's text layout (`svgtext`), TrueType, CFF and variable outlines (`face`) -- so an SVG needs no font to be viewed; what it cannot draw so stays text, with why (`KeptText`). One glyph set for many pages: `outline_text(glyphs={})`, `glyph_sheet`, `embed_glyphs`; ids made of the outline (`glyph_id`). See [fonts.md](fonts.md#text-as-outlines) |
+| `ooxml_common.raster` | SVG to PNG through an installed rasteriser, for both renderers: the backends (resvg-py, then cairosvg) probed without importing more than needed (`available_backends`, `preferred_backend`, `choose_backend`), the call to each with its options (`render_with_resvg`, `render_with_cairosvg`), `RasterizerNotAvailable`, and a page drawn in passes where two faces it uses answer to one name in resvg (`pass_svg`, `draw_in_passes`, `without_undrawn_text`); standard library only, a backend imported when it is used |
+| `ooxml_common.metafile` | An EMF or WMF picture drawn from its GDI records as one SVG (`metafile_to_svg`): pens, brushes, hatches, shapes, arcs, paths, clips, mapping modes, world transforms, bitmaps and text, as Windows PowerPoint draws them; an EMF+ file (dual or not) from its EMF+ records, as Windows draws it; what it leaves out named (`MetafileDrawing.warning`); `inline_metafile_images` writes such pictures inline for a rasteriser that draws no text in an SVG picture |
+| `ooxml_common.metafile.emfplus` | The EMF+ records an EMF's comments carry: the GDI+ graphics state (world and page transforms, clip, saves and containers, the object table) and brushes (solid, hatch, linear and path gradient, texture), pens (widths and units, caps, joins, dashes, alignment, compound), shapes, curves, paths, regions, bitmaps and metafile images, `DrawString` and `DrawDriverString` |
+| `ooxml_common.metafile.dib` | A device-independent bitmap as PNG (moved from pptx2svg), and its pixels (`decode_dib`) |
+| `ooxml_common.drawingml.model` | DrawingML's value types: colour choices and resolved colours, fills, outlines, effects, transforms, geometry, picture tiling |
+| `ooxml_common.drawingml.source` | DrawingML as the XML states it: unresolved fills, outlines, shape styles, effects, transforms, geometry, the theme's format scheme |
+| `ooxml_common.drawingml.read` | The reader: `a:` XML (a slide's or a Word shape's) into those types, and a theme's colour and format schemes |
+| `ooxml_common.drawingml.color` | Colour resolution through a colour map and theme, with every transform, under per-application `ColorRules` |
+| `ooxml_common.drawingml.guides` | Shape-guide formula evaluation |
+| `ooxml_common.drawingml.preset_specs` | The preset geometries pptx2svg draws from ECMA-376 |
+| `ooxml_common.drawingml.presets` | The rest, and `PRESETS`: every name `ST_ShapeType` allows |
+| `ooxml_common.drawingml.preset_text_rects` | Every preset's text rectangle (`a:rect`), from the same source (`tools/derive_preset_text_rects.py`) |
+| `ooxml_common.drawingml.geometry` | A geometry as SVG: pptx2svg's one element per shape, or path data per `a:path`; the rectangle its text is laid out in (`text_rect`), and that drawn in by the outline as Word does and PowerPoint does not (`text_area`) |
+| `ooxml_common.drawingml.fill` | Solid, gradient, pattern and picture fills; outlines with dashes, caps and joins; arrowheads |
+| `ooxml_common.drawingml.effect` | Shadows, glow, soft edges and picture effects as SVG filters |
+| `ooxml_common.drawingml.pattern` | The 54 `a:pattFill` presets |
+| `ooxml_common.drawingml.rules` | Where Word and PowerPoint draw the same DrawingML differently, as a parameter of the renderers |
+| `ooxml_common.drawingml.svg` | What the renderers need of the consumer's SVG document (`SvgDefs`), and `num` |
+| `ooxml_common.drawingml.scene` | The drawable scene: resolved text bodies, shapes, connectors, pictures, groups, tables and charts |
+| `ooxml_common.drawingml.source_tree` | A shape tree and its text as the XML states them, before inheritance |
+| `ooxml_common.drawingml.read_tree` | The shape tree reader (`p:spTree`, a group, SmartArt's `dsp:spTree`) |
+| `ooxml_common.drawingml.read_text` | The text body reader (`a:txBody`, `c:rich`, `c:txPr`) |
+| `ooxml_common.drawingml.table_styles` | PowerPoint's 74 built-in table styles by GUID, measured from PowerPoint 16 (moved from pptx2svg): names, regions with their fills, text colours, bold and borders, the two themed families as `a:tblStyle` XML, and each region's text colour (`builtin_text_colors`) |
+| `ooxml_common.drawingml.theme` | The Office theme a new file gets, measured from new blank files: its colours, Aptos Display / Aptos and the per-script faces, the format scheme's gradients and line widths, PowerPoint's and Word's |
+| `ooxml_common.drawingml.text_chain` | Where a run's inherited colour, size and face come from: the layers PowerPoint walks for a shape, a placeholder and a table cell (measured), and their short source names |
+| `ooxml_common.drawingml.context` | `RenderContext`: the text measurer, font map, definitions, ids and `DrawingRules` of one render |
+| `ooxml_common.drawingml.elements` | An element or a group as SVG, through a group's child space |
+| `ooxml_common.drawingml.shape` | A shape, connector, picture or table as SVG |
+| `ooxml_common.drawingml.textbody` | A text body laid out in its frame (`a:bodyPr`) and drawn as SVG text |
+| `ooxml_common.drawingml.textmeasure` | A text body measured without drawing it: `measure_text_body`, `measure_shape_text` and `measure_text` give each line's break positions, width and height, the height the text needs, and where the text area sits in the frame (`area_left`, `area_top`): each paragraph wrapped inside its `marL`, exactly as the body is anchored and autofit estimates it, or with `as_drawn=True` with line breaks kept where it does not wrap, as it is drawn |
+| `ooxml_common.drawingml.wrap` | Breaking a DrawingML paragraph into lines |
+| `ooxml_common.drawingml.diagram` | SmartArt: finding a diagram's cached drawing from its data part |
+| `ooxml_common.chart.read` | A chart part (`c:chartSpace`) read, with its cached values |
+| `ooxml_common.chart.layout` | A chart laid out and lowered to scene elements, every constant measured on PowerPoint |
+| `ooxml_common.chart.rules` | Where Word and PowerPoint lay a chart out differently, as a parameter |
+
+## Threads
+
+The module caches (embedded fonts, pictures, metafiles, font folders, outlined faces and shaped runs) are safe to use from
+several threads, with the GIL off too (Python 3.15t; `tests/test_threads.py`). One object is
+not: a `text.measure.FontToolsTextMeasurer` opens its fonts lazily, so give each thread its own.
+
+## What is deliberately not in it
+
+- **Line breaking for a Word paragraph.** `drawingml.wrap` breaks DrawingML paragraphs
+  -- a text body's, which a chart and a SmartArt shape carry in Word too. A Word body's
+  paragraphs are a different model and docx2svg breaks them against Word's own output.
+- **Anything that takes a document model.** The resolver that turns what the reader read
+  into drawable values through a slide's inheritance -- placeholders, masters, list
+  styles -- is pptx2svg's, and a Word document's is docx2svg's; so is drawing a whole
+  slide or page. (The readers and the renderers of what they resolve to are here: what
+  they read and draw is the same in both formats.)
+- **The fidelity harnesses.** pptx2svg scores rasterised slides by SSIM; docx2svg
+  measures glyph boxes in a vector PDF. They share the idea of an oracle and none of the
+  code.
+- **The metric generators.** `tools/extract_font_metrics.py` and
+  `tools/derive_preset_geometry.py` stay in pptx2svg for now and write into this package:
+  the first reads Office's faces through pptx2svg's fidelity-harness font profile, and
+  the second's manifest is pptx2svg's renderer policy. The second also writes
+  `drawingml/presets.py` -- every preset its manifest leaves out -- so that `PRESETS` is
+  the whole table.
