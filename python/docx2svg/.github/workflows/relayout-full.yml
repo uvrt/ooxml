@@ -1,0 +1,101 @@
+name: Relayout (full set)
+
+# The full seeded set of tests/test_relayout.py: 96 random edits of the small reports, the
+# 16- and the 40-page report, and more edits of the reports with footnotes, sections and
+# fields.  A pull request's CI (ci.yml) runs the small set, which has every edit kind and
+# every fallback; this runs the rest, with the same assertions (the module's docstring).
+# One leg -- ubuntu, the newest Python -- nightly after CI's own (02:47 UTC), on push to
+# main (a few minutes, so a merge that breaks the property shows at once), on demand, and
+# on a pull request that changes this file or the relayout tests' own code.
+# Not a required check: branch protection requires ci.yml's jobs only.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - .github/workflows/relayout-full.yml
+      - tests/test_relayout.py
+      - tools/report_docs.py
+      - src/docx2svg/relayout.py
+  workflow_dispatch:
+  schedule:
+    - cron: "57 3 * * *"
+
+# One run per pull request at a time: a new push to it cancels the run for the push
+# before.  A push to main, the nightly run and a manual run are never cancelled and never
+# wait: their group ends in the run's own id (a group keeps one pending run and drops the
+# one before it, so a shared group would drop a queued run of main).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  relayout-full:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.15"
+          # As in ci.yml: a final 3.15 whenever setup-python lists one.
+          allow-prereleases: true
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "ooxml-common @ git+https://github.com/uvrt/ooxml-common@main"
+          python -m pip install -e .[dev]
+
+      # The reports are set in Calibri, laid out with Carlito where it is absent (ci.yml).
+      # The fonts come from the apt mirror once, then from the Actions cache, so a mirror
+      # outage cannot turn a run red: on a miss apt installs them (with retries) and every
+      # file the packages put under the font and fontconfig directories is cached with its
+      # path; on a hit those files go back to the same paths and apt is not touched.
+      - name: Restore the open substitute fonts from the cache
+        id: substitute-fonts
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/substitute-fonts
+          key: substitute-fonts-${{ runner.os }}-fonts-crosextra-carlito-fonts-crosextra-caladea-fonts-liberation-v1
+      - name: Install the open substitute fonts
+        if: steps.substitute-fonts.outputs.cache-hit != 'true'
+        run: |
+          packages="fonts-crosextra-carlito fonts-crosextra-caladea fonts-liberation"
+          for attempt in 1 2 3 4 5; do
+            if sudo apt-get -o Acquire::Retries=5 update &&
+               sudo apt-get -o Acquire::Retries=5 install -y --no-install-recommends $packages; then
+              break
+            fi
+            if [ "$attempt" -eq 5 ]; then exit 1; fi
+            sleep $((attempt * 20))
+          done
+          mkdir -p ~/substitute-fonts
+          dpkg -L $packages | grep -E '^/(usr/share/fonts|usr/share/fontconfig|etc/fonts)/' |
+            while read -r f; do
+              if [ -f "$f" ] || [ -L "$f" ]; then cp -d --parents "$f" ~/substitute-fonts/; fi
+            done
+      - name: Save the open substitute fonts to the cache
+        if: steps.substitute-fonts.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/substitute-fonts
+          key: ${{ steps.substitute-fonts.outputs.cache-primary-key }}
+      - name: Put the cached substitute fonts in place and check them
+        env:
+          CACHE_HIT: ${{ steps.substitute-fonts.outputs.cache-hit }}
+        run: |
+          if [ "$CACHE_HIT" = "true" ]; then
+            sudo cp -dR ~/substitute-fonts/. /
+            sudo fc-cache -f
+          fi
+          fc-list : family style file | grep -E 'Carlito|Caladea|Liberation' | sort
+          for family in Carlito Caladea "Liberation Sans" "Liberation Serif" "Liberation Mono"; do
+            fc-list "$family" family | grep -q . || { echo "missing font: $family"; exit 1; }
+          done
+
+      - name: Relayout, full set
+        env:
+          RELAYOUT_FULL: "1"
+        run: python -m pytest -q --durations=10 tests/test_relayout.py
