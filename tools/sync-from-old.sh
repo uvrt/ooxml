@@ -25,7 +25,7 @@ case $repo in
   *) echo "unknown repo: $repo" >&2; exit 2 ;;
 esac
 cd "$(git rev-parse --show-toplevel)"
-branch=$(git symbolic-ref --short HEAD)
+branch=$(git rev-parse --abbrev-ref HEAD)
 if [ "$branch" = main ]; then echo "on main: run this on a branch" >&2; exit 2; fi
 if ! git diff --quiet || ! git diff --cached --quiet; then echo "uncommitted changes" >&2; exit 2; fi
 
