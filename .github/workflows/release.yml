@@ -23,6 +23,7 @@ on:
       - .github/workflows/release.yml
       - tools/release_notes.py
       - tools/check_release_install.sh
+      - .github/workflows/rust-wheels.yml
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -66,11 +67,18 @@ jobs:
           name: dist-python
           path: dist/
 
+  # ooxml-core: every target, as on main.
+  rust:
+    name: build (ooxml-core)
+    uses: ./.github/workflows/rust-wheels.yml
+    with:
+      full: true
+
   # The files of every build job, gathered; then the install the README gives, from a local
   # page that lists them as the release page will.
   check:
     name: check the install
-    needs: [python]
+    needs: [python, rust]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

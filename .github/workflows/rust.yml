@@ -1,0 +1,149 @@
+name: Rust
+
+# The Rust workspace (crates/) and its Python module ooxml-core (python/ooxml-core):
+# - `rust`: cargo fmt --check, cargo clippy -D warnings, cargo test, with a build cache;
+# - `differential`: python/ooxml-core/tests -- Word's Rust layout, the owner and the
+#   registry against docx2svg's layout on made-up documents and docx2svg's samples;
+# - `wheels` (rust-wheels.yml): on a pull request Linux x86_64 and macOS x86_64, on main,
+#   nightly and manual runs every target.
+# On a pull request these run when the change touches the workspace, ooxml-core, the
+# packages the differential tests compare with (tools/ci.py, RUST_PREFIXES and
+# RUST_REFERENCE), .github/ or tools/.  `required (rust)` is the gate to require: it
+# passes when every job passed or was left out.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 2 * * *"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      rust: ${{ steps.plan.outputs.rust }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - id: plan
+        run: python3 tools/ci.py plan --event ${{ github.event_name }}
+
+  rust:
+    name: rust (fmt, clippy, test)
+    needs: plan
+    if: needs.plan.outputs.rust == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo fmt --check
+        run: cargo fmt --all --check
+      - name: cargo clippy -D warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: cargo test
+        run: cargo test --workspace
+
+  differential:
+    name: ooxml-core (differential)
+    needs: plan
+    if: needs.plan.outputs.rust == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # docx-agent makes the documents, docx2svg lays them out: both from this checkout.
+      - name: Install
+        run: |
+          python tools/ci.py install docx-agent
+          python -m pip install ./python/ooxml-core
+          cargo build --release -p ooxml-word --bin word-check
+
+      # The documents are set in Calibri, laid out with Carlito where it is absent.  As in
+      # python-tests.yml: from the apt mirror once, then from the Actions cache.
+      - name: Restore the open substitute fonts from the cache
+        id: substitute-fonts
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/substitute-fonts
+          key: substitute-fonts-${{ runner.os }}-fonts-crosextra-carlito-fonts-crosextra-caladea-fonts-liberation-v1
+      - name: Install the open substitute fonts
+        if: steps.substitute-fonts.outputs.cache-hit != 'true'
+        run: |
+          packages="fonts-crosextra-carlito fonts-crosextra-caladea fonts-liberation"
+          for attempt in 1 2 3 4 5; do
+            if sudo apt-get -o Acquire::Retries=5 update &&
+               sudo apt-get -o Acquire::Retries=5 install -y --no-install-recommends $packages; then
+              break
+            fi
+            if [ "$attempt" -eq 5 ]; then exit 1; fi
+            sleep $((attempt * 20))
+          done
+          mkdir -p ~/substitute-fonts
+          dpkg -L $packages | grep -E '^/(usr/share/fonts|usr/share/fontconfig|etc/fonts)/' |
+            while read -r f; do
+              if [ -f "$f" ] || [ -L "$f" ]; then cp -d --parents "$f" ~/substitute-fonts/; fi
+            done
+      - name: Save the open substitute fonts to the cache
+        if: steps.substitute-fonts.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/substitute-fonts
+          key: ${{ steps.substitute-fonts.outputs.cache-primary-key }}
+      - name: Put the cached substitute fonts in place
+        env:
+          CACHE_HIT: ${{ steps.substitute-fonts.outputs.cache-hit }}
+        run: |
+          if [ "$CACHE_HIT" = "true" ]; then
+            sudo cp -dR ~/substitute-fonts/. /
+            sudo fc-cache -f
+          fi
+          for family in Carlito Caladea "Liberation Sans" "Liberation Serif" "Liberation Mono"; do
+            fc-list "$family" family | grep -q . || { echo "missing font: $family"; exit 1; }
+          done
+
+      # A pull request: the 5-page report.  Main, nightly and manual runs: the 50-page one.
+      - name: Differential tests
+        working-directory: python/ooxml-core
+        env:
+          OOXML_WORD_CHECK: ${{ github.workspace }}/target/release/word-check
+          OOXML_CORE_SECTIONS: ${{ github.event_name == 'pull_request' && '6' || '62' }}
+        run: python -m pytest -q -ra tests
+
+  wheels:
+    name: wheels
+    needs: plan
+    if: needs.plan.outputs.rust == 'true'
+    uses: ./.github/workflows/rust-wheels.yml
+    with:
+      full: ${{ github.event_name != 'pull_request' }}
+
+  required-rust:
+    name: required (rust)
+    needs: [plan, rust, differential, wheels]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every Rust job passed or was left out
+        env:
+          RESULTS: ${{ needs.plan.result }} ${{ needs.rust.result }} ${{ needs.differential.result }} ${{ needs.wheels.result }}
+        run: |
+          echo "plan, rust, differential, wheels: $RESULTS"
+          for r in $RESULTS; do case "$r" in success|skipped) ;; *) exit 1 ;; esac; done

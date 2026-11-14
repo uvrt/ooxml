@@ -15,6 +15,24 @@ its own `pyproject.toml`, version, changelog and tests:
 | docx-agent | `docx_agent` | tools for editing Word documents |
 | pptx-agent | `pptx_agent` | tools for editing PowerPoint decks |
 | xlsx-agent | `xlsx_agent` | tools for editing Excel workbooks |
+| ooxml-core | `ooxml_core` | the Rust core (below), as a Python module; nothing imports it yet |
+
+## The Rust core
+
+A Cargo workspace at the root, its crates under `crates/`:
+
+- `crates/core` (`ooxml-core`): format-neutral -- one owner per document fed by change sets,
+  immutable snapshots, exact units, font metrics and measuring;
+- `crates/word` (`ooxml-word`): Word's layout on the core -- line breaking, pagination,
+  tables, field passes, incremental relayout -- equal to docx2svg's, and the `word-check`
+  binary that compares the two;
+- `crates/python`: the PyO3 module `ooxml_core` (`open_document`, `commit`, `call`,
+  `close_document`), built by maturin from `python/ooxml-core`.
+
+`cargo test --workspace` runs the Rust tests; `python/ooxml-core/tests` compares the Rust
+layout with docx2svg's on made-up documents (`cargo build --release -p ooxml-word`, `pip
+install ./python/ooxml-core`, then `pytest` there). Wheels: one abi3 wheel per platform for
+CPython 3.10 and later, and one for the free-threaded 3.15t.
 
 ## Installing
 
@@ -48,6 +66,9 @@ example `pip install ./python/ooxml-common ./python/ooxml-edit ./python/docx2svg
   nightly run and a manual run take everything. Branch protection requires the jobs
   `required (ubuntu, build)` and `required (windows)`, which pass when every leg they
   cover passed or was left out.
+- Rust (`.github/workflows/rust.yml`): fmt, clippy, tests, the differential tests and the
+  wheels, when a change touches the workspace, ooxml-core or the packages it is compared
+  with; gate job `required (rust)`.
 - Releases (`.github/workflows/release.yml`): pushing a date tag builds and checks every
   distribution and creates the GitHub Release; a manual run only builds and checks.
 

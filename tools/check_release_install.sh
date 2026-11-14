@@ -25,7 +25,10 @@ version_of() {  # name -> version from the checkout's pyproject.toml
 }
 
 # Each agent, and the extras that pull in the renderers and the font bundle.
-for item in docx-agent:png pptx-agent:png xlsx-agent: pptx2svg:fonts; do
+items="docx-agent:png pptx-agent:png xlsx-agent: pptx2svg:fonts"
+# ooxml-core, when the page has its files (the Rust build's)
+if ls "$dist"/ooxml_core-* > /dev/null 2>&1; then items="$items ooxml-core:"; fi
+for item in $items; do
   agent=${item%%:*}; extra=${item#*:}
   v=$(version_of "$agent")
   req="$agent${extra:+[$extra]}==$v"

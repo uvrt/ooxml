@@ -40,11 +40,12 @@ def versions() -> list[tuple[str, str]]:
         path = ROOT / rel / "pyproject.toml"
         if not path.exists():
             continue
-        project = tomllib.loads(path.read_text(encoding="utf-8"))["project"]
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+        project = data["project"]
         version = project.get("version")
-        if version is None:  # a version from Cargo.toml (maturin)
-            cargo = tomllib.loads((ROOT / rel / "Cargo.toml").read_text(encoding="utf-8"))
-            version = cargo["package"]["version"]
+        if version is None:  # maturin: the version of the crate its manifest-path names
+            manifest = ROOT / rel / data["tool"]["maturin"]["manifest-path"]
+            version = tomllib.loads(manifest.read_text(encoding="utf-8"))["package"]["version"]
         out.append((project["name"], version))
     return out
 
