@@ -111,9 +111,6 @@ def test_if_released_is_what_releasing_a_kept_range_does(box, session):
     effect = entry["if_released"]
     assert effect["starts"] == 1 and effect["ends"] == 2 and effect["one_page"] is False
     assert effect["fix"] == {"tool": "word_format", "calls": [{"targets": [span], "keep_together": False}]}
-    from docx_agent.rust.check import STATS
-
-    assert "blank" in effect, (entry, dict(STATS))
     blank = effect["blank"]
     assert blank["page"] == 1 and blank["now_pt"] > blank["pt"]
     assert effect["said"].startswith("releasing its keep (this range alone): starts on page 1, over pages 1-2; "
@@ -126,7 +123,6 @@ def test_if_released_is_what_releasing_a_kept_range_does(box, session):
         assert _seen(layout, ids[17:21], ids[21], 1) == _stated(effect)
     # Released: the next check offers the keep again, with what it costs -- both sides said.
     [again] = _range(box, session, d, f"{ids[17]}..{ids[20]}")
-    assert "blank" in again["if_kept"], str(again["if_kept"]) + " | " + str(effect)
     assert again["if_kept"]["blank"]["pt"] == blank["now_pt"]
 
 

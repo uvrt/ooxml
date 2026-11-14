@@ -163,6 +163,8 @@ def _sequence(session, doc):
         ("a", "undo", {}),
         ("b", "check", {"range": [few], "include": INCLUDE}),
         ("a", "word_fields", {"action": "update"}),
+        ("b", "word_format", {"targets": [f"{heads[5].id}..{heads[6].id}"], "keep_together": True}),
+        ("b", "check", {"range": [f"{heads[5].id}..{heads[6].id}"], "include": INCLUDE}),
         ("b", "check", {"range": [f"h:{heads[1].id}"], "include": INCLUDE}),
         ("a", "set_text", {"target": longs[-2].id, "text": longs[-2].text[::-1]}),
         ("b", "check", {"range": [two], "include": ["layout", "reflow"]}),
@@ -197,7 +199,7 @@ def test_checks_served_in_rust_say_what_docx_agent_says(report, monkeypatch):
             continue
         assert _normal(a) == _normal(b), (arguments, _first_difference(_normal(a), _normal(b)))
         compared += 1
-    assert compared == 10
+    assert compared == 11
 
 
 def test_off_by_environment(report, monkeypatch):

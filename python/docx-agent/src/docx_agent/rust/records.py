@@ -180,13 +180,13 @@ def table_record(ctx: Context, element: Any, identifier: str, model_table: Any, 
     document's (the mirror's)."""
     from docx2svg.table import row_keeps_with_next
 
-    from ..edit.table_format import kept_together, row_keeps
+    from ..edit.table_format import kept_together
     from ..layout_facts import (_columns, _header_rows, header_look, ragged_rows, table_accept_loses,
                                 table_empty_runs, table_grid_mismatch)
 
     document = ctx.document
     index = ctx.index
-    rows = row_keeps(document, element)
+    rows = _row_keeps(document, element, model_table)
     kept = kept_together(rows)
     entry = index.entry_for(element)
 
@@ -240,6 +240,37 @@ def table_record(ctx: Context, element: Any, identifier: str, model_table: Any, 
         cell = next(p.iterancestors(_TC), None)
         found["cell"] = _cell_id(index, cell) if cell is not None else None
     return rec
+
+
+def _row_keeps(document: Any, element: Any, model_table: Any) -> list[tuple]:
+    """``table_format.row_keeps`` of a table the mirror holds: each row's lead paragraph
+    (docx2svg's ``lead_paragraph``) found in the table's own rows by its place -- the
+    mirror's model names no paths in the document -- with its keep with the next, its
+    styles' and its own."""
+    from docx2svg.table import lead_paragraph
+
+    from ..edit import effective as _effective
+    from ..edit.formatting import read_paragraph
+
+    rows = element.findall(_W + "tr")
+    out: list[tuple] = []
+    for r, row in enumerate(model_table.rows if model_table is not None else ()):
+        lead = lead_paragraph(row)
+        found = None
+        if lead is not None and r < len(rows):
+            cells = rows[r].findall(_W + "tc")
+            for c, cell in enumerate(row):
+                for j, inner in enumerate(cell):
+                    if inner is lead and c < len(cells):
+                        paragraphs = cells[c].findall(_P)
+                        found = paragraphs[j] if j < len(paragraphs) else None
+        if found is None:
+            out.append((None, False, False, None))
+            continue
+        out.append((found, _effective.paragraph(document, found).keep_with_next,
+                    _effective.paragraph(document, found, direct=False).keep_with_next,
+                    read_paragraph(found.find(_W + "pPr"), "keep_with_next")))
+    return out
 
 
 def fields_of(element: Any, stack: list) -> tuple[list[list[Any]], list[str]]:
