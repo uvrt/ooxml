@@ -24,6 +24,7 @@ dev = ["pytest>=7"]
 manifest-path = "../../crates/python/Cargo.toml"
 module-name = "ooxml_core"
 features = ["pyo3/extension-module"]
+# Release builds for GIL Pythons add `--features abi3` (crates/python/Cargo.toml).
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
