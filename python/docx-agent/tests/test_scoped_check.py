@@ -255,6 +255,9 @@ def test_scoped_checks_lone_and_in_a_read_batch_all_finish(made, monkeypatch):
     read_batch's scoped check on its own snapshot; none waits for the other."""
     from docx_agent.tools import _base
 
+    # docx-agent's own layout and its lock (0.1.114 answers a lone check of a range in Rust
+    # where it can, laying nothing out here: tests/test_rust_check.py).
+    monkeypatch.setenv("DOCX_AGENT_RUST", "0")
     data, chapters = made
     started = threading.Event()
     run = _base.Engine.lay_out
