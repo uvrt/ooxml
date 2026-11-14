@@ -1,0 +1,29 @@
+[build-system]
+requires = ["maturin>=1.9,<2"]
+build-backend = "maturin"
+
+[project]
+name = "ooxml-core"
+description = "The Rust core of the ooxml packages: documents' layout owners, snapshots and Word's layout, as the module ooxml_core"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Evert Koks" }]
+classifiers = [
+  "Development Status :: 2 - Pre-Alpha",
+  "Programming Language :: Rust",
+  "Programming Language :: Python :: Free Threading :: 2 - Beta",
+]
+# The version is the crate's (crates/python/Cargo.toml).
+dynamic = ["version"]
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[tool.maturin]
+# The Rust crate is the workspace's crates/python; the module is built as ooxml_core.
+manifest-path = "../../crates/python/Cargo.toml"
+module-name = "ooxml_core"
+features = ["pyo3/extension-module"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

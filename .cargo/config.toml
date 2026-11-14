@@ -1,0 +1,8 @@
+# A Python extension module leaves the interpreter's symbols to be found when it is
+# loaded; on macOS the linker must be told so, or `cargo build`/`cargo clippy` of the
+# workspace fails to link crates/python (maturin passes the same flags itself).
+[target.x86_64-apple-darwin]
+rustflags = ["-C", "link-arg=-undefined", "-C", "link-arg=dynamic_lookup"]
+
+[target.aarch64-apple-darwin]
+rustflags = ["-C", "link-arg=-undefined", "-C", "link-arg=dynamic_lookup"]

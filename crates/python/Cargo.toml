@@ -1,0 +1,19 @@
+[package]
+name = "ooxml-python"
+version = "0.1.0"
+description = "The Python module ooxml_core (PyO3): documents' owners by id, and Word's layout"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lib]
+# The extension module's file is named by maturin (module-name in
+# python/ooxml-core/pyproject.toml); this name only keeps it apart from the ooxml-core crate.
+name = "ooxml_core_py"
+crate-type = ["cdylib"]
+
+[dependencies]
+ooxml-word = { path = "../word" }
+pyo3 = { workspace = true, features = ["extension-module"] }
+serde_json.workspace = true
