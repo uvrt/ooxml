@@ -7,10 +7,9 @@ name: Release
 # README says, and attaches them to the GitHub Release of that tag, with notes listing
 # each distribution and its version (tools/release_notes.py).
 #
-# A manual run (workflow_dispatch) and a pull request that changes this file or the notes
-# script do everything but the release: they build, check and upload the files as the
-# run's artifacts.  (GitHub offers a manual run only for a workflow on the default branch,
-# so before this file reaches main the pull request is how it is exercised.)
+# A manual run (workflow_dispatch, on any branch: `gh workflow run release.yml --ref
+# <branch>`) and a pull request that changes this file or the scripts it runs do everything
+# but the release: they build, check and upload the files as the run's artifacts.
 #
 # Every run rebuilds from a clean checkout of the tagged commit, so what ships is exactly
 # what that source produces.
