@@ -602,7 +602,7 @@ def _serve(c: Any, call: Any, arguments: dict[str, Any], timing: Any) -> Any:
 
     from ..scope import MAX_RANGES, Scope, ranges_of, read_scope
     from ..tools import keep_trials
-    from ..tools.shared import KEEP_TRIALS, _original_lost, _validate, _field_facts, resolve
+    from ..tools.shared import KEEP_TRIALS, _original_lost, _field_facts, resolve
 
     document, entry = call.document, call.entry
     include = arguments.get("include")
@@ -835,22 +835,36 @@ def _coverage(mirror: Any, pages: int, blocks: int) -> tuple[dict[str, Any], lis
         raise Fallback("a face missing")
     # The exporter asks every face for every character it sends; a fallback counts where the
     # face draws the character (docx2svg's layout records only those), or for a character
-    # the body does not hold (a header's).
+    # the body does not hold (a header's).  One such is said as docx2svg says it; several
+    # would be said in the order the layout met them, which is not known here.
     chars, drawn = mirror.ex.chars, mirror.ex.drawn
-    if any(char not in chars or (family, char) in drawn
-           for family, char in (getattr(fonts, "glyph_fallbacks", None) or {})):
-        raise Fallback("a glyph measured with another face")
+    real = [(family, char, used) for (family, char), used in
+            (getattr(fonts, "glyph_fallbacks", None) or {}).items()
+            if char not in chars or (family, char) in drawn]
+    if len(real) > 1 or any(char not in chars for _, char, _ in real):
+        raise Fallback("glyphs measured with other faces")
     from ..layout import coverage_facts
 
+    # (docx2svg's StopInfo of such a fallback: its text is the reason, no message)
+    approximations = [{"page": None, "path": None, "message": None,
+                       "reason": f"{family!r} has no glyph for {char!r}: measured with "
+                                 f"{'its missing glyph' if used == '.notdef' else repr(used)}"}
+                      for family, char, used in real]
     coverage = coverage_facts({"complete": True, "pages": pages, "blocks_laid_out": blocks, "blocks": blocks,
                                "estimate_source": "layout", "stop": None, "story_stops": [],
                                "substituted_fonts": [s.as_dict() for s in
                                                      getattr(fonts, "substitutions", {}).values()],
-                               "missing_fonts": [], "approximations": []})
+                               "missing_fonts": [], "approximations": approximations})
     warnings = [docx2svg.Warning(code, docx2svg._PARSER_WARNINGS.get(code, "a body element is not read"))
                 for code in mirror.d2.warnings]
     warnings += [docx2svg.Warning("font-substituted", s.message())
                  for s in getattr(fonts, "substitutions", {}).values()]
+    for family, char, used in real:
+        source = "its missing glyph (.notdef)" if used == ".notdef" else repr(used)
+        warnings.append(docx2svg.Warning(
+            "font-glyph-fallback",
+            f"{family!r} has no glyph for {char!r} (U+{ord(char):04X}): measured with {source}, as an "
+            "approximation (Word's own font fallback is not measured)"))
     return coverage, [short(str(w), 160) for w in warnings[:10]]
 
 

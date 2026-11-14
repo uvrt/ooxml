@@ -224,3 +224,23 @@ def test_unsupported_document_is_checked_docx_agent_s_way(monkeypatch):
         if rust:
             assert "served" not in rust_check.STATS, dict(rust_check.STATS)
     assert results[0] == results[1]
+
+
+def test_a_glyph_its_face_lacks_is_said_the_same(monkeypatch):
+    """A character its face has no glyph for: measured with another, said as an
+    approximation in ``reflow``'s coverage and warnings -- the same both ways."""
+    document = Document.new()
+    document.insert_markdown("# Title\n\n" + "\n\n".join(
+        f"Paragraph {k} with a snowman ☃ and more text to fill a line or two of the page." for k in range(20)))
+    data = document.to_bytes()
+    results = []
+    for rust in (True, False):
+        monkeypatch.setenv("DOCX_AGENT_RUST", "1" if rust else "0")
+        rust_check.STATS.clear()
+        with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, workers=0) as box:
+            session = box.session(clock=CLOCK)
+            doc = session.open(data, "glyph.docx")
+            paragraphs = session.entry(doc).document.paragraphs()
+            results.append(_normal(box.dispatch(session, "check", {
+                "doc": doc, "range": [f"{paragraphs[0].id}..{paragraphs[-1].id}"], "include": INCLUDE}).to_json()))
+    assert results[0] == results[1], _first_difference(results[0], results[1])
