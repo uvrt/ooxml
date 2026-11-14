@@ -1,0 +1,814 @@
+"""R11: datasets and ``xlsx_derive``.
+
+A derive's result kept as ooxml-edit's ``Dataset`` (O2) under ``d:<id>``; ``d:`` read back by
+``xlsx_read`` (its rows, a column, a row by position or key, a value) and taken by
+``xlsx_derive``'s ``from``, with every value's sources carried through to the original
+cells; a dataset that outlives closing its workbook, and is marked stale -- never
+refreshed -- once its workbook changes.
+
+**Staleness.**  The tests here register a test-only changing tool, ``xlsx_touch``
+(``mutates=True``), beside the real ones, so the change goes through a real ``Toolbox`` as
+an edit will: it writes one far cell of the first sheet through the workbook's editor
+(E1: ``Workbook._write``, a step of the workbook's history), so the version moves on.  With
+the history (0.2), undoing the change makes the dataset current again and redoing it stale
+again; once its workbook is closed while it is stale, it stays stale.  Every workbook is
+built with tests/build.py.
+"""
+
+import datetime as dt
+import json
+import math
+import pickle
+
+import pytest
+
+from build import WorkbookBuilder
+from ooxml_edit.tools import Dataset, Limits, Result, Toolbox, string, tool
+from test_catalogue import MARKER
+from test_derive import checks, sales
+
+from xlsx_agent import (AddressError, DatasetAddress, DatasetTable, DatasetValue, DeriveError,
+                        NameNotFound, RegionError, Workbook, as_dataset, parse_address)
+from xlsx_agent import quote_sheet
+from xlsx_agent.tools import FORMAT, GROUPS, TOOLS
+from xlsx_agent.tools.derive import SOURCES_SHOWN
+
+CLOCK = lambda: dt.datetime(2026, 10, 13, 12, 0, tzinfo=dt.timezone.utc)  # noqa: E731
+
+BY_REP = {"group_by": ["Region", "Rep"],
+          "measures": [{"fn": "sum", "column": "Amount", "as": "total"}, {"fn": "count"}],
+          "round": 1}
+
+
+def interleaved(rows: int = 30, keyed: bool = False) -> WorkbookBuilder:
+    """Two groups whose rows alternate, so each value's sources are many ranges; with
+    ``keyed``, its notes are a key column (unique, text), so the sources are by key."""
+    book = WorkbookBuilder()
+    sheet = book.sheet("Log")
+    sheet.rows("A1", [["Team", "Hours", "Note"]]
+               + [["Red" if r % 2 else "Blue", r + 0.5,
+                   f"n{r if keyed else r % 4} {MARKER}"] for r in range(1, rows + 1)])
+    sheet.table("Log", f"A1:C{rows + 1}", ["Team", "Hours", "Note"], write_header=False)
+    return book
+
+
+@pytest.fixture(scope="module")
+def wb() -> Workbook:
+    return Workbook.open(sales().to_bytes())
+
+
+# -- the library -------------------------------------------------------------------------------
+
+
+def test_a_derived_is_a_dataset_of_its_reported_rows_and_their_cells(wb):
+    ds = wb.derive("t:Sales", id="by_rep", **BY_REP)
+    data = ds.dataset()
+    assert isinstance(data, Dataset) and data == as_dataset(ds)
+    assert data.columns == ("Region", "Rep", "total", "count") and data.keys == 2
+    assert data.types == ("text", "text", "number", "number")
+    assert data.rows[0] == ("North", "Ann", 3.7, 2)          # rounded, as reported
+    assert ds.unrounded[0]["total"] == 3.675                  # kept in the detail
+    assert data.sources[0][2] == ("Sales!C2", "Sales!C5")
+    assert data.detail is ds
+    assert pickle.loads(pickle.dumps(data)) == data
+
+
+def test_deriving_from_a_dataset_carries_provenance_to_the_original_cells(wb):
+    by_rep = wb.derive("t:Sales", id="by_rep", **BY_REP)
+    by_region = wb.derive(by_rep, group_by=["Region"],
+                          measures=[{"fn": "sum", "column": "total", "as": "sum"},
+                                    {"fn": "max", "column": "total"}, {"fn": "count"}],
+                          id="by_region")
+    assert by_region.address == "d:by_rep"
+    # the unrounded values are measured: rounding happens once
+    assert [r["sum"] for r in by_region.rows] == [3.675, 0.125, None, 0.0]
+    table = DatasetTable(by_rep)
+    for row, where in zip(by_region.unrounded, by_region.provenance):
+        # the sources are the cells the dataset's values came from, merged again
+        used = [p for p, r in enumerate(by_rep.unrounded, 1)
+                if r["Region"] == row["Region"] and r["total"] is not None]
+        cells = sorted({c for p in used for c in _cells(table.cell_sources(p, 2))})
+        assert sorted(c for s in where["sum"].sources for c in _cells((str(s),))) == cells
+        assert where["sum"].count == len(used)
+        # ... and recompute the value from the original cells
+        if cells:
+            assert math.fsum(wb.cell(c).v for c in cells) == row["sum"]
+        keys = [p for p, r in enumerate(by_rep.unrounded, 1) if r["Region"] == row["Region"]]
+        assert sorted(c for s in where["Region"].sources for c in _cells((str(s),))) == \
+            sorted({c for p in keys for c in _cells(table.cell_sources(p, 0))})
+    # the values left out are named by their d: addresses, never their content
+    assert by_region.excluded["sum"]["blank"].first == ("d:by_rep/#3/total",
+                                                         "d:by_rep/#5/total")
+    assert by_region.provenance[0]["sum"].as_dict()["sources"] == \
+        ["Sales!C2:C3", "Sales!C5", "Sales!C7"]
+
+
+def test_a_dataset_takes_filters_bins_pivots_and_sorts_as_a_table_does(wb):
+    by_rep = wb.derive("t:Sales", id="by_rep", **BY_REP)
+    found = wb.derive(by_rep, where=[{"column": "count", "op": "gte", "value": "2"},
+                                     {"column": "total", "op": "not_blank"}],
+                      bins={"column": "total", "edges": ["-1", "1", "5"]},
+                      pivot="Region", sort=[("total", "desc")])
+    assert found.matched == 4
+    assert found.rows == [{"total": "[1, 5]", "North": 1, "South": 0, "West": 0},
+                          {"total": "[-1, 1)", "North": 1, "South": 1, "West": 1}]
+    with pytest.raises(DeriveError) as caught:
+        wb.derive(by_rep, measures=[{"fn": "sum", "column": "Rep"}])
+    assert caught.value.code == "wrong_type"
+
+
+def test_a_dataset_of_dates_measures_its_iso_text_as_dates():
+    book = WorkbookBuilder()
+    sheet = book.sheet("Days")
+    sheet.rows("A1", [["Kind", "Day"], ["a", dt.date(2026, 1, 1)], ["a", dt.date(2026, 1, 3)],
+                      ["b", dt.date(2026, 2, 1)]])
+    sheet.table("Days", "A1:B4", ["Kind", "Day"], write_header=False)
+    workbook = Workbook.open(book.to_bytes())
+    first = workbook.derive("t:Days", group_by=["Kind"],
+                            measures=[{"fn": "min", "column": "Day", "as": "first"}])
+    again = workbook.derive(first, measures=[{"fn": "max", "column": "first"}])
+    assert first.types["first"] == "date" and again.rows == [{"max first": "2026-02-01"}]
+    assert [str(s) for s in again.provenance[0]["max first"].sources] == ["Days!B2:B4"]
+
+
+def test_a_foreign_dataset_keeps_its_opaque_sources():
+    data = Dataset(("page", "words"), [(1, 10), (2, 5), (3, None)],
+                   sources=[[("page:1",), ("page:1",)], [("page:2",), ("page:2",)],
+                            [("page:3",), ("page:3",)]], keys=1)
+    found = Workbook.open(sales().to_bytes()).derive(data, measures=[{"fn": "sum",
+                                                                      "column": "words"}])
+    assert found.rows == [{"sum words": 15.0}]
+    assert found.provenance[0]["sum words"].sources == ("page:1", "page:2")
+    assert found.excluded["sum words"]["blank"].first == ("d:derived/#3/words",)
+
+
+@pytest.mark.parametrize("address,cells", [
+    ("d:by_region", [f"d:by_region/#{p}/{c}" for p in (1, 2, 3, 4) for c in ("Region", "t")]),
+    ("d:by_region[t]", [f"d:by_region/#{p}/t" for p in (1, 2, 3, 4)]),
+    ("d:by_region/#2", ["d:by_region/#2/Region", "d:by_region/#2/t"]),
+    ("d:by_region/West", ["d:by_region/#4/Region", "d:by_region/#4/t"]),
+    ("d:by_region/South/t", ["d:by_region/#2/t"]),
+    ("d:by_region/#3/region", ["d:by_region/#3/Region"]),
+    ("d:by_region/#2:#3", ["d:by_region/#2/Region", "d:by_region/#2/t",
+                           "d:by_region/#3/Region", "d:by_region/#3/t"]),
+    ("d:by_region/#3:/t", ["d:by_region/#3/t", "d:by_region/#4/t"]),
+], ids=["dataset", "column", "row", "row-by-key", "value-by-key", "column-case-aside",
+        "row-range", "row-range-to-the-last"])
+def test_every_dataset_address_form_reads(wb, address, cells):
+    by_region = wb.derive("t:Sales", group_by=["Region"],
+                          measures=[{"fn": "sum", "column": "Amount", "as": "t"}],
+                          id="by_region")
+    rows = DatasetTable(by_region).read(address)
+    assert [v.a for row in rows for v in row] == cells
+    assert all(isinstance(v, DatasetValue) for row in rows for v in row)
+    assert parse_address(cells[0]).id == "by_region"
+
+
+def test_dataset_lookups_are_refused_with_their_codes(wb):
+    by_rep = DatasetTable(wb.derive("t:Sales", id="by_rep", **BY_REP))
+    with pytest.raises(RegionError) as caught:
+        by_rep.read("d:by_rep/North")
+    assert caught.value.code == "no_key_column" and "North" not in str(caught.value)
+    with pytest.raises(RegionError) as caught:
+        by_rep.read("d:by_rep/#7")
+    assert caught.value.code == "position_out_of_range"
+    with pytest.raises(RegionError) as caught:
+        by_rep.read("d:by_rep/#2:#9")
+    assert caught.value.code == "position_out_of_range" and "nothing is cut" in str(caught.value)
+    assert caught.value.valid_options == [f"d:by_rep/#2:#{by_rep.rows}"]
+    with pytest.raises(NameNotFound) as caught:
+        by_rep.read("d:by_rep[totals]")
+    assert caught.value.what == "column" and caught.value.valid_options[0] == "total"
+    twice = DatasetTable(Dataset(("k", "v"), [("a", 1), ("a", 2), (1, 3), (2.0, 4)], keys=1),
+                         "twice")
+    with pytest.raises(RegionError) as caught:
+        twice.read("d:twice/a")
+    assert caught.value.code == "duplicate_key"
+    assert caught.value.valid_options == ["d:twice/#1", "d:twice/#2"]
+    assert twice.read("d:twice/2/v")[0][0].v == 4          # a whole number by its digits
+    with pytest.raises(NameNotFound) as caught:
+        twice.read("d:twice/b")
+    assert caught.value.what == "key" and "b" not in caught.value.message.split()
+
+
+@pytest.mark.parametrize("text", ["d:2024", "d:by region", "d:" + "x" * 65, "d:a+b",
+                                  "d:_ok?"])
+def test_a_dataset_id_is_ooxml_edits(text):
+    with pytest.raises(AddressError):
+        parse_address(text)
+
+
+@pytest.mark.parametrize("text", ["d:by_region", "d:_x", "d:a.b-c", "d:" + "x" * 64])
+def test_ooxml_edits_dataset_ids_parse(text):
+    assert parse_address(text).text == text
+    with pytest.raises(ValueError):
+        DatasetAddress("1x")
+
+
+def test_a_d_address_needs_a_session_in_a_script(wb):
+    with pytest.raises(DeriveError) as caught:
+        wb.derive("d:by_rep")
+    assert caught.value.code == "bad_source"
+
+
+def _cells(sources) -> list[str]:
+    """Every cell of range texts (one column each), as addresses."""
+    out = []
+    for text in sources:
+        address = parse_address(text)
+        area = address.area
+        for row in range(area.first.row, area.last.row + 1):
+            out.append(f"{address.sheet.text}!{chr(64 + area.first.column)}{row}")
+    return out
+
+
+# -- through a Toolbox -------------------------------------------------------------------------
+
+
+@tool("xlsx_touch", "Test only: a change that changes nothing.", {"doc": string("Document id.")},
+      mutates=True, kind="xlsx")
+def xlsx_touch(call, doc):
+    workbook = call.document
+    sheet = workbook.sheets[0]
+    cell = f"{quote_sheet(sheet.name)}!XFD1048576"
+    current = workbook.cell(cell).v
+    workbook.set_cells({cell: (current or 0) + 1})
+    return Result(summary="touched")
+
+
+@pytest.fixture
+def box():
+    with Toolbox([*TOOLS, xlsx_touch], formats=[FORMAT], groups=GROUPS, workers=0) as toolbox:
+        yield toolbox
+
+
+def _session(toolbox, *books):
+    session = toolbox.session(clock=CLOCK)
+    for book in books:
+        blob = session.add_blob(book.to_bytes(), name="book.xlsx")
+        assert toolbox.dispatch(session, "open_document", {"blob": blob}).ok
+    return session
+
+
+def call(toolbox, session, name, **arguments):
+    return toolbox.dispatch(session, name, arguments)
+
+
+def err(result) -> dict:
+    return result.to_json()["error"]
+
+
+def derive_by_rep(toolbox, session, **more):
+    result = call(toolbox, session, "xlsx_derive", doc="d1", **{"from": "t:Sales"},
+                  id="by_rep", **{**BY_REP, **more})
+    assert result.ok, result.error
+    return result
+
+
+def test_xlsx_derive_keeps_a_dataset_and_shows_its_rows_with_their_sources(box):
+    session = _session(box, sales())
+    result = derive_by_rep(box, session)
+    assert result.datasets == ["d:by_rep"] and result.total == 6
+    data = result.data
+    assert (data["dataset"], data["from"], data["key_columns"]) == ("d:by_rep", "t:Sales", 2)
+    assert data["columns"] == ["Region", "Rep", "total", "count"]
+    assert data["rounding"] == {"rule": "half_away_from_zero", "digits": {"total": 1}}
+    assert data["excluded"]["total"]["number_as_text"] == {"count": 1, "first": ["Sales!C4"]}
+    assert data["rows"][0][2] == {"a": "d:by_rep/#1/total", "v": 3.7, "t": "number",
+                                  "sources": ["Sales!C2", "Sales!C5"]}
+    assert "cut" not in data and "next" not in data
+    assert result.summary == "Derived d:by_rep from t:Sales: 6 rows"
+    entry = session.dataset("d:by_rep")
+    assert (entry.doc, entry.stale, entry.closed) == ("d1", False, False)
+
+
+def test_xlsx_derive_lists_pivot_values_and_names_the_others(box):
+    """Round 27, X6: the tool's pivot_values, as strings; the values not listed are named
+    with their row counts, and their rows counted as left out."""
+    session = _session(box, sales())
+    result = call(box, session, "xlsx_derive", doc="d1", **{"from": "t:Sales"},
+                  id="by_paid", group_by=["Paid"], pivot="Region",
+                  pivot_values=["West", "Central"], measures=[{"fn": "count", "as": "n"}])
+    assert result.ok, result.error
+    data = result.data
+    assert data["columns"] == ["Paid", "West", "Central"]
+    assert [[v["v"] for v in row] for row in data["rows"]] == [[True, 1, 0], [False, 1, 0]]
+    assert data["pivot_unlisted"] == [{"name": "North", "v": "North", "t": "text", "rows": 4},
+                                      {"name": "South", "v": "South", "t": "text", "rows": 4},
+                                      {"name": "East", "v": "East", "t": "text", "rows": 2}]
+    assert data["left_out"]["Region"]["not_listed"]["count"] == 10
+    refused = call(box, session, "xlsx_derive", doc="d1", **{"from": "t:Sales"}, id="x",
+                   pivot="Amount", pivot_values=["many"])
+    error = err(refused)
+    assert (error["code"], error["field"], error["details"]) == (
+        "refused", "pivot_values", {"code": "wrong_type", "column": "Amount",
+                                    "column_type": "number"})
+    assert "many" not in error["message"]
+    alone = call(box, session, "xlsx_derive", doc="d1", **{"from": "t:Sales"}, id="x",
+                 pivot_values=["West"])
+    assert (err(alone)["code"], err(alone)["details"]["code"]) == ("invalid_arguments",
+                                                                   "bad_pivot")
+
+
+def test_xlsx_query_takes_a_dataset_as_it_takes_a_table(box):
+    """Round 10, O5: a dataset's rows filtered and sorted as a table's, each value with its
+    d: address; no doc needed; the refusals a table's are."""
+    session = _session(box, sales())
+    derive_by_rep(box, session)
+    found = call(box, session, "xlsx_query", table="d:by_rep", columns=["Rep", "total"],
+                 where=[{"column": "Region", "op": "eq", "value": "North"}],
+                 sort=[{"column": "total", "desc": True}])
+    assert found.ok, found.error
+    data = found.data
+    assert (data["target"], data["columns"], found.total) == ("d:by_rep", ["Rep", "total"], 2)
+    assert data["dataset"]["id"] == "d:by_rep" and data["dataset"]["stale"] is False
+    assert data["types"] == {"Region": "text", "total": "number"}
+    assert data["rows"] == [
+        [{"a": "d:by_rep/#1/Rep", "v": "Ann", "t": "text"},
+         {"a": "d:by_rep/#1/total", "v": 3.7, "t": "number"}],
+        [{"a": "d:by_rep/#2/Rep", "v": "Bob", "t": "text"},
+         {"a": "d:by_rep/#2/total", "v": 0.0, "t": "number"}]]
+    assert found.summary == "d:by_rep: matching rows 1-2 of 2 (of 6)"
+    # Filters compare what the dataset reports (3.7, its derive's rounding).
+    shown = call(box, session, "xlsx_query", table="d:by_rep", where=[
+        {"column": "total", "op": "gte", "value": "3.7"}])
+    assert shown.total == 1 and shown.data["rows"][0][1]["v"] == "Ann"
+    # Paged as a table's query is, the cursor of one query only.
+    first = call(box, session, "xlsx_query", table="d:by_rep", columns=["Rep"], limit=4)
+    assert first.total == 6 and len(first.data["rows"]) == 4 and first.next_cursor
+    rest = call(box, session, "xlsx_query", table="d:by_rep", columns=["Rep"], limit=4,
+                cursor=first.next_cursor)
+    assert [row[0]["a"] for row in rest.data["rows"]] == ["d:by_rep/#5/Rep", "d:by_rep/#6/Rep"]
+    other = call(box, session, "xlsx_query", table="d:by_rep", columns=["Region"],
+                 cursor=first.next_cursor)
+    assert not other.ok and err(other)["field"] == "cursor"
+    part = call(box, session, "xlsx_query", table="d:by_rep[total]")
+    assert err(part)["code"] == "invalid_arguments" and err(part)["valid_options"] == ["d:by_rep"]
+    wrong = call(box, session, "xlsx_query", table="d:by_rep",
+                 where=[{"column": "Rep", "op": "gte", "value": "3"}])
+    assert err(wrong)["details"]["code"] == "wrong_type"
+    assert err(call(box, session, "xlsx_query", table="d:none"))["code"] == "not_found"
+    assert err(call(box, session, "xlsx_query", table="t:Sales"))["field"] == "doc"
+
+
+def test_describe_of_any_workbook_lists_the_datasets_and_where_they_came_from(box):
+    """Round 5, T11: a dataset's id, columns, types, rows and source, never its values."""
+    session = _session(box, sales(), sales())
+    derive_by_rep(box, session)
+    again = call(box, session, "xlsx_derive", **{"from": "d:by_rep"}, id="by_region",
+                 group_by=["Region"], measures=[{"fn": "sum", "column": "total"}])
+    assert again.ok, again.error
+    for doc in ("d1", "d2"):
+        described = call(box, session, "describe", doc=doc)
+        assert described.ok, described.error
+        assert described.data["datasets"] == [
+            {"id": "d:by_rep", "columns": ["Region", "Rep", "total", "count"],
+             "types": {"Region": "text", "Rep": "text", "total": "number",
+                       "count": "number"}, "rows": 6, "from": "d1/t:Sales"},
+            {"id": "d:by_region", "columns": ["Region", "sum total"],
+             "types": {"Region": "text", "sum total": "number"}, "rows": 4,
+             "from": "d:by_rep"}]
+    assert "North" not in json.dumps(described.data["datasets"])
+
+
+def test_a_dataset_survives_closing_its_workbook_and_is_read_back_by_address(box):
+    session = _session(box, sales())
+    derive_by_rep(box, session)
+    closed = call(box, session, "close_document", doc="d1")
+    assert closed.ok and closed.data["datasets"] == ["d:by_rep"]
+    read = call(box, session, "xlsx_read", target="d:by_rep[total]")
+    assert read.ok, read.error
+    assert read.data["dataset"] == {"id": "d:by_rep", "doc": "d1", "stale": False,
+                                    "closed": True, "cache": {"absent": 1}}
+    assert [row[0]["v"] for row in read.data["rows"]] == [3.7, 0.0, None, 0.1, None, 0.0]
+    assert read.warnings == []
+    # derived from after its workbook closed: no doc needed, provenance carried through
+    again = call(box, session, "xlsx_derive", **{"from": "d:by_rep"}, id="by_region",
+                 group_by=["Region"], measures=[{"fn": "sum", "column": "total"}])
+    assert again.ok, again.error
+    assert again.data["rows"][0][1]["sources"] == ["Sales!C2:C3", "Sales!C5", "Sales!C7"]
+    entry = session.dataset("d:by_region")
+    assert (entry.doc, entry.closed, entry.stale) == ("d1", True, False)
+    value = call(box, session, "xlsx_read", target="d:by_region/North/sum total")
+    assert value.data["rows"] == [[{"a": "d:by_region/#1/sum total", "v": 3.675,
+                                    "t": "number"}]]
+
+
+def test_xlsx_read_picks_a_datasets_columns_as_a_tables(box):
+    """Round 28, X7: columns picks a d: target's columns, in the order given, the address's
+    own column first; a name it has no column of is refused with its columns; paged with a
+    cursor of those columns only."""
+    session = _session(box, sales())
+    derive_by_rep(box, session)
+    read = call(box, session, "xlsx_read", target="d:by_rep", columns=["total", "rep"])
+    assert read.ok, read.error
+    assert (read.data["target"], read.data["columns"]) == ("d:by_rep", ["total", "Rep"])
+    assert read.data["rows"][0] == [{"a": "d:by_rep/#1/total", "v": 3.7, "t": "number"},
+                                    {"a": "d:by_rep/#1/Rep", "v": "Ann", "t": "text"}]
+    assert len(read.data["rows"]) == 6
+    # the old form still reads one column; a column, a row and a value take columns too
+    assert call(box, session, "xlsx_read", target="d:by_rep[total]").data["columns"] == [
+        "total"]
+    both = call(box, session, "xlsx_read", target="d:by_rep[count]", columns=["total", "count"])
+    assert (both.data["target"], both.data["columns"]) == ("d:by_rep", ["count", "total"])
+    row = call(box, session, "xlsx_read", target="d:by_rep/#2", columns=["Rep"])
+    assert row.data["rows"] == [[{"a": "d:by_rep/#2/Rep", "v": "Bob", "t": "text"}]]
+    value = call(box, session, "xlsx_read", target="d:by_rep/#2/Rep", columns=["total"])
+    assert (value.data["target"], value.data["columns"]) == ("d:by_rep/#2", ["Rep", "total"])
+    every = call(box, session, "xlsx_read", target="d:by_rep/*/Rep", columns=["Region"])
+    assert every.data["columns"] == ["Rep", "Region"] and len(every.data["rows"]) == 6
+    # paged: the cursor belongs to these columns
+    first = call(box, session, "xlsx_read", target="d:by_rep", columns=["Rep"], limit=4)
+    assert first.next_cursor and len(first.data["rows"]) == 4
+    rest = call(box, session, "xlsx_read", target="d:by_rep", columns=["Rep"], limit=4,
+                cursor=first.next_cursor)
+    assert [r[0]["a"] for r in rest.data["rows"]] == ["d:by_rep/#5/Rep", "d:by_rep/#6/Rep"]
+    other = call(box, session, "xlsx_read", target="d:by_rep", columns=["Region"],
+                 cursor=first.next_cursor)
+    assert not other.ok and err(other)["field"] == "cursor"
+    unknown = err(call(box, session, "xlsx_read", target="d:by_rep", columns=["Rep", "sum"]))
+    assert (unknown["code"], unknown["field"]) == ("not_found", "columns")
+    assert unknown["valid_options"] == ["Region", "Rep", "total", "count"]
+    assert "'Region', 'Rep', 'total', 'count'" in unknown["message"]
+
+
+def test_a_dataset_is_stale_once_its_workbook_changes_and_never_refreshed(box):
+    session = _session(box, sales())
+    derive_by_rep(box, session)
+    call(box, session, "xlsx_derive", **{"from": "d:by_rep"}, id="by_region",
+         group_by=["Region"], measures=[{"fn": "sum", "column": "total"}])
+    before = call(box, session, "xlsx_read", target="d:by_rep")
+    assert call(box, session, "xlsx_touch", doc="d1").ok      # the workbook's version moves on
+    read = call(box, session, "xlsx_read", target="d:by_rep")
+    assert read.ok and read.data["dataset"]["stale"] is True
+    assert any("stale" in w for w in read.warnings)
+    assert read.summary.endswith("(stale: its source has changed)")
+    assert read.data["rows"] == before.data["rows"]           # never refreshed
+    # a dataset derived from it goes stale with it
+    assert session.dataset("d:by_region").stale
+    assert call(box, session, "xlsx_read", target="d:by_region").data["dataset"]["stale"]
+    # deriving from a stale dataset warns, and the new one is stale from the start
+    derived = call(box, session, "xlsx_derive", **{"from": "d:by_rep"}, id="again",
+                   measures=[{"fn": "count"}])
+    assert derived.ok and any("stale" in w for w in derived.warnings)
+    assert session.dataset("d:again").stale
+    # undo makes it current again, redo stale again (equal versions, equal content)
+    assert call(box, session, "undo", doc="d1").ok
+    assert not session.dataset("d:by_rep").stale and not session.dataset("d:by_region").stale
+    assert call(box, session, "undo", doc="d1", redo=True).ok
+    assert session.dataset("d:by_rep").stale
+    # closed while stale: stale for good
+    assert call(box, session, "close_document", doc="d1").ok
+    assert session.dataset("d:by_rep").stale and session.dataset("d:by_rep").closed
+    # derived again from the workbook, as it is now: current
+    session2 = _session(box, sales())
+    derive_by_rep(box, session2)
+    assert not session2.dataset("d:by_rep").stale
+
+
+def test_a_change_to_another_workbook_leaves_it_current(box):
+    session = _session(box, sales(), interleaved())
+    derive_by_rep(box, session)
+    assert call(box, session, "xlsx_touch", doc="d2").ok
+    read = call(box, session, "xlsx_read", target="d:by_rep")
+    assert read.data["dataset"]["stale"] is False and read.warnings == []
+
+
+def test_a_value_shows_eight_ranges_and_pages_through_all_of_them(box):
+    session = _session(box, interleaved())
+    result = call(box, session, "xlsx_derive", doc="d1", **{"from": "t:Log"}, id="teams",
+                  group_by=["Team"], measures=[{"fn": "sum", "column": "Hours"},
+                                               {"fn": "share"}])
+    assert result.ok, result.error
+    hours = result.data["rows"][0][1]
+    assert len(hours["sources"]) == SOURCES_SHOWN and hours["more"] == 15 - SOURCES_SHOWN
+    assert result.data["totals"]["share"] == {"value": 30, "sources": ["Log!A2:A31"],
+                                              "count": 30}
+    red = call(box, session, "xlsx_derive", doc="d1", **{"from": "t:Log"}, id="red",
+               where=[{"column": "Team", "op": "eq", "value": "Red"}],
+               measures=[{"fn": "share", "column": "Hours"}])
+    assert red.data["totals"]["share Hours"]["more"] == 15 - SOURCES_SHOWN
+    assert len(red.data["totals"]["share Hours"]["sources"]) == SOURCES_SHOWN
+    read = call(box, session, "xlsx_read", target="d:teams", sources=True)
+    assert read.data["rows"][0][1]["more"] == 15 - SOURCES_SHOWN
+    plain = call(box, session, "xlsx_read", target="d:teams")
+    assert "sources" not in plain.data["rows"][0][1]
+    given, cursor, pages = [], None, 0
+    while True:
+        page = call(box, session, "xlsx_read", target="d:teams/Red/sum Hours", sources=True,
+                    limit=4, **({"cursor": cursor} if cursor else {}))
+        assert page.ok, page.error
+        assert page.total == 15 and page.data["value"]["v"] == math.fsum(
+            r + 0.5 for r in range(1, 31, 2))
+        given += page.data["sources"]
+        pages += 1
+        cursor = page.next_cursor
+        if cursor is None:
+            break
+        assert page.data["cut"] == {"sources": 15 - len(given)}
+    assert pages == 4 and given == [f"Log!B{r}" for r in range(2, 32, 2)]
+    other = call(box, session, "xlsx_read", target="d:teams/Blue/sum Hours", sources=True,
+                 cursor=page_cursor(box, session))
+    assert not other.ok and err(other)["code"] == "invalid_arguments"
+
+
+def _keys(sources: list[str]) -> list[str]:
+    """The keys of key-set sources, in order."""
+    out = []
+    for text in sources:
+        address = parse_address(text)
+        out.extend(address.keys if address.keys is not None else [address.key])
+    return out
+
+
+def test_sources_by_key_show_eight_keys_and_page_through_all_of_them(box):
+    session = _session(box, interleaved(keyed=True))
+    result = call(box, session, "xlsx_derive", doc="d1", **{"from": "t:Log"}, id="teams",
+                  group_by=["Team"], measures=[{"fn": "sum", "column": "Hours"},
+                                               {"fn": "share"}])
+    assert result.ok, result.error
+    hours = result.data["rows"][0][1]
+    note = f" {MARKER}"
+    assert hours["sources"] == ["t:Log/{" + ",".join(f"n{r}{note}" for r in range(1, 17, 2))
+                                + "}/Hours"]
+    assert hours["more"] == 15 - SOURCES_SHOWN
+    share = result.data["totals"]["share"]
+    assert (share["count"], share["more"]) == (30, 30 - SOURCES_SHOWN)
+    assert _keys(share["sources"]) == [f"n{r}{note}" for r in range(1, 9)]
+    given, cursor, pages = [], None, 0
+    while True:
+        page = call(box, session, "xlsx_read", target="d:teams/Red/sum Hours", sources=True,
+                    limit=4, **({"cursor": cursor} if cursor else {}))
+        assert page.ok, page.error
+        assert page.total == 15 and len(page.data["sources"]) == 1
+        given += _keys(page.data["sources"])
+        pages += 1
+        cursor = page.next_cursor
+        if cursor is None:
+            break
+        assert page.data["cut"] == {"sources": 15 - len(given)}
+    assert pages == 4 and given == [f"n{r}{note}" for r in range(1, 31, 2)]
+    # every key names the cell it was made from
+    workbook = session.entry("d1").document
+    cells = [workbook.cell(f"t:Log/n{r}{note}/Hours") for r in (1, 29)]
+    assert [c.a for c in cells] == ["Log!B2", "Log!B30"]
+
+
+def page_cursor(box, session) -> str:
+    return call(box, session, "xlsx_read", target="d:teams/Red/sum Hours", sources=True,
+                limit=4).next_cursor
+
+
+def test_a_large_derive_is_bounded_and_continued_by_xlsx_read(box):
+    book = WorkbookBuilder()
+    sheet = book.sheet("Items")
+    rows = 400
+    sheet.rows("A1", [["Item", "Price"]] + [[f"item-{r:04d}", r * 1.25]
+                                             for r in range(1, rows + 1)])
+    sheet.table("Items", f"A1:B{rows + 1}", ["Item", "Price"], write_header=False)
+    session = _session(box, book)
+    result = call(box, session, "xlsx_derive", doc="d1", **{"from": "t:Items"}, id="items",
+                  group_by=["Item"], measures=[{"fn": "sum", "column": "Price"}])
+    assert result.ok and result.total == rows
+    assert len(json.dumps(result.to_json(), ensure_ascii=False)) <= Limits().max_result_chars
+    shown = len(result.data["rows"])
+    assert 0 < shown <= Limits().max_list_items
+    assert result.data["cut"]["rows"] == rows - shown
+    assert result.data["next"]["target"] == "d:items"
+    page = call(box, session, "xlsx_read", target="d:items", sources=True,
+                cursor=result.data["next"]["cursor"])
+    assert page.ok, page.error
+    assert page.data["rows"][0][0]["a"] == f"d:items/#{shown + 1}/Item"
+    assert len(json.dumps(page.to_json(), ensure_ascii=False)) <= Limits().max_result_chars
+
+
+def test_xlsx_derive_refusals(box):
+    session = _session(box, sales())
+    derive_by_rep(box, session)
+    cases = [
+        ({"from": "d:nope", "id": "x"}, "not_found"),
+        ({"from": "d:by_rep[total]", "id": "x"}, "invalid_arguments"),
+        ({"from": "t:Sales", "id": "x"}, "invalid_arguments"),            # no doc
+        ({"doc": "d1", "from": "t:Sales", "id": "2x"}, "invalid_arguments"),
+        ({"doc": "d1", "from": "t:Sales", "id": "x",
+          "measures": [{"fn": "sum", "column": "Rep"}]}, "refused"),
+        ({"doc": "d1", "from": "t:Nope", "id": "x"}, "not_found"),
+    ]
+    for arguments, code in cases:
+        result = call(box, session, "xlsx_derive", **arguments)
+        assert not result.ok and err(result)["code"] == code, (arguments, err(result))
+    missing = call(box, session, "xlsx_read", target="d:nope")
+    assert err(missing)["code"] == "not_found" and err(missing)["valid_options"] == ["d:by_rep"]
+    no_doc = call(box, session, "xlsx_read", target="Sales!A1")
+    assert err(no_doc)["code"] == "invalid_arguments" and err(no_doc)["field"] == "doc"
+    sources = call(box, session, "xlsx_read", doc="d1", target="Sales!A1", sources=True)
+    assert err(sources)["field"] == "sources"
+    key = call(box, session, "xlsx_read", target="d:by_rep/North")
+    assert err(key)["code"] == "refused" and err(key)["details"]["code"] == "no_key_column"
+    # nothing failed defined a dataset
+    assert session.dataset_ids() == ["d:by_rep"]
+
+
+def test_a_refused_column_of_dates_stored_as_text_names_the_issue_and_a_cell(box):
+    session = _session(box, checks())
+    measures = [{"fn": "min", "column": "Seen", "as": "earliest"}]
+    refused = call(box, session, "xlsx_derive", doc="d1", **{"from": "t:Checks"}, id="seen",
+                   measures=measures)
+    error = err(refused)
+    assert error["code"] == "refused" and error["field"] == "measures"
+    assert error["details"] == {"code": "wrong_type", "column": "Seen", "column_type": "text",
+                                "issue": "date_as_text",
+                                "cells": {"count": 3, "first": ["Log!C2", "Log!C3", "Log!C5"]}}
+    assert "Log!C2" in error["message"] and 'coerce ["date_as_text"]' in error["message"]
+    # one step: the same call with the coercion it names
+    read = call(box, session, "xlsx_derive", doc="d1", **{"from": "t:Checks"}, id="seen",
+                measures=measures, coerce=["date_as_text"])
+    assert read.ok, read.error
+    assert read.data["types"]["earliest"] == "date"
+    assert read.data["rows"][0][0]["v"] == "2026-02-11"
+
+
+def test_the_limits_of_a_derive_are_limit_errors(box, monkeypatch):
+    from xlsx_agent import derive as derive_module
+    monkeypatch.setattr(derive_module, "MAX_GROUPS", 2)
+    session = _session(box, sales())
+    result = call(box, session, "xlsx_derive", doc="d1", **{"from": "t:Sales"}, id="x",
+                  group_by=["Rep"])
+    assert err(result)["code"] == "limit"
+
+
+def test_no_cell_content_in_summaries_warnings_or_errors(box):
+    session = _session(box, interleaved())
+    results = [call(box, session, "xlsx_derive", doc="d1", **{"from": "t:Log"}, id="notes",
+                    group_by=["Note"]),
+               call(box, session, "xlsx_read", target=f"d:notes/n1 {MARKER}", sources=True),
+               call(box, session, "xlsx_read", target=f"d:notes/{MARKER}"),
+               call(box, session, "xlsx_touch", doc="d1"),
+               call(box, session, "xlsx_read", target="d:notes")]
+    assert results[0].ok and results[1].ok and not results[2].ok
+    assert MARKER in json.dumps(results[1].data)                 # content in results only
+    for result in results:
+        assert MARKER not in result.summary if result.ok else MARKER not in json.dumps(
+            err(result))
+        assert MARKER not in " ".join(result.warnings)
+    for record in session.log:
+        assert MARKER not in json.dumps(getattr(record, "summary", "") or "")
+
+
+# -- datasets made in Python: dates ------------------------------------------------------------
+
+from xlsx_agent.derive import derive  # noqa: E402
+
+#: Made-up days, one blank among them.
+OPENED = [{"site": "Ash", "opened": dt.date(2026, 3, 1), "at": dt.datetime(2026, 3, 1, 9, 30),
+           "shift": dt.time(7, 15)},
+          {"site": "Elm", "opened": None, "at": dt.datetime(2026, 4, 2, 17, 5, 30),
+           "shift": dt.time(22, 0)},
+          {"site": "Oak", "opened": dt.date(2026, 1, 20), "at": None, "shift": None}]
+
+
+def test_python_dates_are_dates_without_a_label():
+    data = Dataset.from_records(OPENED)
+    measures = [{"fn": "min", "column": "opened", "as": "first_opened"},
+                {"fn": "max", "column": "opened", "as": "last_opened"},
+                {"fn": "first", "column": "opened", "as": "first_row"},
+                {"fn": "max", "column": "at", "as": "latest"},
+                {"fn": "min", "column": "shift", "as": "early"}]
+    derived = derive(None, data, measures=measures)
+    assert derived.rows == [{"first_opened": "2026-01-20", "last_opened": "2026-03-01",
+                             "first_row": "2026-03-01", "latest": "2026-04-02T17:05:30",
+                             "early": "07:15:00"}]
+    assert derived.types == {"first_opened": "date", "last_opened": "date",
+                             "first_row": "date", "latest": "datetime", "early": "time"}
+
+
+def test_python_dates_read_back_as_iso_text_typed():
+    table = DatasetTable(Dataset.from_records(OPENED), "sites")
+    first = table.read("d:sites/#1")[0]
+    assert [(v.v, v.t) for v in first] == [("Ash", "text"), ("2026-03-01", "date"),
+                                           ("2026-03-01T09:30:00", "datetime"),
+                                           ("07:15:00", "time")]
+    assert json.dumps([v.as_dict() for v in first])            # plain JSON, no date objects
+    when = dt.datetime(2026, 3, 1, 9, 30, 0, 999700, tzinfo=dt.timezone.utc)
+    late = DatasetTable(Dataset.from_records([{"at": when}]), "late")
+    assert late.read("d:late/#1/at")[0][0].v == "2026-03-01T09:30:01"   # to the millisecond
+
+
+def test_dates_mixed_with_text_follow_the_majority():
+    mostly = Dataset.from_records([{"d": dt.date(2026, 3, 1)}, {"d": dt.date(2026, 3, 9)},
+                                   {"d": "soon"}])
+    result = derive(None, mostly, measures=[{"fn": "max", "column": "d"}])
+    assert result.rows == [{"max d": "2026-03-09"}]
+    assert sum(c.count for c in result.excluded["max d"].values()) == 1
+    few = Dataset.from_records([{"d": dt.date(2026, 3, 1)}, {"d": "soon"}, {"d": "later"}])
+    with pytest.raises(DeriveError) as caught:
+        derive(None, few, measures=[{"fn": "max", "column": "d"}])
+    assert caught.value.code == "wrong_type"
+
+
+def test_unlabelled_iso_text_is_text_and_the_refusal_says_how_to_read_it():
+    rows = [{"site": "Ash", "opened": "2026-03-01"}, {"site": "Oak", "opened": "2026-01-20"}]
+    measures = [{"fn": "min", "column": "opened"}]
+    with pytest.raises(DeriveError) as caught:
+        derive(None, Dataset.from_records(rows), measures=measures)
+    error = caught.value
+    assert error.code == "wrong_type" and error.issue == "date_as_text"
+    assert "coerce [\"date_as_text\"]" in str(error)
+    assert "types={'opened': \"date\"}" in str(error)
+    labelled = derive(None, Dataset.from_records(rows, types={"opened": "date"}),
+                      measures=measures)
+    coerced = derive(None, Dataset.from_records(rows), measures=measures,
+                     coerce=["date_as_text"])
+    assert labelled.rows == coerced.rows == [{"min opened": "2026-01-20"}]
+    # a column the caller says is text holds text: no flag, no way out offered
+    with pytest.raises(DeriveError) as caught:
+        derive(None, Dataset.from_records(rows, types={"opened": "text"}), measures=measures)
+    assert caught.value.issue is None and "types=" not in str(caught.value)
+
+
+def test_xlsx_derive_takes_a_python_dataset_of_dates(box):
+    from ooxml_edit.tools import DatasetEntry
+    session = _session(box)
+    session.keep_datasets([DatasetEntry("sites", Dataset.from_records(OPENED))])
+    result = call(box, session, "xlsx_derive", **{"from": "d:sites"}, id="span",
+                  measures=[{"fn": "min", "column": "opened", "as": "since"},
+                            {"fn": "max", "column": "opened", "as": "until"}])
+    assert result.ok, result.error
+    assert result.data["types"] == {"since": "date", "until": "date"}
+    assert [v["v"] for v in result.data["rows"][0]] == ["2026-01-20", "2026-03-01"]
+    read = call(box, session, "xlsx_read", target="d:sites/#1/opened")
+    assert read.ok and read.data["rows"] == [[{"a": "d:sites/#1/opened", "v": "2026-03-01",
+                                               "t": "date"}]]
+
+
+# -- round 25, X3: dates stored as text through a derived dataset ------------------------------
+
+
+def reviews() -> WorkbookBuilder:
+    """A log whose review dates are stored as text (ISO 8601), two rows for one item."""
+    book = WorkbookBuilder()
+    sheet = book.sheet("Log")
+    sheet.rows("A1", [["Item", "Reviewed"], ["A", "2025-01-03"], ["A", "2025-02-10"],
+                      ["B", "2024-12-01"]])
+    sheet.table("Log", "A1:B4", ["Item", "Reviewed"])
+    return book
+
+
+LAST = {"group_by": ["Item"], "measures": [{"fn": "last", "column": "Reviewed", "as": "latest"},
+                                           {"fn": "count", "as": "n"}]}
+MAX_LATEST = [{"fn": "max", "column": "latest"}]
+
+
+def test_a_derived_text_column_of_iso_dates_keeps_its_date_reading():
+    wb = Workbook.open(reviews().to_bytes())
+    grouped = wb.derive("t:Log", id="g", **LAST)
+    assert grouped.types == {"Item": "text", "latest": "text", "n": "number"}
+    # the dataset's text column still holds dates stored as text: the refusal says so...
+    with pytest.raises(DeriveError) as caught:
+        wb.derive(grouped, measures=MAX_LATEST)
+    error = caught.value
+    assert error.code == "wrong_type" and error.issue == "date_as_text"
+    assert error.cells.count == 2 and error.cells.first[0] == "d:g/#1/latest"
+    assert 'coerce ["date_as_text"] reads them as dates' in str(error)
+    assert "types=" not in str(error)            # a derive's labels are not the caller's
+    # ... and the coerce applies, with the original cells as sources
+    latest = wb.derive(grouped, measures=MAX_LATEST, coerce=["date_as_text"])
+    assert latest.rows == [{"max latest": "2025-02-10"}]
+    assert latest.coerced["max latest"].count == 2
+    assert [str(s) for s in latest.provenance[0]["max latest"].sources] == [
+        "t:Log/{2025-01-03,2025-02-10,2024-12-01}/Reviewed"]     # every cell compared
+
+
+def test_coerced_first_and_group_by_keep_the_date_type():
+    wb = Workbook.open(reviews().to_bytes())
+    grouped = wb.derive("t:Log", id="g", coerce=["date_as_text"], **LAST)
+    assert grouped.types["latest"] == "date"
+    assert wb.derive(grouped, measures=MAX_LATEST).rows == [{"max latest": "2025-02-10"}]
+    by_day = wb.derive("t:Log", group_by=["Reviewed"], coerce=["date_as_text"])
+    assert by_day.types["Reviewed"] == "date"
+    assert [r["Reviewed"] for r in by_day.rows] == ["2025-01-03", "2025-02-10", "2024-12-01"]
+    assert by_day.coerced["Reviewed"].count == 3
+    data = by_day.dataset()
+    assert DatasetTable(data).value(1, 0).t == "date"
+
+
+def test_a_coerce_that_reads_nothing_says_it_did_not_apply():
+    wb = Workbook.open(reviews().to_bytes())
+    with pytest.raises(DeriveError) as caught:
+        wb.derive("t:Log", measures=[{"fn": "max", "column": "Item"}], coerce=["date_as_text"])
+    assert 'coerce ["date_as_text"] did not apply: none of its values reads as a date' \
+        in str(caught.value)
+    assert caught.value.issue is None
+
+
+def test_xlsx_derive_from_a_derived_dataset_takes_date_as_text(box):
+    session = _session(box, reviews())
+    first = call(box, session, "xlsx_derive", doc="d1", **{"from": "t:Log"}, id="g", **LAST)
+    assert first.ok and first.data["types"]["latest"] == "text"
+    refused = call(box, session, "xlsx_derive", **{"from": "d:g"}, id="m", measures=MAX_LATEST)
+    assert not refused.ok and 'coerce ["date_as_text"]' in err(refused)["message"]
+    taken = call(box, session, "xlsx_derive", **{"from": "d:g"}, id="m", measures=MAX_LATEST,
+                 coerce=["date_as_text"])
+    assert taken.ok, taken.error
+    assert taken.data["rows"][0][0]["v"] == "2025-02-10"
+    assert taken.data["types"] == {"max latest": "date"}

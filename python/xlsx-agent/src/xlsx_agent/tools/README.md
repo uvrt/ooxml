@@ -1,0 +1,516 @@
+# Using the workbook tools with a model provider
+
+The tools in `xlsx_agent.tools` are defined once, in a provider-neutral canonical schema
+([`ooxml_edit.tools`](https://github.com/uvrt/ooxml-edit/blob/main/docs/TOOLS.md)). A
+`Toolbox` turns them into each provider's definitions, runs the model's calls with
+`toolbox.dispatch(session, name, arguments)`, and turns the results back into that
+provider's messages. What each tool takes and returns: [ROADMAP.md](../../../ROADMAP.md),
+"Tools"; the library underneath: [docs/api-tour.md](../../../docs/api-tour.md).
+
+| Call | Sends |
+| --- | --- |
+| `definitions("anthropic")` | every tool; the core loaded, the rest deferred behind the BM25 tool-search tool, `cache_control` on the last core tool. Only `xlsx_set_cells` is sent strict: Claude's strict plan is for writing tools, and the others read |
+| `definitions("openai-responses")` | the Responses API (GPT-6): the core as functions, each other group a deferred `namespace`, and `tool_search` |
+| `definitions("openai-chat", groups=[...])` | Chat Completions, which has no tool search: the core and the groups named |
+
+**Status (0.1.0, and E1 and E3 of 0.2).** Read and derive, the edit foundation -- the
+shared `save_document`, `undo` and `batch` serve workbooks (E1) -- and typed cell writes:
+`xlsx_set_cells` in the deferred `xlsx_edit` group (E3). `save_document` hands the
+application the workbook as `xlsx`, `xlsm` or `xltx`, reopened and every written cell read
+back first. The
+definitions pass Claude's and OpenAI's documented rules offline
+(`ooxml_edit.tools.adapters.anthropic_problems`, `openai_problems`), and on Claude online
+(`tests/test_tools_online.py`, marked `provider`): Claude accepts them as sent, and the
+loaded core counts **6,334 tokens** (claude-sonnet-5-5's count-tokens, 2026-10-30, round
+25, 12 definitions; 4,958 at R14). The budget was 6,500; the user lets the core grow past
+it for a good tool. Three tasks were run on Claude
+(claude-haiku-5-5) and are kept as golden transcripts (`tests/golden/`). The tools have not
+been run live on OpenAI yet; the loop below is the siblings', which a production user ran
+on Azure OpenAI's Responses API.
+
+## Groups
+
+| Group | Tools |
+| --- | --- |
+| `core` (always loaded) | `open_document`, `undo`, `batch`, `read_batch`, `describe`, `find_text`, `save_document`, `xlsx_read`, `xlsx_profile`, `xlsx_query`, `xlsx_derive`, `xlsx_compare`, `xlsx_validate_data` |
+| `shared_misc` | `close_document`, `read_blob` |
+| `xlsx_edit` (E3, E4, E5) | `xlsx_set_cells`, `xlsx_write_table`, `xlsx_manage_sheets` |
+| `xlsx_format` (E7) | `xlsx_format`: font, fill, border, alignment, number format, locked, `like` or a named `style`, column `width` or `fit` (Excel's AutoFit, measured), row `height`, `freeze`, `gridlines` |
+| `xlsx_trace` (round 31) | `xlsx_trace`: rows of a table or dataset, each with the rows it rests on and why (`source`, `names` by key, `lists` its key), every value in full, within a size budget, what did not fit listed |
+| `xlsx_record` (round 53) | `xlsx_record_values`: values you judged from a column's text, one per row by key, kept as `d:<id>` (key, the values' column, `note`), each value's source the cell judged; keys matched among rows with text (a heading or spacer row repeating a key is left out; round 54), unknown or repeated keys and empty source cells refused before keeping, rows with text and no value listed (`not_recorded`); `add: true` adds to the dataset, `type: "number"` keeps numbers |
+
+`describe` and `find_text` are the shared tools with the workbook's handlers: one
+definition for decks, documents and workbooks alike. `describe` of any document also
+lists the session's datasets (ooxml-edit 0.30.0): id, columns, types, row count and
+`from` -- `d1/t:Sales` for a derive from a workbook, `d:by_rep` for one from a dataset --
+never their values.
+
+`read_batch` (ooxml-edit 0.78.0, round 32) reads many things in one call: records by key,
+cells, regions, queries, traces, `describe`, each op answered as the call alone, within its
+own `max_result_chars`, the reply within 96,000 characters; what does not fit is listed in
+`not_returned`, with `resend`, the call that asks for it. It changes nothing, so a reader
+(`roles=["review"]`) has it; a builder reading record after record uses it too, rather
+than a call per record. A change among its ops is refused, pointing at `batch`.
+
+`save_document`, `undo` and `batch` are the shared ones too (E1). A workbook's undo step is
+one call (or one `batch`), and its version is the workbook history's: undoing every step
+gives the bytes that were opened, and a dataset derived before a change is current again
+once the change is undone. `undo`'s `scope` takes a sheet's name: that sheet's latest step
+is taken back while no later step changed what it changed -- a step that touched what
+every sheet shares (the workbook part, shared strings, styles, the calculation chain,
+which the first write of a session always does) is taken back by a plain undo only; a
+caller's own undo (`Session.view`) follows the same rule. `save_document`'s validation
+report is the structure check (`Workbook.validate`) against the one the workbook opened
+with: a new issue refuses the save; `open_document`'s `baseline_problems` counts those
+issues (cell facts such as numbers stored as text are `describe`'s).
+
+**Writing cells** (`xlsx_set_cells`, E3). Each item of `cells` is an `address` and
+exactly one of `text` (always literal, `"=x"` too), `number`, `bool`, `date` (`YYYY-MM-DD`,
+or the session locale's order with a four-digit year, optionally with a time after it --
+`YYYY-MM-DD hh:mm[:ss]`, kept to the millisecond -- or a time of day alone, `hh:mm`, into a
+cell whose format shows it; a General cell, a new one too, and one of a format Excel
+replaces for a typed value -- percentage, currency, time -- gets Excel's format as in Excel:
+the short date, listed in `short_date`, or `m/d/yyyy h:mm`, `h:mm`, `h:mm:ss`, listed in
+`time_format`; a number format such as `0.00` needs `format`), `formula` (`=D10*2`, the only way to write one), `blank: true`
+(the value goes, the format stays) or `markdown` (rich text: `**bold**`, `*italic*`,
+`~~strike~~`, each line a line of the cell, `-` and `1.` items shown as `•` and numbers;
+`xlsx_agent.markdown`). `xlsx_read`'s `markdown: true` gives text as that Markdown --
+rich runs marked, list lines as items, the rest escaped -- so that writing it back gives
+the same cell; a cell given line breaks in a row of a fixed height is listed in
+`fixed_height`, with a warning. `replace_formulas: true` writes over formula cells.
+Every refusal -- a value refused, a formula cell without `replace_formulas`, an array
+formula or merged cell, a table's header, a column the application withholds from the
+model -- comes before anything changes, each by code and address in the error's
+`details`; at most 5,000 cells a call, one undo step. Afterwards every formula value the
+workbook gives reads `cache: invalidated` (Excel recalculates when it opens the file;
+nothing here does), and a dataset derived from those values is stale; a deck or document
+table placed from them says `stale` and the counts in its `from`.
+
+**Writing a block or a table** (`xlsx_write_table`, round 44, E4). `at` a first cell
+with its sheet (`Stock!B2`): `headers` in that row and `rows` below, each row's cells as
+`xlsx_set_cells`' value fields (`{}` a blank), or `from` a dataset (`d:<id>`: its columns
+and rows); `table: true` (or a `name`) makes an Excel table with its filters and the
+workbook's default style banded by rows (`style`: another). `at` a table (`t:Orders`):
+the rows are appended to it -- it grows, its calculated columns are filled, a totals row
+moves below (`Workbook.append_rows`). Refused, changing nothing, over cells holding values
+(unless `overwrite`), a merged area or another table, a table name Excel refuses (with one
+that would do), columns withheld from the model; at most 5,000 cells a call. Returns the
+range written (`range`, `table`, `table_range`, `totals`, `filled`). Sent non-strict: its
+cells are objects in an array in an array, and the strict set stays `xlsx_set_cells`.
+`new_document`'s xlsx handler is `xlsx_agent.tools.NEW_DOCUMENT`, not in `TOOLS`: an
+application that offers new workbooks adds it (`Toolbox([*TOOLS, NEW_DOCUMENT], ...)`); in
+the core it would cost about 225 estimated tokens, past the core's budget.
+
+**Sheets** (`xlsx_manage_sheets`, E5; round 44). One `action` a call, each one undoable
+step: `add` (`name`, `position`: 1 the first tab, the end by default; an empty worksheet as
+Excel makes one), `rename` (`sheet`, `name`: every formula, defined name, rule,
+validation, chart series and pivot cache naming it rewritten as Excel rewrites them,
+listed in `rewritten`; hyperlinks, which Excel leaves, in `not_rewritten`), `clear`
+(Excel's Clear All on every cell: references to the sheet stay -- the way to regenerate a
+sheet), `delete` (refused while anything refers to the sheet, each referent in
+`details.referents` by kind and address; `force` writes `#REF!` into each, as Excel does),
+`hide` and `unhide` (the active tab moves to a visible sheet; the last visible sheet is
+never hidden). Already so is no error: `changed: false` with a `note`. An `add` given only
+`sheet` takes it as the name. A sheet withheld from the model is neither reached nor named:
+a referent on one is counted (`referents_withheld`). The workbook's structure lock, a
+protected sheet (for `clear`) and the host's write policy (a sheet covered whole) refuse
+before anything changes. Sent non-strict (the strict set stays `xlsx_set_cells`). Merged
+cells (`Workbook.merge`, `unmerge`) are host calls only.
+
+**Text XML cannot carry** (R63b). `xlsx_set_cells` writes text holding control characters
+(and a carriage return, and text that reads as an `_xHHHH_` escape) as Excel writes it,
+`_xHHHH_`, and names those cells in `escaped`; it reads back as given.
+
+**Guards** (`xlsx_set_cells`, X4). An `address` may name a value by its row's key,
+`t:stock/P-7/Quantity`: the row holding the key now, wherever it moved; a key two rows
+share, a key no row has, a row by place (`#3`), a table without a declared key column and
+one whose key column holds formulas (`formula_key`: keys are values the application
+supplies) refuse (named `cells[n]`, never by the key). A key no row has starts a row only
+where an item's `row` allocates it (X6): the sheet row number of a free row of the table's
+declared `capacity` (`describe` shows `capacity` and `free`), continuing its data rows with
+no blank row between -- the application allocates the rows, in its instructions or by a
+write policy over the capacity rows it opens. A row outside the capacity (`not_capacity`),
+one of the data rows (`data_row`), a row not empty (`not_free`: a formula returning `""`
+too), a row or key allocated twice (`allocated_twice`), a gap (`capacity_gap`, naming the
+next free row), a key a row already has (`existing_key`) and a full capacity
+(`capacity_full`) refuse, as `allocate[n]`; a free capacity row named by its address is
+refused. There is no "next free row" form in the tool. Each item's `expect` (the type
+now: `empty`/`blank`, `text`, `number`, `bool`, `error`, `formula` -- a formula cell is
+never empty) and `expect_value`
+(the value now as read, as text: a number's digits, `true`/`false`, a date `YYYY-MM-DD`)
+refuse the call when the cell holds something else, `details`'
+`held` naming each such cell's type, never its value; `revision` (a result's `version`)
+refuses it when the workbook has changed since. A protected sheet's (`sheetProtection`)
+locked cells are never written; its unlocked cells are, as Excel lets them be typed into
+(measured, round 46), its protection untouched, and a refusal names the unlocked cells. The application's
+write policy -- `xlsx_agent.tools.policy(session, {"cells": ["Stock!D10:E209"],
+"tables": [{"table": "stock", "columns": ["Quantity"], "new_rows": true}], "formulas":
+false})` before the session opens the workbook (`{"cells": []}`: nothing writable), or
+`Workbook.open(..., policy=...)` in Python; `narrow(session, ...)` only narrows it --
+refuses every cell outside it, by address, by key, in a batch op alike (`not_writable`,
+`formulas_not_allowed`), and `describe` shows it as `writable`. Without a policy a
+session writes as its `edit` role allows. A policy naming a sheet, table or column the
+workbook lacks refuses `open_document` (`bad_policy`, with the entry's `path`).
+
+## Setup (every provider)
+
+```python
+from ooxml_edit.tools import Toolbox
+from xlsx_agent.tools import FORMAT, GROUPS, TOOLS
+
+toolbox = Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS)   # toolbox.close() when done
+session = toolbox.session()                                 # clock=... for a fixed clock
+session.open(xlsx_bytes, name="sales-july.xlsx")            # the model calls it "d1"
+system = toolbox.system_prompt(extra=HOUSE_RULES)           # your guidance after the tools'
+task = ("In d1, total the revenue by region as the dataset by_region, "
+        "then report each figure with its address.")
+```
+
+A workbook can also come in as an input the model opens itself:
+`b1 = session.add_blob(xlsx_bytes, name="sales.xlsx")`, then `open_document` with
+`{"blob": "b1"}`. `.xlsx`, `.xlsm`, `.xltx` and `.xltm` open; `.xls`, `.xlsb` and encrypted
+workbooks are refused with the reason. A macro is never run.
+
+**Roles.** Every workbook tool but `undo`, `xlsx_set_cells`, `xlsx_write_table` and
+`xlsx_manage_sheets` reads, so those are the `review` role's (ooxml-edit 0.45.0,
+[TOOLS.md, "Roles"](https://github.com/uvrt/ooxml-edit/blob/main/docs/TOOLS.md)); `undo`,
+`xlsx_set_cells`, `xlsx_write_table` and `xlsx_manage_sheets` are `edit`'s. A reviewer's toolbox,
+`Toolbox(..., roles=["review"])`, sends the same definitions without those (and without the
+`xlsx_edit` group), and in a
+toolbox with the deck or Word tools a reviewer keeps every reading workbook tool.
+
+| Role | Workbook tools |
+| --- | --- |
+| `review` | `describe`, `find_text`, `xlsx_read`, `xlsx_profile`, `xlsx_query`, `xlsx_derive`, `xlsx_compare`, `xlsx_validate_data`, `xlsx_trace`, `read_batch` |
+| `edit` | `undo`, `xlsx_set_cells`, `xlsx_write_table`, `xlsx_manage_sheets` |
+| any | `open_document`, `close_document`, `read_blob`, `batch`, `save_document` |
+Agents sharing one session (ooxml-edit 0.46.0) each work through a view of it,
+`session.view(roles=[...], context={...})`: the workbook and the datasets derived from it
+are the session's, so a deck builder's view uses the `d:` an analyst's view derived.
+
+**The user's locale.** How text that looks like a number or a date is read (numbers stored
+as text), and the language of the language-dependent built-in number formats, is the
+application's setting -- never the model's -- per toolbox or per session, with the shared
+`ooxml_common.locales.Locale`:
+
+```python
+from ooxml_common.locales import Locale
+
+belgian = Locale(decimal_separator=",", thousands_separator=".", date_order="dmy",
+                 language="nl-BE", list_separator=";")
+toolbox = Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, locale=belgian)
+other = toolbox.session(locale=None)                  # en-US
+```
+
+Without one it is en-US, never the server's. Two reader settings are not locale facts and
+go on the format: `xlsx_agent.tools.format(grouping=True, local_dates=False)` in place of
+`FORMAT`. `grouping` (on) reads `1,234.5` as a number in en-US; `local_dates` (off: ISO
+8601 only) reads `3/4/2026` in the locale's date order, as Excel does. A format code's own
+locale tag (`[$-409]`) wins for its cells. No tool definition or prompt changes.
+
+**Declared tables.** The application often knows its workbooks better than any detection:
+which sheets hold one table (the same header on every area's sheet), on which row the
+header is, which column is the key, what a long header means, and which columns the model
+must not see. It says so as plain data -- its own configuration mapped to this -- on the
+format (every workbook it opens) or on one session (the workbooks it opens from then on,
+in place of the format's); no tool takes it, so no definition grows:
+
+```python
+from xlsx_agent.tools import declare, format
+
+tables = {"tables": [
+    {"name": "checks", "sheets": "Area *", "header_row": 3, "key": "Ref",
+     "description": "One row per check, every area",
+     "fields": [{"header": "Rating (1 to 5, in halves)", "id": "rating",
+                 "description": "The reviewer's rating"},
+                {"header": "Remark", "hidden": True}]},
+    {"name": "run", "type": "key_value", "sheets": "Run facts"}]}
+toolbox = Toolbox(TOOLS, formats=[format(tables=tables)], groups=GROUPS)
+declare(session, tables)              # or per session, in place of the format's
+```
+
+`t:checks` is then one table over every `Area ...` sheet, rows in the sheets' order, each
+value with its own cell (`'Area South'!C5`); `t:checks/S-2/rating` finds the row's sheet;
+`describe` shows `rating` with its description, and never `Remark` -- no tool shows it, an
+address naming it is `not_found` without it among the options, and a read of the sheet's
+cells gives its cells as `{"a": "'Area North'!E4", "withheld": true}`. A declared table
+over an Excel table replaces it: `describe` lists `t:checks` alone, and the Excel table's
+`t:` name is refused toward `t:checks`; a defined name over a hidden column is refused
+and not listed. `t:run/author/value`
+reads a key-value table. A workbook the declarations do not fit is refused at
+`open_document` (`refused`, with the declaration's `code` and `path` in `details`); one
+marked `optional` is skipped where its sheets are not there. Every rule is in
+`xlsx_agent.declare` and docs/api-tour.md, "Declaring tables".
+
+A field may also clean its column's text -- `"clean": {"strip": "^Lead:[^;]*;\\s*",
+"collapse_space": true, "split": ";"}`: a leading label stripped, white space collapsed, a
+cell split into a list (`"t": "list"`) -- applied where the table is read, never to the
+key column. `"extract": "Status:\\s*(\\S.*)$"` gives a column the text one capture group
+finds near the end of each cell (searched for in its last 256 characters, and once more
+where the label it begins with last occurs; not found: blank): a status line at the end of
+a narrative becomes a column of its own, with its cell as its source. `"after": ["Review
+state", "Next step"]` beside an `extract` reads the value after the labels' last
+occurrence anywhere in the cell (a plain search, case aside). A cell holding the label but
+no value the pattern finds reads blank, `extract_unmatched`: counted, with its first cell,
+in `describe`, `xlsx_profile`, `xlsx_derive`, `xlsx_read` and `xlsx_query`, with a
+warning. Clean rules are the application's, never a model's. A value a rule changed says `"cleaned": true`; `xlsx_read` and `xlsx_query`
+pages count them (`cleaned`: count and first addresses), `xlsx_profile` and `describe`
+flag them, `xlsx_derive` counts them per column, and a slide's or document's table from
+`t:` gets a list as one cell with a line per item and a warning saying how many values
+were cleaned. A pattern that could backtrack without bound is refused when declared.
+See `xlsx_agent.clean` and docs/api-tour.md, "Cleaning text".
+
+A field can also read another column's cells by rules of its own, beside it: `{"id":
+"part", "from_field": "notes", "clean": {"extract": "Part:\\s*(\\S+)$"}}` (sources: the
+cells read; never written through, `derived_column`; `describe` shows `derived_from`).
+`"on": "shown"` in a `clean` applies its rules to number cells too, as the text Excel
+shows them (where that is measured; else the cell reads blank, `unmeasured_format`).
+
+Terms can be redacted from everything a workbook shows -- `{"redact": ["Acme Corp",
+"re:Project\\s+\\w+"], "with": "[redacted]"}` among the declarations: every cell, header,
+comment, link, drop-down list, sheet name and an Excel table's column names reads with the
+match replaced, in every tool and in a deck's or document's `from`; a formula holding a
+match keeps its value, not its text, and `find_text` never finds a term. The model sees
+the replacement only -- no count, no flag. See `xlsx_agent.redact`.
+
+**A citation's cell** (round 25). `xlsx_read` of a sheet's cell or range inside one
+table's data rows -- `'Q3 review'!$K$83`, as a citation in the workbook's own text writes
+it -- reads the table row(s) holding it: `target` is then the rows' `t:` address
+(`t:Items/I-80` by key, else by position), `cells` the address asked for, and `held_by`
+the table, the rows and `"read": "rows"` (the first such read also warns that the row was
+read instead of the cell); `columns` picks the row's columns. Any other sheet read says
+`"held_by": null` (cells read as themselves); `cells_only: true` reads the cells as stored
+and still names the rows in `held_by`. A sheet row is never a data row's position: follow
+`held_by`.
+
+**Dates stored as text.** `xlsx_derive`'s `min` and `max` take dates and give a date. On a
+column whose dates are stored as text they are refused, and the error says so in one step:
+its `details` give the `issue` (`date_as_text`) and its `cells` (the count, the first
+addresses), and the message the `coerce: ["date_as_text"]` that reads them as dates. Text
+in the locale's day order (`3/4/2026`) is `local_date_text` without `local_dates`: no
+coercion reads it then. `first` and `last` take any column as it is; their dates stored as
+text stay that in the dataset (`date_as_text`), so a derive from it takes `coerce` too. A
+`coerce` that read nothing says it did not apply. `xlsx_profile` gives
+the range of a column's dates stored as text (`date_text`) beside its flag.
+
+**A pivot's columns, listed** (round 27). `xlsx_derive`'s `pivot_values` --
+`{"pivot": "Status", "pivot_values": ["Open", "Held", "Closed"]}` -- gives one column per
+listed value, in that order, rows or none: `count` 0 where none occur, every other measure
+blank (a sum of nothing is not 0). Values are written as filter values are and matched as
+`group_by` groups, by type and value (in a number column `"5"` is the number 5, not the
+text `"5"`). Values present but not listed are no columns: their rows are left out
+(`left_out`, `not_listed`) and each value is named in `pivot_unlisted` with its row count;
+a group holding only such values is still a row, its cells empty. The blank cells are
+listed as `""` (round 28), their column named `(blank)` as without `pivot_values`; a text
+value `"(blank)"` is then `(blank) (text)`. A refused value is named by its place,
+`pivot_values[2]`, and what is wrong with it.
+
+**Joins** (round 25). `xlsx_derive`'s `join` --
+`{"from": "t:Issues", "on": ["Ref", "Items"], "columns": ["Issue"]}` -- adds another table's
+or dataset's columns to each row of `from`, by key, before `where`, the groups, the measures,
+`sort` and `top`. Every row is kept (blank when unmatched); a list key (a split column)
+matches by any item; when a row matches several, every joined cell is a list (one row per
+row of `from`, so its counts and keys stay true; placed in a deck or document, one item per
+line). A name clash is renamed `Status (Issues)`; `joined` in the result says what was
+matched. Without `group_by`, `measures`, `bins` or `pivot` the joined rows are the dataset
+-- the table an agent places, each joined value with the joined rows' cells as sources. It
+goes stale when either side's source changes, the joined one's too.
+
+**Fills** (round 35). `xlsx_derive`'s `fill` --
+`[{"column": "Limit", "from": "Default limit", "coerce": "number"}]` -- gives each blank
+cell of `column` (no value, or text of no characters: a formula's `""` counts as blank)
+the same row's `from` value, after the join (so `from` may be a joined
+column, looked up by key) and before `where`. It never overwrites; several fills apply in
+order. `coerce` (`number`, `date`) reads text as the derive's `coerce` does. Each filled
+value's sources are the `from` cells and it carries `"filled": "<from>"` in the rows (and
+in an `xlsx_read` of the dataset); `filled` in the result counts per fill the cells filled,
+`coerced` and left blank (`unfilled`, by reason), with first addresses. Without
+`group_by`, `measures`, `bins` or `pivot` the filled rows are the dataset.
+
+**A filter** (round 51). `xlsx_derive` with `where` alone -- no `group_by`, `measures`,
+`bins`, `pivot`, `join` or `fill` -- keeps the matching rows as the dataset, every column,
+in the table's order (`sort` and `top` apply; at most 1,000 rows), each value with its own
+cell as source. To count them instead: `measures: [{fn: count}]` (`matched` gives it too).
+Before 0.1.37 it gave one row, the count.
+
+**Datasets (`d:`).** `xlsx_derive` keeps its figures in the session as a dataset,
+`d:<id>`: columns, rows, and beside every value the cells it came from. `xlsx_read` reads
+it back (`{"target": "d:by_region", "sources": true}`, no `doc` needed; `columns` picks
+its columns in order, as a table's: `{"target": "d:by_region", "columns": ["Region",
+"total"]}`, round 28), `xlsx_derive`
+derives from it again, and it outlives `close_document`. When the table has a key column
+(the one `describe` reports, or one the caller declares with `Workbook.declare_key` on the
+session's workbook), a value's sources are written by key, `t:Stock/{SKU-0001,SKU-0004}/Qty`:
+they name the same cells after a consultant inserts or sorts rows, where ranges would not.
+Without one they are ranges, as before. A row by key is a target (`t:Parts/BX-17`;
+`key` names its key column when several could be, `columns` picks its columns, in order).
+`xlsx_read` takes `*` for every row
+(`t:Stock/*/Price`) and key sets (`t:Stock/{SKU-0001,SKU-0004}/Price`, read in that
+order); `Workbook.expand` turns either into one address per cell, for a check that every
+required cell was used. A dataset whose workbook has
+changed since is marked stale, never refreshed. An application's own figures are a dataset
+too: `Dataset.from_records(rows, types={"opened": "date"})` (ooxml-edit), kept with
+`session.keep_datasets`. A Python `date`, `datetime` or `time` in it needs no label; ISO
+text is a date only in a column labelled `date` (`datetime`, `time`), or with
+`coerce: ["date_as_text"]`. The labels are `number`, `percent`, `date`, `time`,
+`datetime`, `text`, `bool` and `error`. Datasets are ooxml-edit's, so one session
+can hold a workbook beside a deck or a document -- one toolbox with each library's tools
+and formats:
+
+```python
+from pptx_agent.tools import FORMAT as DECK, GROUPS as DECK_GROUPS, TOOLS as DECK_TOOLS
+from xlsx_agent.tools import FORMAT as WORKBOOK, GROUPS as BOOK_GROUPS, TOOLS as BOOK_TOOLS
+
+toolbox = Toolbox([*DECK_TOOLS, *BOOK_TOOLS], formats=[DECK, WORKBOOK],
+                  groups=[*DECK_GROUPS, *BOOK_GROUPS])   # a shared tool merges its kinds
+```
+
+**Comparing two versions.** `xlsx_compare` pairs rows by key and opens on a summary per
+table: for each column, the cells changed, and for numbers and dates how many went up and
+down and the largest move each way, named by key --
+`{"rating": {"changed": 4, "up": 2, "down": 2, "max_up": "t:checks/A3/rating +1.5", ...}}`
+-- and the rows added and removed by key. The differences that follow name each cell by
+key too (`"at": "t:checks/A3/rating"`, with its sheet address in each workbook), so an
+answer cites the same cell after rows are inserted or sorted, and carries its row's
+`label` -- the row's text in the table's first text column other than the key
+(`"label": "Hex bolt M6"`) -- so an answer names the row by what it is, not only by its
+key. The summary is on the first page; the differences page as before. A column the
+application declared hidden is never compared, named or used as the label.
+
+`cells: true` (X5) compares every cell by address instead -- tables too only when named --
+formulas by their normalised text, so a formula changed or pasted over as its own value is
+found even where the cached values agree: `cells` on the first page gives the counts per
+kind (`formula_changed`, `formula_to_literal`, `literal_to_formula`, `formula_removed`,
+`formula_added`, `value_changed`, `cache_changed`), each kind's cells as ranges (50 at
+most) and, when the session has a write policy (`xlsx_agent.tools.policy`), `outside`: the
+changes it does not allow. `formula_text: true` pages each changed formula's text as a
+difference (`{"formula": "formula_changed", "at": "Stock!I10", "a": ..., "b": ...}`).
+`cells` also has `structure` (X6), apart from the cells: counts by kind and the first 50
+changes (`{"kind": "validation_changed", "at": "Stock!D10:D200"}`) of defined names
+(`name_added`, `name_removed`, `name_changed`), data validations (standard and `x14` alike),
+merged areas and conditional formats (`conditional_format_added`, ...); every one is
+outside the write policy (`outside`'s `structure`). With `formula_text` each one's formulas
+are a difference too (`{"structure": "name_changed", "at": "Markup", "a": ["1.4"], "b":
+["1.5"]}`). A table compared by key whose key cells hold formulas says `formula_key`: its
+rows are paired by cached keys, which move with the rows.
+
+**Data validations.** `xlsx_read`'s `validations: true` lists the rules over the target
+(the range as asked, not clipped to the used range, since input cells are often empty), on
+its first page: `origin` (`standard` or `x14`), `type`, `operator`, `cells`, and for a list
+its `source` and whether it `resolved` (`range`, `count`, or the `reason` it did not:
+`indirect`, `offset`, `unknown_name`...); the formulas only with `formulas`.
+`xlsx_set_cells` names the cells written with a value a resolvable rule does not allow
+(`invalid`, with a warning) and those under a rule it cannot check (`unchecked`).
+
+### Workbook tables into slides and documents
+
+A deck or document tool that takes its rows from a source takes a workbook's table, or a
+dataset, as they are: pptx-agent's `ppt_add_table` and `ppt_edit_table` (`from`,
+`from_columns`) and the shared `edit_chart` (`from`, `columns`; ooxml-edit 0.22.0, O3).
+docx-agent's tables follow. No figure is retyped, and the result names the cells every
+placed value came from:
+
+```python
+session.entry("d2").document.declare_key("t:Stock", "SKU")   # the workbook, d2; or detected
+toolbox.dispatch(session, "edit_chart", {
+    "doc": "d1", "target": "s:256", "action": "add", "chart_type": "column",
+    "box": {"x": 40, "y": 60, "w": 600, "h": 300},
+    "from": "t:Stock/{SKU-0001,SKU-0004}", "columns": ["SKU", "Qty"]})
+# result.data["from"]: {"source": "d2/t:Stock/{SKU-0001,SKU-0004}", "doc": "d2", ...,
+#   "categories": {"column": "SKU", "rows": "1-2",
+#                  "sources": ["t:Stock/{SKU-0001,SKU-0004}/SKU"]},
+#   "series": [{"name": "Qty", "column": "Qty", "rows": "1-2",
+#               "sources": ["t:Stock/{SKU-0001,SKU-0004}/Qty"]}]}
+```
+
+`from` is a table, name or region (`t:Stock`), one column of it (`t:Stock[Qty]`,
+`t:Stock/*/Qty`), or a key set's rows in its order (`t:Stock/{SKU-0003,SKU-0001}`); one
+value is refused (`invalid_arguments`), as is a table over `Limits.max_dataset_cells`
+(`limit`, before a cell is read). Values come as `xlsx_read` types them: numbers as
+numbers, dates as ISO 8601 text, blanks as blanks; nothing is coerced -- a number stored as
+text stays text, and a chart refuses it, naming its cell. Each value's source is its cell
+by key when the table has a key column (as a derive's are), else its cell address, and a
+column's are merged (`t:Stock/{...}/Qty`, `Stock!C2:C9`). The workbook is only read: no
+undo step, its version unchanged. `Workbook.dataset("t:Stock")` gives the same rows to a
+script.
+
+**Limits.** Every limit is the session's (`ooxml_edit.tools.Limits`, given to
+`toolbox.session(limits=...)` or the toolbox), and every result says what it cut and gives a
+cursor for the rest. The ones a workbook meets:
+
+| Limit | Default | Bounds |
+| --- | --- | --- |
+| `max_package_bytes`, `max_parts`, `max_uncompressed_bytes`, `max_compression_ratio` | 50 MB, 2,000, 500 MB, 200 | a workbook, checked from the zip's directory before it is unpacked |
+| `max_documents` | 4 | open workbooks (and decks and documents) in a session |
+| `max_result_chars` | 24,000 | one result |
+| `max_list_items` | 50 | rows, matches, differences or problems on one page |
+| `max_datasets`, `max_dataset_cells` | 50, 50,000 | datasets in a session; values in one |
+
+And the tools' own: `describe` targets about 3,000 tokens and names what it left for
+`xlsx_profile`; `xlsx_read` gives 50 rows by default and at most 500, and `xlsx_read`
+and `xlsx_query` cut a cell's text at 2,000 characters unless `text_chars` says otherwise
+(`cut.text` names the cells, the longest one's length and the call that gives them in
+full, paged); `xlsx_derive` keeps
+at most 1,000 result rows and shows 50, with at most eight sources per value, counted in
+units -- a range, or one key of a key set (the rest through `xlsx_read`'s `sources`); `xlsx_validate_data` keeps 10,000 problems and
+counts the rest. The read tools do not check `Limits.soft_deadline` yet: a call on a very
+large sheet runs to the end (ROADMAP.md, design rule 6).
+
+**What is never logged.** Every call is recorded on the session and logged to the
+`ooxml_edit.tools` logger at INFO with its tool, documents, outcome, version and duration;
+its arguments appear only as a digest (a hash and their shape: names, types, lengths), so a
+filter value or a search text is not in the log (`Toolbox(log_arguments=True)` is the
+application's choice to log them). Warnings, errors, exception messages and summaries carry
+addresses, types and codes only -- never a cell's value, a comment, a formula's text or a
+key -- and the test suite holds them to it with marker strings. Tool *results* do return
+content: that is what the model asked for.
+
+The provider SDKs read their keys from the environment (`ANTHROPIC_API_KEY`,
+`OPENAI_API_KEY`).
+
+## Claude (Messages API)
+
+```python
+import anthropic
+
+client = anthropic.Anthropic()
+tools = toolbox.definitions("anthropic")
+messages = [{"role": "user", "content": task}]
+while True:
+    response = client.messages.create(model="claude-sonnet-5-5", max_tokens=8000,
+                                      system=system, tools=tools, messages=messages)
+    messages.append({"role": "assistant", "content": response.content})
+    calls = [block for block in response.content if block.type == "tool_use"]
+    if not calls:
+        break
+    results = [(c.id, toolbox.dispatch(session, c.name, c.input)) for c in calls]
+    messages.append(toolbox.render_results("anthropic", results))   # tool_result blocks
+```
+
+The core is cached on the last core definition's `cache_control`; a system prompt over
+Claude's minimum is cached too when you give it a `cache_control` block of its own.
+
+## OpenAI (Responses API)
+
+```python
+from openai import OpenAI
+
+client = OpenAI()
+tools = toolbox.definitions("openai-responses")
+items = [{"role": "user", "content": task}]
+while True:
+    response = client.responses.create(model="gpt-6", instructions=system, tools=tools,
+                                       input=items)
+    items += response.output
+    calls = [item for item in response.output if item.type == "function_call"]
+    if not calls:
+        break
+    results = [(c.call_id, toolbox.dispatch(session, c.name, c.arguments)) for c in calls]
+    items += toolbox.render_results("openai-responses", results)    # function_call_output items
+```
+
+`items += response.output` passes reasoning items and a hosted tool search's calls back as
+they came; only `function_call` items are dispatched, by their bare `name`. `dispatch`
+takes the arguments as a dict or as the JSON string OpenAI sends, and never raises for the
+model's mistakes: an error comes back as a result the model can read, naming the valid
+options where there are some.

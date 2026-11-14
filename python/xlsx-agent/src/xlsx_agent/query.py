@@ -1,0 +1,918 @@
+"""Queries: the rows of a table, name or region that meet some filters, sorted, with the
+columns asked for, each cell with its address (ROADMAP.md, "Tools": ``xlsx_query``)::
+
+    products = wb.table("t:Products")
+    found = products.query(["SKU", "Price"], where={"Category": {"eq": "Hardware"},
+                                                    "Price": {"gte": 5, "lte": 50}},
+                           sort=[("Price", "desc"), "SKU"], limit=20)
+    found.matches        # how many rows match, all of them
+    found.rows           # [(Value(a='Stock!A7', ...), Value(a='Stock!C7', ...)), ...]
+
+**Filters.**  ``where`` maps a column name to its tests, ``{"Price": {"gte": 5}}``, or is
+a list of ``{"column": ..., "op": ..., "value": ...}`` (``values`` for ``in`` and
+``contains_any``), as the tool gives it; a row matches when it passes every test (they
+combine with *and*).  The tests:
+``eq`` (equal to the value), ``in`` (equal to one of the values), ``gte`` and ``lte`` (at
+least, at most), ``contains`` (text holding the value), ``contains_any`` (text holding any
+of the values; round 40, R43 -- ``in`` is taken by equality, and the name says both
+``contains``' test and ``in``'s list; ``contains`` given a list is read as it, said in
+:attr:`Matches.notes`), ``words_gt`` (text of more words
+than the value, a whole number: words are the runs of characters between white space, as
+:meth:`str.split` splits them; a test for text too long to place), ``blank`` and
+``not_blank`` (the reader's ``blank``: no value, a formula without a cached value among
+them; ``True`` in the mapping form, nothing in the list form), ``is_true`` and ``is_false``
+(a TRUE or a FALSE cell; round 49, R95: written as ``blank`` is, so a caller whose
+schema has no boolean value needs none; a blank cell is neither).
+
+**Types.**  Each filtered column's type is its profile's (:mod:`xlsx_agent.profile`: the
+type most of its values have, :func:`~xlsx_agent.profile.majority_type`), and a test is
+checked against it before any row is given: ``gte``/``lte`` take a number, percent, date,
+time or datetime column; ``contains`` and ``words_gt`` a text column; ``eq`` and ``in``
+any column with values; ``is_true`` and ``is_false`` a TRUE/FALSE (bool) column; ``blank``
+and ``not_blank`` any column.  Any other pairing, and a
+value that is not of the column's type, is refused (:class:`QueryError`, ``wrong_type``)
+naming the column's type, with the tests it takes as ``valid_options``.  A cell of another type than its
+column's never matches a test that compares values: nothing is coerced (ROADMAP.md, "Design
+rules", 4); such cells are counted per column, with their first addresses
+(:attr:`QueryResult.not_compared`).  A value may be given as Python's (``5``, ``True``) or
+as text in its JSON form (``"5"``, ``"2.5e3"``, ``"true"``), as a tool call gives it.
+``eq`` without a value (``null``, or none) is refused once its column's type is known:
+on a TRUE/FALSE column naming ``is_true`` and ``is_false``, on another naming ``blank``.
+
+* **number** and **percent**: compared as stored; a percent is the stored fraction (25 %
+  is ``0.25``).
+* **date**, **time** and **datetime**: compared as the reader shows them, whole
+  milliseconds, in the workbook's date system: a value is ISO 8601 text as the reader
+  gives ``v`` (``2026-01-05``, ``2026-01-05T10:30:00``, ``10:30``, an elapsed time
+  ``PT36H0M0S``) or a serial as it gives ``serial``.  A date column compares days (a date
+  cell's time of day is not shown, and not compared), a time column the time of day (an
+  elapsed time its length), a datetime column the moment; an ISO date on a datetime column
+  is its midnight.  A cell written as ISO text (``t="d"``) is read in the same system.
+* **text**: ``eq`` and ``in`` match exactly: case counts, nothing trimmed or normalised,
+  as keys are matched (:mod:`xlsx_agent.read.regions`).  ``contains`` ignores case
+  (:meth:`str.casefold` on both sides), as a search does.  Neither is Excel's own
+  comparison, which ignores case in both and whose collation is not measured here; text
+  has no ``gte``/``lte`` for that reason.
+* **loose** (round 40, R43; ``"loose": true`` on a filter, or in a column's tests in the
+  mapping form): ``eq``, ``in``, ``contains`` and ``contains_any`` on a text or list column
+  compare both sides as :func:`loose_text` writes them -- every white space character
+  dropped, wherever it is, then Unicode's full case folding -- so ``AB. 12`` matches
+  ``ab.12``.  :attr:`Matches.loosened` counts, per column, the matching rows that match
+  only so, with their first addresses (``0``: loose changed nothing there); ``loose`` on
+  another test or column type changes nothing and says so (:attr:`Matches.notes`).
+* **bool**: ``True``/``False``; **error**: the code as the reader gives it (``#N/A``),
+  exactly.
+* **list** (a declared column whose text is split, :mod:`xlsx_agent.clean`): ``eq``,
+  ``in`` and ``contains`` test each item as text is tested, and a cell passes when any
+  item does (``{"owners": {"eq": "Kim"}}``: the rows Kim is among); a list sorts by its
+  items, as text does, item by item.
+
+**Sorting.**  ``sort`` is a list of keys, the first deciding first: a column name
+(ascending) or ``(name, "asc" | "desc")``.  Within a key, the cells of the column's type
+come first, in order (text by :meth:`str.casefold`, then as written: code-point order, not
+Excel's collation); then cells of other types, then blanks, each as they were (Excel too
+puts blanks last either way).  Rows that tie keep the table's order.
+
+**Bounded.**  :func:`matches` is one streamed pass over the filtered and sorted columns
+that keeps, per matching row, its row number and sort keys, and the cells asked for while
+they are at most :data:`KEEP_CELLS`; :func:`read_rows` gives a page of rows from those, or
+reads them again once they are known (:func:`query` does both, ``offset`` and ``limit``
+giving the page).  ``xlsx_query`` pages through them as ``xlsx_read`` pages through cells.
+
+**A dataset** (``d:by_region``, :func:`dataset_matches`; round 10, O5) is queried as a
+table is: the same filters, types and sort, over its values as it reports them, its rows
+named by position.
+
+**Content** (ROADMAP.md, "Design rules", 7).  A query's rows are a result.  An error says
+which column, which test and which type, never a filter's value (a value may be a cell's,
+as a key may).
+"""
+
+from __future__ import annotations
+
+import math
+import re
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, Iterable, Iterator, Mapping, Sequence, cast
+
+from ooxml_edit.sheets import Area, Cell
+
+from .address import RangeAddress
+from .profile import FIRST_ADDRESSES, Count, majority_type
+from .read.regions import Region
+from .read.stream import CHECKPOINT_ROWS
+from .read.types import Value, day_serial
+
+if TYPE_CHECKING:  # pragma: no cover
+    from .dataset import DatasetTable
+    from .workbook import Workbook
+
+#: Every test a filter can make.
+OPS = ("eq", "in", "gte", "lte", "contains", "contains_any", "words_gt", "blank", "not_blank",
+       "is_true", "is_false")
+
+_ORDERED = ("eq", "in", "gte", "lte", "blank", "not_blank")
+_ANY = ("eq", "in", "blank", "not_blank")
+
+#: The tests that take no value: ``True`` in the mapping form, nothing in the list form.
+_UNVALUED = ("blank", "not_blank", "is_true", "is_false")
+
+#: The tests of a TRUE/FALSE cell (round 49, R95): no value, so a strict caller needs none.
+_TRUTH = ("is_true", "is_false")
+
+#: The tests each column type takes.
+OPS_BY_TYPE: dict[str, tuple[str, ...]] = {
+    "number": _ORDERED, "percent": _ORDERED, "date": _ORDERED, "time": _ORDERED,
+    "datetime": _ORDERED,
+    "text": ("eq", "in", "contains", "contains_any", "words_gt", "blank", "not_blank"),
+    "bool": ("eq", "in", "is_true", "is_false", "blank", "not_blank"), "error": _ANY,
+    "blank": ("blank", "not_blank"),
+    "list": ("eq", "in", "contains", "contains_any", "blank", "not_blank")}
+
+#: The tests that take a list of values.
+_LISTED = ("in", "contains_any")
+
+#: The tests ``loose`` loosens: those comparing text (:func:`loose_text`).
+LOOSENED = ("eq", "in", "contains", "contains_any")
+
+#: The most values an ``in`` or ``contains_any`` test takes.
+MAX_IN = 1000
+
+#: What ``loose`` drops besides what :meth:`str.isspace` counts: the zero-width space and
+#: the zero-width no-break space (byte order mark), which text pasted from elsewhere carries
+#: and nothing shows.
+_INVISIBLE = "\u200b\ufeff"
+
+
+def loose_text(text: str) -> str:
+    """``text`` as a ``loose`` test compares it: without white space -- every character
+    :meth:`str.isspace` counts (Unicode's space separators, category Zs: the space, the
+    no-break space U+00A0, U+2000 to U+200A, U+202F, U+205F, U+3000; and tab, line and
+    paragraph breaks: U+0009 to U+000D, U+001C to U+001F, U+0085, U+2028, U+2029) and the
+    zero-width spaces U+200B and U+FEFF, wherever they are -- then case folded
+    (:meth:`str.casefold`, Unicode's full case folding: ``Straße`` matches ``STRASSE``).
+    Nothing else is normalised: accents, punctuation and a character's composed or
+    decomposed form count."""
+    return "".join(ch for ch in text if not ch.isspace() and ch not in _INVISIBLE).casefold()
+
+#: The most cells :func:`matches` keeps of the columns asked for, so that the pages of a
+#: query need no second pass; past it they are read again, a page at a time.
+KEEP_CELLS = 50_000
+
+#: What a value of each type is written as, for an error message.
+_FORMS = {"number": "a number", "percent": "a number (the stored fraction: 25 % is 0.25)",
+          "date": "an ISO 8601 date (2026-01-05) or a serial",
+          "time": "an ISO 8601 time (10:30:00), an elapsed time (PT36H0M0S) or a serial",
+          "datetime": "an ISO 8601 date and time (2026-01-05T10:30:00) or a serial",
+          "text": "text", "bool": "true or false", "error": "an error code (#N/A)"}
+
+_MOMENTS = ("date", "time", "datetime")
+_MS_PER_DAY = 86_400_000
+_NUMBER = re.compile(r"-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?")
+_ZONE = r"(?:Z|[+-]\d{2}:\d{2})?"
+_CLOCK = r"(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d+))?)?"
+_ISO_DAY = re.compile(rf"(\d{{4}})-(\d{{2}})-(\d{{2}})(?:[T ]{_CLOCK})?{_ZONE}")
+_ISO_TIME = re.compile(rf"{_CLOCK}{_ZONE}")
+_DURATION = re.compile(r"PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)(?:\.(\d+))?S)?")
+
+
+class QueryError(ValueError):
+    """A query the library refuses: ``code`` says why.
+
+    ``wrong_type`` (a test the column's type does not take, or a value not of its type:
+    ``column_type`` names the type, ``valid_options`` the tests it takes), ``bad_filter``
+    (an unknown test, a missing value, a value where none is taken) and ``bad_sort``.
+    ``field`` is the argument at fault (``where``, ``sort``, ``columns``).  The message
+    names columns, tests and types, never a value."""
+
+    def __init__(self, code: str, message: str, *, field: str = "where",
+                 column: str | None = None, column_type: str | None = None,
+                 valid_options: Sequence[str] = ()) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.field = field
+        self.column = column
+        self.column_type = column_type
+        self.valid_options = list(valid_options)
+
+
+@dataclass(frozen=True)
+class Matches:
+    """What :func:`matches` found: ``rows`` the sheet rows of the matching data rows, in
+    the result's order (of a dataset, :func:`dataset_matches`, their positions); ``types`` each filtered or sorted column's type;
+    ``not_compared`` per filtered column, the cells a comparing test met of another type
+    than the column's (never matched).  ``values``: the cells of the columns asked for, by
+    sheet row, when the pass kept them (:data:`KEEP_CELLS`); ``None`` when it did not."""
+
+    region: "Region | DatasetTable"
+    rows: tuple[int, ...]
+    types: dict[str, str]
+    not_compared: dict[str, Count] = field(default_factory=dict)
+    values: dict[int, list[Value]] | None = field(default=None, repr=False, compare=False)
+    #: Per column with a ``loose`` test that loosens (a text or list column): the matching
+    #: rows that match only loosely -- an exact test would not have passed them -- with
+    #: their first cells' addresses; ``Count(0)`` when loose changed nothing there.
+    loosened: dict[str, Count] = field(default_factory=dict)
+    #: What a filter was read as, said for the result's warnings: ``contains`` given a
+    #: list, read as ``contains_any``; ``loose`` on a column it does not loosen.
+    notes: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class QueryResult:
+    """A query's page: ``address`` the region's (``t:Products``); ``columns`` the names
+    given, in order; ``rows`` the matching rows from ``offset``, each a value per column
+    with its address; ``positions`` each row's data-row position (from 1:
+    ``t:Products/#5``); ``matches`` how many rows match in all; ``types`` and
+    ``not_compared`` as :class:`Matches` gives them."""
+
+    address: str
+    columns: tuple[str, ...]
+    rows: tuple[tuple[Value, ...], ...]
+    positions: tuple[int, ...]
+    matches: int
+    types: dict[str, str]
+    not_compared: dict[str, Count] = field(default_factory=dict)
+
+    def as_dict(self) -> dict:
+        """The page as plain data: rows of cells as :meth:`Value.as_dict
+        <xlsx_agent.read.types.Value.as_dict>` writes them."""
+        out: dict = {"address": self.address, "columns": list(self.columns),
+                     "rows": [[v.as_dict() for v in row] for row in self.rows],
+                     "positions": list(self.positions), "matches": self.matches,
+                     "types": dict(self.types)}
+        if self.not_compared:
+            out["not_compared"] = {n: c.as_dict() for n, c in self.not_compared.items()}
+        return out
+
+
+def query(workbook: "Workbook", region: Region, columns: Sequence[str] | None = None, *,
+          where: "Mapping[str, Mapping[str, Any]] | Sequence[Mapping[str, Any]] | None" = None,
+          sort: "Sequence[str | tuple[str, str]] | None" = None, limit: int | None = None,
+          offset: int = 0) -> QueryResult:
+    """The rows of ``region`` that pass ``where``, ordered by ``sort``, from ``offset`` and
+    at most ``limit`` of them, with ``columns`` (names, matched case aside; every column
+    when ``None`` or empty); see the module's notes."""
+    if limit is not None and (isinstance(limit, bool) or not isinstance(limit, int) or limit < 0):
+        raise ValueError("limit is a whole number of rows, 0 or more")
+    if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
+        raise ValueError("offset is a whole number of rows, 0 or more")
+    names = select(region, columns)
+    found = matches(workbook, region, where=where, sort=sort, columns=names)
+    page = found.rows[offset:] if limit is None else found.rows[offset:offset + limit]
+    top = region.area.first.row + region.header_rows
+    rows = read_rows(workbook, region, names, page, kept=found.values)
+    return QueryResult(address=region.address.text, columns=names,
+                       rows=tuple(tuple(row) for row in rows),
+                       positions=tuple(row - top + 1 for row in page),
+                       matches=len(found.rows), types=found.types,
+                       not_compared=found.not_compared)
+
+
+def select(region: "Region | DatasetTable", columns: Sequence[str] | None
+           ) -> tuple[str, ...]:
+    """The columns named, as the region spells them, each once in the order first named;
+    every column when ``None`` or empty."""
+    if isinstance(columns, str):
+        columns = [columns]
+    if not columns:
+        return tuple(region.columns)
+    return tuple(dict.fromkeys(region.columns[region.column_index(name)] for name in columns))
+
+
+def matches(workbook: "Workbook", region: Region, *,
+            where: "Mapping[str, Mapping[str, Any]] | Sequence[Mapping[str, Any]] | None" = None,
+            sort: "Sequence[str | tuple[str, str]] | None" = None,
+            columns: Sequence[str] = ()) -> Matches:
+    """The matching rows of ``region`` in order, in one streamed pass over the columns
+    filtered and sorted; :class:`QueryError` for a filter its column's type does not take
+    (checked once the pass has the types, before any row is given).  The cells of
+    ``columns`` (names as the region spells them) in the matching rows are kept while they
+    are few (:attr:`Matches.values`)."""
+    tests = _tests(region, where)
+    keys = _sort_keys(region, sort)
+    data = region.data
+    if data is None:
+        return Matches(region, (), {})
+    if not tests and not keys:
+        return Matches(region, tuple(range(data.first.row, data.last.row + 1)), {})
+    date1904 = workbook.date1904
+    first = region.area.first.column
+    offsets = sorted({t.offset for t in tests} | {k.offset for k in keys})
+    wanted_offsets = [region.column_index(name) for name in columns]
+    span = offsets + wanted_offsets
+    left, right = first + min(span), first + max(span)
+    kept: dict[int, list[Value]] | None = {} if wanted_offsets else None
+    room = KEEP_CELLS
+    counted: dict[int, dict] = {o: {} for o in offsets}  # offset -> type -> [count, firsts]
+    typed = [t for t in tests if t.compares]
+    loose = [t for t in tests if t.loose]
+    # (row, types per typed test, keys per sort key, the loose tests passed only loosely)
+    found: list[tuple] = []
+    area = Area(Cell(data.first.row, left), Cell(data.last.row, right))
+    # The cells typed: the filtered and sorted columns', and the kept ones' while they are.
+    reading = {first + o for o in offsets} | {first + o for o in wanted_offsets}
+    for row in workbook._read(RangeAddress(region.sheet_ref, area), columns=reading):
+        cells = {o: row[first + o - left] for o in offsets}
+        for o, value in cells.items():
+            if value.t != "blank":
+                entry = counted[o].setdefault(value.t, [0, []])
+                entry[0] += 1
+                if len(entry[1]) < FIRST_ADDRESSES:
+                    entry[1].append(value)
+        if not all(t.passes(cells[t.offset], date1904) for t in tests):
+            continue
+        number = row[0].row
+        found.append((number, tuple(cells[t.offset].t for t in typed),
+                      tuple(k.key(cells[k.offset], date1904) for k in keys),
+                      _loosely(loose, cells, date1904)))
+        if kept is not None:
+            room -= len(wanted_offsets)
+            if room < 0:
+                kept = None
+                reading.difference_update(first + o for o in wanted_offsets)
+                reading.update(first + o for o in offsets)
+            else:
+                kept[number] = [row[first + o - left] for o in wanted_offsets]
+
+    rows, types, not_compared, loosened, notes = _settled(region, tests, keys, offsets,
+                                                          counted, found, date1904)
+    return Matches(region, rows, types, not_compared, kept, loosened, notes)
+
+
+def dataset_matches(table: "DatasetTable", *,
+                    where: "Mapping[str, Mapping[str, Any]] | Sequence[Mapping[str, Any]] | None" = None,
+                    sort: "Sequence[str | tuple[str, str]] | None" = None) -> Matches:
+    """:func:`matches` of a dataset (:class:`~xlsx_agent.dataset.DatasetTable`, round 10,
+    O5): its rows that pass ``where``, ordered by ``sort``, by position (from 1).  The
+    values tested are the dataset's as it reports them -- what ``xlsx_read`` shows of it,
+    rounded where its derive rounded -- each typed as a dataset's values are (a column's
+    label first); the filters, types and sort are a table's."""
+    tests = _tests(table, where)
+    keys = _sort_keys(table, sort)
+    if not tests and not keys:
+        return Matches(table, tuple(range(1, table.rows + 1)), {})
+    date1904 = table.date1904
+    offsets = sorted({t.offset for t in tests} | {k.offset for k in keys})
+    counted: dict[int, dict] = {o: {} for o in offsets}
+    typed = [t for t in tests if t.compares]
+    loose = [t for t in tests if t.loose]
+    found: list[tuple] = []
+    for position in range(1, table.rows + 1):
+        cells = {o: table.value(position, o) for o in offsets}
+        for o, value in cells.items():
+            if value.t != "blank":
+                entry = counted[o].setdefault(value.t, [0, []])
+                entry[0] += 1
+                if len(entry[1]) < FIRST_ADDRESSES:
+                    entry[1].append(value)
+        if all(t.passes(cells[t.offset], date1904) for t in tests):
+            found.append((position, tuple(cells[t.offset].t for t in typed),
+                          tuple(k.key(cells[k.offset], date1904) for k in keys),
+                          _loosely(loose, cells, date1904)))
+    rows, types, not_compared, loosened, notes = _settled(table, tests, keys, offsets,
+                                                          counted, found, date1904)
+    return Matches(table, rows, types, not_compared, None, loosened, notes)
+
+
+def _loosely(loose: "list[_Test]", cells: Mapping[int, Value], date1904: bool
+             ) -> tuple[tuple[str, Value], ...]:
+    """Of a matching row, the loose tests an exact test would not have passed: each
+    column, with its cell."""
+    return tuple((t.column, cells[t.offset]) for t in loose
+                 if not t.exactly(cells[t.offset], date1904))
+
+
+def _settled(region: Any, tests: list, keys: list, offsets: list[int], counted: dict,
+             found: list[tuple], date1904: bool
+             ) -> tuple[tuple[int, ...], dict, dict, dict, tuple[str, ...]]:
+    """The pass's end, for a sheet's region and a dataset alike: each column's type, the
+    tests checked against it, the rows of that type that passed, in order, the cells
+    of other types the comparing tests met, the rows matched only loosely
+    (:attr:`Matches.loosened`) and what the filters were read as (:attr:`Matches.notes`)."""
+    typed = [t for t in tests if t.compares]
+    types = {region.columns[o]: majority_type({t: n for t, (n, _) in counted[o].items()})
+             for o in offsets}
+    for test in tests:
+        test.check(types[test.column], date1904)
+    wanted = tuple(types[t.column] for t in typed)
+    rows = [entry for entry in found if entry[1] == wanted]
+    for index in reversed(range(len(keys))):
+        rows = _ordered(rows, index, types[keys[index].column], keys[index].desc)
+    not_compared = {}
+    for test in typed:
+        if test.column in not_compared:
+            continue
+        others = [(n, values) for t, (n, values) in counted[test.offset].items()
+                  if t != types[test.column]]
+        if others:
+            values = sorted((v for _, vs in others for v in vs), key=lambda v: v.row)
+            not_compared[test.column] = Count(sum(n for n, _ in others),
+                                              tuple(v.a for v in values[:FIRST_ADDRESSES]))
+    notes = [note for test in tests for note in test.notes(types[test.column])]
+    loosening = [t.column for t in tests if t.loose and t.op in LOOSENED
+                 and types[t.column] in ("text", "list")]
+    loosened: dict[str, Count] = {}
+    for column in dict.fromkeys(loosening):
+        count, first = 0, list[str]()
+        for entry in rows:
+            cell = next((value for name, value in entry[3] if name == column), None)
+            if cell is not None:
+                count += 1
+                if len(first) < FIRST_ADDRESSES:
+                    first.append(cell.a)
+        loosened[column] = Count(count, tuple(first))
+    return tuple(entry[0] for entry in rows), types, not_compared, loosened, \
+        tuple(dict.fromkeys(notes))
+
+
+def read_rows(workbook: "Workbook", region: Region, columns: Sequence[str],
+              rows: Sequence[int], *, kept: "dict[int, list[Value]] | None" = None
+              ) -> Iterator[list[Value]]:
+    """The values of ``columns`` (names as the region spells them) in the sheet rows
+    ``rows``, in that order: from ``kept`` (:attr:`Matches.values`, of the same columns)
+    when it has them, else in one streamed pass from the first of them to the last."""
+    if not rows or not columns:
+        return
+    if kept is not None and all(number in kept for number in rows):
+        yield from (kept[number] for number in rows)
+        return
+    first = region.area.first.column
+    offsets = [region.column_index(name) for name in columns]
+    left, right = first + min(offsets), first + max(offsets)
+    wanted = set(rows)
+    reading = {first + o for o in offsets}
+    read: dict[int, list[Value]] = {}
+    for top, bottom in _runs(sorted(wanted), workbook._rows_apart(region.range)):
+        area = Area(Cell(top, left), Cell(bottom, right))
+        for row in workbook._read(RangeAddress(region.sheet_ref, area), columns=reading):
+            number = row[0].row
+            if number in wanted:
+                read[number] = [row[first + o - left] for o in offsets]
+    for number in rows:
+        yield read[number]
+
+
+def _runs(rows: list[int], apart: bool) -> list[tuple[int, int]]:
+    """Sorted sheet rows as the ranges of rows to read them by: one, from the first to the
+    last; or, where rows far apart read alike apart (``apart``:
+    :meth:`Workbook._rows_apart <xlsx_agent.workbook.Workbook._rows_apart>`), a range per
+    run of rows at most a checkpoint's rows apart."""
+    if not apart:
+        return [(rows[0], rows[-1])]
+    out = [[rows[0], rows[0]]]
+    for row in rows[1:]:
+        if row - out[-1][1] <= CHECKPOINT_ROWS:
+            out[-1][1] = row
+        else:
+            out.append([row, row])
+    return [(top, bottom) for top, bottom in out]
+
+
+# -- filters -----------------------------------------------------------------------------------
+
+
+class _Test:
+    """One test of a filter: ``column`` (as the region spells it) at ``offset``, ``op``,
+    and the value or values as given; ``loose``: text compared as :func:`loose_text`
+    writes it (``read_as``: the test as given, when it was read as another)."""
+
+    def __init__(self, column: str, offset: int, op: str, operand: Any, *,
+                 loose: bool = False, read_as: str | None = None) -> None:
+        self.column = column
+        self.offset = offset
+        self.op = op
+        self.operand = operand
+        self.loose = loose
+        self.read_as = read_as
+        #: What the test was read as besides ``read_as``'s (a note for the result).
+        self.said: str | None = None
+        self.compares = op not in ("blank", "not_blank")
+        self._parsed: dict[str, Any] = {}
+        self._exact: _Test | None = None
+
+    def _value(self, t: str, date1904: bool) -> Any:
+        """The operand read as a value of type ``t`` (a set for ``in``, a tuple for
+        ``contains_any``), as compared; ``_BAD`` when it is not one."""
+        if t not in self._parsed:
+            read_as = "text" if t == "list" else t      # a list's items are text
+            loose = self.loose and t in ("text", "list")
+            try:
+                if self.op in _LISTED:
+                    values = [_operand(v, read_as, date1904) for v in self.operand]
+                    if loose:
+                        values = [loose_text(v) for v in values]
+                    parsed: Any = frozenset(values) if self.op == "in" else tuple(
+                        dict.fromkeys(v if loose else v.casefold() for v in values))
+                else:
+                    parsed = _words(self.operand) if self.op == "words_gt" else \
+                        _operand(self.operand, read_as, date1904)
+                    if loose and self.op in LOOSENED:
+                        parsed = loose_text(parsed)
+                    elif self.op == "contains":
+                        parsed = parsed.casefold()
+            except _Bad:
+                parsed = _BAD
+            self._parsed[t] = parsed
+        return self._parsed[t]
+
+    def exactly(self, value: Value, date1904: bool) -> bool:
+        """Whether ``value`` passes the test as it would without ``loose``."""
+        if not self.loose:
+            return self.passes(value, date1904)
+        if self._exact is None:
+            self._exact = _Test(self.column, self.offset, self.op, self.operand)
+        return self._exact.passes(value, date1904)
+
+    def notes(self, column_type: str) -> list[str]:
+        """What the test was read as, for the result's warnings."""
+        out = []
+        if self.read_as is not None:
+            out.append(f"{self.read_as} on {self.column} was given a list: read as {self.op}, "
+                       "any of them")
+        if self.said is not None:
+            out.append(self.said)
+        if self.loose and (self.op not in LOOSENED or column_type not in ("text", "list")):
+            out.append(f"loose on {self.column} changes nothing: it loosens text tests "
+                       f"({', '.join(LOOSENED)}), and this is {self.op} on a {column_type} "
+                       "column")
+        return out
+
+    def passes(self, value: Value, date1904: bool) -> bool:
+        """Whether ``value`` passes, were its type the column's."""
+        if self.op == "blank":
+            return value.t == "blank"
+        if self.op == "not_blank":
+            return value.t != "blank"
+        if self.op in _TRUTH:
+            return value.t == "bool" and value.v is (self.op == "is_true")
+        t = value.t
+        if t == "blank" or self.op not in OPS_BY_TYPE[t]:
+            return False
+        wanted = self._value(t, date1904)
+        if wanted is _BAD:
+            return False
+        if t == "list":                     # any of its items
+            items = cast("list[str]", value.v)
+            return any(self._text_passes(item, wanted) for item in items)
+        key = _key(value, t, date1904)
+        if key is None:
+            return False
+        if t == "text":
+            text = cast(str, value.v)
+            if self.op == "words_gt":
+                return len(text.split()) > wanted
+            return self._text_passes(text, wanted)
+        if self.op == "eq":
+            return key == wanted
+        if self.op == "in":
+            return key in wanted
+        if self.op == "gte":
+            return key >= wanted
+        return key <= wanted                            # lte
+
+    def _text_passes(self, text: str, wanted: Any) -> bool:
+        """Whether a text (or a list's item) passes ``eq``, ``in``, ``contains`` or
+        ``contains_any`` against ``wanted`` (:meth:`_value`'s)."""
+        if self.loose:
+            text = loose_text(text)
+        elif self.op in ("contains", "contains_any"):
+            text = text.casefold()
+        if self.op == "eq":
+            return text == wanted
+        if self.op == "in":
+            return text in wanted
+        if self.op == "contains":
+            return wanted in text
+        return any(part in text for part in wanted)    # contains_any
+
+
+    def check(self, column_type: str, date1904: bool) -> None:
+        """Refuse the test unless the column's type takes it, with a value of that type."""
+        allowed = OPS_BY_TYPE[column_type]
+        if self.operand is None and self.op == "eq":
+            # no value (null, or none given): named here, where the column's type is known
+            if column_type == "bool":
+                raise QueryError("bad_filter", f"eq on {self.column} needs a value: "
+                                 f"{self.column} holds TRUE/FALSE, so use is_true or is_false "
+                                 "(no value), or eq with value \"true\" or \"false\"",
+                                 column=self.column, column_type=column_type,
+                                 valid_options=_TRUTH)
+            raise QueryError("bad_filter", f"eq on {self.column} needs a value; for its empty "
+                             "cells use blank", column=self.column, column_type=column_type,
+                             valid_options=allowed)
+        if self.op not in allowed:
+            if column_type == "blank":
+                reason = "holds no values"
+            elif self.op in _TRUTH:
+                reason = ("holds no TRUE/FALSE values: is_true and is_false are for a "
+                          "TRUE/FALSE column" + ("; eq matches its text exactly"
+                                                 if column_type in ("text", "list") else ""))
+            elif self.op in ("gte", "lte"):
+                reason = "is not ordered here: gte and lte compare numbers, dates and times"
+            else:
+                reason = f"has no text to search: {self.op} is for text columns"
+            raise QueryError("wrong_type", f"{self.column} is a {column_type} column and "
+                             f"{reason}; it takes {', '.join(allowed)}", column=self.column,
+                             column_type=column_type, valid_options=allowed)
+        if self.compares and self.op not in _TRUTH \
+                and self._value(column_type, date1904) is _BAD:
+            what = "each value of in" if self.op == "in" else f"the value of {self.op}"
+            form = "a whole number of words (150)" if self.op == "words_gt" \
+                else _FORMS[column_type]
+            raise QueryError("wrong_type", f"{self.column} is a {column_type} column: {what} "
+                             f"is to be {form}", column=self.column,
+                             column_type=column_type, valid_options=allowed)
+
+
+class _Bad(Exception):
+    """A value that is not of the type asked for."""
+
+
+_BAD = object()
+
+
+def _tests(region: "Region | DatasetTable", where: Any) -> list[_Test]:
+    if where is None:
+        return []
+    out: list[_Test] = []
+    if isinstance(where, Mapping):
+        for column, ops in where.items():
+            if not isinstance(column, str) or not isinstance(ops, Mapping) or not ops:
+                raise QueryError("bad_filter", "where maps a column name to its tests, as "
+                                 "{\"Price\": {\"gte\": 5}}")
+            name = region.columns[region.column_index(column)]
+            loose = ops.get("loose", False)
+            if not isinstance(loose, bool):
+                raise QueryError("bad_filter", f"loose on {name} is true or false",
+                                 column=name)
+            for op, operand in ops.items():
+                if op != "loose":
+                    out.append(_test(region, name, op, operand, mapping=True, loose=loose))
+        return out
+    if isinstance(where, (str, bytes)) or not isinstance(where, Iterable):
+        raise QueryError("bad_filter", "where is a mapping of columns to tests, or a list of "
+                         "{column, op, value} filters")
+    for item in where:
+        if not isinstance(item, Mapping) or not isinstance(item.get("column"), str) \
+                or set(item) - {"column", "op", "value", "values", "loose"}:
+            raise QueryError("bad_filter", "each filter is {column, op, value} (values for "
+                             "in and contains_any; loose: true to compare text ignoring case "
+                             "and white space)")
+        op = item.get("op")
+        name = region.columns[region.column_index(item["column"])]
+        loose = item.get("loose", False)
+        if not isinstance(loose, bool):
+            raise QueryError("bad_filter", f"loose on {name} is true or false", column=name)
+        if op == "contains" and "values" in item and "value" not in item:
+            # values for contains: any of them (rule 1), said in the result
+            out.append(_test(region, name, "contains_any", item.get("values"),
+                             mapping=False, loose=loose, read_as="contains"))
+            continue
+        if op in _LISTED:
+            if "value" in item:
+                raise QueryError("bad_filter", f"{op} on {name} takes values, a list",
+                                 column=name)
+            operand = item.get("values")
+        elif op in _TRUTH and "value" in item and "values" not in item:
+            # a value beside is_true/is_false: one that says the same, or "" (a strict
+            # caller's placeholder), changes nothing (rule 1, said in the result); one that
+            # says the other, or something else, is refused
+            said = _truth(item["value"])
+            if said is not None and said != (op == "is_true"):
+                other = "is_false" if op == "is_true" else "is_true"
+                raise QueryError("bad_filter", f"{op} on {name} takes no value, and this one "
+                                 f"says the other: use {other}, with no value",
+                                 column=name, valid_options=[other])
+            if said is None and item["value"] != "":
+                raise QueryError("bad_filter", f"{op} on {name} takes no value: drop value",
+                                 column=name)
+            test = _test(region, name, op, True, mapping=False, loose=loose)
+            test.said = f"{op} on {name} takes no value: its value changes nothing"
+            out.append(test)
+            continue
+        elif op in _UNVALUED:
+            if "value" in item or "values" in item:
+                raise QueryError("bad_filter", f"{op} on {name} takes no value: drop "
+                                 + ("value" if "value" in item else "values"), column=name)
+            operand = True
+        else:
+            if "values" in item:
+                raise QueryError("bad_filter", f"{op} on {name} takes one value, not values",
+                                 column=name, valid_options=OPS if op not in OPS else ())
+            operand = item.get("value")
+        out.append(_test(region, name, op, operand, mapping=False, loose=loose))
+    return out
+
+
+def _test(region: "Region | DatasetTable", name: str, op: Any, operand: Any, *,
+          mapping: bool, loose: bool = False, read_as: str | None = None) -> _Test:
+    if op not in OPS:
+        raise QueryError("bad_filter", f"a filter on {name} has an unknown test; the tests are "
+                         f"{', '.join(OPS)}", column=name, valid_options=OPS)
+    if op == "contains" and isinstance(operand, (list, tuple)):
+        op, read_as = "contains_any", "contains"        # a list for contains: any of them
+    if op in _UNVALUED:
+        if operand is not True:
+            other = {"blank": "not_blank", "not_blank": "blank", "is_true": "is_false",
+                     "is_false": "is_true"}[op]
+            raise QueryError("bad_filter", f"{op} on {name} is written {op}: true; for the "
+                             f"other, use {other}", column=name)
+    elif op in _LISTED:
+        if isinstance(operand, (str, bytes, Mapping)) or not isinstance(operand, Iterable):
+            raise QueryError("bad_filter", f"{op} on {name} takes a list of values",
+                             column=name)
+        operand = list(operand)
+        if not operand or len(operand) > MAX_IN:
+            raise QueryError("bad_filter", f"{op} on {name} takes 1 to {MAX_IN} values",
+                             column=name)
+        if op == "contains_any" and any(v == "" or (loose and isinstance(v, str)
+                                                    and not loose_text(v)) for v in operand):
+            raise QueryError("bad_filter", f"contains_any on {name} needs some text in each "
+                             "value", column=name)
+    elif operand is None and op != "eq":     # eq's: refused once its column's type is known
+        raise QueryError("bad_filter", f"{op} on {name} needs a value", column=name)
+    elif op == "contains" and (operand == "" or (loose and isinstance(operand, str)
+                                                 and not loose_text(operand))):
+        raise QueryError("bad_filter", f"contains on {name} needs some text", column=name)
+    return _Test(name, region.column_index(name), op, operand, loose=loose, read_as=read_as)
+
+
+def _truth(raw: Any) -> bool | None:
+    """A value given beside ``is_true``/``is_false``, read as the truth it states: ``True``
+    for ``true``/``"true"``, ``False`` for ``false``/``"false"`` (case and spaces aside);
+    ``None`` for anything else, which states none."""
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, str) and raw.strip().casefold() in ("true", "false"):
+        return raw.strip().casefold() == "true"
+    return None
+
+
+def _words(raw: Any) -> int:
+    """``words_gt``'s value: a whole number of words, 0 or more (``150`` or ``"150"``);
+    :class:`_Bad` when it is not one."""
+    if isinstance(raw, int) and not isinstance(raw, bool):
+        number = raw
+    elif isinstance(raw, str) and re.fullmatch(r"[0-9]+", raw.strip()):
+        number = int(raw.strip())
+    else:
+        raise _Bad
+    if number < 0:
+        raise _Bad
+    return number
+
+
+def _operand(raw: Any, t: str, date1904: bool) -> Any:
+    """A filter's value as a key of type ``t`` (:func:`_key`'s); :class:`_Bad` when it is
+    not one."""
+    if t in ("number", "percent"):
+        if isinstance(raw, bool):
+            raise _Bad
+        if isinstance(raw, (int, float)):
+            number = raw
+        elif isinstance(raw, str) and _NUMBER.fullmatch(raw.strip()):
+            number = float(raw)
+        else:
+            raise _Bad
+        if not math.isfinite(number):
+            raise _Bad
+        return number
+    if t in _MOMENTS:
+        if isinstance(raw, bool):
+            raise _Bad
+        if isinstance(raw, (int, float)) and math.isfinite(raw) and raw >= 0:
+            return _serial_key(float(raw), t, raw >= 1 and t == "time")
+        if isinstance(raw, str):
+            key = _iso_key(raw.strip(), t, date1904)
+            if key is not None:
+                return key
+        raise _Bad
+    if t == "bool":
+        if isinstance(raw, bool):
+            return raw
+        if isinstance(raw, str) and raw.strip().casefold() in ("true", "false"):
+            return raw.strip().casefold() == "true"
+        raise _Bad
+    if not isinstance(raw, str):        # text and error
+        raise _Bad
+    return raw
+
+
+def _key(value: Value, t: str, date1904: bool) -> Any:
+    """What a value of type ``t`` is compared and sorted by; ``None`` when it has none."""
+    if t in _MOMENTS:
+        if value.serial is not None:
+            elapsed = isinstance(value.v, str) and value.v.startswith("PT")
+            return _serial_key(value.serial, t, elapsed)
+        return _iso_key(value.v, t, date1904) if isinstance(value.v, str) else None
+    return value.v
+
+
+def _serial_key(serial: float, t: str, elapsed: bool) -> int:
+    """A serial as the reader shows it: the day (``date``), the millisecond of the day
+    (``time``; of the whole length when ``elapsed``), the millisecond (``datetime``)."""
+    total = round(serial * _MS_PER_DAY)
+    if t == "date":
+        return total // _MS_PER_DAY
+    if t == "time" and not elapsed:
+        return total % _MS_PER_DAY
+    return total
+
+
+def _clock_ms(hours: str, minutes: str, seconds: str | None, fraction: str | None) -> int | None:
+    h, m, s = int(hours), int(minutes), int(seconds or 0)
+    if h > 23 or m > 59 or s > 59:
+        return None
+    ms = round(float(f"0.{fraction}") * 1000) if fraction else 0
+    return ((h * 60 + m) * 60 + s) * 1000 + ms
+
+
+def _iso_key(text: str, t: str, date1904: bool) -> int | None:
+    """ISO 8601 text as :func:`_serial_key` keys a serial, in the workbook's date system;
+    ``None`` when it is not a value of type ``t`` (a time on a date column, say)."""
+    if t == "time":
+        match = _ISO_TIME.fullmatch(text)
+        if match:
+            return _clock_ms(*match.groups())
+        match = _DURATION.fullmatch(text)
+        if match and text != "PT":
+            h, m, s, fraction = match.groups()
+            ms = round(float(f"0.{fraction}") * 1000) if fraction else 0
+            return ((int(h or 0) * 60 + int(m or 0)) * 60 + int(s or 0)) * 1000 + ms
+        return None
+    match = _ISO_DAY.fullmatch(text)
+    if not match:
+        return None
+    day = day_serial(int(match.group(1)), int(match.group(2)), int(match.group(3)), date1904)
+    if day is None:
+        return None
+    if t == "date":
+        return day
+    clock = _clock_ms(*match.groups()[3:]) if match.group(4) else 0
+    return None if clock is None else day * _MS_PER_DAY + clock
+
+
+# -- sorting -----------------------------------------------------------------------------------
+
+
+class _SortKey:
+    def __init__(self, column: str, offset: int, desc: bool) -> None:
+        self.column = column
+        self.offset = offset
+        self.desc = desc
+
+    def key(self, value: Value, date1904: bool) -> tuple[str, Any]:
+        """The value's type and its key were that its column's type."""
+        t = value.t
+        if t == "blank":
+            return t, None
+        key = _key(value, t, date1904)
+        if t == "text":
+            key = (key.casefold(), key)
+        elif t == "list":
+            key = tuple((item.casefold(), item) for item in key)
+        return t, key
+
+
+def _sort_keys(region: "Region | DatasetTable", sort: Any) -> list[_SortKey]:
+    if not sort:
+        return []
+    if isinstance(sort, (str, tuple)):
+        sort = [sort]
+    out = []
+    for item in sort:
+        if isinstance(item, str):
+            column, order = item, "asc"
+        elif isinstance(item, Mapping) and isinstance(item.get("column"), str) \
+                and not set(item) - {"column", "desc"}:
+            column, order = item["column"], "desc" if item.get("desc") else "asc"
+        elif isinstance(item, (tuple, list)) and len(item) == 2 and isinstance(item[0], str):
+            column, order = item
+        else:
+            raise QueryError("bad_sort", "each sort key is a column name or (name, \"asc\" or "
+                             "\"desc\")", field="sort")
+        if order not in ("asc", "desc"):
+            raise QueryError("bad_sort", "a sort order is asc or desc", field="sort",
+                             valid_options=["asc", "desc"])
+        name = region.columns[region.column_index(column)]
+        out.append(_SortKey(name, region.column_index(name), order == "desc"))
+    return out
+
+
+def _ordered(rows: list[tuple], index: int, column_type: str, desc: bool) -> list[tuple]:
+    """``rows`` stably sorted by sort key ``index``: the cells of the column's type first, in
+    order; then those of other types; then blanks."""
+    own, other, blank = [], [], []
+    for entry in rows:
+        t, key = entry[2][index]
+        if t == "blank":
+            blank.append(entry)
+        elif t == column_type and key is not None:
+            own.append(entry)
+        else:
+            other.append(entry)
+    own.sort(key=lambda entry: entry[2][index][1], reverse=desc)
+    return own + other + blank
+

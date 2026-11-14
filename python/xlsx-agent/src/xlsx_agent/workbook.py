@@ -1,0 +1,2109 @@
+"""The open workbook: its package, its kind, its sheets.
+
+``Workbook.open`` takes bytes, a path, a binary file or an ooxml-edit
+:class:`~ooxml_edit.opc.OpcPackage` (a chart's embedded workbook, say), checks it as
+:mod:`xlsx_agent.package` says, and reads the workbook part and each sheet's protection
+(streamed: a sheet is never parsed whole)::
+
+    wb = Workbook.open("inventory.xlsx")
+    wb.sheets        # [Sheet(name='Stock', id=3, state='visible', protected=False, type='worksheet')]
+    wb.to_bytes()    # the bytes that were opened, while nothing has changed
+
+and its cells, typed, streamed from the sheet (:mod:`xlsx_agent.read`)::
+
+    wb = Workbook.open("inventory.xlsx", locale=Locale(decimal_separator=",",
+                       thousands_separator=".", date_order="dmy", language="nl-BE",
+                       list_separator=";"))      # ooxml_common.locales.Locale
+    wb.cell("Stock!F2")                  # Value(sheet='Stock', row=2, column=6, v=12.5, t='number')
+    for row in wb.read("Stock!A:C"):     # whole columns, clipped to the used range; lazy
+        ...
+    wb.used_range("Stock")               # Area A1:H40, computed from the cells
+    wb.problems                          # [Problem(code='no_cached_value', address='Stock!F7', count=1)]
+
+and its tables, defined names and regions (:mod:`xlsx_agent.read.regions`), which a ``t:``
+address resolves against::
+
+    wb.tables                            # [Region(kind='table', name='Products', ...)]
+    wb.names                             # [DefinedName(name='Prices', scope=None, ...)]
+    wb.resolve("t:Products/SKU-0042/Price", key="SKU").range    # Stock!C7
+    wb.read("t:Products[Price]")         # the column's data cells, as any range is read
+    wb.expand("t:Products/*/Price")      # ['t:Products/SKU-0001/Price', ...]: by key
+    wb.declare_region("Returns", "Returns!A3:F200", header_rows=2, headers=[...])
+    wb.declare_tables([{"name": "checks", "sheets": "Area *", "header_row": 3,
+                        "key": "Ref"}])   # the caller's tables (xlsx_agent.declare)
+
+and what each column holds (:mod:`xlsx_agent.profile`), and the whole workbook at a
+glance (:mod:`xlsx_agent.catalogue`)::
+
+    wb.table("t:Products").column("Price").stats()     # ColumnStats(type='number', ...)
+    wb.profile("t:Products")                           # every column's, in one pass
+    wb.catalogue()                                     # what describe returns
+
+and where some words are (:mod:`xlsx_agent.find`)::
+
+    wb.find_text("Hardware", within="Stock!")          # Found(kind='cell', address='Stock!B7', ...)
+
+and what changed between two versions of it (:mod:`xlsx_agent.compare`)::
+
+    Workbook.compare(old, new, tables=["t:Products"], key="SKU")   # Diff
+
+and whether it holds what a declared schema says (:mod:`xlsx_agent.schema`)::
+
+    wb.validate_data({"tables": [{"table": "t:Products", "key": ["SKU"], "columns": [
+        {"name": "Price", "type": "number", "min": 0}]}]})     # ValidationReport
+
+and, from 0.2, edited (:mod:`xlsx_agent.edit`): one history, atomic steps, a checked save::
+
+    wb.set_cells({"Stock!D10": 12, "Stock!H10": {"date": "2026-10-20"},
+                  "Stock!J10": {"formula": "=D10*2"}})   # typed, guarded, one step (E3)
+    with wb.batch() as edit:             # one step, all or nothing
+        wb.set_cells({...}); wb.set_cells({...})
+    wb.undo(); wb.redo(); wb.version     # undo to the start: the bytes opened
+    wb.validate()                        # the structure check, by code and address
+    wb.save("stock.xlsx")                # reopened and read back first
+
+Transitional and strict packages (``purl.oclc.org`` namespaces) are read alike; a strict one
+is not written.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import zipfile
+from collections import OrderedDict
+from dataclasses import dataclass, field, replace
+from typing import TYPE_CHECKING, Any, BinaryIO, Iterator, Mapping, Sequence
+
+from lxml import etree
+from ooxml_edit.sheets import Area, Cell
+from ooxml_common.zipparts import ZipPart
+from ooxml_edit.opc import OpcPackage
+from ooxml_edit.tools import Dataset
+from ooxml_edit.tools.limits import Limits
+from ooxml_edit.xml import Element
+
+from .address import (Address, NameNotFound, RangeAddress, SheetRef, TableAddress, nearest,
+                      format_sheet, parse_address, quote_sheet)
+
+from .catalogue import DEFAULT_TOKENS, catalogue
+from .compare import Diff, compare
+from .dataset import table_dataset
+from .derive import Derived, derive
+from .find import Found, find_text
+from .formula.sheets import pick_sheet
+from .package import OpenError, open_package, read_source, workbook_part
+from .profile import Column, ColumnStats, profile
+from .read.names import DefinedName, read_names
+from .schema import ValidationReport, validate
+from .read.regions import (Region, RegionError, Regions, Selection, UnclearRegion, _overlaps,
+                           filled)
+from .read.comments import Comment, read_comments
+from .read.stream import (Hyperlink, SheetBytes, SheetLayout, SheetReader, SheetScan, _area,
+                          _Facts, layout, merges_only, read_area, scan, scanning)
+from .read.strings import SharedStrings
+from .read.styles import NumberFormat, Styles
+from .read.tables import TablePart, read_table
+from .read.types import Problem, Value, format_language, reading_locale
+from .redact import Redaction
+from .xml import iterparse_xml
+
+if TYPE_CHECKING:
+    from .trace import TraceResult
+    from .record import Recorded
+    from .edit import Editor, EditReport, SaveReport
+    from .edit.cells import Written
+    from .edit.filters import FilterChange, HiddenChange
+    from .edit.format import Formatted
+    from .read.widths import ColumnWidths
+    from .edit.rearrange import Rearranged
+    from .edit.restructure import Restructured
+    from .edit.merges import MergeChange
+    from .edit.notes import NoteChange
+    from .edit.properties import Properties, PropertiesChange
+    from .edit.pivots import PivotCacheChange
+    from .edit.policy import Allowed, WritePolicy
+    from .edit.sheets import Referent, SheetChange
+    from .edit.tables import Appended, TableWritten
+    from .validations import ValidationRule
+
+#: SpreadsheetML's main namespace, transitional and strict.
+NS_MAIN = ("http://schemas.openxmlformats.org/spreadsheetml/2006/main",
+           "http://purl.oclc.org/ooxml/spreadsheetml/main")
+_SI_TAGS = tuple(f"{{{ns}}}si" for ns in NS_MAIN)
+#: The relationships namespace of ``r:id``, transitional and strict.
+NS_R = ("http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+        "http://purl.oclc.org/ooxml/officeDocument/relationships")
+
+#: ``ST_SheetState`` (ECMA-376 Part 1, 18.18.68).
+SHEET_STATES = ("visible", "hidden", "veryHidden")
+
+#: The last segment of a sheet's relationship type -> :attr:`Sheet.type`.
+SHEET_TYPES = {"worksheet": "worksheet", "chartsheet": "chartsheet", "dialogsheet": "dialogsheet",
+               "xlMacrosheet": "macrosheet", "xlIntlMacrosheet": "macrosheet"}
+
+_PROTECTION = tuple(f"{{{ns}}}sheetProtection" for ns in NS_MAIN)
+_ROWS = tuple(f"{{{ns}}}row" for ns in NS_MAIN)
+
+
+@dataclass(frozen=True)
+class Sheet:
+    """One sheet, as the workbook part lists it.
+
+    ``id`` is its ``sheetId`` (what ``#3!F2`` names; it survives a rename), ``None`` when
+    the workbook gives none that is a number.  ``state`` is ``"visible"``, ``"hidden"`` or
+    ``"veryHidden"`` (as written, when the file says something else).  ``protected``: the
+    sheet's ``sheetProtection`` turns protection on (``sheet="1"``; a chart sheet's
+    ``content="1"``).  ``type`` is ``"worksheet"``, ``"chartsheet"``, ``"dialogsheet"`` or
+    ``"macrosheet"``, from its relationship; ``part`` the package part, ``None`` when the
+    relationship leads nowhere.  Under a redaction (:meth:`Workbook.redact`) whose rules
+    match its name, ``name`` is the name redacted -- what results show and addresses
+    take -- and :attr:`stored_name` the name as the file stores it."""
+
+    name: str
+    id: int | None
+    state: str = "visible"
+    protected: bool = False
+    type: str | None = "worksheet"
+    part: str | None = field(default=None, repr=False)
+    stored: str | None = field(default=None, repr=False, compare=False)
+
+    @property
+    def visible(self) -> bool:
+        return self.state == "visible"
+
+    @property
+    def stored_name(self) -> str:
+        """The name as the file stores it (``name`` unless a redaction changed it): for
+        the program, and for the caller's declarations, which name sheets as stored."""
+        return self.stored if self.stored is not None else self.name
+
+
+class Workbook:
+    """An open workbook.  Made by :meth:`open`."""
+
+    def __init__(self, package: OpcPackage, *, part: str, kind: str, data: bytes | None = None,
+                 locale: Any = None, grouping: bool = True, local_dates: bool = False) -> None:
+        #: The ooxml-edit package: every part as the bytes that were read.
+        self.package = package
+        #: The workbook part (``xl/workbook.xml`` in every file Excel writes).
+        self.part = part
+        #: ``"xlsx"``, ``"xlsm"``, ``"xltx"`` or ``"xltm"``: what the workbook part declares.
+        self.kind = kind
+        self._locale = reading_locale(locale)
+        #: Whether a text number's whole part may be grouped with the locale's thousands
+        #: separator (``1,234.5``), and whether text dates other than ISO 8601 are read in
+        #: the locale's date order: reader settings, set at :meth:`open`
+        #: (:mod:`xlsx_agent.read.types`).
+        self.grouping = bool(grouping)
+        self.local_dates = bool(local_dates)
+        self._data = data
+        self._sheets: list[Sheet] | None = None
+        #: The sheets withheld from the model (:meth:`withhold_sheets`), by name folded
+        #: (as shown and as stored).
+        self._withheld_sheets: frozenset[str] = frozenset()
+        #: The terms redacted from every text read (:meth:`redact`), or ``None``.
+        self._redaction: Redaction | None = None
+        self._strings: SharedStrings | None = None
+        self._styles: Styles | None = None
+        self._scans: dict[str, SheetScan] = {}
+        #: What a pass needs to know of each sheet part before it starts -- where its rows
+        #: lie (:class:`~xlsx_agent.read.stream._Facts`) -- by part: found once per state
+        #: of the package.
+        self._plans: dict[str, Any] = {}
+        #: Each sheet's merges, array blocks and validation rules read from the tree an
+        #: edit parsed (:meth:`_layout`), by part.
+        self._layouts: dict[str, SheetLayout] = {}
+        self._comments: dict[str, list[Comment]] = {}
+        self._table_parts_read: list[TablePart] | None = None
+        self._catalogue: tuple | None = None   # what the catalogue is made from, gathered
+        #: ``xlsx_query``'s last few matches, by query: its next page needs them again.
+        self._queries: OrderedDict = OrderedDict()
+        #: ``find_text``'s last few counts (total and kinds), by search: its next page
+        #: stops once it is full.
+        self._finds: OrderedDict = OrderedDict()
+        #: The trace index (:mod:`xlsx_agent.trace`) of this state, with its stamp.
+        self._traces: Any = None
+        #: A sheet's problems without the cells declared tables hide, by sheet and areas.
+        self._withheld_problems: dict = {}
+        #: The history and the cell writer (:attr:`editor`), made when first needed.
+        self._editor: "Editor | None" = None
+        #: The host's write policies (:mod:`xlsx_agent.edit.policy`): the one given at
+        #: :meth:`open`, then each :meth:`narrow_policy` added; empty: none.
+        self._policies: "tuple[WritePolicy, ...]" = ()
+        #: The policies resolved against the cells, with the count of :meth:`_forget`
+        #: calls they were resolved at.
+        self._allowed_at: "tuple[int, int, Allowed] | None" = None
+        self._forgotten = 0
+        self.regions = Regions(self)
+
+    # -- lifecycle -------------------------------------------------------------------------
+
+    @classmethod
+    def open(cls, source: "str | os.PathLike[str] | bytes | BinaryIO | OpcPackage", *,
+             limits: Limits | None = None, locale: Any = None, grouping: bool = True,
+             local_dates: bool = False, policy: Any = None) -> "Workbook":
+        """Open a ``.xlsx``, ``.xlsm``, ``.xltx`` or ``.xltm`` from a path, bytes, a binary
+        file or an :class:`~ooxml_edit.opc.OpcPackage`.
+
+        Bytes are checked first against ``limits`` (ooxml-edit's
+        :class:`~ooxml_edit.tools.limits.Limits`; its defaults when ``None``): a package
+        over a size, part-count or expansion limit is refused before it is unpacked.  A
+        ``.xls``, a ``.xlsb``, an encrypted workbook or any other file is refused too:
+        :class:`~xlsx_agent.package.OpenError`, whose ``code`` says which.  A path whose
+        extension names another kind than the package's opens with a
+        :class:`~xlsx_agent.package.KindMismatchWarning`.
+
+        The workbook part and the sheet list are read here, so a part the safe parser
+        refuses (an entity bomb, XML that is not well-formed) refuses the workbook now,
+        with the part's name (``code`` ``"damaged"``), rather than at a later read.
+
+        ``locale`` is how text is read as numbers and dates, and the language the
+        language-dependent built-in number formats are read in: an
+        :class:`ooxml_common.locales.Locale`, or any object with its five string fields;
+        en-US (:data:`~ooxml_common.locales.EN_US`) when ``None``.  ``grouping`` (on)
+        recognises a text number whose whole part is grouped with the locale's thousands
+        separator; ``local_dates`` (off: ISO 8601 dates only) recognises text dates in the
+        locale's date order too -- Excel's own reading, measured
+        (:mod:`xlsx_agent.read.types`).  All three are the caller's settings, never a
+        model's.
+
+        ``policy`` is the host's write policy (:mod:`xlsx_agent.edit.policy`: a
+        :class:`~xlsx_agent.edit.policy.WritePolicy`, or its plain data), fixed for the
+        workbook's life: where it may be written.  ``None``: everywhere but on a protected
+        sheet.  Its form is checked here (:class:`~xlsx_agent.edit.policy.PolicyError`)."""
+        from .edit.policy import as_policy
+
+        given = as_policy(policy) if policy is not None else None
+        if isinstance(source, OpcPackage):
+            part, kind = workbook_part(source)
+            workbook = cls(source, part=part, kind=kind, locale=locale, grouping=grouping,
+                           local_dates=local_dates)
+        else:
+            limits = limits or Limits()
+            data = read_source(source, limits)
+            package = open_package(data, limits)
+            part, kind = workbook_part(package, source)
+            workbook = cls(package, part=part, kind=kind, data=data, locale=locale,
+                           grouping=grouping, local_dates=local_dates)
+        workbook._sheets = workbook._read_sheets()
+        if given is not None:
+            workbook._policies = (given,)
+        return workbook
+
+    # -- the host's write policy (X4) ------------------------------------------------------
+
+    @property
+    def policies(self) -> "tuple[WritePolicy, ...]":
+        """The host's write policies: the one given at :meth:`open`, then each one
+        :meth:`narrow_policy` added; a write must pass every one.  Empty: no policy, and
+        everything but a protected sheet is writable (:mod:`xlsx_agent.edit.policy`)."""
+        return self._policies
+
+    def narrow_policy(self, policy: Any) -> None:
+        """Add a write policy (a :class:`~xlsx_agent.edit.policy.WritePolicy` or its plain
+        data): from now on a write must pass it too.  It narrows what may be written,
+        never widens it; nothing takes a policy away."""
+        from .edit.policy import as_policy
+
+        self._policies = self._policies + (as_policy(policy),)
+        self._allowed_at = None
+        self._catalogue = None
+
+    @property
+    def writable(self) -> Any:
+        """What the policies let be written, as ``describe`` shows it (``writable``):
+        ``None`` without a policy, one policy's :meth:`~xlsx_agent.edit.policy.WritePolicy.
+        as_dict`, or a list of them (each must allow a write)."""
+        if not self._policies:
+            return None
+        shown = [policy.as_dict() for policy in self._policies]
+        return shown[0] if len(shown) == 1 else shown
+
+    def check_policy(self) -> None:
+        """Resolve the policies against the workbook now: their sheets, tables and columns
+        (:class:`~xlsx_agent.edit.policy.PolicyError` naming the entry, else nothing)."""
+        self._allowed_at = None
+        self._allowed()
+
+    def _allowed(self) -> "Allowed | None":
+        """The policies resolved against the cells as they are (``None`` without one),
+        kept until the package changes."""
+        if not self._policies:
+            return None
+        kept = self._allowed_at
+        if kept is not None and kept[0] == self._forgotten and kept[1] == len(self._policies):
+            return kept[2]
+        from .edit.policy import Allowed
+
+        allowed = Allowed(self, self._policies)
+        self._allowed_at = (self._forgotten, len(self._policies), allowed)
+        return allowed
+
+    @property
+    def locale(self) -> Any:
+        """How text is read as numbers and dates, and the language of the
+        language-dependent built-in number formats: the caller's
+        (:class:`ooxml_common.locales.Locale`; en-US unless given).  Setting another one
+        (as the tool layer does with its session's) forgets what was read in the old one:
+        the number formats, the sheets' scans, the detected regions, the catalogue."""
+        return self._locale
+
+    @locale.setter
+    def locale(self, locale: Any) -> None:
+        locale = reading_locale(locale)
+        if locale == self._locale:
+            return
+        self._locale = locale
+        self._styles = None
+        self._scans.clear()
+        self._catalogue = None
+        self._queries.clear()
+        self._finds.clear()
+        self._traces = None
+        self.regions.forget_cells()
+
+    def to_bytes(self, kind: str | None = None) -> bytes:
+        """The workbook as a file.  While nothing has changed -- or every change has been
+        undone -- it is the bytes that were opened, byte for byte; a workbook opened from a
+        package is that package's :meth:`~ooxml_edit.opc.OpcPackage.to_bytes`.  ``kind``
+        (``"xlsx"``, ``"xlsm"``, ``"xltx"``, ``"xltm"``) writes it as that kind instead
+        (:func:`xlsx_agent.edit.serialise`: a kind without macros is refused while the
+        workbook holds a VBA project).  Unchecked: :meth:`save` reads the file back first."""
+        if kind is not None and kind != self.kind:
+            from .edit import serialise
+
+            return serialise(self, kind)
+        if self._data is not None and not self.package.changed_parts():
+            return self._data
+        return self.package.to_bytes()
+
+    def save(self, target: "str | os.PathLike[str] | BinaryIO", *,
+             kind: str | None = None) -> "SaveReport":
+        """Write the workbook to ``target`` (a path or a binary file), checked first: the
+        bytes are reopened and every cell written since the workbook was opened is read
+        back with its type and value (:func:`xlsx_agent.edit.verify`; ``EditError``
+        ``readback`` and nothing written when one is not).  ``kind`` is the path's
+        extension's when it names a workbook kind, else the workbook's own; a ``.xlsx``
+        (or ``.xltx``) is refused while the workbook holds a VBA project
+        (``vba_project``).  Returns the :class:`~xlsx_agent.edit.SaveReport`: the kind,
+        the size, the cells read back and the structure issues of what was saved."""
+        from ooxml_common.kinds import kind_for
+
+        from .edit import serialise, verify
+
+        if kind is None:
+            kind = kind_for(target, "excel") or self.kind
+        data = serialise(self, kind)
+        report = verify(self, data, kind)
+        if isinstance(target, (str, os.PathLike)):
+            with open(os.fspath(target), "wb") as handle:
+                handle.write(data)
+        else:
+            target.write(data)
+        return report
+
+    # -- editing (0.2) ---------------------------------------------------------------------
+
+    @property
+    def editor(self) -> "Editor":
+        """The workbook's :class:`~xlsx_agent.edit.Editor`: its history and cell writer,
+        made the first time it is needed (:mod:`xlsx_agent.edit`)."""
+        if self._editor is None:
+            from .edit import Editor
+
+            self._editor = Editor(self)
+        return self._editor
+
+    @property
+    def history(self) -> Any:
+        """ooxml-edit's :class:`~ooxml_edit.history.History` of the workbook's edits."""
+        return self.editor.history
+
+    @property
+    def version(self) -> int:
+        """The workbook's state number: 0 as opened, a new number for every step, and the
+        number of the state undo or redo brings back (equal versions, equal content).  A
+        failed step keeps it.  What a caller holds as the revision it last read."""
+        return self.editor.history.version
+
+    #: The same as :attr:`version`.
+    revision = version
+
+    def batch(self):
+        """``with wb.batch() as edit:`` -- one step, all or nothing; ``edit.report`` the
+        :class:`~xlsx_agent.edit.EditReport` once it closes (:mod:`xlsx_agent.edit`)."""
+        return self.editor.batch()
+
+    def savepoint(self):
+        """Inside a batch, roll back what runs inside alone if it raises
+        (:meth:`Editor.savepoint <xlsx_agent.edit.Editor.savepoint>`)."""
+        return self.editor.savepoint()
+
+    def undo(self) -> bool:
+        """Back one step; whether there was one.  Undoing every step gives the bytes that
+        were opened."""
+        return self.editor.undo()
+
+    def redo(self) -> bool:
+        """Forward one undone step; whether there was one."""
+        return self.editor.redo()
+
+    @property
+    def last_edit(self) -> "EditReport | None":
+        """The last step's :class:`~xlsx_agent.edit.EditReport`; ``None`` before any."""
+        return self._editor.last if self._editor is not None else None
+
+    def validate(self, *, sheets: "Sequence[str] | None" = None) -> list[Problem]:
+        """The structure check (:mod:`xlsx_agent.edit.structure`): what is out of order
+        among the parts -- cell order, shared strings and their counts, styles, the
+        dimension, tables, names, relationships and content types, the calculation chain --
+        each by code with its first address and count, never content.  ``sheets`` (names)
+        limits the cell checks to those sheets."""
+        from .edit.structure import check_structure
+
+        parts = None
+        if sheets is not None:
+            parts = [self._cell_sheet(name).part for name in sheets]
+        return check_structure(self, sheets=parts)
+
+    @property
+    def calculation_status(self) -> str:
+        """Whether the workbook's cached formula values are as last saved:
+        ``"invalidated"`` when the workbook asks for a full recalculation on load
+        (``fullCalcOnLoad``, which every edit sets) or was saved with manual calculation --
+        its cached values may be stale -- and ``"cached_unverified"`` otherwise: as last
+        saved, with no known invalidation, never checked to be current.  Read from the
+        package, so a rollback or an undo restores it with the rest."""
+        return "invalidated" if self.calculation else "cached_unverified"
+
+    @property
+    def _external_names(self) -> frozenset[str]:
+        """The defined names (case folded) that refer to another workbook."""
+        return frozenset(name.name.casefold() for name in self.regions._every_name
+                         if name.reason == "external")
+
+    @property
+    def external_links(self) -> int:
+        """How many external-link parts the workbook relates to (``externalLink``): other
+        workbooks its formulas or names may refer to, never followed."""
+        return sum(1 for rel in self.package.relationships(self.part).values()
+                   if rel.type.rpartition("/")[2] == "externalLink")
+
+    @property
+    def strict(self) -> bool:
+        """The workbook part is in strict OOXML's namespace (``purl.oclc.org``)."""
+        return self._root.tag.startswith(f"{{{NS_MAIN[1]}}}")
+
+    def set_cells(self, cells: "Mapping[str, Any] | Sequence[tuple[str, Any]]", *,
+                  replace_formulas: bool = False, new_rows: bool = False,
+                  allocate: "Mapping[str, int] | Sequence[tuple[str, int]] | None" = None,
+                  revision: int | None = None) -> "Written":
+        """Write cells by address, typed and guarded (:mod:`xlsx_agent.edit.cells`):
+        ``{"Stock!D10": 12, "Stock!H10": {"date": "2026-10-20"}, "Stock!J10":
+        {"formula": "=D10*2"}, "Stock!B4": None}`` -- text always literal, numbers,
+        booleans, dates in the workbook's date system into a cell that shows one (or with
+        ``"format"``), blanks that keep the cell's format, formulas only given as one.
+        Every value and guard is checked before anything changes, and the writes are one
+        step (or part of the open batch): :class:`~xlsx_agent.edit.EditError` with the
+        cells refused, and nothing written, for any refusal.  A cell holding a formula is
+        written over only with ``replace_formulas``.  Returns the
+        :class:`~xlsx_agent.edit.cells.Written`: the cells, their old types, the shared
+        formula groups handed on, the calculation status (``invalidated`` after any
+        write).
+
+        Guarded (X4): a cell by key (``"t:stock/P-7/Quantity"``: the row holding the key,
+        wherever it is; :mod:`xlsx_agent.edit.keys`); a new row only in a declared
+        table's capacity, in the free row ``allocate`` names for its key (``{"t:stock/Lamp":
+        15}``; ``new_rows=True``, the next free row, as a convenience the write policy must
+        allow), and never from a key column of formulas; the host's write policy
+        (:attr:`policies`), a
+        protected sheet, an expectation of what a cell holds now (``{"value": 12,
+        "expect": {"type": "number", "value": 10}}``) and ``revision`` (the
+        :attr:`version` the call was made for) each refuse before anything changes."""
+        from .edit.cells import set_cells
+
+        return set_cells(self, cells, replace_formulas=replace_formulas, new_rows=new_rows,
+                         allocate=allocate, revision=revision)
+
+    # -- formatting and layout (E7, round 44) ----------------------------------------------
+
+    def format(self, target: "str | Sequence[str]", *, font: "Mapping[str, Any] | None" = None,
+               fill: Any = False, border: Any = None,
+               alignment: "Mapping[str, Any] | None" = None,
+               number_format: "str | int | None" = None,
+               protection: "Mapping[str, bool] | None" = None, like: str | None = None,
+               style: str | None = None) -> "Formatted":
+        """Format cells (:mod:`xlsx_agent.edit.format`): ``target`` a range with its sheet
+        (``"Stock!A1:H1"``), whole columns or rows (``"Stock!D:D"``, ``"Stock!1:1"``) or a
+        list of them; ``font`` (``bold``, ``italic``, ``underline``, ``strike``, ``color``
+        ``"#RRGGBB"``, ``size``, ``name``), ``fill`` (a colour; ``None`` no fill),
+        ``border`` (``all``, ``outline``, ``left``, ``right``, ``top``, ``bottom``: a style
+        such as ``"thin"``, or ``{"style", "color"}``), ``alignment`` (``horizontal``,
+        ``vertical``, ``wrap``, ``indent``, ``rotation``, ``shrink``), ``number_format`` (a
+        code, as ``"0.0"``, or a built-in id), ``protection`` (``locked``, ``hidden``),
+        ``like`` (a cell whose whole format the cells take) or ``style`` (a named cell
+        style of the workbook).  Only what is asked changes; equal formats are reused.  One
+        step; every problem refused before anything changes."""
+        from .edit.format import format_cells
+
+        return format_cells(self, target, font=font, fill=fill, border=border,
+                            alignment=alignment, number_format=number_format,
+                            protection=protection, like=like, style=style)
+
+    def set_column_widths(self, target: "str | Sequence[str]", width: Any) -> "Formatted":
+        """Column widths (:mod:`xlsx_agent.edit.layout`): characters as Excel's Column Width
+        takes them, ``"fit"`` (Excel's AutoFit, measured) or ``None`` (the sheet's
+        default); ``target`` whole columns (``"Stock!A:C"``) or a range (its columns; a fit
+        reads its cells only)."""
+        from .edit.layout import set_column_widths
+
+        return set_column_widths(self, target, width)
+
+    def column_widths(self, target: str, *, limit: int = 256) -> "ColumnWidths":
+        """Each column's width, as Excel's Column Width shows it (characters, the unit
+        :meth:`set_column_widths` takes): ``"Stock!A:H"``, ``"Stock!C"``, a range's columns,
+        or a sheet's name alone (every column up to the last used or sized).  Each says
+        whether the width is the column's own (``stored``) or the sheet's default, and
+        whether the column is hidden (:mod:`xlsx_agent.read.widths`; measured in Excel).
+        At most ``limit`` columns (up to 16,384); ``more`` and ``next`` say what was not
+        listed."""
+        from .read.widths import column_widths
+
+        return column_widths(self, target, limit=limit)
+
+    def set_row_heights(self, target: "str | Sequence[str]", height: Any) -> "Formatted":
+        """Row heights in points (``"Stock!1:1"``, or a range: its rows); ``None`` lets the
+        rows fit their text again."""
+        from .edit.layout import set_row_heights
+
+        return set_row_heights(self, target, height)
+
+    def freeze_panes(self, sheet: str, *, rows: int | None = None,
+                     columns: int | None = None, at: str | None = None) -> "Formatted":
+        """Freeze ``sheet``'s top ``rows`` and left ``columns`` (or what is above and left
+        of the cell ``at``, as ``"B2"``); ``rows=0, columns=0`` unfreezes."""
+        from .edit.layout import freeze_panes
+
+        return freeze_panes(self, sheet, rows=rows, columns=columns, at=at)
+
+    def set_gridlines(self, sheet: str, shown: bool) -> "Formatted":
+        """Show or hide ``sheet``'s gridlines."""
+        from .edit.layout import set_gridlines
+
+        return set_gridlines(self, sheet, shown)
+
+    def protect_sheet(self, sheet: str, *, password: str | None = None) -> "Formatted":
+        """Protect ``sheet`` as Excel's Protect Sheet does (its locked cells can no longer
+        be edited in Excel, nor written here), with ``password`` hashed as Excel hashes it
+        (SHA-512, salted, 100,000 rounds)."""
+        from .edit.layout import protect_sheet
+
+        return protect_sheet(self, sheet, password=password)
+
+    def unprotect_sheet(self, sheet: str, *, password: str | None = None,
+                        force: bool = False) -> "Formatted":
+        """Take ``sheet``'s protection away; a password-protected sheet needs its password
+        (``force``: the host's own code, without checking it)."""
+        from .edit.layout import unprotect_sheet
+
+        return unprotect_sheet(self, sheet, password=password, force=force)
+    # -- rows and columns (round 44: xlsx_agent.edit.grid) ---------------------------------
+
+    def insert_rows(self, sheet: "Sheet | str | SheetRef", at: "int | str", count: int | None = None,
+                    *, revision: int | None = None) -> "Restructured":
+        """Insert ``count`` empty rows before row ``at``, as Excel inserts them: every
+        reference to the cells after them moves, ranges that span them grow, and the new
+        rows take the format of the row above (:mod:`xlsx_agent.edit.grid`).  One step;
+        :class:`~xlsx_agent.edit.EditError` before anything changes when Excel would refuse
+        (an array formula cut through, cells pushed off the sheet) or a dependent is not
+        measured.  Returns the :class:`~xlsx_agent.edit.restructure.Restructured`."""
+        from .edit.restructure import restructure
+
+        return restructure(self, sheet, "insert_rows", at, count, revision=revision)
+
+    def insert_columns(self, sheet: "Sheet | str | SheetRef", at: "int | str",
+                       count: int | None = None, *, revision: int | None = None
+                       ) -> "Restructured":
+        """Insert ``count`` empty columns before column ``at`` (``"C"`` or 3), as Excel
+        does: see :meth:`insert_rows`; inside a table the table gets new columns."""
+        from .edit.restructure import restructure
+
+        return restructure(self, sheet, "insert_columns", at, count, revision=revision)
+
+    def delete_rows(self, sheet: "Sheet | str | SheetRef", first: "int | str",
+                    count: int | None = None, *, revision: int | None = None
+                    ) -> "Restructured":
+        """Delete rows ``first`` .. ``first + count - 1`` (or ``"5:7"``), as Excel does:
+        references into them become ``#REF!``, ranges shrink, what lies wholly in them goes
+        (merges, rules, hyperlinks, comments).  To give a sheet new rows each run, clear and
+        write it rather than delete rows: a deleted row's references are gone for good.
+        See :meth:`insert_rows` for the step and the refusals (a table's header row too)."""
+        from .edit.restructure import restructure
+
+        return restructure(self, sheet, "delete_rows", first, count, revision=revision)
+
+    def delete_columns(self, sheet: "Sheet | str | SheetRef", first: "int | str",
+                       count: int | None = None, *, revision: int | None = None
+                       ) -> "Restructured":
+        """Delete columns ``first`` (``"C"``, 3 or ``"C:D"``) onwards, as Excel does: see
+        :meth:`delete_rows`; a table loses those columns, structured references to them
+        become ``#REF!``."""
+        from .edit.restructure import restructure
+
+        return restructure(self, sheet, "delete_columns", first, count, revision=revision)
+
+    def move_rows(self, sheet: "Sheet | str | SheetRef", source: "int | str",
+                  before: "int | str", *, revision: int | None = None) -> "Restructured":
+        """Move rows ``source`` (``5`` or ``"5:7"``) to before row ``before`` (numbered as
+        before the move): Excel's Cut and "Insert Cut Cells".  The cells and all that is
+        attached to them go with them; references to them follow."""
+        from .edit.restructure import restructure
+
+        return restructure(self, sheet, "move_rows", source, None, before, revision=revision)
+
+    def move_columns(self, sheet: "Sheet | str | SheetRef", source: "int | str",
+                     before: "int | str", *, revision: int | None = None) -> "Restructured":
+        """Move columns ``source`` (``"E"`` or ``"E:F"``) to before column ``before``:
+        see :meth:`move_rows`.  Excel refuses to move whole columns of a table; so does
+        this (:meth:`rearrange_columns` reorders a table's columns in its rows, as Excel's
+        drag of a table column does)."""
+        from .edit.restructure import restructure
+
+        return restructure(self, sheet, "move_columns", source, None, before,
+                           revision=revision)
+
+    def rearrange_columns(self, sheet: "Sheet | str | SheetRef", order: Any = None, *,
+                          drop: "Sequence[str | int]" = (), revision: int | None = None
+                          ) -> "Rearranged":
+        """Put a sheet's columns in an order, and drop some, in one step: a composition of
+        :meth:`delete_columns` and the fewest :meth:`move_columns`, every reference
+        remapped through it; a table's columns reordered within the table's rows, as
+        Excel's drag of a table column (:mod:`xlsx_agent.edit.rearrange`).  ``["K", "I"]``
+        swaps K and I (J stays); ``{"C": "A", "A": "C"}`` likewise."""
+        from .edit.rearrange import rearrange_columns
+
+        return rearrange_columns(self, sheet, order, drop=drop, revision=revision)
+
+    # -- sheets and merged cells (E5, R52, R56) ------------------------------------------
+
+    def add_sheet(self, name: str, index: int | None = None) -> "SheetChange":
+        """Add an empty worksheet ``name`` at ``index`` (0 the first tab; ``None`` the end),
+        as Excel makes one; one step (:mod:`xlsx_agent.edit.sheets`)."""
+        from .edit.sheets import add_sheet
+
+        return add_sheet(self, name, index)
+
+    def rename_sheet(self, sheet: Any, name: str) -> "SheetChange":
+        """Rename a sheet, every reference to it rewritten as Excel rewrites it: formulas,
+        defined names, rules, validations, chart series, pivot caches
+        (:mod:`xlsx_agent.edit.sheets`)."""
+        from .edit.sheets import rename_sheet
+
+        return rename_sheet(self, sheet, name)
+
+    def delete_sheet(self, sheet: Any, *, force: bool = False) -> "SheetChange":
+        """Delete a sheet: refused while anything refers to it, each referent listed by
+        address, unless ``force`` (each then reads ``#REF!``, as Excel writes it).  To
+        regenerate a sheet, :meth:`clear_sheet` it and write it again: references keep."""
+        from .edit.sheets import delete_sheet
+
+        return delete_sheet(self, sheet, force=force)
+
+    def clear_sheet(self, sheet: Any, *, force: bool = False) -> "SheetChange":
+        """Excel's Clear All on every cell of a sheet: cells, merges, rules, validations,
+        comments, hyperlinks, tables and pivot tables go; widths, heights, views, print
+        settings, drawings and every reference to the sheet stay
+        (:mod:`xlsx_agent.edit.sheets`)."""
+        from .edit.sheets import clear_sheet
+
+        return clear_sheet(self, sheet, force=force)
+
+    def set_sheet_state(self, sheet: Any, state: str) -> "SheetChange":
+        """Show or hide a sheet: ``"visible"``, ``"hidden"`` or ``"veryHidden"``; the
+        active tab moves to a visible sheet as Excel moves it; the last visible sheet is
+        never hidden (:mod:`xlsx_agent.edit.sheets`)."""
+        from .edit.sheets import set_sheet_state
+
+        return set_sheet_state(self, sheet, state)
+
+    def sheet_referents(self, sheet: Any) -> "list[Referent]":
+        """What refers to a sheet from outside it, by address: formulas, defined names,
+        rules, validations, chart series, pivot caches, hyperlinks, and formulas naming a
+        table on it (:mod:`xlsx_agent.edit.sheets`)."""
+        from .edit.sheets import referents
+
+        return referents(self, sheet)
+
+    def merge(self, address: str, *, drop: bool = False) -> "MergeChange":
+        """Merge a range (``Stock!A1:C2``) as Excel does: every cell given the first
+        cell's format; refused while other cells hold content unless ``drop``
+        (:mod:`xlsx_agent.edit.merges`)."""
+        from .edit.merges import merge
+
+        return merge(self, address, drop=drop)
+
+    def unmerge(self, address: str, *, fill: str | None = None) -> "MergeChange":
+        """Unmerge the merged areas a range or cell overlaps; ``fill="anchor"`` gives every
+        cell its area's first cell's format (:mod:`xlsx_agent.edit.merges`)."""
+        from .edit.merges import unmerge
+
+        return unmerge(self, address, fill=fill)
+
+    def set_comment(self, cell: str, text: str, *, author: str | None = None) -> "NoteChange":
+        """Give a cell (``Stock!B3``) a note, as Excel writes one (its shape and anchor
+        measured), or replace its note's text; ``author`` replaces the author, ``None``
+        keeps it (:mod:`xlsx_agent.edit.notes`).  A cell with a threaded comment is
+        refused."""
+        from .edit.notes import set_comments
+
+        return set_comments(self, [(cell, text)], author=author)
+
+    def set_comments(self, notes: "Mapping[str, str] | Sequence[tuple[str, str]]", *,
+                     author: str | None = None) -> "NoteChange":
+        """Many cells' notes in one step (``{"Stock!B3": "Check count", ...}``), as
+        :meth:`set_comment` writes each."""
+        from .edit.notes import set_comments
+
+        return set_comments(self, notes, author=author)
+
+    def remove_comment(self, target: "str | Sequence[str]") -> "NoteChange":
+        """Take away a cell's note, or every note in a range (``Stock!A1:D20``,
+        ``Stock!B:B``, ``Stock!``); none there: ``changed`` false
+        (:mod:`xlsx_agent.edit.notes`)."""
+        from .edit.notes import remove_comments
+
+        return remove_comments(self, target)
+
+    def properties(self) -> "Properties":
+        """The workbook's core and custom document properties
+        (:mod:`xlsx_agent.edit.properties`)."""
+        from .edit.properties import properties
+
+        return properties(self)
+
+    def set_properties(self, *, custom: "Mapping[str, Any] | None" = None,
+                       **core: Any) -> "PropertiesChange":
+        """Set core properties by name (``title="Stock list"``; ``None`` removes one) and
+        custom ones (``custom={"Run": 42}``) in one step; the modified date only when given
+        (:mod:`xlsx_agent.edit.properties`)."""
+        from .edit.properties import set_properties
+
+        return set_properties(self, core, custom)
+    # -- filters, hidden rows and columns, pivot refresh (round 44, R55, R61) -------------
+
+    def set_autofilter(self, target: str, ref: str | None = None,
+                       criteria: "Mapping[Any, Any] | None" = None, *,
+                       hide: bool = True) -> "FilterChange":
+        """Set the AutoFilter of a sheet (``"Stock"`` with ``ref`` ``"A1:F8"``, or
+        ``"Stock!A1:F8"``; one per sheet, as Excel) or a table (``"t:Orders"``), with
+        value lists by column header or letters (``{"Item": ["Lamp", "Desk"], "Shelf":
+        [None]}``: ``None`` keeps blank cells).  The rows it excludes are hidden here --
+        Excel does not apply a saved filter when it opens a file (measured) -- unless
+        ``hide`` is false, which writes the criteria only.  Literal values, and formulas'
+        cached values only while they hold (:mod:`xlsx_agent.edit.filters`).  One step.
+
+        Each call sets the whole filter: ``criteria`` replaces every column's criteria of
+        that range or table, so a column left out of it is no longer filtered.  Pass all
+        the columns to filter in one call (``{"Item": [...], "Shelf": [...]}``); to change
+        one, pass it with the others again."""
+        from .edit.filters import set_autofilter
+
+        return set_autofilter(self, target, ref, criteria, hide=hide)
+
+    def clear_autofilter(self, target: str, *, keep: bool = False) -> "FilterChange":
+        """Turn a sheet's filter off (every row of its range shown), or with ``keep`` clear
+        its criteria and keep its buttons; a table's criteria cleared."""
+        from .edit.filters import clear_autofilter
+
+        return clear_autofilter(self, target, keep=keep)
+
+    def hide_rows(self, sheet: Any, rows: Any) -> "HiddenChange":
+        """Hide rows (``5``, ``"5:7"`` or a list of them) of a sheet."""
+        from .edit.filters import set_rows_hidden
+
+        return set_rows_hidden(self, sheet, rows, True)
+
+    def show_rows(self, sheet: Any, rows: Any) -> "HiddenChange":
+        """Show hidden rows (``5``, ``"5:7"`` or a list of them) of a sheet."""
+        from .edit.filters import set_rows_hidden
+
+        return set_rows_hidden(self, sheet, rows, False)
+
+    def hide_columns(self, sheet: Any, columns: Any) -> "HiddenChange":
+        """Hide columns (``"C"``, ``"C:D"``, ``3`` or a list of them) of a sheet."""
+        from .edit.filters import set_columns_hidden
+
+        return set_columns_hidden(self, sheet, columns, True)
+
+    def show_columns(self, sheet: Any, columns: Any) -> "HiddenChange":
+        """Show hidden columns (``"C"``, ``"C:D"``, ``3`` or a list of them) of a sheet."""
+        from .edit.filters import set_columns_hidden
+
+        return set_columns_hidden(self, sheet, columns, False)
+
+    def refresh_pivots_on_load(self, on: bool = True, *,
+                               pivots: "Sequence[Any] | None" = None) -> "PivotCacheChange":
+        """Ask the application to refresh pivot caches when it opens the workbook
+        (``refreshOnLoad``): every cache, or those of ``pivots`` (pivot table names or
+        cache ids); ``False`` takes the flag away.  Opt-in, a targeted edit of each cache
+        definition's bytes (:mod:`xlsx_agent.edit.pivots`).  Excel for Mac kept the flag
+        but did not refresh on open (measured)."""
+        from .edit.pivots import refresh_pivots_on_load
+
+        return refresh_pivots_on_load(self, on, pivots=pivots)
+
+    def write_table(self, sheet: "str | Sheet | None", origin: str,
+                    headers: "Sequence[str] | None", rows: "Sequence[Any]", *,
+                    as_table: "bool | str" = False, name: str | None = None,
+                    style: str | None = None, overwrite: bool = False) -> "TableWritten":
+        """Write a block -- ``headers`` in the row at ``origin`` (``"B2"``, or
+        ``"Stock!B2"`` with ``sheet`` ``None``), ``rows`` below -- with set_cells' values
+        (:mod:`xlsx_agent.edit.tables`); ``as_table`` (``True`` or the table's name) makes
+        it a real Excel table with its AutoFilter and the workbook's default style banded
+        by rows (``style``: another).  Refused before anything changes, every problem
+        listed: a cell of the block holding a value or formula (unless ``overwrite``), a
+        merged area or table it touches, a table name Excel refuses (measured).  One step;
+        returns :class:`~xlsx_agent.edit.tables.TableWritten`, the range written."""
+        from .edit.tables import write_table
+
+        return write_table(self, sheet, origin, headers, list(rows), as_table=as_table,
+                           name=name, style=style, overwrite=overwrite)
+
+    def append_rows(self, target: str, rows: "Sequence[Any]") -> "Appended":
+        """Append ``rows`` (lists, or mappings by a table's column names) to a table
+        (``"t:Orders"``: it grows, calculated columns filled, a totals row moved below),
+        below the last row holding a value in a sheet's columns (``"Log"``) or a region's
+        (``"Log!B4:D200"``) -- a cell with only a format does not count
+        (:mod:`xlsx_agent.edit.tables`).  One step; returns
+        :class:`~xlsx_agent.edit.tables.Appended`, the range written."""
+        from .edit.tables import append_rows
+
+        return append_rows(self, target, list(rows))
+
+    @classmethod
+    def new(cls, sheets: "Sequence[str] | str | None" = None, *, author: str | None = None,
+            title: str | None = None, locale: Any = None, grouping: bool = True,
+            local_dates: bool = False, policy: Any = None) -> "Workbook":
+        """A new workbook as Excel makes one (R51; its parts measured,
+        :mod:`xlsx_agent.edit.blank`): one sheet, ``Sheet1``, or ``sheets`` (names, in
+        order), each empty; ``author`` and ``title`` its document properties.  Opened as
+        :meth:`open` opens bytes (``locale``, ``grouping``, ``local_dates``, ``policy``),
+        unchanged: its history starts here, and :meth:`save` writes it."""
+        from .edit import EditError
+        from .edit.blank import DEFAULT_SHEET, build, sheet_name_problems
+
+        names = [sheets] if isinstance(sheets, str) else list(sheets or [DEFAULT_SHEET])
+        problems = sheet_name_problems(names)
+        if problems:
+            raise EditError("bad_value", "; ".join(problems[:5]))
+        return cls.open(build(names, author=author, title=title), locale=locale,
+                        grouping=grouping, local_dates=local_dates, policy=policy)
+
+    @classmethod
+    def from_tables(cls, tables: "Mapping[str, Mapping[str, Any]]", *,
+                    author: str | None = None, title: str | None = None, locale: Any = None,
+                    policy: Any = None) -> "Workbook":
+        """A new workbook (:meth:`new`) with a sheet per entry of ``tables``, in order, each
+        written by :meth:`write_table` at ``A1``: ``{"Stock": {"columns": ["Item", "Qty"],
+        "rows": [["Lamp", 3]]}}``.  An entry may say ``"table": True`` (or the table's
+        name) to make an Excel table, ``"origin"`` another first cell and ``"style"`` a
+        table style.  One step after the new workbook; refused whole."""
+        from .edit import EditError
+
+        if not isinstance(tables, Mapping) or not tables:
+            raise EditError("bad_value", 'tables is {"Sheet": {"columns": [...], "rows": '
+                            "[...]}}, at least one sheet")
+        allowed = {"columns", "rows", "table", "origin", "style"}
+        for sheet, entry in tables.items():
+            if not isinstance(entry, Mapping) or set(entry) - allowed:
+                raise EditError("bad_value", f"sheet {sheet!r}: an entry has columns and rows "
+                                f"(and optionally table, origin, style)",
+                                addresses=[str(sheet)[:40]])
+        workbook = cls.new(list(tables), author=author, title=title, locale=locale,
+                           policy=policy)
+        with workbook.batch():
+            for sheet, entry in tables.items():
+                workbook.write_table(sheet, entry.get("origin", "A1"), entry.get("columns"),
+                                     list(entry.get("rows") or []),
+                                     as_table=entry.get("table", False),
+                                     style=entry.get("style"))
+        return workbook
+
+    def _forget(self) -> None:
+        """Forget everything read from the package: it changed (an edit, a rollback, an
+        undo or redo).  The application's settings stay: declared tables and regions, the
+        redaction, the sheets withheld, the locale."""
+        self._sheets = None
+        self._strings = None
+        self._styles = None
+        self._scans.clear()
+        self._plans.clear()
+        self._layouts.clear()
+        self._comments.clear()
+        self._table_parts_read = None
+        self._catalogue = None
+        self._queries.clear()
+        self._finds.clear()
+        self._traces = None
+        self._withheld_problems.clear()
+        self._forgotten += 1
+        self.regions.forget_package()
+        self.regions.refresh_capacity()
+
+    # -- the workbook part -----------------------------------------------------------------
+
+    @property
+    def _root(self) -> Element:
+        return _parsed(self.part, lambda: self.package.tree(self.part))
+
+    def _child(self, local: str) -> Element | None:
+        for ns in NS_MAIN:
+            node = self._root.find(f"{{{ns}}}{local}")
+            if node is not None:
+                return node
+        return None
+
+    @property
+    def sheets(self) -> list[Sheet]:
+        """Every sheet, in the workbook's order (the order of its tabs); a sheet withheld
+        from the model (:meth:`withhold_sheets`) is not one of them."""
+        withheld = self._withheld_sheets
+        return [s for s in self._every_sheet if s.name.casefold() not in withheld]
+
+    @property
+    def _every_sheet(self) -> list[Sheet]:
+        """Every sheet the workbook part lists, withheld ones too: for what reads the file
+        as stored (a defined name's ``localSheetId``, a formula's run of sheets), never
+        for what a result shows."""
+        if self._sheets is None:
+            self._sheets = self._read_sheets()
+        return list(self._sheets)
+
+    @property
+    def withheld_sheets(self) -> list[str]:
+        """The names of the sheets withheld from the model (:meth:`withhold_sheets`), in
+        the workbook's order: for the program that withheld them; no tool gives them."""
+        withheld = self._withheld_sheets
+        return [s.name for s in self._every_sheet if s.name.casefold() in withheld]
+
+    @property
+    def redaction(self) -> "Redaction | None":
+        """The terms redacted from every text this workbook gives (:meth:`redact`), or
+        ``None``; its :attr:`~xlsx_agent.redact.Redaction.redacted` counts the texts
+        changed so far, for the program."""
+        return self._redaction
+
+    def redact(self, redaction: "Redaction | Sequence[Mapping]") -> None:
+        """Redact terms from every text this workbook gives from now on (see
+        :mod:`xlsx_agent.redact`): ``redaction`` a :class:`~xlsx_agent.redact.Redaction`
+        or its declarations (``[{"redact": ["Acme Corp"], "with": "[redacted]"}]``).  The
+        caller's setting, declared with the tables (:mod:`xlsx_agent.declare`), and set
+        before anything is declared or kept: ``ValueError`` once a table, region, key or
+        hidden sheet is, unless the rules are the ones set already.  Everything read
+        before is forgotten."""
+        from .redact import parse_rules
+        if not isinstance(redaction, Redaction):
+            redaction = parse_rules(redaction)
+        if self._redaction is not None and self._redaction.spec == redaction.spec:
+            return
+        regions = self.regions
+        if regions.declared or regions.configured or regions.declared_keys \
+                or self._withheld_sheets or (self._redaction is not None):
+            raise ValueError("a redaction is set before tables, regions, keys or hidden "
+                             "sheets are declared, and once")
+        self._set_redaction(redaction if redaction.rules else None)
+
+    def _set_redaction(self, redaction: "Redaction | None") -> None:
+        """Set the redaction, forgetting everything read with another."""
+        self._redaction = redaction
+        self._sheets = None
+        self._strings = None
+        self._styles = None
+        self._scans.clear()
+        self._layouts.clear()
+        self._comments.clear()
+        self._table_parts_read = None
+        self._catalogue = None
+        self._queries.clear()
+        self._finds.clear()
+        self._traces = None
+        self._withheld_problems.clear()
+        self.regions = Regions(self)
+        self._sheets = self._read_sheets()
+
+    def _redacted(self, text: str) -> str:
+        """``text`` as this workbook gives it: redacted (:meth:`redact`), or as it is."""
+        return self._redaction.text(text) if self._redaction is not None and text else text
+
+    def withhold_sheets(self, names: "Sequence[str]") -> None:
+        """Withhold the sheets called ``names`` (exact names, case aside; more are added to
+        those withheld already, and none is ever given back) from everything this
+        workbook shows: they are no :attr:`sheets`, no address reaches their cells, and
+        their tables and the defined names on them or local to them are not the
+        workbook's; a formula elsewhere that reaches them keeps its value, not its text.
+        The caller's setting, declared with the tables (``{"sheets": "Notes", "hidden":
+        true}``, :mod:`xlsx_agent.declare`), which checks it; ``KeyError`` here for a name
+        that is no sheet."""
+        wanted = {name.casefold() for name in names}
+        found = set()
+        for sheet in self._every_sheet:
+            folded = {sheet.name.casefold(), sheet.stored_name.casefold()}
+            if sheet.name and folded & wanted:
+                found |= folded
+                wanted -= folded
+        if wanted:
+            raise KeyError("no such sheet")
+        self._set_withheld_sheets(self._withheld_sheets | found)
+
+    def _set_withheld_sheets(self, withheld: "frozenset[str]") -> None:
+        """Set the sheets withheld (by name folded), forgetting what was gathered with
+        another set: the catalogue, finds, queries and the regions' names and tables."""
+        if withheld == self._withheld_sheets:
+            return
+        self._withheld_sheets = frozenset(withheld)
+        self._catalogue = None
+        self._queries.clear()
+        self._finds.clear()
+        self._traces = None
+        self._withheld_problems.clear()
+        self.regions.forget_withheld()
+
+    def _sheet_withheld(self, name: str | None) -> bool:
+        """Whether the sheet called ``name`` is withheld from the model."""
+        return bool(name) and (name or "").casefold() in self._withheld_sheets
+
+    def sheet(self, name: str) -> Sheet:
+        """The sheet called ``name``, matched as Excel matches names (case aside; a
+        name's leading and trailing spaces are part of it), or as an address writes it
+        (``'Stock '``); when no sheet is so named, the one sheet equal to ``name`` with
+        outer spaces aside (:func:`~xlsx_agent.formula.sheets.pick_sheet`).
+        :class:`~xlsx_agent.address.NameNotFound` (a ``KeyError``) naming the sheets there
+        are, with the nearest as ``valid_options``, as an address writes them."""
+        shown = self.sheets
+        found = pick_sheet([sheet.name for sheet in shown], name) \
+            if isinstance(name, str) else []
+        if len(found) == 1:
+            return shown[found[0]]
+        names = [sheet.name for sheet in shown]
+        written = [quote_sheet(sheet.name) for sheet in shown if sheet.name]
+        if found:
+            alike = [quote_sheet(shown[i].name) for i in found]
+            raise NameNotFound(f"no sheet {name!r}; {', '.join(alike)} differ from it only "
+                               "in their outer spaces: name one as stored", what="sheet",
+                               name=name, candidates=written, valid_options=alike)
+        raise NameNotFound(f"no sheet {name!r}; the sheets are {names}", what="sheet",
+                           name=name, candidates=written,
+                           valid_options=nearest(quote_sheet(name) if name else "", written))
+
+    def sheet_by_id(self, sheet_id: int) -> Sheet:
+        """The sheet whose ``sheetId`` is ``sheet_id`` (what ``#3!F2`` names);
+        :class:`~xlsx_agent.address.NameNotFound` with the ids there are, as ``#3``."""
+        for sheet in self.sheets:
+            if sheet.id is not None and sheet.id == sheet_id:
+                return sheet
+        ids = [f"#{sheet.id}" for sheet in self.sheets if sheet.id is not None]
+        raise NameNotFound(f"no sheet with id {sheet_id}; the ids are {ids}", what="sheet id",
+                           name=sheet_id, candidates=ids, valid_options=ids[:50])
+
+    def sheet_of(self, address: "str | SheetRef | RangeAddress | TableAddress") -> Sheet:
+        """The sheet an address names: a :class:`~xlsx_agent.address.SheetRef`, a cell or
+        range (``Stock!F2``, ``#3!A:A``), a detected region (``t:Stock!A1``), or such an
+        address as text.  By name, matched case aside; by id, its ``sheetId``.  A table,
+        dataset or ref names no sheet by itself: ``ValueError``."""
+        target: "Address | SheetRef" = parse_address(address) if isinstance(address, str) \
+            else address
+        if isinstance(target, TableAddress) and target.region is not None:
+            target = target.region
+        if isinstance(target, RangeAddress):
+            target = target.sheet
+        if not isinstance(target, SheetRef):
+            raise ValueError(f"a {getattr(target, 'kind', type(target).__name__)} address "
+                             "names no sheet by itself")
+        if target.id is not None:
+            return self.sheet_by_id(target.id)
+        assert target.name is not None   # a sheet is named by its name or its id
+        return self.sheet(target.name)
+
+    @staticmethod
+    def sheet_refs(sheet: Sheet) -> tuple[SheetRef | None, SheetRef | None]:
+        """Both ways to name ``sheet``: by name and by id, each ``None`` when the workbook
+        gives none (an empty name, a ``sheetId`` that is not a number).  A result gives
+        both the first time it names a sheet."""
+        return (SheetRef(name=sheet.name) if sheet.name else None,
+                SheetRef(id=sheet.id) if sheet.id is not None and sheet.id >= 0 else None)
+
+    @property
+    def protected(self) -> bool:
+        """The workbook's structure or windows are locked (``workbookProtection``)."""
+        node = self._child("workbookProtection")
+        if node is None:
+            return False
+        return any(_true(node.get(attribute)) for attribute in ("lockStructure", "lockWindows"))
+
+    @property
+    def date1904(self) -> bool:
+        """The workbook uses the 1904 date system (``workbookPr date1904``); else 1900."""
+        node = self._child("workbookPr")
+        return node is not None and _true(node.get("date1904"))
+
+    @property
+    def calculation(self) -> list[str]:
+        """Why cached values may be stale: ``"full_calc_on_load"`` (``calcPr
+        fullCalcOnLoad``: the file asks for a full recalculation when it opens) and
+        ``"manual_calculation"`` (saved with ``calcMode="manual"``)."""
+        node = self._child("calcPr")
+        if node is None:
+            return []
+        out = []
+        if _true(node.get("fullCalcOnLoad")):
+            out.append("full_calc_on_load")
+        if (node.get("calcMode") or "").strip() == "manual":
+            out.append("manual_calculation")
+        return out
+
+    @property
+    def problems(self) -> list[Problem]:
+        """What is odd about the workbook, by code and address, never by content: the
+        :attr:`calculation` flags once each, then, per worksheet, each issue its cells
+        have (``no_cached_value``, ``number_as_text``, ``at_limit``, ``volatile``...) with
+        its first address and count.  Every worksheet is scanned once (streamed) the first
+        time this is asked.  The cells of a column a declared table hides from the model
+        (:mod:`xlsx_agent.declare`) are left out: a problem met only there is not listed,
+        and one met there too is counted and placed at its other cells only (the sheet is
+        read once more for it, while the declarations stay as they are)."""
+        out = [Problem(code) for code in self.calculation]
+        out.extend(self.regions.problems())
+        for sheet in self.sheets:
+            if sheet.part is not None and sheet.type in _CELL_SHEETS:
+                out.extend(self._sheet_problems(sheet))
+        return out
+
+    def _sheet_problems(self, sheet: Sheet) -> list[Problem]:
+        found = self.scan(sheet)
+        hidden = self.regions.withheld(sheet.name) if sheet.name else []
+        if not hidden or not found.issues:
+            return found.problems
+        key = (sheet.part, tuple(hidden), self.locale)
+        if key not in self._withheld_problems:
+            counted: dict[str, list] = {}
+
+            def count(code: str, value: Value) -> None:
+                entry = counted.get(code)
+                if entry is None:
+                    counted[code] = [1, value.a]
+                else:
+                    entry[0] += 1
+
+            for value in self.cells(sheet):
+                if any(a.first.row <= value.row <= a.last.row
+                       and a.first.column <= value.column <= a.last.column for a in hidden):
+                    continue
+                if value.issue is not None:
+                    count(value.issue, value)
+                if value.at_limit:
+                    count("at_limit", value)
+                if value.volatile:
+                    count("volatile", value)
+            self._withheld_problems[key] = [Problem(code, address, n) for code, (n, address)
+                                            in sorted(counted.items())]
+        return list(self._withheld_problems[key])
+
+    # -- tables, names and regions ---------------------------------------------------------
+
+    @property
+    def tables(self) -> list[Region]:
+        """The Excel tables (ListObjects), sheet by sheet in the workbook's order, each in
+        the order its sheet relates to it; a table whose ``ref`` is not a range is left out
+        and reported in :attr:`problems` (``bad_ref``, ``bad_table``), and so is one a
+        declared table covers, which replaces it (:mod:`xlsx_agent.declare`)."""
+        return self.regions.tables
+
+    @property
+    def names(self) -> list[DefinedName]:
+        """The defined names, in the file's order, hidden and built-in ones too; those that
+        are not a range say why (:mod:`xlsx_agent.read.names`)."""
+        return self.regions.names
+
+    def region(self, address: "str | TableAddress") -> Region:
+        """The table, name or region a ``t:`` address names (its column or row aside):
+        :class:`~xlsx_agent.address.NameNotFound` for an unknown name, with the nearest as
+        ``valid_options``; :class:`~xlsx_agent.read.regions.RegionError` for a name that is
+        not a range, an ambiguous one, or a header that is not detected."""
+        return self.regions.region(address)
+
+    def table(self, address: "str | TableAddress", *, key: str | None = None) -> Region:
+        """As :meth:`region`, with ``key`` (a column name) as its key column."""
+        region = self.regions.region(address)
+        if key is not None:
+            region = replace(region, key=region.columns[region.column_index(key)])
+        return region
+
+    def resolve(self, address: "str | TableAddress", *, key: str | None = None) -> Selection:
+        """What a ``t:`` address names, as cells: ``t:Products`` (its data rows),
+        ``t:Products[Price]``, ``t:Products/#5``, ``t:Products/SKU-0042``,
+        ``t:Products/SKU-0042/Price``, ``t:Stock!Prices`` and ``t:Stock!A1`` (a detected
+        region).  ``key`` names the key column for a row by key; see
+        :mod:`xlsx_agent.read.regions` for how keys, columns and names are matched."""
+        return self.regions.resolve(address, key=key)
+
+    def expand(self, address: "str | TableAddress", *, key: str | None = None) -> list[str]:
+        """What a ``t:`` address covers, one address by key per cell (per row, without a
+        column), in the table's row order: ``t:Products/*/Price`` gives
+        ``t:Products/SKU-0001/Price``, ... -- a coverage selector, for checking that a set
+        of addresses (a derived value's sources, say, which name cells by key) holds every
+        one::
+
+            required = set(wb.expand("t:Products/*/Price"))
+            used = {a for s in sources for a in wb.expand(s)}
+            missing = required - used
+
+        ``t:Products/*/*`` gives every value, ``t:Products/SKU-0042/*`` each of one row's,
+        a key set each of its own, ``t:Products`` and ``t:Products/*`` every row.  The keys
+        are the key column's (``key``, else the region's own); a row without a key, or with
+        one another row shares, is refused (``no_key``, ``duplicate_key``), never named by
+        a key that would not name it alone.  See
+        :meth:`~xlsx_agent.read.regions.Regions.expand`."""
+        return [a.text for a in self.regions.expand(address, key=key)]
+
+    def declare_region(self, name: str, where: "str | RangeAddress", *, header_rows: int = 1,
+                       headers: "list[str] | None" = None, key: str | None = None) -> Region:
+        """Declare a region over a range (``Returns!A3:F200``), usable as ``t:<name>`` from
+        then on: ``header_rows`` header rows (0 for none), named by ``headers`` (one per
+        column, unique case aside; required with two or more header rows, since a
+        multi-row or merged header is never read as names), else by the header row's text
+        (one header row) or the columns' letters (none).  ``key`` names the key column.
+        ``name`` follows ECMA-376's rule for names (:func:`~xlsx_agent.address.is_name`)
+        and is no table's or workbook-wide name's; declaring a region's name again replaces
+        it."""
+        self._allowed_at = None    # a policy may name what this declares
+        return self.regions.declare(name, where, header_rows=header_rows, headers=headers,
+                                    key=key)
+
+    def declare_key(self, address: "str | TableAddress", column: str) -> Region:
+        """Name ``column`` the key column of a table, name or region (``t:Products``) from
+        then on: rows by key look their keys up in it, :meth:`expand` names cells by it,
+        and a derived value's sources are written by it (``t:Products/{SKU-0003,
+        SKU-0007}/Price``) -- the caller's setting, for a table with several columns that
+        could be its key, or none that is.  A region declared with ``key=`` keeps its own.
+        See :meth:`~xlsx_agent.read.regions.Regions.declare_key`."""
+        self._allowed_at = None    # a policy may name what this declares
+        return self.regions.declare_key(address, column)
+
+    def declare_tables(self, declarations: Any) -> list[Region]:
+        """Declare tables from the caller's configuration (plain data: a mapping, a list of
+        them, or ``{"tables": [...]}``), usable as ``t:<name>`` from then on: sheets by
+        name or glob, a table over several sheets read as one, the header row (or the
+        row found by its text, ``{"match": [...]}``), the data rows' end, the key column,
+        column ids and descriptions, columns hidden from the model, key-value tables; and
+        whole sheets hidden from the model (``{"sheets": "Notes", "hidden": true}``,
+        :meth:`withhold_sheets`).  Every declaration is checked against the workbook before
+        any is kept (:class:`~xlsx_agent.declare.DeclarationError`, naming the entry and
+        what is wrong); see :mod:`xlsx_agent.declare`.  The tables declared, in order."""
+        self._allowed_at = None    # a policy may name what this declares
+        from .declare import declare_tables
+        return declare_tables(self, declarations)
+
+    def declare_table(self, name: str, sheets: "str | Sequence[str]", **declaration: Any
+                      ) -> Region:
+        """One table, as :meth:`declare_tables` declares it: ``wb.declare_table("checks",
+        "Area *", header_row=3, key="Ref", fields=[...])``."""
+        found = self.declare_tables([{"name": name, "sheets": sheets, **declaration}])
+        if not found:   # optional, and its sheets are not there
+            raise KeyError(f"no sheet matches the sheets of t:{name}")
+        return found[0]
+
+    def detect_region(self, where: "str | RangeAddress | TableAddress") -> Region:
+        """The region whose single-row header starts at a cell (``t:Stock!A1``); see
+        :meth:`~xlsx_agent.read.regions.Regions.detect`."""
+        return self.regions.detect(where)
+
+    def find_regions(self, sheet: "Sheet | str | SheetRef") -> "list[Region | UnclearRegion]":
+        """The blocks of a sheet outside its tables, each detected or flagged
+        ``header_unclear``; see :meth:`~xlsx_agent.read.regions.Regions.find`."""
+        return self.regions.find(sheet)
+
+    def column(self, address: "str | TableAddress", *, key: str | None = None) -> Column:
+        """The column a ``t:`` column address names (``t:Products[Price]``), whose
+        :meth:`~xlsx_agent.profile.Column.stats` is its profile; ``ValueError`` for an
+        address that names no column, or a row or value of one."""
+        if isinstance(address, str):
+            address = TableAddress.parse(address)
+        if not isinstance(address, TableAddress) or address.kind != "column":
+            raise ValueError("a column address names one column of a table, as t:Products[Price]")
+        region = self.table(address.whole, key=key)
+        assert address.column is not None   # a column address names its column
+        return Column(self, region, address.column)
+
+    def profile(self, address: "str | TableAddress | Region",
+                columns: "list[str] | None" = None) -> list[ColumnStats]:
+        """The profile of every column of a table, name or region (or of ``columns``, by
+        name), in one streamed pass: what ``xlsx_profile`` returns
+        (:mod:`xlsx_agent.profile`)."""
+        region = address if isinstance(address, Region) else self.regions.region(address)
+        return profile(self, region, columns)
+
+    def key_columns(self, address: "str | TableAddress | Region") -> list[str]:
+        """The columns that can be a region's key: unique, never blank, text or whole
+        numbers."""
+        region = address if isinstance(address, Region) else self.regions.region(address)
+        return self.regions.key_columns(region)
+
+    def trace(self, rows: "str | Sequence[str]", *, depth: int | None = None) -> "TraceResult":
+        """The table rows ``rows`` names (``t:issues/Q-1``, ``t:Items/{I-1,I-3}``,
+        ``t:Items/#2:#5``, a table, or a sheet's cells in one table), each with the rows it
+        rests on and why -- the rows its text names by key, those they name (``depth``
+        steps, 2 unless given), and the rows whose text names its key -- and every row's
+        values in full (:mod:`xlsx_agent.trace`).  A dataset row's sources are the tool's
+        (``xlsx_trace``), where the dataset is."""
+        from .trace import DEPTH, trace
+
+        return trace(self, [rows] if isinstance(rows, str) else list(rows),
+                     depth=DEPTH if depth is None else depth)
+
+    def rows_holding(self, address: "str | RangeAddress") -> "TableAddress | None":
+        """The table rows that hold a sheet's cells -- what a citation such as
+        ``'Q3 review'!K83`` (or ``Sheet!$K$83``, ``'It''s'!K80:L90``: any form the address
+        parser reads) points into -- as a ``t:`` address: one row by key when the table has
+        a key column whose keys are unique (``t:Items/I-17``), else by position
+        (``t:Items/#17``); several rows as a row range (``t:Items/#12:#20``).  ``None``
+        when no one table's data rows hold every cell (:meth:`Regions.holding
+        <xlsx_agent.read.regions.Regions.holding>`): the cells are then only cells."""
+        target = parse_address(address) if isinstance(address, str) else address
+        if not isinstance(target, RangeAddress) or target.span != "cells":
+            return None
+        sheet = self.sheet_of(target)
+        found = self.regions.holding(sheet.name, target.area)
+        if found is None:
+            return None
+        region, first, last = found
+        whole = region.address
+        if first != last:
+            return replace(whole, row_range=(first, last))
+        try:
+            index = self.regions.key_index(region)
+        except (RegionError, KeyError):
+            index = None
+        key = index.keys[first - 1] if index is not None and index.unique else None
+        return replace(whole, key=key) if key is not None else replace(whole, position=first)
+
+    def dataset(self, address: "str | TableAddress", *, max_cells: int | None = None) -> Dataset:
+        """The rows a ``t:`` address names as an ooxml-edit
+        :class:`~ooxml_edit.tools.Dataset` -- columns, rows, each value's cell by key (or
+        its cell address without a key) -- as a deck or document tool takes it with
+        ``from: "t:Products"``: ``t:Products``, ``t:Products[Price]``,
+        ``t:Products/{SKU-0003,SKU-0007}``; nothing coerced.  See
+        :func:`~xlsx_agent.dataset.table_dataset`."""
+        return table_dataset(self, address, max_cells=max_cells)
+
+    # -- derived figures -------------------------------------------------------------------
+
+    def derive(self, from_: "str | TableAddress | Region | Derived | Dataset", *, where=None,
+               group_by=None, measures=None, bins=None, pivot=None, sort=None,
+               top: int | None = None, round: "int | dict[str, int] | None" = None, coerce=None,
+               id: str | None = None, join=None, pivot_values=None, fill=None) -> Derived:
+        """Figures from a table, name or region (``t:Products``), computed here, each with
+        the cells it came from: ``where`` (:mod:`xlsx_agent.query`'s filters), ``group_by``
+        (column names), ``measures`` (``[{"fn": "mean", "column": "Price", "as":
+        "average"}]``: count, sum, mean, median, min, max, share, distinct), ``bins``
+        (``{"column", "edges", "as"}``), ``pivot`` (a column whose values become columns),
+        ``sort``, ``top``, ``round`` (decimals, half away from zero, on the reported values
+        only), ``coerce`` (``["number_as_text"]``) and ``id``.  A measure its column's type
+        does not take is refused before anything is computed; see
+        :mod:`xlsx_agent.derive`.  ``from_`` may be a dataset instead -- an earlier
+        :class:`Derived`, or an ooxml-edit ``Dataset`` -- whose sources carry through to
+        the original cells (:mod:`xlsx_agent.dataset`).  ``join`` (``{"from": "t:Issues",
+        "on": ["Ref", "Items"], "columns": ["Issue"]}``) first adds another table's or
+        dataset's columns to each row, by key (:mod:`xlsx_agent.join`); without
+        ``group_by``, ``measures``, ``bins`` or ``pivot`` the joined rows are the result.
+        ``pivot_values`` (``["Open", "Closed"]``) gives the pivot one column per listed value,
+        in that order, rows or none; rows of other values are left out and named in
+        ``pivot_unlisted``.  ``fill`` (``[{"column": "Limit", "from": "Default limit",
+        "coerce": "number"}]``) gives a column's blank cells another column's value of the
+        same row, after the join, each with the cells it came from (:mod:`xlsx_agent.fill`)."""
+        return derive(self, from_, where=where, group_by=group_by, measures=measures,
+                      bins=bins, pivot=pivot, sort=sort, top=top, round=round,
+                      coerce=coerce, id=id, join=join, pivot_values=pivot_values, fill=fill)
+
+    def record_values(self, table: "str | TableAddress", *, key: str, source: str,
+                      column: str, values: "Sequence[Mapping[str, Any]]",
+                      type: str = "text", add_to: "Dataset | None" = None) -> "Recorded":
+        """Values the caller judged from the ``source`` column of ``table``'s rows, one per
+        key (``[{"key", "value", "note"?}]``), kept as a dataset of the key, ``column`` and
+        ``note``, each value's source the cell it was judged from; the rows with source text
+        and no value listed (round 53, R108).  ``type="number"`` takes numbers only;
+        ``add_to``, a dataset recorded so before, is extended (round 54).  See
+        :mod:`xlsx_agent.record`."""
+        from .record import record_values
+
+        return record_values(self, table, key=key, source=source, column=column,
+                             values=values, type=type, add_to=add_to)
+
+    # -- comparing -------------------------------------------------------------------------
+
+    @staticmethod
+    def compare(a: "Workbook", b: "Workbook", *,
+                tables: "str | Sequence[str | tuple[str, str]] | None" = None,
+                key: "str | Mapping[str, str] | None" = None,
+                columns: "Sequence[str] | None" = None, cells: bool = False,
+                formula_text: bool = False, policy: Any = None) -> Diff:
+        """``a`` (the older workbook) against ``b`` (the newer): sheets by id, tables and
+        regions by name (``tables``: some of them, or pairs; every table and declared region
+        when ``None``), rows by key (``key``: a column name, or one per table; else the
+        declared key, or the one key column both find), and cells by type and value, each
+        change with both cells typed.  A key two rows share is reported, never paired; see
+        :mod:`xlsx_agent.compare`.  ``cells=True`` compares every cell by address instead,
+        formulas by their text (tables too only when ``tables`` names them), with
+        ``formula_text`` the formulas of the cells that differ and the changes outside
+        ``policy`` (or ``a``'s own write policies): :mod:`xlsx_agent.integrity`."""
+        return compare(a, b, tables=tables, key=key, columns=columns, cells=cells,
+                       formula_text=formula_text, policy=policy)
+
+    # -- data validation (X5) ---------------------------------------------------------------
+
+    def validations(self, sheet: "Sheet | str | SheetRef | None" = None) -> "list[ValidationRule]":
+        """The data-validation rules of ``sheet`` (every sheet's, by default), inspected:
+        standard or ``x14``, type, operator, the cells covered and, for a list, where its
+        values come from and whether they resolve without evaluating anything
+        (:mod:`xlsx_agent.validations`)."""
+        from .validations import inspect
+
+        return inspect(self, None if sheet is None else [self._cell_sheet(sheet)])
+
+    # -- checking against a schema ---------------------------------------------------------
+
+    def validate_data(self, schema: Mapping[str, Any]) -> ValidationReport:
+        """The workbook checked against a declared ``schema`` (plain data: required
+        ``sheets``; ``tables``, each a ``t:`` address or a declared region spec, with its
+        ``key`` and its ``columns``' ``type``, ``required``, ``unique``, ``min``, ``max``,
+        ``step``, ``enum``, ``case``, ``validation_list`` and ``pattern``).  The report
+        lists problems by code and address, never a cell's content, and counts them by
+        code; a schema that is not one is refused (:class:`~xlsx_agent.schema.SchemaError`)
+        before anything is read.  See :mod:`xlsx_agent.schema`."""
+        return validate(self, schema)
+
+    # -- finding text ----------------------------------------------------------------------
+
+    def find_text(self, needle: "str | re.Pattern", *,
+                  within: "str | RangeAddress | TableAddress | None" = None) -> Iterator[Found]:
+        """Where ``needle`` (text, case counting, or a compiled pattern) is: text cells,
+        table and region names, table headers, comments and defined names, each match by
+        address and kind, sheet by sheet in reading order, streamed; ``within`` a sheet
+        (``Stock!``), range or table.  Formula text and non-text values are not searched;
+        see :mod:`xlsx_agent.find`."""
+        return find_text(self, needle, within)
+
+    # -- the catalogue ---------------------------------------------------------------------
+
+    def catalogue(self, *, detail: str = "catalogue", max_tokens: int = DEFAULT_TOKENS) -> dict:
+        """What the workbook holds, as data: sheets, regions with their key columns and
+        each column's profile summarised, sample rows, flags and problems, within
+        ``max_tokens`` as the siblings' offline proxy counts them (``detail="full"``:
+        every column's whole profile, nothing cut).  What the shared ``describe`` tool
+        returns; see :mod:`xlsx_agent.catalogue`."""
+        return catalogue(self, detail=detail, max_tokens=max_tokens)
+
+    def describe(self, *, max_tokens: int = DEFAULT_TOKENS) -> str:
+        """The catalogue as text: :meth:`catalogue`'s data as compact JSON."""
+        return json.dumps(self.catalogue(max_tokens=max_tokens), ensure_ascii=False,
+                          separators=(",", ":"), default=str)
+
+    def _table_parts(self) -> list[TablePart]:
+        if self._table_parts_read is None:
+            out = []
+            for sheet in self._every_sheet:     # withheld ones too: a formula may name them
+                if sheet.part is None or sheet.type != "worksheet":
+                    continue
+                written = format_sheet(sheet.name, sheet.id)
+                for rel in self.package.relationships(sheet.part).values():
+                    if rel.is_external or rel.type.rpartition("/")[2] != "table" \
+                            or rel.target_part is None \
+                            or not self.package.has_part(rel.target_part):
+                        continue
+                    part = rel.target_part
+                    root = _parsed(part, lambda: self.package.tree(part))
+                    table = read_table(root, sheet=sheet.name, written_sheet=written, part=part,
+                                       redact=self._redaction.text
+                                       if self._redaction is not None else None)
+                    if table is not None:
+                        out.append(table)
+            self._table_parts_read = out
+        return list(self._table_parts_read)
+
+    def _defined_names(self) -> list[DefinedName]:
+        return read_names(self._child("definedNames"), self._every_sheet)
+
+    # -- cells -----------------------------------------------------------------------------
+
+    def _related(self, kind: str) -> str | None:
+        """The workbook's part related by a relationship whose type ends in ``kind``
+        (``"sharedStrings"``, ``"styles"``): transitional and strict alike."""
+        for rel in self.package.relationships(self.part).values():
+            if not rel.is_external and rel.type.rpartition("/")[2] == kind \
+                    and rel.target_part is not None and self.package.has_part(rel.target_part):
+                return rel.target_part
+        return None
+
+    def _string_count(self) -> int:
+        """How many items the shared-string table has: counted in its tree (an edit's cell
+        writer parses it), without reading their text."""
+        if self._strings is not None and self._strings._items is not None:
+            return len(self._strings)
+        part = self._related("sharedStrings")
+        root = _parsed(part, lambda: self.package.tree(part)) if part else None
+        return 0 if root is None else sum(1 for node in root.iterchildren(*_SI_TAGS))
+
+    @property
+    def strings(self) -> SharedStrings:
+        """The shared-string table, read (streamed) the first time a cell needs it; each
+        item redacted (:meth:`redact`)."""
+        if self._strings is None:
+            part = self._related("sharedStrings")
+            self._strings = SharedStrings(self._part_bytes(part) if part else None,
+                                          redact=self._redaction.text
+                                          if self._redaction is not None else None)
+        return self._strings
+
+    @property
+    def styles(self) -> Styles:
+        """``styles.xml``'s number formats, read once."""
+        if self._styles is None:
+            part = self._related("styles")
+            root = _parsed(part, lambda: self.package.tree(part)) if part else None
+            self._styles = Styles(root, format_language(self.locale.language))
+        return self._styles
+
+    def number_format(self, style: int) -> NumberFormat:
+        """The number format of a cell whose ``s`` is ``style`` (a ``cellXfs`` index)."""
+        return self.styles.format(style)
+
+    def _cell_sheet(self, sheet: "Sheet | str | SheetRef") -> Sheet:
+        if isinstance(sheet, Sheet):
+            found = sheet
+            if self._sheet_withheld(found.name):
+                found = self.sheet(found.name)   # refused as a sheet the workbook has not
+        elif isinstance(sheet, SheetRef):
+            found = self.sheet_of(sheet)
+        else:
+            found = self.sheet(sheet)
+        if found.type not in _CELL_SHEETS:
+            raise ValueError(f"sheet {quote_sheet(found.name) if found.name else found.id} "
+                             f"is a {found.type or 'sheet of no known type'} and holds no cells")
+        return found
+
+    def _reader(self, sheet: Sheet, *, formats: bool = False,
+                markdown: "bool | str" = False, data: bytes | None = None) -> SheetReader:
+        """A reader of ``sheet``'s cells; ``data``: other bytes than the part's (``b""``
+        for one that types cells it is handed, never passes over the sheet)."""
+        given = data
+        source: "bytes | ZipPart | None" = data
+        if data is None:
+            source = self._part_bytes(sheet.part) if sheet.part is not None else None
+        name = format_sheet(sheet.name, sheet.id)
+        reader = SheetReader(source or b"", sheet=name, hidden=not sheet.visible,
+                             strings=self.strings, styles=self.styles, date1904=self.date1904,
+                             locale=self.locale, formats=formats, grouping=self.grouping,
+                             local_dates=self.local_dates, redaction=self._redaction,
+                             cache=self.calculation_status,
+                             external_names=self._external_names, markdown=markdown)
+        if sheet.part is not None and given is None:   # the part's own bytes
+            reader.plans = (self._plans, sheet.part)
+        return reader
+
+    def _part_bytes(self, part: str) -> "bytes | ZipPart | None":
+        """A part as a pass reads it: its compressed entry while it is untouched (inflated a
+        piece at a time by each pass, never held whole), else its bytes."""
+        entry = getattr(self.package, "part_entry", None)   # ooxml-edit 0.99.0 on
+        found = entry(part) if entry is not None else None
+        return found if found is not None else self.package.read(part)
+
+    def _stream(self, sheet: Sheet, run):
+        """``run()`` over a sheet's part, with the parser's refusal turned into
+        :class:`OpenError`.  ``run`` may be a generator function: its items are passed on."""
+        return _guarded(sheet.part or f"sheet #{sheet.id}", run)
+
+    def scan(self, sheet: "Sheet | str | SheetRef") -> SheetScan:
+        """One full streamed pass over a sheet, done once and kept: the used range
+        computed from the cells, merges, ordering and the issues met
+        (:class:`~xlsx_agent.read.stream.SheetScan`)."""
+        sheet = self._cell_sheet(sheet)
+        key = sheet.part or f"#{sheet.id}"
+        if key not in self._scans:
+            self._scans[key] = _parsed(key, lambda: scan(self._reader(sheet)))
+        return self._scans[key]
+
+    def used_range(self, sheet: "Sheet | str | SheetRef") -> Area | None:
+        """The used range: the smallest area holding every cell with a value or a formula,
+        computed from the cells (a ``dimension`` is never trusted); ``None`` when there
+        are none."""
+        return self.scan(sheet).used
+
+    def merges(self, sheet: "Sheet | str | SheetRef",
+               within: "str | Area | None" = None) -> list[Area]:
+        """The sheet's merged areas, in the order the file gives them; ``within`` (a range
+        of the sheet, ``A1:S40`` or ``Stock!A1:S40``): those that overlap it only.
+
+        Read without a pass over the cells when none has been made (``mergeCells`` comes
+        after them: the part is parsed as its header and what follows the cells), so a
+        sheet of a million rows gives its merges at once; a pass made already, or the
+        tree an edit parsed, gives them as before.  A range on another sheet, or none,
+        is refused (``ValueError``)."""
+        sheet = self._cell_sheet(sheet)
+        area = self._merges_within(sheet, within) if within not in (None, "") else None
+        key = sheet.part or f"#{sheet.id}"
+        found: "list[Area] | None" = None
+        trees = getattr(self.package, "_trees", None)
+        if key not in self._layouts and key not in self._scans and sheet.part is not None \
+                and not (isinstance(trees, dict) and sheet.part in trees):
+            part = sheet.part
+            found = _parsed(part, lambda: merges_only(self._reader(sheet)))
+        if found is None:
+            found = list(self._layout(sheet).merges)
+        if area is None:
+            return found
+        return [merge for merge in found if _overlaps(merge, area)]
+
+    def _merges_within(self, sheet: Sheet, within: "str | Area") -> Area:
+        """``within`` of :meth:`merges` as an area of ``sheet``."""
+        if isinstance(within, Area):
+            return within
+        text = within.strip() if isinstance(within, str) else within
+        try:
+            parsed = parse_address(text if "!" in text
+                                   else f"{format_sheet(sheet.name, sheet.id)}!{text}")
+        except (ValueError, TypeError):
+            parsed = None
+        if not isinstance(parsed, RangeAddress):
+            raise ValueError(f"within is a range of the sheet, as A1:S40; not {within!r}")
+        if self._cell_sheet(self.sheet_of(parsed)).part != sheet.part:
+            raise ValueError(f"within ({within}) is on another sheet than "
+                             f"{format_sheet(sheet.name, sheet.id)}; give a range of it, "
+                             "as A1:S40")
+        return parsed.area
+
+    def arrays(self, sheet: "Sheet | str | SheetRef") -> list[Area]:
+        """The blocks the sheet's array formulas fill (a dynamic array's spill among them),
+        each as its formula gives it, in reading order."""
+        return list(self._layout(sheet).arrays)
+
+    def _layout(self, sheet: "Sheet | str | SheetRef", *, edit: bool = False) -> SheetLayout:
+        """The sheet's merges, array blocks and data-validation rules, as its
+        :meth:`scan` finds them: from the scan when one is kept; from the sheet's tree when
+        an edit's cell writer has parsed it, or ``edit`` (an edit's guard, before the write
+        that parses it) -- no value typed, on a sheet of any size; from a scan otherwise
+        (a read never parses a sheet whole)."""
+        sheet = self._cell_sheet(sheet)
+        key = sheet.part or f"#{sheet.id}"
+        found = self._layouts.get(key)
+        if found is not None:
+            return found
+        if key not in self._scans and sheet.part is not None:
+            trees = getattr(self.package, "_trees", None)   # ooxml-edit's parsed parts
+            root = trees.get(sheet.part) if isinstance(trees, dict) else None
+            if root is None and edit:
+                root = _parsed(sheet.part, lambda: self.package.tree(sheet.part))
+            found = layout(root) if root is not None else None
+            if found is not None:
+                self._layouts[key] = found
+                return found
+        return SheetLayout.of_scan(self.scan(sheet))
+
+    def hyperlinks(self, sheet: "Sheet | str | SheetRef") -> list[Hyperlink]:
+        """The sheet's hyperlinks, in the file's order, each with the cells it covers and
+        its ``url`` (an external target, from the sheet's relationships) or ``location`` (a
+        place in the workbook).  Content: never followed, never in a message.  A link to a
+        place on a sheet withheld from the model (its ``location`` names the sheet, or a
+        defined name of it) is left out: it would say the sheet's name."""
+        sheet = self._cell_sheet(sheet)
+        links = self.scan(sheet).hyperlinks
+        if links and self._withheld_sheets:
+            links = [link for link in links if link.location is None
+                     or not self.regions._text_names_withheld_sheet(link.location, sheet.name,
+                                                                    set())]
+        if not links:
+            return []
+        assert sheet.part is not None   # links were read from it
+        rels = self.package.relationships(sheet.part)
+        out = []
+        for link in links:
+            rel = rels.get(link.rel_id) if link.rel_id is not None else None
+            link = replace(link, url=rel.target) if rel is not None else link
+            if self._redaction is not None:
+                link = replace(link, url=self._redacted(link.url) if link.url else link.url,
+                               location=self._redacted(link.location) if link.location
+                               else link.location)
+            out.append(link)
+        return out
+
+    def comments(self, sheet: "Sheet | str | SheetRef") -> list[Comment]:
+        """The sheet's comments (its comments part, :mod:`xlsx_agent.read.comments`), in
+        the file's order; read once."""
+        sheet = self._cell_sheet(sheet)
+        key = sheet.part or f"#{sheet.id}"
+        if key not in self._comments:
+            found: list[Comment] = []
+            if sheet.part is not None:
+                rels = self.package.relationships(sheet.part).values()
+                threaded: set[Cell] = set()
+                for rel in rels:
+                    if not rel.is_external and rel.type.rpartition("/")[2] == "threadedComment" \
+                            and rel.target_part and self.package.has_part(rel.target_part):
+                        tree = self.package.tree(rel.target_part)
+                        for node in (tree if tree is not None else []):
+                            area = _area(node.get("ref")) if isinstance(node.tag, str) else None
+                            if area is not None:
+                                threaded.add(area.first)
+                for rel in rels:
+                    if rel.is_external or rel.type.rpartition("/")[2] != "comments" \
+                            or rel.target_part is None \
+                            or not self.package.has_part(rel.target_part):
+                        continue
+                    part = rel.target_part
+                    found = read_comments(_parsed(part, lambda: self.package.tree(part)),
+                                          frozenset(threaded))
+                    if self._redaction is not None:
+                        found = [replace(c, text=self._redacted(c.text),
+                                         author=self._redacted(c.author) if c.author
+                                         else c.author) for c in found]
+                    break
+            self._comments[key] = found
+        return list(self._comments[key])
+
+    def cells(self, sheet: "Sheet | str | SheetRef", *, formats: bool = False,
+              markdown: bool = False, values_only: bool = False) -> Iterator[Value]:
+        """Every cell the sheet stores, typed, in the order of the file, streamed (a cell
+        with only a style comes as ``blank``).  ``formats`` puts each value's format code on
+        it; ``markdown`` gives text as Markdown (as :meth:`read`).
+
+        ``values_only``: the cells that hold a value or a formula only (those a used range
+        counts), the others passed over untyped -- a sheet formatted to its last row gives
+        its values without a blank for each formatted cell.
+
+        A pass to the end also scans the sheet when no scan is kept (:meth:`scan`): the
+        :meth:`used_range` and :meth:`merges` after it read nothing again."""
+        sheet = self._cell_sheet(sheet)
+        key = sheet.part or f"#{sheet.id}"
+
+        def run() -> Iterator[Value]:
+            reader = self._reader(sheet, formats=formats, markdown=markdown)
+            if key in self._scans:
+                values = reader.values(blanks=not values_only)
+            else:
+                stamp = (self._forgotten, self._locale, self._redaction)
+
+                def keep(found: SheetScan) -> None:
+                    if (self._forgotten, self._locale, self._redaction) == stamp:
+                        self._scans.setdefault(key, found)
+                values = scanning(reader, blanks=not values_only, done=keep)
+            if values_only:
+                return (v for v in values if v.t != "blank" or v.formula)
+            return values
+
+        values = self._stream(sheet, run)
+        return (_as_markdown(value) for value in values) if markdown else values
+
+    def read(self, address: "str | RangeAddress | TableAddress", *,
+             formats: bool = False, markdown: bool = False) -> Iterator[list[Value]]:
+        """The rows of a cell or range (``Stock!A1:H40``, ``#3!B2``), each a list of
+        values from the range's first column to its last, blanks filled in; whole columns
+        and rows (``Stock!A:A``, ``Stock!2:5``) clipped to the used range.  A ``t:``
+        address is read as the cells :meth:`resolve` gives it (a table's data rows, a
+        column's, a row, a value; nothing when it has no data rows); a key set's rows
+        in the set's order (``t:Products/{SKU-0042,SKU-0007}/Price``).
+
+        Lazy: rows are read as they are asked for, and the pass stops after the range's
+        last row.  The sheet is scanned once first (:meth:`scan`: the used range, and
+        whether its rows are in order; a sheet whose rows are not has the range's cells
+        gathered before the first row is given).  A cell of a column a declared table hides
+        from the model (:mod:`xlsx_agent.declare`) is given blank: every read of the
+        sheet's cells goes through here.  Text comes with the workbook's redacted terms
+        replaced (:meth:`redact`), as from :meth:`cells`.  A dataset or ref address is not a range:
+        ``ValueError``.
+
+        ``markdown``: every text value is given as Markdown (:mod:`xlsx_agent.markdown`):
+        rich text's bold, italic and strikethrough runs as ``**``, ``*`` and ``~~``, lines
+        of bullets and numbers as list items, every other character escaped (``*`` as
+        ``\\*``) -- what ``set_cells``' ``{"markdown": ...}`` writes back as the same cell.
+        A value a declared column's rule cleaned stays as cleaned."""
+        rows = self._read(address, formats=formats, markdown=markdown)
+        return _markdown_rows(rows) if markdown else rows
+
+    def _read(self, address: "str | RangeAddress | TableAddress", *, formats: bool = False,
+              columns: "set[int] | None" = None,
+              markdown: "bool | str" = False) -> Iterator[list[Value]]:
+        """:meth:`read`, typing the cells of ``columns`` (sheet columns) only, for a pass
+        that looks at no other (:func:`~xlsx_agent.read.stream.read_area`); ``markdown``
+        sets each text value's :attr:`~xlsx_agent.read.types.Value.markdown` without
+        giving it as ``v``: ``True`` a cell's Markdown, :data:`~xlsx_agent.read.strings.FIELD`
+        a document's (round 48)."""
+        target: Address = parse_address(address) if isinstance(address, str) else address
+        if isinstance(target, TableAddress):
+            selection = self.resolve(target)
+            if selection.positions:
+                return self._read_rows(selection.areas, formats=formats, columns=columns,
+                                       markdown=markdown)
+            selected = selection.range
+            if selected is None:
+                return iter(())
+            target = selected
+        if not isinstance(target, RangeAddress):
+            raise ValueError(f"a {target.kind} address is read from a later milestone; "
+                             "give a cell or range, as Stock!A1:H40")
+        address = target
+        span = self.regions.span(address.sheet)
+        if span is not None:   # a declared table read as one: its own rows and columns
+            return span.read(self, address.area, formats=formats, columns=columns,
+                             markdown=markdown)
+        sheet = self._cell_sheet(self.sheet_of(address))
+        found = self.scan(sheet)
+        area = address.clipped(found.used)
+        if area is None:
+            return iter(())
+        readers: list[SheetReader] = []
+
+        def run() -> Iterator[list[Value]]:
+            readers.append(self._reader(sheet, formats=formats, markdown=markdown))
+            return read_area(readers[0], area, found.ordered, found.index, columns)
+
+        rows = self._stream(sheet, run)
+        fills = [m for m in getattr(address.sheet, "fills", ()) if _overlaps(area, m)
+                 and (columns is None or m.first.column in columns)]
+        if fills:   # a region with merged data cells, read as the region: each filled
+            rows = self._filled(rows, sheet, fills, formats)
+        withheld = [a for a in self.regions.withheld(sheet.name) if _overlaps(area, a)] \
+            if sheet.name else []
+        if withheld:
+            rows = _withheld(rows, withheld)
+        if sheet.name and self.regions.withholds:
+            rows = self._formulas_withheld(rows, sheet.name, readers)
+        return rows
+
+    def _filled(self, rows: Iterator[list[Value]], sheet: Sheet, fills: list[Area],
+                formats: bool) -> Iterator[list[Value]]:
+        """``rows`` with each blank cell of a merged area in ``fills`` but its first given
+        the first's value (:class:`~xlsx_agent.read.regions.FilledSheet`); the first cell
+        read on its own when the rows start below it."""
+        firsts: dict[Cell, Value] = {}
+        ref = SheetRef(name=sheet.name) if sheet.name else SheetRef(id=sheet.id)
+        for row in rows:
+            for n, value in enumerate(row):
+                for merge in fills:
+                    if value.column != merge.first.column \
+                            or not merge.first.row <= value.row <= merge.last.row:
+                        continue
+                    if value.row == merge.first.row:
+                        firsts[merge.first] = value
+                    elif value.t == "blank" and not value.formula:
+                        first = firsts.get(merge.first)
+                        if first is None:
+                            first = firsts[merge.first] = next(iter(self._read(
+                                RangeAddress(ref, Area(merge.first, merge.first)),
+                                formats=formats)))[0]
+                        row[n] = filled(first, value)
+                    break
+            yield row
+
+    def _formulas_withheld(self, rows: Iterator[list[Value]], sheet: str,
+                           readers: "list[SheetReader]") -> Iterator[list[Value]]:
+        """``rows`` with the text of each formula that reaches a cell hidden from the
+        model left out (:attr:`Value.formula_withheld
+        <xlsx_agent.read.types.Value.formula_withheld>`; :meth:`Regions.formula_withheld
+        <xlsx_agent.read.regions.Regions.formula_withheld>`).  A shared group is judged
+        whole, by its first cell's text and the range it fills."""
+        regions = self.regions
+        for row in rows:
+            groups = readers[0].shared_groups if readers else {}
+            for value in row:
+                if not value.formula:
+                    continue
+                anchor = value.shared_from or value.a
+                text, fill = groups.get(anchor, (value.formula_text, None))
+                if not text:
+                    continue
+                filled = _area(fill)
+                if filled is None and value.shared_from:   # a group without its range
+                    first = _area(anchor.rpartition("!")[2])
+                    if first is not None:
+                        filled = Area(first.first, Cell(max(first.first.row, value.row),
+                                                        max(first.first.column, value.column)))
+                origin = filled.first if filled is not None else Cell(value.row, value.column)
+                if regions.formula_withheld(text, sheet, origin, filled):
+
+                    value.formula_text = None
+                    value.formula_withheld = True
+            yield row
+
+    def _read_rows(self, areas: "list[RangeAddress]", *, formats: bool = False,
+                   columns: "set[int] | None" = None,
+                   markdown: "bool | str" = False) -> Iterator[list[Value]]:
+        """The rows of ``areas`` (one row each, on one sheet, alike in columns), in their
+        order: one read through the rows they span, keeping theirs."""
+        wanted = {a.area.first.row for a in areas}
+        first, last = areas[0].area.first, areas[0].area.last
+        span = RangeAddress(areas[0].sheet, Area(Cell(min(wanted), first.column),
+                                                 Cell(max(wanted), last.column)))
+        found = {}
+        for row in self._read(span, formats=formats, columns=columns, markdown=markdown):
+            if row and row[0].row in wanted:
+                found[row[0].row] = row
+        return iter([found[a.area.first.row] for a in areas])
+
+    def _rows_apart(self, address: RangeAddress) -> bool:
+        """Whether rows of the range's sheet far apart are read as well by a read for each
+        as by one through them all: its reads start near their rows (it has a
+        :class:`~xlsx_agent.read.stream.RowIndex`), and no cell read depends on one passed
+        on the way (it has no shared formula, whose group's first cell the others name)."""
+        if self.regions.span(address.sheet) is not None:
+            return False
+        index = self.scan(self._cell_sheet(self.sheet_of(address))).index
+        return index is not None and not index.shared_formulas
+
+    def cell(self, address: "str | RangeAddress | TableAddress", *,
+             formats: bool = False, markdown: bool = False) -> Value:
+        """One cell's value (``Stock!F2``, or a ``t:`` value such as
+        ``t:Products/SKU-0042/Price``); ``blank`` when the sheet stores nothing there."""
+        target: "Address | None" = parse_address(address) if isinstance(address, str) \
+            else address
+        if isinstance(target, TableAddress):
+            target = self.resolve(target).range
+        if not isinstance(target, RangeAddress) or target.kind != "cell":
+            raise ValueError("a cell address names one cell, as Stock!F2")
+        return next(iter(self.read(target, formats=formats, markdown=markdown)))[0]
+
+    def _read_sheets(self) -> list[Sheet]:
+        holder = self._child("sheets")
+        if holder is None:
+            return []
+        relationships = self.package.relationships(self.part)
+        out = []
+        for node in holder:
+            if not isinstance(node.tag, str) or node.tag.rpartition("}")[2] != "sheet":
+                continue
+            rel_id = next((node.get(f"{{{ns}}}id") for ns in NS_R if node.get(f"{{{ns}}}id")), None)
+            rel = relationships.get(rel_id) if rel_id else None
+            part = rel.target_part if rel is not None and not rel.is_external else None
+            if part is not None and not self.package.has_part(part):
+                part = None
+            kind = rel.type.rpartition("/")[2] if rel is not None else None
+            kind = SHEET_TYPES.get(kind, kind) if kind is not None else None
+            out.append(Sheet(name=node.get("name") or "", id=_int(node.get("sheetId")),
+                             state=node.get("state") or "visible",
+                             protected=part is not None and self._protected(part, kind), type=kind, part=part))
+        if self._redaction is not None:
+            out = _shown_names(out, self._redaction)
+        return out
+
+    def _protected(self, part: str, kind: str | None) -> bool:
+        """Whether the sheet part's ``sheetProtection`` turns protection on, streamed: the
+        element follows the cells, and a sheet is never parsed whole -- read from the
+        sheet's tree when an edit has parsed it (a dirty part's bytes are its tree written
+        out, which a sheet of many rows pays for)."""
+        trees = getattr(self.package, "_trees", None)   # ooxml-edit's parsed parts
+        root = trees.get(part) if isinstance(trees, dict) else None
+        if root is not None:
+            node = next(root.iter(*_PROTECTION), None)
+            return node is not None and _true(node.get("content" if kind == "chartsheet"
+                                                       else "sheet"))
+        source = SheetBytes(self._part_bytes(part))
+        # One streamed look at the part: what a pass will need of it is kept (by part, as a
+        # reader would keep it), so the first pass need not look again.
+        facts = self._plans.get(part)
+        if facts is None:
+            facts = self._plans[part] = _parsed(part, lambda: _Facts.of(source))
+        if not facts.protection:
+            return False  # the element's name is spelt out in any 8-bit encoding
+        attribute = "content" if kind == "chartsheet" else "sheet"
+        return _parsed(part, lambda: _scan_protection(source.stream(), attribute))
+
+
+def _as_markdown(value: Value) -> Value:
+    """``value`` with its Markdown as ``v`` (a text value no rule cleaned)."""
+    if value.t == "text" and value.markdown is not None and not value.cleaned:
+        value.v = value.markdown
+    return value
+
+
+def _markdown_rows(rows: Iterator[list[Value]]) -> Iterator[list[Value]]:
+    for row in rows:
+        yield [_as_markdown(value) for value in row]
+
+
+#: The sheet types that hold cells (a chart sheet and a dialog sheet hold none).
+_CELL_SHEETS = ("worksheet", "macrosheet")
+
+
+def _shown_names(sheets: list[Sheet], redaction: "Redaction") -> list[Sheet]:
+    """``sheets`` with each name a redaction changes shown redacted, made unique (case
+    aside) among every sheet's name, shown or stored, by `` (2)``, `` (3)``..."""
+    taken = {s.name.casefold() for s in sheets}
+    out = []
+    for sheet in sheets:
+        shown = redaction.text(sheet.name) if sheet.name else sheet.name
+        if shown == sheet.name:
+            out.append(sheet)
+            continue
+        name, n = shown, 1
+        while name.casefold() in taken:
+            n += 1
+            name = f"{shown} ({n})"
+        taken.add(name.casefold())
+        out.append(replace(sheet, name=name, stored=sheet.name))
+    return out
+
+
+def _withheld(rows: Iterator[list[Value]], areas: list[Area]) -> Iterator[list[Value]]:
+    """``rows`` with each cell of ``areas`` (columns hidden from the model by a declared
+    table) given blank: its place, nothing of what it holds."""
+    for row in rows:
+        for n, value in enumerate(row):
+            if any(a.first.row <= value.row <= a.last.row
+                   and a.first.column <= value.column <= a.last.column for a in areas):
+                row[n] = Value(value.sheet, value.row, value.column)
+        yield row
+
+
+def _guarded(part: str, run) -> Iterator:
+    try:
+        yield from run()
+    except etree.XMLSyntaxError:
+        raise OpenError("damaged", f"{part} cannot be parsed as safe, well-formed XML") from None
+    except zipfile.BadZipFile:
+        raise OpenError("damaged", _UNREADABLE.format(part=part)) from None
+
+
+#: A part kept compressed whose data a read found damaged (it is checked as it is read).
+_UNREADABLE = "{part}'s compressed data is damaged"
+
+
+def _scan_protection(data, attribute: str) -> bool:
+    for _, node in iterparse_xml(data, tag=_PROTECTION + _ROWS):
+        if node.tag in _PROTECTION:
+            return _true(node.get(attribute))
+        node.clear()
+        while node.getprevious() is not None:
+            del node.getparent()[0]
+    return False
+
+
+def _parsed(part: str, parse):
+    """``parse()``, with the parser's refusal turned into :class:`OpenError`: the part's
+    name only, since lxml's message may quote the part."""
+    try:
+        return parse()
+    except etree.XMLSyntaxError:
+        raise OpenError("damaged", f"{part} cannot be parsed as safe, well-formed XML") from None
+    except zipfile.BadZipFile:
+        raise OpenError("damaged", _UNREADABLE.format(part=part)) from None
+
+
+def _true(value: str | None) -> bool:
+    """An ``xsd:boolean``."""
+    return value is not None and value.strip() in ("1", "true")
+
+
+def _int(value: str | None) -> int | None:
+    try:
+        return int(value) if value is not None else None
+    except ValueError:
+        return None
