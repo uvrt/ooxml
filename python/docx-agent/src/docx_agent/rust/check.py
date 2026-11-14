@@ -30,6 +30,7 @@ import itertools
 import json
 import logging
 import os
+import re
 import threading
 import time
 from collections import Counter, OrderedDict
@@ -614,13 +615,20 @@ def _serve(c: Any, call: Any, arguments: dict[str, Any], timing: Any) -> Any:
         if len(ranges) > MAX_RANGES:
             raise ToolError("limit", f"{len(ranges)} ranges: at most {MAX_RANGES} per check; a span p:A..t:B "
                             "covers many blocks", field="range")
-        scope = Scope(document, ranges)
-    spec = []
-    for found in scope.ranges:
-        blocks = _whole_blocks(document, found)
-        if blocks is None:
-            raise Fallback("a range of parts of blocks")
-        spec.append({"address": found.address, "paragraphs": list(found.paragraphs), "blocks": blocks})
+        scope = _cached_scope(call, ranges)
+        spans = _spans(ranges)
+        if spans is None:
+            if scope is None:
+                scope = Scope(document, ranges)
+            spec = []
+            for found in scope.ranges:
+                blocks = _whole_blocks(document, found)
+                if blocks is None:
+                    raise Fallback("a range of parts of blocks")
+                spec.append({"address": found.address, "paragraphs": list(found.paragraphs), "blocks": blocks})
+        else:
+            # Blocks and spans of blocks: resolved by the owner, from its own list of blocks.
+            spec = [{"address": address, "span": [first, last]} for address, first, last in spans]
     doc = open_doc(call)
     if doc is None:
         raise Fallback("document not modelled")
@@ -629,14 +637,10 @@ def _serve(c: Any, call: Any, arguments: dict[str, Any], timing: Any) -> Any:
     live = _live(document)
     if seq is None or doc.stale is not None:
         raise Fallback("version not followed")
-    call.read_scope = read_scope(scope, layout=True)
     if "layout" not in wanted:
         wanted.append("layout")
     keeps = KEEP_TRIALS or "keeps" in wanted
     report: dict[str, Any] = {}
-    if "validate" in wanted:
-        with timing.part("validate"):
-            _validate(document, entry, scope, report, cache=not call.in_batch)
     seen = live.__dict__.get("_rust_seen")
     since = "reflow" in wanted and seen is not None and seen[0] != version
     if "reflow" in wanted and seen is None and live.__dict__.get("_tool_seen_layout") is not None:
@@ -645,7 +649,9 @@ def _serve(c: Any, call: Any, arguments: dict[str, Any], timing: Any) -> Any:
     from .. import layout_facts
     from ..tools import scoped
 
-    request = {"ranges": spec, "subjects": sorted(scope.subjects()), "scoped": sorted(scope.paragraphs),
+    request = {"ranges": spec, "derive": scope is None,
+               "subjects": sorted(scope.subjects()) if scope is not None else [],
+               "scoped": sorted(scope.paragraphs) if scope is not None else [],
                "keeps": bool(keeps and keep_trials.asked()), "layout": True, "since": since, "aliases": aliases,
                "fields": "fields" in wanted,
                # the caps as docx-agent's modules hold them now
@@ -660,6 +666,13 @@ def _serve(c: Any, call: Any, arguments: dict[str, Any], timing: Any) -> Any:
     answer = json.loads(text)
     if answer.get("fallback"):
         raise Fallback(answer["fallback"])
+    if scope is None:
+        scope = RustScope(document, answer["resolved"], ranges)
+        _keep_scope(call, ranges, scope)
+    call.read_scope = read_scope(scope, layout=True)
+    if "validate" in wanted:
+        with timing.part("validate"):
+            _validate_in(document, entry, scope, report, cache=not call.in_batch)
     started = time.perf_counter()
     report["range"] = answer["range"]
     on = answer["on"]
@@ -693,6 +706,120 @@ def _serve(c: Any, call: Any, arguments: dict[str, Any], timing: Any) -> Any:
     # (the order the handler writes them in)
     ordered = {k: report[k] for k in ("validate", "range", "reflow", "layout", "fields", "timing") if k in report}
     return Result(summary=summary, data=ordered)
+
+
+def _validate_in(document: Any, entry: Any, scope: Any, report: dict[str, Any], *, cache: bool) -> None:
+    """``shared._validate``: with no problems in the document, none in the scope and none
+    elsewhere, read without placing them (a scope made here reads its roots only to place
+    some)."""
+    from ..tools.format import FORMAT
+    from ..tools.shared import _validate, problems_now, validate_delta
+
+    found = problems_now(entry, FORMAT, cache=cache)
+    if found:
+        _validate(document, entry, scope, report, cache=cache)
+        return
+    delta = validate_delta(entry, found)
+    report["validate"] = {"new": [], "fixed": delta["fixed"], "baseline": delta["baseline"], "problems": [],
+                          "elsewhere": 0}
+
+
+#: A block's id as the Word tools write it, and a span of two.
+_SPAN = re.compile(r"^([pt]:[0-9A-F]{8})(?:\.\.([pt]:[0-9A-F]{8}))?$")
+
+
+def _spans(ranges: list[str]) -> "list[tuple[str, str, str]] | None":
+    """``[(address, first, last)]`` where every range is a top-level block or a span of
+    them by their ids (the owner resolves those), else ``None``."""
+    out = []
+    for address in ranges:
+        found = _SPAN.match(address)
+        if found is None:
+            return None
+        out.append((address, found.group(1), found.group(2) or found.group(1)))
+    return out
+
+
+def _cached_scope(call: Any, ranges: list[str]) -> Any:
+    found = call.__dict__.get("_rust_scope")
+    return found[1] if found is not None and found[0] == tuple(ranges) else None
+
+
+def _keep_scope(call: Any, ranges: list[str], scope: Any) -> None:
+    """The scope a check's numbers resolved, for its handler (one resolution per call)."""
+    call.__dict__["_rust_scope"] = (tuple(ranges), scope)
+
+
+def _rust_scope_class() -> Any:
+    from ..scope import Range, Scope
+
+    class _RustScope(Scope):
+        """:class:`docx_agent.scope.Scope` of some blocks and spans of blocks, as the
+        document's owner resolved them (its own list of the body's blocks): the same
+        paragraphs, blocks and tables; ``roots`` (the elements validate's problems are looked
+        for in) from docx-agent's own reading, made when asked (only where there are
+        problems to place)."""
+
+        def __init__(self, document: Any, resolved: dict[str, Any], addresses: list[str]) -> None:
+            self.document = document
+            self.addresses = list(addresses)
+            self.ranges = [Range(r["address"], list(r["paragraphs"]), list(r["blocks"]), [])
+                           for r in resolved["ranges"]]
+            self.paragraphs = {p for r in self.ranges for p in r.paragraphs}
+            self.tables = set(resolved["tables"])
+            self.drawings = set()
+            self._roots = None
+
+        @property
+        def roots(self) -> list:
+            if self._roots is None:
+                self._roots = Scope(self.document, self.addresses).roots
+            return self._roots
+
+    return _RustScope
+
+
+def RustScope(document: Any, resolved: dict[str, Any], addresses: list[str]) -> Any:  # noqa: N802
+    return _rust_scope_class()(document, resolved, addresses)
+
+
+def number_texts(call: Any, scope_arguments: Any) -> Any:
+    """``textfacts.number_texts``' texts of a range, from the document's owner (each
+    paragraph's text kept with its block), or ``None`` (read its own way)."""
+    c = core()
+    arguments = getattr(call, "arguments", None)
+    if c is None or not call.may_unlock or call.in_batch or request_supported(arguments, call.document) or \
+            scope_arguments.get("pages") is not None or scope_arguments.get("slides") is not None:
+        return None
+    from ..scope import ranges_of
+    from ..tools._base import resolve
+
+    ranges = ranges_of(resolve(call, scope_arguments.get("range")))
+    spans = _spans(ranges) if ranges else None
+    if not spans:
+        return None
+    try:
+        doc = open_doc(call)
+    except Exception:  # noqa: BLE001
+        return None
+    if doc is None or doc.stale is not None:
+        return None
+    seq = doc.seqs.get(call.document.history.version)
+    if seq is None:
+        return None
+    request = {"ranges": [{"address": a, "span": [f, l]} for a, f, l in spans], "derive": True, "numbers": True}
+    try:
+        with call.unlocked():
+            text, _ = c.check(doc.key, seq, json.dumps(request), None)
+    except Exception:  # noqa: BLE001
+        return None
+    if text is None:
+        return None
+    answer = json.loads(text)
+    if answer.get("fallback"):
+        return None
+    _keep_scope(call, ranges, RustScope(call.document, answer["resolved"], ranges))
+    return answer["texts"]
 
 
 def _coverage(mirror: Any, pages: int, blocks: int) -> tuple[dict[str, Any], list[str]]:

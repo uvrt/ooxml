@@ -34,9 +34,15 @@ pub const MIN_CONFIDENCE: f64 = 0.5;
 #[derive(Deserialize, Clone)]
 pub struct RangeReq {
     pub address: String,
+    #[serde(default)]
     pub paragraphs: Vec<String>,
     /// The range's top-level blocks (whole blocks only: docx-agent checks it).
+    #[serde(default)]
     pub blocks: Vec<String>,
+    /// Or the first and last of a span of top-level blocks, resolved here (`blocks` and
+    /// `paragraphs` made from it; the answer's `resolved` says them).
+    #[serde(default)]
+    pub span: Option<(String, String)>,
 }
 
 #[derive(Deserialize, Clone, Default)]
@@ -65,6 +71,12 @@ pub struct Request {
     /// Whether the fields facts are asked (`shared._field_facts`, its note aside).
     #[serde(default)]
     pub fields: bool,
+    /// Whether `subjects` and `scoped` are made here from the ranges (spans resolved here).
+    #[serde(default)]
+    pub derive: bool,
+    /// Whether the texts a check of numbers reads are asked (`textfacts.number_texts`).
+    #[serde(default)]
+    pub numbers: bool,
     /// docx-agent's caps as its modules hold them at the call: `[CAP, EXTENT_PAGES,
     /// BREAKS_LISTED, TRIALS]`.
     #[serde(default = "caps")]
@@ -1937,7 +1949,10 @@ fn page_digests(s: &Snap, aliases: &HashMap<String, String>) -> Vec<(u64, Vec<St
 }
 
 /// A page's (1-based) body lines as `page_digests` reads them (tests and measurements).
-pub fn page_line_digests(s: &Snap, page: usize) -> Vec<(Option<String>, i64, i64, u64, u64, u32, u32)> {
+/// A line as `page_line_digests` says it: `(key, top, pitch, digest, table digest, row, cell)`.
+pub type LineDigest = (Option<String>, i64, i64, u64, u64, u32, u32);
+
+pub fn page_line_digests(s: &Snap, page: usize) -> Vec<LineDigest> {
     let Some(k) = (0..s.pag.starts.len()).find(|k| s.pag.page_at[*k] as usize + 1 == page) else {
         return Vec::new();
     };
@@ -2004,15 +2019,136 @@ pub fn since(now: &Snap, before: &Snap, aliases: &HashMap<String, String>) -> Va
     Value::Object(out)
 }
 
+/// `textfacts.number_texts`' texts of the ranges' paragraphs, in order: a top-level
+/// paragraph's own, a cell's paragraphs as one (`{"at", "ids", "texts", "table"}`), those in
+/// a table of contents left out.
+fn number_texts(fx: &F, req: &Request) -> Result<Value, String> {
+    let s = fx.s;
+    let mut seen = HashSet::new();
+    let mut items = Vec::new();
+    for r in &req.ranges {
+        for b in &r.blocks {
+            let &i = fx.items.get(b.as_str()).ok_or("a block not laid out")?;
+            if seen.insert(i) {
+                items.push(i);
+            }
+        }
+    }
+    items.sort();
+    let mut out: Vec<Value> = Vec::new();
+    for i in items {
+        let r = rec(&s.inputs[i]).ok_or("a block without its record")?;
+        if fx.is_para(i) {
+            if b(Some(r), "toc") {
+                continue;
+            }
+            if !b(Some(r), "nd") {
+                continue; // no digit: nothing a check of numbers reads
+            }
+            let id = r.get("id").cloned().unwrap_or(Value::Null);
+            out.push(
+                json!({"at": id, "ids": [id], "texts": [r.get("nt").cloned().unwrap_or(json!(""))],
+                            "table": null}),
+            );
+            continue;
+        }
+        if b(Some(r), "toc_table") {
+            return Err("numbers: a table of contents in a table".into());
+        }
+        let mut current: Option<String> = None;
+        let mut digits: Vec<bool> = Vec::new();
+        let start = out.len();
+        for p in arr(Some(r), "paras") {
+            let cell = p
+                .get("cell")
+                .and_then(Value::as_str)
+                .ok_or("numbers: a cell without its id")?;
+            let id = p.get("id").cloned().unwrap_or(Value::Null);
+            let text = p.get("nt").cloned().unwrap_or(json!(""));
+            let digit = b(Some(p), "nd");
+            if current.as_deref() == Some(cell) {
+                let last = out.last_mut().unwrap();
+                last["ids"].as_array_mut().unwrap().push(id);
+                last["texts"].as_array_mut().unwrap().push(text);
+                *digits.last_mut().unwrap() |= digit;
+            } else {
+                current = Some(cell.to_string());
+                out.push(json!({"at": cell, "ids": [id], "texts": [text], "table": fx.key(i)}));
+                digits.push(digit);
+            }
+        }
+        // a cell's paragraphs, one text: read where any of them has a digit
+        let cells: Vec<Value> = out.drain(start..).collect();
+        out.extend(cells.into_iter().zip(digits).filter(|(_, d)| *d).map(|(g, _)| g));
+    }
+    Ok(Value::Array(out))
+}
+
 /// One check's answer: `{"version", "pages", "blocks", "range", "on", "layout", "since",
 /// "pages_of", "fallback"}`.
 pub fn answer(s: &Snap, req: &Request, seen: Option<&Snap>) -> Value {
+    // spans resolved: the range's blocks and every paragraph in them, cells' too
+    let mut resolved: Vec<RangeReq> = Vec::with_capacity(req.ranges.len());
+    let mut tables: Vec<String> = Vec::new();
+    for r in &req.ranges {
+        let Some((first, last)) = &r.span else {
+            resolved.push(r.clone());
+            continue;
+        };
+        let keys = s.keys();
+        let (Some(&a), Some(&b)) = (keys.get(first), keys.get(last)) else {
+            return json!({"fallback": "a span's end is not a top-level block here"});
+        };
+        if a > b {
+            return json!({"fallback": "a span that ends before it starts"});
+        }
+        let mut blocks = Vec::new();
+        let mut paragraphs = Vec::new();
+        for aux in &s.aux[a..=b] {
+            let Some(key) = &aux.key else {
+                return json!({"fallback": "a block without an id"});
+            };
+            blocks.push(key.clone());
+            if aux.table {
+                tables.push(key.clone());
+            }
+            for p in &aux.paras {
+                match &p.key {
+                    Some(k) => paragraphs.push(k.clone()),
+                    None => return json!({"fallback": "a paragraph without an id"}),
+                }
+            }
+        }
+        resolved.push(RangeReq {
+            address: r.address.clone(),
+            paragraphs,
+            blocks,
+            span: None,
+        });
+    }
+    let (subjects, scoped): (Vec<String>, Vec<String>) = if req.derive {
+        let mut p: Vec<String> = resolved.iter().flat_map(|r| r.paragraphs.iter().cloned()).collect();
+        p.sort();
+        p.dedup();
+        let mut subj = p.clone();
+        subj.extend(tables.iter().cloned());
+        (subj, p)
+    } else {
+        (req.subjects.clone(), req.scoped.clone())
+    };
+    let req2 = Request {
+        ranges: resolved,
+        subjects: Vec::new(),
+        scoped: Vec::new(),
+        ..req.clone()
+    };
+    let req = &req2;
     let g = s.global.get_or_init(|| make_global(s));
     let fx0 = F {
         s,
         laid: RefCell::new(HashMap::new()),
-        subjects: req.subjects.iter().map(String::as_str).collect(),
-        scoped: req.scoped.iter().map(String::as_str).collect(),
+        subjects: subjects.iter().map(String::as_str).collect(),
+        scoped: scoped.iter().map(String::as_str).collect(),
         wanted: None,
         caps: req.caps,
         items: s.keys(),
@@ -2023,6 +2159,22 @@ pub fn answer(s: &Snap, req: &Request, seen: Option<&Snap>) -> Value {
     out.insert("version".into(), json!(s.version));
     out.insert("pages".into(), json!(s.page_count()));
     out.insert("blocks".into(), json!(s.inputs.len()));
+    if req.derive {
+        let r: Vec<Value> = req
+            .ranges
+            .iter()
+            .map(|r| json!({"address": r.address, "paragraphs": r.paragraphs, "blocks": r.blocks}))
+            .collect();
+        out.insert("resolved".into(), json!({"ranges": r, "tables": tables}));
+    }
+    if req.numbers {
+        match number_texts(&fx0, req) {
+            Ok(v) => {
+                out.insert("texts".into(), v);
+            }
+            Err(why) => fallback = Some(why),
+        }
+    }
     if !req.ranges.is_empty() {
         let (found, on) = ranges(&fx0, req, &mut fallback);
         out.insert("range".into(), Value::Array(found));

@@ -789,11 +789,21 @@ def _record(self, unit: Unit, table=None) -> dict:
         rec = records.table_record(ctx, unit.element, unit.key, unit.blocks[0], self.d2)
         rec.update(_table_geometry(self, unit.element, unit.blocks[0]))
     fields, names = records.fields_of(unit.element, copy.deepcopy(unit.fstack or []))
+    # In a table of contents (textfacts: _toc_paragraphs): one open before it, or begun in it.
+    if any(_keyword(entry[0]) == "TOC" for entry in unit.fstack or ()) or any(f[0] == "TOC" for f in fields):
+        if table is not None:
+            rec["toc_table"] = True
+        rec["toc"] = True
     if fields:
         rec["fld"] = fields
     if names:
         rec["bm"] = names
     return rec
+
+
+def _keyword(instruction: str) -> str:
+    words = (instruction or "").split()
+    return words[0].upper() if words else ""
 
 
 def _thread_fields(self, units, stack: list) -> list:

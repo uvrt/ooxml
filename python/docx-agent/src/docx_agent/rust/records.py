@@ -103,8 +103,12 @@ def paragraph_record(ctx: Context, element: Any, identifier: str, *, top: bool) 
     from ..edit.typography import paragraph_problems
     from ..layout_facts import _CONTENT, _page_break_at, _state
 
+    from ..edit import text as _text
+
     document = ctx.document
-    rec: dict[str, Any] = {"id": identifier}
+    # A check of numbers' text of it (textfacts.number_texts).
+    text = _text.paragraph_text(element).replace(_text.OBJECT, " ")
+    rec: dict[str, Any] = {"id": identifier, "nt": text, "nd": any(ch.isdigit() for ch in text)}
     found = ctx.facts._direct(element, identifier)
     if found is not None:
         rec["df"] = found
@@ -229,6 +233,12 @@ def table_record(ctx: Context, element: Any, identifier: str, model_table: Any, 
                         if id_of(p) is not None]
     finally:
         ctx.facts.kept_leads = set()
+    from ..tools.textfacts import _cell_id
+
+    _TC = _W + "tc"
+    for found, p in zip(rec["paras"], [p for p in element.iter(_P) if id_of(p) is not None]):
+        cell = next(p.iterancestors(_TC), None)
+        found["cell"] = _cell_id(index, cell) if cell is not None else None
     return rec
 
 
