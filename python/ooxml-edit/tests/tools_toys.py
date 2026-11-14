@@ -1,0 +1,620 @@
+"""Toy tools for the tool-layer tests: two per format, on ooxml-edit's own package objects.
+
+pptx-agent and docx-agent ship their real tools in their own packages; these only exercise
+the plumbing.  Both toy formats open the synthetic test package (``synthetic.py``) as an
+:class:`~ooxml_edit.opc.OpcPackage` with a :class:`~ooxml_edit.history.History`, and edit it
+the way a format layer would: a checkpoint, a change to a part's tree, ``mark_dirty``.
+
+* "pptx" (the toy deck): ``toy_ppt_set_title`` sets a page's title; ``toy_ppt_render``
+  renders a page to a PNG in a worker process.
+* "docx" (the toy text): ``toy_word_insert`` adds an item to the main part;
+  ``toy_word_read`` reads the items back, paged.
+* ``toy_save`` is one shared definition with a handler per kind, behind the validate gate.
+
+The worker functions are module-level so a spawned worker process can import them.
+"""
+
+from __future__ import annotations
+
+import os
+import struct
+import time
+import warnings
+import zlib
+
+from ooxml_edit.history import History
+from ooxml_edit.opc import OpcPackage
+from ooxml_edit.tools import (DocumentFormat, Result, ToolError, ToolGroup, array, boolean,
+                              integer, page_text, string, tool, worker_task)
+from ooxml_edit.xml import make, qn, register_namespaces
+
+import synthetic
+
+register_namespaces({"tst": synthetic.NS})
+
+
+class ToyWarning(UserWarning):
+    """What a library warns about; the toolbox collects it into the result."""
+
+
+class ToyLabelError(LookupError):
+    """A library error that knows its candidates, mapped to ``label_not_found``."""
+
+    def __init__(self, label: str, candidates: list[str]) -> None:
+        super().__init__(f"no page labelled {label!r}")
+        self.candidates = candidates
+
+
+class ToyDocument:
+    """A document over the synthetic package: pages with titles, and a main part of items."""
+
+    def __init__(self, data: bytes) -> None:
+        self.package = OpcPackage.open(data)
+        self.history = History(self.package)
+
+    @property
+    def pages(self) -> list[str]:
+        return self.package.related_parts_of_type(synthetic.MAIN, synthetic.REL_PAGE)
+
+    def page(self, number: int) -> str:
+        pages = self.pages
+        if not 1 <= number <= len(pages):
+            raise IndexError(f"no page {number}; the pages are 1 to {len(pages)}")
+        return pages[number - 1]
+
+    def title(self, number: int) -> str | None:
+        return self.package.tree(self.page(number)).get("title")
+
+    def set_title(self, number: int, text: str) -> None:
+        part = self.page(number)
+        self.history.checkpoint()
+        self.package.tree(part).set("title", text)
+        self.package.mark_dirty(part)
+        if len(text) > 40:
+            warnings.warn(f"the title of page {number} is {len(text)} characters", ToyWarning)
+
+    def items(self) -> list[str]:
+        root = self.package.tree(synthetic.MAIN)
+        return [item.get("val", "") for item in root.iter(qn("tst:item"))]
+
+    def insert(self, text: str, at: str) -> int:
+        self.history.checkpoint()
+        root = self.package.tree(synthetic.MAIN)
+        item = make("tst:item", val=text)
+        if at == "start":
+            root.insert(0, item)
+        else:
+            root.append(item)
+        self.package.mark_dirty(synthetic.MAIN)
+        return self.items().index(text) + 1
+
+    def batch(self):
+        return self.history.batch()
+
+    def undo(self) -> bool:
+        return self.history.undo()
+
+    def redo(self) -> bool:
+        return self.history.redo()
+
+    def to_bytes(self) -> bytes:
+        return self.package.to_bytes()
+
+    def problems(self) -> list[str]:
+        return [f"page {n} has an empty title" for n in range(1, len(self.pages) + 1)
+                if self.title(n) == ""]
+
+
+def _is(extension: str):
+    return lambda data, name: data.startswith(b"PK") and name.lower().endswith(extension)
+
+
+def _label_candidates(exc: ToyLabelError) -> list[str]:
+    return exc.candidates
+
+
+def _page_scope(document: ToyDocument, scope: str) -> list[str]:
+    """A toy deck's undo scope: a page (``"2"``), its part and relationships."""
+    try:
+        part = document.page(int(scope))
+    except (ValueError, IndexError):
+        raise ToolError("not_found", f"no page {scope!r}", field="scope",
+                        valid_options=[str(n) for n in range(1, len(document.pages) + 1)]) from None
+    return document.package.reachable_parts(part, lambda rel: False)
+
+
+#: What a scoped undo told the format (``restored``), for the tests.
+RESTORED: list[int] = []
+
+DECK = DocumentFormat(
+    kind="pptx", open=ToyDocument, detect=_is(".pptx"), problems=ToyDocument.problems,
+    warnings=(ToyWarning,), prompt="Toy deck: pages are numbered from 1.",
+    errors={ToyLabelError: ("label_not_found", _label_candidates)},
+    undo_scope=_page_scope, restored=lambda document: RESTORED.append(id(document)))
+TEXT = DocumentFormat(
+    kind="docx", open=ToyDocument, detect=_is(".docx"), problems=ToyDocument.problems,
+    warnings=(ToyWarning,), prompt="Toy text: items are numbered from 1.")
+
+GROUPS = [ToolGroup("toy_render", "Rendering pages to images."),
+          ToolGroup("toy_read", "Reading items, paged.")]
+
+
+# -- the worker's side -------------------------------------------------------------------------
+
+
+def png(width: int, height: int, rgb: tuple[int, int, int] = (40, 90, 160)) -> bytes:
+    """A solid-colour PNG, written with the standard library."""
+    row = b"\x00" + bytes(rgb) * width
+    raw = zlib.compress(row * height, 9)
+
+    def chunk(kind: bytes, body: bytes) -> bytes:
+        return (struct.pack(">I", len(body)) + kind + body
+                + struct.pack(">I", zlib.crc32(kind + body) & 0xFFFFFFFF))
+
+    header = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", raw)
+            + chunk(b"IEND", b""))
+
+
+@worker_task
+def render_page(data: bytes, number: int, width: int, seconds: float = 0.0) -> tuple[bytes, int, int]:
+    """What a renderer does in a worker: open the bytes, draw a page.  ``seconds`` stalls it."""
+    document = ToyDocument(data)
+    document.page(number)
+    if seconds:
+        time.sleep(seconds)
+    height = width * 9 // 16
+    return png(width, height), width, height
+
+
+@worker_task
+def read_title(data: bytes, number: int, seconds: float = 0.0) -> tuple[str, int, int]:
+    """A slow read in a worker (``Call.on_snapshot``): a page's title in the bytes, their
+    length and the worker's pid.  ``seconds`` stalls it."""
+    import os
+    if seconds:
+        time.sleep(seconds)
+    return ToyDocument(data).title(number), len(data), os.getpid()
+
+
+@worker_task
+def worker_pid() -> int:
+    import os
+    return os.getpid()
+
+
+#: What :func:`keep_value` left in this process: a worker's own state, for affinity.
+_KEPT: dict = {}
+
+
+@worker_task
+def keep_value(key: str, value: object, seconds: float = 0.0) -> tuple[int, object]:
+    """Keep ``value`` under ``key`` in this process, after ``seconds``; the pid, and what
+    was kept there before (``None``: nothing -- this worker never held ``key``)."""
+    import os
+    if seconds:
+        time.sleep(seconds)
+    before = _KEPT.get(key)
+    _KEPT[key] = value
+    return os.getpid(), before
+
+
+@worker_task
+def fonts_seen(font_dirs) -> tuple[int, object]:
+    """What a renderer in a worker is handed as its font folders, and the worker's pid."""
+    import os
+    return os.getpid(), font_dirs
+
+
+@worker_task
+def locale_seen(locale) -> tuple[int, object]:
+    """What a renderer in a worker is handed as its locale, and the worker's pid."""
+    import os
+    return os.getpid(), locale
+
+
+# -- the toy tools -----------------------------------------------------------------------------
+
+
+@tool("toy_ppt_set_title", "Set the title of one page of a deck. Returns the page's address.",
+      {"doc": string("Document id, e.g. d1."),
+       "page": integer("Page number, from 1.", minimum=1),
+       "text": string("The new title text.", max_length=200),
+       "key": string("Idempotence key: a retry with the same key changes nothing.",
+                     optional=True)},
+      kind="pptx", mutates=True)
+def toy_ppt_set_title(call, doc, page, text, key=None):
+    call.document.set_title(page, text)
+    return Result(summary=f"Set the title of page {page}", changed=[f"page:{page}"])
+
+
+@tool("toy_ppt_render", "Render one page of a deck to a PNG. Returns the image, its size and "
+      "its token cost.",
+      {"doc": string("Document id, e.g. d1."),
+       "page": integer("Page number, from 1.", minimum=1),
+       "width": integer("Width in pixels, 16 to 2576. Default 1280.", minimum=16, maximum=2576,
+                        optional=True),
+       "stall": integer("Test only: seconds the renderer stalls.", minimum=0,
+                        optional=True)},
+      kind="pptx", group="toy_render")
+def toy_ppt_render(call, doc, page, width=1280, stall=0):
+    entry = call.entry
+    version = entry.version                  # the snapshot: this version's bytes
+    key = ("page", page, width)
+    hit = entry.render_cache.get((version, key))
+    if hit is None:
+        data = call.document.to_bytes()
+        hit = call.run_unlocked(render_page, data, page, width, stall)
+        entry.render_cache.put((version, key), hit)
+    data, w, h = hit
+    call.image(data, w, h, label=f"page {page}")
+    return Result(summary=f"Rendered page {page}")
+
+
+@tool("toy_word_insert", "Insert an item of text at the start or end of a document. Returns "
+      "the item's position.",
+      {"doc": string("Document id, e.g. d1."),
+       "text": string("The item's text.", min_length=1),
+       "at": string("Where: start or end.", enum=["start", "end"])},
+      kind="docx", mutates=True)
+def toy_word_insert(call, doc, text, at):
+    position = call.document.insert(text, at)
+    return Result(summary=f"Inserted item {position}", created=[f"item:{position}"])
+
+
+@tool("toy_word_read", "Read a document's items, one per line, in pages. Pass next_cursor "
+      "back for the next page.",
+      {"doc": string("Document id, e.g. d1."),
+       "cursor": string("next_cursor from the previous page.", optional=True),
+       "page_chars": integer("Characters per page, 1 to 24000. Default 24000.", minimum=1,
+                             maximum=24000, optional=True)},
+      kind="docx", group="toy_read")
+def toy_word_read(call, doc, cursor=None, page_chars=24000):
+    text = "".join(f"{n}. {item}\n" for n, item in enumerate(call.document.items(), 1))
+    page, next_cursor = page_text(text, cursor=cursor, limit=page_chars)
+    return Result(summary="Read items", data=page, next_cursor=next_cursor)
+
+
+_SAVE = {"doc": string("Document id, e.g. d1."),
+         "name": string("File name for the application, e.g. report.pptx."),
+         "format": string("The file format.", enum=["pptx", "docx"])}
+
+
+@tool("toy_save", "Hand a document to the application as a file. Refuses new validation "
+      "problems. Returns the name, format, size and validation report.", _SAVE, kind="pptx")
+def toy_save_deck(call, doc, name, format):
+    if format != "pptx":
+        raise ToolError("invalid_arguments", "a deck saves as pptx", field="format",
+                        valid_options=["pptx"])
+    return Result(summary=f"Saved {name}", data=call.output(name, format, call.document.to_bytes()))
+
+
+@toy_save_deck.for_kind("docx")
+def toy_save_text(call, doc, name, format):
+    if format != "docx":
+        raise ToolError("invalid_arguments", "a text document saves as docx", field="format",
+                        valid_options=["docx"])
+    return Result(summary=f"Saved {name}", data=call.output(name, format, call.document.to_bytes(),
+                                                           state=True))
+
+
+@tool("toy_ppt_find_label", "Find the page with a label. Returns its number.",
+      {"doc": string("Document id, e.g. d1."), "label": string("The label.")},
+      kind="pptx", group="toy_read")
+def toy_ppt_find_label(call, doc, label):
+    labels = [call.document.title(n) or f"untitled {n}"
+              for n in range(1, len(call.document.pages) + 1)]
+    if label not in labels:
+        raise ToyLabelError(label, labels)
+    return {"page": labels.index(label) + 1}
+
+
+TOOLS = [toy_ppt_set_title, toy_ppt_render, toy_word_insert, toy_word_read, toy_save_deck,
+         toy_ppt_find_label]
+FORMATS = [DECK, TEXT]
+
+# ``boolean`` and ``array`` are re-exported for the tests that build tools of their own.
+__all__ = ["TOOLS", "FORMATS", "GROUPS", "ToyDocument", "ToyWarning", "ToyLabelError", "png",
+           "render_page", "worker_pid", "boolean", "array"]
+
+
+@worker_task
+def raise_tool_error() -> None:
+    raise ToolError("refused", "not this way", valid_options=["a", "b"])
+
+
+# -- a daemonic parent (a Celery prefork worker's child, say) ----------------------------------
+
+
+def render_in_a_daemonic_process(queue, fallback=True, stall: int = 0) -> None:
+    """In a daemonic process, which may not start multiprocessing children: a toolbox
+    renders a page, then (after a timeout, say) another.
+
+    Puts ``(ok, error code or exception text, in_process, message, runner, then_ok)`` on
+    ``queue``.  With ``fallback=False`` the pool behaves as it did before 0.12:
+    ``Process.start`` fails."""
+    from ooxml_edit.tools import Limits, Toolbox, WorkerPool
+
+    try:
+        limits = Limits(render_timeout=1.5)
+        runner = WorkerPool(1, fallback=fallback)
+        with Toolbox(TOOLS, formats=FORMATS, limits=limits, runner=runner) as box:
+            session = box.session(limits=limits)
+            session.open(synthetic.outer_package(), "deck.pptx")
+            result = box.dispatch(session, "toy_ppt_render",
+                                  {"doc": "d1", "page": 1, "width": 32, "stall": stall})
+            then = box.dispatch(session, "toy_ppt_render", {"doc": "d1", "page": 2, "width": 32})
+            queue.put((result.ok, None if result.ok else result.error.code,
+                       runner.in_process, result.error.message if result.error else "",
+                       runner.runner, then.ok))
+    except BaseException as exc:  # noqa: BLE001 -- reported to the test
+        queue.put((False, f"{type(exc).__name__}: {exc}", None, "", None, None))
+
+
+# -- work that holds the GIL, as resvg-py's rasterise does ---------------------------------------
+
+
+@worker_task
+def hold_the_gil(data: bytes, page: int, count: int) -> tuple[bytes, int, int]:
+    """Open the bytes and hold the GIL for ``count`` additions: ``sum(range(...))`` runs in C
+    with no bytecode in between, so no other thread of this process runs meanwhile."""
+    ToyDocument(data).page(page)
+    sum(range(count))
+    return png(16, 9), 16, 9
+
+
+@tool("toy_ppt_spin", "Test only: render a page with a renderer that holds the GIL.",
+      {"doc": string("Document id, e.g. d1."),
+       "page": integer("Page number, from 1.", minimum=1),
+       "count": integer("Additions the renderer makes.", minimum=0)},
+      kind="pptx", group="toy_render")
+def toy_ppt_spin(call, doc, page, count):
+    data = call.document.to_bytes()
+    image, w, h = call.run_unlocked(hold_the_gil, data, page, count)
+    call.image(image, w, h, label=f"page {page}")
+    return Result(summary=f"Rendered page {page}")
+
+
+def concurrency_in_a_daemonic_process(queue, workers: int, count: int) -> None:
+    """In a daemonic process: one GIL-holding render alone, then two at once, then an edit
+    while one runs.  Puts ``{"runner", "pids", "one", "two", "edit", "ok"}`` (seconds) on
+    ``queue``, or ``{"error": text}``."""
+    import threading
+    import time as clock
+
+    from ooxml_edit.tools import Toolbox
+
+    try:
+        with Toolbox(TOOLS + [toy_ppt_spin], formats=FORMATS, workers=workers) as box:
+            session = box.session()
+            session.open(synthetic.outer_package(), "deck.pptx")
+            results: list = []
+
+            def spin(page: int, record: dict | None = None) -> None:
+                started = clock.perf_counter()
+                results.append(box.dispatch(session, "toy_ppt_spin",
+                                            {"doc": "d1", "page": page, "count": count}))
+                if record is not None:
+                    record["done"] = clock.perf_counter() - started
+
+            def both() -> float:
+                started = clock.perf_counter()
+                threads = [threading.Thread(target=spin, args=(page,)) for page in (1, 2)]
+                for thread in threads:
+                    thread.start()
+                for thread in threads:
+                    thread.join()
+                return clock.perf_counter() - started
+
+            both()                                      # starts both workers
+            started = clock.perf_counter()
+            spin(1)
+            one = clock.perf_counter() - started
+            two = both()
+            record: dict = {}
+            render = threading.Thread(target=spin, args=(1, record))
+            render.start()
+            # The edit is asked for once the render is under way.  Timed from when it is
+            # asked for: where the render holds this process's GIL, even the sleep's
+            # return waits for it.
+            pause = min(0.2, one / 5)
+            asked = clock.perf_counter() + pause
+            clock.sleep(pause)
+            edit = box.dispatch(session, "toy_ppt_set_title",
+                                {"doc": "d1", "page": 2, "text": "Edited"})
+            edit_time = clock.perf_counter() - asked
+            render.join()
+            queue.put({"runner": getattr(box.pool, "runner", None), "pids": box.pool.pids(),
+                       "one": one, "two": two, "edit": edit_time, "render": record["done"],
+                       "ok": all(result.ok for result in results) and edit.ok})
+    except BaseException as exc:  # noqa: BLE001 -- reported to the test
+        queue.put({"error": f"{type(exc).__name__}: {exc}"})
+
+
+# -- the subprocess worker's edge cases ---------------------------------------------------------
+
+
+@worker_task
+def noisy(text: str) -> str:
+    """Print to stdout three ways, and read stdin: none of it may reach the protocol."""
+    import os
+    import sys
+    print("noise from print", text)
+    sys.stdout.flush()
+    os.write(1, b"noise from fd 1\n")
+    sys.__stdout__.write("noise from __stdout__\n")
+    sys.__stdout__.flush()
+    return f"{text}|{sys.stdin.read()!r}"
+
+
+class Unpicklable(Exception):
+    """An exception whose arguments do not round-trip: ``__init__`` wants two."""
+
+    def __init__(self, a, b):
+        super().__init__(f"{a} and {b}")
+
+
+@worker_task
+def raise_unpicklable() -> None:
+    raise Unpicklable("one", "two")
+
+
+@worker_task
+def exit_hard() -> None:
+    import os
+    os._exit(3)
+
+
+def not_registered() -> int:
+    import os
+    return os.getpid()
+
+
+@worker_task
+def slow_warm_up() -> None:
+    """A warm-up that takes longer than the deadlines the tests give their tasks."""
+    time.sleep(2.0)
+    os.environ["OOXML_EDIT_TOYS_WARMED"] = "1"
+
+
+@worker_task
+def warmed() -> str | None:
+    return os.environ.get("OOXML_EDIT_TOYS_WARMED")
+
+
+@worker_task
+def sleep_then(seconds: float, value: object) -> object:
+    time.sleep(seconds)
+    return value
+
+
+@worker_task
+def failing_warm_up() -> None:
+    raise RuntimeError("this warm-up fails")
+
+
+# -- a renderer for the shared render pipeline (ooxml_edit.tools.render) ----------------------
+
+from ooxml_edit.tools import render as pipeline  # noqa: E402
+
+
+class ToyRenderer(pipeline.RendererBase):
+    """Views that stand alone: each page laid out by itself, its title in its SVG.  The
+    state a task is handed comes back in its facts, beside the pages it drew."""
+
+    name = "toy"
+    modules = ("ooxml_edit",)
+
+    def lay_out(self, data, items, width, font_dirs, locale, state):
+        document = ToyDocument(data)
+        count = len(document.pages)
+        views = [pipeline.View(n, f'<svg width="{width}" data-toy-id="{os.getpid()}">'
+                                  f'{document.title(n)}</svg>', n)
+                 for n in items if 1 <= n <= count]
+        return pipeline.Layout(views, pipeline.fingerprint(self, list(font_dirs)),
+                               raster=width, facts={"state": state, "count": count,
+                                                    "pid": os.getpid()})
+
+    def key_text(self, svg):
+        import re
+        return re.sub(r' data-toy-id="[^"]*"', "", svg)
+
+    def rasterise(self, views, raster):
+        if any(view.info == FAILING_PAGE for view in views):
+            raise RuntimeError(f"page {FAILING_PAGE} does not draw")
+        return [(png(raster, raster * 9 // 16), {"page": view.info}) for view in views]
+
+    def rasterise_tiles(self, svg, font_dirs):
+        warnings.warn("a label the fonts lack", ToyWarning)
+        return png(8, 8)
+
+    def warm_up(self):
+        warnings.warn("warming up", ToyWarning)
+
+
+class WholeToyRenderer(ToyRenderer):
+    """The same pages, laid out with the whole document: once, then rasterised in chunks."""
+
+    name = "toy-whole"
+    whole_document = True
+
+
+class BrokenToyRenderer(ToyRenderer):
+    """A renderer whose images are not PNGs."""
+
+    name = "toy-broken"
+
+    def rasterise(self, views, raster):
+        return [(b"GIF89a" + bytes(40), None) for _ in views]
+
+
+class FastToyRenderer(ToyRenderer):
+    """Pages with cheaper, approximate pixels on request (round 39): another colour."""
+
+    name = "toy-fast"
+    fast = True
+
+    def rasterise_fast(self, views, raster):
+        return [(png(raster, raster * 9 // 16, (200, 60, 60)), {"page": view.info, "fast": True})
+                for view in views]
+
+
+class FastWholeToyRenderer(FastToyRenderer):
+    name = "toy-fast-whole"
+    whole_document = True
+
+
+#: A page whose rasterising fails (``None``: none), set by a test; in-process runs only.
+FAILING_PAGE = None
+RENDERERS = {"alone": ToyRenderer(), "whole": WholeToyRenderer(), "broken": BrokenToyRenderer(),
+             "fast": FastToyRenderer(), "fast-whole": FastWholeToyRenderer()}
+
+
+@tool("toy_draw", "Test only: draw pages with the shared render pipeline.",
+      {"doc": string("Document id, e.g. d1."),
+       "pages": array(integer("Page number.", minimum=1), "Pages to draw."),
+       "width": integer("Width in pixels.", minimum=16, maximum=2576, optional=True),
+       "shape": string("Which renderer.", enum=list(RENDERERS), optional=True),
+       "first_alone": boolean("One chunk first, by itself.", optional=True),
+       "fast": boolean("Approximate pixels.", optional=True)},
+      kind="pptx", group="toy_render")
+def toy_draw(call, doc, pages, width=64, shape="alone", first_alone=False, fast=False):
+    seen = []
+
+    def on_facts(facts, alone):
+        seen.append((facts["state"], alone))
+        return "handed" if alone else None
+
+    drawn, facts = pipeline.draw(call, RENDERERS[shape], pages, width,
+                                 ids={n: f"p{n}" for n in pages}, fonts=(), locale=None,
+                                 state=lambda data: "kept", first_alone=first_alone,
+                                 on_facts=on_facts, fast=bool(fast))
+    for n in pages:
+        if n in drawn:
+            call.image(drawn[n][0], *pipeline.png_size(drawn[n][0]), label=f"page {n}")
+    return Result(summary="Drew", data={"drawn": sorted(drawn), "cached": sorted(
+        n for n in drawn if drawn[n][2]), "meta": {n: drawn[n][1] for n in sorted(drawn)},
+        "facts": [f["state"] for f in facts], "seen": seen,
+        "approximate": sorted(n for n in drawn if drawn[n][3])})
+
+
+@tool("toy_tiles", "Test only: a contact image of pages with the shared render pipeline.",
+      {"doc": string("Document id, e.g. d1."),
+       "pages": array(integer("Page number.", minimum=1), "Pages to tile.")},
+      kind="pptx", group="toy_render")
+def toy_tiles(call, doc, pages):
+    from ooxml_edit.tools import tiles
+
+    drawn, _ = pipeline.draw(call, RENDERERS["alone"], pages, 160,
+                             ids={n: f"p{n}" for n in pages}, fonts=(), locale=None)
+    tiling = tiles.tiling_of({"width": 160}, len(pages), name="tiles", what="pages")
+    image, w, h = pipeline.draw_tiles(call, RENDERERS["alone"],
+                                      [(drawn[n][0], f"page {n}") for n in pages], tiling,
+                                      name="tiles", what="pages", fonts=())
+    call.image(image, w, h, label="tiles")
+    return Result(summary="Tiled", data={"size": [w, h]})
+
+
+@worker_task
+def toy_warm_up() -> None:
+    pipeline.warm_up(RENDERERS["alone"])

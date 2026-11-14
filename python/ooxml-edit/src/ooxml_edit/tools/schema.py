@@ -1,0 +1,635 @@
+"""The common strict subset of JSON Schema, and a validator for calls against it.
+
+Every tool's *canonical* schema is written in a subset that both providers accept in strict
+mode, so one definition serves Claude and the OpenAI APIs alike:
+
+* a root ``type: object``; ``properties``, ``required`` and ``additionalProperties: false``
+  on every object, every key named;
+* the types ``string``, ``integer``, ``number``, ``boolean``, ``array`` (with ``items``) and
+  ``object``, one type per property -- no unions;
+* ``enum`` of strings, at most :data:`MAX_ENUM` values each and :data:`MAX_ENUM_TOTAL` in a
+  tool; ``format`` only ``date`` and ``date-time``; ``minItems`` only 0 or 1;
+* a ``description`` on every top-level property, and property names that match
+  :data:`NAME`.  Nested properties and array items may leave it out where the name, type
+  and enum say it all (``bold``, ``x``): every description is sent with every request, so
+  one that repeats the name is cost without information;
+* nesting at most :data:`MAX_DEPTH` levels below the root, no ``$ref``, no recursion.
+
+One exception: a tool that is never sent strict (``Tool(strict=False)``, the generic
+``batch`` tool) may hold a *free-form* object, ``{"type": "object", "additionalProperties":
+true}`` with no properties, whose content the dispatcher checks against another schema.
+
+What the subset cannot say -- numeric bounds, string and array lengths, "exactly one of" --
+the dispatcher enforces.  A tool keeps those in its *validation* schema, which is the
+canonical schema plus the bound keywords in :data:`BOUND_KEYWORDS`; :func:`canonical` strips
+them, and :func:`validate_call` checks them.  No jsonschema dependency: the subset is small
+enough to check by hand, and the messages are written for a model to act on.
+"""
+
+from __future__ import annotations
+
+import copy
+import datetime as _dt
+import difflib
+import re
+from typing import Any, Iterable, Mapping
+
+#: Tool and property names: lower snake case, at most 64 characters (the tightest provider
+#: rule is OpenAI Chat Completions' 64; Anthropic allows 128).
+NAME = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+
+TYPES = ("string", "integer", "number", "boolean", "array", "object")
+FORMATS = ("date", "date-time")
+MAX_ENUM = 50
+MAX_ENUM_TOTAL = 1000
+#: How deep an object may sit below the root (an array's items count as a level).  Six
+#: lets a plural tool hold a text spec: ``items[] -> paragraphs[] -> runs[]``, the runs at
+#: depth 6.  OpenAI strict mode allows 10 levels; Anthropic documents no depth limit, only
+#: an overall complexity limit (a 400, "Schema is too complex for compilation"), which the
+#: online test checks with every definition sent at once.
+MAX_DEPTH = 6
+
+#: The keywords a canonical schema node may carry.
+SUBSET_KEYWORDS = frozenset({
+    "type", "description", "properties", "required", "additionalProperties", "items",
+    "enum", "format", "minItems",
+})
+
+#: Keywords a validation schema may add for the dispatcher; never sent to a provider.
+#: ``orInteger`` (on a string, a whole number) lets the dispatcher take a whole number of at
+#: least that value in the string's place, kept a number: an address that may also be a
+#: position (``2``, or an id such as ``"n:257"``) is a string to a strict
+#: decoder -- the subset has no unions -- while a call written without one, or before the
+#: change, still passes its number.
+#: ``orNumber`` (``true``, on a string) lets the dispatcher take any finite number in the
+#: string's place, kept a number (round 54): a value that is text or a number -- a judged
+#: grade, ``3`` or ``"3.5"`` -- is a string to a strict decoder, while a model naturally
+#: writes a number as one.  Never sent; the handler reads what it got.
+#: ``valueAliases`` (on a string, ``{alias: value}``) are values a model naturally writes for
+#: one it may give -- an application's own word for an enum value (``shrink`` for
+#: ``normal``): the dispatcher reads the alias, matched ignoring case, as its value and says
+#: so in the result's warnings.  The provider is never sent them, so they cost no tokens.
+#: ``orNull`` (``true``, on an array's items) lets the dispatcher take ``null`` for an item,
+#: kept ``None``: a chart's blank point among its values.  The subset has no unions, so the
+#: canonical schema says nothing of it and the description says ``null``; the OpenAI strict
+#: form makes such items nullable (:func:`~.adapters.openai_strict_schema`'s ``nulls``).
+#: ``orSingle`` (``true``, on an array) lets the dispatcher take one item in the array's
+#: place, read as a one-item array: ``range: "A..B"`` for ``range: ["A..B"]`` (round 35).
+#: Never sent, so it costs no tokens.
+#: ``orMap`` (``true``, on an array of objects of two string properties, both required) lets
+#: the dispatcher take an object ``{a: b, ...}`` in the array's place, read as
+#: ``[{first: a, second: b}, ...]`` in its order (round 52): pairs a strict decoder writes as
+#: an array -- the subset has no object of free keys -- and a model naturally writes as one
+#: object.  Never sent; the result's warnings say what was read.
+BOUND_KEYWORDS = frozenset({"minimum", "maximum", "minLength", "maxLength", "maxItems",
+                            "orInteger", "orNumber", "valueAliases", "orNull", "orSingle",
+                            "orMap"})
+
+#: Words that make a property name a file-system path.  The tool layer has no paths: inputs
+#: are blob handles, outputs go to the application.
+PATH_WORDS = frozenset({"path", "paths", "file", "files", "filename", "filepath", "dir",
+                        "dirs", "directory", "folder", "filesystem"})
+
+
+class SubsetError(ValueError):
+    """A canonical schema that leaves the common strict subset."""
+
+    def __init__(self, problems: list[str]) -> None:
+        super().__init__("; ".join(problems))
+        self.problems = problems
+
+
+# -- the subset checker ------------------------------------------------------------------------
+
+
+def subset_problems(schema: Mapping[str, Any], *, allow_bounds: bool = False,
+                    allow_free: bool = False) -> list[str]:
+    """Every way ``schema`` leaves the common strict subset; empty when it is inside.
+
+    With ``allow_bounds`` the dispatcher's bound keywords are accepted too (a validation
+    schema); without, the schema must be exactly what a provider is sent.  With
+    ``allow_free`` a free-form object (:func:`is_free`) is accepted: only for a tool that is
+    never sent strict.
+    """
+    problems: list[str] = []
+    if not isinstance(schema, Mapping):
+        return ["the schema is not an object"]
+    if schema.get("type") != "object":
+        problems.append("the root must be type object")
+    enum_total = [0]
+    _check_node(schema, "$", 0, problems, enum_total, allow_bounds, is_root=True,
+                allow_free=allow_free)
+    if enum_total[0] > MAX_ENUM_TOTAL:
+        problems.append(f"{enum_total[0]} enum values in total; at most {MAX_ENUM_TOTAL}")
+    return problems
+
+
+def check_subset(schema: Mapping[str, Any], *, allow_bounds: bool = False,
+                 allow_free: bool = False) -> None:
+    """Raise :class:`SubsetError` unless ``schema`` is inside the common strict subset."""
+    problems = subset_problems(schema, allow_bounds=allow_bounds, allow_free=allow_free)
+    if problems:
+        raise SubsetError(problems)
+
+
+def is_free(node: Mapping[str, Any]) -> bool:
+    """A free-form object: any keys, checked by the dispatcher against another schema."""
+    return node.get("type") == "object" and node.get("additionalProperties") is True
+
+
+def _check_node(node: Any, where: str, depth: int, problems: list[str], enum_total: list[int],
+                allow_bounds: bool, *, is_root: bool = False, allow_free: bool = False) -> None:
+    if not isinstance(node, Mapping):
+        problems.append(f"{where}: not a schema object")
+        return
+    if allow_free and not is_root and is_free(node):
+        if set(node) - {"type", "description", "additionalProperties"}:
+            problems.append(f"{where}: a free-form object takes no other keywords")
+        if not str(node.get("description") or "").strip():
+            problems.append(f"{where}: no description")
+        return
+    allowed = SUBSET_KEYWORDS | (BOUND_KEYWORDS if allow_bounds else frozenset())
+    for key in node:
+        if key not in allowed:
+            problems.append(f"{where}: keyword {key!r} is outside the subset")
+    kind = node.get("type")
+    if isinstance(kind, list):
+        problems.append(f"{where}: a type union {kind}; use two optional properties instead")
+        return
+    if kind not in TYPES:
+        problems.append(f"{where}: type {kind!r} is not one of {', '.join(TYPES)}")
+        return
+    if depth == 1 and not str(node.get("description") or "").strip():
+        problems.append(f"{where}: no description")
+    if "description" in node and not isinstance(node["description"], str):
+        problems.append(f"{where}: description must be a string")
+    if "enum" in node:
+        values = node["enum"]
+        if kind != "string" or not isinstance(values, list) or not values:
+            problems.append(f"{where}: enum must be a non-empty list on a string")
+        else:
+            if not all(isinstance(value, str) for value in values):
+                problems.append(f"{where}: enum values must be strings")
+            if len(values) > MAX_ENUM:
+                problems.append(f"{where}: {len(values)} enum values; at most {MAX_ENUM}")
+            if len(set(values)) != len(values):
+                problems.append(f"{where}: repeated enum values")
+            enum_total[0] += len(values)
+    if "format" in node and (kind != "string" or node["format"] not in FORMATS):
+        problems.append(f"{where}: format {node['format']!r}; only {' and '.join(FORMATS)}")
+    if "minItems" in node and (kind != "array" or node["minItems"] not in (0, 1)):
+        problems.append(f"{where}: minItems may only be 0 or 1, on an array")
+    for key in ("minimum", "maximum"):
+        if key in node and kind not in ("integer", "number"):
+            problems.append(f"{where}: {key} on a {kind}")
+    for key in ("minLength", "maxLength"):
+        if key in node and kind != "string":
+            problems.append(f"{where}: {key} on a {kind}")
+    if "maxItems" in node and kind != "array":
+        problems.append(f"{where}: maxItems on a {kind}")
+    if "orInteger" in node and (kind != "string" or isinstance(node["orInteger"], bool)
+                                or not isinstance(node["orInteger"], int)):
+        problems.append(f"{where}: orInteger must be a whole number, on a string")
+    if "orNumber" in node and (node["orNumber"] is not True or kind != "string"
+                               or "orInteger" in node):
+        problems.append(f"{where}: orNumber must be true, on a string without orInteger")
+    if "orNull" in node and node["orNull"] is not True:
+        problems.append(f"{where}: orNull must be true")
+    if "orSingle" in node and (node["orSingle"] is not True or kind != "array"):
+        problems.append(f"{where}: orSingle must be true, on an array")
+    if "orMap" in node and (node["orMap"] is not True or kind != "array"
+                            or _pair_names(node.get("items")) is None):
+        problems.append(f"{where}: orMap must be true, on an array of objects of two required "
+                        "string properties")
+    if "valueAliases" in node:
+        aliases = node["valueAliases"]
+        if kind != "string" or not isinstance(aliases, Mapping) or not aliases or not all(
+                isinstance(k, str) and isinstance(v, str) for k, v in aliases.items()):
+            problems.append(f"{where}: valueAliases must map strings to strings, on a string")
+        elif "enum" in node:
+            for alias, value in aliases.items():
+                if value not in node["enum"]:
+                    problems.append(f"{where}: valueAliases reads {alias!r} as {value!r}, "
+                                    "which is not in the enum")
+                if alias in node["enum"]:
+                    problems.append(f"{where}: valueAliases names {alias!r}, an enum value")
+
+    if kind == "object":
+        if depth > MAX_DEPTH:
+            problems.append(f"{where}: nested deeper than {MAX_DEPTH} levels")
+        if node.get("additionalProperties") is not False:
+            problems.append(f"{where}: additionalProperties must be false")
+        properties = node.get("properties")
+        if not isinstance(properties, Mapping):
+            problems.append(f"{where}: an object needs properties")
+            properties = {}
+        required = node.get("required", [])
+        if not isinstance(required, list) or not all(isinstance(r, str) for r in required):
+            problems.append(f"{where}: required must be a list of names")
+            required = []
+        for name in required:
+            if name not in properties:
+                problems.append(f"{where}: required names {name!r}, which is not a property")
+        if len(set(required)) != len(required):
+            problems.append(f"{where}: repeated names in required")
+        for name, child in properties.items():
+            if not NAME.match(name):
+                problems.append(f"{where}.{name}: the name does not match {NAME.pattern}")
+            if is_path_name(name):
+                problems.append(f"{where}.{name}: a path parameter; take a blob handle instead")
+            _check_node(child, f"{where}.{name}", depth + 1, problems, enum_total, allow_bounds,
+                        allow_free=allow_free)
+    elif "properties" in node or "required" in node or "additionalProperties" in node:
+        problems.append(f"{where}: object keywords on a {kind}")
+    if kind == "array":
+        if "items" not in node:
+            problems.append(f"{where}: an array needs items")
+        else:
+            # Items take their meaning from the array's own description.
+            items = node["items"]
+            _check_node(items, f"{where}[]", depth + 1, problems, enum_total, allow_bounds,
+                        allow_free=allow_free)
+    elif "items" in node:
+        problems.append(f"{where}: items on a {kind}")
+
+
+def is_path_name(name: str) -> bool:
+    """Whether a property name reads as a file-system path (``path``, ``out_file``, ``dir``)."""
+    return any(word in PATH_WORDS for word in name.lower().split("_"))
+
+
+def canonical(schema: Mapping[str, Any]) -> dict[str, Any]:
+    """The schema a provider is sent: ``schema`` without the dispatcher's bound keywords."""
+
+    def strip(node: Any) -> Any:
+        if isinstance(node, Mapping):
+            return {key: strip(value) for key, value in node.items()
+                    if key not in BOUND_KEYWORDS}
+        if isinstance(node, list):
+            return [strip(value) for value in node]
+        return node
+
+    return strip(copy.deepcopy(dict(schema)))
+
+
+def required_first(schema: Mapping[str, Any]) -> dict[str, Any]:
+    """``schema`` with every object's required properties before its optional ones, each
+    part in its given order, at any depth.
+
+    Strict decoding writes an object's keys in the schema's order: once the model has
+    written a property, it can no longer write one listed before it.  A model writes the
+    arguments it must give first (``doc``, then where), so an optional property listed
+    before a later required one is lost -- Claude's strict grammar dropped
+    ``word_insert_markdown``'s ``markdown`` when the model wrote ``at`` (listed after it)
+    first.  With the required ones first, every optional property can still follow.
+    """
+
+    def order(node: Any) -> Any:
+        if not isinstance(node, Mapping):
+            return node
+        node = dict(node)
+        properties = node.get("properties")
+        if isinstance(properties, Mapping):
+            required = set(node.get("required", ()))
+            names = ([name for name in properties if name in required]
+                     + [name for name in properties if name not in required])
+            node["properties"] = {name: order(properties[name]) for name in names}
+        if isinstance(node.get("items"), Mapping):
+            node["items"] = order(node["items"])
+        return node
+
+    return order(copy.deepcopy(dict(schema)))
+
+
+def required_after_optional(schema: Mapping[str, Any]) -> list[str]:
+    """The dotted names of required properties listed after an optional one, at any depth:
+    what :func:`required_first` puts right."""
+    found: list[str] = []
+
+    def visit(node: Any, where: str) -> None:
+        if not isinstance(node, Mapping):
+            return
+        properties = node.get("properties")
+        if isinstance(properties, Mapping):
+            required = set(node.get("required", ()))
+            seen_optional = False
+            for name, child in properties.items():
+                if name not in required:
+                    seen_optional = True
+                elif seen_optional:
+                    found.append(f"{where}.{name}" if where else name)
+                visit(child, f"{where}.{name}" if where else name)
+        if isinstance(node.get("items"), Mapping):
+            visit(node["items"], where + "[]")
+
+    visit(schema, "")
+    return found
+
+
+def example_arguments(schema: Mapping[str, Any]) -> dict[str, Any]:
+    """Arguments that give every property, optional ones included, at any depth: a string
+    named after its property, the first enum value, ``2``, ``2.5``, ``true``, one array item.
+
+    For checking a provider's strict decoding online: ask for a call with these and see
+    that every property arrives.  The values satisfy the canonical schema, not a tool's
+    own rules (its bounds, either/or groups or addresses)."""
+
+    def value(node: Mapping[str, Any], name: str) -> Any:
+        kind = node.get("type")
+        if kind == "object":
+            return {key: value(child, key)
+                    for key, child in (node.get("properties") or {}).items()}
+        if kind == "array":
+            return [value(node.get("items") or {"type": "string"}, name)]
+        if kind == "string":
+            if node.get("enum"):
+                return node["enum"][0]
+            if node.get("format") == "date":
+                return "2026-10-07"
+            if node.get("format") == "date-time":
+                return "2026-10-07T09:00:00Z"
+            return f"{name} 1"
+        if kind == "integer":
+            return 2
+        if kind == "number":
+            return 2.5
+        if kind == "boolean":
+            return True
+        return None
+
+    return value(schema, "")
+
+
+def walk_properties(schema: Mapping[str, Any]) -> Iterable[tuple[str, Mapping[str, Any], bool]]:
+    """Every property at any depth: ``(dotted name, schema, required)``."""
+
+    def walk(node: Mapping[str, Any], prefix: str) -> Iterable[tuple[str, Mapping[str, Any], bool]]:
+        if node.get("type") == "array" and isinstance(node.get("items"), Mapping):
+            yield from walk(node["items"], prefix + "[]")
+            return
+        required = set(node.get("required", ()))
+        for name, child in (node.get("properties") or {}).items():
+            dotted = f"{prefix}.{name}" if prefix else name
+            yield dotted, child, name in required
+            yield from walk(child, dotted)
+
+    yield from walk(schema, "")
+
+
+# -- the call validator ------------------------------------------------------------------------
+
+
+class CallError(ValueError):
+    """A call that does not match its tool's schema: what is wrong, where, and what would do.
+
+    ``field`` is the dotted path of the argument (``box.x``, ``cells[2].text``), and
+    ``valid_options`` the allowed values or names where there is a closed set.
+    """
+
+    def __init__(self, message: str, field: str | None = None,
+                 valid_options: list[Any] | None = None) -> None:
+        super().__init__(message)
+        self.message = message
+        self.field = field
+        self.valid_options = valid_options or []
+
+
+def validate_call(schema: Mapping[str, Any], arguments: Any,
+                  notes: list[str] | None = None) -> dict[str, Any]:
+    """Check ``arguments`` against a (validation) schema and return them normalised.
+
+    Normalising drops an optional property given as ``null`` -- the OpenAI adapters send
+    every optional property, as ``null`` when unused -- so a handler sees it as absent
+    either way.  An integer given as ``3.0`` becomes ``3``, and a value a string's
+    ``valueAliases`` name becomes its value, a line added to ``notes`` saying so
+    (``frame.autofit 'shrink' read as 'normal'``).  Raises :class:`CallError` on the
+    first problem; an unknown name or an enum value close to a known one says "did you
+    mean".
+    """
+    if not isinstance(arguments, Mapping):
+        raise CallError("the arguments must be a JSON object")
+    return _validate(schema, arguments, "", notes if notes is not None else [], None)
+
+
+def close_match(value: str, options: Iterable[str]) -> str | None:
+    """The option ``value`` most likely meant, ``None`` when none is close.  Ranked:
+
+    1. the same ignoring case and ``-``/``_``/spaces (``Normal``: ``normal``);
+    2. a prefix either way (``rectangle``: ``rect``; ``round``: ``roundRect``) -- the
+       longest shared prefix, then the nearest by :class:`difflib.SequenceMatcher`;
+    3. an abbreviation: the option's letters in order inside the value, or the value's in
+       the option, from the same first letter (``rndrect``: ``roundRect``) -- the nearest;
+    4. :func:`difflib.get_close_matches`' nearest at 0.6 (``nomral``: ``normal``).
+
+    Prefixes and abbreviations need three letters, so a short value matches nothing
+    by chance."""
+    options = [option for option in options if isinstance(option, str)]
+    folded = {_fold(option): option for option in options}
+    given = _fold(value)
+    if given in folded:
+        return folded[given]
+    if not given:
+        return None
+
+    def ratio(key: str) -> float:
+        return difflib.SequenceMatcher(None, given, key).ratio()
+
+    prefixed = [key for key in folded if min(len(key), len(given)) >= 3
+                and (given.startswith(key) or key.startswith(given))]
+    if prefixed:
+        return folded[max(prefixed, key=lambda key: (min(len(key), len(given)), ratio(key)))]
+    abbreviated = [key for key in folded if min(len(key), len(given)) >= 3
+                   and key[0] == given[0]
+                   and (_in_order(key, given) or _in_order(given, key))]
+    if abbreviated:
+        return folded[max(abbreviated, key=ratio)]
+    found = difflib.get_close_matches(given, list(folded), 1, 0.6)
+    return folded[found[0]] if found else None
+
+
+def _in_order(short: str, long: str) -> bool:
+    """Whether ``short``'s letters appear in ``long`` in order."""
+    letters = iter(long)
+    return all(letter in letters for letter in short)
+
+
+def _fold(text: str) -> str:
+    return re.sub(r"[\s_-]+", "", text.lower())
+
+
+def _did_you_mean(value: str, options: Iterable[str]) -> str:
+    match = close_match(value, options)
+    return f"; did you mean {match!r}?" if match is not None and match != value else ""
+
+
+def _misplaced(key: str, node: Mapping[str, Any], where: str,
+               outer: tuple[Mapping[str, Any], str] | None) -> str:
+    """Where an unknown ``key`` of the object at ``where`` belongs when it is a property one
+    level up (the enclosing object, ``outer``: its schema and place) or one level down (an
+    object property of this one, or its array's items) -- ``preset_name`` given in
+    ``items[4].box`` belongs on ``items[4]``; ``""`` when neither has it.  Matched
+    ignoring case and ``-``/``_``."""
+    folded = _fold(key)
+
+    def named(schema: Mapping[str, Any]) -> str | None:
+        return {_fold(name): name for name in schema.get("properties") or {}}.get(folded)
+
+    if outer is not None:
+        meant = named(outer[0])
+        if meant is not None:
+            inner = where[len(outer[1]):].lstrip(".") if outer[1] else where
+            return (f"; {meant} belongs one level up, "
+                    + (f"on {outer[1]}" if outer[1] else "at the top level")
+                    + f", not in {inner}")
+    below = []
+    for name, child in (node.get("properties") or {}).items():
+        many = child.get("type") == "array"
+        child = child.get("items") or {} if many else child
+        if child.get("type") == "object" and not is_free(child):
+            meant = named(child)
+            if meant is not None:
+                below.append(f"{_join(where, name)}{'[]' if many else ''}.{meant}")
+    if len(below) == 1:
+        return f"; {key} belongs one level down: {below[0]}"
+    if below:
+        return f"; {key} belongs one level down, in one of: {', '.join(below)}"
+    return ""
+
+
+def _pair_names(items: Any) -> tuple[str, str] | None:
+    """An ``orMap`` array's two item properties, in order; ``None`` when its items are not
+    an object of two required string properties."""
+    if not isinstance(items, Mapping) or items.get("type") != "object":
+        return None
+    properties = items.get("properties") or {}
+    names = list(properties)
+    if (len(names) != 2 or set(items.get("required") or ()) != set(names)
+            or any((properties[name] or {}).get("type") != "string" for name in names)):
+        return None
+    return names[0], names[1]
+
+
+def _validate(node: Mapping[str, Any], value: Any, where: str, notes: list[str],
+              outer: tuple[Mapping[str, Any], str] | None = None) -> Any:
+    """``value`` checked against ``node`` at ``where``; ``outer``: the enclosing object's
+    schema and place, for an unknown key that belongs there (:func:`_misplaced`)."""
+    kind = node.get("type")
+    label = where or "the arguments"
+    if value is None and node.get("orNull"):
+        return None
+    if kind == "object":
+        if not isinstance(value, Mapping):
+            raise CallError(f"{label} must be an object", where or None)
+        if is_free(node):
+            return dict(value)
+        properties = node.get("properties") or {}
+        required = set(node.get("required", ()))
+        unknown = [key for key in value if key not in properties]
+        if unknown:
+            name = _join(where, unknown[0])
+            hint = _misplaced(unknown[0], node, where, outer) or _did_you_mean(unknown[0],
+                                                                               properties)
+            raise CallError(f"unknown argument {name!r}" + hint, name, sorted(properties))
+        result: dict[str, Any] = {}
+        for name, child in properties.items():
+            path = _join(where, name)
+            if name not in value or value[name] is None:
+                if name in required:
+                    raise CallError(f"{path!r} is required", path)
+                continue
+            result[name] = _validate(child, value[name], path, notes, (node, where))
+        return result
+    if kind == "array":
+        if node.get("orMap") and isinstance(value, Mapping):
+            first, second = _pair_names(node.get("items")) or ("", "")
+            value = [{first: a, second: b} for a, b in value.items()]
+            notes.append(f"{label} given as an object: read as {len(value)} pair(s) "
+                         f"{{{first}, {second}}}")
+        if node.get("orSingle") and not isinstance(value, list):
+            try:            # one item in the array's place (round 35): a one-item array
+                _validate(node.get("items") or {}, value, f"{where}[0]", [], outer)
+                value = [value]
+            except CallError:
+                pass        # not an item either: refused as no array below
+        if not isinstance(value, list):
+            raise CallError(f"{label} must be an array", where)
+        if "minItems" in node and len(value) < node["minItems"]:
+            raise CallError(f"{label} needs at least {node['minItems']} item(s)", where)
+        if "maxItems" in node and len(value) > node["maxItems"]:
+            raise CallError(f"{label} has {len(value)} items; at most {node['maxItems']}", where)
+        items = node.get("items") or {}
+        return [_validate(items, item, f"{where}[{index}]", notes, outer)
+                for index, item in enumerate(value)]
+    if kind == "string":
+        if "orInteger" in node and not isinstance(value, (str, bool)) and isinstance(value, (int, float)):
+            return _validate({"type": "integer", "minimum": node["orInteger"]}, value, where,
+                             notes)
+        if node.get("orNumber") and not isinstance(value, (str, bool)) and isinstance(
+                value, (int, float)):
+            return _validate({"type": "number"}, value, where, notes)
+        if not isinstance(value, str):
+            if node.get("orNumber"):
+                raise CallError(f"{label} must be a number or a string", where)
+            if "orInteger" in node:
+                raise CallError(f"{label} must be a whole number or a string", where)
+            raise CallError(f"{label} must be a string", where)
+        aliases = node.get("valueAliases")
+        if aliases and value not in node.get("enum", ()):
+            read = {alias.lower(): meant for alias, meant in aliases.items()}.get(value.lower())
+            if read is not None:
+                notes.append(f"{label} {value!r} read as {read!r}")
+                value = read
+        if "enum" in node and value not in node["enum"]:
+            raise CallError(f"{label} is {value!r}; not one of the allowed values"
+                            + _did_you_mean(value, node["enum"]), where, list(node["enum"]))
+        if "minLength" in node and len(value) < node["minLength"]:
+            raise CallError(f"{label} must be at least {node['minLength']} characters", where)
+        if "maxLength" in node and len(value) > node["maxLength"]:
+            raise CallError(f"{label} is {len(value)} characters; at most {node['maxLength']}",
+                            where)
+        fmt = node.get("format")
+        if fmt == "date" and not _parses(_dt.date.fromisoformat, value, 10):
+            raise CallError(f"{label} must be a date, YYYY-MM-DD", where)
+        if fmt == "date-time" and not _parses(_parse_datetime, value):
+            raise CallError(f"{label} must be a date-time, YYYY-MM-DDThh:mm:ssZ", where)
+        return value
+    if kind == "boolean":
+        if not isinstance(value, bool):
+            raise CallError(f"{label} must be true or false", where)
+        return value
+    if kind in ("integer", "number"):
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise CallError(f"{label} must be a number", where)
+        if kind == "integer":
+            if isinstance(value, float):
+                if not value.is_integer():
+                    raise CallError(f"{label} must be a whole number", where)
+                value = int(value)
+        if value != value or value in (float("inf"), float("-inf")):
+            raise CallError(f"{label} must be a finite number", where)
+        if "minimum" in node and value < node["minimum"]:
+            raise CallError(f"{label} is {value}; at least {node['minimum']}", where)
+        if "maximum" in node and value > node["maximum"]:
+            raise CallError(f"{label} is {value}; at most {node['maximum']}", where)
+        return value
+    raise CallError(f"{label}: the schema has no usable type")
+
+
+def _join(where: str, name: str) -> str:
+    return f"{where}.{name}" if where else name
+
+
+def _parses(parse: Any, value: str, length: int | None = None) -> bool:
+    if length is not None and len(value) != length:
+        return False
+    try:
+        parse(value)
+    except ValueError:
+        return False
+    return True
+
+
+def _parse_datetime(value: str) -> _dt.datetime:
+    if len(value) < 19 or value[10] not in "Tt":
+        raise ValueError(value)
+    return _dt.datetime.fromisoformat(value[:-1] + "+00:00" if value[-1] in "Zz" else value)
