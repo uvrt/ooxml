@@ -1877,16 +1877,15 @@ fn canon<'x>(aliases: &'x HashMap<String, String>, key: &'x str) -> &'x str {
     k
 }
 
-/// Per laid page: a digest of what it draws (its lines, by paragraph id through `aliases`,
-/// where and how; its tables' rows; its header and footer's page number and count), and its
-/// body's paragraph ids in drawing order.
-fn page_digests(s: &Snap, aliases: &HashMap<String, String>) -> Vec<(u64, Vec<String>)> {
+/// One laid page's digest -- what it draws: its lines, by paragraph id through `aliases`,
+/// where and how; its tables' rows; its header and footer's page number and count -- and its
+/// body's paragraph ids in drawing order; by its index among the laid pages.
+fn page_digest(s: &Snap, k: usize, aliases: &HashMap<String, String>) -> (u64, Vec<String>) {
     use std::hash::{Hash, Hasher};
     let stories = s.constants.get("stories");
     let epoch = s.constants.get("epoch").map(|v| v.to_string()).unwrap_or_default();
     let pages = s.pag.info.len() as i64;
-    let mut out = vec![(0u64, Vec::new()); s.pag.info.len()];
-    for k in 0..s.pag.starts.len() {
+    {
         let index = s.pag.page_at[k] as usize;
         let info = &s.pag.info[index];
         let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -1936,9 +1935,8 @@ fn page_digests(s: &Snap, aliases: &HashMap<String, String>) -> Vec<(u64, Vec<St
             }
         }
         // a table row's borders: the rows drawn here, their tops and heights
-        out[index] = (h.finish(), ids);
+        (h.finish(), ids)
     }
-    out
 }
 
 /// A page's (1-based) body lines as `page_digests` reads them (tests and measurements).
@@ -1967,33 +1965,52 @@ pub fn page_line_digests(s: &Snap, page: usize) -> Vec<LineDigest> {
 }
 
 /// `since_last_check` against an earlier snapshot of the same document.
-pub fn since(now: &Snap, before: &Snap, aliases: &HashMap<String, String>) -> Value {
-    let a = page_digests(before, aliases);
-    let b = page_digests(now, aliases);
-    let count = a.len().max(b.len());
-    let limit = a.len().min(b.len());
+pub fn since(now: &Snap, before: &Snap, aliases: &HashMap<String, String>, pages: Option<&[usize]>) -> Value {
+    let (na, nb) = (before.page_count(), now.page_count());
+    let count = na.max(nb);
+    let limit = na.min(nb);
+    // what each page draws, compared on the pages asked for (the check's range's) alone
+    let laid = |s: &Snap, number: usize| -> Option<usize> {
+        let k = s.pag.page_at.partition_point(|p| (*p as usize) < number - 1);
+        (k < s.pag.page_at.len() && s.pag.page_at[k] as usize == number - 1).then_some(k)
+    };
     let mut changed = Vec::new();
-    for n in 1..=count.min(limit) {
-        if a[n - 1].0 != b[n - 1].0 {
+    let wanted: Vec<usize> = match pages {
+        Some(p) => p
+            .iter()
+            .copied()
+            .filter(|n| *n >= 1 && *n <= count.min(limit))
+            .collect(),
+        None => (1..=count.min(limit)).collect(),
+    };
+    for n in wanted {
+        let a = laid(before, n).map(|k| page_digest(before, k, aliases).0);
+        let b = laid(now, n).map(|k| page_digest(now, k, aliases).0);
+        if a != b {
             changed.push(n);
         }
     }
     let unknown: Vec<usize> = (limit + 1..=count).collect();
-    let first = |d: &Vec<(u64, Vec<String>)>| -> Vec<(String, usize)> {
-        let mut seen = HashSet::new();
-        let mut out = Vec::new();
-        for (n, (_, ids)) in d.iter().enumerate() {
-            for id in ids {
-                if seen.insert(id.clone()) {
-                    out.push((id.clone(), n + 1));
-                }
-            }
-        }
-        out
+    // each paragraph's first page, in the order this layout first draws them
+    let canon_first = |s: &Snap| -> Vec<(String, usize, (u32, u32, u32, u32))> {
+        let mut v: Vec<(String, usize, (u32, u32, u32, u32))> = s
+            .first_pages()
+            .into_iter()
+            .map(|(k, (p, at))| (canon(aliases, k).to_string(), p, at))
+            .collect();
+        v.sort_by_key(|a| (a.1, a.2));
+        v
     };
-    let fb: HashMap<String, usize> = first(&a).into_iter().collect();
+    let mut fb: HashMap<String, usize> = HashMap::new();
+    for (k, p, _) in canon_first(before) {
+        fb.entry(k).or_insert(p);
+    }
     let mut moved = Map::new();
-    for (key, page) in first(&b) {
+    let mut seen = HashSet::new();
+    for (key, page, _) in canon_first(now) {
+        if !seen.insert(key.clone()) {
+            continue;
+        }
         if let Some(&p) = fb.get(&key) {
             if p != page && moved.len() < 20 {
                 moved.insert(key, json!([p, page]));
@@ -2002,7 +2019,7 @@ pub fn since(now: &Snap, before: &Snap, aliases: &HashMap<String, String>) -> Va
     }
     let mut out = Map::new();
     out.insert("changed".into(), json!(changed));
-    out.insert("pages".into(), json!([a.len(), b.len()]));
+    out.insert("pages".into(), json!([na, nb]));
     if !moved.is_empty() {
         out.insert("moved".into(), Value::Object(moved));
     }
@@ -2182,7 +2199,11 @@ pub fn answer(s: &Snap, req: &Request, seen: Option<&Snap>) -> Value {
     }
     if req.since {
         if let Some(before) = seen {
-            out.insert("since".into(), since(s, before, &req.aliases));
+            let on: Option<Vec<usize>> = out
+                .get("on")
+                .and_then(Value::as_array)
+                .map(|a| a.iter().filter_map(Value::as_u64).map(|n| n as usize).collect());
+            out.insert("since".into(), since(s, before, &req.aliases, on.as_deref()));
         }
     }
     if !req.pages_of.is_empty() {
