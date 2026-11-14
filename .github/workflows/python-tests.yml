@@ -40,7 +40,7 @@ jobs:
       - name: Install
         run: python tools/ci.py install ${{ matrix.package }} ${{ inputs.free-threading && '--free-threading' || '' }}
 
-      # The open metric compatible substitutes (docx2svg's README, "Fonts"): with them the
+      # The open substitutes with the Office faces' widths (docx2svg's README, "Fonts"): with them the
       # Word layout runs past the first paragraph on a runner without Office's faces, so the
       # render, reflow and field tests run rather than skip.  Never a font file in the
       # repository.  Windows has Calibri, Arial, Times New Roman and Courier New itself.
