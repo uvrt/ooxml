@@ -1,0 +1,194 @@
+"""Namespace-agnostic helpers over ``xml.etree.ElementTree``.
+
+OOXML mixes a dozen namespaces (``a:``, ``p:``, ``r:``, ``dgm:`` ...) and the same
+local name means the same thing in each.  pptx-glimpse matches on local names
+throughout; these helpers do the same so callers never spell out a namespace URI.
+
+Element order is significant in DrawingML (a paragraph's runs and breaks interleave),
+and ElementTree preserves document order, so ``children()`` is the ordered view that
+the TypeScript port had to reconstruct by hand from fast-xml-parser output.
+"""
+
+from __future__ import annotations
+
+import re
+from typing import Iterable, Iterator
+from xml.etree.ElementTree import Element, fromstring
+
+# Relationship namespaces we need to spell out, because the attribute name alone
+# (``id``, ``embed``, ``link``) is ambiguous without them.
+NS_R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+
+_CHAR_REF = re.compile(r"&#x([0-9a-fA-F]+);|&#([0-9]+);")
+
+
+def parse_xml(data: bytes | str) -> Element:
+    if isinstance(data, str):
+        data = data.encode("utf-8")
+    return fromstring(data)
+
+
+def local_name(tag: str) -> str:
+    """``{http://...}sp`` -> ``sp``; ``a:sp`` -> ``sp``."""
+    found = _LOCAL_NAMES.get(tag)
+    if found is not None:
+        return found
+    if tag.startswith("{"):
+        found = tag.rsplit("}", 1)[-1]
+    elif ":" in tag:
+        found = tag.rsplit(":", 1)[-1]
+    else:
+        found = tag
+    if len(_LOCAL_NAMES) < LOCAL_NAMES:
+        _LOCAL_NAMES[tag] = found
+    return found
+
+
+#: Each tag's local name, as :func:`local_name` found it (round 39): a document's few hundred
+#: tags are asked for over and over -- a check's paths resolved name every sibling on the
+#: way -- and a look-up takes a quarter of the time splitting it does.  At most :data:`LOCAL_NAMES` tags;
+#: past that, the others are split each time.  A dict: safe across threads, the GIL or not.
+_LOCAL_NAMES: dict[str, str] = {}
+LOCAL_NAMES = 8192
+
+
+def children(parent: Element | None, name: str | None = None) -> list[Element]:
+    """Direct children in document order, optionally filtered by local name."""
+    if parent is None:
+        return []
+    if name is None:
+        return list(parent)
+    return [child for child in parent if local_name(child.tag) == name]
+
+
+def child(parent: Element | None, name: str) -> Element | None:
+    """First direct child with the given local name."""
+    if parent is None:
+        return None
+    for node in parent:
+        if local_name(node.tag) == name:
+            return node
+    return None
+
+
+def element_children(parent: Element | None, name: str | None = None) -> list[Element]:
+    """:func:`children`, elements only.
+
+    A comment or a processing instruction has a tag that is not a string: lxml keeps them
+    in the tree, and so does an ElementTree parser built with ``insert_comments`` or
+    ``insert_pis``.  :func:`children` returns them unfiltered, and asked for a name it
+    reads their tag as one, which fails; this skips them.  For a tree :func:`parse_xml`
+    made, which holds neither, the two return the same list.
+    """
+    if parent is None:
+        return []
+    if name is None:
+        return [node for node in parent if isinstance(node.tag, str)]
+    return [node for node in parent if isinstance(node.tag, str) and local_name(node.tag) == name]
+
+
+def element_child(parent: Element | None, name: str) -> Element | None:
+    """:func:`child`, past comments and processing instructions (:func:`element_children`)."""
+    if parent is None:
+        return None
+    for node in parent:
+        if isinstance(node.tag, str) and local_name(node.tag) == name:
+            return node
+    return None
+
+
+def child_path(parent: Element | None, *names: str) -> Element | None:
+    """Walk a chain of local names, e.g. ``child_path(sp, "spPr", "xfrm", "off")``."""
+    node = parent
+    for name in names:
+        node = child(node, name)
+        if node is None:
+            return None
+    return node
+
+
+def has_child(parent: Element | None, name: str) -> bool:
+    return child(parent, name) is not None
+
+
+def descendants(parent: Element | None, name: str) -> Iterator[Element]:
+    if parent is None:
+        return
+    for node in parent.iter():
+        if node is not parent and local_name(node.tag) == name:
+            yield node
+
+
+def find_descendant(parent: Element | None, name: str) -> Element | None:
+    return next(descendants(parent, name), None)
+
+
+def attr(node: Element | None, name: str, default: str | None = None) -> str | None:
+    """Attribute lookup that ignores namespaces on the attribute name."""
+    if node is None:
+        return default
+    value = node.get(name)
+    if value is not None:
+        return value
+    for key, val in node.attrib.items():
+        if local_name(key) == name:
+            return val
+    return default
+
+
+def ns_attr(node: Element | None, name: str, namespace: str = NS_R) -> str | None:
+    """Namespace-qualified attribute (``r:embed``, ``r:id``)."""
+    if node is None:
+        return None
+    return node.get(f"{{{namespace}}}{name}")
+
+
+def num_attr(node: Element | None, name: str) -> float | None:
+    """Numeric attribute; ``None`` when absent or not a finite number."""
+    raw = attr(node, name)
+    if raw is None:
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if value != value or value in (float("inf"), float("-inf")):
+        return None
+    return value
+
+
+def int_attr(node: Element | None, name: str) -> int | None:
+    value = num_attr(node, name)
+    return None if value is None else int(value)
+
+
+def is_true(value: str | None) -> bool:
+    """OOXML boolean attribute (``1`` / ``0`` / ``true`` / ``false``)."""
+    return value in ("1", "true")
+
+
+def bool_attr(node: Element | None, name: str) -> bool:
+    return is_true(attr(node, name))
+
+
+def child_text(parent: Element | None, name: str) -> str | None:
+    node = child(parent, name)
+    if node is None:
+        return None
+    return "".join(node.itertext())
+
+
+def decode_char_refs(value: str) -> str:
+    """Decode numeric character references left in attribute values (bullet chars)."""
+
+    def replace(match: re.Match[str]) -> str:
+        hex_digits, decimal = match.group(1), match.group(2)
+        if hex_digits is not None:
+            return chr(int(hex_digits, 16))
+        return chr(int(decimal or "0", 10))
+
+    return _CHAR_REF.sub(replace, value)
+
+
+def enum_value(value: str | None, allowed: Iterable[str], default: str | None = None) -> str | None:
+    return value if value is not None and value in set(allowed) else default
