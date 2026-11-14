@@ -25,7 +25,12 @@ pub struct Facts {
 impl Snapshot {
     pub fn new(doc: Doc, items: Vec<It>, pag: Pagination) -> Snapshot {
         let blocks = items.iter().map(|i| i.block()).collect();
-        Snapshot { doc, items, pag, blocks }
+        Snapshot {
+            doc,
+            items,
+            pag,
+            blocks,
+        }
     }
     pub fn pages(&self) -> usize {
         self.pag.starts.len()

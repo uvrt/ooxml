@@ -27,7 +27,11 @@ pub fn cell_stack(px: &Px, c: &CellIn, hs: &[Vec<LineH>], previous_style: i64, _
                 let same = p.style == prev.style;
                 let own_before = if p.contextual && same { 0 } else { p.before };
                 let prev_after = if prev.contextual && same { 0 } else { prev.after };
-                let box_before = if own_before > prev_after { px.twips(own_before - prev_after) } else { 0 };
+                let box_before = if own_before > prev_after {
+                    px.twips(own_before - prev_after)
+                } else {
+                    0
+                };
                 px.twips(prev_after) + box_before
             }
         };
@@ -36,7 +40,15 @@ pub fn cell_stack(px: &Px, c: &CellIn, hs: &[Vec<LineH>], previous_style: i64, _
         for (n, h) in heights.iter().enumerate() {
             let above = if n == 0 { gap + p.top_border } else { 0 };
             let below = if n == last { p.border } else { 0 };
-            out.push(Stk { h: above + h.pitch + below, above, pitch: h.pitch, para: k as u32, number: n as u32, para_lines: heights.len() as u32, widow: p.widow.unwrap_or(true) });
+            out.push(Stk {
+                h: above + h.pitch + below,
+                above,
+                pitch: h.pitch,
+                para: k as u32,
+                number: n as u32,
+                para_lines: heights.len() as u32,
+                widow: p.widow.unwrap_or(true),
+            });
         }
         previous = Some(k);
     }
@@ -46,7 +58,11 @@ pub fn cell_stack(px: &Px, c: &CellIn, hs: &[Vec<LineH>], previous_style: i64, _
 /// The space after the cell's last paragraph (`cell_stack`'s second value).
 pub fn cell_after(px: &Px, c: &CellIn, default_style: i64) -> i64 {
     match c.paragraphs.iter().rev().find(|p| !p.hidden) {
-        Some(p) => px.twips(if p.contextual && p.effective_style == default_style { 0 } else { p.after }),
+        Some(p) => px.twips(if p.contextual && p.effective_style == default_style {
+            0
+        } else {
+            p.after
+        }),
         None => 0,
     }
 }

@@ -19,7 +19,13 @@ pub struct Line {
 
 impl Line {
     fn new(start: usize, end: usize) -> Line {
-        Line { start, end, forced: false, emergency: false, hyphenated: false }
+        Line {
+            start,
+            end,
+            forced: false,
+            emergency: false,
+            hyphenated: false,
+        }
     }
     pub fn flags(&self) -> u8 {
         self.forced as u8 | (self.emergency as u8) << 1 | (self.hyphenated as u8) << 2
@@ -131,11 +137,31 @@ pub fn pieces(t: &Tables, m: &MeasureIn) -> Vec<Piece> {
             _ => 0,
         };
         if shift != 0 {
-            out.push(Piece { kind: GLYPH, ch: '\0', width: -shift, kern_next: 0, kkey: -1, source: -1, hyphen: 0, run: -1, hp: 0 });
+            out.push(Piece {
+                kind: GLYPH,
+                ch: '\0',
+                width: -shift,
+                kern_next: 0,
+                kkey: -1,
+                source: -1,
+                hyphen: 0,
+                run: -1,
+                hp: 0,
+            });
         }
         out.extend(lab);
         match label.suffix.as_str() {
-            "tab" => out.push(Piece { kind: TAB, ch: '\t', width: 0, kern_next: 0, kkey: -1, source: -1, hyphen: 0, run: -1, hp: 0 }),
+            "tab" => out.push(Piece {
+                kind: TAB,
+                ch: '\t',
+                width: 0,
+                kern_next: 0,
+                kkey: -1,
+                source: -1,
+                hyphen: 0,
+                run: -1,
+                hp: 0,
+            }),
             "space" => {
                 let f = t.fmts[label.space_fmt];
                 let font = &t.fonts[f.font as usize];
@@ -173,22 +199,66 @@ pub fn pieces(t: &Tables, m: &MeasureIn) -> Vec<Piece> {
             if run.tracking != 0 {
                 width += run.tracking * t.s;
             }
-            let kkey = if run.kern != 0 && f.hp >= run.kern { f.font * 100_000 + f.whp } else { -1 };
-            Piece { kind, ch: drawn, width, kern_next: 0, kkey, source: index, hyphen: 0, run: ri as i32, hp: f.hp }
+            let kkey = if run.kern != 0 && f.hp >= run.kern {
+                f.font * 100_000 + f.whp
+            } else {
+                -1
+            };
+            Piece {
+                kind,
+                ch: drawn,
+                width,
+                kern_next: 0,
+                kkey,
+                source: index,
+                hyphen: 0,
+                run: ri as i32,
+                hp: f.hp,
+            }
         };
         let mark = |kind: &str, out: &mut Vec<Piece>| match kind {
-            "tab" => out.push(Piece { kind: TAB, ch: '\t', width: 0, kern_next: 0, kkey: -1, source, hyphen: 0, run: -1, hp: 0 }),
+            "tab" => out.push(Piece {
+                kind: TAB,
+                ch: '\t',
+                width: 0,
+                kern_next: 0,
+                kkey: -1,
+                source,
+                hyphen: 0,
+                run: -1,
+                hp: 0,
+            }),
             "br" | "textWrapping" | "page" | "column" | "cr" => {
                 let ch = match kind {
                     "page" => '\u{c}',
                     "column" => '\u{b}',
                     _ => '\n',
                 };
-                out.push(Piece { kind: BREAK, ch, width: 0, kern_next: 0, kkey: -1, source, hyphen: 0, run: -1, hp: 0 })
+                out.push(Piece {
+                    kind: BREAK,
+                    ch,
+                    width: 0,
+                    kern_next: 0,
+                    kkey: -1,
+                    source,
+                    hyphen: 0,
+                    run: -1,
+                    hp: 0,
+                })
             }
             "softHyphen" => {
                 let h = glyph('-', GLYPH, source, run.hyphen_fmt);
-                out.push(Piece { kind: SOFT, ch: '\u{ad}', width: 0, kern_next: 0, kkey: -1, source, hyphen: h.width, run: -1, hp: 0 })
+                out.push(Piece {
+                    kind: SOFT,
+                    ch: '\u{ad}',
+                    width: 0,
+                    kern_next: 0,
+                    kkey: -1,
+                    source,
+                    hyphen: h.width,
+                    run: -1,
+                    hp: 0,
+                })
             }
             "noBreakHyphen" => {
                 let mut p = glyph('-', GLYPH, source, run.hyphen_fmt);
@@ -206,7 +276,12 @@ pub fn pieces(t: &Tables, m: &MeasureIn) -> Vec<Piece> {
                 mi += 1;
             }
             let f = if uniform { run.fmts[0] } else { run.fmts[offset] };
-            out.push(glyph(c, if is_space(c) { SPACE } else { GLYPH }, source + offset as i32, f));
+            out.push(glyph(
+                c,
+                if is_space(c) { SPACE } else { GLYPH },
+                source + offset as i32,
+                f,
+            ));
         }
         while mi < marks.len() {
             assert!(marks[mi].0 == n as usize, "marks out of order");
@@ -278,14 +353,26 @@ pub fn break_line(s: i64, items: &[Piece], i: usize, g: &Geometry, first: bool) 
             }
         }
         if piece.kind == BREAK {
-            return Line { start, end: j + 1, forced: true, emergency: false, hyphenated: false };
+            return Line {
+                start,
+                end: j + 1,
+                forced: true,
+                emergency: false,
+                hyphenated: false,
+            };
         }
         let x_new;
         if piece.kind == TAB {
             let (stop, align, default) = g.next_tab(x, first);
             if matches!(align, 6 | 1 | 2) {
                 x_new = x;
-                limit = if stop <= g.right { g.right } else if align != 1 { stop } else { 2 * stop - x };
+                limit = if stop <= g.right {
+                    g.right
+                } else if align != 1 {
+                    stop
+                } else {
+                    2 * stop - x
+                };
             } else if stop > g.right && !default {
                 x_new = stop;
                 limit = INF;
@@ -315,8 +402,20 @@ pub fn break_line(s: i64, items: &[Piece], i: usize, g: &Geometry, first: bool) 
             && !(g.squeeze && squeezes(x_new - limit, room, spaces, limit - before_x, before_spaces))
         {
             return match last_break {
-                Some(at) => Line { start, end: at + 1, forced: false, emergency: false, hyphenated: items[at].kind == SOFT },
-                None => Line { start, end: j, forced: false, emergency: true, hyphenated: false },
+                Some(at) => Line {
+                    start,
+                    end: at + 1,
+                    forced: false,
+                    emergency: false,
+                    hyphenated: items[at].kind == SOFT,
+                },
+                None => Line {
+                    start,
+                    end: j,
+                    forced: false,
+                    emergency: true,
+                    hyphenated: false,
+                },
             };
         }
         if piece.kind == GLYPH || piece.kind == TAB {
@@ -410,16 +509,28 @@ pub fn measure(t: &Tables, m: &MeasureIn) -> Measured {
     let mut cache: Vec<(Vec<usize>, bool, LineH)> = Vec::new();
     let mut heights = Vec::with_capacity(lines.len());
     for number in 0..lines.len() {
-        let text: Vec<usize> = if any_text[number] { per_line[number].clone() } else { vec![m.mark_fmt] };
+        let text: Vec<usize> = if any_text[number] {
+            per_line[number].clone()
+        } else {
+            vec![m.mark_fmt]
+        };
         let first = number == 0;
-        if let Some((_, _, v)) = cache.iter().find(|(k, f, _)| k == &text && (*f == first || label.is_empty())) {
+        if let Some((_, _, v)) = cache
+            .iter()
+            .find(|(k, f, _)| k == &text && (*f == first || label.is_empty()))
+        {
             heights.push(*v);
             continue;
         }
-        let v = h.line_height(&text, if first { &label } else { &[] }, m.rule, m.line).expect("no face metrics");
+        let v = h
+            .line_height(&text, if first { &label } else { &[] }, m.rule, m.line)
+            .expect("no face metrics");
         cache.push((text, first, v));
         heights.push(v);
     }
-    Measured { pieces: items, lines, heights }
+    Measured {
+        pieces: items,
+        lines,
+        heights,
+    }
 }
-

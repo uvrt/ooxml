@@ -16,7 +16,10 @@ pub struct LineBox {
 
 impl From<&LineH> for LineBox {
     fn from(h: &LineH) -> LineBox {
-        LineBox { pitch: h.pitch, fit: h.fit() }
+        LineBox {
+            pitch: h.pitch,
+            fit: h.fit(),
+        }
     }
 }
 
@@ -163,7 +166,11 @@ pub fn section_geo(px: &Px, s: &SectionIn) -> SectionGeo {
 
 impl Doc {
     pub fn new(e: &Export) -> Doc {
-        let px = Px { den: e.px_den, lu: e.lu, dpi: e.dpi };
+        let px = Px {
+            den: e.px_den,
+            lu: e.lu,
+            dpi: e.dpi,
+        };
         Doc {
             px,
             mode15: e.compat.unwrap_or(0) >= 15,
@@ -183,19 +190,37 @@ impl Doc {
     /// `vertical.paragraph_gap_px`'s gap.
     #[inline]
     fn gap(&self, prev_after: i64, before: i64) -> (i64, i64) {
-        let box_before = if before > prev_after { self.px.twips(before - prev_after) } else { 0 };
+        let box_before = if before > prev_after {
+            self.px.twips(before - prev_after)
+        } else {
+            0
+        };
         (self.px.twips(prev_after) + box_before, box_before)
     }
 }
 
 /// The exported flow, with docx2svg's own heights (`use_ref`) or with heights given.
 pub fn flow_from_export(e: &Export) -> Vec<It> {
-    let px = Px { den: e.px_den, lu: e.lu, dpi: e.dpi };
-    e.items.iter().map(|it| It::new(item_from_export(&px, it, None))).collect()
+    let px = Px {
+        den: e.px_den,
+        lu: e.lu,
+        dpi: e.dpi,
+    };
+    e.items
+        .iter()
+        .map(|it| It::new(item_from_export(&px, it, None)))
+        .collect()
 }
 
 fn lb(h: &crate::model::HeightIn) -> LineBox {
-    let l = LineH { pitch: h.0, above: h.1, below: h.2, rule: h.3, line: h.4, natural: h.5 };
+    let l = LineH {
+        pitch: h.0,
+        above: h.1,
+        below: h.2,
+        rule: h.3,
+        line: h.4,
+        natural: h.5,
+    };
     LineBox::from(&l)
 }
 
@@ -240,7 +265,15 @@ pub fn item_from_export(px: &Px, it: &ItemIn, measured: Option<&[Vec<LineH>]>) -
                                     .iter()
                                     .map(|s| {
                                         let para = &c.paragraphs[s.4];
-                                        Stk { h: s.0 + s.1 + s.2, above: s.0, pitch: s.1, para: s.4 as u32, number: s.3 as u32, para_lines: para.heights.len() as u32, widow: para.widow.unwrap_or(true) }
+                                        Stk {
+                                            h: s.0 + s.1 + s.2,
+                                            above: s.0,
+                                            pitch: s.1,
+                                            para: s.4 as u32,
+                                            number: s.3 as u32,
+                                            para_lines: para.heights.len() as u32,
+                                            widow: para.widow.unwrap_or(true),
+                                        }
                                     })
                                     .collect(),
                                 Some(m) => {
@@ -253,14 +286,26 @@ pub fn item_from_export(px: &Px, it: &ItemIn, measured: Option<&[Vec<LineH>]>) -
                                 None => c.after,
                                 Some(_) => crate::table::cell_after(px, c, t.default_style),
                             };
-                            FCell { margins: c.mt + c.mb, margin_top: c.mt, after, stack }
+                            FCell {
+                                margins: c.mt + c.mb,
+                                margin_top: c.mt,
+                                after,
+                                stack,
+                            }
                         })
                         .collect::<Vec<_>>();
                     let height = match measured {
                         None => r.height,
                         Some(_) => crate::table::row_height(px, r, &cells),
                     };
-                    FRow { top_border: r.top_border, height, header: r.header, cant_split: r.cant_split, keeps_next: r.keeps_next, cells }
+                    FRow {
+                        top_border: r.top_border,
+                        height,
+                        header: r.header,
+                        cant_split: r.cant_split,
+                        keeps_next: r.keeps_next,
+                        cells,
+                    }
                 })
                 .collect();
             let header_count = rows.iter().take_while(|r| r.header).count() as u32;
@@ -286,7 +331,11 @@ pub struct Pos {
 
 impl Pos {
     pub fn at(item: u32, line: u32) -> Pos {
-        Pos { item, line, part: Vec::new() }
+        Pos {
+            item,
+            line,
+            part: Vec::new(),
+        }
     }
 }
 
@@ -346,7 +395,9 @@ fn split_counts(row: &FRow, starts: &[u32], room: i64, widow_control: bool) -> V
         let start = start as usize;
         let mut count: i64 = 0;
         let n = cell.stack.len();
-        while start + (count as usize) < n && cell.margins + slice_height(cell, start, start + count as usize + 1) <= room {
+        while start + (count as usize) < n
+            && cell.margins + slice_height(cell, start, start + count as usize + 1) <= room
+        {
             count += 1;
         }
         if widow_control && count > 0 && start + (count as usize) < n {
@@ -371,7 +422,16 @@ fn split_counts(row: &FRow, starts: &[u32], room: i64, widow_control: bool) -> V
 }
 
 /// `table._place_table` without merges.
-fn place_table(t: &FTable, y: i64, bottom: i64, row: usize, part: &[u32], first_on_page: bool, mode15: bool, split_kept: bool) -> TablePage {
+fn place_table(
+    t: &FTable,
+    y: i64,
+    bottom: i64,
+    row: usize,
+    part: &[u32],
+    first_on_page: bool,
+    mode15: bool,
+    split_kept: bool,
+) -> TablePage {
     place_table_at(t, y, bottom, row, part, first_on_page, mode15, split_kept, None)
 }
 
@@ -379,12 +439,26 @@ fn place_table(t: &FTable, y: i64, bottom: i64, row: usize, part: &[u32], first_
 pub type CellRanges = Vec<(u32, u32)>;
 
 fn whole(row: &FRow, starts: Option<&[u32]>) -> CellRanges {
-    row.cells.iter().enumerate().map(|(k, c)| (starts.map_or(0, |s| s[k]), c.stack.len() as u32)).collect()
+    row.cells
+        .iter()
+        .enumerate()
+        .map(|(k, c)| (starts.map_or(0, |s| s[k]), c.stack.len() as u32))
+        .collect()
 }
 
 /// `place_table`, with each piece's cell lines recorded in `ranges` where given (placing a
 /// page to read it, not paginating).
-fn place_table_at(t: &FTable, mut y: i64, bottom: i64, mut row: usize, part: &[u32], first_on_page: bool, mode15: bool, split_kept: bool, mut ranges: Option<&mut Vec<CellRanges>>) -> TablePage {
+fn place_table_at(
+    t: &FTable,
+    mut y: i64,
+    bottom: i64,
+    mut row: usize,
+    part: &[u32],
+    first_on_page: bool,
+    mode15: bool,
+    split_kept: bool,
+    mut ranges: Option<&mut Vec<CellRanges>>,
+) -> TablePage {
     let rows = &t.rows;
     let header_count = t.header_count as usize;
     let y0 = y;
@@ -403,21 +477,40 @@ fn place_table_at(t: &FTable, mut y: i64, bottom: i64, mut row: usize, part: &[u
     let any_body = |pieces: &Vec<(usize, bool, i64, i64)>| pieces.iter().any(|p| !p.1);
     macro_rules! leave {
         ($after:expr) => {{
-            if mode15 && header_count > 0 && !pieces.is_empty() && !first_on_page && pieces.iter().all(|p| p.0 < header_count && !p.1) {
+            if mode15
+                && header_count > 0
+                && !pieces.is_empty()
+                && !first_on_page
+                && pieces.iter().all(|p| p.0 < header_count && !p.1)
+            {
                 if let Some(r) = ranges.as_deref_mut() {
                     r.clear();
                 }
-                return TablePage { end: y0, next: Some((0, Vec::new())), any_body: false, pieces: Vec::new() };
+                return TablePage {
+                    end: y0,
+                    next: Some((0, Vec::new())),
+                    any_body: false,
+                    pieces: Vec::new(),
+                };
             }
             let end = y + pieces.last().map_or(0, |p| edge_below(t, p.0));
             let any = any_body(&pieces);
-            return TablePage { end, next: Some($after), any_body: any, pieces };
+            return TablePage {
+                end,
+                next: Some($after),
+                any_body: any,
+                pieces,
+            };
         }};
     }
     while row < rows.len() {
         let current = &rows[row];
         let continued = !part.is_empty();
-        let starts: Vec<u32> = if continued { part.clone() } else { vec![0; current.cells.len()] };
+        let starts: Vec<u32> = if continued {
+            part.clone()
+        } else {
+            vec![0; current.cells.len()]
+        };
         let height = if continued {
             current
                 .cells
@@ -461,7 +554,12 @@ fn place_table_at(t: &FTable, mut y: i64, bottom: i64, mut row: usize, part: &[u
         }
         let room = bottom - edge - y - current.top_border;
         let mut counts = split_counts(current, &starts, room, mode15);
-        if counts.iter().zip(&starts).zip(&current.cells).any(|((&c, &s), cell)| c == 0 && (s as usize) < cell.stack.len()) {
+        if counts
+            .iter()
+            .zip(&starts)
+            .zip(&current.cells)
+            .any(|((&c, &s), cell)| c == 0 && (s as usize) < cell.stack.len())
+        {
             counts.iter_mut().for_each(|c| *c = 0);
         }
         let split_ends: Vec<u32> = starts.iter().zip(&counts).map(|(s, c)| s + c).collect();
@@ -481,8 +579,17 @@ fn place_table_at(t: &FTable, mut y: i64, bottom: i64, mut row: usize, part: &[u
                 pieces.push((row, false, y, current.top_border + height));
                 y += current.top_border + height;
                 row += 1;
-                let next = if row < rows.len() { Some((row as u32, Vec::new())) } else { None };
-                return TablePage { end: y + edge, next, any_body: true, pieces };
+                let next = if row < rows.len() {
+                    Some((row as u32, Vec::new()))
+                } else {
+                    None
+                };
+                return TablePage {
+                    end: y + edge,
+                    next,
+                    any_body: true,
+                    pieces,
+                };
             }
             leave!((row as u32, part.clone()));
         }
@@ -491,10 +598,20 @@ fn place_table_at(t: &FTable, mut y: i64, bottom: i64, mut row: usize, part: &[u
         }
         pieces.push((row, false, y, current.top_border + split_height));
         y += current.top_border + split_height;
-        return TablePage { end: y + edge, next: Some((row as u32, split_ends)), any_body: true, pieces };
+        return TablePage {
+            end: y + edge,
+            next: Some((row as u32, split_ends)),
+            any_body: true,
+            pieces,
+        };
     }
     let any = any_body(&pieces);
-    TablePage { end: y + t.bottom_border, next: None, any_body: any, pieces }
+    TablePage {
+        end: y + t.bottom_border,
+        next: None,
+        any_body: any,
+        pieces,
+    }
 }
 
 struct Ctx<'a> {
@@ -534,7 +651,13 @@ impl<'a> Ctx<'a> {
                         let count = p.lines.len() as u32;
                         let mut end = count;
                         if self.doc.mode15 {
-                            end = p.page_breaks.iter().filter(|&&k| k >= number).map(|k| k + 1).min().unwrap_or(count);
+                            end = p
+                                .page_breaks
+                                .iter()
+                                .filter(|&&k| k >= number)
+                                .map(|k| k + 1)
+                                .min()
+                                .unwrap_or(count);
                         }
                         let below = end as i64 - number as i64;
                         if below < 2 {
@@ -571,7 +694,10 @@ impl<'a> Ctx<'a> {
     fn break_before(&self, start: &Pos, overflow: Pos) -> Pos {
         let target = self.keeps(start, overflow.clone());
         if target <= *start {
-            if self.doc.mode15 && matches!(*self.items[overflow.item as usize], FItem::T(_)) && Pos::at(overflow.item, 0) > *start {
+            if self.doc.mode15
+                && matches!(*self.items[overflow.item as usize], FItem::T(_))
+                && Pos::at(overflow.item, 0) > *start
+            {
                 return Pos::at(overflow.item, 0);
             }
             return overflow;
@@ -605,7 +731,13 @@ impl<'a> Ctx<'a> {
     }
 
     /// `scan`, with every line drawn recorded in `lines` where given (lane E).
-    fn scan_lines(&self, start: &Pos, story: u8, mut rec: Option<&mut Vec<Placed>>, mut lines: Option<&mut Vec<PLine>>) -> (Pos, bool, Pos) {
+    fn scan_lines(
+        &self,
+        start: &Pos,
+        story: u8,
+        mut rec: Option<&mut Vec<Placed>>,
+        mut lines: Option<&mut Vec<PLine>>,
+    ) -> (Pos, bool, Pos) {
         let doc = self.doc;
         let items = self.items;
         let first_item = &items[start.item as usize];
@@ -643,9 +775,25 @@ impl<'a> Ctx<'a> {
                         laid
                     };
                     if let Some(out) = lines.as_deref_mut() {
-                        let split_kept = !doc.mode15 && self.kept_row_breaks(t, &place_table(t, y, bottom, line as usize, part, first_on_page, doc.mode15, false), index, start);
+                        let split_kept = !doc.mode15
+                            && self.kept_row_breaks(
+                                t,
+                                &place_table(t, y, bottom, line as usize, part, first_on_page, doc.mode15, false),
+                                index,
+                                start,
+                            );
                         let mut ranges = Vec::new();
-                        let again = place_table_at(t, y, bottom, line as usize, part, first_on_page, doc.mode15, split_kept, Some(&mut ranges));
+                        let again = place_table_at(
+                            t,
+                            y,
+                            bottom,
+                            line as usize,
+                            part,
+                            first_on_page,
+                            doc.mode15,
+                            split_kept,
+                            Some(&mut ranges),
+                        );
                         for (&(row, header, top, _), cells) in again.pieces.iter().zip(&ranges) {
                             let content_top = top + t.rows[row].top_border;
                             for (c, &(a, b)) in cells.iter().enumerate() {
@@ -654,7 +802,16 @@ impl<'a> Ctx<'a> {
                                 for k in a..b {
                                     let st = &cell.stack[k as usize];
                                     let top = line_y + st.above;
-                                    out.push(PLine { item: index as u32, row: row as u32, cell: c as u32, para: st.para, number: st.number, top, pitch: st.pitch, header });
+                                    out.push(PLine {
+                                        item: index as u32,
+                                        row: row as u32,
+                                        cell: c as u32,
+                                        para: st.para,
+                                        number: st.number,
+                                        top,
+                                        pitch: st.pitch,
+                                        header,
+                                    });
                                     line_y += st.h;
                                 }
                             }
@@ -663,17 +820,35 @@ impl<'a> Ctx<'a> {
                     if let Some(r) = rec.as_deref_mut() {
                         for &(row, header, top, h) in &laid.pieces {
                             if !header {
-                                r.push(Placed { item: index as u32, line: row as u32, top, end: top + h, bottom });
+                                r.push(Placed {
+                                    item: index as u32,
+                                    line: row as u32,
+                                    top,
+                                    end: top + h,
+                                    bottom,
+                                });
                             }
                         }
                     }
                     if let Some((next_row, next_part)) = laid.next {
-                        let reach = Pos { item: index as u32, line: next_row, part: next_part.clone() };
+                        let reach = Pos {
+                            item: index as u32,
+                            line: next_row,
+                            part: next_part.clone(),
+                        };
                         if !laid.any_body {
                             return (self.break_before(start, Pos::at(index as u32, next_row)), false, reach);
                         }
                         if !next_part.is_empty() {
-                            return (Pos { item: index as u32, line: next_row, part: next_part }, false, reach);
+                            return (
+                                Pos {
+                                    item: index as u32,
+                                    line: next_row,
+                                    part: next_part,
+                                },
+                                false,
+                                reach,
+                            );
                         }
                         return (self.break_before(start, Pos::at(index as u32, next_row)), false, reach);
                     }
@@ -732,21 +907,44 @@ impl<'a> Ctx<'a> {
                             };
                             y += gap + p.top_border;
                         }
-                        let border = if number == count - 1 || !doc.mode15 { p.border } else { 0 };
+                        let border = if number == count - 1 || !doc.mode15 {
+                            p.border
+                        } else {
+                            0
+                        };
                         if !first_on_page && y + h.fit + border > bottom {
                             let overflow = Pos::at(index as u32, number);
                             return (self.break_before(start, overflow.clone()), false, overflow);
                         }
                         if let Some(r) = rec.as_deref_mut() {
-                            r.push(Placed { item: index as u32, line: number, top: y, end: y + h.fit + border, bottom });
+                            r.push(Placed {
+                                item: index as u32,
+                                line: number,
+                                top: y,
+                                end: y + h.fit + border,
+                                bottom,
+                            });
                         }
                         if let Some(out) = lines.as_deref_mut() {
-                            out.push(PLine { item: index as u32, row: u32::MAX, cell: u32::MAX, para: 0, number, top: y, pitch: h.pitch, header: false });
+                            out.push(PLine {
+                                item: index as u32,
+                                row: u32::MAX,
+                                cell: u32::MAX,
+                                para: 0,
+                                number,
+                                top: y,
+                                pitch: h.pitch,
+                                header: false,
+                            });
                         }
                         y += h.pitch;
                         first_on_page = false;
                         if !p.page_breaks.is_empty() && p.page_breaks.contains(&number) {
-                            let end = if number + 1 < count { Pos::at(index as u32, number + 1) } else { Pos::at(index as u32 + 1, 0) };
+                            let end = if number + 1 < count {
+                                Pos::at(index as u32, number + 1)
+                            } else {
+                                Pos::at(index as u32 + 1, 0)
+                            };
                             return (end, true, Pos::at(index as u32, number));
                         }
                         number += 1;
@@ -777,7 +975,12 @@ impl<'a> Ctx<'a> {
 
 /// `paginate.paginate` from `resume` (`(position, page index, number before)`) until the end,
 /// or until `until(position, page, number)` says the rest is known.
-pub fn paginate(doc: &Doc, items: &[It], resume: Option<(Pos, u32, i64)>, until: &mut dyn FnMut(&Pos, u32, i64) -> bool) -> (Pagination, Option<(Pos, u32, i64)>) {
+pub fn paginate(
+    doc: &Doc,
+    items: &[It],
+    resume: Option<(Pos, u32, i64)>,
+    until: &mut dyn FnMut(&Pos, u32, i64) -> bool,
+) -> (Pagination, Option<(Pos, u32, i64)>) {
     let ctx = Ctx { doc, items };
     let mut out = Pagination::default();
     let (mut position, mut page, mut number) = resume.unwrap_or((Pos::default(), 0, 0));
@@ -800,7 +1003,9 @@ pub fn paginate(doc: &Doc, items: &[It], resume: Option<(Pos, u32, i64)>, until:
             let mut n = sec.page_number_start.unwrap_or(number + 1);
             let mut blanks = 0;
             let kind = sec.start_type.as_deref();
-            if matches!(kind, Some("oddPage") | Some("evenPage")) && n % 2 != (if kind == Some("oddPage") { 1 } else { 0 }) {
+            if matches!(kind, Some("oddPage") | Some("evenPage"))
+                && n % 2 != (if kind == Some("oddPage") { 1 } else { 0 })
+            {
                 if restarted {
                     n += 1;
                 } else {
@@ -813,7 +1018,13 @@ pub fn paginate(doc: &Doc, items: &[It], resume: Option<(Pos, u32, i64)>, until:
             }
             number = n;
             for _ in 0..blanks {
-                out.info.push(Info { number: number - 1, section: items[position.item as usize - 1].section(), section_first: false, story: DEFAULT, blank: true });
+                out.info.push(Info {
+                    number: number - 1,
+                    section: items[position.item as usize - 1].section(),
+                    section_first: false,
+                    story: DEFAULT,
+                    blank: true,
+                });
                 page += 1;
             }
         } else if section_first && sec.page_number_start.is_some() {
@@ -822,7 +1033,13 @@ pub fn paginate(doc: &Doc, items: &[It], resume: Option<(Pos, u32, i64)>, until:
             number += 1;
         }
         let story = doc.story_kind(item.section(), section_first, number);
-        out.info.push(Info { number, section: item.section(), section_first, story, blank: false });
+        out.info.push(Info {
+            number,
+            section: item.section(),
+            section_first,
+            story,
+            blank: false,
+        });
         out.starts.push(position.clone());
         let (end, _forced, reach) = ctx.scan(&position, story, None);
         out.reach.push(reach);
@@ -837,7 +1054,14 @@ pub fn paginate_all(doc: &Doc, items: &[It]) -> Pagination {
 }
 
 pub fn from_export_pages(e: &Export) -> Vec<Pos> {
-    e.pages.iter().map(|p| Pos { item: p.start.0 as u32, line: p.start.1 as u32, part: p.start.2.iter().map(|v| *v as u32).collect() }).collect()
+    e.pages
+        .iter()
+        .map(|p| Pos {
+            item: p.start.0 as u32,
+            line: p.start.1 as u32,
+            part: p.start.2.iter().map(|v| *v as u32).collect(),
+        })
+        .collect()
 }
 
 /// A line (a table row's part) as placed on its page: px from the page's top to its top, to
@@ -876,7 +1100,10 @@ pub fn page_lines(doc: &Doc, items: &[It], pag: &Pagination, k: usize) -> Vec<PL
     // what the page holds ends where the next page starts (a split row's part is the page's)
     out.retain(|p| {
         let at = Pos::at(p.item, if p.row == u32::MAX { p.number } else { p.row });
-        at < end || (end.item == p.item && p.row != u32::MAX && (end.line > p.row || (end.line == p.row && !end.part.is_empty())))
+        at < end
+            || (end.item == p.item
+                && p.row != u32::MAX
+                && (end.line > p.row || (end.line == p.row && !end.part.is_empty())))
     });
     out
 }

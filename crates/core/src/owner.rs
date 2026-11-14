@@ -72,7 +72,11 @@ impl<F: Format> Owner<F> {
         let (tx, rx) = channel();
         let s2 = shared.clone();
         let thread = std::thread::spawn(move || run(state, rx, s2));
-        Owner { tx: Mutex::new(tx), shared, thread: Mutex::new(Some(thread)) }
+        Owner {
+            tx: Mutex::new(tx),
+            shared,
+            thread: Mutex::new(Some(thread)),
+        }
     }
 
     /// Hand a commit to the owner's thread; returns at once.
@@ -148,10 +152,20 @@ fn run<F: Format>(mut state: F, rx: Receiver<Msg>, shared: Arc<Shared<F>>) {
                     shared.cv.notify_all();
                     let publish_ms = ms(tpub);
                     let waited = oldest.map_or(0.0, |o| o.elapsed().as_secs_f64() * 1000.0);
-                    shared.passes.lock().unwrap().push(Pass { stat, commits: n, parse_ms, publish_ms, commit_to_publish_ms: waited });
+                    shared.passes.lock().unwrap().push(Pass {
+                        stat,
+                        commits: n,
+                        parse_ms,
+                        publish_ms,
+                        commit_to_publish_ms: waited,
+                    });
                 }
                 Err(e) => {
-                    let msg = e.downcast_ref::<String>().cloned().or_else(|| e.downcast_ref::<&str>().map(|s| s.to_string())).unwrap_or_default();
+                    let msg = e
+                        .downcast_ref::<String>()
+                        .cloned()
+                        .or_else(|| e.downcast_ref::<&str>().map(|s| s.to_string()))
+                        .unwrap_or_default();
                     return fail(&shared, msg);
                 }
             }

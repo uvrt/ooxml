@@ -23,7 +23,11 @@ pub fn diff(old: &[Option<String>], new: &[Option<String>]) -> Change {
         bo -= 1;
         bn -= 1;
     }
-    Change { a, b_old: bo, b_new: bn }
+    Change {
+        a,
+        b_old: bo,
+        b_new: bn,
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -35,7 +39,11 @@ pub struct Stats {
 }
 
 fn shift(p: &Pos, by: i64) -> Pos {
-    Pos { item: (p.item as i64 + by) as u32, line: p.line, part: p.part.clone() }
+    Pos {
+        item: (p.item as i64 + by) as u32,
+        line: p.line,
+        part: p.part.clone(),
+    }
 }
 
 /// The new flow's pagination from the old one's: the pages before the change kept, the
@@ -91,7 +99,14 @@ pub fn repaginate(doc: &Doc, old: &Pagination, new_items: &[It], ch: Change) -> 
             out.info.push(i);
         }
     }
-    (out, Stats { restart_page: first_page, pages_laid, joined_old_page: joined })
+    (
+        out,
+        Stats {
+            restart_page: first_page,
+            pages_laid,
+            joined_old_page: joined,
+        },
+    )
 }
 
 /// Splice the changed items into the old flow.

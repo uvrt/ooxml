@@ -73,7 +73,11 @@ impl FontT {
     #[inline]
     pub fn advance(&self, c: char) -> i64 {
         let u = c as usize;
-        let v = if u < DENSE { self.adv[u] as i64 } else { *self.adv_more.get(&(u as u32)).unwrap_or(&-1) };
+        let v = if u < DENSE {
+            self.adv[u] as i64
+        } else {
+            *self.adv_more.get(&(u as u32)).unwrap_or(&-1)
+        };
         assert!(v >= 0, "no advance for {c:?}");
         v
     }
@@ -110,7 +114,14 @@ impl Tables {
 
     /// Lane E: the tables from their parts (a commit may bring new faces, formats or
     /// characters: the tables are made again from the whole lists).
-    pub fn from_parts(e_fonts: &[crate::model::FontIn], formats: &[(i64, i64, i64, i64, Option<(i64, i64)>)], w_den: i64, px_den: i64, lu: i64, dpi: i64) -> Tables {
+    pub fn from_parts(
+        e_fonts: &[crate::model::FontIn],
+        formats: &[(i64, i64, i64, i64, Option<(i64, i64)>)],
+        w_den: i64,
+        px_den: i64,
+        lu: i64,
+        dpi: i64,
+    ) -> Tables {
         let mut s = w_den.lcm(&200);
         let mut fonts = Vec::new();
         for f in e_fonts {
@@ -139,13 +150,32 @@ impl Tables {
                 script: [m[4], m[5], m[6], m[7]],
             });
             let _ = (&f.face, f.bold, f.italic);
-            fonts.push(FontT { upm: f.upm, metrics, adv, adv_more, kern, kern_known: f.kern_known });
+            fonts.push(FontT {
+                upm: f.upm,
+                metrics,
+                adv,
+                adv_more,
+                kern,
+                kern_known: f.kern_known,
+            });
         }
         let fmts = formats
             .iter()
-            .map(|&(font, hp, whp, position, border)| Fmt { font, hp, whp, position, border })
+            .map(|&(font, hp, whp, position, border)| Fmt {
+                font,
+                hp,
+                whp,
+                position,
+                border,
+            })
             .collect();
-        Tables { s, w_den, px: Px { den: px_den, lu, dpi }, fonts, fmts }
+        Tables {
+            s,
+            w_den,
+            px: Px { den: px_den, lu, dpi },
+            fonts,
+            fmts,
+        }
     }
 
     /// `linebreak._units`: an advance at a size, in 1/`s` units, exact.
@@ -219,7 +249,12 @@ impl Face {
     fn extent_sum(&self) -> (Q, Q, Q, Q) {
         // (ascent, descent, gap, upm) as rationals
         match *self {
-            Face::Real(f) => (q(f.ascent as i128, 1), q(f.descent as i128, 1), q(f.gap as i128, 1), q(f.upm as i128, 1)),
+            Face::Real(f) => (
+                q(f.ascent as i128, 1),
+                q(f.descent as i128, 1),
+                q(f.gap as i128, 1),
+                q(f.upm as i128, 1),
+            ),
             Face::Synthetic(a, d) => (a, d, Q::from_integer(0), Q::from_integer(1)),
         }
     }
@@ -265,7 +300,14 @@ impl<'a> Heights<'a> {
             let Some(face) = self.metrics(fmt) else { continue };
             let (above, below) = self.item_extent(fmt, &face);
             let moved = (above, below) != self.face_extent(&face, fmt.hp);
-            ext.push(Extent { above, below: if is_label { Q::from_integer(0) } else { below }, hp: fmt.hp, face: Some(face), label: is_label, moved });
+            ext.push(Extent {
+                above,
+                below: if is_label { Q::from_integer(0) } else { below },
+                hp: fmt.hp,
+                face: Some(face),
+                label: is_label,
+                moved,
+            });
         }
         if ext.is_empty() {
             return None;
@@ -307,7 +349,11 @@ impl<'a> Heights<'a> {
     /// `lines._line_height`.
     pub fn line_height(&self, text: &[usize], label: &[usize], rule: u8, line: i64) -> Option<LineH> {
         let combined = self.line_extent(text, label)?;
-        let text_only = if label.is_empty() { None } else { self.line_extent(text, &[]) };
+        let text_only = if label.is_empty() {
+            None
+        } else {
+            self.line_extent(text, &[])
+        };
         let text_natural = self.tallest_natural(text);
         let (face, hp, _) = combined;
         let pitch = if rule != 0 || line == 240 || (text_only.is_none() && text_natural.is_none()) {
@@ -321,7 +367,9 @@ impl<'a> Heights<'a> {
                 }
             };
             let everything = self.natural(&face, hp);
-            self.t.px.quantise(everything + tn * (q(line as i128, 240) - Q::from_integer(1)))
+            self.t
+                .px
+                .quantise(everything + tn * (q(line as i128, 240) - Q::from_integer(1)))
         };
         let (a, d, g, upm) = face.extent_sum();
         let em = self.em(upm, hp);

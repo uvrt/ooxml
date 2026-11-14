@@ -11,7 +11,9 @@
 use crate::incr::{repaginate, Change};
 use crate::measure::{measure, Measured, Tables, BREAK, GLYPH, TAB};
 use crate::model::{Export, FontIn, ItemIn, MeasureIn, SectionIn};
-use crate::paginate::{item_from_export, page_lines, paginate_all, section_geo, Doc, FItem, It, LineBox, PLine, Pagination, Pos};
+use crate::paginate::{
+    item_from_export, page_lines, paginate_all, section_geo, Doc, FItem, It, LineBox, PLine, Pagination, Pos,
+};
 use rayon::prelude::*;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -50,7 +52,15 @@ impl Aux {
     }
 }
 
-fn para_aux(m: &MeasureIn, me: &Measured, key: Option<String>, bookmarks: &[(String, usize)], row: u32, cell: u32, idx: u32) -> PAux {
+fn para_aux(
+    m: &MeasureIn,
+    me: &Measured,
+    key: Option<String>,
+    bookmarks: &[(String, usize)],
+    row: u32,
+    cell: u32,
+    idx: u32,
+) -> PAux {
     let mut fields = Vec::new();
     let mut offset = 0usize;
     for (k, run) in m.runs.iter().enumerate() {
@@ -90,7 +100,16 @@ fn para_aux(m: &MeasureIn, me: &Measured, key: Option<String>, bookmarks: &[(Str
         }
         line_text.push((small, ink));
     }
-    PAux { key, row, cell, idx, bookmarks: bookmarks.to_vec(), fields, line_of, line_text }
+    PAux {
+        key,
+        row,
+        cell,
+        idx,
+        bookmarks: bookmarks.to_vec(),
+        fields,
+        line_of,
+        line_text,
+    }
 }
 
 /// The paginator's item of an input, measured, and what the engine keeps beside it.
@@ -104,10 +123,26 @@ pub fn build(t: &Tables, it: &ItemIn) -> (FItem, Aux) {
                 .lines
                 .iter()
                 .enumerate()
-                .filter(|(_, l)| l.forced && l.end > 0 && (me.pieces[l.end - 1].ch == '\u{c}' || (one_column && me.pieces[l.end - 1].ch == '\u{b}')))
+                .filter(|(_, l)| {
+                    l.forced
+                        && l.end > 0
+                        && (me.pieces[l.end - 1].ch == '\u{c}' || (one_column && me.pieces[l.end - 1].ch == '\u{b}'))
+                })
                 .map(|(n, _)| n as u32)
                 .collect();
-            let aux = Aux { key: p.key.clone(), table: false, paras: vec![para_aux(&p.measure, &me, p.key.clone(), &p.bookmarks, u32::MAX, u32::MAX, 0)] };
+            let aux = Aux {
+                key: p.key.clone(),
+                table: false,
+                paras: vec![para_aux(
+                    &p.measure,
+                    &me,
+                    p.key.clone(),
+                    &p.bookmarks,
+                    u32::MAX,
+                    u32::MAX,
+                    0,
+                )],
+            };
             let item = FItem::P(crate::paginate::FPara {
                 block: p.block as u32,
                 section: p.section as u32,
@@ -134,13 +169,28 @@ pub fn build(t: &Tables, it: &ItemIn) -> (FItem, Aux) {
                 for (c, cell) in row.cells.iter().enumerate() {
                     for (k, cp) in cell.paragraphs.iter().enumerate() {
                         let me = measure(t, &cp.measure);
-                        paras.push(para_aux(&cp.measure, &me, cp.key.clone(), &cp.bookmarks, r as u32, c as u32, k as u32));
+                        paras.push(para_aux(
+                            &cp.measure,
+                            &me,
+                            cp.key.clone(),
+                            &cp.bookmarks,
+                            r as u32,
+                            c as u32,
+                            k as u32,
+                        ));
                         hs.push(me.heights);
                     }
                 }
             }
             let item = item_from_export(&t.px, it, Some(&hs));
-            (item, Aux { key: tb.key.clone(), table: true, paras })
+            (
+                item,
+                Aux {
+                    key: tb.key.clone(),
+                    table: true,
+                    paras,
+                },
+            )
         }
     }
 }
@@ -246,7 +296,12 @@ impl Engine {
             pag,
             version: 0,
         };
-        let mut st = Stat { measure_ms, paginate_ms, items_measured: eng.flow.len(), ..Default::default() };
+        let mut st = Stat {
+            measure_ms,
+            paginate_ms,
+            items_measured: eng.flow.len(),
+            ..Default::default()
+        };
         let t2 = Instant::now();
         let (passes, items, unsettled) = eng.fields();
         st.fields_ms = ms(t2);
@@ -261,7 +316,10 @@ impl Engine {
     /// Apply commits in order, as one relayout.
     pub fn apply(&mut self, commits: Vec<Commit>) -> Stat {
         let t0 = Instant::now();
-        let mut st = Stat { commits: commits.len(), ..Default::default() };
+        let mut st = Stat {
+            commits: commits.len(),
+            ..Default::default()
+        };
         let old_len = self.flow.len();
         // the dirty span [lo, hi) of the current list
         let (mut lo, mut hi) = (usize::MAX, 0usize);
@@ -327,7 +385,11 @@ impl Engine {
         }
         if lo != usize::MAX {
             let cur = self.flow.len();
-            let ch = Change { a: lo, b_old: old_len - (cur - hi), b_new: hi };
+            let ch = Change {
+                a: lo,
+                b_old: old_len - (cur - hi),
+                b_new: hi,
+            };
             let tp = Instant::now();
             self.repaginate(ch, &mut st);
             st.paginate_ms += ms(tp);
@@ -358,7 +420,9 @@ impl Engine {
     /// The 0-based page index (blank pages counted) of a paragraph's text offset.
     fn page_of(&self, item: usize, pa: &PAux, offset: usize) -> Option<usize> {
         let lo = |o: usize| pa.line_of.get(o).copied().filter(|v| *v >= 0);
-        let line = lo(offset).or_else(|| if offset > 0 { lo(offset - 1) } else { None }).unwrap_or(0) as u32;
+        let line = lo(offset)
+            .or_else(|| if offset > 0 { lo(offset - 1) } else { None })
+            .unwrap_or(0) as u32;
         if pa.row == u32::MAX {
             let pos = Pos::at(item as u32, line);
             let k = self.pag.starts.partition_point(|s| *s <= pos);
@@ -368,11 +432,18 @@ impl Engine {
             return Some(self.pag.page_at[k - 1] as usize);
         }
         // a cell paragraph: the first page it is drawn on (`paginate.drawn_pages`)
-        let first = self.pag.starts.partition_point(|s| *s < Pos::at(item as u32, 0)).saturating_sub(1);
+        let first = self
+            .pag
+            .starts
+            .partition_point(|s| *s < Pos::at(item as u32, 0))
+            .saturating_sub(1);
         let last = self.pag.starts.partition_point(|s| *s < Pos::at(item as u32 + 1, 0));
         for k in first..last {
             let lines = page_lines(&self.doc, &self.flow, &self.pag, k);
-            if lines.iter().any(|l| l.item == item as u32 && l.row == pa.row && l.cell == pa.cell && l.para == pa.idx) {
+            if lines
+                .iter()
+                .any(|l| l.item == item as u32 && l.row == pa.row && l.cell == pa.cell && l.para == pa.idx)
+            {
                 return Some(self.pag.page_at[k] as usize);
             }
         }
@@ -439,18 +510,18 @@ impl Engine {
             let t = self.t.clone();
             let (lo, hi) = (subs.first().unwrap().0, subs.last().unwrap().0 + 1);
             let rebuild = |(i, mine): (usize, Vec<(usize, usize, String)>)| {
-                    let mut input = (*self.inputs[i]).clone();
-                    for (pi, run, s) in mine {
-                        let m = para_measure_mut(&mut input, &self.aux[i].paras[pi]);
-                        let r = &mut m.runs[run];
-                        r.text = s;
-                        if r.fmts.len() > 1 {
-                            r.fmts.truncate(1);
-                        }
+                let mut input = (*self.inputs[i]).clone();
+                for (pi, run, s) in mine {
+                    let m = para_measure_mut(&mut input, &self.aux[i].paras[pi]);
+                    let r = &mut m.runs[run];
+                    r.text = s;
+                    if r.fmts.len() > 1 {
+                        r.fmts.truncate(1);
                     }
-                    let built = build(&t, &input);
-                    (i, input, built)
-                };
+                }
+                let built = build(&t, &input);
+                (i, input, built)
+            };
             let rebuilt: Vec<(usize, ItemIn, (FItem, Aux))> = if subs.len() < PARALLEL_FROM {
                 subs.into_iter().map(rebuild).collect()
             } else {
@@ -462,7 +533,14 @@ impl Engine {
                 self.aux[i] = Arc::new(a);
             }
             let mut st = Stat::default();
-            self.repaginate(Change { a: lo, b_old: hi, b_new: hi }, &mut st);
+            self.repaginate(
+                Change {
+                    a: lo,
+                    b_old: hi,
+                    b_new: hi,
+                },
+                &mut st,
+            );
         }
     }
 
@@ -538,21 +616,34 @@ impl Snap {
         let mut placed: HashMap<usize, Vec<PLine>> = HashMap::new();
         let mut out = Vec::with_capacity(keys.len());
         for key in keys {
-            let found = paras.get(key).copied().or_else(|| items.get(key).map(|&i| (i, usize::MAX)));
+            let found = paras
+                .get(key)
+                .copied()
+                .or_else(|| items.get(key).map(|&i| (i, usize::MAX)));
             let mut pages: Vec<usize> = Vec::new();
             if let Some((i, pi)) = found {
                 let a = &self.aux[i];
                 if !a.table {
                     let n = a.paras[0].line_text.len().max(1) as u32;
-                    let first = self.pag.starts.partition_point(|s| *s <= Pos::at(i as u32, 0)).saturating_sub(1);
-                    let last = self.pag.starts.partition_point(|s| *s <= Pos::at(i as u32, n - 1)).saturating_sub(1);
+                    let first = self
+                        .pag
+                        .starts
+                        .partition_point(|s| *s <= Pos::at(i as u32, 0))
+                        .saturating_sub(1);
+                    let last = self
+                        .pag
+                        .starts
+                        .partition_point(|s| *s <= Pos::at(i as u32, n - 1))
+                        .saturating_sub(1);
                     for k in first..=last.max(first) {
                         pages.push(self.pag.page_at[k] as usize + 1);
                     }
                 } else {
                     let (first, last) = self.pages_of_item(i);
                     for k in first..last.min(self.pag.starts.len()) {
-                        let lines = placed.entry(k).or_insert_with(|| page_lines(&self.doc, &self.flow, &self.pag, k));
+                        let lines = placed
+                            .entry(k)
+                            .or_insert_with(|| page_lines(&self.doc, &self.flow, &self.pag, k));
                         let hit = lines.iter().any(|l| {
                             l.item as usize == i
                                 && (pi == usize::MAX || {
@@ -578,8 +669,16 @@ impl Snap {
 
     /// Laid-out page `k`'s span of items.
     fn pages_of_item(&self, item: usize) -> (usize, usize) {
-        let first = self.pag.starts.partition_point(|s| *s <= Pos::at(item as u32, 0)).saturating_sub(1);
-        let last = self.pag.starts.partition_point(|s| *s < Pos::at(item as u32 + 1, 0)).max(first + 1);
+        let first = self
+            .pag
+            .starts
+            .partition_point(|s| *s <= Pos::at(item as u32, 0))
+            .saturating_sub(1);
+        let last = self
+            .pag
+            .starts
+            .partition_point(|s| *s < Pos::at(item as u32 + 1, 0))
+            .max(first + 1);
         (first, last)
     }
 
@@ -616,7 +715,8 @@ impl Snap {
         }
         let mut pages = Vec::new();
         if q.extent_only && lo != usize::MAX {
-            let inside_items: std::collections::HashSet<usize> = inside.iter().filter_map(|k| keys.get(k).copied()).collect();
+            let inside_items: std::collections::HashSet<usize> =
+                inside.iter().filter_map(|k| keys.get(k).copied()).collect();
             let mut extent = Vec::new();
             for k in lo..hi.min(self.pag.starts.len()) {
                 let lines = page_lines(&self.doc, &self.flow, &self.pag, k);
@@ -642,7 +742,9 @@ impl Snap {
                 for l in &lines {
                     out.push(self.line_json(l));
                 }
-                pages.push(json!({"page": index + 1, "section": info.section, "top": top, "bottom": bottom, "lines": out}));
+                pages.push(
+                    json!({"page": index + 1, "section": info.section, "top": top, "bottom": bottom, "lines": out}),
+                );
             }
         }
         json!({"version": self.version, "pages": self.page_count(), "px_den": self.dpx, "laid": pages, "missing": missing,
@@ -656,7 +758,10 @@ impl Snap {
             let (hp, ink) = p.line_text.get(l.number as usize).copied().unwrap_or((0, false));
             json!([p.key, l.number, l.top, l.pitch, hp, ink])
         } else {
-            let p = a.paras.iter().find(|p| p.row == l.row && p.cell == l.cell && p.idx == l.para);
+            let p = a
+                .paras
+                .iter()
+                .find(|p| p.row == l.row && p.cell == l.cell && p.idx == l.para);
             let (key, hp, ink) = match p {
                 Some(p) => {
                     let (hp, ink) = p.line_text.get(l.number as usize).copied().unwrap_or((0, false));
@@ -680,7 +785,8 @@ impl Snap {
                     let pos = Pos::at(i as u32, 0);
                     let k = self.pag.starts.partition_point(|s| *s <= pos).saturating_sub(1);
                     if k < self.pag.page_at.len() {
-                        out.entry(key.as_str()).or_insert((self.pag.page_at[k] as usize + 1, (i as u32, 0, 0, 0)));
+                        out.entry(key.as_str())
+                            .or_insert((self.pag.page_at[k] as usize + 1, (i as u32, 0, 0, 0)));
                     }
                 }
             } else {
@@ -690,9 +796,16 @@ impl Snap {
                         if l.item as usize != i {
                             continue;
                         }
-                        if let Some(p) = a.paras.iter().find(|p| p.row == l.row && p.cell == l.cell && p.idx == l.para) {
+                        if let Some(p) = a
+                            .paras
+                            .iter()
+                            .find(|p| p.row == l.row && p.cell == l.cell && p.idx == l.para)
+                        {
                             if let Some(key) = &p.key {
-                                out.entry(key.as_str()).or_insert((self.pag.page_at[k] as usize + 1, (i as u32, l.row + 1, l.cell, l.para)));
+                                out.entry(key.as_str()).or_insert((
+                                    self.pag.page_at[k] as usize + 1,
+                                    (i as u32, l.row + 1, l.cell, l.para),
+                                ));
                             }
                         }
                     }
@@ -752,7 +865,10 @@ pub struct Owner {
 impl Owner {
     pub fn open(e: Export) -> Owner {
         let (eng, st) = Engine::new(e);
-        Owner { core: crate::owner::Owner::start(eng, "word-layout-owner"), first: st }
+        Owner {
+            core: crate::owner::Owner::start(eng, "word-layout-owner"),
+            first: st,
+        }
     }
     pub fn commit(&self, json: String) {
         self.core.commit(json);

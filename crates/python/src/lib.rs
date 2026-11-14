@@ -17,7 +17,7 @@ impl Snap {
     /// Load an export, measure it with the Rust kernel, paginate it (lock released).
     #[staticmethod]
     fn load(py: Python<'_>, path: &str, copies: usize) -> PyResult<Snap> {
-        let snap = py.allow_threads(|| {
+        let snap = py.detach(|| {
             let e = load(path);
             let t = Tables::new(&e);
             let doc = Doc::new(&e);
@@ -47,12 +47,12 @@ impl Snap {
     /// The same, lock released.
     fn page_of_block_released(&self, py: Python<'_>, block: u32) -> Option<u32> {
         let s = self.inner.clone();
-        py.allow_threads(move || s.page_of_block(block))
+        py.detach(move || s.page_of_block(block))
     }
     /// Facts over pages `[from, to)`, placed lazily, lock released.
     fn facts(&self, py: Python<'_>, from: usize, to: usize) -> (u64, u64, u64, u64) {
         let s = self.inner.clone();
-        let f = py.allow_threads(move || s.facts(from, to));
+        let f = py.detach(move || s.facts(from, to));
         (f.lines, f.past_bottom, f.keep_next_broken, f.keep_lines_broken)
     }
     /// The same, lock held.
@@ -86,11 +86,21 @@ impl SnapshotE {
     }
     /// Each laid-out page's start `(item, line, part)` (tests).
     fn starts(&self) -> Vec<(u32, u32, Vec<u32>)> {
-        self.inner.pag.starts.iter().map(|p| (p.item, p.line, p.part.clone())).collect()
+        self.inner
+            .pag
+            .starts
+            .iter()
+            .map(|p| (p.item, p.line, p.part.clone()))
+            .collect()
     }
     /// Each page's `(number, section, section_first, story, blank)` (tests).
     fn info(&self) -> Vec<(i64, u32, bool, u8, bool)> {
-        self.inner.pag.info.iter().map(|i| (i.number, i.section, i.section_first, i.story, i.blank)).collect()
+        self.inner
+            .pag
+            .info
+            .iter()
+            .map(|i| (i.number, i.section, i.section_first, i.story, i.blank))
+            .collect()
     }
     /// Every computed field's text now: `(item, paragraph, run, keyword, text)` (tests).
     fn field_texts(&self) -> Vec<(usize, usize, usize, String, String)> {
@@ -106,10 +116,14 @@ impl SnapshotE {
     }
     /// Every item's lines' heights `[pitch...]` (tests).
     fn pitches(&self) -> Vec<Vec<i64>> {
-        self.inner.flow.iter().map(|it| match &**it {
-            ooxml_word::paginate::FItem::P(p) => p.lines.iter().map(|l| l.pitch).collect(),
-            ooxml_word::paginate::FItem::T(t) => t.rows.iter().map(|r| r.height).collect(),
-        }).collect()
+        self.inner
+            .flow
+            .iter()
+            .map(|it| match &**it {
+                ooxml_word::paginate::FItem::P(p) => p.lines.iter().map(|l| l.pitch).collect(),
+                ooxml_word::paginate::FItem::T(t) => t.rows.iter().map(|r| r.height).collect(),
+            })
+            .collect()
     }
 }
 
@@ -118,7 +132,7 @@ impl Owner {
     /// The owner of a document from its export (JSON), laid out whole (lock released).
     #[staticmethod]
     fn open(py: Python<'_>, export: String) -> PyResult<(Owner, String)> {
-        let (o, st) = py.allow_threads(move || {
+        let (o, st) = py.detach(move || {
             let t = std::time::Instant::now();
             let e: ooxml_word::model::Export = serde_json::from_str(&export).expect("export");
             let parse = t.elapsed().as_secs_f64() * 1000.0;
@@ -136,7 +150,7 @@ impl Owner {
     /// Wait (lock released) for the first snapshot of `version` or later, then answer the
     /// query (JSON) on it: one call per check.  Returns `(answer JSON, snapshot)`.
     fn check(&self, py: Python<'_>, version: u64, query: String) -> PyResult<(String, SnapshotE, f64, f64)> {
-        let (s, snap, waited, read) = py.allow_threads(|| {
+        let (s, snap, waited, read) = py.detach(|| {
             let t = std::time::Instant::now();
             let snap = self.inner.wait(version);
             let waited = t.elapsed().as_secs_f64() * 1000.0;
@@ -150,7 +164,7 @@ impl Owner {
     /// The pages each key is drawn on, on the first snapshot of `version` or later (lock
     /// released): `([[page...]...], snapshot version)`.
     fn pages_of(&self, py: Python<'_>, version: u64, keys: Vec<String>) -> (Vec<Vec<usize>>, u64) {
-        py.allow_threads(|| {
+        py.detach(|| {
             let snap = self.inner.wait(version);
             (snap.pages_of(&keys), snap.version)
         })
@@ -159,7 +173,7 @@ impl Owner {
     #[staticmethod]
     fn moved(py: Python<'_>, before: &SnapshotE, now: &SnapshotE) -> Vec<(String, usize, usize)> {
         let (a, b) = (before.inner.clone(), now.inner.clone());
-        py.allow_threads(move || b.moved(&a))
+        py.detach(move || b.moved(&a))
     }
     /// The relayouts so far (JSON list), and clears them.
     fn stats(&self) -> String {
@@ -172,7 +186,7 @@ impl Owner {
         self.inner.core.latest().version
     }
     fn stop(&self, py: Python<'_>) {
-        py.allow_threads(|| self.inner.stop());
+        py.detach(|| self.inner.stop());
     }
 }
 
@@ -229,9 +243,11 @@ fn owner_of(doc: &str) -> PyResult<Arc<dyn AnyOwner>> {
 #[pyfunction]
 fn open_document(py: Python<'_>, doc: String, kind: &str, first: String) -> PyResult<String> {
     if kind != "docx" {
-        return Err(pyo3::exceptions::PyValueError::new_err(format!("no {kind} format in this prototype")));
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "no {kind} format in this prototype"
+        )));
     }
-    let (owner, stat) = py.allow_threads(move || {
+    let (owner, stat) = py.detach(move || {
         let e: ooxml_word::model::Export = serde_json::from_str(&first).expect("export");
         let o = ooxml_word::engine::Owner::open(e);
         let st = ooxml_word::engine::stat_json(&o.first, 0.0).to_string();
@@ -252,21 +268,26 @@ fn commit(doc: &str, text: String) -> PyResult<()> {
 #[pyfunction]
 fn call(py: Python<'_>, doc: &str, version: u64, request: String) -> PyResult<String> {
     let owner = owner_of(doc)?;
-    Ok(py.allow_threads(move || owner.call(version, &request)))
+    Ok(py.detach(move || owner.call(version, &request)))
 }
 
 #[pyfunction]
 fn close_document(py: Python<'_>, doc: &str) -> PyResult<()> {
     let owner = registry().write().unwrap().remove(doc);
     if let Some(o) = owner {
-        py.allow_threads(move || o.stop());
+        py.detach(move || o.stop());
     }
     Ok(())
 }
 
 #[pyfunction]
 fn documents() -> Vec<(String, &'static str)> {
-    registry().read().unwrap().iter().map(|(k, v)| (k.clone(), v.kind())).collect()
+    registry()
+        .read()
+        .unwrap()
+        .iter()
+        .map(|(k, v)| (k.clone(), v.kind()))
+        .collect()
 }
 
 #[pyfunction]
@@ -284,7 +305,7 @@ fn busy(micros: u64) -> u64 {
 /// Busy for `micros`, lock released.
 #[pyfunction]
 fn spin(py: Python<'_>, micros: u64) -> u64 {
-    py.allow_threads(move || busy(micros))
+    py.detach(move || busy(micros))
 }
 
 /// Busy for `micros`, lock held.
@@ -293,7 +314,8 @@ fn spin_held(micros: u64) -> u64 {
     busy(micros)
 }
 
-#[pymodule]
+// Free-threading safe: every class is frozen, shared state is behind Arc and locks.
+#[pymodule(gil_used = false)]
 fn ooxml_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Snap>()?;
     m.add_class::<Owner>()?;

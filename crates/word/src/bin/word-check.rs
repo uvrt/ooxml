@@ -9,7 +9,9 @@
 use ooxml_word::incr::{diff, repaginate, splice};
 use ooxml_word::measure::{measure, Tables};
 use ooxml_word::model::{load, Export, ItemIn, RefIn};
-use ooxml_word::paginate::{flow_from_export, from_export_pages, item_from_export, paginate_all, Doc, FItem, Pagination, Pos};
+use ooxml_word::paginate::{
+    flow_from_export, from_export_pages, item_from_export, paginate_all, Doc, FItem, Pagination, Pos,
+};
 use ooxml_word::snapshot::Snapshot;
 use ooxml_word::{measure_item, measured_flow};
 use rayon::prelude::*;
@@ -67,33 +69,61 @@ struct Compare {
     examples: Vec<Value>,
 }
 
-fn compare_para(t: &Tables, c: &mut Compare, block: usize, m: &ooxml_word::model::MeasureIn, r: &RefIn, heights: &[ooxml_word::model::HeightIn]) {
+fn compare_para(
+    t: &Tables,
+    c: &mut Compare,
+    block: usize,
+    m: &ooxml_word::model::MeasureIn,
+    r: &RefIn,
+    heights: &[ooxml_word::model::HeightIn],
+) {
     c.paragraphs += 1;
     let got = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| measure(t, m))) {
         Ok(g) => g,
         Err(err) => {
-            let msg = err.downcast_ref::<String>().cloned().or_else(|| err.downcast_ref::<&str>().map(|s| s.to_string())).unwrap_or_default();
+            let msg = err
+                .downcast_ref::<String>()
+                .cloned()
+                .or_else(|| err.downcast_ref::<&str>().map(|s| s.to_string()))
+                .unwrap_or_default();
             if c.examples.len() < 12 {
-                c.examples.push(json!({"block": block, "what": "rust stopped", "why": msg}));
+                c.examples
+                    .push(json!({"block": block, "what": "rust stopped", "why": msg}));
             }
             return;
         }
     };
     let widths_ok = got.pieces.len() == r.widths.len()
-        && got.pieces.iter().zip(&r.widths).zip(&r.kinds).all(|((p, w), k)| p.width == t.w(*w) && p.kind == *k);
+        && got
+            .pieces
+            .iter()
+            .zip(&r.widths)
+            .zip(&r.kinds)
+            .all(|((p, w), k)| p.width == t.w(*w) && p.kind == *k);
     if widths_ok {
         c.pieces_ok += 1;
     } else if c.examples.len() < 12 {
-        let k = got.pieces.iter().zip(&r.widths).position(|(p, w)| p.width != t.w(*w)).unwrap_or(0);
-        c.examples.push(json!({"block": block, "what": "pieces", "n": [got.pieces.len(), r.widths.len()], "first": k}));
+        let k = got
+            .pieces
+            .iter()
+            .zip(&r.widths)
+            .position(|(p, w)| p.width != t.w(*w))
+            .unwrap_or(0);
+        c.examples
+            .push(json!({"block": block, "what": "pieces", "n": [got.pieces.len(), r.widths.len()], "first": k}));
     }
     let lines: Vec<(usize, usize, u8)> = got.lines.iter().map(|l| (l.start, l.end, l.flags())).collect();
     if lines == r.lines {
         c.lines_ok += 1;
     } else if c.examples.len() < 12 {
-        c.examples.push(json!({"block": block, "what": "lines", "rust": lines, "docx2svg": r.lines}));
+        c.examples
+            .push(json!({"block": block, "what": "lines", "rust": lines, "docx2svg": r.lines}));
     }
-    let hs: Vec<(i64, i64, i64, u8, i64, i64)> = got.heights.iter().map(|h| (h.pitch, h.above, h.below, h.rule, h.line, h.natural)).collect();
+    let hs: Vec<(i64, i64, i64, u8, i64, i64)> = got
+        .heights
+        .iter()
+        .map(|h| (h.pitch, h.above, h.below, h.rule, h.line, h.natural))
+        .collect();
     if hs == heights {
         c.heights_ok += 1;
     } else if c.examples.len() < 12 {
@@ -129,7 +159,13 @@ fn compare_pages(got: &Pagination, want: &[Pos], info: &[(i64, i64, bool, String
         _ => 0,
     };
     let info_ok = got.info.len() == info.len()
-        && got.info.iter().zip(info).all(|(a, b)| a.number == b.0 && a.section as i64 == b.1 && a.section_first == b.2 && a.story == kind(&b.3) && a.blank == b.4);
+        && got.info.iter().zip(info).all(|(a, b)| {
+            a.number == b.0
+                && a.section as i64 == b.1
+                && a.section_first == b.2
+                && a.story == kind(&b.3)
+                && a.blank == b.4
+        });
     json!({
         "pages_rust": got.starts.len(), "pages_docx2svg": want.len(), "starts_equal": same,
         "all_equal": same == want.len() && got.starts.len() == want.len(), "info_equal": info_ok,
@@ -143,7 +179,13 @@ fn check(path: &str) -> Value {
     let load_ms = ms(t0);
     let t = Tables::new(&e);
     std::panic::set_hook(Box::new(|_| {}));
-    let mut c = Compare { paragraphs: 0, pieces_ok: 0, lines_ok: 0, heights_ok: 0, examples: vec![] };
+    let mut c = Compare {
+        paragraphs: 0,
+        pieces_ok: 0,
+        lines_ok: 0,
+        heights_ok: 0,
+        examples: vec![],
+    };
     for it in &e.items {
         match it {
             ItemIn::Para(p) => compare_para(&t, &mut c, p.block, &p.measure, &p.reference, &p.heights),
@@ -162,12 +204,34 @@ fn check(path: &str) -> Value {
         .into_iter()
         .filter(|(_, m)| std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| measure(&t, m))).is_ok())
         .collect();
-    let pieces: usize = paras.iter().map(|(_, m)| ooxml_word::measure::pieces(&t, m).len()).sum();
-    let (single, _) = best(3, || paras.iter().map(|(_, m)| measure(&t, m).lines.len()).sum::<usize>());
-    let (parallel, _) = best(3, || paras.par_iter().map(|(_, m)| measure(&t, m).lines.len()).sum::<usize>());
+    let pieces: usize = paras
+        .iter()
+        .map(|(_, m)| ooxml_word::measure::pieces(&t, m).len())
+        .sum();
+    let (single, _) = best(3, || {
+        paras.iter().map(|(_, m)| measure(&t, m).lines.len()).sum::<usize>()
+    });
+    let (parallel, _) = best(3, || {
+        paras.par_iter().map(|(_, m)| measure(&t, m).lines.len()).sum::<usize>()
+    });
     let breaks_only = {
-        let prepared: Vec<_> = paras.iter().map(|(_, m)| (ooxml_word::measure::pieces(&t, m), ooxml_word::measure::Geometry::new(&t, &m.geometry), m.columns)).collect();
-        best(3, || prepared.iter().map(|(p, g, col)| ooxml_word::measure::break_pieces(t.s, p, g, *col).len()).sum::<usize>()).0
+        let prepared: Vec<_> = paras
+            .iter()
+            .map(|(_, m)| {
+                (
+                    ooxml_word::measure::pieces(&t, m),
+                    ooxml_word::measure::Geometry::new(&t, &m.geometry),
+                    m.columns,
+                )
+            })
+            .collect();
+        best(3, || {
+            prepared
+                .iter()
+                .map(|(p, g, col)| ooxml_word::measure::break_pieces(t.s, p, g, *col).len())
+                .sum::<usize>()
+        })
+        .0
     };
     if e.pages.is_empty() {
         return json!({"export": path, "items": e.items.len(), "measure": {"paragraphs": c.paragraphs, "pieces": pieces,
@@ -191,7 +255,11 @@ fn check(path: &str) -> Value {
         if let (FItem::T(x), FItem::T(y)) = (&**a, &**b) {
             for (r1, r2) in x.rows.iter().zip(&y.rows) {
                 rows += 1;
-                if r1.height == r2.height && r1.cells.iter().zip(&r2.cells).all(|(c1, c2)| c1.after == c2.after && c1.stack.iter().map(|s| s.h).eq(c2.stack.iter().map(|s| s.h))) {
+                if r1.height == r2.height
+                    && r1.cells.iter().zip(&r2.cells).all(|(c1, c2)| {
+                        c1.after == c2.after && c1.stack.iter().map(|s| s.h).eq(c2.stack.iter().map(|s| s.h))
+                    })
+                {
                     rows_ok += 1;
                 }
             }
@@ -244,7 +312,10 @@ fn edits(base_path: &str, edited: &[String]) -> Value {
         let mut splice_ms = f64::INFINITY;
         for _ in 0..5 {
             let t0 = Instant::now();
-            let items: Vec<FItem> = changed.iter().map(|it| item_from_export(&te.px, it, Some(&measure_item(&te, it)))).collect();
+            let items: Vec<FItem> = changed
+                .iter()
+                .map(|it| item_from_export(&te.px, it, Some(&measure_item(&te, it))))
+                .collect();
             measure_ms = measure_ms.min(ms(t0));
             let t1 = Instant::now();
             let new_flow = splice(&flow, ch, items);
@@ -261,10 +332,22 @@ fn edits(base_path: &str, edited: &[String]) -> Value {
         let changed_heights_ok = changed.iter().all(|it| {
             let hs = measure_item(&te, it);
             match it {
-                ItemIn::Para(p) => hs[0].iter().map(|h| (h.pitch, h.above, h.below, h.rule, h.line, h.natural)).eq(p.heights.iter().copied()),
+                ItemIn::Para(p) => hs[0]
+                    .iter()
+                    .map(|h| (h.pitch, h.above, h.below, h.rule, h.line, h.natural))
+                    .eq(p.heights.iter().copied()),
                 ItemIn::Table(tb) => {
-                    let refs: Vec<_> = tb.rows.iter().flat_map(|r| r.cells.iter()).flat_map(|c| c.paragraphs.iter()).collect();
-                    refs.iter().zip(&hs).all(|(p, h)| h.iter().map(|h| (h.pitch, h.above, h.below, h.rule, h.line, h.natural)).eq(p.heights.iter().copied()))
+                    let refs: Vec<_> = tb
+                        .rows
+                        .iter()
+                        .flat_map(|r| r.cells.iter())
+                        .flat_map(|c| c.paragraphs.iter())
+                        .collect();
+                    refs.iter().zip(&hs).all(|(p, h)| {
+                        h.iter()
+                            .map(|h| (h.pitch, h.above, h.below, h.rule, h.line, h.natural))
+                            .eq(p.heights.iter().copied())
+                    })
                 }
             }
         });
@@ -288,10 +371,22 @@ fn scale(base_path: &str, copies: usize, edited: &[String]) -> Value {
     let t = Tables::new(&base);
     let doc = Doc::new(&base);
     let n = base.items.len();
-    let span = base.items.iter().map(|it| match it {
-        ItemIn::Para(p) => p.block + 1,
-        ItemIn::Table(tb) => tb.rows.iter().flat_map(|r| r.cells.iter()).flat_map(|c| c.paragraphs.iter()).map(|p| p.block + 1).max().unwrap_or(tb.block + 1),
-    }).max().unwrap() as u32;
+    let span = base
+        .items
+        .iter()
+        .map(|it| match it {
+            ItemIn::Para(p) => p.block + 1,
+            ItemIn::Table(tb) => tb
+                .rows
+                .iter()
+                .flat_map(|r| r.cells.iter())
+                .flat_map(|c| c.paragraphs.iter())
+                .map(|p| p.block + 1)
+                .max()
+                .unwrap_or(tb.block + 1),
+        })
+        .max()
+        .unwrap() as u32;
     // measure the repeated input: every paragraph of every copy measured again (no cache)
     let idx: Vec<usize> = (0..n * copies).map(|k| k % n).collect();
     let renumber = |mut it: FItem, copy: usize| -> FItem {
@@ -303,11 +398,18 @@ fn scale(base_path: &str, copies: usize, edited: &[String]) -> Value {
         it
     };
     let measure_all = |parallel: bool| -> Vec<ooxml_word::paginate::It> {
-        let one = |(k, i): (usize, &usize)| renumber((*measured_flow(&base, &t, &[*i], false).pop().unwrap()).clone(), k / n);
+        let one =
+            |(k, i): (usize, &usize)| renumber((*measured_flow(&base, &t, &[*i], false).pop().unwrap()).clone(), k / n);
         if parallel {
-            idx.par_iter().enumerate().map(|x| ooxml_word::paginate::It::new(one(x))).collect()
+            idx.par_iter()
+                .enumerate()
+                .map(|x| ooxml_word::paginate::It::new(one(x)))
+                .collect()
         } else {
-            idx.iter().enumerate().map(|x| ooxml_word::paginate::It::new(one(x))).collect()
+            idx.iter()
+                .enumerate()
+                .map(|x| ooxml_word::paginate::It::new(one(x)))
+                .collect()
         }
     };
     let c0 = cpu_ms();
@@ -319,15 +421,40 @@ fn scale(base_path: &str, copies: usize, edited: &[String]) -> Value {
     let c2 = cpu_ms();
     let (pag_ms, pag) = best(3, || paginate_all(&doc, &flow));
     let pag_cpu = (cpu_ms() - c2) / 3.0;
-    let lines: usize = flow.iter().map(|i| match &**i {
-        FItem::P(p) => p.lines.len(),
-        FItem::T(tb) => tb.rows.iter().flat_map(|r| r.cells.iter()).map(|c| c.stack.len()).sum(),
-    }).sum();
+    let lines: usize = flow
+        .iter()
+        .map(|i| match &**i {
+            FItem::P(p) => p.lines.len(),
+            FItem::T(tb) => tb.rows.iter().flat_map(|r| r.cells.iter()).map(|c| c.stack.len()).sum(),
+        })
+        .sum();
     // the snapshot's own size, counted
-    let bytes: usize = flow.iter().map(|i| std::mem::size_of::<FItem>() + 16 + match &**i {
-        FItem::P(p) => p.lines.capacity() * 16 + p.page_breaks.capacity() * 4,
-        FItem::T(tb) => tb.rows.iter().map(|r| std::mem::size_of_val(r) + r.cells.iter().map(|c| std::mem::size_of_val(c) + c.stack.capacity() * std::mem::size_of::<ooxml_word::paginate::Stk>()).sum::<usize>()).sum(),
-    }).sum::<usize>() + pag.starts.len() * (std::mem::size_of::<Pos>() * 2 + 12) + pag.info.len() * 32;
+    let bytes: usize = flow
+        .iter()
+        .map(|i| {
+            std::mem::size_of::<FItem>()
+                + 16
+                + match &**i {
+                    FItem::P(p) => p.lines.capacity() * 16 + p.page_breaks.capacity() * 4,
+                    FItem::T(tb) => tb
+                        .rows
+                        .iter()
+                        .map(|r| {
+                            std::mem::size_of_val(r)
+                                + r.cells
+                                    .iter()
+                                    .map(|c| {
+                                        std::mem::size_of_val(c)
+                                            + c.stack.capacity() * std::mem::size_of::<ooxml_word::paginate::Stk>()
+                                    })
+                                    .sum::<usize>()
+                        })
+                        .sum(),
+                }
+        })
+        .sum::<usize>()
+        + pag.starts.len() * (std::mem::size_of::<Pos>() * 2 + 12)
+        + pag.info.len() * 32;
     // incremental edits at the start, the middle and the end of the long flow: each edited
     // export's changed items, put in copy 0, copy copies/2 and the last copy
     let mut rows = Vec::new();
@@ -337,7 +464,11 @@ fn scale(base_path: &str, copies: usize, edited: &[String]) -> Value {
         let ch0 = diff(&digests(&base), &digests(&e));
         let te = Tables::new(&e);
         for copy in [0, copies / 2, copies - 1] {
-            let ch = ooxml_word::incr::Change { a: ch0.a + copy * n, b_old: ch0.b_old + copy * n, b_new: ch0.b_new + copy * n };
+            let ch = ooxml_word::incr::Change {
+                a: ch0.a + copy * n,
+                b_old: ch0.b_old + copy * n,
+                b_new: ch0.b_new + copy * n,
+            };
             let mut m_ms = f64::INFINITY;
             let mut p_ms = f64::INFINITY;
             let mut s_ms = f64::INFINITY;
@@ -345,7 +476,10 @@ fn scale(base_path: &str, copies: usize, edited: &[String]) -> Value {
             let mut pages = 0;
             for _ in 0..3 {
                 let t0 = Instant::now();
-                let items: Vec<FItem> = e.items[ch0.a..ch0.b_new].iter().map(|it| renumber(item_from_export(&te.px, it, Some(&measure_item(&te, it))), copy)).collect();
+                let items: Vec<FItem> = e.items[ch0.a..ch0.b_new]
+                    .iter()
+                    .map(|it| renumber(item_from_export(&te.px, it, Some(&measure_item(&te, it))), copy))
+                    .collect();
                 m_ms = m_ms.min(ms(t0));
                 let t1 = Instant::now();
                 let nf = splice(&snap.items, ch, items);
@@ -363,7 +497,11 @@ fn scale(base_path: &str, copies: usize, edited: &[String]) -> Value {
     }
     // queries on the snapshot
     let pages = snap.pages();
-    let (q_ms, _) = best(3, || (0..100_000u32).map(|b| snap.page_of_block((b * 7919) % (span * copies as u32)).unwrap_or(0) as u64).sum::<u64>());
+    let (q_ms, _) = best(3, || {
+        (0..100_000u32)
+            .map(|b| snap.page_of_block((b * 7919) % (span * copies as u32)).unwrap_or(0) as u64)
+            .sum::<u64>()
+    });
     let mut facts = Vec::new();
     for from in [0, pages / 2, pages - 20] {
         let (f_ms, f) = best(5, || snap.facts(from, from + 20));

@@ -4,8 +4,8 @@
 //!
 //! Moved in from the performance lanes' prototype (lane S: kernels; lane E: the owner).
 pub mod engine;
-pub mod linebreak;
 pub mod incr;
+pub mod linebreak;
 pub mod paginate;
 pub mod snapshot;
 pub mod table;
