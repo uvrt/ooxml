@@ -442,25 +442,40 @@ def _advance(c: Any, live: Any, doc: RustDoc, version: int) -> None:
             after += 1
     lo, hi_old, hi_new = before, len(old.spans) - after, len(new.spans) - after
     stories = _definitions(doc, changed) if changed else False
-    elements = []
-    if hi_new > lo:
-        body = package.tree(main).find(_W + "body")
-        k = 0
-        for child in body:
-            if child.tag in _BLOCKS:
-                if lo <= k < hi_new:
-                    elements.append(child)
-                k += 1
-                if k >= hi_new:
-                    break
+    body = package.tree(main).find(_W + "body")
+    blocks = [child for child in body if child.tag in _BLOCKS]
+    if len(blocks) != len(new.spans):
+        raise Unsupported("the body's blocks and its bytes' differ")
+    elements = blocks[lo:hi_new]
     mirror = doc.mirror
-    doc.undefined |= _undefined(live, elements, doc.definitions)
+    # Within the region, the blocks byte for byte as they were are kept, not made again (a
+    # batch's two edits far apart change two blocks, not every one between them).
+    same: list = [None] * len(elements)
+    if hi_old > lo and hi_new > lo:
+        import difflib
+
+        def digests(data: bytes, spans: list) -> list[bytes]:
+            return [hashlib.blake2b(data[a:b], digest_size=16).digest() for a, b in spans]
+
+        before = digests(old.data, old.spans[lo:hi_old])
+        after = digests(data, new.spans[lo:hi_new])
+        matcher = difflib.SequenceMatcher(None, before, after, autojunk=False)
+        for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+            if tag == "equal":
+                for k in range(i2 - i1):
+                    same[j1 + k] = mirror.units[lo + i1 + k]
+    doc.undefined |= _undefined(live, [e for e, kept in zip(elements, same) if kept is None], doc.definitions)
     doc.seq += 1
     with _records(live, mirror):
         extra = {"constants": constants(live, mirror)} if stories else {}
         if stories and mirror.sections_json() != doc.sections:
             extra["sections"] = doc.sections = mirror.sections_json()
-        text, stats = mirror.splice(lo, hi_old, elements, doc.seq, extra)
+        # every unit on the document's own elements now (a neighbour made again reads them)
+        for unit, element in zip(mirror.units[:lo], blocks[:lo]):
+            unit.element = element
+        for unit, element in zip(mirror.units[hi_old:], blocks[hi_new:]):
+            unit.element = element
+        text, stats = mirror.splice(lo, hi_old, elements, doc.seq, extra, same)
     _check_keys(mirror)
     c.commit(doc.key, text)
     doc.version = version

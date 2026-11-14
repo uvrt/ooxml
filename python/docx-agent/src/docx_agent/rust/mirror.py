@@ -863,17 +863,28 @@ def _table_geometry(self, element, table) -> dict:
     return out
 
 
-def _splice(self, lo: int, hi: int, elements: list, version: int, more: dict | None = None) -> tuple[str, dict]:
+def _splice(self, lo: int, hi: int, elements: list, version: int, more: dict | None = None,
+            same: list | None = None) -> tuple[str, dict]:
     """One commit (JSON) replacing units ``[lo, hi)`` by ``elements`` (the body's blocks
     there now, parsed again), the units relabelled and their neighbours made again, as
-    :meth:`changes` does for the units an edit reported."""
+    :meth:`changes` does for the units an edit reported.  ``same``: per element, the unit
+    it is byte for byte (kept, not made again), or ``None``."""
     t0 = time.perf_counter()
     stats: dict = {}
     for element in elements:
         if element.tag not in (_P, _TBL):
             raise Unsupported(f"body element {element.tag}")
-    region_units = [Unit(element, key_of(element), []) for element in elements]
-    reparse = {id(element) for element in elements}
+    region_units = []
+    reparse = set()
+    for j, element in enumerate(elements):
+        kept = same[j] if same is not None else None
+        if kept is not None:
+            kept.element = element
+            region_units.append(kept)
+        else:
+            region_units.append(Unit(element, key_of(element), []))
+            reparse.add(id(element))
+    old_units = self.units[lo:hi]
     runs = []
     redo: set = set()
     if hi > lo or region_units:
@@ -888,7 +899,22 @@ def _splice(self, lo: int, hi: int, elements: list, version: int, more: dict | N
         marks = bool(targets and targets & (_bookmark_names(self.units[lo:hi]) | _bookmark_names(region_units)))
         self.units[lo:hi] = region_units
         self._touch()
-        runs.append((lo, lo + len(region_units), hi - lo))
+        # the runs of units that differ, in the new list's places (lane E's changes())
+        new_ids, old_ids = {id(u) for u in region_units}, {id(u) for u in old_units}
+        i = j = 0
+        while i < len(old_units) or j < len(region_units):
+            if i < len(old_units) and j < len(region_units) and old_units[i] is region_units[j]:
+                i += 1
+                j += 1
+                continue
+            a_i, a_j = i, j
+            while i < len(old_units) and id(old_units[i]) not in new_ids:
+                i += 1
+            while j < len(region_units) and id(region_units[j]) not in old_ids:
+                j += 1
+            if (i, j) == (a_i, a_j):
+                raise Unsupported("units out of order")
+            runs.append((lo + a_j, lo + j, i - a_i))
         if getattr(self, "refs_pending", False) or marks:
             self.refs_pending = False
             redo |= self._cross_references(lo, lo + len(region_units))
