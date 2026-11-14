@@ -44,7 +44,7 @@ ENV = "DOCX_AGENT_RUST"
 
 log = logging.getLogger("docx_agent.rust")
 
-#: Why checks were served or not, counted (tests and probes read it; never in results).
+#: Why checks were served or not, counted (tests and measurements read it; never in results).
 STATS: Counter = Counter()
 
 _core: Any = None
@@ -341,6 +341,8 @@ def _drawn_story(blocks: Any) -> bytes:
         if isinstance(value, (list, tuple)):
             return type(value)(clear(v) for v in value)
         if dataclasses.is_dataclass(value) and not isinstance(value, type):
+            if getattr(value, "keyword", None) in ("PAGE", "NUMPAGES") and hasattr(value, "cached"):
+                return dataclasses.replace(value, cached=())     # (a field: its cached result)
             changes = {}
             field = getattr(value, "field", None)
             if field is not None and getattr(field, "keyword", None) in ("PAGE", "NUMPAGES") and \
@@ -711,13 +713,13 @@ def _coverage(mirror: Any, pages: int, blocks: int) -> tuple[dict[str, Any], lis
     if any(char not in chars or (family, char) in drawn
            for family, char in (getattr(fonts, "glyph_fallbacks", None) or {})):
         raise Fallback("a glyph measured with another face")
-    coverage: dict[str, Any] = {"complete": True, "status": "complete", "pages": pages,
-                                "blocks_laid_out": [blocks, blocks]}
-    substituted = [s.as_dict() for s in getattr(fonts, "substitutions", {}).values()]
-    if substituted:
-        coverage["substituted_fonts"] = [f"{s['family']} -> {s['substitute']}"
-                                         + ("" if s["metric_compatible"] else " (approximate)")
-                                         for s in substituted]
+    from ..layout import coverage_facts
+
+    coverage = coverage_facts({"complete": True, "pages": pages, "blocks_laid_out": blocks, "blocks": blocks,
+                               "estimate_source": "layout", "stop": None, "story_stops": [],
+                               "substituted_fonts": [s.as_dict() for s in
+                                                     getattr(fonts, "substitutions", {}).values()],
+                               "missing_fonts": [], "approximations": []})
     warnings = [docx2svg.Warning(code, docx2svg._PARSER_WARNINGS.get(code, "a body element is not read"))
                 for code in mirror.d2.warnings]
     warnings += [docx2svg.Warning("font-substituted", s.message())

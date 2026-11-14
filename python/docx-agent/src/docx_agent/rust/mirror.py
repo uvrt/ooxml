@@ -1080,5 +1080,5 @@ class MirrorModel:
         return _Mirrored(document, mirror)
 
 
-#: What the mirror-backed model did (tests and probes).
+#: What the mirror-backed model did (tests and measurements).
 STATS = {"model_whole": 0}

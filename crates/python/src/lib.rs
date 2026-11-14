@@ -115,7 +115,7 @@ impl SnapshotE {
         out
     }
     /// Lane F: page `page`'s (1-based) body lines as since_last_check reads them: `(key,
-    /// top, pitch, digest, table digest, row, cell)` (tests and probes).
+    /// top, pitch, digest, table digest, row, cell)` (tests and measurements).
     fn page_lines(&self, page: usize) -> Vec<(Option<String>, i64, i64, u64, u64, u32, u32)> {
         ooxml_word::facts::page_line_digests(&self.inner, page)
     }

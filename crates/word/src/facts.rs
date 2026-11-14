@@ -1936,7 +1936,7 @@ fn page_digests(s: &Snap, aliases: &HashMap<String, String>) -> Vec<(u64, Vec<St
     out
 }
 
-/// A page's (1-based) body lines as `page_digests` reads them (tests and probes).
+/// A page's (1-based) body lines as `page_digests` reads them (tests and measurements).
 pub fn page_line_digests(s: &Snap, page: usize) -> Vec<(Option<String>, i64, i64, u64, u64, u32, u32)> {
     let Some(k) = (0..s.pag.starts.len()).find(|k| s.pag.page_at[*k] as usize + 1 == page) else {
         return Vec::new();
