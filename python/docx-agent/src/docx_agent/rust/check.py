@@ -48,6 +48,24 @@ log = logging.getLogger("docx_agent.rust")
 #: Why checks were served or not, counted (tests and measurements read it; never in results).
 STATS: Counter = Counter()
 
+
+def _stats_at_exit() -> None:
+    """``DOCX_AGENT_RUST_STATS`` names a file: each process adds its :data:`STATS` to it, one
+    JSON line, when it ends (a test run's or a measurement's count of what fell back)."""
+    path = os.environ.get("DOCX_AGENT_RUST_STATS")
+    if path and STATS:
+        try:
+            with open(path, "a", encoding="utf-8") as out:
+                out.write(json.dumps(dict(STATS)) + "\n")
+        except OSError:
+            pass
+
+
+if os.environ.get("DOCX_AGENT_RUST_STATS"):
+    import atexit
+
+    atexit.register(_stats_at_exit)
+
 _core: Any = None
 _core_failed = False
 _core_lock = threading.Lock()
