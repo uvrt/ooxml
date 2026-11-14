@@ -126,6 +126,7 @@ def test_if_released_is_what_releasing_a_kept_range_does(box, session):
         assert _seen(layout, ids[17:21], ids[21], 1) == _stated(effect)
     # Released: the next check offers the keep again, with what it costs -- both sides said.
     [again] = _range(box, session, d, f"{ids[17]}..{ids[20]}")
+    assert "blank" in again["if_kept"], (again, effect, dict(STATS))
     assert again["if_kept"]["blank"]["pt"] == blank["now_pt"]
 
 
