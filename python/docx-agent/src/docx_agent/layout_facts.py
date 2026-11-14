@@ -1117,37 +1117,8 @@ class _Facts:
         """Why a table's first row looks like a header, drawn unlike its second row:
         ``first_row_look`` (the style's first-row formatting applies to it), ``bold``,
         ``shading``; empty for a first row drawn like the rest (round 24, W4)."""
-        own = element.findall(_W + "tr")
-        if len(own) < 2:
-            return []
-        reasons = []
         table = _model_table(_effective.model(self.document).model.body, path)
-        if table is not None and table.conditions and any("firstRow" in c for c in table.conditions[0]):
-            sheet = _effective.model(self.document).model
-            chain = style_chain(sheet.styles, table_style_id(sheet, table), "table")
-            if any("firstRow" in style.conditional for style in chain):
-                reasons.append("first_row_look")
-        bold = [self._all_bold(row) for row in own[:2]]
-        if bold[0] and not bold[1]:
-            reasons.append("bold")
-        if table is not None and len(table.rows) > 1:
-            resolved = resolve_table(_effective.model(self.document).model, table)
-            fills = [[_fill(cell.properties.get("shd")) for cell in row.cells] for row in resolved.rows[:2]]
-            if fills[0] and all(fills[0]) and fills[0] != fills[1]:
-                reasons.append("shading")
-        return reasons
-
-    def _all_bold(self, row) -> bool | None:
-        """Whether every run of text in a row is drawn bold (``None``: no text)."""
-        found = None
-        for paragraph in row.iter(_W + "p"):
-            for run in paragraph.iter(_W + "r"):
-                if not _text.run_text(paragraph, run).strip():
-                    continue
-                if not _effective.run(self.document, paragraph, run).bold:
-                    return False
-                found = True
-        return found
+        return header_look(self.document, table, element)
 
     def past_margins(self) -> list[dict]:
         document = self.document
@@ -1272,6 +1243,42 @@ class _Facts:
         self.capped(entries, "uncertain", out)
         if self.layout.stopped is not None:
             out["unknown_from"] = self.layout.stopped.page
+
+
+def header_look(document: "Document", table: Any, element: Any) -> list[str]:
+    """:meth:`_Facts._header_look` of a table element and its docx2svg model (``table``,
+    ``None`` where none is found)."""
+    own = element.findall(_W + "tr")
+    if len(own) < 2:
+        return []
+    reasons = []
+    if table is not None and table.conditions and any("firstRow" in c for c in table.conditions[0]):
+        sheet = _effective.model(document).model
+        chain = style_chain(sheet.styles, table_style_id(sheet, table), "table")
+        if any("firstRow" in style.conditional for style in chain):
+            reasons.append("first_row_look")
+    bold = [_all_bold(document, row) for row in own[:2]]
+    if bold[0] and not bold[1]:
+        reasons.append("bold")
+    if table is not None and len(table.rows) > 1:
+        resolved = resolve_table(_effective.model(document).model, table)
+        fills = [[_fill(cell.properties.get("shd")) for cell in row.cells] for row in resolved.rows[:2]]
+        if fills[0] and all(fills[0]) and fills[0] != fills[1]:
+            reasons.append("shading")
+    return reasons
+
+
+def _all_bold(document: "Document", row) -> bool | None:
+    """Whether every run of text in a row is drawn bold (``None``: no text)."""
+    found = None
+    for paragraph in row.iter(_W + "p"):
+        for run in paragraph.iter(_W + "r"):
+            if not _text.run_text(paragraph, run).strip():
+                continue
+            if not _effective.run(document, paragraph, run).bold:
+                return False
+            found = True
+    return found
 
 
 def _kind(line) -> str:
@@ -1515,31 +1522,40 @@ def accept_loses_text(document: "Document") -> list[dict[str, Any]]:
     Accept All removes with its text (the module says what each entry holds)."""
     part = document.package.document_part()
     index = document._index(part)
-    revisions = None
+    revisions: list = []
     found: list[dict[str, Any]] = []
     for table in index.tables:
-        for row, column, cell in document.cells_lost_on_accept(table.id):
-            if revisions is None:
-                held = document._revision_elements()       # held: the map is keyed by the proxies' id()
-                revisions = {id(node): identifier for _, identifier, node in held}
-            paragraphs = [p for p in cell.iter(_W + "p")]
-            last = paragraphs[-1] if paragraphs else None
-            record = None
-            if last is not None:
-                mark = last.find(f"{_W}pPr/{_W}rPr")
-                record = next((c for c in mark if c.tag in (_W + "del", _W + "moveFrom")), None) \
-                    if mark is not None else None
-            text = " ".join(" ".join("".join(n.text or "" for n in p.iter(_W + "t")
-                                             if not any(a.tag in (_W + "del", _W + "moveFrom")
-                                                        for a in n.iterancestors()))
-                                     for p in paragraphs).split())
-            change = revisions.get(id(record)) if record is not None else None
-            entry: dict[str, Any] = {"cell": f"{table.id}/c{row},{column}", "text": _shortened(text, 80),
-                                     "change": change,
-                                     "author": record.get(_W + "author") if record is not None else None}
-            entry["fix"] = {"tool": "word_changes", "calls": [{"action": "reject", "ids": [change]}]} \
-                if change else {"tool": "word_changes", "calls": [{"action": "reject", "within": entry["cell"]}]}
-            found.append(entry)
+        found += table_accept_loses(document, table, revisions)
+    return found
+
+
+def table_accept_loses(document: "Document", table: Any, revisions: list) -> list[dict[str, Any]]:
+    """:func:`accept_loses_text`' entries of one table (an index entry); ``revisions`` holds
+    the document's tracked changes by element once read (shared across one reading)."""
+    found: list[dict[str, Any]] = []
+    for row, column, cell in document.cells_lost_on_accept(table.id):
+        if not revisions:
+            held = document._revision_elements()       # held: the map is keyed by the proxies' id()
+            revisions.append(({id(node): identifier for _, identifier, node in held}, held))
+        by_node = revisions[0][0]
+        paragraphs = [p for p in cell.iter(_W + "p")]
+        last = paragraphs[-1] if paragraphs else None
+        record = None
+        if last is not None:
+            mark = last.find(f"{_W}pPr/{_W}rPr")
+            record = next((c for c in mark if c.tag in (_W + "del", _W + "moveFrom")), None) \
+                if mark is not None else None
+        text = " ".join(" ".join("".join(n.text or "" for n in p.iter(_W + "t")
+                                         if not any(a.tag in (_W + "del", _W + "moveFrom")
+                                                    for a in n.iterancestors()))
+                                 for p in paragraphs).split())
+        change = by_node.get(id(record)) if record is not None else None
+        entry: dict[str, Any] = {"cell": f"{table.id}/c{row},{column}", "text": _shortened(text, 80),
+                                 "change": change,
+                                 "author": record.get(_W + "author") if record is not None else None}
+        entry["fix"] = {"tool": "word_changes", "calls": [{"action": "reject", "ids": [change]}]} \
+            if change else {"tool": "word_changes", "calls": [{"action": "reject", "within": entry["cell"]}]}
+        found.append(entry)
     return found
 
 
@@ -1715,14 +1731,21 @@ def empty_paragraphs(document: "Document") -> list[dict[str, Any]]:
     if body is not None:
         found += _empty_runs(document, index, "body", _sequence(body))
     for table in index.tables:
-        for r, (row, _) in enumerate(table.rows):
-            column = _int(_find(row, "w:trPr/w:gridBefore"), 0)
-            for cell in _cells(row):
-                properties = cell.find(_W + "tcPr")
-                merge = properties.find(_W + "vMerge") if properties is not None else None
-                if merge is None or merge.get(_W + "val") == "restart":
-                    found += _empty_runs(document, index, f"{table.id}/c{r},{column}", _sequence(cell))
-                column += max(1, _int(_find(cell, "w:tcPr/w:gridSpan"), 1))
+        found += table_empty_runs(document, index, table)
+    return found
+
+
+def table_empty_runs(document: "Document", index: Any, table: Any) -> list[dict[str, Any]]:
+    """:func:`empty_paragraphs`' entries of one table's cells (an index entry)."""
+    found: list[dict[str, Any]] = []
+    for r, (row, _) in enumerate(table.rows):
+        column = _int(_find(row, "w:trPr/w:gridBefore"), 0)
+        for cell in _cells(row):
+            properties = cell.find(_W + "tcPr")
+            merge = properties.find(_W + "vMerge") if properties is not None else None
+            if merge is None or merge.get(_W + "val") == "restart":
+                found += _empty_runs(document, index, f"{table.id}/c{r},{column}", _sequence(cell))
+            column += max(1, _int(_find(cell, "w:tcPr/w:gridSpan"), 1))
     return found
 
 

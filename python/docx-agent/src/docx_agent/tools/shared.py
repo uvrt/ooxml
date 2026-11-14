@@ -564,6 +564,14 @@ def _check(call: Any, doc: str, slides: list | None, pages: list[int] | None, in
     # anything (laid out once for every check waiting then): said where the layout's parts
     # are (_layout_facts), else with the rest.
     timing.owner = layout_waited()
+    # Lane F: a check of some ranges answered by the document's Rust owner, where it can be.
+    from ..rust.check import serve
+
+    served = serve(call, {"slides": slides, "pages": pages, "include": include, "boxes": boxes,
+                          "spacing": spacing, "contrast": contrast, "min_size": min_size, "styles": styles,
+                          "range": range, "copies": copies}, timing)
+    if served is not None:
+        return served
     pages = _pages_of(call, slides, pages)
     if boxes is not None:
         raise _decks_only("boxes", "include")
@@ -833,7 +841,17 @@ def _layout_facts(call: Any, pages: list[int] | None, seen: bool = True, *, scop
         now = summary_for(document, key, layout)
         warnings = [short(str(w), 160) for w in layout.warnings[:10]] if layout.warnings else None
     before = getattr(document, "_tool_seen_layout", None)
-    if before is not None and before is not now:
+    from ..rust.check import seen_by_python, since_for_python
+
+    # Lane F: a check served by the document's Rust owner saw a later version than this
+    # summary is of: compared with that one, there.
+    handled, reflow = since_for_python(call, version) if seen else (False, None)
+    if handled:
+        if reflow is not None:
+            if pages:
+                reflow["changed"] = [p for p in reflow["changed"] if p in pages]
+            facts["since_last_check"] = reflow
+    elif before is not None and before is not now:
         # Compared by summaries (round 38), ids followed through the document's aliases now.
         reflow = reflow_json(now.compare(before, canon_of(document)))
         if pages:
@@ -841,6 +859,7 @@ def _layout_facts(call: Any, pages: list[int] | None, seen: bool = True, *, scop
         facts["since_last_check"] = reflow
     if seen:
         document._tool_seen_layout = now
+        seen_by_python(call, version)
     if warnings:
         facts["layout_warnings"] = warnings
     if made is not None:

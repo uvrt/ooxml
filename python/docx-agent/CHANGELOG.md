@@ -5,6 +5,39 @@ docx-agent has not been released to PyPI. Each version that reaches `main` is ta
 snapshot commit; the development history before it is summarised here.
 [`ROADMAP.md`](ROADMAP.md) has the detail of every phase.
 
+## 0.1.114 -- unreleased
+
+- **A check of some ranges is answered by the Rust core** (needs ooxml-core 0.2.0, now a
+  dependency). The results are the same, field for field; what changes is how long a check
+  takes and what it costs. The first check of a range in a document makes the document's
+  Rust owner: docx2svg's model of the body, each block's measuring input and what the facts
+  read of it (`docx_agent.rust`), laid out in Rust. From then on each committed version is
+  handed to the owner as the blocks that changed, under the document's lock as the version is
+  committed, and laid out there in milliseconds; a check of a range resolves its ranges,
+  reads `validate` as before, and asks the owner once -- the interpreter lock let go -- for
+  the range's pages, extent, breaks and keeps, `reflow` (its `since_last_check` too), every
+  `layout` fact and the `fields` facts, which it puts together from the range's pages and
+  blocks (and, for the few facts that count over the document, from what each block keeps,
+  never by reading the document again). A check of numbers reads its texts' pages there too.
+  `data.timing` keeps its parts: `layout` is the owner's answer, `facts` the wording.
+- **Everything else is checked as before, whole.** A request without a range, with `pages`,
+  `copies`, `min_size` (or the application's `min_text_size`), `styles` or a deck's
+  arguments, or in a batch; a range of parts of blocks (a cell, a text range); a document
+  the Rust layout does not model (notes, drawings, frames, text boxes, columns, more than one
+  section, hyphenation, merged or nested cells, cells' vertical alignment, floating tables,
+  page numbers other than decimal, SEQ, SECTIONPAGES and STYLEREF fields, a block without a
+  unique paraId); a change the owner does not follow (a style or list changed rather than
+  added, other settings, a REF field's bookmark edited: the owner is made again at the next
+  check of a range); a range whose keep a check would try (`if_kept`, `if_released`), a table
+  whose columns may fit otherwise (`column_fit`) or that may reach past the margins
+  (`past_margins`). Such a check runs docx-agent's own way, exactly as 0.1.113 did.
+- **`DOCX_AGENT_RUST=0`** in the environment turns the Rust path off. Where ooxml-core
+  cannot be imported, docx-agent says so once in its log (`docx_agent.rust`) and checks its
+  own way; never in a tool's result.
+- `edit.typography.paragraph_problems`, `layout_facts.table_empty_runs`,
+  `table_accept_loses` and `header_look`: one paragraph's or table's entries, read alone
+  (the whole-document functions call them, as before).
+
 ## 0.1.113 -- unreleased
 
 - **A check after an undo reads the document as the undo left it** (needs ooxml-edit

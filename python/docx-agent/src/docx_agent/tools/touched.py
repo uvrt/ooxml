@@ -97,6 +97,10 @@ def body_sections(document: Any, before: bytes | None, after: bytes | None, *,
         return None
     old = _summary(document, before)
     new = _summary(document, after, old)
+    # Lane F: the body as this version has it, for the change set its Rust owner is handed
+    # when the version is committed (docx_agent.rust.check.committed).
+    history = getattr(document, "history", None)
+    document.__dict__["_body_summary"] = (getattr(history, "version", None), new)
     changed: set[int] = set()
     matcher = difflib.SequenceMatcher(None, old.digests, new.digests, autojunk=False)
     for tag, _i1, _i2, j1, j2 in matcher.get_opcodes():

@@ -37,6 +37,14 @@ pub struct PAux {
     /// Per line: the smallest half points of its text drawn (super/subscript left out; 0:
     /// none) and whether it draws anything but spaces.
     pub line_text: Vec<(i64, bool)>,
+    /// Lane F: per line, a digest of what it draws but where (its characters, their widths
+    /// and how they are drawn, the paragraph's alignment and geometry, the line's heights):
+    /// `since_last_check` compares pages by these.
+    pub line_draw: Vec<u64>,
+    /// Lane F: per line, its ink width and its widest run without a space (`column_fit`),
+    /// in 1/`ink_unit` pt (-1: no ink).
+    pub line_ink: Vec<(i64, i64)>,
+    pub ink_unit: i64,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -44,6 +52,8 @@ pub struct Aux {
     pub key: Option<String>,
     pub table: bool,
     pub paras: Vec<PAux>,
+    /// Lane F: a table's own drawing digest (borders, shading, widths).
+    pub draw: u64,
 }
 
 impl Aux {
@@ -53,6 +63,7 @@ impl Aux {
 }
 
 fn para_aux(
+    unit: i64,
     m: &MeasureIn,
     me: &Measured,
     key: Option<String>,
@@ -84,6 +95,52 @@ fn para_aux(
             }
         }
     }
+    let pdraw = m.draw.as_deref().unwrap_or("");
+    let mut line_draw = Vec::with_capacity(me.lines.len());
+    let mut line_ink = Vec::with_capacity(me.lines.len());
+    for (n, line) in me.lines.iter().enumerate() {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        pdraw.hash(&mut h);
+        n.hash(&mut h);
+        (n + 1 == me.lines.len()).hash(&mut h);
+        line.forced.hash(&mut h);
+        if let Some(hh) = me.heights.get(n) {
+            (hh.pitch, hh.above, hh.below, hh.rule, hh.line, hh.natural).hash(&mut h);
+        }
+        // ink: from the first character not white space to the end of the last; the widest
+        // stretch without a space
+        let (mut x, mut low, mut high) = (0i64, None::<i64>, 0i64);
+        let (mut word, mut widest, mut start) = (0i64, 0i64, None::<i64>);
+        for p in &me.pieces[line.start..line.end] {
+            (p.kind, p.ch, p.width, p.kern_next, p.hp, p.kkey, p.hyphen).hash(&mut h);
+            let run = if p.run >= 0 {
+                m.runs[p.run as usize].draw.as_deref().unwrap_or("")
+            } else {
+                "\u{0}label"
+            };
+            run.hash(&mut h);
+            let w = p.width + p.kern_next;
+            if p.hp != 0 && p.ch != '\0' && !p.ch.is_whitespace() {
+                if low.is_none() {
+                    low = Some(x);
+                }
+                high = x + w;
+                if start.is_none() {
+                    start = Some(x);
+                }
+                word = x + w - start.unwrap();
+            } else {
+                widest = widest.max(word);
+                start = None;
+                word = 0;
+            }
+            x += w;
+        }
+        widest = widest.max(word);
+        line_draw.push(h.finish());
+        line_ink.push((low.map_or(-1, |l| high - l), widest));
+    }
     let mut line_text = Vec::with_capacity(me.lines.len());
     for line in &me.lines {
         let mut small = 0i64;
@@ -109,6 +166,9 @@ fn para_aux(
         fields,
         line_of,
         line_text,
+        line_draw,
+        line_ink,
+        ink_unit: unit,
     }
 }
 
@@ -131,9 +191,11 @@ pub fn build(t: &Tables, it: &ItemIn) -> (FItem, Aux) {
                 .map(|(n, _)| n as u32)
                 .collect();
             let aux = Aux {
+                draw: 0,
                 key: p.key.clone(),
                 table: false,
                 paras: vec![para_aux(
+                    t.s * 4096,
                     &p.measure,
                     &me,
                     p.key.clone(),
@@ -170,6 +232,7 @@ pub fn build(t: &Tables, it: &ItemIn) -> (FItem, Aux) {
                     for (k, cp) in cell.paragraphs.iter().enumerate() {
                         let me = measure(t, &cp.measure);
                         paras.push(para_aux(
+                            t.s * 4096,
                             &cp.measure,
                             &me,
                             cp.key.clone(),
@@ -189,6 +252,12 @@ pub fn build(t: &Tables, it: &ItemIn) -> (FItem, Aux) {
                     key: tb.key.clone(),
                     table: true,
                     paras,
+                    draw: {
+                        use std::hash::{Hash, Hasher};
+                        let mut h = std::collections::hash_map::DefaultHasher::new();
+                        tb.draw.as_deref().unwrap_or("").hash(&mut h);
+                        h.finish()
+                    },
                 },
             )
         }
@@ -207,6 +276,9 @@ pub struct Commit {
     pub formats: Option<Vec<(i64, i64, i64, i64, Option<(i64, i64)>)>>,
     #[serde(default)]
     pub sections: Option<Vec<SectionIn>>,
+    /// Lane F: the document-level constants again, where they changed (a header's fields).
+    #[serde(default)]
+    pub constants: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -246,16 +318,28 @@ pub struct Engine {
     pub aux: Vec<Arc<Aux>>,
     pub pag: Pagination,
     pub version: u64,
+    /// Lane F: the export's document-level constants (and a commit's, replacing them).
+    pub constants: Arc<serde_json::Value>,
 }
 
 /// What a check reads: one layout, never changed.
 pub struct Snap {
     pub version: u64,
+    /// Lane F: the items' inputs (their records: `crate::facts`).
+    pub inputs: Vec<Arc<ItemIn>>,
+    /// Lane F: what the facts read once per snapshot (`crate::facts::Global`).
+    pub global: OnceLock<crate::facts::Global>,
+    /// Lane F: the document-level constants the export carried (`Export::constants`).
+    pub constants: Arc<serde_json::Value>,
     pub doc: Doc,
     pub flow: Vec<It>,
     pub aux: Vec<Arc<Aux>>,
     pub pag: Pagination,
     pub dpx: i64,
+    /// Lane F: `(w_den, px_den, lu, dpi)`: a width's units (`crate::facts`).
+    pub dens: (i64, i64, i64, i64),
+    /// Lane F: the measuring tables (a keep's trial lays a copy out again: `crate::facts`).
+    pub tables: Arc<Tables>,
     keys: OnceLock<HashMap<String, usize>>,
     /// Every paragraph's key (cells' too) -> (item, paragraph in the item).
     paras: OnceLock<HashMap<String, (usize, usize)>>,
@@ -269,6 +353,24 @@ fn ms(t: Instant) -> f64 {
 }
 
 impl Engine {
+    /// Lane F: an engine over a snapshot (a keep's trial: laid out again with some keeps
+    /// changed, then read; never published).
+    pub fn of_snapshot(s: &Snap) -> Engine {
+        Engine {
+            t: s.tables.clone(),
+            fonts: Vec::new(),
+            formats: Vec::new(),
+            dens: s.dens,
+            doc: s.doc.clone(),
+            inputs: s.inputs.clone(),
+            flow: s.flow.clone(),
+            aux: s.aux.clone(),
+            pag: s.pag.clone(),
+            version: s.version,
+            constants: s.constants.clone(),
+        }
+    }
+
     pub fn new(e: Export) -> (Engine, Stat) {
         let t0 = Instant::now();
         let t = Tables::new(&e);
@@ -295,6 +397,7 @@ impl Engine {
             aux,
             pag,
             version: 0,
+            constants: Arc::new(e.constants.clone().unwrap_or(serde_json::Value::Null)),
         };
         let mut st = Stat {
             measure_ms,
@@ -333,6 +436,9 @@ impl Engine {
                 }
                 let (w_den, px_den, lu, dpi) = self.dens;
                 self.t = Arc::new(Tables::from_parts(&self.fonts, &self.formats, w_den, px_den, lu, dpi));
+            }
+            if let Some(v) = c.constants {
+                self.constants = Arc::new(v);
             }
             if let Some(sections) = c.sections {
                 self.doc.sections = sections.iter().map(|s| section_geo(&self.doc.px, s)).collect();
@@ -406,7 +512,7 @@ impl Engine {
         st
     }
 
-    fn repaginate(&mut self, ch: Change, st: &mut Stat) {
+    pub(crate) fn repaginate(&mut self, ch: Change, st: &mut Stat) {
         if self.pag.starts.is_empty() || ch.a >= self.flow.len() && self.flow.is_empty() {
             self.pag = paginate_all(&self.doc, &self.flow);
             return;
@@ -547,11 +653,16 @@ impl Engine {
     pub fn snapshot(&self) -> Snap {
         Snap {
             version: self.version,
+            inputs: self.inputs.clone(),
+            global: OnceLock::new(),
+            constants: self.constants.clone(),
             doc: self.doc.clone(),
             flow: self.flow.clone(),
             aux: self.aux.clone(),
             pag: self.pag.clone(),
             dpx: self.dens.1,
+            dens: self.dens,
+            tables: self.t.clone(),
             keys: OnceLock::new(),
             paras: OnceLock::new(),
         }
@@ -582,7 +693,7 @@ pub struct Query {
 }
 
 impl Snap {
-    fn keys(&self) -> &HashMap<String, usize> {
+    pub(crate) fn keys(&self) -> &HashMap<String, usize> {
         self.keys.get_or_init(|| {
             let mut m = HashMap::with_capacity(self.aux.len());
             for (i, a) in self.aux.iter().enumerate() {
@@ -594,7 +705,7 @@ impl Snap {
         })
     }
 
-    fn paras(&self) -> &HashMap<String, (usize, usize)> {
+    pub(crate) fn paras(&self) -> &HashMap<String, (usize, usize)> {
         self.paras.get_or_init(|| {
             let mut m = HashMap::with_capacity(self.aux.len() * 2);
             for (i, a) in self.aux.iter().enumerate() {
@@ -670,7 +781,7 @@ impl Snap {
     }
 
     /// Laid-out page `k`'s span of items.
-    fn pages_of_item(&self, item: usize) -> (usize, usize) {
+    pub(crate) fn pages_of_item(&self, item: usize) -> (usize, usize) {
         let first = self
             .pag
             .starts
@@ -856,6 +967,9 @@ impl crate::owner::Format for Engine {
     fn snap_version(s: &Snap) -> u64 {
         s.version
     }
+    fn per_commit(&self) -> bool {
+        true
+    }
 }
 
 /// A Word document's owner, and what laying it out first took.
@@ -877,6 +991,10 @@ impl Owner {
     }
     pub fn wait(&self, version: u64) -> Arc<Snap> {
         self.core.wait(version)
+    }
+    /// Lane F: the snapshot of exactly `version`, `None` where it is not kept.
+    pub fn wait_exact(&self, version: u64) -> Option<Arc<Snap>> {
+        self.core.wait_exact(version)
     }
     pub fn stop(&self) {
         self.core.stop();

@@ -25,7 +25,15 @@ pub trait Format: Send + 'static {
     fn apply(&mut self, commits: Vec<Self::Commit>) -> Self::Stat;
     fn snapshot(&self) -> Self::Snap;
     fn snap_version(snap: &Self::Snap) -> u64;
+    /// Lane F: whether each commit is laid out and published on its own (every version
+    /// read exactly: `Owner::wait_exact`) rather than coalesced with those that came with it.
+    fn per_commit(&self) -> bool {
+        false
+    }
 }
+
+/// Lane F: the snapshots kept besides the latest, for a reader of an exact version.
+pub const KEPT: usize = 64;
 
 pub enum Msg {
     Commit(String, Instant),
@@ -45,6 +53,8 @@ pub struct Pass<S> {
 
 pub struct Shared<F: Format> {
     pub snap: Mutex<Arc<F::Snap>>,
+    /// Lane F: the latest snapshots, oldest first (at most `KEPT`).
+    pub kept: Mutex<std::collections::VecDeque<Arc<F::Snap>>>,
     pub cv: Condvar,
     pub passes: Mutex<Vec<Pass<F::Stat>>>,
     pub error: Mutex<Option<String>>,
@@ -63,8 +73,10 @@ fn ms(t: Instant) -> f64 {
 impl<F: Format> Owner<F> {
     /// The owner of a document whose state is `state` (laid out already).
     pub fn start(state: F, _name: &str) -> Owner<F> {
+        let first = Arc::new(state.snapshot());
         let shared = Arc::new(Shared {
-            snap: Mutex::new(Arc::new(state.snapshot())),
+            kept: Mutex::new(std::collections::VecDeque::from(vec![first.clone()])),
+            snap: Mutex::new(first),
             cv: Condvar::new(),
             passes: Mutex::new(Vec::new()),
             error: Mutex::new(None),
@@ -94,6 +106,17 @@ impl<F: Format> Owner<F> {
             g = self.shared.cv.wait(g).unwrap();
         }
         g.clone()
+    }
+
+    /// Lane F: the snapshot of exactly `version` (waits for it); `None` where a later one
+    /// was published without it (coalesced) or it is no longer kept.
+    pub fn wait_exact(&self, version: u64) -> Option<Arc<F::Snap>> {
+        let latest = self.wait(version);
+        if F::snap_version(&latest) == version {
+            return Some(latest);
+        }
+        let kept = self.shared.kept.lock().unwrap();
+        kept.iter().rev().find(|s| F::snap_version(s) == version).cloned()
     }
 
     pub fn latest(&self) -> Arc<F::Snap> {
@@ -142,23 +165,42 @@ fn run<F: Format>(mut state: F, rx: Receiver<Msg>, shared: Arc<Shared<F>>) {
         }
         commits.sort_by_key(|c| F::version_of(c));
         let parse_ms = ms(tp);
-        if !commits.is_empty() {
+        let groups: Vec<Vec<F::Commit>> = if state.per_commit() {
+            commits.into_iter().map(|c| vec![c]).collect()
+        } else if commits.is_empty() {
+            Vec::new()
+        } else {
+            vec![commits]
+        };
+        for commits in groups {
             let n = commits.len();
             match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| state.apply(commits))) {
                 Ok(stat) => {
                     let tpub = Instant::now();
                     let snap = Arc::new(state.snapshot());
+                    {
+                        let mut kept = shared.kept.lock().unwrap();
+                        kept.push_back(snap.clone());
+                        while kept.len() > KEPT {
+                            kept.pop_front();
+                        }
+                    }
                     *shared.snap.lock().unwrap() = snap;
                     shared.cv.notify_all();
                     let publish_ms = ms(tpub);
                     let waited = oldest.map_or(0.0, |o| o.elapsed().as_secs_f64() * 1000.0);
-                    shared.passes.lock().unwrap().push(Pass {
+                    let mut passes = shared.passes.lock().unwrap();
+                    passes.push(Pass {
                         stat,
                         commits: n,
                         parse_ms,
                         publish_ms,
                         commit_to_publish_ms: waited,
                     });
+                    // a log for whoever reads it (`stats`), not a history: the oldest go
+                    if passes.len() > 4096 {
+                        passes.drain(..2048);
+                    }
                 }
                 Err(e) => {
                     let msg = e

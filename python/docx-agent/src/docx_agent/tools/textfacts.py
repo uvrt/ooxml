@@ -262,6 +262,11 @@ def _layout(call: Any, ids: list[str], required: bool) -> Any:
 
     entry, document = call.entry, call.document
     version = entry.version
+    from ..rust.check import pages_of
+
+    found = pages_of(call, ids)          # lane F: the document's Rust owner, where it follows it
+    if found is not None:
+        return found
     try:
         if call.may_unlock:
             # Lane O (step 1): the check's own request with these pages besides, in one trip
