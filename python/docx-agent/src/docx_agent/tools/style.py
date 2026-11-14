@@ -1,0 +1,584 @@
+"""Style: ``word_lists``, ``word_styles``, ``word_template``, ``word_design_facts``, ``word_compare_blocks``
+and ``word_follow_sample``
+(``word_format``, the general setter, is in :mod:`.text` and in this group)."""
+
+from __future__ import annotations
+
+from typing import Any
+
+import json
+
+from ooxml_edit.tools import REVIEW, Result, ToolError, array, boolean, integer, number, obj, page_list, string
+
+from ..edit.design import ALL_KINDS, CAPS, KINDS
+from ..edit.formatting import RUN_PROPERTIES, read_paragraph, read_run, read_shading
+from ..edit.errors import EditError
+from ..edit.styles import TAB_ALIGNMENTS, TAB_LEADERS, StyleError, read_tabs
+from ._base import lay_out_ahead, need, outcome, resolve, tool_names, word_tool
+from .text import PARAGRAPH_FIELDS, RUN_FIELDS, paragraphs_of, split_formatting  # noqa: F401
+
+DOC = string("Document id.")
+
+#: What add and modify set: word_format's common fields.
+STYLE_FIELDS = {k: v for k, v in {**RUN_FIELDS, **PARAGRAPH_FIELDS}.items()
+                if k in ("bold", "italic", "size", "font", "color", "alignment", "space_before", "space_after",
+                         "line_spacing", "indent_left", "indent_first", "keep_with_next")}
+# Round 24, W6: a paragraph style's shading (behind its paragraphs), a character style's.
+STYLE_FIELDS["shading"] = string("Fill: RRGGBB, theme colour, 'accent1 lighter 80%' or none.", optional=True)
+
+
+# -- W10 word_lists ----------------------------------------------------------------------------
+
+
+@word_tool("word_lists", "Lists: add paragraphs to a bullet or numbered list, remove them, set level, restart or continue numbering, change a level's number format and positions.",
+           {"doc": DOC,
+            "targets": array(string(), "Paragraphs or spans.", min_items=1),
+            "action": string("What to do.", enum=["add", "remove", "level", "restart", "continue", "format"]),
+            "kind": string("add. Default bullet.", enum=["bullet", "number"], optional=True),
+            "level": integer("add, level, format: level from 0.", minimum=0, maximum=8, optional=True),
+            "start": integer("restart: first number (default 1); format: start value.",
+                             minimum=0, maximum=32767, optional=True),
+            "number_format": string("format: decimal, lowerLetter, upperRoman, bullet...",
+                                    optional=True),
+            "label": string("format: label, e.g. %1) or a bullet.", optional=True),
+            # Round 30, W14: Word's "Define new multilevel list" positions.
+            "number_at": number("format: number's position.", minimum=-1584, maximum=1584, optional=True),
+            "text_at": number("format: text indent.", minimum=-1584, maximum=1584, optional=True),
+            "follow": string("format: after the number.", enum=["tab", "space", "nothing"], optional=True),
+            "tab_at": number("format: tab stop.", minimum=-1584, maximum=1584, optional=True),
+            "force": boolean("remove: also where the style numbers. Default false.", optional=True),
+            # Round 43: the list to go on from, where it is not the nearest one like it.
+            "join": string("continue: a paragraph of the list to join.", optional=True)},
+           refs=('targets[]', 'join'), group="word_style", mutates=True)
+def word_lists(call: Any, doc: str, targets: list[str], action: str, kind: str = "bullet",
+               level: int | None = None, start: int | None = None, number_format: str | None = None,
+               label: str | None = None, number_at: float | None = None, text_at: float | None = None,
+               follow: str | None = None, tab_at: float | None = None, force: bool = False,
+               join: str | None = None) -> Result:
+    """Round 36, R33: ``remove`` refuses a paragraph its style numbers -- taking it out writes
+    a direct override the template's style no longer decides -- naming the styles that fit
+    and number nothing; ``force`` writes the override (``numId`` 0) as before.  Round 43:
+    ``continue`` ``join`` names a paragraph of the list to go on from (``check``'s fix for
+    copies whose lists are stated to run on); by default the nearest earlier list like it."""
+    document = call.document
+    paragraphs = [p for address in resolve(call, targets) for p in paragraphs_of(document, address)]
+    if action == "remove" and not force:
+        _refuse_style_numbered(document, paragraphs)
+    edits = []
+    listless = []
+    for k, paragraph in enumerate(paragraphs):
+        identifier = paragraph.id
+        if action == "add":
+            edits.append(document.add_to_list(identifier, kind, level=level or 0))
+        elif action == "remove":
+            # Round 27: a paragraph in no list is as asked; one note names them all.
+            edit = document.remove_from_list(identifier)
+            if edit.changed:
+                edits.append(edit)
+            else:
+                listless.append(edit.id)
+        elif action == "level":
+            edits.append(document.set_list_level(identifier, need(level, "level")))
+        elif action == "restart":
+            if k == 0:
+                edits.append(document.restart_numbering(identifier, at=1 if start is None else start))
+        elif action == "continue":
+            if k == 0:
+                edits.append(document.continue_numbering(identifier, _joined(document, join)))
+        else:
+            if k == 0:
+                edits.append(document.set_list_format(identifier, level=level, format=number_format, text=label,
+                                                      start=start, number_at=number_at, text_at=text_at,
+                                                      follow=follow, tab_at=tab_at))
+    lists = []
+    for paragraph in paragraphs:
+        membership = document.list_of(paragraph.id)
+        lists.append({"id": paragraph.id, "list": None if membership is None else
+                      {"kind": membership.kind, "level": membership.level, "num_id": membership.num_id}})
+    result = outcome(edits, f"{action}: {len(paragraphs)} paragraph(s)", data=lists[:50])
+    if action != "continue" and isinstance(join, str) and join.strip():
+        result.warnings.append(f"join is continue's: left out of {action}")
+    if listless:
+        named = ", ".join(listless[:10]) + (f" and {len(listless) - 10} more" if len(listless) > 10 else "")
+        result.warnings.append(f"{len(listless)} paragraph(s) were not in a list, left as they were: {named}")
+    return result
+
+
+def _joined(document: Any, join: str | None) -> str | None:
+    """``join``'s paragraph id (an address ``word_read`` takes: its first paragraph), or
+    ``None`` -- a placeholder too (rule 1)."""
+    if not isinstance(join, str) or not join.strip():
+        return None
+    found = paragraphs_of(document, join.strip())
+    if not found:
+        raise ToolError("not_found", f"join {join!r} holds no paragraph: name a paragraph of the list to "
+                        "go on from", field="join")
+    return found[0].id
+
+
+def _refuse_style_numbered(document: Any, paragraphs: list[Any]) -> None:
+    """The refusal of ``remove`` for paragraphs whose style numbers them (rule 2: which, and
+    the styles to give them instead, or ``force``)."""
+    from ..edit.numbering import style_list
+
+    numbered: dict[str, list[str]] = {}
+    for paragraph in paragraphs:
+        style_id = _paragraph_style_id(document, paragraph)
+        if style_id is not None and style_list(document, style_id) is not None:
+            numbered.setdefault(style_id, []).append(paragraph.id)
+    if not numbered:
+        return
+    names = {s.id: s.name or s.id for s in document.styles}
+    parts, options = [], []
+    for style_id, ids in list(numbered.items())[:5]:
+        fits = unnumbered_styles_like(document, style_id)
+        shown = ", ".join(ids[:5]) + (f" and {len(ids) - 5} more" if len(ids) > 5 else "")
+        parts.append(f"{shown}: style {names.get(style_id, style_id)!r} numbers them"
+                     + (f" (styles like it that number nothing: {', '.join(fits)})" if fits else
+                        " (no style like it numbers nothing: word_styles add one based on it)"))
+        options += [f for f in fits if f not in options]
+    message = "; ".join(parts) + (". Taking them out of the list would override their style: give them a "
+                                  "style that numbers nothing (word_format paragraph_style), or force true to "
+                                  "override (no marker)")
+    joins = _joins(document, [p for ids in numbered.values() for p in ids])
+    if joins:
+        # Round 42, R47: items numbered by a list of their own over a numbering style --
+        # what a builder means by removing "their own" numbering is joining a list,
+        # keeping their marker and level: word_format like an item of it.
+        message += ". To drop their own numbering and join an earlier list at their level instead, keeping a " \
+                   "marker: " + "; ".join(f"word_format {json.dumps(call)}" for call in joins)
+        options = [f"word_format like {call['like']}" for call in joins] + options
+    raise ToolError("invalid_arguments", message, field="targets", valid_options=(options + ["force"])[:50])
+
+
+def _joins(document: Any, ids: list[str]) -> list[dict]:
+    """For paragraphs numbered by a list of their own (``w:numPr``), the ``word_format``
+    calls that make them items of the nearest earlier list at their level (``like`` an item
+    of it), grouped by that item; at most five."""
+    calls: dict[str, list[str]] = {}
+    for identifier in ids:
+        found = document.list_of(identifier)
+        if found is None or found.from_style:
+            continue
+        item = _earlier_item(document, identifier, found)
+        if item is not None:
+            calls.setdefault(item, []).append(identifier)
+    return [{"targets": targets, "like": item} for item, targets in list(calls.items())[:5]]
+
+
+def _earlier_item(document: Any, identifier: str, own: Any) -> str | None:
+    """The nearest paragraph before ``identifier`` in its container that is an item of
+    another list at ``own``'s level."""
+    from ..edit.numbering import membership
+
+    _, entry = document._paragraph_entry(identifier)
+    node = entry.element.getprevious()
+    index = document._index(document._resolve(identifier)[0])
+    while node is not None:
+        if node.tag == entry.element.tag:
+            found = membership(document, node)
+            if found is not None and found.num_id != own.num_id and found.level == own.level:
+                other = index.entry_for(node)
+                return other.id if other is not None else None
+        node = node.getprevious()
+    return None
+
+
+def _paragraph_style_id(document: Any, paragraph: Any) -> str | None:
+    from ..edit.document import _OutlineLevels
+
+    _, entry = document._resolve(paragraph.id)
+    return _OutlineLevels(document).style_id(entry.element)
+
+
+def unnumbered_styles_like(document: Any, style_id: str, limit: int = 6) -> list[str]:
+    """Names of paragraph styles that number nothing and fit where ``style_id`` stands, best
+    first: one based on it, one at its outline level (a heading's), one it is based on, one
+    beside it (the same base), the default paragraph style."""
+    from ..edit.numbering import style_list
+
+    styles = [s for s in document.styles if s.kind == "paragraph"]
+    by_id = {s.id: s for s in styles}
+    numbered = by_id.get(style_id)
+    if numbered is None:
+        return []
+    chain, current = [], numbered.based_on
+    while current and current in by_id and current not in chain:
+        chain.append(current)
+        current = by_id[current].based_on
+
+    def rank(style: Any) -> int | None:
+        if style.based_on == style_id:
+            return 0
+        if numbered.outline_level is not None and style.outline_level == numbered.outline_level:
+            return 1
+        if style.id in chain:
+            return 2
+        if numbered.based_on and style.based_on == numbered.based_on:
+            return 3
+        if style.default:
+            return 4
+        return None
+
+    ranked = sorted((r, k, s) for k, s in enumerate(styles) if s.id != style_id and (r := rank(s)) is not None)
+    out = []
+    for _, _, style in ranked:
+        if style_list(document, style.id) is None:
+            out.append(style.name or style.id)
+        if len(out) >= limit:
+            break
+    return out
+
+
+# -- W21 word_styles ---------------------------------------------------------------------------
+
+
+def _style_element(document: Any, style_id: str) -> Any:
+    from ..edit.styles import _W
+
+    part = document.package.related_parts_of_type(
+        document.package.document_part(),
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles")
+    if not part:
+        return None
+    root = document.package.tree(part[0])
+    for node in root.iter(_W + "style"):
+        if node.get(_W + "styleId") == style_id:
+            return node
+    return None
+
+
+def describe_style(document: Any, style: Any) -> dict[str, Any]:
+    from ..edit.styles import _W
+
+    data: dict[str, Any] = {"name": style.name, "kind": style.kind, "based_on": style.based_on}
+    node = _style_element(document, style.id)
+    if node is not None:
+        run = node.find(_W + "rPr")
+        paragraph = node.find(_W + "pPr")
+        declared = {}
+        for name in sorted(RUN_PROPERTIES):
+            value = read_run(run, name)
+            if value is not None:
+                declared[name] = value
+        if style.kind == "paragraph":
+            for name in ("alignment", "space_before", "space_after", "line_spacing", "indent_left",
+                         "indent_right", "first_line", "hanging", "keep_with_next", "keep_together",
+                         "page_break_before"):
+                value = read_paragraph(paragraph, name)
+                if value is not None:
+                    declared["keep_lines" if name == "keep_together" else name] = value
+        shading = read_shading(paragraph if style.kind == "paragraph" else run)
+        if shading is not None:
+            declared["shading"] = shading
+        tabs = read_tabs(node) if style.kind == "paragraph" else None
+        if tabs is not None:
+            declared["tabs"] = tabs                   # round 31, R4: its own stops, clears too
+        data["declared"] = declared
+        if style.kind == "paragraph":
+            # Round 30, W15: the list level it numbers at, its own or through based_on.
+            from ..edit.numbering import style_link
+
+            link = style_link(document, style.id)
+            if link is not None:
+                if "from" in link:
+                    held = next((s for s in document.styles if s.id == link["from"]), None)
+                    link["from"] = (held.name or held.id) if held is not None else link["from"]
+                data["numbering"] = link
+    if style.kind == "table":
+        chosen = document.styles.table_default()
+        if chosen is not None and chosen.id == style.id:
+            data["default"] = True                    # round 31, R3: new tables get it
+    data["usage"] = document.styles.usage(style.name, style.kind)
+    return data
+
+
+@word_tool("word_styles", "The style sheet: list, describe (formatting, usage), add, modify, remove (with a replacement while used), purge unused, set_default (the table style new tables get), set_language (the language text is proofed and spaced in: the document's, or name's).",
+           {"doc": DOC,
+            "action": string("What to do.", enum=["list", "describe", "add", "modify", "remove", "purge_unused",
+                                                  "set_default", "set_language"]),
+            "name": string("Style name.", optional=True),
+            "kind": string("Default paragraph.",
+                           enum=["paragraph", "character", "table"], optional=True),
+            "based_on": string("add: based on this style.", optional=True),
+            "next_style": string("add: style of the next paragraph.", optional=True),
+            "replacement": string("remove: style its users get instead.", optional=True),
+            # Round 35, R24: the language of an existing document (Document.set_language).
+            "language": string("set_language: a tag such as fr-BE, nl-BE, en-US.", optional=True),
+            "in_use_only": boolean("list: only styles in use.", optional=True),
+            # Round 29, W12: Word's "Link level to style".
+            "numbering": obj({"list": string("A list's number, a style in it, or none to unlink."),
+                              "level": integer("From 0. Default 0.", minimum=0, maximum=8, optional=True)},
+                             "modify: link to a list level.", optional=True),
+            # Round 31, R4: a paragraph style's own tab stops.
+            "tabs": array(obj({"position": number("Points. Omit: the text column's end.", minimum=-1584,
+                                                  maximum=1584, optional=True),
+                               "alignment": string("Default left; clear: an inherited stop.",
+                                                   enum=list(TAB_ALIGNMENTS), optional=True),
+                               "leader": string("Default none.", enum=list(TAB_LEADERS), optional=True)}),
+                          "add, modify: the style's tab stops, replacing its own; [] removes them.", optional=True),
+            **STYLE_FIELDS},
+           group="word_style", mutates=True, track=False,
+           action_roles={"list": REVIEW, "describe": REVIEW})
+def word_styles(call: Any, doc: str, action: str, name: str | None = None, kind: str | None = None,
+                based_on: str | None = None, next_style: str | None = None, replacement: str | None = None,
+                language: str | None = None, in_use_only: bool = False, numbering: dict | None = None, tabs: list[dict] | None = None,
+                **values: Any) -> Result:
+    document = call.document
+    styles = document.styles
+    try:
+        if action == "list":
+            rows = []
+            chosen = styles.table_default()
+            for style in styles:
+                if not style.name or (kind and style.kind != kind):
+                    continue
+                if in_use_only and not styles.usage(style.name, style.kind).get("content"):
+                    continue
+                row = {"name": style.name, "kind": style.kind, "based_on": style.based_on}
+                if chosen is not None and style.id == chosen.id:
+                    row["default"] = True             # round 31, R3: new tables get it
+                rows.append(row)
+            return Result(summary=f"{len(rows)} style(s)" + (f"; new tables get {chosen.name}" if chosen else ""),
+                          data=rows[:200])
+        if action == "purge_unused":
+            return outcome([styles.purge_unused()], "Purged unused styles")
+        if action == "set_language":
+            return _set_language(document, need(language, "language"), name)
+        if language is not None:
+            raise ToolError("invalid_arguments", f"language is set_language's: {action} takes none", field="language")
+        name = need(name, "name")
+        if numbering is not None and action != "modify":
+            raise ToolError("invalid_arguments", f"numbering is modify's: {action} takes none", field="numbering")
+        if tabs is not None and action not in ("add", "modify"):
+            raise ToolError("invalid_arguments", f"tabs is add's and modify's: {action} takes none", field="tabs")
+        if action == "describe":
+            return Result(summary=f"Style {name}", data=describe_style(document, styles.get(name, kind)))
+        if action == "remove":
+            return outcome([styles.remove(name, kind, replacement=replacement)], f"Removed style {name}")
+        if action == "set_default":
+            # Round 31, R3: Word's Table Design > Set as Default (this document).
+            if kind not in (None, "table"):
+                raise ToolError("invalid_arguments", "set_default sets the table style new tables get: kind table",
+                                field="kind", valid_options=["table"])
+            kind = "table"                            # a refusal lists the table styles
+            edit = styles.set_default(name)
+            return outcome([edit], f"New tables get {styles.table_default().name}" if edit.changed
+                           else f"No change: new tables get {name}")
+        run, paragraph = split_formatting(values)
+        formatting = {**run, **paragraph}
+        if values.get("shading") is not None:
+            formatting["shading"] = None if values["shading"].strip().lower() == "none" else values["shading"]
+        if tabs is not None:
+            formatting["tabs"] = [{k: v for k, v in stop.items() if v is not None} for stop in tabs]
+        if action == "add":
+            edit = styles.add(name, kind or "paragraph", based_on=based_on, next_style=next_style, **formatting)
+            return outcome([edit], f"Added style {name}")
+        if numbering is not None:
+            given = numbering["list"].strip()
+            unlink = given.lower() == "none"
+            if unlink and "level" in numbering:
+                raise ToolError("invalid_arguments", 'list "none" unlinks: give no level with it',
+                                field="numbering.level")
+            formatting["numbering"] = None if unlink else {
+                "list": int(given) if given.isdigit() else given, "level": numbering.get("level", 0)}
+        if not formatting:
+            raise ToolError("invalid_arguments", "modify needs formatting to set, numbering or tabs",
+                            valid_options=[*STYLE_FIELDS, "numbering", "tabs"])
+        if numbering is not None:
+            if styles.get(name, kind).kind != "paragraph":     # the style first, by its name
+                raise ToolError("invalid_arguments", f"{name!r} is a {styles.get(name, kind).kind} style: "
+                                "only a paragraph style is linked to a list level", field="name")
+            if formatting["numbering"] is not None:
+                try:                                     # the list and level, named by their field
+                    styles._list_level(formatting["numbering"])
+                except EditError as error:
+                    raise ToolError("not_found" if isinstance(error, StyleError) else "invalid_arguments",
+                                    str(error), field="numbering.list" if isinstance(error, StyleError)
+                                    or "level" not in str(error) else "numbering.level") from None
+            edit = styles.modify(name, kind, **formatting)
+            what = ("unlinked from its list level" if edit.changed else "numbers nothing, left as it was") \
+                if formatting["numbering"] is None else \
+                f"linked to level {formatting['numbering']['level']} of list {numbering['list'].strip()}"
+            return outcome([edit], f"Modified style {name}: {what}")
+        return outcome([styles.modify(name, kind, **formatting)], f"Modified style {name}")
+    except StyleError as error:
+        raise ToolError("not_found", str(error), field="name",
+                        valid_options=[s.name for s in styles if s.name and (kind is None or s.kind == kind)][:50]) \
+            from None
+
+
+def _set_language(document: Any, language: str, name: str | None) -> Result:
+    """Round 35, R24: :meth:`Document.set_language` -- the document's language (its default,
+    the styles in the template's own language (R25), the theme's), or with ``name`` that
+    style's alone."""
+    from ..edit.language import LanguageError, word_tag
+
+    try:
+        edit = document.set_language(language, **({"styles": [name], "default": False} if name else {}))
+    except LanguageError as error:
+        raise ToolError("invalid_arguments", str(error), field="language",
+                        valid_options=error.options[:30]) from None
+    found = document.languages()
+    data = {"default": found["default"], "styles": dict(list(found["styles"].items())[:20])}
+    if len(found["styles"]) > 20:
+        data["styles_left_out"] = len(found["styles"]) - 20
+    if found["runs"]:
+        data["runs"] = found["runs"]
+    tag = (found["styles"].get(name) or {}) if name else found["default"]
+    what = f"Style {name}" if name else "The document"
+    # The attribute the language was written in (the others are other scripts' languages).
+    slot = word_tag(language)[1]
+    summary = (f"{what}: language {tag.get(slot) or ', '.join(tag.values())}" if edit.changed
+               else f"No change: {edit.warnings[0]}")
+    return outcome([edit], summary, data=data)
+
+
+# -- W29 word_template -------------------------------------------------------------------------
+
+
+@word_tool("word_template", "Upgrade the document to Word's current compatibility mode, reporting the reflow. To save it as a template, save_document with format dotx.",
+           {"doc": DOC,
+            "action": string("What to do.", enum=["upgrade_to_modern"])},
+           batchable=False, group="word_style", mutates=True, track=False,
+           ahead=lambda call, **_: call.document.compatibility_mode < 15 and lay_out_ahead(call))
+def word_template(call: Any, doc: str, action: str) -> Result:
+    from ._base import reflow_json
+
+    document = call.document
+    edit = document.upgrade_to_modern()
+    data = {"mode": document.compatibility_mode,
+            "reflow": reflow_json(edit.reflow) if edit.reflow is not None else None}
+    return outcome([edit], f"Compatibility mode {document.compatibility_mode}", data=data)
+
+
+# -- F9 word_design_facts ---------------------------------------------------------------------
+
+
+@word_tool("word_design_facts", "Measured design facts for template analysis, no verdicts: styles in use per role with usage and look, table styles by place (header, bands, label column), table frames, page grid per section, theme, repeated block shapes; or every declared style resolved.",
+           {"doc": DOC,
+            "include": array(string(enum=list(ALL_KINDS)), "Facts to report. Default all but declared_styles.",
+                             optional=True),
+            "cursor": string("next_cursor (declared_styles).", optional=True)},
+           group="word_style")
+def word_design_facts(call: Any, doc: str, include: list[str] | None = None, cursor: str | None = None) -> Result:
+    """:meth:`Document.design_facts <docx_agent.Document.design_facts>`; a result too long
+    for the call's limit keeps fewer entries per list (``omitted`` counts the rest), except
+    ``declared_styles``, which is paged: as many styles as fit, ``next_cursor`` for the rest
+    (a later page holds only them)."""
+    document = call.document
+    kinds = list(include) if include else list(KINDS)
+    declared = "declared_styles" in kinds or cursor is not None
+    others = [] if cursor is not None else [k for k in kinds if k != "declared_styles"]
+    caps = dict(CAPS)
+    limit = call.limits.max_result_chars - 1500
+    data: dict[str, Any] = {}
+    while others:
+        data = document.design_facts(others, caps=caps)
+        if len(json.dumps(data, ensure_ascii=False)) <= (limit // 2 if declared else limit) \
+                or max(caps.values()) <= 1:
+            break
+        caps = {k: max(1, v // 2) for k, v in caps.items()}
+    counts = [f"{len(data[k])} {k.replace('_', ' ')}" for k in ("styles", "table_styles", "table_frames", "sections",
+                                                               "patterns")
+              if k in data]
+    total, next_cursor = None, None
+    if declared:
+        styles = document.design_facts(["declared_styles"], caps={"declared_styles": 10 ** 6})["declared_styles"]
+        page, total, _ = page_list(styles, cursor=cursor, limit=len(styles))
+        start = len(styles) - len(page)
+        room = limit - len(json.dumps(data, ensure_ascii=False))
+        kept: list = []
+        for entry in page:
+            room -= len(json.dumps(entry, ensure_ascii=False)) + 2
+            if room < 0 and kept:
+                break
+            kept.append(entry)
+        data["declared_styles"] = kept
+        end = start + len(kept)
+        next_cursor = f"c{end}" if end < total else None
+        counts.append(f"declared styles {start + 1}-{end} of {total}" if kept else f"no declared styles of {total}")
+    data = tool_names(data, "look")             # a paragraph's keep_lines, as word_format says it
+    left = data.get("omitted")
+    return Result(summary="Design facts: " + ", ".join(counts) + (
+        "; " + ", ".join(f"{n} more {k.replace('_', ' ')}" for k, n in left.items()) + " left out (include fewer kinds)"
+        if left else ""), data=data, total=total, next_cursor=next_cursor)
+
+
+# -- round 17, P3 word_compare_blocks ---------------------------------------------------------
+
+#: Differences in one page of a comparison.
+COMPARE_PAGE = 60
+
+
+def _compared_documents(arguments: Any) -> list[str]:
+    """``doc`` and, when it names another, the reference's (or the sample's) document."""
+    out = [arguments["doc"]] if isinstance(arguments.get("doc"), str) else []
+    reference = arguments.get("reference", arguments.get("sample"))
+    other = reference.get("doc") if isinstance(reference, dict) else None
+    if isinstance(other, str) and other and other not in out:   # "" a placeholder: doc
+        out.append(other)
+    return out
+
+
+@word_tool("word_compare_blocks", "Compare tables or paragraphs with a reference block (a sample, here or in another open document): rows, merges, widths, styles, shading, borders, direct formatting; each difference with fix calls. Measures only.",
+           {"doc": DOC,
+            "blocks": array(string(), "Blocks to compare, t:... or p:....", min_items=1),
+            "reference": obj({"doc": string("Its document. Default doc.", optional=True),
+                              "block": string("Its block.")}, "The block with the expected values."),
+            "cursor": string("next_cursor of the previous page.", optional=True)},
+           refs=('blocks[]',), group="word_style", documents=_compared_documents)
+def word_compare_blocks(call: Any, doc: str, blocks: list[str], reference: dict,
+                        cursor: str | None = None) -> Result:
+    """:meth:`Document.compare_blocks <docx_agent.Document.compare_blocks>`, paged by
+    difference."""
+    other = reference.get("doc") or doc
+    if other not in call.entries:
+        raise ToolError("not_found", f"no open document {other!r}", field="reference.doc",
+                        valid_options=list(call.entries)[:50])
+    source = call.entries[other].document
+    data = call.document.compare_blocks(resolve(call, blocks), reference["block"],
+                                        reference_document=source if other != doc else None)
+    differences, total, next_cursor = page_list(data["differences"], cursor=cursor, limit=COMPARE_PAGE)
+    data["differences"] = differences
+    fixes = sum(1 for d in differences if d["fix"])
+    return Result(summary=f"Compared {len(data['compared'])} block(s) with {data['reference']}: "
+                  f"{len(data['same'])} the same, {total} difference(s) ({fixes} with a fix on this page)",
+                  data=data, total=total, next_cursor=next_cursor)
+
+
+# -- round 31, R8 word_follow_sample ----------------------------------------------------------
+
+
+@word_tool("word_follow_sample", "Make copies of a sample table or paragraph follow the revised sample in one step: its widths, table, row, cell and paragraph formatting, styles, run formatting; each copy keeps its text, rows, columns and merges.",
+           {"doc": DOC,
+            "sample": obj({"doc": string("Its document. Default doc.", optional=True),
+                           "block": string("Its block.")}, "The revised sample, t:... or p:...."),
+            "copies": array(string(), "Blocks made from it, t:... or p:....", min_items=1),
+            "preview": boolean("Report what would change, change nothing.", optional=True),
+            "report": string("actionable: leave out the copies' own (kind own), counted.",
+                             enum=["all", "actionable"], optional=True)},
+           refs=('copies[]',), group="word_style", mutates=True, documents=_compared_documents,
+           reads=lambda arguments: bool(arguments.get("preview")))
+def word_follow_sample(call: Any, doc: str, sample: dict, copies: list[str], preview: bool = False,
+                       report: str = "all") -> Result:
+    """:meth:`Document.follow_sample <docx_agent.Document.follow_sample>`: per copy what
+    changed and what was not followed, with why and the calls that make it where a tool does."""
+    other = sample.get("doc") or doc
+    if other not in call.entries:
+        raise ToolError("not_found", f"no open document {other!r}", field="sample.doc",
+                        valid_options=list(call.entries)[:50])
+    source = call.entries[other].document
+    edit, data = call.document.follow_sample(sample["block"], resolve(call, copies),
+                                             sample_document=source if other != doc else None,
+                                             preview=bool(preview), report=report or "all")
+    entries = data["copies"]
+    changed = [e["copy"] for e in entries if e["changed"]]
+    left = sum(len(e["not_followed"]) + e.get("more", 0) + e.get("own", 0) for e in entries)
+    verb = "would follow" if preview else "followed"
+    summary = (f"{len(changed)} of {len(entries)} cop{'y' if len(entries) == 1 else 'ies'} {verb} {data['sample']}"
+               + (f"; {left} difference(s) not followed (see not_followed)" if left else "; nothing left to follow"))
+    return outcome([] if preview else [edit], summary, data=data, changed=[] if preview else changed)
+
+
+TOOLS = [word_lists, word_styles, word_template, word_design_facts, word_compare_blocks, word_follow_sample]

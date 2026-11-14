@@ -1,0 +1,135 @@
+{
+ "task": "w12-org-chart",
+ "clock": "2026-10-07T09:00:00+00:00",
+ "open": [
+  "annual-report-draft.docx"
+ ],
+ "blobs": [
+  "org-chart.png"
+ ],
+ "calls": [
+  {
+   "tool": "describe",
+   "arguments": {
+    "doc": "d1"
+   },
+   "expect": {
+    "ok": true,
+    "summary": "Described annual-report-draft.docx",
+    "data_sha": "4f242342a2c1fb78",
+    "data_keys": [
+     "comments",
+     "comments.by_author",
+     "comments.open",
+     "comments.threads",
+     "compatibility_mode",
+     "controls",
+     "drawings",
+     "fields",
+     "headings",
+     "name",
+     "notes",
+     "pages",
+     "problems",
+     "properties",
+     "properties.author",
+     "properties.subject",
+     "properties.title",
+     "revisions",
+     "revisions.by_author",
+     "revisions.changes",
+     "revisions.records",
+     "sections",
+     "styles_in_use",
+     "tables",
+     "tracking"
+    ],
+    "data_sha_core": "a82d77ed615138a1"
+   }
+  },
+  {
+   "tool": "word_drawings",
+   "arguments": {
+    "doc": "d1",
+    "action": "insert_picture",
+    "image": "b1",
+    "width": 340.16,
+    "alt_text": "Organisation chart: the managing board over three divisions",
+    "at": "after:p:3B212964",
+    "align": "center"
+   },
+   "expect": {
+    "ok": true,
+    "summary": "Inserted picture d:1",
+    "created": [
+     "p:77B9C794",
+     "d:1"
+    ],
+    "data_sha": "87274a4b10deb7f6",
+    "data_keys": [
+     "id",
+     "paragraph",
+     "size"
+    ],
+    "data_sha_core": "87274a4b10deb7f6"
+   }
+  },
+  {
+   "tool": "render",
+   "arguments": {
+    "doc": "d1",
+    "pages": [
+     1
+    ]
+   },
+   "expect": {
+    "ok": true,
+    "summary": "Rendered page(s) 1 (final view: changes accepted, comments hidden)",
+    "data_sha": "9c7b87b81e81bce4",
+    "data_keys": [
+     "cached",
+     "coverage",
+     "coverage.blocks_laid_out",
+     "coverage.complete",
+     "coverage.pages",
+     "coverage.status",
+     "pages"
+    ],
+    "data_sha_core": "cca0736c36c5e91b"
+   }
+  },
+  {
+   "tool": "save_document",
+   "arguments": {
+    "doc": "d1",
+    "name": "annual-report-draft.docx",
+    "format": "docx"
+   },
+   "expect": {
+    "ok": true,
+    "summary": "Saved annual-report-draft.docx for the application",
+    "data_sha": "b7575758933e3455",
+    "data_keys": [
+     "coverage",
+     "coverage.blocks_laid_out",
+     "coverage.complete",
+     "coverage.pages",
+     "coverage.status",
+     "doc",
+     "format",
+     "name",
+     "size",
+     "validate",
+     "validate.baseline",
+     "validate.fixed",
+     "validate.new"
+    ],
+    "data_sha_core": "fd047364a2c948c3"
+   }
+  }
+ ],
+ "output": {
+  "name": "annual-report-draft.docx",
+  "sha256": "93006dc933e49dd68a4acce0cc727b6da10bdd83405ac865f2fe14a895a0cda3"
+ }
+}

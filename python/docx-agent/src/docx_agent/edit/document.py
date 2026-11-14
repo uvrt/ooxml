@@ -1,0 +1,3307 @@
+"""The editing API: ``Document`` -> stories -> paragraphs, tables, runs.
+
+Every view is a *live* view over the lxml tree, never a copy: a property reads the XML on
+demand, and anything the views do not model -- ``mc:AlternateContent``, ``w14``/``w15``
+extensions, custom XML, permission ranges, proofing marks, math -- survives because nothing
+removed it.  Views hold an *id*, not an element: they resolve it on every access (as
+pptx-agent's runs do), so a view taken before an edit, an undo or a redo still answers.
+
+Every edit is one undo step (ooxml-edit's history), checks what it can before it changes
+anything, and returns an :class:`EditResult` naming what it touched: the ids it created,
+renamed (a paragraph stamped or re-issued, ROADMAP.md "Addressing") and removed.
+"""
+
+from __future__ import annotations
+
+import copy
+import os
+import re
+from contextlib import contextmanager
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, BinaryIO, Iterator
+
+from lxml import etree
+from ooxml_edit.history import History
+
+from ..oxml.package import WordPackage, story_name
+from ..oxml.xml import REVISION_PROPERTY_TAGS, Element, qn, remove
+from . import ids as _ids
+from .errors import EditError
+from . import text as _text
+from . import typography as _typography
+from .ids import PartIndex, ParagraphEntry, TableEntry
+from .styles import BUILTIN_HEADING, outline_value, style_outline_level
+from . import effective as _effective
+from . import inline as _inline
+from . import formatting as _formatting
+from .addresses import AddressOps, span_ends
+from .outline import OutlineOps
+from .annotations import AnnotationOps
+from .formatops import FormatOps
+from .links import Bookmark, Hyperlink, LinkOps  # noqa: F401 -- Bookmark: edit/__init__.py imports it from here
+from .numbering import ListMembership, ListOps
+from .pictures import Picture, PictureOps
+from .ranges import TextOps, TextRange
+from .comments import CommentOps
+from . import comments as _comments
+from .tables import TableOps
+from .table_format import TableFormatOps
+from .drawings import DrawingOps
+from .charts import ChartOps
+from .controls import ControlOps
+from .sections import Section, SectionOps, section_id as _section_id
+from .notes import NoteOps
+from .fields import Field, FieldOps  # noqa: F401  (re-exported)
+from .authoring import AuthoringOps
+from .language import LanguageOps
+from .importing import ImportOps
+from .properties import PropertyOps
+from .provenance import ProvenanceOps
+from ..revisions import track as _track
+from ..revisions.mode import TrackingOps, trackable
+from ..revisions.review import RevisionOps
+from ..revisions.stamp import Stamp
+
+if TYPE_CHECKING:  # pragma: no cover
+    from ooxml_common.locales import Locale
+
+    from ..layout import DocumentLayout, Reflow, _Conversion
+
+_W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+W_P = _W + "p"
+W_TBL = _W + "tbl"
+W_PPR = _W + "pPr"
+W_SECTPR = _W + "sectPr"
+W_TC = _W + "tc"
+W_BODY = _W + "body"
+
+#: Range markers: a start and an end sharing ``w:id``.
+_RANGE_PAIRS = {
+    _W + "bookmarkStart": _W + "bookmarkEnd",
+    _W + "commentRangeStart": _W + "commentRangeEnd",
+    _W + "moveFromRangeStart": _W + "moveFromRangeEnd",
+    _W + "moveToRangeStart": _W + "moveToRangeEnd",
+    _W + "permStart": _W + "permEnd",
+}
+_RANGE_ENDS = {end: start for start, end in _RANGE_PAIRS.items()}
+
+#: What a paragraph cannot be deleted with in E0: deleting it would orphan a note, a
+#: comment or half a field.  E3 and E4 handle these.
+_REFERENCES = (_W + "footnoteReference", _W + "endnoteReference", _W + "commentReference")
+
+
+
+
+@dataclass
+class EditResult:
+    """What an edit touched.  ``id`` is the edited (or created) block's id after the edit."""
+
+    id: str | None
+    created: list[str] = field(default_factory=list)
+    #: Old id -> new id, for every paragraph stamped or re-issued by the edit.
+    renamed: dict[str, str] = field(default_factory=dict)
+    removed: list[str] = field(default_factory=list)
+    #: Whether the document changed at all.
+    changed: bool = True
+    #: How many places a find-and-replace (or another many-place edit) changed.
+    count: int | None = None
+    #: What the edit did that the caller may want to know about (a reference left
+    #: pointing at something removed).
+    warnings: list[str] = field(default_factory=list)
+    #: The top-level blocks an insertion made, in order (``insert_markdown``): ``created``
+    #: lists these and what is inside them (cells' paragraphs, notes).
+    blocks: list[str] = field(default_factory=list)
+    #: What the edit could not compute (fields whose target is past where docx2svg's
+    #: layout stops: ``update_fields``, ``insert_toc``).
+    unknown: list[str] = field(default_factory=list)
+    #: The pages the edit reflowed, by docx2svg's layout before and after, for an edit
+    #: that reports it (``upgrade_to_modern``).
+    reflow: "Reflow | None" = None
+    #: A copy's id for each source id it copies (``copy_blocks``): blocks, paragraphs in
+    #: them, notes and comments.
+    copied: dict[str, str] = field(default_factory=dict)
+    #: What new paragraphs kept of the ones they replaced (``insert_markdown`` at
+    #: ``replace:``, round 42): ``{"block", "from", "settings"}`` per paragraph.
+    kept: list[dict] = field(default_factory=list)
+    #: What an accept or reject removed, by kind (round 56, R121):
+    #: :meth:`~docx_agent.revisions.review.RevisionOps._blocks_gone`'s ``typed``.
+    removed_blocks: dict = field(default_factory=dict)
+    #: The document edited, set for an edit made through the API: what :attr:`object`
+    #: resolves ``id`` in.
+    document: "Document | None" = field(default=None, repr=False, compare=False)
+
+    @property
+    def object(self):
+        """The edited or created object itself -- ``doc.get(result.id)``: a
+        :class:`Paragraph`, :class:`Table`, picture, note, comment...::
+
+            paragraph = doc.insert_paragraph("New text.", after="p:3B212964").object
+            paragraph.format(bold=True)"""
+        if self.id is None:
+            raise AttributeError("the edit names no object (id is None)")
+        if self.document is None:
+            raise AttributeError(f"this result does not know its document: use doc.get({self.id!r})")
+        return self.document.get(self.id)
+
+
+# -- views -----------------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ControlBlock:
+    """A block-level content control as a block (:meth:`Document._resolve_block`)."""
+
+    id: str
+    element: Element
+
+
+class Paragraph:
+    """A ``w:p`` anywhere in a story: the body, a table cell, a content control, a text box,
+    a header, a note or a comment."""
+
+    def __init__(self, document: "Document", identifier: str) -> None:
+        self._document = document
+        self._id = identifier
+
+    def _entry(self) -> tuple[str, ParagraphEntry]:
+        part, entry = self._document._resolve(self._id)
+        if not isinstance(entry, ParagraphEntry):
+            raise KeyError(f"{self._id} is not a paragraph")
+        return part, entry
+
+    @property
+    def _element(self) -> Element:
+        return self._entry()[1].element
+
+    @property
+    def id(self) -> str:
+        """The paragraph's id now: after a stamp or a re-issue, the new one."""
+        return self._entry()[1].id
+
+    @property
+    def story(self) -> str:
+        """The story the paragraph is in: ``"body"``, ``"header1"``, ``"footnotes"``..."""
+        return self._document._story_of(self._entry()[0])
+
+    @property
+    def volatile(self) -> bool:
+        """Whether the id is positional (``p@...``) or a repeat (``#k``) until edited."""
+        return self._entry()[1].volatile
+
+    @property
+    def para_id(self) -> str | None:
+        """``w14:paraId`` as written, or ``None``."""
+        return self._element.get(_ids.PARA_ID)
+
+    @property
+    def text_id(self) -> str | None:
+        """Word's ``w14:textId`` on the paragraph, or ``None``."""
+        return self._element.get(_ids.TEXT_ID)
+
+    @property
+    def text(self) -> str:
+        """The text in the current view (insertions in, deletions out)."""
+        return _text.paragraph_text(self._element)
+
+    @text.setter
+    def text(self, value: str) -> None:
+        self.set_text(value)
+
+    def text_in(self, view: str) -> str:
+        """The text in ``current``, ``original`` or ``markup`` view."""
+        return _text.paragraph_text(self._element, view)
+
+    @property
+    def style(self) -> str | None:
+        """The declared paragraph style's id (``w:pStyle``), or ``None`` (the default).
+        Set it by name (``paragraph.style = "Heading 2"``): see :meth:`set_style`."""
+        node = self._element.find(qn("w:pPr"))
+        node = node.find(qn("w:pStyle")) if node is not None else None
+        return node.get(qn("w:val")) if node is not None else None
+
+    @style.setter
+    def style(self, name: str | None) -> None:
+        self.set_style(name)
+
+    @property
+    def style_name(self) -> str | None:
+        """The applied paragraph style's name (the default style's when none is declared)."""
+        styles = self._document.styles
+        declared = self.style
+        found = styles.find(declared, "paragraph") if declared else None
+        found = found or styles.default("paragraph")
+        return found.name if found else None
+
+    def set_style(self, name: str | None) -> EditResult:
+        """Apply a paragraph style by name (or alias, or id): a localised template's
+        "heading 1" is found whatever its id; a built-in style the document lacks is added
+        as Word writes it.  ``None`` returns the paragraph to the default style."""
+        return self._document.set_paragraph_style(self._id, name)
+
+    def format(self, **values) -> EditResult:
+        """Direct formatting: paragraph properties (``alignment``, ``indent_left``,
+        ``space_after``, ``keep_with_next``...) and run properties (``bold``, ``size``...),
+        the latter on every run and the paragraph mark.  ``None`` removes a value."""
+        return self._document.format_paragraph(self._id, **values)
+
+    def clear_direct_formatting(self, *, paragraph: bool = True) -> EditResult:
+        """Remove the direct formatting of the paragraph's runs, its mark and (unless
+        ``paragraph=False``) the paragraph itself; styles and list membership stay."""
+        return self._document.clear_formatting(self._id, paragraph=paragraph)
+
+    @property
+    def effective(self) -> "_effective.EffectiveParagraph":
+        """The paragraph's formatting as Word applies it (docx2svg's resolver)."""
+        return _effective.paragraph(self._document, self._element)
+
+    @property
+    def hyperlinks(self) -> list[Hyperlink]:
+        """The paragraph's hyperlinks, in order."""
+        count = sum(1 for _ in self._element.iter(qn("w:hyperlink")))
+        return [Hyperlink(self._document, self.id, k) for k in range(count)]
+
+    def coalesce_runs(self) -> EditResult:
+        """Merge adjacent runs whose properties differ only in revision save ids (``w:rsid*``),
+        which Word leaves behind; never done implicitly, since it changes untouched bytes."""
+        return self._document.coalesce_runs(self._id)
+
+    # -- lists ---------------------------------------------------------------------------------
+
+    @property
+    def list(self) -> ListMembership | None:
+        """The list the paragraph is in (instance, level, format), or ``None``."""
+        return self._document.list_of(self._id)
+
+    def add_to_list(self, kind: "str | int" = "bullet", *, level: int = 0,
+                    continue_previous: bool = True) -> EditResult:
+        """Make the paragraph a list item (``bullet``, ``number``, or a numId to join)."""
+        return self._document.add_to_list(self._id, kind, level=level, continue_previous=continue_previous)
+
+    @property
+    def list_level(self) -> int | None:
+        """The paragraph's list level (0-8), or ``None`` when it is not a list item."""
+        found = self.list
+        return found.level if found is not None else None
+
+    @list_level.setter
+    def list_level(self, level: int) -> None:
+        self._document.set_list_level(self._id, level)
+
+    def indent_list(self) -> EditResult:
+        """One list level deeper."""
+        return self._document.set_list_level(self._id, (self.list_level or 0) + 1)
+
+    def outdent_list(self) -> EditResult:
+        """One list level shallower."""
+        return self._document.set_list_level(self._id, (self.list_level or 0) - 1)
+
+    def restart_numbering(self, at: int = 1) -> EditResult:
+        """Restart its list's numbering here: :meth:`Document.restart_numbering`."""
+        return self._document.restart_numbering(self._id, at)
+
+    def continue_numbering(self, from_id: str | None = None) -> EditResult:
+        """Continue an earlier list's numbering: :meth:`Document.continue_numbering`."""
+        return self._document.continue_numbering(self._id, from_id)
+
+    def remove_from_list(self) -> EditResult:
+        """Take the paragraph out of its list: :meth:`Document.remove_from_list`."""
+        return self._document.remove_from_list(self._id)
+
+    def declared(self, name: str):
+        """A paragraph property as the paragraph itself declares it, or ``None``."""
+        if name not in _formatting.PARAGRAPH_PROPERTIES:
+            raise KeyError(f"no paragraph property {name!r}")
+        return _formatting.read_paragraph(self._element.find(qn("w:pPr")), name)
+
+    @property
+    def ends_section(self) -> bool:
+        """Whether the paragraph's mark ends a section (it holds a ``w:sectPr``)."""
+        properties = self._element.find(W_PPR)
+        return properties is not None and properties.find(W_SECTPR) is not None
+
+    @property
+    def runs(self) -> list["Run"]:
+        """The paragraph's runs in document order, inside hyperlinks, insertions and
+        controls too: ``[run.text for run in paragraph.runs]``."""
+        return [Run(self, k) for k in range(len(_text.runs(self._element)))]
+
+    def run(self, index: int) -> "Run":
+        """Run ``index`` (negative counts from the end); ``IndexError`` if none."""
+        count = len(_text.runs(self._element))
+        if not -count <= index < count:
+            raise IndexError(f"{self.id} has {count} runs; no r{index}")
+        return Run(self, index % count)
+
+    def set_text(self, value: str) -> EditResult:
+        """Replace the text, keeping each surviving character's formatting; new characters
+        take the formatting of what they replace or follow (ROADMAP.md, "Edit operations")."""
+        return self._document._set_text(self._id, value)
+
+    def range(self, start: int = 0, end: int | None = None, *, view: str = "current") -> TextRange:
+        """Characters ``[start, end)`` of the paragraph's text (to its end by default)."""
+        length = len(self.text_in(view))
+        end = length if end is None else end
+        if not 0 <= start <= end <= length:
+            raise IndexError(f"{self.id} has {length} characters; no range {start}:{end}")
+        return TextRange(self._document, self.id, start, self.id, end, view)
+
+    def find(self, text: str, **options) -> list[TextRange]:
+        """Every place ``text`` occurs in this paragraph (:meth:`Document.find`'s options)."""
+        return self._document.find(text, within=self.id, **options)
+
+    def insert_after(self, text: str = "", *, style: str | None = None) -> EditResult:
+        """A new paragraph after this one: ``paragraph.insert_after("Text", style="Heading 2")``."""
+        return self._document.insert_paragraph(text, after=self._id, style=style)
+
+    def insert_before(self, text: str = "", *, style: str | None = None) -> EditResult:
+        """A new paragraph before this one (:meth:`Document.insert_paragraph`)."""
+        return self._document.insert_paragraph(text, before=self._id, style=style)
+
+    def delete(self) -> EditResult:
+        """Delete the paragraph (tracked when tracking): :meth:`Document.delete_block`."""
+        return self._document.delete_block(self._id)
+
+    def move(self, *, after: str | None = None, before: str | None = None) -> EditResult:
+        """Move the paragraph beside another block of its story, keeping its id."""
+        return self._document.move_block(self._id, after=after, before=before)
+
+    def __repr__(self) -> str:
+        text = self.text
+        return f"<Paragraph {self.id} {text[:40]!r}{'...' if len(text) > 40 else ''}>"
+
+
+class Run:
+    """The ``index``-th run of a paragraph in the current view: positional, re-resolved on
+    every access, as runs have no identity in OOXML."""
+
+    def __init__(self, paragraph: Paragraph, index: int) -> None:
+        self._paragraph = paragraph
+        self._index = index
+
+    @property
+    def id(self) -> str:
+        """The run's id, ``<paragraph id>/r<index>``: positional, valid until the paragraph
+        is next edited."""
+        return f"{self._paragraph.id}/r{self._index}"
+
+    @property
+    def _element(self) -> Element:
+        runs = _text.runs(self._paragraph._element)
+        if self._index >= len(runs):
+            raise KeyError(f"{self.id} no longer exists")
+        return runs[self._index]
+
+    @property
+    def text(self) -> str:
+        """The run's text in the current view."""
+        return _text.run_text(self._paragraph._element, self._element)
+
+    @property
+    def style(self) -> str | None:
+        """The declared character style's id, or ``None``; set it by name."""
+        node = self._element.find(qn("w:rPr"))
+        node = node.find(qn("w:rStyle")) if node is not None else None
+        return node.get(qn("w:val")) if node is not None else None
+
+    @style.setter
+    def style(self, name: str | None) -> None:
+        self.range().set_style(name)
+
+    def range(self) -> TextRange:
+        """The run's characters as a range of its paragraph."""
+        paragraph = self._paragraph._element
+        element = self._element
+        items = _text.atoms(paragraph)
+        mine = [k for k, atom in enumerate(items) if atom.run is element]
+        if not mine:
+            start = next((k for k, atom in enumerate(items)
+                          if atom.run is not None and _follows(atom.run, element)), len(items))
+            return TextRange(self._paragraph._document, self._paragraph.id, start, self._paragraph.id, start)
+        return TextRange(self._paragraph._document, self._paragraph.id, mine[0], self._paragraph.id, mine[-1] + 1)
+
+    def format(self, **values) -> EditResult:
+        """Direct formatting on this run as it is (``bold=True``, ``size=12``...)."""
+        return self._paragraph._document.format_run(self._paragraph._id, self._index, **values)
+
+    def declared(self, name: str):
+        """A run property as the run itself declares it, or ``None`` (inherited)."""
+        if name not in _formatting.RUN_PROPERTIES:
+            raise KeyError(f"no run property {name!r}")
+        return _formatting.read_run(self._element.find(qn("w:rPr")), name)
+
+    @property
+    def effective(self) -> "_effective.EffectiveRun":
+        """The run's formatting as Word applies it (docx2svg's resolver)."""
+        return _effective.run(self._paragraph._document, self._paragraph._element, self._element)
+
+    def __repr__(self) -> str:
+        return f"<Run {self.id} {self.text!r}>"
+
+
+def _run_property(name: str):
+    def getter(self: Run):
+        return self.declared(name)
+
+    def setter(self: Run, value) -> None:
+        self.format(**{name: value})
+
+    return property(getter, setter, doc=f"The run's declared ``{name}`` (``None``: inherited); "
+                                        "setting it is direct formatting.")
+
+
+for _name in sorted(_formatting.RUN_PROPERTIES):
+    setattr(Run, _name, _run_property(_name))
+
+
+def _paragraph_property(name: str):
+    def getter(self: Paragraph):
+        return self.declared(name)
+
+    def setter(self: Paragraph, value) -> None:
+        self.format(**{name: value})
+
+    return property(getter, setter, doc=f"The paragraph's declared ``{name}`` (``None``: "
+                                        "inherited); setting it is direct formatting.")
+
+
+for _name in sorted(_formatting.PARAGRAPH_PROPERTIES):
+    setattr(Paragraph, _name, _paragraph_property(_name))
+
+
+def _follows(run: Element, element: Element) -> bool:
+    """Whether ``run`` comes after ``element`` in document order."""
+    for node in element.itersiblings():
+        if node is run or any(d is run for d in node.iter()):
+            return True
+    parent = element.getparent()
+    return parent is not None and parent.tag != W_P and _follows(run, parent)
+
+
+def table_alt_text(element: Element) -> dict[str, str]:
+    """A table's alt text, what it states: ``alt`` (its title, ``w:tblCaption``) and
+    ``description`` (``w:tblDescription``), each only when set and not empty."""
+    out = {}
+    for label, tag in (("alt", "tblCaption"), ("description", "tblDescription")):
+        node = element.find(f"{_W}tblPr/{_W}{tag}")
+        value = node.get(_W + "val") if node is not None else None
+        if value:
+            out[label] = value
+    return out
+
+
+class Table:
+    """A ``w:tbl``, with a grid view that resolves ``w:gridSpan`` and ``w:vMerge``."""
+
+    def __init__(self, document: "Document", identifier: str) -> None:
+        self._document = document
+        self._id = identifier
+
+    def _entry(self) -> tuple[str, TableEntry]:
+        part, entry = self._document._resolve(self._id)
+        if not isinstance(entry, TableEntry):
+            raise KeyError(f"{self._id} is not a table")
+        return part, entry
+
+    @property
+    def id(self) -> str:
+        """The table's id (``t:...``)."""
+        return self._entry()[1].id
+
+    @property
+    def alt_text(self) -> dict[str, str]:
+        """The table's alt text as it states it: ``alt`` (its title) and ``description``,
+        each only when set (:func:`table_alt_text`)."""
+        return table_alt_text(self._entry()[1].element)
+
+    @property
+    def rows(self) -> list["Row"]:
+        """The table's rows, in order."""
+        return [Row(self, k) for k in range(len(self._entry()[1].rows))]
+
+    def grid(self) -> list[list["Cell | None"]]:
+        """Every grid position's cell, a merged cell answering at each position it covers
+        (its origin's id); ``None`` where a row has no cell (``w:gridBefore``/``After``)."""
+        out: list[list[Cell | None]] = []
+        origins: dict[int, tuple[int, int]] = {}  # column -> origin of a vertical merge
+        for r, (row, _) in enumerate(self._entry()[1].rows):
+            line: list[Cell | None] = []
+            before = _int(_find(row, "w:trPr/w:gridBefore"), 0)
+            line.extend([None] * before)
+            column = before
+            for tc in _cells(row):
+                span = max(1, _int(_find(tc, "w:tcPr/w:gridSpan"), 1))
+                merge = _find(tc, "w:tcPr/w:vMerge")
+                continues = merge is not None and merge.get(qn("w:val")) in (None, "continue")
+                origin = origins.get(column) if continues else None
+                if origin is None:
+                    origin = (r, column)
+                    for c in range(column, column + span):
+                        origins[c] = origin
+                cell = Cell(self, *origin)
+                line.extend([cell] * span)
+                column += span
+            out.append(line)
+        return out
+
+    def insert_row(self, index: int | None = None, *, below: bool = True, plain: bool = False) -> EditResult:
+        """A new row beside row ``index``: :meth:`Document.insert_row`."""
+        return self._document.insert_row(self._id, index, below=below, plain=plain)
+
+    def delete_row(self, index: int) -> EditResult:
+        """Delete row ``index``: :meth:`Document.delete_row`."""
+        return self._document.delete_row(self._id, index)
+
+    def insert_column(self, index: int, *, right: bool = True) -> EditResult:
+        """A new column beside grid column ``index``: :meth:`Document.insert_column`."""
+        return self._document.insert_column(self._id, index, right=right)
+
+    def delete_column(self, index: int) -> EditResult:
+        """Delete grid column ``index``: :meth:`Document.delete_column`."""
+        return self._document.delete_column(self._id, index)
+
+    def merge(self, first: tuple[int, int], last: tuple[int, int]) -> EditResult:
+        """Merge the cells from ``first`` to ``last`` (``(row, column)``, inclusive)."""
+        return self._document.merge_cells(self._id, first, last)
+
+    def split(self, row: int, column: int, *, rows: int = 1, columns: int | None = None) -> EditResult:
+        """Split the cell at ``(row, column)`` (:meth:`Document.split_cell`)."""
+        return self._document.split_cell(self._id, row, column, rows=rows, columns=columns)
+
+    def set(self, **values) -> EditResult:
+        """Set the table's properties (:meth:`Document.set_table`)."""
+        return self._document.set_table(self._id, **values)
+
+    def set_column_width(self, column: int, width: float) -> EditResult:
+        """A grid column's width in points: :meth:`Document.set_column_width`."""
+        return self._document.set_column_width(self._id, column, width)
+
+    def set_row(self, row: int, **values) -> EditResult:
+        """A row's height and settings: :meth:`Document.set_row`."""
+        return self._document.set_row(self._id, row, **values)
+
+    def set_cell(self, row: int, column: int, **values) -> EditResult:
+        """A cell's shading, borders, alignment... -- not its text: :meth:`Document.set_cell`."""
+        return self._document.set_cell(self._id, row, column, **values)
+
+    def format_cell(self, row: int, column: int, **values) -> EditResult:
+        """A cell's formatting, as :meth:`set_cell` (its text is ``cell(r, c).paragraphs[0]``)."""
+        return self._document.set_cell(self._id, row, column, **values)
+
+    @property
+    def properties(self) -> dict:
+        """What the table states itself (:meth:`Document.table_properties`)."""
+        return self._document.table_properties(self._id)
+
+    @property
+    def column_count(self) -> int:
+        """The number of grid columns (``w:tblGrid``)."""
+        part, entry = self._entry()
+        grid = entry.element.find(qn("w:tblGrid"))
+        return len(grid.findall(qn("w:gridCol"))) if grid is not None else 0
+
+    def cell(self, row: int, column: int) -> "Cell":
+        """The cell over grid position ``(row, column)`` (0-based); :class:`NoCell` (an
+        ``IndexError``) if none, saying the table's rows, columns and merged cells.
+        ``table.cell(0, 1).text``."""
+        grid = self.grid()
+        found = grid[row][column] if 0 <= row < len(grid) and 0 <= column < len(grid[row]) else None
+        if found is None:
+            raise NoCell(self.id, row, column, grid)
+        return found
+
+    def __repr__(self) -> str:
+        return f"<Table {self.id} {len(self.rows)} rows>"
+
+
+class Row:
+    """A table row (``table.rows[0]``); its cells are ``table.cell(row, column)``."""
+
+    def __init__(self, table: Table, index: int) -> None:
+        self._table = table
+        self._index = index
+
+    @property
+    def id(self) -> str:
+        """The row's id (``tr:...``)."""
+        return self._table._entry()[1].rows[self._index][1]
+
+    def __repr__(self) -> str:
+        return f"<Row {self.id}>"
+
+
+class NoCell(IndexError):
+    """A table has no cell at a grid position (round 31, R5c): the message says the table's
+    rows, columns and merged cells, ``options`` its cells' ids (the first 50)."""
+
+    def __init__(self, table_id: str, row: int, column: int, grid: list[list["Cell | None"]]) -> None:
+        super().__init__(no_cell_message(table_id, row, column, grid))
+        self.options = [cell.id for cell in _origins(grid)][:50]
+
+
+def _origins(grid: list[list["Cell | None"]]) -> list["Cell"]:
+    seen: dict[tuple[int, int], Cell] = {}
+    for line in grid:
+        for cell in line:
+            if cell is not None:
+                seen.setdefault((cell.row, cell.column), cell)
+    return list(seen.values())
+
+
+def no_cell_message(table_id: str, row: int, column: int, grid: list[list["Cell | None"]]) -> str:
+    """``t:X has no cell at (1, 2)``, then what the table has: its rows and columns (from 0),
+    each merged cell with the positions it covers, the positions no cell covers."""
+    rows, columns = len(grid), max((len(line) for line in grid), default=0)
+    spans: dict[tuple[int, int], list[tuple[int, int]]] = {}
+    empty = []
+    for r, line in enumerate(grid):
+        for c in range(columns):
+            cell = line[c] if c < len(line) else None
+            if cell is None:
+                empty.append(f"({r}, {c})")
+            else:
+                spans.setdefault((cell.row, cell.column), []).append((r, c))
+    merged = [f"({o[0]}, {o[1]})-({cells[-1][0]}, {cells[-1][1]})" for o, cells in spans.items() if len(cells) > 1]
+    text = (f"{table_id} has no cell at ({row}, {column}): it has {rows} row(s) (0 to {rows - 1}) and "
+            f"{columns} column(s) (0 to {columns - 1}), counted from 0")
+    if merged:
+        text += "; merged: " + ", ".join(merged[:10]) + (f" and {len(merged) - 10} more" if len(merged) > 10 else "") \
+            + " (a merged cell's id is its first position's)"
+    if empty:
+        text += "; no cell at " + ", ".join(empty[:10]) + (f" and {len(empty) - 10} more" if len(empty) > 10 else "")
+    return text
+
+
+class Cell:
+    """The cell whose grid origin is (``row``, ``column``)."""
+
+    def __init__(self, table: Table, row: int, column: int) -> None:
+        self._table = table
+        self.row = row
+        self.column = column
+
+    @property
+    def id(self) -> str:
+        """The cell's id, ``<table id>/c<row>,<column>``."""
+        return f"{self._table.id}/c{self.row},{self.column}"
+
+    @property
+    def _element(self) -> Element:
+        found = cell_element(self._table._entry()[1].rows[self.row][0], self.column)
+        if found is None:
+            raise KeyError(f"{self.id} no longer exists")
+        return found
+
+    @property
+    def paragraphs(self) -> list[Paragraph]:
+        """The cell's paragraphs (not those of a table nested in it)."""
+        part, _ = self._table._entry()
+        index = self._table._document._index(part)
+        # Round 45: the cell's own paragraphs looked up, not every paragraph of the story
+        # tested -- the same ones in the same (document) order.
+        return [Paragraph(self._table._document, entry.id) for entry in map(index.entry_for, self._element.iter(W_P))
+                if isinstance(entry, ParagraphEntry)]
+
+    @property
+    def text(self) -> str:
+        """The cell's text, its paragraphs joined by ``\\n``."""
+        return "\n".join(p.text for p in self.paragraphs)
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, Cell) and other.id == self.id
+
+    def __hash__(self) -> int:
+        return hash(self.id)
+
+    def __repr__(self) -> str:
+        return f"<Cell {self.id}>"
+
+
+class CallableList(list):
+    """A list that may also be called (``doc.stories`` and ``doc.stories()`` alike): the
+    collections an agent reaches by property and by method, either way."""
+
+    def __call__(self) -> "CallableList":
+        return self
+
+
+class Story:
+    """The blocks of one part: the body, a header, a footer, the notes, the comments."""
+
+    def __init__(self, document: "Document", name: str, part: str) -> None:
+        self._document = document
+        self.name = name
+        self.part = part
+
+    @property
+    def paragraphs(self) -> list[Paragraph]:
+        """Every paragraph of the story in document order: inside tables, content controls
+        and text boxes too."""
+        return [Paragraph(self._document, entry.id)
+                for entry in self._document._index(self.part).paragraphs]
+
+    @property
+    def tables(self) -> list[Table]:
+        """The story's tables, in order."""
+        return [Table(self._document, entry.id) for entry in self._document._index(self.part).tables]
+
+    def __repr__(self) -> str:
+        return f"<Story {self.name} {self.part}>"
+
+
+# -- the document ----------------------------------------------------------------------------
+
+
+#: How the first edit stamps paraIds (ROADMAP.md, "Durable across a Word save -- measured").
+STAMPING = ("document", "paragraph")
+
+
+#: :meth:`Document._used` inside :meth:`Document._held_ids` before its first read.
+_NOT_READ = object()
+
+
+class Document(TrackingOps, RevisionOps, TextOps, FormatOps, ListOps, LinkOps, PictureOps, CommentOps, TableOps,
+               TableFormatOps, DrawingOps, ControlOps, SectionOps, NoteOps, FieldOps, AnnotationOps, AuthoringOps, LanguageOps,
+               PropertyOps, ImportOps, ChartOps, ProvenanceOps, AddressOps, OutlineOps):
+    """An open Word document, editable, undoable and re-renderable.
+
+    ``stamping`` says what the first edit stamps.  ``"document"`` (the default): every
+    paragraph and table row of every story that lacks a valid, unique ``w14:paraId``, and
+    every drawing without a ``wp14:anchorId`` and ``wp14:editId`` -- the only state in
+    which Word keeps paraIds on saving (measured: one paragraph, row or drawing without its
+    ids, in any story, or one paraId out of range, and Word writes none at all).
+    ``"paragraph"``: only what an edit touches and the volatile ids it would renumber --
+    fewer bytes changed, but ids then last only until Word saves the file.
+    """
+
+    #: The application's own font folders, for every layout and render of this document
+    #: -- reflow, coverage, fields' page numbers, a TOC's, PNGs: a face there is laid out
+    #: and drawn with.  ``None`` (the default) reads ``OOXML_FONT_DIRS``
+    #: (``os.pathsep``-separated); an empty tuple means none.  Added to the folders Word
+    #: uses, never in their place.  The agent tool layer sets it from its session
+    #: (``Toolbox(font_dirs=...)``); a ``font_dirs`` option given to a call wins.
+    font_dirs: "tuple[str, ...] | None" = None
+
+    #: The application's minimum text size, points -- one number for every kind of text, or
+    #: a mapping by kind, ``{"body": 10, "table": 9, "footnote": 8, "caption": 9}`` (a kind
+    #: left out is not checked; :mod:`docx_agent.edit.minimums`): the agent tool layer's
+    #: ``check`` reports text drawn smaller (``small_text``), and the builders'
+    #: (``word_insert_markdown``, ``word_edit_table``) results the text they wrote that its
+    #: styles make smaller.  ``None`` (the default): no minimum.  The tool layer sets it from
+    #: its format (``docx_format(min_text_size=10)``).
+    min_text_size: "float | dict[str, float] | None" = None
+
+    #: The regional settings this document is drawn and edited in -- an
+    #: :class:`ooxml_common.locales.Locale`: what every layout and render passes docx2svg
+    #: (``ConvertOptions(locale=...)``: the separator a decimal tab stop aligns on, a
+    #: chart's decimal and thousands separators), the language of a new chart's text where
+    #: the document states none, and, for :meth:`new`, a new document's language and its
+    #: ``w:decimalSymbol`` and ``w:listSeparator``.  ``None`` (the default) is en-US
+    #: (:data:`ooxml_common.locales.EN_US`), never the operating system's.  The agent tool
+    #: layer sets it from its session (``Toolbox(locale=...)``); a ``locale`` option given
+    #: to a render wins.
+    locale: "Locale | None" = None
+
+    def __init__(self, package: WordPackage, *, stamping: str = "document") -> None:
+        if stamping not in STAMPING:
+            raise ValueError(f"stamping must be one of {', '.join(STAMPING)}")
+        self.stamping = stamping
+        self.package = package
+        self.history = History(package)
+        #: Old id -> new id, for every paragraph stamped or re-issued this session.
+        self._aliases: dict[str, str] = {}
+        #: Every id this session's states had, and which change removed each block's
+        #: (round 37): none is generated again, and naming one says it was deleted.
+        self._ledger = _ids.Ledger()
+        #: Who made the change that made a version, in words, for the error naming a deleted
+        #: id: ``describe_step(version) -> str | None``.  The tool layer sets it (the tool and
+        #: its caller); ``None``: the version alone.  ``read_hint``: how to read the document
+        #: again, in that error (the tools' ``word_read``; ``None``: ``to_markdown``).
+        self.describe_step = None
+        self.read_hint: str | None = None
+        self._indexes: dict[str, PartIndex] = {}
+        #: docx2svg's conversions of recent states, by their bytes' hash (layout.convert).
+        self._layouts: dict[str, "_Conversion"] = {}
+        #: Who lays the document out: ``None`` here, through docx2svg; or a callable
+        #: ``converter(data, options) -> (layout, svgs, warnings)`` --
+        #: :func:`docx_agent.layout.convert_bytes`'s answer, computed elsewhere (a worker
+        #: process with a deadline).  Every layout goes through it: :meth:`layout`,
+        #: :meth:`render_svg`, :meth:`update_fields`, :meth:`insert_toc`, ``state(layout=True)``.
+        self.converter = None
+        #: Bumped on every change: what per-state caches (the effective-formatting model) key on.
+        self._state = 0
+        #: Round 45: the ids in use, read once inside :meth:`_held_ids` (``None``: not held).
+        self._used_held: Any = None
+        #: Round 45: the recorder, its version and the state the written text was last spaced
+        #: at (:meth:`_space_written`).
+        self._spaced: tuple | None = None
+        self._effective = None
+        #: The tracking context (``tracking()``) and the per-edit overrides (``track=``).
+        self._tracking = None
+        self._track_stack: list = []
+        #: Whether text an edit writes gets the spacing its language wants around punctuation
+        #: (round 35, R21: :mod:`docx_agent.edit.typography`); ``docx_format(typography=False)``.
+        self.typography = True
+        #: The spaces that spacing wrote or made U+00A0, all edits together.
+        self.typography_spaced = 0
+
+    # -- lifecycle ---------------------------------------------------------------------------
+
+    @classmethod
+    def open(cls, source: str | os.PathLike[str] | bytes | BinaryIO, *,
+             stamping: str = "document", ids: str | None = None) -> "Document":
+        """Open a ``.docx`` (or ``.docm``, ``.dotx``...) from a path, bytes or a binary
+        file.  Nothing is changed until you edit: ``Document.open("report.docx")``.
+
+        Opening a **template** (``.dotx``, ``.dotm``) opens the template itself, to edit it,
+        and warns (:class:`~docx_agent.edit.authoring.TemplateOpened`): to make a document
+        from a template, as Word's File > New does, use ``Document.new(template=...)``.
+        Either way :meth:`save` writes the kind of file its extension names.
+
+        ``stamping`` decides when paragraphs without Word's ``w14:paraId`` get one
+        (``"document"``: all of them, on the first edit; ROADMAP.md, "Addressing and stable
+        ids").
+
+        ``ids`` is the state :meth:`id_state` gave when these bytes were saved (round 38):
+        the document goes on from where it was -- no id it ever had is given again, naming a
+        deleted one says which change deleted it, and versions continue from the saved one.
+        An :class:`~docx_agent.edit.ids.IdStateError` (an ``ArgumentError``) refuses a
+        state that is not these bytes', saying what to pass instead; ``None`` (or ``""``)
+        reads the ids from the file alone, as before."""
+        package = WordPackage.open(source)
+        package.document_part()  # refuse a package that is not a Word document
+        if package.kind in ("dotx", "dotm"):
+            import warnings
+
+            from .authoring import TemplateOpened
+
+            name = os.path.basename(os.fspath(source)) if isinstance(source, (str, os.PathLike)) else "this file"
+            warnings.warn(TemplateOpened(
+                f"{name} is a template (.{package.kind}): editing it edits the template. To make a document "
+                f"from it use Document.new(template=...); save('x.docx') writes a document either way"),
+                stacklevel=2)
+        document = cls(package, stamping=stamping)
+        if ids is not None and ids not in ("", b""):
+            document._restore_ids(ids)
+        return document
+
+    @classmethod
+    def new(cls, *, page=None, orientation: str | None = None, language: str | None = None, locale=None,
+            page_defaults=None, title: str | None = None, author: str | None = None, created=None,
+            template=None, keep_content: bool = True, attach: bool | None = None,
+            stamping: str = "document") -> "Document":
+        """A new document, in compatibility mode 15 (ROADMAP.md, "Decisions").
+
+        ``locale`` -- an :class:`ooxml_common.locales.Locale`, the user's regional settings
+        -- becomes the new document's :attr:`locale` (``None``: en-US).
+
+        **Blank** (no ``template``): what Word makes for a new blank document
+        (:mod:`docx_agent.edit.blank`): ``page`` "A4" (the default), "Letter", "Legal",
+        "A5", "A3" or ``(width, height)`` in points; ``orientation`` "portrait" (the
+        default) or "landscape"; ``language`` the text's (``w:lang``): not given,
+        ``locale``'s (``"en-US"`` without one); ``locale``'s separators are the document's
+        number separators (``w:decimalSymbol``, ``w:listSeparator``: ``.`` and ``,``
+        without one); ``page_defaults`` the margins, distances, tab stop and hyphenation
+        zone Word's Normal template gives the page (:class:`blank.PageDefaults`;
+        :data:`blank.METRIC`, measured here, for every page but Letter, which takes
+        :data:`blank.US`).  A :class:`blank.Locale` (or :data:`blank.METRIC`,
+        :data:`blank.US`) given as ``locale`` -- the page's values and the separators in one,
+        as before -- is deprecated and writes what it wrote.
+
+        **From a template** (``template``: a ``.dotx``, ``.dotm``, ``.docx`` or ``.docm``,
+        a path or bytes): as Word's File > New from a template (:mod:`.authoring`): the
+        template's package kept, its body too unless ``keep_content`` is false, the main
+        part a document's, the template attached only with ``attach=True`` (Word attaches a
+        ``.dotx``; attached, Word for Mac asks for access to it on opening), the properties started
+        again; ``page``, ``orientation`` and ``language`` replace the template's when
+        given.  A macro-enabled template's VBA project is dropped
+        (:class:`~docx_agent.edit.authoring.MacrosDropped`).
+
+        ``title`` and ``author`` go into ``docProps/core.xml``, ``created`` (default now; a
+        datetime or an ISO 8601 string, as ``tracking(date=...)`` takes) is its creation and
+        modification date.  The new document is the base state undo
+        returns to."""
+        from .authoring import new
+
+        return new(cls, page=page, orientation=orientation, language=language, locale=locale,
+                   page_defaults=page_defaults, title=title,
+                   author=author, created=created, template=template, keep_content=keep_content, attach=attach,
+                   stamping=stamping)
+
+    def save(self, target: str | os.PathLike[str] | BinaryIO, *, validate: bool = False) -> None:
+        """Write the document: ``doc.save("report-edited.docx")``.  ``docProps/app.xml``'s
+        statistics are brought up to date when the body changed
+        (:func:`docx_agent.edit.properties.refreshed_app`).
+
+        **The extension decides the kind of file**: the main part's content type is set to
+        a document's for ``.docx`` and ``.docm`` (macro-enabled) and to a template's for
+        ``.dotx`` and ``.dotm``, as Word's Save As does -- Word refuses a file whose content
+        type is another kind's, so a template opened and saved as ``.docx`` is a document.
+        Nothing else differs from :meth:`to_bytes`, but for a VBA project written to a
+        ``.docx`` or ``.dotx``, which is dropped from the file with a
+        :class:`~docx_agent.edit.authoring.MacrosDropped` warning.  Another extension, or a
+        file object, gets the package as it is.  The open document does not change.
+
+        With ``validate=True``, :meth:`validate` runs first and an :class:`EditError`
+        listing the problems is raised, and nothing written, if it finds any."""
+        from .authoring import kind_for, write_as
+        from .properties import REL_APP, _part, refreshed_app
+
+        if validate:
+            problems = self.validate()
+            if problems:
+                listed = "; ".join(str(problem) for problem in problems[:10])
+                more = f" and {len(problems) - 10} more" if len(problems) > 10 else ""
+                raise EditError(f"not saved: {len(problems)} validity problem(s): {listed}{more}")
+
+        app = refreshed_app(self)
+        kind = kind_for(target)
+        if kind is not None and self.package.kind is not None and kind != self.package.kind:
+            write_as(self, target, kind, app)
+            return
+        if not isinstance(target, (str, os.PathLike)):
+            target.write(self.package.to_bytes({_part(self.package, REL_APP): app} if app is not None else None))
+            return
+        self.package.save(target, {_part(self.package, REL_APP): app} if app is not None else None)
+
+    def to_bytes(self) -> bytes:
+        """The document as ``.docx`` bytes, as :meth:`save` would write them (less the
+        refreshed statistics)."""
+        return self.package.to_bytes()
+
+    def design_facts(self, include=None, *, caps: dict | None = None) -> dict:
+        """Measured design facts for analysing a template, no verdicts
+        (:mod:`docx_agent.edit.design`): each style in use per role with its usage and its
+        look after inheritance, each table style's look by place (header row, bands, label
+        column), each section's page grid and header and footer variants, the theme's
+        palette and fonts, repeated block shapes under headings.  ``include`` picks kinds of
+        :data:`~docx_agent.edit.design.ALL_KINDS` (default :data:`~docx_agent.edit.design.KINDS`);
+        ``declared_styles``, only when named, is every paragraph, character and table style
+        the document declares, used or not, resolved -- theme colours with their tint or
+        shade as the RGB Word draws.  ``caps`` overrides how many entries a list keeps
+        (``omitted`` counts the rest)."""
+        from .design import design_facts
+
+        return design_facts(self, include, caps)
+
+    def compare_blocks(self, blocks, reference: str, *, reference_document: "Document | None" = None) -> dict:
+        """Each of ``blocks`` (paragraph or table ids) compared with ``reference``, a block of
+        ``reference_document`` (another open document) or of this one: every difference with
+        the reference's value and the Word tool calls that give it
+        (:mod:`docx_agent.edit.compare`)::
+
+            doc.compare_blocks(["t:1A", "t:2B"], "t:9C", reference_document=samples)["differences"]
+        """
+        from .compare import compare_blocks
+
+        return compare_blocks(self, [blocks] if isinstance(blocks, str) else list(blocks), reference,
+                              reference_document)
+
+    def follow_sample(self, sample: str, copies, *, sample_document: "Document | None" = None,
+                      preview: bool = False, report: str = "all") -> tuple[EditResult, dict]:
+        """Each of ``copies`` (table or paragraph ids) made to follow ``sample``, a block of
+        ``sample_document`` (another open document) or of this one: the sample's table, row,
+        cell and paragraph properties and its run formatting, each copy keeping its own text,
+        rows, columns, merges and lists (:mod:`docx_agent.edit.follow`).  One undo step; with
+        ``preview`` nothing changes.  ``(result, report)``: the report's ``copies`` say per
+        copy what changed and what was not followed, with why and its ``kind`` (``own``,
+        ``changed_by_copy``, ``structure``); ``report="actionable"`` leaves the copies' own
+        out, counted per copy in ``own``::
+
+            result, report = doc.follow_sample("t:9C", ["t:1A", "t:2B"])
+            for entry in report["copies"]:
+                print(entry["copy"], entry["changed"], [d["why"] for d in entry["not_followed"]])
+        """
+        from .follow import follow
+
+        return follow(self, sample, [copies] if isinstance(copies, str) else list(copies),
+                      sample_document=sample_document, preview=preview, report=report)
+
+    def validate(self, target: str | os.PathLike[str] | None = None) -> list:
+        """The structural problems Word would repair or refuse (:func:`docx_agent.validate.check`):
+        schema order, relationships, content types, unique ids, paired ranges, numbering,
+        style references, comment parts.  An empty list means none were found::
+
+            problems = doc.validate()
+            assert not problems, "\\n".join(map(str, problems))
+
+        With ``target`` (a file name), also whether the package's kind fits its extension
+        (``content-type-extension``: a template's content type in a ``.docx`` is a file
+        Word refuses).  :meth:`save` sets the kind from the extension itself; this is for
+        bytes written another way.
+
+        Each is a :class:`docx_agent.validate.Problem` (``code``, ``part``, ``detail``).
+        No edit adds one; a document may arrive with some."""
+        from ..validate import check
+
+        return check(self.package, target=target)
+
+    @property
+    def compatibility_mode(self) -> int:
+        """The document's compatibility mode (15 for Word 2013 and later, 14, or 12 when it
+        names none).  Edits never change it."""
+        return self.package.compatibility_mode()
+
+    # -- stories ------------------------------------------------------------------------------
+
+    def _parts(self) -> list[str]:
+        return [self.package.document_part()] + self.package.story_parts()
+
+    def _story_of(self, part: str) -> str:
+        return story_name(self.package, part)
+
+    @property
+    def stories(self) -> list[Story]:
+        """Every story: the body, then headers, footers, footnotes, endnotes, comments.  A
+        property (``doc.stories``); ``doc.stories()`` works too."""
+        return CallableList(Story(self, self._story_of(part), part) for part in self._parts())
+
+    def story(self, name: str = "body") -> Story:
+        """A story by name (``"body"``, ``"header1"``, ``"footnotes"``...); ``KeyError`` if none."""
+        for story in self.stories:
+            if story.name == name:
+                return story
+        raise KeyError(f"no story {name!r}")
+
+    @property
+    def body(self) -> Story:
+        """The body story."""
+        return self.story("body")
+
+    def paragraphs(self, story: str = "body") -> list[Paragraph]:
+        """The paragraphs of a story (the body by default), in order, those in its tables
+        and controls too::
+
+            for paragraph in doc.paragraphs():
+                print(paragraph.id, paragraph.text)"""
+        return self.story(story).paragraphs
+
+    def tables(self, story: str = "body") -> list[Table]:
+        """The tables of a story (the body by default), in order."""
+        return self.story(story).tables
+
+    def blocks(self) -> list[dict]:
+        """The body's top-level blocks in order, one dict each::
+
+            {"id": "p:1A2B3C4D", "kind": "paragraph", "style": "heading 1", "level": 1,
+             "section_break": False, "movable": True}
+
+        ``kind`` is ``paragraph``, ``table``, ``control`` (a block-level content control,
+        ``cc:...``) or ``custom_xml`` (its ``id`` ``None``: nothing addresses it).
+        ``style`` is the paragraph style's name (the default style's for a paragraph naming
+        none) or the table style's (``None`` for none); ``None`` for the others.  ``level``
+        is the paragraph's outline level, 1-9, as Word reads it for a table of contents
+        (:meth:`outline_level`), else ``None`` (body text, and every block that is not a
+        paragraph).  ``section_break``: the paragraph ends a section (holds ``w:sectPr``).
+        ``movable``: :meth:`move_blocks` takes it -- a paragraph or table, not a paragraph
+        ending a section; a content control, with its content, unless locked (``w:lock``)
+        or holding a section break.  :meth:`delete_block` and :meth:`copy_blocks` take a
+        control's id as they take a table's.  ``deleted: True`` (left out when false): the
+        block is wholly a pending tracked deletion -- a paragraph whose mark and every bit of
+        content are deleted (or its content moved away), a table whose every row is deleted;
+        the final view has none of it (accepting removes it, rejecting keeps it), and its id
+        is among the ``joins`` of the paragraph it is joined to there."""
+        part = self.package.document_part()
+        index = self._index(part)
+        levels = _OutlineLevels(self)
+        table_styles = {s.id: s.name or s.id for s in self.styles if s.kind == "table"}
+        out: list[dict] = []
+        root = self.package.tree(part).find(W_BODY)
+        for node in root:
+            if not isinstance(node.tag, str) or node.tag not in _MOVABLE:
+                continue
+            item: dict = {"id": None, "kind": None, "style": None, "level": None, "section_break": False,
+                          "movable": False}
+            if node.tag == W_P:
+                entry = index.entry_for(node)
+                breaks = node.find(f"{W_PPR}/{W_SECTPR}") is not None
+                item.update(id=entry.id if entry is not None else None, kind="paragraph",
+                            style=levels.style_name(node), level=levels.effective(node),
+                            section_break=breaks, movable=not breaks)
+                if _wholly_deleted(node):
+                    item["deleted"] = True
+            elif node.tag == W_TBL:
+                entry = index.entry_for(node)
+                declared = node.find(f"{_W}tblPr/{_W}tblStyle")
+                style_id = declared.get(_W + "val") if declared is not None else None
+                item.update(id=entry.id if entry is not None else None, kind="table",
+                            style=table_styles.get(style_id, style_id) if style_id else None, movable=True)
+                if _wholly_deleted(node):
+                    item["deleted"] = True
+            elif node.tag == _W + "sdt":
+                identifier = self._block_id(part, node)
+                try:
+                    _control_movable(ControlBlock(identifier, node), "moving")
+                    movable = True
+                except EditError:
+                    movable = False
+                item.update(id=identifier, kind="control", movable=movable)
+            else:
+                item.update(kind="custom_xml")
+            out.append(item)
+        return out
+
+    def outline_level(self, identifier: str) -> int | None:
+        """A paragraph's outline level (1-9) as Word reads it for a table of contents, or
+        ``None`` for body text: :meth:`blocks`' ``level``."""
+        _, entry = self._resolve(identifier)
+        if not isinstance(entry, ParagraphEntry):
+            raise EditError(f"{identifier} is not a paragraph")
+        return _OutlineLevels(self).effective(entry.element)
+
+    # -- addressing ---------------------------------------------------------------------------
+
+    @property
+    def aliases(self) -> dict[str, str]:
+        """Every rename this session: old id -> new id."""
+        return dict(self._aliases)
+
+    def _index(self, part: str) -> PartIndex:
+        index = self._indexes.get(part)
+        if index is None:
+            root = self.package.tree(part)
+            if root is None:
+                raise KeyError(f"part {part} is missing")
+            index = PartIndex(self._story_of(part), root)
+            self._indexes[part] = index
+        return index
+
+    def _invalidate(self) -> None:
+        """Something changed: every index and cached layout may be stale."""
+        self._indexes.clear()
+        self._state += 1
+
+    def _part_for_story(self, story: str) -> str | None:
+        for part in self._parts():
+            if self._story_of(part) == story:
+                return part
+        return None
+
+    def _direct(self, identifier: str) -> tuple[str, ParagraphEntry | TableEntry] | None:
+        if identifier[:2] in ("p@", "t@"):
+            story = identifier[2:].rpartition("/")[0]
+        elif "/" in identifier:
+            story = identifier.partition("/")[0]
+        else:
+            story = "body"
+        part = self._part_for_story(story)
+        if part is None:
+            return None
+        entry = self._index(part).by_id.get(identifier)
+        return (part, entry) if entry is not None else None
+
+    def _resolve(self, identifier: str) -> tuple[str, ParagraphEntry | TableEntry]:
+        """The part and entry an id names now.  An alias wins while its target exists, so a
+        renamed paragraph is found under its old id, and -- once the rename is undone -- the
+        old id names the paragraph directly again."""
+        seen = set()
+        target = identifier
+        while target in self._aliases and target not in seen:
+            seen.add(target)
+            target = self._aliases[target]
+        if target != identifier:
+            found = self._direct(target)
+            if found is not None:
+                return found
+        found = self._direct(identifier)
+        if found is None:
+            raise self._unknown(identifier)
+        return found
+
+    def _resolve_block(self, identifier: str) -> tuple[str, "ParagraphEntry | TableEntry | ControlBlock"]:
+        """:meth:`_resolve`, and a block-level content control's id (``cc:``, ``cc@``): the
+        block tools take a control as a block, the control with its content."""
+        if not isinstance(identifier, str) or not identifier.startswith(("cc:", "cc@")):
+            return self._resolve(identifier)
+        from .annotations import control_level
+
+        try:
+            part, sdt = self._control(identifier)
+        except EditError:
+            raise KeyError(f"no content control {identifier!r}") from None
+        level = control_level(sdt)
+        if level != "block":
+            raise EditError(f"{identifier} is a content control in a {'line' if level == 'inline' else level}, "
+                            "not a block: remove_control (the content-control tool's remove) takes it out")
+        return part, ControlBlock(identifier, sdt)
+
+    def paragraph(self, identifier: str) -> Paragraph:
+        """A paragraph by id (``p:3B212964``, ``p@body/7``, an alias); ``KeyError`` if none.
+        ``doc.paragraph("p:3B212964").set_text("New text.")``.  An id of another kind -- a
+        table, a content control, a cell -- is a ``KeyError`` naming its kind and what reads
+        it (:meth:`block_text` gives any block's text; round 49, R92)."""
+        self._of_kind(identifier, ParagraphEntry, "paragraph")
+        return Paragraph(self, identifier)
+
+    def table(self, identifier: str) -> Table:
+        """A table by id (``t:...``); ``KeyError`` if none, or -- naming its kind and what
+        reads it -- if the id is of another kind (round 49, R92)."""
+        self._of_kind(identifier, TableEntry, "table")
+        return Table(self, identifier)
+
+    def _of_kind(self, identifier: str, wanted: type, name: str) -> None:
+        """``KeyError`` unless ``identifier`` names a ``wanted`` entry: for one of another
+        kind, a message naming that kind, the call that reads it and :meth:`block_text`."""
+        from .addresses import AddressError
+
+        try:
+            found = self._resolve(identifier)[1]
+        except KeyError as error:
+            if not (isinstance(identifier, str) and identifier.startswith(("cc:", "cc@"))):
+                raise AddressError(f"{error.args[0] if error.args else error}; block_text({identifier!r}) gives "
+                                   "the text of any block, span, cell or control",
+                                   getattr(error, "options", [])) if isinstance(error, AddressError) else error
+            try:
+                control = self.content_control(identifier)
+                level = control.level
+            except KeyError:
+                raise error from None
+            part, sdt = self._control(identifier)
+            if name == "table":
+                inner = [self._index(part).entry_for(table).id for table in sdt.iter(W_TBL)][:3]
+            elif level == "inline":
+                holder = sdt.getparent()
+                while holder is not None and holder.tag != W_P:
+                    holder = holder.getparent()
+                inner = [self._index(part).entry_for(holder).id] if holder is not None else []
+            else:
+                inner = [entry.id for entry in self._entries_in(part, [sdt])][:3]
+            what = "the paragraph it is in" if level == "inline" else f"the {name}s in it"
+            where = f"; {what}: {', '.join(inner)}" if inner else ""
+            raise AddressError(f"{identifier} is a content control ({control.kind}, {level} level), not a {name}: "
+                               f"content_control({identifier!r}) reads it, block_text({identifier!r}) gives its "
+                               f"text{where}", inner) from None
+        if not isinstance(found, wanted):
+            if isinstance(found, ParagraphEntry):
+                holder = found.element.getparent()
+                while holder is not None and holder.tag != W_TBL:
+                    holder = holder.getparent()
+                table = self._index(self._resolve(identifier)[0]).entry_for(holder) if holder is not None else None
+                if table is not None:       # a paragraph in a table, where its table was meant
+                    raise AddressError(f"{identifier} is a paragraph in table {table.id}: give the table "
+                                       f"(block_text({identifier!r}) gives the paragraph's text)", [table.id])
+            kind, reader = ("table", "table") if isinstance(found, TableEntry) else ("paragraph", "paragraph")
+            raise AddressError(f"{identifier} is a {kind}, not a {name}: {reader}({identifier!r}) reads it, "
+                               f"block_text({identifier!r}) gives its text", [found.id])
+
+    def block_text(self, identifier: str, *, view: str = "current") -> str:
+        """The plain text of a block, whatever its kind (round 49, R92)::
+
+            doc.block_text("t:3F2A1B0C")   # 'Code\tAmount\nK7-1\t12'
+
+        * a paragraph -- its text (a section break's paragraph: its text, often empty);
+        * a table -- its rows, one per line, each row's cells separated by a tab (a merged
+          cell once; a cell of several paragraphs keeps their line breaks);
+        * a content control -- the text of what it holds (its blocks', or its text in a
+          line); a cell or row (``t:X/c1,1``, ``tr:...``) as in a table;
+        * a span of blocks (``p:A..t:B``, ``p:A..``), a heading's range (``h:p:A``), a
+          section (``s:2``) or a story (``body``, ``header1``) -- its blocks' texts, one per
+          line;
+        * a text range or bookmark -- its text (:meth:`range`), paragraphs one per line (a
+          bookmark's in the current view).
+
+        ``view`` as :meth:`Paragraph.text_in`: ``current`` (insertions in, deletions out),
+        ``original`` or ``markup``.  ``KeyError`` for an id the document lacks."""
+        from .addresses import is_text_range
+
+        if view not in _text.VIEWS:
+            raise ValueError(f"no text view {view!r}: {', '.join(_text.VIEWS)}")
+        if not isinstance(identifier, str) or not identifier.strip():
+            raise KeyError(f"an id is empty ({identifier!r}): give a block id (p:..., t:..., cc:...)")
+        identifier = self._expand_heading(identifier)
+        part = self._part_for_story(identifier)
+        if part is not None:
+            root = self.package.tree(part)
+            body = root.find(_W + "body")
+            blocks = list(root if body is None else body)
+            if root.tag in (_W + "footnotes", _W + "endnotes", _W + "comments"):
+                blocks = [block for note in blocks for block in note]       # each note's blocks
+            return _blocks_text(blocks, view)
+        if span_ends(identifier) is not None:
+            return _blocks_text(self._blocks_of(identifier)[0], view)
+        if is_text_range(identifier):
+            return self.range(identifier, view=view).text
+        if identifier.startswith(("s:", "s@")):
+            return _blocks_text(self._section_blocks(identifier), view)
+        if identifier.startswith(("cc:", "cc@")):
+            part, sdt = self._control(identifier)
+            from .annotations import control_level
+
+            if control_level(sdt) == "inline":
+                return self.content_control(identifier).text if view == "current" else _inline_control_text(sdt, view)
+            return _blocks_text([sdt], view)
+        container = self._table_part_element(identifier)
+        if container is not None:
+            element = container[1][0]
+            return _row_text(element, view) if element.tag == _W + "tr" else _cell_text(element, view)
+        try:
+            found = self._resolve(identifier)[1]
+        except KeyError:
+            if identifier.startswith("bm:") or not re.search(r"[:@/#]", identifier):
+                return self.bookmark(identifier).text                    # a bookmark: its text
+            raise
+        return _blocks_text([found.element], view)
+
+    def _section_blocks(self, identifier: str) -> list[Element]:
+        """The body's top-level blocks of a section, in order: those after the previous
+        section's break through the one holding this section's break."""
+        wanted = self._section_record(identifier)[0]
+        body = self.package.tree(self.package.document_part()).find(_W + "body")
+        ends = {id(paragraph): record_id for record_id, _, paragraph in self._section_records()
+                if paragraph is not None}
+        current: list[Element] = []
+        for child in body:
+            if not isinstance(child.tag, str) or child.tag not in _MOVABLE:
+                continue
+            current.append(child)
+            closing = ends.get(id(child)) if child.tag == W_P else next(
+                (ends[id(p)] for p in child.iter(W_P) if id(p) in ends), None)
+            if closing is not None:
+                if closing == wanted:
+                    return current
+                current = []
+        return current
+
+    def get(self, identifier: str):
+        """Whatever an id names: a paragraph, run, table, row, cell, section, story,
+        hyperlink (``hl:``), bookmark (``bm:``, or its plain name when no story has it), picture or other drawing (``d:``, a group's
+        member ``d:<group>/<member>``), note
+        (``fn:``, ``en:``), comment (``c:``, ``c#``), revision (``rev:``) or content control
+        (``cc:``, ``cc@``), field (``fld:``) -- every id ``to_markdown`` and ``state`` write."""
+        kinds = (("hl:", self.hyperlink), ("bm:", self.bookmark), ("d:", self.drawing), ("fld:", self.field),
+                 ("fn:", self.note), ("en:", self.note), ("c:", self.comment), ("c#", self.comment),
+                 ("rev:", self.revision), ("cc:", self.content_control), ("cc@", self.content_control))
+        if not isinstance(identifier, str) or not identifier.strip() or span_ends(identifier) is not None:
+            raise self._unknown(identifier)
+        for prefix, find in kinds:
+            if identifier.startswith(prefix):
+                return find(identifier)
+        if ":" not in identifier and "@" not in identifier and "/" not in identifier:
+            try:
+                return self.story(identifier)
+            except KeyError as error:
+                try:
+                    return self.bookmark(identifier)    # a bookmark by its plain name
+                except KeyError:
+                    raise error from None
+        if identifier == "s:body" or identifier.startswith(("s:", "s@")):
+            for section in self.sections():
+                if section.id in (identifier, self._renamed_section(identifier),
+                                  self._canonical_section(identifier)):
+                    return section
+            self._section_record(identifier)            # its KeyError says what there is
+            raise KeyError(f"no section {identifier!r}")
+        if identifier.startswith("tr:") or "/tr:" in identifier:
+            for story in self.stories:
+                for table in story.tables:
+                    for row in table.rows:
+                        if row.id == identifier:
+                            return row
+            raise self._deleted(identifier) or KeyError(f"no row {identifier!r}")
+        match = re.fullmatch(r"(.+)/(r\d+|c\d+,\d+)", identifier)
+        if match is not None:
+            base, step = match.groups()
+            try:
+                part, entry = self._resolve(base)
+            except KeyError:
+                pass
+            else:
+                if isinstance(entry, ParagraphEntry) and step.startswith("r"):
+                    return Paragraph(self, base).run(int(step[1:]))
+                if isinstance(entry, TableEntry) and step.startswith("r"):
+                    return Table(self, base).rows[int(step[1:])]
+                if isinstance(entry, TableEntry):
+                    r, c = map(int, step[1:].split(","))
+                    return Table(self, base).cell(r, c)
+        part, entry = self._resolve(identifier)
+        if isinstance(entry, ParagraphEntry):
+            return Paragraph(self, identifier)
+        return Table(self, identifier)
+
+    def _renamed_section(self, identifier: str) -> str:
+        if identifier.startswith(("s:", "s@")):
+            paragraph = "p" + identifier[1:]
+            target = self._aliases.get(paragraph)
+            if target is not None:
+                return _section_id(target)
+        return identifier
+
+    # -- stamping -----------------------------------------------------------------------------
+
+    def _used(self) -> set[int]:
+        """Every id in use and every id this session had (round 37), as the one set
+        :func:`~docx_agent.edit.ids.generate` adds to: what it gives is never given again.
+        Inside :meth:`_held_ids`, read once."""
+        held = self._used_held
+        if held is not None:
+            if held is _NOT_READ:
+                held = self._used_held = self._read_used()
+            return held
+        return self._read_used()
+
+    @contextmanager
+    def _held_ids(self) -> Iterator[None]:
+        """Round 45: :meth:`_used` read once for the edits inside, not before each.  The same
+        set either way: every value an edit inside writes is one :func:`~.ids.generate` gave
+        (and so in the set), the edits being the ones a table filled in one pass makes --
+        text, a textId, rows and paragraphs made and stamped here -- none of which copies a
+        paraId, textId or drawing id in from elsewhere."""
+        if self._used_held is not None:
+            yield
+            return
+        self._used_held = _NOT_READ
+        try:
+            yield
+        finally:
+            self._used_held = None
+
+    def _stamping_due(self) -> bool:
+        """Whether an edit's stamping would stamp anything now (:meth:`_stamp_document`'s
+        test, for any stamping policy): a paragraph or row, in any story, without a valid
+        and unique paraId, or a drawing without its anchorId and editId."""
+        for part in self._parts():
+            index = self._index(part)
+            if any(entry.needs_stamp for entry in index.paragraphs):
+                return True
+            prefix = "" if index.story == "body" else f"{index.story}/"
+            if any(not row_id.startswith(prefix + "tr:") for table in index.tables for _, row_id in table.rows):
+                return True
+            if _ids.drawings_needing_ids(index.root):
+                return True
+        return False
+
+    def _read_used(self) -> set[int]:
+        roots = self._roots()
+        pool = self._id_pool()
+        pool |= _ids.used_long_hex(roots)
+        return pool
+
+    def _roots(self) -> list[Element]:
+        roots = [self.package.tree(p) for p in self._parts()]
+        return [r for r in roots if r is not None]
+
+    def _id_pool(self) -> "_ids.IdPool":
+        if self._ledger.pool is None:
+            self._note_ids()
+        return self._ledger.pool  # type: ignore[return-value]
+
+    def _note_ids(self) -> None:
+        """Read the ids of the state the document is in, once per version: what an edit,
+        undo or redo removed is recorded as gone, by the version that removed it."""
+        ledger = self._ledger
+        if ledger.pool is not None and ledger.version == self.history.version:
+            return
+        ledger.note(self._roots(), self.history.version)
+
+    def id_state(self) -> str:
+        """What this document's ids have been, as a short opaque string to keep beside its
+        bytes (round 38): every id it ever had, which change deleted each block id that is
+        gone (with who made it, in the tool layer), the drawing numbers used, the renames,
+        and the version.  ``Document.open(data, ids=state)`` takes it back.
+
+        It describes the document as it is now: take it with the bytes it goes with, at one
+        version (``to_bytes()`` and ``id_state()`` together, no edit between; the tool
+        layer's ``Session.save`` does both under the document's lock).  Nothing is written
+        into the document: Word's bytes stay as they are.  Size: a few hundred bytes for a
+        document written by docx-agent, growing with the ids deleted (about a byte or two
+        each when docx-agent made them, four or five when Word did) and the ids Word wrote
+        that edits replaced (ROADMAP.md, "Addressing and stable ids")."""
+        self._note_ids()
+        return _ids.export_state(self._ledger, self._roots(), version=self.history.version,
+                                 last=self.history.last_version, aliases=self._aliases,
+                                 describe=self.describe_step)
+
+    def _restore_ids(self, state) -> None:
+        """Take back :meth:`id_state`'s string, before anything is read or edited."""
+        loaded = _ids.load_state(state, self._roots())
+        self.history.continue_from(loaded.version, loaded.last)
+        self._ledger.restore(loaded)
+        self._aliases.update(loaded.aliases)
+        self._note_ids()
+
+    def _remember_ids(self, values: set[int]) -> None:
+        """Ids written other than by generating them (a copy's own, kept): never again."""
+        self._id_pool().update(values)
+
+    def _known_ids(self) -> set[int]:
+        """The ids this session had, as a copy: before a copy is placed, so its own ids --
+        kept where the document never had them -- are not among them."""
+        return set(self._id_pool())
+
+    def _deleted(self, identifier: object) -> "_ids.DeletedId | None":
+        """The error for a block id (or drawing id) that named something this session and
+        names nothing now; ``None`` for any other id."""
+        if not isinstance(identifier, str):
+            return None
+        ledger = self._ledger
+        found = _GONE_DRAWING.match(identifier)
+        if found is not None and ledger.drawings_gone:
+            number = int(found.group(1))
+            if number in ledger.drawings_gone:
+                version = ledger.drawings_gone[number]
+                return _ids.DeletedId(_deleted_message(self, found.group(0), version),
+                                      found.group(0), version, earlier=version in ledger.earlier)
+        if not ledger.gone:
+            return None
+        for match in _GONE_BLOCK.finditer(identifier):
+            value = int(match.group("hex"), 16)
+            if value not in ledger.gone:
+                continue
+            named = match.group(0).lstrip("/")
+            version = ledger.gone[value]
+            replaced_by = ledger.replaced.get(value)
+            return _ids.DeletedId(_deleted_message(self, named, version, replaced_by, identifier),
+                                  named, version, replaced_by, earlier=version in ledger.earlier)
+        return None
+
+    def _note_replaced(self, old: list[str], new: list[str]) -> None:
+        """One block replaced by one block: the error naming the old id says which."""
+        if len(old) == 1 and len(new) == 1 and old[0] and new[0]:
+            found = _GONE_BLOCK.search(old[0])
+            if found is not None:
+                self._ledger.replaced[int(found.group("hex"), 16)] = new[0]
+
+    def _rename(self, renames: dict[str, str]) -> None:
+        for old, new in renames.items():
+            self._aliases[old] = new
+            # An alias that pointed at the old id follows it to the new one.
+            for key, value in list(self._aliases.items()):
+                if value == old:
+                    self._aliases[key] = new
+
+    def _stamp(self, part: str, entries: list[ParagraphEntry],
+               used: set[int] | None = None) -> dict[str, str]:
+        """Give each entry a fresh paraId and textId; record the renames as aliases."""
+        if not entries:
+            return {}
+        used = self._used() if used is None else used
+        prefix = "" if self._story_of(part) == "body" else f"{self._story_of(part)}/"
+        renames: dict[str, str] = {}
+        for entry in entries:
+            para_id, text_id = _ids.generate(part, used, 2)
+            _ids.stamp(entry.element, para_id, text_id)
+            renames[entry.id] = f"{prefix}p:{para_id}"
+        _ids.ensure_w14(self.package.tree(part))
+        self.package.mark_dirty(part)
+        self._rename(renames)
+        return renames
+
+    def _stamp_document(self) -> dict[str, str]:
+        """Stamp every paragraph and row, in every story, that lacks a valid and unique
+        paraId, and every drawing that lacks an anchorId and an editId: what Word needs to
+        keep any of them (ROADMAP.md, "Durable across a Word save -- measured").  Returns
+        the renames; nothing when the document is complete."""
+        used: set[int] | None = None
+        renames: dict[str, str] = {}
+        for part in self._parts():
+            index = self._index(part)
+            paragraphs = [e for e in index.paragraphs if e.needs_stamp]
+            prefix = "" if index.story == "body" else f"{index.story}/"
+            rows = [(table, k, row, row_id) for table in index.tables
+                    for k, (row, row_id) in enumerate(table.rows) if not row_id.startswith(prefix + "tr:")]
+            drawings = _ids.drawings_needing_ids(index.root)
+            if not paragraphs and not rows and not drawings:
+                continue
+            if used is None:
+                used = self._used()
+            renames.update(self._stamp(part, paragraphs, used))
+            table_renames: dict[str, str] = {}
+            for table, k, row, row_id in rows:
+                para_id, text_id = _ids.generate(part + "\0row", used, 2)
+                _ids.stamp(row, para_id, text_id)
+                renames[row_id] = f"{prefix}tr:{para_id}"
+                if k == 0:
+                    table_renames[table.id] = f"{prefix}t:{para_id}"
+            renames.update(table_renames)
+            for drawing in drawings:
+                anchor_id, edit_id = _ids.generate(part + "\0drawing", used, 2)
+                drawing.set(_ids.ANCHOR_ID, anchor_id)
+                drawing.set(_ids.EDIT_ID, edit_id)
+            self._rename({key: value for key, value in renames.items() if key not in self._aliases})
+            _ids.ensure_w14(self.package.tree(part), drawings=bool(drawings))
+            self.package.mark_dirty(part)
+        if renames:
+            self._invalidate()
+        return renames
+
+    def _prepare(self, part: str, entries: list[ParagraphEntry], position: int | None = None,
+                 *, including: bool = False) -> dict[str, str]:
+        """Stamp before an edit, per the stamping policy: the whole document, or the
+        ``entries`` an edit touches plus the volatile ids a structural edit at ``position``
+        would renumber."""
+        if self.stamping == "document":
+            return self._stamp_document()
+        stale = [e for e in entries if e.needs_stamp]
+        for entry in list(stale):
+            if entry.state == "repeat":
+                # Re-issuing this repeat would renumber the later repeats of its paraId.
+                stale += [e for e in self._index(part).paragraphs
+                          if e.state == "repeat" and e.index > entry.index and e not in stale
+                          and (e.raw or "").upper() == (entry.raw or "").upper()]
+        if position is not None:
+            stale += [e for e in self._freeze_after(part, position, including=including) if e not in stale]
+        return self._stamp(part, stale)
+
+    def _prepare_many(self, targets: list[tuple[str, list[ParagraphEntry]]]) -> dict[str, str]:
+        """:meth:`_prepare` for an edit that touches paragraphs in several places."""
+        if self.stamping == "document":
+            return self._stamp_document()
+        renames: dict[str, str] = {}
+        by_part: dict[str, list[ParagraphEntry]] = {}
+        for part, entries in targets:
+            bucket = by_part.setdefault(part, [])
+            bucket += [e for e in entries if all(e is not b for b in bucket)]
+        for part, entries in by_part.items():
+            renames.update(self._prepare(part, entries))
+        return renames
+
+    def _renew_text_id(self, part: str, entry: ParagraphEntry) -> None:
+        """A paragraph whose text changed gets a new textId (it had one stamped, or Word's)."""
+        if entry.element.get(_ids.PARA_ID) is not None:
+            self._new_text_id(part, entry.element)
+
+    def _release(self, part: str, rel_ids: list[str]) -> list[str]:
+        """Drop the relationships an edit stopped using, and the parts (media) nothing uses
+        any more: ooxml-edit's release and reap.  Returns the parts removed."""
+        if not rel_ids:
+            return []
+        self.package.mark_dirty(part)
+        return self.package.release(part, rel_ids)
+
+    def coalesce_runs(self, identifier: str | None = None) -> EditResult:
+        """:meth:`Paragraph.coalesce_runs` on one paragraph, or on every paragraph."""
+        targets = ([self._paragraph_entry(identifier)] if identifier is not None else
+                   [(part, entry) for part in self._parts() for entry in self._index(part).paragraphs])
+        if not targets:
+            return EditResult(None, changed=False)
+        with self._edit():
+            renames = self._prepare_many([(part, [entry]) for part, entry in targets])
+            merged = 0
+            for part, entry in targets:
+                count = _inline.coalesce(entry.element)
+                if count:
+                    self.package.mark_dirty(part)
+                merged += count
+        first = targets[0][1].id
+        return EditResult(renames.get(first, first), renamed=renames, changed=merged > 0 or bool(renames),
+                          count=merged)
+
+    def _fresh_ids(self, part: str) -> tuple[str, str]:
+        para_id, text_id = _ids.generate(part, self._used(), 2)
+        return para_id, text_id
+
+    def _freeze_after(self, part: str, position: int, *, including: bool = False) -> list[ParagraphEntry]:
+        """The volatile paragraphs a structural edit at ``position`` would renumber."""
+        return [entry for entry in self._index(part).paragraphs
+                if entry.volatile and (entry.index > position or (including and entry.index == position))]
+
+    # -- edits --------------------------------------------------------------------------------
+
+    @contextmanager
+    def _edit(self) -> Iterator[None]:
+        """One undo step; on failure everything is rolled back and the caches dropped."""
+        outermost = not self.history.in_batch
+        if outermost:
+            self._note_ids()    # the state before, if no edit, undo or redo read it yet
+        recording = self._start_recording()
+        try:
+            with self.history.batch():
+                if outermost:
+                    self._prune_provenance()  # entries a save left behind: none comes back
+                before = self._revision_id_counts() if outermost else None
+                boxes = self._text_box_snapshot() if outermost else None
+                yield
+                if recording is not None:
+                    self._space_written(_typography.recorder())
+                # Round 36: values written by reference follow their text, edit by edit.
+                self._follow_text_facts()
+                if outermost:
+                    self._sync_text_boxes(boxes)
+                    self._unique_revision_ids(before)
+                    self._prune_provenance()  # a deleted table's record goes with it
+            if outermost:
+                self._note_ids()    # round 37: what the edit removed, by its version
+        finally:
+            if recording is not None:
+                _typography.stop(recording)
+            self._invalidate()
+
+    def _start_recording(self):
+        """Round 35, R21: the text an edit (or a batch: a tool call) writes is recorded, and
+        spaced as its language wants before it ends, in its undo step -- by the edit or batch
+        that started the recording; ``None`` when one is recording already or it is off."""
+        if not getattr(self, "typography", True) or _typography.recorder() is not None:
+            return None
+        return _typography.start()
+
+    def space_written(self) -> int:
+        """Give the text written so far in the recording edit or batch the spacing its
+        language wants now, rather than when it ends (the tool layer, to say what it did):
+        the number of spaces written or made U+00A0."""
+        before = getattr(self, "typography_spaced", 0)
+        self._space_written(_typography.recorder())
+        return getattr(self, "typography_spaced", 0) - before
+
+    def _space_written(self, record: "_typography.Recorder | None") -> None:
+        """The spacing of the written text's language (:mod:`docx_agent.edit.typography`),
+        counted in :attr:`typography_spaced`."""
+        if not record:
+            return
+        # Round 45: applied already to what the recorder holds, and nothing changed since (no
+        # edit, nothing more recorded) -- the tool layer's spacing then the batch's end: the
+        # spacing is in place (applying it again finds nothing to do), not looked for again.
+        done = (record, record.version, self._state)
+        if self._spaced is not None and self._spaced[0] is record and self._spaced[1:] == done[1:]:
+            return
+        roots = {id(self.package.tree(part)): part for part in self._parts()}
+        mine = [p for p in record.paragraphs() if id(p.getroottree().getroot()) in roots]
+        made, changed = _typography.apply_written(self, record, mine)
+        self._spaced = done
+        if not made:
+            return
+        from .drawings import _MC, sync_text_box
+
+        self.typography_spaced = getattr(self, "typography_spaced", 0) + made
+        for paragraph in changed:
+            part = roots.get(id(paragraph.getroottree().getroot()))
+            if part is not None:
+                self.package.mark_dirty(part)
+            # A text box's: its fallback holds the same (``_sync_text_boxes``).
+            for holder in paragraph.iterancestors(_MC + "AlternateContent"):
+                sync_text_box(holder)
+
+    def _text_box_snapshot(self) -> list[tuple[str, Element, bytes]]:
+        """Every text box's content as Word reads it (the ``mc:Choice``), before an edit."""
+        from .drawings import _MC
+
+        out = []
+        for part in self._parts():
+            for holder in self.package.tree(part).iter(_MC + "AlternateContent"):
+                choice = holder.find(_MC + "Choice")
+                content = next(choice.iter(_W + "txbxContent"), None) if choice is not None else None
+                if content is not None:
+                    out.append((part, holder, etree.tostring(content)))
+        return out
+
+    def _sync_text_boxes(self, before: list[tuple[str, Element, bytes]]) -> None:
+        """After an edit: every text box whose content changed gets the same content in its
+        VML fallback, as Word writes a text box (paraIds and all; a revision record copied
+        gets an id of its own afterwards)."""
+        from .drawings import _MC, sync_text_box
+
+        known = {id(holder): data for _, holder, data in before} if before is not None else {}
+        for part in self._parts():
+            changed = False
+            for holder in self.package.tree(part).iter(_MC + "AlternateContent"):
+                choice = holder.find(_MC + "Choice")
+                content = next(choice.iter(_W + "txbxContent"), None) if choice is not None else None
+                if content is None or (before is not None and known.get(id(holder)) == etree.tostring(content)):
+                    continue
+                changed = sync_text_box(holder) or changed
+            if changed:
+                self.package.mark_dirty(part)
+
+    def _revision_id_counts(self) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for part in self._parts():
+            for node in self.package.tree(part).iter(*REVISION_KINDS_ALL):
+                raw = node.get(_W + "id")
+                if raw is not None:
+                    counts[raw] = counts.get(raw, 0) + 1
+        return counts
+
+    def _unique_revision_ids(self, before: dict[str, int]) -> None:
+        """Give a revision record whose ``w:id`` an edit repeated an id of its own: an edit
+        that splits a run copies its ``w:rPrChange`` with the rest of its properties (Word
+        renumbers them all on saving).  Repeats the document had before are left alone."""
+        after = self._revision_id_counts()
+        grown = {raw for raw, count in after.items() if count > before.get(raw, 0) and count > 1}
+        if not grown:
+            return
+        largest = self._next_annotation_id() - 1
+        seen: set[str] = set()
+        for part in self._parts():
+            for node in self.package.tree(part).iter(*REVISION_KINDS_ALL):
+                raw = node.get(_W + "id")
+                if raw not in grown:
+                    continue
+                if raw not in seen:
+                    seen.add(raw)
+                    continue
+                largest += 1
+                node.set(_W + "id", str(largest))
+                self.package.mark_dirty(part)
+
+    def _set_text(self, identifier: str, value: str) -> EditResult:
+        _text.check_text(value)
+        part, entry = self._resolve(identifier)
+        if not isinstance(entry, ParagraphEntry):
+            raise EditError(f"{identifier} is not a paragraph")
+        if _text.paragraph_text(entry.element) == value:
+            return EditResult(entry.id, changed=False)
+        tracking = self._active_tracking()
+        with self._edit():
+            renames = self._write_text(part, entry, value, tracking)
+        return EditResult(renames.get(entry.id, entry.id), renamed=renames)
+
+    def _write_text(self, part: str, entry: ParagraphEntry, value: str, tracking: Any, *,
+                    prepare: bool = True) -> dict[str, str]:
+        """:meth:`_set_text`'s change, inside an edit: the renames.  ``prepare`` false (round
+        45: a table filled in one pass, :meth:`~.tables.TableOps._fill_cells`) skips the
+        stamping, where the caller found nothing to stamp (:meth:`_stamping_due`)."""
+        stamped = entry.needs_stamp
+        renames = self._prepare(part, [entry]) if prepare else {}
+        element = entry.element
+        if tracking is not None:
+            stamp = Stamp(self, tracking)
+            old = _text.paragraph_text(element)
+            released = _track.replace_span(element, 0, len(old), value, stamp, part, keep="characters")
+            stamp.finish()
+            self._release(part, released)
+        else:
+            _text.set_text(element, value)
+        if not stamped:
+            self._new_text_id(part, element)
+        self.package.mark_dirty(part)
+        return renames
+
+    def set_text_paragraphs(self, identifier: str, value: str) -> EditResult:
+        """Paragraph ``identifier`` rewritten as :meth:`Paragraph.set_text` does with the
+        first line of ``value``, and each later line (``"\\n"`` between them; ``"\\r\\n"``
+        reads as one) a new paragraph after it, in order -- what pressing Enter at the end
+        of the paragraph and typing makes.  Each new paragraph takes the paragraph's
+        properties (its style, alignment, spacing, indents, keeps and list membership, so a
+        list item continues the list), without a section break or a revision record, and
+        the run formatting of the paragraph's last text run (as
+        :meth:`insert_paragraph` after it, and ``word_edit_table``'s lines, do).  A ``\\v``
+        stays a line break inside its paragraph.  An empty line is an empty paragraph.
+
+        The result's ``id`` is the paragraph's, ``created`` the new paragraphs' ids in
+        order.  No change (``changed`` false) when the paragraph and the ones right after
+        it already hold the lines in its style -- a repeated call adds nothing.  Refused
+        (``EditError``) for a paragraph that ends a section: the new paragraphs would
+        start the next section."""
+        lines = value.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+        if len(lines) == 1:
+            return self._set_text(identifier, value)
+        for line in lines:
+            _text.check_text(line)
+        part, entry = self._resolve(identifier)
+        if not isinstance(entry, ParagraphEntry):
+            raise EditError(f"{identifier} is not a paragraph")
+        element = entry.element
+        if element.find(f"{W_PPR}/{W_SECTPR}") is not None:
+            raise EditError(f"{entry.id} ends a section: paragraphs split after it at \\n would start the "
+                            "next section; give it one line and insert the others before it "
+                            "(word_insert_markdown at before:)")
+        if self._already_lines(element, lines):
+            return EditResult(entry.id, changed=False)
+        with self.batch():
+            first = self._set_text(entry.id, lines[0])
+            renamed = dict(first.renamed)
+            created: list[str] = []
+            current = first.id
+            for line in lines[1:]:
+                made = self.insert_paragraph(line, after=current)
+                renamed.update(made.renamed)
+                created.append(made.id)
+                current = made.id
+        return EditResult(renamed.get(entry.id, first.id), created=created, renamed=renamed)
+
+    def _already_lines(self, element: Element, lines: list[str]) -> bool:
+        """Whether ``element`` and the paragraphs right after it hold ``lines``, all in its
+        paragraph style."""
+        style = element.find(f"{W_PPR}/{_W}pStyle")
+        wanted = style.get(qn("w:val")) if style is not None else None
+        node: Element | None = element
+        for k, line in enumerate(lines):
+            if k:
+                node = node.getnext() if node is not None else None
+                while node is not None and not (isinstance(node.tag, str) and node.tag in (W_P, W_TBL)):
+                    node = node.getnext()
+            if node is None or node.tag != W_P or _text.paragraph_text(node) != line:
+                return False
+            found = node.find(f"{W_PPR}/{_W}pStyle")
+            if (found.get(qn("w:val")) if found is not None else None) != wanted:
+                return False
+        return True
+
+    def _new_text_id(self, part: str, element: Element) -> None:
+        """A paragraph whose text changed gets a new ``w14:textId``, as Word gives one: the
+        textId versions the text (MS-DOCX 2.6.1.1)."""
+        element.set(_ids.TEXT_ID, _ids.generate(part + "\0text", self._used(), 1)[0])
+        _ids.ensure_w14(self.package.tree(part))
+
+    def insert_paragraph(self, text: str = "", *, after: str | None = None,
+                         before: str | None = None, style: str | None = None) -> EditResult:
+        """A new paragraph after or before a block (a paragraph or a table).
+
+        It continues the paragraph it is inserted beside: a copy of its paragraph properties
+        (without a section break or a revision record) and of its nearest run's properties
+        -- the last run when inserted after, the first when before.  ``style`` (a name,
+        alias or id; a built-in style the document lacks is added as Word writes it)
+        replaces the copied properties with that paragraph style alone.  The new paragraph is
+        stamped at once, so its id is durable from the start.
+        """
+        with self.batch():  # its text is made before the edit: recorded (round 35, R21)
+            return self._insert_paragraph(text, after=after, before=before, style=style)
+
+    def _insert_paragraph(self, text: str, *, after: str | None, before: str | None,
+                          style: str | None) -> EditResult:
+        if (after is None) == (before is None):
+            raise EditError("give exactly one of after= or before=")
+        _text.check_text(text)
+        anchor_id = after if after is not None else before
+        part, entry = self._resolve(anchor_id)  # type: ignore[arg-type]
+        anchor = entry.element
+        style_id = self.styles.resolve(style, "paragraph")[0] if style is not None else None
+
+        paragraph = _text._make("w:p")
+        template = anchor if anchor.tag == W_P else None
+        if style_id is not None:
+            properties = _text._make("w:pPr")
+            pstyle = _text._make("w:pStyle")
+            pstyle.set(qn("w:val"), style_id)
+            properties.append(pstyle)
+            paragraph.append(properties)
+        elif template is not None and template.find(W_PPR) is not None:
+            properties = copy.deepcopy(template.find(W_PPR))
+            for child in list(properties):
+                if child.tag in (W_SECTPR, _W + "pPrChange"):
+                    remove(child)
+                elif child.tag == _W + "rPr":
+                    for mark in list(child):
+                        if mark.tag in REVISION_PROPERTY_TAGS:
+                            remove(mark)
+                    if not len(child):
+                        remove(child)
+            if len(properties):
+                paragraph.append(properties)
+        if text:
+            reference = None
+            if template is not None and style_id is None:
+                runs = [r for r in _text.runs(template) if _text.run_text(template, r)]
+                if runs:
+                    reference = runs[-1] if after is not None else runs[0]
+            properties = (_text.run_properties_for(template, reference)
+                          if template is not None and style_id is None else None)
+            paragraph.append(_text.make_run(text, properties))
+
+        position = entry.index if isinstance(entry, ParagraphEntry) else self._block_position(part, anchor, after is not None)
+        tracking = self._active_tracking()
+        with self._edit():
+            renames = self._prepare(part, [], position, including=before is not None)
+            if style is not None:
+                self.styles._ensure(style, "paragraph")
+            para_id, text_id = self._fresh_ids(part)
+            _ids.stamp(paragraph, para_id, text_id)
+            if after is not None:
+                anchor.addnext(paragraph)
+            else:
+                anchor.addprevious(paragraph)
+            if tracking is not None:
+                self._track_new_paragraph(part, paragraph, tracking)
+            _ids.ensure_w14(self.package.tree(part))
+            self.package.mark_dirty(part)
+            story = self._story_of(part)
+            new_id = ("" if story == "body" else f"{story}/") + f"p:{para_id}"
+        return EditResult(new_id, created=[new_id], renamed=renames)
+
+    def _track_new_paragraph(self, part: str, paragraph: Element, tracking) -> None:
+        """Record a paragraph just put in place as inserted.  Followed by a block of its
+        container, it is inserted with its own mark (``w:pPr/w:rPr/w:ins``).  Last in its
+        container -- where Word cannot accept or reject a mark (measured) -- it is written as
+        Word writes a paragraph typed at the end of the one before: that one's mark is the
+        inserted one, and the new paragraph carries the old mark's properties, its own
+        recorded as a change from them."""
+        stamp = Stamp(self, tracking)
+        _track.insert_paragraph_content(paragraph, stamp, part)
+        previous = paragraph.getprevious()
+        while previous is not None and not (isinstance(previous.tag, str) and previous.tag in (W_P, W_TBL)):
+            previous = previous.getprevious()
+        if _track.is_last_in_container(paragraph) and previous is not None and previous.tag == W_P \
+                and _track.mark_record(previous) is None:
+            if previous.find(f"{W_PPR}/{W_SECTPR}") is None:
+                # The old mark's properties: as they were before a change recorded on them.
+                old = _track.pass_mark(previous, stamp, part)
+                _track.record_paragraph_change(paragraph, old, stamp, part)
+                stamp.finish()
+                return
+        _track.mark(paragraph, "ins", stamp, part)
+        stamp.finish()
+
+    def append_paragraph(self, text: str = "", *, story: str = "body", style: str | None = None) -> EditResult:
+        """A new paragraph at the end of a story (before the body's last section
+        properties): how a story with no paragraph to insert beside gets its first."""
+        _text.check_text(text)
+        if story.startswith("d:"):
+            # A text box's story: its paragraphs live in the part it is drawn in.
+            part, container = self._text_box_content(story)
+            root = self.package.tree(part)
+        else:
+            part = self._part_for_story(story)
+            if part is None:
+                raise EditError(f"no story {story!r}")
+            root = self.package.tree(part)
+            container = root.find(W_BODY) if root.find(W_BODY) is not None else root
+        style_id = None
+        if style is not None:
+            style_id = self.styles.resolve(style, "paragraph")[0]
+        with self._edit():
+            renames = self._prepare(part, [], len(self._index(part).paragraphs))
+            if style is not None:
+                style_id = self.styles._ensure(style, "paragraph")
+            paragraph = _text._make("w:p")
+            if style_id is not None:
+                properties = _text._make("w:pPr")
+                pstyle = _text._make("w:pStyle")
+                pstyle.set(qn("w:val"), style_id)
+                properties.append(pstyle)
+                paragraph.append(properties)
+            if text:
+                paragraph.append(_text.make_run(text, None))
+            para_id, text_id = self._fresh_ids(part)
+            _ids.stamp(paragraph, para_id, text_id)
+            if story.startswith("d:"):
+                part, container = self._text_box_content(story)
+            last = container.find(W_SECTPR) if container.tag == W_BODY else None
+            if last is not None:
+                last.addprevious(paragraph)
+            else:
+                container.append(paragraph)
+            tracking = self._active_tracking()
+            if tracking is not None:
+                self._track_new_paragraph(part, paragraph, tracking)
+            _ids.ensure_w14(root)
+            self.package.mark_dirty(part)
+            new_id = ("" if self._story_of(part) == "body" else f"{self._story_of(part)}/") + f"p:{para_id}"
+        return EditResult(new_id, created=[new_id], renamed=renames)
+
+    def delete_block(self, identifier: str) -> EditResult:
+        """Delete a paragraph, a table or a block-level content control (``cc:``) with its
+        content (:meth:`remove_control` with ``keep_content=False``; refused for a control
+        locked against deletion or editing, ``w:lock``).
+
+        Refused, before anything changes, where E0 cannot yet keep the document whole: a
+        paragraph that ends a section (E4 joins sections), one holding a note or comment
+        reference (E3/E4), one that opens or closes a field another paragraph continues, and
+        a block whose removal would leave a cell, the body or a story without a paragraph to
+        end on.  A bookmark, comment, move or permission range that only starts or ends in a
+        deleted paragraph keeps that end, moved to the next paragraph (or the previous one).
+        """
+        part, entry = self._resolve_block(identifier)
+        if isinstance(entry, ControlBlock):
+            return self._delete_control_block(part, entry)
+        element = entry.element
+        old_id = entry.id
+        if isinstance(entry, ParagraphEntry):
+            properties = element.find(W_PPR)
+            if properties is not None and properties.find(W_SECTPR) is not None:
+                raise EditError(f"{old_id} ends a section; deleting it would join two sections")
+            # Round 45: the reference of a comment on a table or row before it moves on.
+            moving = _comments.block_references(element) if self._active_tracking() is None else None
+            for tag in _REFERENCES:
+                if moving is None and element.find(".//" + tag) is not None:
+                    raise EditError(f"{old_id} holds a {tag.rpartition('}')[2]}; deleting it "
+                                    "would orphan the note or comment")
+            if not _fields_balanced(element):
+                raise EditError(f"{old_id} holds part of a field that spans paragraphs")
+        _check_container_survives(element)
+
+        position = entry.index if isinstance(entry, ParagraphEntry) else self._block_position(part, element, True)
+        removed_ids = [old_id]
+        if isinstance(entry, TableEntry):
+            nested = set(map(id, element.iter(W_P)))
+            removed_ids += [e.id for e in self._index(part).paragraphs if id(e.element) in nested]
+        tracking = self._active_tracking()
+        separator = _separator_of(element, tracking.author) if tracking is not None and isinstance(
+            entry, TableEntry) else None
+        if separator is not None:
+            found = self._index(part).entry_for(separator)
+            separator = (separator, found.id) if found is not None else None
+        if tracking is not None and not self._own_insertion(element, tracking):
+            with self._edit():
+                renames = self._prepare(part, [], position)
+                named = {}
+                if isinstance(entry, TableEntry):
+                    # Row and paragraph ids, for the rows a tracked deletion removes outright.
+                    named = {id(row): renames.get(i, i) for row, i in self._table_entry(
+                        renames.get(old_id, old_id))[1].rows}
+                    named.update({id(e.element): e.id for e in self._index(part).paragraphs
+                                  if id(e.element) in nested})
+                gone = self._track_delete_block(part, element, tracking) or []
+                self.package.mark_dirty(part)
+            removed = [named[id(node)] for row in gone for node in [row, *row.iter(W_P)] if id(node) in named]
+            if element.getparent() is None:
+                removed_ids += self._drop_separator(part, separator)
+                renames = {old: new for old, new in renames.items() if old not in removed_ids}
+                return EditResult(None, renamed=renames, removed=removed_ids)
+            current = renames.get(old_id, old_id)
+            if gone:
+                # A table is named by its first row: that row gone, it has the next one's name.
+                now = self._index(part).entry_for(element).id
+                if now != current:
+                    self._rename({old_id: now, current: now})
+                    renames = {**renames, old_id: now}
+                    current = now
+            return EditResult(current, renamed=renames, removed=removed)
+        with self._edit():
+            renames = {old: new for old, new in self._prepare(part, [], position).items()
+                       if old not in removed_ids}
+            self._aliases = {old: new for old, new in self._aliases.items() if old not in removed_ids}
+            if tracking is not None:
+                # One's own insertion, deleted, goes outright (Word: measured); what it
+                # held of one's own goes with it.
+                self._release(part, _inline.relationship_ids(element))
+            if isinstance(entry, ParagraphEntry):
+                _comments.move_block_references(element, _comments.block_references(element) or [])
+            _rehome_markers(element)
+            remove(element)
+            removed_ids += self._drop_separator(part, separator)
+            renames = {old: new for old, new in renames.items() if old not in removed_ids}
+            self.package.mark_dirty(part)
+        return EditResult(None, renamed=renames, removed=removed_ids)
+
+    def _drop_separator(self, part: str, separator: "tuple[Element, str] | None") -> list[str]:
+        """Round 51: the empty paragraph a table one inserted came with -- between it and a
+        table before or after it, which Word would have put beside each other (measured,
+        ``tools/separator_probe.py``: Word inserts a table beside a table, and deleting it
+        leaves no trace) -- goes with it, once nothing needs it: not between two tables, not
+        its container's last block.  Its id, when it went."""
+        if separator is None:
+            return []
+        paragraph, identifier = separator
+        if paragraph.getparent() is None:
+            return []
+        before, after = _block_sibling(paragraph, -1), _block_sibling(paragraph, 1)
+        if after is None or (before is not None and before.tag == W_TBL and after.tag == W_TBL):
+            return []
+        _rehome_markers(paragraph)
+        remove(paragraph)
+        return [identifier]
+
+    def _delete_control_block(self, part: str, entry: "ControlBlock") -> EditResult:
+        """A block-level control deleted with its content, as a table is: refused for a lock,
+        a section break, a note or comment reference inside, or a container left with no
+        paragraph."""
+        _control_movable(entry, "deleting")
+        for tag in _REFERENCES:
+            if entry.element.find(".//" + tag) is not None:
+                raise EditError(f"{entry.id} holds a {tag.rpartition('}')[2]}; deleting it "
+                                "would orphan the note or comment")
+        _check_container_survives(entry.element)
+        index = self._index(part)
+        inside = {id(node) for node in entry.element.iter(W_P, W_TBL)}
+        nested = [e.id for e in [*index.paragraphs, *index.tables] if id(e.element) in inside]
+        result = self.remove_control(entry.id, keep_content=False)
+        if self._active_tracking() is None:
+            result.removed += [i for i in nested if i not in result.removed]
+        return result
+
+    def _own_insertion(self, element: Element, tracking) -> bool:
+        """Whether a block is wholly an insertion by the tracking author: a paragraph whose
+        mark and every run are, a table whose every row is."""
+        author = tracking.author
+        if element.tag == W_TBL:
+            # Round 51 (R103): every row wholly one's own insertion, marks and text with it
+            # (a row holding what was there before, or another's insertion, is not).
+            from .table_format import own_rows
+            from .tables import _row_fate
+
+            rows = own_rows(element)
+            return bool(rows) and all(_row_fate(row, author) == "remove" for row in rows)
+        record = _track.mark_record(element)
+        if record is None or record.tag != _W + "ins" or record.get(_W + "author") != author:
+            return False
+        for run in _text.walk(element, "markup").runs:
+            owner = _track.revision_owner(run)
+            if owner is None or owner.tag != _W + "ins" or owner.get(_W + "author") != author:
+                return False
+        return True
+
+    def _track_delete_block(self, part: str, element: Element, tracking) -> "list[Element] | None":
+        """A block's tracked deletion.  A paragraph: its content and its mark, as Word
+        deletes a whole paragraph; last in its container -- where Word cannot accept a
+        deleted mark (measured: a cell's pulls the cell's first paragraph out of the
+        table) -- the mark before it is the deleted one, and the paragraph takes that
+        paragraph's properties, recorded as a change.  A table: every row as Word deletes
+        rows (:meth:`_track_delete_rows`: ``w:trPr/w:del`` with every cell's paragraph marks
+        and content; one's own pending row removed outright, the table with its last row).
+        Returns a table's rows removed outright."""
+        stamp = Stamp(self, tracking)
+        if element.tag == W_TBL:
+            # Round 51 (R103): row by row as Word deletes them -- one's own pending rows go
+            # outright (:meth:`_track_delete_rows`); a table left with none goes too.
+            from .table_format import own_rows
+
+            gone = self._track_delete_rows(part, own_rows(element), stamp, nested_rows=True)
+            if gone and not own_rows(element):
+                _rehome_markers(element)
+                self._release(part, _inline.relationship_ids(element))
+                remove(element)
+            stamp.finish()
+            return gone
+        own_runs = list(element.iter(_W + "r"))
+        self._release(part, _track.delete_content(element, stamp, part))
+        previous = element.getprevious()
+        while previous is not None and not (isinstance(previous.tag, str) and previous.tag in (W_P, W_TBL)) \
+                or previous is not None and previous.tag == W_P and _track.mark_record(previous) is not None \
+                and _track.mark_record(previous).tag in _track.DELETED:
+            # Past paragraphs whose mark is deleted already: they join on into this one.
+            previous = previous.getprevious()
+        if _track.is_last_in_container(element) and previous is not None and previous.tag == W_P \
+                and previous.find(f"{W_PPR}/{W_SECTPR}") is None:
+            properties = previous.find(W_PPR)
+            previous_properties = copy.deepcopy(properties) if properties is not None else _text._make("w:pPr")
+            joined_id = previous.get(_ids.PARA_ID)
+            _track.delete_mark(previous, stamp, part)
+            _track.take_properties(element, previous_properties, stamp, part)
+            if previous.getparent() is None and joined_id and element.get(_ids.PARA_ID):
+                # The mark was this author's own insertion: removing it joined that paragraph
+                # into this one.  When this one's content went with the deletion (it was the
+                # author's insertion too), what is left is that paragraph: it keeps its id.
+                story = self._story_of(part)
+                prefix = "" if story == "body" else f"{story}/"
+                mine = element.get(_ids.PARA_ID)
+                if not any(any(a is element for a in run.iterancestors()) for run in own_runs):
+                    element.set(_ids.PARA_ID, joined_id)
+                    self._rename({f"{prefix}p:{mine}": f"{prefix}p:{joined_id}"})
+                else:
+                    self._rename({f"{prefix}p:{joined_id}": f"{prefix}p:{mine}"})
+        elif _track.mark_record(element) is None:
+            _track.mark(element, "del", stamp, part)
+        stamp.finish()
+
+    def move_block(self, identifier: str, *, after: str | None = None, before: str | None = None) -> EditResult:
+        """Move a paragraph or table beside another block of the same story; it keeps its
+        id (and its paraIds), as Word keeps them when it moves text.  Refused, before
+        anything changes, for a paragraph that ends a section, a move into the block itself,
+        and one that would leave a cell or story without a final paragraph."""
+        if (after is None) == (before is None):
+            raise EditError("give exactly one of after= or before=")
+        part, entry = self._resolve_block(identifier)
+        target_part, target = self._resolve_block(after if after is not None else before)  # type: ignore[arg-type]
+        if part != target_part:
+            raise EditError("a block moves within its story; between stories or documents is E6's copy")
+        element, anchor = entry.element, target.element
+        if element is anchor:
+            raise EditError("a block cannot move beside itself")
+        if any(node is element for node in anchor.iterancestors()):
+            raise EditError(f"{identifier} holds the block it would move beside")
+        if isinstance(entry, ParagraphEntry):
+            properties = element.find(W_PPR)
+            if properties is not None and properties.find(W_SECTPR) is not None:
+                raise EditError(f"{entry.id} ends a section; moving it would move the section break")
+        _check_container_survives(element)
+        if after is not None and anchor.getnext() is element or before is not None and anchor.getprevious() is element:
+            return EditResult(entry.id, changed=False)
+        position = min(entry.index if isinstance(entry, ParagraphEntry) else self._block_position(part, element, False),
+                       target.index if isinstance(target, ParagraphEntry) else self._block_position(part, anchor, False))
+        if isinstance(entry, ControlBlock):
+            _control_movable(entry, "moving")
+        tracking = self._active_tracking()
+        warnings: list[str] = []
+        if tracking is not None and isinstance(entry, ControlBlock):
+            # Word has no revision for a control: its move would be its content's alone.
+            warnings.append(f"{entry.id} is a content control: Word has no revision for a control, so it moved "
+                            "untracked")
+            tracking = None
+        if tracking is not None and any(True for _ in element.iter(*_REFERENCES)):
+            # A copy would repeat the note or comment reference: Word's move form needs both.
+            warnings.append(f"{entry.id} holds a note or comment reference: moved untracked")
+            tracking = None
+        if tracking is not None and not self._own_insertion(element, tracking):
+            with self._edit():
+                renames = self._prepare(part, [], position)
+                moved = self._track_move(part, element, anchor, after is not None, tracking)
+                old_id = renames.get(entry.id, entry.id)
+                story = self._story_of(part)
+                prefix = "" if story == "body" else f"{story}/"
+                new_id = prefix + ("p:" if moved.tag == W_P else "t:") + (
+                    moved.get(_ids.PARA_ID) if moved.tag == W_P else moved.find(_W + "tr").get(_ids.PARA_ID))
+                self._rename({old_id: new_id})
+                renames[old_id] = new_id
+                self.package.mark_dirty(part)
+            return EditResult(new_id, created=[new_id], renamed=renames)
+        with self._edit():
+            renames = self._prepare(part, [], position)
+            if after is not None:
+                anchor.addnext(element)
+            else:
+                anchor.addprevious(element)
+            self.package.mark_dirty(part)
+        return EditResult(renames.get(entry.id, entry.id), renamed=renames, warnings=warnings)
+
+    def section_blocks(self, heading: str) -> list[str]:
+        """The ids of a heading's section: the heading and every block after it up to the
+        next heading of the same or a higher level (a lower number), in order -- what to
+        give :meth:`move_blocks`, :meth:`to_markdown` (``f"{ids[0]}..{ids[-1]}"``) or
+        :meth:`copy_blocks`::
+
+            section = doc.section_blocks("p:11698B22")     # "6 Data retention" and its 6.1, 6.2...
+            doc.move_blocks(section, after=doc.section_blocks("p:3A1F09C2")[-1])
+
+        A heading is a body paragraph whose style is a heading (by name, or by the outline
+        level it or its style declares, as ``to_markdown`` reads ``#``).  Headings inside
+        the section at deeper levels are part of it; a section break inside it is too (its
+        paragraph cannot move: :meth:`move_blocks` says so)."""
+        part, entry = self._resolve(heading)
+        body = self.package.document_part()
+        if part != body or not isinstance(entry, ParagraphEntry) or entry.element.getparent().tag != W_BODY:
+            raise EditError(f"{heading} is not a paragraph of the body itself (not in a table or a control)")
+        levels = _HeadingLevels(self)
+        level = levels.of(entry.element)
+        if level is None:
+            raise EditError(f"{entry.id} is not a heading: its style has no heading level")
+        out = [entry.id]
+        node = entry.element.getnext()
+        while node is not None:
+            if isinstance(node.tag, str) and node.tag in _MOVABLE:
+                if node.tag == W_P:
+                    other = levels.of(node)
+                    if other is not None and other <= level:
+                        break
+                out.append(self._block_id(part, node))
+            node = node.getnext()
+        return out
+
+    def move_blocks(self, blocks: "str | list[str]", *, after: str | None = None,
+                    before: str | None = None) -> EditResult:
+        """Move several blocks together beside another block, in their order, as one undo
+        step: a range ``"p:A..t:B"`` (the blocks from the first through the last, of one
+        container) or a list of ids (:meth:`section_blocks`'s).  Each keeps its id, as
+        :meth:`move_block`; tracked, each paragraph is a tracked move (``w:moveFrom`` where
+        it was, ``w:moveTo`` where it goes, Word's form) and a table a deletion and an
+        insertion, as Word records them.  ``result.blocks`` are the moved blocks' ids at
+        their new place, in order.  Refused, before anything changes, for a target inside
+        the blocks, a paragraph that ends a section, and blocks of different stories."""
+        if (after is None) == (before is None):
+            raise EditError("give exactly one of after= or before=")
+        elements, part = self._blocks_of(blocks)
+        target_part, target = self._resolve(after if after is not None else before)  # type: ignore[arg-type]
+        if target_part != part:
+            raise EditError("blocks move within their story; between documents is copy_blocks")
+        if any(target.element is e or any(a is e for a in target.element.iterancestors()) for e in elements):
+            raise EditError(f"{after or before} is one of the blocks moved, or inside one")
+        for element in elements:
+            if element.tag not in (W_P, W_TBL, _W + "sdt"):
+                raise EditError("custom XML is not moved: move_blocks moves paragraphs, tables and content-control blocks")
+            if element.tag == W_P and element.find(f"{W_PPR}/{W_SECTPR}") is not None:
+                raise EditError(f"{self._block_id(part, element)} ends a section; moving it would move the "
+                                "section break")
+        ids = [self._block_id(part, element) for element in elements]
+        moved: list[str] = []
+        renamed: dict[str, str] = {}
+        created: list[str] = []
+        warnings: list[str] = []
+        with self.batch():
+            previous = None
+            for identifier in ids:
+                identifier = renamed.get(identifier, identifier)
+                if previous is None:
+                    result = self.move_block(identifier, after=after, before=before)
+                else:
+                    result = self.move_block(identifier, after=previous)
+                renamed.update(result.renamed)
+                created += result.created
+                warnings += result.warnings
+                previous = result.id
+                moved.append(result.id)
+        return EditResult(moved[0] if moved else None, created=created, renamed=renamed, warnings=warnings,
+                          blocks=moved)
+
+    def _blocks_of(self, blocks: "str | list[str]") -> tuple[list[Element], str]:
+        """The block elements ``blocks`` names, in document order, and their part."""
+        if isinstance(blocks, str):
+            blocks = self._expand_heading(blocks)          # h:p:A, a heading's range (round 36)
+            ends = span_ends(blocks)
+            if ends is None:
+                part, entry = self._resolve_block(blocks)
+                return [entry.element], part
+            return self._span_elements(*ends, movable=_MOVABLE)
+        if not blocks:
+            raise EditError("no blocks to move")
+        found = [self._resolve_block(identifier) for identifier in blocks]
+        parts = {part for part, _ in found}
+        if len(parts) != 1:
+            raise EditError("the blocks moved are of one story")
+        part = parts.pop()
+        order = {id(node): k for k, node in enumerate(self.package.tree(part).iter())}
+        elements = []
+        for _, entry in found:
+            if not any(entry.element is e for e in elements):
+                elements.append(entry.element)
+        elements.sort(key=lambda e: order[id(e)])
+        return elements, part
+
+    def _block_id(self, part: str, element: Element) -> str:
+        index = self._index(part)
+        found = index.entry_for(element)
+        if found is not None:
+            return found.id
+        for _, identifier, node in self._content_controls():
+            if node is element:
+                return identifier
+        raise EditError("not a paragraph, table or content control")
+
+    def block_of(self, identifier: str) -> str | None:
+        """The id of the body's top-level block (:meth:`blocks`' ids: a paragraph, table or
+        block-level content control) that holds ``identifier`` -- any id the library takes::
+
+            doc.block_of("p:0D2C4E61")          # a paragraph in a table's cell -> "t:5B1F07A2"
+            doc.block_of("fn:2")                # the block holding the note's reference
+            doc.block_of("bm:Results")          # the block its start is in
+
+        A nested paragraph (in a cell, a nested table, a text box, a content control), a
+        range (``p:A@4:11``: its start), run, table, row or cell, drawing (``d:``, a group's
+        member too), hyperlink, field, revision or content control gives the block it is
+        in; a footnote or endnote (``fn:``, ``en:``) the block holding its reference; a
+        comment (``c:``, ``c#``) the block its range starts in (a reply's own range, else
+        its thread's, as ``comment.anchor`` reads it); a bookmark (``bm:<name>``, or the
+        plain name) the block of its start; a section (``s:``) the block holding its break.
+        A marker standing between blocks counts as the next block's, as a range reads it.
+
+        ``None`` for what is not in the body: a header's or footer's paragraph, a note's or
+        comment's own text, a story's name, a note or comment referenced from no body
+        block, and the body's last section (``s:body``: no block holds its break).  An id
+        the document does not have raises ``KeyError``, as :meth:`get` does; a span
+        (``p:A..t:B``) is :meth:`blocks_between`'s.  A ``$name`` ref lives in the tools'
+        session, not in the document: :func:`docx_agent.tools.block_of` resolves it
+        first (``block_of(session, doc, id)``, or ``block_of(call, id)`` in a handler)."""
+        found = self._held(identifier)
+        if found is None:
+            return None
+        part, element = found
+        if part != self.package.document_part():
+            return None
+        top = _top_block(element)
+        if top is None and element.getparent() is not None:
+            # A marker between blocks (a bookmark's start): the next paragraph's.
+            entry, _ = self._marker_place(part, element, forward=True)
+            top = _top_block(entry.element)
+        return self._block_id(part, top) if top is not None else None
+
+    def blocks_between(self, first: str, last: str) -> list[str]:
+        """The ids of the body's top-level blocks from the one holding ``first`` through the
+        one holding ``last`` (:meth:`block_of`: either may be a nested id), in order::
+
+            doc.blocks_between("p:0D2C4E61", "fn:3")   # a cell's table .. the block citing fn:3
+
+        The span the block tools take (``p:A..t:B``, read by the same resolver), so a
+        ``last`` before ``first`` is refused as theirs is (``EditError``).  An id not in the
+        body (a header's paragraph) is an ``EditError``, one the document does not have a
+        ``KeyError``."""
+        ends = []
+        for identifier in (first, last):
+            block = self.block_of(identifier)
+            if block is None:
+                raise EditError(f"{identifier} is not in the body: blocks_between spans the body's blocks")
+            ends.append(block)
+        elements, part = self._blocks_of(f"{ends[0]}..{ends[1]}")
+        return [self._block_id(part, element) for element in elements]
+
+    def _held(self, identifier: str) -> tuple[str, Element] | None:
+        """The part and element :meth:`block_of` starts from: the element ``identifier``
+        names, a note's reference, the paragraph a comment's range starts in, a bookmark's
+        start; ``None`` for a story's name, the body's last section, a comment or note
+        with no reference.  ``KeyError`` for an id the document lacks."""
+        if not isinstance(identifier, str) or not identifier:
+            raise KeyError(f"no block {identifier!r}")
+        if identifier.startswith("$"):
+            raise KeyError(f"{identifier} is a ref: refs live in the tools' session, and "
+                           "docx_agent.tools.block_of(session, doc, ...) resolves one "
+                           "(block_of(call, ...) in a handler)")
+        if span_ends(identifier) is not None:
+            raise EditError(f"{identifier!r} is a span of blocks: blocks_between takes its two ends")
+        if _RANGE_ID.fullmatch(identifier):
+            return self._element_of(self.range(identifier).start_id)
+        if identifier.startswith("hl:"):
+            part, _, node = self.hyperlink(identifier)._locate()
+            return part, node
+        if identifier.startswith("bm:") or not re.search(r"[:@/#]", identifier):
+            if not identifier.startswith("bm:") and any(s.name == identifier for s in self.stories):
+                return None
+            part, start, _ = self._bookmark_markers()[self.bookmark(identifier).name]
+            return part, start
+        if identifier.startswith("d:"):
+            self.drawing(identifier)                       # KeyError if there is none
+            frame = identifier.partition("/")[0]           # a group's member: its group
+            for part, found, element in self._all_drawings():
+                if found == frame:
+                    return part, element
+            raise self._deleted(identifier) or KeyError(f"no drawing {identifier!r}")
+        if identifier.startswith(("fn:", "en:")):
+            self.note(identifier)
+            return self._note_reference(identifier)
+        if identifier.startswith(("c:", "c#")):
+            anchor = self.comment(identifier).anchor
+            return self._element_of(anchor.start_id) if anchor is not None else None
+        if identifier.startswith("fld:"):
+            begin = self._field(identifier).begin
+            return self._part_for_story(identifier[4:].rpartition("/")[0]), begin  # type: ignore[return-value]
+        if identifier.startswith("rev:"):
+            return self.revision(identifier)._locate()
+        if identifier.startswith(("cc:", "cc@")):
+            return self.content_control(identifier)._locate()
+        if identifier.startswith(("s:", "s@")):
+            _, _, paragraph = self._section_record(identifier)
+            return (self.package.document_part(), paragraph) if paragraph is not None else None
+        found = self.get(identifier)
+        if isinstance(found, (Row, Cell)):
+            return self._element_of(found._table.id)
+        if isinstance(found, Run):
+            return self._element_of(found._paragraph.id)
+        return self._element_of(identifier)
+
+    def _element_of(self, identifier: str) -> tuple[str, Element]:
+        part, entry = self._resolve(identifier)
+        return part, entry.element
+
+    def _track_move(self, part: str, element: Element, anchor: Element, after: bool, tracking) -> Element:
+        """A block's tracked move: the paragraph stays where it was, its runs in
+        ``w:moveFrom`` and its mark ``w:moveFrom``, between ``w:moveFromRangeStart`` (after its
+        properties) and ``w:moveFromRangeEnd`` (after it); a copy -- a new paragraph -- goes to
+        the destination, the same in ``w:moveTo``, both ranges named alike: Word's form,
+        measured.  The copy holds no bookmark or comment range of the original (they stay
+        with it).  A paragraph holding other revisions, and a table, move as a deletion and
+        an insertion.  Returns the copy."""
+        from ..oxml.xml import insert_in_order
+
+        copy_ = copy.deepcopy(element)
+        used = self._used()
+        for node in copy_.iter(W_P, _W + "tr"):
+            para_id, text_id = _ids.generate(part + "\0move", used, 2)
+            _ids.stamp(node, para_id, text_id)
+        for node in list(copy_.iter(*_MARKERS, _W + "permStart", _W + "permEnd")):
+            remove(node)
+        for frame in copy_.iter(_ids.WP_INLINE, _ids.WP_ANCHOR):
+            doc_pr = frame.find("{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}docPr")
+            if doc_pr is not None:
+                doc_pr.set("id", str(self._next_doc_pr()))
+        if after:
+            anchor.addnext(copy_)
+        else:
+            anchor.addprevious(copy_)
+        # Word's move form needs a paragraph after each end to join (a last mark it cannot
+        # accept or reject: measured); else the move is a deletion and an insertion, each in
+        # the form that has one.
+        plain = element.tag == W_P and not any(
+            isinstance(node.tag, str) and node.tag in REVISION_KINDS_ALL for node in element.iter()) \
+            and not _track.is_last_in_container(element) and not _track.is_last_in_container(copy_)
+        if not plain:
+            # Deleted where it was, inserted where it goes.
+            self._track_delete_block(part, element, tracking)
+            stamp = Stamp(self, tracking)
+            paragraphs = list(copy_.iter(W_P))
+            if copy_.tag == W_TBL:
+                for row in copy_.iter(_W + "tr"):
+                    for record in row.findall(f"{_W}trPr/{_W}del") + row.findall(f"{_W}trPr/{_W}ins"):
+                        remove(record)
+                    properties = row.find(_W + "trPr")
+                    if properties is None:
+                        properties = _text._make("w:trPr")
+                        insert_in_order(row, properties)
+                    insert_in_order(properties, stamp.make("w:ins", part))
+            for paragraph in paragraphs:
+                _clear_revisions(paragraph)
+            if copy_.tag == W_P:
+                stamp.finish()
+                self._track_new_paragraph(part, copy_, tracking)
+            else:
+                for paragraph in paragraphs:
+                    _track.insert_paragraph_content(paragraph, stamp, part)
+                    _track.mark(paragraph, "ins", stamp, part)
+                stamp.finish()
+            _ids.ensure_w14(self.package.tree(part))
+            return copy_
+        stamp = Stamp(self, tracking)
+        name = f"move{stamp.next_id()}"
+        for paragraph, kind in ((element, "moveFrom"), (copy_, "moveTo")):
+            start = stamp.make(f"w:{kind}RangeStart", part, name=name)
+            properties = paragraph.find(W_PPR)
+            if properties is not None:
+                properties.addnext(start)
+            else:
+                paragraph.insert(0, start)
+            _track.wrap_runs(_track.content_runs(paragraph), f"w:{kind}", stamp, part)
+            _track.mark(paragraph, kind, stamp, part)
+            end = _text._make(f"w:{kind}RangeEnd")
+            end.set(_W + "id", start.get(_W + "id"))
+            paragraph.addnext(end)
+        stamp.finish()
+        _ids.ensure_w14(self.package.tree(part))
+        return copy_
+
+    def _block_position(self, part: str, element: Element, after: bool) -> int:
+        """The paragraph index a structural edit at a table is at: its last paragraph's (an
+        edit after it) or the one before its first (an edit before it)."""
+        nested = [e.index for e in self._index(part).paragraphs if e.element is element
+                  or any(e.element is p for p in element.iter(W_P))]
+        if not nested:
+            return -1
+        return max(nested) if after else min(nested) - 1
+
+    # -- history ------------------------------------------------------------------------------
+
+    @contextmanager
+    def batch(self) -> Iterator[None]:
+        """Collapse every edit inside into one undo step; roll all of them back on error."""
+        outermost = not self.history.in_batch
+        if outermost:
+            self._note_ids()
+        recording = self._start_recording()
+        try:
+            with self.history.batch():
+                if outermost:
+                    self._prune_provenance()  # entries a save left behind: none comes back
+                # Round 50: a record an edit inside repeated gets an id of its own when the
+                # batch ends, as an edit's own does (every tool call is a batch).
+                before = self._revision_id_counts() if outermost else None
+                yield
+                if recording is not None:
+                    self._space_written(_typography.recorder())
+                self._follow_text_facts()     # round 36: as each edit does
+                if outermost:
+                    self._unique_revision_ids(before)
+                    self._prune_provenance()  # a deleted table's record goes with it
+            if outermost:
+                self._note_ids()
+        finally:
+            if recording is not None:
+                _typography.stop(recording)
+            self._invalidate()
+
+    def undo(self) -> bool:
+        """Undo the last edit (one step; a :meth:`batch` is one); ``False`` if there is none.
+        Undoing every step gives back the original bytes."""
+        self._note_ids()        # the state it leaves, if no edit read it
+        changed = self.history.undo()
+        self._invalidate()
+        if changed:
+            self._note_ids()    # round 37: an undone deletion is back, a redone one gone again
+        return changed
+
+    def redo(self) -> bool:
+        """Redo the last undone edit; ``False`` if there is none."""
+        self._note_ids()        # the state it leaves, if no edit read it
+        changed = self.history.redo()
+        self._invalidate()
+        if changed:
+            self._note_ids()    # round 37: an undone deletion is back, a redone one gone again
+        return changed
+
+    # -- rendering and layout -----------------------------------------------------------------
+
+    def layout(self, **options) -> "DocumentLayout":
+        """docx2svg's layout of the document as it is now, mapped to this API's ids; cached
+        by the document's bytes, and laid out once with :meth:`render_svg` of the same
+        state.  See :class:`docx_agent.layout.DocumentLayout`::
+
+            before = doc.layout()
+            doc.paragraph("p:3B212964").set_text("A longer text...")
+            doc.layout().where("p:3B212964")    # [Placement(page=1, top=..., bottom=...)]
+            doc.layout().compare(before).changed  # the pages the edit changed
+
+        ``options`` as :meth:`render_svg`'s (no ``pages``: the layout is of every page)."""
+        from ..layout import check_options, lay_out
+
+        check_options(options, "layout")
+        return lay_out(self, **options)
+
+    # -- reading as Markdown and as JSON (E2) -------------------------------------------------
+
+    def to_markdown(self, range: str | None = None, *, view: str = "final", ids: bool = True,
+                    headers: bool = False, notes: bool = True, style_map=None, stories="body") -> str:
+        """The document as Markdown with ids (:func:`docx_agent.markdown.to_markdown`): reads,
+        never writes, never stamps.  ``stories="all"`` adds every header and footer with
+        content and every note after the body (their comments too, in ``view="markup"``);
+        a list names stories (``["body", "header1"]``).  In ``view="markup"`` field results
+        are marked (``<!-- field: REF ... -->...<!-- /field -->``), and a heading's id comment
+        says whether a list numbers it (``numbered: list``) or its number is typed
+        (``numbered: text``)."""
+        from ..markdown import to_markdown
+
+        return to_markdown(self, range, view=view, ids=ids, headers=headers, notes=notes, style_map=style_map,
+                           stories=stories)
+
+    def insert_markdown(self, md: str, *, at: str = "end", style_map=None, images=None, fetch=None,
+                        html: str = "refuse", emphasis: str = "styles", keep_settings: bool = True, like=None) -> EditResult:
+        """Write Markdown as the document's own blocks (:mod:`docx_agent.markdown.write`).
+
+        ``at``: ``"end"`` (the body's end) or ``"end:<story>"``; ``"after:<id>"``,
+        ``"before:<id>"`` (or a bare id: after it); ``"replace:<id>"`` or
+        ``"replace:<id>..<id>"``, blocks of one container.  Headings, paragraphs, lists,
+        quotes, code, thematic breaks, GFM tables, emphasis, strong, strikethrough, inline
+        code, links (external and ``#bookmark``), hard breaks, footnotes and pictures, each in
+        the style ``style_map`` names (by ``w:name``; a mapped built-in style the document
+        lacks is added as Word writes it).  ``style_map`` is a dict of the styles that differ
+        from the default (:class:`~docx_agent.StyleMap`, :data:`StyleMap.DEFAULT`)::
+
+            doc.insert_markdown(md, style_map={"h1": "Report Title", "h2": "Heading 1",
+                                               "paragraph": "Report Body"})
+
+        Its keys: ``paragraph`` (body paragraphs only: table cells are ``table_cell`` and
+        footnotes ``footnote``, which keep the document's defaults unless named),
+        ``h1``-``h6``, ``quote``, ``code``, ``inline_code``, ``bullet``, ``bullet2``-``5``,
+        ``number``, ``number2``-``5``, ``table``, ``footnote_reference``, ``emphasis``,
+        ``strong``, ``link``.
+
+        At ``"end"`` of a body that is only one empty paragraph -- a new document's -- the
+        Markdown replaces that paragraph, as typing into it does (tracked, it is a deleted
+        paragraph that accepting removes).  Pictures come from ``images`` -- a directory a
+        path must lie under, a mapping or a function -- and remote ones only through
+        ``fetch``.  ``html``: ``"refuse"`` raw HTML, or keep it as ``"text"``.  ``emphasis``:
+        the Emphasis and Strong ``"styles"`` (decided), or ``"direct"`` ``w:i``/``w:b``.
+        ``like`` (round 42): list items that look like given paragraphs, by level --
+        ``{1: "p:3", 2: "p:4"}``, a role (``"bullet2"``: a bullet list's second level), or
+        one id for the top level -- each taking its paragraph's style, list at its level
+        (numbered on), indents and page settings (:class:`~docx_agent.edit.like.LevelLooks`).
+
+        At ``"replace:..."`` the new paragraphs keep the settings of the paragraphs they
+        replace (round 42; ``keep_settings=False``: not), matched by kind -- a paragraph, a
+        heading of the same level, a list item of the same kind and level -- and position:
+        the paragraph style where the style map names none for it, keeps, page breaks,
+        indents, spacing and list membership, so items join the replaced items' list and
+        count on in it.  What Markdown says wins: a heading level, a bullet or numbered
+        list, a numbered list's start, a style the map names (then only the keeps and page
+        breaks are kept).  ``kept`` says what each new paragraph kept, and from which.
+
+        One undo step; with tracking, one revision group.  ``created`` lists every new
+        paragraph and table id, ``blocks`` the top-level ones in order, ``warnings`` the
+        styles added."""
+        from ..markdown.write import insert_markdown
+
+        return insert_markdown(self, md, at=at, style_map=style_map, images=images, fetch=fetch, html=html,
+                               emphasis=emphasis, keep_settings=keep_settings, like=like)
+
+    def state(self, range: str | None = None, *, view: str = "final", layout: bool = False,
+              xml: bool = False, style_map=None) -> dict:
+        """The structured, read-only JSON state (:func:`docx_agent.state.state`)."""
+        from ..state import state
+
+        return state(self, range, view=view, layout=layout, xml=xml, style_map=style_map)
+
+    def render_svg(self, pages: list[int] | None = None, **options) -> list[str]:
+        """The pages (1-based; all by default) as SVG strings, through docx2svg, each
+        paragraph group carrying its id in ``data-docx-agent-id``::
+
+            svgs = doc.render_svg(pages=[1])
+
+        Renders always show the **final view**: every tracked change as if accepted,
+        comments not drawn (by decision; ROADMAP.md, "How docx2svg should render
+        revisions").  To review revisions and comments in place, read
+        ``doc.to_markdown(view="markup")``.
+
+        ``options`` are docx2svg's :class:`~docx2svg.ConvertOptions` (``width``,
+        ``height``, ``glyph_size``, ``font_dirs``, ``locale``...; the last two default to
+        :attr:`font_dirs` and :attr:`locale`); an unknown one raises a
+        ``TypeError`` that lists them."""
+        from ..layout import check_options, render_svg
+
+        check_options(options, "render_svg")
+        return render_svg(self, pages, **options)
+
+    def render_png(self, pages: list[int] | None = None, **options) -> list[bytes]:
+        """The pages (1-based; all by default) as PNG bytes, through docx2svg
+        (``pip install docx-agent[png]``)::
+
+            Path("page1.png").write_bytes(doc.render_png(pages=[1])[0])
+
+        Like :meth:`render_svg`, the final view (revisions accepted, comments hidden);
+        review with ``doc.to_markdown(view="markup")``.  ``options`` as :meth:`render_svg`'s
+        (``width=`` and ``height=`` set the pixel size)."""
+        import docx2svg
+
+        from ..layout import check_options
+
+        from ..layout import layout_options
+
+        check_options(options, "render_png")
+        convert = docx2svg.ConvertOptions(pages=pages, **layout_options(self, options))
+        return docx2svg.convert_docx_to_png(self.to_bytes(), convert)
+
+    def __repr__(self) -> str:
+        return f"<Document {len(self.body.paragraphs)} paragraphs, mode {self.compatibility_mode}>"
+
+
+# -- helpers ---------------------------------------------------------------------------------
+
+
+#: Blocks a section is made of.
+_MOVABLE = (W_P, W_TBL, _W + "sdt", _W + "customXml")
+_GONE = (_W + "del", _W + "moveFrom")
+
+
+def _wholly_deleted(block: Element) -> bool:
+    """Whether a body paragraph or table is wholly a pending tracked deletion (:meth:`Document.blocks`'
+    ``deleted``): a paragraph whose mark is deleted and which keeps no content outside a
+    deletion or a move away; a table whose rows are all deleted."""
+    if block.tag == W_TBL:
+        rows = block.findall(_W + "tr")
+        return bool(rows) and all(row.find(f"{_W}trPr/{_W}del") is not None for row in rows)
+    if block.find(f"{W_PPR}/{_W}rPr/{_W}del") is None:
+        return False
+    for run in block.iter(_W + "r"):
+        if not any(isinstance(child.tag, str) and child.tag != _W + "rPr" for child in run):
+            continue
+        parent = run.getparent()
+        while parent is not block and parent.tag not in _GONE:
+            parent = parent.getparent()
+        if parent is block:
+            return False
+    return True
+
+
+def _blocks_text(elements: list[Element], view: str) -> str:
+    """The plain text of blocks (:meth:`Document.block_text`): one line per paragraph, a
+    table's rows one per line with their cells separated by tabs, a control's or custom XML
+    element's blocks as theirs; markers between blocks add nothing."""
+    lines = []
+    for element in elements:
+        tag = element.tag if isinstance(element.tag, str) else None
+        if tag == W_P:
+            lines.append(_text.paragraph_text(element, view))
+        elif tag == W_TBL:
+            lines += [_row_text(row, view) for row in _own(element, "tr") if _row_shown(row, view)]
+        elif tag in (_W + "sdt", _W + "customXml"):
+            content = element.find(_W + "sdtContent") if tag == _W + "sdt" else element
+            if content is not None:
+                lines.append(_blocks_text(list(content), view))
+    return "\n".join(lines)
+
+
+def _own(element: Element, name: str) -> list[Element]:
+    """``element``'s ``w:<name>`` descendants that are its own: not those of a table nested
+    in it (rows and cells inside controls or custom XML are its own)."""
+    wanted = _W + name
+    stop = (_W + "tbl", _W + "tc", _W + "tr")
+    out = []
+
+    def walk(node: Element) -> None:
+        for child in node:
+            if not isinstance(child.tag, str):
+                continue
+            if child.tag == wanted:
+                out.append(child)
+            elif child.tag not in stop:
+                walk(child)
+
+    walk(element)
+    return out
+
+
+def _row_shown(row: Element, view: str) -> bool:
+    """Whether a row is in ``view``: a deleted row (``w:trPr/w:del``) is not in the current
+    one, an inserted row (``w:trPr/w:ins``) not in the original."""
+    gone = {"current": "del", "original": "ins"}.get(view)
+    return gone is None or row.find(f"{_W}trPr/{_W}{gone}") is None
+
+
+def _row_text(row: Element, view: str) -> str:
+    return "\t".join(_cell_text(cell, view) for cell in _own(row, "tc"))
+
+
+def _cell_text(cell: Element, view: str) -> str:
+    return _blocks_text(list(cell), view)
+
+
+def _inline_control_text(sdt: Element, view: str) -> str:
+    """An inline control's text in ``view`` (its content's characters)."""
+    paragraph = sdt.getparent()
+    while paragraph is not None and paragraph.tag != W_P:
+        paragraph = paragraph.getparent()
+    content = sdt.find(_W + "sdtContent")
+    if paragraph is None or content is None:
+        return ""
+    nodes = list(content.iter())  # held: one proxy per element, stable id()s
+    inside = {id(n) for n in nodes}
+    return "".join(a.char for a in _text.atoms(paragraph, view) if id(a.node) in inside)
+
+#: A text range's id (``p:A@4:11``, ``p:A@5``, ``p:A@3..p:B@8``), not a positional block id
+#: (``p@body/7``, which the ``@`` of a range may follow).
+_RANGE_ID = re.compile(r".+@\d+(?::\d+|\.\..+@\d+)?")
+
+
+#: A block id inside any address (``p:X``, ``header1/p:X``, ``t:X/c1,2``, ``p:X@3:9``,
+#: ``h:p:X``, ``s:X``, ``tr:X``, a span's ends): the eight hex digits of its paraId.
+_GONE_BLOCK = re.compile(r"(?:^|(?<=[/:.]))(?:[A-Za-z0-9_]+/)?(?:p|t|tr|s):(?P<hex>[0-9A-Fa-f]{8})(?![0-9A-Fa-f])")
+#: A drawing's id, ``d:<number>`` (a group's member: its group).
+_GONE_DRAWING = re.compile(r"d:(\d+)(?![\d#])")
+
+
+def _deleted_message(document: "Document", named: str, version: int, replaced_by: str | None = None,
+                     identifier: str | None = None) -> str:
+    """What naming a removed id says: which change removed it, and the way on (round 37).
+    A change made before the document was saved and opened again with its id state is
+    described by the state's words, and says so (round 38)."""
+    earlier = document._ledger.earlier
+    if version in earlier:
+        who = earlier[version]
+    else:
+        describe = document.describe_step
+        who = describe(version) if describe is not None else None
+    what = f"replaced with {replaced_by}" if replaced_by else "deleted"
+    by = f" by {who}, the change that made version {version}" if who else f" in the change that made version {version}"
+    if version in earlier:
+        by += ", before the document was saved and opened again"
+    head = f"{identifier}: " if identifier and identifier != named else ""
+    tool = document.read_hint or "to_markdown"
+    return (f"{head}{named} was {what}{by}. An id is never given to another block: read that part of "
+            f"the document again ({tool}) for the ids there now"
+            + (f", or use {replaced_by}" if replaced_by else ""))
+
+
+def _top_block(element: Element) -> Element | None:
+    """The body's top-level block holding ``element`` (it, or an ancestor): the outermost
+    paragraph, table or content control under the body, custom XML passed through as
+    :meth:`Document.blocks` passes it; ``None`` for an element outside every block (a
+    marker standing between blocks, the body's ``w:sectPr``) or not in the body."""
+    chain = [element, *element.iterancestors()]
+    body = next((k for k, node in enumerate(chain) if node.tag == W_BODY), None)
+    if body is None:
+        return None
+    for node in reversed(chain[:body]):
+        if node.tag in (W_P, W_TBL, _W + "sdt"):
+            return node
+        if node.tag != _W + "customXml":
+            return None
+    return None
+
+
+class _HeadingLevels:
+    """A body paragraph's heading level (1-9), as ``to_markdown`` reads ``#``: the outline
+    level it states, else its style's (by name, or the outline level the style declares)."""
+
+    def __init__(self, document: "Document") -> None:
+        from ..markdown.read import Reader
+
+        self.reader = Reader(document)
+
+    def of(self, paragraph: Element) -> int | None:
+        properties = paragraph.find(W_PPR)
+        direct = properties.find(_W + "outlineLvl") if properties is not None else None
+        if direct is not None:
+            try:
+                value = int(direct.get(_W + "val"))
+            except (TypeError, ValueError):
+                value = 9
+            return value + 1 if 0 <= value <= 8 else None
+        style = properties.find(_W + "pStyle") if properties is not None else None
+        style_id = style.get(_W + "val") if style is not None else None
+        name = self.reader.style_name(style_id) if style_id else None
+        return self.reader.map.heading_level(name, self.reader.outline_level(style_id))
+
+
+class _OutlineLevels:
+    """Paragraphs' outline levels (1-9, ``None`` for body text) as Word reads them for a
+    table of contents (measured: ``fields`` module docstring, "Which paragraphs a table of
+    contents lists").  One per document state: styles are read once."""
+
+    def __init__(self, document: "Document") -> None:
+        self.document = document
+        self.nodes = {node.get(_W + "styleId"): node for node in document.styles._nodes()}
+        default = document.styles.default("paragraph")
+        self.default = default.id if default is not None else None
+        self._levels: dict[str | None, int | None] = {}
+
+    def style_id(self, paragraph: Element) -> str | None:
+        """The paragraph style applied: the one named if the document has it, else the default."""
+        found = paragraph.find(f"{W_PPR}/{_W}pStyle")
+        named = found.get(_W + "val") if found is not None else None
+        return named if named in self.nodes else self.default
+
+    def style_name(self, paragraph: Element) -> str | None:
+        style_id = self.style_id(paragraph)
+        node = self.nodes.get(style_id)
+        name = node.find(_W + "name") if node is not None else None
+        return name.get(_W + "val") if name is not None else style_id
+
+    def style(self, style_id: str | None) -> int | None:
+        """The level a paragraph style gives (what ``\\o`` reads): a built-in heading's
+        (``heading 1`` to ``heading 9``, by name) is its number, whatever its definition
+        states; another style's is the ``w:outlineLvl`` its ``basedOn`` chain declares
+        first, a built-in heading in the chain counting as its number
+        (:attr:`~docx_agent.edit.styles.Style.outline_level`)."""
+        return style_outline_level(self.nodes, style_id, self._levels)
+
+    def own(self, paragraph: Element) -> int | None:
+        """The level the paragraph states itself; ``None`` where it states none or body text."""
+        node = paragraph.find(f"{W_PPR}/{_W}outlineLvl")
+        return outline_value(node) if node is not None else None
+
+    def from_style(self, paragraph: Element) -> int | None:
+        return self.style(self.style_id(paragraph))
+
+    def effective(self, paragraph: Element) -> int | None:
+        """The paragraph's level (what ``\\u`` reads): a built-in heading style's number;
+        else the level the paragraph states (body text, ``w:outlineLvl`` 9, is ``None``,
+        whatever its style gives); else its style's."""
+        style_id = self.style_id(paragraph)
+        node = self.nodes.get(style_id)
+        heading = BUILTIN_HEADING.fullmatch(_style_name(node) or "") if node is not None else None
+        if heading:
+            return int(heading.group(1))
+        if paragraph.find(f"{W_PPR}/{_W}outlineLvl") is not None:
+            return self.own(paragraph)
+        return self.style(style_id)
+
+
+def _style_name(node: Element) -> str | None:
+    name = node.find(_W + "name")
+    return name.get(_W + "val") if name is not None else None
+
+
+
+def _find(node: Element | None, path: str) -> Element | None:
+    for step in path.split("/"):
+        if node is None:
+            return None
+        node = node.find(qn(step))
+    return node
+
+
+def _int(node: Element | None, default: int, attribute: str = "w:val") -> int:
+    if node is None:
+        return default
+    try:
+        return int(node.get(qn(attribute)) or "")
+    except ValueError:
+        return default
+
+
+def cell_element(row: Element, column: int) -> Element | None:
+    """The ``w:tc`` of ``row`` whose grid column (``w:gridBefore`` and the spans before it
+    counted) is ``column``, or ``None``."""
+    at = _int(_find(row, "w:trPr/w:gridBefore"), 0)
+    for tc in _cells(row):
+        if at == column:
+            return tc
+        at += max(1, _int(_find(tc, "w:tcPr/w:gridSpan"), 1))
+    return None
+
+
+def _cells(row: Element) -> list[Element]:
+    """A row's ``w:tc``, also inside row-level ``w:sdt``/``w:customXml``."""
+    out: list[Element] = []
+    for child in row:
+        if child.tag == W_TC:
+            out.append(child)
+        elif child.tag == _W + "sdt":
+            content = child.find(_W + "sdtContent")
+            if content is not None:
+                out.extend(_cells(content))
+        elif child.tag == _W + "customXml":
+            out.extend(_cells(child))
+    return out
+
+
+def _fields_balanced(paragraph: Element) -> bool:
+    depth = 0
+    for node in paragraph.iter(_W + "fldChar"):
+        kind = node.get(_W + "fldCharType")
+        if kind == "begin":
+            depth += 1
+        elif kind == "end":
+            depth -= 1
+            if depth < 0:
+                return False
+    return depth == 0
+
+
+_MARKERS = frozenset(_RANGE_PAIRS) | frozenset(_RANGE_ENDS)
+_BLOCK_TAGS = frozenset({W_P, W_TBL, _W + "sdt", _W + "customXml", _W + "altChunk"})
+
+
+def _control_movable(entry: ControlBlock, doing: str) -> None:
+    """Refuse to delete or move a block-level control that is locked (``w:lock``) or holds
+    a section break."""
+    found = entry.element.find(f"{_W}sdtPr/{_W}lock")
+    value = found.get(_W + "val") if found is not None else None
+    if value in ("sdtLocked", "sdtContentLocked"):
+        raise EditError(f"{entry.id} is locked against deletion (w:lock {value}): {doing} it is refused")
+    if value == "contentLocked":
+        raise EditError(f"{entry.id}'s content is locked (w:lock contentLocked): {doing} it is refused")
+    if entry.element.find(f".//{W_PPR}/{W_SECTPR}") is not None:
+        raise EditError(f"{entry.id} holds a section break; {doing} it would move or join sections")
+
+
+def _check_container_survives(element: Element) -> None:
+    """A cell, a body or a story must still end on a paragraph once ``element`` is gone."""
+    parent = element.getparent()
+    if parent is None:
+        raise EditError("the block has no container")
+    container = parent
+    while container is not None and container.tag in (_W + "sdtContent", _W + "sdt", _W + "customXml"):
+        container = container.getparent()
+    blocks = [child for child in _direct_blocks(container) if child is not element]
+    if not blocks:
+        raise EditError("deleting it would leave its story or cell with no paragraph")
+    last = blocks[-1]
+    if last.tag == W_TBL:
+        raise EditError("deleting it would leave a table last in its story or cell; Word "
+                        "needs a paragraph after it")
+
+
+def _direct_blocks(container: Element) -> list[Element]:
+    """The blocks of a container in order, seeing through block-level content controls and
+    custom XML."""
+    out: list[Element] = []
+    for child in container:
+        if child.tag in (W_P, W_TBL):
+            out.append(child)
+        elif child.tag == _W + "sdt":
+            content = child.find(_W + "sdtContent")
+            if content is not None:
+                out.extend(_direct_blocks(content))
+        elif child.tag == _W + "customXml":
+            out.extend(_direct_blocks(child))
+    return out
+
+
+def _rehome_markers(element: Element) -> None:
+    """Move the range markers whose partner is outside ``element`` to the nearest paragraph
+    that stays, so no range is left with one end."""
+    inside: dict[tuple[str, str], Element] = {}
+    for node in element.iter():
+        if node.tag in _MARKERS:
+            inside[(node.tag, node.get(qn("w:id")) or "")] = node
+    lonely: list[Element] = []
+    for (tag, mark_id), node in inside.items():
+        partner = _RANGE_PAIRS.get(tag) or _RANGE_ENDS.get(tag)
+        if (partner, mark_id) not in inside:
+            lonely.append(node)
+    if not lonely:
+        return
+    following = _neighbour_paragraph(element, forward=True)
+    previous = _neighbour_paragraph(element, forward=False)
+    for node in lonely:
+        node.tail = None
+        if following is not None:
+            properties = following.find(W_PPR)
+            if properties is not None:
+                properties.addnext(node)
+            else:
+                following.insert(0, node)
+        elif previous is not None:
+            previous.append(node)
+
+
+def _block_sibling(element: Element, step: int) -> Element | None:
+    """The block (paragraph, table, control) beside ``element`` in its container, before it
+    (``step`` -1) or after it (1); ``None`` at the container's start or end."""
+    node = element.getprevious() if step < 0 else element.getnext()
+    while node is not None:
+        if isinstance(node.tag, str) and node.tag in (W_P, W_TBL, _W + "sdt", _W + "customXml"):
+            return node
+        if isinstance(node.tag, str) and node.tag == W_SECTPR:
+            return None
+        node = node.getprevious() if step < 0 else node.getnext()
+    return None
+
+
+def _separator_of(table: Element, author: str) -> Element | None:
+    """The empty paragraph, ``author``'s own pending insertion, between ``table`` and a
+    table beside it: what docx-agent writes so that two tables do not touch."""
+    for step in (-1, 1):
+        paragraph = _block_sibling(table, step)
+        if paragraph is None or paragraph.tag != W_P:
+            continue
+        record = _track.mark_record(paragraph)
+        if record is None or record.tag != _W + "ins" or record.get(_W + "author") != author:
+            continue
+        if any(True for _ in paragraph.iter(_W + "r", _W + "fldSimple", W_TBL, W_SECTPR)):
+            continue
+        beyond = _block_sibling(paragraph, step)
+        if beyond is not None and beyond.tag == W_TBL:
+            return paragraph
+    return None
+
+
+def _neighbour_paragraph(element: Element, *, forward: bool) -> Element | None:
+    body = element
+    while body.getparent() is not None:
+        body = body.getparent()
+    paragraphs = [p for p in body.iter(W_P)]
+    inside = set(map(id, element.iter(W_P)))
+    try:
+        anchor = next(i for i, p in enumerate(paragraphs) if id(p) in inside)
+        last = max(i for i, p in enumerate(paragraphs) if id(p) in inside)
+    except (StopIteration, ValueError):
+        return None
+    candidates = paragraphs[last + 1:] if forward else reversed(paragraphs[:anchor])
+    for paragraph in candidates:
+        if id(paragraph) not in inside:
+            return paragraph
+    return None
+
+
+#: Every revision record's tag: a block holding one moves as a deletion and an insertion.
+REVISION_KINDS_ALL = frozenset(_W + name for name in (
+    "ins", "del", "moveFrom", "moveTo", "rPrChange", "pPrChange", "sectPrChange", "tblPrChange",
+    "trPrChange", "tcPrChange", "tblGridChange", "numberingChange", "cellIns", "cellDel", "cellMerge"))
+
+
+def _clear_revisions(paragraph: Element) -> None:
+    """Make a copied paragraph's content plain: its insertions unwrapped, its deletions and
+    moved-away text removed, its records dropped -- what it shows in the current view."""
+    for node in list(paragraph.iter(_W + "del", _W + "moveFrom")):
+        if node.getparent() is not None and node.getparent().tag != qn("w:rPr"):
+            remove(node)
+    for node in list(paragraph.iter(_W + "ins", _W + "moveTo")):
+        parent = node.getparent()
+        if parent is None:
+            continue
+        if parent.tag == qn("w:rPr"):
+            remove(node)
+            continue
+        for child in list(node):
+            node.addprevious(child)
+        remove(node)
+    for node in list(paragraph.iter(_W + "rPrChange", _W + "pPrChange")):
+        remove(node)
+    for node in list(paragraph.iter(_W + "del", _W + "moveFrom")):
+        remove(node)
+
+
+def _make_trackable() -> None:
+    """Give every edit a ``track`` keyword (:func:`docx_agent.revisions.mode.trackable`)."""
+    from .annotations import Note as _Note
+    from .links import Hyperlink as _Hyperlink
+
+    plan = {
+        Document: ("set_paragraph_style", "set_character_style", "format_range", "format_paragraph",
+                   "format_run", "clear_formatting", "insert_paragraph", "append_paragraph", "delete_block",
+                   "move_block", "move_blocks", "replace", "insert_text", "delete_text", "add_to_list", "set_list_level",
+                   "restart_numbering", "continue_numbering", "remove_from_list", "set_list_format",
+                   "add_hyperlink", "insert_cross_reference", "insert_picture", "insert_row", "delete_row",
+                   "insert_column", "delete_column", "merge_cells", "split_cell", "insert_table", "set_table",
+                   "set_column_width", "set_row", "set_cell", "float_drawing", "inline_drawing", "set_drawing",
+                   "move_drawing", "resize_drawing", "insert_text_box", "insert_shape", "fill_control",
+                   "insert_control", "remove_control", "add_bookmark", "rename_bookmark",
+                   "remove_bookmark", "coalesce_runs", "_set_text", "insert_markdown", "copy_blocks",
+                   # E4: what Word tracks (a section's properties, a break, notes, fields, a
+                   # table of contents, text in a story); the rest take track= and write no
+                   # revision, as Word writes none for them.
+                   "insert_section_break", "remove_section_break", "set_section", "add_header", "add_footer",
+                   "link_to_previous", "unlink_from_previous", "remove_header", "remove_footer",
+                   "insert_footnote", "insert_endnote", "edit_note", "delete_note", "move_note",
+                   "insert_field", "insert_page_number", "insert_date", "insert_sequence", "insert_caption",
+                   "insert_hyperlink", "insert_toc"),
+        Paragraph: ("set_style", "format", "clear_direct_formatting", "add_to_list", "indent_list",
+                    "outdent_list", "restart_numbering", "continue_numbering", "remove_from_list", "set_text",
+                    "insert_after", "insert_before", "delete", "move", "coalesce_runs"),
+        Run: ("format",),
+        TextRange: ("replace", "delete", "insert_before", "insert_after", "format", "set_style",
+                    "clear_formatting", "add_hyperlink", "add_bookmark", "insert_picture"),
+        Table: ("insert_row", "delete_row", "insert_column", "delete_column", "merge", "split", "set",
+                "set_column_width", "set_row", "set_cell"),
+        _Hyperlink: ("set_target", "remove"),
+        Picture: ("replace", "resize", "delete"),
+        Section: ("set", "remove_break", "add_header", "add_footer", "link_to_previous", "unlink_from_previous"),
+        _Note: ("edit", "delete", "move"),
+    }
+    for cls, names in plan.items():
+        for name in names:
+            setattr(cls, name, trackable(getattr(cls, name)))
+
+
+_make_trackable()

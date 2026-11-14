@@ -1,0 +1,260 @@
+{
+ "task": "w5-selective-review",
+ "clock": "2026-10-07T09:00:00+00:00",
+ "open": [
+  "remote-working-guideline.docx"
+ ],
+ "calls": [
+  {
+   "tool": "describe",
+   "arguments": {
+    "doc": "d1"
+   },
+   "expect": {
+    "ok": true,
+    "summary": "Described remote-working-guideline.docx",
+    "data_sha": "d3aac538e0d9179d",
+    "data_keys": [
+     "comments",
+     "comments.by_author",
+     "comments.open",
+     "comments.threads",
+     "compatibility_mode",
+     "controls",
+     "drawings",
+     "fields",
+     "headings",
+     "name",
+     "notes",
+     "pages",
+     "problems",
+     "properties",
+     "properties.author",
+     "properties.subject",
+     "properties.title",
+     "revisions",
+     "revisions.by_author",
+     "revisions.changes",
+     "revisions.records",
+     "sections",
+     "styles_in_use",
+     "tables",
+     "tracking"
+    ],
+    "data_sha_core": "988c5f7187f8fa20"
+   }
+  },
+  {
+   "tool": "word_changes",
+   "arguments": {
+    "doc": "d1",
+    "action": "list"
+   },
+   "expect": {
+    "ok": true,
+    "summary": "8 change(s)",
+    "data_sha": "bb41bfe958cf1974",
+    "data_keys": [
+     "[].author",
+     "[].date",
+     "[].id",
+     "[].kind",
+     "[].old_text",
+     "[].paragraphs",
+     "[].records",
+     "[].text"
+    ],
+    "data_sha_core": "bb41bfe958cf1974"
+   }
+  },
+  {
+   "tool": "word_changes",
+   "arguments": {
+    "doc": "d1",
+    "action": "accept",
+    "author": "Alice Moreau"
+   },
+   "expect": {
+    "ok": true,
+    "summary": "Accepted 4 revision record(s)",
+    "data_sha": "83a14baee777b3a3",
+    "data_keys": [
+     "changes_left",
+     "left_by_author",
+     "left_by_author.Bob Lindqvist",
+     "left_by_author.Chen Wei",
+     "records",
+     "this_session"
+    ],
+    "data_sha_core": "83a14baee777b3a3"
+   }
+  },
+  {
+   "tool": "word_changes",
+   "arguments": {
+    "doc": "d1",
+    "action": "reject",
+    "author": "Bob Lindqvist"
+   },
+   "expect": {
+    "ok": true,
+    "summary": "Rejected 5 revision record(s)",
+    "data_sha": "e9f57ae54ca6db00",
+    "data_keys": [
+     "changes_left",
+     "left_by_author",
+     "left_by_author.Chen Wei",
+     "records",
+     "this_session"
+    ],
+    "data_sha_core": "e9f57ae54ca6db00"
+   }
+  },
+  {
+   "tool": "word_changes",
+   "arguments": {
+    "doc": "d1",
+    "action": "list"
+   },
+   "expect": {
+    "ok": true,
+    "summary": "2 change(s)",
+    "data_sha": "c7de1c98ff17b9d8",
+    "data_keys": [
+     "[].author",
+     "[].date",
+     "[].id",
+     "[].kind",
+     "[].old_text",
+     "[].paragraphs",
+     "[].records",
+     "[].text"
+    ],
+    "data_sha_core": "c7de1c98ff17b9d8"
+   }
+  },
+  {
+   "tool": "word_set_tracking",
+   "arguments": {
+    "doc": "d1",
+    "on": true,
+    "author": "Claude"
+   },
+   "expect": {
+    "ok": true,
+    "summary": "Tracking on, as Claude",
+    "data_sha": "ec60fd32c07c245f",
+    "data_keys": [
+     "author",
+     "tracking",
+     "word_switch"
+    ],
+    "data_sha_core": "ec60fd32c07c245f"
+   }
+  },
+  {
+   "tool": "word_insert_markdown",
+   "arguments": {
+    "doc": "d1",
+    "markdown": "## Review summary\n\n- Accepted (Alice Moreau): \"Team leads should agree\" became \"Team leads must agree\".\n- Accepted (Alice Moreau): deleted \"Outside core hours, employees choose when they work.\"\n- Accepted (Alice Moreau): added \"Report a lost device to the service desk within 24 hours.\"\n- Rejected (Bob Lindqvist): \"up to three days a week\" changed to \"up to five days a week\".\n- Rejected (Bob Lindqvist): the furniture allowance changed from EUR 300 to EUR 750.\n- Rejected (Bob Lindqvist): deleted \"Use the company VPN on every network outside the office.\"\n",
+    "at": "end"
+   },
+   "expect": {
+    "ok": true,
+    "summary": "Inserted 7 block(s)",
+    "created": [
+     "p:248828D0",
+     "p:4D332FBE",
+     "p:1234B65C",
+     "p:36070FA6",
+     "p:07C803C5",
+     "p:60298A4C",
+     "p:27E7AE38"
+    ],
+    "warnings": [
+     "style added: List Bullet (ListBullet), as Word writes it"
+    ],
+    "data_sha": "0350c06d15d5aace",
+    "data_keys": [
+     "blocks"
+    ],
+    "data_sha_core": "0350c06d15d5aace"
+   }
+  },
+  {
+   "tool": "word_read",
+   "arguments": {
+    "doc": "d1",
+    "view": "markup"
+   },
+   "expect": {
+    "ok": true,
+    "summary": "Read the document (markup)",
+    "data_sha": "3d86756b19066d1a",
+    "data_sha_core": "3d86756b19066d1a"
+   }
+  },
+  {
+   "tool": "check",
+   "arguments": {
+    "doc": "d1"
+   },
+   "expect": {
+    "ok": true,
+    "summary": "Checked validate, reflow, fields",
+    "data_sha": "e61d0ad860d56858",
+    "data_keys": [
+     "fields",
+     "fields.counts",
+     "fields.note",
+     "reflow",
+     "reflow.complete",
+     "reflow.coverage",
+     "reflow.pages",
+     "validate",
+     "validate.baseline",
+     "validate.fixed",
+     "validate.new",
+     "validate.problems",
+     "validation",
+     "validation.baseline",
+     "validation.new"
+    ],
+    "data_sha_core": "23ba4d8504c4cba4"
+   }
+  },
+  {
+   "tool": "save_document",
+   "arguments": {
+    "doc": "d1",
+    "name": "remote-working-guideline.docx",
+    "format": "docx"
+   },
+   "expect": {
+    "ok": true,
+    "summary": "Saved remote-working-guideline.docx for the application",
+    "data_sha": "b734d751bf8904e6",
+    "data_keys": [
+     "coverage",
+     "coverage.blocks_laid_out",
+     "coverage.complete",
+     "coverage.pages",
+     "coverage.status",
+     "doc",
+     "format",
+     "name",
+     "size",
+     "validate",
+     "validate.baseline",
+     "validate.fixed",
+     "validate.new"
+    ],
+    "data_sha_core": "e3941c1ab580753c"
+   }
+  }
+ ],
+ "output": {
+  "name": "remote-working-guideline.docx",
+  "sha256": "1814f789a78d8f75b2aaed6c2edbb01b9d98eda007e0985cabb3d99e1ba8de32"
+ }
+}

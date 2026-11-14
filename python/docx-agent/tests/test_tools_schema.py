@@ -1,0 +1,379 @@
+"""The Word tool definitions against each provider's rules, and the token budgets.
+
+Offline: every canonical schema is in the common strict subset (``ooxml_edit.tools`` refuses
+a tool that is not, when it is made); the Anthropic, OpenAI Responses and Chat Completions
+adapters' output passes each provider's documented strict rules; no parameter is a path; the
+groups are as the roadmap lists them.
+
+**The budgets (tool roadmap, "Budgets", after T5's rationalisation).**  What binds is what a
+request loads: the core, at most 6,500 tokens as Anthropic's count-tokens counts them
+(raised from 5,500 by the user on 2026-10-11, to 6,500 on 2026-10-17)
+(``test_tools_online.py``, marked provider).  Offline, characters / 3.5 of each definition's
+compact JSON stands in for it, times 1.48, the ratio of the counted to the estimated size
+T5 and T5b measured on Sonnet 5.5 (the Word core: 2,384 estimated, 3,539 counted; every
+definition: 11,046 and 15,544).  Every definition, deferred ones included, is held at what
+the rationalisation left plus a small margin: a regression guard, not a budget.  T4 raised it
+by 400 for edit_chart's add, data-label and gap-width actions (11,056 -> 11,402), which took
+the place of a separate word_insert_chart; the core is unchanged.  Post-T4 lowered it:
+word_insert_table and list_documents went (no model called them; a new table is Markdown),
+11,402 -> 11,080 estimated, the core unchanged at 2,384.  The radar chart type in
+edit_chart's enum added 3 (11,083); the guard stays.  ooxml-edit 0.12's optional scope on
+the shared undo added 33 to the core (2,384 -> 2,417, about 3,577 counted by the proxy) and
+to every definition (11,116), though a Word document refuses it (it undoes document-wide);
+budget and guard stay.  ooxml-edit 0.14's slide ids in render's and check's ``slides`` (the
+items a string: ``s:256``, ``$ref`` or a number) added 12 to the core (2,417 -> 2,429, about
+3,595 counted by the proxy) and to every definition (11,128); a document's ``pages`` stay
+numbers (``"1"`` is refused, ``pages[0] must be a number``).  Budget and guard stay.  Round
+3's chart formatting in the deferred edit_chart (axis scales, gridlines, series and point
+colours and markers, series type, chart text, point labels; the radar_filled and bubble types)
+added 646 to every definition (11,774), none to the core; the guard rises to 11,850 rather
+than squeeze the descriptions.  ooxml-edit 0.18's workbook kind in the shared tools
+(``describe``'s and ``find_text``'s descriptions, find_text's ``range``, ``xlsx`` in
+new_document's ``kind``, ``xlsx``, ``xlsm`` and ``xltx`` in save_document's ``format``) added
+64 to the core (2,471 -> 2,535, about 3,752 counted by the proxy, within 6,000) and to every
+definition (11,880); the guard rises to 11,950.  ooxml-edit 0.22 (O3) put ``from`` and
+``columns`` on the deferred edit_chart (about 11,933).  X1, tables from data (``from``,
+``from_columns`` and ``header`` on word_insert_markdown and word_edit_table) added 194 to
+every definition (12,127), none to the core; the guard rises to 12,150, the next 50, rather
+than squeeze descriptions the pptx-agent twins share.  With seven optional parameters
+word_insert_markdown keeps its strict place, and edit_smartart (two) no longer fits Claude's
+24 beside the others: it is sent non-strict (the dispatcher still validates it), 23 optional
+parameters over the strict tools.  ooxml-edit 0.26.0 (round 5, T1): ``batch`` applies its
+ops one by one by default and takes ``atomic`` for all or none; its description and the new
+parameter add 22 to the core (2,535 -> 2,558, about 3,786 counted) and to every definition
+(12,131 -> 12,153); the guard rises to 12,155.  The strict set is unchanged: ``batch`` is
+never strict.  ooxml-edit 0.32.0 (round 5, T2): a chart added with its look in one call
+(``data_labels`` and ``colors`` on the deferred edit_chart, ``add`` in ``style``'s and
+``part``'s descriptions, "Batch several changes.") adds 63 to every definition (12,153 ->
+12,216), none to the core (2,558); the guard rises to 12,220.  The strict set is unchanged:
+edit_chart left it in T4.  ooxml-edit 0.36.0 (round 6, R6): find_text's and replace_text's
+``slides`` take slide ids as render's do (strings with ``orInteger``, "or ids (s:256,
+$ref)"; decks only) and add 12 to the core (2,558 -> 2,570, about 3,804 counted) and to
+every definition (12,216 -> 12,228); the guard rises to 12,230.  The strict set changes:
+replace_text's ``slides`` items are strings now.
+"""
+
+from __future__ import annotations
+
+import json
+import math
+
+import pytest
+
+pytest.importorskip("ooxml_edit.tools.shared", reason="needs ooxml-edit 0.4 (the shared tools)")
+
+from ooxml_edit.tools import Toolbox  # noqa: E402
+from ooxml_edit.tools.adapters import anthropic_problems, openai_problems  # noqa: E402
+from ooxml_edit.tools.schema import is_path_name, subset_problems, walk_properties  # noqa: E402
+
+from docx_agent.tools import FORMAT, GROUPS, TOOLS, WORD_TOOLS  # noqa: E402
+
+#: Round 6, R9: date formats -- ``date_format`` on word_insert_markdown and word_edit_table (a
+#: table from rows, its dates as text in a pattern) and on the shared edit_chart (ooxml-edit
+#: 0.38.0: add from, its category dates kept as an Excel code) -- add 84 to every definition
+#: (12,228 -> 12,312), none to the core (2,570).  The guard rises to 12,315.  The strict set
+#: is unchanged in its members; word_insert_markdown's and word_edit_table's schemas gain one
+#: optional string each.
+#: Round 6, R10: edit_chart's chart_type enum gains ``dot`` (ooxml-edit 0.40.0): +2 to every
+#: definition (12,312 -> 12,314), none to the core; the guard stays 12,315.  edit_chart is
+#: sent non-strict, so the strict set is unchanged.
+#: Round 9, N1: render's ``sheet`` (``{columns, width}``: pages tiled into one labelled image,
+#: ooxml-edit 0.49.0) adds 64 to the core (2,570 -> 2,634) and to every definition (12,314 ->
+#: 12,378).  The guard rises to 12,380.  The strict set is unchanged in its members: render
+#: is not sent strict to Claude; on OpenAI, where it is, ``sheet`` is one more object.
+#: Round 10, item 4: the shared undo's ``scope`` says what each kind takes (ooxml-edit
+#: 0.55.0): the core 2,634 -> 2,635, every definition 12,378 -> 12,379; the guard stays
+#: 12,380.  The strict set is unchanged: undo is not strict, and no parameter is added.
+#: Round 12, Q1: the shared check's ``spacing`` (decks: the gaps, padding and frame
+#: clearances below that many pt, ooxml-edit 0.56.0; a document refuses it) adds 35 to the
+#: core (2,635 -> 2,670) and to every definition (12,379 -> 12,414).  The guard rises to
+#: 12,415.  The strict set is unchanged in its members: check is a reading tool, not sent
+#: strict to Claude; on OpenAI, where it is, ``spacing`` is one more nullable number.
+#: Round 15, T2: the shared check's ``contrast`` (decks: text below that contrast ratio with
+#: what is behind it, ooxml-edit 0.59.0; a document refuses it) adds 37 to the core
+#: (2,670 -> 2,707) and to every definition (12,414 -> 12,451).  The guard rises to 12,452.
+#: The strict set is unchanged in its members, as with spacing.
+#: Round 16, F11: the shared save_document's ``clean`` (orphaned parts, rsids, web divs and
+#: an external template link taken out of the file saved, ooxml-edit 0.60.0) adds 42 to the
+#: core (2,707 -> 2,749) and to every definition (12,451 -> 12,493).  The guard rises to
+#: 12,494.  save_document is not sent strict to Claude; on OpenAI ``clean`` is one more
+#: nullable boolean.
+#: Round 16, F8: the shared check's ``layout`` facts and their two measures, ``min_size`` (a
+#: number) and ``styles`` (names; ooxml-edit 0.61.0), add 67 to the core (2,749 -> 2,816,
+#: about 4,168 counted by the proxy) and to every definition; word_format's ``clear`` (the
+#: properties a direct_formatting fix takes back to the style: an enum of word_format's own
+#: names, deferred in word_style) adds 95 more there (12,493 -> 12,655).  The guard rises to
+#: 12,656.  Neither tool is sent strict to Claude; on OpenAI ``min_size`` is one more nullable
+#: number, ``styles`` and ``clear`` nullable arrays of strings.
+#: Round 16, F9: word_design_facts (deferred, in word_style: a template's design facts) adds
+#: 169 to every definition (12,655 -> 12,824), none to the core (2,816).  The guard rises to
+#: 12,825.  It is a reading tool, not sent strict: the strict set is unchanged.
+#: Round 17, P4: word_copy_from's description says it copies from "an open document, this one
+#: too": +1 to every definition (12,824 -> 12,825), the guard.  P3: word_compare_blocks
+#: (deferred, in word_style: blocks compared with a reference block, the fixes as calls) adds
+#: 258 to every definition (12,825 -> 13,083), none to the core (2,816).  The guard rises to
+#: 13,085.  It is a reading tool, not sent strict: the strict set is unchanged.
+#: Round 17, P6: word_drawings' ``color`` (an SVG's tint) adds 27 to every definition
+#: (13,083 -> 13,110), none to the core; the guard rises to 13,115.  ``size_pt`` is an alias
+#: of ``width`` (no definition).  With an asset catalogue configured (docx_format(assets=...)),
+#: ``asset`` and word_find_asset add 151 more (13,261): what the application chose to send.
+#: word_drawings is not strict: the strict set is unchanged.
+#: Round 21, T7: word_design_facts' ``declared_styles`` (every declared style resolved, an
+#: include value) and ``cursor`` (its pages) add 42 to every definition (13,110 -> 13,152),
+#: none to the core (2,816).  The guard rises to 13,155.  It is a reading tool, not sent
+#: strict: the strict set is unchanged.
+#: Round 21, T5: word_format_table's ``width_of`` (``body``: a share of the lines of the
+#: paragraphs around the table, their indents included) adds 31 to every definition
+#: (13,152 -> 13,183), none to the core (2,816); the guard rises to 13,185.  word_format_table
+#: is not strict: the strict set is unchanged (6 tools, 24 optional parameters).
+#: Round 22, Q3: word_insert_markdown's style_map elements ``table_cell_center`` and
+#: ``table_cell_right`` (a column's alignment through a style) add 11 to every definition
+#: (13,183 -> 13,194), none to the core (2,816); the guard rises to 13,195.  word_insert_markdown
+#: is strict: two enum values, no parameter, so the strict set is unchanged (6 tools, 24
+#: optional parameters; word_insert_markdown 8).
+#: Round 23, V2 and V4: word_delete's ``target`` names a content control (``cc:``) as a block
+#: and word_read's ``range`` a section by its number (``s:2``): +10 to every definition
+#: (13,194 -> 13,204), +4 to the core (2,816 -> 2,820, word_read); the guard rises to 13,205.
+#: Descriptions only: the strict set is unchanged (6 tools, 24 optional parameters).
+#: Round 23, V3 (ooxml-edit 0.70.0, Tool.kind_fields and kind_values): the shared check,
+#: find_text, replace_text, render and undo are sent without a deck's (or workbook's)
+#: parameters (slides, boxes, spacing, contrast, scope; stories' layouts and masters;
+#: include's fit, collisions, facts, design), check's and stories' descriptions for a
+#: document alone: the core 2,820 -> 2,440 (about 3,612 counted by the proxy), every
+#: definition 13,204 -> 12,824.  The guard falls to 12,825.  replace_text is strict and loses
+#: slides: 6 tools, 23 optional parameters.
+#: Round 24: word_format_table's ``look`` (the style options on, Table Design's names: W2)
+#: and ``cant_split`` (a row's, or every row's) +83, word_styles' ``shading`` (W6) +30, and
+#: word_insert_markdown's description (an empty header row is no header row, W2) +8 to every
+#: definition (12,824 -> 12,944), none to the core (2,440).  The guard rises to 12,945.
+#: word_insert_markdown is strict: its description only, so the strict set is unchanged (6
+#: tools, 23 optional parameters); the other two are not strict.
+#: Round 25, W2: word_format_table's ``keep_together`` (a table kept on one page by its
+#: rows' keeps) +30 to every definition (12,944 -> 12,974), none to the core (2,440).  The
+#: guard rises to 12,975.  word_format_table is not strict: the strict set is unchanged (6
+#: tools, 23 optional parameters).
+#: Round 25, W4: word_format's ``keep_lines`` (Word's "Keep lines together") and its place in
+#: ``clear``'s enum +23 to every definition (12,974 -> 12,997), none to the core (2,440).  The
+#: guard rises to 13,000.  word_format is not strict (deferred, in word_style): the strict set
+#: is unchanged (6 tools, 23 optional parameters).  ``keep_together``, the Python API's name,
+#: is read as ``keep_lines`` (an alias: no definition).
+#: Round 25, W5: word_format_table's ``keep_with_next`` (a table kept together keeps with the
+#: next block too: its last row keeps) +31 to every definition (12,997 -> 13,028), none to the
+#: core (2,440).  The guard rises to 13,030.  word_format_table is not strict: the strict set
+#: is unchanged (6 tools, 23 optional parameters).
+#: Round 28, W9 and W10: word_set_text's ``text`` (and its items') says a ``\\n`` starts a
+#: paragraph (+14; no parameter: a newline, refused before, splits) and word_read's
+#: ``range`` (a cell, an open span ``p:A..``) +4 to the core (2,440 -> 2,458, about 3,638
+#: counted by the proxy) and to every definition; word_inspect's ``target`` (the same
+#: forms, a section) +12 more there (13,028 -> 13,059).  The guard rises to 13,060.  The
+#: strict set is unchanged (6 tools, 23 optional parameters).
+#: Round 29, C1 (ooxml-edit 0.75.0): edit_chart's ``blanks`` (how blank points draw) and
+#: ``null`` for a blank in its values' descriptions +49 to every definition (13,059 ->
+#: 13,108), none to the core (2,458): edit_chart is deferred.  The guard rises to 13,110.
+#: edit_chart is never sent strict (47 optional parameters): the strict set is unchanged
+#: (6 tools, 23 optional parameters).
+#: Round 29, W12: word_styles' ``numbering`` (Word's "Link level to style": a list's number
+#: or a style in it, and a level; ``none`` unlinks) +84 to every definition (13,108 ->
+#: 13,192), none to the core (2,458).  The guard rises to 13,195.  word_styles is not
+#: strict (deferred, in word_style): the strict set is unchanged (6 tools, 23 optional
+#: parameters).
+#: Round 30, W14: word_lists' ``number_at``, ``text_at``, ``follow`` and ``tab_at`` (a
+#: level's positions and what follows its number, as Word's "Define new multilevel list"
+#: sets them) +90 to every definition (13,192 -> 13,282), none to the core (2,458).  The
+#: guard rises to 13,285.  word_lists is not strict (deferred, in word_style): the strict
+#: set is unchanged (6 tools, 23 optional parameters).
+#: Round 31, R3-R5b: word_styles' ``set_default`` action (Word's Set as Default for a table
+#: style) and ``tabs`` (a style's tab stops: position, alignment with clear, leader) +168,
+#: word_insert_markdown's ``caption`` style_map element and ``captions (: text)`` in its
+#: description +8, to every definition (13,282 -> 13,459), none to the core (2,458).  The
+#: guard rises to 13,460.  word_insert_markdown is strict: an enum value and its description
+#: only, so the strict set is unchanged (6 tools, 23 optional parameters); word_styles is not
+#: strict.  word_delete's find with target (no longer exactly one of them) changes no definition.
+#: Round 31, R8: word_follow_sample (deferred, in word_style: copies made to follow a revised
+#: sample in one call, with preview) adds 260 to every definition (13,459 -> 13,719), none to
+#: the core (2,458).  The guard rises to 13,720.  It is not sent strict (one optional
+#: parameter, preview): the strict set is unchanged (6 tools, 23 optional parameters).
+#: Round 32, R13: word_follow_sample's ``report`` ("all" or "actionable": the copies' own
+#: differences left out, counted) +37 to every definition (13,719 -> 13,756), none to the
+#: core (2,458).  The guard rises to 13,760.  word_follow_sample is not strict: the strict
+#: set is unchanged (6 tools, 23 optional parameters).
+#: Round 32, R15 (ooxml-edit 0.78.0): read_batch (many reads in one call, each with its own
+#: budget) in the core, where a builder reading block after block reaches for it: +183 to
+#: the core (2,458 -> 2,642, about 3,910 counted by the proxy) and to every definition
+#: (13,756 -> 13,939).  The guard rises to 13,940.  read_batch is sent non-strict (free-form
+#: ops): the strict set is unchanged (6 tools, 23 optional parameters).
+#: Round 35, R18/R19 (ooxml-edit 0.81.0): check's ``range`` and ``copies`` and render's
+#: ``range`` in the shared definitions, +229 to the core (2,642 -> 2,871) and to every
+#: definition (13,939 -> 14,168).  The guard rises to 14,170.
+#: Round 35, R24: word_styles' ``set_language`` action and ``language`` (the language of an
+#: existing document, or of a style) +56 to every definition (14,168 -> 14,224), none to the
+#: core (2,871).  The guard rises to 14,225.  word_styles is not strict (deferred, in
+#: word_style): the strict set is unchanged.
+#: Round 36, R30/R34: word_format's ``keep_together`` (a span's blocks on one page; on one
+#: paragraph its lines, as the Python API's name read before) +38, word_design_facts'
+#: ``table_frames`` kind +5: +43 to every definition (14,224 -> 14,267), none to the core
+#: (2,871).  The guard rises to 14,270.  Neither tool is strict: the strict set is unchanged.
+#: Round 36, R28 (ooxml-edit 0.84.0): check's include takes ``numbers`` (numbers in text no
+#: value holds, opt in): +3 to the core (2,871 -> 2,874, about 4,254 counted by the proxy)
+#: and to every definition (14,267 -> 14,270).  The guard rises to 14,275.  No parameter
+#: added: the strict set and its optional count are unchanged.
+#: Round 36, R32/R33: word_read's ``range`` names a heading's range ``h:p:A`` (+2 to the core:
+#: 2,874 -> 2,876); word_delete's and word_lists' ``force`` (a heading deleted though its
+#: content stays; unnumbering a paragraph its style numbers): +58 to every definition
+#: (14,270 -> 14,328).  The guard rises to 14,330; a reviewer's core is 2,750, at its guard.  Neither is strict: the strict set is
+#: unchanged (6 tools, 23 optional parameters).
+#: Round 36, R31 (ooxml-edit 0.85.0): check's ``scale`` (values styled with the wrong step of a
+#: scale the caller gives, or none; its steps' fields undescribed) +158 to the core (2,876 ->
+#: 3,034, about 4,490 counted by the proxy) and to every definition; style_by_value (a scale's
+#: steps written once: a character style per step, cell shading), deferred in shared_misc,
+#: +464 (14,328 -> 14,950).  The guard rises to 14,950.  style_by_value is listed last and
+#: does not fit Claude's strict limits beside the others: the strict set is unchanged (6
+#: tools, 23 optional parameters).
+#: Round 38 (ooxml-edit 0.87.0): the scale's ``show`` (label: a step's label in place of its
+#: value, the value kept) +14 to the core (3,034 -> 3,048) and +60 to every definition
+#: (14,950 -> 15,010).  The guard rises to 15,010.  The strict set is unchanged (6 tools, 23
+#: optional parameters).
+#: Round 39 (ooxml-edit 0.92.0): render's ``fast`` (approximate pixels of the same layout while
+#: building; the result says so) +40 to the core (3,048 -> 3,088, about 4,570 counted by the
+#: proxy) and to every definition (15,010 -> 15,050).  The guard rises to 15,050.  render is
+#: not strict: the strict set is unchanged (6 tools, 23 optional parameters).
+#: Round 40: word_format's ``find`` (text found and formatted in one call: text, within,
+#: occurrence, expect) +122, word_insert_text's ``at`` (the place as every placing tool names
+#: it, on the call and its items) +46, ``ref`` on word_insert_markdown and word_copy_from (the
+#: blocks made, named) +22 each, word_edit_table's ``grow`` (rows added for set_cells from)
+#: +24: +236 to every definition (15,050 -> 15,286), none to the core (3,088).  The guard
+#: rises to 15,290.  word_insert_markdown is strict: its ``ref`` takes the strict set to 6
+#: tools and 24 optional parameters, Claude's limit -- the next optional parameter on a
+#: strict tool sends one tool non-strict.  The others are not strict.  The other tools'
+#: names for a place are aliases (never sent).
+#: Round 42: word_set_text's ``paragraph_style`` (on the call and each item) and its text's
+#: inline emphasis (``**strong**``, ``*emphasis*``, ``[text]{Character style}``, said in the
+#: items' text) +69 to the core (3,088 -> 3,157, about 4,672 counted by the proxy) and to
+#: every definition (15,286 -> 15,355).  The guard rises to 15,360.  word_set_text's five
+#: optional parameters no longer fit Claude's 24 beside the strict tools before it: it is sent
+#: non-strict (the dispatcher still validates it) and edit_smartart (two) takes the place: 6
+#: tools, 23 optional parameters.
+#: Round 42, R47: ``like`` on word_format (the look of a given paragraph) and on
+#: word_insert_markdown (list items like given paragraphs, by level) +66 to every definition
+#: (15,355 -> 15,421), none to the core (3,157).  The guard rises to 15,425.
+#: word_insert_markdown is strict: its tenth optional parameter takes the strict set to 6
+#: tools and 24 optional parameters, Claude's limit.
+#: Round 43 (ooxml-edit 0.94.0): a copy's ``lists`` in check's ``copies`` (``run_on``: the
+#: caller states the copies' numbered lists count on from copy to copy) +35 to the core
+#: (3,157 -> 3,192, about 4,724 counted by the proxy) and word_lists' ``join`` (the list
+#: ``continue`` joins) +24: +59 to every definition (15,421 -> 15,480).  The guard rises to
+#: 15,480.  Neither tool is strict: the strict set is unchanged (6 tools, 24 optional
+#: parameters).
+#: Round 45, R65/R66/R68: word_insert_markdown's ``from`` names one text field too, written
+#: as its Markdown (+12; ``markdown_from`` was an alias, dropped in round 47: no definition), word_edit_table's
+#: cells take ``from`` (one value, a number format after it; ``text`` now optional: +20) and
+#: word_comments' target a table or row (+3): +36 to every definition (15,480 -> 15,516), none
+#: to the core (3,192).  The guard rises to 15,520.  word_insert_markdown is strict: its
+#: description only, so the strict set is unchanged (6 tools, 24 optional parameters); the
+#: other two are not strict for Claude (on OpenAI, where every tool is, a cell's ``from`` is
+#: one more nullable string).
+#: Round 48, R89: word_edit_table's cells take ``rows`` (one entry for a column's rows, one
+#: text or value) +28 to every definition (15,516 -> 15,544), none to the core (3,192).  The
+#: limit rises to 15,545.  word_edit_table is not strict for Claude (19 optional parameters of
+#: its own): the strict set is unchanged (6 tools, 24 optional parameters); on OpenAI a cell's
+#: ``rows`` is one more nullable string.
+#: Round 48, R87 R88: word_comments' target a content control and word_format_table's
+#: ``width_of`` "window" (AutoFit to Window): +4 to every definition (15,544 -> 15,548), none
+#: to the core (3,192).  The guard rises to 15,548.  Neither tool is strict for Claude: the
+#: strict set is unchanged (6 tools, 24 optional parameters).
+#: Round 49, R90: word_edit_table's ``sync`` (an action, ``key`` and ``remove``, ``from`` and
+#: ``from_columns`` saying what sync reads them as) +68 to every definition (15,548 -> 15,616),
+#: none to the core (3,192).  The guard rises to 15,616.  word_edit_table is not strict for
+#: Claude (21 optional parameters of its own now): the strict set is unchanged (6 tools, 24
+#: optional parameters); on OpenAI ``key`` and ``remove`` are two more nullable fields.
+#: Round 49, R91: word_links' ``target`` says add_bookmark takes blocks (a table, a span of
+#: blocks) +12 to every definition (15,616 -> 15,628), none to the core (3,192).  The guard
+#: rises to 15,628.  A description only, no parameter: the strict set is
+#: unchanged (6 tools, 24 optional parameters).
+#: Round 52, R106: word_edit_table's ``loose`` (an enum) and ``match`` (pairs ``{table, data}``)
+#: +107 to every definition (15,628 -> 15,735), none to the core (3,192).  The guard rises to
+#: 15,735.  word_edit_table is still not strict for Claude: the strict set is unchanged (6
+#: tools, 24 optional parameters); on OpenAI two more nullable fields.
+#: Round 56, R121: word_changes' action ``preview`` (what accept and reject would settle and
+#: remove, nothing changed) +2 to every definition (15,735 -> 15,737), none to the core
+#: (3,192).  The guard rises to 15,737.  word_changes is strict: an enum value, no parameter,
+#: so the strict set is unchanged (6 tools, 24 optional parameters).
+CHARS_PER_TOKEN = 3.5
+COUNTED_PER_ESTIMATED = 1.48
+CORE_COUNTED_BUDGET = 6500
+ALL_GUARD = 15737
+
+
+@pytest.fixture(scope="module")
+def box():
+    with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS) as toolbox:
+        yield toolbox
+
+
+def estimate(definitions: list[dict]) -> int:
+    """Characters / 3.5 of the compact JSON of each definition as sent."""
+    return math.ceil(sum(len(json.dumps(d, separators=(",", ":"), ensure_ascii=False))
+                         for d in definitions) / CHARS_PER_TOKEN)
+
+
+def test_every_canonical_schema_is_in_the_common_strict_subset():
+    for tool in TOOLS:
+        assert subset_problems(tool.canonical, allow_free=not tool.strict) == [], tool.name
+
+
+@pytest.mark.parametrize("options", [{}, {"defer": True}], ids=["all-loaded", "deferred"])
+def test_the_anthropic_definitions_keep_claudes_strict_rules(box, options):
+    definitions = box.definitions("anthropic", **options)
+    assert anthropic_problems(definitions) == []
+    strict = [d for d in definitions if d.get("strict")]
+    assert 0 < len(strict) <= 20
+    if options:
+        loaded = [d for d in definitions if "input_schema" in d and not d.get("defer_loading")]
+        assert {d["name"] for d in loaded} == {t.name for t in TOOLS if t.group == "core"}
+        assert loaded[-1].get("cache_control") and definitions[0]["type"].startswith("tool_search")
+
+
+def test_the_openai_definitions_keep_the_strict_rules(box):
+    responses = box.definitions("openai-responses")
+    chat = box.definitions("openai-chat")
+    assert openai_problems(responses) == [] and openai_problems(chat, chat=True) == []
+    namespaces = box.definitions("openai-responses", namespaces=True, defer=True)
+    assert openai_problems(namespaces) == []
+
+
+def test_no_parameter_is_a_path_and_blobs_are_handles():
+    for tool in TOOLS:
+        for name, node, _ in walk_properties(tool.canonical):
+            assert not is_path_name(name.split(".")[-1].rstrip("[]")), (tool.name, name)
+    blobs = [(t.name, n) for t in TOOLS for n, node, _ in walk_properties(t.canonical) if "blob" in n or n == "image"]
+    assert blobs and all("handle" in json.dumps(t.canonical) for t in TOOLS if t.name in {b[0] for b in blobs})
+
+
+def test_the_groups_are_the_roadmaps():
+    groups = {}
+    for tool in WORD_TOOLS:
+        groups.setdefault(tool.group, set()).add(tool.name)
+    assert groups["core"] == {"word_read", "word_set_text"}        # and the shared describe
+    assert groups["word_text"] == {"word_inspect", "word_insert_text", "word_delete", "word_insert_markdown"}
+    assert groups["word_review"] == {"word_set_tracking", "word_changes", "word_comments"}
+    assert groups["word_structure"] == {"word_move", "word_copy_from", "word_sections", "word_headers_footers",
+                                        "word_fields", "word_notes", "word_links"}
+    assert groups["word_objects"] == {"word_edit_table", "word_format_table",
+                                      "word_drawings", "word_controls"}
+    assert groups["word_style"] == {"word_format", "word_lists", "word_styles", "word_template",
+                                    "word_design_facts", "word_compare_blocks", "word_follow_sample"}
+    assert all(len(names) < 10 for group, names in groups.items() if group != "core")
+
+
+def test_the_loaded_core_is_within_budget_and_every_definition_within_its_guard(box):
+    core = estimate(box.definitions("anthropic", groups="core"))
+    every = estimate(box.definitions("anthropic", defer=False))
+    assert core * COUNTED_PER_ESTIMATED <= CORE_COUNTED_BUDGET, core
+    assert every <= ALL_GUARD, every
+
+
+def test_descriptions_stay_short():
+    for tool in WORD_TOOLS:
+        assert len(tool.description.split()) <= 40, tool.name
+        for name, node, _ in walk_properties(tool.canonical):
+            assert len(node.get("description", "").split()) <= 15, (tool.name, name)
