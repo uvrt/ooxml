@@ -1,0 +1,106 @@
+name: Python tests (one OS)
+
+# Called by ci.yml (one call per OS, so each OS's legs can be required or not on its own)
+# and by freethreading.yml.  `matrix` is tools/ci.py plan's output for that call: a list of
+# {package, os, python}.  Each leg installs the package and the siblings it needs from this
+# checkout, then runs the suite as the package's own repository's CI ran it
+# (tools/ci.py install / test; the differences between the packages live there).
+
+on:
+  workflow_call:
+    inputs:
+      matrix:
+        type: string
+        required: true
+      free-threading:
+        type: boolean
+        default: false
+
+jobs:
+  test:
+    name: ${{ matrix.package }} (${{ matrix.os }}, ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    # A hang fails the job (a test still running after 300 s prints every thread's
+    # traceback on the free-threading legs) instead of running for 6 hours.
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(inputs.matrix) }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          # 3.15.0 is out (2026-10-09) but setup-python's version list may still offer only
+          # its release candidates; this takes a final release whenever there is one.
+          allow-prereleases: true
+
+      - name: Install
+        run: python tools/ci.py install ${{ matrix.package }} ${{ inputs.free-threading && '--free-threading' || '' }}
+
+      # The open metric compatible substitutes (docx2svg's README, "Fonts"): with them the
+      # Word layout runs past the first paragraph on a runner without Office's faces, so the
+      # render, reflow and field tests run rather than skip.  Never a font file in the
+      # repository.  Windows has Calibri, Arial, Times New Roman and Courier New itself.
+      # The fonts come from the apt mirror once, then from the Actions cache, so a mirror
+      # outage cannot turn a run red: on a miss apt installs them (with retries) and every
+      # file the packages put under the font and fontconfig directories is cached with its
+      # path; on a hit those files go back to the same paths and apt is not touched.
+      - name: Restore the open substitute fonts from the cache (Linux)
+        id: substitute-fonts
+        if: runner.os == 'Linux' && (matrix.package == 'docx2svg' || matrix.package == 'docx-agent')
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/substitute-fonts
+          key: substitute-fonts-${{ runner.os }}-fonts-crosextra-carlito-fonts-crosextra-caladea-fonts-liberation-v1
+      - name: Install the open substitute fonts (Linux)
+        if: runner.os == 'Linux' && (matrix.package == 'docx2svg' || matrix.package == 'docx-agent') && steps.substitute-fonts.outputs.cache-hit != 'true'
+        run: |
+          packages="fonts-crosextra-carlito fonts-crosextra-caladea fonts-liberation"
+          for attempt in 1 2 3 4 5; do
+            if sudo apt-get -o Acquire::Retries=5 update &&
+               sudo apt-get -o Acquire::Retries=5 install -y --no-install-recommends $packages; then
+              break
+            fi
+            if [ "$attempt" -eq 5 ]; then exit 1; fi
+            sleep $((attempt * 20))
+          done
+          mkdir -p ~/substitute-fonts
+          dpkg -L $packages | grep -E '^/(usr/share/fonts|usr/share/fontconfig|etc/fonts)/' |
+            while read -r f; do
+              if [ -f "$f" ] || [ -L "$f" ]; then cp -d --parents "$f" ~/substitute-fonts/; fi
+            done
+      - name: Save the open substitute fonts to the cache (Linux)
+        if: runner.os == 'Linux' && (matrix.package == 'docx2svg' || matrix.package == 'docx-agent') && steps.substitute-fonts.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/substitute-fonts
+          key: ${{ steps.substitute-fonts.outputs.cache-primary-key }}
+      - name: Put the cached substitute fonts in place and check them (Linux)
+        if: runner.os == 'Linux' && (matrix.package == 'docx2svg' || matrix.package == 'docx-agent')
+        env:
+          CACHE_HIT: ${{ steps.substitute-fonts.outputs.cache-hit }}
+        run: |
+          if [ "$CACHE_HIT" = "true" ]; then
+            sudo cp -dR ~/substitute-fonts/. /
+            sudo fc-cache -f
+          fi
+          fc-list : family style file | grep -E 'Carlito|Caladea|Liberation' | sort
+          for family in Carlito Caladea "Liberation Sans" "Liberation Serif" "Liberation Mono"; do
+            fc-list "$family" family | grep -q . || { echo "missing font: $family"; exit 1; }
+          done
+      - name: Install the open substitute fonts (macOS)
+        if: runner.os == 'macOS' && (matrix.package == 'docx2svg' || matrix.package == 'docx-agent')
+        run: brew install --cask font-carlito font-caladea font-liberation
+
+      - name: Importing the package leaves the GIL off
+        if: inputs.free-threading
+        run: python tools/ci.py gil-check ${{ matrix.package }}
+
+      # The Office oracle tests are opt-in and need Office, which no runner has; the
+      # provider tests need an API key, which CI does not hold.  Both skip.
+      - name: Test
+        shell: bash
+        run: python tools/ci.py test ${{ matrix.package }} --event ${{ github.event_name }} ${{ inputs.free-threading && '--free-threading' || '' }} ${{ (matrix.os == 'ubuntu-latest' && matrix.python == '3.12') && '--coverage' || '' }}
