@@ -7,6 +7,7 @@
 // functions' many arguments and its large exported paragraph.  Named types come with the port.
 #![allow(clippy::type_complexity, clippy::too_many_arguments, clippy::large_enum_variant)]
 pub mod engine;
+pub mod facts;
 pub mod incr;
 pub mod linebreak;
 pub mod paginate;

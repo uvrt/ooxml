@@ -1,0 +1,29 @@
+# Changelog
+
+ooxml-core is the Rust core of the ooxml packages (`crates/`), as the Python module
+`ooxml_core`. Its version is the `crates/python` crate's.
+
+## 0.2.0 -- unreleased
+
+- **`ooxml_core.check(doc, version, request, seen=None)`**: docx-agent's check of some
+  ranges, answered on the snapshot of exactly that version of a document opened with
+  `open_document` (the interpreter lock let go throughout): the ranges' pages, extent,
+  breaks and keeps, `since_last_check` against the snapshot `seen`, the layout facts
+  (`ooxml_word::facts`: docx-agent's `layout_facts` rules, ported one for one, reading the
+  range's pages and the records docx-agent made of each block), the fields facts, and the
+  pages of some blocks. Returns the answer (JSON) and the snapshot, or `(None, None)` where
+  that version's snapshot is no longer kept. What it does not port answers
+  `{"fallback": why}` and docx-agent checks its own way.
+- **Each version is laid out and published on its own** (a Word document's owner): a
+  check reads exactly the version it asks for; the latest 64 snapshots are kept.
+- The export and change sets carry each block's record (`rec`), what a paragraph, a run and
+  a table draw (`draw`, for `since_last_check`) and the document's constants; a change set
+  may carry new constants and sections.
+- `open_document` reports a document it cannot read or lay out as an error rather than
+  stopping the process.
+- JSON keeps the order docx-agent writes its results in (serde_json's `preserve_order`).
+
+## 0.1.0
+
+- The first version: Word's layout (measure, paginate, the page-number fields) behind a
+  document's owner, as moved in from the performance lanes' prototype.

@@ -114,6 +114,11 @@ impl SnapshotE {
         }
         out
     }
+    /// Lane F: page `page`'s (1-based) body lines as since_last_check reads them: `(key,
+    /// top, pitch, digest, table digest, row, cell)` (tests and measurements).
+    fn page_lines(&self, page: usize) -> Vec<ooxml_word::facts::LineDigest> {
+        ooxml_word::facts::page_line_digests(&self.inner, page)
+    }
     /// Every item's lines' heights `[pitch...]` (tests).
     fn pitches(&self) -> Vec<Vec<i64>> {
         self.inner
@@ -201,6 +206,10 @@ impl Owner {
 
 trait AnyOwner: Send + Sync {
     fn kind(&self) -> &'static str;
+    /// Lane F: the Word owner, for the calls that read its snapshots.
+    fn word(&self) -> Option<&ooxml_word::engine::Owner> {
+        None
+    }
     fn commit(&self, text: String);
     /// Wait for the first snapshot holding `version`, then answer `request` on it.
     fn call(&self, version: u64, request: &str) -> String;
@@ -210,6 +219,9 @@ trait AnyOwner: Send + Sync {
 impl AnyOwner for ooxml_word::engine::Owner {
     fn kind(&self) -> &'static str {
         "docx"
+    }
+    fn word(&self) -> Option<&ooxml_word::engine::Owner> {
+        Some(self)
     }
     fn commit(&self, text: String) {
         ooxml_word::engine::Owner::commit(self, text)
@@ -247,12 +259,15 @@ fn open_document(py: Python<'_>, doc: String, kind: &str, first: String) -> PyRe
             "no {kind} format in this prototype"
         )));
     }
-    let (owner, stat) = py.detach(move || {
-        let e: ooxml_word::model::Export = serde_json::from_str(&first).expect("export");
-        let o = ooxml_word::engine::Owner::open(e);
-        let st = ooxml_word::engine::stat_json(&o.first, 0.0).to_string();
-        (o, st)
-    });
+    let (owner, stat) = py
+        .detach(move || -> Result<_, String> {
+            let e: ooxml_word::model::Export = serde_json::from_str(&first).map_err(|e| e.to_string())?;
+            let o = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| ooxml_word::engine::Owner::open(e)))
+                .map_err(|_| "the layout failed".to_string())?;
+            let st = ooxml_word::engine::stat_json(&o.first, 0.0).to_string();
+            Ok((o, st))
+        })
+        .map_err(pyo3::exceptions::PyValueError::new_err)?;
     registry().write().unwrap().insert(doc, Arc::new(owner));
     Ok(stat)
 }
@@ -269,6 +284,43 @@ fn commit(doc: &str, text: String) -> PyResult<()> {
 fn call(py: Python<'_>, doc: &str, version: u64, request: String) -> PyResult<String> {
     let owner = owner_of(doc)?;
     Ok(py.detach(move || owner.call(version, &request)))
+}
+
+/// Lane F: docx-agent's check of `doc` at exactly `version` (a commit's sequence number), the
+/// interpreter lock let go throughout: waits for that version's snapshot, then answers the
+/// request (JSON, `ooxml_word::facts::Request`) on it, `seen` the snapshot a check saw last
+/// (`since_last_check`).  Returns `(answer JSON, the snapshot)`, or `(None, None)` where the
+/// version's snapshot is not kept (the caller checks its own way).
+#[pyfunction]
+#[pyo3(signature = (doc, version, request, seen=None))]
+fn check(
+    py: Python<'_>,
+    doc: &str,
+    version: u64,
+    request: String,
+    seen: Option<PyRef<'_, SnapshotE>>,
+) -> PyResult<(Option<String>, Option<SnapshotE>)> {
+    let owner = owner_of(doc)?;
+    let before = seen.map(|s| s.inner.clone());
+    let out = py.detach(
+        move || -> Result<Option<(String, Arc<ooxml_word::engine::Snap>)>, String> {
+            let word = owner.word().ok_or("not a Word document")?;
+            let t = std::time::Instant::now();
+            let Some(snap) = word.wait_exact(version) else {
+                return Ok(None);
+            };
+            let waited = t.elapsed().as_secs_f64() * 1000.0;
+            let req: ooxml_word::facts::Request = serde_json::from_str(&request).map_err(|e| e.to_string())?;
+            let mut answer = ooxml_word::facts::answer(&snap, &req, before.as_deref());
+            answer["ms"]["wait"] = serde_json::json!(waited);
+            Ok(Some((answer.to_string(), snap)))
+        },
+    );
+    match out {
+        Ok(Some((text, snap))) => Ok((Some(text), Some(SnapshotE { inner: snap }))),
+        Ok(None) => Ok((None, None)),
+        Err(e) => Err(pyo3::exceptions::PyValueError::new_err(e)),
+    }
 }
 
 #[pyfunction]
@@ -325,6 +377,7 @@ fn ooxml_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(commit, m)?)?;
     m.add_function(wrap_pyfunction!(call, m)?)?;
     m.add_function(wrap_pyfunction!(close_document, m)?)?;
+    m.add_function(wrap_pyfunction!(check, m)?)?;
     m.add_function(wrap_pyfunction!(documents, m)?)?;
     m.add_function(wrap_pyfunction!(spin, m)?)?;
     m.add_function(wrap_pyfunction!(spin_held, m)?)?;

@@ -134,6 +134,10 @@ this package uses; what each earlier version added is in that package's CHANGELO
   "Decisions", 9): it is standard-library only, so it costs little, and reflow feedback is
   part of every edit's answer. 0.2.0 is docx2svg's first tagged version and always gives
   a layout its coverage, which every layout fact is read from.
+- `ooxml-core>=0.2.0`: the Rust core (built from this repository's `crates/`, prebuilt
+  wheels on GitHub Releases), which lays a document out and answers a check of some ranges
+  (`docx_agent.rust`, 0.1.114). 0.2.0 has `ooxml_core.check`. Where it cannot be imported,
+  docx-agent checks its own way, said once in its log.
 - `lxml>=4.9`: the XML tree every edit is made in.
 - `markdown-it-py>=3.0`, `mdit-py-plugins>=0.4` (footnotes): the Markdown parser, by
   decision (ROADMAP.md, "Decisions", 2): it reads `to_markdown`'s output back for the

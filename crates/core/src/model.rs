@@ -22,6 +22,10 @@ pub struct Export {
     pub info: Vec<(i64, i64, bool, String, bool)>,
     #[serde(default)]
     pub stopped: Option<i64>,
+    /// Lane F: what a check's facts read of the document as a whole (docx-agent's
+    /// `docx_agent.rust.check`: each section's body height, the default language...).
+    #[serde(default)]
+    pub constants: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize, Clone)]
@@ -99,6 +103,10 @@ pub struct ParaIn {
     pub measure: MeasureIn,
     #[serde(rename = "ref", default)]
     pub reference: RefIn,
+    /// Lane F: what a check's facts read of the block besides its layout (docx-agent's
+    /// `docx_agent.rust.records`), as made; `None` where no check reads it.
+    #[serde(default)]
+    pub rec: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize, Clone, Default)]
@@ -119,6 +127,11 @@ pub struct MeasureIn {
     pub rule: u8,
     pub line: i64,
     pub columns: bool,
+    /// Lane F: a digest of what the paragraph draws besides its characters' faces and
+    /// widths (alignment, borders, shading): with each run's `draw`, what a line's digest
+    /// is made of (`since_last_check`).
+    #[serde(default)]
+    pub draw: Option<String>,
 }
 
 #[derive(Deserialize, Clone)]
@@ -144,6 +157,9 @@ pub struct RunIn {
     /// Lane E: superscript or subscript (left out of the smallest text size).
     #[serde(default)]
     pub va: bool,
+    /// Lane F: a digest of how the run's characters are drawn (colour, underline...).
+    #[serde(default)]
+    pub draw: Option<String>,
 }
 
 #[derive(Deserialize, Clone)]
@@ -180,6 +196,12 @@ pub struct TableIn {
     pub default_style: i64,
     pub first_style: i64,
     pub rows: Vec<RowIn>,
+    /// Lane F: as a paragraph's `rec`.
+    #[serde(default)]
+    pub rec: Option<serde_json::Value>,
+    /// Lane F: a digest of the table's borders, shading and widths (`since_last_check`).
+    #[serde(default)]
+    pub draw: Option<String>,
 }
 
 #[derive(Deserialize, Clone)]

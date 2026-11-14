@@ -4,6 +4,8 @@ name: Rust
 # - `rust`: cargo fmt --check, cargo clippy -D warnings, cargo test, with a build cache;
 # - `differential`: python/ooxml-core/tests -- Word's Rust layout, the owner and the
 #   registry against docx2svg's layout on made-up documents and docx2svg's samples;
+# - `rust-check`: docx-agent's check-related tests with its Rust path on (the default) and
+#   off (DOCX_AGENT_RUST=0), the differential test comparing the two among them;
 # - `wheels` (rust-wheels.yml): on a pull request Linux x86_64 and macOS x86_64, on main,
 #   nightly and manual runs every target.
 # On a pull request these run when the change touches the workspace, ooxml-core, the
@@ -127,6 +129,76 @@ jobs:
           OOXML_CORE_SECTIONS: ${{ github.event_name == 'pull_request' && '6' || '62' }}
         run: python -m pytest -q -ra tests
 
+  rust-check:
+    name: docx-agent check (Rust path on and off)
+    needs: plan
+    if: needs.plan.outputs.rust == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: python tools/ci.py install docx-agent
+
+      # The documents are set in Calibri, laid out with Carlito where it is absent.  As in
+      # python-tests.yml: from the apt mirror once, then from the Actions cache.
+      - name: Restore the open substitute fonts from the cache
+        id: substitute-fonts
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/substitute-fonts
+          key: substitute-fonts-${{ runner.os }}-fonts-crosextra-carlito-fonts-crosextra-caladea-fonts-liberation-v1
+      - name: Install the open substitute fonts
+        if: steps.substitute-fonts.outputs.cache-hit != 'true'
+        run: |
+          packages="fonts-crosextra-carlito fonts-crosextra-caladea fonts-liberation"
+          for attempt in 1 2 3 4 5; do
+            if sudo apt-get -o Acquire::Retries=5 update &&
+               sudo apt-get -o Acquire::Retries=5 install -y --no-install-recommends $packages; then
+              break
+            fi
+            if [ "$attempt" -eq 5 ]; then exit 1; fi
+            sleep $((attempt * 20))
+          done
+          mkdir -p ~/substitute-fonts
+          dpkg -L $packages | grep -E '^/(usr/share/fonts|usr/share/fontconfig|etc/fonts)/' |
+            while read -r f; do
+              if [ -f "$f" ] || [ -L "$f" ]; then cp -d --parents "$f" ~/substitute-fonts/; fi
+            done
+      - name: Save the open substitute fonts to the cache
+        if: steps.substitute-fonts.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/substitute-fonts
+          key: ${{ steps.substitute-fonts.outputs.cache-primary-key }}
+      - name: Put the cached substitute fonts in place
+        env:
+          CACHE_HIT: ${{ steps.substitute-fonts.outputs.cache-hit }}
+        run: |
+          if [ "$CACHE_HIT" = "true" ]; then
+            sudo cp -dR ~/substitute-fonts/. /
+            sudo fc-cache -f
+          fi
+          for family in Carlito Caladea "Liberation Sans" "Liberation Serif" "Liberation Mono"; do
+            fc-list "$family" family | grep -q . || { echo "missing font: $family"; exit 1; }
+          done
+
+      # The tests a check of ranges goes through, once with each setting.
+      - name: Check tests, Rust path on
+        working-directory: python/docx-agent
+        env:
+          DOCX_AGENT_RUST: "1"
+        run: python -m pytest -q -ra -n 2 tests/test_rust_check.py tests/test_check_owner.py tests/test_check_timing.py tests/test_range_extent.py tests/test_keep_spans.py tests/test_keep_trials.py tests/test_numbers.py tests/test_ranges.py tests/test_check_speed_r57.py
+      - name: Check tests, Rust path off
+        working-directory: python/docx-agent
+        env:
+          DOCX_AGENT_RUST: "0"
+        run: python -m pytest -q -ra -n 2 tests/test_rust_check.py tests/test_check_owner.py tests/test_check_timing.py tests/test_range_extent.py tests/test_keep_spans.py tests/test_keep_trials.py tests/test_numbers.py tests/test_ranges.py tests/test_check_speed_r57.py
+
   wheels:
     name: wheels
     needs: plan
@@ -137,13 +209,13 @@ jobs:
 
   required-rust:
     name: required (rust)
-    needs: [plan, rust, differential, wheels]
+    needs: [plan, rust, differential, rust-check, wheels]
     if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Every Rust job passed or was left out
         env:
-          RESULTS: ${{ needs.plan.result }} ${{ needs.rust.result }} ${{ needs.differential.result }} ${{ needs.wheels.result }}
+          RESULTS: ${{ needs.plan.result }} ${{ needs.rust.result }} ${{ needs.differential.result }} ${{ needs.rust-check.result }} ${{ needs.wheels.result }}
         run: |
-          echo "plan, rust, differential, wheels: $RESULTS"
+          echo "plan, rust, differential, rust-check, wheels: $RESULTS"
           for r in $RESULTS; do case "$r" in success|skipped) ;; *) exit 1 ;; esac; done

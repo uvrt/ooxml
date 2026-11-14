@@ -2023,6 +2023,8 @@ _SHARED_LAYOUT = ("_layout_lock", "_layout_flights", "_layout_kept", "_layout_co
                   "_layout_tickets", "_layout_lineage", "_layout_fresh", "_layout_summaries",
                   "_check_facts", "_layout_failures", "_layouts", "_layout_stats", "_tool_seen_layout",
                   "_layout_owner",
+                  # Lane F: the document's Rust owner and what its checks saw (docx_agent.rust).
+                  "_rust_doc", "_rust_refused", "_rust_seen",
                   # The tools' caches keyed by content or by version, set whole (a tuple) or
                   # under a lock of their own: a check's copy comparisons, the styles' digest,
                   # a render's coverage, the settings read for a like.
@@ -2127,6 +2129,11 @@ def read_copy(document: "Document"):
     document's layouts are, from its last one, and the document's next layout starts from
     the copy's).  Never edited: its tools only read."""
     _keeper(document)
+    # Lane F: this version to the document's Rust owner, where it has one.
+    if document.__dict__.get("_rust_doc") is not None:
+        from .rust.check import committed
+
+        committed(document)
     # Its ids as they are now: the ledger copied (what id_state would write and the copy's
     # open read back, without either), the renames, and the version numbers.
     ledger = _ids.copy_ledger(document._ledger)

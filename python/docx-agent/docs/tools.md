@@ -103,6 +103,12 @@ with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS) as toolbox:
   workers start with; 256 by default) for the layouts held -- about a megabyte a page -- and
   up to 1.75 times it with the measurements and pickled layouts kept beside them, the least
   recently used dropped first (`docx_agent.layout.LAYOUT_MEMORY`, round 39).
+- **A check of some ranges is answered by the Rust core** (0.1.114, ooxml-core): the first
+  such check of a document makes its Rust owner (about 10 s for a 300-page report, in the
+  calling process); from then on each committed version is handed to it as the blocks that
+  changed, and a check of a range reads its facts there -- the same results, in tens of
+  milliseconds. Requests and documents it does not model are checked as before
+  (`docx_agent.rust.check` lists them). `DOCX_AGENT_RUST=0` in the environment turns it off.
 - **Saving refuses new validation problems**; only the application may allow them
   (`Toolbox(allow_new_problems=True)`). Check before save: every `check` carries
   `validation` (ooxml-edit 0.111.0, round 53) -- the problems the save would refuse as new,

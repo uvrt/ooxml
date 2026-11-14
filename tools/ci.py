@@ -104,8 +104,9 @@ PACKAGES: dict[str, dict] = {
         "gil_imports": "import resvg_py, pypdfium2, fontTools.ttLib, PIL.Image, numpy",
     },
     "docx-agent": {
-        "uses": ["ooxml-common", "ooxml-edit", "docx2svg", "docx-agent"],
-        "siblings": ["ooxml-common", "ooxml-edit", "docx2svg[png]"],
+        # ooxml-core (the Rust core, built here by maturin) serves its checks of ranges.
+        "uses": ["ooxml-common", "ooxml-edit", "docx2svg", "ooxml-core", "docx-agent"],
+        "siblings": ["ooxml-common", "ooxml-edit", "docx2svg[png]", "ooxml-core"],
         "extras": "dev,png",
         "min_python": "3.10",
         "pytest": ["-n", "auto", "--durations=30"],
@@ -133,10 +134,13 @@ PACKAGES: dict[str, dict] = {
         "gil_imports": "import lxml.etree, lxml.html, pptx2svg, resvg_py, PIL.Image",
     },
     "xlsx-agent": {
-        "uses": ["ooxml-common", "ooxml-edit", "pptx2svg", "pptx-agent", "docx2svg", "docx-agent", "xlsx-agent"],
+        "uses": ["ooxml-common", "ooxml-edit", "pptx2svg", "pptx-agent", "docx2svg", "ooxml-core", "docx-agent",
+                 "xlsx-agent"],
         # Test only: pptx2svg and pptx-agent (a deck filled from a workbook's table),
-        # docx2svg and docx-agent (a workbook's rich-text cell in a Word document).
-        "siblings": ["ooxml-common", "ooxml-edit", "pptx2svg", "pptx-agent", "docx2svg", "docx-agent"],
+        # docx2svg and docx-agent (a workbook's rich-text cell in a Word document), and
+        # docx-agent's ooxml-core.
+        "siblings": ["ooxml-common", "ooxml-edit", "pptx2svg", "pptx-agent", "docx2svg", "ooxml-core",
+                     "docx-agent"],
         "extras": "test",
         "min_python": "3.11",
         "pytest": [],
@@ -178,6 +182,8 @@ def affected(changed: list[str]) -> list[str]:
     for path in changed:
         if path.startswith(RUN_ALL_PREFIXES):
             return list(PACKAGES)
+        if path.startswith(RUST_PREFIXES):
+            touched.add("ooxml-core")       # the Rust core: the packages that install it
         parts = path.split("/")
         if len(parts) > 2 and parts[0] == "python" and parts[1] in PACKAGES:
             touched.add(parts[1])

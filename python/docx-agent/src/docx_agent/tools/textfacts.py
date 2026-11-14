@@ -170,11 +170,17 @@ def data_count(returned: Any) -> int:
 def number_texts(call: Any, scope: Mapping[str, Any]) -> list[NumberText]:
     """``DocumentFormat.number_texts`` for a Word document (the module's notes)."""
     from ..scope import Scope, ranges_of
-    from ._base import engage, release, resolve
+    from ._base import resolve
     from .shared import _pages_of
 
     document = call.document
     pages = _pages_of(call, scope.get("slides"), scope.get("pages"))
+    # Lane F: a range's texts as the document's Rust owner keeps them, where it follows it.
+    from ..rust.check import number_texts as kept_texts
+
+    groups = kept_texts(call, scope)
+    if groups is not None:
+        return _number_texts_of(call, document, groups, pages)
     ranges = ranges_of(resolve(call, scope.get("range")))
     held = Scope(document, ranges) if ranges else None
     main = document.package.document_part()
@@ -220,6 +226,45 @@ def number_texts(call: Any, scope: Mapping[str, Any]) -> list[NumberText]:
             marked += [(offset + a, offset + b) for a, b in own]
             offset += len(text) + 1
         found.append((at, joined, tuple(marked), [entry.id for entry, _, _ in members]))
+    return _with_pages(call, found, pages)
+
+
+def _number_texts_of(call: Any, document: Any, groups: list[dict[str, Any]], pages: Any) -> list[NumberText]:
+    """:func:`number_texts` from the texts the document's Rust owner keeps (lane F):
+    ``groups`` -- each top-level paragraph's text, each cell's paragraphs' -- of the range, in
+    order, a table of contents' left out; the tables placed with ``from`` and the spans
+    written by reference read here, as there."""
+    placed = set()
+    for key in document.provenance():
+        found = document._direct(key) if key.rpartition("/")[2].startswith("t:") else None
+        if found is not None:
+            placed.add(found[1].element)
+    placed_ids = set()
+    if placed:
+        index = document._index(document.package.document_part())
+        placed_ids = {entry.id for entry in (index.entry_for(t) for t in placed) if entry is not None}
+    written = document.text_facts()
+    found: list[tuple[str, str, tuple[tuple[int, int], ...], list[str]]] = []
+    for group in groups:
+        if group["table"] is not None and group["table"] in placed_ids:
+            continue
+        texts = group["texts"]
+        joined = "\n".join(texts)
+        if not any(ch.isdigit() for ch in joined):
+            continue
+        marked: list[tuple[int, int]] = []
+        offset = 0
+        for identifier, text in zip(group["ids"], texts):
+            marked += [(offset + f["at"], offset + f["at"] + len(f["text"])) for f in written.get(identifier, ())]
+            offset += len(text) + 1
+        found.append((group["at"], joined, tuple(marked), list(group["ids"])))
+    return _with_pages(call, found, pages)
+
+
+def _with_pages(call: Any, found: list, pages: Any) -> list[NumberText]:
+    """The texts with the page each starts on (:func:`number_texts`' end)."""
+    from ._base import engage, release
+
     # Round 57 (R124): only those texts' pages, asked for where the layout is held (a check
     # of a 300-page report pulled the whole layout here to name each text's first page:
     # seconds of the interpreter every call shares).
@@ -262,6 +307,11 @@ def _layout(call: Any, ids: list[str], required: bool) -> Any:
 
     entry, document = call.entry, call.document
     version = entry.version
+    from ..rust.check import pages_of
+
+    found = pages_of(call, ids)          # lane F: the document's Rust owner, where it follows it
+    if found is not None:
+        return found
     try:
         if call.may_unlock:
             # Lane O (step 1): the check's own request with these pages besides, in one trip

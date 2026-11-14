@@ -67,9 +67,11 @@ def test_samples(work, word_check, sample):
     drawing, a picture) line breaking of every paragraph it can take, as lane S's corpus."""
     out = work / f"{sample.stem}.json"
     if not out.exists():
+        from docx_agent.rust.exporter import Unsupported
+
         try:
             export_json(sample.read_bytes(), out)
-        except SystemExit:
+        except (SystemExit, Unsupported):
             export_json(sample.read_bytes(), out, lines_only=True)
     assert_check_equal(run_check(word_check, "check", out))
 

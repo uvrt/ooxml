@@ -510,41 +510,51 @@ def problems(document: "Document") -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for part in document._parts():
         for entry in document._index(part).paragraphs:
-            raw = "".join(node.text or "" for node in entry.element.iter(_W + "t"))
-            if not any(c in raw for c in MARKS + OPEN + CLOSE):
-                continue  # nothing to look at (cheaper than the paragraph's atoms)
-            paragraph = _Paragraph(cascade, entry.element)
-            spots = find(paragraph.text, paragraph.language_at, paragraph.looked_at, check=True)
-            if not spots:
-                continue
-            spacing = [spot for spot in spots if spot.kind not in _MISMATCH_KINDS]
-            mismatched = [spot for spot in spots if spot.kind in _MISMATCH_KINDS]
-            if spacing:
-                found = _entry(entry.id, spacing)
-                found["fix"] = {"tool": "replace_text",
-                                "calls": _fix_calls(entry.id, paragraph.text, spacing[:MARKS_PER_PARAGRAPH])}
-                out.append(found)
-            if mismatched:
-                if not guess:
-                    guess.append(french_guess(document))
-                source = paragraph.source_at(mismatched[0].mark) or "default"
-                found = _entry(entry.id, mismatched)
-                found = {"para": found.pop("para"), "kind": "language_mismatch", **found, "source": source}
-                if source == "run":
-                    found["note"] = (f"French spacing in runs tagged {mismatched[0].language} themselves: likely "
-                                     "French text under the wrong tag; not a spacing fault if so")
-                else:
-                    call: dict[str, Any] = {"action": "set_language", "language": guess[0]}
-                    if source.startswith("style:") and not _template_own(document, own, mismatched[0].language):
-                        # A style in a language the template does not otherwise use: that
-                        # style's alone.  In the template's own language (Normal, the headings
-                        # of an English template): the document's, which retags them all.
-                        call["name"] = source[len("style:"):]
-                    found["note"] = (f"French spacing in text tagged {mismatched[0].language}: likely French "
-                                     "under the wrong language; the fix sets it (the text's own region if not "
-                                     f"{guess[0]}: fr-BE, fr-CH, fr-CA...)")
-                    found["fix"] = {"tool": "word_styles", "calls": [call]}
-                out.append(found)
+            out += paragraph_problems(document, cascade, entry.id, entry.element, guess, own)
+    return out
+
+
+def paragraph_problems(document: "Document", cascade: "Cascade", identifier: str, element: Any,
+                       guess: list[str], own: list) -> list[dict[str, Any]]:
+    """:func:`problems`' entries of one paragraph (``identifier``, ``element``): ``cascade``,
+    ``guess`` and ``own`` shared across one reading of the document (lane F: a paragraph's
+    entries read alone, where only it changed)."""
+    out: list[dict[str, Any]] = []
+    raw = "".join(node.text or "" for node in element.iter(_W + "t"))
+    if not any(c in raw for c in MARKS + OPEN + CLOSE):
+        return []  # nothing to look at (cheaper than the paragraph's atoms)
+    paragraph = _Paragraph(cascade, element)
+    spots = find(paragraph.text, paragraph.language_at, paragraph.looked_at, check=True)
+    if not spots:
+        return []
+    spacing = [spot for spot in spots if spot.kind not in _MISMATCH_KINDS]
+    mismatched = [spot for spot in spots if spot.kind in _MISMATCH_KINDS]
+    if spacing:
+        found = _entry(identifier, spacing)
+        found["fix"] = {"tool": "replace_text",
+                        "calls": _fix_calls(identifier, paragraph.text, spacing[:MARKS_PER_PARAGRAPH])}
+        out.append(found)
+    if mismatched:
+        if not guess:
+            guess.append(french_guess(document))
+        source = paragraph.source_at(mismatched[0].mark) or "default"
+        found = _entry(identifier, mismatched)
+        found = {"para": found.pop("para"), "kind": "language_mismatch", **found, "source": source}
+        if source == "run":
+            found["note"] = (f"French spacing in runs tagged {mismatched[0].language} themselves: likely "
+                             "French text under the wrong tag; not a spacing fault if so")
+        else:
+            call: dict[str, Any] = {"action": "set_language", "language": guess[0]}
+            if source.startswith("style:") and not _template_own(document, own, mismatched[0].language):
+                # A style in a language the template does not otherwise use: that
+                # style's alone.  In the template's own language (Normal, the headings
+                # of an English template): the document's, which retags them all.
+                call["name"] = source[len("style:"):]
+            found["note"] = (f"French spacing in text tagged {mismatched[0].language}: likely French "
+                             "under the wrong language; the fix sets it (the text's own region if not "
+                             f"{guess[0]}: fr-BE, fr-CH, fr-CA...)")
+            found["fix"] = {"tool": "word_styles", "calls": [call]}
+        out.append(found)
     return out
 
 
