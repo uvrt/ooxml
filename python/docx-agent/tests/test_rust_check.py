@@ -246,3 +246,40 @@ def test_a_glyph_its_face_lacks_is_said_the_same(monkeypatch):
             results.append(_normal(box.dispatch(session, "check", {
                 "doc": doc, "range": [f"{paragraphs[0].id}..{paragraphs[-1].id}"], "include": INCLUDE}).to_json()))
     assert results[0] == results[1], _first_difference(results[0], results[1])
+
+
+def test_faces_substituted_are_said_in_the_order_the_layout_meets_them(monkeypatch):
+    """Faces the machine lacks, laid out with others: ``reflow``'s coverage and warnings list
+    them in the order the layout meets them (the body's first) -- the same both ways."""
+    from lxml import etree
+
+    w = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+    document = Document.new()
+    document.insert_markdown("# Heading first\n\n" + "\n\n".join(
+        f"Body paragraph {k} with some text to fill a line or two of the page." for k in range(20)))
+    package = document.package
+    part = package.styles_part()
+    for style in package.tree(part).iter(w + "style"):
+        if style.get(w + "styleId") in ("Normal", "Heading1"):
+            properties = style.find(w + "rPr")
+            if properties is None:
+                properties = etree.SubElement(style, w + "rPr")
+            for found in properties.findall(w + "rFonts"):
+                properties.remove(found)
+            fonts = etree.SubElement(properties, w + "rFonts")
+            for name in ("ascii", "hAnsi", "cs", "eastAsia"):
+                fonts.set(w + name, "Nowhere Sans" if style.get(w + "styleId") == "Normal" else "Nowhere Display")
+    package.mark_dirty(part)
+    document._invalidate()
+    data = document.to_bytes()
+    results = []
+    for rust in (True, False):
+        monkeypatch.setenv("DOCX_AGENT_RUST", "1" if rust else "0")
+        with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, workers=0) as box:
+            session = box.session(clock=CLOCK)
+            doc = session.open(data, "faces.docx")
+            paragraphs = session.entry(doc).document.paragraphs()
+            results.append(_normal(box.dispatch(session, "check", {
+                "doc": doc, "range": [f"{paragraphs[0].id}..{paragraphs[-1].id}"], "include": INCLUDE}).to_json()))
+    assert results[0] == results[1], _first_difference(results[0], results[1])
+    assert results[0]["data"]["reflow"]["coverage"]["substituted_fonts"][0].startswith("Nowhere Display")

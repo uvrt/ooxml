@@ -62,8 +62,13 @@ class Exporter:
             self.font_list.append(key)
         return self.fonts[key]
 
+    #: Lane F: the faces formats name, in the order first named (the mirror reads it per block).
+    face_log: list | None = None
+
     def fmt(self, f, width_hp=None):
         """A character format's index: font, size, width size (a script's), position, border."""
+        if self.face_log is not None and f.face and f.face not in self.face_log:
+            self.face_log.append(f.face)
         font = self.font(f.face, f.bold, f.italic) if f.face else -1
         key = (font, f.half_points, width_hp if width_hp is not None else f.half_points, f.position or 0,
                tuple(f.border) if f.border else None)

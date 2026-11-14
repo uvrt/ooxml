@@ -138,6 +138,8 @@ class Unit:
     fstack: list | None = None
     #: Lane F: the bookmarks its REF fields show.
     refs: frozenset = frozenset()
+    #: Lane F: the faces its text is measured in, in the order first named.
+    faces: tuple = ()
 
 
 def _table_draw(element) -> str:
@@ -292,14 +294,20 @@ class Mirror:
     # -- items ------------------------------------------------------------------------
 
     def unit_items(self, k: int) -> list:
-        """The flow items (export dicts, Px/Wd unconverted) of unit ``k``."""
+        """The flow items (export dicts, Px/Wd unconverted) of unit ``k``; the faces its
+        text names, in order (:attr:`Unit.faces`)."""
         unit = self.units[k]
         out = []
-        for block in unit.blocks:
-            if isinstance(block, Table):
-                out.append(self.table_item(k, unit, block))
-            else:
-                out.append(self.para_item(k, unit, block))
+        self.ex.face_log = []
+        try:
+            for block in unit.blocks:
+                if isinstance(block, Table):
+                    out.append(self.table_item(k, unit, block))
+                else:
+                    out.append(self.para_item(k, unit, block))
+            unit.faces = list(self.ex.face_log)
+        finally:
+            self.ex.face_log = None
         return out
 
     def _neighbour_paragraph(self, k: int, side: int):

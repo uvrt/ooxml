@@ -855,6 +855,22 @@ def number_texts(call: Any, scope_arguments: Any) -> Any:
     return answer["texts"]
 
 
+def _in_layout_order(mirror: Any, substitutions: dict) -> list:
+    """The faces substituted in the order docx2svg's layout of the document meets them: the
+    body's in the order its blocks first name them, then the rest (the headers' and
+    footers') as the mirror met them."""
+    left = dict(substitutions)
+    out = []
+    for unit in mirror.units:
+        for face in unit.faces:
+            found = left.pop(face, None)
+            if found is not None:
+                out.append(found)
+        if not left:
+            break
+    return out + list(left.values())
+
+
 def _coverage(mirror: Any, pages: int, blocks: int) -> tuple[dict[str, Any], list[str]]:
     """``reflow``'s ``coverage`` and ``layout_warnings`` of a complete layout
     (``layout.coverage_facts``, docx2svg's ``coverage_of`` and the conversion's warnings):
@@ -883,15 +899,14 @@ def _coverage(mirror: Any, pages: int, blocks: int) -> tuple[dict[str, Any], lis
                        "reason": f"{family!r} has no glyph for {char!r}: measured with "
                                  f"{'its missing glyph' if used == '.notdef' else repr(used)}"}
                       for family, char, used in real]
+    substitutions = _in_layout_order(mirror, getattr(fonts, "substitutions", None) or {})
     coverage = coverage_facts({"complete": True, "pages": pages, "blocks_laid_out": blocks, "blocks": blocks,
                                "estimate_source": "layout", "stop": None, "story_stops": [],
-                               "substituted_fonts": [s.as_dict() for s in
-                                                     getattr(fonts, "substitutions", {}).values()],
+                               "substituted_fonts": [s.as_dict() for s in substitutions],
                                "missing_fonts": [], "approximations": approximations})
     warnings = [docx2svg.Warning(code, docx2svg._PARSER_WARNINGS.get(code, "a body element is not read"))
                 for code in mirror.d2.warnings]
-    warnings += [docx2svg.Warning("font-substituted", s.message())
-                 for s in getattr(fonts, "substitutions", {}).values()]
+    warnings += [docx2svg.Warning("font-substituted", s.message()) for s in substitutions]
     for family, char, used in real:
         source = "its missing glyph (.notdef)" if used == ".notdef" else repr(used)
         warnings.append(docx2svg.Warning(
