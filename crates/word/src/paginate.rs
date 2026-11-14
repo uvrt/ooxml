@@ -466,12 +466,12 @@ fn place_table_at(
     let mut pieces: Vec<(usize, bool, i64, i64)> = Vec::new();
     let mut part: Vec<u32> = part.to_vec();
     if first_on_page && (row > 0 || !part.is_empty()) && header_count > 0 && header_count <= row {
-        for h in 0..header_count {
+        for (h, header) in rows.iter().enumerate().take(header_count) {
             if let Some(r) = ranges.as_deref_mut() {
-                r.push(whole(&rows[h], None));
+                r.push(whole(header, None));
             }
-            pieces.push((h, true, y, rows[h].top_border + rows[h].height));
-            y += rows[h].top_border + rows[h].height;
+            pieces.push((h, true, y, header.top_border + header.height));
+            y += header.top_border + header.height;
         }
     }
     let any_body = |pieces: &Vec<(usize, bool, i64, i64)>| pieces.iter().any(|p| !p.1);
@@ -671,7 +671,7 @@ impl<'a> Ctx<'a> {
                 }
             }
         }
-        if target.line == 0 && target.part.is_empty() && target.item >= 1 && target.item - 1 >= start.item {
+        if target.line == 0 && target.part.is_empty() && target.item > start.item {
             let prev = target.item - 1;
             match &*self.items[prev as usize] {
                 FItem::P(p) if p.keep_next => {

@@ -80,7 +80,7 @@ impl Geometry {
         for &(p, a) in &self.tabs {
             if p + origin > x {
                 let c = (p + origin, a);
-                if best.map_or(true, |b| c < b) {
+                if best.is_none_or(|b| c < b) {
                     best = Some(c);
                 }
             }
@@ -89,7 +89,7 @@ impl Geometry {
             if let Some(h) = self.hanging_stop {
                 if h > x {
                     let c = (h, LEFT);
-                    if best.map_or(true, |b| c < b) {
+                    if best.is_none_or(|b| c < b) {
                         best = Some(c);
                     }
                 }
@@ -101,7 +101,11 @@ impl Geometry {
         let last = self.tabs.iter().map(|t| t.0).max().unwrap_or(0) + origin;
         let base = x.max(last);
         let step = self.default_tab;
-        (((base - origin).div_floor(&step) + 1) * step + origin, LEFT, true)
+        (
+            (Integer::div_floor(&(base - origin), &step) + 1) * step + origin,
+            LEFT,
+            true,
+        )
     }
 }
 
@@ -321,7 +325,7 @@ fn may_break(before: &Piece, after: &Piece) -> bool {
 
 /// `linebreak.squeeze`: a quarter of a space, half up to the unit.
 fn squeeze(s: i64, p: &Piece) -> i64 {
-    (p.width + 2 * s).div_floor(&(4 * s)) * s
+    Integer::div_floor(&(p.width + 2 * s), &(4 * s)) * s
 }
 
 fn squeezes(over: i64, room: i64, spaces: i64, slack: i64, spaces_before: i64) -> bool {

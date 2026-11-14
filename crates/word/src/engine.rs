@@ -407,7 +407,7 @@ impl Engine {
     }
 
     fn repaginate(&mut self, ch: Change, st: &mut Stat) {
-        if self.pag.starts.is_empty() || ch.a >= self.flow.len().min(usize::MAX) && self.flow.is_empty() {
+        if self.pag.starts.is_empty() || ch.a >= self.flow.len() && self.flow.is_empty() {
             self.pag = paginate_all(&self.doc, &self.flow);
             return;
         }
@@ -635,9 +635,11 @@ impl Snap {
                         .starts
                         .partition_point(|s| *s <= Pos::at(i as u32, n - 1))
                         .saturating_sub(1);
-                    for k in first..=last.max(first) {
-                        pages.push(self.pag.page_at[k] as usize + 1);
-                    }
+                    pages.extend(
+                        self.pag.page_at[first..=last.max(first)]
+                            .iter()
+                            .map(|p| *p as usize + 1),
+                    );
                 } else {
                     let (first, last) = self.pages_of_item(i);
                     for k in first..last.min(self.pag.starts.len()) {

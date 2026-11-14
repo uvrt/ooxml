@@ -12,6 +12,10 @@ publish.workspace = true
 # python/ooxml-core/pyproject.toml); this name only keeps it apart from the ooxml-core crate.
 name = "ooxml_core_py"
 crate-type = ["cdylib"]
+# An extension module leaves the interpreter's symbols unresolved, so a test binary of it
+# cannot link on Linux; python/ooxml-core/tests tests the module.
+test = false
+doctest = false
 
 [dependencies]
 ooxml-word = { path = "../word" }
