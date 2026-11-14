@@ -6,7 +6,7 @@ differences live here and nowhere else:
 
     python tools/ci.py plan [--event EVENT] [--changed FILE]...
         Which packages to test, as GitHub Actions matrices (written to $GITHUB_OUTPUT when it
-        is set, printed otherwise).  On a pull request only the packages a change touches, and
+        is set, printed otherwise), and whether rust.yml's jobs run (`rust`).  On a pull request only the packages a change touches, and
         every package that depends on one of them (USES below); a change to the workflows or
         to tools/ runs everything.  A push to main, the nightly run and a manual run take all.
     python tools/ci.py affected FILE...
@@ -155,6 +155,22 @@ IMPORT_NAMES = {name: name.replace("-", "_") for name in PACKAGES}
 #: A change under one of these runs every package's tests.
 RUN_ALL_PREFIXES = (".github/", "tools/")
 
+#: The Rust workspace and its Python module: a change here runs rust.yml.  So does a change
+#: to the packages the differential tests compare with or build their documents through
+#: (python/ooxml-core/tests: docx2svg is the reference, docx-agent makes the documents).
+RUST_PREFIXES = ("crates/", "Cargo.toml", "Cargo.lock", ".cargo/", "rustfmt.toml", "python/ooxml-core/")
+RUST_REFERENCE = ("ooxml-common", "ooxml-edit", "docx2svg", "docx-agent")
+
+
+def rust_affected(changed: list[str]) -> bool:
+    for path in changed:
+        if path.startswith(RUN_ALL_PREFIXES + RUST_PREFIXES):
+            return True
+        parts = path.split("/")
+        if len(parts) > 2 and parts[0] == "python" and parts[1] in RUST_REFERENCE:
+            return True
+    return False
+
 
 def affected(changed: list[str]) -> list[str]:
     """The packages whose tests a change to ``changed`` (paths from the root) selects."""
@@ -192,6 +208,7 @@ def plan(event: str, changed: list[str] | None) -> dict[str, str]:
     out = {
         "packages": names,
         "any": bool(names),
+        "rust": full or changed is None or rust_affected(changed),
         "linux": {"include": linux},
         "windows": {"include": windows},
         "macos": {"include": macos},

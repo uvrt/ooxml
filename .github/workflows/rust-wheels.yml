@@ -1,0 +1,91 @@
+name: ooxml-core wheels
+
+# The wheels of ooxml-core (the Rust core's Python module), built by maturin; called by
+# rust.yml and release.yml.  Per target: one abi3 wheel for every GIL build of CPython from
+# 3.10 (crates/python's feature abi3), and one wheel for the free-threaded 3.15t.  `full`:
+# Linux x86_64 and aarch64 (manylinux), macOS x86_64 and arm64, Windows x86_64; otherwise
+# (a pull request) Linux x86_64 and macOS x86_64 only.  A wheel built for the runner's own
+# machine is installed and imported before it is uploaded.
+
+on:
+  workflow_call:
+    inputs:
+      full:
+        type: boolean
+        default: true
+
+jobs:
+  wheels:
+    name: wheels ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(inputs.full && '[{"target":"linux-x86_64","os":"ubuntu-latest","rust":"x86_64","native":true},{"target":"linux-aarch64","os":"ubuntu-24.04-arm","rust":"aarch64","native":true},{"target":"macos-x86_64","os":"macos-latest","rust":"x86_64-apple-darwin","native":false},{"target":"macos-arm64","os":"macos-latest","rust":"aarch64-apple-darwin","native":true},{"target":"windows-x86_64","os":"windows-latest","rust":"x86_64-pc-windows-msvc","native":true}]' || '[{"target":"linux-x86_64","os":"ubuntu-latest","rust":"x86_64","native":true},{"target":"macos-x86_64","os":"macos-latest","rust":"x86_64-apple-darwin","native":false}]') }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # The host Pythons: 3.12 for the abi3 wheel, 3.15t for the free-threaded one (on Linux
+      # the manylinux container builds with its own; this one installs the wheel).
+      - uses: actions/setup-python@v5
+        id: ft
+        with:
+          python-version: "3.15t"
+          allow-prereleases: true
+      - uses: actions/setup-python@v5
+        id: py
+        with:
+          python-version: "3.12"
+
+      - name: abi3 wheel (CPython 3.10 and later)
+        uses: PyO3/maturin-action@v1
+        with:
+          working-directory: python/ooxml-core
+          target: ${{ matrix.rust }}
+          manylinux: ${{ runner.os == 'Linux' && 'auto' || '' }}
+          args: --release --features abi3 --out ../../dist -i ${{ runner.os == 'Linux' && 'python3.12' || steps.py.outputs.python-path }}
+
+      - name: Free-threaded wheel (CPython 3.15t)
+        uses: PyO3/maturin-action@v1
+        with:
+          working-directory: python/ooxml-core
+          target: ${{ matrix.rust }}
+          manylinux: ${{ runner.os == 'Linux' && 'auto' || '' }}
+          args: --release --out ../../dist -i ${{ runner.os == 'Linux' && 'python3.15t' || steps.ft.outputs.python-path }}
+
+      - name: The wheels install and import
+        if: matrix.native
+        shell: bash
+        run: |
+          ls -l dist
+          python -m pip install --no-index --find-links dist ooxml-core
+          python -c "import ooxml_core, sys; print(sys.version, sorted(n for n in dir(ooxml_core) if not n.startswith('_')))"
+
+      - name: The free-threaded wheel installs and imports with the GIL off
+        if: matrix.native
+        shell: bash
+        env:
+          FT: ${{ steps.ft.outputs.python-path }}
+        run: |
+          "$FT" -m pip install --no-index --find-links dist ooxml-core
+          "$FT" -W error::RuntimeWarning -c "import sys, ooxml_core; print(sys.version); sys.exit('the GIL is enabled' if sys._is_gil_enabled() else 0)"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-ooxml-core-${{ matrix.target }}
+          path: dist/
+
+  sdist:
+    name: sdist ooxml-core
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: PyO3/maturin-action@v1
+        with:
+          working-directory: python/ooxml-core
+          command: sdist
+          args: --out ../../dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-ooxml-core-sdist
+          path: dist/
