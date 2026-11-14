@@ -1,0 +1,280 @@
+"""PNG rasterisation through the external backend."""
+
+from __future__ import annotations
+
+import builtins
+from pathlib import Path
+import struct
+
+import pytest
+
+from pptx2svg import ConvertOptions, convert_pptx_to_png
+from pptx2svg.png import _preferred_backend, available_backends, svg_to_png
+
+pytestmark = pytest.mark.skipif(
+    not available_backends(),
+    reason="no SVG rasterizer installed (pip install pptx2svg[png])",
+)
+
+PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+
+SIMPLE_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 20" width="40" height="20">'
+    '<rect width="40" height="20" fill="#3366cc"/></svg>'
+)
+
+
+def png_size(data: bytes) -> tuple[int, int]:
+    """Read width/height out of the IHDR chunk."""
+    assert data[:8] == PNG_MAGIC
+    width, height = struct.unpack(">II", data[16:24])
+    return width, height
+
+
+def test_rasterizes_to_png():
+    assert svg_to_png(SIMPLE_SVG)[:8] == PNG_MAGIC
+
+
+def test_output_size_follows_the_svg_by_default():
+    assert png_size(svg_to_png(SIMPLE_SVG)) == (40, 20)
+
+
+def test_explicit_width_scales_the_output():
+    width, height = png_size(svg_to_png(SIMPLE_SVG, width=400))
+    assert width == 400
+    assert height == 200  # aspect ratio preserved by the backend
+
+
+def test_unknown_backend_is_rejected():
+    with pytest.raises(ValueError):
+        svg_to_png(SIMPLE_SVG, backend="nonexistent")
+
+
+def test_convert_pptx_to_png_produces_one_image_per_slide(product_page):
+    images = convert_pptx_to_png(product_page, ConvertOptions(width=640))
+    assert len(images) == 1
+    assert images[0][:8] == PNG_MAGIC
+    assert png_size(images[0])[0] == 640
+
+
+def test_rendered_slide_is_not_blank(product_page):
+    """A slide with text must produce more than a flat background."""
+    image = convert_pptx_to_png(product_page, ConvertOptions(width=320))[0]
+    # A blank fill compresses far smaller than a slide with glyphs on it.
+    assert len(image) > 2000
+
+
+# --------------------------------------------------------------------------------------
+# Fonts: reproducible by default, and never silently degraded
+# --------------------------------------------------------------------------------------
+
+TEXT_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="60">'
+    '<rect width="400" height="60" fill="#fff"/>'
+    '<text x="10" y="40" font-family="Calibri, Carlito, sans-serif" font-size="28"'
+    ' fill="#000">Handgloves</text></svg>'
+)
+
+
+def test_bundled_fonts_are_used_and_the_host_is_ignored_without_office_fonts():
+    """The reproducible render -- the default where Office is not installed, and
+    ``host_fonts=False`` where it is -- must not depend on what this machine has.
+
+    Compared against an explicit system-fonts render rather than against a stored hash:
+    a hash would pin this test to one resvg build, while the property that matters is
+    that the two configurations are *different*, which is only true if the default is
+    really reading the bundle.
+    """
+    from pptx2svg.fonts import bundle_dir
+
+    if bundle_dir() is None:
+        pytest.skip("pptx2svg-fonts is not importable")
+    default = svg_to_png(TEXT_SVG, backend="resvg", host_fonts=False)
+    system = svg_to_png(
+        TEXT_SVG, backend="resvg", use_bundled_fonts=False, skip_system_fonts=False
+    )
+    assert default[:8] == PNG_MAGIC
+    # This machine has neither Calibri nor Carlito outside the bundle, so a default
+    # render that matched the system one would mean the bundle was never consulted.
+    assert default != system
+
+
+def test_office_fonts_draw_by_default_where_they_are_installed(monkeypatch):
+    """``host_fonts=None`` asks for the faces PowerPoint uses whenever Office's fonts are
+    here, bundle or not; ``False`` never does."""
+    from pptx2svg.fonts import office
+
+    asked = []
+    monkeypatch.setattr(office, "drawing_plan", lambda svg, supplied=frozenset(), own=None, host=True:
+                        asked.append(svg) if host else None)
+    monkeypatch.setattr(office, "available", lambda: True)
+    svg_to_png(TEXT_SVG, backend="resvg")
+    assert len(asked) == 1
+    svg_to_png(TEXT_SVG, backend="resvg", host_fonts=False)
+    assert len(asked) == 1
+    monkeypatch.setattr(office, "available", lambda: False)
+    from pptx2svg.fonts import bundle_dir
+
+    if bundle_dir() is not None:
+        svg_to_png(TEXT_SVG, backend="resvg")
+        assert len(asked) == 1
+
+
+def test_without_a_bundle_the_host_fonts_are_used_rather_than_none(monkeypatch):
+    """Skipping system fonts with nothing to replace them renders blank slides."""
+    monkeypatch.setattr("pptx2svg.fonts.bundle_dir", lambda: None)
+    image = svg_to_png(TEXT_SVG, backend="resvg")
+    assert image[:8] == PNG_MAGIC
+    # Text drawn with *something* compresses larger than an empty white rectangle.
+    blank = svg_to_png(
+        '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="60">'
+        '<rect width="400" height="60" fill="#fff"/></svg>',
+        backend="resvg",
+    )
+    assert len(image) > len(blank)
+
+
+def test_caller_font_dirs_take_precedence_over_the_bundle(tmp_path):
+    """An empty directory must not knock out the bundle; order is dirs, then bundle."""
+    (tmp_path / "not-a-font.txt").write_text("x")
+    image = svg_to_png(TEXT_SVG, backend="resvg", font_dirs=[str(tmp_path)])
+    assert image[:8] == PNG_MAGIC
+    assert image == svg_to_png(TEXT_SVG, backend="resvg")
+
+
+MANY_FACES_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 160" width="400" height="160">'
+    '<rect width="400" height="160" fill="#fff"/>'
+    '<text x="10" y="30" font-size="20" font-family="Carlito, sans-serif">Handgloves</text>'
+    '<text x="10" y="60" font-size="20" font-family="\'Not Installed\', serif">Handgloves</text>'
+    '<text x="10" y="90" font-size="20" font-family="Lato, sans-serif">Lato <tspan '
+    'font-weight="bold" font-style="italic">bold</tspan> \u3042\u3044 \u2192</text>'
+    '<text x="10" y="120" font-size="20">no family</text>'
+    '<text x="10" y="150" font-size="20" font-family="monospace">mono</text>'
+    '</svg>'
+)
+
+
+@pytest.mark.skipif("resvg" not in available_backends(), reason="resvg-py is not installed")
+def test_the_rasteriser_is_handed_only_the_faces_the_svg_can_use(monkeypatch, tmp_path):
+    """resvg-py opens every file it is handed on every call; handed only the faces a run
+    can resolve to and those its missing characters fall back to, in the order it loads
+    them, it draws the same pixels (ooxml_common.fonts.rasterdb)."""
+    import resvg_py
+
+    from ooxml_common.fonts import rasterdb
+
+    calls = []
+    real = resvg_py.svg_to_bytes
+
+    def spy(**options):
+        calls.append(options)
+        return real(**options)
+
+    monkeypatch.setattr(resvg_py, "svg_to_bytes", spy)
+    (tmp_path / "not-a-font.txt").write_text("x")
+    options = dict(backend="resvg", font_dirs=[str(tmp_path)], host_fonts=False, check_glyphs=False)
+    subset = svg_to_png(MANY_FACES_SVG, **options)
+    handed = calls[-1]
+    monkeypatch.setattr(rasterdb, "needed_font_files", lambda *args, **kwargs: None)
+    everything = svg_to_png(MANY_FACES_SVG, **options)
+    assert subset == everything
+    if handed.get("skip_system_fonts"):          # the bundle is installed
+        assert "font_dirs" not in handed
+        names = {Path(path).name for path in handed["font_files"]}
+        assert any(name.startswith("Lato-") for name in names)
+        assert any(name.startswith("NotoSansJP") for name in names)    # あい fall back to it
+        assert not any(name.startswith("Caladea") for name in names)  # nothing reaches it
+        assert "font_dirs" in calls[-1]
+
+
+# --------------------------------------------------------------------------------------
+# Backend discovery
+#
+# These probe discovery rather than rendering.  They inherit the module's skip, which is
+# harmless: with no rasteriser at all there is no preference to get wrong.
+# --------------------------------------------------------------------------------------
+
+
+@pytest.fixture
+def broken_cairo(monkeypatch):
+    """cairosvg installed, libcairo missing -- the normal state of a Mac without brew.
+
+    `import cairosvg` then raises OSError rather than ImportError, because cairocffi
+    looks for the *system* library at import time.
+    """
+    real_import = builtins.__import__
+    imported: list[str] = []
+
+    def fake_import(name, *args, **kwargs):
+        imported.append(name)
+        if name == "cairosvg":
+            raise OSError('no library called "cairo-2" was found')
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    return imported
+
+
+def test_a_backend_that_cannot_load_is_absent_rather_than_fatal(broken_cairo):
+    """The bug this guards: discovery caught ImportError only, so an OSError from
+    cairosvg took down callers that were about to choose resvg and never touch cairo."""
+    assert "cairosvg" not in available_backends()
+
+
+def test_auto_does_not_import_a_backend_it_will_not_use(broken_cairo):
+    """resvg wins on preference, so cairosvg must never be imported at all -- importing
+    it means loading a system library we have already decided not to use."""
+    if "resvg" not in available_backends():
+        pytest.skip("resvg-py is not installed; nothing to prefer over cairosvg")
+    broken_cairo.clear()
+    assert _preferred_backend() == "resvg"
+    assert "cairosvg" not in broken_cairo
+
+
+def test_the_public_two_halves_draw_what_convert_pptx_to_png_draws(product_page):
+    """:func:`pptx2svg.render_svgs` then :func:`pptx2svg.rasterise_svgs` -- what a render
+    tool keeping images by their SVG calls -- are :func:`convert_pptx_to_png` byte for
+    byte; the agents' old private names still work."""
+    import tempfile
+
+    import pptx2svg
+
+    assert (pptx2svg._render, pptx2svg._host_fonts) == (pptx2svg.render_svgs, pptx2svg.uses_host_fonts)
+    whole = convert_pptx_to_png(product_page, ConvertOptions(width=480))
+    options = ConvertOptions(width=480)
+    documents, resolved = pptx2svg.render_svgs(product_page, options)
+    assert documents == pptx2svg.convert_pptx_to_svg(product_page, ConvertOptions(width=480))
+    with tempfile.TemporaryDirectory() as folder:
+        files = resolved.embedded_fonts.write(folder) if resolved.embedded_fonts else None
+        numbers = [(slide.slide_number, slide.template_part) for slide in resolved.slides]
+        assert pptx2svg.rasterise_svgs(documents, options, numbers=numbers, font_files=files) == whole
+
+
+# -- On ooxml-common's rasterisers (review, S7) -------------------------------------------
+
+
+def test_the_public_names_are_the_shared_ones():
+    import pptx2svg
+    from ooxml_common import raster
+
+    assert pptx2svg.RasterizerNotAvailable is raster.RasterizerNotAvailable
+    assert pptx2svg.available_backends is raster.available_backends
+
+
+def test_no_backend_says_how_to_install_one(monkeypatch):
+    import sys
+
+    import pptx2svg
+
+    monkeypatch.setitem(sys.modules, "resvg_py", None)
+    monkeypatch.setitem(sys.modules, "cairosvg", None)
+    with pytest.raises(pptx2svg.RasterizerNotAvailable, match=r"pip install pptx2svg\[png\]"):
+        svg_to_png(SIMPLE_SVG)
+    with pytest.raises(pptx2svg.RasterizerNotAvailable, match=r"pip install pptx2svg\[png\]"):
+        svg_to_png(SIMPLE_SVG, backend="resvg")
+
+
+def test_an_unknown_backend_is_a_value_error():
+    with pytest.raises(ValueError, match="unknown rasterizer backend"):
+        svg_to_png(SIMPLE_SVG, backend="pdf")  # type: ignore[arg-type]

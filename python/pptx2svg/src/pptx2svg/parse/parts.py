@@ -1,0 +1,636 @@
+"""Part readers: presentation.xml, slides, layouts, masters and themes.
+
+Walks the package graph from ``presentation.xml``: the slide id list gives slide parts in
+presentation order, each slide's relationships point at its layout, each layout at its
+master, and each master at its theme.  Layouts and masters are read once and shared, so a
+50-slide deck built on one master parses that master once.
+"""
+
+from __future__ import annotations
+
+from typing import Callable, Iterable
+from xml.etree.ElementTree import Element
+
+from ..opc import (
+    OpcPackage,
+    REL_SLIDE,
+    REL_SLIDE_LAYOUT,
+    REL_SLIDE_MASTER,
+    REL_TABLE_STYLES,
+    REL_THEME,
+)
+from ..xmlutil import attr, child, children, int_attr, is_true, ns_attr, num_attr
+from .drawing import (  # noqa: F401 -- the theme readers moved there and are re-exported
+    COLOR_SCHEME_KEYS,
+    parse_color,
+    parse_color_scheme,
+    parse_effect_list,
+    parse_fill,
+    parse_fill_style,
+    parse_format_scheme,
+    parse_line,
+    parse_style_reference,
+)
+from .shapes import parse_shape_tree
+from .source import (
+    SourceBackground,
+    SourceColorMap,
+    SourceEmbeddedFont,
+    SourceFontScheme,
+    SourcePresentation,
+    SourceRunProperties,
+    SourceSlide,
+    SourceSlideLayout,
+    SourceSlideMaster,
+    SourceTableBackground,
+    SourceTableBorder,
+    SourceTableCellStyle,
+    SourceTableStyle,
+    SourceTableStyles,
+    SourceTheme,
+    TABLE_STYLE_REGIONS,
+)
+from .text import parse_text_style
+
+#: ``p:clrMap`` slots, in the order the schema declares them.
+COLOR_MAP_SLOTS = (
+    "bg1",
+    "tx1",
+    "bg2",
+    "tx2",
+    "accent1",
+    "accent2",
+    "accent3",
+    "accent4",
+    "accent5",
+    "accent6",
+    "hlink",
+    "folHlink",
+)
+
+
+
+def read_presentation(
+    package: OpcPackage,
+    slide_numbers: Iterable[int] | None = None,
+    *,
+    parsed: PartReader | None = None,
+) -> SourcePresentation:
+    """Read a deck into the source model: every slide, or with ``slide_numbers`` (1-based,
+    presentation order) only those, each with its layout, master and theme.  A slide not
+    asked for is not parsed: resolution draws only the slides asked for, and a slide
+    reads nothing of another.
+
+    ``parsed``, when given, reads each layout, master and theme
+    (:meth:`pptx2svg.cache.ModelCache.parsed`): one parse shared by every conversion of
+    the same bytes."""
+    presentation_path = package.presentation_part()
+    if presentation_path is None:
+        raise ValueError("package has no presentation part; is this a .pptx?")
+
+    root = package.read_xml(presentation_path)
+    if root is None:
+        raise ValueError(f"presentation part {presentation_path!r} is missing")
+
+    sld_sz = child(root, "sldSz")
+    if parsed is None:
+        default_text_style = parse_text_style(child(root, "defaultTextStyle"))
+        table_styles = read_table_styles(package, presentation_path)
+    else:
+        default_text_style = parsed(package, presentation_path, _default_text_style)
+        styles_path = package.first_related_part(presentation_path, REL_TABLE_STYLES)
+        table_styles = (parsed(package, styles_path, _table_styles_part)
+                        if styles_path is not None else None)
+    presentation = SourcePresentation(
+        part_path=presentation_path,
+        slide_width=num_attr(sld_sz, "cx") or 9144000,
+        slide_height=num_attr(sld_sz, "cy") or 6858000,
+        default_text_style=default_text_style,
+        table_styles=table_styles,
+        embedded_fonts=read_embedded_fonts(root, presentation_path),
+        app_version=read_app_version(package),
+        first_slide_number=_first_slide_number(root),
+    )
+
+    wanted = None if slide_numbers is None else set(slide_numbers)
+    entries = _slide_paths(package, presentation_path, root)
+    for number, (slide_id, slide_path) in enumerate(entries, start=1):
+        if wanted is not None and number not in wanted:
+            continue
+        slide = read_slide(package, slide_path, number, slide_id)
+        if slide is None:
+            continue
+        presentation.slides.append(slide)
+        _ensure_ancestry(package, presentation, slide, parsed)
+
+    return presentation
+
+
+#: How :func:`read_presentation` reads a layout, master or theme when it is handed one:
+#: ``(package, part path, reader) -> what reader(package, part path) returns``.
+PartReader = Callable[[OpcPackage, str, Callable], object]
+
+
+def slide_entries(package: OpcPackage) -> list[tuple[int | None, str]]:
+    """``(sldId, part path)`` of every slide, in presentation order -- slide number ``n``
+    is entry ``n - 1`` -- without parsing a slide."""
+    presentation_path = package.presentation_part()
+    root = package.read_xml(presentation_path) if presentation_path is not None else None
+    if root is None:
+        return []
+    return _slide_paths(package, presentation_path, root)
+
+
+def _first_slide_number(root) -> int:
+    """``p:presentation@firstSlideNum``, 1 when absent (0 is legal)."""
+    value = int_attr(root, "firstSlideNum")
+    return 1 if value is None else value
+
+
+#: The package relationship that names ``docProps/app.xml``.
+REL_EXTENDED_PROPERTIES = (
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties"
+)
+
+
+def read_app_version(package: OpcPackage) -> str | None:
+    """``AppVersion`` from the deck's extended properties, or ``None``.
+
+    Found through the package's own relationship rather than by path, the way the
+    presentation part is; a missing, unreadable or silent part is simply no answer.
+    """
+    for rel in package.relationships("").values():
+        if rel.type != REL_EXTENDED_PROPERTIES or rel.target_part is None:
+            continue
+        try:
+            root = package.read_xml(rel.target_part)
+        except Exception:
+            return None
+        node = child(root, "AppVersion")
+        text = (node.text or "").strip() if node is not None else ""
+        return text or None
+    return None
+
+
+#: ``<p:embeddedFont>`` children -> the field on :class:`SourceEmbeddedFont` they fill.
+EMBEDDED_FONT_SLOTS = {
+    "regular": "regular",
+    "bold": "bold",
+    "italic": "italic",
+    "boldItalic": "bold_italic",
+}
+
+
+def read_embedded_fonts(root: Element, part_path: str) -> list[SourceEmbeddedFont]:
+    """``<p:embeddedFontLst>`` -- the faces the author shipped inside the deck.
+
+    Only the family name and the four relationship ids; decoding the parts they point at
+    is :mod:`pptx2svg.fonts.embedded`'s job, and it costs about a second per face, which
+    is not a price the parser should make every caller pay.
+
+    An entry with no ``typeface`` is dropped: the family name is the key everything else
+    joins on -- the run's ``a:latin``, the metrics table, the ``font-family`` in the SVG --
+    and a nameless one can be joined to nothing.
+    """
+    fonts: list[SourceEmbeddedFont] = []
+    for node in children(child(root, "embeddedFontLst"), "embeddedFont"):
+        typeface = attr(child(node, "font"), "typeface")
+        if not typeface:
+            continue
+        slots = {
+            field_name: ns_attr(child(node, tag), "id")
+            for tag, field_name in EMBEDDED_FONT_SLOTS.items()
+        }
+        if not any(slots.values()):
+            continue
+        fonts.append(SourceEmbeddedFont(typeface=typeface, part_path=part_path, **slots))
+    return fonts
+
+
+def _slide_paths(
+    package: OpcPackage, presentation_path: str, root: Element
+) -> list[tuple[int | None, str]]:
+    """``(sldId, part path)`` in presentation order, from ``p:sldIdLst``.
+
+    ``p:sldId/@id`` is carried alongside the path because it is deck-unique and survives
+    reordering, which the slide's position does not -- making it the durable half of a
+    per-shape identity.
+    """
+    relationships = package.relationships(presentation_path)
+    entries: list[tuple[int | None, str]] = []
+    for sld_id in children(child(root, "sldIdLst"), "sldId"):
+        rel_id = ns_attr(sld_id, "id")
+        relationship = relationships.get(rel_id) if rel_id else None
+        if relationship is None or relationship.target_part is None:
+            continue
+        raw_id = attr(sld_id, "id")
+        try:
+            identifier = int(raw_id) if raw_id is not None else None
+        except ValueError:
+            identifier = None
+        entries.append((identifier, relationship.target_part))
+    if entries:
+        return entries
+    # Malformed decks without a slide id list: fall back to relationship order.
+    return [
+        (None, path) for path in package.related_parts_of_type(presentation_path, REL_SLIDE)
+    ]
+
+
+def template_parts(package: OpcPackage, presentation: SourcePresentation) -> dict[str, str]:
+    """Every slide master and layout of the deck, ``{part path: "master" | "layout"}``:
+    each master in ``p:sldMasterIdLst`` order, then its layouts."""
+    found: dict[str, str] = {}
+    for master in package.related_parts_of_type(presentation.part_path, REL_SLIDE_MASTER):
+        found.setdefault(master, "master")
+        for layout in package.related_parts_of_type(master, REL_SLIDE_LAYOUT):
+            found.setdefault(layout, "layout")
+    return found
+
+
+def read_template(
+    package: OpcPackage, presentation: SourcePresentation, part_path: str
+) -> SourceSlide:
+    """A stand-in slide on the layout or master ``part_path``, with the placeholders of
+    that part as its shapes, for a template view to draw (:mod:`pptx2svg.resolve.templates`).
+
+    A layout's stand-in is built on it, so its background, the master's shapes (unless
+    the layout's ``showMasterSp`` says not) and its own shapes come as a slide's would; a
+    master's has no layout.  The layout, master and theme are read into ``presentation``
+    as a slide's are.  Raises ``ValueError`` when ``part_path`` is neither.
+    """
+    part_path = part_path.lstrip("/")
+    kinds = template_parts(package, presentation)
+    kind = kinds.get(part_path)
+    if kind is None:
+        raise ValueError(
+            f"{part_path!r} is not a slide layout or master of this deck; it has "
+            f"{list(kinds)}"
+        )
+    if kind == "layout":
+        stand_in = SourceSlide(part_path=part_path, layout_part_path=part_path,
+                               slide_number=0, template="layout")
+        _ensure_ancestry(package, presentation, stand_in)
+        owner = presentation.layouts.get(part_path)
+    else:
+        stand_in = SourceSlide(part_path=part_path, slide_number=0, template="master")
+        owner = presentation.masters.get(part_path)
+        if owner is None:
+            owner = read_slide_master(package, part_path)
+            if owner is not None:
+                presentation.masters[part_path] = owner
+        theme_path = owner.theme_part_path if owner is not None else None
+        if theme_path is not None and theme_path not in presentation.themes:
+            theme = read_theme(package, theme_path)
+            if theme is not None:
+                presentation.themes[theme_path] = theme
+    if owner is None:
+        raise ValueError(f"{part_path!r} could not be read")
+    stand_in.shapes = [shape for shape in owner.shapes
+                       if getattr(shape, "placeholder", None) is not None]
+    return stand_in
+
+
+def _ensure_ancestry(
+    package: OpcPackage, presentation: SourcePresentation, slide: SourceSlide,
+    parsed: PartReader | None = None,
+) -> None:
+    """Read the slide's layout, master and theme once each, caching by part path."""
+    def read(reader, path):
+        return reader(package, path) if parsed is None else parsed(package, path, reader)
+
+    layout_path = slide.layout_part_path
+    if layout_path is None or layout_path in presentation.layouts:
+        layout = presentation.layouts.get(layout_path) if layout_path else None
+    else:
+        layout = read(read_slide_layout, layout_path)
+        if layout is not None:
+            presentation.layouts[layout_path] = layout
+
+    if layout is None:
+        return
+
+    master_path = layout.master_part_path
+    if master_path is None:
+        return
+    master = presentation.masters.get(master_path)
+    if master is None:
+        master = read(read_slide_master, master_path)
+        if master is None:
+            return
+        presentation.masters[master_path] = master
+
+    theme_path = master.theme_part_path
+    if theme_path is not None and theme_path not in presentation.themes:
+        theme = read(read_theme, theme_path)
+        if theme is not None:
+            presentation.themes[theme_path] = theme
+
+
+# --------------------------------------------------------------------------------------
+# Slide / layout / master
+# --------------------------------------------------------------------------------------
+
+
+def read_slide(
+    package: OpcPackage,
+    part_path: str,
+    slide_number: int,
+    slide_id: int | None = None,
+) -> SourceSlide | None:
+    root = package.read_xml(part_path)
+    if root is None:
+        return None
+    common = child(root, "cSld")
+    show_master = attr(root, "showMasterSp")
+
+    return SourceSlide(
+        part_path=part_path,
+        shapes=parse_shape_tree(child(common, "spTree")),
+        background=parse_background(child(common, "bg")),
+        color_map_override=parse_color_map_override(child(root, "clrMapOvr")),
+        layout_part_path=package.first_related_part(part_path, REL_SLIDE_LAYOUT),
+        show_master_shapes=True if show_master is None else is_true(show_master),
+        slide_number=slide_number,
+        slide_id=slide_id,
+    )
+
+
+def read_slide_layout(package: OpcPackage, part_path: str) -> SourceSlideLayout | None:
+    root = package.read_xml(part_path)
+    if root is None:
+        return None
+    common = child(root, "cSld")
+    show_master = attr(root, "showMasterSp")
+
+    return SourceSlideLayout(
+        part_path=part_path,
+        shapes=parse_shape_tree(child(common, "spTree")),
+        background=parse_background(child(common, "bg")),
+        color_map_override=parse_color_map_override(child(root, "clrMapOvr")),
+        master_part_path=package.first_related_part(part_path, REL_SLIDE_MASTER),
+        show_master_shapes=True if show_master is None else is_true(show_master),
+        layout_type=attr(root, "type"),
+        name=attr(common, "name") if common is not None else None,
+    )
+
+
+def read_slide_master(package: OpcPackage, part_path: str) -> SourceSlideMaster | None:
+    root = package.read_xml(part_path)
+    if root is None:
+        return None
+    common = child(root, "cSld")
+    tx_styles = child(root, "txStyles")
+
+    return SourceSlideMaster(
+        part_path=part_path,
+        shapes=parse_shape_tree(child(common, "spTree")),
+        background=parse_background(child(common, "bg")),
+        theme_part_path=package.first_related_part(part_path, REL_THEME),
+        color_map=parse_color_map(child(root, "clrMap")),
+        title_style=parse_text_style(child(tx_styles, "titleStyle")),
+        body_style=parse_text_style(child(tx_styles, "bodyStyle")),
+        other_style=parse_text_style(child(tx_styles, "otherStyle")),
+        name=attr(common, "name") if common is not None else None,
+    )
+
+
+def parse_background(bg: Element | None) -> SourceBackground | None:
+    """Read ``p:bg`` -- either an explicit ``p:bgPr`` fill or a ``p:bgRef`` theme index."""
+    if bg is None:
+        return None
+
+    bg_pr = child(bg, "bgPr")
+    if bg_pr is not None:
+        fill = parse_fill(bg_pr)
+        if fill is not None:
+            return SourceBackground(fill=fill)
+
+    bg_ref = child(bg, "bgRef")
+    if bg_ref is not None:
+        return SourceBackground(bg_ref=parse_style_reference(bg_ref))
+
+    return None
+
+
+def parse_color_map(clr_map: Element | None) -> SourceColorMap | None:
+    if clr_map is None:
+        return None
+    mapping = {slot: attr(clr_map, slot) for slot in COLOR_MAP_SLOTS}
+    resolved = {slot: value for slot, value in mapping.items() if value is not None}
+    return SourceColorMap(mapping=resolved) if resolved else None
+
+
+def parse_color_map_override(clr_map_ovr: Element | None) -> SourceColorMap | None:
+    """``p:clrMapOvr`` either says "use the master's map" or supplies a full override."""
+    if clr_map_ovr is None:
+        return None
+    return parse_color_map(child(clr_map_ovr, "overrideClrMapping"))
+
+
+# --------------------------------------------------------------------------------------
+# Table styles
+# --------------------------------------------------------------------------------------
+
+
+def read_table_styles(package: OpcPackage, presentation_path: str) -> SourceTableStyles | None:
+    """Read ``ppt/tableStyles.xml``.
+
+    Note what this part does *not* contain: PowerPoint never writes out the definition
+    of a built-in style, not even for a style a table in the deck actually uses.  A
+    PowerPoint-authored deck typically has a ``tableStyles.xml`` holding nothing but the
+    ``def`` attribute naming "Medium Style 2 - Accent 1", and every table in it renders
+    from a catalogue that lives inside the application.  So this reader covers *custom*
+    styles -- the ones Google Slides, Keynote and PowerPoint's own style editor emit --
+    and :mod:`pptx2svg.parse.table_styles_builtin` covers the rest.
+    """
+    part_path = package.first_related_part(presentation_path, REL_TABLE_STYLES)
+    if part_path is None:
+        return None
+    return _table_styles_part(package, part_path)
+
+
+def _default_text_style(package: OpcPackage, presentation_path: str):
+    """``p:defaultTextStyle`` of the presentation part (a :data:`PartReader`'s reader)."""
+    return parse_text_style(child(package.read_xml(presentation_path), "defaultTextStyle"))
+
+
+def _table_styles_part(package: OpcPackage, part_path: str) -> SourceTableStyles | None:
+    """The table styles part ``part_path`` (see :func:`read_table_styles`)."""
+    root = package.read_xml(part_path)
+    if root is None:
+        return None
+
+    styles: dict[str, SourceTableStyle] = {}
+    for node in children(root, "tblStyle"):
+        style = parse_table_style(node)
+        if style is not None:
+            styles[style.style_id] = style
+    return SourceTableStyles(default_style_id=attr(root, "def"), styles=styles)
+
+
+def parse_table_style(node: Element) -> SourceTableStyle | None:
+    style_id = attr(node, "styleId")
+    if not style_id:
+        return None
+    style = SourceTableStyle(style_id=style_id, name=attr(node, "styleName"),
+                             background=parse_table_background(child(node, "tblBg")))
+    for element_name, attribute in TABLE_STYLE_REGIONS:
+        region = parse_table_cell_style(child(node, element_name))
+        if region is not None:
+            setattr(style, attribute, region)
+    return style
+
+
+def parse_table_cell_style(node: Element | None) -> SourceTableCellStyle | None:
+    """Read one conditional region (``a:wholeTbl``, ``a:band1H``, ``a:firstRow``...)."""
+    if node is None:
+        return None
+    tc_style = child(node, "tcStyle")
+    borders = child(tc_style, "tcBdr")
+
+    style = SourceTableCellStyle(
+        # `a:fill` wraps the fill element, exactly like `a:spPr` does.
+        fill=parse_fill(child(tc_style, "fill")),
+        fill_ref=parse_style_reference(child(tc_style, "fillRef")),
+        text=parse_table_text_style(child(node, "tcTxStyle")),
+        border_left=parse_table_border(child(borders, "left")),
+        border_right=parse_table_border(child(borders, "right")),
+        border_top=parse_table_border(child(borders, "top")),
+        border_bottom=parse_table_border(child(borders, "bottom")),
+        border_inside_h=parse_table_border(child(borders, "insideH")),
+        border_inside_v=parse_table_border(child(borders, "insideV")),
+    )
+    if all(value is None for value in vars(style).values()):
+        return None
+    return style
+
+
+def parse_table_border(node: Element | None) -> SourceTableBorder | None:
+    """One ``a:tcBdr`` edge: its own ``a:ln``, or an ``a:lnRef`` into the theme's line
+    styles (the built-in "Themed Style" tables draw every line that way)."""
+    if node is None:
+        return None
+    return parse_line(child(node, "ln")) or parse_style_reference(child(node, "lnRef"))
+
+
+def parse_table_background(node: Element | None) -> SourceTableBackground | None:
+    """``a:tblBg``: a fill or a theme fill style, and effects or a theme effect style."""
+    if node is None:
+        return None
+    background = SourceTableBackground(
+        fill=parse_fill(child(node, "fill")),
+        fill_ref=parse_style_reference(child(node, "fillRef")),
+        effects=parse_effect_list(child(child(node, "effect"), "effectLst")),
+        effect_ref=parse_style_reference(child(node, "effectRef")),
+    )
+    if all(value is None for value in vars(background).values()):
+        return None
+    return background
+
+
+def parse_table_text_style(node: Element | None) -> SourceRunProperties | None:
+    """``a:tcTxStyle`` -- bold/italic plus a colour and a typeface for the region.
+
+    ``b``/``i`` here are ``"on"``/``"off"``/``"def"``, not the booleans ``a:rPr`` uses;
+    ``"def"`` means "leave it to whatever the cell inherits", which is ``None``.
+    """
+    if node is None:
+        return None
+
+    font = child(node, "font")
+    # `a:fontRef idx="minor"` names a theme font rather than a typeface; hand it on as
+    # the placeholder the text resolver already expands.
+    font_ref = {"major": "+mj-lt", "minor": "+mn-lt"}.get(
+        attr(child(node, "fontRef"), "idx") or ""
+    )
+    properties = SourceRunProperties(
+        bold=_on_off(attr(node, "b")),
+        italic=_on_off(attr(node, "i")),
+        typeface=attr(child(font, "latin"), "typeface") or font_ref,
+        typeface_ea=attr(child(font, "ea"), "typeface"),
+        typeface_cs=attr(child(font, "cs"), "typeface"),
+        # The colour is a bare child rather than being wrapped in `a:solidFill`.
+        color=parse_color(node),
+    )
+    if all(value is None for value in vars(properties).values()):
+        return None
+    return properties
+
+
+def _on_off(value: str | None) -> bool | None:
+    if value is None or value == "def":
+        return None
+    return value == "on"
+
+
+# --------------------------------------------------------------------------------------
+# Theme
+# --------------------------------------------------------------------------------------
+
+
+def read_theme(package: OpcPackage, part_path: str) -> SourceTheme | None:
+    root = package.read_xml(part_path)
+    if root is None:
+        return None
+    elements = child(root, "themeElements")
+
+    return SourceTheme(
+        part_path=part_path,
+        color_scheme=parse_color_scheme(child(elements, "clrScheme")),
+        font_scheme=parse_font_scheme(child(elements, "fontScheme")),
+        format_scheme=parse_format_scheme(child(elements, "fmtScheme")),
+    )
+
+
+def parse_font_scheme(font_scheme: Element | None) -> SourceFontScheme:
+    if font_scheme is None:
+        return SourceFontScheme()
+    major = child(font_scheme, "majorFont")
+    minor = child(font_scheme, "minorFont")
+    return SourceFontScheme(
+        major_latin=attr(child(major, "latin"), "typeface"),
+        minor_latin=attr(child(minor, "latin"), "typeface"),
+        major_east_asian=attr(child(major, "ea"), "typeface"),
+        minor_east_asian=attr(child(minor, "ea"), "typeface"),
+        major_complex_script=attr(child(major, "cs"), "typeface"),
+        minor_complex_script=attr(child(minor, "cs"), "typeface"),
+        major_japanese=_east_asian_script_typeface(major),
+        minor_japanese=_east_asian_script_typeface(minor),
+    )
+
+
+#: East Asian scripts to try in a font collection's ``a:font script="..."`` list, in the
+#: order they are tried.
+#:
+#: Jpan first, which is *not* the order ``aiden0z/pptx-renderer`` uses -- its
+#: ``resolveScriptFont()`` tries Hans, Hant, Jpan, Hang.  That order is wrong for the two
+#: decks here that depend on this path.  A stock Office theme carries all four entries,
+#: so ``sample.pptx`` offers Jpan=ＭＳ Ｐゴシック *and* Hans=宋体 with no ``lang`` anywhere
+#: to choose between them, and Hans-first would pick the Chinese face for Japanese text.
+#: PowerPoint's own PDF export of that deck embeds MS-Gothic and MS-Mincho, so it chose
+#: the Japanese entry.
+#:
+#: The properly general answer is to choose by the characters in the run -- kana implies
+#: Jpan, Hangul implies Hang, bare Han is genuinely ambiguous -- and that is not done
+#: here because no deck in the corpus exercises it and there would be nothing to check
+#: the rule against.  This list is the part that is measured: it stops a Chinese or
+#: Korean deck getting *no* East Asian face at all, which is what reading only Jpan did.
+EAST_ASIAN_SCRIPTS = ("Jpan", "Hans", "Hant", "Hang")
+
+
+def _script_typeface(font: Element | None, script: str) -> str | None:
+    """``a:font script="Jpan"`` -- the per-script override list inside a font collection."""
+    for node in children(font, "font"):
+        if attr(node, "script") == script:
+            return attr(node, "typeface") or None
+    return None
+
+
+def _east_asian_script_typeface(font: Element | None) -> str | None:
+    """The first East Asian face this font collection's script list offers."""
+    for script in EAST_ASIAN_SCRIPTS:
+        found = _script_typeface(font, script)
+        if found:
+            return found
+    return None

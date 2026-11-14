@@ -1,0 +1,132 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pptx2svg"
+version = "0.3.8"
+description = "Render PowerPoint (.pptx) slides to SVG (and PNG) in pure Python"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Evert Koks" }]
+keywords = ["pptx", "powerpoint", "svg", "png", "ooxml", "render"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Programming Language :: Python :: 3.15",
+  "Programming Language :: Python :: Free Threading :: 2 - Beta",
+  "Topic :: Multimedia :: Graphics :: Graphics Conversion",
+  "Topic :: Office/Business :: Office Suites",
+  "Typing :: Typed",
+]
+# Standard-library only at runtime; why ooxml-common is a dependency, and why at this
+# version: CONTRIBUTING.md, "Dependencies".
+dependencies = ["ooxml-common>=0.38.0"]
+
+[project.optional-dependencies]
+# SVG -> PNG rasterisation. resvg-py ships prebuilt wheels, so this needs no compiler
+# and no system libraries; it is the same renderer pptx-glimpse rasterises with.
+png = ["resvg-py>=0.5"]
+# Alternative backend for environments that already have Cairo. Its SVG filter support
+# is weaker, so shadows and glows differ from resvg.
+cairo = ["cairosvg>=2.7"]
+# The recommended install.  Carries the font files pptx2svg draws with, so PNG output
+# ignores the host's fonts entirely and the same deck rasterises to the same bytes
+# everywhere.  A separate distribution rather than package data: this wheel stays ~100 kB
+# and stdlib-only for the many callers who only want SVG (which embeds no fonts) or who
+# supply their own via `font_dirs`.  Without it, rendering falls back to system fonts and
+# says so through ConvertOptions.warnings -- see pptx2svg.fonts.
+fonts = ["pptx2svg-fonts>=0.1"]
+# Measure with real installed fonts instead of the bundled metric tables
+# (FontToolsTextMeasurer), and regenerate the tables with tools/extract_font_metrics.py.
+# Renamed from `fonts`, which now means the font files themselves.
+measure = ["fonttools>=4.40"]
+# Render the PDF preview Office embeds inside an EMF. Extracting the preview and the DIB
+# variant of it are standard-library only; rasterising a PDF page is the one thing the
+# stdlib cannot do, so it lives behind this extra and degrades to a placeholder without it.
+metafile = ["pypdfium2>=4"]
+# Scoring a render against PowerPoint's own PDF export (tools/fidelity.py).  Strictly a
+# development concern: none of this is imported from src/, which stays standard-library
+# only, and the harness itself also needs PowerPoint's exports, which pip cannot supply.
+#
+# PyMuPDF is the instrument's converter (tools/pdf_svg.py): PowerPoint's page to SVG, so
+# that both sides of the score go through resvg.  It is AGPL-3.0 -- acceptable for a local
+# tool that is never distributed with the library -- so it is deliberately NOT in `dev`:
+# CI does not install it, and the tests that need it skip there.  Install it into the
+# project's own virtual environment only (docs/fidelity.md):
+#   python3 -m venv --system-site-packages .venv && .venv/bin/pip install -e '.[fidelity]'
+fidelity = [
+  "numpy>=1.24",
+  "pillow>=10",
+  "pypdfium2>=4",
+  "resvg-py>=0.5",
+  "fonttools>=4.40",
+  "pymupdf>=1.24",
+]
+dev = [
+  "pytest>=7",
+  # `pytest -n auto` (docs/development.md).  Opt-in: a bare `pytest` stays serial,
+  # and so does CI.
+  "pytest-xdist>=3",
+  "resvg-py>=0.5",
+  "fonttools>=4.40",
+  "numpy>=1.24",
+  "pillow>=10",
+  "pypdfium2>=4",
+  # The linter (CI's build job runs it, at the same pin; [tool.ruff] below).
+  "ruff==0.17.2",
+]
+# `pptx2svg-fonts` is deliberately NOT listed above.  It is a sibling distribution that
+# lives in this repository at packages/pptx2svg-fonts and is not published yet, so naming
+# it as a dependency makes `pip install -e '.[dev]'` fail outright against PyPI -- which
+# is exactly what it did to CI on every platform.  Install it from the checkout instead:
+#
+#     pip install -e packages/pptx2svg-fonts
+#
+# The suite does not strictly require it: tests/conftest.py puts the bundle's src/ on
+# sys.path when the directory is present, so a source checkout exercises the bundled-font
+# configuration either way.  Installing it is the more faithful reproduction of what
+# `pip install 'pptx2svg[fonts]'` gives a user, which is why CI does it.
+
+[project.urls]
+Homepage = "https://github.com/uvrt/pptx2svg"
+Repository = "https://github.com/uvrt/pptx2svg"
+Issues = "https://github.com/uvrt/pptx2svg/issues"
+Changelog = "https://github.com/uvrt/pptx2svg/blob/main/ROADMAP.md"
+
+[project.scripts]
+pptx2svg = "pptx2svg.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# py.typed: the package's annotations are for its callers' type checkers (PEP 561).
+[tool.setuptools.package-data]
+pptx2svg = ["py.typed"]
+
+# A small set of bug-finding rules, not a style: pyflakes (F), syntax errors (E9),
+# mutable or called defaults (B006, B008), return in finally (B012), comparisons that do
+# nothing (B015) and pylint's errors (PLE).  No formatter and no import sorting.
+[tool.ruff]
+target-version = "py310"
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["F", "E9", "B006", "B008", "B012", "B015", "PLE"]
+
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+  "powerpoint: drives Microsoft PowerPoint, which is one instance per machine; such a test runs only serially or in the one xdist group `--dist loadgroup` keeps on a single worker (tests/conftest.py)",
+  "pdfium: scores against the fidelity harness's old instrument (tools/fidelity.py --truth pdfium); skipped unless `pytest --pdfium`, since the default truth is svg",
+]

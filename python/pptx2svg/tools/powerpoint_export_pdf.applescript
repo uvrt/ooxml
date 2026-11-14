@@ -1,0 +1,92 @@
+-- Export a .pptx to PDF using the locally installed Microsoft PowerPoint.
+--
+-- Used as the ground-truth oracle for visual regression testing: PowerPoint is the
+-- reference implementation, so its own output is the only fully authoritative answer
+-- to "what should this slide look like?".
+--
+--   osascript tools/powerpoint_export_pdf.applescript <input.pptx> <output.pdf>
+--
+-- Then rasterise per page with pypdfium2.
+--
+-- Constraints discovered on PowerPoint 16.x / macOS:
+--   * PowerPoint is sandboxed, and being under the user's home is NOT sufficient. Both
+--     paths must be in a directory PowerPoint has already been granted access to; a
+--     freshly created one -- even directly under $HOME, even under ~/Documents -- is
+--     refused with error -9074, and so are /tmp and /private/tmp. The failure is silent
+--     in the worst way: the deck opens (a ~$ lock file appears) and only the save fails,
+--     so it reads as a broken deck rather than a path that was never approved. Reuse the
+--     directory previous exports went to rather than making a tidy new one. How a new
+--     directory gets approved was not established -- only that having one already is
+--     what separates a working export from a failing one.
+--   * Paths must be absolute; the presentation is matched by its exact full name so a
+--     concurrently open deck is never exported by mistake.
+--   * `save as PNG` exists in the dictionary but silently produces nothing. PDF is the
+--     only export that works unattended; per-slide PNG needs a VBA macro host.
+--   * The first run triggers a macOS automation permission prompt.
+--   * A damaged file raises an app-modal repair dialog ("Herstellen" / "Repair").  While it
+--     is up PowerPoint stops servicing AppleEvents, so this script cannot dismiss it -- it is
+--     blocked inside `open`.  The timeout below turns a 120-second hang into a prompt
+--     failure; clearing the dialog afterwards needs a separate process (see the recovery
+--     helper in pptx-agent's tests/oracle.py).  A timeout here therefore means "PowerPoint
+--     would not open this file", which is exactly the verdict the oracle exists to give.
+--   * **A repair dialog left standing makes every later export fail with -9074**, including
+--     one of a deck that exported fine an hour earlier to a path PowerPoint has always been
+--     allowed to write.  So -9074 does not reliably mean "unapproved path": check for the
+--     dialog before believing it.  Two commands settle it and both work while PowerPoint is
+--     otherwise unresponsive:
+--         osascript -e 'tell application "System Events" to tell process "Microsoft PowerPoint" \
+--             to get {name of every button, value of every static text} of window 1'
+--         osascript -e 'tell application "System Events" to tell process "Microsoft PowerPoint" \
+--             to click button "Cancel" of window 1'
+--     (the button is localised -- "Annuleren" on a Dutch install).  A second failure mode
+--     looks different again: a deck PowerPoint repairs *silently* opens as `Name [Repaired]`,
+--     which no longer matches the full path this script looks for, and the export produces
+--     no file at all while the script still exits 0.  Always check the PDF exists rather
+--     than trusting the exit status.
+
+on run argv
+    if (count of argv) is not 2 then
+        error "Usage: osascript powerpoint_export_pdf.applescript <input-pptx> <output-pdf>"
+    end if
+
+    set inputPosixPath to item 1 of argv
+    set inPath to POSIX file inputPosixPath
+    set outPath to POSIX file (item 2 of argv)
+
+    set openedPresentation to missing value
+    -- A large deck can take well over AppleScript's default two-minute
+    -- AppleEvent timeout to open and export; without this the call fails with
+    -- -1712 even though PowerPoint is working normally.  This is deliberately
+    -- generous rather than fail-fast: a caller that needs a shorter deadline --
+    -- to notice the repair dialog described above -- should impose its own
+    -- wall-clock timeout on osascript, which is where recovery has to live
+    -- anyway, since this script is blocked inside `open` while the dialog is up.
+    with timeout of 600 seconds
+        tell application "Microsoft PowerPoint"
+            activate
+            try
+                open inPath
+                -- Match by full path rather than trusting the active window.
+                set presentationPaths to (get full name of every presentation)
+                repeat with presentationIndex from 1 to count of presentationPaths
+                    if (item presentationIndex of presentationPaths as text) is inputPosixPath then
+                        set openedPresentation to presentation presentationIndex
+                        exit repeat
+                    end if
+                end repeat
+                if openedPresentation is missing value then
+                    error "PowerPoint opened the input but no presentation matched: " & inputPosixPath
+                end if
+                save openedPresentation in outPath as save as PDF
+                close openedPresentation saving no
+            on error errorMessage number errorNumber
+                if openedPresentation is not missing value then
+                    try
+                        close openedPresentation saving no
+                    end try
+                end if
+                error errorMessage number errorNumber
+            end try
+        end tell
+    end timeout
+end run

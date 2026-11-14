@@ -1,0 +1,6515 @@
+# Roadmap to full PPTX support
+
+Working plan for closing the gap between what `pptx2svg` renders today and what a PPTX
+can contain. Written to be picked up cold: every item says what is missing, where the
+code lives, how to approach it, and how to know it is done.
+
+Phases are ordered by *dependency and payoff*. Phase 0 comes first because everything
+after it needs a way to tell "better" from "different".
+
+**Effort key:** S ≈ half a day · M ≈ 1–3 days · L ≈ 1–2 weeks · XL ≈ 3+ weeks.
+
+**Sources.** Sizes are calibrated against two existing implementations, both MIT:
+
+- [pptx-glimpse](https://github.com/hirokisakabe/pptx-glimpse) — the TypeScript library
+  this one is ported from. Referenced for the pieces not yet ported.
+- [aiden0z/pptx-renderer](https://github.com/aiden0z/pptx-renderer) — a browser-native
+  PPTX renderer with materially wider coverage (187+ presets, charts, table styles,
+  EMF previews) and a PowerPoint-based visual regression harness. Reviewed specifically
+  for techniques worth adopting; the findings are marked **[pptx-renderer]** below.
+
+### How the field handles fonts
+
+Surveyed in September 2026, because this library's central bet — *compute layout from a
+generated table of advance widths, and draw with the very same files* — is unusual enough
+to be worth checking against everyone else's answer.
+
+| | Embedded fonts | Metrics source | Missing-font strategy |
+| --- | --- | --- | --- |
+| LibreOffice ≥ 25.8 | **yes**, libEOT → temp font, `fsType`-gated | fontconfig / system | hardcoded metric map → fontconfig hook → `VCL.xcu` → attribute match |
+| Apache POI XSLF | API exists, renderer ignores it | `java.awt` `FontRenderContext` | `Font.SANS_SERIF`, or a `FONT_MAP` you supply |
+| python-pptx | no | Pillow, macOS/Windows only | n/a — it does no layout |
+| Aspose.Slides | yes | own engine | `FontSubstRule` + PowerPoint-alike default |
+| Syncfusion | not documented | own engine | Microsoft Sans Serif |
+| PPTXjs / js-pptx | no | **none** — CSS plus a global fudge factor | whatever CSS falls back to |
+| **[pptx-renderer]** | **yes**, EOT+MTX, `fsType`-gated | the browser | CSS stack, silently |
+| ONLYOFFICE | rights-checked | **own FreeType/WASM + shipped `font_selection.bin`** | penalty-based match |
+| Collabora Online | via LibreOffice | LibreOffice, server-side | LibreOffice's, plus remote font download |
+| **pptx2svg** | **yes**, EOT+MTX, `fsType`-gated, pure Python | **generated metric table, or the embedded face's own** | clone set + `font-substituted` |
+
+**The load-bearing result is not that this library compares well. It is why.** Two
+projects arrived independently at "carry your own metrics": ONLYOFFICE compiles its own
+FreeType engine to WebAssembly and feeds it a server-generated `font_selection.bin`
+metrics blob, and the Rust project `Ryujiyasu/oxi` ships generated metric tables with
+bundled clones and a resolved / DEGRADED / ABSENT report. Neither borrowed the idea from
+the other. Two independent arrivals is the strongest available validation of the
+principle the whole `text/` and `fonts/` subsystem rests on.
+
+**The contrast worth keeping is silence.** Most of the field substitutes without saying
+so. PPTXjs never measures at all and applies a global `fontSizeFactor` "browser rendering
+adjustment" — a fudge constant is exactly what a renderer needs when it has no metrics,
+and it is the clearest illustration available of what `font-substituted` exists to
+prevent. Apache POI's own developers concede `getTextHeight()` "varies from
+Windows/Linux/Mac". python-pptx closes every render-to-image issue with "use LibreOffice".
+
+Two corrections to notes elsewhere: **Collabora Online is not a JS renderer** — server-side
+LibreOffice rasterises PNG tiles and the browser is a viewport — and **nodeppt is a
+Markdown-to-HTML authoring tool, not a PPTX renderer**. Neither belongs in a comparison of
+rendering approaches.
+
+---
+
+## Where we are
+
+| Area | State |
+| --- | --- |
+| Package, relationships, parts | Complete |
+| Theme colours, colour maps, transforms | Complete |
+| Placeholder / background / text inheritance | Complete; a text box's or autoshape's inherited colour, size and face **measured against PowerPoint** (round 15: run, paragraph, list style, `fontRef`, `defaultTextStyle` -- not the master's `otherStyle`; docs/rendering.md). Open: a table with no `tableStyleId` is drawn with a header band PowerPoint does not draw (its text black, a thin black grid) |
+| Shapes: all 187 presets PowerPoint accepts + custom geometry | Complete and **verified against PowerPoint**: every preset matches its own PDF export at two aspect ratios, median 0.999 silhouette overlap |
+| Text: cascade, bullets, wrapping (Latin + CJK), autofit, vertical, tabs, columns | Complete for the common path |
+| Fills, outlines, arrowheads, shadows, glow, soft edge | Complete |
+| Pictures: crop, colour adjustments, tile, stretch | Complete |
+| Tables: merged cells, borders, fills, **table styles** | Complete; **all 74** built-in styles carried, every one measured out of PowerPoint; an id in neither the deck nor the catalogue now warns `table-style-unknown` instead of rendering a bare grid in silence; cell text takes a table style's `tcTxStyle` over the master's `otherStyle` |
+| Charts | `barChart`, `lineChart`, `pieChart`, `doughnutChart` and `radarChart` read and drawn with their data labels, **verified against PowerPoint** across 190 probe charts and every chart in the corpus; **no deck warns `chart-unsupported-type` any more**. **Combo charts** -- several groups over one plot area with a secondary value axis -- are drawn, measured over 76 probe slides. Category labels wrap at whitespace, turn 45° only when their widest unbreakable token still will not fit, and are **cut with an ellipsis** when a turned one is wider than the frame's height allows. Every other chart type warns and draws an empty frame |
+| SmartArt | Cached drawing rendered and verified against 46 real decks; **no layout engine**, so diagrams without a cache draw nothing and say so |
+| EMF / WMF | GDI records drawn as SVG (ooxml-common's player, round 7); an EMF+ file from its EMF+ records, as Windows draws it; embedded previews where records are left out |
+| 3-D, bevel, reflection | **Not rendered** |
+| Shape identity on output (`data-pptx-id`) | Complete; with `edit_marks` also table cells, sources, text bodies and per-shape definition ids (round 13) |
+| A live, editable view (pictures by reference, the slide by shape, no links) | Complete, opt-in (round 13; docs/usage.md) |
+| Fonts: bundled, metric-generated, diagnosed | Complete; **Aptos and Cambria approximate** |
+
+2,059 tests pass. The pipeline is `opc → parse → resolve → render → png`; each stage is
+independently testable, and every phase below slots into exactly one of them.
+
+### Shape identity
+
+Every rendered element carries `data-pptx-id` -- `"<sldId>.<cNvPr id>"` for slide shapes,
+`lay:`/`mst:` for shapes inherited from the layout or master -- plus `data-pptx-path`, the index
+path through the shape tree. Both are set in `resolve/view.py:resolve_element`, the single
+dispatch point, so every nesting depth is covered for free, and written out in
+`render/svg.py:render_element`.
+
+The path is not redundant: **`cNvPr@id` is not unique in real decks.** In
+`real-financial-report.pptx` slide 2 a `p:sp` and a `p:graphicFrame` both carry `id="3"`. The
+pair `(id, path)` is unique, and a downstream consumer needs both to address a shape.
+
+For a live, editable view (round 13, `ConvertOptions(edit_marks=True)`) the path is left
+out -- it is the shape's position, which an added or removed shape changes -- and the id
+alone addresses a shape: pptx-agent's `Slide.render_svg` rewrites the ids to its own,
+which are unique. The contract, with cells (`<table id>/cell<row>,<column>`),
+`data-pptx-source`, `data-pptx-text` and `data-pptx-size`, is in docs/usage.md ("A live,
+editable view"). Open: pptx2svg's ids are not pptx-agent's where a shape has a stamp or an
+`a16:creationId` (most shapes PowerPoint wrote); pptx-agent maps them after rendering. Its
+layout and master shapes keep pptx2svg's `lay:`/`mst:` ids, which no tool takes.
+
+### Measured baseline
+
+Against real PowerPoint output, every slide of every fixture, produced by
+`tools/fidelity.py` and recorded in `tests/fidelity-baselines.json`.
+
+**The numbers in this section and in Phase 3's tables were taken with the old instrument**
+(PowerPoint's PDF through pdfium). The instrument is now one rasteriser for both sides,
+and the recorded scores were recalibrated once: see *0.5 The instrument* for the
+before/after table per deck and per slide, and what the sharper instrument shows.
+
+**These numbers mean something different from the ones they replace.** Every table that
+used to sit here was partly a measurement of font availability: PowerPoint drew with
+Microsoft's Calibri, Cambria and Aptos, our side drew with whatever resvg could find, and
+for five of the seven fixtures that was a generic sans. The difference between the two
+images was dominated by glyph shape before the renderer had done anything at all. The
+harness now renders our side with the *same licensed faces* PowerPoint used, read in
+place through a gitignored local profile, and **a deck whose faces PowerPoint did not have
+either is skipped rather than scored against Microsoft's own fallback**.
+
+| Fixture | SSIM | hist | Gate (≥0.95 / ≥0.80) |
+| --- | --- | --- | --- |
+| `table test.pptx` | **0.9895** | 0.9984 | pass |
+| `authoring-integration.pptx` | 0.9327 | 0.9984 | SSIM |
+| `chart-gallery.pptx` | 0.6747 | 0.8147 | SSIM |
+| `real-college-template.pptx` (local only) | 0.8003 | 0.8753 | SSIM, hist |
+| `sample-issue-387.pptx` | **0.9897** | 1.0000 | pass |
+| `real-financial-report.pptx` | 0.9114 | 0.9988 | SSIM |
+| `sample-cjk.pptx` (derived) | 0.7367 | 0.9805 | SSIM |
+| `real-basic-theme.pptx` | **0.9947** | 1.0000 | SSIM gate passes; scored since the East Asian resolution rule (below) |
+| `sample.pptx` | 0.5099 | 0.9987 | SSIM — the faces now match; every line sits about 2 px above PowerPoint's |
+| `real-product-page.pptx` | 0.8982 | 0.9992 | SSIM — emoji drawn in Apple Color Emoji, as PowerPoint draws them |
+
+**Five of nine fixtures could not be scored at all, and that was the single biggest hole
+in this project's feedback loop.** Not because the renderer is wrong on them — because
+the oracle and the renderer disagreed about which *face* to draw, so any number would
+measure font resolution rather than layout. Three of the five are now scored, and the
+two routes this section used to list turned out to be one good one and one that does not
+work:
+
+* **Install Noto Sans JP where PowerPoint can see it.** Taken. The bundled OFL file goes
+  into `~/Library/Fonts`, the three decks that name it are re-exported, and their PDFs
+  now carry `NotoSansJP-Thin_Regular`/`_Bold` — Core Text's spelling for the variable
+  font's 400 and 700 instances, matched against the file's own widths. FONTS.md ▸
+  *Making the oracle draw Japanese* has the command and how to undo it.
+  `real-financial-report` and `sample-issue-387` score from this alone.
+  `real-product-page` does not: removing the font difference exposed a second and
+  unrelated one — three emoji that no face the deck names can draw, which both renderers
+  therefore invent.
+* **Rewrite the two Japanese decks' themes to name `MS Gothic`.** Does not work, and the
+  seven exports that establish why are tabled in `tools/make_cjk_deck.py`. This
+  PowerPoint resolves neither ＭＳ Ｐゴシック nor `MS Gothic` by name; `real-basic-theme`
+  ignores its theme's East Asian slots altogether because its runs name a Latin face as
+  their own `<a:ea>`; and what *does* work for `sample` — filling the scheme's empty
+  `<a:ea>` — is a change to a fixture whose empty `<a:ea>` is the thing several
+  measurements are about.
+
+So the third route is the one taken for CJK: `tools/make_cjk_deck.py` **derives**
+`sample-cjk.pptx` from `sample.pptx` with that one theme slot filled with Noto Sans JP,
+leaving `sample.pptx` untouched. It is the first Japanese deck in this corpus where both
+sides ink the face the deck asks for. Its score is a measurement of our Japanese
+*layout*, and the two defects the first measurement named are **both fixed**: slide 3's
+overlapping line and slide 2's late break. 0.6788 → 0.7367 for the deck, slide 3
+0.2391 → 0.5373 and slide 2 0.5470 → 0.5957.
+
+#### What the two defects turned out to be, and what the probes refuted
+
+**Slide 3 was a bug in the line advance, and the "mixed-format" clue named the wrong
+thing.** The condition is not a format change as such: it is an *italic* run in a face
+with no italic, which `render/text.py` detaches into a sheared `<text>` sibling because
+SVG will not transform a `<tspan>`. A line's `dy` is the only record of where that line
+sits — `<text y>` is the first baseline and every line after it is a relative step — and
+the detached run took the prefix carrying the `dy` with it. The rest of the line then drew
+on the line above *and every line below it came up one advance too high as well*. A tab
+stop at the head of a line lost the same prefix by a different route. The position and the
+advance now come apart, and a line whose every run is sheared away carries the advance on
+a spacer.
+
+**Slide 2 was the comparison at the boundary, and it is the one worth reading the probe
+for.** `tools/make_cjk_wrap_probe.py` / `read_cjk_wrap_probe.py` are that probe; its
+readers have the `--check` mode that renders through this library and prints the residual
+against the export. Fifty-three slides of one 1 em character repeated in a box of
+`k * size + delta`:
+
+* **PowerPoint's budget is exact.** It fits `k` characters at `delta = 0` and `k - 1` at
+  `delta = -0.25 pt`, at three box widths and five font sizes. The rule is
+  `sum of advances <= width - lIns - rIns - marL`, inclusive, with **no slack at all**.
+* **The widths were not wrong**, which is the second time this project has suspected CJK
+  widths and been refuted: Noto Sans JP advances every ideograph and every kana at
+  1.000 em and so do we, bold included.
+* **The inset was not wrong either.** `lIns`, `rIns` and `marL` all leave the budget, one
+  for one, and a box that is ten glyphs plus both insets fits exactly ten.
+
+So the 2% tolerance was never a model of PowerPoint. It is an allowance for *our*
+measurement error, and that error is now measured: **PowerPoint applies the face's
+OpenType `kern` feature to Japanese and we do not.** Noto Sans JP kerns キス and ンプ by
+-30/1000 em and ト、 by -20/1000, read out of its GPOS table and confirmed against the
+pen origins in the export. A line we measure is therefore *wider* than the one PowerPoint
+lays out, by 0% to 0.684% over this deck's fifteen lines. Slide 3 needs at least 0.231%
+of that to keep a nineteenth character PowerPoint keeps; slide 2's twenty-first character
+overhangs by 0.813% and PowerPoint rejects it. `WRAP_TOLERANCE_RATIO` was then 0.005, the
+middle of that window; 0.02 sat above all of it.
+
+**No constant is right in general**, and it is better to say so than to discover it: a
+string of nothing but kerned pairs — キスキスキス — loses 1.5% of its width to `kern`,
+outside the window above. *Modelling `kern` is the fix*, and it is now done — see
+*The `kern` feature, modelled* below. `WRAP_TOLERANCE_RATIO` is `1e-6`.
+
+#### The `kern` feature, modelled — **done**
+
+The largest named open item in this file, and the only one whose fix *removes* an
+approximation instead of adding a rule: `WRAP_TOLERANCE_RATIO` existed to pay for it and
+is now a floating-point epsilon, `1e-6`, five thousand times smaller than the 0.005 it
+replaces. `src/pptx2svg/text/kerning.py` is the new table, generated by
+`tools/extract_font_metrics.py` beside the advance widths and on the same footing: **a
+kern value is a measurement of a design, not font software**, and no font file enters git
+or any artifact to carry one.
+
+| | `sample-cjk` | `sample-issue-387` | the other five |
+| --- | --- | --- | --- |
+| SSIM | 0.7367 → **0.8069** | 0.9897 → **0.9906** | unchanged to four places |
+
+Slide by slide on `sample-cjk`: 2 is 0.5957 → **0.7825**, 6 is 0.7400 → **0.9243**, 3 is
+0.5373 → **0.5877**, and every one of the three also falls in mean absolute error
+(2.361 → 1.457, 0.725 → 0.369, 2.214 → 2.054), so the pictures moved and not just the
+metric. Slide 6 is the cleanest reading available: its subtitle's ink ran 176–784 px
+against PowerPoint's **178–786**, and now runs 178–786 exactly, while its title — which
+has no kern pair in it — was already exact at 223–738 and did not move. That is the 1 pt
+this file recorded as unexplained in *Slides 4 and 6*, closed.
+
+##### The representation, measured before it was chosen
+
+A face carries thousands of pairs and `metrics.py` is source code a human reads, so both
+candidates were costed over the twenty face-and-weight tables, restricted to the ~570
+characters the advance table already stores:
+
+| representation | entries | source |
+| --- | --- | --- |
+| one entry per pair | 276,551 | ~6.1 MB |
+| **class matrix (taken)** | **28,406 cells + 8,511 class members** | **416 KB** |
+
+Fifteen times smaller and **exact** — nothing is rounded, dropped or thresholded.
+Quantising the values to 1/1000 em before classifying was tried and is not worth having:
+it merges 133 cells out of 28,406 and saves 2% of the file, because the classes are the
+font's own design classes and rounding does not merge them.
+
+**The classes are re-derived from the kern function, not copied from the font's
+`ClassDef` tables.** Two characters share a left class when their whole row of
+adjustments is identical, and a right class when their column is. That matters because
+the faces are not all class-based: Arimo and Tinos store explicit pairs (`PairPos`
+format 1), Carlito a class matrix (format 2), Lato, Caladea, Raleway, Cambria and Aptos a
+mixture, and Cambria, Aptos and Aptos Display also carry a legacy `kern` table. Reducing
+each face to a function of two characters first makes all of them compress the same way,
+and the generator asserts the round trip pair for pair in both directions before writing
+a line.
+
+Two findings that cost nothing and shorten the table:
+
+* **No face here kerns an ideograph.** Checked against a hundred common kanji in every
+  face: not one pair. `metrics.cjk_width` remains their whole story, and the table needs
+  no kanji rows. Kana, CJK punctuation and full-width forms kern normally.
+* **Eighteen of the twenty-eight faces have no kern feature at all** — Cousine, the four
+  MS Japanese faces, the eleven fixed-pitch CJK ones and the two Lucida monospaces — so
+  they get no entry and their `FontMetrics.kerning` is `None`. Monospace and full-width
+  designs do not kern; that is a fact about them rather than a gap here.
+
+##### Where kerning had to reach, and where it must not
+
+`text/wrap.py` gives **every CJK character its own token**, so a kern pair almost always
+straddles a token boundary and measuring tokens separately would have charged none of
+them — the entire defect would have survived a correct measurer. `TextMeasurer` grew
+`kern_between`, the wrap charges the join as it appends, and `_join_kern` requires the two
+tokens to share one run object, which is the same identity test `_merge_segments` uses to
+build the line the renderer finally centres.
+
+**`resolve/chart.py` must not kern, and that is measured rather than overlooked.** The
+first attempt charged it there too and three chart decks got *worse* — `chart-gallery`
+0.7303 → 0.7296, `real-financial-report` 0.9151 → 0.9147, `authoring-integration` 0.9309
+→ 0.9307, with mean absolute error rising as well. The obvious suspect was
+`LEGEND_ENTRY_SLACK`, fitted from our own widths, so it was re-measured first: the
+`legend-pack` deck was rebuilt and re-exported and the worst key residual is **0.14 pt,
+identical with kerning on and off** — the probe's entry names (`Wm`, `Wii`, …) carry no
+kern pair, so that fit was never contaminated. The constant is clean.
+
+What the export says instead is that PowerPoint's chart engine **lays text out unkerned
+and draws it kerned**:
+
+* Comparing every drawn text run's start against the export, over all 17 gallery pages:
+  unkerned lands twenty-odd legend entries within **0.033 pt** — slide 8's five at
+  0.001 — and the kerned advance moves the ones with a kern pair in them out by 0.15 to
+  **0.67 pt**. The ones without a kern pair do not move at all, which is what identifies
+  the cause.
+* The same export draws them kerned. `Plan` on slide 1 is shown as `[ (Pl) 83 (a) -46
+  (n) ]` — a net 0.37 pt leftward against a 19.20 pt unkerned advance, where our kerned
+  measure is 18.92.
+
+So the chart engine measures the way GDI's `GetTextExtent` does and hands the string to a
+shaper afterwards. With `text_width` left unkerned all five Latin decks hold to four
+decimal places and the two Japanese ones improve.
+
+##### What else was checked
+
+* **`LEGEND_ENTRY_SLACK`, `LEGEND_HORIZONTAL_OFFSET_PT`, `LEGEND_ENTRY_KEY_EM`** — probe
+  re-exported, residual unchanged at 0.14 pt (above). Kern-free probe names.
+* **Every other constant fed by `text_width`** — the rotated category band, the side
+  legend's width, the truncation allowances, `RADAR_LABEL_MAX_FRACTION`. All reached
+  through the one function that no longer kerns, so none of them moved; `text_width` is
+  the single chart-side measurement path and it is now asserted to be a plain advance sum.
+* **`BOLD_FACTOR`** — a ratio of two advance tables, only reached for a face with no bold
+  cut, and no face in the table has a kern table without a bold one. Untouched.
+* **`EAST_ASIAN_SYNTHETIC_BOLD_PT`** — read from the *difference* between two pen origins
+  in one PowerPoint export, so any kern term cancels; MS Gothic has none in any case.
+* **`fonts/check.py`'s clone comparison** — both sides of it resolve to the same metrics
+  entry, so both sides gained the same pairs and the verdicts are unchanged.
+
+##### Left undone
+
+* **An embedded face does not kern.** `fonts/embedded.py` builds its table with a
+  cut-down sfnt reader that parses `cmap`, `head`, `hhea` and `hmtx` and not `GPOS`, so
+  its `FontMetrics.kerning` is `None` and an embedded face still measures wide. No corpus
+  deck embeds a face that kerns. The fix is a GPOS reader, not a wider tolerance.
+* **`a:rPr@kern`** — OOXML's *minimum font size at which kerning occurs*, in hundredths
+  of a point — is parsed by nobody here. Six of the ten corpus decks write `kern="1200"`
+  28 times each (the master's `p:txStyles` defaults) and the other four write none at
+  all; absent means "kern at every size". Nothing in the corpus sets body text below
+  12 pt in a deck that writes it, so no measurement here could separate the two readings,
+  and modelling it on the spec alone would be a rule rather than a measurement.
+* **Kerning across two runs of identical formatting.** `_merge_segments` splits on the
+  identity of the run properties object, not on their values, so two adjacent runs that
+  happen to be formatted alike are drawn as separate `tspan`s and neither the wrap nor
+  the renderer kerns the join. PowerPoint does. It is one pair per run boundary and no
+  corpus line measurably depends on it.
+
+#### Kinsoku: a third defect, measured and fixed
+
+Japanese forbids a line that *begins* with a closing bracket, a small kana, a sound mark
+or a full stop, and one that *ends* with an opening bracket. We broke between any two CJK
+characters. The probe's `k` family puts each class at the break in a box known to the
+quarter point: PowerPoint moved the neighbour down in all seven cases, including for two
+marks in a row, so it pushes out (追い出し) rather than hanging the character past the
+edge. The `q` family then tried the two attributes that might have owned the rule, and
+**`hangingPunct` makes no difference with either setting** while **`eaLnBrk="0"` turns the
+rule off**. `eaLnBrk` defaults to on and every master here writes it on, so `text/wrap.py`
+applies the rule unconditionally; reading the attribute is what a deck that turns it off
+would need, and the corpus has none. No corpus score moves — no corpus line breaks at one
+of these characters — but `sample`'s snapshot does.
+
+#### Slides 4 and 6: horizontal is exact, vertical is not
+
+Both were unexplained and neither is the same defect. Read against the export's pen
+origins, **every horizontal position on slide 4 matches PowerPoint to the point**: the
+three bullet glyphs at 43.2, 79.2 and 115.2 pt, the three text starts at 70.2, 101.7 and
+133.2, and the Latin digit after six kana at 262.2. Slide 6's title matches its centre
+exactly at 360.0 pt. Slide 6's *subtitle* is 1 pt left of PowerPoint's, and that is the
+kerning above seen from the other side: the line carries -53/1000 em of `kern`, so the
+width we centre it on is ~1.7 pt too wide and half of that lands on the left edge. Its
+title, which has no kern pair in it, is exactly right — the two together are as clean a
+confirmation as the GPOS table.
+
+What is left on both slides is **vertical**, and the probe's `g` family says it is not a
+small residue. Twenty slides of two one-line paragraphs, holding one font size and
+sweeping the other:
+
+| | PowerPoint | ours | error |
+| --- | --- | --- | --- |
+| 32 → 12 pt, `spcBef` 20% | 22.08 pt | 17.28 | -4.80 |
+| 32 → 24 | 36.00 | 34.56 | -1.44 |
+| 32 → 32 | 46.08 | 46.08 | 0 |
+| 32 → 40 | 54.96 | 57.60 | +2.64 |
+| 12 → 32 | 41.04 | 46.08 | +5.04 |
+| 40 → 32 | 48.00 | 46.08 | -1.92 |
+
+**Our advance is right only when the two sizes are equal**, which is exactly why slide 4's
+three same-size advances are correct and its two size-changing ones are 1.7 and 1.9 pt
+out. Three further readings fall out of the `spcBef = 0` rows and none of them is our
+model:
+
+* between two paragraphs at 32 pt with no spacing at all the advance is **37.92 pt**
+  (1.185 em), not the 1.2 em `DEFAULT_LINE_HEIGHT_RATIO` asserts;
+* *within* one wrapped paragraph at the same size and face it is **38.88 pt** (1.215 em) —
+  so a paragraph boundary is not a line advance plus a gap, and neither number is 1.2;
+* the advance is **not a linear function of the two sizes**: 32 → 12 measures 18.96 where
+  the 32 → 32 and 32 → 24 rows predict 18.12 for any function of the form
+  `below(first) + above(second)`.
+
+This is deliberately **not fixed here**. `DEFAULT_LINE_HEIGHT_RATIO` governs Latin
+spacing too, the 1.2 constant is the result of its own measurement across eleven faces
+(see `text/measure.py`), and six numbers from one script are not enough to replace it.
+
+One number in this section went **down**, and it is the case `tools/fidelity.py`'s own
+docstring warns about: `sample-cjk`'s histogram fell 0.9819 → 0.9805 while its SSIM rose
+0.6788 → 0.7367. Slide 3 is where it happens, and every other column there improved —
+mean absolute error 3.901 → 2.214, pixels over 10% 2.719 → 1.981, coverage 3.28% → 2.80%.
+Removing ink we drew and PowerPoint did not shrinks the mask the score is a mean over.
+The probe family that would settle it is written and committed; what it needs is the same
+sweep on a Latin face, which would say whether 1.185/1.215 is a property of Noto Sans JP
+or of PowerPoint.
+
+**One last thing the probe found and this does not fix.** A paragraph with a hanging
+indent and *no bullet* (`marL` 32 pt, `indent` -32 pt) gets the full box width for its
+first line in PowerPoint — it fits eleven glyphs where we fit ten. With a bullet, which
+is every case in the corpus, PowerPoint budgets from the text start and we agree. So the
+defect is confined to the bullet-less hanging indent, and no deck here has one.
+
+`chart-gallery.pptx` is the fourth scorable deck and the only chart-heavy one; what its
+0.6747 is made of is in *3.2a* below, since almost all of it is a statement about chart
+types rather than about this deck.
+
+`real-college-template.pptx` escapes that trap: it names only Arial, Calibri and
+Wingdings, all of which this machine has, so it is **the first real-world deck measurable
+rather than skipped**. It is third-party and therefore **not committed** -- it lives in
+the gitignored `scratch/`, and the tests that need it skip where it is absent (see
+`tests/fixtures/README.md`). The defects it found are pinned by tests that do *not* need
+it. Its nine slides:
+
+| slide | SSIM | hist | what is left |
+| --- | --- | --- | --- |
+| 1 | 0.9931 | 1.0000 | — |
+| 2 | 0.9870 | 0.9998 | — |
+| 3 | 0.7627 | 0.1195 | CMYK in an EMF: pdfium and Quartz disagree on the logo's red by a visible amount. 2.9% coverage, nearly all logo, is why one hue moves the histogram this far. Needs an ICC transform in `metafile/pdf.py`, and the answer would be machine-specific. |
+| 4 | 0.3721 | 0.9899 | `c:userShapes`, literal text in a number format, a manually laid out legend, the plot area's own `c:spPr` border. See Phase 3. |
+| 5 | 0.9528 | 0.9997 | — |
+| 6 | 0.7372 | 0.9611 | Line tops now agree within 1–2 px; at 20 pt over 5% coverage that alone costs most of the SSIM. |
+| 7 | 0.5112 | 0.9715 | same |
+| 8 | 0.8869 | 0.8365 | A 441 kB JPEG: our resampling and colour differ slightly from pdfium's at 58% coverage. |
+| 9 | 1.0000 | 1.0000 | sparse — too little foreground to judge |
+
+### Two limits of this oracle, worth knowing before chasing a number
+
+**The oracle is localised.** This Office install renders decimals with a comma (`$8,0`,
+`($1,0)`), so slide 4's numeric text can never match character-for-character regardless of
+what the number-format code does.
+
+**The metric is not monotone in geometric accuracy.** Measured, not assumed: setting slide
+4's plot bottom to PowerPoint's own *to the pixel* scores 0.4704 SSIM / 0.9842 hist, while
+reserving one label line instead of the two PowerPoint drew — a band 11.5 pt too short —
+reproduces its old 0.9950 histogram exactly. The last half-percent on that slide is only
+purchasable by being measurably wrong, so it was left unbought.
+
+### What the corpus says is wrong now
+
+With fonts eliminated as a variable, what remains is layout, and it is concentrated:
+
+* ~~**CJK label width**~~ — the East Asian face now reaches measurement, and the item
+  that used to head this list was **half right about the cause and wrong about the
+  number**. See *The East Asian face cascade* below: the face was genuinely being
+  dropped, and fixing it takes 6.83 pt off the corpus radar's radius — but the 19.8 pt
+  attributed to chart3's *width* is not a width error at all. PowerPoint's own export
+  draws `プラットフォーム` at 12.000 pt a glyph, which is the 96 pt we measure.
+* ~~**The rotated-label reserve has no cap**~~ and ~~**PowerPoint ellipsis-truncates a
+  category label that will not fit**~~ — both closed, and they were one mechanism seen
+  from two sides. See *The rotated label's cap is a truncation* below: three probe decks,
+  112 charts. Chart3's bar axis now draws `プラット…` where PowerPoint draws `プラット…`,
+  keeps `グローバル` whole where PowerPoint keeps it, and reserves 68.59 pt against its
+  69.538 — the 19.8 pt error is 0.95. **The radar's two truncations are not fixed**: that
+  is a different allowance (`RADAR_LABEL_MAX_FRACTION`) and no probe here measured it.
+* **A manually laid out legend** is the whole of slide 4's remaining chart error.
+* **Chart glyphs at whole points — measured, not applied.** PowerPoint 16 for Mac draws a
+  chart's glyphs (titles, axis titles, data labels, tick labels) at a whole-point size —
+  `sz` 1749 → 17 pt, 1750 → 18, 1850 and 1862 → 19, 2050 → 20, 1197 → 12 — while its
+  character spacing keeps each line's width at the stated size (about 5.9 pt per stated
+  point, within 0.5%). The half-point rule is unclear (17.5 → 18, 18.5 → 19, 20.5 → 20),
+  so pptx2svg draws at the stated size: widths already agree to about 0.5%, glyph height
+  is what differs (oracle-titlefont probe2, 2026-10-16).
+* **Text displacement of 1–2 px** on body copy is what slides 6 and 7 are made of, and
+  `tools/fidelity.py`'s own docstring warns that SSIM is unusually sensitive to exactly
+  that on thin high-contrast content.
+* ~~**The OpenType `kern` feature is not modelled at all**~~ — **done**, and it was the
+  largest named term left in Japanese layout. `text/kerning.py` carries every pair as a
+  class matrix, `WRAP_TOLERANCE_RATIO` is `1e-6` rather than 0.005, and `sample-cjk`'s
+  centred subtitle now inks PowerPoint's own 178–786 px exactly. `sample-cjk` 0.7367 →
+  0.8069, `sample-issue-387` 0.9897 → 0.9906, the other five decks unchanged. See *The
+  `kern` feature, modelled* above — including why the chart engine must **not** kern.
+* **The paragraph advance is only right when two consecutive paragraphs share a font
+  size.** Twenty probe slides put the error between -4.80 and +5.04 pt, and the same
+  measurement says the 1.2 em line box is 1.185 em between paragraphs and 1.215 em within
+  one. `DEFAULT_LINE_HEIGHT_RATIO` governs Latin too, so this needs the same sweep on a
+  Latin face before anything moves; the probe family is written (`g` in
+  `tools/make_cjk_wrap_probe.py`).
+
+The bold/italic and paragraph-spacing defects that used to head this list are **fixed**:
+bold now inherits through the placeholder cascade, `spcBef` and `spcAft` add rather than
+collapse, and `spcPct` is a share of the line height rather than the font size. Slide 6
+went 0.0977 → 0.7372 on the spacing fix alone.
+
+### The East Asian face cascade
+
+The question a run has to answer before anything can measure it: *which face draws the
+kana?* Three names compete — the run's `<a:ea>`, the theme font collection's `<a:ea>` and
+its `<a:font script="Jpan"/>` list — and until now the answer was **none of them** unless
+the run named one itself. Where it did not, `RunProperties.font_family_ea` came through as
+`None` and `DefaultTextMeasurer` measured every ideograph with the *Latin* table.
+
+That is worse than it sounds, and the reason is in `text/metrics.py`: **`cjk_width` is
+1.0 em in every table, Latin ones included**, because `tools/extract_font_metrics.py`
+writes `units_per_em` when the face has no glyph for its probe kanji. So a Latin face
+never says "I cannot draw this". It answers "one em" and the layout is computed from a
+constant while the rasteriser draws with whatever it finds.
+
+Three places dropped it, and they had to be fixed together:
+
+| where | what it dropped |
+| --- | --- |
+| `resolve/text.py` | `font_family_ea` was the run's own `<a:ea>` and nothing else |
+| `render/text.py` | `_needs_script_split` needs *both* families, so a run with no `<a:ea>` never split — and the East Asian chunk is the only place `jpan_fallback_font` was ever consulted |
+| `resolve/chart.py` | `ChartFont`, `font_box` and `text_width` carried one family, and `_label_body` emitted `RunProperties` with no `font_family_ea` at all |
+
+#### What the precedence actually is
+
+Read out of **PowerPoint's own PDF export of `real-financial-report.pptx`**, which is the
+one place in the corpus where every competing explanation is ruled out. Its five charts
+name `<a:latin typeface="Arial"/>` and stop; its theme writes `<a:ea typeface=""/>` in
+both collections with `<a:font script="Jpan" typeface="游ゴシック"/>` beside it. The
+export embeds **YuGothic-Regular** for every Japanese category label and **ArialMT** for
+the Latin runs *inside the same labels*.
+
+1. the run's `<a:ea>`, when it names a face that can draw East Asian text;
+2. the theme collection's `<a:ea>`, same condition;
+3. the theme's `<a:font script="Jpan"/>` (then `Hans`, `Hant`, `Hang`);
+4. the Latin face, as a last resort so the emitted stack is never empty.
+
+Two rules in there are measured rather than read off the spec:
+
+* **An empty `typeface=""` is not a name.** Every theme in this corpus writes one.
+* **A name with no East Asian glyphs loses to one that has them.**
+  `real-basic-theme.pptx` writes `<a:ea typeface="Raleway"/>` on nine of its runs and
+  PowerPoint drew their Japanese in MS Gothic and MS Mincho — so it did not honour the
+  name either. `covers_east_asian` is the test, and it is a field on `Substitution`
+  rather than something derived: `cjk_width` cannot distinguish a face that draws a kanji
+  at one em from one that cannot draw it, and counting per-character rows calls Cambria
+  Japanese (four bracket forms) and ＭＳ ゴシック not (monospace, so no row disagrees with
+  `cjk_width`).
+
+**Body before heading**, also measured: the theme offers `游ゴシック Light` as its major
+Jpan face and `游ゴシック` as its minor, and the export used the Regular. `jpan_fallback`
+in `__init__.py` had it the other way round and put a light weight behind body copy.
+
+#### Before and after, against PowerPoint's own export
+
+The oracle is the *pen span* — first glyph origin to last glyph origin — read out of the
+PDFs with `pypdfium2`, which needs no knowledge of the final glyph's advance and is
+therefore exact.
+
+| string | face PowerPoint drew | drawn | ours before | ours after |
+| --- | --- | --- | --- | --- |
+| `デジタル` (12 pt) | YuGothic-Regular | 48.000 | 48.000 | 48.000 |
+| `グローバル` (12 pt) | YuGothic-Regular | 60.000 | 60.000 | 60.000 |
+| `その他` (12 pt) | YuGothic-Regular | 36.000 | 36.000 | 36.000 |
+| `DX投資額` (12 pt) | ArialMT + YuGothic | 52.669 | 52.669 | 52.669 |
+| `CO2削減` (12 pt) | ArialMT + YuGothic | 48.674 | 48.674 | 48.674 |
+| `前年同期` (10 pt) | YuGothic-Regular | 30.000 | 30.000 | 30.000 |
+
+**Every CJK string on every chart in that deck already measured to 0.000 pt, before and
+after.** That is the refutation, and it is worth stating plainly because this file
+asserted the opposite for two sections: `プラットフォーム` was said to come out 96 pt
+where PowerPoint "laid it out in a substituted CJK face at about 68". The 68 was
+`ROTATED_LABEL_INSET_PT + width · sin 45` inverted through PowerPoint's 69.538 pt inset —
+our own formula run backwards, never a measurement. PowerPoint draws all eight glyphs at
+exactly 12.000 pt, one em of Yu Gothic, for 96 pt.
+
+The widths coincided because Arimo's `cjk_width` is 1.0 em and Yu Gothic's kana and
+ideographs are too. The *line box* did not, and that is the part the fix collects:
+
+| | line box at 12 pt | radar reserve | radius |
+| --- | --- | --- | --- |
+| Arial, as read before | 13.406 (1.117 em) | 11.61 | 52.39 |
+| 游ゴシック → Noto Sans JP's table | 17.376 (1.448 em) | 16.61 | **47.39** |
+| PowerPoint | — | 18.44 | **45.56** |
+
+6.83 pt of radius error becomes 1.83. The residual is the fitted reserve, not the face:
+`RADAR_LABEL_RESERVE_LINES`/`_PT` were fitted to five Latin probes, and reproducing 18.44
+exactly wants a 1.5696 em line box, which is neither our Noto Sans JP table's 1.448 nor Yu
+Gothic's own `hhea` figure. Whether the reserve has a term only CJK exercises is
+unmeasured — one CJK radar in the corpus and no probe deck for it.
+
+Where the face choice *does* move a width is `real-basic-theme.pptx`, whose `<a:ea>` is a
+Latin face. Its kana went from Raleway's 1.0 em guess to ＭＳ Ｐゴシック's real
+proportional advances: `かじょうがき１` at 13 pt goes 78.000 → 65.559, `たいとる` at 42 pt
+goes 126.000 → 110.953. PowerPoint's export of that deck drew MS **Gothic** at a flat
+1.0 em, so our numbers move *away* from that PDF — which is exactly why the harness skips
+the deck: the exporting machine had no MS PGothic either. This is the same trade the
+`text/fontmap.py` docstring already commits to for `sample.pptx`, and it is the one that
+keeps measure-equals-draw true: the stack we emit now starts at a face we ship and can
+draw, instead of at one with no kana in it.
+
+#### What this turned up and did not fix
+
+* **PowerPoint truncates, we overflow.** `プラット…`, `海外売上…`, `従業員満…` — a
+  category label wider than its allowance is cut and ellipsised, not wrapped, because
+  `wrap_label` breaks at whitespace and CJK has none. The radar's allowance looks like the
+  `RADAR_LABEL_MAX_FRACTION` cap we already carry: 0.25 × 243.243 pt region = 60.8 pt, and
+  both truncated labels came back at five cells (60.0 pt) where the full string is six
+  (72.0). We wrap onto a second line instead.
+* ~~**A candidate cap for the rotated reserve, on three observations.**~~ The candidate
+  was *half the frame height* on three implied widths that were 0.502, 0.504 and 0.507 of
+  their frames. **It is refuted, and it was refuted by the fourth point.** The three
+  implied widths were an inversion through our own formula, and the formula's constant is
+  not a constant: it is `21.39` only for the 10 pt Aptos all three were read in. Sweeping
+  the label size moves it from 14.70 pt to 39.94. What the sweep found instead is below.
+* **`lang` may select between the script list and an application default.**
+  `real-financial-report.pptx`'s table cells name no typeface, inherit `+mn-ea` → 游ゴシック
+  — and PowerPoint drew them in **MS Gothic**, not Yu Gothic, on a machine that has both.
+  Every one of those runs is `lang="en-US"`. The chart text, which has no `lang` at all,
+  went to the script list; so does `sample.pptx`, which has no `lang` anywhere and whose
+  Japanese resolved through its theme's Jpan entry. The theory fits all three and cannot
+  be acted on: "PowerPoint's default Japanese font for a non-Japanese run language" is a
+  property of the machine, not of the deck, and the script list is the only deck-derived
+  answer available. Recorded because the alternative is to pretend the cascade explains a
+  case it does not.
+* **`ascender_ratio` still prefers the Latin face** even for a run with no Latin character
+  in it (`text/measure.py`), and chart `first_baseline` follows it deliberately so the two
+  stay in step. Changing one without the other would unstitch measure-equals-draw.
+* **The legend band still reads the Latin line box.** `ChartFont.box_for` is consulted by
+  `_bottom_label_band` and `_radar_geometry` only. `real-financial-report.pptx`'s doughnut
+  legends in Japanese, but its entries are laid out down a right-hand band where the line
+  box is not what sets the width, and no probe measures a CJK legend.
+
+
+---
+
+## The shared package: `ooxml-common` — **extracted, on branch `extract-shared-package`**
+
+The format-neutral half of this library moved to a new repository,
+[`ooxml-common`](https://github.com/uvrt/ooxml-common), **with its git history**
+(`git filter-repo`; `git log --follow` on any moved file reaches this repository's first
+commit). The reason is docx2svg: it needs these measurements, and depending on a
+PowerPoint renderer to measure a Word document, or copying the tables into a second set
+of constants that could drift, were both worse. The boundary is docx2svg's
+`ROADMAP.md`, Phase 1, which measured it from this package's import graph.
+
+**What moved** — everything that already imported nothing from `model.py`:
+`opc`, `xmlutil`, `units`, `fonts/`, `text/{kerning,metrics,fontmap,measure}`, and
+`guides` with `render/{pattern,preset_specs}` under `ooxml_common.drawingml`. One split:
+`fonts/check.py`'s report and `check_families` moved; `check_deck`, `deck_families` and
+`resolved_families`, which walk the resolved slide model, stayed in `pptx2svg.fonts.check`.
+
+**Nothing changed from the outside.** Every old path is a thin re-export whose module
+*is* the shared module (`pptx2svg.text.metrics is ooxml_common.text.metrics`), so state,
+identity and monkeypatching are unchanged; `pptx2svg.fonts`, which is still a package
+here, forwards reads and writes of the shared names. The suite (2,522 passed, 43
+skipped), every VRT snapshot and every fidelity baseline are identical, and the runtime
+is still standard-library only — `ooxml-common` has no dependencies.
+
+**What stayed, and why:**
+
+* `text/wrap.py` and `render/text.py`. The line breaker's method transfers to Word and
+  its types do not; which paragraph protocol a shared one takes is docx2svg's Phase 3's
+  question, answered by breaking lines against Word, not in advance.
+* `render/fill.py` and `render/geometry.py` take `model.py`'s DrawingML *value* types
+  (`Fill`, `Outline`, `PresetGeometry`, ...). Lifting those types out first is the next
+  step that would let both follow.
+* The generators, `tools/extract_font_metrics.py` and `tools/derive_preset_geometry.py`.
+  The first reads Office's faces through the fidelity harness's font profile, the second's
+  `SPEC_DRIVEN` is this renderer's policy. Both now write into whichever `ooxml-common` is
+  installed (the editable sibling checkout).
+* The fidelity harness: it scores rasterised slides and shares no code with docx2svg's.
+* `packages/pptx2svg-fonts`, unchanged in name and place. The shared code finds it by
+  import name only, and renaming a distribution is the disruptive option; if it is ever
+  renamed, the moment to do it is before its first PyPI release.
+
+`INSTALL_HINT` still says `pip install 'pptx2svg[fonts]'` and embedded faces are still
+relabelled `pptx2svg embedded: …`, both in shared code now: changing either changes this
+library's output, which this move was not allowed to do.
+
+### Second step: DrawingML's value types and renderers — **moved, on branch `drawingml-rendering`**
+
+docx2svg draws a Word document's floating shapes, which are DrawingML, and had begun to
+write a second copy of this library's renderers to do it (its ROADMAP.md, "Floating
+drawings — measured", F.10, which proposed this step). So the step the first extraction
+deferred is done:
+
+* **The value types** — colour choices (`SrgbColor`, `SchemeColor`, `SystemColor`,
+  `ColorTransform`) and `ResolvedColor`, every fill, `Outline` and its arrowheads, the
+  effects, `Transform`, preset and custom geometry, picture tiling, `ColorScheme` — moved
+  from `model.py` and `parse/source.py` to `ooxml_common.drawingml.model`. Both modules
+  re-export them, and each *is* the shared class.
+* **The renderers**, whole files with their history: `render/fill.py`, `render/geometry.py`,
+  `render/effect.py`, `resolve/color.py` and `imagemeta.py` are now
+  `ooxml_common.drawingml.{fill,geometry,effect,color}` and `ooxml_common.imagemeta`, and
+  each old path is the shared module, as before. `num` moved beside them; the renderers
+  take any object with `new_id` / `add_def` (`SvgDefs`), which `RenderContext` is.
+* **The complete preset table.** `tools/derive_preset_geometry.py` now also writes
+  `drawingml/presets.py`, every preset `SPEC_DRIVEN` leaves out, so `PRESETS` holds all
+  187 names `ST_ShapeType` allows. The 5th edition's `presetShapeDefinitions.xml` has
+  `upDownArrow` twice and **no `upArrow`**; the tool writes it as the file's `downArrow`
+  mirrored. `PRESET_SPECS` and this renderer's hand-written generators are unchanged: which
+  presets are drawn from the specification is still this renderer's measured policy.
+* **Geometry as path data** (`geometry_path_data`, `preset_path_data`, `spec_path_data`):
+  each `a:path` over a box with its fill mode and stroke flag, through the evaluator and
+  path builder the specification-driven presets already use — what docx2svg paints with.
+* **Colour rules.** Where Word and PowerPoint were measured to differ, the resolver takes
+  the application as `ColorRules`: `POWERPOINT` (the default, this library's rounding, half
+  to even) or `WORD` (docx2svg's measurement: a half down, `7F7F7F` for black at
+  `lumMod 50000 lumOff 50000`). The HLS `lumMod` that is 23 levels off PowerPoint's chart
+  accent cycle (3.2, `ofPie`) moved **as it is**: fixing it moves every deck.
+
+**Nothing changed from the outside**, checked against `main` (6a7de7f): every SVG of 32
+decks (197 slides: the fixtures, `scratch/`, the oracle's), 3,474 direct renderer outputs
+(every preset at four sizes and three adjustment sets, every fill, pattern, dash, cap,
+join, marker, effect, and 752 colour resolutions), every VRT snapshot, the fidelity scores
+under both truths, and the suite's counts are byte-identical. One test changed:
+`test_the_renderer_reads_every_field_the_model_carries` now also reads the moved
+renderers' source, where the fields are read.
+
+**What stayed**: `parse/drawing.py`, which reads DrawingML XML into these types (the
+colour parser, `_hsl_to_hex` and `PRESET_COLOR_HEX` with it); `render/shape.py` and
+`render/svg.py`, which place elements on a slide; the chart ramp's own linear-light
+conversion.
+
+**Then the reader**: `parse/drawing.py` followed, with its history, to
+`ooxml_common.drawingml.read` (ooxml-common 0.3), and the DrawingML half of
+`parse/source.py` -- the unresolved fills, outlines, shape styles, effects, transforms,
+geometry and the theme's format scheme -- to `ooxml_common.drawingml.source`, because
+docx2svg reads a Word shape's `spPr` into the same types. `parse/drawing.py` is the shared
+module under its old name, `parse/source.py` re-exports the moved classes, and
+`parse/parts.py` imports the theme readers that moved beside them. docx2svg also measured
+where Word draws the same DrawingML differently (dash caps, gradient geometry, colour
+composition, arrowheads, the pattern's phase...: ooxml-common's README), and those
+differences are parameters there (`drawingml.rules`), so pptx2svg's output does not move:
+the reader now carries what Word's rules use beside what pptx2svg reads, and reads two
+things it read as nothing before -- every `a:prstClr` name (it knew 27) and `sysDashDot` /
+`sysDashDotDot` -- which no deck here uses. Checked against `main` (d0e9044): the suite's
+counts, every VRT snapshot, the fidelity scores and every deck's SVG byte-identical.
+
+### Third step: charts, the shape tree and the text body renderer — **moved, on branch `chart-smartart`**
+
+docx2svg skipped every chart and SmartArt diagram in a Word document, and both are what
+this library already draws: a Word chart is the same `c:chartSpace` part, and a Word
+SmartArt frame names the same data part, whose cached `dsp:drawing` is the same shape tree.
+So what draws them moved to ooxml-common 0.4, whole files with their history:
+
+* **Charts**: `parse/chart.py` and `resolve/chart.py` are `ooxml_common.chart.{read,layout}`.
+  `DRAWABLE_CHART_KINDS` and `drawable_plots` moved from `resolve/view.py` beside the
+  layout. What the layout cannot know stays a parameter, as it was: `ChartStyle` (the
+  theme's faces, text colour and accent cycle) and `ChartBuilder`'s `resolve_fill`,
+  `resolve_outline`, `resolve_text` and `resolve_typeface`, which here are this library's
+  inheritance and in docx2svg are Word's.
+* **What a chart and a diagram are drawn with**: `render/{context,shape,text}.py` and
+  `text/wrap.py` are `ooxml_common.drawingml.{context,shape,textbody,wrap}`; `render/svg.py`'s
+  element and group drawing is `drawingml.elements`, and the slide -- its background and
+  size -- stays here. The scene types (`model.py`'s text, element, table and chart types)
+  are `drawingml.scene`, and the shape tree and text body source types with their readers
+  (`parse/{shapes,text}.py`) are `drawingml.{source_tree,read_tree,read_text}`.
+* **SmartArt's lookup**: the cached drawing keyed from the data part through the owner's
+  relationships, and its child transform, are `drawingml.diagram`, taking a package and
+  the owning part. Resolving the diagram's shapes stays here: it is this library's shape
+  resolver, with the placeholder and list-style inheritance a Word document does not have.
+* **Rules**: `RenderContext.rules` is the `DrawingRules` the shape and text renderers draw
+  under, and `ChartBuilder` takes `ChartRules`; `POWERPOINT` is both defaults, and no
+  Word field is assumed before it is measured.
+
+Each old path is the shared module (`pptx2svg.resolve.chart is ooxml_common.chart.layout`),
+`model.py` and `parse/source.py` re-export the moved classes, `render/svg.py` re-exports
+`render_element`, `render_group` and `swaps_group_axes`, and `resolve/view.py` still has
+`DRAWABLE_CHART_KINDS`. **Nothing changed from the outside**, checked against `main`
+(c2dbb2c): every SVG of 26 decks (182 slides), the suite's counts (2,605 passed, 44
+skipped) with every VRT snapshot, and `tools/fidelity.py --json`, byte-identical. One test
+changed, as last time: `test_the_renderer_reads_every_field_the_model_carries` reads the
+moved renderers' source.
+
+---
+
+## Fonts — **done**
+
+The problem, stated precisely: layout was computed from a table of advance widths, the
+SVG named a `font-family`, and **nothing made those two agree**. On a machine without
+Calibri the rasteriser substituted something else without a word — rendering one string
+in Calibri, Carlito, Aptos, Noto Sans JP and Lato produced five byte-identical PNGs. Text
+appeared, at widths nothing had computed.
+
+### The shape of the fix
+
+0. **Read the deck's own fonts first**, where it carries any. Added in Phase 6, after the
+   rest of this section was written: a `<p:embeddedFontLst>` face is decoded, rights-checked
+   and used for both measurement and drawing, and it takes precedence over every rule below.
+   Nothing a bundle ships can beat the file the author laid the deck out with -- measured,
+   the bundled Raleway and the Raleway inside `real-basic-theme.pptx` disagree on 338 of 340
+   advance widths.
+1. **Ship the faces**, in a separate `pptx2svg-fonts` distribution installed as
+   `pptx2svg[fonts]`.
+2. **Generate the metrics from them.** `tools/extract_font_metrics.py` reads the shipped
+   files and rewrites `text/metrics.py`; a test re-runs it and fails on drift.
+3. **Draw with them by default**, `skip_system_fonts=True`, so output does not depend on
+   the host.
+4. **Say so when we cannot** — `pptx2svg fonts --check`, and warnings on
+   `ConvertOptions.warnings`.
+
+### Why a separate distribution
+
+Extras cannot conditionally add package data, so the choice was "font files in every
+wheel" or "font files in a wheel you opt into". The main wheel is 150 kB; the fonts are
+11 MB compressed. **SVG output embeds no fonts at all** — an SVG names them — so every
+caller who only wants SVG, or who points `font_dirs` at their own corporate faces, would
+have paid 11 MB for bytes they can never use. PNG already requires an extra
+(`pptx2svg[png]`), so the audience that needs fonts is already typing an extra.
+
+The cost is a second distribution to release in lockstep, and a bare `pip install
+pptx2svg` that is *not* deterministic. That second cost is paid down by making the
+degraded mode loud rather than silent: `pptx2svg.fonts.bundle_mode()` is the single source
+of truth, `pptx2svg fonts` leads its report with it, and a render without the bundle emits
+one `font-bundle-missing` warning naming the fix.
+
+### What was found by measuring instead of trusting
+
+Every one of these was believed to be true beforehand, on good authority, and was not:
+
+* **Caladea is not metric-compatible with Cambria.** It is described that way
+  everywhere. Measured against the installed Cambria over four representative strings it
+  runs 4.5 % narrow (0.9555, 0.9384, 0.9525, 0.9542). Cambria therefore gets the Aptos
+  treatment: measured with its own widths, drawn with Caladea.
+* **The inherited Noto Sans JP table was wrong for 186 of 191 characters.** It came from
+  pptx-glimpse and had never been checked against the font it claimed to describe. This
+  is the single best argument for generating the table.
+* **Bold was a flat 1.05 multiplier.** The true ratio is 1.000 for Cousine — monospace
+  bold is the same width, and we were inflating every bold line of code by 5 % — 1.023 for
+  Carlito, 1.049 for Tinos, 1.056 for Arimo, 1.089 for Caladea, 1.119 for Noto Sans JP.
+  1.05 is the middle of that spread, which is another way of saying it was wrong for all
+  of them. Bold now has its own generated table.
+* **Aptos Display was not missing.** Office does not install it; it downloads it into a
+  cloud-font cache under a numeric filename. Reading `/BaseFont` out of PowerPoint's own
+  PDF export is what found it. Two of the seven fixtures use it, and they were the two
+  worst-scoring.
+* **resvg handles variable fonts correctly.** Arimo at `wght=700` renders pixel-identical
+  to static Liberation Sans Bold, which is why the bundle ships one 1 MB variable Arimo
+  instead of four static cuts.
+* **Debian does not package Raleway.** The obvious `fonts-raleway` does not exist.
+* **The substitution table only worked in one direction.** Every row was written from the
+  Office side — "a deck asked for Calibri, what do we draw?" — which made a family a legal
+  *input* only if some Office face happened to be spelled that way. The five faces the
+  bundle ships, measures and draws with were therefore names we did not recognise:
+  `metrics_for("Carlito")` returned `None` and the string was laid out from the 0.6 em
+  per-character guess. At 18 pt on "Hamburgefonstiv 12345", Carlito, Arimo, Tinos, Cousine
+  and Caladea each measured 280.800 px — the same 280.800 px as a face that does not exist
+  — against 235.055, 254.824, 233.965, 302.449 and 231.312 px in their own tables, which
+  were sitting in `METRICS` the whole time. Cousine shows the guess is not even wrong in a
+  consistent direction: monospaced, it is 7.7 % *wider* than the fallback assumed, while
+  Caladea is 17.6 % narrower. Decks reach these names by ordinary routes — Carlito and
+  Caladea are LibreOffice's own Calibri and Cambria substitutes, `fonts-croscore` and
+  `fonts-liberation2` put the rest in front of every Linux author — and `fonts --check`
+  called each of them "no substitute known", the exact opposite of the truth. The identity
+  rows now come from `BUNDLED_FAMILIES` itself, so a ninth family cannot ship without one.
+* **Two heuristics were hiding behind the same gap.** With no row to consult,
+  `generic_family` fell back to reading the *name*, and nothing in "Tinos", "Caladea" or
+  "Cousine" says serif or monospace — all three ended their font stack in `sans-serif`.
+  That is only the last resort in the stack, but the last resort is where it bites: in
+  `system` mode a deck set in Tinos degraded to resvg's sans default. And `ascender_ratio`
+  had no descender to work from either, so the first baseline came from
+  `DEFAULT_ASCENDER_RATIO` — y=32 against Carlito's own y=29.806 on the probe deck.
+* **Nothing in the corpus was affected, and that is the finding.** All seven fixtures
+  re-render byte-identically, because not one of them names a substitute face directly;
+  the fidelity scores cannot move. The bug was invisible precisely where it was measured.
+* **Five of seven fixtures resolved most runs to `font_family=None`.** Nothing in OOXML
+  obliges anyone to name a typeface, and plenty of decks name one nowhere. That meant no
+  `font-family` in the SVG *and* no metrics table, so strings were measured with a 0.6 em
+  per-character guess. It now falls back to the theme's body face, which is what
+  PowerPoint draws.
+
+### Aptos
+
+Microsoft's Office default since 2023 has no open metric-compatible clone, and pretending
+otherwise would be the same class of error as the Caladea claim above. The choice is
+therefore explicit and is not a compromise between the two options — it picks one:
+
+* **Measured** with Aptos's own advance widths, so line breaks, autofit and centring match
+  PowerPoint's.
+* **Drawn** with Carlito, whose widths are closest of anything shippable: −3.6 % on a
+  representative sentence, against Arimo's +5.2 % and Tinos's −2.8 % (Tinos is a serif, so
+  it loses on shape what it gains on width).
+
+That deliberately breaks the measure-equals-draw invariant, which is why
+`Substitution.metric_compatible` exists as a field rather than an assumption, why
+`pptx2svg fonts` grades it `approximate` rather than `compatible`, and why `--check` exits
+non-zero on it. A deck in Aptos can be rendered; it cannot be rendered *faithfully*, and
+the tooling says so rather than letting someone find out from a screenshot.
+
+Publishing measurements of a proprietary font is not redistributing it. Advance widths are
+facts about a design, which is the footing on which Carlito, Arimo and Liberation exist at
+all; no Aptos outline, table or file is in this repository.
+
+**Settled, and negative — checked again in September 2026.** There is still no open
+metric-compatible clone of Aptos, and the question does not need re-opening by the next
+person who wonders. The Document Foundation's own public position concedes that its
+proposed replacements "are not metrically compatible"; Aptos is a 2048-upem design and
+Source Sans, the usual suggestion, is 1000. The open request to adopt one anyway
+(tdf#162872, September 2024) has produced nothing. **Every non-Microsoft renderer reflows
+Aptos text today** — LibreOffice included, whose built-in Tools ▸ Options replacement
+table is empty by default.
+
+That matters beyond this entry: Aptos ships in six weights on a current PowerPoint
+install and is the default face a new deck gets, so it would be the single most important
+row of any survey of open equivalents. It is already answered. Anyone running that survey
+should skip it and spend the budget on the faces that might actually have clones.
+
+**Both decks are scored now, and the premise above was wrong.** PowerPoint resolves
+ＭＳ Ｐゴシック perfectly well by either spelling when a run names it in `<a:ea>`;
+`sample.pptx` never does — its theme names it only as the `Jpan` script entry, which a run
+reaches only when its `lang` is Japanese — and `real-basic-theme`'s runs name Lato and
+Raleway. Both fall to PowerPoint's MS Gothic / MS Mincho choice by PANOSE, which this
+library now makes too (FONTS.md ▸ *Which face draws the Japanese?*,
+`tools/make_font_resolution_probe.py`). `real-product-page`'s emoji are drawn in Apple
+Color Emoji wherever the host's faces are in use, as PowerPoint draws them. `sample`
+scores low for a reason that is no longer about fonts: every line of it sits about 2 px
+(1.5 pt) above PowerPoint's, and shifting our page down 2 px lifts slide 4 from 0.26 to
+0.83 — a line-box question for East Asian lines, left open.
+
+*Source note:* the bugzilla thread itself is behind Anubis and could not be fetched by two
+independent attempts, so the TDF position statement is the citation here, not the ticket
+discussion. Flagged rather than laundered into a firmer claim than it is.
+
+### Left undone
+
+* **Emoji, in the reproducible render.** `real-product-page.pptx` renders through
+  PowerPoint with AppleColorEmoji, and so does this library wherever the host's faces are
+  in use (FONTS.md). Nothing open and redistributable is a drop-in for platform emoji,
+  and colour emoji fonts are large, so without the host's faces emoji still render as the
+  substitute's glyph or not at all.
+* **Complex scripts.** `a:cs` typefaces — Arabic, Hebrew, Thai, Devanagari — have no
+  entry in the substitution table, so they fall through to the generic family and the
+  per-category width guess. Adding them means shipping Noto for each script, which is
+  another CJK-sized decision.
+* **Italic is measured from the upright table.** Divergence is ≤2.5 % across the Office
+  substitutes (Carlito 0.4 %, Tinos 2.2 %, Caladea 2.5 %, Arimo and Cousine 0.0 %), which
+  is inside the noise of everything else. Lato is the outlier at 6 %.
+* **Approximate mappings for non-Office faces.** Segoe UI, Verdana, Georgia, Consolas and
+  friends are unmapped. Mapping them to a bundled family would be better than the 0.6 em
+  guess, but only if the mapping is measured first — guessing is how the Caladea claim got
+  in.
+* **`font_files` feeds the rasteriser only.** Fixed for `font_dirs` and `--font-dir`
+  (2026-10-10, the first of the three candidate fixes once listed here): an application's
+  own folders -- `ConvertOptions.font_dirs`, `convert_pptx_to_png(font_dirs=...)`,
+  `--font-dir`, or `OOXML_FONT_DIRS` -- are measured from as well as drawn with
+  (`pptx2svg.fonts.office.user_layout_metrics`), and a face found there reports `exact`
+  instead of `font-substituted`. A family the static tables measure as itself (Aptos,
+  Calibri) keeps its table, which was measured against PowerPoint. `font_files` still
+  reaches the rasteriser alone: a caller with single files can name their folder instead,
+  or pair them with `measurer=FontToolsTextMeasurer({...})`.
+
+### Two open design questions, from the landscape review
+
+Neither is a defect and neither is being acted on. Both are places where LibreOffice
+encodes a distinction this library currently collapses, recorded so that whoever next
+touches `text/fontmap.py` can decide deliberately rather than rediscover the question.
+
+**1. Should the metric-compatible tier be unoverridable?**
+
+LibreOffice resolves a missing font in five steps, and the *order* is the claim.
+`PhysicalFontCollection::FindFontFamily` tries the exact name, then
+**`FindMetricCompatibleFont` — a hardcoded C++ map** (`"Arial"` → `"Liberation Sans"`,
+`"Times New Roman"` → `"Liberation Serif"`), then the fontconfig pre-match hook, then the
+configurable `VCL.xcu` substitution lists, then attribute matching. The metric map sits
+*deliberately ahead* of the configurable table, because metric compatibility is a stronger
+claim than similarity and a user's preference list should not be able to override it
+silently.
+
+The `VCL.xcu` entry, verbatim, for reference:
+
+```xml
+<node oor:name="calibri" oor:op="replace">
+  <prop oor:name="SubstFonts"><value>carlito;hiraginomarugothicpronw3;hiraginomarugothicprow3</value></prop>
+```
+
+`create_font_mapping()` merges a caller's dict straight over `DEFAULT_FONT_MAPPING` with
+no such tier. So a caller can today override Calibri → Carlito with a face that reflows
+the deck, and nothing says a word — the same silent-substitution failure the
+`font-substituted` warning exists to close, reachable through a documented parameter. The
+question is whether identity and metric-compatible rows should be structurally
+unoverridable, or whether overriding one should at least warn. Not obvious: the escape
+hatch exists because people have legitimate reasons to force a face.
+
+**2. Should the "widths guessed" tier fall back per codepoint rather than per run?**
+
+LibreOffice splits its substitution hook in two (`vcl/inc/font/fontsubstitution.hxx`):
+`PreMatchFontSubstitution`, whole-font and configured, and
+`GlyphFallbackFontSubstitution`, per-codepoint and driven by a set of missing codepoints.
+
+This library has only the whole-font kind, so a face with no clone drops its entire run on
+the generic family and the 0.6 em guess. Per-codepoint fallback would let most of a run
+resolve properly and confine the guess to the characters that genuinely have nowhere to
+go. That is the known better shape for the `missing` tier; it is not a small change, and
+it interacts with measurement, since a run drawn from two faces must be measured from two
+tables.
+
+---
+
+## Phase 0 — PowerPoint as the fidelity oracle
+
+**Effort: M. Blocks everything else.**
+
+Nothing currently catches a change that makes rendering *subtly worse*. The suite checks
+structure (well-formed SVG, no `pt` units, text present) but cannot tell that a shadow
+moved 4 px or a paragraph gained a line. Every phase below changes pixels.
+
+**Microsoft PowerPoint 16.106 is installed on this machine**, which makes the reference
+implementation itself available as ground truth — strictly better than LibreOffice, which
+is not installed here anyway and is only an approximation of PowerPoint. **[pptx-renderer]**
+uses exactly this approach and reports SSIM / colour-histogram / IoU metrics per slide
+against PowerPoint exports.
+
+### 0.1 The oracle — verified working
+
+`tools/powerpoint_export_pdf.applescript` is in the repo and confirmed working on this
+machine. It drives PowerPoint via AppleScript to export a deck to PDF; `pypdfium2` then
+rasterises each page.
+
+```bash
+osascript tools/powerpoint_export_pdf.applescript "$PWD/deck.pptx" "$HOME/gt/deck.pdf"
+```
+
+```python
+import pypdfium2 as pdfium
+pdf = pdfium.PdfDocument(pdf_path)
+page = pdf[0]
+image = page.render(scale=1280 / page.get_size()[0]).to_pil()
+```
+
+**Constraints found by testing, all of which bite silently:**
+
+| Constraint | Consequence |
+| --- | --- |
+| PowerPoint is sandboxed | Paths must be in a directory PowerPoint has **already been granted**. Under `$HOME` is *not* sufficient: a freshly created `~/pptx2svg-star/`, and a fresh directory under `~/Documents/`, both fail with **−9074** exactly as `/tmp` does, while the directory earlier exports used keeps working. The deck opens (a `~$` lock file appears) and only the save fails, so it reads as a broken deck rather than an unapproved path — which cost most of a session. Reuse the directory that already works. |
+| **−9074 has a second cause** | A file PowerPoint wants to repair raises an app-modal dialog, and *every* export then fails −9074 until it is cleared — including known-good files. Check for a dialog before suspecting the path; one bad input otherwise looks exactly like a broken environment. |
+| **−9074 has a third cause, and `pkill` is the fix** | After one export failed on a malformed deck, *every* subsequent export failed −9074 — including the corpus decks that had exported minutes earlier, so it reads as a revoked sandbox grant rather than a wedged app. AppleScript `quit saving no` returns `missing value` and does nothing, because PowerPoint is stuck on the half-open deck. `pkill -x "Microsoft PowerPoint"` clears it and the very next export succeeds. Before concluding the directory lost its grant, kill the app and retry — it turns a dead end into ten seconds. Remember to delete the `~$` lock the failed attempt left behind. |
+| **−9074 has a fourth cause, and it survives sessions** | A presentation left open from an *earlier* session — windowless, unlisted in the Window menu, raising no dialog — makes every export fail −9074 with nothing visible to blame. One was found on arrival as `zz-bisect [Repaired]`, days old. `get name of every presentation` is the diagnostic the other health checks miss: it names the zombie where `count of presentations` and a dialog sweep both come back clean. `pkill` and relaunch is again the only fix. **Run the name check first** — −9074 genuinely does not mean “unapproved path”. |
+| A fifth input defect, and it **repairs** rather than hangs | A content-type `Override` whose `PartName` starts `//`. `tests/deckbuilder.py` prepends the leading slash itself, so a caller passing `f"/{part}"` produces one; the three chart probe fixtures did exactly that. Our reader never looks at `[Content_Types].xml`, so the suite passed, but PowerPoint opens such a deck as `<name> [Repaired]` -- and the export script then fails with −2700 "no presentation matched", because the repaired presentation's full name is no longer the path it was asked for. Fixed in `tests/test_chart.py`; check any new caller. |
+| **A third input defect with the hang signature** | Two series in one plot group both claiming `<c:idx val="0"/><c:order val="0"/>`. PowerPoint opens the deck and then never returns, exactly like the non-standard preset name and the partial `avLst` already listed. Out-of-order children of `c:ser` and `c:lineChart` (the schema's sequence is strict: `marker` before `dLbls`, the group-level `marker` *after* every `ser`) cost an earlier −9074 the same way. When a generated probe deck hangs, validate it against the schema sequence before suspecting the oracle. |
+| **A hand-written ChartEx cannot be opened at all** | Four `cx:chartSpace` parts — a treemap with `numDim type="size"`, the same with `type="val"`, a minimal waterfall, and a treemap naming an embedded workbook through `cx:externalData` — were tried at both `ppt/charts/chart18.xml` and the `chartEx18.xml` spelling PowerPoint itself uses. **Every one hangs PowerPoint inside `open`**, and a deck carrying one exports to *nothing*: `save ... as save as PDF` returns success and writes no file, after which every later export fails −9074 until `pkill`. The same deck without that one slide exports in seconds. So `chart-gallery.pptx` has no ChartEx slide — the acceptance test for a fixture is that PowerPoint opens it. Getting a real ChartEx into the corpus needs a deck Office wrote. |
+| The export script cannot clear that dialog | It is blocked inside `open` and never regains control. Dismissal has to run in a separate process, and **Escape does not work** — only a real button click does, matched across localisations (`Annuleren` on a Dutch install). |
+| `count of presentations` is not a health check | A wedged PowerPoint answers `0` while still refusing every file. |
+| Restarting re-raises the dialog | PowerPoint reopens the document it was killed over. Dismiss rather than restart; and after any restart, poll until it answers — an `open` sent mid-launch is refused instantly with −9074. |
+| `save as PNG` is in the dictionary but **silently no-ops** | Returns success, writes nothing. PDF is the only export that works unattended. Do not spend time on it. |
+| Per-slide PNG needs VBA | PowerPoint's `Slide.Export` is VBA-only, requiring a macro-enabled `.pptm` host. **[pptx-renderer]** does this; PDF + `pypdfium2` avoids the complexity and the macro-security friction. |
+| First run prompts for automation permission | Fine interactively; in CI this must be pre-granted or the oracle skipped. Dismissing the repair dialog needs a *second* permission, Accessibility. |
+| The script wraps its work in `with timeout of 45 seconds` | Otherwise a modal dialog costs the 120-second AppleEvent default on every attempt. A timeout here means "PowerPoint would not open this file", which is the verdict the oracle exists to give. |
+| Must match the presentation by full path | Otherwise a concurrently open deck gets exported instead. The script does this. |
+
+**Deliverable:** `tests/oracle/` with a `generate_ground_truth.py` that walks the fixture
+corpus, exports each deck once, caches the PNGs by input SHA-256, and skips cleanly when
+PowerPoint is absent (so `pytest` still passes on Linux CI and other machines).
+
+### 0.2 Snapshot VRT (the regression net) — **done**
+
+Ground truth needs PowerPoint; regression detection does not. `tests/vrt/` carries one
+committed SVG per slide of every deck in `tests/fixtures/` — 16 files, 195 kB — and
+`tests/test_vrt.py` re-renders them and compares byte for byte. `--update-snapshots`
+rebaselines, and skips rather than passes, so the flag cannot produce a green run.
+
+**SVG, not the PNGs this section used to ask for.** A PNG additionally encodes resvg's
+version and its antialiasing, so bumping `resvg-py` would fail every fixture at once and
+read as a rendering regression — a gate that cries wolf on a dependency bump is a gate
+people learn to rebaseline through. It is also 3x the bytes (587 kB against 195 kB on this
+corpus) and, already compressed, those bytes never shrink, in the pack file or in history,
+on every rebaseline, forever. The SVG is the part we author; the rasteriser is somebody
+else's output and `tools/fidelity.py` already exercises it.
+
+The font bundle turns out **not** to be what makes this work, which is worth correcting
+here because this section claimed it was. The SVG path opens no font file at all: widths
+come from the generated tables in `text/metrics.py` and the `font-family` is a name for a
+rasteriser to resolve later. Measured — with the bundle and without it, all sixteen
+documents are identical to the byte; only `ConvertOptions.warnings` differ, which is why
+warnings are not snapshotted. The bundle is what makes a *PNG* reproducible. So these
+snapshots are meaningful on a bare checkout too, and nothing has to skip.
+
+What was verified rather than assumed, because a snapshot that differs per machine is
+worse than none:
+
+- **`PYTHONHASHSEED`.** Set iteration order varies between processes and never within one,
+  so rendering twice in one process proves nothing. Two subprocesses under two fixed,
+  different seeds agree, and a test keeps it that way.
+- **Line endings.** `.gitattributes` pins `tests/vrt/**.svg` to `eol=lf` so Git on Windows
+  cannot rewrite them on checkout; the test normalises on read as well, and asserts the
+  render itself emits no `\r` so that normalisation cannot mask a real change.
+- **Encoding.** Every read and write names UTF-8. These files carry Japanese, and this
+  repository has already lost a Windows run to `read_text()` following the locale.
+- **Float formatting across platforms.** Rounding is to three decimals and formatting is
+  Python's own dtoa, both platform-independent. libm is not: `sin`, `cos`, `log10` and
+  friends may differ by an ulp between glibc, macOS and MSVC. Measured rather than argued
+  — perturbing *every* transcendental in the render by one ulp, systematically, in one
+  direction, moved not a byte of fifteen of the sixteen snapshots. The sixteenth is the
+  finding below, and it has since been fixed; nothing in the corpus moves either way now.
+
+#### Found while proving that: `floor(log10(span))` amplified an ulp into a different chart — **fixed**
+
+`resolve/chart.py` picked an axis unit with
+
+    unit = 10.0 ** math.floor(math.log10(span))
+
+`real-financial-report.pptx` slide 4 is a radar spanning exactly 0..100, so `log10` returns
+exactly 2.0 and the unit is 100. One ulp low — `1.9999999999999998` — and `floor` gives 1,
+the unit becomes 10, and the slide re-lays out: 29,659 characters of SVG become 34,639.
+That was the *only* byte anywhere in the corpus that a 1-ulp libm difference could move,
+and it did not move by a digit, it moved by a factor of ten.
+
+Every mainstream libm returns 2.0 here, because the true value is exactly representable and
+correct rounding therefore requires it; only a merely *faithful* implementation is allowed
+to return the value below, which is why no user ever hit this. It was worth fixing anyway:
+the failure mode is silent, total, and would have surfaced as one unexplained snapshot
+mismatch on somebody's CI leg.
+
+**The fix is `_decade()` in `resolve/chart.py`**, used by both sites that wanted a power of
+ten (the axis unit and the 1-2-5 ladder in `_next_nice_unit`). It takes
+`floor(log10(value))` as a *guess* and then checks it against the input, correcting by one
+step in whichever direction the logarithm rounded; comparing a value with a power of ten is
+an ordinary float comparison where comparing logarithms is a transcendental. Any `log10`
+accurate to better than a whole decade — every real one — now gives the same axis. Two
+details that were not free:
+
+- The powers come from `float(f"1e{n}")`, CPython's own correctly-rounded parser, not from
+  `10.0 ** n`, which is libm again and raises `OverflowError` at `1e309` where the parser
+  returns `inf`. That `inf`, and the `0.0` at `1e-324`, are what let the correction walk
+  off either end of the double range and stop.
+- A span is a subtraction of authored decimals and lands *just under* round numbers:
+  `0.24 - 0.14` is `0.09999999999999998` and `1.13 - 1.03` is `0.09999999999999987`. A
+  strict comparison puts the second in the decade below and steps that axis by 0.005.
+  `log10`'s rounding used to supply a forgiving window here by accident — which is why the
+  old behaviour was right on the first of those and wrong on the second — so the window is
+  now explicit and even: `_DECADE_SLACK = 1e-12`, wider than any such residue (a few ulps,
+  ~1e-16 relative) and nine orders of magnitude narrower than a span like 9.99 that misses
+  a decade because it was written that way. That window — between one part in 1e16 and one
+  in 1e12 below a power of ten — is the one place the fix deliberately changes an answer,
+  and it changes it towards the humane one. No snapshot and no fidelity score moves.
+
+The tripwire that stood in for the fix (`test_the_platform_agrees_about_log10_of_a_power_of_ten`)
+is **gone**, replaced by `test_a_one_ulp_error_in_log10_does_not_move_a_snapshot`: it
+renders that same deck with `log10` nudged an ulp each way and demands the committed bytes
+back. Asserting a property of the platform would now fail a *correct* build on a merely
+faithful libm — the opposite of what a gate is for — while asserting the property of our
+own code is what the snapshots actually depend on. `tests/test_chart.py` holds the
+unit-level version, driving `_decade` with the perturbed logarithm directly.
+
+`real-college-template.pptx` is **not** snapshotted: a render of it contains its text and
+its images, so committing one would redistribute a deck that is not ours to redistribute.
+
+Two layers, two jobs: snapshot VRT runs everywhere and catches regressions; the PowerPoint
+oracle runs on this Mac and catches *being wrong in the first place*. The gap between them
+is wider than it looks — `tests/fidelity-baselines.json` skips five of the seven committed
+decks (PowerPoint substituted the same CJK face, or this machine lacks Noto Sans JP), so
+for five of these seven, the snapshot is the *only* thing watching, and it is watching for
+change rather than for correctness. `tests/vrt/README.md` says so at the top and lists the
+known defects the committed bytes freeze in.
+
+### 0.3 Metrics — **done**
+
+`tools/fidelity.py`. Raw pixel-difference percentage is a blunt instrument — a 1 px text
+baseline shift lights up every glyph, which is exactly how a *correct* gridline fix
+scored as a regression below. Two gates replace it, both from **[pptx-renderer]**:
+
+- **SSIM ≥ 0.95**, for "is the same thing in the same place" — catches wrong geometry,
+  missing elements and layout shifts; ignores a hairline of antialiasing.
+- **Colour histogram correlation ≥ 0.80**, position-blind, for theme resolution,
+  gradients and tint/shade — the class of bug SSIM on greyscale barely sees.
+
+Both are taken over foreground pixels only (grey < 245), and a slide under 1.5%
+foreground is declared unscoreable rather than left to noise. Foreground IoU is
+deliberately *not* used: upstream dropped it because a thin stroke loses half its IoU to
+one pixel of antialiasing, and table gridlines are exactly that shape of problem.
+
+A stored baseline fails on a drop of more than 0.02 SSIM. It is only compared against a
+run with the same **font profile** — which faces the deck asks for, which of those the
+host can supply, hashed — because a score taken with different fonts is not a score of
+this library. That turned out to matter more than anything else in the file: see the
+font column in the table above.
+
+Pure NumPy, dev-only, behind the `fidelity` extra; the library stays standard-library.
+
+### 0.4 Fixture corpus
+
+Nine fixtures is thin, **only four of them can be scored** (see the baseline table
+above), and **none contain SmartArt** — Phase 2 needed inputs before it needed code, and
+got them from 46 real decks outside the repository instead. The chart half of this is
+now done rather than planned: `tests/fixtures/chart-gallery.pptx`, written by
+`tools/make_chart_gallery.py`, is one chart type per slide across every `c:*Chart` group
+element the reader knows, and it is authored in the theme's Aptos with no CJK anywhere
+precisely so the oracle scores it instead of skipping it. Generate a synthetic corpus with `python-pptx`, one feature per slide (each preset
+family, each fill type, each bullet scheme, each table configuration). **[pptx-renderer]**
+does this with a case generator and a support catalogue; the generated-corpus idea ports
+directly even though their generator does not.
+
+### 0.5 The instrument: one rasteriser for both sides
+
+0.3 rasterised PowerPoint's PDF with pdfium and our SVG with resvg, so part of every
+score was pdfium against resvg. The sibling `docx2svg` measured how much (its ROADMAP
+5.13): on Word's own page, pdfium against MuPDF on the *same* PDF scores 0.890, MuPDF
+against resvg 0.996 -- pdfium grid-fits glyph outlines and widens axis-aligned fills to
+whole pixels. The instrument here is now the one it adopted: **PowerPoint's page is
+converted to SVG, and resvg rasterises both sides.** `tools/fidelity.py --truth svg` is
+the default; `--truth pdfium`, the old instrument, is kept, and its numbers re-recorded
+through the new code equal the committed ones exactly (every slide, every column).
+
+**The converter** is `tools/pdf_svg.py`, a copy of `docx2svg`'s (its commit `02822f8`)
+taking the oracle directory as an argument, as `fidelity.py` itself is copied per
+harness: PyMuPDF (`page.get_svg_image(text_as_path=True)`), development only, behind the
+`fidelity` extra, which is not part of `dev` (AGPL-3.0: fine for a local tool never
+distributed with the library; nothing under `src/` imports it; CI does not install it,
+and the tests that need it skip). It carries the sibling's two corrections -- every glyph
+redrawn **unhinted** from the embedded program (PowerPoint's Aptos moves 30-35 font units
+under MuPDF's hinting: measured here too, on every Aptos page) and the page sized in
+**device pixels** -- and three more that PowerPoint's pages needed, each found by the
+validation below:
+
+* **Stroked text.** PowerPoint draws a run it has no bold face for with the regular face,
+  filled and stroked, and sets the line width before the `cm` that scales the text
+  object (`1.166667 w 2 Tr q 0.24 0 0 0.24 … cm BT`: a stroke 0.28 pt wide). MuPDF's SVG
+  writer takes the width as though it were already in page space -- 1.17 pt, four times
+  too wide -- so `real-financial-report`'s bold Japanese came out as blots, 17,000 pixels
+  beyond anti-aliasing a page. `stroked_text_widths` recomputes each stroked glyph's
+  width from MuPDF's own device calls (the line width times the expansion of the
+  transform current when the text is painted). 192 glyphs on `real-financial-report`,
+  `sample` and `real-basic-theme`.
+* **ICC-tagged images.** `real-college-template`'s photograph is tagged Adobe RGB (1998).
+  Both PDF rasterisers honour the profile; the SVG carries the samples only and resvg
+  reads them as sRGB, 9-11 levels off. `srgb_images` converts such an image to sRGB with
+  its profile and rendering intent (little CMS, as MuPDF uses) and embeds it as a PNG.
+* **MuPDF's own SVG reader does not tile a `<pattern>`** (it scores 0.08 against its own
+  PDF raster on `feature-sweep`'s tile fills, where resvg's raster of the same SVG agrees
+  with MuPDF's PDF raster to anti-aliasing). As for `<mask>`, the same-engine route is
+  skipped on such a page and resvg's route decides.
+
+**Validated on every page the harness reads** (`python tools/pdf_svg.py --validate`):
+all 61 pages of the 11 exports in `~/pptx2svg-oracle`, the three skipped decks' included,
+at 300 dpi and at the scoring resolution (1280 px across: 128 dpi on the 720 pt slides,
+96 on the 960 pt ones). The sibling's criteria, per page: same engine by two routes
+(MuPDF's raster of the PDF against MuPDF's raster of the SVG); no more than 20 pixels
+beyond anti-aliasing (MuPDF's PDF raster against resvg's SVG raster, bitmaps included);
+no flat colour more than 2 levels apart; every glyph the embedded program's, no `<text>`
+in the SVG, and resvg drawing it with no font available. Two adjustments, both measured:
+
+* **At the scoring resolution the gate is taken on rasters drawn at 4x and averaged
+  down.** At 96-128 dpi MuPDF's glyph cache puts a glyph on a sub-pixel grid that is a
+  larger share of a stem, and it minifies an embedded bitmap with a filter of its own:
+  at 1x, 28-101 isolated pixels a page on `chart-gallery`, on its text and its 3-D
+  scenes, even between MuPDF's two routes, on pages that hold at 300 dpi. At 4x, none.
+  The supersampled gate must also score SSIM 0.98 or more (passing pages: 0.985-1.0).
+* **At 300 dpi, stroked text goes through MuPDF's glyph cache too**:
+  `real-financial-report` page 2 shows 222 isolated pixels at 1x, 3 with both rasters
+  drawn at 2x, 0 at 4x. Where the 1x gate fails, the 2x one decides (and the same-engine
+  route may still change no colour).
+
+**59 of 61 pages pass. Two fail, and are not scored:**
+
+| Page | What | Why it cannot be held |
+| --- | --- | --- |
+| `feature-sweep` 13 | `a:pattFill` presets: PowerPoint embeds each pattern as a 64 x 64 px tile at 576 dpi | resvg, MuPDF and pdfium each sample the tiling in their own phase: 0.39 even at 300 dpi supersampled; at 128 dpi 0.82. No rasteriser agrees with another here |
+| `feature-sweep` 10 | `a:tile` picture fills: tiled images | faithful at 300 dpi (resvg against MuPDF's PDF raster 0.98, nothing beyond); at 128 dpi the supersampled gate scores 0.89. pdfium places the tiles in another phase altogether: its old score on this slide, 0.18, was mostly that |
+
+`tools/fidelity.py` reads each page's verdict (cached as `validation-1280.json` beside the
+conversion, computed once per PDF and converter version) and **reports a failing slide
+rather than averaging it**: the deck mean is over the validated slides.
+
+**Bitmaps PowerPoint embedded** (`python tools/pdf_svg.py --bitmaps`): no rasteriser can
+un-rasterise these, so in these regions our vector drawing is scored against
+PowerPoint's raster, now drawn by resvg's filter instead of pdfium's:
+
+| Deck, page | Bitmap | What it is |
+| --- | --- | --- |
+| `chart-gallery` 12-16 | 1,289-2,011 px, 300 dpi, soft mask, one a page | the surface, `bar3D`, `line3D`, `pie3D` and `area3D` scenes |
+| `feature-sweep` 1 | 1,067 x 268, 300 dpi, soft mask | the `a:clrChange` picture, recoloured by PowerPoint and re-rasterised (the untouched one beside it is the deck's own 192 x 48) |
+| `feature-sweep` 6 | two 734 x 184, 300 dpi, soft mask | the `a:alphaModFix` 50% and 20% pictures (the opaque one is the deck's own) |
+| `feature-sweep` 9 | two 136 x 96 at **72 dpi**, two 567 x 401 at 300 dpi, soft mask | the four gradient fills: `lin` and `path=circle` rasterised at one pixel a point, `path=rect` and `path=shape` at 300 dpi |
+| `feature-sweep` 12 | 551 x 384 and 650 x 590 at 300 dpi, soft mask; 668 x 168 | the two `a:outerShdw` shadows and the `a:blur grow` picture |
+| `feature-sweep` 13 | six 64 x 64 at 576 dpi | the pattern tiles (above) |
+| `real-college-template` 2-9 | 1,525 x 300 and 514 x 101, 300 dpi, soft mask | the logo, an EMF PowerPoint rasterised (slide 3's CMYK one included) |
+| `real-product-page` 1 | three 1,231 x 788 and three 160 x 160, 300 / 640 dpi, soft mask | the cards' shadows and the icons (the deck is skipped) |
+| `real-basic-theme` 2 | 396 x 396, 300 dpi, soft mask | a picture with `a:alphaModFix` (the deck is skipped) |
+
+The rest are the decks' own pictures at their own resolution: `feature-sweep`'s swatches
+(2, 3), picture bullets (4, 32 x 32 with their alpha), tiles (10); `real-college-template`
+8's photograph (1,029 x 683, 118 dpi, the Adobe RGB one); `authoring-integration`'s
+4 x 4 px image. **The converted pages hold Microsoft's glyph outlines**: they are cached
+only in `~/pptx2svg-oracle/svg/`, `pdf_svg.py` refuses to write one inside this or any
+git checkout, and none is committed.
+
+**Cost.** Converting all 61 pages takes 4 seconds, and is cached. A scoring run costs
+about 70 s against the old instrument's 54 (both truths, rendering ours once: 98 s). The
+full validation is the expensive part -- about 70 CPU-seconds a page at both resolutions,
+18 minutes for the corpus on four cores -- and runs once per export and converter
+version; `tests/test_pdf_svg.py` holds a sample of three pages (about a minute) and a
+refusal (feature-sweep 13).
+
+#### Faster, without hiding anything
+
+Four changes, each held to the same bar: every recorded svg-truth score is the same bits,
+and nothing the harness used to see can now go unseen. `--update` writes the committed
+`tests/fidelity-baselines.json` byte for byte, at `--jobs 1` and `--jobs 4`, cold cache
+and warm, with and without `--no-cache`, and with `--truth both`.
+
+* **pdfium runs only when asked for** (`--truth pdfium`, `--truth both`). The default run
+  scores the svg truth alone. The recorded pdfium entries stay in the baselines file: a
+  default `--update` carries each one over *as it is* and refuses, rather than keep one
+  dishonestly, where its deck's font profile or slide count changed, the deck is now
+  skipped, or it left the oracle (`baselines_payload`; "re-record with `--update
+  --truth both`"). In the suite, score comparisons default to svg; the pdfium variant is
+  marked `pdfium` and runs under `pytest --pdfium`.
+* **Each deck is converted once**, a deck per task, not once per slide. Every slide's SVG
+  of all 11 decks (61 slides) is the same bytes both ways, in one process and in a fresh
+  process per deck.
+* **Rasters are cached** (`tools/raster_cache.py`, in `~/pptx2svg-oracle/svg/rasters/`,
+  never in a repository: a raster of PowerPoint's page holds Microsoft's glyph shapes).
+  The key is every input that moves the pixels -- ours: the SVG's bytes, the *content*
+  digest of every font file resvg is handed (588 files under the profile's directories,
+  1.5-2 s a run, read while the decks convert, plus the staged superfamily copies),
+  `pptx2svg/png.py`, resvg-py's version and binary, Pillow's version, the options, the
+  width and `HARNESS_VERSION`; PowerPoint's: the PDF's and the converted page's bytes,
+  the converter's version and `pdf_svg.py` itself, PyMuPDF's version, the resolution and
+  options, resvg and Pillow. The components are stored beside each raster with a digest
+  of its pixels, and both are compared on every read. **Detection:** every run re-draws
+  six slides, spread across the decks and rotating by date (every one of the 52 within
+  nine days), and compares them with the cache byte for byte; any difference, or a stored
+  entry that is not what was written, discards the whole cache and stops the run with
+  exit 3, printing nothing and writing no baseline. Tried both ways on the real cache: a
+  self-consistent stale entry in the sample, and a corrupted one outside it, each
+  stopped the run; a stale one outside the sample was found by `--verify-cache`, which
+  re-draws every slide. `--no-cache` bypasses the cache. 104 rasters, 11.0 MB.
+* **SSIM is computed over the content only**: the bounding box of the union of both
+  images' foreground (never one side's), grown by the window's radius, 5, clamped to the
+  page. It is exact: a pixel's SSIM reads only pixels within the radius, so every masked
+  value is the same float in the same order. `tests/test_fidelity.py` holds cropped
+  equal to full-page on every scored slide (and on synthetic pages with no margin, ink
+  at the edges, a page colour); every run holds six slides so; a page whose ink reaches
+  every edge is computed whole.
+
+Measured on a four-core machine shared with other work (load 5-12, so wall times are
+inflated and noisy; CPU time is steadier), default `--update`:
+
+| | main (both truths) | now, warm cache | now, cold cache | now, `--no-cache` |
+| --- | --- | --- | --- | --- |
+| `--jobs 4`, wall | 51-70 s | 21-30 s | 31-50 s | 40 s |
+| `--jobs 4`, CPU | 124-132 s | 48-50 s | 80-83 s | |
+| `--jobs 1`, wall | 106-155 s | 39-51 s | 73-93 s | 70 s |
+
+The spot-checks cost 9-10 s serially and 6-11 s at four jobs (a warm run with the sample
+against one without); `--verify-cache` takes a little longer than a cold run (58 s at four jobs), since it also
+scores every slide twice.
+
+#### Recalibrated
+
+The renderer did not change: our SVG output and the VRT snapshots are the same bytes.
+`tests/fidelity-baselines.json` now holds, per deck, the `svg` truth's entry (stamped
+`"truth"` and `"converter"`) with the `pdfium` truth's slides and means beside it, and
+every slide carries the unnormalised structural `loss` (the sum of `1 − SSIM` over the
+mask) that the harness docstring tells a reader to prefer when the mask changes:
+
+| Deck | pdfium: SSIM / hist | loss | **svg: SSIM / hist** | loss |
+| --- | --- | --- | --- | --- |
+| `table-test` | 0.9895 / 0.9984 | 2,199 | **0.9921 / 0.9987** | 1,659 |
+| `sample-issue-387` | 0.9906 / 1.0000 | 8,698 | **0.9908 / 1.0000** | 8,454 |
+| `authoring-integration` | 0.9309 / 0.9985 | 13,999 | **0.9352 / 0.9999** | 12,948 |
+| `real-financial-report` | 0.9151 / 0.9988 | 65,534 | **0.9158 / 0.9998** | 62,065 |
+| `sample-cjk` | 0.8069 / 0.9802 | 27,941 | **0.8279 / 0.9955** | 23,675 |
+| `real-college-template` (local) | 0.8017 / 0.8754 | 342,524 | **0.8260 / 0.8879** | 260,820 |
+| `feature-sweep`, 11 validated slides | 0.8132 / 0.8957 | 126,508 | **0.8281 / 0.9313** | 106,008 |
+| `feature-sweep`, all 13 (pdfium) | 0.7061 / 0.9061 | 466,679 | slides 10 and 13 not scored | |
+| `chart-gallery` | 0.7345 / 0.8443 | 510,403 | **0.7368 / 0.8600** | 492,936 |
+
+The same three decks are skipped, for the same reasons. **The spread did not compress,
+and that is the finding.** In `docx2svg` the pages went from 0.84-0.96 to 0.96-1.0,
+because what was left after pdfium was small. Here the median scored slide moves 0.8429 →
+0.8641 (median gain +0.0076) and the range stays 0.09-0.99: at 96-128 dpi pdfium's
+hinting costs less than at 300, and what spreads these slides is what our render draws
+differently. The loss falls on 45 of the 48 scored slides (it rises on `chart-gallery`
+14, `real-college-template` 5 and `real-financial-report` 4: 30%, 5% and 5%).
+
+**The thresholds stay.** `docx2svg` had an outlier drop tuned to pdfium's spread and
+scaled it (0.05 → 0.02) when the spread compressed. This harness has no outlier
+mechanism; its gates are `MIN_SSIM` 0.95 and `MIN_HISTOGRAM` 0.80 -- absolute pass marks
+from pptx-renderer, not fitted to pdfium's spread -- and `MAX_SSIM_DROP` 0.02, the
+regression allowance on a deck mean, which is about a rasteriser version moving both
+sides now and was never about the spread. With the spread unchanged, none of them was
+tuned to something that moved; the same two decks pass. Every deck's histogram rose or held
+(by up to 0.036): pdfium's anti-aliased edges and its image filtering put pixels in other
+bins than resvg's, which a 64-bin histogram cannot tell from a wrong colour.
+
+**Slides that moved notably:**
+
+| Slide | pdfium | svg | What the sharper instrument shows |
+| --- | --- | --- | --- |
+| `real-college-template` 8 | 0.8869, loss 80,420 | **0.9737**, loss 18,657 | 0.3's explanation -- "our resampling and colour differ slightly from pdfium's" -- was mostly pdfium: its resampling of the photograph. What is left is ours, see finding 2 |
+| `feature-sweep` 10 | 0.1806 | (0.9101, not scored) | pdfium tiles the picture fill in a different phase from MuPDF and resvg; the old 0.18 was that. Our tiling agrees with resvg's truth to 0.91, and would have been read as a failure |
+| `feature-sweep` 13 | 0.0535 | (0.4513, not scored) | the pattern tiles: no two rasterisers agree, so no score means anything here |
+| `feature-sweep` 4 | 0.8110 | 0.8728 | picture bullets (histogram 0.87 → 0.99): pdfium's drawing of the 32 x 32 px bullet images and of the thin text beside them |
+| `sample-cjk` 2, 4 | 0.7825, 0.6456 | 0.8404, 0.6856 | sparse Japanese text: 32% and 17% of the loss was the two rasterisers' glyph edges |
+| `real-college-template` 6, 7 | 0.7372, 0.5112 | 0.7917, 0.5445 | the text displacement recorded under *What the corpus says is wrong now* is real, but 27% and 13% of the loss was pdfium's |
+| `chart-gallery` 3, 5, 12 | 0.8251, 0.7843, 0.5694 | 0.8554, 0.8116, 0.5993 | sparse line art (3, 5) and the surface chart's scene bitmap (12): pdfium's edges and its minification |
+| `chart-gallery` 14 | 0.5812, loss 18,332 | **0.4609**, loss 23,788 | **fell**: the `line3D` scene is PowerPoint's 300 dpi bitmap. pdfium minified it by sampling, which kept its hairline gridlines dark and crisp -- like our vector gridlines. resvg filters it (against an 8x area-averaged ideal: resvg 0.979, pdfium 0.832), so PowerPoint's scene lines are lighter and softer than ours. That is raster against vector, not a defect of the ribbons |
+| `feature-sweep` 11, `sample-cjk` 3, `real-financial-report` 4 | 0.7068, 0.5877, 0.8606 | 0.6891, 0.5727, 0.8506 | fell with the mask: pdfium's wider ink was foreground in both images. `feature-sweep` 11's loss fell (10,552 → 9,884) and its histogram rose 0.73 → 0.998, `sample-cjk` 3's loss is level; `real-financial-report` 4's rose 5%, the filled radar of finding 4 |
+
+**The explained low scores, revisited:**
+
+* `real-college-template` 3 (0.7627 → 0.7877, histogram 0.1195 → 0.1373): still the
+  CMYK EMF logo. Our side rasterises the EMF's embedded PDF preview with pdfium; the
+  instrument change does not touch that, and PowerPoint's logo is its own 300 dpi
+  raster of the EMF. The explanation stands.
+* `real-college-template` 4 (0.3846 → 0.4034) and `chart-gallery` 11 (0.0900 → 0.0924):
+  unchanged in substance -- `c:userShapes` and the manual legend; the stock chart's axis
+  about a pixel off. The instrument did not move them, which is the confirmation.
+* `real-college-template` 8: see the table and finding 2.
+* `chart-gallery` 3, 5, 10 (sparse line art): up 0.003-0.03, still low. "SSIM is not a
+  percentage of correctness on sparse line art" is still true, but "half a pixel of
+  stroke displacement" was partly pdfium's grid-fitting; what is left is the plot
+  rectangle's.
+* `chart-gallery` 11's lesson (SSIM fell while the picture improved) is the mask, and
+  holds under either truth.
+
+**What the sharper instrument exposes**, recorded here when it was found; each was then
+measured against PowerPoint -- four fixed, the fifth refuted -- see *What it exposed,
+measured* below:
+
+1. **A shape's text sits in the shape's box, not in its preset's text rectangle.**
+   `authoring-integration` slide 1: the `roundRect`'s "Shape contract" is 6.5 px higher
+   and 6.0 px further left than PowerPoint's -- 3.5 pt, exactly the rounded corner's
+   inset (`0.29289 × adj × ss`, adj 16667, ss 900,000 EMU: 43,935 EMU). Nothing under
+   `src/` reads a preset's `a:rect`, so every preset whose text rectangle is not its
+   bounds (rounded rectangles, ellipses, arrows, callouts) places its text in the wrong
+   box. It is the three largest cells of that slide's loss.
+2. **A picture's embedded ICC profile is ignored.** `real-college-template` slide 8's
+   JPEG carries Adobe RGB (1998) (560 bytes); PowerPoint honours it, resvg draws the
+   samples as sRGB: mean |difference| 3.85 over the photograph, the blue channel 3 levels
+   low on average, histogram 0.86 on an otherwise 0.97 slide.
+3. **A 3-D line chart's legend key is a line where PowerPoint draws a square**
+   (`chart-gallery` 14): our keys are 3-D ribbon bars as wide as a line key, PowerPoint's
+   small squares.
+4. **A filled radar's spokes are drawn under its fill** (`real-financial-report` 4):
+   PowerPoint draws the category spokes over the filled series; ours are hidden by it.
+   The radar's known truncations and radius are beside it.
+5. **In a PowerPoint-rasterised scene, the truth is softer than our vector drawing**
+   (`chart-gallery` 12-16): the scene's hairlines lose contrast when the 300 dpi bitmap
+   is minified to 128 dpi. That bounds what a vector scene can score there; it is not
+   a rendering defect. (**Refuted** by measurement below: the raster is not capped, and
+   the truth's scene is the sharper and darker of the two.)
+
+#### What it exposed, measured
+
+One probe deck asks PowerPoint all five questions (`tools/make_exposed_probe.py`, read
+back by `tools/read_exposed_probe.py`; a second deck, `two`, asks the follow-ups the first
+export raised, and a third, `three`, how overflowing text spills). All three are
+throwaway: built into `~/pptx2svg-oracle`, exported, moved out and deleted.
+
+| Deck | svg truth: SSIM / hist, loss | after | pdfium truth: SSIM / hist | after |
+| --- | --- | --- | --- | --- |
+| `authoring-integration` | 0.9352 / 0.9999, 12,948 | **0.9659** / 0.9999, 6,812 | 0.9309 / 0.9985 | **0.9619** / 0.9985 |
+| `real-financial-report` | 0.9158 / 0.9998, 62,065 | **0.9205** / 0.9998, 59,025 | 0.9151 / 0.9988 | **0.9196** / 0.9988 |
+| `real-college-template` (local) | 0.8260 / 0.8879, 260,820 | **0.8277** / **0.9033**, 250,058 | 0.8017 / 0.8754 | **0.8033** / **0.8930** |
+| `chart-gallery` | 0.7368 / 0.8600, 492,936 | **0.7378** / 0.8592, 491,895 | 0.7345 / 0.8443 | **0.7355** / 0.8421 |
+| the other four scored decks | | unchanged to the bit | | unchanged |
+
+Five slides move, every one of them up in SSIM and down in loss under both truths:
+`authoring-integration` 1 (the text rectangle), `real-financial-report` 4 (the radar's
+spokes, then the ellipse badges' text rectangle and their overflow: 0.8506 → 0.8692),
+`real-college-template` 8 (the ICC profile), `chart-gallery` 14 (the legend key). The one
+column that falls is `chart-gallery`'s histogram, by 0.0008 (slide 14's 0.8533 → 0.8387,
+pdfium 0.6027 → 0.5645): the coloured ink of the wide keys went, and the mask with it --
+mean absolute error and pixels over 10% fall on that slide under both. Both truths'
+baselines are re-recorded (`--update --truth both`) for exactly those slides.
+
+**1. A shape lays its text out in its geometry's text rectangle, and PowerPoint does not
+draw it in by the outline.** Thirteen geometries -- `rect` (the control), `roundRect` at
+the default and at 40000, `ellipse`, `octagon`, `triangle`, `rtTriangle`, `diamond`,
+`hexagon`, `rightArrow`, `wedgeRectCallout`, `cloud` and a custom geometry stating
+`<a:rect l="w/4" t="h/4" r="r" b="b"/>` -- each holding one 14 pt Arial run set top-left,
+bottom-right and centred, every reading taken against the plain `rect` set the same way.
+**Every one lands on ECMA-376's text rectangle** (`ooxml_common.drawingml.geometry.text_rect`),
+all four sides and the centre, within 0.2 pt -- the `roundRect`'s 5.381 pt of corner, the
+`ellipse`'s 27.675 / 16.144, the `triangle`'s lower middle (47.244 in, 55.1 down), the
+`rtTriangle`'s 15.748 / 64.3 and 78.740 / 9.2, the `rightArrow`'s asymmetric shaft, the
+`cloud`'s four different insets, the custom geometry's own rectangle; the
+`wedgeRectCallout`, whose rectangle is its box, does not move. The residuals are the
+baseline's own 0.1 pt grid (the controls show the same).
+
+**The outline moves nothing** -- where Word draws the text in by half of it (docx2svg's
+F.13). A `rect`, a `roundRect` and an `ellipse` under a 1, 4 and 8 pt line, an 8 pt
+`a:noFill` line with its width, the theme's 1.5 pt line through `a:lnRef idx="3"` with no
+`a:ln` at all, and an 8 pt line under zero insets: every run started where the same shape
+with no outline started it, to 0.1 pt. That is a PowerPoint-vs-Word difference, so it is
+a rule in `ooxml-common`: `DrawingRules.text_outline_inset`, 0 for PowerPoint and 0.5 for
+Word, applied by `geometry.text_area` (ooxml-common 0.3.2). **Flipped shapes**: the
+rectangle flips with the geometry (`rtTriangle` and `rightArrow` under `flipH` put their
+runs at the mirrored rectangle, 78.740 pt in), but PowerPoint does not mirror the glyphs
+-- `flipH` leaves them upright, `flipV` turns them 180 degrees -- where we mirror them with
+the shape. No corpus deck flips a shape with text in it; recorded, not fixed.
+
+`render/text.py`'s `_text_area` shrinks the frame to the text rectangle (in slide units,
+inside a group's scale) and translates the text into it; a custom geometry's rectangle
+travels from `parse/shapes.py` on `ShapeElement.text_rect` with the geometry it belongs
+to; `spAutofit` grows the shape by what the rectangle needs plus what the geometry keeps
+outside it. SmartArt's `dsp:txXfrm`, already the text's own box, is left alone. Against
+MuPDF's raster of PowerPoint's PDF, the probe's thirteen unflipped slides go from
+0.940-0.998 to 0.989-0.998; the flipped slide falls 0.926 → 0.907, its mirrored glyphs now
+sitting in the mirrored rectangle.
+`authoring-integration` slide 1 -- the `roundRect`'s "Shape contract", 6 px up and left
+-- goes **0.9352 → 0.9659** (loss 12,948 → 6,812). Three snapshots move: that slide,
+`real-financial-report` slide 4 (three 30 pt `ellipse` badges, whose two-letter labels
+now wrap in the inscribed rectangle as PowerPoint wraps them -- and overflow it, see
+below) and `real-product-page` slide 1 (three `ellipse`s and two `roundRect`s holding
+text; the deck is not scored).
+
+**Text taller than its text rectangle spills the way it is anchored.** Laid out in the
+ellipse's inscribed rectangle, `real-financial-report`'s two-letter badges wrap to two
+lines as PowerPoint's do, and those lines no longer fit; ours were held at the top inset,
+a rule nothing had measured. The `three` deck puts three 14 pt lines in `rect`, `ellipse`
+and `roundRect` boxes 60 pt high at each anchor: where the rectangle holds them the three
+anchors differ by the slack (a `rect`'s first baseline at 17.638, 18.838 and 20.038 pt),
+and where it does not -- the ellipse's 35 pt -- **`t` spills down (26.375), `ctr` both ways
+about the centre (18.695, the `rect`'s centre to 0.14 pt) and `b` upwards (11.255, above
+the rectangle's top)**. The clamp is gone: the probe's two slides go 0.925 → 0.964 and
+0.892 → 0.972, `real-financial-report` slide 4 **0.8537 → 0.8692** (loss 23,167 →
+20,630) with the badges' letters centred in their circles as PowerPoint draws them, and
+the same two snapshots move again (`real-product-page` slide 1's `ellipse`s overflow too).
+
+**2. A picture's embedded ICC profile: PowerPoint converts it to sRGB, and now so does our
+rasteriser.** The probe's pictures are flat patches under two synthetic matrix/TRC
+profiles -- Adobe RGB's primaries at gamma 563/256, Display P3's at 1.8 -- as a PNG with
+an `iCCP` chunk and as a JPEG with an `APP2` one (the second deck repeats the JPEGs each
+distinct in a pixel: the first deck's three, identical but for their profiles, came back
+as one image object drawn three times). **PowerPoint wrote every one converted to sRGB and
+tagged sRGB**: (200, 100, 50) under the Adobe profile became (227, 100, 42), the exact
+conversion to the level; every patch lands within a level of the arithmetic except the
+Adobe profile's near-black 12, which PowerPoint wrote as 10 where the arithmetic and
+little CMS give 4 (one reading; a 1/16 slope limit on the source curve would explain it;
+not modelled). `real-college-template`'s photograph is the other case: PowerPoint passed
+that JPEG through with its Adobe RGB profile, and the PDF's reader converts it -- which is
+little CMS's arithmetic.
+
+**What we do.** The SVG keeps embedding the picture's own bytes, profile included: SVG
+says an embedded profile is honoured (SVG 1.1 `color-profile: auto`), a browser converts
+it as a PDF reader does, and no standard-library code can decode a JPEG to convert it
+in the SVG anyway. The rasteriser is where it went wrong -- resvg (and cairosvg) read the
+samples as sRGB -- so `svg_to_png` now hands it every picture whose profile is a non-sRGB
+matrix/TRC one **converted exactly** (`pptx2svg/iccimages.py`): `ooxml_common.icc` reads
+the profile (three curves in any of `curv`'s and `para`'s forms, three D50 colorants) and
+converts through D50 to sRGB, clipped -- relative colorimetric, no black-point
+compensation, little CMS's default -- 0.03 of a level from little CMS on the photograph,
+at most 1. PNGs are decoded with the standard library (8-bit truecolour with or without
+alpha, and palettes, of which only the palette is converted); JPEGs when Pillow is
+importable. A profile whose conversion is a lookup table (`A2B0`-`A2B2`), or that is not
+RGB, is left alone rather than approximated: no corpus picture carries one.
+`real-college-template` slide 8 goes **0.9737 → 0.9889**, histogram **0.8604 → 0.9984**,
+loss 18,657 → 7,895. No SVG, and so no snapshot, changes; the fidelity harness's raster
+cache now keys our side on the conversion's code as well as `png.py`'s.
+
+**3. A `line3DChart` legends with the bar's swatch, on the bar's cell.** The series were
+already keyed with a swatch (`line_keyed` is off for a `line3DChart`), but the legend's
+layout still asked `_is_line_keyed`, which counted every `_is_line` group, so each swatch
+was drawn 19.2 pt wide -- the line key's rule -- and the entries were spaced on the line
+key's 24 pt cell. The `legend3d-` charts (bottom, right, top at 14 pt, and with a
+`c:marker`) put PowerPoint's keys at a **5.492 pt square** (7.691 at 14 pt) with 2.371 pt
+to the text, the marker making no difference; our keys now land within 0.01 pt of every
+one of them, and the bottom row's pitch is 40.75 pt against PowerPoint's 40.76.
+`chart-gallery` slide 14: SSIM 0.4609 → 0.4767, loss 23,788 → 22,748, mean absolute
+error 3.96 → 3.84, pixels over 10% 3.19% → 3.10%. Its histogram falls 0.8533 → 0.8387:
+the two wide blue and orange keys were coloured ink the truth does not have, and the
+foreground mask lost them with it (the harness docstring's documented effect).
+
+**4. A radar's spokes are the value axis' line, and go over a `filled` radar's series.**
+With every part in its own colour -- the category axis' line red, the rings blue, the
+value axis' line green, the series 4 pt wide -- PowerPoint drew, in this order, the rings,
+then **six spokes and the value axis up the twelve o'clock spoke, all green**, then the
+series and their markers, for `standard` and `marker`; for `filled`, the rings, the
+series, and *then* the green spokes. **Nothing red, at any style.** The follow-ups
+settle the source: the value axis' line alone draws the spokes; the category axis' alone,
+neither, the value axis' `a:noFill`, or the value axis deleted draw none (the rings are
+drawn in every case, as measured before). `real-financial-report`'s radar states the same
+#888888 line on both axes, which is why the old reading -- "the category axis draws the
+spokes" -- fitted the corpus and the earlier probes, none of which stated either line.
+`_draw_radar_spokes` now takes the value axis' line, and `filled` draws them after its
+series: `real-financial-report` slide 4 0.8506 → 0.8537, loss 23,670 → 23,169, the
+spokes back over the fill as PowerPoint draws them.
+
+Not fixed, seen on the same pages: PowerPoint's radar **markers** took the automatic
+accent colours (#4472C4, #ED7D31) where the series stated `F2A33A`/`7030A0` in its
+`c:spPr`, and ours take the series' colour -- a marker's own colour source, not measured
+further here.
+
+
+**5. The 3-D scene's raster caps nothing, and the truth is not softer than our drawing.
+Measured; no renderer change.** Finding 5 said the truth's scene -- PowerPoint's bitmap,
+minified to 128 dpi -- is softer and lighter than our vector scene, which bounds what a
+vector scene can score. Three measurements say otherwise:
+
+* **PowerPoint does not cap the scene's raster.** The probe's `line3DChart` and
+  `bar3DChart` frames from 150 x 110 pt to the whole slide (712 x 397 pt) all came back at
+  **300.0 dpi**: 470 x 206 px up to 2,812 x 1,282 and 2,713 x 1,405. Nothing drops the
+  resolution for a large scene.
+* **The raster route by itself costs little, and not always in the truth's disfavour.**
+  Drawing *our own* scene as a 300 dpi bitmap and letting resvg minify it, against
+  drawing it as vectors, scores 0.960, 0.938, 0.980 and 0.992 over the scene's rectangle
+  on gallery slides 12, 13, 14 and 16. Scored against the truth's scene, our minified
+  bitmap does better than our vectors on 12, 13 and 16 (+0.008, +0.030, +0.008) and worse
+  on 14 (-0.05): the route moves a score by a few hundredths, and in both directions.
+* **The truth's scene has more ink and sharper edges than ours, not less.** Over each
+  scene's rectangle our ink is 0.97, 0.99, 0.91 and 1.07 of PowerPoint's and our summed
+  gradient 0.84, 0.78, 0.94 and 0.40 of it. At 300 dpi a PowerPoint gridline covers 3.5
+  pixels (0.84 pt) where ours is 0.75 pt: darker, not lighter.
+
+So what separates these slides from PowerPoint is geometry, and it is visible: slide 13's
+whole chart -- title, tick labels and scene -- sits about 4 pt above PowerPoint's; each
+scene's lines land 0.3-0.6 px off; the stacked `area3DChart` (16) and the `pie3DChart`
+(15) are still drawn flat; and **PowerPoint draws tick marks** -- as vector paths outside
+the raster, 3.13 pt long in the axis' line (black 0.5 pt by default, red 2.25 pt when the
+category axis states it; none at `majorTickMark="none"`), measured on the second deck's
+`bar3d-` charts -- on every chart axis, 2-D and 3-D, and we drew none anywhere. Those are
+the next fixes for these slides; none of them is the raster's. (The 2-D ticks are drawn
+now -- see *Axis tick marks, measured* -- and the 3-D ones are still not.)
+---
+
+## Phase 1 — Parsed but not rendered — **done**
+
+**Effort: M total. Highest fidelity-per-line in the whole plan.**
+
+Fields the parser already read and the resolver already carried, which the renderer then
+ignored. All of them now render, with two deliberate exceptions noted at the end.
+
+| Gap | State |
+| --- | --- |
+| **Table styles** (`tableStyles.xml`, `a:tblStyle`) | Done — custom styles read, all 74 built-ins carried |
+| **Tab stops** (`a:tabLst`, `defTabSz`) | Done |
+| **Text highlight** (`a:highlight`) | Done — drawn as a rect behind the text |
+| **Underline styles** (`u="dbl"`, `"wavy"`, `"dotted"` …) | Done — `text-decoration-style` |
+| **Complex-script fonts** (`a:cs`) | Done — last in the `font-family` stack |
+| **Text body rotation** (`a:bodyPr@rot`) | Done |
+| **Hidden shapes** (`cNvPr@hidden`) | Done |
+| **Image tile / stretch** | Done, and the tile is now **measured**: `a:tile@sx`/`@sy` scale the *picture's* natural size (`pixels * 72 / density`, 144 dpi when the file states none), not the shape's box. `@algn`, `@tx`/`@ty` and `@flip` all drawn — a mirrored axis doubles the SVG cell and holds the mirror inside it, which is what PowerPoint's own export does |
+| **Pattern fills** (`a:pattFill`) | Done — **all 54** presets of `ST_PresetPatternVal`, each an 8x8 bitmap read out of PowerPoint's PDF export, on a measured **8.0 pt** cell. Was 23 presets on a 6 pt cell, with the other 31 falling through to a flat solid fill in silence. The lattice's *phase* is measured but not reproduced — see `render/fill.py` |
+| **Multi-column text** (`a:bodyPr@numCol`) | Done, except mid-paragraph breaks |
+| **Justified text** (`algn="just"`) | **Deferred** — see below |
+
+### Correction: built-in table styles are not in the file
+
+The earlier version of this section said banding, header row and borders "all come from
+`ppt/tableStyles.xml` keyed by GUID". That is wrong, and it is the single most important
+thing to know before touching tables.
+
+**PowerPoint never writes a built-in style's definition into the file** — not even for a
+style a table in the deck is actually using. Confirmed by round-tripping a deck through
+PowerPoint 16.x: it rewrote `tableStyles.xml` as an empty element carrying nothing but
+`def="{5C22544A-…}"`, the id of "Medium Style 2 - Accent 1". Three of the six fixtures
+have exactly that shape. A reader for the part is necessary — Google Slides and Keynote
+*do* write custom styles out — but it is nowhere near sufficient, and a catalogue of the
+built-ins has to be carried.
+
+The definitions are not on disk anywhere either; the application bundle was searched.
+They were therefore **measured from PowerPoint's own rendering**, by
+`tools/derive_table_styles.py`:
+
+1. a sheet of 546 swatches, each filled with a known OOXML colour expression, gives an
+   exact colour → expression dictionary — which is what turns a sampled `#cfd5ea` into
+   `accent1 tint 40%` rather than into a guess;
+2. a probe deck with one slide per candidate GUID and three tables per slide, laid out so
+   every conditional region lands at a known row and column;
+3. each probe rendered **twice, over a white background and over a black one**, so that
+   `observed = colour × alpha + backdrop × (1 − alpha)` becomes two equations in two
+   unknowns and alpha falls out. This matters: the whole Light Style family bands with
+   20%-alpha black, which over a single background is indistinguishable from an opaque
+   grey.
+
+Two cross-checks keep guesses out of the result. A GUID PowerPoint does not recognise
+renders exactly like "No Style, Table Grid" — that is its fallback — which caught three
+candidate GUIDs that were wrong. And within a family the six accent variants must agree
+once the accent number is factored out, which caught five stray colour matches.
+
+**The catalogue is now complete: all 74.** The last two were absent only because their
+GUIDs were unknown — the measurement was never the obstacle. "Medium Style 1"
+(`{793D81CF-…}`) was read out of PowerPoint's own executable, which carries fifteen
+brace-delimited GUIDs, fourteen of them table styles already catalogued here; that was
+the fifteenth. "Light Style 1 - Accent 4" (`{D27102A9-…}`) came from
+`aiden0z/pptx-renderer`'s published list and so was never more than a candidate. Both
+then had to pass the same two cross-checks as everything else, and did: neither measures
+like the unrecognised-GUID fallback, and each came out with its family's exact shape
+carrying a colour the tool was never told to expect — accent 4 in the Light Style 1
+shape, `dk1` where the accents sit in the Medium Style 1 shape, which is what an
+accent-less base variant looks like elsewhere (compare "Dark Style 2" against "Dark Style
+2 - Accent 1/Accent 2"). Re-deriving the whole catalogue in the same run reproduced the
+other 72 entries byte for byte.
+
+**Refuted: "Dark Style 2" is not missing its fourth accent.** PowerPoint pairs that
+family's accents as "Accent 1/Accent 2", "Accent 3/Accent 4" and "Accent 5/Accent 6", so
+it has three accent variants by design, not six, and all three are present. The family
+count has to allow for it or the catalogue reads as two short forever.
+
+A table naming a GUID that is in neither the deck nor the catalogue still falls back to
+no style, exactly as PowerPoint does — but it now raises a `table-style-unknown` warning
+while doing it. The render is defensible; the silence was not. An unstyled table is
+pixel-identical to a table whose style genuinely carries nothing, so with no warning
+there is no way to tell a correct render from one that dropped every band and header
+rule. Same shape of bug as the substitutions `font-substituted` exists for.
+
+### Also found on the way
+
+Two things turned up that were not in this plan:
+
+- **`tint` and `shade` were wrong in two independent ways** — the value was read as how
+  far the colour *moves* rather than how much of it *survives*, and the blend was done in
+  sRGB where PowerPoint does it in linear light. 284 of the 546 swatches differed from
+  PowerPoint by more than 2/255 before the fix, several by more than 150. None do now.
+  `lumMod`/`lumOff`, checked the same way, were already exact.
+- **`a:clrChange` is parsed, resolved, and has no renderer at all** — a gap this section
+  missed. It is now recorded in `UNRENDERED_FIELDS`, and is a Phase 5 item.
+
+### Correction: the `real-basic-theme` regression was font metrics, not tables
+
+Phase 1 recorded that this fixture's gridlines were drawn "a couple of pixels lower than
+PowerPoint" because our CJK line height was "about 7% short". The regression was real
+and reproduced exactly (1.84% → 2.07%, SSIM 0.946 → 0.938, all of it on slide 2). The
+explanation was wrong in both direction and cause: the rules were drawn *higher*, not
+lower, and the deck's Japanese text had nothing to do with it.
+
+Measuring the rendered rules put them at y = 528/582/635.5/689 against PowerPoint's
+528.5/584/639/695 — rows 53.7 px where PowerPoint draws 55.5 px, short by the same
+amount every row and so cumulative. Working back through the cell margins, PowerPoint
+wanted a 1.2016 em line box where we computed 1.1172 em, which is Liberation Sans's
+`hhea` ascent + descent. The 7% was real; the reason was not.
+
+So the line box was measured directly, by exporting probe decks and reading the line
+advance off the raster:
+
+> **PowerPoint's single-spaced line box is 1.2 × the font size, and the typeface has
+> nothing to do with it.** Arial, Calibri, Times New Roman, Courier New, Aptos, Aptos
+> Display, Lato, Raleway, MS Gothic, Meiryo and Noto Sans JP all measured 1.2 em, at
+> 14 pt and 28 pt, with Latin text and with Japanese — although their real ascent +
+> descent ranges from 1.00 em (MS Gothic) to 1.45 em (Noto Sans JP). `a:lnSpc`
+> percentages multiply *that*: 150% measured 1.8 em, 90% measured 1.08 em. `a:spcPts` is
+> literal and ignores it.
+
+The first baseline has two rules, and they do not meet:
+
+> At or below 100% the baseline hangs off the **bottom** of the line box, one font
+> descent up, so the slack becomes leading above the text — 14 pt for 14 pt Arial,
+> 14 pt for Times New Roman, 13 pt for Calibri. Above 100% the face drops out entirely
+> and the baseline lands at **three quarters of the line box**: Arial and Calibri both
+> measured 19 pt at 150% despite different descents. Going from 100% to 105% therefore
+> moves the baseline *up*, which looked like a bad measurement until the second rule
+> explained it.
+
+Against the probe, our first baseline was out by up to 44 px (at 2560 px wide) and is
+now out by at most 3. The old model — ascent × font size, line box from the face's own
+metrics — was wrong for every font in the table, by −7% for Arial and +21% for Noto
+Sans JP.
+
+The corpus percentages *rejected* this fix at first, and that was the second lesson: on
+a host with none of the decks' fonts installed, the end-to-end score cannot adjudicate a
+layout change at all. The probe decks, which use only Arial and Times New Roman, could.
+
+### The audit is now a test
+
+`tests/test_render.py` walks the render model and fails on any field the renderer never
+reads — which is how the table above was produced in the first place. Fields that are
+deliberately not the renderer's business are listed with a reason each, and a second test
+fails if one of those entries stops naming a real field, so the list cannot rot into a
+place regressions hide.
+
+### Left undone, on purpose
+
+- **Justified text** (`algn="just"`). SVG has no `text-align: justify`, so it means
+  per-word `x` positioning: the wrapper would have to hand out word positions instead of
+  line segments, and every consumer of `LineSegment` would change with it. Deferred, as
+  this plan suggested.
+- **Mid-paragraph column breaks.** PowerPoint splits a paragraph across a column
+  boundary; we move the whole paragraph. Seen side by side on a probe deck: PowerPoint
+  starts paragraph 4 at the bottom of the left column and finishes it at the top of the
+  right one. Fixing it means making the wrapper's line list the unit of column layout,
+  and deciding what a continuation does about its bullet.
+
+### Fixtures
+
+`table test.pptx` was added to cover the built-in style catalogue, and it now does: it
+names `{5C22544A-...}` ("Medium Style 2 - Accent 1"), sets `firstRow` and `bandRow`, and
+gives no cell an explicit fill, so every colour it renders comes out of
+`parse/table_styles_builtin.py`. Exported through PowerPoint and sampled cell by cell,
+all twenty-five fills are byte-identical — header `#156082`, bands `#CCD2D8` and
+`#E7EAED` — with white rules throughout; the only differences anywhere in the table are
+sub-pixel antialiasing on the rules themselves. That is **one** GUID of the seventy-two
+carried. The rest came from the same measurement process but no fixture exercises them,
+and they should not be described as verified.
+
+None of the seven other fixtures uses a tab stop, a highlight, `bodyPr@rot`, a hidden shape, a
+non-single underline or multiple columns — checked, not assumed. Those are validated
+against PowerPoint using the deck `tools/make_feature_probe.py` builds, which is also
+where the mid-paragraph column finding above comes from. A synthetic corpus of the kind
+Phase 0.4 describes would subsume it.
+
+---
+
+## Phase 2 — SmartArt — **done, and validated against 46 real decks**
+
+**Effort: S–M. The code landed at the S end -- ~120 lines in `resolve/view.py`, no new
+parser -- but the estimate was only right about the code. Getting it to work on a file
+PowerPoint actually wrote took a second pass, because the first one was verified only
+against fixtures we built ourselves and those encoded our own misreading of the format.**
+
+> **Correction to an earlier assessment.** I previously said SmartArt "needs a diagram
+> layout engine". For the common case it does not. PowerPoint caches a fully laid-out
+> DrawingML rendering of every diagram, and pptx-glimpse simply reads it —
+> `computeSmartArtElement` is ~45 lines. Layout is only needed for files lacking the cache.
+
+The lookup chain, confirmed against pptx-glimpse's source:
+
+```
+p:graphicFrame
+  └─ a:graphicData[uri=…/diagram]/dgm:relIds@r:dm     ← we already parse this
+       └─ ppt/diagrams/data1.xml                       ← the data model part
+            └─ its _rels, type …/2007/relationships/diagramDrawing
+                 └─ ppt/diagrams/drawing1.xml
+                      └─ dsp:drawing/dsp:spTree        ← plain DrawingML!
+```
+
+That last shape tree is ordinary shapes, text and geometry — `parse/shapes.py:parse_shape_tree`
+handles it as-is.
+
+**Work:** all four steps done in `resolve/view.py:_resolve_diagram`. Both relationship
+spellings (`schemas.microsoft.com/office/2007/…` and `purl.oclc.org/ooxml/…`) are accepted;
+children resolve with `part_path` pointed at the drawing part, so a diagram's own images
+are found; the warning and empty frame survive for a deck whose cached drawing is missing,
+empty or corrupt.
+
+**Two things worth knowing that the plan did not mention:**
+
+- **Every cached shape has `cNvPr@id="0"`.** PowerPoint carries identity in `modelId`
+  (a GUID), not the DrawingML id, so taking the id at face value would have given every
+  node in a diagram the same `data-pptx-id`. Ids are rebuilt from the frame's id plus the
+  child's index (`256.7001/0/0`), which is unique, stable and still addressable.
+- **The `grpSpPr/a:xfrm` fallback is not `replace(transform)`.** A regular group with no
+  `chOff` has children in absolute slide coordinates, so mapping it to the outer transform
+  is right. A diagram's children are relative to the frame's own origin, so the fallback
+  has to be `chOff=(0,0)`, `chExt=` the frame extent. Using the group default here shifts
+  the whole diagram off the slide by the frame's offset.
+
+**[pptx-renderer]** notes that diagram groups need "diagram-specific compensation requiring
+matching layout provenance". Nothing beyond the above was needed for the cases tested —
+but see the caveat, and expect this to be where a real file diverges. Their fallback when
+no drawing exists is an EMF preview, which Phase 4 now unlocks for us too, though nothing
+wires the two together yet (a `dgm:relIds` frame has no blip to hand to `_resolve_image`).
+
+**Done when:** a SmartArt cycle/hierarchy renders its nodes and connectors ✅ (nodes, text,
+fills, geometry and embedded pictures; connectors are ordinary shapes in the cache and
+need no special handling); a deck with the drawing part deleted still renders and still
+warns ✅.
+
+**Now verified against real input, and it was broken.** The earlier caveat here said the
+implementation was untested against genuine PowerPoint output. It was, and it rendered
+*nothing at all* on every real deck. LibreOffice's test corpus
+(`sd/qa/unit/data/pptx/smartart*`) has 46 SmartArt decks written by PowerPoint 12.0 to
+16.0; all 46 produced an empty frame.
+
+**The lookup was in the wrong place.** `dgm:relIds` names the data model, layout, quick
+style and colours — and not the drawing, because the cached drawing was added to the
+format after `relIds` was specified. Microsoft keyed it through an extension instead:
+
+```
+slide rels --r:dm--------------> ppt/diagrams/data1.xml
+    data1.xml dgm:extLst/dsp:dataModelExt@relId = "rId6"
+                                         |
+slide rels --rId6 (diagramDrawing)-------+--> ppt/diagrams/drawing1.xml
+```
+
+So the id is written in the *data* part and resolved against the *slide's*
+relationships. All 27 decks that carry a cached drawing do it this way, and exactly one
+has a `ppt/diagrams/_rels/data1.xml.rels` at all — which is what the original code, and
+the plan above, assumed was the only route. Two fallbacks remain for producers that do
+something else: the data part's own relationships, then a lone diagram-drawing
+relationship on the slide, used only when there is exactly one (two frames on a slide
+with nothing to key them by would be a coin toss).
+
+**Where the corpus stands now:**
+
+| | Decks | Outcome |
+| --- | --- | --- |
+| Cached drawing with shapes in it | 13 | Renders shapes, text, fills, geometry |
+| Cached drawing present but an empty `spTree` | 13 | Nothing to draw; warns `diagram-no-cached-drawing` |
+| No drawing part at all | 20 | Nothing to draw; warns `diagram-no-cached-drawing` |
+
+Every deck that carries usable cached content now renders it, and no frame comes out
+blank without saying why. `smartart-font-size.pptx` carries three diagram frames on one
+slide and warns three times, independently.
+
+**`dsp:txXfrm` was the other thing only a real deck could show.** A diagram shape places
+its text box separately from the shape — a Venn ring's label goes in the sliver that ring
+does not share. 13 of the 26 cached drawings use it, exactly the 13 that render. Ignoring
+it stacked every label at its shape's bounding-box corner.
+
+#### What is left
+
+Twenty decks have no cached drawing because Office 2007 did not always write one, and 13
+more have an empty one. Drawing them means implementing the layout algorithms in
+`dgm:layoutDef` — a diagram engine, a project in its own right, and **deliberately not
+attempted**. The honest interim answer is an empty frame plus a warning naming the
+reason, which is what happens now.
+
+**Fixtures are still not committed.** The 46 decks are validated against locally but not
+checked in: LibreOffice is MPL-2.0 / LGPLv3+ and redistribution with attribution is
+defensible, but many of these files began life as bug-report attachments and that is a
+call for the project to make, not for a contributor. The alternative that is unambiguously
+ours to ship is `sld.Shapes.AddSmartArt` in VBA — PowerPoint authors the diagram, we own
+the output — which needs a macro-enabled host `.pptm` built by hand. `tests/test_diagram.py`
+still ends with a skipped test that activates when `tests/fixtures/real-smartart.pptx`
+appears.
+
+---
+
+## Phase 3 — Charts
+
+**Effort: XL. 3.1 is done, 3.2 has every type ECMA-376 defines, and 3.3's combo charts
+and secondary axis landed with them; what remains of the 3-D scene is the perspective
+camera and a `pie3DChart`'s solid.**
+
+No shortcut: unlike SmartArt, PowerPoint does *not* cache a rendered chart. The
+`c:chartSpace` part holds data plus styling, and the renderer must do axis scaling, tick
+selection and plotting. pptx-glimpse spends ~1,400 lines on this plus ~450 on data.
+
+A real fixture (`real-financial-report.pptx`, `ppt/charts/chart1.xml`, 6 KB) uses 67
+distinct `c:` elements, a useful sense of the minimum vocabulary:
+`barChart barDir grouping gapWidth overlap ser cat val numRef numCache strRef strCache pt
+ptCount catAx valAx axId axPos scaling orientation crosses crossAx crossBetween
+majorGridlines tickLblPos numFmt formatCode legend legendPos dLbls …`
+
+### Build or delegate?
+
+**[pptx-renderer]** delegates to [ECharts](https://echarts.apache.org/). The Python
+equivalents are matplotlib (SVG backend) and pygal (pure-Python SVG). Hand-rolling was
+the call and it held: the whole of `resolve/chart.py` lowers a chart to the
+`ShapeElement`s and `ConnectorElement`s the renderer already draws, so there is no second
+code path, no dependency, and the chart composes into the slide's transform stack for
+free. `render/svg.py` gained one line.
+
+The reference's `postProcess.ts` — 530 lines of pushing ECharts output back towards
+PowerPoint — is the cost that decision avoids, and reading it was still worth it: it is
+where the real PowerPoint behaviours are written down.
+
+### 3.1 Chart data model and reader — **done**
+
+`parse/chart.py` reads `c:chartSpace` into a `SourceChart`; `model.ChartData` /
+`ChartSeries` / `ChartAxisScale` carry the result out to `convert_pptx_to_model` callers,
+alongside the drawn primitives. Verified against all six charts in the corpus.
+
+Three things the obvious reading gets wrong, each found in a fixture:
+
+* **Chart booleans default to *true* when `val` is absent.** `<c:delete/>` deletes an axis
+  and `<c:overlay/>` overlays a legend. The `is_true` used for ordinary DrawingML
+  attributes reads both as false.
+* **Categories are not always `c:strRef`.** Every category axis in
+  `real-financial-report.pptx` is a `c:multiLvlStrRef`, and a numeric or date axis arrives
+  as `c:numRef`. A reader that only looks at `c:strRef` silently draws a bare axis.
+* **A missing `c:pt` is a blank cell, not a zero.** `c:dispBlanksAs` draws gap, zero and
+  span differently, so blanks survive as `None` rather than being flattened at parse time.
+
+`c:ptCount` is attacker-controlled and is clamped rather than trusted. The chart's own
+`c:clrMapOvr` **replaces** the slide's rather than layering on it — a slide that remaps
+`bg1`/`tx1` for its own shapes does not remap them for a chart that declares its own
+mapping. Both **[pptx-renderer]** and this roadmap flagged it; it is invisible until a
+deck does both at once.
+
+### 3.2 Renderer — **every type done**
+
+1. ✅ `barChart` — clustered, stacked, percentStacked, `barDir` col and bar
+2. ✅ `lineChart` — markers, smoothing, blanks, the real fixture on slide 2
+3. ✅ `pieChart` / `doughnutChart` — hole, rings, explosion, the real fixture on slide 3
+4. ✅ `radarChart` — standard, marker and filled, the real fixture on slide 4
+5. ✅ `areaChart` — standard, stacked, percentStacked, negatives, `crossBetween`
+6. ✅ `scatterChart` — two value axes, all five `c:dLblPos`, splines
+7. ✅ `bubbleChart` — `c:bubbleSize`, `c:bubbleScale`, `c:sizeRepresents`,
+   `c:showNegBubbles`
+8. ✅ `ofPieChart` — both `c:ofPieType` forms, all five splits, `c:serLines`
+9. ✅ `stockChart` — `c:hiLowLines`, `c:upDownBars`, three and four series
+10. ✅ `surfaceChart` / `surface3DChart` — a lit mesh banded by value, `c:bandFmts`,
+    `c:wireframe` and a legend of the bands; see *Surface — measured, and drawn* in 3.4
+
+**Still warning `chart-unsupported-type`:** the whole ChartEx family, and a plot area
+holding a group element the reader does not recognise at all. Every `c:*Chart` group
+ECMA-376 defines is drawn, the 3-D spellings included — four of them draw their scene and
+the rest degrade through `parse/chart.flat_chart_kind` and declare it.
+**No chart in the corpus warns**, and none ever did once 3.1 landed.
+
+Data labels are drawn for all ten of the types that have them, at every `c:dLblPos` each
+accepts — except the radar's, whose placement no export has ever shown; see below. A
+surface has none: it has no marks of its own to label, its facets being bands rather than
+points.
+
+#### Polar layout, measured
+
+The core comes off `real-financial-report.pptx`'s own doughnut, which is exact enough to
+pin it without a probe at all:
+
+* the plot region is the **same** one a bar chart computes — edge insets plus the legend
+  band, whose 113.98 pt on that deck is the identical number its bar charts reserve;
+* the radius is **half the shorter side** of that region, centred in it;
+* **angle zero is 12 o'clock and slices run clockwise**; its first slice ends at
+  154.80° for a 43% share, which is 43% of 360;
+* **`c:holeSize` is a percentage of the outer radius**, not of the frame or the diameter.
+
+A twelve-chart probe adds the rest, and two of them contradict the obvious reading:
+
+* **A `c:doughnutChart` stating no `c:holeSize` draws as a solid pie.** ECMA-376 documents
+  a default of 10; the wedge PowerPoint emitted closes through the centre with no inner
+  arc at all.
+* **`varyColors` is the default for a pie and not for a bar.** Probe pies stating no
+  `c:varyColors` came out accent1..accent4 across their slices, and a two-ring doughnut
+  cycled the same four in *both* rings — per point, not per series.
+* Several series make **concentric rings**, innermost first, splitting the space between
+  the hole and the outer radius evenly.
+* **`c:explosion` shrinks the radius by `1/(1+e)`** and offsets each slice by `e` of the
+  *shrunk* radius along its own bisector — both halves measured to 0.01 pt.
+* Slice labels sit along the bisector at a fraction of the radius: `ctr` exactly 0.5,
+  `inEnd` 0.856, `outEnd` 1.020, `bestFit` 0.710.
+* **`showPercent` percentages add up to 100**: three equal values are labelled 34%, 33%,
+  33%, where rounding each on its own gives 33% three times and totals 99.
+* A pie legends its **categories**, not its series.
+
+#### Radar, measured
+
+`radarChart` is done, and the corpus measured most of it. That is worth stating plainly
+because the brief for this work assumed it could not: `real-financial-report.pptx` is
+skipped by `tools/fidelity.py` for want of Noto Sans JP, but **vector geometry does not
+move when a font is substituted**, so its chart5 — the only radar in the corpus — is
+readable out of PowerPoint's own PDF at exact coordinates. A skipped *score* is not a
+skipped *measurement*. Three probe decks of six charts each pinned the rest.
+
+The polar conventions turn out to be the pie's, and that is a measurement rather than an
+assumption — the four-category probe puts its vertices due north, east, south and west:
+
+* **angle zero is twelve o'clock and categories run clockwise**, 360/n apart;
+* the centre is the centre of the **same plot region a pie computes**, to within 0.21 pt
+  on the legend probe and 0.1 pt on the corpus radar;
+* a point sits at `(value − minimum) / (maximum − minimum)` of the radius.
+
+Six things the schema does not say, each from a probe that contradicts the obvious
+reading:
+
+* **The web is polygonal and follows the category count** — 3, 5, 6 and 8 categories gave
+  triangles, pentagons, hexagons and octagons — and **it is drawn whether or not the file
+  asks for it**. A probe with no `c:majorGridlines` at all still drew every ring, and so
+  did one with `<c:delete val="1"/>` on the value axis. Only the *styling* comes from
+  `c:majorGridlines`.
+* **The spokes do not.** No probe without a `c:spPr` on its axes drew any; the corpus
+  radar, whose axes both state `<a:ln w="12700">` in #888888, drew six in exactly that.
+  **Corrected** (*0.5, What it exposed*): the radial lines are the **value** axis' own
+  line, not the category axis', and go over a `filled` radar's series; **their default is
+  none** — the opposite of a bar chart, whose default axis line is black at 0.5 pt.
+* **`standard` and `marker` draw an identical picture**, markers included, though
+  ECMA-376 says a `standard` radar has none. Two probes, byte-identical output.
+* **`filled` draws only the fill.** No markers, and no outline unless the series states an
+  `a:ln` of its own: the probe, which states none, emits a bare `f`; the corpus radar,
+  which states `w="25400"`, is stroked at 2 pt. That pair is the whole rule.
+* **A radar's value axis stops at the data where a bar's goes a unit past it.** 0..5 of
+  data draws five rings with the outermost through the largest point, where the same data
+  on a bar gives 0..6. One discriminating observation, and it is the only difference —
+  the unit is chosen identically.
+* **Category labels wrap; they do not rotate.** Every `rot` in the long-label probe is
+  zero and "Category Three" came back split as "Category" / "Three".
+
+The value-axis labels sit up the twelve o'clock spoke, right-aligned, with their right
+edge **two widths of the digit zero** to the left of it. Six charts across two faces and
+three sizes plus the corpus radar's Arial 12 pt, worst residual 0.14 pt. Reading it as an
+em fraction does not work — it is 1.069 em in Aptos and 1.112 em in Arial, and the
+difference is exactly twice the difference between the two faces' digit widths.
+
+The radius is the fitted part. Two constraints, smaller wins:
+
+* **vertically**, it falls short of half the region by a reserve that is a function of the
+  category label's line box — `1.2578 × line_height − 5.2501`, fitted to five probes with
+  a worst residual of **0.089 pt**:
+
+  | face | size | line box | reserve |
+  | --- | --- | --- | --- |
+  | Aptos | 8 | 9.766 | 7.071 |
+  | Aptos | 10 | 12.207 | 10.081 |
+  | Aptos | 14 | 17.090 | 16.191 |
+  | Arial | 10 | 11.172 | 8.751 |
+  | Arial | 14 | 15.641 | 14.511 |
+
+  The slope is **not** 1, which is why no "leave one line of room" rule reproduces the
+  set; and a sixth probe pins the other end — with the category axis deleted and so no
+  labels at all the radius came out 79.44 pt against a half-region of 79.551, i.e. the
+  reserve goes to zero.
+
+* **horizontally**, the widest label must still fit the region, which for a spoke at angle
+  θ bounds the radius by `(half_width − 2.85 − label_width) / |sin θ|`. Three probes are
+  bound this way and land within 0.7 pt.
+
+Ten cases land within 0.14 pt of PowerPoint. **The reserve counts one line even when a
+label wraps**, and that is the measurement rather than an oversight: the one multi-line
+observation has a radius of 60.24 pt, which the horizontal constraint reproduces exactly
+and whose vertical reserve is therefore at most 19.31 pt — less than the 20.16 pt that two
+lines of the fitted per-line reserve would ask for. The per-line rule is contradicted by
+that probe, so it was not shipped.
+
+Two smaller measurements that belong to other chart types too:
+
+* **A line-style radar's legend key is a line with its marker on it**, not a swatch:
+  19.200 pt of rule then 2.025 pt before the text, at 10 pt — against the swatch's
+  5.492 + 2.371. That is 13.4 pt of band width. Four line-chart legends have since
+  confirmed both numbers and refuted the *scaling*: they were carried as 1.920 and
+  0.2025 ems on the assumption that a single 10 pt measurement scaled, and a 14 pt legend
+  came back at the same 19.200 and 2.025. They are absolute points, and a `lineChart`
+  now draws them too.
+* **A radar series stating no `c:size` gets a 6 pt marker**, not ECMA-376's 7. The probe's
+  second series measured 6.0 pt square; its first measured 5.76 pt across, which is the
+  same 6 pt box with a diamond's tips falling inside PowerPoint's 0.24 pt output grid.
+  `lineChart` still uses 7, which has never been measured either way.
+
+What is wrong or unmeasured in the radar path:
+
+* **The corpus radar's radius was 6.83 pt too large; 5.00 of that is fixed.** Its
+  category labels are Japanese, and `font_box` read the `<a:latin typeface="Arial"/>` the
+  axis names — a face with no kana in it — for a label made of nothing else. PowerPoint's
+  export embeds **YuGothic-Regular** for them, which is the theme's
+  `<a:font script="Jpan"/>`; `ChartFont` now carries it, and its 1.448 em line box takes
+  the reserve from 11.61 to 16.61 and the radius from 52.39 to 47.39 against PowerPoint's
+  45.56. See *The East Asian face cascade*. **The 1.83 pt left is the reserve, not the
+  face**: `RADAR_LABEL_RESERVE_LINES`/`_PT` were fitted to five Latin probes, and
+  reproducing 18.44 exactly wants a 1.5696 em line box, which is neither our Noto Sans JP
+  table's 1.448 nor Yu Gothic's own `hhea` figure. One CJK radar and no probe deck, so
+  whether the reserve has a term only CJK exercises stays unmeasured.
+* **A radar category label that will not fit is truncated by PowerPoint and wrapped by
+  us.** Its export draws `海外売上…` and `従業員満…` where the categories are six
+  characters. Five cells (60.0 pt) against the `RADAR_LABEL_MAX_FRACTION` allowance of
+  0.25 × 243.243 = 60.8 pt, so the cap we already carry looks like the right one and the
+  response to it is not: `wrap_label` breaks at whitespace and CJK has none.
+* **Radar data labels are not measured.** The corpus radar's `c:dLbls` sets every
+  `c:show*` to 0 and no probe turned one on, so where PowerPoint puts one is unknown. They
+  are drawn — pushed radially out from the point, one marker clear — because silently
+  dropping flags a file states is the worse failure, but that placement is a guess and the
+  code says so. It is the only thing in the radar path without a measurement behind it.
+* **`dispBlanksAs` on a radar is not measured.** A blank breaks the ring, mirroring the
+  line chart. A ring is a cycle, so the stretch running through index 0 is one run and not
+  two — that was a real defect the test caught, and `_rotate_past_blank` is why it is not
+  one now.
+* **The label stands off its vertex by 4% of the radius** (`RADAR_LABEL_GAP_FRACTION`).
+  The fitted 2.85 pt gap above was that 4% of those probes' 70 pt radius: radars of 3 to
+  8 categories at radii of 87 to 148 pt, in PowerPoint and in Word, put every label's near
+  edge `0.04 r |dx|` from its vertex, and a label on a sloping spoke is **centred** on its
+  anchor rather than hung from it by a corner, which had put the side labels of a
+  6-spoke radar 5 to 10 pt out. A label on a vertical spoke still hangs from the anchor,
+  over the top vertex 1.35 pt higher (`RADAR_LABEL_FOOT_PT`, a constant of the fit).
+  Every label of thirteen probes and pptx-agent's p13 now lands within 0.41 pt across and
+  0.65 pt down of PowerPoint's PDF (ooxml-common `tests/test_chart_labels.py`).
+* **The wrap threshold is one bracket.** 43.72 pt of label stayed on one line and 59.10 pt
+  wrapped, on a 198.47 pt region; 0.25 is the round number inside (0.2203, 0.2978].
+
+#### Area, measured
+
+Eighteen probe charts in the same 220.4724 x 181.1024 pt frame as the bar sweep, plus four
+tie-breakers, exported by PowerPoint 16.106 and read back as exact path vertices.
+
+**The plot rectangle is a bar chart's, to the last decimal.** All four insets agree on
+every one of the eighteen — `bare` 21.073 / 11.000 / 11.102 / 24.965, `font14` 26.907 /
+11.000 / 13.545 / 32.353, `title` top 40.803, `legend-b` bottom 49.048 — worst residual
+across the sweep **0.23 pt**. So is the value axis: 3, 4, 5 of data gives 0..6 by 1, the
+bar's strictly-outward rule and *not* the radar's stop-at-the-data one.
+
+What is new, and six of the seven refute the obvious reading:
+
+* **An area chart that states no `c:crossBetween` draws as `midCat`.** Three probes: with
+  `val="between"` the three vertices land on the band centres (52.473 / 115.292 /
+  178.072); with `val="midCat"` and with **no element at all** they are byte-identical to
+  each other on the plot's edges and midpoint (26.433 / 108.015 / 189.632). A line chart's
+  absent case is not measured — every line chart in the corpus and in every probe states
+  `between` — so the default there is left alone and this one is scoped to the area.
+* **`midCat` narrows the plot** because the first and last category label are now centred
+  on its own edges and half of each hangs outside. Left becomes
+  `max(label column, 11.0 + half the first label)` and right `11.0 + half the last`:
+  `Reader` is 30.859 pt and `Renderer` 39.673 pt, giving 26.433 and 189.636 against
+  PowerPoint's 26.433 and 189.632.
+* **The fill closes to the zero line, not to the plot's floor.** The negative probe's
+  polygon returns along y = 117.069, which is where its -3..6 axis puts 0, with the plot's
+  own bottom 53 pt lower. The path therefore **crosses itself** where the line crosses
+  zero and PowerPoint leaves the bow tie exactly as it falls — its fill rule is nonzero
+  **winding**, which is what the renderer already does.
+* **`c:invertIfNegative` does not exist on an area series.** CT_AreaSer has no such
+  element; a deck carrying one makes PowerPoint open it `[Repaired]` and refuse to export.
+  So the question the bar chart settled does not arise here — the file cannot ask.
+* **The series are painted in series order, first at the back, and the fills are opaque.**
+  Every one of the eighteen came back at alpha 255, and two probes say it is *order* and
+  not size: swapping the two series' values swapped which one was hidden, and a probe
+  whose first series covers the second entirely still emitted the first path first. A
+  front series really does hide what is behind it. That is PowerPoint's picture.
+* **No outline unless the file asks.** Eight probes stating none got a bare fill; one
+  stating `<a:ln w="25400"/>` got a second, stroked copy of the whole closed path,
+  baseline edge included.
+* **A blank splits the run, and a run of one point draws nothing.** The
+  `dispBlanksAs="gap"` probe, whose middle value is missing, drew **no area at all** —
+  two runs of one point each, and a point has no area.
+
+Stacked and percent-stacked accumulate exactly as a stacked bar does, with each band's
+lower edge the running total *without* this series, traced backwards; percentStacked's
+last series reaches 100% in every category. And:
+
+* **An area data label sits at the vertical centre of its own band**, horizontally centred
+  on the point. Unstacked 3/4/5 put its labels at 1.5, 2.0 and 2.5 on the value axis; a
+  stacked pair put the second series' at 4, 6.5 and 5.5, the midpoints of its *segments*
+  and not of the stack. Ten labels, worst residual 0.21 pt.
+* **`c:dLblPos` is refused outright.** An area chart whose `c:dLbls` carries one — `ctr`
+  included, which is the only value ECMA-376 lists for an area series — makes PowerPoint
+  open the deck `[Repaired]`. An area label has exactly one placement.
+* **The legend key is the square swatch**, 5.492 pt then 2.371 pt of gap: a bar's key, not
+  the line chart's rule.
+
+#### Scatter, measured
+
+Eighteen probe charts plus six tie-breakers. **Both axes are value axes and there is no
+category axis at all**, which is the one structural difference from every other Cartesian
+chart here and the reason `_build_scatter` does not go through `_build_cartesian`.
+
+**The brief's question — does the plot-area code assume a category axis? — is yes, and
+specifically the bottom of it.** `_bottom_label_band` takes a category list and decides
+between a level band, a wrapped one and a turned one; `_labels_rotate` and `wrap_label`
+are written around a *band width*, which a row of numbers does not have; and
+`_draw_labels` picks its placement off `barDir`. None of that applies to a scatter. What a
+scatter's bottom actually is, measured, is the **horizontal bar chart's**: one plain line
+of value labels centred on their ticks, with half the last one hanging past the plot's
+right edge. So the band is `_bottom_label_band(font, [], width)` — the same formula with
+an empty category list — and nothing else of that machinery is reached.
+
+* **The plot rectangle** is the horizontal bar's on all six discriminating probes:
+  `bare` 21.073 / 13.670 / 11.102 / 24.965 (the right inset is `11.0 + half of "6"`),
+  `font14` 26.907 / 14.740 / 13.545 / 32.353, `x-deleted` 11.000 right and 11.102 bottom
+  with no labels to reserve for. Worst residual **0.32 pt** over eighteen.
+* **Neither axis is anchored at zero, and a scatter is the only type that is not.**
+  `nice_axis_scale` forces `min(0, data)` because a bar that does not start at its axis is
+  a different picture. Applied to a scatter it destroys the chart: a decade of years
+  against a measurement collapses into a 1% sliver of a 0..3000 axis. Six probes bracket
+  when PowerPoint lets go — the near end has to sit past **5/6** of the far one, measured
+  to [0.80, 0.84) by the pair that straddles it:
+
+  | x data | near/far | PowerPoint |
+  | --- | --- | --- |
+  | 10..50 | 0.20 | 0..60 by 20 |
+  | 40..50 | 0.80 | **0..60 by 20** |
+  | 42..50 | 0.84 | **40..55 by 5** |
+  | 100..104 | 0.96 | 98..106 by 2 |
+  | 2010..2020 | 0.995 | 2005..2025 by 5 |
+  | −50..−10 | mirrored | −60..0 by 20 |
+
+  The unanchored extent rounds strictly outward at **both** ends where an anchored one
+  holds its low end at zero — 100..104 comes back 98..106, a whole unit clear each way —
+  and the unit and the four-interval cap are unchanged. Ten of the eleven scatter axes
+  measured now reproduce exactly. **Only a scatter is measured**: a line chart of
+  temperatures has the same problem and no probe has ever shown what PowerPoint does with
+  one, so every other type keeps the anchor.
+* **`c:crosses` belongs to the axis it is written on**, on a scatter as on a bar: it says
+  where *that* axis crosses the perpendicular one, so the vertical line's position is a
+  question for the y axis even though the answer is an x coordinate. Only `autoZero` is
+  measured, and the reading is `_category_axis_position`'s rather than a second one
+  invented for scatters — which is also how `c:crossesAt` comes along for free.
+* **The two negative corners mirror the bar chart's.** A negative *x* range floats the
+  value axis into the plot — drawn at 111.088 pt, not at the plot's left edge 95.7 pt away
+  — and the y labels go with it, right-aligned the same `descent + 0.645 em` from the axis
+  the column always uses; the left inset is then the first x label's overhang, 15.373 pt
+  measured against 15.373 predicted. A negative *y* range moves the x labels up beside the
+  zero line and the bottom band disappears.
+* **The x axis is the coarse one, and the cap is four intervals and not five.** 1..5 of
+  data comes out 0..6 **by two** where the same span on the y axis takes ones. The
+  constant was five on the single horizontal-bar observation, which only bounds it below
+  six; the discriminating probe is `x-float`, whose 0.5..4.5 rounds to a *five*-interval
+  0..5 at unit 1 and was coarsened to 0..6 by 2 anyway, against `x-neg`'s four-interval
+  -4..4 by 2 which was kept. The bracket is [4, 5).
+* **`c:scatterStyle` decides nothing.** `marker`, `line` and `lineMarker` produced
+  byte-identical output — line *and* markers in all three. What turns either off is the
+  series' own markup: `<a:ln><a:noFill/></a:ln>` for the line, `<c:symbol val="none"/>`
+  for the marker, each measured. That was a live defect on the line chart too: a `noFill`
+  stroke resolves to `None` exactly as an absent `c:spPr` does, and the default 1.5 pt
+  line was being substituted for it.
+* **A blank breaks the run**, and the vertex list alone does not say so. The path through
+  a missing middle y has four points, which reads as unbroken; its segment *kinds* are
+  move, line, move, line. Reading coordinates without reading the operators is how that
+  gets missed — it was, until the render was put beside PowerPoint's. Points are joined in
+  **the order the file lists them**, not sorted by x: the unsorted probe's path runs
+  3, 1, 5, 2, 4.
+* **All five `c:dLblPos` values are the line chart's geometry read off a different edge of
+  the marker.** `r` — the default when the file states none — and `l` put the label's near
+  edge a marker radius plus 0.6 em from the point, 9.000 pt measured and 9.000 predicted
+  on both sides; `t` and `b` put its line box a radius plus the bar's 4.85 pt gap away;
+  `ctr` is the ink centre. Worst residuals 0.20, 0.20, 0.21, **0.91** and 0.26 pt.
+* **The legend key is the line chart's rule**, 19.200 pt with the marker on its midpoint.
+
+#### Two constants the new probes corrected, and one they finally measured
+
+Both of these are shared with `lineChart` and both were carried on assumption:
+
+* **The default marker is 6 pt, not ECMA-376's 7.** The radar already used 6 from a probe
+  whose *diamond* measured 5.76 pt across — a diamond, so the reading depended on the tips
+  falling inside PowerPoint's 0.24 pt output grid. Two probes settle it with an
+  axis-aligned shape and no such argument: the scatter two-series probe's second series
+  states no `c:marker` and its **square** measured exactly 6.000 x 6.000, and a line chart
+  with an explicit `c:size val="6"` square measured the same 6.000 on the same export. The
+  scatter's `r` data label confirms it a third way: its 9.000 pt offset is radius plus
+  0.6 em, which is 9.0 at a 6 pt marker and 9.5 at a 7 pt one.
+* **An absent `c:smooth` smooths.** It is a chart boolean, so the element being missing is
+  not the same as `val="0"` — the trap `parse/chart._flag` exists for, and this reader was
+  using `bool(None)`. Three probes: `val="1"`, the element absent, and `val="0"` came back
+  as four cubics, the *same* four cubics, and a four-segment polyline. PowerPoint's own
+  writer always emits the element, so no corpus deck moves; a hand-written one does.
+* **`c:smooth`'s tension is now measured, and both ends of the spline were wrong.** The
+  roadmap recorded the curve as "a Catmull-Rom spline, which has the right shape" with the
+  tension unmeasured. It is the plain 1/6: a five-point series exports as four cubics whose
+  interior controls reproduce `c1 = p1 + (p2 - p0)/6` and `c2 = p2 - (p3 - p1)/6` to the
+  0.001 pt the PDF prints, on a line chart and a scatter alike. **The terminal controls
+  are a third of their own chord, not a sixth** — 87.073 against the 90.527 that
+  duplicating the end point gives, on a chord of 20.72 pt — so the phantom point is a
+  *reflection*, `p0 = 2*p1 - p2`, and reflecting it reproduces both ends exactly.
+
+**What it bought.** No corpus deck holds an area or a scatter, so nothing scored moves and
+that is the point: `authoring-integration` holds at 0.9327/0.9984, `table-test` at
+0.9895/0.9984 and `real-college-template` at 0.8003/0.8753, all unchanged to four decimals
+despite the marker size, the smooth default, the spline ends, the `noFill` stroke and the
+bottom-axis interval cap all being shared with chart types those decks *do* hold. The
+improvement is in the probe decks, scored the same way:
+
+| probe deck | before | after |
+| --- | --- | --- |
+| area (18 charts) | 0.6165 / −0.0251 | **0.9562 / 0.9990** |
+| scatter (18 charts) | 0.0175 / −0.1142 | **0.8695 / 0.7945** |
+| tie-breakers (12) | 0.3148 / −0.0547 | **0.8921 / 0.8624** |
+| smooth (6) | 0.4291 / 0.3285 | **0.8768 / 0.6820** |
+| axis minimum (6) | 0.4870 / 0.9201 | **0.5806 / 0.8859** |
+
+The axis-minimum deck is the one that stays low, and the reason is named above: four of
+its six charts reproduce exactly and the other two are the 120..160 y axis, where we drew
+five gridlines against PowerPoint's nine. That was the unsolved tick rule and not the zero
+anchor the deck was built to measure; it is solved since, and that axis now comes out
+0..180 by 20 as PowerPoint draws it.
+
+The three that stay under 0.95 are decks of thin curves and markers on white, where SSIM
+is punishing about a pixel of antialiasing; put side by side at 1400 px the renders are
+indistinguishable apart from the tick density noted below. The probe decks are throwaway
+and were deleted; their generators are `tests/test_chart.py`'s `area_chart_xml` and
+`scatter_chart_xml`.
+
+#### Bubble, measured
+
+Thirty probe charts across three decks in the same 220.4724 x 181.1024 pt frame as the
+scatter sweep, exported by PowerPoint 16.106 and read back as exact path vertices. Every
+drawn circle came back axis-aligned and square to 0.001 pt, so its bounding box *is* its
+diameter, and every number below is PowerPoint's own.
+
+**A bubble is a scatter plus a third dimension, and the "plus" is the whole of the work.**
+The plot rectangle, the unanchored axes, the coarse x axis, the blank handling and the
+`c:crosses` reading are the scatter's and were reused untouched: `bare` reproduces
+21.073 / 13.670 / 11.102 / 24.965, the scatter sweep's own row.
+
+* **The size-to-radius map is area-proportional, and the reference is the largest size.**
+  Sizes 1, 4, 9 drew 13.162, 26.323 and 39.485 — exactly 1:2:3, so the *area* is
+  proportional to the size and the diameter to its square root. `<c:sizeRepresents
+  val="w"/>` on the same data drew 4.387, 17.549 and 39.485, exactly 1:4:9. The largest
+  is 39.485 in **both**, and in four probes whose size distribution differs wildly
+  (1,2,3 / 1,4,9 / 5,5,5 / 1,2,100), so the reference is the maximum rather than the sum.
+  A two-series probe makes it **global**: a series topping out at 9 drew 27.920 beside
+  one topping out at 18, which is 39.485 × sqrt(9/18).
+
+* **What the largest bubble is sized against is not the plot rectangle.** This is the one
+  that would have been guessed wrong: `font14` and `font8` move all four plot edges and
+  draw the *same* 39.485 pt bubble, while a right legend (plot 137.805 x 145.035) draws
+  37.511 and a top or bottom one (185.729 x 120.952) draws 33.928. The region is the
+  **frame inset by 5 pt on every side**, less the title band and the legend band.
+
+  The 5 pt is solved, not fitted. The legend band is 24.083 pt and takes the diameter from
+  39.485 to 33.928, so the height it eats into is `24.083 / (1 − 33.928/39.485)` = 171.12,
+  which is the 181.102 pt frame less **9.98**. The side-legend probe then falls out with
+  no constant of its own: its reserve is the 47.924 pt the plot gives up, and
+  `(210.472 − 47.924) × 0.2308` is 37.513 against 37.511 drawn. So does the title probe:
+  `171.102 − 29.700 = 141.402`, times the same factor, is 32.631 against 32.631 drawn.
+
+* **`c:bubbleScale` does not scale the diameter.** It is a soft clamp,
+  `D = M · s / (s + 1000/3)` where `M` is the short side of that region — linear in *s*
+  while small, and approaching the region's own short side as *s* grows, so a bubble can
+  never fill more than the region no matter what the file asks for:
+
+  | scale | PowerPoint | predicted |
+  | --- | --- | --- |
+  | 1 | 0.512 | 0.5117 |
+  | 10 | 4.983 | 4.9836 |
+  | 25 | 11.937 | 11.9374 |
+  | 50 | 22.318 | 22.3177 |
+  | 75 | 31.427 | 31.4269 |
+  | 100 | 39.485 | 39.4851 |
+  | 150 | 53.101 | 53.1007 |
+  | 200 | 64.163 | 64.1634 |
+  | 300 | 81.048 | 81.0485 |
+
+  Worst residual **0.0005 pt** over nine observations. The obvious linear reading is
+  refuted at both ends — it predicts 19.74 at 50 where PowerPoint drew 22.318, and 78.97
+  at 200 where it drew 64.163 — and so is every power law: the implied exponent is 0.824
+  on one side of 100 and 0.701 on the other.
+
+* **A zero size draws nothing and a negative one draws hollow.** The `-4, 0, 9` probe
+  emitted **two** circles: the 9 in the series colour and the −4 at its magnitude, white
+  with a black 0.75 pt outline — the drawing a negative bar gets. `<c:showNegBubbles
+  val="0"/>` removes it; the element absent and `val="1"` are identical, so the default is
+  to draw it.
+
+* **No line, no marker, no outline.** Every disc on every probe came back filled and
+  unstroked, with no connecting stroke and no marker anywhere.
+
+* **The legend key is the square swatch, not the scatter's rule.** Both legend probes drew
+  a 5.492 pt key. This is not cosmetic: the legend reserve feeds the sizing region as well
+  as the plot, so reading the line key there put the plot 13.4 pt narrow *and* the drawn
+  bubble 3.1 pt small.
+
+* **A bubble's data label stands further off its mark than a marker's does.** `r` puts the
+  label box's near edge 8.494 pt past the **disc's** edge at 10 pt — 8.504, 8.484 and
+  8.494 on discs of radius 6.581, 13.162 and 19.742 once each digit's own side bearing is
+  taken out — against the scatter's 6.0 off a 3 pt marker; `t` and `b` put the line box
+  7.25 and 6.76 pt out against the scatter's 4.85. `ctr` is the ink centre, 0.22 pt out,
+  which is the same slack this file records everywhere else. One font size only, so
+  whether these are points or ems is **unmeasured**; they are carried as points because
+  the line chart's legend key turned out that way.
+
+Two things measured and **not** implemented:
+
+* **A label PowerPoint cannot fit is pushed back inside the frame.** The `t` probe's
+  largest bubble would have put its label above the frame's top edge, and PowerPoint drew
+  it at 4.140 pt instead of the 10.07 pt gap the other two took. Where it clamps to is not
+  identified from one observation, so ours goes where the rule says and off the top.
+* **`<c:bubble3D val="1"/>` hangs this PowerPoint.** Twice, reproducibly: the deck opens,
+  a `~$` lock appears, AppleEvents stop being serviced and the 600-second timeout fires
+  with no PDF written. So the 3-D bubble is not merely unmeasured — the oracle will not
+  produce an answer for it, and the recovery is to kill PowerPoint and delete the lock.
+
+#### Of-pie, measured
+
+Twenty-four probe charts across two decks. A wedge's path closes through the pie's centre,
+which is the second-to-last point PowerPoint emits, so the centre, the radius and both
+edge angles come out of the PDF exactly rather than by fitting.
+
+**The region is the pie's own** — `_polar_region`, edge insets plus the title and legend
+bands — and the two plots are packed across its full width: the first plot's left edge and
+the second's right edge land on the region's own edges in every probe, and both are
+centred on its middle row to 0.001 pt.
+
+* **The split rule, five spellings, four measured on 40/25/15/10/6/4.** `pos` moves the
+  **last** `c:splitPos` points (`val="4"` kept 40 and 25 and moved the other four); `val`
+  moves every point **below** `c:splitPos` (`val="12"` moved 10, 6 and 4 and kept 15);
+  `percent` is the same test on the point's share and it is **strict** (`val="15"` moved
+  10%, 6% and 4% and kept the 15%); `cust` moves exactly the `c:secondPiePt` indices, in
+  their original order, and leaves everything else — colours included — where it was.
+
+* **`auto`, which is also what an absent `c:splitType` means, moves the last ceil(n/3).**
+  This is the part the brief expected to be subtly wrong, and it is where reading the
+  schema would have left it wrong: ECMA-376 documents a `c:splitPos` default of 2, and a
+  six-point chart does indeed move two — but three points moved **one** and eight moved
+  **three**. Five counts, 3/4/6/7/8, moved 1/2/2/3/3. `round(n/3)` is refuted twice over,
+  at n=4 (it predicts 1) and n=7 (it predicts 2); `floor(n/3)` fails at n=8.
+
+* **The aggregated slice is centred at three o'clock**, pointing at the second plot, and
+  that fixes the rotation of the whole chart. Five probes: the slice runs 72..108, 27..153,
+  54..126, 0..180 and 54..126 degrees clockwise from twelve, every one centred on 90. The
+  second plot starts at the **same** angle the first one does.
+
+* **It takes the colour one past the last point.** Six points came out accent1..accent6
+  with the slice in the next cycle's accent1; a four-point chart put it in accent5 and a
+  three-point one in accent4.
+
+* **The packing law.** With the region width `W` and `s = secondPieSize/100`,
+  `r = W / (2 + 2s + g/100)` where `g` is `c:gapWidth` in percent — of the **first plot's
+  radius**, which is the part the schema does not say. Six probes, every one exact:
+  198.472/4.5 = 44.105 at the defaults, /4 = 49.618 at `secondPieSize=50`, /5 = 39.694 at
+  100, /3.5 = 56.706 at 25, /6.5 = 30.534 at `gapWidth=300` and /3.5 = 56.706 at
+  `gapWidth=0`. `c:secondPieSize` defaults to 75 and `c:gapWidth` to 100.
+
+* **The bar form packs by a different divisor**, `r = W / (2 + s + g/200)` — the gap
+  between the pie and the bar is **half** what it is between two pies. Two probes, both
+  exact: 61.068 at `s=0.75` and 66.157 at `s=0.5`. The bar is `s·r` wide and `2·s·r` tall,
+  the same vertical extent a second pie of that size would have, and it stacks the first
+  moved point on **top**. Only `gapWidth=100` was measured on the bar form, so the `/200`
+  is the natural reading of one observation rather than a fitted slope.
+
+* **`c:serLines` is two tangents, and its presence is the switch.** A probe with no
+  element drew no connector at all; a bare `<c:serLines/>` drew two lines in black at
+  0.5 pt — the axis default — and `<a:ln w="28575">` in red drew them red at 2.25 pt. Each
+  line leaves a **corner of the aggregated slice**, where its arc meets the circle, and is
+  **tangent to the second pie**: the upper line ran (97.051, 76.922) to (168.104, 58.528),
+  where the dot product of the second pie's radius and the line direction is 0.000 and the
+  drawn length 73.395 pt is exactly `sqrt(d² − r²)`. The upper corner takes the upper
+  tangent point. **The bar form is not measured** — no probe put `c:serLines` on one — so
+  its lines run to the bar's two left corners, which is the natural analogue and is marked
+  in the code as a guess rather than left undrawn.
+
+* **Past six colours the accent cycle stops being the plain accents**, and this is a
+  *pie-family* behaviour that an ofPie merely exposes, because an ofPie always needs one
+  colour more than it has points. A seven-slice chart came back with accent1..accent6
+  **darkened** and the seventh a light accent1; a nine-slice one repeated exactly the same
+  darkened six and then three light ones, so the variation is per **cycle** of six and not
+  a function of the count. Applied to the **linear-light** value of each channel —
+  `L × 0.76` for the first cycle and `L + 0.23 × (1 − L)` for the second — it reproduces
+  all 27 measured channels to the byte; the round numbers either side, 0.75 and 0.25, are
+  off by up to 1 and 5.
+
+  The colour *space* matters as much as the factor, and that is a second finding: the same
+  modulation done in HLS on sRGB, which is what `resolve/color._apply_luminance` does for
+  DrawingML's own `lumMod`, puts accent1's blue channel at 150 against the 173 PowerPoint
+  drew. **That is a real defect in the general colour transform and it is not fixed here**
+  — changing it moves every deck in the corpus — so the chart ramp carries its own
+  conversion and says why. A third cycle is unmeasured: no probe had more than twelve
+  points, and it repeats the second's tint.
+
+Two divergences, both measured rather than guessed at:
+
+* **PowerPoint shrinks both plots to make room for data labels and this does not.** The
+  label probe's first radius came out 37.981 against the 44.105 the same chart draws
+  without them, the same 0.861 factor on both plots. One observation does not say what the
+  reserve is a function of, so the plots keep their full size and the labels are laid over
+  them.
+* **A split that moves nothing leaves PowerPoint drawing a dark disc where the second plot
+  would be** — `#404040`, filled and stroked at 3 pt, at the radius the second plot would
+  have had. Ours draws nothing there. An empty circle of flat dark grey is not a picture
+  worth reproducing, and the *first* plot — which is the chart — is identical either way.
+
+#### Stock, measured
+
+Twelve probe charts. The plot rectangle, the axis, the category bands and the legend key
+came back a line chart's in every one of them.
+
+* **A stock chart with no decorations *is* a line chart.** This refutes the brief for this
+  work, which had it as "a lineChart with the lines suppressed": a `c:stockChart` with
+  neither `c:hiLowLines` nor `c:upDownBars` came back as one 1.5 pt polyline per series
+  with the ordinary diamond/square/triangle marker cycle on it, drawn at 6 pt. What a real
+  stock chart lacks is suppressed by the **file**, which writes `<a:ln><a:noFill/></a:ln>`
+  on each series; nothing in the renderer hides anything. So `_is_line` answers yes for a
+  stock chart and the two decorations are drawn on top, in that order — PowerPoint emitted
+  the series first, then the hi-low lines, then the bars.
+
+* **`c:upDownBars` takes the first and the last series, and the series *order* carries the
+  meaning while the labels carry none.** That is the question the brief asked, and the
+  discriminating probe is a three-series High/Low/Close chart with `c:upDownBars` on it:
+  PowerPoint drew all five bars **down**, from each category's High to its Close. A
+  four-series Open/High/Low/Close chart drew three up and two down, which is where close
+  exceeds open and where it does not. Neither reading of the *names* survives that pair;
+  `series[0]` and `series[-1]` reproduces both.
+
+* **The bar width is `band / (1 + gapWidth/100)` and the default `gapWidth` is 150.** On a
+  36.612 pt band the default drew 14.646, which is `36.612/2.5`; probes at 50 and 300 drew
+  24.410 and 9.154 against 24.408 and 9.153 predicted. An empty `<c:upDownBars/>` is the
+  default, byte-identical to `val="150"`.
+
+* **The default up and down fills are #F9F9F9 and #3F3F3F**, both with a black 0.5 pt
+  outline. They are **not** theme accents, which is what the brief suspected. One theme
+  measured — the Office scheme, whose `lt1` is white and `dk1` black — so whether they are
+  literal or derived from those two is unknown, and they are carried as literals rather
+  than as a derivation nothing has tested. An explicit `c:upBars`/`c:downBars` fill wins.
+
+* **`c:hiLowLines` is the vertical range at each category**, from the largest value there
+  to the smallest — 18 down to 8 on a 0..20 axis, drawn at 25.606 and 98.123 pt, both on
+  the axis to 0.001 pt — at the band centre, in black at 0.5 pt by default and in the
+  file's own `a:ln` when it states one. Presence is the switch. Only well-formed data was
+  probed, so "the largest and smallest of every series" and "the second and third series"
+  are not separated by any observation here; the former is implemented, because it is the
+  one that cannot pick the wrong pair when the series are ordered differently.
+
+* **The legend key is the line chart's rule with the marker on it**, 19.200 pt, confirmed
+  on the bottom-legend probe.
+
+#### Surface — measured, and **drawn**
+
+`surfaceChart` was the last group element PowerPoint renders that this did not, and it is
+drawn now: a lit 3-D mesh coloured by value band, both spellings of it, with a legend of
+those bands. What this section used to say — six probe charts, a refusal, and a list of
+seven things none of which existed — is kept below as the reading that was right, with
+what each of them came to. Five probe decks settle it: `view3d-surfshape` (110 slides),
+`view3d-surfmesh` (28), `view3d-surflight` (34), `view3d-surflit` (29) and
+`view3d-surfband` (22), all in `tools/make_view3d_probe.py`.
+
+**The reading that was already right, and still is.**
+
+* **A lit 3-D mesh, in perspective, for the spelling without "3D" in it too.** ECMA-376
+  calls `c:surfaceChart` a contour chart and the obvious reading is a flat 2-D map. It is
+  not: `view3d-surfshape` draws twelve cells both ways and they come back **equal to the
+  digit** — the same face, the same lattice, the same depth. So `surfaceChart` is in
+  `THREE_D_CHART_KINDS` although its name does not say so, which is what gives it the bare
+  (unpadded) value axis every other 3-D group gets.
+* **`c:wireframe val="1"` replaces the fill with a stroked mesh** and nothing else changes.
+* **The surface is coloured by value band, not by series**, each facet shaded by its
+  orientation.
+* **The legend is of those bands**, printed as `0-5`, `5-10`, `10-15`.
+
+**The scene is a `line3DChart`'s exactly, and that is measured rather than borrowed.** A
+surface's categories sit **on** the ticks, so the first and last category labels stand on
+the drawn face's own left and right edges while the extreme value labels stand on its top
+and bottom ones — which gives the face's width and its height directly, with no region and
+no model in between, and the raster's ink box on top of that gives the depth vector. Over
+42 cells, two to eight categories against one to six series at two cameras each:
+
+> aspect = `floor((across + series) / 2) / categories` of the region's own, and
+> depth = `series / categories` of the scene's width.
+
+Every cell's free fit lands within 0.01 of the integer, and the depth within 0.3%.
+`across` follows `c:crossBetween` here too, which the eight-category pair separates —
+spelled `between` it reads 5 where its `midCat` twin reads 4 — and **`midCat` is the
+default**, read off the probe that states the attribute nowhere and draws its `midCat`
+twin's picture to the digit. `c:depthPercent` scales the depth alone, a stated
+`c:hPercent` replaces the region's aspect, and `c:gapDepth` moves neither: 0 and 500% draw
+the identical picture.
+
+**The lattice spans the whole depth, front row to back.** `view3d-surfmesh` paints every
+band one and the same red through `c:bandFmts`, which is what makes the sheet separable
+from the floor by colour alone — the scene's own ink box is the floor's and says nothing
+about the mesh — and stands each row flat at a value of its own, so a row's own scanline
+gives its front-left corner. Two, three, four and five rows come back at `0, 1`,
+`0, ½, 1`, `0, ⅓, ⅔, 1` and `0, ¼, ½, ¾, 1`. **Series one is the front row** whatever its
+values, read off the probe whose rows descend. A **one-series** surface draws no sheet at
+all, which is PowerPoint's own picture.
+
+**Each cell is two triangles, split along its near-left to far-right diagonal.** Measured
+and not chosen: a cell with three corners level and the fourth pulled down draws **two**
+tones, one of them the level tone its neighbour draws — which that diagonal gives and the
+other cannot, since it would split the same cell into two sloped triangles and draw three.
+Predicted, the two tones land within one 8-bit level at three heights.
+
+**A surface is lit by a different light, and only the direction differs.** The prism and
+the ribbon are lit from 22° right of the viewer and 29° above; a surface's sheet is lit
+from the **corner** — `(1, 1, 1)/√3` — with the same ambient and the same diffuse. That is
+a free fit of `ambient + u·nx + w·ny + q·nz` to **96 facets**, which returns 0.3946,
+0.4345, 0.4339 and 0.4317: three light components inside 0.7% of each other and an ambient
+that agrees with `VIEW_3D_AMBIENT` to the fourth place. The instrument is the ribbon's,
+turned on a sheet — a facet whose normal the drawn geometry gives, with `c:hPercent` and
+`c:depthPercent` as the levers that tilt it from level to nearly vertical in each of the
+scene's two planes without touching the data. Read back with the **shared** constants,
+every one of the 104 facets is inside **two 8-bit levels**, mean 0.66. The prism's own
+light is refuted by a wide margin: it puts a level sheet at 0.7587 where PowerPoint draws
+0.8275.
+
+Two more things the same sweeps settle. It **clamps at both ends** — `ambient + diffuse`
+is 1.1412 and the brightest facet measured is 1.0000 exactly — and a facet the light
+misses is a flat **0.4000**, where `max(0, n·L)` puts it at the ambient 0.3947. That 1.4
+levels is the whole of the disagreement and is left where it is. The edge-on case is what
+confirms the projection under all of this: a sheet falling away at exactly the pitch shows
+its **underside**, and `sm-c5-n2-down` tilts its rows 15.0° at `rotX=15` and does.
+
+**The bands are the value axis' own major intervals.** No band count of its own and no
+rule of its own: coarsen the axis and the bands coarsen with it, which is why the same data
+draws five bands on a short frame and nine on a tall one. Eleven axes from `-20..20 by 10`
+to `0..1,4 by 0,2` say so, and the legend names every boundary — the two ticks' own text
+joined by a hyphen, in the axis' own number format (`0,00-2,00` under `0.00`, `0%-200%`
+under `0%`, and `-4--2` at the bottom of a signed axis, PowerPoint joining the strings and
+leaving the signs where they fall). `c:bandFmts` overrides a band's fill by an index that
+counts **from the axis' minimum up**, and the override reaches the legend key as well.
+
+**The band colours are the per-point accent cycle, turned two bands early.** The legend's
+swatches are vector and are the fills exactly, which is what made this readable: 3 and 4
+bands come back `#4472C4 #ED7D31 #A5A5A5 #FFC000`, 5 and 6 come back the same six
+*darkened*, 7 adds a light `#8FA2D4` after them, and 9 and 10 bands carry the darkened six
+followed by light accent1, accent2, accent3 and accent4. So it is `_cycle_accent` exactly
+and only its threshold moves — four bands draw the plain accents where four *points* also
+do, and five bands draw the darkened ones where five points do not. What the two extra
+colours are for is not identified; `BAND_COLOR_CYCLE_SLACK` is that two and says so.
+
+**A side legend stands beside the region and below the title**, and both halves of that
+came out of this slide. PowerPoint's nine band keys stand at 685.5 pt where the scene's
+own *face* plus the lead gap is 565.5: the legend's band comes off the frame before the
+camera is fitted into what is left, so the scene shrinking its front face does not pull the
+legend in after it. And the block is centred in the frame **less the title's band** — 9.38,
+13.04 and 19.15 pt below the frame's centre at 8, 14 and 24 pt of title, unmoved at every
+camera on the thirteen titleless probes beside them, and the same on a flat control. Twice
+those shifts is `line_height + 8.99` at all three sizes, and it is a constant of the title
+rather than a share of the frame: 120, 250 and 330 pt frames all read 13.04. That is **not**
+`TITLE_BAND_LINES` times the line, which is the band the axis' interval count is measured
+against and reads 14.42, 25.24 and 43.27 against this one's 18.76, 26.08 and 38.30 — the
+two agree at 14 pt and nowhere else, which is why one stood for the other until a size
+sweep was run. Gallery slides 4, 7 and 15 moved with slide 12 for that reason, all three
+upwards.
+
+**What it cost and what it bought.** Gallery slide 12 goes from **0.5313 / −0.0470** to
+**0.5694 / 0.9095**, with mean absolute error 17.47 → 6.61 and pixels over 10% 13.25 →
+5.91; the deck goes 0.7303 → **0.7345** and its histogram 0.7891 → **0.8443**, and slides
+4, 7 and 15 gain 0.0019, 0.0161 and 0.0150 from the legend's title band. Nothing else in
+the corpus moves to four decimals. Put the two renders side by side and the difference is
+edges: the mesh's own colours are exact, the nine band names are PowerPoint's string for
+string, and what the difference image shows is antialiasing along the contours, where
+PowerPoint rasterises the whole scene at once and we draw vector polygons.
+
+The one thing drawn here that PowerPoint does not draw is a **hairline in each facet's own
+colour**: two polygons sharing an edge antialias against the paper rather than against each
+other, so a mesh of them comes out with a pale seam along every edge. The stroke closes it
+and moves the silhouette by a fortieth of a point; it took slide 12 from 0.5154 to 0.5685
+on its own.
+
+**What is left, and it is small.** A **one-series** surface draws its scene and no sheet,
+which is PowerPoint's picture — but PowerPoint also draws a degenerate `0..1,5` value axis
+under it where we draw the data's own, and that axis is not modelled. A surface with
+**no camera** (`c:rAngAx="0"`, or no `c:view3D` at all) keeps its axis and its legend and
+declares `chart-3d-flattened`, exactly as a `bar3DChart` under the same camera does: what
+those select is the perspective scene, which nothing here draws for any group element.
+
+#### What the new types cost the corpus, and what they bought
+
+No corpus deck holds a bubble, an ofPie or a stock chart, so nothing scored moves and that
+is the point: `authoring-integration` holds at 0.9327/0.9984, `table-test` at 0.9895/0.9984
+and `real-college-template` at 0.8003/0.8753, all unchanged to four decimals despite the
+accent ramp, the `_place_label` gap parameters and `_is_line` all being shared with chart
+types those decks *do* hold. The probe decks, scored the same way:
+
+| probe deck | before | after |
+| --- | --- | --- |
+| bubble 1 (12 charts) | 0.3640 / −0.0254 | **0.9338 / 0.9639** |
+| bubble 2a (6) | 0.4053 / −0.0232 | **0.9252 / 0.9762** |
+| bubble 2c (4) | 0.3605 / −0.0013 | **0.8900 / 0.9775** |
+| bubble 2d (1) | 1.0000 / 1.0000 | 1.0000 / 1.0000 |
+| bubble 3 (8) | 0.3677 / −0.0124 | **0.9246 / 0.9432** |
+| ofPie 1 (12) | 0.6767 / −0.0299 | **0.9910 / 0.9994** |
+| ofPie 2 (12) | 0.6638 / −0.0270 | **0.8949 / 0.9944** |
+| stock 1 (12) | 0.0894 / 0.0098 | **0.5733 / 0.8683** |
+
+The bubble decks sit where the scatter deck sits and for the same reason: circles on white
+are a pixel of antialiasing per edge and SSIM is punishing about that. Put side by side at
+1400 px they are indistinguishable.
+
+**The two that stay low are both explained, and neither is a bubble, ofPie or stock
+defect.**
+
+* **ofPie 2 is the wrapped legend.** Its `legb` chart has six entries; PowerPoint laid
+  them out as two rows of three and we lay them out as one row of six with the last name
+  broken over two lines, which moves both plots 8 pt down. That is the *Where a wrapped
+  legend's rows sit* gap already recorded below. Its `dlbl` chart is the label shrink
+  recorded above. Every other chart on the deck is exact.
+* **stock 1 was the unsolved value-axis rule**, and it added one more observation to the
+  section below rather than being a stock defect: 8..18 of data on a 145.035 pt axis comes
+  back **0..20 by 2** — ten intervals at 14.504 pt — where the old rule gave 0..20 by 5.
+  The measured rule draws PowerPoint's: its 181.1 pt frame has room for ten intervals, and
+  18.9 padded over ten rounds up to 2. Every stock-specific number on that deck
+  reproduces: the hi-low lines land within
+  0.07 pt, the bar widths within 0.005 pt, the bar tops and bottoms within 0.06 pt, the
+  up/down assignment on all five categories, and the default fills exactly. What costs the
+  SSIM is six missing gridlines and six missing axis labels on each of twelve charts.
+
+#### Rotated category labels, measured
+
+The category labels turn when they will not fit, and until this was measured it was the
+worst-looking thing any corpus deck did: `real-financial-report.pptx` slide 3 reserved
+27.3 pt under its plot against PowerPoint's 69.5 and printed five Japanese labels on top
+of each other.
+
+Twelve probe charts across two decks, five categories each in the same
+220.4724 x 181.1024 pt frame with 10 pt Aptos labels, exported and read back as exact
+vector coordinates. One deck sweeps the label from a fifth of its band to four times it;
+the other straddles exactly one band, which is what turns the threshold from a guess into
+a window.
+
+* **The rule is that the widest label is wider than its own band** — and, once
+  *Wrapped category labels* below is taken into account, specifically the widest
+  unbreakable **token**, which is the same thing for every label in this sweep because
+  none of them contains a space. On a 37.68 pt band a 36.62 pt label stayed level and a
+  38.59 pt one turned, so the threshold is inside (0.972, 1.024] and one band width is
+  the middle of it rather than a round number picked for tidiness. The *widest* label is
+  what counts, not the first: the deck whose five labels differ only by a trailing letter
+  left a 0.73 pt residual until that was fixed, which is exactly the 1.01 pt difference
+  between Aptos' `A` and its `D` times sin 45.
+* **The angle snaps to 45°.** Everything from 1.02 band widths to 4.18 came out at
+  exactly 45, reading up to the right — `rot="-2700000"` in DrawingML terms. No
+  intermediate angle appears anywhere in that range and nothing goes to 90. The corpus
+  deck confirms it independently at 12 pt, where its export's text matrix is 8.4853,
+  which is `12 cos 45`.
+* **The band under the plot becomes `21.39 + widest x sin 45`**, replacing the level
+  `6.5 + lineHeight + 0.615 em` outright rather than adding to it. Six probes, worst
+  residual **0.015 pt**.
+* **The label hangs off the far end of its rotated baseline**, 2.0 pt right of its band's
+  centre and 12.7 pt below the axis. Six probes, spread under 0.15 pt.
+* Neither fixture carries an explicit `rot=` on `a:bodyPr`, so all of this is
+  PowerPoint's own decision rather than anything the file asks for.
+
+And a contrast worth keeping, because it says this is a *category-axis* behaviour rather
+than a general label one: **a radar facing the same problem wraps instead of rotating.**
+Every `rot` in the radar long-label probe is zero and "Category Three" came back split
+over two lines as "Category" / "Three". That observation turned out to be the thread
+worth pulling: a bar chart wraps first too, and rotates only when wrapping cannot save
+the label. See *Wrapped category labels* below.
+
+One piece is measured and **not** shipped, because a probe refutes the obvious rule. The
+other — the cap — is now settled; see *The rotated label's cap is a truncation* below.
+
+* **The left inset.** It grows too once the first label reaches past the plot: 21.07 pt
+  level, then 21.68, 36.44 and 54.19 as the label widens, with the last two probes
+  sharing a value the way the bottom cap does. Solving it for the minimum pen position
+  gives 10.02, 8.56 and 6.78 — not one number — so it is left alone and our plot comes
+  out wider than PowerPoint's on the two most crowded probes.
+
+**What it bought.** On chart3 the bottom inset goes 27.29 -> 89.3 against PowerPoint's
+69.538, so the error more than halves and the labels stop colliding.
+
+**What the 19.8 pt left is — corrected.** This paragraph used to say it was the width:
+that `プラットフォーム` came out 96 pt through the `<a:latin typeface="Arial"/>` the axis
+names where PowerPoint laid it out "in a substituted CJK face at about 68". **The 68 was
+this very formula inverted through PowerPoint's 69.538 pt inset, not a measurement.**
+PowerPoint's own export draws all eight glyphs at exactly 12.000 pt — one em of the
+YuGothic-Regular it embeds — so the label is 96 pt drawn and 96 pt measured, and
+`デジタル`, `グローバル` and `その他` match to 0.000 pt as well. The error is this rule's
+missing cap, and the export adds a clue the probes could not: **PowerPoint truncated the
+label to `プラット…`**. That clue turned out to be the whole answer; see below.
+
+`authoring-integration` holds at 0.9327 and `table-test` at 0.9734, unchanged to four
+decimals: neither has a label wide enough to turn, so nothing this work did moves a
+scored number. The probe decks that measured it are throwaway and were deleted.
+
+#### The rotated label's cap is a truncation
+
+Three probe decks, 112 charts, built by `tools/make_label_probe.py` and read back by
+`tools/read_label_probe.py` — pen positions and drawn strings out of PowerPoint's own PDF,
+not rasters. The question was the cap the section above could not name. **There is no cap
+on the reserve. PowerPoint cuts the label and the reserve follows what it drew.**
+
+* **The ellipsis is one U+2026 and its own text object**, whose pen starts exactly where
+  the kept text ends. It is *inside* the allowance the prefix is measured against —
+  `f36`/`f37` bracket that at three characters — and *outside* the band, hanging past the
+  anchor towards the axis, which is why the reserve is sized from the prefix alone.
+* **The cut is by width, not by characters.** `MMMM…IIII` and `IIII…MMMM` are the same 32
+  characters and the same 177.7 pt; PowerPoint kept 10 of the first and 21 of the second.
+* **At least one character survives**: a 24 pt label on a 110 pt frame has an allowance of
+  2.5 pt and still came back as one character and an ellipsis.
+* **The allowance is a height rule.** Six frame widths from 150 to 500 pt and category
+  counts of 3, 5 and 8 reserved *identically* — the same trap the tick rule fell into,
+  checked the same way. A right legend changed nothing; a **bottom** legend, a **top**
+  legend and a **title** each moved it by their own band, on three frame heights each.
+* **The slope is `sin 45`**: the allowance runs from 21 pt of label on a 70 pt frame to
+  241 on a 380 pt one, straight, at every size.
+* **The band constant is not a constant.** `21.39` was fitted at 10 pt Aptos; the pen
+  positions put it at 14.70 pt for a 6 pt label and 39.94 for a 24 pt one. It decomposes
+  exactly into the level band with the label's box turned: `FRAME_PADDING_PT +
+  (lineBox + width) · cos 45 + 0.615 em`, to 0.28 pt over nine face/size pairs.
+
+**The 0.73 pt inversion — the observation that refused three rules — falls straight out.**
+The 2.92-band label is 91.86 pt and *fits* its 101.13 pt allowance, so it is drawn whole
+and reserves 86.23; the 4.18-band one is 130.90, does not fit, and is cut to
+`CategoryLongerStillA` at 90.83, which reserves 85.51. A cut prefix is necessarily a hair
+narrower than a whole label that just fits, so the wider category reserves *less*. Both
+land within 0.12 pt of PowerPoint and the gap between them is 0.728 against a measured
+0.728 — on two numbers that were not in the fit.
+
+**What is not settled: the offset.** The rule is "half the height, less a fixed drop", and
+95 two-sided readings do not agree on one number for that drop. Solved per size it is
+8.6 pt at 6 pt, 7.6 at 8, 6.4 at 10 and 12, and unconstrained above 14 — non-monotone, so
+not a linear term in the size either, and no affine model in (height, size) fits all 95.
+`ROTATED_LABEL_HEADROOM_PT = 6.25` is what the densest family gives (46 readings at 10 pt
+bracket it into (6.20, 6.31]) and it reproduces **78 of 95** exactly, drawn string and
+band alike. The other 17 miss by at most one and a half characters, concentrated at 6 and
+8 pt. The rival — `band ≤ (height − EDGE_INSET_PT)/2`, the plot keeping half the frame
+with no anchor term — brackets every reading at 10 pt *and below* and fails from 12 pt up.
+The two are the same rule with the anchor counted and not counted; the truth is between
+them and this data cannot say where.
+
+**Two things the sweep turned up that are not this rule:**
+
+* **PowerPoint's legend band is 2 × the face's *pitch*, not 2 × its line box.** Read off
+  three frames: 23.02, 23.02, 23.07 pt for 10 pt Arial, where `LEGEND_BAND_LINES ×
+  line_height` is 22.34. Same lineGap the wrapped-label ladder found. Not fixed here.
+* **A right- or centre-aligned line split by a font change drew its first chunk one chunk
+  width to the left.** `_render_line` resolves the line's anchor into a position and then
+  handed that position back with the line's own anchor. Four corpus slides were drawing
+  that way; the rotated label and its ellipsis were the fifth, which is how it surfaced.
+  Fixed, with a test.
+
+**The CJK probes are not a test of any of this.** The probe deck's Japanese fell back to
+**MS Gothic**, whose metrics this library does not carry (our `游ゴシック` is Noto Sans
+JP's table), so those 12 charts measure the font table, not the rule. The one Japanese
+chart drawn in a face we do approximate — chart3, in YuGothic — is reproduced: allowance
+62.3 pt, `グローバル` (60) kept whole, `プラットフォーム` (96) cut to `プラット…`, band
+68.59 against PowerPoint's 69.538.
+
+#### Wrapped category labels, and why the rotation rule was right in the wrong domain
+
+The rotation sweep above measured a real behaviour but measured it on labels built from
+one repeated character. `MMMMM` has nowhere to break, so rotation was the only move
+PowerPoint had, and the rule that came out — *turn when the widest label is wider than
+its band* — is only half of what it does. `real-college-template.pptx` slide 4 is where
+that showed: its eleventh category is `2012 (Proj)`, 54.41 pt on a 54.14 pt band, so
+every one of its eleven labels turned, and PowerPoint's own export leaves all eleven
+level and breaks that one over two lines.
+
+**Wrapping comes first; rotation is the last resort.** Three throwaway decks, 57 bar
+charts, same 220.4724 x 181.1024 pt frame and five categories as the rotation sweep, on a
+37.761 pt band read off the axis rule.
+
+* **The test is the widest unbreakable token, not the widest label.** `MMM MM` is
+  44.43 pt — 1.18 bands — and came back level on two lines; `MMMMM` is 41.65 pt, 1.10
+  bands, and turned. Straddling the band with a token instead of a label gives
+  (0.9857, 1.0151] — `xxxxxxxi M` at 37.22 pt wrapped, `HHHHHi M` at 38.33 pt turned —
+  and one band width is the only value inside both that window and the unbroken sweep's
+  (0.972, 1.024].
+* **The case that separates it from every other candidate rule** is
+  `Fiscal MMMMMMMMMMMM 2012`. It has two spaces in it, so "any break opportunity means
+  wrap" predicts level; PowerPoint turned it, because breaking it still leaves a 99.96 pt
+  token. (It also truncated it to `Fiscal…`, which is its own unmeasured behaviour.)
+* **The break set is whitespace, not Unicode line breaking.** `MMM-MM`, `MMM/MM`,
+  `MMM,MM`, `MMM_MM` and `MMM–MM` were each 44–47 pt on that band and PowerPoint turned
+  all five rather than breaking them, and `プラットフォーム` — 80 pt of CJK, which any
+  line-breaking algorithm would break anywhere — turned as well. The surprise is U+00A0:
+  `MMM<nbsp>MM` broke at the no-break space exactly as the plain space did. Tab and the
+  rest of `str.split`'s whitespace are **not measured**.
+* **One label that must turn turns all of them.** Four `MMM MM` beside one `MMMMM` came
+  back with all five at 45°, none of them broken. Rotation is a decision for the axis.
+* **A label that fits stays on one line** while its neighbour wraps, and sits on the
+  *first* row of the block: the block is top-aligned, and the first baseline is where a
+  one-line label's would be — 15.03, 15.05 and 15.07 pt under the axis at one, two and
+  three lines, one number inside PowerPoint's 0.12 pt grid.
+* **The band is the level band plus one line box per extra line.** A four-rung ladder in
+  five faces, one token per line by construction. PowerPoint's band grew by the same
+  amount from one line to two, two to three and three to four in every face, so this is a
+  straight line rather than a fit:
+
+  | face | per extra line | our line box | residual |
+  | --- | --- | --- | --- |
+  | Calibri | 12.205 | 12.207 | −0.002 |
+  | Aptos | 12.205 | 12.207 | −0.002 |
+  | Courier New | 11.330 | 11.328 | +0.002 |
+  | Times New Roman | 11.075 | 11.074 | +0.001 |
+  | Arial | 11.500 | 11.172 | **+0.328** |
+
+**Arial is the one refutation, and it has a name.** PowerPoint's pitch is the face's full
+`hhea` line spacing — ascender plus descender plus *lineGap* — and Arial is the only one
+of the five whose lineGap is not zero: 67 units of 2048 is 0.328 pt at 10 pt, exactly the
+residual. That rule is **not** shipped, because `text/metrics.py` carries no lineGap and
+the file it would be generated from disagrees with the file PowerPoint used: our Tinos
+substitute has 87 where Office's own `times.ttf`, inside the app bundle, has 0. Adding
+the gap would trade a 0.33 pt error on Arial for a 0.42 pt one on Times New Roman, so the
+line box alone is shipped and the Arial shortfall is pinned by a test.
+
+Two more things measured and deliberately not shipped:
+
+* **Past six lines PowerPoint stops wrapping.** Six tokens gave six lines and an 81.212 pt
+  band, on the same straight line as one through four. Eight, twelve and twenty-four
+  tokens all came back on **two** lines in a 35.212 pt band, each line four band widths
+  wide and overlapping its neighbours. No rule reproduces both the linear part and that
+  collapse, so the band stops growing at six and a test records that we are then 44 pt
+  over. This used to read as the same shape of problem as the rotated band's cap past
+  90 pt of label — and that one turned out to be a **truncation**, so the wrapped
+  collapse is worth re-reading with the same question: what does PowerPoint *draw* at
+  eight tokens, rather than what does it reserve.
+* **An explicit orientation on `a:bodyPr` forbids the turn, and PowerPoint drops labels
+  instead.** `<a:bodyPr rot="0" vert="horz"/>` and `<a:bodyPr vert="horz"/>` both left
+  `MMMMM` level on a band it does not fit — and PowerPoint printed only every *other*
+  label, three of five, at twice the band pitch, rather than turning or overlapping them.
+  With a break available (`MMM MM`) the same axis wrapped exactly as a free one did. So
+  there is a third strategy under there — skipping to a wider tick-label interval — that
+  no corpus deck reaches and that is not implemented. Note that
+  `real-college-template.pptx`'s own chart carries `rot="0"`, so its labels would stay
+  level under this rule too; the wrap rule above is what actually reproduces its output,
+  and the two agree there.
+
+**What it bought.** `real-college-template.pptx` slide 4 goes 0.3484 → **0.3721** SSIM
+against the 0.3690 it scored before rotation existed, and its bottom band 59.9 → 37.8
+against PowerPoint's own two-line block. Its histogram goes 0.9694 → **0.9899** against
+0.9950, and it does not get all the way back: 0.9950 is reproduced *exactly* by reserving
+one line instead of two, which is 11.5 pt shorter than the band PowerPoint drew. The
+metric is not monotone in geometric accuracy on this slide — setting the plot bottom to
+PowerPoint's own, to the pixel, scores 0.4704 SSIM and 0.9842 histogram — so the last
+0.005 of histogram is only available by keeping a band that is measurably wrong. What is
+actually left on that slide is the **manual legend layout**: its `c:legend` carries a
+`c:manualLayout` we ignore, which is worth 4.8 pt of plot height and 9.5 pt of legend
+baseline, and no rule was found that composes the plot area around a manually placed
+legend (PowerPoint's plot bottom sits 13.4 pt above the legend's declared top, which is
+neither the declared height nor our band).
+
+`authoring-integration` holds at 0.9327 and `table-test` at 0.9895, unchanged to four
+decimals. The probe decks are throwaway and were deleted.
+
+#### The four radar readings that refuted a spacing rule, and what they are
+
+These four were taken to bracket a *spacing* threshold and could not: a radar accepted
+1.389 em of spacing and refused 0.929, where a bar chart's bracket was (1.543, 1.610) em
+on the same machine. Same frame, same data, the only variable the label font:
+
+| face | size | radius | PowerPoint | ours |
+| --- | --- | --- | --- | --- |
+| Aptos | 10 | 69.47 | 0..5 by 1 | 0..5 by 1 (N=6) |
+| Arial | 10 | 70.80 | 0..5 by 1 | 0..5 by 1 (N=7) |
+| Aptos | 14 | 63.36 | 0..6 by 2 | 0..6 by 2 (N=4) |
+| Arial | 14 | 65.04 | 0..6 by 2 | **0..5 by 1** (N=5) |
+
+They are not a spacing threshold; they are a *count*, and the count is the radius over the
+label's line box. Three of the four come out exactly; the fourth is Arial's `lineGap`
+again — its real `hhea` spacing is 16.09 pt at 14 pt against the 15.64 our metrics give,
+and 16.09 puts the count at four and the axis at 0..6 by 2. See "The value axis' tick
+rule, solved".
+#### The corpus contains no drawn data label
+
+Worth stating once, because two separate readings of the same files got it wrong. Five of
+the six charts carry a `c:dLbls` block. Four state every `c:show*` flag as 0. The fifth,
+chart4's doughnut, *does* set `showCatName` and `showPercent` — and then carries four
+`c:dLbl` overrides, one per point, that set every flag back to 0. PowerPoint's export
+confirms it: no label is drawn on any chart in the corpus. Counting `c:dLbls` elements
+says nothing; the flags have to be read, and then the per-point overrides on top of them.
+
+Data-label rendering is therefore verified **entirely against probes**.
+
+The ChartEx family warns `chart-unsupported-type` and draws an empty frame rather than a
+wrong picture; nothing in the `c:` reader does any more, `surfaceChart` having been the
+last one out. The shared infrastructure — value domain, tick
+selection, number formatting, gridlines, legend layout for all four `legendPos` values,
+plot-area rectangle, the polar region, markers, data labels — is built, and the three types
+that landed this week were mostly a matter of reusing it: the bubble is the scatter's
+layout with a disc per point, the ofPie is the pie's region with two plots packed into it,
+and the stock chart is the line chart with two decorations drawn over it.
+
+#### Every constant was measured, and the measurement kept correcting the reasoning
+
+Eighteen probe charts differing in one input each — title, legend on each of four sides,
+8/10/14 pt text, gap width, tick marks, series count, horizontal bars, stacked and
+percent-stacked grouping, negative values with and without `invertIfNegative`,
+`varyColors` — were laid out at an identical frame size, exported by PowerPoint 16.106,
+and read back out of the PDF as **exact vector coordinates**. Both sweeps are tests
+(`tests/test_chart.py`), rebuilt from their XML generators, so no binary is committed.
+
+Against `authoring-integration.pptx`, whose chart is half the slide:
+
+| | SSIM | histogram |
+| --- | --- | --- |
+| before | 0.8379 | 0.8106 |
+| after | **0.9327** | **0.9984** |
+| the chart region alone, after | 0.9124 | 0.9957 (was 0.0499) |
+
+Its plot rectangle, first bar, bar width and every text baseline land within 0.47 pt of
+PowerPoint's; all seven gridlines and the category axis land on the same pixel row at
+1280 px. The two bar charts in `real-financial-report.pptx` agree on all four insets to
+within 0.14 pt and on the axis exactly.
+
+What the measurement said that the reasoning did not:
+
+* ~~**The axis rule is the plain power of ten below the span, halved when the span is
+  under twice it.**~~ — refuted and replaced; see "The value axis' tick rule, solved". It
+  was read as "not a tick target" because no target reproduces both 0..9 → 0..10 by 1 (ten
+  intervals) and 0..1842 → 0..2000 by 500 (four); on a taller frame PowerPoint draws that
+  second one **by 200**, ten intervals, so the pair was one rule seen at two frame sizes
+  and the fit went to the shape of the smaller one.
+* **The tick-mark allowance is reserved whether or not tick marks are drawn.**
+  `majorTickMark="none"` and `"out"` produced byte-identical plot rectangles.
+* **The default axis and gridline colour is black at 0.5 pt, not grey.** Charts written by
+  modern PowerPoint carry a `c:style` or a chart-style part that overrides this; none of
+  the decks measured here does.
+* **A chart's axis labels and its title resolve through different cascades.** With no
+  `c:txPr` anywhere, PowerPoint drew `authoring-integration`'s axis labels in Aptos 10 pt
+  (the theme's minor face, the chart default) and its title, whose `a:rPr` names nothing
+  at all, in Arial 18 pt — the same fallback any unstyled text box gets.
+* **`c:txPr` names a typeface as well as a size.** Reading only the size measured
+  `real-financial-report`'s Arial labels in the theme face and put the plot area 1.7 pt
+  out.
+* **`varyColors` cycles the theme accents exactly.** **[pptx-renderer]** darkens them to
+  88%; PowerPoint's export says #4472C4, #ED7D31, #A5A5A5 unmodified.
+* **A negative bar is white with a *black* 0.75 pt outline**, and the series colour when
+  `invertIfNegative` is 0.
+* **`tickLblPos="nextTo"` means next to the axis, and the axis is at zero.** With negative
+  values PowerPoint reserves no band under the plot at all and prints the category labels
+  inside it, beside the zero line.
+* **A horizontal value axis comes out coarser than a vertical one** for the same data on
+  an axis of almost the same length. Measured again since, over six frame widths and three
+  label widths: its rung is four ems where a side axis' is one line box.
+
+One rule resisted: **the vertical centring of a one-line label on a tick**. Five
+measurements across two faces and three sizes fit none of half the cap height, half the
+x-height, half the line box, or the centre of the digits' own ink. The constant is the
+fitted mean and its worst residual is 0.61 pt.
+
+#### The value axis' tick rule, solved
+
+**The unit is a count, the count is a length, and the length is the frame's.** Both halves
+are measured and shipped:
+
+> The major unit is the finest 1-2-5 step that divides the **padded** data range into no
+> more than *N* intervals, where the range is padded 5% at each end (clamped at zero when
+> the axis is anchored there), and the extent is that padded range rounded outwards to
+> whole units. *N* is what the chart has room for:
+>
+> | axis | N |
+> | --- | --- |
+> | up the side | `floor((frame height − 22 pt) / line box) − 2`, capped at 10 |
+> | along the bottom | `floor((frame width − 23 pt) / rung)`, capped at 10, rung = max(4 em, widest label + 0.4 em) |
+> | radial (a radar) | `floor(radius / line box + 0.875)`, capped at 10 |
+>
+> The "frame height" is the chart frame less its title and less a legend above or below
+> it; the line box is the **tick labels' own face** at their own size. A radar pads
+> nothing and stops at the data.
+
+**616 readings over fifteen probe decks, and 611 of them reproduce exactly** — axis ends
+and unit both — where the shipped decade-and-halve rule reproduced 29 of the 94 scatter
+readings and 21 of their extents. (`tools/read_axis_probe.py` scores 609 of the 616; the
+two it cannot score are a 71 pt radar whose two labels pdfium merges into one, and the
+raster shows PowerPoint drawing the 0 and the 5 the rule asks for.) The five that differ
+are named at the end of this section. What each deck settled, in the order they were
+built:
+
+| deck | probes | what it settled |
+| --- | --- | --- |
+| `axis-decade` | 30 | the span's decade is never asked; the slack is unmeasurable |
+| `axis-density` | 25 | the unit moves with the frame's height |
+| `axis-count` | 17 | eleven intervals accepted, twelve refused; label *size* drives it |
+| `axis-pad` | 12 | 5% of headroom at each end, bracketed from both sides |
+| `axis-shape` | 10 | on an anchored axis the headroom is 5% of the **maximum** |
+| `axis-bar` | 7 | a real bar chart obeys the same rule; 0..1842 is by **200** on a tall frame |
+| `axis-coarse` | 64 | **the count is a function of the frame, not of the plot** |
+| `axis-rung` | 147 | the N-meter: the count, exactly, over ten frames and five label sizes |
+| `axis-band` | 101 | the rung is one line box and the reserve 22 pt; a legend and a title come off the top |
+| `axis-wider` | 83 | the rung is the **face's** line box, not a constant 1.2 em |
+| `axis-bottom` | 43 | the bottom axis' own rung and reserve, at two label sizes and three label widths |
+| `axis-scatter` | 12 | a scatter's x axis is that same bottom axis, swept over six frame widths |
+| `axis-radar` | 16 | a radar's count is not the side axis' read off the frame |
+| `axis-ring` | 40 | the radial axis' own count, the N-meter over eight frames |
+| `axis-corpusradar` | 9 | the corpus radar replicated, one variable removed at a time |
+
+**The count is read off the frame, and that is what a decade of contradictory readings
+turned on.** `axis-coarse` sweeps two datasets over eight frames on four chart types —
+scatter, column, line and area — and all four coarsen at *exactly* the same frame heights,
+although their plot rectangles differ by 14 pt because three of them reserve a band for
+category labels and a scatter does not. Fitted to the drawn plot instead, those 64
+readings have **no solution at all**: a 44.88 pt plot taking one interval and a 50.64 pt
+plot taking three force a rung under 5.8 pt, which the 74.16 pt plot's five intervals then
+contradict. That is why the old readings could not be ordered — they came from different
+types and were compared by their plots.
+
+The N-meter is how the count was read rather than bracketed. Five datasets whose 1-2-5
+boundaries fall at N = 2, 3, 5, 10, 4, 8, 7 and 9 name every N from 1 to 11 by the units
+they draw together, so one cell of five slides reads the count exactly. Ten transition
+scans then walk the frame two points at a time either side of a step:
+
+| label size | N=2 at | N=10 at | rung | reserve |
+| --- | --- | --- | --- | --- |
+| 6 pt | (51, 52] | (109, 110] | (7.13, 7.38] | (21.70, 22.11] |
+| 10 pt | (70, 71] | (168, 169] | (12.13, 12.38] | (21.52, 22.17] |
+| 14 pt | (90, 91] | (227, 228] | (17.00, 17.25] | (21.92, 22.64] |
+| 20 pt | (119, 120] | (314, 315] | (24.25, 24.50] | (21.34, 22.03] |
+| 28 pt | (158, 159] | — | (34.00, 34.50] | (21.56, 22.28] |
+
+The rung is (1.2143, 1.225] ems and Aptos' own line box is 1.2207; the reserve's five
+brackets intersect at **(21.92, 22.03]**, which is `2 * EDGE_INSET_PT`. Arial labels cross
+their transition 4 to 9 pt lower — a *face* ratio and not PowerPoint's constant 1.2 em line
+box for running text — so the rung asks the face.
+
+**The rung is the face's full `hhea` pitch, `lineGap` included, and that is now carried.**
+All ten scans are Aptos, whose gap is zero, so they cannot separate pitch from line box;
+Arial's gap is 67 units of 2048 and it can. Read with the line box the Arial readings are
+not merely loose but *contradictory* — PowerPoint steps up between 160 and 165 pt of frame
+and `22 + 12 × lineBox` puts the step at 156.0 to 156.1 for every reserve in the 22 pt
+bracket, which is outside that window. With the pitch (11.499 pt at 10 pt) the same
+expression gives 159.91 to 160.02, inside it. `FontMetrics` now holds the *Office* face's
+`lineGap` — Arial's 67, not the Arimo we draw with — and the rung asks for it.
+
+**A bottom axis is a different rung.** Four ems rather than one line box, bracketed to
+(4.00, 4.02] at 10 pt and (3.78, 4.18] at 20 pt, with a 23 pt reserve in (22, 24]. What
+four ems *is* was not identified, and it is not the label: "10" is 0.9 em wide and "10000"
+2.5 em, and both cross the same rungs at the same frame width. A label *wider* than the
+rung does push it — eight-digit labels cross 50 pt later — which is the `+ 0.4 em` term,
+and that family does not fit one rung: its two crossings ask for 0.40 and 0.93 ems. Wider
+still and PowerPoint stops choosing a unit at all: 0..9e6 in a 260 pt frame came back
+labelled 0, 4e6, 8e6 on an axis still ending at 1e7, which is a **skipped tick** rather
+than a 1-2-5 unit. Nothing here draws that.
+
+`HORIZONTAL_MAX_INTERVALS` is **subsumed**, and it was an artefact of its probes' frames:
+all four sat on 160 to 200 pt frames, where the measured rule also says three or four. On
+a 684 pt frame it drew four intervals where PowerPoint draws ten. A scatter's x axis sweeps
+the same rungs at the same widths as a horizontal bar chart's, six for six.
+
+**A radial axis is not the side axis seen sideways.** A radar's rings are counted off its
+own radius with no 22 pt of frame inset and no two end labels, and it pads nothing — with
+5% added its own ring sweep needs eleven intervals where ten is the most any axis takes.
+Nine replicas of `real-financial-report.pptx`'s radar, one variable removed at a time,
+agree: its two rings are a hundred over four rounded up the ladder to fifty, and four is
+what its 45.56 pt radius holds.
+
+**What the five misses are.** Four are the bottom axis with labels wider than its rung,
+where the single-rung approximation leaves two windows about 15 pt wide at each crossing —
+three of those four are the skipped-tick case above, which is a different mechanism
+altogether. The fifth was an Arial side axis crossing 5 pt early, and that is now the
+`lineGap` above: **it still misses, but by 0.012 pt instead of four points of frame.**
+`(160 − 22) / 11.499` is 12.00104, and taking nine intervals there needs the reserve above
+22.012 — which is inside the Aptos bracket (21.92, 22.03] and just outside the round
+`2 * EDGE_INSET_PT` we ship. The two brackets intersect at (22.012, 22.03], so the model is
+consistent and it is the tidy 22 that the intersection now excludes. **Not moved**: one
+reading against a constant with a meaning is a fit, and an Arial scan at 161 to 164 pt
+settles whether the reserve is really 22.02 or whether the missing hundredths are something
+else. All five are in the constants' docstrings with their brackets.
+
+**What this fixes in the corpus.** `real-financial-report.pptx`'s line chart — 43 of data
+on a 112.5 pt frame — drew 0..50 by 10 where PowerPoint draws **0..60 by 20**; it now draws
+PowerPoint's. That is the only chart in the corpus that moves, and it is the one the old
+section below called the case that exposes the problem. The other three corpus axes
+(0..6 by 1, 0..5000 by 1000, 0..2000 by 500) and the radar's two rings all come out
+unchanged, from the new rule rather than from the old one.
+
+#### Axis tick marks, measured
+
+Nothing drew a tick mark until `tools/make_tick_probe.py`. Its decks strip every other
+stroke off the page -- no gridlines, filled and unstroked series -- so what is left is the
+axis lines and their ticks, read back as exact segments by `tools/read_tick_probe.py`
+(`--compare` scores ours against them). Every rule lives in `resolve/chart.py` with its
+readings; in short:
+
+* **Length is the axis label's ascent**: a third of it for a major tick, a quarter for a
+  minor one. Aptos 3.130 pt at 10 pt through 8.763 at 28; Arial 3.019, Times New Roman
+  2.970, Courier New 2.775 at 10 pt -- an ascent rule, not an em one. The text is the
+  axis' own, and `tickLblPos="none"` does not change it.
+* **`out` points away from the plot and stays there**: left of a value axis, below a
+  category axis, even when a negative minimum floats the category axis to the zero line.
+  Only `c:crosses="max"` turns it. `in` is the other side, `cross` both, full length each.
+* **Where**: every major and minor unit on a value axis, both ends included (a minor
+  unit is a fifth of the major when unstated); every band edge on a category axis, and a
+  minor half a step past each major one with the last pulled back onto the far end.
+  `c:tickMarkSkip` thins both.
+* **Stroke** is the axis line's, dash included; a deleted or `a:noFill` axis has none.
+* **Radar**: the value axis' ticks on every spoke, turned with it, and none of the
+  category axis'. `c:majorGridlines` takes the major ticks away -- which is why
+  `chart-gallery`'s radar draws none -- and leaves the minor ones.
+* **A missing element is `cross`, unless PowerPoint 2007 wrote the deck.** Then it is
+  `out` for the major and `none` for the minor, and a default stroke is `#898989`, not
+  black. `real-college-template`'s chart copied into a probe deck drew what the deck
+  does not; its workbook changed nothing, and rewriting `docProps/app.xml` to say
+  `AppVersion` 12.0000 changed everything. 14.0000, 15.0000 and 16.0000 read as a deck
+  naming no version does.
+* **`tickLblPos="low"` moves the labels, not the line**: the category axis and its
+  ticks stay on the zero line (`col-neg-low`, and `real-college-template`'s own axis).
+
+Not drawn: the **3-D** charts' ticks, which PowerPoint draws in its projection (this
+library draws none on any 3-D spelling rather than flat ones in the wrong place).
+
+Found on the way and fixed: **a chart line rising to the right was drawn as its mirror
+image.** The `line` preset runs from its box's top-left to its bottom-right, and the
+chart's connectors never set `flipV`, so a radar's spokes up and to the right of the
+centre came out down and to the right. Nothing else in a chart is diagonal, which is why
+`real-financial-report` slide 4 -- the radar -- is the one slide it moves.
+
+Found on the way and **not** changed here:
+
+* **A missing `c:delete` deletes the axis** in any deck not written by PowerPoint 2007 --
+  no line, no ticks, no labels. We draw it, which is the 2007 reading.
+* **A radar with no `c:majorGridlines` draws no web** on these probes, against the
+  earlier reading that the rings are always drawn.
+* The probes' own layout disagreements, which the ticks only make visible: a 14 pt
+  title's band (`chart-gallery` slides 4 and 17, whose plot top is 3 pt off -- the reason
+  those two slides lose a few points of loss to correctly drawn ticks), a stated
+  `c:majorUnit` whose maximum is not a multiple of it, `crossBetween="midCat"` on a
+  column chart, `c:crosses="max"` on a value axis, and `tickLblPos="high"`.
+
+| Slide (svg truth) | SSIM | loss |
+| --- | --- | --- |
+| `chart-gallery` 1 | 0.6885 → **0.6889** | 21,922 → 21,913 |
+| `chart-gallery` 2 | 0.9332 → **0.9339** | 8,420 → 8,330 |
+| `chart-gallery` 3 | 0.8554 → **0.8588** | 4,740 → 4,630 |
+| `chart-gallery` 5 | 0.8116 → **0.8171** | 5,208 → 5,060 |
+| `chart-gallery` 6 | 0.5840 → **0.5845** | 33,860 → 33,838 |
+| `chart-gallery` 11 | 0.0924 → **0.0938** | 34,799 → 34,788 |
+| `real-financial-report` 3 | 0.8865 → **0.8866** | 17,470 → 17,452 |
+| `real-financial-report` 2 | 0.9384 → **0.9392** | 9,809 → 9,679 |
+| `real-financial-report` 4 (the spokes) | 0.8692 → **0.8745** | 20,630 → 19,790 |
+| `real-college-template` 4 (the low axis line) | 0.4034 → 0.4034 | 129,176 → 128,668 |
+| `chart-gallery` 4 | 0.8842 → 0.8842 | 41,894 → 41,931 |
+| `chart-gallery` 17 | 0.7634 → 0.7632 | 46,045 → 46,123 |
+
+The pdfium truth moves the same slides the same way. Two histograms fall with the new ink
+while every other column rises -- `chart-gallery` 3 (0.6206 → 0.6126) and 5 (0.5433 →
+0.5358), a line and a scatter whose histograms are low for their series colours -- and
+the ticks on those slides land within 0.12 pt of PowerPoint's.
+
+#### Not done for the ten types that draw
+
+Each of these is known-missing rather than merely absent:
+
+* **Data-label wrapping**, and **`c:separator` on an area chart**. PowerPoint wraps a long
+  category name onto two lines inside a multi-part label; we draw it on one. `c:separator`,
+  `c:leaderLines` and a data label's own `c:layout` are read or ignored but never drawn.
+  The area probe adds a measurement to that: a label showing category name *and* value
+  came back joined with `"; "` on **one** line and wrapped mid-word when it did not fit
+  (`Rendere` / `r; 5`), where a bar chart's multi-part label stacks its parts on separate
+  lines. Ours stacks for both. The bar behaviour is measured and shipped; the area one is
+  measured and **not** — changing the join would need the wrap that goes with it, and this
+  is the same known gap either way.
+* ~~**A line chart's legend key.**~~ — done. Four line-chart legend probes confirm the
+  radar's 19.200 pt of rule with the marker at its midpoint and 2.025 pt before the text,
+  and add that a series with `c:symbol val="none"` still gets the rule, and that the
+  numbers are **points, not ems**: a 14 pt legend measured the same 19.200 and 2.025 as a
+  10 pt one. `real-financial-report.pptx`'s line chart is the deck that wanted it, and it
+  is skipped by the scorer on this machine for want of Noto Sans JP, so the improvement is
+  not in a scored number.
+* ~~**Where a wrapped legend's rows sit.**~~ — done and measured; see *The legend row, and
+  what wraps inside it* below. The block is still the rows centred on the frame; what was
+  wrong is that each entry's baseline was centred in its *opened* row. It sits half of an
+  **unopened** row below the row's top, so the extra lines hang below, and chart4's five
+  baselines now come out within 0.2 pt of 26.46, 43.50, 56.70, 86.94 and 116.94 where
+  centring the opened row was 5.9 pt low. Two things about that chart are still not drawn
+  right: the **drop to a wrapped entry's second line** is the drawing face's line box --
+  17.04 pt for its Japanese face, where our text renderer drops a flat 1.2 em -- and the
+  band that holds it is the **Latin** face's box, which is a separate number.
+* **`bestFit` is a fixed fraction of the radius.** PowerPoint's moves a label out of the
+  way when it does not fit; the probe pie's labels all fit, so that behaviour was never
+  exercised.
+* ~~**`c:smooth`'s tension.**~~ — done and measured; see *Two constants the new probes
+  corrected* above. It is the plain Catmull-Rom 1/6, and the terminal control points are a
+  *third* of their own chord rather than a sixth, which is the reflected phantom point and
+  not the duplicated one this used to draw. Thirteen ordinates reproduced to 0.08 pt.
+* ~~**Rotated category labels.**~~ — done and measured; see *Rotated category labels,
+  measured* and *Wrapped category labels* below. Labels wrap at spaces before they turn,
+  and the band grows a line box for every extra line. Four pieces are **not** done and
+  are named there: PowerPoint caps the band it reserves past about 90 pt of a turned
+  label in a way no clamp reproduces; it widens the *left* inset by up to 33 pt, which
+  three measurements do not fit; it stops wrapping past six lines and lets the label
+  overflow; and an explicit orientation on `a:bodyPr` makes it drop every other label
+  rather than turn them, which nothing here implements.
+* **Axis titles**, **minor gridlines**, **`c:dTable`**, and manual
+  `c:layout` for the plot area or the legend.
+* **Secondary axes.** A `c:barChart` group is tied to its axes through its own `c:axId`
+  list, which is the hard part and is done; a second value axis is then mostly drawing.
+* **Log scales** and `c:tickLblSkip` (`c:tickMarkSkip` is drawn). `c:crosses` and `c:crossesAt`
+  move the category axis but have only been measured at zero — except on a scatter, where
+  the negative-x and negative-y probes measure both crossings at the other axis' own zero.
+  `c:crossBetween="midCat"` **is** measured now, on an area chart; the same placement is
+  applied to a line chart stating it, which no probe has exercised.
+* **`dispBlanksAs="span"`** is treated as `gap`, which is right for a bar chart and will
+  not be for a line one. It is unmeasured on an area chart and on a scatter, where the
+  line chart's reading is reused.
+* ~~**A scatter's `c:bubbleSize`.**~~ — done and measured; see *Bubble, measured*. A
+  scatter or bubble series' `c:trendline` and `c:errBars` are still neither read nor drawn,
+  and neither is `c:dropLines` on a line or stock chart.
+* **`c:crossBetween="midCat"` on a bar chart.** Excel writes it for the category axis'
+  "Axis position: on tick marks" checkbox, so an ordinary column chart carries it, and
+  `_draw_bars` still lays its bars into bands. Ours therefore keeps a `midCat` bar chart's
+  labels in the bands with its bars — the one reading that cannot contradict itself — and
+  what PowerPoint actually draws for that file is **not measured**. Only `areaChart` and
+  `lineChart` put their marks on the ticks.
+* **A scatter data label at `b` is 0.9 pt low**, the one loose number in the five
+  placements. It is the slack this file records elsewhere: PowerPoint's line box runs about
+  a point taller than our metrics give, so a placement hung off the *ascent* inherits all
+  of the difference where one hung off the descent inherits none. One constant is used for
+  both rather than two fitted ones.
+* **A horizontal legend's entry pitch is 1.3 to 2.2 pt out** on both new types, and the
+  measurement says so: the area probe's two bottom entries are 40.375 pt apart and the
+  scatter's 55.127 pt, which is 7.58 and 8.97 pt of gap after the entry's own width where
+  `LEGEND_ENTRY_GAP_EM` gives 5.0. No single number produces both, so the constant fitted
+  to the bar legends is left alone and the residual recorded.
+* The chart frame's rounded corners (`c:roundedCorners`) and effects.
+* **Three things the new types measured and did not ship**, each with one observation
+  behind it and named where it was measured: a bubble label PowerPoint pushes back inside
+  the frame rather than letting it overflow; the shrink an ofPie applies to both its plots
+  when it has data labels; and the dark disc PowerPoint draws where an empty second plot
+  would be. See *Bubble, measured* and *Of-pie, measured*.
+* **The ChartEx family** — treemap, sunburst, histogram, box-and-whisker, waterfall,
+  funnel and map, all new in Office 2016. They are a `cx:chartSpace` part in a different
+  namespace with a different data model, sharing no markup with `c:chartSpace`, so they are
+  not a missing case in the chart reader but a second format. They draw an empty positioned
+  frame and warn `chart-unsupported-type`. **They used to warn the wrong thing**: their
+  graphic frame's first child is also called `chart`, so `parse/shapes` fell through to the
+  ordinary chart path and reported "names no chart part" — true of the `c:` relationship
+  and false about the file. `GRAPHIC_DATA_CHARTEX` tells them apart now. The picture was
+  always right; only the diagnosis was wrong, and this is exactly the class of defect the
+  review note below is about.
+
+#### What the probe sweeps could not catch
+
+A review of the finished branch found ten defects, and the shape of them is worth keeping:
+**both sweeps assert the plot rectangle, and four of the ten got the rectangle right while
+drawing the wrong thing inside it.** A horizontal chart's gridlines ran across the bars
+instead of up the plot; `barDir` swapped which line each axis' `c:delete` and `c:spPr`
+applied to; `c:catAx/c:txPr` and `c:overlay` were parsed and then never read. Two more
+silently lost data — a series longer than the labelled one lost its tail, and a
+`c:multiLvlStrCache` without `c:ptCount` lost every label — and three were crashes on
+numbers a file controls (`c:gapWidth="-100"` divides by zero; a datum near the float
+ceiling overflows the axis rounding; a denormal span underflows the unit).
+
+The lesson is not that measuring was wrong — it is that a measurement pins the *frame* and
+says nothing about the *contents*, and that the four orientation bugs all lived in the one
+variant with no corpus deck behind it. Anything drawn, not just the box it is drawn in,
+needs its own assertion; a parsed field with no reader needs one too.
+
+### 3.2a What the chart gallery measures
+
+`tests/fixtures/chart-gallery.pptx` (written by `tools/make_chart_gallery.py`, one chart
+type per slide, 17 slides) is the first chart-heavy deck the oracle can score. Its mean is
+**SSIM 0.7303 / hist 0.7891** (0.6413 / 0.8170 when this table was first written; slides 1
+and 17 moved in 3.3, every slide with a horizontal legend moved in 3.5, slides 14 and 16
+moved in 3.4, slides 13 and 14 moved again when their scenes were **drawn** in 3.4, and
+slides 6, 9 and 11 moved in **3.2b**), and reading that as "charts are 70% right"
+would be wrong
+twice over — three of the seventeen slides are types we deliberately do not draw, and the
+rest are thin ink on white, where SSIM punishes a one-pixel shift like a missing element.
+The per-slide numbers are the measurement; the mean is not.
+
+| slide | type | SSIM | hist | cov | reading |
+| --- | --- | --- | --- | --- | --- |
+| 1 | `barChart` col, rotated labels | 0.6671 | 0.9960 | 0.083 | was 0.5611 before `c:overlap` entered the bar-width divisor (3.3) and 0.6556 before the legend gap (3.5); the plot rectangle is still a few pt wider than PowerPoint's |
+| 2 | `barChart` bar, bottom value axis, data labels | 0.9310 | 0.9989 | 0.138 | — |
+| 3 | `lineChart` | 0.6906 | 0.5920 | 0.040 | visually the same chart; 4% coverage of 1 pt strokes is what the number is. The legend gap (3.5) took the SSIM up and the histogram down, both for that reason |
+| 4 | `areaChart` stacked | 0.8814 → **0.8833** | 0.9998 | 0.394 | its side legend sits below the title band now; see 3.4 |
+| 5 | `scatterChart` | 0.7759 | 0.6225 | 0.031 | sparse, as slide 3 |
+| 6 | `bubbleChart` | **0.5512** | 0.9942 | 0.090 | was 0.4149. Both axes run 0–12 by 2 now rather than 0–10 by 1: the domain clears the bubbles' *ink*. Pixels differing by more than 10% went 10.7 to 3.8. See 3.2b |
+| 7 | `pieChart` | 0.8968 → **0.9132** | 0.9993 | 0.240 | the side legend's title band again; see 3.4 |
+| 8 | `doughnutChart` | 0.9717 | 0.9999 | 0.188 | the best slide in the deck |
+| 9 | `ofPieChart` bar form | **0.8979** | 0.9990 | 0.272 | was 0.8056, and **not** the divisor defect this table used to call it: the radius was right to 1%, the two plots were in the wrong place. Pixels over 10% went 14.9 to 2.2. See 3.2b |
+| 10 | `radarChart` | 0.7106 | 0.7318 | 0.036 | rings and spokes agree exactly, including the ring count; sparse |
+| 11 | `stockChart` | 0.0384 | 0.9608 | 0.045 | was 0.0499 and the picture is **right** now: the three wrong swatches are gone and the legend lays out on PowerPoint's own cell. Every other number improved — histogram 0.9593 to 0.9608, mean absolute error 5.53 to 5.02, pixels over 10% 4.81 to 4.40 — and the SSIM fell anyway. See below and 3.2b |
+| 12 | `surfaceChart` | 0.5313 → **0.5694** | −0.0470 → **0.9095** | 0.151 | its **mesh is drawn**: a lit lattice cut into nine value bands, with a legend of those bands whose nine names are PowerPoint's string for string. Mean absolute error 17.47 → 6.61 and pixels over 10% 13.25 → 5.91; the histogram was negative because the two pictures shared nothing. See 3.4 |
+| 13 | `bar3DChart` | 0.5882 → **0.7316** | 0.9404 → **0.9990** | 0.212 | its **scene is drawn**: prisms, floor, side and back walls. Mean absolute error 13.48 → 5.50 and pixels over 10% 10.26 → 4.83. See 3.4 |
+| 14 | `line3DChart` | 0.1223 → **0.5812** | 0.8871 → 0.6027 | 0.061 | its **scene is drawn** too: ribbons in depth, one row per series. Mean absolute error 7.78 → 3.07 and pixels over 10% 5.96 → 3.26; the histogram falls for the documented mask reason, and the ribbon faces are within two levels per channel of PowerPoint's. See 3.4 |
+| 15 | `pie3DChart` | 0.7614 → **0.7764** | 0.1336 → 0.1159 | 0.241 | the side legend's title band; its scene is still flat. See 3.4 |
+| 16 | `area3DChart` | **0.7551** | 0.9801 | 0.286 | was 0.7340 / 0.9931: its axis is PowerPoint's 0–50 by 5 now rather than 0–60 by 10, which is more ink in the right places and slightly more black on a slide whose scene is a raster. Stacked, so its scene is measured and not drawn. See 3.4 |
+| 17 | combo | **0.7433** | 0.9994 | 0.232 | was 0.6120: both groups, the right-hand axis and the two-entry legend are drawn now. See 3.3 and 3.5 |
+
+Three defects were new when this table was written and none of them were visible in the
+corpus before this deck. **All three are measured now**; 3.2b is what they came to, and
+two of them were not what this table said they were.
+
+Slides 3, 5 and 10 are the reminder the `tools/fidelity.py` docstring already gives:
+**SSIM is not a percentage of correctness on sparse line art.** A line chart that is
+indistinguishable from PowerPoint's at a glance scores 0.67 because 4% of the pixels are
+ink and half a pixel of stroke displacement moves all of them.
+
+**Slide 11 is now the sharpest example of that in the corpus, and it is worth reading
+before trusting any number in this table.** Its picture became right and its score went
+*down*. SSIM here is a mean over the pixels that are ink in *either* image, and the three
+swatches we used to draw were a twelfth of that mask scoring 0.28 where the slide's own
+average is 0.05. Deleting them removed more mask than loss, so the ratio fell while the
+picture improved. The unnormalised quantity says what actually happened: the total
+structural loss over the mask fell from **42577 to 39502**, and every other metric the
+harness records moved the right way. What is left of slide 11's 0.04 is its gridlines and
+axis sitting about a pixel off PowerPoint's, which is slide 1's plot-rectangle defect and
+not the legend's.
+
+### 3.2b The gallery's three defects, measured — **done**
+
+Three probe decks, **91 slides**, against 3.2a's three readings. Two of the three
+diagnoses in that table were wrong about the cause while being right about the symptom,
+which is the whole reason they were probed rather than patched.
+
+| deck | slides | tool | what it settled |
+| --- | --- | --- | --- |
+| `legend-nokey` | 16 | `make_legend_probe.py` | what a legend key with nothing to draw does to the layout |
+| `ofpie-pack` / `-region` / `-clamp` | 47 | `make_ofpie_probe.py` | `OF_PIE_BAR_GAP_DIVISOR` over its whole range, and the height clamp |
+| `bubble-axis` | 40 | `make_bubble_probe.py` | what a bubble chart's value axis pads for |
+
+| slide | before | after |
+| --- | --- | --- |
+| 6 `bubbleChart` | 0.4149 | **0.5512** |
+| 9 `ofPieChart` | 0.8056 | **0.8979** |
+| 11 `stockChart` | 0.0499 | 0.0384, and right — see 3.2a |
+
+`chart-gallery` **0.6619 → 0.6747** SSIM, histogram unchanged at 0.8147. The other three
+scored decks do not move by a digit, and slides 6, 9 and 11 are the only VRT snapshots
+that change.
+
+#### A key with no rule to draw keeps a *narrower* slot
+
+`legend-nokey` names every entry `W`, `Wm`, `Wmm`… so each label's ink begins at the same
+side bearing and the pitch between two labels is the pitch between two layout cells with
+no font residue in it. Each slide then determines the one unknown — the cell — twice
+over: from the pitch, and from the run's centring, which must come back as **one** left
+side bearing shared by every slide in the deck. It does, at −0.366 pt, the same residual
+3.5 already carries.
+
+* **Nothing is drawn.** Three bare line series produced no key path on the page at all.
+  Our filled accent swatch was invented.
+* **The cell is the swatch's.** 1.0984 em against the swatch cell's 1.0985, at three frame
+  widths and at two, three, four and five entries. Reading the 24.0 pt line cell there is
+  8.5 pt out on the first label and reading *no* cell 7.5 pt the other way, so this is not
+  a close call.
+* **The marker survives the rule.** The same three series with `<c:symbol val="circle"/>`
+  draw the marker alone, centred in that same cell to 0.07 pt. What is lost is the stroke,
+  not the slot.
+* **It is a decision for the chart, not the series.** One series keeping its rule puts all
+  three entries back on the 24.002 pt cell, and the bare ones beside it simply leave their
+  slot empty. Three mixtures say so, and the key count on the page is the number of series
+  that still have a rule.
+* **A real `c:stockChart` reads as a line chart**, both ways round, and a **side** legend
+  agrees to 0.008 pt with no probe of its own having been fitted to it.
+
+`_is_line_keyed` therefore asks `_draws_a_rule()` as well as the group's shape, and
+`_legend_entry` has a third branch. `chart-gallery` slide 11 is the case; nothing else in
+the corpus states `<a:ln><a:noFill/></a:ln>` on a line series.
+
+#### `OF_PIE_BAR_GAP_DIVISOR` is right, and slide 9 was never about it
+
+3.2a called slide 9 a second reading of a constant fitted to one observation. It is not.
+`ofpie-pack`'s 23 slides sweep `gapWidth` over 0, 25, 50, 100, 150, 200 and 300 and
+`secondPieSize` over 25, 50, 75, 100 and 125, plus five cross terms and six pie-form
+controls, and **`r = W / (2 + s + g/200)` reproduces every one to 0.004 pt** — a residual
+of one part in 25 000 on the divisor. The bar form is read twice per slide because the
+second plot is an exact rectangle, `s*r` wide and `2*s*r` tall, and the two agree. The
+`/200` is a fitted slope now rather than the natural reading of one observation, and the
+constant's docstring says so.
+
+`ofpie-region` then holds those two at the gallery's values and moves only the furniture —
+no title, a title, a bottom, top or right legend, and both — in both forms, twelve slides
+agreeing to 0.033 pt. So the polar region is right too.
+
+**What slide 9 actually is: the height clamp gives back the width it did not use.**
+`_of_pie_geometry` caps the radius at half the region's height, and while the *width* is
+what binds — every slide of `ofpie-pack` — pinning the first plot's left edge to the
+region's left and the second's right edge to its right is the same thing as centring the
+run. Once the region is short enough for the height to bind they part company, and
+`ofpie-clamp` says which one PowerPoint does. On nine slides across five frames and both
+forms:
+
+* the cap is **exactly half the region's height**, to 0.005 pt;
+* the drawn run is **`divisor * radius`** wide and its midpoint is the region's own, to
+  0.005 pt.
+
+Pinning to the edges was up to **160.6 pt** out on a 600 pt frame. `chart-gallery` slide 9
+is on that side of the line — its 498 pt region asks for a radius of 153.2 and its height
+allows 129.9 — which is why the two plots were visibly in the wrong place and why the
+radius, which the table called too small, was within 1%.
+
+#### A bubble chart's value axis clears the ink, and it measures it against the *height*
+
+`bubble-axis` sweeps `c:bubbleScale` at fixed data, which is the discriminating
+experiment: it changes every radius and no value at all, so a domain that moves with it is
+padding for ink. It moves. The same chart draws **0–10 by 1** at scale 10, 25 and 50 and
+**0–12 by 2** at 75, 100 and above.
+
+The rule is that the domain must leave room for every mark's own circle:
+
+    span >= vmax + clearance * span     and     span >= clearance * span - vmin
+
+with `clearance` the largest drawn radius as a fraction of the axis' length — a linear
+equation per end, because the radius is fixed *before* the axis is (the region a bubble is
+sized against is frame-derived and not the plot, `BUBBLE_REGION_INSET_PT`). The five per
+cent headroom every other axis takes becomes a **floor** rather than an addition: summing
+the two rounds scale 50's axis to 0–12 where PowerPoint draws 0–10.
+
+Three things about it are measured rather than reasoned, and two are surprising:
+
+* **The radius is the chart's largest, wherever it sits.** `d-inner` puts the biggest
+  bubble in the middle of both ranges and `d-outer` puts it on the y maximum; PowerPoint
+  draws the same 0–12 for both. Reading the extreme *point's* own radius gives 0–10 on
+  `d-inner`.
+* **Both axes measure the clearance against the plot's HEIGHT.** Reading the x axis
+  against its own width agrees with 25 of the 40 slides and against the height with 38,
+  and the fifteen it settles are not marginal: at `bubbleScale=150` the width reading
+  leaves x at 0–12 where PowerPoint draws −2–14. A square plot could not tell the two
+  apart; these are 437 × 224.
+* **The clearance is rechecked after the domain is rounded.** Rounding outwards enlarges
+  the span, and the room a bubble needs is a fraction of the span, so a domain that cleared
+  the ink can fail after rounding. At scale 150 the solve gives 0–10.885, the rounding
+  gives 0–12, and at 0–12 the bubble on the data's own minimum of 2 hangs 0.08 units below
+  the floor — PowerPoint draws −2–12. One unit each way settles it; at scale 300 it takes
+  two.
+
+**The circularity closes after exactly one pass, and iterating further would oscillate.**
+The clearance needs the plot rectangle and the plot rectangle needs the domain's tick
+labels, so the unpadded domain's rectangle is what the clearance is computed from. Going
+round again is not merely unnecessary but wrong: a domain that goes negative moves its own
+value labels *inside* the plot, which grows the plot, which shrinks the clearance, which no
+longer needs the negative. The single pass is what PowerPoint's own answers match.
+
+**38 of the 40 slides agree exactly, units included.** The two that do not are at
+`bubbleScale` 250 and 300 — `m-lift-l`, where PowerPoint's y runs 0–45 against our 0–40 and
+its x −2–16 against our 0–14, and `eb-12`, where PowerPoint takes unit 5 and runs −5–20
+where we take 2 and run −2–18. Both are one step of a second-order effect at radii above a
+quarter of the plot; no corpus chart is near them, and one reading each is not a rule.
+
+#### Two residuals worth naming
+
+* **The title band is not a constant times its line height, and there are now two readings
+  that say so.** `TITLE_BAND_LINES = 1.4769` is an 18 pt Arial fit whose own docstring asks
+  to be re-measured if a differently sized title ever disagrees. One has.
+  `ofpie-clamp`'s `c-gallery` — a default-size title, which resolves here to 18 pt and a
+  20.109 pt line box — wants a band of **30.03** against the 29.70 this computes, a ratio
+  of 1.4931. `chart-gallery` slide 9's 14 pt title, line box 15.641, wants **20.44**
+  against the 23.10 this computes, a ratio of **1.3068**. The two ratios differ by 14% and
+  a straight line through them has a negative intercept, so neither is a rule and fitting
+  one to two points would be worse than the honest single-font fit that is there. The same
+  2.66 pt appears independently on slide 6, whose largest bubble is 64.27 pt where
+  PowerPoint draws 63.65 — the bubble region and the polar region take the same band, so it
+  is one error seen twice. A title-size sweep read through the height clamp, which is the
+  one construction that puts a region height on the page as a length, would settle it.
+* **The bar form's own height clamp disagrees, once.** `_of_pie_geometry` also caps the
+  radius at `region.height / (2 * s)`, because a second bar wider than the pie runs out of
+  height first. The one probe frame short enough to reach it — `ofpie-clamp`'s 520 × 220 at
+  `gapWidth=300`, `secondPieSize=125` — drew a pie of radius 49.496 where the cap asks for
+  79.2, and a bar 99.0 pt wide where `s*r` is 61.9, so PowerPoint's bar and pie stop
+  agreeing on a radius at all there. The cap is kept, because without it such a chart draws
+  a bar taller than its own region; what PowerPoint replaces it with is one observation and
+  is not carried as a rule.
+
+### 3.3 Combo charts — **done**
+
+Several `c:*Chart` groups over one plot area, with a secondary value axis. `barChart`,
+`lineChart` and `areaChart` in any combination are now drawn together; `chart-gallery`
+slide 17 went from SSIM **0.6120 to 0.7384** and its histogram from 0.9993 to 0.9994.
+(3.5 has since taken the same slide to 0.7433.)
+
+**Six probe decks, 76 slides**, written by `tools/make_combo_probe.py` and read back by
+`tools/read_combo_probe.py`. `--check` renders the same deck through this library and
+prints the residual against the export, which is the assertion SSIM cannot make: **every
+plot edge on all 76 slides lands within 0.04 pt of PowerPoint's**, and every tick label on
+both axes matches, with the two exceptions named at the end.
+
+| deck | slides | what it settled |
+| --- | --- | --- |
+| `combo-order` | 9 | the paint order is a **precedence by type**, not the document order |
+| `combo-domain` | 8 | a value axis' domain comes from the series attached to **it** |
+| `combo-side` | 35 | the secondary axis obeys the same frame-derived interval rule |
+| `combo-plot` | 9 | what the secondary axis does to the plot rectangle, and where it goes |
+| `combo-bar` | 11 | bar geometry across groups; `gapWidth` and `overlap` |
+| `combo-legend` | 4 | legend composition, order and key width |
+
+#### Draw order is a type precedence
+
+Three pairs — bar/line, bar/area and line/area — were each authored **twice, with the two
+`c:*Chart` elements swapped**, and the six exports come back as *three* pictures. The area
+is under the bars in both spellings of bar+area, the line over the bars in both of
+bar+line, and over the area in both of line+area. So the order is
+
+    areaChart → barChart → lineChart
+
+and two groups of the same type keep the order the file wrote them in (`g-bar-bar` draws
+the first one first), which makes it a stable sort rather than a reordering.
+
+**The colours do not follow it.** A line group written first still takes accent1 and the
+bar group after it accent2, while the bars are still painted first — `c:idx` numbers the
+series and the precedence only decides who covers whom. Two mechanisms, and reading one
+off the other would have been wrong in both directions.
+
+#### The two axes are independent, and counted by the same rule
+
+`combo-domain` holds a bar group at 0..9 and moves the line group beside it over 0..0.5,
+0..5, 0..50 and 0..500 on the secondary axis: **the left axis does not move**, staying
+0..10 by 1 in all four. The control — both groups naming the *primary* axis — does move
+it, to 0..60 by 10 and 0..600 by 100. So the domain follows `c:axId` and not the plot.
+
+**They do not share a tick count either.** On `combo-side`'s `s150-C` the left axis draws
+six labels and the right nine, over one plot, meeting only at the two ends. "Make them
+share tick counts" is refuted outright.
+
+What they *do* share is the interval count the **frame** asks for. `combo-side` puts the
+five-dataset N-meter from `axis-rung` on the secondary axis at five frame heights and
+reads the count back off the drawn unit; the five readings at each height intersect at
+exactly one value — **1, 3, 6, 8 and 10 for frames of 60, 90, 120, 150 and 180 pt** —
+and those are the five counts `side_axis_intervals` returns for the same frames. Ten more
+slides put the meter on the *primary* of the same charts and read the same counts back.
+The hard-won lesson from `axis-coarse` holds on the secondary axis: the count is a
+function of the frame, and the two plots here are identical anyway.
+
+#### The band on the right is the band on the left
+
+`_value_label_band` is one formula now, fed each axis' own labels. Measured to 0.04 pt over
+five label widths: a right-hand axis labelled 0..6 reserves 21.07 pt, one labelled 0..10 or
+0..60 reserves 26.41 and one labelled 0..600 reserves 31.75 — and the same deck's *left*
+axis labelled 0..600 reserves 31.75 as well. The labels themselves are the mirror image:
+the right column begins 9.70 pt past the plot's right edge at three label widths, where
+the left column ends 9.70 pt before it begins.
+
+`c:crosses` decides the side and **`c:axPos` decides nothing**: a secondary axis written
+`axPos="l"` with `crosses="max"` came out on the right in the same place as the `axPos="r"`
+one beside it. A `c:delete`d secondary axis reserves nothing — the plot runs to the plain
+11.0 pt inset — while its series is still drawn and still scaled by it.
+
+#### Bars
+
+A bar group in a combo keeps the **whole category band**: the line group beside it takes no
+slot, and a bar drawn against a line is the same width as the same bar drawn alone. Two bar
+groups do not cluster into one band either — each divides the band by its own series count
+and they are drawn over each other — and each group uses **its own `gapWidth`**: groups
+stating 50 and 300 drew 57.6 pt and 21.6 pt bars in one band, so neither value wins.
+
+**`c:overlap` belongs in the bar-width divisor and was missing from it.** Two charts say
+so, both to inside the 0.24 pt PowerPoint quantises a bar width to: `chart-gallery`
+slide 1 (five categories, two series, `gapWidth` 150, `overlap` −27 on a 250.59 pt plot)
+draws 13.2 pt bars where the divisor without the overlap term asks for 14.32 and with it
+for 13.29, and `combo-bar`'s `g-overlap` agrees on a 427.18 pt plot with 22.56 against
+24.41 and 22.66. A stacked group is unaffected — `slots` is 1, so the term is zero — which
+is why `real-college-template`'s `overlap=100` stacked chart does not move. Fixing it took
+**slide 1 from 0.5611 to 0.6556**, which is the second-largest gain in this branch and was
+found by a probe built for something else.
+
+#### The legend
+
+Entries come out in **paint order**, not document order: the same two groups written both
+ways round legend identically, bars first and line last, at the same x. And **one line
+group widens every key to the line key's width**: the bar keys of a bar-plus-line chart
+came back 19.200 pt wide — not the 5.49 pt swatch — and 5.49 pt tall. The width is a
+decision for the chart and the height one for the series.
+
+#### What is not drawn, and why
+
+* **Two value axes on the same side.** `crosses="autoZero"` on the secondary axis puts it
+  on the *left*, inside the primary, and PowerPoint narrows the plot for two stacked label
+  columns. Its inner column measured 21.42 pt against the outer one's 26.41 for the same
+  label, and the 4.99 pt between them is not any constant in this file. One reading is not
+  a rule, so this case falls back to drawing the first group alone — `p-seczero` is the
+  one probe slide whose plot is wrong, by 21.38 pt, and it is wrong on purpose.
+* **A horizontal (`barDir="bar"`) combo**, which would put the value axis along the bottom
+  and the secondary along the top. No probe has measured it; it falls back too.
+* **A group type outside `areaChart` / `barChart` / `lineChart`** — a pie beside a bar, a
+  scatter beside a line. PowerPoint does not author them and no probe has drawn one.
+
+Each of those keeps the old behaviour — the first drawable group, alone — which is a worse
+picture than PowerPoint's but not a wrong one.
+
+#### Two residuals worth naming
+
+* **A right legend with a secondary axis composes at −0.31 pt.** Measured once, on
+  `combo-legend`'s `l-right`: the legend key lands where it would with no secondary axis at
+  all (0.04 pt), and the plot gives up a further 15.1 pt where the composition shipped here
+  — the legend band plus what the label column takes beyond the plain inset — predicts
+  15.41. A sweep of the secondary label width with a right legend would settle the third of
+  a point.
+* **`LEGEND_ENTRY_GAP_EM = 0.5` was refuted here and is now replaced.** The gap between
+  entries in a horizontal legend is solvable from the pitch between consecutive keys, and
+  four charts gave four answers: **0.77 em** (`chart-gallery` slide 1, two bar entries on a
+  288 pt frame), **1.03 em** (slide 3, three line entries on 648 pt), **1.12 em** (slide 17,
+  a combo on 648 pt) and **1.15 em** (`combo-legend`'s `l-bottom`, a combo on 480 pt). The
+  sweep that settled it is **3.5**; one rule gives all four, because the gap is a function
+  of the entries and not of the chart.
+
+### 3.4 3-D chart fallbacks (M–L) — **four group elements draw their scene; a `pie3DChart` and a stacked `area3DChart` stay flat**
+
+`bar3DChart`, `line3DChart`, `pie3DChart`, `area3DChart` parse as their 2-D equivalents —
+`parse/chart.flat_chart_kind` does this and `bar3DChart` therefore already draws flat.
+**[pptx-renderer]** does the same and is explicit that it is not PowerPoint-perfect.
+
+Since then: `c:view3D` is read, the 3-D spelling survives the flattening, the value axis
+is the one PowerPoint draws, and every such chart warns `chart-3d-flattened` rather than
+passing a simplified picture off as a faithful one. **The camera is built**, and so is the
+**mesh** — for a `bar3DChart`'s prisms, a `line3DChart`'s ribbons and a clustered
+`area3DChart`'s slabs, each with its floor and its two walls, and those slides no longer
+warn at all, because the warning is a claim about what this library did rather than about
+what the file holds. A `pie3DChart` and a **stacked** `area3DChart` keep the flat drawing
+and keep the warning; *why*, per group element, is **What is still flat** below.
+
+The line and the area were the last thing blocked on one number — the shape of their
+scene — and that number is now a law rather than a ladder: **the aspect and the depth are
+both `1 / categories` quantities**, re-derived together over seven category counts and six
+series counts. See *The scene's shape, re-derived* below.
+
+**They have now been compared against real output**, on slides 13–16 of
+`chart-gallery.pptx`, and the flat fallback is a good deal further from PowerPoint than
+"drawn flat" suggests. PowerPoint draws a genuine perspective scene for all four: a floor,
+a back wall, gridlines that run into the depth, and a plot rectangle displaced and shrunk
+to make room for it.
+
+**PowerPoint rasterises the 3-D geometry, and that decides how measurable this is.** A
+census of `chart-gallery.pdf`'s page objects settles the question the feasibility review
+could not: slides 13–16 and the surface on slide 12 each carry **one image object** where
+the 2-D control on slide 1 carries none — a **300 dpi raster** covering the plot (bar3D
+466.3 × 250.1 pt as 1943 × 1042 px; pie3D 309.4 × 288.0; surface 434.9 × 232.8). The
+scene is a picture, not paths.
+
+The consequence is a clean split, and it is what any 3-D plan has to be built around:
+
+* **The text stays vector** — 20 text objects on slide 13, 28 on slide 12 — so the axis,
+  its tick labels, the legend and therefore **the plot rectangle and its depth
+  reservation are exactly measurable**, to the same standard as everything else here.
+  That is the whole of the axis defect below, and it is reachable with the drawing still
+  flat.
+* **The camera is not solvable from vertices, but it is still measurable.** There are no
+  paths to read, so a projection has to be *fitted* against the raster rather than solved
+  from exact points — and this project distinguishes those (`BUBBLE_REGION_INSET_PT`'s 5 pt
+  is "solved rather than guessed"). A 3-D camera would be the first major geometry here in
+  the fitted category, which is worth knowing before committing to an L.
+
+  It is not, however, the weak position it first looks like, and two things say so. The
+  first is that **`tools/fidelity.py` is already a raster comparator** — it rasterises our
+  SVG and scores it against PowerPoint's page, which works the same whether that page holds
+  paths or an image, so verification needs no vertices at all and slides 13–16 are a
+  working objective function today. The second is **over-determination**: `@silurus/ooxml`'s
+  ~1.8% came from four corners of one card at 200 dpi, where bar prisms, floor and wall
+  quads and gridline intersections across a probe sweep give hundreds of constraints at
+  300 dpi against six parameters.
+
+**The SVG side is not in doubt, and was checked rather than assumed.** A throwaway
+prototype — one yaw/pitch/pinhole transform, Lambert shading against a fixed light, a
+painter's sort on face depth — draws a four-bar 3-D scene with a floor in **25 polygons
+and 2.4 kB of SVG, standard library only**, rendering correctly through resvg. SVG's paint
+model *is* the painter's algorithm, so the depth sort the scene needs is the one the format
+already performs. Separately, resvg honours `feDiffuseLighting` with `feDistantLight`
+(measured: 238 → 182 across a filtered rectangle), so shape bevels have a lighting model
+available too — though the twelve `ST_BevelPresetType` cross-sections cannot be expressed
+as a blur radius, which buys *a* bevel rather than *the* bevel.
+
+**Lighting and material are available too, and the split is the same one.** Measured in
+resvg, our own rasteriser: `feDiffuseLighting` runs with all three light types
+(`feDistantLight`, `fePointLight`, `feSpotLight`), and `feSpecularLighting` runs as well —
+with the specular exponent controlling highlight tightness, which is the matte / plastic /
+metal axis `a:sp3d/@prstMaterial` encodes (exponent 1 gave 73 distinct levels, exponent 20
+gave 111, against 16 for an unlit fill). **The naive test reports a false negative**: a
+specular pass clipped into `SourceAlpha` with `operator="in"` throws the highlight away and
+looks like the filter never ran. It has to be composited *additively* over the source.
+
+Where the normal comes from is what decides whether that is worth anything:
+
+* **In a chart it is exact.** Each face's normal comes from its own polygon, so shading is
+  arithmetic baked into `fill` — no filter, no height field, no approximation, and material
+  is just the curve mapping the Lambert term to a colour plus an optional specular term.
+* **On a shape it is not.** SVG's lighting primitives derive their height field from
+  *blurred alpha*, which is not the bevel's profile. `a:bevelT` has twelve
+  `ST_BevelPresetType` cross-sections — `circle`, `hardEdge`, `coolSlant`, `divot`,
+  `riblet`, `artDeco` — and a blur radius cannot encode which one, so there is no parameter
+  to fit per preset. That is *a* bevel, not *the* bevel, and it is why 5.3's "approximate,
+  do last" rating still stands for shapes while it no longer does for charts.
+
+`a:lightRig`'s direction maps to azimuth and elevation, and `lighting-color` carries a
+tinted rig; the multi-light presets such as `threePt` would need several lighting passes
+merged, which is composable in principle and untested here.
+
+The prototype also showed the failure mode: a wrong pinhole divisor renders confidently
+inverted geometry rather than a slightly-off picture. That is the argument against shipping
+a half-fitted camera, and it is a different argument from the one against drawing flat.
+
+| slide | group | SSIM | hist | what PowerPoint drew instead |
+| --- | --- | --- | --- | --- |
+| 13 | `bar3DChart` | 0.5828 → 0.5882 → **0.7327** | 0.9760 → 0.9404 → **0.9990** | extruded boxes on a floor, the plot pushed right and up by the depth — **all of which is drawn now** |
+| 14 | `line3DChart` | 0.0689 → 0.1223 → **0.5812** | 0.9292 → 0.8871 → 0.6027 | ribbons in depth — **drawn now**, and the two pictures are hard to tell apart: mean absolute error 7.78 → 3.07 and pixels over 10% 5.96% → 3.26%, with the histogram falling for the documented mask reason |
+| 15 | `pie3DChart` | 0.7612 | **0.1336** | an ellipse half the height of our circle, with a shaded extruded side; the shading is what takes the histogram to 0.13 |
+| 16 | `area3DChart` | 0.7340 → **0.7551** | 0.9931 → 0.9801 | a 3-D box, and a value axis of 0–50 by 5 where ours drew 0–60 by 10. **Stacked**, which is the one shape whose camera is measured and deliberately not applied — see *Where the camera is still deliberately not applied* |
+
+#### The axis is now PowerPoint's, and the reason is not the one recorded here
+
+Two probe decks — `view3d-meter` (59 slides) and `view3d-view` (54), written by
+`tools/make_view3d_probe.py` and read back by `tools/read_view3d_probe.py` — sweep the
+frame and then `c:view3D` one element at a time on a `bar3DChart`, with `line3DChart`,
+`area3DChart` and a flat `barChart` control on the same deck and the same export. The
+text is vector, so each slide's value axis, its tick labels' own centres and the category
+labels' centres are read exactly; **all of it lands on a 0.24 pt grid**, which is the
+300 dpi the scene beside it is rasterised at.
+
+**The recorded causal chain was half right, and the half it got wrong is the half that
+was drawing the wrong numbers.** Slide 16's frame is 336 pt tall: it is at the interval
+cap of ten either way, so the depth reservation cannot be what changes its axis. What
+changes it is the *range*:
+
+> **A 3-D value axis has no headroom.** The unit is the finest 1-2-5 step that divides the
+> **unpadded** data range into no more than *N* intervals, and the extent is the data
+> rounded outwards to whole units — the rule a radar already had, which is
+> `nice_axis_scale(strict=False)`.
+
+0..50 of data came back 0..50 on all seven frames of the `bar3DChart` sweep and on the
+`line3DChart`, `area3DChart` and stacked `area3DChart` beside it — never the 0..55 or
+0..60 a 5% headroom produces; 0..96 came back 0..100, never 0..120. Fed back through
+`nice_axis_scale`, **the padded rule has no solution at any interval count** on 34 of the
+two decks' 52 3-D cells, and the bare rule solves all 52. The two flat `barChart` controls
+are the exact mirror: padded solves both, bare solves neither. That is what makes this a
+property of the 3-D spelling rather than of the export, the machine or the data.
+
+(A "cell" is the probes sharing a frame and a view. The N-meter's datasets have their
+1-2-5 boundaries at different counts, so their drawn units name the count between them;
+`tools/read_view3d_probe.py --solve` is that intersection, printed per probe and per
+cell.)
+
+Shipped, gated on the spelling, which is why `flat_chart_kind` no longer erases it:
+`SourceChartPlot.kind` always carried it but `m.ChartData.kind` did not, and the resolver
+now carries `three_d` and the parsed `c:view3D` through to the render model. The corpus
+moves by exactly one slide — gallery 16 draws 0–50 by 5, and 13 (0–60 by 10) and 14
+(0–30 by 5) were already right and stay right.
+
+#### The count is read off the *drawn* plot, and that is what is still open
+
+`side_axis_intervals` is not refuted, it is fed the wrong number. Reading the count back
+out of each cell's drawn unit:
+
+| the count as a function of | misses, over the 52 cells |
+| --- | --- |
+| the **frame** — the flat rule | refuted outright: six cells on one and the same 120 pt frame need N = 1, 3–4 and 5–8, which no function of the frame produces |
+| `side_axis_intervals(drawn plot height)` | 40 |
+| `side_axis_intervals(drawn plot height + 22)` | 20 |
+| **`side_axis_intervals(drawn plot height + 36)`** | **0** |
+| `floor(drawn plot height / pitch) − 1` | 1 |
+
+and **36 pt is the flat chart's own furniture** — measured on the same deck's controls as
+10.01 pt of top inset plus a 25.87 pt category-label band, and since read off the
+gridlines rather than the tick labels' centres as 11.103 + 24.965. Both split 36.0 the
+same way to a tenth, which is why the reservation is unmoved by that correction. So the
+count really is read off the frame less a depth reservation, exactly as this section
+claimed; what the reservation does to the *range* was the part that was wrong.
+
+#### The camera, shipped — `three_d_plot_rect`
+
+The reservation is a camera, and it turned out to be **three constants and a `min`**.
+`resolve/chart.three_d_plot_rect` takes the region and the view and returns the front
+face; `three_d_camera` is the gate that decides whether a chart gets one at all. Two more
+probe decks were written for it, both in `tools/make_view3d_probe.py`: `view3d-type` (39
+slides) sweeps the same view per group element, which settled where the gate has to sit,
+and `view3d-series` (32) sweeps the series count and `c:gapDepth`, which found the third
+constant.
+
+The model, in full:
+
+* **The region is the flat plot rectangle.** PowerPoint lays the scene out inside the
+  rectangle the same chart drawn flat would get. The `flat*` controls on `view3d-meter`
+  give that rectangle directly — a 195 pt frame's is inset 10.01 pt at the top, 25.87 at
+  the bottom, 10.587 at the right and 25.441 at the left for a two-character tick label.
+  Those four are tick-label centres and each carries about a point of PDF text-rect
+  convention; `axis-inset`'s gridlines put the same rectangle at 11.103 and 24.965.
+* **`c:hPercent` absent is the region's own aspect**, and **that closes the 0.7%**. The
+  measured 0.2438 and the "plot area's own aspect" 0.2456 differed because the earlier
+  estimate of the region was the part that was wrong: against the region above, the
+  seven auto readings come back to 0.6%. The three stated heights 50, 100 and 200 give
+  the same reservation to within 1% of it, which is what says `hPercent` is an input to
+  the scene's shape and not to the reservation.
+* **The depth projects to one constant.** `VIEW_3D_DEPTH_PROJECTION = 0.2030` of the
+  scene's width, per unit of depth, per unit of the sine of the rotation — the horizontal
+  component reading `rotY` and the vertical one reading `rotX`, neither mixing into the
+  other. Fitted separately the two come out within 2% of each other, and holding them
+  equal costs nothing. A **genuine yaw-then-pitch rotation**, whose components do mix,
+  misses the same readings by 3.0 pt rms, which is the direct evidence that `rAngAx="1"`
+  is an oblique projection and not a camera matrix.
+* **The depth is `depthPercent · (1 + gapDepth) / (series + 1.5)` of the width**, and the
+  series count is the surprise: **adding series makes the scene shallower**. One to five
+  series on a 195 pt frame reserved 0.0600, 0.0459, 0.0373, 0.0321 and 0.0283 of the
+  scene's width, and the same five on a 120 pt frame agree. It is genuinely the depth and
+  not the box: the drawn face's height over its width held 0.2440 ± 0.0003 across all
+  five, read off the category labels rather than inferred. `c:gapDepth` enters as
+  `1 + gapDepth` and nowhere else — swept at 0, 50, 150, 300 and 500% against one, two and
+  four series it scales the depth by 0.4116, 0.6130, 1.0, 1.587 and 2.375 against
+  `(1 + gap) / 2.5`'s 0.4, 0.6, 1.0, 1.6, 2.4, and the shape in the series count is the
+  same at every one of them. The divisor's constant fits free at **1.512** over 131
+  readings; 1.5 is both the round number in it and `c:gapDepth`'s own default, and which
+  of those it is cannot be told here, because the gap sweep says the constant does not
+  move with `gapDepth` at all. Without this term the same fit is 5.09 pt rms and 25.9 pt
+  at worst; with it, 0.24 and 0.99.
+* **A fixed margin, `VIEW_3D_SCENE_MARGIN = 0.0079` of the width**, survives at zero depth
+  *and* zero rotation: `<c:view3D/>` with nothing in it draws a scene 0.8% of its width
+  shorter than its region. This is the "offset at zero depth" the old reading recorded as
+  unidentified. It is now identified as a quantity and still not as a *thing* — a floor
+  slab's thickness and a wall's edge are both the right size to be it.
+* **The box is scaled isotropically and centred, and the `min` is the second branch.**
+  `sin(rotX)` was never refuted; what refuted it was reading the width-bound probes on the
+  height-bound curve. With the fit written as `min(region.width / (1 + across),
+  region.height / (aspect + up))` the small-angle readings land on the same two constants
+  as the rest: `rotX=0` and `rotX=5` are width-bound and `rotX=15` upwards are
+  height-bound.
+* **The face sits at the corner the depth leads away from, and the yaw's half turn flips
+  it.** `rotY` 0, 20, 45, 90 and 135 all reserved at the top and 180, 270 and 340 all at
+  the bottom, so the vertical sign turns at 180 and not at `cos(rotY)`'s 90. Sideways it
+  is the sine, so a yaw past a half turn puts the depth left and the face right of it.
+
+**Residual: 0.24 pt rms and 0.99 pt worst**, over 131 readings — seven frames, seven
+depths from 20% to 2000%, nine pitches from −45 to 90 degrees, seven yaws, five stated
+heights, five series counts and five gap depths. The face's drawn *position* follows to
+about a point. The probe grid is 0.24 pt, being the 300 dpi the scene beside it is
+rasterised at.
+
+Read back as the thing that matters — does our axis match PowerPoint's? —
+`tools/read_view3d_probe.py --check` over the four decks goes from **77 of 152 slides to
+142 of 184**, and of the 133 that are a `bar3DChart` with right-angle axes, **132 match
+exactly**. The one miss is `v-h20`, `hPercent=20` on a 195 pt frame, where the model puts
+the face a point tall of PowerPoint's 120.00 and that point crosses an interval boundary.
+
+#### The scene per group element — read off the raster, not the axis
+
+Two more decks, `view3d-shape` (67 slides) and `view3d-aspect` (52), settle what the last
+pass could not, and they do it with a **different instrument**. Slide 13's camera was
+already known to land on the image object's own corners to about two points, so *the
+raster's box is the scene's box* — which means every slide gives the scene's width and
+height directly, including for the one group element that draws no axis at all.
+`tools/read_view3d_probe.py --shapes` reads those boxes and `--colours` reads the ink.
+
+Fitted per group element and series count — the region, the scene's aspect and its depth,
+against eleven or four cameras each, two of them width-bound and two height-bound so the
+aspect and the depth separate:
+
+| group | aspect, as a multiple of the region's | depth | fit |
+| --- | --- | --- | --- |
+| `bar3DChart` | 0.991, 0.995, 0.995, 0.994 at one to four series — **the region's own**, which is the control that says the instrument reads what the tick labels read | 1.04, 0.75, 0.59, 0.49 — `(1 + gapDepth) / (series + 1.5)` | 0.14 pt rms |
+| `line3DChart` | **0.6, 0.6, 0.8, 0.8** | **1.03, 2.01, 3.01, 4.00** — one unit per series | 0.08 pt rms |
+| `area3DChart` | **0.4, 0.6, 0.6, 0.8** | 1.03, 2.01, 3.01, 4.00 | 0.14 pt rms |
+| `area3DChart` stacked, two series | 0.80 | 1.04 — one row, shared | 1.60 pt rms |
+| `pie3DChart` | no scene box at all — see below | — | — |
+
+**The depth column is a ratio and not an absolute**, and the `bar3DChart` row is what
+says so: its law is `(1 + gapDepth) / (series + 1.5)`, which is 1.0, 0.714, 0.556 and
+0.455, and the raster reads 3 to 7% over that at every count. The image object overshoots
+the scene it holds by a little — the gallery's was about two points wider than the camera's
+own corners — and that excess lands in the depth when the projection constant is held at
+the 0.2030 the tick labels measured. So what is read here is each group element *against
+the bar measured the same way*, which is exactly what this section needed and is why the
+bar is on the deck at all.
+
+So 3.4's two single readings of 0.6 and 0.4 were right, and the factor multiplies a
+*stated* `c:hPercent` too: `hPercent=200` on a `line3DChart` draws a scene of aspect 1.198
+where a `bar3DChart`'s is 2.0. The depth is the other half — a `line3DChart`'s **grows by
+one unit per series** where a `bar3DChart`'s shrinks, which this section recorded as a
+direction and now has as a law.
+
+`@silurus/ooxml` was read for the shape of this question and not for its numbers, and it
+corroborates the shape: it carries a `sceneDepthScale` of 0.10 for its Bar family against
+0.40 for line and area, and a `perspectiveTangentGain` of 1 against 2, which its own
+comments call a compatibility choice fitted to a local corpus. That each group element has
+its own scene geometry is therefore agreed on from two directions. Its split is two
+families where this measures three group elements, its factors are depth and not aspect,
+and none of its numbers is used here.
+
+**The aspect climbed a ladder and the ladder was the law seen at one category count.**
+Eight readings, every one a fifth exactly: `0.4 + 0.2 · ceil(m / 2)` at `m = series` for a
+`line3DChart` and `series − 1` for an `area3DChart`, capped by a
+`VIEW_3D_SHAPE_MAX_SERIES` of 4 for want of anything to extrapolate. Both are gone; what
+replaced them is *The scene's shape, re-derived* below.
+
+**Read back as the thing that matters** — does our axis match PowerPoint's? — the three
+raster decks' 178 probes go from **109 drawn exactly as PowerPoint drew them to 170**.
+`line3DChart` goes 3/16 → 14/16 and `area3DChart` 1/16 → 14/16 on `view3d-aspect`, both go
+to 19/19 on `view3d-shape`, and on `view3d-meter` — the deck this section's axis rule was
+measured on — `type-line3D-F/G` and `type-area3D-F/G` all four land exactly, one of them
+with a drawn plot of 59.040 pt against our 59.049. **No probe that matched before stops
+matching**, and `bar3DChart` holds at 49/49, 13/13 and 16/16.
+
+One of those four is worth naming because it looks like a regression and is not: a
+one-series `area3DChart` with 0..50 of data is drawn by PowerPoint as **0..60 by 20**. Its
+scene is 0.4 of the region's aspect, so the axis has room for three intervals rather than
+five, and the bare rule rounds 50 outwards to whole units of 20. The extent exceeding the
+data is the rule working, not a headroom.
+
+#### Where the camera is still deliberately *not* applied, and why
+
+`three_d_camera` returns `None` — keep the flat rectangle — in these cases.
+
+* **A `pie3DChart`, because its rectangle is already PowerPoint's.** Its scene raster is
+  the plot region itself — 662.40 × 173.28 pt on a 195 pt frame — at *every* camera and
+  every frame, and only the ink inside it moves. `rotY` and `depthPercent` change nothing
+  at all: yaws of 20, 45, 90, 135, 180 and 270 degrees and depths of 20% and 500% all drew
+  the same 481.92 × 168.24 pt of ink, to the hundredth of a point. Only `rotX` and
+  `hPercent` move a pie, and they move it *inside* a rectangle that does not change. That
+  also refutes the reference renderer's pie for PowerPoint: `@silurus/ooxml` folds `rotY`
+  into the camera and rotates the whole solid with it.
+* **A stacked `area3DChart`**, which is gallery slide 16's own shape. It reads 0.8 rather
+  than the 0.6 its standard twin reads and one unit of depth rather than two — a stacked
+  group shares a row — but its four cameras do not fit one box to better than 1.6 pt where
+  every other group fits to 0.14. Its width is not the region's at every width-bound camera
+  the way the others' is, so the box being fitted is not the box being drawn. The shape is
+  *different* and not yet *known*.
+* **More series than the ladder was read at**, above.
+* **`rAngAx="0"`**, which draws a perspective scene: the face is no longer a rectangle, the
+  bottom inset runs 64 to 93 pt where a right-angled scene's is 26, and five readings are
+  not a projection.
+* **`c:view3D` absent altogether**, which selects that same perspective scene although
+  ECMA-376 defaults `rAngAx` to 1 — the absent probe is identical to 0.001 pt to
+  `rotX=15 rotY=20 depthPercent=100 rAngAx=0`.
+
+A reservation fitted to within a few per cent predicts the count correctly almost
+everywhere and wrongly near a transition, and a wrong count is a wrong axis. That is still
+why the gate is where it is; what changed is that two of the three group elements it used
+to exclude are now measured rather than named, and the remaining exclusions are each a
+thing that was looked at and did not settle.
+
+#### What is still open
+
+* ~~**What 0.2040 *is*.**~~ **Closed**: it is `1 / categories`, and every deck it was
+  fitted on drew five. See *The mesh, built* below.
+* ~~**Whether the `1.5` in the depth's divisor is `c:gapDepth`'s default or a constant of
+  its own.**~~ **Closed, and it is neither**: it is `c:gapWidth`'s default, because the
+  depth is one bar's width and that is the bar-width divisor. The `gapWidth` sweep is what
+  separates them.
+* ~~**What the aspect ladder is**, and it is now *contradicted* as well as
+  unidentified.~~ **Closed, and the ladder dissolved**: the aspect reads the category
+  count, exactly as the contradiction suggested, and is
+  `floor((across + series) / 2) / categories` of the region's own. The two probes this
+  entry asked for were built and are what settled it. See *The scene's shape, re-derived*.
+* ~~**What `c:gapDepth` does to a `line3DChart` or an `area3DChart`.**~~ **Closed for
+  both**: 0 and 500% divide the *row* without changing the scene's depth at all, which is
+  the opposite of what it does to a bar and is why the bar's `(1 + gapDepth)` factor must
+  not be carried over. `view3d-band` sweeps it on a `line3DChart` too, at two cameras, and
+  the scene does not move.
+* ~~**The stacked `area3DChart`'s scene**~~ — **measured, and deliberately not shipped**:
+  `across / categories` of the region's aspect on one shared row, at four category counts
+  and both axis crossings. What is open is whether giving gallery slide 16 that camera
+  keeps the axis it already draws right; see *Where the camera is still deliberately not
+  applied*.
+* **The perspective branch** (`rAngAx="0"`, and therefore the absent element).
+* **`hPercent=500`** reads back as an effective 4.6, not 5 — one reading, and the only
+  place `hPercent` is not exactly the scene's aspect.
+* **The front face's lift**, in the colour sweep below: measured, bounded at eleven levels
+  of 255, zero over the whole ordinary camera, and not identified.
+* **The interval count's own rung is wrong for a short 3-D face**, and that is what the
+  56 remaining axis misses of 465 now are. See *The count's rung, and what the new decks
+  say about it* below: the shipped rule reads the count off `drawn face + 36 pt` at the
+  label's 12.207 pt pitch, and over 393 solvable probes a rung of **10.7 pt with no
+  offset at all** fits 386 where the shipped form fits 351. Every one of its 101
+  `bar3DChart` probes fits *both*, so nothing in the corpus says which — and the new rung
+  is fitted at one label size on one frame, which is exactly the shape of hole that hid
+  `1 / categories` for two days. Not shipped; the probe that would settle it is an
+  N-meter on a `line3DChart` over a label-size sweep.
+* **What a `pie3DChart` does with `rotX` and `hPercent`.** They are the only two inputs
+  that move it, and what they move is the ink inside a rectangle that does not change:
+  0, 15, 30 and 60 degrees of pitch drew ink 640.32, 481.92, 287.52 and 185.28 pt wide, all
+  about 168 tall. Its plot rectangle needs nothing, so this is the mesh's problem and not
+  the camera's — and the mesh's problem is bigger than the prism's, because its **rim is a
+  gradient**: see *What the other three still get wrong* below.
+* **The category-label band is not constant** across the view sweep: 25.63 to 30.91 pt
+  where a flat chart's is 25.87.
+* **Our own flat plot rectangle was never 3.7 pt low — the instrument was.** This entry
+  used to read that PowerPoint insets the plot 10.01 pt at the top and 25.87 at the
+  bottom where we inset 13.78 and 22.18: the same height, the wrong split, with
+  `_top_inset` the suspect. Both halves of that difference are **reading conventions**,
+  and neither is layout. `read_view3d_probe.ours` took our tick label's *box* centre,
+  and our label box is 1.5 line heights tall with its baseline near the top, which puts
+  it 2.67 pt below the tick at 10 pt; PowerPoint's side is a PDF text rect, which is the
+  digits' **ink** and sits 1.09 pt above the tick. 2.67 + 1.09 is the 3.77 pt "error" at
+  the top and the 3.69 at the bottom, to a hundredth.
+
+  **The gridlines settle it, because they are the rectangle.** `axis-inset` — 36 charts,
+  four faces, eight label sizes, read with `tools/read_axis_probe.py --insets` — puts the
+  plot's top edge on the topmost major gridline and its bottom on the category axis line,
+  and our top inset lands within **0.002 pt** of PowerPoint's on all 24 face/size cells.
+  `max(11.0, 5.0 + lineHeight/2)` is right, its floor is measured (six of the cells draw
+  their gridline at exactly 11.000), and it is the line box and not the pitch with Arial
+  in the sweep at eight sizes to say so.
+
+  What the same deck *did* find is one face-shaped error in the other half: the level
+  category band is `6.5 + (5/3) × ascent + descent`, not `6.5 + lineBox + 0.615 em`. Four
+  faces solve the coefficient on their own ascent to 1.6665, 1.6668, 1.6667 and 1.6667,
+  and the drawn baselines say it independently at 1.672 ± 0.04 of the ascent where against
+  the em the same readings run 1.38 to 1.64. Aptos — the only face the earlier four
+  readings used — has 2/3 of its ascent within 0.011 em of 0.615, which is why one face
+  could not see it. Shipped as `CATEGORY_LABEL_GAP_ASCENT`; the wrap ladder's twenty
+  readings in five faces went from a 0.11–0.60 pt per-face bias to inside 0.01 pt, and no
+  tick unit, truncation or wrap count moves anywhere in the corpus.
+
+  Two things the deck leaves open. **A short frame breaks the band**: 24 pt labels on a
+  90 pt frame take 46.88 pt in Aptos and 47.58 in Arial where every taller frame takes
+  50.82 and 47.79, and nothing here says what that floor is. And the **turned** band keeps
+  its em term (`CATEGORY_LABEL_GAP_EM`), because `ROTATED_LABEL_HEADROOM_PT` was solved
+  with the anchor inside it and the corpus' one rotated chart sits 0.4 pt from a
+  truncation boundary — see that constant's docstring, and the Yu Gothic metrics it names,
+  which are Noto Sans JP's 1.16/0.288 against the real `YuGothic-Regular`'s
+  0.8799/0.2222/0.5 pulled straight out of `real-financial-report.pdf`.
+
+#### The scene — measured on the gallery's own raster, and now built
+
+The camera puts the plot rectangle where PowerPoint puts it; the picture inside it is
+still flat. What that picture has to become was read off `chart-gallery.pdf`'s slide 13 at
+4 px/pt, because the scene is a raster and a raster is a measurement like any other.
+
+* **The camera's box is the raster's box.** The image object on slide 13 runs 70.56 to
+  536.88 pt across and 83.04 to 333.12 down; the camera's face plus its depth vector gives
+  72.3 to 535.1 and 81.9 to 331.4, which is the same rectangle to about two points of
+  antialiasing bleed. So the projection is not only right about the *axis*, it is right
+  about where the scene's own corners land.
+* **The scene is line art on white.** A colour census of the plot region finds white, the
+  two series colours, two shades of each, black, and nothing else but antialiasing greys.
+  There is no floor fill and no wall fill to resolve — the floor, the back wall and the
+  side wall are drawn as strokes.
+* **A prism is three flat fills and no outline.** The front face is the series colour
+  exactly; the top face is **0.758×** it and the right face **0.632×**, per channel, and
+  both multipliers are the same for both series — `#4472C5` gives `#345695` and `#2A487E`,
+  `#ED7E30` gives `#B55E24` and `#97501E`. The faces meet with no stroke between them.
+  The camera sweep below refines both numbers, adds the two faces this camera does not
+  show, and settles what they *are*: constants.
+* **The bars stand at 0.3 to 0.7 of the depth.** Their bases are drawn 6.1 pt above the
+  front face's own bottom edge on a scene whose depth rises 20.1 pt, which is 0.30; the
+  visible right face is 10.5 pt wide against a 27.9 pt depth, which is 0.38 of it. One row
+  of depth 1 centred in a `gapDepth` of 150% occupies exactly 0.3 to 0.7, and that is the
+  obvious reading — **confirmed since over five gaps**, and the two facts that were "not
+  yet one story" are one now: the series share the row because they share the *band*, and
+  the depth shrank with the series count because each bar got narrower. See *The mesh,
+  built*.
+* **A gridline is a polyline, not a line.** Each value tick draws front-left → back-left →
+  back-right: a diagonal up the side wall along the depth vector, then a horizontal across
+  the back wall. The category axis is the front bottom edge alone.
+
+**Both of the things that stopped this being built have now been measured.** They were:
+that three of the four group elements had no camera, so three of the four slides would
+still be flat; and that **every colour above was read at one camera**, `rotX=15 rotY=20`,
+so nothing said whether 0.758 and 0.632 were constants or the value of a cosine at fifteen
+degrees. The scene per group element is the section above. The colour is the section
+below, and the answer is that they are constants.
+
+#### The colour does not move with the camera, and that refutes the lighting model
+
+`view3d-colour` — 42 slides, a four-series `bar3DChart` on a 684 × 330 pt frame with its
+fills **stated** rather than themed — sweeps the camera and reads the prism faces off each
+slide's own raster. Twelve pitches from 0 to 90 degrees, fifteen yaws from 0 to 315,
+eight diagonals that take the pitch down to −45, two depths, two stated heights and one,
+two and four series.
+
+**Every face is the same byte wherever it is drawn at all.** A `4472C4` prism's top face
+is `#345695` and its right face `#2A487E` on every one of the forty-two slides that shows
+that face; the faces change *size* with the camera — a top face runs 5.9k pixels at five
+degrees of pitch and 42k at ninety — and never colour. A degenerate camera *hides* a face
+— there is no top at `rotX=0` and no side at `rotY=0` — and never recolours one. So the
+shading is fixed to the box and not to the camera.
+
+That is the measurement Stage 2 was waiting on, and it decides against the reference
+implementation's model. `@silurus/ooxml`'s `meshMaterialFactor` is
+`max(0.78, min(1, 0.78 + 0.24 · lambert))` against a hand-chosen light `(−0.20, 0.25, 1)`,
+and — this is the part that matters — it evaluates the dot product on the **camera-space**
+normal, rotating every vertex by the yaw and the pitch before taking the cross product. Its
+factors therefore *must* move with the rotation. PowerPoint's do not move at all. The
+*shape* of its rule survives and its numbers do not: one flat factor per face, multiplying
+the sRGB triple, no gradient and no per-pixel work — which is exactly what the raster
+shows.
+
+Four values, and a prism has no fifth:
+
+| face | factor | `4472C4` → | `ED7D31` → |
+| --- | --- | --- | --- |
+| front | 1.0 | `#4472C4` | `#ED7D31` |
+| top | **0.7587** | `#345695` | `#B55E24` |
+| right | **0.6364** | `#2A487E` | `#97501E` |
+| left *and* bottom | **0.3947** | `#1A2C4E` | `#5E3212` |
+
+`left` and `bottom` are **one** value and not two, which is the set's one
+over-determination: a prism yawed past a half turn shows its left face and one pitched from
+below shows its underside, and both come back the same hex. Which face a factor belongs to
+is decided by where the pixels are, not by the value — a top face's centroid sits above the
+front face's and a side face's beside it — so nothing here assumes the ordering it found.
+
+**The multiply is in sRGB, not in linear light.** The four fills are chosen for channel
+spread — `FF3300` carries a zero channel and a dark one, `103070` is dark throughout —
+because scaling the linear light and converting back is an *affine* map in sRGB,
+`k · c − 0.055 · (1 − k)`, whose offset is invisible on a bright channel and a tenth of a
+dark one. Fitted over twelve channels a face, a per-channel sRGB multiply lands within
+**1.3 levels** everywhere, which is the one level the export's own rounding moves a flat
+fill by; the linear scaling misses by up to **5.8**. `103070`'s top face is drawn `#0C2456`,
+and a linear scaling that gets its blue right puts its red at 10 where PowerPoint drew 12.
+That is the *opposite* answer from 3.2's chart accent cycle, which PowerPoint modulates in
+linear light — two colour spaces for two operations, which is a finding and not an
+inconsistency to resolve.
+
+Read as lighting, the four are `ambient + diffuse · max(0, n · light)` with an ambient of
+0.395, a diffuse of 0.747 and a light 22 degrees right of the viewer and 29 above — the left
+and bottom faces being the two the light misses, which is why they share the ambient
+exactly. That is three parameters against four faces with `left == bottom` its only check,
+so it was a *consistent reading* rather than a confirmed model, and it asked for a curved
+extrusion to sweep the whole cosine. **A `line3DChart`'s ribbon is that experiment and it
+confirms the model** — a faceted solid whose every segment is a different normal in the
+same scene, predicted inside 0.5% at six normals and two cameras. See *The ribbon and the
+slab* below; `three_d_lambert` ships it, and the four constants are four of its samples.
+
+**One residual, and it is small and unexplained.** The *front* face is lifted by a constant
+added to all three channels alike — not scaled: at `rotX=−45` a `103070` prism's front is
+`#1B3B7B`, eleven levels up on every channel, which no multiplier produces. It is zero to
+within half a level over the whole ordinary camera — every pitch from 10 to 90 degrees and
+every yaw from 10 to 150, which includes PowerPoint's own default 15/20 — and grows only as
+the scene degenerates: +1 at five degrees of either, +2 at zero pitch or at a yaw of 0 or
+180, +3 to +4 past a half turn, +6 at `rotX=−15`, +10 at `rotX=0 rotY=0` where no other
+face is drawn at all, and +11 at `rotX=−45`. It is not a white blend (that moves a dark
+channel more than a bright one, and this does not), not a gradient (the face is one flat
+colour over three hundred thousand pixels) and not compression (the rasters are
+`FlateDecode`, lossless). Recorded in `VIEW_3D_FRONT_LIFT_MAX`; a mesh can paint the front
+face as the fill.
+
+#### The mesh, built — and the depth law it corrected
+
+A sixth probe deck, `view3d-mesh` (51 slides, `tools/make_view3d_probe.py`, read back by
+`tools/read_view3d_probe.py --mesh`), turns the raster instrument on the **solid inside**
+the scene rather than on the scene's box. One series with a stated fill over three
+categories whose values descend, so no prism's right face is hidden behind its neighbour,
+and a value axis whose ticks give the front plane's own `value → y` on every slide. Two
+numbers come off each prism and neither needs the scene's box:
+
+* **the near offset** — how far above the value it plots its front face is actually
+  painted, which is exactly how far back in the depth it stands; and
+* **the solid's own depth**, as the width of its right face and that face's slope.
+
+The sweep is seven pitches, seven yaws, four depths, two stated heights, four `c:gapDepth`,
+four `c:gapWidth`, four series counts, two stacked groupings, two frames and one
+`barDir="bar"`.
+
+**A 3-D bar is as deep as it is wide.** The prism's own right face against the prism's own
+width comes back **1.000 at every camera** — 0.990 at `rotX=15`, 0.995 at 5 degrees, 1.000
+at `rotY=90` — and the projection is `sin` exactly, with no constant in front of it.
+`c:depthPercent` scales it and nothing else does: 20, 50, 200 and 500% read 0.184, 0.481,
+1.965 and 4.993 of the bar's width. So the scene is `(1 + gapDepth)` of one bar's depth,
+and the bar's width is the *flat* rule — the category band over `slots + gapWidth/100`.
+
+**That refutes the depth law this section shipped, and identifies both of its constants.**
+The reservation was fitted as `VIEW_3D_DEPTH_PROJECTION · depthPercent · (1 + gapDepth) /
+(series + 1.5)`, and every deck it was fitted on drew **five** categories at the default
+`gapWidth` of 150% — which is exactly where the two forms agree:
+
+* `0.2030` is `1 / 5` to 1.5%. That is what "the depth is drawn at a fifth of its nominal
+  length and no ratio of the scene's own proportions produces that fifth" was: a fifth of
+  the plot *per category*.
+* the `1.5` is **`c:gapWidth`'s** own default, not `c:gapDepth`'s — the question this
+  section recorded as unsettled, with the note that the gap sweep could not tell them
+  apart. A `gapWidth` sweep can, because the old form has no `gapWidth` in it at all: at
+  0, 50, 150 and 300% PowerPoint drew value axes of **127.20, 146.16, 166.08 and
+  179.76 pt** on one frame where the old form says 166.08 four times. The new form
+  reproduces all four to **0.15 pt**.
+* and the series count's "adding series makes the scene shallower" is not a property of
+  the depth at all: clustered series share the band, so each bar is narrower, so the scene
+  is shallower by the same factor. **Stacked is the control**: `m-stack2` and `m-stack3`
+  draw the same 507.32 × 166.08 pt face, the same 67.44 pt bars and the same 23.04 × 17.28
+  pt depth vector as the *one-series* probe beside them, because a stacked group takes one
+  slot of the band rather than one each.
+
+Two more things follow from "as deep as it is wide" rather than being separate rules. A
+**horizontal** bar is as deep as it is *thick*, and its thickness is a share of the scene's
+height, so the aspect scales the whole thing: `m-bardir` draws a depth vector of 8.64 ×
+6.48 pt where the same chart upright draws 23.04 × 17.28. And `c:gapDepth` does **not**
+change a bar's own depth — only the room around it.
+
+Read back over the whole sweep with the reservation recomputed, the drawn face is
+reproduced to about half a point at every camera, including both branches of the `min`:
+`rx5` is width-bound at 190.60 against PowerPoint's 190.56 and `rx10` height-bound at
+178.07 against 178.08.
+
+**Where a bar stands in its row is `c:gapDepth` and nothing else.** It fills
+`1 / (1 + gapDepth)` of the scene's depth, centred, so the near face is at
+`gapDepth / 2 / (1 + gapDepth)`. Measured at five gaps, the bar's share reads 0.985, 0.689,
+0.406, 0.252 and 0.166 against the rule's 1.0, 0.667, 0.4, 0.25 and 0.167. At the default
+150% that is **0.3 to 0.7** exactly — the range this section read off gallery slide 13 by
+hand, now with the law behind it.
+
+**The floor has a colour of its own.** It is a quadrilateral seen in plan and three of its
+four sides are drawn over by something black: the category axis along the front, and the
+value axis' gridline at zero back along the depth and across the back — that last one being
+drawn where a flat chart leaves the crossing gridline out, because flat the category axis
+already covers it. The fourth side, the one the depth leads towards, is the only place the
+floor's own stroke shows, and it is **`#898989`** on gallery slide 13 and on the probe
+deck, which are two different themes, so it is a constant.
+
+**What is drawn**, in `resolve/chart`: `three_d_scene` returns the front face and the
+depth as a screen displacement, so every piece of the scene is the face plus a fraction of
+it; `_draw_scene_gridlines` draws each value tick as the measured polyline, `_draw_scene_floor`
+the floor's own quadrilateral, and `_paint_prism` three faces per solid with the
+`VIEW_3D_FACE_SHADES` factors multiplied into the fill and no outline between them. Which
+cap and which side is the *sign* of the depth vector's two components rather than a case
+to enumerate, so a degenerate camera hides a face instead of needing a branch: `rotX=0
+rotY=0` draws one face per bar and `rotX=-15` draws the underside.
+
+**The painter's sort is not a sort on depth.** Every bar of a clustered `bar3DChart` stands
+in the *same* row, and they still hide each other: a bar's side face runs back along the
+depth vector, so anything further along that vector is nearer the viewer and has to be
+painted over it. That is measured rather than reasoned — on gallery slide 13 the blue
+series' right face is drawn in exactly the two categories where blue outruns the orange
+beside it, and a shorter bar's top face stops dead at the next bar's left edge — and the
+same argument orders a stacked column's segments, which share a position and differ only up
+the value axis. `_prism_order` writes all three keys down, depth first, although the first
+is always zero for the one group element that draws.
+
+#### The scene's shape, re-derived — **the ladder dissolved**
+
+Three more probe decks — `view3d-cat` (112 slides), `view3d-count` (72) and `view3d-band`
+(80), all in `tools/make_view3d_probe.py` — sweep the **category count and the series
+count independently**, which is what every earlier deck held fixed at five and is why the
+ladder looked clean. They are read with the *text* instrument rather than the raster one:
+the value axis' extreme tick labels sit on the drawn face's own top and bottom edges, so
+each probe gives the face's height directly, on the 0.24 pt grid the scene beside it is
+rasterised at. Four cameras a cell — `rotX=0` and `rotY=90` width-bound, the default and
+`rotX=45` height-bound — which is what separates the aspect from the depth.
+
+**One line, and it holds over seven category counts and six series counts:**
+
+> The scene's aspect is `floor((across + series) / 2) / categories` of the region's own,
+> and its depth is `series / categories` of its own width — one row per series, a row
+> being the category band. `across` is how many category *intervals* the front face
+> spans: the category count for an axis crossing `between`, one less for `midCat`.
+
+* **Every one of the 42 cells' free fits lands within 0.03 of an integer** `k` once the
+  depth is held at `series / categories` — 0.998, 1.994, 1.998, 2.997… — and fed back as
+  the law the drawn face height comes back within **1.21 pt at worst and 0.3 pt typically**
+  over 168 probes.
+* **At five categories this *is* the ladder**, which is why the ladder reproduced all
+  eight of its readings and why it could not be told from a law: `floor((5 + m) / 2) / 5`
+  is 0.6, 0.6, 0.8, 0.8 for a line and `floor((4 + m) / 2) / 5` is 0.4, 0.6, 0.6, 0.8 for
+  an area. At three categories it is 1/3, 2/3, 2/3 where the ladder says 0.4, 0.6, 0.6 —
+  which is the contradiction `view3d-mesh` recorded, now with the law behind it.
+* **`across` follows the axis and not the group element.** Every earlier area probe drew
+  `c:crossBetween="midCat"`, which is what PowerPoint writes for an area chart and is also
+  the only thing that separated it from a line; `view3d-band` draws area charts spelled
+  `between` and they read a whole step *up* — 2 against 1 at three categories, 3 against 2
+  at five, 5 against 4 at eight. Gallery slide 16 is an area chart spelled `between`, so
+  this is not a hypothetical spelling.
+* **`depthPercent` scales the depth and leaves the aspect alone** (500% reads five times
+  the depth and the same `k`), a stated **`hPercent`** is multiplied by the same `k`, and
+  **`c:gapDepth`** moves neither — it divides the row, at 0 and 500% on both elements.
+* **Five and six series were read directly**, at two category counts each, so
+  `VIEW_3D_SHAPE_MAX_SERIES` is gone: a floor of a sum has no staircase to run off.
+
+What `k` *is* is still not identified — half the sum of the face's intervals and the
+scene's rows is a plausible thing for a layout to want and is stated nowhere — but it is
+now a bounded function of two counts rather than four readings of a staircase.
+
+**Read back as the thing that matters** — does our axis match PowerPoint's? — the seven
+`view3d-*` decks' 465 scored probes go from **355 drawn exactly as PowerPoint drew them to
+409**, with `view3d-cat` 77 → 95, `view3d-count` 31 → 59 and `view3d-band` 54 → 62, and
+the four decks measured before this pass unmoved at 57/59, 39/39, 46/52 and 51/51. Eight
+probes that matched before now miss and all eight are the count's own rung below, not the
+shape: our face is within 0.5 pt of PowerPoint's on every one of them.
+
+#### The ribbon and the slab — and the lighting model, now confirmed
+
+The solid inside those scenes is the same one twice: a strip swept along the data in the
+front plane and extruded through its own row of depth. What differs is where its underside
+is — the zero line for an `area3DChart`'s slab, a hair below the value for a
+`line3DChart`'s ribbon — so both go through one painter, `_paint_slab`.
+
+* **A ribbon hangs below the value it plots.** Its front face is the fill exactly and its
+  top edge is the value: a three-category one-series probe paints its first category's
+  front face at 5.641 value units where the value is 4.05 and its row's near offset lifts
+  it by 1.586, which is that offset read on its own. The thickness is **0.00255 of the
+  scene's width**, sd 0.00015 over 72 readings — eight cells, three cameras, one to three
+  series, read as the front face's pixel area over the columns it spans, which is subpixel
+  where the strip itself is six pixels. It tracks the scene and nothing else: the same cell
+  pitched to 45 degrees draws a scene 0.67 as wide and a ribbon 0.67 as thick. `1 / 400` is
+  inside the spread and is what is shipped; what the quantity *is* is not identified.
+* **Where in its row each stands is `c:gapDepth` and nothing else**, exactly as a bar's —
+  `1 / (1 + gapDepth)` of the row, centred, which `view3d-mesh` read as 48.65 and 86.33 pt
+  of near offset for the second and third rows against 48.98 and 86.66.
+* **Series one stands nearest the viewer**, so they are painted last to first. Read off the
+  raster rather than assumed: on the two-series slab probe the first series' fill is the
+  one drawn over the second.
+
+**The lighting model is confirmed, and a ribbon is the experiment that confirms it.** The
+four `VIEW_3D_FACE_SHADES` are a prism's whole story, and this section recorded the Lambert
+reading of them — ambient 0.3947, diffuse 0.7465, a light 22 degrees right of the viewer
+and 29 above — as *consistent* rather than *confirmed*, three parameters against four faces
+with `left == bottom` its only check, and asked for "a curved extrusion, which would sweep
+the whole cosine". A ribbon is faceted per segment, so each segment's top face is a
+different normal in the same scene:
+
+| probe | segment slopes, as drawn | PowerPoint | `ambient + diffuse · (n · light)` |
+| --- | --- | --- | --- |
+| `line3D-c5-n1-base` | four | 0.6201, 0.7113, 0.8018, 0.8088 | 0.6231, 0.7144, 0.8040, 0.8126 |
+| `line3D-c2-n1-base` | one | 0.7277 | 0.7267 |
+| `line3D-c3-n1-rx45` | two | 0.6867, 0.7908 | 0.691, 0.7874 |
+| `area3D-c2-n1-base` | one | 0.7387 | 0.7432 |
+
+Every one inside 0.5%, over normals spanning a quarter of the whole range and at two
+cameras — and each of those predictions runs through the scene's *height*, so it is an
+independent check of the aspect law as well. So the shading is a light and not a lookup,
+and `three_d_lambert` is what paints every sloped face; the four constants are four of its
+samples, and they are kept as the measurement they are.
+
+Two details the model does not carry. PowerPoint **smooths** an area chart's top surface
+between facets where a ribbon's stay flat — a five-category slab's top sweeps 0.753 to
+0.784 continuously where four flat facets would be 0.690 to 0.792, and a single-facet slab
+is flat and lands on the model exactly — so our per-facet shading is at worst a few per
+cent out on a multi-segment slab, in the direction of more contrast. And a face turned away
+from the viewer is simply not drawn: which of a segment's two skins shows is
+`n · (−depth_x, depth_y, −depth) < 0`, which is why at `rotX=0` a rising segment's belly
+comes back at the ambient 0.3939 while its falling neighbour's top is 0.7908.
+
+#### The count's rung, and what the new decks say about it
+
+**The shape is right and the interval count is not.** With the face now measured to half a
+point across 267 probes, the drawn *unit* can be read against it directly, and PowerPoint's
+count steps at face heights the shipped rule does not predict: from one interval to two
+between **40.80 and 43.20 pt** of face, and from four to five between **74.64 and 75.36**.
+The shipped rule — `side_axis_intervals(drawn face + 36 pt)`, so
+`floor((face + 14.07) / 12.207) − 2` — steps at 34.76 and 71.38, about five points of face
+early both times, and no offset at the 12.207 pt label pitch fits both windows at once.
+
+Scanned over the 393 probes whose drawn axis solves to a count, `floor(face / rung) − 2`
+fits **386** at a rung of 10.65–11.05 and an offset of about zero, where the shipped form
+fits **351**. The rung's own bracket from the two windows is tight — `(10.66, 10.77]` — and
+it is **not** a font quantity anyone has measured: Aptos' pitch and line box are both
+12.207 pt at 10 pt, and the labels are drawn at the same size on every probe (6.54 pt of
+ink, 4.40 pt for a zero, on the 3-D and the flat controls alike).
+
+Not shipped, for the reason this section keeps re-learning: every one of the 101
+`bar3DChart` probes fits *both* forms, so the corpus cannot choose between them, and the
+new rung is fitted at **one label size on one frame** — which is the same hole that hid
+`1 / categories` inside 0.2030. The probe that settles it is an N-meter (five datasets
+whose drawn units intersect at one count) on a `line3DChart` and an `area3DChart` over a
+label-size sweep, which is what `view3d-meter` already does for a `bar3DChart`.
+
+#### What is still flat, and why
+
+* **`pie3DChart`.** Its ellipse and its extruded rim are a bigger measurement than this
+  stage, and the gallery raster says why: the rim is not flat-shaded. The orange slice's
+  wall sweeps **more than a hundred distinct colours** from 0.40 to 0.92 of its fill,
+  which is the cosine of a curved surface's own normal — the "a curved extrusion would
+  settle it" experiment this section asked for, and the answer is that it does not reduce
+  to the prism's four constants. The pie's *top* face is a fifth constant again, `0.9240`
+  of the fill on all five slices of gallery slide 15 (and on all three of that slide's
+  greys, which is what says it is not a hue effect). Nothing here is built; it is recorded
+  because it is measured.
+* **A stacked `area3DChart`**, which is gallery slide 16's own shape. Its scene is
+  *measured* now — `across / categories` of the region's aspect on one shared row,
+  1/2, 2/3, 4/5 and 7/8 at two, three, five and eight categories and 3/3 and 5/5 for the
+  two spelled `between`, the same at two series and at three, fitting its cameras as
+  tightly as any other cell — and it is deliberately not applied. What a camera is *for*
+  here is the axis, and slide 16 already draws PowerPoint's own 0–50 by 5 without one; the
+  count rule that would divide its reserved band is the one whose rung is wrong above, so
+  giving it a reservation would be trading a right axis for a drawn solid. It keeps the
+  flat rectangle and the warning until that rung is settled.
+* **`c:shape` other than `box`**, and **`c:grouping="standard"`** on a `bar3DChart`, which
+  stands each series in its own row of depth rather than side by side. A cone drawn as a
+  box and a row layout drawn as a cluster are both wrong pictures rather than simplified
+  ones, so both keep the flat rectangle and the warning. `c:shape` is parsed now for that
+  reason alone. `standard` is the *default* for a `line3DChart` and an `area3DChart`,
+  whose rows are measured, and means nothing else there.
+
+#### What the two still get wrong
+
+The scene: floor, back wall, depth, extrusion and shading — for the **two** that are
+still flat. Each of those emits one `chart-3d-flattened` warning naming its group element
+and saying what is missing, which is the difference between a silent wrong picture and a
+declared one — and a different code from `chart-unsupported-type`, which means nothing was
+drawn at all. **The warning now says which of two defects it is**: a chart whose camera was
+applied says so, because its axis, gridlines and marks are where PowerPoint puts them and
+only the scene is absent, where a chart without one is drawn in a rectangle PowerPoint
+never used.
+
+**And it is asked of the builder rather than of the file**, because it is a claim about
+what this library drew: gallery slides 13 and 14 no longer warn, and a chart holding a
+drawn `bar3DChart` beside a flat stacked `area3DChart` names only the area.
+
+On the gallery, slide 13 went 0.5828 → 0.5882 when the camera arrived and **0.5882 →
+0.7327** when the scene was drawn, with the histogram 0.9404 → **0.9990**, mean absolute
+error 13.48 → 5.46 and pixels over 10% 10.26% → 4.88%. (The camera step alone had taken
+the histogram *down* for the harness's documented mask reason plus a real one — flat bars
+in a shorter rectangle have less coloured ink than extruded prisms — and the prisms are
+what won it back.) Rendered side by side the two pictures are hard to tell apart: the
+remaining difference is that PowerPoint draws tick marks on both axes and that the whole
+scene sits about three points left of PowerPoint's. That was blamed on the plot-rectangle
+inset defect recorded at the end of this section; there is no such defect — the flat
+rectangle's *left* inset is within 0.04 pt of PowerPoint's at every size of Aptos and
+Arial on `axis-inset` — so slide 13's three points are still unexplained, and they are
+horizontal where that suspicion was vertical.
+
+**Slide 14 did the same thing when its camera arrived** — SSIM 0.0689 → 0.1223, mean
+absolute error 8.43 → 7.78, pixels over 10% 6.45% → 5.96%, histogram 0.9292 → 0.8871 for
+the same mask reason — and **drawing its ribbons took it 0.1223 → 0.5812**, with mean
+absolute error 7.78 → 3.07 and pixels over 10% 5.96% → 3.26%. Its histogram falls again,
+0.8871 → 0.6027, and the ink says why it is the mask and not the colour: our ribbons come
+back `#35599A`, `#BE6427`, `#A55722`, `#2C497E` and `#2B477B` against PowerPoint's
+`#345A99`, `#BF6426`, `#A55822`, `#2C4A7E` and `#2A487C` — every face within two levels
+per channel, which is the Lambert term doing its job. Rendered side by side the two
+pictures are hard to tell apart.
+
+Slides 13 and 15 are untouched by the shape and slide 16 keeps its flat rectangle, its
+`pie3DChart` and stacked `area3DChart` being the two the gate still refuses. The deck goes
+0.7033 → 0.7303 and 0.8059 → 0.7891, and **no other deck in the corpus moves at all** —
+one VRT snapshot changes, `chart-gallery/slide-14.svg`, and the other 22 decks are
+byte-identical. Gallery 13, 14 and 16 still draw PowerPoint's own tick labels, read off
+both sides and compared string by string: 0/10/…/60, 0/5/…/30 and 0/5/…/50 on both sides,
+with the only differences the ones the PDF's own text-rect splitting introduces in the
+titles.
+
+**A `line3DChart` keys its legend with a swatch, not a rule.** Measured on gallery slide
+14, whose legend PowerPoint draws as two filled squares where a flat line chart of the same
+data gets the 24 pt rule and its marker. Gated on the spelling rather than on whether the
+scene is drawn, because it is PowerPoint that draws the ribbon either way; the key cell is
+1.0985 em instead of 24 pt, so the whole legend run narrows and re-centres with it.
+
+**One residual worth naming, because it is not the camera's.** Slide 13's drawn face comes
+out 232.7 pt tall where PowerPoint's is 224.9. The probe decks have no title and no legend,
+so their region is the frame less two insets and is known exactly; the gallery's is the
+frame less a title band and a legend band as well, and three points of error in either of
+those moves the face by about eight. The camera is fed the region it is given.
+
+### 3.5 The horizontal legend's inter-entry gap — **done**
+
+`LEGEND_ENTRY_GAP_EM = 0.5` claimed the gap between entries in a `b` or `t` legend was a
+constant. 3.3 refuted it on four charts that solved for four gaps and left it there. **Four
+probe decks, 94 slides**, written by `tools/make_legend_probe.py` and read back by
+`tools/read_legend_probe.py`, settle it.
+
+The rule is:
+
+    W(i) = key cell + advance(name i)        cell = 1.0985 em (swatch) or 24.0 pt (line)
+    gap  = min(0.2 * ΣW, 0.9 * frame - ΣW) / (n + 1)
+    run  = ΣW + gap * (n - 1)                centred on the frame, plus 0.75 pt
+
+Read plainly: **the run is padded by a fifth of its own natural width, and that slack is
+cut into `n + 1` equal pieces** — one before the first entry, one after the last, and one
+between each pair. The gap is therefore a property of the entries, not of the chart.
+
+Worst residual **0.009 pt** on the gap and **0.035 pt** on the first key's x, over 88 probe
+slides and the nine charts of `chart-gallery.pptx` that were *not* fitted — which includes
+all four of 3.3's disagreeing observations. `read_legend_probe.py --check` renders each
+deck through this library and prints the residual against the export: worst **0.05 pt**.
+
+#### The distributed reading is refuted, and the frame sweep is what does it
+
+3.3's open question offered a second reading: that PowerPoint distributes entries across an
+available width, so what we solve for as a gap is a residue `(available − ΣW) / (n − 1)`
+that would naturally differ per chart. **It does not survive contact with two measurements,
+and they point in opposite directions:**
+
+* **Frame width moves nothing.** The same three entries on frames of 240, 300, 360, 420,
+  480, 600 and 720 pt draw at the same pitch to 0.001 pt, and the run simply re-centres.
+  A residue would move with every one of them.
+* **The gap grows with the content, where a residue would shrink.** Two entries give
+  3.79 pt and seven give 5.16 pt on one frame; three short names give 7.39 pt and the same
+  three names lengthened give 19.42 pt. The discriminating experiment 3.3 asked for —
+  lengthen one entry and watch the *others* — came out packed in sign and neither reading
+  in magnitude: the pitch between two untouched entries **grew**, by a fortieth of the
+  change, which is `0.2/(n+1)` at `n = 4`.
+
+`aiden0z/pptx-renderer` was checked as a prior and packs with a fixed 12 px gap in a
+centred flexbox — the same shape as the constant being replaced, and wrong the same way.
+It was read for the shape of the question only; no number came from it.
+
+#### What the sweep varied, and what each thing settled
+
+| family | swept | result |
+| --- | --- | --- |
+| `x` | one name's length, others held | packed in sign, `0.2/(n+1)` in size — the discriminating experiment |
+| `n` | entry count 2–7 | the `n + 1` divisor; six counts, two parameters, residual 0.001 pt |
+| `w` | name widths, including one long among short | depends on the **multiset**, not the order: `w-ssl` and `w-sls` agree to 0.002 pt |
+| `k` | bar, area, pie, line, line without marker, scatter, scatter-marker, combo | **two key cells, not seven.** Bar, area and pie take 1.0985 em; every line-keyed form takes 24.0 pt, combos included |
+| `f` | frame width 200–720 pt at fixed entries | the gap does not move at all |
+| `z` | font size 8, 10, 12, 14, 18 pt | `K/size` constant to four digits, so the whole layout is in ems — except the 0.75 pt centring offset, which is not |
+| `p` | `legendPos` `b`, `t`, `tr` | `b` and `t` are identical to 0.001 pt. **`tr` is not a horizontal legend at all** — see below |
+| `c` | content across the 0.9 threshold, at three frames and three counts | the cap, to 0.007 pt |
+
+#### The key cell is not the drawn key
+
+The layout advances by a cell that is **wider than the key it shows**, and the key is
+*centred* in it. A swatch is 0.549 em drawn inside a 1.0985 em cell — exactly twice — and a
+line rule 19.2 pt inside 24.0 pt. Taking the cell to be the drawn key plus its text gap
+(0.786 em) is what made the old constant look like it varied: the missing 0.31 em per entry
+is what `n` was multiplying. Both cells are over-determined — the pitch fixes them, and so
+does the centring, independently, to 0.005 em.
+
+#### The cap, and what is past it
+
+The 0.2 slack is capped so the run plus its `n + 1` gaps never passes **0.9 of the frame**.
+Nine slides cross that threshold at frames of 300, 480 and 720 pt and at two, three and six
+entries, and all nine land within 0.007 pt of the leftover `(0.9 · frame − ΣW)/(n + 1)`.
+This is the one place the layout does distribute, and it is a *cap*, not the rule.
+
+**Past it PowerPoint wraps the legend onto more rows**, and that is now drawn: see *The
+legend row, and what wraps inside it* below for the grid, the band and the 127 probe
+slides behind them.
+
+#### The legend row, and what wraps inside it
+
+Four new probe decks — `legend-side` (38 slides), `legend-row` (40), `legend-band` (24) and
+`legend-face` (22) — settle both halves of the wrapping question and correct the constant
+underneath them. Everything below is read off PowerPoint's own export: baselines from each
+text object's matrix, and the band from the **plot's bottom edge**, which is the category
+axis line, differenced against a slide of the same deck that has no legend at all.
+
+**The row is one number, and it is the Latin face's line box.** `row = 0.99 · lineBox +
+6.0` points — the same quantity for a side legend's baseline pitch, for a wrapped
+horizontal legend's, and for the height a row takes out of the frame. Four faces and five
+sizes give the ratio to 0.0002 em:
+
+| face | size | row less 6.0 pt | our line box | ratio |
+| --- | --- | --- | --- | --- |
+| Aptos | 8 | 9.667 | 9.766 | 0.9899 |
+| Aptos | 10 | 12.083 | 12.207 | 0.9898 |
+| Aptos | 12 | 14.504 | 14.648 | 0.9902 |
+| Aptos | 14 | 16.918 | 17.090 | 0.9899 |
+| Aptos | 18 | 21.750 | 21.973 | 0.9899 |
+| Arial | 10 | 11.063 | 11.172 | 0.9902 |
+| Arial | 14 | 15.484 | 15.641 | 0.9900 |
+| Times New Roman | 10 | 10.964 | 11.074 | 0.9900 |
+| Times New Roman | 14 | 15.350 | 15.504 | 0.9900 |
+| Courier New | 10 | 11.217 | 11.328 | 0.9902 |
+| Courier New | 14 | 15.701 | 15.859 | 0.9900 |
+
+Three things that table refutes. It is **not a multiple of the size**: `1.2083 · size +
+6.0` fits Aptos and Calibri perfectly and misses Arial by a point, which only shows up
+once a deck names a face — Aptos and Calibri are metric-compatible to the unit, so five
+sizes of the first deck could not tell the two readings apart. It is the line **box** and
+not the pitch: Arial's 0.327 pt line gap is not in the row, which is the separation
+`FontBox.pitch`'s docstring asks for and it comes out the other way from the value axis'
+rung. And it is the **Latin** face's box even when no Latin is drawn: a legend of Japanese
+names with `a:latin="Arial"` takes Arial's 17.06 pt row, not the 20.3 pt Yu Gothic's
+1.448 em box would give. That last one is why `real-financial-report.pptx`'s Japanese
+legends measure the Aptos number — their Latin face is Calibri.
+
+The 1% is carried as a ratio rather than chased. It is the same 1% for every face and
+size here, so it is a difference between our `hhea` box and whatever PowerPoint measures,
+not a per-face correction.
+
+**The band a horizontal legend takes** is `rows · row + 6.0`, less **1.5 pt from the second
+row on**. Fifteen slides at five sizes and three row counts, each differenced against a
+no-legend control: the third row and every row after it costs exactly one row, and the
+second costs 1.5 pt less at every size, so the 1.5 is points and not ems. A wrapped
+legend's last row therefore overhangs the band it was given. `legendPos="t"` takes the
+same band off the top and pins its **first** baseline where a single row would sit;
+`"b"` hangs its **last** row off the frame's bottom. That asymmetry is the one 3.3 already
+recorded between `LEGEND_BOTTOM_BASELINE_EM` and `LEGEND_TOP_BASELINE_EM`, and both
+constants are now gone: they were 10 pt fits and are out by 8.8 pt at 18 pt.
+
+**Past the 0.9 cap the run becomes a grid** of equal columns, each as wide as the widest
+entry, packed with no gap, and the block centred on the frame with the same 0.75 pt offset
+a single row gets. The counts are not a greedy fill:
+
+    columns that fit = floor(0.9 · frame / widest entry)
+    rows             = ceil(entries / columns that fit)
+    columns drawn    = ceil(entries / rows)
+
+Six equal entries with four to a row come back **3 + 3**, not 4 + 2; seven with three to a
+row come back 3 + 3 + 1, which is not a balanced split either. Forty slides — entry counts
+2 to 7, frames 300 to 720, sizes 8 to 18, swatch and line keys, unequal entries, a pie and
+a top legend — reproduce to **0.59 pt**, of which 0.02 is the x and the rest is
+`ink_centre`.
+
+**A side legend's wrapped rows.** The block is the rows centred on the frame, as it was;
+what was wrong is where the baseline sits inside a row that has opened. It sits
+`row(1)/2 + ink_centre` below the row's top — half of an **unopened** row — so the extra
+lines hang below rather than the single line being re-centred. Thirty-eight slides at four
+wrap depths, four frame heights, four entry counts, four sizes, three key types and both
+side positions come back within **0.63 pt**, and `real-financial-report.pptx`'s doughnut
+within 0.2 pt of its five measured baselines where the old rule was 5.9 pt low.
+
+Two corrections came with it. A **left** legend wraps exactly like a right one, which ours
+never did: it measured the available width against the frame's far edge and so never
+wrapped at all. And the band **shrinks back to the widest line the wrap produced** rather
+than keeping the cap: a three-word name on a 300 pt frame wraps to two words and one, and
+its band comes back 105.0 pt where the cap alone reserves 120. The doughnut cannot tell
+those apart — its wrapped Japanese line is 80.0 pt against a column of 80.04 — which is why
+this looked like a plain cap when `LEGEND_SIDE_MAX_FRACTION` was first measured.
+
+##### What moved
+
+Three scored decks up, one down, and the down is `ink_centre` above.
+
+| deck | SSIM before | after |
+| --- | --- | --- |
+| `chart-gallery` | 0.6747 | **0.6925** |
+| `real-financial-report` | 0.9114 | **0.9147** |
+| `real-college-template` | 0.8003 | **0.8018** |
+| `authoring-integration` | 0.9327 | 0.9290 |
+
+`real-financial-report`'s slide 3 carries the doughnut and goes 0.8662 → 0.8796; its slide
+4 does not move, because a radar with a two-entry legend takes the same rows either way.
+`real-college-template`'s slide 4 goes 0.3719 → 0.3852 and is the only chart in the corpus
+whose legend is **Arial at 12 pt**, so it is the one deck the face-driven row changes on its
+own. `chart-gallery`'s ten legend slides: 1, 3, 6, 10, 11 and 17 up (slide 3 by 0.118,
+slide 11 by 0.081, slide 10 by 0.069), and 9, 13, 14 and 16 down by 0.001 to 0.011. Its
+deck histogram falls 0.8147 → 0.8046 entirely on slides 3, 10 and 11 — the three that gained
+most on SSIM and the three with the least ink (3.5 to 4.2% coverage), which is the mask
+effect `tools/fidelity.py` documents; the rendered pair for slide 3 is the same picture.
+`authoring-integration` is one slide with one bottom legend: 0.33 pt of its loss is the
+band, now measured to 0.005 pt, and the rest is the legend baseline sitting 0.46 pt low
+because it inherits the shared `ink_centre` where the constant it replaces was fitted at
+exactly 10 pt. Putting that 0.46 back by hand recovers 0.0012 of the 0.0037 — which is the
+size of the thing, and not a reason to keep a rule that is 8.8 pt wrong at 18 pt.
+
+##### What this did not settle
+
+* **The wrap column is about 2.4 pt too generous at one frame.** The `legend-side` frame
+  sweep walks a four-word name across 240, 300, 360 and 480 pt frames; three agree and at
+  360 PowerPoint broke 2 + 2 where a 110.04 pt column holds three words at 107.60. No
+  single fraction fits that slide and the doughnut, whose break needs 0.3999 of its frame
+  where this one needs under 0.3933; counting the space that follows the line does not
+  close it either (109.63 still fits), and a column of about 0.29 · frame fits all five but
+  then has to be a second constant, because at 480 the *unwrapped* name is 0.30 of the
+  frame and stays on one line. Left at 0.40, where the one corpus chart that wraps
+  measured it. A CJK sweep would also say whether PowerPoint's kinsoku pushes a small kana
+  back or lets it hang, which changes what the doughnut's own break brackets.
+* **A wrapped entry's second line still drops by our text renderer's flat 1.2 em.**
+  PowerPoint drops by the box of the face that *draws* the line: 12.24 pt for Aptos at
+  10 pt, 17.04 pt for the same 10 pt legend in Japanese. The row is sized for the first of
+  those either way — the row arithmetic is the Latin box and does not move — so the second
+  line of `real-financial-report.pptx`'s doughnut entry sits 5 pt high. Fixing it is a
+  line-height question for the text engine, not for the legend.
+* **`ink_centre` is what is left in the residual.** Every legend baseline here is
+  `row/2 + ink_centre` below its row's top, and the legend's own readings put that offset
+  at 0.223 em at 10 pt, 0.305 at 8, 0.253 at 12, 0.268 at 14 and 0.295 at 18 — the same
+  U-shaped spread the constant's docstring already records, and consistent with no obvious
+  rule. It is also face-dependent: the same offset is 0.293 em for Arial and 0.157 for
+  Courier New at 10 pt. The shared 0.27 em costs 0.46 pt at 10 pt, which is the whole of
+  `authoring-integration`'s regression below.
+* **A side legend's band is 2 to 5 pt narrow at 18 pt.** Unchanged behaviour, visible in
+  the new deck: `LEGEND_SIDE_LEAD_EM` and `LEGEND_SIDE_TRAIL_EM` were measured at 10 pt and
+  assumed to scale, and the 8-to-18 pt sweep puts our band 2.0 pt narrow at 8 pt and 4.8 pt
+  wide at 18. Nothing in the corpus has a side legend at another size.
+
+#### `legendPos="tr"` is a stacked legend
+
+Measured twice, with a swatch key and a line key: `tr` puts its entries in **one column at
+the top right**, at the 18.0 pt row pitch a right-hand legend uses, and takes its band off
+the plot's **width** — the plot ended at 429.51 pt where the same chart with a bottom
+legend ran to 487.0. It is a side legend that happens to be top-aligned rather than
+centred, and it is not what `resolve/chart.py` does with it: `tr` is still handled in the
+horizontal branch.
+
+**Left unchanged on purpose.** Two probe slides say what `tr` does; nothing says what its
+band width rule is, where the top alignment starts, or what the plot gives up as a
+function of the widest entry — and a right-hand legend's own composition already has an
+unresolved 0.31 pt in 3.3. No fixture in the corpus uses `tr`, so the wrong branch costs
+nothing today. A sweep of `tr` against the side-legend rules would settle it.
+
+#### What moved
+
+`chart-gallery` **0.6543 → 0.6601** SSIM. Ten of its seventeen slides carry a horizontal
+legend and nine of the ten improved; the tenth, slide 11, moved by −0.0004 on a slide whose
+score is 0.05 for an unrelated reason (its legend keys should be invisible). The other
+three scored decks are unchanged to four decimals. The deck histogram fell 0.8172 → 0.8153,
+entirely on slides 3 and 10, whose histograms are 0.61 and 0.74 for reasons that have
+nothing to do with the legend: they are 4% ink, so moving three 19.2 pt rules a few points
+is a visible fraction of their coloured pixels.
+
+| slide | SSIM before | after |
+| --- | --- | --- |
+| 1 `barChart` col | 0.6556 | **0.6671** |
+| 3 `lineChart` | 0.6683 | **0.6906** |
+| 6 `bubbleChart` | 0.4068 | 0.4149 |
+| 9 `ofPieChart` | 0.7924 | **0.8056** |
+| 10 `radarChart` | 0.6826 | **0.7106** |
+| 11 `stockChart` | 0.0503 | 0.0499 |
+| 13 `bar3DChart` | 0.5805 | 0.5844 |
+| 14 `line3DChart` | 0.0689 | 0.0723 |
+| 16 `area3DChart` | 0.7307 | 0.7340 |
+| 17 combo | 0.7384 | 0.7433 |
+
+#### Two residuals worth naming
+
+* **The 0.75 pt centring offset has no explanation.** The run's centre lands that far right
+  of the frame's centre, on every slide of every deck: frame-independent (200–720 pt),
+  size-independent (8–18 pt), key-independent, count-independent, and the same on
+  `chart-gallery`, whose frames sit at a different slide offset. It is not the plot's
+  centre — a pie, which has no axes at all, gives the identical number to a bar chart on
+  the same frame. It is carried as the measurement it is.
+* **Our legend text sits about 0.38 pt left of PowerPoint's advance origin**, unchanged by
+  this work. `LEGEND_SWATCH_GAP_EM = 0.237` reproduces the export's *ink* to 0.02 pt, and
+  the layout's own gap after the swatch is half a swatch, 0.2746 em. The two differ by a
+  left side bearing, and which of them PowerPoint is actually positioning on cannot be told
+  from a swatch legend alone. It was left alone because that constant also feeds side
+  legends, which were measured separately.
+
+---
+
+### 3.6 The plot rectangle's top and bottom, separately — **measured; the top was right**
+
+3.4 recorded that "our own flat plot rectangle is 3.7 pt low", top inset too big and
+bottom band too small by the same amount, with `_top_inset` named as the suspect. **It was
+not. Nothing was 3.7 pt low.** The 3.7 is two reading conventions, and the whole of it is
+in the instrument:
+
+* our side was `read_view3d_probe.ours`, which took our tick label's **element box**
+  centre — a box 1.5 line heights tall with the baseline near its top, so its centre is
+  2.67 pt below the tick at 10 pt Aptos;
+* PowerPoint's side is a PDF text rect, which is the digits' **ink** and sits 1.09 pt
+  *above* the tick.
+
+Those two sum to 3.76 at the top and, with the sign flipped, 3.69 at the bottom, which is
+what was recorded. Both readers are fixed: `ours` now converts its box to the ink centre,
+and the view3d flat controls come back at −1.094 / +0.903 — PowerPoint's own text-rect
+convention and nothing else. With that reader the 3-D probes' rectangles agree within
+0.2–0.4 pt as well, so the camera never had a three-point residual under it either.
+
+#### The gridlines are the rectangle
+
+`axis-inset` (the sixteenth table in `tools/make_axis_probe.py`, 36 charts) sweeps the
+label size and the label face and is read with `tools/read_axis_probe.py --insets`, which
+takes the plot's top edge from the **topmost major gridline** and its bottom from the
+**category axis line**. Both are drawn strokes, neither is a glyph, and no convention gets
+between them and the rectangle. Aptos and Arial are what make it a sweep — Calibri is
+metric-compatible with Aptos to the unit — with Times New Roman and Courier New for a
+third and fourth set of `hhea` numbers.
+
+**The top inset is right at every one of the 24 face/size cells, to 0.002 pt.**
+`max(11.0, 5.0 + lineBox/2)`, the floor included: it binds for every face at 6 and 8 pt
+and for all but Aptos at 10, and each of those draws its top gridline at exactly 11.000 pt
+below the frame. It is the line **box** and not the pitch, and Arial is in the sweep at
+eight sizes to say so — half its line gap runs 0.10 to 0.46 pt, all of it outside the
+residual.
+
+**The bottom band had one face-shaped error.** It is
+`FRAME_PADDING_PT + (5/3) × ascent + descent`, not `FRAME_PADDING_PT + lineBox + 0.615 em`:
+
+| face | ascent/em | band/size | less descent | ÷ ascent |
+| --- | --- | --- | --- | --- |
+| Aptos | 0.9390 | 1.8466 | 1.5649 | 1.6665 |
+| Arial | 0.9053 | 1.7208 | 1.5089 | 1.6668 |
+| Times New Roman | 0.8911 | 1.7015 | 1.4852 | 1.6667 |
+| Courier New | 0.8325 | 1.6878 | 1.3875 | 1.6667 |
+
+Differencing the padding out leaves 6.500, 6.496, 6.499 and 6.497, which is
+`FRAME_PADDING_PT` exactly. The **drawn baselines** say the same thing independently and
+say which term the correction belongs to: a category label has no descender, so a PDF text
+rect's floor is its baseline, and the drop below the axis line is 1.672 ± 0.04 of the
+ascent across the same 24 charts where against the em it runs 1.38 to 1.64 and is no rule
+at all. Aptos' two thirds of an ascent is 0.626 em, within 0.011 of the 0.615 it replaces,
+which is exactly why four readings in one face could not see this.
+
+Confirmed on a deck it was not fitted on: the wrap ladder's **twenty readings in five
+faces** (Calibri among them) carried a per-face bias of 0.11 pt on Arial through 0.60 on
+Courier New, and every one of them now lands within **0.01 pt**. The six rotated readings
+in `ROTATED_LABEL_HEADROOM_PT`'s table prefer the ascent too — worst residual 0.16 pt
+against 0.28 — and the turned band is nonetheless left on the em; see below.
+
+#### What moved, and what did not
+
+The plot rectangle's height changes by 0.011 em of the label size — 0.11 pt at 10 pt
+Aptos, the other way for the other faces — so every chart in the corpus moves by about a
+tenth of a point and **no tick unit, truncation or wrap count moves at all**: the chart
+text of all ten oracle decks is byte-identical before and after, gallery 13, 14 and 16
+still draw PowerPoint's own tick labels string for string, and `side_axis_intervals` reads
+the frame less its furniture rather than the plot, so the band was never one of its
+inputs. `chart-gallery` 0.7044 → 0.7033, `real-financial-report` 0.9147 → 0.9151,
+`real-college-template` 0.8018 → 0.8017, `authoring-integration` 0.9290 → 0.9309, and the
+three deck-wide histograms that move all move up (0.8041 → 0.8059, 0.8751 → 0.8754,
+0.9984 → 0.9985). The gallery's tenth of a point is slide 11's, whose SSIM is 0.09 on a
+slide of hairlines and whose histogram goes 0.9171 → 0.9481 — the mask trap
+`tools/fidelity.py` documents; rendered side by side the two are indistinguishable. No
+deck without a chart moves by a pixel.
+
+#### Left open
+
+* **A short frame breaks the band.** 24 pt labels on a 90 pt frame take 46.876 pt in Aptos
+  and 47.578 in Arial where the same labels on 120, 195 and 330 pt frames take 50.818 and
+  47.793 — the top inset unmoved, the plot down to 20-odd points of height. Ours is 3.7 pt
+  too deep there and right on every frame that is not that short. Three readings; nothing
+  in the sweep says what the floor is.
+* **The turned band keeps the em term.** `ROTATED_LABEL_HEADROOM_PT` was solved from where
+  PowerPoint cut a label with the anchor inside the solution, so moving the anchor without
+  re-solving the headroom moves every truncation boundary — and the corpus' one rotated
+  chart, `real-financial-report`'s chart3, sits 0.4 pt from such a boundary. That chart
+  cannot arbitrate either: its labels are Yu Gothic, whose real metrics are
+  0.8799 / 0.2222 with a **0.5 em line gap** — pulled out of `real-financial-report.pdf`'s
+  own embedded `YuGothic-Regular` — where this library carries Noto Sans JP's 1.1600 /
+  0.2880 and no gap for that name. Its current 0.95 pt agreement is two errors cancelling.
+  Re-running `tools/make_label_probe.py`'s decks in faces whose ascents differ, and solving
+  the headroom and the anchor together, is what would settle it.
+* **Courier New's value-label column is too wide** — 1.0 pt at 10 pt and 2.4 at 24. That
+  is the *left* inset rather than the bottom band, and `VALUE_LABEL_GAP_EM = 0.645` is the
+  same shape of one-face fit this section corrected on the category side. Aptos, Arial and
+  Times New Roman are within 0.26 pt at every size, so nothing in the corpus is waiting on
+  it; `--insets` reports the left and right insets too, for whoever picks it up.
+
+---
+
+## Phase 4 — EMF / WMF — **done (steps 1–3)**
+
+**Effort: revised down from L to S–M for the cases that matter. Landed at the S end.**
+
+> **Correction to an earlier assessment.** I previously scoped this as "write a subset EMF
+> record interpreter" and flagged it as the riskiest phase. Reviewing **[pptx-renderer]**
+> changed that: most Office EMFs do not need vector interpretation at all.
+
+### The insight
+
+PowerPoint embeds vector artwork as EMF, but those EMFs usually **carry a ready-made
+preview inside them**:
+
+- an **embedded PDF**, inside `EMR_COMMENT` (type 70) records with the `GDIC` comment id
+  (`0x43494447`), public types `BEGINGROUP` (2) or `MULTIFORMATS` (`0x40000004`) — findable
+  by scanning for `%PDF` … `%%EOF`;
+- or an **embedded DIB bitmap**, in an `EMR_STRETCHDIBITS` (type 81) record.
+
+`pptx-renderer/src/utils/emfParser.ts` extracts both in **294 lines** with no record
+interpretation whatsoever. That is a direct, well-scoped port.
+
+And we already have the rasteriser: **`pypdfium2`** is needed for Phase 0's oracle anyway,
+so embedded-PDF EMFs cost nothing extra.
+
+### Plan
+
+1. ✅ **`pptx2svg/metafile/emf_preview.py`** — record walk, embedded PDF and DIB
+   extraction. `metafile/dib.py` decodes 1/4/8/16/24/32 bpp DIBs and writes PNG with
+   nothing but `zlib` and `struct`; `metafile/pdf.py` rasterises the PDF case.
+2. ✅ **Wired into `resolve/view.py`** — and into the image *fill* and OLE-preview paths
+   as well, which take metafiles just as legally as `p:pic` does.
+3. ✅ **`metafile_converter` on `ConvertOptions`** — `(bytes, mime) -> (bytes, mime) | None`.
+   It takes precedence over the built-in extraction, may return SVG, and a hook that
+   raises warns instead of aborting the deck.
+4. ✅ **Vector interpreter, GDI records** (round 7, L9 step 1) — `ooxml_common.metafile`
+   plays an EMF's or WMF's GDI records into SVG, measured against **Windows** PowerPoint
+   (PDF export and slide show of 23 made-up metafiles; Mac's player differs). The resolver
+   now tries it first: a fully understood metafile is drawn from its records (what Windows
+   draws, in vectors); one with records left out falls back to an embedded PDF when there
+   is one, else is drawn partially with a `metafile-records` warning; the embedded bitmap
+   and the grey box come last. For the PNG, `svg_to_png` writes these SVG pictures inline
+   (resvg draws no text in an `<image>` SVG).
+5. **EMF+** (step 2) — not played: a dual file is drawn from its GDI records. Windows
+   draws only the EMF+ records of a dual file (measured: slide 22 of the round-7 deck), so
+   step 2 is an EMF+ record player (header, object table — brushes, pens, paths, fonts,
+   images — fill/draw rects, paths, polygons, ellipses, text, images, world transforms,
+   clips, GetDC hand-over to GDI records) on the same SVG writer.
+
+WMF has no equivalent preview convention. `extract_metafile_preview` accepts WMF bytes and
+returns `None` for them, which costs nothing and correctly handles the real case of a
+`.wmf` part that actually contains EMF bytes.
+
+**Notes from the implementation:**
+
+- **The corpus measurement could not be made.** No fixture contains an EMF or WMF at all,
+  so there is no local evidence about how many real EMFs carry a preview. The "measure
+  before building a vector interpreter" instruction stands, unexecuted; it needs a corpus
+  of decks with pasted vector art, which this repo does not have.
+- **Hard limits, with one substitution.** Input 8 MB, record 4 MB, 50,000 records are kept
+  verbatim. The 200,000-geometry-point limit has no meaning here because no geometry is
+  interpreted; the bound that does the equivalent job is a 64-megapixel cap on a decoded
+  DIB, since a 40-byte header can otherwise demand a gigapixel allocation.
+- **Only `EMR_STRETCHDIBITS` (81) is read for bitmaps.** `EMR_SETDIBITSTODEVICE` (79) and
+  the `BitBlt`/`StretchBlt` records carry DIBs too, with different field offsets. Adding
+  them is cheap but untestable against real output right now, so they were left out.
+- **`EmrFormat` descriptors inside `MULTIFORMATS` are deliberately not trusted** —
+  implementations disagree on whether `offData` is relative to the record or to the comment
+  data. Accumulating the comment payloads and scanning for `%PDF` … `%%EOF` is immune to
+  that, and also handles a PDF split across several `BEGINGROUP` records.
+- **`pypdfium2` is an optional extra** (`pip install pptx2svg[metafile]`). Without it the
+  PDF case warns `metafile-rasterizer-missing` and keeps the placeholder; DIB extraction
+  and PNG encoding stay standard-library only.
+
+**Done when:** a deck with pasted vector art renders it ✅ (against synthetic EMFs — see
+the caveat below); a truncated or malformed EMF warns and falls back rather than raising
+or hanging ✅; adversarial inputs are covered by tests ✅ (`tests/test_metafile.py`).
+
+**Not yet verified against real input.** Every EMF in the test suite is built by
+`tests/test_metafile.py` from the MS-EMF record layouts. That exercises the code paths and
+the failure modes, but it cannot catch a misreading of the *specification* — if Office
+writes a field somewhere other than where MS-EMF says, these tests will not notice. The
+first real EMF-bearing deck should be run through
+`convert_pptx_to_model` and checked for a `metafile-image` warning.
+
+---
+
+## Phase 5 — Coverage gaps found in review
+
+**Effort: M–L total.** Individually small, collectively the difference between "renders
+most decks" and "renders decks".
+
+### 5.1 The missing preset shapes — **done, and then some**
+
+**Effort: M. Came in under it, because the shapes stopped being transcribed by hand.**
+
+All 53 are implemented, plus `lineInv`, which the original probe missed. The spec's 186
+presets are now fully covered. (ECMA-376 itself omits `upArrow` — a known erratum — and we
+keep our own; `bendUpArrow` stays registered as an alias for the `bentUpArrow` misspelling.)
+
+**The approach changed partway through, and that is the part worth keeping.** The first
+16 callouts and 12 action buttons were transcribed by hand from two third-party copies of
+the spec that happened to agree. That works but cannot be checked. ECMA-376 publishes the
+geometry as a data file — an electronic addendum to Part 1 — and
+`tools/derive_preset_geometry.py` now compiles it directly into
+`src/pptx2svg/render/preset_specs.py`, following `tools/extract_font_metrics.py`'s
+pattern: pinned source SHA-256, generated output, `--check` that fails on drift.
+Re-compiling the hand-transcribed 53 from the official file reproduced them exactly, so
+the transcriptions were right — but they are now generated rather than merely lucky.
+`render/geometry.py` went from 5426 lines to 1246.
+
+The source file is **not vendored**: ECMA's text copyright policy governs it, so `--source`
+points at a copy you obtain yourself. Vendoring it (as pptx-renderer does, with a notice)
+is a reasonable alternative and would let `--check` run in CI; that is a project decision,
+not a tooling one.
+
+**Two real bugs fell out of doing it properly**, both of which predate this phase and both
+of which affect `a:custGeom` as much as presets:
+
+- `stAng`/`swAng` in an `arcTo` are **geometric** angles, not the ellipse's parametric
+  angle. They coincide only when `wR == hR`, so every circular arc looked fine and every
+  stretched one was wrong. `curvedUpArrow` made it visible: the band missed its own
+  arrowhead. Confirmed by the spec's own named guides — after the fix the arcs land on
+  `iy` and `x5` exactly.
+- SVG draws **nothing** when an arc's endpoints coincide, and DrawingML writes a circle as
+  one `arcTo` sweeping 360°. Every circle in the catalogue was being erased —
+  `smileyFace` rendered as a bare mouth curve. Sweeps are now cut into half-turn pieces.
+
+Neither changed any fixture's output: the corpus has no elliptical or full-circle custom
+geometry. Both would bite on a real deck.
+
+#### Every preset has now been measured against PowerPoint
+
+The judgement-based ranking that used to live here is gone, replaced by a measurement.
+All 187 presets PowerPoint accepts were laid out at their default adjustments in probe
+decks, exported to PDF by PowerPoint 16.106, and scored by silhouette overlap against
+both candidates — our generator and the compiled specification.
+
+**The headline: PowerPoint never contradicts ECMA-376.** Across 187 shapes there was not
+one case where our approximation beat the specification, and not one where the
+specification failed to match PowerPoint. The standard is simply what PowerPoint draws,
+which retires the question the stars raised.
+
+| Outcome | Count |
+| --- | --- |
+| Specification matched, ours did not → promoted | **51** |
+| Both matched (mostly shapes already compiled from the spec) | 135 |
+| `upArrow`, which ECMA-376 omits as a known erratum — ours matches at 0.996 | 1 |
+| Ours matched and the specification did not | **0** |
+| Neither matched | **0** |
+
+After promotion: **median 0.999, mean 0.997, minimum 0.962** across all 187. The seven
+still below 0.98 are antialiasing-limited rather than wrong — `line` and `lineInv` both
+score 0.962, and they are the same diagonal drawn by different code, one ours and one the
+specification's.
+
+142 presets are now compiled from the specification and 45 remain hand-written; the
+specification does not beat any of the 45 by more than 0.01, and they are the shapes where
+a native `<rect>`/`<ellipse>`/`<line>` is the better output anyway.
+
+**Two aspect ratios, not one.** Every shape was measured in a square box *and* a 2:1 one,
+because a generator can be exactly right when the box is square and wrong the moment it is
+stretched. `chevron` is the proof: pixel-identical to the specification in a square box,
+0.716 against PowerPoint when stretched. A single-aspect sweep would have passed it.
+
+**What the sweep cost, and what it was worth.** Three things went wrong that are worth
+knowing before repeating it:
+
+- **Two different input defects present identically**, and the presentation is the problem:
+  PowerPoint opens the deck, closes it again, and leaves the export blocked with the
+  process idle at 0% CPU. That reads as a hung oracle, so it sends you to look at
+  PowerPoint when the fault is in the file you handed it. When an export hangs, suspect
+  the deck first and bisect it; the app is almost certainly fine. The two known causes:
+
+  1. **A preset name OOXML does not define.** `bendUpArrow` — our alias for a misspelling
+     that appears in real files — is one. Probe decks must contain only standard names.
+  2. **A partial `a:avLst`.** Naming only the handle you want to move and leaving
+     PowerPoint to fill in the rest is refused; the list must carry *every* handle the
+     preset declares, with one value changed. Single-handle shapes such as `roundRect`
+     never hit this, because for them a partial list is already complete — which is
+     exactly why it stays hidden until a multi-handle shape meets it.
+- Twenty shapes on one slide exports in three seconds; 120 across six slides silently
+  produces nothing. Batch small.
+- The sweep found exactly two shapes where *neither* candidate matched, `cloud` and
+  `cloudCallout`, and both turned out to be our bug rather than PowerPoint's divergence:
+  a path authored in its own coordinate space had its arc radii scaled before the start
+  angle was converted, which rotates any arc not beginning on an axis. Invisible in a
+  square box. That bug would not have been found any other way.
+
+#### The adjustment values have been measured too
+
+The sweep above moved no handles: every shape was drawn at its **default** adjustments, so
+a preset that mishandles a non-default value passed it untouched. That gap is now closed.
+298 handles across 122 presets were swept **one at a time**, others left at their
+defaults — the two ends of the range the specification's own `pin` guides define, plus one
+value outside each end, with a default-adjustment instance per preset as a control. 1102
+cases, each at both aspect ratios.
+
+| Outcome | Cases |
+| --- | --- |
+| Both matched PowerPoint | 890 |
+| Specification matched, ours did not → **promoted** | 15 (10 presets) |
+| Undecidable by this method, then re-probed → **promoted** | 8 (3 presets) |
+| Neither matched | 38 |
+| Ours matched, the specification did not | 8 |
+| Undecidable even after re-probing | 2 |
+
+**There is no clamp divergence, and that was the thing worth checking.** PowerPoint honours
+the specification's `pin` exactly. Sweeping `parallelogram` through its published range
+gives rendered areas of 1.000, 0.750, 0.600, 0.500, 0.400, 0.250 at adj = 0, 25000, 40000,
+50000, 60000, 75000 — tracking the published geometry at every step.
+
+**What PowerPoint does differently is narrower and stranger.** At the exact values where
+the published geometry *degenerates to zero area*, PowerPoint draws the shape's bounding
+rectangle instead of the collapsed path. `parallelogram` at adj = 100000 and `diagStripe`
+at adj = 100000 both reduce to a line under the spec's own formulas, and both render as a
+filled box. That accounts for most of the 38 "neither matched" cases and for all 8 where
+our older approximation scored better — `leftBrace` and `rightBrace` collapse at both ends
+of `adj2`, and our hand-written brace happened to land nearer PowerPoint's substitute.
+
+This is **not implemented**. It only occurs at the extreme end of an adjustment range,
+which PowerPoint's own UI will not let a user reach by dragging, and a
+"degenerate → bounding box" fallback would mask real geometry bugs as readily as it would
+match Office. It is recorded here as a known, bounded divergence.
+
+**The promotions came almost entirely from out-of-range values**, which is the argument for
+testing them: a generator that ignores the clamp is indistinguishable from one that
+honours it until you hand it something out of range. `downArrow` at adj1 = -25000 scored
+0.727 where the specification scores 1.000; `triangle`, `snip1Rect`, `snip2SameRect`,
+`snipRoundRect`, `round2DiagRect`, `foldedCorner`, `bevel`, `frame` and `upDownArrow` the
+same way.
+
+**A blind spot found and then closed.** A callout's handles move its *leader line*, which
+lies outside the shape's box — so cropping the box clips it away for PowerPoint and for us
+alike, and 164 cases compared two identical pictures. Reporting those as agreement would
+have been false; they were reported undecidable, then re-probed with the shape inset inside
+a larger measured region. 162 became real measurements and 8 of them were failures:
+`borderCallout3` on six handles, `wedgeRectCallout` and `wedgeRoundRectCallout` on `adj2`.
+**When a preset's geometry can leave its own box, the box is the wrong crop.**
+
+155 of the 188 registered presets are now compiled from the specification.
+
+**The lesson that generalises.** The ranking this replaced was produced by eye and was
+wrong in both directions: it listed `chevron` at 0.31 divergence (a square-box artefact of
+measuring at 2:1) while calling `decagon` and `dodecagon` fine at a glance, when both were
+systematically wrong. Shapes at 0.86–0.94 are exactly the ones a screenshot calls correct.
+
+Shapes that should *stay* hand-written: `rect`, `ellipse`, `line`, `roundRect` and
+friends emit a native `<rect>`/`<ellipse>`/`<line>`, which is smaller and strokes correctly
+under a transform. All of them match PowerPoint already.
+
+### 5.2 Other gaps (S–M each)
+
+- **Picture bullets** (`a:buBlip`) — bullets as images. We handle `buChar` and `buAutoNum`
+  only, and silently drop `buBlip`.
+- **`a:clrChange` on a picture** — parsed and resolved onto `BlipEffects.clr_change`, and
+  never drawn. Replacing one colour with another needs more than `feComponentTransfer`
+  can express per channel; the usual trick is an `feColorMatrix` that isolates the source
+  colour followed by an `feComposite`. Found by the model-coverage test, not by reading.
+- **Compound lines** (`a:ln@cmpd`: `dbl`, `thickThin`, `thinThick`, `tri`) — currently render
+  as a single stroke.
+- **Rectangular gradients** — we treat every `a:path` gradient as radial;
+  `a:path path="rect"` is a distinct shape gradient.
+- ~~**Pattern fills** — we implement ~25 presets, **[pptx-renderer]** has 52+.~~ **Done**,
+  and not by counting presets against another renderer: all 54 of `ST_PresetPatternVal`
+  are drawn from the 8x8 bitmaps PowerPoint's own PDF export carries, on the 8.0 pt cell
+  the same export states. Reading the count off a competitor would have kept the two
+  defects that actually mattered — the cell was 8 *pixels*, a third too fine, and several
+  of the 23 that were implemented did not match the preset they named (`horz` and `ltHorz`
+  were the same drawing; `lgGrid` was on a double cell; `dkDnDiag` was two hairlines where
+  PowerPoint draws a 2 px diagonal). See `tools/make_fill_probe.py`.
+- **Prefer the SVG picture extension** — `mc:AlternateContent` may offer `asvg:svgBlip`
+  (vector) in its `Choice` with a raster `Fallback`. `parse/shapes.py:parse_alternate_content`
+  currently always prefers `Fallback`; since we can embed SVG directly, preferring a
+  *supported* `Choice` is strictly better output. Small change, real quality win.
+- **Audio / video placeholders** — media shapes currently vanish. Rendering the poster frame
+  (`p:pic` inside the media frame) is nearly free.
+- **Line-spacing edge semantics** — **[pptx-renderer]** notes percentage line spacing follows
+  Office *line-unit* semantics, and that ordinary text boxes trim spacing outside the first
+  and last visible paragraphs. We do neither; it shifts every multi-paragraph body slightly.
+
+### 5.3 Advanced rendering (L, do last)
+
+- ~~**Embedded fonts**~~ — **done, in Phase 6.** This entry once read "extract, undo the
+  trivial obfuscation, pass via the existing `font_files` parameter". Both halves were
+  wrong: the payload is EOT and in practice MicroType-Express compressed, and `font_files`
+  feeds the rasteriser only, so it would have drawn the right glyphs while still measuring
+  the wrong widths. Kept visible rather than deleted, because the happy path is what made
+  it look cheap — and because the *second* estimate, "this needs a C library", was wrong
+  in the other direction.
+- **3-D (`a:sp3d`, `a:scene3d`), bevels, reflection** (L) — SVG has no 3-D model. Target an
+  approximation: bevels as light/dark edge gradients, reflection as a flipped copy under an
+  opacity gradient. **[pptx-renderer]** does not attempt these either.
+- **Text-to-path** (M) — glyphs as `<path>` via fontTools, making output font-independent.
+  `FontToolsTextMeasurer` already loads the faces.
+- ~~**Gradient stop overrides**~~ — **done, and it was a bigger hole than it said.** The
+  entry read: `_blend_stop` replaces every theme gradient stop with the `a:fillRef`
+  override instead of re-deriving each stop's own tint/shade against it. `_blend_stop`
+  was never reached. The format scheme writes every colour as `a:schemeClr val="phClr"`,
+  which is no colour of the theme's, so each entry resolved to *nothing* before the
+  override could be applied: **every shape filled only by its `p:style` was drawn
+  unfilled**, which is every shape PowerPoint inserts with default formatting, and its
+  `a:fontRef` colour was never read, so its text was black where PowerPoint draws it
+  white. The corpus hid it: of its decks only `real-college-template` slide 3 has a
+  `p:style` at all, on a shape whose `a:spPr` states its own fill. Measured on
+  `tools/make_style_probe.py` (41 probes on the 2013 and on the 2007 Office theme,
+  exported by PowerPoint 16, read by `tools/read_style_probe.py`; 3 of 41 and 0 of 41
+  agreed before, 35 and 34 after):
+  * `phClr` is the reference's colour **with its modifiers**, and the entry's own
+    modifiers then apply to it: `fillRef idx="2"` over `accent2` + `shade 50000` is three
+    stops, each derived from the shaded orange. An `alpha` on the reference carries
+    through. The same holds for `a:lnRef` (the 2007 theme's first line style shades its
+    placeholder once more: `#BE4B48` for accent2, not `#C0504D`) and `a:effectRef`.
+  * `fillRef` 1-3 name `a:fillStyleLst`, 1001-1003 `a:bgFillStyleLst`; 0 and 1000 are no
+    fill. **`effectRef` counts from 1 too**: `idx="0"` is no effect. It was read from 0,
+    which put the first effect style's shadow under every default shape on a 2007 theme.
+  * `a:fontRef` gives the colour and the collection's face (`major` draws Calibri Light
+    where `p:otherStyle` alone gives Calibri; `none` keeps the face and still gives the
+    colour; no colour leaves it to `otherStyle`). It sits over the master's
+    `p:otherStyle`, under the shape's `a:lstStyle` and its runs -- where a table style's
+    `a:tcTxStyle` sits. ooxml-common 0.4.2 keeps the collection, which it used to read as
+    the number 0.
+  * A local `a:ln` overrides the referenced line attribute by attribute: one that names
+    only a colour keeps the reference's width (2 pt under the 2007 theme's `idx="2"`, not
+    the 0.75 pt default), and a local `a:noFill` turns the outline off -- it used to
+    bring the theme's line back.
+
+  The fixtures' 7 `p:bgRef` backgrounds now resolve rather than falling back to white;
+  all are `bg1` on white, so nothing is drawn differently, and no fidelity score moved.
+  **What still differed was the colour engine, not the reference:** `ColorRules.POWERPOINT`
+  composed `tint` with `satMod` and clamped the saturation, and PowerPoint does neither --
+  `satMod 200000` on `#4472C4` is `#0460FF` against our `#0961FF`, and `tint 95000 satMod
+  170000` on `#ED7D31` was read here as `#FF7718` against our `#FF833E` (a raster
+  reading: the swatch probe's exact one is `#FF7818`). **Measured and fixed in 5.6.** The
+  2007 theme's background path gradients (`fillToRect` outside the shape) and its third
+  effect style's bevel are drawn as approximations, as before.
+- **Bidi / RTL text** (L) — Arabic and Hebrew need reordering and shaping. Depends on 5.2's
+  complex-script fonts. Large, and only matters for those scripts.
+
+### 5.4 Group coordinate scaling does not scale text — **measured, and fixed**
+
+A group's `a:ext`/`a:chExt` ratio maps its children's authored coordinate space onto its
+on-slide box. We implemented that as an SVG `scale()` around the whole subtree, which
+scales the glyphs with everything else. Google Slides exports make that catastrophic: they
+author a slide in a small private space and stretch it to fit, so a 24 pt subtitle in a
+group scaling 3.7969x drew at 91 pt, wrapped onto three lines and fell off the bottom of
+the slide.
+
+**Both readings were defensible before the measurement.** If PowerPoint scaled text, our
+91 pt was right and the template was simply mis-authored. It does not. A probe deck of 21
+groups was exported by PowerPoint 16.x and the drawn text read back out of the PDF with
+`pypdfium2` — per-character font size is written as `1` with the size folded into the text
+matrix, so the sizes below are cap heights and advance widths, not `/FontSize`:
+
+| probe | group scale | drawn |
+| --- | --- | --- |
+| ungrouped control, 18 pt Arial | — | 12.89 pt cap height |
+| uniform | 4.0 | 12.89 |
+| nested, 2x inside 3x | 6.0 | 12.89 |
+| shrinking group | 0.25 | 12.89 |
+| non-uniform, x only | 4.0 / 1.0 | 12.89 tall, 58.67 pt wide — the control's width exactly |
+
+The non-uniform probe is the one that settles it: scaled text would have drawn four times
+as wide. **PowerPoint never scales text with a group, in either axis, at any depth.**
+
+Everything else in the text frame is absolute too, each measured on the same deck:
+`bodyPr@lIns` of 91440 EMU drew a 7.20 pt indent at scale 1 and 7.20 pt at scale 4;
+`lnSpc` `spcPts` 3000 gave a 30.00 pt baseline pitch at both; `spcBef` `spcPts` 1200 gave a
+32.88 pt paragraph pitch at both; `normAutofit` `fontScale` 50% gave a 6.44 pt cap height
+at both; the first baseline sat 18.1 pt below the frame top at both. Only the *frame*
+scales — a long paragraph broke into identical lines inside a 4x group and in an ungrouped
+box of the same on-slide width.
+
+So the fix is not "divide the font size by the scale", which would be wrong for a
+non-uniform group and would wrap at the child-space width. The text is laid out in the
+frame grown by the accumulated scale, at the authored size, and the result wrapped in the
+transform that cancels the scale. `RenderContext.group_scale` carries the factor;
+`tests/test_group_text_scale.py` holds the cases.
+
+**That limitation is closed; see §5.5.** It was recorded here as "a rotated group with a
+non-uniform scale composes to a shear, and a pair of per-axis factors cannot express
+that", alongside the geometry half — "a rotated shape in a 4:1 group draws a
+differently-skewed parallelogram than PowerPoint's". Both halves rested on an assumption
+that turned out to be wrong: **PowerPoint never composes a shear at all.**
+
+**A second defect surfaced on the same slide.** `_render_custom_path` emitted the path's
+scale through the coordinate formatter, which rounds to three decimals. A custom path
+authored in EMU — which is what every Google Slides export writes, `<a:path w="2387010"
+h="161597">` on a shape 250 px wide — maps onto its shape by 1.05e-4, and three decimals
+make that `scale(0, 0)`. **Every such shape drew as nothing.** It was invisible in the
+corpus because the committed fixtures author custom paths in small path units, and in the
+suite because the unit test used `w="100"`. On the sales template this was worth more than
+the text fix: mean SSIM against PowerPoint's export went 0.7912 → 0.8015 with the group
+rule alone and 0.7912 → 0.9101 with both.
+
+### 5.5 A group's scale is not a matrix — **measured, and fixed**
+
+§5.4 left one case open and framed it as "the composite is a shear and we cannot express
+it". SVG *can* express a shear, with `matrix()`, so that framing made the work sound like
+a notation problem. It was not. **PowerPoint does not draw a shear. There is no shear to
+express.**
+
+Three probe decks — 82 probes over 82 slides, built by `tools/make_group_shear_probe.py`
+and exported by PowerPoint 16.x — were read back not by rasterising but by walking the
+PDF's path objects for the drawn vertices (`tools/read_group_shear_probe.py`). The
+discriminator is a square rotated 45° inside a 4:1 group. Scale-after-rotate gives a
+rhombus with diagonals 178.2 and 44.5 pt and corners at 28° and 152°. PowerPoint drew a
+**31.496 × 125.984 pt rectangle with an interior angle of 90.000°**, and so did all 43
+sweep probes at every angle, ratio, flip and nesting order tried:
+
+| authored | drawn | |
+| --- | --- | --- |
+| square, 4:1 group, rot 0 | 125.984 × 31.496, corner 90.000° | the control |
+| square, 4:1 group, rot 30 | 125.984 × 31.496 at 30° | the 4 is on the width |
+| square, 4:1 group, rot 44.9 | 125.984 × 31.496 | still the width |
+| square, 4:1 group, rot 45 | 31.496 × 125.984 | the two factors change places |
+| square, 4:1 group, rot 60 | 31.496 × 125.984, long side at 150° | an authored 60° draws at −30° |
+| square, 4:1 group, rot 90 | 125.984 × 31.496, axis-aligned | identical to rot 0 |
+
+So the rule is: **the group hands each of its two factors to one of the child's own axes,
+choosing by which slide axis that axis currently lies nearer to, and rotates the grown box
+afterwards.** The centre is still mapped by the plain scale — it landed on
+`origin + S·(centre − chOff)` to the hundredth of a point on all 43. The rest of the deck
+pins the rule down:
+
+* **The crossing is at 45° and is a switch, not a blend.** 44.9 and 45.0 both drew exactly
+  1× and 4× the authored side, nothing in between.
+* **It does not move with the ratio.** 2:1 and 10:1 both flipped between 44 and 45.
+* **It repeats every 90°, signed.** 134 swapped and 135 did not; 180 behaved as 0, 225 as
+  45, 270 as 90, 315 as 135, 405 as 45, −30 as 150, −60 as 120.
+* **Neither factor need be 1**, and the child need not be square: a 4:2 group put 4 and 2
+  on a 400000 × 200000 child's own axes and swapped them past 45°.
+* **Nesting composes.** A rotated nested *group* is treated exactly like a rotated shape,
+  and a 2:1 inside a 4:1 scaled a rotated child by 8 — 251.968 pt against the authored
+  31.496 — so the assignment sees the product.
+
+**A reading the measurements refuted.** Since |sin| and |cos| cross at exactly 45°, the
+obvious rule is "swap when |sin| > |cos|", and flips would be irrelevant because that test
+takes magnitudes. Twenty-six flipped probes at 30° and 60° agree with it. The ties do not:
+at exactly 45° an unflipped child swaps and one carrying `flipH` *or* `flipV` does not, and
+at exactly 135° it is the other way round. One flip negates the angle the test is made on;
+two flips cancel. The rule is therefore stated on a signed angle — `swaps_group_axes` in
+`render/svg.py`.
+
+**What text does inside it.** Glyphs never skew, and they never take the geometry's
+effective angle either. Every character of an 18 pt Arial run in a 4:1, 1:4 or 2:1 group
+came out with a text matrix of exactly `18 · R(θ)` for the **authored** θ — byte-identical
+to the ungrouped control's matrix, no skew term, size untouched. Only the frame moves: the
+first baseline of a run in a 4:1 group at 45° was predicted from the *swapped*
+31.496 × 62.992 pt frame to within 0.07 pt, where the unswapped frame predicts a point
+50 pt away. So text needs no counter-transform once the scale is folded into the box;
+`RenderContext.group_scale` now carries the uniform case only.
+
+**The fix.** A uniform scale commutes with rotation and stays an SVG `scale()` around the
+subtree, byte-identical to before. A non-uniform one is folded into each child's own box.
+The exception is a table, whose column widths and row heights are authored in EMU and do
+not follow its frame; it keeps the wrapper, and with it the old approximation.
+
+Uniformity is tested with a tolerance and a real deck says why: Google Slides rounds one
+scale into two EMU pairs that no longer divide to the same number — 3.796875 across against
+3.7968797 down in the meal planning template, and 0.75 against 0.7499996 — so four groups
+that are uniform by intent would otherwise fold on float noise. 1e-4 is three orders of
+magnitude above that and far below any deliberate stretch.
+
+**Before and after, on the probe decks:** 14/72 → **72/72** drawn quads matching
+PowerPoint's vertices to 0.05 pt, and 4/10 → **9/10** text baselines within a point at the
+same angle and size. By mean SSIM: `group-shear` 0.7971 → 0.9968, `group-sweep`
+0.6435 → 0.9997, `group-tie` 0.5115 → 0.9423. The scored corpus did not move at all
+(`authoring-integration` 0.9327, `table-test` 0.9895, `real-college-template` 0.8003), nor
+did either template deck in `scratch/`, which render byte-identically.
+
+Only one deck anywhere changed: `real-basic-theme`, whose layouts hold a 0.7006 × 1.8185
+group with children at −90°. Its pixels did not move, and the reason is worth recording —
+at an exact multiple of 90° the scale and the rotation commute, `S·R(90) = R(90)·D`, so the
+old code was accidentally right there. That is why the corpus never caught this.
+
+**Found and not fixed: a group's scale does not reach the pen either.** A 6 pt outline drew
+6.00 pt in every case measured — ungrouped, in a 4:1 group, in a *uniform* 4:4 group, and
+on a rotated child. Line width is absolute the way font size is. Folding a non-uniform
+group now gets this right as a side effect, but the uniform path still multiplies the
+stroke by the scale: `group-tie` slide 9 scores 0.4702 against 0.9862+ for every other
+slide on that deck, drawing a 6 pt pen at 24 pt. Fixing it means folding uniform groups
+too, which changes every grouped fixture and contradicts four of the nine cases in
+`tests/test_group_text_scale.py` that deliberately pin the `scale()` mechanism, so it is a
+separate piece of work.
+
+**Found and not fixed: we mirror text inside a flipped shape and PowerPoint does not.** The
+`flipH` text probe drew unmirrored at its authored +45°; we emit `scale(-1, 1)` around the
+`<text>` and draw it at −135°. This is independent of groups — any flipped text box does it
+— and predates this work.
+
+### 5.6 Colour transforms, measured — **fixed** (ooxml-common 0.4.3)
+
+`ColorRules.POWERPOINT` was what pptx2svg had always done -- `lumMod` and `lumOff` paired
+in one pass wherever they stood, a level rounded after every transform, the saturation
+clamped at 1, and `satOff`, `hueMod`, `hueOff`, `comp`, `inv`, `gray`, `gamma`,
+`invGamma`, `alphaMod` and `alphaOff` not applied at all -- and none of it had been
+measured beyond the table-style swatches of Phase 1. `tools/make_color_probe.py` writes a
+deck of **3,108 swatches**: scheme and sRGB bases (and `a:scrgbClr`, `a:hslClr`,
+`a:prstClr`, `a:sysClr`) under every transform alone at ordinary and extreme values,
+chains in both orders where order could matter, the Office themes' own gradient stops,
+greys and the ends of the range, and 2,400 chains drawn at random from the values decks
+use. **PowerPoint writes a solid fill as a vector path with its colour as three numbers**,
+each a whole level over 255, and its opacity in the graphics state, so
+`tools/read_color_probe.py` reads the level drawn exactly -- no rasteriser, no
+antialiasing -- and resolves the same colour element through ooxml-common's reader.
+
+Under the old rules 1,507 of the 3,108 agreed to the level; under `ColorRules.WORD`'s
+composition, 2,902. What PowerPoint does, which `POWERPOINT` now does and draws **3,102**
+of them by:
+
+* **The transforms apply in document order**, each on the channels the last one left,
+  clamped to 0-1 between steps -- as Word does. `lumOff 40000` before `lumMod 60000` on
+  accent1 is `#517CC8`; paired it was `#8FAADC`.
+* **The colour is kept as linear-light channels in 1/100000** -- an `a:scrgbClr`'s
+  percentages -- from the base colour on and after every step, **except inside a run of
+  HLS transforms** (`lumMod`, `lumOff`, `satMod`, `satOff`, `hueMod`, `hueOff`, `comp`),
+  which stays on sRGB channels, each step still clamped, and is kept where the run ends.
+  That quantum and no other puts the half levels where PowerPoint puts them: 3,102
+  swatches agree, against 2,997 kept in 1/1000000, 2,990 in 1/65535, 2,899 in 1/10000 and
+  2,960 unrounded; keeping a level between two HLS steps as well costs 28. Black at
+  `lumOff 50000` is `#7F7F7F` this way -- 127.4997 levels -- and not by rounding a half
+  down, which is how Word's rules reach it.
+* **The saturation is unbounded above and below.** `satMod 200000` on `#4472C4` is
+  `#0460FF` (the HLS formula with a saturation over 1, each channel clamped; clamping the
+  saturation gave `#0961FF`), twice over is `#003EFF`, and `satOff -50000` on `#70AD47`
+  turns the hue over to `#7C7084` rather than stopping at the grey `#7A7A7A`.
+* **A grey given a saturation is red at hue 0, its blue channel extrapolated**: `satOff
+  25000` on `#808080` is `#A06000` -- red at the high level, green at the low one, blue at
+  `3 * low - 2 * high`, the HLS ramp evaluated a third of a turn back without wrapping.
+  The 42 swatches whose level depends on it all agree.
+* **`gray` weighs the sRGB channels by Rec. 709** (`#ED7D31` is `#8F8F8F`; Rec. 601 gives
+  `#969696`). Word's one `gray` swatch, `#4472C4`, is `#6E6E6E` under either weighting,
+  so `WORD` keeps the 601 it was written with.
+* **`gamma`** reads the channels as linear light and encodes them as sRGB (`#4472C4` is
+  `#8DB2E3`), **`invGamma`** the reverse (`#0F2B8D`); **`alphaMod`** multiplies the
+  opacity and **`alphaOff`** adds to it (drawn at 64/255 and 191/255). The reader now
+  keeps all four; `WORD`, whose probe had none of them, passes over them as before.
+* `a:scrgbClr` is linear light, `a:hslClr`, `a:prstClr` and `a:sysClr` resolve as before,
+  and `tint` / `shade` blend in linear light, as they already did.
+
+Six swatches are not reproduced. Two land within a few thousandths of a half level and are
+drawn a level the other way. Four are one base under one chain: `lumMod 200000` then
+`lumOff` on `#FFE699` is `#FFDFDF` (`#00FFFF` for `lumOff -50000`), where the seven other
+bases measured under it go white and then grey as the clamp says.
+
+**No corpus slide moved** -- not one byte of the SVG of any fixture, and so no fidelity
+score and no snapshot: every transform the corpus uses resolves to the same level under
+both rules. It is the theme style references of 5.3 (`satMod` over 1 on a gradient stop)
+and decks with `satOff`, hue, `gray` or `inv` transforms that draw differently now. `tests/test_color_transforms.py`
+holds 23 of the swatches through pptx2svg's own reader and resolver.
+
+### 5.7 A run after a change of face — **measured, and fixed** (ooxml-common 0.4.3)
+
+pptx-agent's outline drafting (its E6) drew `Revenue grew **12%** to *4,285*` and
+`- Operating margin `11.9%`` with the second run over the end of the first. The slide
+XML was right. Reproduced on its new-deck template (Aptos over 游ゴシック): both runs that
+overlapped were put at an **absolute `x`**, and both for a reason that did not hold.
+
+`tools/make_run_probe.py` puts two runs on a line in 43 ways -- Calibri then Calibri
+Italic, Bold, Consolas, Cambria; Arial and Aptos then Consolas; Consolas then Calibri;
+each with the space closing the first run, opening the second, absent, and tripled; at 12
+to 36 pt; in a bulleted and a centred paragraph -- and `tools/read_run_probe.py` reads the
+origin of the second run's first glyph off PowerPoint's PDF. **PowerPoint puts a run at
+the advance of the one before it, a trailing space included, in that run's own face, and a
+space that opens a run in the run's face.** Our measurer agreed to 0.2 pt on every face
+it has a table for. It had none for Consolas: a Consolas space was guessed at 7.2 pt at
+24 pt where PowerPoint advances 13.25, a Consolas run ending in three spaces came out
+21 pt short, and twelve Consolas letters 6.6 pt long.
+
+So the trailing space was measured in the right face; what went wrong is where the second
+run was *drawn*:
+
+1. **A Latin italic was sheared and lifted out of the line because its East Asian face
+   has no italic.** `_segment_tspans` asked whether *any* face in the run's chain lacked
+   an italic, and the Office theme's 游ゴシック does, so `*4,285*` in Aptos was drawn
+   upright under a `skewX` in a `<text>` of its own, at the `x` our tables end `to `
+   at. The face that draws a Latin run is its Latin face, which has an italic: it is now
+   asked for with `font-style`, in the flow, as PowerPoint draws it.
+2. **A change of face started a new text chunk at an absolute `x`.** That rule exists for
+   resvg, which redraws a whole chunk in its default face when a character in it is one
+   the requested family cannot cover -- a kana in a Calibri chunk. A Latin run in another
+   face is not that: every stack ends in a generic family that draws Latin, and a chunk
+   of Calibri then Consolas draws each run in its own face. Starting a chunk there put
+   the next run where our tables end the last one, and a rasteriser drawing that one in a
+   wider face -- pptx-agent renders without the font bundle, so Aptos fell back to a
+   system face -- drew it into the next. Now only a run that is not plain Latin (East
+   Asian text, anything outside Latin, punctuation and currency) opens a chunk; Latin runs
+   flow on in whatever face draws them, which is PowerPoint's rule in that face.
+3. **Consolas is measured**, at its own 1126/2048 em on every character (a fixed-pitch
+   table of two constants, like the Lucidas'), and drawn with Cousine where Consolas is
+   not installed -- 9.1% wide there, and graded `approximate`.
+
+With the three, 39 of the 43 probes agree to 0.5 pt; the four that do not are Consolas
+first runs, which PowerPoint advances at 13.25 pt a character at 24 pt where the face
+says 13.195 -- 0.7 pt over thirteen. Holding every chunk to its measured width with
+`textLength` was tried first and rejected: it stops the overlap whatever face draws the
+text, but it overrides the real advances inside a chunk with our tables, and
+`sample-issue-387` slide 1 fell from SSIM 0.9908 to 0.9767 under it.
+
+**No corpus slide moved**: no fixture changes face inside Latin text, and every run the
+corpus shears is in a face with no italic of its own. `tests/test_render.py` holds the probe's
+advances, the flowing chunk and the italic in its own face.
+
+### 5.8 Autofit is what the file stores — **measured, and fixed** (ooxml-common 0.4.5)
+
+An agent splitting an overlong slide was shown it already fitting. The body placeholder of
+a deck it was given held twenty paragraphs under the master's `a:normAutofit`, with no
+`fontScale` stored; pptx2svg drew them shrunk into the box, and PowerPoint draws them at
+full size running off the slide. The shrink was the renderer's own idea, from its first
+commit -- "the stored `fontScale` ... was computed against PowerPoint's font metrics;
+re-deriving it keeps text inside the box" -- and nothing had measured it. The same went
+for `a:spAutoFit`, whose shape was grown to its text.
+
+`tools/make_autofit_probe.py` puts one grey 400 x 150 pt Calibri text box on each of 47
+slides -- `normAutofit` with nothing stored on text that fits and on text that overflows
+at 12, 18 and 28 pt, wrapping and centred; a stored `fontScale` of 50, 62.5 and 92.5 % on
+text that fits and on text that still overflows; `lnSpcReduction` alone, with a scale,
+and against `spcBef`, `spcAft`, a 150 % and a 90 % `lnSpc` and a 30 pt `spcPts`, each beside
+a `noAutofit` twin; sizes a scale does not take to a whole point; `spAutoFit` on text
+taller and shorter than its box; `noAutofit`; no autofit element -- and
+`tools/read_autofit_probe.py` reads each run's size, each baseline and the box's drawn
+height off PowerPoint's PDF. **What PowerPoint draws on open is what the file stores; it
+fits nothing until the text is edited.**
+
+* **`normAutofit` with nothing stored overflows at full size.** Twelve 18 pt lines are
+  drawn at 18 pt, the last baseline at 297.60 pt in a box that ends at 190; centred, they
+  spill both ways (the first baseline at 2.40 pt, above the box). We drew 9.92 pt, the
+  last line at 183.76.
+* **A stored `fontScale` is applied, and nothing more.** 30 lines at 50 % are drawn at
+  9 pt and run to 365.52 pt; we shrank them again, to 3.97 pt.
+* **The scaled size is rounded to a whole point, half up**, read off each line's advance
+  (the PDF's own font size is not it: PowerPoint writes a stated 10.5 pt run as an 11 pt
+  font with 10.5 pt's advances, and that 10.5 pt is kept, at 100 % and with no autofit):
+
+  | stated | `fontScale` | exact | drawn |
+  | --- | --- | --- | --- |
+  | 18 pt | 62.5 % | 11.25 | 11 |
+  | 18 pt | 92.5 % | 16.65 | 17 |
+  | 18 pt | 70 % | 12.6 | 13 |
+  | 18 pt | 55 % | 9.9 | 10 |
+  | 25 / 21 / 13 / 11 pt | 50 % | 12.5 / 10.5 / 6.5 / 5.5 | 13 / 11 / 7 / 6 |
+  | 10 pt | 85 % | 8.5 | 9 |
+  | 10.5 pt | 50 % | 5.25 | 5 |
+
+  Every tie went up, so it is not to-even; a run of 24 pt beside the 18 pt one, at
+  62.5 %, is 15. The line pitch follows the rounded size: 9 pt lines step 10.96 pt.
+* **`lnSpcReduction` comes off a percentage line spacing in percentage points.** 150 %
+  less 20 steps 28.02 pt where 150 % steps 32.46 -- 130 %, not the 120 % a factor of 0.8
+  gives -- and 90 % less 10 draws exactly the `noAutofit` 80 % (first baseline 56.64,
+  last 125.52). A 30 pt `spcPts` keeps its 30.00 pt under 20 %, and neither the reduction
+  nor a `fontScale` touches `spcBef` (12 pt, and 50 %) or `spcAft` (50 %).
+* **`spAutoFit` keeps the stored extent.** Twelve lines draw in a box still 150 pt tall,
+  overflowing it (we grew it to 266.4); two lines in it leave it 150 tall, at the top
+  or, anchored `b`, at the bottom.
+* `noAutofit` and no autofit element overflow at full size, as we drew them.
+* `normAutofit` on `wrap="none"` text that overflows was left out: exporting it, PowerPoint
+  16.106 dropped the AppleEvent connection (-609) and refused every open after it with
+  -9074 until it was killed. Its first symptom was an export that exits 0 and writes no
+  PDF.
+
+So `DrawingRules.autofit` is new (ooxml-common 0.4.5). `"stored"`, PowerPoint's: a
+`normAutofit` body's runs are given their scaled, rounded sizes (the 18 pt default too,
+where no run states one) and each paragraph's percentage spacing the reduction off, before
+anything is laid out, and nothing is shrunk; a `spAutoFit` shape is drawn at its extent.
+`"fit"` keeps the old shrinking and growing for Word, where none of this was measured, so
+docx2svg does not move. A table row still grows to its cells' text (`_row_heights`): that
+is `a:tr@h` as a minimum, not autofit.
+
+The probe goes from **19 to 45 of 47** agreeing (size, line count, first and last baseline
+to 1 pt, box height). The two left are one rule that is not autofit's: a line with an 11 pt
+run then a 15 pt one puts its first baseline 57.60 pt down in PowerPoint and 53.85 in ours,
+the same scaled and stated (`ctl-mixed`) -- our first baseline follows the paragraph's
+first run, not the line's tallest. Recorded, not fixed.
+
+**One fidelity slide moved, closer**: `real-college-template` slide 8, a body at a stored
+90 %, **0.9889 → 0.9930** (loss 7,894.8 → 4,959.9; under pdfium 0.9014 → 0.9049), the deck
+0.8277 → 0.8282. One snapshot moved: slide 2 of the basic theme fixture, whose 25.5 pt title at a
+stored 90 % is drawn 23 pt rather than 22.95 (that deck is not scored: PowerPoint drew its
+ＭＳ Ｐゴシック with other faces). Otherwise only the three local template decks in
+`scratch/` changed, and not in a pixel: their top-anchored `spAutoFit` boxes with no fill
+or line are drawn at their stored height. The trial deck's twenty-paragraph body is now drawn at full size, running off the slide, as
+PowerPoint draws it. ooxml-common's `tests/test_autofit.py` holds the rules.
+
+### 5.9 The faces PowerPoint draws, found where it keeps them — **measured, and fixed**
+
+Agents in end-to-end trial 2 judged their slides on renders in the wrong typeface. Every
+deck in Office's default theme names Aptos and Aptos Display; pptx-agent installs
+`pptx2svg[png]` without the font bundle, so the PNG was drawn from "this machine's
+fonts" -- and on the Mac PowerPoint ran on, neither face is one. **Aptos lives in
+PowerPoint's own bundle (`…/Microsoft PowerPoint.app/Contents/Resources/DFonts`), Aptos
+Display only in Office's cloud-font cache (`~/Library/Group Containers/UBF8T346G9.Office/
+FontCache/4/CloudFonts`)**, and resvg searched neither. The stack `'Aptos Display', Aptos,
+Carlito, '游ゴシック Light', 游ゴシック, 'Noto Sans JP', sans-serif` fell through to the first
+name anything answered: Noto Sans JP, installed for the oracle, whose Latin and vertical
+metrics put every line in another face and a few points lower. The SVG was right -- it
+names Aptos and embeds nothing, and Aptos was already measured from its own table, so line
+breaks agreed -- and the substitution was entirely the rasteriser's font lookup.
+
+`pptx2svg.fonts.office` now finds a family where PowerPoint does, read in place:
+**PowerPoint's bundle, then macOS's fonts, then the cloud cache**. The order is measured
+(`tools/make_face_source_probe.py` / `read_face_source_probe.py`, one 24 pt line per
+family and style). 29 family-and-style pairs are in both macOS and the bundle here; two
+can be told apart, and PowerPoint used the bundle's copy of both:
+
+| Probe | PDF draws | macOS copy, max error | bundle copy, max error |
+| --- | --- | --- | --- |
+| Rockwell, 4 styles | Rockwell, -Bold, -Italic, -BoldItalic | 20.8–25.9 pt (13.0) | 0.5–1.5 pt (1.65); 19 of 19 outlines |
+| Symbol, `abgdpqw` | SymbolMT | 75.6 pt | 0.09 pt |
+| Arial, Verdana, Tahoma, Times New Roman | ArialMT, Verdana, Tahoma, TimesNewRomanPSMT | same as the bundle's: equal advances, identical outlines | |
+| Aptos, Aptos Narrow, Calibri | Aptos, Aptos-Narrow, Calibri | — | 1.0, 1.0, 1.7 pt (only copy) |
+| Aptos Display, Segoe UI, Lato | AptosDisplay, SegoeUI, Lato-Regular | — | cache: 1.3, 0.4, 0.2 pt (only copy) |
+
+(The residue on the only-copy rows is kerning, which the probe's prediction leaves out.)
+Word, measured the same way by docx2svg, lays out with macOS's copy and draws its bundle's;
+PowerPoint does both with its bundle's. Nothing is in the cache and elsewhere, so the
+cache's place is moot; it is last, as Word's is.
+
+It applies when the host's fonts do: without the bundle, or with `--system-fonts`.
+`ConvertOptions.host_fonts` / `svg_to_png(host_fonts=)` override it, and
+`PPTX2SVG_OFFICE_FONTS=0` turns it off; where the folders are absent nothing changes.
+
+* **Drawing.** The files of each family the SVG names go to resvg as `font_files`, after
+  the caller's own and a deck's embedded faces, and before everything else. resvg keeps
+  the first face it loads of a name, and loads the system's before any file, so where a
+  bundle face shares its name with a macOS one (Rockwell, Symbol, Arial…) the system's
+  folders are handed over as directories after the files instead -- checked to draw the
+  committed fixtures byte for byte as resvg's own system loading does. **Aptos Display
+  and Aptos collide in resvg**: both files name their typographic family "Aptos" (ID 16),
+  which is all resvg's database files them under, at weight 400, width 5, upright, so
+  loaded together the first draws both. Renaming one would mean copying a Microsoft font.
+  Instead such a slide is drawn in passes: everything with Aptos loaded and the Aptos
+  Display text `visibility="hidden"` (a hidden glyph keeps its advance); then only that
+  text, with Aptos Display loaded, over the first pass as an image -- pixel-identical to
+  a single pass where faces do not collide (`tests/test_office_fonts.py`).
+* **Measuring.** A family the static tables measure as itself keeps its table, kern pairs
+  included: Aptos, Aptos Display, Cambria and the metric-compatible rows. One they guess
+  at or measure from another face -- Rockwell, Gill Sans MT, Segoe UI, Aptos Narrow,
+  Aptos Light, Yu Gothic -- is measured from the installed file (its `hmtx`/`cmap`, read
+  without the outlines), as an embedded face is; those tables have no kern pairs yet.
+
+**Trial 2's six PowerPoint tasks** (66 slides of the agents' outputs, ours at PowerPoint's
+export size against the PDF): mean SSIM **0.484 → 0.828**, 46 better, none worse;
+p6-restructure-deck 0.225 → 0.826, p3-split-slide 0.030 → 0.672. **The oracle corpus is
+unchanged**: `tools/fidelity.py` draws with the font profile's files and the bundle, so
+host faces never take part, and its output is identical with and without this change --
+and identical again with `host_fonts=True` forced, because no scored deck names a family
+the tables do not already measure as itself (the one host table it would build, 游ゴシック,
+moves no line). Drawn from the host's fonts instead (`skip_system_fonts=False`, the
+pptx-agent path), the corpus's mean SSIM rises on six decks, is unchanged on four and
+falls on one, `real-basic-theme` (0.978 → 0.966; `sample` rises overall but its slide 3
+falls) -- the two decks the harness skips because PowerPoint draws their ＭＳ Ｐゴシック as
+MS Gothic: we now draw the face the deck names, and PowerPoint does not.
+
+**Since: on by default where Office is installed** (5.10). The user's decision: Office's
+fonts are used whenever they are on the machine, with or without the bundle, because that
+most closely resembles PowerPoint; the output then depends on the machine, and
+`host_fonts=False` / `PPTX2SVG_OFFICE_FONTS=0` is the reproducible render.
+
+### 5.10 Which kern pairs PowerPoint charges — **measured, and fixed** (ooxml-common 0.5)
+
+Trial 2's p4 run 2 had a "Pass" label, Aptos 18 pt in a 650,000 EMU box, that pptx-agent's
+fit check kept on one line and PowerPoint broke "Pas / s". pptx-agent's
+`tools/wrap_boundary_probe.py` (290 one-word boxes) found the cause: PowerPoint did not
+charge Aptos's `ss` pair (-33/2048 em), which only the face's GPOS holds, and the tables
+did -- every kern pair here was the OpenType feature (*The `kern` feature, modelled*).
+`tools/make_kern_source_probe.py` / `read_kern_source_probe.py` asked the general
+question: 29 lines, each of pairs of one class in one face -- in the legacy `kern` table
+only, in GPOS only, in both alike, in both differently -- read off the export to 3/1000 em:
+
+| Faces | Where | What PowerPoint charged |
+| --- | --- | --- |
+| Aptos, Aptos Display | bundle, cloud cache | the legacy table: `ss`, `éV`, `vT`… (GPOS only) unkerned; pairs in both, kerned |
+| Calibri, Arial, Times New Roman, Cambria, Meiryo | bundle | pairs in both, kerned (these faces' GPOS-only pairs are outside the probe's letters) |
+| Segoe UI | cloud cache | the legacy value where the tables disagree (`Ta` -217, not -230); GPOS-only `Fa` -70 unkerned |
+| Verdana, Tahoma | bundle | the legacy table (they have no GPOS kerning) |
+| Lato, Raleway, Yu Gothic | cache, cache, bundle | nothing: no legacy table, GPOS pairs (Lato `aT` -248) unkerned |
+| Minion Pro, PT Sans, Avenir Next, Hiragino Sans (Latin and kana) | macOS | the legacy table; GPOS-only pairs (Hiragino `ダノ` -220) unkerned |
+| Noto Sans JP (Latin and kana), STIX Two Text | macOS, **variable** | **GPOS**, to 2/1000 em |
+
+So: **a static face is kerned with its legacy `kern` table alone, wherever it is installed;
+a variable face with its GPOS pairs** -- which is also why `sample-cjk`'s Noto Sans JP kana
+measured kerned (above). ooxml-common 0.5 makes it a rule, `DrawingRules.kerning`
+(`KerningSource`: PowerPoint's is legacy for a static face, GPOS for a variable one), and
+the tables carry both: `LEGACY_KERNING` holds the legacy pairs of the face each entry
+stands for -- Calibri's for Carlito, as its line gap is Calibri's -- generated here by
+`tools/extract_font_metrics.py` from the Office faces, and `FontMetrics.variable` marks
+Noto Sans JP. The shared default stays the feature; `convert_pptx_to_svg` measures with
+PowerPoint's rule. Faces read in place or embedded in a deck carry their legacy pairs too.
+
+Word, asked the same question by docx2svg (`tools/make_wrap_kern_probe.py`), kerns only
+where `w:kern` asks, with the legacy table (324/324 verdicts), and kerns a variable face
+not at all.
+
+**Effect.** The oracle corpus: every one of the 113 slides of the oracle decks and fixtures
+converts to the same SVG bytes as before, with Office's fonts on or off, and so all 52
+scored slides score as before -- no line in the corpus sits within a kern pair of its edge.
+Trial 2's p1-p6 (66 slides): one SVG changes, p4 run 2 slide 2, whose "Pass" now breaks as
+PowerPoint's does (SSIM 0.9732 → 0.9739); with Office's fonts now on by default, the six
+tasks' mean is 0.8278 against 0.5598 for main's default with the bundle installed.
+
+---
+
+## Phase 6 — Embedded fonts — **done**
+
+**Estimated L, with "a hard dependency that could make it XL". It came in under that, and
+the reason is the second finding below.** The two cost drivers this phase was planned
+around — "is it really MTX?" and "MTX needs a C library" — were an inference and a
+prediction. Measuring both changed the shape of the work.
+
+### 1. The payloads really are MTX, and that is now measured rather than inferred
+
+The plan said: decode one payload before designing anything, because the whole estimate
+rested on reading `Flags = 0x4` as `TTEMBED_TTCOMPRESSED` and nothing had actually
+decompressed one. Done first. libEOT's `eot2ttf`, built from source as an oracle outside
+this repository, decodes **all 21** `.fntdata` parts across the two local template decks
+to valid TrueType files. So:
+
+```
+Version       0x00020002   (EOT 2.2)        on all 21
+Flags         0x00000004   (TTCOMPRESSED)   on all 21 — no SUBSET, no XORENCRYPTDATA
+fsType        0x0000       (installable)    on all 21
+EOTSize       == the part length, to the byte, on all 21
+```
+
+The inference held. Two things that were not expected:
+
+* **The payloads are not subsetted.** `TTEMBED_SUBSET` is clear, and the decoded Arimo
+  carries all 3237 glyphs with a 3010-entry cmap. PowerPoint embedded the whole face.
+  That is what makes measuring from the extracted file worth doing at all — a subset would
+  only cover the characters already on the slides.
+* **The part names lie.** `ppt/fonts/MerriweatherSansLight-bold.fntdata` decodes to a font
+  whose `name` table says *Merriweather Sans / Regular* at `usWeightClass` 400. PowerPoint
+  had no Light Bold cut and substituted one, and it still draws bold "Merriweather Sans
+  Light" runs with it. The deck's slot assignment, not the file's own name table, is what
+  governs. See §5.
+
+### 2. A C dependency was not needed, and the extra had nothing to point at
+
+The plan was `pptx2svg[eot]`, shaped like `[metafile]`, because LibreOffice 25.8 links
+libEOT for exactly this. Two measurements killed that:
+
+* **There is no EOT decoder on PyPI.** Not `libeot`, not a binding, not anything. The
+  "optional extra" would have been a package this project first had to write and publish.
+  That was never checked when the extra was proposed.
+* **The decode-side subset of libEOT is about 700 lines of Python, and it is fast enough.**
+  Per face: 0.15 s (Inclusive Sans, 23 kB payload) to 1.06 s (Arimo Bold Italic, 164 kB).
+  The nine faces of the largest local deck total 5.9 s.
+
+So `fonts/mtx.py` is pure standard library and lives in the core, and a bare
+`pip install pptx2svg` reads embedded fonts. Only the decompressor is ported (`Decode`,
+`DecodeLength`, `DecodeDistance2`, `InitializeModel`, AHUFF's read side, BITIO's read side,
+`parseCTF`, `SFNTContainer`); libEOT's compressor half has no caller here.
+
+**Correctness is pinned against libEOT, not against ourselves.** All 21 local payloads
+decode **byte-identically** to `eot2ttf`'s output. Two further independent checks, because
+the warning this file gives elsewhere — our own writer agreeing with our own reader proves
+nothing — applies to the sfnt reader as much as to the decoder:
+
+* The metrics table `fonts/sfnt.py` builds from the *embedded static* Arimo reproduces
+  `METRICS["Arimo"]` — generated by fontTools from the *bundled variable* Arimo —
+  character for character, both cuts, 349 of 349, plus unitsPerEm, ascender, descender,
+  `default_width` and `cjk_width`. Different file, different tool chain, same numbers.
+* `tests/fixtures/real-basic-theme.pptx` embeds eight real PowerPoint-written MTX payloads
+  (see §3), so CI decodes PowerPoint's own output on every run.
+
+### 2a. A bound the reference implementation does not have
+
+Found by mutating bytes inside the font data of the real payloads: 19 of 1680 mutations
+made an LZ copy item run past the declared output length, which escaped as an `IndexError`
+rather than as this module's own error. In libEOT the same input is worse than an
+exception -- `Decode` writes the whole copy item into a fixed-size buffer and only
+*afterwards* asserts `pos == out_len`, so a corrupt stream overflows the heap before the
+check runs. The port now refuses the item instead, and all 21 real payloads still decode
+byte for byte with the bound in place.
+
+A deck is untrusted input, so the surrounding code was swept the same way. 2520 truncation
+and bit-flip cases through `decode_eot` and `read_sfnt`, 1680 through the compressed body,
+960 through the CTF rebuild: no unexpected exception type, no case slower than eight
+seconds. Two `cmap` subtable formats were also bounded — a format 12 header can declare
+four billion groups and a format 4 segment can span 65,536 code points, so a kilobyte of
+malicious `cmap` could otherwise ask for hours of work. The 120-mutation regression test
+is pinned to a seed that reaches the copy-item bound three times, so it cannot quietly
+stop covering it.
+
+### 3. Correction: a corpus deck *does* embed fonts
+
+`tests/fixtures/real-basic-theme.pptx` carries
+`ppt/fonts/{Lato,Raleway}-{regular,bold,italic,boldItalic}.fntdata` — eight EOT 2.2
+payloads, MTX compressed, written by PowerPoint. The instruction to treat a fidelity move
+as "a finding, not a rebaseline" was sound, but its premise ("no corpus deck embeds fonts")
+was not.
+
+Two consequences, both worth keeping:
+
+* **It made the feature testable in CI** without adding a byte to the repository.
+* **It cost 6× on the test suite before it was cached.** Every test deriving a deck from
+  that fixture decoded eight faces: 21 s → 126 s. A bounded content-digest cache in
+  `fonts/embedded.py` brings it back to 25 s, and keying it by payload digest rather than
+  by part path is what makes a *derived* deck hit.
+
+Fidelity did **not** move: `authoring-integration` 0.9327, `table-test` 0.9895 and
+`real-college-template` 0.8003 are all unchanged. `real-basic-theme` is skipped by the
+harness for an unrelated reason — PowerPoint drew MS-Gothic where the deck asks for
+ＭＳ Ｐゴシック — so the one corpus deck whose rendering *did* change is the one the corpus
+cannot score. That gap is why the template decks were scored by hand instead; see §6.
+
+### 4. The `fsType` policy, and why it is that one
+
+Refuse a face **only** when its permission field says restricted-licence embedding and says
+nothing else. That is LibreOffice's rule, adopted deliberately rather than invented:
+
+```cpp
+// EmbeddedFontsHelper::sufficientTTFRights, vcl/source/gdi/embeddedfontshelper.cxx
+case FontRights::ViewingAllowed:
+    return copyright == 0 || ( copyright & 0x0e ) != 0x02;
+```
+
+Rendering a deck to SVG or PNG is a viewing use: the output is a fixed image, it is not
+editable, and it carries no font file — an SVG names fonts and embeds none. So `0x0000`
+(installable), `0x0004` (preview & print) and `0x0008` (editable) all permit it, in any
+combination, and `0x0002` alone does not.
+
+Two bits beyond LibreOffice's check:
+
+* **`0x0200`, bitmap embedding only — refused.** We draw outlines, which is exactly what
+  the bit forbids. Refusing where LibreOffice permits is the direction to err in.
+* **`0x0100`, no subsetting — permitted, and written down so nobody adds a check for it.**
+  Nothing here subsets: the extracted face is written out whole.
+
+**The gate is checked twice, and the second time is the point.** The EOT header carries its
+own `fsType` copy, written by whatever produced the EOT; the decoded font's `OS/2` table is
+the foundry's own statement. The header is checked first, purely so a refusal does not cost
+a second of decompression, and the decoded table is checked after. Both must permit. There
+is no bypass parameter, and `--no-embedded-fonts` only turns the whole feature off — it
+cannot be used to ignore a restriction.
+
+A refused face warns `font-embedded-restricted` naming the restriction and falls back to
+substitution; an undecodable one warns `font-embedded-undecodable`. Neither is fatal, which
+is the same degradation contract `metafile-rasterizer-missing` implements.
+
+### 5. Relabelling, which is not cosmetic
+
+`<p:embeddedFont><p:font typeface="X"/><p:bold r:id="Y"/>` asserts *Y is the bold cut of X
+for this deck*, and the file behind Y need not agree — in the local corpus it frequently
+does not. Left alone, such a file is **unaddressable**: the SVG asks for
+`font-family: 'Merriweather Sans Light'; font-weight: bold`, and the rasteriser's font
+database has that file under "Merriweather Sans" at weight 400. The face would be handed
+over and then silently passed over, and a *similar* face would draw instead — the exact
+silent-substitution failure this subsystem exists to prevent, and one that would have
+looked fine in a screenshot.
+
+So `fonts/sfnt.py:relabel` rewrites `name` 1/2/4/6 to the deck's typeface and the slot's
+style, drops 16/17 (whose only purpose is to override 1/2, which are now correct), and sets
+`OS/2.usWeightClass`, `OS/2.fsSelection` and `head.macStyle` to the slot. Copyright (0),
+trademark (7), licence (13) and licence URL (14) survive byte for byte, which matters for a
+file this library writes to disk. The measured widths come from the same file, so
+measure-equals-draw holds whatever the label says.
+
+Relabelling is deferred until a file is actually written, so an SVG-only render never pays
+for it.
+
+### 6. Measurement, and what it was worth
+
+The hard requirement was that an embedded face reach measurement, not just the rasteriser.
+It does, by a route that keeps the core standard-library-only: `fonts/sfnt.py` reads
+`head`/`hhea`/`maxp`/`OS/2`/`hmtx`/`cmap` without fontTools and builds a `FontMetrics`,
+which `DefaultTextMeasurer(extra_metrics=...)` consults ahead of the static tables.
+Injecting a table rather than adding a measurer means every existing rule — bold cuts,
+synthetic emboldening, East Asian advances, the first-baseline formula — applies to an
+embedded face unchanged instead of being reimplemented beside it. Unlike the generated
+tables, which store a ~450-character sample because a human reads them, the embedded table
+stores the whole cmap, so nothing a deck can contain falls back to a guess.
+
+`"Hamburgefonstiv 12345"` at 18 pt, guessed against measured:
+
+| face | guessed | from the deck's own file | error removed |
+| --- | ---: | ---: | ---: |
+| Anton | 280.800 px | 225.141 px | **19.8 %** |
+| Literata | 280.800 px | 270.360 px | 3.7 % |
+| Inclusive Sans | 280.800 px | 270.744 px | 3.6 % |
+| Merriweather Sans Light | 280.800 px | 273.408 px | 2.6 % |
+| Arimo | 254.824 px | 254.824 px | 0 % — already bundled, and the two agree exactly |
+
+Anton is the case that shows the guess is not merely imprecise: it is a condensed display
+face, so the 0.6 em per-character fallback was laying out every headline on that deck a
+fifth too wide.
+
+**Scored against PowerPoint's own PDF export** of the two template decks, six slides each,
+rendered with the bundle plus the extracted faces (SSIM, foreground pixels):
+
+| | slide 1 | 2 | 3 | 4 | 5 | 6 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| nutrition, before | 0.7012 | 0.7398 | 0.8424 | 0.8199 | 0.8257 | 0.6942 |
+| nutrition, after | **0.8190** | **0.8210** | **0.8879** | **0.9426** | **0.8731** | **0.7579** |
+| sales, before | 0.8698 | 0.9267 | 0.8440 | 0.8710 | 0.7883 | 0.6468 |
+| sales, after | **0.9124** | **0.9786** | **0.8754** | **0.9202** | **0.8363** | **0.6547** |
+
+Twelve of twelve improved; mean +0.058, largest +0.123. Nothing regressed. That is the
+measurement the corpus could not supply, and it is against PowerPoint rather than against
+this library's own output.
+
+### 7. An embedded face beats a bundled one of the same name
+
+Not obvious, and decided on a measurement. `real-basic-theme.pptx` embeds Raleway 4.026 and
+Lato 1.104; the bundle ships later releases of both. Over the characters the two tables
+share, **338 of 340 Raleway advance widths differ** and 205 of 236 Lato ones do, and
+`"Hamburgefonstiv 12345"` measures 251.184 px from the bundled Raleway against 261.000 px
+from the deck's — **3.9 % apart, the same order as the 4.5 % Caladea error this file records as a
+bug.** The author laid the deck out with the file inside it. So the embedded face wins, and
+`fonts --check` grades it `exact` with "drawn with the face the deck embedded", because the
+layout was measured from the very file the rasteriser is handed.
+
+*Labelled as an inference:* Microsoft documents embedded fonts as a fallback for machines
+that lack the face, which suggests PowerPoint itself prefers an *installed* copy over an
+embedded one. That was not tested — `real-basic-theme` is unscoreable, and its Raleway text
+does not reach the exported PDF's simple-font `/Widths` arrays, so the cheap check was not
+available. It does not change the decision: this library has no installed fonts to prefer,
+so the choice is between the deck's Raleway and the bundle's, and only one of them is the
+file the author used.
+
+### Done when — all met
+
+- ✅ A real `.fntdata` payload decoded to a usable font file; the MTX question answered by
+  decoding 21 of them, byte-identically to libEOT.
+- ✅ `<p:embeddedFontLst>` parsed into the source model, keyed by family and face
+  (`SourceEmbeddedFont`).
+- ✅ An embedded face is **both measured and drawn** from the extracted file.
+- ✅ `fsType` checked twice, and a restricted font refused with a warning naming the
+  restriction.
+- ✅ A deck whose embedded font cannot be decoded still renders, and says why.
+- ✅ **The two template decks in `scratch/` render without a single "no substitute known"
+  warning** — the observable this phase existed to move. Before: `Anton` and `Literata` on
+  one, `Inclusive Sans` and `Merriweather Sans Light` on the other. After: none, on either.
+
+  | deck | sha256 |
+  | --- | --- |
+  | `nutrition_templates-Meal Planning Slides.pptx` | `0f50e1c0f786abbaa459512cf602cc5992115741f275182265455103e013ef81` |
+  | `sales_templates-IT Software Sales Proposal Slides.pptx` | `7b95c1f168d6102c8296aed23d7b58f26cdb3f4d8c5414d5197fad414c004204` |
+
+  Both are third-party stock templates and **not committed**, on the same footing as
+  `real-college-template.pptx` — see `tests/fixtures/README.md` and the `college_template`
+  fixture in `tests/conftest.py` for the pattern a test should follow, which is to skip
+  where the file is absent rather than to fail.
+
+  Between them they embed Anton, Arimo, Literata, Merriweather Sans, Merriweather Sans
+  Light and Inclusive Sans, and both carry EOT flags `0x00000004`. **Their provenance is
+  not recorded**: they arrived in `scratch/` during the investigation and no source URL or
+  download date was captured, which is a gap by the standard
+  `tests/fixtures/README.md` sets for every other outside input. Whoever picks this phase
+  up should either recover the provenance or substitute two template decks whose source is
+  known, rather than treating the hashes above as sufficient on their own.
+
+- **A synthetic deck exercising the uncompressed path** is still wanted. Nothing in
+  `scratch/` covers non-MTX, so the cheap half of the format ships untested. It is
+  additional to the real decks above, never a replacement: a fixture we write
+  ourselves tests our EOT writer against our EOT reader, and those two can agree
+  perfectly while both disagree with PowerPoint. It pins the branch; it proves
+  nothing about the format.
+
+### Left undone
+
+* **Charts still measure from the static tables.** `resolve/chart.py` calls `font_box` and
+  `text_width`, which reach `metrics_for` directly rather than through the measurer, and
+  chart resolution runs *before* the embedded fonts are decoded — the decode is deferred
+  until after resolution precisely so it can be limited to the families the resolved slides
+  ask for. A chart set in an embedded face therefore still gets guessed widths. Neither
+  template deck has one, so this is unobserved rather than known-broken. Fixing it means
+  either decoding before resolution, and paying for families no slide uses, or routing
+  chart text measurement through the measurer, which it should do anyway.
+* **`--font-dir` still feeds the rasteriser only.** The gap recorded under Fonts ▸ Left
+  undone is untouched. What changed is that the plumbing it wants now exists:
+  `DefaultTextMeasurer(extra_metrics=...)` takes a family→`FontMetrics` map, and
+  `fonts/sfnt.py` builds one from a font file with no fontTools dependency. Teaching
+  `font_dirs` to feed measurement is now a small change rather than a design question, and
+  the CLI could gain a measurer for nearly free. Deliberately not done here: it changes
+  existing behaviour for every caller of a documented parameter, which is its own decision.
+* **Italic is measured from the upright cut**, as everywhere else in this library. The
+  italic file *is* extracted and drawn with; only the metrics table is shared, because
+  `FontMetrics` has no italic column. Divergence is ≤2.5 % across the Office substitutes.
+  Adding one is cheaper than it was, since the italic face is already parsed.
+* **`hdmx` and `VDMX` are dropped**, following libEOT: they are keyed to the original glyph
+  set and are not rebuilt, and carrying them through unchanged would let a rasteriser that
+  trusts `hdmx` disagree with `hmtx`. Neither affects the advance widths measured here.
+* **A TrueType collection inside an EOT is refused.** No `.fntdata` on hand contains one and
+  the EOT specification does not describe one, so `read_sfnt` raises rather than guess.
+* **The decode cache is per process and bounded at 32 faces.** A long-lived service
+  rendering many embedded-font decks will re-decode. A disk cache would fix it and is not
+  obviously wanted.
+
+---
+
+## The clone landscape — survey, measured
+
+Phase 6 ends by deferring one question: "finding which have open equivalents is a real and
+separate piece of work." This is that work. Nothing here is a plan; it is a survey with a
+shortlist attached, and the decision about what the bundle ships is not made here.
+
+It is done the way the Caladea finding was done — by reading the faces Office installed on
+this machine and comparing advance widths character by character — because that is the only
+method this project has any reason to trust. **A claim of metric compatibility with no
+measurement behind it is exactly what this project does not ship.** Every row below either
+carries a measurement or says plainly that it does not. No Microsoft font file was copied
+anywhere; `/Applications/Microsoft PowerPoint.app/Contents/Resources/DFonts` was read in
+place, and candidate clones were downloaded outside the repository, measured, and left
+there. Measured advance widths are facts and are recorded; font files are not.
+
+### The inventory, and why two different counts are both right
+
+PowerPoint 16.106 ships its fonts in `Contents/Resources/DFonts`: **280 files, 322 faces**.
+That is not an estimate — the app carries its own manifest at
+`Contents/Resources/applicationfontmetadata.json`, whose header reads `"fc": 322`, and
+enumerating the files with fontTools reproduces it exactly. **An earlier note on this page
+put the face count at 388; that number is wrong and 322 replaces it.** The family counts in
+it survive scrutiny: 238 distinct `name` id-1 strings across all languages, collapsing to
+**186** once the 52 localised CJK aliases are dropped.
+
+The manifest also answers a question the id-1 count cannot. Microsoft's own `fa` field —
+the GDI-collapsed family, which is what the PowerPoint font menu shows — yields **155
+families**. The two numbers differ because GDI folds weight and width variants into their
+parent: the menu has one "Arial" holding Arial, Arial Black and Arial Narrow, and one
+"Aptos" holding Light through Black.
+
+**186 is the number that matters here**, because `text/fontmap.py` is keyed on the string a
+deck writes into `a:latin/@typeface`, and a deck writes `Arial Narrow`, not `Arial`. The
+bundle's eight families answer 16 of those 186 names. The other 170 reach the 0.6 em
+per-character guess.
+
+### What has to be true for a row to say "metric-compatible"
+
+Two things, and conflating them is how Caladea got in.
+
+1. **Same advance widths**, so line breaks, autofit and centring land where PowerPoint put
+   them. This is measurable and is measured below.
+2. **Nothing else.** Shape, colour, hinting and x-height are all irrelevant to layout. A
+   face can look nothing like the original and still be a perfect substitute for our
+   purposes, and a face can be a scholarly revival of the very same design and still
+   reflow every line.
+
+Two measurement conventions are used throughout. Differences of one design unit are
+**quantisation, not design**: a Microsoft face is 2048 upem and most clones are 1000 or
+2048, so a 0.05 % discrepancy means the clone was drawn to the same number and rounded
+differently. And ASCII is reported in two slices — all 95 printable characters, and the 74
+that are letters, digits and ordinary punctuation. The gap between those two slices is
+almost always `#`, `|`, brackets and the math operators, which real slide text uses far
+less than the 95-character count implies.
+
+### Measured: families that do have a true metric clone
+
+Each "differ" column counts characters differing by more than one design unit. "Text"
+is the 74-character letters-digits-punctuation slice.
+
+| Family | Clone | Kind | Licence | Evidence | Size |
+| --- | --- | --- | --- | --- | --- |
+| Arial Narrow | Nimbus Sans Narrow (URW) | **metric** | AGPL-3.0 + PS/PDF exception | 0/95 ASCII against Arial Narrow regular, italic and bold-italic | 617 kB /4 |
+| Arial Narrow | TeX Gyre Heros Cn | **metric** | GUST (LPPL 1.3c) | 0/95 beyond rounding; max deviation 0.14 %, all of it 1000-upem quantisation | 467 kB /4 |
+| Book Antiqua | URW P052 | **metric** | AGPL + exception | 0/74 text; 1/95 ASCII (`#`, 0.606 → 0.500) | 882 kB /4 |
+| Palatino Linotype | URW P052 | **metric on text** | AGPL + exception | 0/74 text; 10/95 ASCII — Microsoft regularised `+ / < = > ^ \| ~` to 0.5 em, URW kept Palatino's | (same file) |
+| Century Schoolbook | URW C059 | **metric** | AGPL + exception | 0/74 text; the 3 ASCII "differences" are one unit in 2048 | 838 kB /4 |
+| Century | URW C059 | **metric** | AGPL + exception | Century and Century Schoolbook have identical ASCII advances; same result | (same file) |
+| Century Gothic | URW Gothic | **metric** | AGPL + exception | 0/74 text; 2/95 ASCII (`#`, `^`) | 601 kB /4 |
+| Bookman Old Style | URW Bookman Light/Demi | **metric** | AGPL + exception | 1/74 text (`Q`, +2.5 %); `#` also differs | 803 kB /4 |
+| Monotype Corsiva | URW Z003 (Zapf Chancery) | **metric** | AGPL + exception | 0/74 text; 1/95 (`#`). Surprising, and checked twice | 215 kB /1 |
+| Symbol | **Symbol Neu** (croscore) | **metric** | Apache-2.0 | **0/188 by legacy code and 0/189 by glyph name, mean 1.0000** | 69 kB /1 |
+| Symbol | URW Standard Symbols PS | **metric** | AGPL + exception | 0/188 by code *and* by glyph name, mean 1.0001 — the same result under a worse licence | 24 kB /1 |
+| Monotype Sorts | URW D050000L (Dingbats) | **near-metric** | AGPL + exception | 9/202 differ, mean 0.9938 | 37 kB /1 |
+| Comic Sans MS | Comic Relief | **metric** | OFL-1.1 | **0/95 ASCII, regular and bold.** The cleanest result in the survey | 171 kB /2 |
+| MS Gothic, MS Mincho, SimSun, NSimSun, SimHei, KaiTi, FangSong, MingLiU, MingLiU_HKSCS, BatangChe, GulimChe, DotumChe, GungsuhChe | Noto Sans Mono CJK JP | **metric** | OFL-1.1 | **0 differing over 1,106–2,264 shared codepoints each**, ideographs, kana and ASCII together | 16.0 MB /1 |
+| MingLiU-ExtB, SimSun-ExtB | Noto Sans Mono CJK JP | metric on ASCII only | OFL-1.1 | 0/95 ASCII; the Ext-B ideographs they exist for are not in the JP font, so only ASCII was measurable | (same file) |
+
+That is **26 of the 186 names** with a genuine metric-compatible open face, 11 of them
+Latin or symbol and 15 CJK.
+
+### Measured: what the usual suggestions actually do
+
+These are the faces a search engine offers, measured rather than repeated. Every one of
+them reflows. The mean ratio is over all 95 ASCII characters.
+
+| Family | Suggested face | Verdict | Measurement |
+| --- | --- | --- | --- |
+| Franklin Gothic Book | Libre Franklin | approximate | 94/95 differ, mean 1.0508, range 0.534–1.524 |
+| Franklin Gothic Medium | Libre Franklin | approximate | 94/95 differ, mean 1.0325 |
+| Garamond | EB Garamond | approximate | 91/95 differ, mean 0.9722 |
+| Century Gothic | Josefin Sans | approximate | 95/95 differ, mean 0.9093 — the URW row above is the answer here |
+| Tw Cen MT | Josefin Sans | approximate | 95/95 differ, mean 1.0105, range 0.423–1.536 |
+| Gill Sans MT | Libre Franklin | approximate | 95/95 differ, mean 1.0774 |
+| Verdana | DejaVu Sans | approximate | 57/95 differ, mean 0.9613. The Bitstream Vera lineage is a design influence, not shared metrics |
+| Tahoma | DejaVu Sans Condensed | approximate | 93/95 differ; mean 0.9994 is a coincidence of averaging, range 0.637–1.191 |
+| Trebuchet MS | Arimo | approximate | 94/95 differ, mean 1.0216, range 0.495–1.515 |
+| Candara | Carlito | approximate | 92/95 differ, mean 0.9950 |
+| Corbel | Carlito | approximate | 94/95 differ, mean 0.9883 |
+| Constantia | Caladea | approximate | 93/95 differ, mean 0.9574 — the same 4 % Caladea misses Cambria by |
+| Rockwell | URW Bookman | approximate | 94/95 differ, mean 1.0658 |
+| Perpetua | Nimbus Roman | approximate | 87/95 differ, mean 1.0782 |
+| Lucida Bright | Nimbus Roman | approximate | 94/95 differ, mean 0.9207 |
+| Arial Black | Nimbus Sans Bold | approximate | 85/95 differ, mean 0.8924 |
+| Nyala (Ethiopic) | Abyssinica SIL | approximate | 355/358 differ, mean 1.1446. Noto Sans Ethiopic: 353/358, mean 1.1033 |
+| David (Hebrew) | David Libre | approximate | 36/55 differ, mean 1.1223, and it covers only 55 of David's 88 Hebrew codepoints |
+| Mangal (Devanagari) | Noto Sans Devanagari | approximate | 94/112 differ, mean 0.9455 |
+| Latha (Tamil) | Noto Sans Tamil | approximate | 70/72 differ, mean 0.9943 |
+| Gautami (Telugu) | Noto Sans Telugu | approximate | 82/93 differ, mean 1.0596 |
+| Tunga (Kannada) | Noto Sans Kannada | approximate | 85/86 differ, mean 1.0150 |
+| Kartika (Malayalam) | Noto Sans Malayalam | approximate | 95/98 differ, mean 0.8887 |
+| TH SarabunPSK | Sarabun (Google Fonts) | approximate | 71/87 differ in the Thai block, **mean 1.5299** — Sarabun is drawn at a completely different optical size within the em |
+| Angsana New | Noto Sans Thai | approximate | 71/87 differ, mean 1.3950 |
+| Mongolian Baiti | Noto Sans Mongolian | approximate | 155/156 differ, mean 1.9053 |
+| Dubai (Arabic) | Cairo | approximate | 86/101 differ, mean 1.1120 |
+
+### None known
+
+No open face claims, and none measured within reach of, the following. They are listed so
+the next person does not re-search them: the Monotype and ITC display and script faces
+(Abadi MT, Baskerville Old Face, Bauhaus 93, Bell MT, Bernard MT, Braggadocio, Britannic,
+Calisto MT, Colonna MT, Cooper, Copperplate Gothic, Curlz MT, Desdemona, Edwardian Script
+ITC, Engravers MT, Eurostile, Footlight MT, Gabriola, Gill Sans Ultra Bold, Gloucester MT,
+Goudy Old Style, Haettenschweiler, Harrington, Imprint MT Shadow, Kino MT, Matura MT,
+Mistral, Modern No. 20, News Gothic MT, Onyx, Perpetua Titling MT, Segoe Print, Segoe
+Script, Stencil, Wide Latin); the whole Lucida family, which is Bigelow & Holmes and has
+never been cloned; the Microsoft symbol and dingbat fonts (Bookshelf Symbol 7, Marlett, MS
+Reference Specialty, MT Extra, Webdings, Wingdings 1/2/3, Segoe UI Symbol, Segoe UI
+Historic) — **Wingdings against D050000L differs on all 202 shared codes, mean 0.8632**,
+which is the measurement behind "Wingdings is not Dingbats"; Cambria Math, where STIX Two
+Math is the free stand-in and shares nothing but purpose; the minority-script faces
+(Microsoft Himalaya, Tai Le, New Tai Lue, Yi Baiti, Myanmar Text); and the nine HG* faces,
+which are Ricoh designs bundled for Japanese Office.
+
+### Four things that turned up that were not the question
+
+* **Verdana and MS Reference Sans Serif are the same metrics.** 0 differing over all 191
+  Latin-1 characters. Neither has a clone, so this changes nothing today, but any future
+  Verdana clone answers two names, and any substitution rule written for one must be
+  written for both.
+* **TeX Gyre is not URW, and the difference is exactly 14 characters.** The TeX Gyre
+  families are redrawn from the URW base-35 and are usually described as metric-compatible
+  with them. Measured, Bonum and Heros are byte-identical to URW Bookman and Nimbus Sans;
+  Pagella, Schola, Adventor and Termes are identical on letters and digits and **deliberately
+  rewidened on `( ) [ ] { } + < = > | / \ *`** — `(` goes from 0.333 to 0.456 em in Pagella,
+  0.333 to 0.483 in Schola. On a realistic sentence the cost is small and quantified:
+  "Revenue grew 18% in Q3 (year on year), driven by EMEA." measures **1.0092** in TeX Gyre
+  Pagella against Book Antiqua and **1.0000** in URW P052; sentences without brackets come
+  back 0.9996–1.0001. So TeX Gyre is metric-compatible for prose and carries roughly a 0.9 %
+  penalty per parenthetical. That is a fifth of the error that disqualified Caladea, and it
+  is a real error rather than none.
+* **TeX Gyre Chorus is not Zapf Chancery.** All 95 ASCII differ from Z003 by a uniform
+  1.081, so it is the same proportions at a different design size — which still reflows.
+  Monotype Corsiva's only metric clone is the AGPL one.
+* **Selawik is metric-compatible with Segoe UI — for three of its five cuts.** Microsoft's
+  own OFL release claims the compatibility flatly. Measured against the Segoe UI that
+  Microsoft Remote Desktop installs: Regular 0/188 over Latin-1, Light 0/95 — exact.
+  **Semilight is not: 51 of 95 differ, and `1` is 19 % out.** Bold and Semibold could not be
+  measured, no Segoe UI Bold being present on this machine. It is also a 352-glyph font,
+  which is Latin-1 and little else. So the claim is true where it is most used and false
+  where nobody checked, which is the shape of every finding in this survey.
+
+### CJK compatibility is nearly free, and mostly already held
+
+The single most useful structural finding in the survey. **Every Microsoft CJK face gives
+every ideograph and every kana an advance of exactly 1.000 em** — MS Gothic, MS Mincho,
+Meiryo, Yu Gothic, Yu Mincho, DengXian, Microsoft YaHei, JhengHei, Malgun Gothic, SimSun,
+SimHei, MingLiU, Batang, Gulim, all of them — and so does the Noto Sans JP the bundle
+already ships. Measured over 1,570 shared ideographs and kana, Noto Sans JP differs from
+Meiryo, Yu Gothic, Microsoft YaHei, Malgun Gothic and DengXian on **zero** codepoints.
+
+So the comment in `text/fontmap.py` that reads "Noto Sans JP is not metric-compatible with
+any of these (nothing is; the MS faces are proprietary and were never cloned)" is too
+strong, and the survey contradicts it. For the CJK portion of a CJK run it *is* exactly
+compatible, and has been all along. The divergence is confined to the Latin sub-run, which
+is 0.83 of Meiryo's widths and 0.90 of Yu Gothic's. Three faces are the exception and they
+prove the rule: **MS PGothic makes kana proportional too** (176 kana differ, which is why its
+own table already exists and is right), and Gungsuh and STZhongsong do the same.
+
+The fixed-pitch families are the strong case. MS Gothic, MS Mincho, SimSun, NSimSun, SimHei,
+KaiTi, FangSong, MingLiU, MingLiU_HKSCS, BatangChe, GulimChe, DotumChe and GungsuhChe are all
+(1.0 em ideograph, 1.0 em kana, 0.5 em ASCII), which is precisely Noto Sans Mono CJK JP's
+profile, and the measurement is 0 differing codepoints for every one of them.
+
+**Which makes the cheapest fix on this page a metrics-only one.** Those thirteen families
+need no font file at all: their entire advance table is three constants. `fonts/` already
+draws them with Noto Sans JP, and the only thing missing is a measured table, which costs
+nothing to carry and does not enlarge the wheel by a byte. The same trick works for the
+monospaced Latin faces, where the whole table is one number:
+
+> **Done**, and the measurement came out slightly different from the sketch above. It is
+> *two* constants, not three: half an em for Latin and half-width kana, a full em for
+> everything ideographic, verified against every installed face by
+> `verify_fixed_pitch` — every printable ASCII character at exactly the half-width, every
+> kana, ideograph and full-width form at exactly the full width, in all thirteen. What
+> needs rows is the two dozen typographic characters an East Asian design draws *full*
+> width although Unicode files them under Latin (`—`, `“`, `…`, `■`): 21 in MS Gothic, 23
+> in SimSun, 42 in KaiTi, 65 in the Korean four. `units_per_em` is 256 for the Japanese and
+> Simplified Chinese faces, 1024 for MingLiU and the Korean ones, 2048 for the Lucidas.
+>
+> **All thirteen grade `approximate`, not `compatible`, and the reason is the drawn face
+> rather than the widths.** The widths are exact; what draws them is not. Measured against
+> the Noto Sans JP the bundle ships: 8,166 to 8,245 of each Chinese face's 20,900-odd
+> unified ideographs have no glyph in it, and **none of the 11,172 Hangul syllables do** —
+> Korean text drawn from the bundle is missing glyphs, not merely mis-shaped. The Latin
+> half fails differently and is the half-width trap: these faces put ASCII at exactly
+> 0.5 em and Noto Sans JP's is proportional (0.24 em for `i`, 0.83 for `M`), so getting
+> every ideograph right does not make the face compatible. Each says so in its `caveat`.
+>
+> One residual inside the *measurement*, recorded rather than fixed: `is_cjk` stops at
+> U+9FFF and Hangul syllables start at U+AC00, so a Hangul character falls to
+> `default_width` — the half-width — where the face draws it at a full em. Making `is_cjk`
+> full-width-but-not-break-anywhere is a change to line breaking and wants a Korean probe,
+> not a width table.
+
+| Family | Advance | Nearest shippable | Drawn-width error |
+| --- | --- | --- | --- |
+| Lucida Console | 0.602539 em | Cousine (0.600098, already bundled) | **0.41 %** |
+| Lucida Sans Typewriter | 0.602539 em | Cousine | **0.41 %** |
+| Consolas | 0.549805 em | Anonymous Pro (0.545898) | 0.71 %, but needs a new four-cut family (158 kB regular) |
+| Consolas | 0.549805 em | Cousine | 9.1 % — too wide to draw with |
+
+Inconsolata is 0.5 and JetBrains Mono, Source Code Pro and Noto Sans Mono are all 0.6; no
+open monospace was found at Consolas's 1126/2048.
+
+### Licence: the URW result is the best measurement and the worst licence
+
+The URW base-35 set produces the strongest numbers in this survey and is the one candidate
+group that **cannot be adopted without a deliberate decision about the package licence.**
+Read first-hand from `LICENSE` in `ArtifexSoftware/urw-base35-fonts`:
+
+> The font and related files in this directory are distributed under the GNU AFFERO GENERAL
+> PUBLIC LICENSE Version 3 [...] with the following exemption: As a special exception,
+> permission is granted to include these font programs in a Postscript or PDF file [...]
+
+**The exception covers embedding a glyph in a PS or PDF document. It does not cover
+redistributing the font files.** This is narrower than the GPL font exception people assume
+when they see "URW fonts are basically free". `pptx2svg-fonts` currently declares
+`MIT AND OFL-1.1`; shipping URW would make it `MIT AND OFL-1.1 AND AGPL-3.0-only`, with the
+network clause attached, inside a wheel that an MIT library pulls in as an extra. It also
+would not help Phase 6's eventual SVG font embedding, since SVG is neither PostScript nor
+PDF. **Flagged, not decided** — it is a licensing judgement, not a technical one, and it
+belongs to whoever owns the project's licence policy.
+
+The alternative is TeX Gyre. Its GUST Font License is LPPL 1.3c plus a *request* (explicitly
+"not legally required") to rename derived works — permissive, non-copyleft, and compatible
+with an MIT distribution as long as the licence text travels with the files. Its cost is the
+14 rewidened punctuation characters measured above.
+
+Licences confirmed by reading the shipped text: URW (AGPL + the quoted exception), GUST
+(fetched from gust.org.pl), Symbol Neu (Apache-2.0, from its own `name` id 13), Selawik
+(OFL-1.1, from `LICENSE.txt` in `microsoft/Selawik`), and Comic Relief and the Noto/Google
+Fonts candidates (OFL-1.1, the `OFL.txt` beside each family in `google/fonts`).
+
+### What the reference implementation does about this, which is almost nothing
+
+`aiden0z/pptx-renderer` is this project's standing reference and was checked for a mapping
+table worth borrowing. It has one, in `src/renderer/fontResolver.ts`, and it is eleven
+entries long: `FONT_FAMILY_ALIASES` maps `calibri`, `calibri light`, `aptos`, `aptos
+display` and seven CJK spellings (`microsoft yahei`, `微软雅黑`, `dengxian`, `等线`,
+`simhei`, `黑体`, `heiti sc`) to **CSS font stacks**, not to faces it ships. The only
+Western clone named anywhere in it is **Carlito**, third in Calibri's stack behind Calibri
+and Aptos; there is no Arimo, Tinos, Cousine, Caladea or Liberation, and no concept of
+metric compatibility at all. Everything else falls through `cssFontFamilyStack()` to
+`sans-serif` and whatever the browser has.
+
+That is not a criticism of it — a browser renderer cannot measure, so a font stack is the
+only tool it has — but it does mean **there is no table here to copy.** It also makes the
+same point the Fonts section opens with from the other direction: aiden0z solved its font
+problem by reading `<p:embeddedFontLst>`, which is Phase 6, and left the clone problem to
+the user's machine.
+
+One correction and one further negative, so neither is re-searched. **Liberation Sans
+Narrow exists only in the 1.x line** — the 2.x OFL releases ship Sans, Serif and Mono and
+no Narrow — but it is not moot, as first written here: Debian packages it as
+`fonts-liberation-sans-narrow` 1:1.07.6-4 in main, and measured against the Arial Narrow
+macOS installs it is **0 of 95 in all four cuts**, the cleanest Arial Narrow result of the
+three. Its licence is **GPL-2 with the Liberation font exception**, and that exception
+covers embedding a glyph in a document, not redistributing the files — the same shape as
+URW's, and the same reason it stays out of the wheel while being the best `apt` route.
+TeX Gyre Heros Cn remains the shortlist pick for the bundle. And croscore has **a sixth face that this project has never heard of**:
+**Symbol Neu**, Google's Apache-2.0 metric clone of Microsoft Symbol, which measures 0/188
+against the installed `symbol.ttf` by legacy code and 0/189 by glyph name. It is not in any
+current package — Google dropped it after croscore 1.23.0 on the reasoning that browsers
+map Symbol themselves, and Debian dropped it with them — so it has to come out of the
+archived `croscorefonts-1.23.0.tar.gz` on `chromeos-localmirror`, which is a supply-chain
+caveat rather than a licensing one. Beyond it, croscore and crosextra hold only the five
+faces already bundled (Arimo, Tinos, Cousine; Carlito, Caladea).
+
+### The shortlist
+
+Ranked by names rescued from the width guess per megabyte added to a bundle that is
+currently 11 MB packed and 20.5 MB on disk for eight families. This is a shortlist for the
+*wheel*, which redistributes and must therefore be conservative. `tools/install-fonts-debian.sh`
+is under no such constraint — it installs from Debian's archive and redistributes nothing —
+so its `--clones` tier takes the measured-best face in every row, `fonts-urw-base35`
+included. The bundle's inclusion rule
+— every family is there because Office will draw with it — is respected: everything below
+is a clone of a face PowerPoint installs.
+
+**Ship. No licence question, measured exact, and cheap.**
+
+| | Adds | Rescues | kB per name |
+| --- | --- | --- | --- |
+| 1 | ~~**Metrics-only CJK and mono tables** (0 kB)~~ — **done** | MS Gothic, MS Mincho, SimSun, NSimSun, SimHei, KaiTi, FangSong, MingLiU, MingLiU_HKSCS, BatangChe, GulimChe, DotumChe, GungsuhChe, Lucida Console, Lucida Sans Typewriter | **0** |
+| 2 | **Symbol Neu** (Apache-2.0, 1 file, 69 kB) | Symbol | 69 |
+| 3 | **Comic Relief** (OFL, 2 cuts, 171 kB) | Comic Sans MS | 171 |
+| 4 | **TeX Gyre Heros Cn** (GUST, 4 cuts, 467 kB) | Arial Narrow | 467 |
+| 5 | **TeX Gyre Bonum** (GUST, 4 cuts, 524 kB) | Bookman Old Style | 524 |
+| 6 | **TeX Gyre Adventor** (GUST, 4 cuts, 693 kB) | Century Gothic | 693 |
+| 7 | **TeX Gyre Pagella** (GUST, 4 cuts, 875 kB) | Book Antiqua, Palatino Linotype | 438 |
+| 8 | **TeX Gyre Schola** (GUST, 4 cuts, 813 kB) | Century Schoolbook, Century | 407 |
+
+Row 1 is done; what follows was written before it was and its "no caveat at all" claim is
+corrected above — the tables are exact and what draws them is not, so the thirteen names
+grade `approximate` with the reason in each row's `caveat`.
+
+Rows 1–8 together are **3.6 MB on disk for 24 names**, against 20.5 MB for the 16 the
+bundle answers today. Rows 1–5 carry no caveat at all: the metrics-only tables and Symbol
+Neu are exact, Comic Relief is exact, and Heros Cn and Bonum are metrically identical to
+the URW originals. Rows 6–8 carry the 0.9 %-per-parenthetical note, which `Substitution`
+already has a field for — this is what `caveat` is for, and they should still grade
+`compatible`, because we would measure and draw with the same face.
+
+Row 1 is first on the list because it is free, and it is free for a reason worth stating
+plainly: **for a fixed-pitch face the advance table is a constant, and a constant is a fact
+about a design, not a copy of it.** The same argument that lets `METRICS` carry Aptos's
+widths lets it carry MS Gothic's — and MS Gothic's is one number repeated. Nothing has to
+be downloaded, licensed or shipped.
+
+**Decide, do not drift into.** With Symbol Neu taking Symbol, two AGPL rows are left that
+have no alternative anywhere: **D050000L** (37 kB) for Monotype Sorts and **Z003** (215 kB)
+for Monotype Corsiva, TeX Gyre Chorus having been measured out of contention above. 252 kB
+for two more names is a good ratio *and* it is the AGPL. Worth putting to whoever owns the
+licence question precisely because the amount is small enough that it would otherwise get
+waved through.
+
+**Do not ship.**
+
+* **Noto Sans Mono CJK JP, 16 MB.** It is exactly right for thirteen families, and the
+  metrics-only row above already captures most of that value for nothing. Sixteen megabytes
+  — enough to double the bundle — buys only the correct *drawn* Latin inside a fixed-pitch
+  CJK run. Wrong trade at this size.
+* **Every "approximate" row in the second table.** Libre Franklin, EB Garamond, Josefin Sans,
+  DejaVu Sans, Abyssinica SIL, the Noto Indic set. Shipping one of these would mean drawing
+  a face that reflows and grading it `approximate`, which is the Aptos arrangement — and
+  Aptos earns that arrangement by being Office's *default*, which Tw Cen MT is not. For
+  everything else, a `font-substituted` warning naming the truth beats a substitute that
+  quietly moves every line break.
+* **Gelasio and Selawik**, despite both measuring exact — Gelasio 0/95 against Georgia,
+  Selawik 0/188 against Segoe UI — because **neither Georgia nor Segoe UI is in `DFonts`**.
+  macOS supplies Georgia, as it supplies Courier New, Trebuchet MS and the Comic Sans
+  regular cut; Segoe UI is a Windows system face that Office draws with there and that
+  PowerPoint for Mac carries only as `.woff` add-in chrome under `Resources/sdx/`. Both are
+  out of scope for a survey of what PowerPoint *ships* and are recorded so the results are
+  not re-derived.
+
+  **Selawik is the strongest argument for widening that rule**, and should be put to whoever
+  owns it rather than settled here. It is 216 kB for five cuts, OFL, published by Microsoft,
+  and Segoe UI is named by real decks far more often than Bookman Old Style is. The rule it
+  fails — "Office ships it" — is already stretched by Lato and Raleway, which are in the
+  bundle because Office *offers* them from the cloud. If the rule becomes "Office will draw
+  with it", Selawik is the first row and Gelasio the second.
+
+### What could not be settled
+
+* **Whether the URW AGPL exception's reach can be argued wider.** The text is unambiguous
+  about what it *grants*; whether ordinary aggregation of unmodified font files in a wheel
+  needs the exception at all is a legal question this survey is not competent to answer,
+  and guessing at it would be the licensing version of asserting metric compatibility.
+* **Coverage beyond Latin-1 for the TeX Gyre and URW candidates.** All the numbers above are
+  ASCII, Latin-1 or the relevant script block. A deck in Book Antiqua with Greek or Cyrillic
+  in it has not been measured.
+* **Whether `Century` and `Century Schoolbook` being metrically identical is by design.**
+  They are two menu entries with the same 95 ASCII advances. Both map to C059 either way, so
+  nothing depends on the answer.
+* **Every number here is from one machine's PowerPoint 16.106.** A different Office build
+  could ship a different cut of the same family. Nothing in the survey depends on a version
+  Microsoft could quietly change, but a re-check is cheap and has never been done twice.
+* ~~**Kerning, everywhere.**~~ This survey compared `hmtx` advances only because
+  `pptx2svg` applied no kerning at all when it was written. That gap is closed — see *The
+  `kern` feature, modelled* — and the caveat it left is now **measured, and it comes back
+  clean: the metric clones carry the originals' kern pairs exactly.**
+
+  | clone / original | pairs | disagree by ≥0.5/1000 em | of which real |
+  | --- | --- | --- | --- |
+  | Carlito / Calibri | 9,191 vs 9,267 | 76 | **1** — `",` , which Calibri kerns -78/1000 em and Carlito does not |
+  | Arimo / Arial | 108 vs 117 | 9 | **0** |
+  | Tinos / Times New Roman | 131 vs 131 | **0** | **0** |
+  | Cousine / Courier New | 0 vs 0 | **0** | neither kerns |
+
+  The 84 differences that are not real all involve **U+00AD soft hyphen** (75 of
+  Carlito's) or **U+00A0 no-break space** (all 9 of Arimo's), where the originals carry
+  pairs the clones do not. A soft hyphen is never laid out as ink. A no-break space is,
+  and it is the one known residue: at most 55/1000 em on a single join against Arial.
+  Six representative strings (`AV Today, Yes`, `Type WAVE Volatility`, …) come back
+  bit-identical between clone and original in all three faces that kern.
+
+  So "metric-compatible" holds for the pair table as well as for the advance table, on a
+  measurement rather than on the claim — one pair in 9,409. `test_fidelity.py` asserts it
+  wherever the licensed originals are installed.
+
+  **Caladea is the exception, and it is the same exception as before.** Against Cambria
+  3,749 of its pairs disagree, which is the kerning face of the 4.5% advance gap already
+  recorded above. It does not reach a Cambria deck: Cambria has a measured table of its
+  own, kern pairs included, and Caladea's entry is only read by a deck that names
+  Caladea. Aptos, Aptos Display and the four MS Japanese faces are likewise read from the
+  Office file itself.
+
+---
+
+## Text as outlines (round 31)
+
+Production asked for an SVG that needs no font in the browser (a face whose licence does not
+allow serving it as a web font). `ConvertOptions(text="outlines")` (0.3.6) draws each text as
+its glyph paths through `ooxml_common.outlines` (0.37.0), from the fonts the PNG is drawn
+with, following resvg's own face choice, fallback, shaping and layout rather than this
+library's measurer: the reference is the PNG, which resvg draws from the `<text>`.
+
+- **Measured** (round 31, lane B): every slide rasterised twice by resvg, from the SVG with
+  its text and from the outlined SVG, with the same fonts -- the host's faces, as `ConvertOptions()` uses them on this machine.
+  Every third deck of the local corpus (`~/Documents`' decks, deduplicated: 191 decks, 995
+  slides): no pixel differs by more than 64 of 255, the mean difference is 0.00003 per
+  channel, 560 slides are identical and 60 have a pixel more than 16 apart -- anti-aliased
+  edge pixels, a glyph placed through another chain of float32 transforms than resvg's.
+  No text was kept as text. Size: 12.3 MB of SVG became 24.7 MB (2.0 times; a glyph is a
+  few hundred bytes once per slide, then a reference); writing them took 2.0 times as long
+  (61 s to 124 s, on a heavily loaded machine).
+- **Left undone.** Right-to-left and complex-script text (Arabic, Hebrew, the Indic
+  scripts, Thai...) stays text: their shaping (HarfBuzz's script shapers) is not
+  reimplemented, and none of the corpus has any. Emoji stay text: Apple Color Emoji's glyphs
+  are pictures (`sbix`), which could be embedded as images but are not. `CFF2` faces stay
+  text. Each slide carries its own glyph definitions; a viewer showing a deck could share
+  them across slides (one `<defs>` document) and does not yet. A gradient's box leaves the
+  decorations out (usvg adds an underline's box to the text's).
+- **Round 32: one glyph set, ids that do not move, smaller paths** (R10, R11; 0.3.7 with
+  ooxml-common 0.38.0). `ConvertOptions(glyphs={})` collects the deck's glyph definitions
+  in one dict, the slides referencing them; `glyph_sheet` and `embed_glyphs` put them in an
+  HTML page once, or back into one slide. A glyph's id is its outline's (it was its font
+  file's path's: an embedded face read from a new temporary folder renamed every glyph each
+  render). Path data uses `t`/`s`; whole font units were measured not to pay (under a fifth
+  of a set's bytes, and they move the implied midpoints and lose the `t`). `slide_groups`
+  orders a shape's glyph definitions by the shape's own first use. Measured, every third
+  deck of the local corpus (191 decks, 995 slides): every outlined slide's PNG is 0.3.6's,
+  byte for byte (so against the text: 559 slides identical, the largest difference 64 of
+  255, none above); SVG 12.33 MB as text, 24.73 MB outlined in 0.3.6, 22.01 MB slide by
+  slide, 16.83 MB with one set (gzipped slide by slide 4.47, 9.05, 8.36 and 6.03 MB). A
+  made-up 49-slide text-heavy deck: 548 KB as text, 2,894 KB outlined in 0.3.6, 1,698 KB
+  with one set (gzipped 68, 729 and 281 KB). What is left is the references, about 31
+  bytes a glyph drawn where the character was one.
+
+## Suggested order
+
+```
+Phase 0  (PowerPoint oracle + VRT)  ──┬─▶ Phase 1  (parsed-but-unrendered)   DONE
+                                      ├─▶ Phase 2  (SmartArt — DONE)
+                                      ├─▶ Phase 4  (EMF previews — DONE)
+                                      ├─▶ Phase 5.1 DONE / 5.2  (small gaps)
+                                      ├─▶ Phase 3  (charts — reader + 10 types done)
+                                      └─▶ Phase 6  (embedded fonts — DONE)
+                                                              Phase 5.3 last
+```
+
+Phase 0 gates everything and is now much stronger than originally planned, because the
+reference implementation is available locally.
+
+Revised quick wins, in order of payoff per day:
+
+1. ~~**Phase 1 table styles**~~ — done, though not in an afternoon: the built-in
+   definitions are not in the file and had to be measured out of PowerPoint.
+2. **Font metrics** — still the largest single component of the residual on every
+   fixture. Phase 6's embedded fonts have closed the half a bundle can never reach: a
+   deck that carries its faces is now measured and drawn from them, which moved twelve
+   of twelve slides closer to PowerPoint on the two template decks that motivated it.
+   Open clones for PowerPoint's own faces are the other half; they do not overlap, and
+   only a deck that names an Office face and embeds nothing still gets the width guess.
+3. ~~**Phase 4 EMF previews**~~ — done; the S estimate held.
+4. ~~**Phase 2 SmartArt**~~ — done; the S estimate held.
+5. ~~**Phase 5.1 shapes**~~ — done. Not the additive, near-zero-risk job it looked
+   like: it turned up two arc-conversion bugs that had been silently misdrawing
+   custom geometry, and it replaced hand-transcription with a spec compiler.
+
+Phase 3 is well along: the reader and **every** chart type ECMA-376 defines --
+`barChart`, `lineChart`, `areaChart`, `scatterChart`, `bubbleChart`, `pieChart`,
+`doughnutChart`, `ofPieChart`, `radarChart`, `stockChart` and now `surfaceChart` -- are
+drawn and measured, and nothing in the corpus warns `chart-unsupported-type` any more.
+The surface was the last one out; see *Surface -- measured, and drawn*. The shared infrastructure -- value domain, tick selection, number formatting,
+gridlines, legend layout, plot-area rectangle, polar region -- is built, and the three
+types that landed this week reused nearly all of it. What is left, cheapest first:
+
+1. ~~**The CJK label width.**~~ Done, and the diagnosis was half wrong — see *The East
+   Asian face cascade*. `ChartFont` now carries the East Asian face as well as the Latin
+   one, measures per character and names both in the emitted `font-family`, which takes
+   5.00 pt of the radar's 6.83 pt radius error. Chart3's 19.8 pt turned out not to be a
+   width at all: PowerPoint draws `プラットフォーム` at the same 96 pt we measure. The
+   rotated reserve's missing cap is closed too — it is a **truncation**, see *The rotated
+   label's cap is a truncation* — and chart3's 19.8 pt error is now 0.95.
+2. **A manually laid out legend.** `real-college-template.pptx` slide 4 carries a
+   `c:legend/c:layout/c:manualLayout` we ignore, and it is now the whole of that slide's
+   remaining chart error: 4.8 pt of plot height and 9.5 pt of legend baseline. Reading
+   the element is trivial; what is not known is how PowerPoint composes the plot area
+   around it, and one deck is not enough to fit that.
+3. **Data-label wrapping**, **`bestFit` actually moving a label**, and **three-or-more
+   line legend entries** -- each a known-missing detail with a named symptom above.
+   Category-label wrapping is done; the data-label kind is a separate path.
+4. ~~**Combo charts and the secondary axis.**~~ -- done and measured over 76 probe
+   slides; see 3.3. `bubbleChart`, `ofPieChart` and `stockChart` had already landed, and
+   `surfaceChart` has since -- see *Surface -- measured, and drawn*. What 3.3 leaves open is named there: two value axes on one side, a
+   horizontal combo, and a horizontal legend's inter-entry gap -- the last of which is not
+   a combo problem at all and is now the largest chart item left.
+5. ~~**The value-axis tick density — and, it turns out, the unit rule under it.**~~ — done
+   and measured; see "The value axis' tick rule, solved". 616 readings over fifteen probe
+   decks, 611 reproduced exactly. What is left of it is small and named there: a bottom
+   axis whose labels are wider than its rung is within one rung of PowerPoint rather than
+   on it, PowerPoint's own answer there is a *skipped* tick we do not draw, and an Arial
+   axis crosses its rung about 5 pt late because our metrics carry no `lineGap`. The
+   `lineGap` gap is one table away and would fix this and `_bottom_label_band` together.
+
+## Non-goals
+
+Explicitly out of scope, to save re-litigating them:
+
+- Animations, transitions, timing
+- Speaker notes, comments, revision history
+- Editing or writing `.pptx`. This library reads and renders; editing lives in the separate
+  [`pptx-agent`](https://github.com/uvrt/pptx-agent) project, which depends on this one for
+  rendering. The only concession made here is the shape identity described above — enough for a
+  downstream editor to map a rendered group back to a shape, and nothing more.
+- Equations (OMML) — **[pptx-renderer]** excludes these too
+- Executing or editing embedded OLE objects (previews only)
+- Pixel-exact PowerPoint reproduction — the goal is accurate text, shapes and layout
