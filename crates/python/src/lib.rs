@@ -305,11 +305,14 @@ fn check(
     let out = py.detach(
         move || -> Result<Option<(String, Arc<ooxml_word::engine::Snap>)>, String> {
             let word = owner.word().ok_or("not a Word document")?;
+            let t = std::time::Instant::now();
             let Some(snap) = word.wait_exact(version) else {
                 return Ok(None);
             };
+            let waited = t.elapsed().as_secs_f64() * 1000.0;
             let req: ooxml_word::facts::Request = serde_json::from_str(&request).map_err(|e| e.to_string())?;
-            let answer = ooxml_word::facts::answer(&snap, &req, before.as_deref());
+            let mut answer = ooxml_word::facts::answer(&snap, &req, before.as_deref());
+            answer["ms"]["wait"] = serde_json::json!(waited);
             Ok(Some((answer.to_string(), snap)))
         },
     );

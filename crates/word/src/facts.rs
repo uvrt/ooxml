@@ -2153,7 +2153,9 @@ pub fn answer(s: &Snap, req: &Request, seen: Option<&Snap>) -> Value {
         ..req.clone()
     };
     let req = &req2;
+    let t0 = std::time::Instant::now();
     let g = s.global.get_or_init(|| make_global(s));
+    let global_ms = t0.elapsed().as_secs_f64() * 1000.0;
     let fx0 = F {
         s,
         laid: RefCell::new(HashMap::new()),
@@ -2197,6 +2199,7 @@ pub fn answer(s: &Snap, req: &Request, seen: Option<&Snap>) -> Value {
             out.insert("layout".into(), layout(&fx, g, &mut fallback));
         }
     }
+    let t1 = std::time::Instant::now();
     if req.since {
         if let Some(before) = seen {
             let on: Option<Vec<usize>> = out
@@ -2220,5 +2223,10 @@ pub fn answer(s: &Snap, req: &Request, seen: Option<&Snap>) -> Value {
     if let Some(why) = fallback {
         out.insert("fallback".into(), json!(why));
     }
+    out.insert(
+        "ms".into(),
+        json!({"global": global_ms, "since": t1.elapsed().as_secs_f64() * 1000.0,
+               "all": t0.elapsed().as_secs_f64() * 1000.0}),
+    );
     Value::Object(out)
 }

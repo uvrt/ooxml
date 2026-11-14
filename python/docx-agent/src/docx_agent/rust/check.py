@@ -674,8 +674,8 @@ def _serve(c: Any, call: Any, arguments: dict[str, Any], timing: Any) -> Any:
         wanted.append("layout")
     keeps = KEEP_TRIALS or "keeps" in wanted
     report: dict[str, Any] = {}
-    seen = live.__dict__.get("_rust_seen")
-    since = "reflow" in wanted and seen is not None and seen[0] != version
+    seen = _seen_before(live, doc, seq)
+    since = "reflow" in wanted and seen is not None and seen[2] != version
     if "reflow" in wanted and seen is None and live.__dict__.get("_tool_seen_layout") is not None:
         raise Fallback("a layout seen before the owner")
     aliases = dict(document._aliases) if since else {}
@@ -692,11 +692,15 @@ def _serve(c: Any, call: Any, arguments: dict[str, Any], timing: Any) -> Any:
                         _trial_cap(keep_trials.asked())]}
     started = time.perf_counter()
     with call.unlocked():
-        text, snap = c.check(doc.key, seq, json.dumps(request), seen[1] if since else None)
-    timing.add("layout", time.perf_counter() - started)
+        text, snap = c.check(doc.key, seq, json.dumps(request), seen[3] if since else None)
+    elapsed = time.perf_counter() - started
     if text is None:
         raise Fallback("version's snapshot not kept")
     answer = json.loads(text)
+    # the owner's layout of the version (the wait for its snapshot), then the facts read there
+    waited = min(elapsed, (answer.get("ms") or {}).get("wait", 0.0) / 1000)
+    timing.add("layout", waited)
+    timing.add("facts", elapsed - waited)
     if answer.get("fallback"):
         raise Fallback(answer["fallback"])
     if scope is None:
@@ -720,8 +724,7 @@ def _serve(c: Any, call: Any, arguments: dict[str, Any], timing: Any) -> Any:
         if warnings:
             reflow["layout_warnings"] = warnings
         report["reflow"] = reflow
-        live.__dict__["_rust_seen"] = (version, snap)
-        live.__dict__["_rust_seen_by"] = "rust"
+        _seen_add(live, doc, seq, version, snap, "rust")
     layout = answer["layout"]
     layout = _original_lost(document, scope, layout)
     from ..tools.objects import ragged_made_by
@@ -991,23 +994,54 @@ class _held:
         return None
 
 
+#: Checks seen (``since_last_check``) kept per document, the latest.
+_SEEN_KEPT = 64
+_seen_lock = threading.Lock()
+_seen_order = itertools.count(1)
+
+
+def _seen_before(live: Any, doc: RustDoc, seq: int) -> Any:
+    """The check seen last before one of the owner's version ``seq``, as the checks of a
+    document follow each other one at a time in the order of the versions they read (a
+    check of an older version that ends after one of a newer is before it):
+    ``(owner key, order, version, snapshot, by)``, or ``None``.  One seen by an owner made
+    before this one is before all of this one's."""
+    with _seen_lock:
+        log = list(live.__dict__.get("_rust_seen") or ())
+    found = [e for e in log if e[0][0] != doc.key or e[0][1] <= seq]
+    if not found:
+        return None
+    best = max(found, key=lambda e: (e[0][0] == doc.key, e[0][1] if e[0][0] == doc.key else 0, e[1]))
+    return (best[0], best[1], best[2], best[3], best[4])
+
+
+def _seen_add(live: Any, doc: RustDoc, seq: int, version: int, snap: Any, by: str) -> None:
+    with _seen_lock:
+        log = live.__dict__.get("_rust_seen")
+        if not isinstance(log, list):
+            log = live.__dict__["_rust_seen"] = []
+        log.append(((doc.key, seq), next(_seen_order), version, snap, by))
+        del log[:-_SEEN_KEPT]
+
+
 def since_for_python(call: Any, version: int) -> Any:
     """For docx-agent's own check of a document the Rust owner follows: ``(True, reflow)``
     -- ``since_last_check`` against the version a check served here saw last (its own
     layout's summary is then of an older one) -- or ``(False, None)``: as before."""
     live = _live(call.document)
     doc = live.__dict__.get("_rust_doc")
-    seen = live.__dict__.get("_rust_seen")
-    if doc is None or seen is None or live.__dict__.get("_rust_seen_by") != "rust":
+    seq = doc.seqs.get(version) if doc is not None else None
+    seen = _seen_before(live, doc, seq) if seq is not None else None
+    if seen is None or seen[4] != "rust":
         return False, None
-    if seen[0] == version:
+    if seen[2] == version:
         return True, None           # the version that check saw: nothing since
     snap = _snapshot(call, doc, version)
     if snap is None:
         return False, None
     c = core()
     request = {"since": True, "aliases": dict(call.document._aliases)}
-    text, _ = c.check(doc.key, doc.seqs[version], json.dumps(request), seen[1])
+    text, _ = c.check(doc.key, seq, json.dumps(request), seen[3])
     return True, json.loads(text).get("since")
 
 
@@ -1020,10 +1054,7 @@ def seen_by_python(call: Any, version: int) -> None:
         return
     snap = _snapshot(call, doc, version)
     if snap is not None:
-        live.__dict__["_rust_seen"] = (version, snap)
-        live.__dict__["_rust_seen_by"] = "python"
-    else:
-        live.__dict__.pop("_rust_seen", None)
+        _seen_add(live, doc, doc.seqs[version], version, snap, "python")
 
 
 def _snapshot(call: Any, doc: RustDoc, version: int) -> Any:

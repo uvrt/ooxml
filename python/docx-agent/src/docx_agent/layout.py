@@ -2024,7 +2024,7 @@ _SHARED_LAYOUT = ("_layout_lock", "_layout_flights", "_layout_kept", "_layout_co
                   "_check_facts", "_layout_failures", "_layouts", "_layout_stats", "_tool_seen_layout",
                   "_layout_owner",
                   # Lane F: the document's Rust owner and what its checks saw (docx_agent.rust).
-                  "_rust_doc", "_rust_refused", "_rust_seen", "_rust_seen_by",
+                  "_rust_doc", "_rust_refused", "_rust_seen",
                   # The tools' caches keyed by content or by version, set whole (a tuple) or
                   # under a lock of their own: a check's copy comparisons, the styles' digest,
                   # a render's coverage, the settings read for a like.
