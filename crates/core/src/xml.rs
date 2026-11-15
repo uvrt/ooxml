@@ -4,7 +4,7 @@
 //! root, so that a subtree can be handed on and parsed by itself.
 //!
 //! What a part's XML holds and this reader keeps: elements, attributes, character data
-//! (entities and character references decoded, CDATA as text).  Comments, processing
+//! (references decoded, CDATA as text).  Comments, processing
 //! instructions and the document type are skipped.  Anything it cannot read is an error
 //! (the caller refuses the document; it never guesses).
 
@@ -469,7 +469,7 @@ fn decode(raw: &str, out: &mut String) -> Result<(), XmlError> {
                 };
                 let c = code
                     .and_then(char::from_u32)
-                    .ok_or_else(|| XmlError(format!("an entity &{name};")))?;
+                    .ok_or_else(|| XmlError(format!("an unknown reference &{name};")))?;
                 out.push(c);
             }
         }

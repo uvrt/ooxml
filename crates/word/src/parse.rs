@@ -132,7 +132,7 @@ impl Block {
 /// One top-level body element and what it makes.
 #[derive(Clone, Debug)]
 pub struct Unit {
-    /// Its identity across change sets (a unit kept by one is the same unit).
+    /// Which unit it is across change sets (a unit kept by one is the same unit).
     pub uid: u64,
     pub key: Option<String>,
     /// Its block as parsed, and with its `REF` fields computed.
