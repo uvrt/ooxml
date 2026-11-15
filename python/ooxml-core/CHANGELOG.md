@@ -14,6 +14,13 @@ ooxml-core is the Rust core of the ooxml packages (`crates/`), as the Python mod
   version's snapshot is no longer kept. docx-agent 0.1.117's `word_fields` update reads
   its pages here.
 
+## 0.3.0 -- unreleased
+
+- **A snapshot no longer the latest lets go of what a check made of it.** The owner tells
+  the format when it publishes a newer snapshot (`Format::retire`); a Word snapshot then
+  drops its blocks' and paragraphs' key maps (made again if a check of that version comes),
+  so the 64 kept snapshots no longer each hold their own (several MB each at ~3,000 pages).
+
 ## 0.2.0 -- unreleased
 
 - **`ooxml_core.check(doc, version, request, seen=None)`**: docx-agent's check of some

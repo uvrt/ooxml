@@ -33,6 +33,42 @@ snapshot commit; the development history before it is summarised here.
   a listed heading is numbered, and a section's page number format is read once per round.
 - Needs ooxml-core 0.4.0.
 
+## 0.1.116 -- unreleased
+
+- **The rest of an edit's whole-document passes cost what the edit changed.** The same
+  results, field for field and byte for byte (tool results, saved bytes, id state, checks);
+  what changes is the time an edit, an undo or a redo takes on a long document.
+  - **The ids.** The ledger's reading of each version (which block ids an edit removed, by
+    the version that removed them) reads only the top-level blocks whose bytes changed, each
+    block's ids kept; the ids in use are no longer read again from every part before an
+    edit that writes one (the pool already holds every id of every version and every one
+    generated or copied in).
+  - **The body's index** (every paragraph's and table's id) is made from the last one where
+    only some top-level blocks changed: the others' entries are kept, the later ones moved.
+  - **What a call touched** (`touched`'s heading sections) reads the changed blocks' ids
+    only, the others' kept from the state before.
+  - **Undo and redo put back only the body's blocks that differ** and keep the other
+    elements (the tree is written out and compared with the version's bytes; where it does
+    not write out the same, the part is parsed whole, as before) -- so what is kept per block
+    stays after an undo too.
+  - **`word_edit_table`'s table as Markdown** costs the table's reading: the list items
+    before it are counted only when the table numbers one, and its paragraphs' formatting
+    is read from docx2svg's model of that table alone (the styles, numbering, theme and
+    settings parsed once until they change), not from a parse of the whole document; a
+    deleted paragraph mark in or just before the table reads the whole document, as before.
+  - **The Rust owner's change sets** count list labels from the last marked state before the
+    change and stop where the counters are as before (not every list item of the document
+    after every edit), and a table's record reads the index made per change.
+  - **Opening for the Rust path** resolves each distinct character of a run once (not each
+    character).
+  - `DOCX_AGENT_INCREMENTAL=0` runs every pass whole, as 0.1.115 did (the switch the
+    validation per change reads too); `DOCX_AGENT_FULL_VALIDATE=1` runs the whole pass
+    beside each one and fails where they differ (docx-agent's tests set it). What each pass
+    did is counted in `docx_agent.incremental.STATS`.
+- **Memory per version.** A snapshot of the Rust owner's that is no longer the latest lets
+  go of the key maps a check made of it (ooxml-core 0.3.0); the kept snapshots no longer
+  each hold their own.
+
 ## 0.1.115 -- unreleased
 
 - **Edits cost what they change, not the document's size.** The same results, field for

@@ -126,6 +126,12 @@ with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS) as toolbox:
   `STYLEREF`, a page number format or switch other than decimal, more than one section, a
   document the owner does not model -- is updated as before (`docx_agent.rust.fields`).
   `DOCX_AGENT_RUST_FIELDS=0` turns it off (`DOCX_AGENT_RUST=0` turns every Rust path off).
+- **The rest of an edit's whole-document passes too** (0.1.116, ooxml-edit 0.118.0,
+  ooxml-core 0.3.0): the ids ledger's reading of each version, the ids in use, the body's
+  index, `touched`'s sections, the Rust owner's list labels and table records read only the
+  blocks that changed, and undo and redo put back only those (`docx_agent.incremental` says
+  which pass is what). `DOCX_AGENT_INCREMENTAL=0` makes each whole again;
+  `DOCX_AGENT_FULL_VALIDATE=1` compares each with its whole pass.
 - **Saving refuses new validation problems**; only the application may allow them
   (`Toolbox(allow_new_problems=True)`). Check before save: every `check` carries
   `validation` (ooxml-edit 0.111.0, round 53) -- the problems the save would refuse as new,

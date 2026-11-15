@@ -96,13 +96,20 @@ class Exporter:
             entry = {"text": run.text, "vanish": bool(resolved.get("vanish"))}
             if not entry["vanish"]:
                 fmts = []
+                # One character's format and what it adds, per distinct character of the
+                # run (0.1.116): the same for each of its occurrences.
+                seen: dict = {}
+                caps = resolved.get("caps")
                 for char in run.text:
-                    f = character_format(resolved, char, document)
-                    fmts.append(self.fmt(f, self.width_hp(f)))
-                    drawn = char.upper() if resolved.get("caps") else char
-                    self.chars.add(drawn)
-                    self.chars.add(char)
-                    self.drawn.add((f.face, drawn))
+                    index = seen.get(char)
+                    if index is None:
+                        f = character_format(resolved, char, document)
+                        index = seen[char] = self.fmt(f, self.width_hp(f))
+                        drawn = char.upper() if caps else char
+                        self.chars.add(drawn)
+                        self.chars.add(char)
+                        self.drawn.add((f.face, drawn))
+                    fmts.append(index)
                 entry["fmts"] = fmts if len(set(fmts)) > 1 else (fmts[:1] or [self.fmt(character_format(resolved, " ", document))])
                 entry["tracking"] = linebreak.twips_to_units(resolved.get("spacing") or 0) if resolved.get("spacing") else 0
                 entry["scale"] = resolved.get("w") or 100
