@@ -251,6 +251,42 @@ fn owner_of(doc: &str) -> PyResult<Arc<dyn AnyOwner>> {
         .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err(doc.to_string()))
 }
 
+/// A resolver for the Rust parser: the Python callable asked `(kind, argument JSON)`.
+struct PyResolver<'a, 'py> {
+    f: &'a Bound<'py, PyAny>,
+}
+
+impl ooxml_word::parse::Resolver for PyResolver<'_, '_> {
+    fn call(&mut self, kind: &str, arg: &str) -> Result<String, String> {
+        match self.f.call1((kind, arg)) {
+            Ok(v) => v.extract::<String>().map_err(|e| e.to_string()),
+            Err(e) => Err(format!("{}: {}", e.get_type(self.f.py()).name().map(|n| n.to_string()).unwrap_or_default(), e.value(self.f.py()))),
+        }
+    }
+}
+
+/// Lane I1: the owner's first input for a Word document's `document.xml`, made by the Rust
+/// parser (`ooxml_word::parse`), `resolver(kind, argument)` asked what the parser does not
+/// resolve itself (the interpreter lock held: it calls Python).  Returns `(export JSON or
+/// None, statistics JSON)`: `None` where the parser refuses the document (`"refused"` in the
+/// statistics says why).
+#[pyfunction]
+fn parse_export(data: &[u8], resolver: &Bound<'_, PyAny>) -> PyResult<(Option<String>, String)> {
+    let mut r = PyResolver { f: resolver };
+    let found = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| ooxml_word::parse::export(data, &mut r)));
+    match found {
+        Ok(Ok((text, st, _body))) => {
+            let calls: serde_json::Map<String, serde_json::Value> =
+                st.calls.iter().map(|(k, v)| (k.to_string(), serde_json::json!(v))).collect();
+            let stats = serde_json::json!({"items": st.items, "calls": calls, "parse_ms": st.parse_ms,
+                                           "export_ms": st.export_ms});
+            Ok((Some(text), stats.to_string()))
+        }
+        Ok(Err(why)) => Ok((None, serde_json::json!({"refused": why.0}).to_string())),
+        Err(_) => Ok((None, serde_json::json!({"refused": "the parser failed"}).to_string())),
+    }
+}
+
 /// Open a document of `kind` under `doc` from its first input (a Word export).
 #[pyfunction]
 fn open_document(py: Python<'_>, doc: String, kind: &str, first: String) -> PyResult<String> {
@@ -394,6 +430,7 @@ fn ooxml_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<SnapshotE>()?;
     m.add_function(wrap_pyfunction!(noop, m)?)?;
     m.add_function(wrap_pyfunction!(open_document, m)?)?;
+    m.add_function(wrap_pyfunction!(parse_export, m)?)?;
     m.add_function(wrap_pyfunction!(commit, m)?)?;
     m.add_function(wrap_pyfunction!(call, m)?)?;
     m.add_function(wrap_pyfunction!(close_document, m)?)?;
