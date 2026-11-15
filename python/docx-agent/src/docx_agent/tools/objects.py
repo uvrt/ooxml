@@ -1531,8 +1531,8 @@ class _Kept:
         from ..blocks import unrecorded
 
         with unrecorded(self.document):
-            found = None
-            for story in self.document.stories:
+            found = self._entry_of_element()
+            for story in self.document.stories if found is None else ():
                 for table in story.tables:
                     entry = _table_entry(self.document, table.id)
                     if entry is not None and entry.element is self.element:
@@ -1541,6 +1541,21 @@ class _Kept:
                 if found is not None:
                     break
         return _table_entry(self.document, found.id) if found is not None else None
+
+    def _entry_of_element(self) -> Any:
+        """Lane H1: the entry :meth:`_entry_now` finds, from the index of the part the element
+        is in (its entry there, when its id names it), not by asking every table of every
+        story for its entry; ``None``: look for it so."""
+        root = self.element.getroottree().getroot()
+        document = self.document
+        for part in document._parts():
+            if document.package.tree(part) is root:
+                entry = document._index(part).entry_for(self.element)
+                if entry is None or not hasattr(entry, "rows"):
+                    return None
+                found = _table_entry(document, entry.id)
+                return found if found is not None and found.element is self.element else None
+        return None
 
 
 def _set_cell(document: Any, table: Any, row: int, col: int, text: str) -> list[Any]:
