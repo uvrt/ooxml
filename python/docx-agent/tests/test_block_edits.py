@@ -23,6 +23,7 @@ from docx_agent import Document, blocks
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
 
 import block_stress
+from gates import Gate, Watched
 
 pytestmark = pytest.mark.any_faces
 
@@ -173,32 +174,47 @@ def test_a_slow_fill_runs_once_when_calls_that_take_the_lock_come_meanwhile(monk
     calls that take the document's lock come -- a style changed (a part the fill's patch
     must find unchanged) and the fields updated.  They wait for the fill to apply, so it
     runs once, and they change the version it made."""
-    import time
-
     from docx_agent.tools import objects
 
     original = objects._set_from
     runs = []
+    gate = Gate()
 
     def slow(*args, **kwargs):
         runs.append(1)
-        time.sleep(2)
+        gate.hold("fill")                  # still preparing until the test lets it go
         return original(*args, **kwargs)
 
     monkeypatch.setattr(objects, "_set_from", slow)
-    with opened("auto", redo=0.3) as (box, session, doc, layout):
+    # Any draft in flight counts as long (``block_redo_cpu`` 0): the wait for it is the
+    # property, not how long it took.
+    with opened("auto", redo=0.0) as (box, session, doc, layout):
+        entry = session.entry(doc)
+        entry._drafts_ended = drafts = Watched()
         out = {}
         thread = threading.Thread(target=lambda: out.setdefault("fill", box.dispatch(session, "word_edit_table", {
             "doc": doc, "table": layout.fill, "action": "set_cells", "grow": True, "from": "d:rows"})))
+
+        def lock_takers():
+            out["style"] = box.dispatch(session, "word_styles", {"doc": doc, "action": "modify", "name": "Normal",
+                                                                 "size": 12})
+            out["fields"] = box.dispatch(session, "word_fields", {"doc": doc, "action": "update"})
+
+        takers = threading.Thread(target=lock_takers)
         thread.start()
-        time.sleep(0.8)
-        style = box.dispatch(session, "word_styles", {"doc": doc, "action": "modify", "name": "Normal", "size": 12})
-        fields = box.dispatch(session, "word_fields", {"doc": doc, "action": "update"})
-        thread.join()
-        fill = out["fill"]
+        try:
+            gate.wait_entered()
+            takers.start()
+            assert drafts.until_waiting(1)        # the style change waits for the fill's draft
+        finally:
+            gate.open()
+            thread.join()
+            if takers.ident is not None:
+                takers.join()
+        fill, style, fields = out["fill"], out["style"], out["fields"]
         assert fill.ok and _shape(fill.block) == {"tries": 1, "conflicts": []}, fill.block
         assert len(runs) == 1
-        assert style.ok and style.block is not None and style.block["waited"] > 0.5
+        assert style.ok and style.block is not None and style.block.get("waited", 0) > 0, style.block
         assert style.version == fill.version + 1
         assert fields.ok and fields.version >= style.version
 
@@ -900,18 +916,22 @@ def test_a_ranged_check_is_warned_only_when_its_blocks_changed_meanwhile(monkeyp
     """A check of one chapter, laid out with the lock let go: an edit of another chapter
     meanwhile is not news to it; one of its own chapter is ("changed while this call read
     it"); a check of the whole document hears of either."""
-    import contextlib
-    import time
-
     from ooxml_edit.tools import dispatch
 
     original = dispatch.Call.unlocked
+    gates: list = [None]
+
+    def held() -> None:
+        """The check's thread held at its first slow point, until the edit is in."""
+        gate = gates[0]
+        if gate is not None and threading.current_thread() is gate.thread and not gate.is_open:
+            gate.hold("check")
 
     @contextlib.contextmanager
     def slow(self):
         with original(self) as released:
             if released:
-                time.sleep(1.0)
+                held()
             yield released
 
     monkeypatch.setattr(dispatch.Call, "unlocked", slow)
@@ -924,20 +944,26 @@ def test_a_ranged_check_is_warned_only_when_its_blocks_changed_meanwhile(monkeyp
 
     def slow_reading(*args, **kwargs):
         reading(*args, **kwargs)
-        time.sleep(1.0)
+        held()
 
     monkeypatch.setattr(owner_module, "reading", slow_reading)
 
     def run(arguments, target):
         with opened("auto") as (box, session, doc, layout):
             out = {}
-            reader = threading.Thread(target=lambda: out.setdefault("check", box.dispatch(
+            gate = gates[0] = Gate()
+            reader = gate.thread = threading.Thread(target=lambda: out.setdefault("check", box.dispatch(
                 session, "check", {"doc": doc, **arguments(layout)})))
             reader.start()
-            time.sleep(0.4)
-            assert box.dispatch(session, "word_set_text", {"doc": doc, "target": target(layout),
-                                                           "text": "Meanwhile."}).ok
-            reader.join()
+            try:
+                gate.wait_entered()
+                assert box.dispatch(session, "word_set_text", {"doc": doc, "target": target(layout),
+                                                               "text": "Meanwhile."}).ok
+                gate.note("edit")
+            finally:
+                gate.open()
+                reader.join()
+            assert gate.order == ["check in", "edit", "check out"], gate.order    # landed while it read
             result = out["check"]
             assert result.ok, result.to_json()
             return any("changed while this call read it" in w for w in result.warnings)
