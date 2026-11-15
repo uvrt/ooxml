@@ -348,7 +348,7 @@ class Reader:
         gone = _DELETED if self.view == "current" else _INSERTED if self.view == "original" else ()
         return next((child for child in mark if child.tag in gone), None)
 
-    def block(self, part: str, identifier: str, *, whole: bool = False) -> list | None:
+    def block(self, part: str, identifier: str) -> list | None:
         """The records :meth:`story` gives the top-level table holding ``identifier`` (its
         id, a row's, a cell's, a paragraph's in it), without reading the story's other
         blocks: of those before it, only the list items are counted -- the one thing a
@@ -357,6 +357,11 @@ class Reader:
         the whole story for it made each op of a batch cost the document's size).
         ``None`` where the id is not in a top-level table of a story with blocks (a
         paragraph, a note), or the view shows no such table there: :meth:`story` then."""
+        return self._block(part, identifier)
+
+    def _block(self, part: str, identifier: str, *, whole: bool = False) -> list | None:
+        """:meth:`block`; ``whole``: the blocks before counted first, the table read with the
+        whole document's model (lane H1's path off, as ``DOCX_AGENT_FULL_VALIDATE`` compares)."""
         root = self.document.package.tree(part)
         if root is None or root.tag in (_W + "footnotes", _W + "endnotes", _W + "comments"):
             return None
@@ -403,7 +408,7 @@ class Reader:
             if before is not None:
                 self._counters[part] = before
         if fast and full_check_on():
-            other = Reader(self.document, self.view_name, self.map).block(part, identifier, whole=True)
+            other = Reader(self.document, self.view_name, self.map)._block(part, identifier, whole=True)
             if other is None or other != records:
                 raise AssertionError(f"{identifier}: the table read at its own cost differs from the table read "
                                      "after every block before it")
