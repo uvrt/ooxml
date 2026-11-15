@@ -60,6 +60,9 @@ def _stats_at_exit() -> None:
     fields = sys.modules.get("docx_agent.rust.fields")
     if fields is not None and fields.STATS:
         stats["fields"] = dict(fields.STATS)
+    parser = sys.modules.get("docx_agent.rust.parser")
+    if parser is not None and parser.STATS:
+        stats["parser"] = dict(parser.STATS)
     if path and stats:
         try:
             with open(path, "a", encoding="utf-8") as out:
@@ -227,12 +230,21 @@ def _open(call: Any, copy: Any, live: Any, found: Any) -> "RustDoc | None":
     t0 = time.perf_counter()
     version = copy.history.version
     try:
-        mirror = Mirror(copy)
-        _check_keys(mirror)
-        mirror.fstack_end = mirror.thread_fields(mirror.units, [])
-        t1 = time.perf_counter()
-        with _records(copy, mirror):
-            text, stats = mirror.export_with(constants(copy, mirror))
+        from . import parser as rust_parser
+
+        mirror = None
+        if rust_parser.enabled():
+            # Lane I1: the body read and exported by the Rust parser; a document it refuses
+            # is mirrored in Python, as before.
+            mirror, text, stats = rust_parser.open_mirror(copy)
+            t1 = t0 + stats.get("resolution_s", 0.0)
+        if mirror is None:
+            mirror = Mirror(copy)
+            _check_keys(mirror)
+            mirror.fstack_end = mirror.thread_fields(mirror.units, [])
+            t1 = time.perf_counter()
+            with _records(copy, mirror):
+                text, stats = mirror.export_with(constants(copy, mirror))
         t2 = time.perf_counter()
         main = copy.package.document_part()
         summary = _summary(copy, copy.package.read(main))
@@ -299,6 +311,14 @@ class _records:
         from .mirror import MirrorModel
         from .records import Context
 
+        if getattr(self.mirror, "rust", False):
+            from .parser import _RecordsContext
+
+            self.mirror.resolution.document = self.document
+            self.rust = _RecordsContext(self.document, self.mirror.resolution)
+            self.rust.__enter__()
+            return
+        self.rust = None
         self.saved = self.document.__dict__.get("_effective")
         self.document._effective = (self.document._state, MirrorModel(self.document, self.mirror))
         self.mirror.ctx = Context(self.document)
@@ -307,6 +327,9 @@ class _records:
         self.reading.__enter__()
 
     def __exit__(self, *exc: Any) -> None:
+        if self.rust is not None:
+            self.rust.__exit__(*exc)
+            return
         self.reading.__exit__(*exc)
         self.mirror.ctx = None
         self.document._effective = self.saved
@@ -904,8 +927,9 @@ def _in_layout_order(mirror: Any, substitutions: dict) -> list:
     footers') as the mirror met them."""
     left = dict(substitutions)
     out = []
-    for unit in mirror.units:
-        for face in unit.faces:
+    listed = mirror.faces_list() if getattr(mirror, "rust", False) else [unit.faces for unit in mirror.units]
+    for faces in listed:
+        for face in faces:
             found = left.pop(face, None)
             if found is not None:
                 out.append(found)

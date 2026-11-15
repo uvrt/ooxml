@@ -12,12 +12,13 @@ pub mod fieldpages;
 pub mod incr;
 pub mod linebreak;
 pub mod paginate;
+pub mod parse;
 pub mod snapshot;
 pub mod table;
 
 // The core's modules, under the paths this crate's code was written against; `measure`
 // is the core's with Word's line breaking (`linebreak`) beside it, as it was one module.
-pub use ooxml_core::{model, owner, units};
+pub use ooxml_core::{model, owner, units, xml};
 pub mod measure {
     pub use crate::linebreak::*;
     pub use ooxml_core::measure::*;
