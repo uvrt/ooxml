@@ -441,6 +441,10 @@ def _advance(c: Any, live: Any, doc: RustDoc, version: int) -> None:
                 data[slice(*new.spans[-1 - after])]:
             after += 1
     lo, hi_old, hi_new = before, len(old.spans) - after, len(new.spans) - after
+    if new is not old:
+        # Lane G: the state it was read from is not kept by it (each version's summary held
+        # the one before, so the owner held every version's bytes).
+        new.kept = None
     stories = _definitions(doc, changed) if changed else False
     body = package.tree(main).find(_W + "body")
     blocks = [child for child in body if child.tag in _BLOCKS]

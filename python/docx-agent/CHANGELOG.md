@@ -37,6 +37,10 @@ snapshot commit; the development history before it is summarised here.
     when the version's body holds no deletion record; nothing written out to look for a
     layout when none was made; and a document whose body is over 4 MB (about 600 pages) is
     edited under its lock rather than on a draft, which copied the whole document.
+- **The Rust owner no longer keeps every version's bytes.** Each version's body summary it
+  kept held the one before (0.1.114), so a document's owner held the body of every version
+  it had followed: memory grew by the body's size with every edit (about 30 MB an edit on a
+  3,000-page report).
 - `DOCX_AGENT_INCREMENTAL=0` in the environment turns docx-agent's part of this off: the
   whole check at every call, each version's bytes made at its commit and its read copy
   parsed from them, the table's parse made whole, drafts at any size, as 0.1.114 did
