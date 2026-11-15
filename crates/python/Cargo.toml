@@ -18,6 +18,7 @@ test = false
 doctest = false
 
 [dependencies]
+ooxml-core = { path = "../core" }
 ooxml-word = { path = "../word" }
 pyo3 = { workspace = true, features = ["extension-module"] }
 serde_json.workspace = true

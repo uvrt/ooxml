@@ -151,6 +151,7 @@ dependencies = [
 name = "ooxml-python"
 version = "0.6.0"
 dependencies = [
+ "ooxml-core",
  "ooxml-word",
  "pyo3",
  "serde_json",
