@@ -250,7 +250,7 @@ def test_responses_definitions_meet_the_strict_rules(toolbox):
     render = next(d for d in definitions if d.get("name") == "toy_ppt_render")
     assert render["strict"] is True and render["type"] == "function"
     params = render["parameters"]
-    assert params["required"] == ["doc", "page", "width", "stall"]
+    assert params["required"] == ["doc", "page", "width", "stall", "gate"]
     assert params["properties"]["width"]["type"] == ["integer", "null"]
     assert params["properties"]["page"]["type"] == "integer"
 
