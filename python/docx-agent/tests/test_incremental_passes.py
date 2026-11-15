@@ -20,7 +20,7 @@ from ooxml_edit.tools.limits import Limits  # noqa: E402
 from docx_agent import incremental  # noqa: E402
 from docx_agent.tools import FORMAT, GROUPS  # noqa: E402
 
-from test_rust_check import CLOCK, INCLUDE, TOOLS, WORDS, _first_difference, _ids, _normal, report  # noqa: E402,F401
+from test_rust_check import CLOCK, INCLUDE, TOOLS, WORDS, _first_difference, _ids, _normal, report  # noqa: E402,F401,F811
 
 pytestmark = pytest.mark.any_faces
 
@@ -79,7 +79,7 @@ def _run(data: bytes, per_change: bool, monkeypatch, oracle: bool = True) -> tup
 
 
 @pytest.mark.parametrize("oracle", [True, False], ids=["compared", "alone"])
-def test_passes_per_change_give_what_the_whole_passes_give(report, monkeypatch, oracle):
+def test_passes_per_change_give_what_the_whole_passes_give(report, monkeypatch, oracle):  # noqa: F811
     mine, stats = _run(report, True, monkeypatch, oracle)
     theirs, _ = _run(report, False, monkeypatch)
     assert len(mine) == len(theirs)

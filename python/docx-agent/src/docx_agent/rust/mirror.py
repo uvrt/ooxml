@@ -362,7 +362,7 @@ class Mirror:
         self.relabelled_units = units
         if incremental.verifying():
             mine = (dict(labels), dict(numbered))
-            whole = self._label_pass()
+            self._label_pass()
             incremental.check("mirror labels", mine, (self.labels, self.numbered))
             self.relabelled_units = units
         incremental.STATS["mirror labels: incremental"] += 1
