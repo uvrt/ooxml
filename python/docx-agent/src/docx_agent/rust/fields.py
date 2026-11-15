@@ -333,6 +333,8 @@ def note_laid(document: Any, version: int, count: int) -> None:
         laid.pop(next(iter(laid)))
 
 
-def laid_count(document: Any) -> int | None:
+def laid_count(document: Any, version: int | None = None) -> int | None:
     laid = document.__dict__.get("_rust_fields_laid")
-    return laid.get(document.history.version) if laid else None
+    if not laid:
+        return None
+    return laid.get(document.history.version if version is None else version)

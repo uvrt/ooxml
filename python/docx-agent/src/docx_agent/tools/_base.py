@@ -212,14 +212,14 @@ def seen_before(document: Any, data: bytes | None = None) -> Any:
     return summary_for(document, key, conversion.layout) if conversion is not None else None
 
 
-def laid_before(document: Any) -> Any:
-    """0.1.117: where a fields update read the layout of the document's current version
-    from its Rust owner (:mod:`docx_agent.rust.fields`), what docx-agent's own update would
-    have kept of it for the reflow: its page count (always more than :data:`REFLOW_PAGES`:
-    the reflow says :data:`STALE`); else ``None``."""
+def laid_before(document: Any, version: int | None = None) -> Any:
+    """0.1.117: where a fields update read the layout of the document's current version (or
+    ``version``) from its Rust owner (:mod:`docx_agent.rust.fields`), what docx-agent's own
+    update would have kept of it for the reflow: its page count (always more than
+    :data:`REFLOW_PAGES`: the reflow says :data:`STALE`); else ``None``."""
     from ..rust.fields import laid_count
 
-    count = laid_count(document)
+    count = laid_count(document, version)
     return _Laid(count) if count is not None else None
 
 

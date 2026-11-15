@@ -1287,6 +1287,8 @@ class Blocks:
     def apply(self, document: Any, plan: Plan) -> Mapping[str, str]:
         package = document.package
         patch = plan.patch
+        # 0.1.117: the version the patch is applied to, for its reflow (:meth:`settle`).
+        document.__dict__["_patched_from"] = document.history.version
         if plan.data is not None and plan.data != plan.before:
             _splice_tree(package, patch.body, plan)
         for path, before, after in plan.parts:
@@ -1312,7 +1314,7 @@ class Blocks:
         return plan.renames
 
     def settle(self, document: Any, plan: Plan, *, touched: list[Any], before: bytes) -> None:
-        from .tools._base import Before, Engine, seen_before
+        from .tools._base import Before, Engine, laid_before, seen_before
 
         document._note_ids()
         # The body's bytes at this version, as the patch was checked to make them: the next
@@ -1324,10 +1326,11 @@ class Blocks:
         engine = plan.patch.engine
         if isinstance(engine, Engine):
             document._checks_engine = Engine(engine._run, engine.timeout, keyed=engine.keyed, document=document)
+        patched_from = document.__dict__.pop("_patched_from", None)
         for k, scope in enumerate(touched):
             if isinstance(scope, Before):
                 # What the reflow is measured from: the document as it was just before.
-                touched[k] = Before(seen_before(document, before))
+                touched[k] = Before(seen_before(document, before) or laid_before(document, patched_from))
 
     def rename(self, value: Any, renames: Mapping[str, str]) -> Any:
         return renamed(value, token_renamer(renames))
