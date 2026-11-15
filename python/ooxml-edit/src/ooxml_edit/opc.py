@@ -159,6 +159,13 @@ class OpcPackage:
         self._settling = False
         self._keep_settled = False
         self._restoring_settled: frozenset[str] = frozenset()
+        #: 0.119.0: each part's changes counted (marked dirty, a tree or a part put in place,
+        #: restored), and the count at its last snapshot: inside a scope that keeps settled
+        #: snapshots (the tool layer's calls, where a tree changes only through the history
+        #: or marked dirty), a snapshot of a part not changed since its last one is that one
+        #: -- a batch's states before each op are not written out again where nothing changed.
+        self._changes: dict[str, int] = {}
+        self._snapshot_changes: dict[str, int] = {}
 
     # -- loading ---------------------------------------------------------------------------
 
@@ -276,6 +283,7 @@ class OpcPackage:
             # 0.119.0: a tree handed out outside a call (an application's, which may change it
             # without the history) is written out again for its next snapshot.
             self._settled.discard(path)
+        self._changes[path] = self._changes.get(path, 0) + 1
         cached = self._trees.get(path)
         if cached is not None:
             return cached
@@ -303,6 +311,7 @@ class OpcPackage:
         self._dirty.add(path)
         self._serialized.pop(path, None)
         self._settled.discard(path)
+        self._changes[path] = self._changes.get(path, 0) + 1
         # A rels part that changed invalidates its cached relationships.
         self._rels_cache.pop(part_for_rels(path), None)
 
@@ -318,6 +327,7 @@ class OpcPackage:
         self._dirty.add(path)
         self._serialized.pop(path, None)
         self._settled.discard(path)
+        self._changes[path] = self._changes.get(path, 0) + 1
         self._rels_cache.pop(part_for_rels(path), None)
 
     @property
@@ -346,6 +356,7 @@ class OpcPackage:
         self._dirty.discard(path)
         self._serialized.pop(path, None)
         self._settled.discard(path)
+        self._changes[path] = self._changes.get(path, 0) + 1
         self._rels_cache.pop(part_for_rels(path), None)
         self._raw_changes[path] = None
         if new:
@@ -393,6 +404,7 @@ class OpcPackage:
         self._dirty.discard(path)
         self._serialized.pop(path, None)
         self._settled.discard(path)
+        self._changes[path] = self._changes.get(path, 0) + 1
         self._rels_cache.pop(part_for_rels(path), None)
         self._rels_cache.pop(path, None)
         self._raw_changes[path] = None
@@ -933,13 +945,15 @@ class OpcPackage:
         """An edited part's bytes now as :class:`Pieces`: the pieces of its last snapshot
         where the bytes are the same at the start and the end, only the stretch between
         copied (0.117.0) -- every version of a long part held at the cost of its change."""
-        if path in self._settled:
+        if path in self._settled or (self._serial_scopes and self._keep_settled and path in self._pieces
+                                     and self._snapshot_changes.get(path) == self._changes.get(path, 0)):
             found = self._pieces[path]
             if _verify_serialized():
                 assert bytes(found) == serialize(self._trees[path]), f"{path}: settled bytes are not the tree's"
             return found
         found = Pieces.of(self._serialize(path), self._pieces.get(path))
         self._pieces[path] = found
+        self._snapshot_changes[path] = self._changes.get(path, 0)
         if self._settling and self._serial_scopes:
             self._settled.add(path)
         return found
@@ -955,6 +969,8 @@ class OpcPackage:
         # tells the restored tree's bytes from what it put back, _restored_tree)
         self._restoring_settled = frozenset(self._settled)
         self._settled.clear()
+        for path in set(snapshot.trees) | set(self._dirty):
+            self._changes[path] = self._changes.get(path, 0) + 1
         # (0.118.0: each tree and its last snapshot's bytes as they were, for a format that
         # puts back only what differs, _restored_tree)
         current_trees = {path: self._trees.get(path) for path in snapshot.trees if path in self._dirty}
@@ -1076,6 +1092,7 @@ class OpcPackage:
         self._ensure_entry(path)
         self._serialized.pop(path, None)
         self._settled.discard(path)
+        self._changes[path] = self._changes.get(path, 0) + 1
         self._parts[path] = data
 
     def _ensure_entry(self, path: str) -> None:

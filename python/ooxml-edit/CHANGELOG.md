@@ -22,6 +22,11 @@ earlier ones were never tagged.
   a tree it kept marks the part dirty, as `mark_dirty` asks). A library's own use, with no
   such scope, writes the state before each change out as before: a tree it holds may be
   changed unmarked between changes.
+- **Within a call, a part not changed since its last snapshot is not written out again.**
+  Each part's changes are counted (marked dirty, a tree or a part put in place, restored);
+  inside a scope that keeps settled snapshots, a snapshot of a part whose count is the one
+  at its last snapshot is that snapshot: a batch's states before each op and after the
+  last, taken where nothing changed since, cost nothing.
 - `OpcPackage.restore` tells a format's `_restored_tree` which parts' last snapshots were
   their trees' bytes (`_restoring_settled`); a format that knows the tree it gives writes
   out as the snapshot may mark the part settled.
