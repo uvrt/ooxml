@@ -226,6 +226,11 @@ class LinkOps:
 
     def _bookmark_markers(self: "Document") -> dict[str, tuple[str, Element, Element | None]]:
         """name -> (part, bookmarkStart, bookmarkEnd) for every bookmark in every story."""
+        # 0.1.117: read once while a fields update computes results (``_markers_memo``, a
+        # holder it empties when it adds or removes bookmarks: a table of contents rebuilt).
+        memo = self.__dict__.get("_markers_memo")
+        if memo is not None and memo[0] is not None:
+            return memo[0]
         out: dict[str, tuple[str, Element, Element | None]] = {}
         for part in self._parts():
             root = self.package.tree(part)
@@ -233,6 +238,8 @@ class LinkOps:
             for start in root.iter(_W + "bookmarkStart"):
                 name = start.get(_W + "name") or ""
                 out.setdefault(name, (part, start, ends.get(start.get(_W + "id"))))
+        if memo is not None:
+            memo[0] = out
         return out
 
     def bookmarks(self: "Document", *, hidden: bool = False) -> list[Bookmark]:

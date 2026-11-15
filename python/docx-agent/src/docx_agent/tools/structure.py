@@ -263,7 +263,9 @@ def _fields_ahead(call: Any, doc: str, action: str, kind: str | None = None,
     page cross-reference reads (:func:`~._base.lay_out_ahead`)."""
     if action == "update":
         started = time.perf_counter()
-        if any(found.keyword in _LAID_OUT for found in call.document._all_fields()):
+        from ..rust import fields as rust_fields
+
+        if any(found.keyword in _LAID_OUT for found in call.document._all_fields()) and not rust_fields.ahead(call):
             from .owner import layout_first
 
             layout_first(call)      # lane O: the layout its document's checks read, first

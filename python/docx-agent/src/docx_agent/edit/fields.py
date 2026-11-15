@@ -356,6 +356,17 @@ class _Context:
     sections: list
     date: _dt.date | _dt.datetime
     unknown: list[str] = _field(default_factory=list)
+    #: Each section's page number format (``None``: decimal), read once per round.
+    formats: dict = _field(default_factory=dict)
+
+    def format_of(self, index: int) -> str | None:
+        if index not in self.formats:
+            fmt = None
+            if 0 <= index < len(self.sections):
+                fmt = self.sections[index].page_numbering["format"]
+                fmt = None if fmt == "decimal" else fmt
+            self.formats[index] = fmt
+        return self.formats[index]
 
 
 class FieldOps:
@@ -679,17 +690,24 @@ class FieldOps:
         changed."""
         from .document import EditResult
 
+        from ..rust.fields import following
+
         before = {self._field_id(f): self._result_text(f) for f in self._all_fields()}
-        with self._edit():
-            with self._untracked():
-                found = self._all_fields()
-                if identifiers is not None:
-                    wanted = set(identifiers)
-                    found = [f for f in found if self._field_id(f) in wanted]
-                    missing = wanted - {self._field_id(f) for f in found}
-                    if missing:
-                        raise EditError(f"no field {', '.join(sorted(missing))}")
-                unknown, _ = self._update_loop(found, passes=passes, date=date)
+        # Each table of contents' entries as a round wrote them (:meth:`_rebuild_toc`).
+        self.__dict__["_toc_built"] = {}
+        try:
+            with following(self), self._edit():
+                with self._untracked():
+                    found = self._all_fields()
+                    if identifiers is not None:
+                        wanted = set(identifiers)
+                        found = [f for f in found if self._field_id(f) in wanted]
+                        missing = wanted - {self._field_id(f) for f in found}
+                        if missing:
+                            raise EditError(f"no field {', '.join(sorted(missing))}")
+                    unknown, _ = self._update_loop(found, passes=passes, date=date)
+        finally:
+            self.__dict__.pop("_toc_built", None)
         after = {self._field_id(f): self._result_text(f) for f in self._all_fields()}
         count = sum(1 for key, value in after.items() if before.get(key) != value)
         return EditResult(None, changed=count > 0 or bool(unknown), count=count, unknown=unknown,
@@ -714,10 +732,11 @@ class FieldOps:
         across passes by its end (a table of contents' begin is rebuilt, its end kept) or,
         for a simple field, its element."""
         keys = [f.begin if f.simple or f.end is None else f.end for f in found]
+        # (0.1.117: by identity at once -- the keys held here keep their elements' proxies.)
+        held = {id(key) for key in keys}
 
         def current() -> list[_Found]:
-            return [f for f in self._all_fields()
-                    if any((f.begin if f.simple or f.end is None else f.end) is key for key in keys)]
+            return [f for f in self._all_fields() if id(f.begin if f.simple or f.end is None else f.end) in held]
 
         unknown: list[str] = []
         previous = None
@@ -738,7 +757,7 @@ class FieldOps:
         """Write each field's result from one layout; the ids of those it cannot compute."""
         needs_layout = any(f.keyword in ("PAGE", "NUMPAGES", "SECTIONPAGES", "PAGEREF", "TOC", "STYLEREF")
                            for f in found)
-        context = _Context(self.layout() if needs_layout else None, self.sections(),
+        context = _Context(self._update_layout() if needs_layout else None, self.sections(),
                            date or _dt.datetime.now(_dt.timezone.utc).date())
         sequences: dict[str, int] = {}
         wanted = [f for f in found if f.keyword == "SEQ"]
@@ -752,14 +771,28 @@ class FieldOps:
                     else:
                         self._write_result(item, value, context)
         tocs = [f for f in found if f.keyword == "TOC"]
+        # (0.1.117: by identity at once -- ``found`` and the nested lists are one scan's.)
+        nested = {id(inner) for toc in tocs for inner in toc.nested}
+        # Bookmarks read once while results are written (they move no bookmark); read again
+        # after a table of contents is rebuilt (it adds and removes some).
+        memo = self.__dict__["_markers_memo"] = [None]
+        try:
+            self._results(found, context, nested, memo)
+        finally:
+            self.__dict__.pop("_markers_memo", None)
+        return context.unknown
+
+    def _results(self: "Document", found: list[_Found], context: _Context, nested: set[int], memo: list) -> None:
         for item in found:
             keyword = item.keyword
             if keyword == "SEQ" or not _attached(item.begin):
                 continue
-            if keyword != "TOC" and any(item in toc.nested for toc in tocs):
+            if keyword != "TOC" and id(item) in nested:
                 continue  # rebuilt with its table of contents
             if keyword == "TOC":
+                memo[0] = None
                 self._rebuild_toc(item, context)
+                memo[0] = None
                 continue
             try:
                 value = self._value(item, context)
@@ -772,7 +805,15 @@ class FieldOps:
                 self._write_result(item, value, context)
                 if not item.simple and item.begin.get(_W + "dirty") is not None:
                     del item.begin.attrib[_W + "dirty"]
-        return context.unknown
+
+    def _update_layout(self: "Document"):
+        """The layout an update's round reads: the document's Rust owner's, where it serves
+        the document and its fields (:mod:`docx_agent.rust.fields`, 0.1.117), else
+        docx2svg's (:meth:`layout`) -- the same pages either way."""
+        from ..rust.fields import layout_for
+
+        found = layout_for(self, self._all_fields())
+        return found if found is not None else self.layout()
 
     def _sequence_value(self: "Document", item: _Found, sequences: dict[str, int]) -> str | None:
         """A ``SEQ`` field's text, ``sequences`` counted on; ``None`` where Word draws an
@@ -883,11 +924,7 @@ class FieldOps:
         return "".join(texts)
 
     def _section_format(self: "Document", index: int, context: _Context) -> str | None:
-        sections = context.sections
-        if 0 <= index < len(sections):
-            fmt = sections[index].page_numbering["format"]
-            return None if fmt == "decimal" else fmt
-        return None
+        return context.format_of(index)
 
     def _bookmark_page(self: "Document", name: str, context: _Context):
         """The page (docx2svg's) a bookmark starts on, or ``None`` where the layout cannot
@@ -978,10 +1015,14 @@ class FieldOps:
             style_ids[level] = style_ids.get(level) or self.styles._ensure(f"toc {level}", "paragraph")
         link_style = self.styles._ensure("Hyperlink", "character") if hyperlinks and headings else None
         tab = self._toc_tab(entries_place[-1])
-        labels = self._toc_labels() if headings else {}
+        # (0.1.117: the list numbers counted only where a heading listed is numbered.)
+        labels = self._toc_labels() if headings and self._toc_numbered(headings) else {}
         looks = _TocLooks(self, link_style)
         bookmarks = [self._toc_bookmark(entry.element) for entry, _ in headings]
         pages = []
+        prefetch = getattr(context.layout, "prefetch", None)
+        if prefetch is not None:
+            prefetch([entry.id for entry, _ in headings])     # the Rust owner's: asked at once
         for (entry, _), name in zip(headings, bookmarks):
             page = None
             if context.layout is not None:
@@ -994,6 +1035,16 @@ class FieldOps:
             if page is None:
                 context.unknown.append(f"{self._field_id(item)} ({entry.id})")
             pages.append(page)
+        # 0.1.117: a later round of the same update with the very entries the round before
+        # wrote, on the table as that round left it, writes the same bytes again (round 37):
+        # it is left as it is.
+        built = self.__dict__.get("_toc_built")
+        signature = None
+        if built is not None:
+            signature = self._toc_signature(item, headings, bookmarks, pages, labels, looks, style_ids, link_style,
+                                            tab, (hyperlinks, hidden, omit_levels))
+            if built.get(id(item.end)) == (signature, _region_digest(item)):
+                return
         # The new entries.
         begin_run = _run_of(item.begin)
         head = _field_head(item)
@@ -1087,6 +1138,37 @@ class FieldOps:
         self.package.mark_dirty(part)
         self._invalidate()
         item.begin = head[0].find(_W + "fldChar")
+        if built is not None:
+            built[id(item.end)] = (signature, _region_digest(item))
+
+    def _toc_signature(self: "Document", item: _Found, headings: list, bookmarks: list, pages: list, labels: dict,
+                       looks: "_TocLooks", style_ids: dict, link_style: str | None, tab: int, options: tuple) -> tuple:
+        """What a table of contents' rebuilt entries are made of (:meth:`_rebuild_toc`)."""
+        rows = []
+        for (entry, level), name, page in zip(headings, bookmarks, pages):
+            label, suffix = labels.get(id(entry.element), (None, None))
+            stop = looks.number_stop(level, label) if label and suffix == "tab" else None
+            rows.append((entry.id, level, _heading_text(entry.element), label, suffix, stop, name, page))
+        levels = sorted(style_ids)
+        return (item.instruction, tuple(rows), tuple((level, style_ids[level], looks.has_tabs(level)) for level in levels),
+                link_style, tab, options)
+
+    def _toc_numbered(self: "Document", headings: list) -> bool:
+        """Whether a heading a table of contents lists may be numbered (what
+        :meth:`_toc_labels_read` gives a label)."""
+        from .numbering import membership, paragraph_style_id, reading, style_list
+
+        if not self.package.numbering_part():
+            return False
+        with reading(self):
+            for entry, _ in headings:
+                found = membership(self, entry.element)
+                if found is None or found.format in (None, "none"):
+                    continue
+                if found.from_style and style_list(self, paragraph_style_id(entry.element)) is None:
+                    continue
+                return True
+        return False
 
     def _toc_entries(self: "Document", instruction: str) -> list:
         """``(entry, level)`` of the body's paragraphs a TOC field lists, in order, by
@@ -1239,6 +1321,9 @@ class FieldOps:
         paragraph.append(end)
         part = self.package.document_part()
         self.package.mark_dirty(part)
+        memo = self.__dict__.get("_markers_memo")
+        if memo is not None:
+            memo[0] = None
         return name
 
 
@@ -1386,11 +1471,7 @@ def _page_text(instruction: str, page, context: _Context) -> str:
 
     info = page.info
     number = info.number if info is not None else page.number + 1
-    sections = context.sections
-    fmt = None
-    if info is not None and 0 <= info.section < len(sections):
-        fmt = sections[info.section].page_numbering["format"]
-        fmt = None if fmt == "decimal" else fmt
+    fmt = context.format_of(info.section) if info is not None else None
     try:
         return field_text(instruction.replace("PAGEREF", "PAGE", 1), "PAGE", page=number, pages=None,
                           section_pages=None, section_format=fmt)
@@ -1543,6 +1624,16 @@ def _field_head(item: _Found) -> list[Element]:
         run.append(child)
         out.append(run)
     return out
+
+
+def _region_digest(item: _Found) -> bytes:
+    """A digest of a table of contents' paragraphs as they are now (:func:`_toc_paragraphs`)."""
+    from lxml.etree import tostring
+
+    digest = hashlib.blake2b(digest_size=16)
+    for paragraph in _toc_paragraphs(item):
+        digest.update(tostring(paragraph))
+    return digest.digest()
 
 
 def _toc_paragraphs(item: _Found) -> list[Element]:

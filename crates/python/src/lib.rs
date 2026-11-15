@@ -323,6 +323,26 @@ fn check(
     }
 }
 
+/// A fields update's reading of `doc` at exactly `version` (a commit's sequence number),
+/// the interpreter lock let go throughout: each key's first page and (`info`) every page's
+/// number, section, story kind and blankness (JSON, `ooxml_word::fieldpages`); `None` where
+/// the version's snapshot is not kept.
+#[pyfunction]
+#[pyo3(signature = (doc, version, keys, info=false))]
+fn field_pages(py: Python<'_>, doc: &str, version: u64, keys: Vec<String>, info: bool) -> PyResult<Option<String>> {
+    let owner = owner_of(doc)?;
+    let out = py.detach(move || -> Result<Option<String>, String> {
+        let word = owner.word().ok_or("not a Word document")?;
+        let Some(snap) = word.wait_exact(version) else {
+            return Ok(None);
+        };
+        Ok(Some(
+            ooxml_word::fieldpages::field_pages(&snap, &keys, info).to_string(),
+        ))
+    });
+    out.map_err(pyo3::exceptions::PyValueError::new_err)
+}
+
 #[pyfunction]
 fn close_document(py: Python<'_>, doc: &str) -> PyResult<()> {
     let owner = registry().write().unwrap().remove(doc);
@@ -378,6 +398,7 @@ fn ooxml_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(call, m)?)?;
     m.add_function(wrap_pyfunction!(close_document, m)?)?;
     m.add_function(wrap_pyfunction!(check, m)?)?;
+    m.add_function(wrap_pyfunction!(field_pages, m)?)?;
     m.add_function(wrap_pyfunction!(documents, m)?)?;
     m.add_function(wrap_pyfunction!(spin, m)?)?;
     m.add_function(wrap_pyfunction!(spin_held, m)?)?;

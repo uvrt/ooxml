@@ -1,6 +1,6 @@
 [package]
 name = "ooxml-python"
-version = "0.2.0"
+version = "0.4.0"
 description = "The Python module ooxml_core (PyO3): documents' owners by id, and Word's layout"
 edition.workspace = true
 license.workspace = true

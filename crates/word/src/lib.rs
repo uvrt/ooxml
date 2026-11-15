@@ -8,6 +8,7 @@
 #![allow(clippy::type_complexity, clippy::too_many_arguments, clippy::large_enum_variant)]
 pub mod engine;
 pub mod facts;
+pub mod fieldpages;
 pub mod incr;
 pub mod linebreak;
 pub mod paginate;

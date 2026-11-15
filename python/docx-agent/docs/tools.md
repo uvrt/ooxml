@@ -118,6 +118,14 @@ with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS) as toolbox:
   of it off (validation per change, read copies from parts, the kept parse, the draft limit);
   `DOCX_AGENT_FULL_VALIDATE=1` runs the whole check beside it at every call and raises when
   they differ.
+- **`word_fields` update reads its pages from the Rust layout** (0.1.117, ooxml-core 0.4.0):
+  each round of the update hands the document as it is then to the document's Rust owner
+  (opened by a check of a range, or by the update itself) and reads the pages there, instead
+  of laying the document out in Python; the results, contents and bytes are the same.
+  What it does not read the same way -- a document of 20 pages or fewer, `SECTIONPAGES`,
+  `STYLEREF`, a page number format or switch other than decimal, more than one section, a
+  document the owner does not model -- is updated as before (`docx_agent.rust.fields`).
+  `DOCX_AGENT_RUST_FIELDS=0` turns it off (`DOCX_AGENT_RUST=0` turns every Rust path off).
 - **Saving refuses new validation problems**; only the application may allow them
   (`Toolbox(allow_new_problems=True)`). Check before save: every `check` carries
   `validation` (ooxml-edit 0.111.0, round 53) -- the problems the save would refuse as new,
