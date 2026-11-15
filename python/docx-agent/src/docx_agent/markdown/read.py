@@ -299,7 +299,8 @@ class Reader:
             # they were counted before it was read: nothing read since counted in ``part``).
             self._deferred = None
             placed = self._placed
-            self._count_before(*deferred)
+            part_, groups = deferred
+            self._count_before(part_, groups.made() if isinstance(groups, _Before) else groups)
             self._placed = placed
         counters = self._counters.get(story)
         if counters is None:
@@ -464,11 +465,9 @@ class Reader:
             return None
         return records
 
-    def _count_before(self, part: str, groups: "list | _Before") -> None:
+    def _count_before(self, part: str, groups: list) -> None:
         """The list items of ``groups`` (the blocks before a table :meth:`block` reads)
         counted, no record made."""
-        if isinstance(groups, _Before):
-            groups = groups.made()
         self._counting = True
         try:
             # Lane G: the lists and styles listed once for the count (a read of them).

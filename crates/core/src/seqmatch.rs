@@ -67,7 +67,11 @@ impl<'s, T: Eq + std::hash::Hash> Matcher<'s, T> {
                     if j >= bhi {
                         break;
                     }
-                    let k = if j > 0 { j2len.get(&(j - 1)).copied().unwrap_or(0) } else { 0 } + 1;
+                    let k = if j > 0 {
+                        j2len.get(&(j - 1)).copied().unwrap_or(0)
+                    } else {
+                        0
+                    } + 1;
                     newj2len.insert(j, k);
                     if k > bestsize {
                         besti = i + 1 - k;
@@ -144,12 +148,24 @@ pub fn opcodes<T: Eq + std::hash::Hash>(a: &[T], b: &[T]) -> Vec<Opcode> {
             None
         };
         if let Some(tag) = tag {
-            out.push(Opcode { tag, i1: i, i2: ai, j1: j, j2: bj });
+            out.push(Opcode {
+                tag,
+                i1: i,
+                i2: ai,
+                j1: j,
+                j2: bj,
+            });
         }
         i = ai + size;
         j = bj + size;
         if size > 0 {
-            out.push(Opcode { tag: Tag::Equal, i1: ai, i2: i, j1: bj, j2: j });
+            out.push(Opcode {
+                tag: Tag::Equal,
+                i1: ai,
+                i2: i,
+                j1: bj,
+                j2: j,
+            });
         }
     }
     out
@@ -162,7 +178,10 @@ mod tests {
     fn ops(a: &str, b: &str) -> Vec<(&'static str, usize, usize, usize, usize)> {
         let a: Vec<char> = a.chars().collect();
         let b: Vec<char> = b.chars().collect();
-        opcodes(&a, &b).into_iter().map(|o| (o.tag.name(), o.i1, o.i2, o.j1, o.j2)).collect()
+        opcodes(&a, &b)
+            .into_iter()
+            .map(|o| (o.tag.name(), o.i1, o.i2, o.j1, o.j2))
+            .collect()
     }
 
     #[test]

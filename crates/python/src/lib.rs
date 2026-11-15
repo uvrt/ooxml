@@ -386,13 +386,18 @@ fn spin_held(micros: u64) -> u64 {
     busy(micros)
 }
 
+/// An opcode as difflib gives it: `(tag, i1, i2, j1, j2)`.
+type PyOpcode = (&'static str, usize, usize, usize, usize);
+
 /// `difflib.SequenceMatcher(None, a, b, autojunk=False).get_opcodes()` over two sequences
 /// of `width`-byte keys given joined (`ooxml_core::seqmatch`), the interpreter lock let go:
 /// `(tag, i1, i2, j1, j2)` each, as difflib gives them.
 #[pyfunction]
-fn opcodes(py: Python<'_>, a: &[u8], b: &[u8], width: usize) -> PyResult<Vec<(&'static str, usize, usize, usize, usize)>> {
-    if width == 0 || a.len() % width != 0 || b.len() % width != 0 {
-        return Err(pyo3::exceptions::PyValueError::new_err("the keys are not of the width given"));
+fn opcodes(py: Python<'_>, a: &[u8], b: &[u8], width: usize) -> PyResult<Vec<PyOpcode>> {
+    if width == 0 || !a.len().is_multiple_of(width) || !b.len().is_multiple_of(width) {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "the keys are not of the width given",
+        ));
     }
     let (a, b) = (a.to_vec(), b.to_vec());
     Ok(py.detach(move || {

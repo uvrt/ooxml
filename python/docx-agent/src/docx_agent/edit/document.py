@@ -1490,10 +1490,15 @@ class Document(TrackingOps, RevisionOps, TextOps, FormatOps, ListOps, LinkOps, P
         and unique paraId, or a drawing without its anchorId and editId."""
         for part in self._parts():
             index = self._index(part)
-            if any(entry.needs_stamp for entry in index.paragraphs):
-                return True
-            prefix = "" if index.story == "body" else f"{index.story}/"
-            if any(not row_id.startswith(prefix + "tr:") for table in index.tables for _, row_id in table.rows):
+            # (0.1.118: what an index's entries say, read once per index -- an index kept
+            # through calls is not looked through again)
+            due = index.__dict__.get("_stamping_due")
+            if due is None:
+                prefix = "" if index.story == "body" else f"{index.story}/"
+                due = index.__dict__["_stamping_due"] = (
+                    any(entry.needs_stamp for entry in index.paragraphs)
+                    or any(not row_id.startswith(prefix + "tr:") for table in index.tables for _, row_id in table.rows))
+            if due:
                 return True
             if _ids.drawings_needing_ids(index.root):
                 return True

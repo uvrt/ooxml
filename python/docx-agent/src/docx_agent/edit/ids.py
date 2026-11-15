@@ -408,6 +408,9 @@ def _index_from(root, data, base, tops, _blocks, _common_prefix, _common_suffix)
         by_id[entry_t.id] = entry_t
         by_element[id(entry_t.element)] = entry_t
     index.by_id, index._by_element = by_id, by_element
+    if old_index.__dict__.get("_stamping_due") is False:
+        # (0.1.118: the blocks made here are all stamped, the others as before)
+        index.__dict__["_stamping_due"] = False
     old_walk_raws = getattr(old_index, "_walk", None)
     if old_walk_raws is not None:
         _, base_raws, base_owners = old_walk_raws
