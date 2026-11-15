@@ -419,7 +419,6 @@ class Resolution:
 
         k = arg["k"]
         element = self.elements[k]
-        document = self.document
         key = _key_of(element)
         if element.tag == _P:
             rec = records.paragraph_record(self.ctx, element, key, top=True)

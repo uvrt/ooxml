@@ -296,6 +296,22 @@ fn refused(why: &str) -> String {
     serde_json::json!({"refused": why}).to_string()
 }
 
+impl Parser {
+    /// The document's parser, waited for with the interpreter lock let go: a thread making a
+    /// change set holds it while it asks Python (and so needs the interpreter lock back).
+    fn held<'a>(&'a self, py: Python<'_>) -> std::sync::MutexGuard<'a, ooxml_word::parse::Doc> {
+        loop {
+            match self.inner.try_lock() {
+                Ok(g) => return g,
+                Err(std::sync::TryLockError::Poisoned(p)) => return p.into_inner(),
+                Err(std::sync::TryLockError::WouldBlock) => {
+                    py.detach(|| std::thread::sleep(std::time::Duration::from_micros(200)))
+                }
+            }
+        }
+    }
+}
+
 #[pymethods]
 impl Parser {
     /// `(parser or None, the first input or None, statistics JSON)`.
@@ -341,7 +357,7 @@ impl Parser {
             }
         }
         let mut r = PyResolver { f: resolver };
-        let mut doc = self.inner.lock().unwrap();
+        let mut doc = self.held(resolver.py());
         let found = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             doc.splice(lo, hi, els, version, more, &mut r)
         }));
@@ -353,12 +369,12 @@ impl Parser {
     }
 
     /// The exporter's tables and the units' keys and faces (JSON).
-    fn tables(&self) -> String {
-        self.inner.lock().unwrap().tables_json().to_string()
+    fn tables(&self, py: Python<'_>) -> String {
+        self.held(py).tables_json().to_string()
     }
 
-    fn __len__(&self) -> usize {
-        self.inner.lock().unwrap().units.len()
+    fn __len__(&self, py: Python<'_>) -> usize {
+        self.held(py).units.len()
     }
 }
 

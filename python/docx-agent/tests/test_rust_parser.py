@@ -69,7 +69,7 @@ def _first_text_difference(a: str, b: str) -> str:
     return f"at {k} of {len(a)}/{len(b)}: {a[max(0, k - 120):k + 120]!r} != {b[max(0, k - 120):k + 120]!r}"
 
 
-def test_the_owner_gets_what_the_mirror_gives_it(report, monkeypatch):
+def test_the_owner_gets_what_the_mirror_gives_it(report, monkeypatch):  # noqa: F811
     mine, mine_results, stats = _run(report, True, monkeypatch)
     theirs, their_results, _ = _run(report, False, monkeypatch)
     assert stats.get("exported", 0) >= 1, stats
@@ -82,7 +82,7 @@ def test_the_owner_gets_what_the_mirror_gives_it(report, monkeypatch):
         assert _normal(a) == _normal(b), tool
 
 
-def test_off_by_environment(report, monkeypatch):
+def test_off_by_environment(report, monkeypatch):  # noqa: F811
     """``DOCX_AGENT_RUST_PARSER=0``: the mirror exports the document, as before."""
     _, _, stats = _run(report, False, monkeypatch, sequence=lambda session, doc: [
         ("a", "check", {"range": [session.entry(doc).document.paragraphs()[-1].id], "include": INCLUDE})])
@@ -144,7 +144,7 @@ def test_every_sample_is_exported_as_the_mirror_exports_it(name):
     assert mine == theirs, _first_text_difference(mine, theirs)
 
 
-def test_the_report_is_exported_as_the_mirror_exports_it(report):
+def test_the_report_is_exported_as_the_mirror_exports_it(report):  # noqa: F811
     document = Document.open(report)
     mine, stats, _ = rust_parser.export(document)
     assert mine is not None, stats
