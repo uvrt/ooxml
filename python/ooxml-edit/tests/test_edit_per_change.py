@@ -96,6 +96,77 @@ def test_nothing_is_kept_while_a_batch_is_open():
         assert b"two" in package.read(synthetic.MAIN)
 
 
+# -- one serialization per version, from one call to the next (0.119.0) --------------------------
+
+
+def _counting(monkeypatch) -> list:
+    import ooxml_edit.opc as opc
+
+    calls = []
+    real = opc.serialize
+
+    def counted(root):
+        calls.append(1)
+        return real(root)
+
+    monkeypatch.setattr(opc, "serialize", counted)
+    monkeypatch.setenv("OOXML_EDIT_VERIFY_SERIALIZED", "0")
+    return calls
+
+
+def _edit_in_a_call(package, history, value, keep_settled=True):
+    with package.serializing(keep_settled):
+        with history.batch():
+            package.tree(synthetic.MAIN).append(make("tst:item", val=value))
+            package.mark_dirty(synthetic.MAIN)
+        return package.read(synthetic.MAIN)
+
+
+def test_the_next_call_starts_from_the_snapshot_the_last_one_left(monkeypatch):
+    package = _package(10)
+    history = History(package)
+    _edit_in_a_call(package, history, "one")
+    calls = _counting(monkeypatch)
+    data = _edit_in_a_call(package, history, "two")
+    assert len(calls) == 1                             # the version's own, not the state before
+    assert b"two" in data and history.undo()
+    assert b"two" not in package.read(synthetic.MAIN) and b"one" in package.read(synthetic.MAIN)
+
+
+def test_a_tree_handed_out_between_calls_or_marked_dirty_is_written_out_again(monkeypatch):
+    package = _package(10)
+    history = History(package)
+    _edit_in_a_call(package, history, "one")
+    # An application's own change between calls, through the tree it is handed.
+    package.tree(synthetic.MAIN).append(make("tst:item", val="between calls"))
+    _edit_in_a_call(package, history, "two")
+    assert history.undo()
+    assert b"between calls" in package.read(synthetic.MAIN)
+    # Through a tree it held, marked dirty as mark_dirty asks.
+    root = package.tree(synthetic.MAIN)
+    _edit_in_a_call(package, history, "three")
+    root.append(make("tst:item", val="held"))
+    package.mark_dirty(synthetic.MAIN)
+    calls = _counting(monkeypatch)
+    _edit_in_a_call(package, history, "four")
+    assert len(calls) == 2                             # the state before, and the version
+    assert history.undo()
+    assert b"held" in package.read(synthetic.MAIN) and b"four" not in package.read(synthetic.MAIN)
+
+
+def test_a_scope_that_does_not_keep_its_snapshot_leaves_the_next_to_write_it_out(monkeypatch):
+    package = _package(10)
+    history = History(package)
+    _edit_in_a_call(package, history, "one", keep_settled=False)
+    # A library's own use (no tool layer): a tree held from before, changed unmarked.
+    held = package._trees[synthetic.MAIN]
+    held.append(make("tst:item", val="unmarked"))
+    calls = _counting(monkeypatch)
+    _edit_in_a_call(package, history, "two", keep_settled=False)
+    assert len(calls) == 2
+    assert history.undo() and b"unmarked" in package.read(synthetic.MAIN)
+
+
 # -- committed versions --------------------------------------------------------------------------
 
 

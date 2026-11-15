@@ -4,6 +4,37 @@ Versions are those in `pyproject.toml`; none is published to PyPI yet. Each vers
 reaches `main` is tagged `v<version>` on the commit that brought it, from 0.62.0; the
 earlier ones were never tagged.
 
+## 0.119.0 -- unreleased
+
+- **One serialization per version, from one call to the next.** A snapshot the history
+  takes once a state is made (an outermost batch closed, an undo, a redo) is kept as the
+  part's bytes until the next change (`OpcPackage._settled`): the next call's batch starts
+  from it instead of writing the tree out again, and reads of the part share its pieces.
+  So an edit writes its part out once (it wrote it twice: once for the state before, once
+  for the state after), and an undo or a redo whose format tells the restored tree's bytes
+  (docx-agent's Word package) not at all. The history's next checkpoint or batch,
+  `mark_dirty`, putting a tree or a part in place, restoring, and `tree()` asked outside a
+  `serializing()` scope each forget it; `OOXML_EDIT_VERIFY_SERIALIZED=1` compares it with
+  the tree written out again. It is taken only inside a `serializing()` scope, and kept
+  past the scope's end only where the scope says so (`serializing(keep_settled=True)`):
+  the tool layer's calls, whose documents change between calls only through the history
+  or marked dirty (an application that changes a toolbox's document between calls through
+  a tree it kept marks the part dirty, as `mark_dirty` asks). A library's own use, with no
+  such scope, writes the state before each change out as before: a tree it holds may be
+  changed unmarked between changes.
+- **Within a call, a part not changed since its last snapshot is not written out again.**
+  Each part's changes are counted (marked dirty, a tree or a part put in place, restored);
+  inside a scope that keeps settled snapshots, a snapshot of a part whose count is the one
+  at its last snapshot is that snapshot: a batch's states before each op and after the
+  last, taken where nothing changed since, cost nothing.
+- `OpcPackage.restore` tells a format's `_restored_tree` which parts' last snapshots were
+  their trees' bytes (`_restoring_settled`); a format that knows the tree it gives writes
+  out as the snapshot may mark the part settled.
+- **`Pieces` compare and grow in place.** A new snapshot's pieces are found the same as the
+  last one's with `bytes.startswith`/`endswith` at an offset (no copies); two snapshots'
+  pieces are compared leaving out the pieces both share at the start and the end (an
+  undo's steps compared without joining a long part's every version).
+
 ## 0.118.0 -- unreleased
 
 - **A format may put back only what differs.** `OpcPackage.restore` (an undo, a redo, a

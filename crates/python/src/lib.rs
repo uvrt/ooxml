@@ -386,6 +386,30 @@ fn spin_held(micros: u64) -> u64 {
     busy(micros)
 }
 
+/// An opcode as difflib gives it: `(tag, i1, i2, j1, j2)`.
+type PyOpcode = (&'static str, usize, usize, usize, usize);
+
+/// `difflib.SequenceMatcher(None, a, b, autojunk=False).get_opcodes()` over two sequences
+/// of `width`-byte keys given joined (`ooxml_core::seqmatch`), the interpreter lock let go:
+/// `(tag, i1, i2, j1, j2)` each, as difflib gives them.
+#[pyfunction]
+fn opcodes(py: Python<'_>, a: &[u8], b: &[u8], width: usize) -> PyResult<Vec<PyOpcode>> {
+    if width == 0 || !a.len().is_multiple_of(width) || !b.len().is_multiple_of(width) {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "the keys are not of the width given",
+        ));
+    }
+    let (a, b) = (a.to_vec(), b.to_vec());
+    Ok(py.detach(move || {
+        let a: Vec<&[u8]> = a.chunks(width).collect();
+        let b: Vec<&[u8]> = b.chunks(width).collect();
+        ::ooxml_core::seqmatch::opcodes(&a, &b)
+            .into_iter()
+            .map(|o| (o.tag.name(), o.i1, o.i2, o.j1, o.j2))
+            .collect()
+    }))
+}
+
 // Free-threading safe: every class is frozen, shared state is behind Arc and locks.
 #[pymodule(gil_used = false)]
 fn ooxml_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -393,6 +417,7 @@ fn ooxml_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Owner>()?;
     m.add_class::<SnapshotE>()?;
     m.add_function(wrap_pyfunction!(noop, m)?)?;
+    m.add_function(wrap_pyfunction!(opcodes, m)?)?;
     m.add_function(wrap_pyfunction!(open_document, m)?)?;
     m.add_function(wrap_pyfunction!(commit, m)?)?;
     m.add_function(wrap_pyfunction!(call, m)?)?;

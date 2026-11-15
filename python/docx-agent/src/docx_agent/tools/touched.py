@@ -42,6 +42,7 @@ toolbox's ``ContentStore``).
 
 from __future__ import annotations
 
+import bisect
 import difflib
 from collections import Counter
 import hashlib
@@ -107,9 +108,12 @@ def body_sections(document: Any, before: bytes | None, after: bytes | None, *,
     # 0.1.116: and the edits made by then (Document._state): the body's index is made from
     # these bytes while no edit has been made since (Document._index).
     document.__dict__["_body_summary_state"] = getattr(document, "_state", None)
+    # 0.1.118: and its blocks' spans, where an undo of this version finds the blocks it puts
+    # back (docx_agent.oxml.package).
+    if new.spans is not None and new.body is not None and hasattr(document.package, "_body_spans"):
+        document.package._body_spans = (new.data, new.spans, new.body)
     changed: set[int] = set()
-    matcher = difflib.SequenceMatcher(None, old.digests, new.digests, autojunk=False)
-    for tag, _i1, _i2, j1, j2 in matcher.get_opcodes():
+    for tag, _i1, _i2, j1, j2 in _opcodes(old.digests, new.digests):
         if tag == "equal":
             continue
         if j2 > j1:
@@ -119,31 +123,68 @@ def body_sections(document: Any, before: bytes | None, after: bytes | None, *,
     out: list[dict[str, Any]] = []
     if changed:
         levels, ids = new.levels(document, styles_changed), new.ids()
-        owner, current = [], 0
-        for index, level in enumerate(levels):
-            if level is not None:
-                current = index
-            owner.append(current)
-        for start in sorted({owner[j] for j in changed}):
+        # Each changed block's section: the heading at or before it (the first block when
+        # none is), found walking back from it (0.1.118: not a pass over every block).
+        starts = set()
+        for j in sorted(changed):
+            k = j
+            while k >= 0 and levels[k] is None:
+                k -= 1
+            starts.add(k if k >= 0 else 0)
+        for start in sorted(starts):
             level = levels[start]
             end = next((k for k in range(start + 1, len(levels)) if levels[k] is not None
                         and (level is None or levels[k] <= level)), len(levels))
             out.append({"heading": ids[start] if level is not None else None, "level": level or 0,
                         "blocks": [ids[start], ids[end - 1]]})
+    same_rest = new.rest_as(old)
     new.kept = None     # its levels are its own now: no chain of states held
-    if old.rest != new.rest or not out:
+    if not same_rest or not out:
         out.append({})
     return out
+
+
+def _opcodes(old: list[bytes], new: list[bytes]) -> list[tuple[str, int, int, int, int]]:
+    """``difflib.SequenceMatcher(None, old, new, autojunk=False).get_opcodes()`` of the
+    blocks' digests: from ``ooxml_core.opcodes`` (difflib's algorithm ported step for step to
+    Rust, 0.1.118: milliseconds at 30,000 blocks) where the module is there and the passes are
+    made per change; difflib itself otherwise (and beside it, compared, with
+    ``DOCX_AGENT_FULL_VALIDATE=1``)."""
+    core = _core() if _incremental.enabled() else None
+    joined = (b"".join(old), b"".join(new)) if core is not None else None
+    if core is None or len(joined[0]) != 16 * len(old) or len(joined[1]) != 16 * len(new):
+        _incremental.STATS["touched opcodes: difflib"] += 1
+        return difflib.SequenceMatcher(None, old, new, autojunk=False).get_opcodes()
+    found = core.opcodes(joined[0], joined[1], 16)
+    _incremental.STATS["touched opcodes: rust"] += 1
+    if _incremental.verifying():
+        _incremental.check("touched opcodes", found,
+                           difflib.SequenceMatcher(None, old, new, autojunk=False).get_opcodes())
+    return found
+
+
+def _core() -> Any:
+    try:
+        import ooxml_core
+    except ImportError:
+        return None
+    return ooxml_core if hasattr(ooxml_core, "opcodes") else None
 
 
 class _Summary:
     """One state of the body: its blocks' spans and digests, what is not a block as one
     digest; the blocks' ids and heading levels when asked (the state after a call only)."""
 
-    def __init__(self, data: bytes, spans: list[tuple[int, int]] | None, digests: list[bytes], rest: bytes,
+    def __init__(self, data: bytes, spans: list[tuple[int, int]] | None, digests: list[bytes], rest: bytes | None,
                  ids: list[str] | None = None, levels: list[int | None] | None = None,
                  body: tuple[int, int] | None = None) -> None:
-        self.data, self.spans, self.digests, self.rest, self.body = data, spans, digests, rest, body
+        self.data, self.spans, self.digests, self.body = data, spans, digests, body
+        #: What is in the body but in no block, as a digest (:func:`_rest`); ``None`` until
+        #: asked (0.1.118: a state read from another compares only the stretch read again).
+        self._rest = rest
+        #: (0.1.118) Where this state was read from ``kept``'s: whether its bytes outside the
+        #: blocks are the same as that state's.
+        self.rest_kept: bool | None = None
         self._ids, self._levels = ids, levels
         #: Its paragraphs' and rows' paraIds per block (:class:`_Stamps`), where its ids were
         #: read from its bytes (0.1.116: the next state's are read where it changed).
@@ -151,6 +192,21 @@ class _Summary:
         #: Where this state's blocks came from another's (:func:`_rescan`): the blocks kept
         #: before and after the new ones, and that state, whose levels they share.
         self.kept: tuple[int, int, "_Summary"] | None = None
+
+    @property
+    def rest(self) -> bytes:
+        if self._rest is None:
+            self._rest = _rest(self.data, self.spans, self.body)
+        return self._rest
+
+    def rest_as(self, other: "_Summary") -> bool:
+        """Whether the body's bytes outside the blocks are the same as ``other``'s."""
+        kept = self.kept
+        if kept is not None and kept[2] is other and self.rest_kept is not None:
+            if _incremental.verifying():
+                _incremental.check("touched rest", self.rest_kept, self.rest == other.rest)
+            return self.rest_kept
+        return self.rest == other.rest
 
     def ids(self) -> list[str]:
         if self._ids is None:
@@ -181,16 +237,15 @@ class _Summary:
 def _summary(document: Any, data: bytes, base: _Summary | None = None) -> _Summary:
     """``data``'s summary, kept on the document by the bytes' digest (the latest
     :data:`_KEPT`); from ``base``'s where only part of the body changed."""
-    key = hashlib.blake2b(data, digest_size=16).digest()
-    cache: dict[bytes, _Summary] = document.__dict__.setdefault("_touched_summaries", {})
-    found = cache.get(key)
-    if found is not None:
-        cache[key] = cache.pop(key)      # the latest last
-        return found
+    cache: list[_Summary] = document.__dict__.setdefault("_touched_kept", [])
+    # (0.1.118: found by comparing the bytes, not by a digest of them)
+    for k, found in enumerate(cache):
+        if len(found.data) == len(data) and found.data == data:
+            cache.append(cache.pop(k))      # the latest last
+            return found
     found = (base is not None and _rescan(data, base)) or _scan(data) or _parse(document, data)
-    cache[key] = found
-    while len(cache) > _KEPT:
-        cache.pop(next(iter(cache)))
+    cache.append(found)
+    del cache[:-_KEPT]
     return found
 
 
@@ -250,8 +305,7 @@ def _scan(data: bytes) -> _Summary | None:
     spans = _blocks(data, *body)
     if spans is None:
         return None
-    return _Summary(data, spans, [_digest(data[begin:end]) for begin, end in spans], _rest(data, spans, body),
-                    body=body)
+    return _Summary(data, spans, [_digest(data[begin:end]) for begin, end in spans], None, body=body)
 
 
 def _rescan(data: bytes, base: _Summary) -> _Summary | None:
@@ -269,12 +323,7 @@ def _rescan(data: bytes, base: _Summary) -> _Summary | None:
     if prefix < body_at or len(old) - suffix > body_end:
         return None
     spans = base.spans
-    before = 0
-    while before < len(spans) and spans[before][1] <= prefix:
-        before += 1
-    after = 0
-    while after < len(spans) - before and spans[len(spans) - 1 - after][0] >= len(old) - suffix:
-        after += 1
+    before, after = _kept_counts(spans, prefix, len(old) - suffix)
     begin = spans[before - 1][1] if before else body_at
     stop = spans[len(spans) - after][0] + delta if after else body_end + delta
     middle = _blocks(data, begin, stop)
@@ -285,19 +334,52 @@ def _rescan(data: bytes, base: _Summary) -> _Summary | None:
     body = (body_at, body_end + delta)
     digests = (base.digests[:before] + [_digest(data[s:e]) for s, e in middle]
                + base.digests[len(spans) - after:])
-    found = _Summary(data, new_spans, digests, _rest(data, new_spans, body), body=body)
+    found = _Summary(data, new_spans, digests, None, body=body)
     found.kept = (before, after, base)
+    old_stop = stop - delta
+    found.rest_kept = b"".join(_gaps(old, spans[before:len(spans) - after], begin, old_stop)) == \
+        b"".join(_gaps(data, middle, begin, stop))
     return found
 
 
+def _kept_counts(spans: list[tuple[int, int]], prefix: int, suffix_at: int) -> tuple[int, int]:
+    """How many blocks end within the first ``prefix`` bytes, and how many of the rest start
+    at or after ``suffix_at`` (spans in order): by bisection (0.1.118)."""
+    n = len(spans)
+    before = bisect.bisect_right(spans, prefix, key=_end)
+    after = n - max(before, bisect.bisect_left(spans, suffix_at, key=_start))
+    return before, after
+
+
+def _end(span: tuple[int, int]) -> int:
+    return span[1]
+
+
+def _start(span: tuple[int, int]) -> int:
+    return span[0]
+
+
+def _gaps(data: bytes, spans: Any, begin: int, stop: int) -> list[bytes]:
+    """The bytes between the blocks at ``spans`` within ``data[begin:stop]``."""
+    out, previous = [], begin
+    for a, b in spans:
+        out.append(data[previous:a])
+        previous = b
+    out.append(data[previous:stop])
+    return out
+
+
+
 def _common_prefix(a: bytes, b: bytes) -> int:
-    """How many leading bytes ``a`` and ``b`` share (compared a block at a time)."""
-    limit, at, step = min(len(a), len(b)), 0, 4096
-    while at < limit and a[at:at + step] == b[at:at + step]:
-        at += step
-    if at >= limit:
-        return limit
-    low, high = at, min(at + step, limit)
+    """How many leading bytes ``a`` and ``b`` share (compared a stretch at a time: 1 MiB,
+    then 4 KiB, then halving -- 0.1.118)."""
+    limit, at = min(len(a), len(b)), 0
+    for step in (1 << 20, 1 << 12):
+        while at < limit and a[at:at + step] == b[at:at + step]:
+            at += step
+        if at >= limit:
+            return limit
+    low, high = at, min(at + (1 << 12), limit)
     while low < high:
         middle = (low + high + 1) // 2
         if a[at:middle] == b[at:middle]:
@@ -308,13 +390,16 @@ def _common_prefix(a: bytes, b: bytes) -> int:
 
 
 def _common_suffix(a: bytes, b: bytes, limit: int) -> int:
-    """How many trailing bytes ``a`` and ``b`` share, at most ``limit``."""
-    at, step = 0, 4096
-    while at < limit and a[len(a) - min(at + step, limit):len(a) - at] == b[len(b) - min(at + step, limit):len(b) - at]:
-        at = min(at + step, limit)
-    if at >= limit:
-        return limit
-    low, high = at, min(at + step, limit)
+    """How many trailing bytes ``a`` and ``b`` share, at most ``limit`` (compared as
+    :func:`_common_prefix` does, from the end)."""
+    at = 0
+    for step in (1 << 20, 1 << 12):
+        while at < limit and a[len(a) - min(at + step, limit):len(a) - at] == \
+                b[len(b) - min(at + step, limit):len(b) - at]:
+            at = min(at + step, limit)
+        if at >= limit:
+            return limit
+    low, high = at, min(at + (1 << 12), limit)
     while low < high:
         middle = (low + high + 1) // 2
         if a[len(a) - middle:len(a) - at] == b[len(b) - middle:len(b) - at]:
@@ -339,8 +424,10 @@ class _Stamps:
     paragraphs and rows and its paraIds (upper case), outside ``mc:Fallback``; the counts of
     each paraId and the totals over the body."""
 
-    def __init__(self, per: list, counts: Counter, elements: int, stamped: int) -> None:
+    def __init__(self, per: list, counts: Counter, elements: int, stamped: int, dups: int | None = None) -> None:
         self.per, self.counts, self.elements, self.stamped = per, counts, elements, stamped
+        #: How many paraIds are counted more than once (0.1.118: kept as counts change).
+        self.dups = sum(1 for v in counts.values() if v > 1) if dups is None else dups
 
     @staticmethod
     def block(data: bytes, begin: int, end: int) -> tuple[int, tuple[bytes, ...]]:
@@ -389,19 +476,31 @@ def _kept_ids(summary: "_Summary") -> list[str] | None:
     region = _Stamps.block(data, begin, stop)
     if region[0] != sum(n for n, _ in per) or len(region[1]) != sum(len(f) for _, f in per):
         return None                    # a paragraph or row outside the blocks there
-    counts = stamps.counts.copy()
-    elements, stamped = stamps.elements, stamps.stamped
+    # (0.1.118: the counts changed where the blocks did, and how many are above one kept so,
+    # not looked through again)
+    counts = Counter(stamps.counts)
+    elements, stamped, dups = stamps.elements, stamps.stamped, stamps.dups
     for n, found in stamps.per[before:n_old - after]:
-        counts.subtract(found)
+        for key in found:
+            value = counts[key] - 1
+            if value == 1:
+                dups -= 1
+            if value:
+                counts[key] = value
+            else:
+                del counts[key]
         elements -= n
         stamped -= len(found)
     for n, found in per:
-        counts.update(found)
+        for key in found:
+            value = counts.get(key, 0) + 1
+            if value == 2:
+                dups += 1
+            counts[key] = value
         elements += n
         stamped += len(found)
-    counts = +counts
-    new = _Stamps(stamps.per[:before] + per + stamps.per[n_old - after:], counts, elements, stamped)
-    if elements != stamped or any(v > 1 for v in counts.values()):
+    new = _Stamps(stamps.per[:before] + per + stamps.per[n_old - after:], counts, elements, stamped, dups)
+    if elements != stamped or dups:
         return None                    # not stamped: _fast_ids reads none either
     ids = _span_ids(data, middle)
     if ids is None:

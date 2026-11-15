@@ -26,7 +26,6 @@ from docx2svg.parse.properties import read_paragraph_properties, read_run_proper
 from docx2svg.paths import path_part, resolve_path, row_level
 from docx2svg.resolve import character_format, resolve_paragraph, resolve_run
 from docx2svg.table import lead_paragraph
-from ooxml_common.xmlutil import element_children
 
 from ..oxml.xml import Element
 
@@ -304,10 +303,10 @@ class PathFinder:
             if name in ("tr", "tc"):
                 siblings = self.rows(parent, name)
             else:
-                siblings = [child for child in parent if child.tag == node.tag]
+                # (0.1.118: the children of that tag found by lxml, not each child looked at)
+                siblings = list(parent.iterchildren(node.tag))
             # The same local name in another namespace: docx2svg counts it.
-            clash = any(isinstance(child.tag, str) and child.tag != node.tag and _local(child.tag) == name
-                        for child in parent)
+            clash = any(child.tag != node.tag for child in parent.iterchildren("{*}" + name))
             kept = (parent, len(parent), None if clash else {id(child): k for k, child in enumerate(siblings)},
                     siblings)
             self._places[key] = kept
@@ -330,7 +329,9 @@ class PathFinder:
         key = (id(parent), "named:" + name)
         kept = self._places.get(key)
         if kept is None or kept[0] is not parent or kept[1] != len(parent):
-            kept = (parent, len(parent), element_children(parent, name))
+            # (0.1.118: lxml's own walk of the children of that local name, any namespace:
+            # element_children's list, not each child looked at)
+            kept = (parent, len(parent), list(parent.iterchildren("{*}" + name)))
             self._places[key] = kept
         return kept[2]
 

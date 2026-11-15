@@ -1174,15 +1174,25 @@ class Document(TrackingOps, RevisionOps, TextOps, FormatOps, ListOps, LinkOps, P
                     # (the version's body as the tool layer read it after the call that made
                     # it: the Rust owner's change sets read the same, docx_agent.rust.check)
                     data = held[1].data
+            last = self.__dict__.get("_index_last", {}).get(part) if _incremental.enabled() else None
             if data is not None:
                 index, base = _ids.body_index(root, data, self.__dict__.get("_index_base"))
                 self.__dict__["_index_base"] = base
                 _incremental.STATS["body index: " + ("made" if base is not None else "whole")] += 1
                 if _incremental.verifying() and not _ids.same_index(index, PartIndex("body", root)):
                     raise _incremental.Mismatch("body index: the index made per change differs")
+            elif last is not None and last.root is root and _ids.same_walk(last):
+                # 0.1.118: within a call, after a change that left every paragraph, row and
+                # table where it was with its paraId (a cell's or a paragraph's text): the
+                # index before it, not one made again.
+                index = last
+                _incremental.STATS["index: kept"] += 1
+                if _incremental.verifying() and not _ids.same_index(index, PartIndex(self._story_of(part), root)):
+                    raise _incremental.Mismatch("index: the index kept differs")
             else:
                 index = PartIndex(self._story_of(part), root)
             self._indexes[part] = index
+            self.__dict__.setdefault("_index_last", {})[part] = index
         return index
 
     def _invalidate(self) -> None:
@@ -1480,10 +1490,15 @@ class Document(TrackingOps, RevisionOps, TextOps, FormatOps, ListOps, LinkOps, P
         and unique paraId, or a drawing without its anchorId and editId."""
         for part in self._parts():
             index = self._index(part)
-            if any(entry.needs_stamp for entry in index.paragraphs):
-                return True
-            prefix = "" if index.story == "body" else f"{index.story}/"
-            if any(not row_id.startswith(prefix + "tr:") for table in index.tables for _, row_id in table.rows):
+            # (0.1.118: what an index's entries say, read once per index -- an index kept
+            # through calls is not looked through again)
+            due = index.__dict__.get("_stamping_due")
+            if due is None:
+                prefix = "" if index.story == "body" else f"{index.story}/"
+                due = index.__dict__["_stamping_due"] = (
+                    any(entry.needs_stamp for entry in index.paragraphs)
+                    or any(not row_id.startswith(prefix + "tr:") for table in index.tables for _, row_id in table.rows))
+            if due:
                 return True
             if _ids.drawings_needing_ids(index.root):
                 return True

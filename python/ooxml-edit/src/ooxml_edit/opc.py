@@ -145,6 +145,27 @@ class OpcPackage:
         #: 0.117.0: each edited part's last snapshot (:class:`Pieces`), whose pieces the
         #: next one shares where the bytes are the same: a version costs what it changed.
         self._pieces: dict[str, "Pieces"] = {}
+        #: 0.119.0: the edited parts whose last snapshot (``_pieces``) is their tree's bytes
+        #: now -- taken once the history said the state is made (:meth:`keep_serialized`),
+        #: and nothing changed the part since -- inside a :meth:`serializing` scope.  The
+        #: next snapshot shares it whole, and the part's bytes are those pieces: one
+        #: serialization per version.  Kept from one call to the next where the scope says
+        #: so (``keep_settled``: the tool layer's calls, whose documents change between
+        #: calls only through the history or with :meth:`mark_dirty`); else forgotten when
+        #: the scope ends.  The history's next checkpoint or batch, :meth:`mark_dirty`,
+        #: putting a tree or a part in place, restoring, and :meth:`tree` asked outside a
+        #: scope each forget it too.
+        self._settled: set[str] = set()
+        self._settling = False
+        self._keep_settled = False
+        self._restoring_settled: frozenset[str] = frozenset()
+        #: 0.119.0: each part's changes counted (marked dirty, a tree or a part put in place,
+        #: restored), and the count at its last snapshot: inside a scope that keeps settled
+        #: snapshots (the tool layer's calls, where a tree changes only through the history
+        #: or marked dirty), a snapshot of a part not changed since its last one is that one
+        #: -- a batch's states before each op are not written out again where nothing changed.
+        self._changes: dict[str, int] = {}
+        self._snapshot_changes: dict[str, int] = {}
 
     # -- loading ---------------------------------------------------------------------------
 
@@ -177,7 +198,12 @@ class OpcPackage:
             if _verify_serialized():
                 assert kept == serialize(self._trees[path]), f"{path}: kept bytes are not the tree's"
             return kept
-        data = serialize(self._trees[path])
+        if path in self._settled:
+            data = bytes(self._pieces[path])
+            if _verify_serialized():
+                assert data == serialize(self._trees[path]), f"{path}: settled bytes are not the tree's"
+        else:
+            data = serialize(self._trees[path])
         if self._keep_serialized:
             self._serialized[path] = data
         return data
@@ -188,25 +214,40 @@ class OpcPackage:
         (:class:`~.history.History`: after an outermost batch closes or an undo, and never
         while one is open) -- and only inside a :meth:`serializing` scope; ``False`` forgets
         every kept part.  Marking a part dirty, putting a tree or a part in place, or
-        restoring forgets that part's (or every) kept bytes."""
+        restoring forgets that part's (or every) kept bytes.
+
+        0.119.0: ``keep`` also says whether a snapshot taken now is the state the history
+        made (``_settled``, kept across calls until the next change); ``False`` forgets
+        those too."""
         self._keep_serialized = keep and self._serial_scopes > 0
+        self._settling = keep
         if not keep:
             self._serialized.clear()
+            self._settled.clear()
 
     @contextmanager
-    def serializing(self) -> Iterator[None]:
+    def serializing(self, keep_settled: bool = False) -> Iterator[None]:
         """A stretch in which nothing changes a tree but through the history (0.117.0): the
         tool layer's one call on the document, its lock held -- its change, its undo step,
         its commit and its readers share one serialization of the version it leaves.  Outside
         one (an application editing trees between calls, as it may), nothing is kept: every
         read writes the trees out again, as before."""
+        if not self._serial_scopes:
+            self._keep_settled = keep_settled
         self._serial_scopes += 1
         try:
             yield
         finally:
             self._serial_scopes -= 1
             if not self._serial_scopes:
-                self.keep_serialized(False)
+                # The bytes kept for readers go; a settled snapshot stays where the scope
+                # says nothing changes a tree between it and the next one but through the
+                # history or with mark_dirty (``keep_settled``, 0.119.0: the tool layer's
+                # documents), else it goes too.
+                self._keep_serialized = False
+                self._serialized.clear()
+                if not self._keep_settled:
+                    self._settled.clear()
 
     def open_part(self, path: str) -> BinaryIO | None:
         """A binary file over a part's current bytes: an untouched part inflated a piece at
@@ -238,6 +279,11 @@ class OpcPackage:
     def tree(self, path: str) -> Element | None:
         """Parsed root of a part, cached.  Parsing alone does not mark the part dirty."""
         path = normalize_part_path(path)
+        if not self._serial_scopes:
+            # 0.119.0: a tree handed out outside a call (an application's, which may change it
+            # without the history) is written out again for its next snapshot.
+            self._settled.discard(path)
+        self._changes[path] = self._changes.get(path, 0) + 1
         cached = self._trees.get(path)
         if cached is not None:
             return cached
@@ -264,6 +310,8 @@ class OpcPackage:
             raise KeyError(f"part {path!r} was never parsed, so it cannot be dirty")
         self._dirty.add(path)
         self._serialized.pop(path, None)
+        self._settled.discard(path)
+        self._changes[path] = self._changes.get(path, 0) + 1
         # A rels part that changed invalidates its cached relationships.
         self._rels_cache.pop(part_for_rels(path), None)
 
@@ -278,6 +326,8 @@ class OpcPackage:
         self._trees[path] = root
         self._dirty.add(path)
         self._serialized.pop(path, None)
+        self._settled.discard(path)
+        self._changes[path] = self._changes.get(path, 0) + 1
         self._rels_cache.pop(part_for_rels(path), None)
 
     @property
@@ -305,6 +355,8 @@ class OpcPackage:
         self._trees.pop(path, None)
         self._dirty.discard(path)
         self._serialized.pop(path, None)
+        self._settled.discard(path)
+        self._changes[path] = self._changes.get(path, 0) + 1
         self._rels_cache.pop(part_for_rels(path), None)
         self._raw_changes[path] = None
         if new:
@@ -351,6 +403,8 @@ class OpcPackage:
         self._trees.pop(path, None)
         self._dirty.discard(path)
         self._serialized.pop(path, None)
+        self._settled.discard(path)
+        self._changes[path] = self._changes.get(path, 0) + 1
         self._rels_cache.pop(part_for_rels(path), None)
         self._rels_cache.pop(path, None)
         self._raw_changes[path] = None
@@ -891,8 +945,17 @@ class OpcPackage:
         """An edited part's bytes now as :class:`Pieces`: the pieces of its last snapshot
         where the bytes are the same at the start and the end, only the stretch between
         copied (0.117.0) -- every version of a long part held at the cost of its change."""
+        if path in self._settled or (self._serial_scopes and self._keep_settled and path in self._pieces
+                                     and self._snapshot_changes.get(path) == self._changes.get(path, 0)):
+            found = self._pieces[path]
+            if _verify_serialized():
+                assert bytes(found) == serialize(self._trees[path]), f"{path}: settled bytes are not the tree's"
+            return found
         found = Pieces.of(self._serialize(path), self._pieces.get(path))
         self._pieces[path] = found
+        self._snapshot_changes[path] = self._changes.get(path, 0)
+        if self._settling and self._serial_scopes:
+            self._settled.add(path)
         return found
 
     def restore(self, snapshot: "PackageSnapshot") -> None:
@@ -902,6 +965,12 @@ class OpcPackage:
         dropped back to their original bytes, and parts added since are removed.
         """
         self._serialized.clear()
+        # (0.119.0: the parts whose last snapshot was their tree's bytes, for a format that
+        # tells the restored tree's bytes from what it put back, _restored_tree)
+        self._restoring_settled = frozenset(self._settled)
+        self._settled.clear()
+        for path in set(snapshot.trees) | set(self._dirty):
+            self._changes[path] = self._changes.get(path, 0) + 1
         # (0.118.0: each tree and its last snapshot's bytes as they were, for a format that
         # puts back only what differs, _restored_tree)
         current_trees = {path: self._trees.get(path) for path in snapshot.trees if path in self._dirty}
@@ -935,12 +1004,17 @@ class OpcPackage:
             self._rels_cache.pop(part_for_rels(path), None)
             if isinstance(kept, Pieces):
                 self._pieces[path] = kept
+            else:
+                self._settled.discard(path)
+        self._restoring_settled = frozenset()
 
     def _restored_tree(self, path: str, kept: Any, pieces: "Pieces | None", tree: "Element | None") -> Element:
         """The tree of a part put back to ``kept`` (a snapshot's bytes) by :meth:`restore`:
         parsed whole here.  ``pieces`` and ``tree`` are the part's last snapshot's bytes and
         its tree before (``None``: none): a format may put back only the elements whose bytes
-        differ, as long as the tree it gives writes out as ``kept`` (0.118.0)."""
+        differ, as long as the tree it gives writes out as ``kept`` (0.118.0).  One that
+        knows the tree writes out as ``kept`` may add ``path`` to ``_settled`` (0.119.0):
+        the part is not written out again for its next snapshot."""
         return parse_xml(bytes(kept))
 
     # -- snapshots part by part (scoped undo) ----------------------------------------------
@@ -1017,6 +1091,8 @@ class OpcPackage:
     def _set_raw(self, path: str, data: "bytes | ZipPart") -> None:
         self._ensure_entry(path)
         self._serialized.pop(path, None)
+        self._settled.discard(path)
+        self._changes[path] = self._changes.get(path, 0) + 1
         self._parts[path] = data
 
     def _ensure_entry(self, path: str) -> None:
@@ -1143,17 +1219,17 @@ class Pieces:
         size = cls.SIZE
         if before is None or not before.pieces:
             return cls(tuple(data[k:k + size] for k in range(0, len(data), size)) or (b"",))
-        view = memoryview(data)
         old = before.pieces
         head, at = 0, 0
-        while head < len(old) and at + len(old[head]) <= len(data) and view[at:at + len(old[head])] == old[head]:
+        # (bytes.startswith/endswith at an offset: compared in place, 0.119.0)
+        while head < len(old) and data.startswith(old[head], at):
             at += len(old[head])
             head += 1
         if head == len(old) and at == len(data):
             return before
         tail, end = 0, len(data)
         while tail < len(old) - head and end - len(old[-1 - tail]) >= at \
-                and view[end - len(old[-1 - tail]):end] == old[-1 - tail]:
+                and data.endswith(old[-1 - tail], at, end):
             end -= len(old[-1 - tail])
             tail += 1
         middle = tuple(data[k:min(k + size, end)] for k in range(at, end, size))
@@ -1173,7 +1249,17 @@ class Pieces:
                 return False
             if len(other.pieces) == len(self.pieces) and all(a is b or a == b for a, b in zip(self.pieces, other.pieces)):
                 return True
-            return bytes(self) == bytes(other)
+            # 0.119.0: the pieces both share at the start and at the end (the same objects,
+            # so the same bytes) left out, only the rest joined and compared.
+            mine, theirs = self.pieces, other.pieces
+            head = 0
+            while head < len(mine) and head < len(theirs) and mine[head] is theirs[head]:
+                head += 1
+            tail = 0
+            while tail < len(mine) - head and tail < len(theirs) - head \
+                    and mine[-1 - tail] is theirs[-1 - tail]:
+                tail += 1
+            return b"".join(mine[head:len(mine) - tail]) == b"".join(theirs[head:len(theirs) - tail])
         if isinstance(other, (bytes, bytearray, memoryview)):
             return self.size == len(other) and bytes(self) == other
         return NotImplemented
