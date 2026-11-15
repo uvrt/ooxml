@@ -51,12 +51,19 @@ STATS: Counter = Counter()
 
 def _stats_at_exit() -> None:
     """``DOCX_AGENT_RUST_STATS`` names a file: each process adds its :data:`STATS` to it, one
-    JSON line, when it ends (a test run's or a measurement's count of what fell back)."""
+    JSON line, when it ends (a test run's or a measurement's count of what fell back); with
+    the fields update's (:data:`.fields.STATS`) under ``"fields"``, where it ran."""
+    import sys
+
     path = os.environ.get("DOCX_AGENT_RUST_STATS")
-    if path and STATS:
+    stats: dict[str, Any] = dict(STATS)
+    fields = sys.modules.get("docx_agent.rust.fields")
+    if fields is not None and fields.STATS:
+        stats["fields"] = dict(fields.STATS)
+    if path and stats:
         try:
             with open(path, "a", encoding="utf-8") as out:
-                out.write(json.dumps(dict(STATS)) + "\n")
+                out.write(json.dumps(stats) + "\n")
         except OSError:
             pass
 

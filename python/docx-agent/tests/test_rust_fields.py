@@ -2,7 +2,8 @@
 says and writes what docx-agent's own update does.
 
 The same made-up sequences -- headings and text inserted, fields updated (all of them, some
-of them, in a batch with other edits), undo and redo, several writers, checks -- run with
+of them, in a batch with other edits), a page cross-reference and a second contents
+inserted, undo and redo, several writers, checks -- run with
 the path on and off (``DOCX_AGENT_RUST_FIELDS``), and after every step the two are
 compared: the call's result (its timing aside), the document's bytes, its version.  What
 the path does not serve (a short document, a field it does not compute, a document the
@@ -143,6 +144,10 @@ def _sequence(session, doc, *, check_first: bool = True):
             {"tool": "word_fields", "arguments": {"doc": doc, "action": "update"}},
             {"tool": "word_set_text", "arguments": {"doc": doc, "target": longs[-1].id, "text": text(30)}}]}),
         ("a", "word_fields", {"action": "update", "ids": ["fld:body/0"]}),
+        ("b", "word_fields", {"action": "insert_cross_reference", "at": f"{longs[6].id}@0", "bookmark": "later",
+                              "kind": "page"}),
+        ("b", "word_fields", {"action": "insert_toc", "after": chapters[1].id, "levels": "1-1"}),
+        ("a", "word_fields", {"action": "update"}),
         ("a", "word_delete", {"target": longs[5].id}),
         ("a", "word_fields", {"action": "update"}),
         ("a", "undo", {}),

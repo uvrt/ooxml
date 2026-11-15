@@ -591,7 +591,9 @@ class FieldOps:
         # Before a paragraph, Word's form (``tocfield``): the field's end opens that
         # paragraph; elsewhere an empty paragraph holds it (as one Word puts a TOC in).
         own_holder = not (before is not None and entry.element.tag == W_P)
-        with self._edit():
+        from ..rust.fields import following
+
+        with following(self), self._edit():
             if own_holder:
                 holder = self.insert_paragraph("", after=after, before=before, track=False)
                 renames = dict(holder.renamed)
@@ -732,7 +734,8 @@ class FieldOps:
         across passes by its end (a table of contents' begin is rebuilt, its end kept) or,
         for a simple field, its element."""
         keys = [f.begin if f.simple or f.end is None else f.end for f in found]
-        # (0.1.117: by identity at once -- the keys held here keep their elements' proxies.)
+        # (0.1.117: looked up at once by the objects themselves -- the keys held here keep
+        # their elements' proxies, so ``id`` is ``is``.)
         held = {id(key) for key in keys}
 
         def current() -> list[_Found]:
@@ -771,7 +774,8 @@ class FieldOps:
                     else:
                         self._write_result(item, value, context)
         tocs = [f for f in found if f.keyword == "TOC"]
-        # (0.1.117: by identity at once -- ``found`` and the nested lists are one scan's.)
+        # (0.1.117: looked up at once by the objects themselves -- ``found`` and the nested
+        # lists are one scan's.)
         nested = {id(inner) for toc in tocs for inner in toc.nested}
         # Bookmarks read once while results are written (they move no bookmark); read again
         # after a table of contents is rebuilt (it adds and removes some).
@@ -941,8 +945,9 @@ class FieldOps:
 
     def page_label(self: "Document", identifier: str) -> str | None:
         """The page number Word shows for the page a block starts on (its section's start
-        and format), from docx2svg's layout; ``None`` where the layout cannot say."""
-        context = _Context(self.layout(), self.sections(), _dt.date.today())
+        and format), from docx2svg's layout (0.1.117: or the Rust owner's, as an update reads
+        it); ``None`` where the layout cannot say."""
+        context = _Context(self._update_layout(), self.sections(), _dt.date.today())
         placed = context.layout.where(identifier)
         if not placed:
             return None

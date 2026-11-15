@@ -43,22 +43,6 @@ _NOT_SERVED = frozenset({"SECTIONPAGES", "STYLEREF"})
 _KINDS = ("default", "first", "even")
 
 
-def _stats_at_exit() -> None:
-    path = os.environ.get("DOCX_AGENT_RUST_STATS")
-    if path and STATS:
-        try:
-            with open(path, "a", encoding="utf-8") as out:
-                out.write(json.dumps({"fields": dict(STATS)}) + "\n")
-        except OSError:
-            pass
-
-
-if os.environ.get("DOCX_AGENT_RUST_STATS"):
-    import atexit
-
-    atexit.register(_stats_at_exit)
-
-
 def enabled() -> bool:
     return os.environ.get(ENV, "1").strip() != "0"
 

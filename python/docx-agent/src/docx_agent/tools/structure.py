@@ -272,7 +272,10 @@ def _fields_ahead(call: Any, doc: str, action: str, kind: str | None = None,
             update_fields_ahead(call, ids)
         ahead_timed(time.perf_counter() - started)    # round 45: the update's timing says it
     elif action == "insert_cross_reference" and kind == "page":
-        lay_out_ahead(call)
+        from ..rust import fields as rust_fields
+
+        if not rust_fields.ahead(call):     # 0.1.117: its page read from the Rust owner
+            lay_out_ahead(call)
 
 
 @word_tool("word_fields", "Fields: list; insert a TOC, caption, cross-reference, date or other field; update all results (TOC, page numbers, REF, SEQ) after changes.",
