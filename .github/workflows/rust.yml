@@ -201,6 +201,14 @@ jobs:
           DOCX_AGENT_RUST: "1"
           DOCX_AGENT_FULL_VALIDATE: "1"
         run: python -m pytest -q -ra -n 2 tests/test_rust_fields.py
+      # Lane I1: the Rust parser's first input and change sets against the mirror's, byte
+      # for byte, on every sample of the tests and on recorded edit sequences.
+      - name: Rust parser against the mirror
+        working-directory: python/docx-agent
+        env:
+          DOCX_AGENT_RUST: "1"
+          DOCX_AGENT_FULL_VALIDATE: "1"
+        run: python -m pytest -q -ra -n 2 tests/test_rust_parser.py
       - name: Check tests, Rust path off
         working-directory: python/docx-agent
         env:

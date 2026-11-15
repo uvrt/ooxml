@@ -5,6 +5,30 @@ docx-agent has not been released to PyPI. Each version that reaches `main` is ta
 snapshot commit; the development history before it is summarised here.
 [`ROADMAP.md`](ROADMAP.md) has the detail of every phase.
 
+## 0.1.119 -- unreleased
+
+- **The Rust owner's input is made by a Rust parser of the body.** The same results -- every
+  check, every `word_fields` update, the saved bytes and every tool result -- but the body
+  is read in Rust (ooxml-core 0.6.0's `Parser`): paragraphs, tables, runs, fields threaded
+  through the body, bookmarks, `REF` fields, list labels, cells' autofit widths, and most
+  paragraphs' check records; what formatting resolves to is asked of docx2svg once per
+  distinct style input, not per paragraph. After an edit, the change set handed to the
+  owner is made in Rust from the elements the edit changed (the Python mirror of the body
+  is no longer kept for such documents). Every text handed to the owner is the mirror's,
+  byte for byte (`tests/test_rust_parser.py`: every sample of the tests and recorded edit
+  sequences, and on the made-up reports of about 1,000 and 3,000 pages). The first check
+  of a range on the made-up reports (the owner opened): 4.2-4.5 s instead of 10.8 s at 295
+  pages, 9.1-9.8 s instead of 34.7 s at about 1,000, 27.3-27.5 s instead of 108-110 s at
+  about 3,000; `word_fields` update after a heading added 1.3-2.7 s instead of 1.7-3.2 s,
+  5.8-11.1 s instead of 7.7-15.2 s, 14.5-33.3 s instead of 20.6-39.8 s. Edits as before.
+  What is left of the open is Python's: each table's record and grid, the language of
+  long paragraphs, and records of paragraphs with direct formatting.
+  - A document the parser does not read (content controls, tracked changes, drawings,
+    notes, merged cells, fields other than page numbers, `REF` and contents, ...) is
+    mirrored in Python as before, counted (`docx_agent.rust.parser.STATS`).
+  - `DOCX_AGENT_RUST_PARSER=0` turns it off.
+- Needs ooxml-core 0.6.0.
+
 ## 0.1.118 -- unreleased
 
 - **An edit, an undo and a redo on a long document cost less again, with the same

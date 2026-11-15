@@ -11,3 +11,4 @@ pub mod model;
 pub mod owner;
 pub mod seqmatch;
 pub mod units;
+pub mod xml;
