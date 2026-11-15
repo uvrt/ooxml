@@ -6,8 +6,8 @@ waited for Y, Y's hold times out (:data:`TIMEOUT`) and notes so, and the test fa
 order -- it never passes slowly, and a busy machine cannot make it fail.
 
 A gate lives in a directory, so a worker process can hold it as a thread can: the notes are
-lines appended to a file there, the gate is open once a file named ``open`` is there.  A
-:class:`Gate` pickles as its path."""
+lines appended to a file there (under a lock: :meth:`Gate._locked`), the gate is open once a
+file named ``open`` is there.  A :class:`Gate` pickles as its path."""
 
 from __future__ import annotations
 
@@ -18,6 +18,9 @@ from pathlib import Path
 
 #: How long a hold waits for the test to open its gate before it notes that it timed out.
 TIMEOUT = 60.0
+
+#: How old the gate's lock is when it is taken as left behind by a killed worker (seconds).
+STALE = 10.0
 
 #: How often a hold looks whether its gate is open (seconds).
 POLL = 0.005
@@ -34,19 +37,49 @@ class Gate:
     def _dir(self) -> Path:
         return Path(self.path)
 
+    def _locked(self):
+        """The gate's lock across threads and processes: a directory made, then removed.
+        Windows emulates an append as a seek and a write, so appends from two processes
+        can land on one another; the notes are written and read under this instead."""
+        gate = self
+
+        class _Lock:
+            def __enter__(self):
+                ends = time.monotonic() + TIMEOUT
+                while True:
+                    try:
+                        os.mkdir(gate._dir / "lock")
+                        return self
+                    except FileExistsError:
+                        # One left by a worker killed while it wrote (a test kills some) is
+                        # taken over: nobody holds it this long otherwise.
+                        try:
+                            if time.time() - os.stat(gate._dir / "lock").st_mtime > STALE:
+                                os.rmdir(gate._dir / "lock")
+                                continue
+                        except FileNotFoundError:
+                            continue
+                        assert time.monotonic() < ends, f"the gate's lock was never let go: {gate.path}"
+                        time.sleep(POLL / 5)
+
+            def __exit__(self, *exc):
+                os.rmdir(gate._dir / "lock")
+                return False
+
+        return _Lock()
+
     def note(self, what: str) -> None:
-        """Append ``what`` to the order (one line; an append this short is atomic)."""
-        fd = os.open(self._dir / "order", os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
-        try:
-            os.write(fd, (what + "\n").encode())
-        finally:
-            os.close(fd)
+        """Append ``what`` to the order (one line, under the gate's lock)."""
+        with self._locked():
+            with open(self._dir / "order", "a", encoding="utf-8") as out:
+                out.write(what + "\n")
 
     def order(self) -> list[str]:
-        try:
-            return (self._dir / "order").read_text().splitlines()
-        except FileNotFoundError:
-            return []
+        with self._locked():
+            try:
+                return (self._dir / "order").read_text(encoding="utf-8").splitlines()
+            except FileNotFoundError:
+                return []
 
     def hold(self, name: str = "held", timeout: float = TIMEOUT) -> bool:
         """Note ``<name> in``, wait until the gate is open, note ``<name> out`` -- or, past
