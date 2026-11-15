@@ -175,9 +175,11 @@ def _numbering(ctx: Context, element: Any) -> dict[str, Any] | None:
             "first": ctx.first_labels[key]}
 
 
-def table_record(ctx: Context, element: Any, identifier: str, model_table: Any, model: Any) -> dict[str, Any]:
+def table_record(ctx: Context, element: Any, identifier: str, model_table: Any, model: Any,
+                 made: list | None = None) -> dict[str, Any]:
     """A top-level table's record: ``model_table`` its docx2svg model, ``model`` the
-    document's (the mirror's)."""
+    document's (the mirror's); ``made``: its paragraphs' records the Rust parser made (JSON
+    text, ``None`` where it left one to this module), in the table's order (lane I1)."""
     from docx2svg.table import row_keeps_with_next
 
     from ..edit.table_format import kept_together
@@ -229,8 +231,23 @@ def table_record(ctx: Context, element: Any, identifier: str, model_table: Any, 
     # Its rows' deciding paragraphs: their keeps are the table's (direct_formatting).
     ctx.facts.kept_leads = {id(row[0]) for row in rows} if kept else set()
     try:
-        rec["paras"] = [paragraph_record(ctx, p, id_of(p) or "", top=False) for p in element.iter(_P)
-                        if id_of(p) is not None]
+        if made is None:
+            rec["paras"] = [paragraph_record(ctx, p, id_of(p) or "", top=False) for p in element.iter(_P)
+                            if id_of(p) is not None]
+        else:
+            import json
+
+            rec["paras"] = []
+            for p, text in zip(element.iter(_P), made):
+                identifier = id_of(p)
+                if identifier is None:
+                    continue
+                if text is None:
+                    rec["paras"].append(paragraph_record(ctx, p, identifier, top=False))
+                else:
+                    found = json.loads(text)
+                    found["id"] = identifier
+                    rec["paras"].append(found)
     finally:
         ctx.facts.kept_leads = set()
     from ..tools.textfacts import _cell_id

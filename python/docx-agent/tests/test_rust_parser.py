@@ -105,3 +105,47 @@ def test_a_document_the_parser_does_not_read_is_mirrored_as_before(monkeypatch):
     assert any(k.startswith("refused") for k in stats), stats
     assert mine == theirs
     assert [_normal(r) for _, r in results] == [_normal(r) for _, r in their_results]
+
+
+_HERE = __import__("pathlib").Path(__file__).resolve().parent
+_SAMPLES = sorted(str(p.relative_to(_HERE)) for p in _HERE.rglob("*.docx"))
+
+
+def _mirror_export(document):
+    from docx_agent.rust.exporter import Unsupported
+    from docx_agent.rust.mirror import Mirror
+
+    try:
+        mirror = Mirror(document)
+        rust_check._check_keys(mirror)
+        mirror.fstack_end = mirror.thread_fields(mirror.units, [])
+        with rust_check._records(document, mirror):
+            return mirror.export_with(rust_check.constants(document, mirror))[0]
+    except Unsupported:
+        return None
+
+
+@pytest.mark.parametrize("name", _SAMPLES)
+def test_every_sample_is_exported_as_the_mirror_exports_it(name):
+    """Every made-up document and sample of the tests: the parser's first input is the
+    mirror's byte for byte, or the parser refuses the document whole (the mirror then
+    exports it, as before) -- never a different one, never one the mirror refuses."""
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        document = Document.open((_HERE / name).read_bytes())
+    theirs = _mirror_export(document)
+    mine, stats, _ = rust_parser.export(document)
+    if mine is None:
+        assert "refused" in stats
+        return
+    assert theirs is not None, "the parser exports a document the mirror refuses"
+    assert mine == theirs, _first_text_difference(mine, theirs)
+
+
+def test_the_report_is_exported_as_the_mirror_exports_it(report):
+    document = Document.open(report)
+    mine, stats, _ = rust_parser.export(document)
+    assert mine is not None, stats
+    assert mine == _mirror_export(document)

@@ -112,6 +112,7 @@ class Resolution:
             raise Unsupported("columns")
         self.paragraphs: dict = {}
         self.tables: dict = {}
+        self.resolved: dict = {}
         self.heights_cache: dict = {}
         self.records = records
         main = document.package.document_part()
@@ -184,7 +185,11 @@ class Resolution:
             "widow": None if widow is None else bool(widow),
             "num": [num_id if num_id else 0, pp.get("numPr.ilvl", 0) or 0],
             "rule": RULES[pp.get("spacing.lineRule", "auto")], "line": pp.get("spacing.line", 240),
-            "draw": draw_key(pp.values), "eff_style": _paragraph_style_id(self.d2.styles, paragraph)})
+            "draw": draw_key(pp.values), "eff_style": _paragraph_style_id(self.d2.styles, paragraph),
+            # what a cell paragraph's autofit extent reads (``table.paragraph_extent``)
+            "left": pp.get("ind.left", 0) or 0, "right": pp.get("ind.right", 0) or 0,
+            "first_line": pp.get("ind.firstLine", 0) or 0, "hanging": pp.get("ind.hanging", 0) or 0,
+            "mode15": self.d2.compatibility_mode is not None and self.d2.compatibility_mode >= 15})
         if not isinstance(out["num"][0], int):
             raise Unsupported("a list id that is not a number")
         return out
@@ -325,12 +330,30 @@ class Resolution:
         from .mirror import _table_draw
 
         skeleton, element = self._skeleton(arg["xml"])
-        cells = iter(arg["cells"])
-        rows = tuple(tuple(tuple(self._real_paragraph(w) for w in next(cells)) for _ in row) for row in skeleton.rows)
-        table = dataclasses.replace(skeleton, rows=rows)
+        table = skeleton
+        measured = iter(arg["cells"])
+        extents_of = {(r, c): next(measured) for r, row in enumerate(skeleton.rows) for c, _ in enumerate(row)}
         document, section = self.d2, self.section
+
+        def cell_extent(cell):
+            # ``table.cell_extent``, each paragraph's extent measured by the Rust parser
+            low = high = Fraction(0)
+            for found in extents_of[(cell.row, cell.index)]:
+                if found is None:
+                    raise tm.Unsupported("autofit: a tab or a drawing in a cell sized by its content (not measured)")
+                low, high = max(low, Fraction(found[0], found[1])), max(high, Fraction(found[2], found[3]))
+            if not high:
+                low = high = Fraction(tm.EMPTY_CONTENT)
+            offsets = tm.left_offset(cell) + tm.right_offset(cell)
+            return low + offsets, high + offsets
         try:
-            resolved = tm.resolve_table(document, table)
+            # The table resolved once per skeleton (its properties, structure and cells'
+            # paragraphs' properties: all resolve_table reads), its content's extents its own.
+            template = self.resolved.get(arg["xml"])
+            if template is None:
+                template = self.resolved[arg["xml"]] = tm.resolve_table(document, table)
+            resolved = copy.copy(template)
+            resolved.extents = None
             unmodelled = tm._unmodelled(resolved)
             if unmodelled:
                 raise Unsupported(unmodelled)
@@ -346,8 +369,7 @@ class Resolution:
                 resolved.rows and resolved.rows[0].cells) else set()
             if autofit and not (tm.in_percent(resolved) and kinds in ({"pct"}, {"dxa"})):
                 try:
-                    resolved.extents = {(row.index, cell.index): tm.cell_extent(document, cell, section, self.advances,
-                                                                                 self.metrics)
+                    resolved.extents = {(row.index, cell.index): cell_extent(cell)
                                         for row in resolved.rows for cell in row.cells if cell.merge != "continue"}
                 except tm.Unsupported:
                     if tm.in_percent(resolved) or tm.autofit_unmodelled(resolved):
@@ -403,9 +425,56 @@ class Resolution:
             rec = records.paragraph_record(self.ctx, element, key, top=True)
         else:
             skeleton, _ = self._skeleton(arg["xml"])
-            rec = records.table_record(self.ctx, element, key, skeleton, self.d2)
+            rec = records.table_record(self.ctx, element, key, skeleton, self.d2, arg.get("paras"))
             rec.update(_table_geometry(self, element, skeleton))
         return json.dumps(rec, separators=(",", ":"))
+
+    def _rec_key(self, arg: dict) -> dict:
+        """What a paragraph's record reads of its properties alone (``records.paragraph_record``:
+        its list, keeps, style, spacing, caption style), each as JSON text."""
+        from lxml import etree
+
+        from ..edit import effective as _effective
+        from ..edit.formatting import read_paragraph
+        from . import records
+
+        element = etree.fromstring(f'<w:p xmlns:w="{_WNS}">{arg["ppr"] or ""}</w:p>'.encode())
+        ctx = self.ctx
+        dump = lambda value: json.dumps(value, separators=(",", ":"))  # noqa: E731
+        number = records._numbering(ctx, element)
+        applied = _effective.paragraph(self.document, element)
+        styled = _effective.paragraph(self.document, element, direct=False)
+        properties = element.find(_W + "pPr")
+        return {"num": dump(number) if number is not None else None,
+                "ktd": dump(bool(read_paragraph(properties, "keep_together"))),
+                "kwnd": dump(bool(read_paragraph(properties, "keep_with_next"))),
+                "kts": dump(bool(styled.keep_together)), "kwns": dump(bool(styled.keep_with_next)),
+                "st": dump(ctx.facts.style_of(element)), "kwn": dump(bool(applied.keep_with_next)),
+                "kt": dump(bool(applied.keep_together)), "pbb": dump(bool(applied.page_break_before)),
+                "sb": dump(applied.space_before), "sa": dump(applied.space_after),
+                "cap": dump(bool(ctx.is_caption(element)))}
+
+    def _judge(self, arg: dict) -> str:
+        """A paragraph's language judged (``text_language._judge``), as its record's member."""
+        from ..edit.text_language import PROFILES, _judge, primary
+
+        element = self.elements[arg["k"]]
+        if element.tag != _P:
+            element = list(element.iter(_P))[arg["j"]]
+        judged, why = _judge(self.ctx.cascade, element, arg["id"])
+        if judged is not None:
+            found = {"tag": judged.tag, "source": judged.source, "lang": judged.found.language,
+                     "conf": judged.found.confidence, "words": judged.found.words,
+                     "prim": primary(judged.tag), "profiled": primary(judged.tag) in PROFILES}
+            return ',"lj":' + json.dumps(found, separators=(",", ":"))
+        if why is not None:
+            return ',"lw":' + json.dumps(why)
+        return ""
+
+    def _units(self, arg: Any) -> dict:
+        from docx2svg import vertical
+
+        return {"lu": _q(vertical.LAYOUT_UNIT_PX)}
 
     def _fonts(self, arg: dict) -> str:
         """``Mirror.fonts_json`` for a commit that measures new faces or characters."""

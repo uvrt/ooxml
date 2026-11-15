@@ -79,6 +79,30 @@ pub struct Para {
     /// conditional formats.
     pub table_style: Option<String>,
     pub conditions: Vec<&'static str>,
+    /// What docx-agent's record of it reads of its text and structure.
+    pub rec: RecInfo,
+    /// Its resolution's key (`w:pPr`, table style, conditions).
+    pub pk: String,
+}
+
+/// What a paragraph's record (docx-agent's ``records.paragraph_record``) reads of the
+/// paragraph's own XML: its text as docx-agent's text walk reads it, and the structural
+/// facts.  ``simple``: no direct formatting the record reports, no punctuation the
+/// spacing rules read, no characters this reading leaves to Python (else the record is
+/// made in Python).
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct RecInfo {
+    pub simple: bool,
+    pub nt: String,
+    pub nd: bool,
+    pub txt: bool,
+    /// The words of its `w:t` text (`text_language.words_of`), `None`: not counted here.
+    pub words: Option<usize>,
+    pub raw_blank: bool,
+    pub visible: bool,
+    pub content: bool,
+    pub bs: bool,
+    pub be: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -413,7 +437,20 @@ impl Reader {
                 // (a tracked change of a run's formatting: refused below by its key's parse)
             }
         }
+        let rec = self.rec_info(element);
+        let ppr_xml = ppr.map(|n| n.write(&self.names, Some(w)));
+        let mut pk = String::new();
+        py_json_str(ppr_xml.as_deref().unwrap_or(""), &mut pk);
+        pk.push('|');
+        match table_style {
+            None => pk.push('-'),
+            Some(t) => py_json_str(t, &mut pk),
+        }
+        pk.push('|');
+        pk.push_str(&conditions.join(","));
         Ok(Para {
+            rec,
+            pk,
             ppr: ppr.map(|n| n.write(&self.names, Some(w))),
             style_id: ppr.and_then(|p| p.child(w, "pStyle")).and_then(|s| s.attr_any("val")).map(str::to_string),
             runs,
@@ -422,6 +459,173 @@ impl Reader {
             table_style: table_style.map(str::to_string),
             conditions: conditions.to_vec(),
         })
+    }
+
+    /// docx-agent's text walk of a paragraph (`edit.text.walk`, the current view) and what its
+    /// record reads besides (`records.paragraph_record`).
+    fn rec_info(&self, element: &Node) -> RecInfo {
+        let w = self.w;
+        struct Walk {
+            fields: Vec<bool>,
+            text: String,
+            rdecl: bool,
+            odd: bool,
+        }
+        fn visible(s: &Walk) -> bool {
+            s.fields.iter().all(|r| *r)
+        }
+        const RUN_DECLARES: [&str; 11] = ["b", "bCs", "i", "iCs", "u", "strike", "sz", "szCs", "rFonts", "color", "highlight"];
+        fn run(r: &Node, w: Ns, s: &mut Walk) {
+            let mut had_text = false;
+            for c in &r.children {
+                if c.ns != w {
+                    if c.name == "AlternateContent" && visible(s) {
+                        s.text.push('\u{FFFC}');
+                    }
+                    continue;
+                }
+                match c.name.as_str() {
+                    "rPr" => continue,
+                    "fldChar" => {
+                        match c.attr(w, "fldCharType") {
+                            Some("begin") => s.fields.push(false),
+                            Some("separate") => {
+                                if let Some(l) = s.fields.last_mut() {
+                                    *l = true;
+                                }
+                            }
+                            Some("end") => {
+                                s.fields.pop();
+                            }
+                            _ => {}
+                        }
+                        continue;
+                    }
+                    _ => {}
+                }
+                if !visible(s) {
+                    continue;
+                }
+                match c.name.as_str() {
+                    "t" => {
+                        if !c.text.is_empty() {
+                            had_text = true;
+                        }
+                        s.text.push_str(&c.text);
+                    }
+                    "delText" => {}
+                    "br" => s.text.push(if matches!(c.attr(w, "type"), Some("page") | Some("column")) { '\u{0C}' } else { '\u{0B}' }),
+                    "tab" | "ptab" => s.text.push('\t'),
+                    "cr" => s.text.push('\u{0B}'),
+                    "noBreakHyphen" => s.text.push('\u{2011}'),
+                    "softHyphen" => s.text.push('\u{AD}'),
+                    "sym" => {
+                        s.odd = true;
+                        s.text.push('\u{FFFC}');
+                    }
+                    "drawing" | "pict" | "object" | "footnoteReference" | "endnoteReference" | "footnoteRef" | "endnoteRef"
+                    | "contentPart" | "ruby" => s.text.push('\u{FFFC}'),
+                    _ => {}
+                }
+            }
+            if had_text {
+                if let Some(rpr) = r.child(w, "rPr") {
+                    if rpr.children.iter().any(|x| x.ns == w && RUN_DECLARES.contains(&x.name.as_str())) {
+                        s.rdecl = true;
+                    }
+                }
+            }
+        }
+        fn container(n: &Node, w: Ns, s: &mut Walk) {
+            for c in &n.children {
+                if c.ns != w {
+                    if c.name == "oMath" || c.name == "oMathPara" {
+                        s.odd = true;
+                    }
+                    continue;
+                }
+                match c.name.as_str() {
+                    "r" => run(c, w, s),
+                    "hyperlink" | "smartTag" | "customXml" | "dir" | "bdo" | "fldSimple" | "ins" | "moveTo" => container(c, w, s),
+                    "sdt" => {
+                        if let Some(content) = c.child(w, "sdtContent") {
+                            container(content, w, s);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let mut s = Walk { fields: vec![], text: String::new(), rdecl: false, odd: false };
+        container(element, w, &mut s);
+        let nt: String = s.text.chars().map(|c| if c == '\u{FFFC}' { ' ' } else { c }).collect();
+        let all = element.descendants();
+        let raw: String = all.iter().filter(|n| n.ns == w && n.name == "t").map(|n| n.text.as_str()).collect();
+        let ppr = element.child(w, "pPr");
+        let pdecl = ppr.is_some_and(|p| {
+            p.children.iter().any(|c| c.ns == w && matches!(c.name.as_str(), "jc" | "spacing" | "ind" | "keepNext" | "keepLines" | "pageBreakBefore"))
+        });
+        let puncts = raw.chars().any(|c| ":;!?\u{AB}\u{BB}".contains(c));
+        let ascii = raw.is_ascii() && nt.chars().all(|c| c.is_ascii() || !c.is_numeric());
+        let words = if raw.is_ascii() {
+            let mut n = 0usize;
+            let mut in_word = false;
+            for c in raw.chars() {
+                let letter = c.is_ascii_alphabetic();
+                if letter && !in_word {
+                    n += 1;
+                }
+                in_word = letter;
+            }
+            Some(n)
+        } else {
+            None
+        };
+        // _state: something drawn or a break, outside the properties
+        const VISIBLE: [&str; 17] = [
+            "drawing", "pict", "object", "br", "cr", "sym", "tab", "ptab", "fldChar", "fldSimple", "instrText",
+            "footnoteReference", "endnoteReference", "commentReference", "sdt", "noBreakHyphen", "softHyphen",
+        ];
+        let mut vis = false;
+        for c in &element.children {
+            if c.ns == w && c.name == "pPr" {
+                continue;
+            }
+            for n in c.descendants() {
+                if (n.ns == w && (VISIBLE.contains(&n.name.as_str()) || n.name == "pgNum"))
+                    || (n.ns != w && (n.name == "oMath" || n.name == "oMathPara"))
+                    || (n.ns == w && (n.name == "t" || n.name == "delText") && !py_strip(&n.text).is_empty())
+                {
+                    vis = true;
+                    break;
+                }
+            }
+            if vis {
+                break;
+            }
+        }
+        const CONTENT: [&str; 14] =
+            ["drawing", "pict", "object", "br", "cr", "sym", "tab", "ptab", "fldChar", "fldSimple", "footnoteReference", "endnoteReference", "sectPr", "framePr"];
+        let content = all.iter().any(|n| n.ns == w && CONTENT.contains(&n.name.as_str()));
+        let breaks: Vec<&&Node> = all
+            .iter()
+            .filter(|n| n.ns == w && (matches!(n.name.as_str(), "br" | "tab" | "drawing") || (n.name == "t" && !py_strip(&n.text).is_empty())))
+            .collect();
+        let page = |n: &Node| n.name == "br" && n.attr(w, "type") == Some("page");
+        let bs = breaks.first().is_some_and(|n| page(n));
+        let be = breaks.last().is_some_and(|n| page(n));
+        RecInfo {
+            simple: !pdecl && !s.rdecl && !puncts && ascii && !s.odd,
+            nd: nt.chars().any(|c| c.is_ascii_digit()),
+            nt,
+            txt: !py_strip(&raw).is_empty(),
+            words,
+            raw_blank: py_strip(&raw).is_empty(),
+            visible: vis,
+            content,
+            bs,
+            be,
+        }
     }
 
     fn table(&self, element: &Node, fields: &mut Fields) -> Result<Table, Refused> {
@@ -1209,7 +1413,7 @@ fn encode(v: &V, d: &Dens, out: &mut String) -> Result<(), Refused> {
 /// What the resolver said of one paragraph key.
 #[derive(Clone, Debug)]
 struct ParaInfo {
-    v: Value,
+    v: std::sync::Arc<Value>,
 }
 
 impl ParaInfo {
@@ -1368,6 +1572,10 @@ pub struct Caches {
     levels: HashMap<i64, Option<Levels>>,
     ex: Ex,
     pub calls: HashMap<&'static str, usize>,
+    /// The measuring tables (fonts' advances, formats) as of the counts they were made at.
+    tables: Option<(crate::measure::Tables, (usize, usize, usize, usize))>,
+    units: Option<(i128, i128)>,
+    rec_keys: HashMap<Option<String>, Value>,
 }
 
 impl Caches {
@@ -1381,6 +1589,9 @@ impl Caches {
             levels: HashMap::new(),
             ex: Ex::new(),
             calls: HashMap::new(),
+            tables: None,
+            units: None,
+            rec_keys: HashMap::new(),
         }
     }
 }
@@ -1398,16 +1609,7 @@ pub struct Exporter<'a> {
 }
 
 fn pkey(p: &Para) -> String {
-    let mut s = String::new();
-    py_json_str(p.ppr.as_deref().unwrap_or(""), &mut s);
-    s.push('|');
-    match &p.table_style {
-        None => s.push('-'),
-        Some(t) => py_json_str(t, &mut s),
-    }
-    s.push('|');
-    s.push_str(&p.conditions.join(","));
-    s
+    p.pk.clone()
 }
 
 fn pkey_json(p: &Para) -> Value {
@@ -1430,13 +1632,99 @@ impl<'a> Exporter<'a> {
         self.r.call(kind, &arg.to_string()).map_err(Refused)
     }
 
+    /// The measuring tables for the formats and characters met so far (asked again of the
+    /// resolver when they grew).
+    fn tables(&mut self) -> Result<&crate::measure::Tables, Refused> {
+        let e = &self.c.ex;
+        let counts = (e.font_list.len(), e.chars.len(), e.format_list.len(), e.kern_fonts.len());
+        if self.c.tables.as_ref().map(|t| t.1) != Some(counts) {
+            if self.c.units.is_none() {
+                let v = self.ask("units", &json!(null))?;
+                let lu = q_of(&v["lu"])?;
+                let px_den = lu.denom().lcm(&(96 * 20));
+                self.c.units = Some((px_den, (lu * Q::from_integer(px_den)).to_integer()));
+            }
+            let arg = self_document_arg(&self.c.ex, &[]);
+            let text = self.ask_raw("fonts", &arg)?;
+            let fonts: Vec<ooxml_core::model::FontIn> = serde_json::from_str(&text).map_err(|e| Refused(format!("fonts: {e}")))?;
+            let (px_den, lu) = self.c.units.unwrap();
+            let t = crate::measure::Tables::from_parts(&fonts, &self.c.ex.format_list, 20, px_den as i64, lu as i64, 300);
+            self.c.tables = Some((t, counts));
+        }
+        Ok(&self.c.tables.as_ref().unwrap().0)
+    }
+
+    /// docx-agent's record of a paragraph made here (`records.paragraph_record` for a
+    /// paragraph whose `RecInfo.simple` holds): what its properties give asked once per
+    /// distinct `w:pPr`, the language judged by the resolver where it has words enough.
+    fn para_record(&mut self, p: &Para, k: usize, j: usize, id: &str, top: bool) -> Result<String, Refused> {
+        let kv = match self.c.rec_keys.get(&p.ppr) {
+            Some(v) => v.clone(),
+            None => {
+                let v = self.ask("rec_key", &json!({"ppr": p.ppr}))?;
+                self.c.rec_keys.insert(p.ppr.clone(), v.clone());
+                v
+            }
+        };
+        let r = &p.rec;
+        let mut s = String::with_capacity(r.nt.len() + 200);
+        s.push_str("{\"id\":");
+        py_json_str(id, &mut s);
+        s.push_str(",\"nt\":");
+        py_json_str(&r.nt, &mut s);
+        s.push_str(if r.nd { ",\"nd\":true" } else { ",\"nd\":false" });
+        match r.words {
+            Some(n) if n < 8 => {
+                if !r.raw_blank {
+                    s.push_str(",\"lw\":\"too_short\"");
+                }
+            }
+            _ => {
+                let judged = self.ask_raw("judge", &json!({"k": k, "j": j, "id": id}))?;
+                s.push_str(&judged);
+            }
+        }
+        if let Some(num) = kv["num"].as_str() {
+            s.push_str(",\"num\":");
+            s.push_str(num);
+        }
+        if top {
+            for name in ["ktd", "kwnd", "kts", "kwns", "st", "kwn", "kt", "pbb"] {
+                s.push_str(",\"");
+                s.push_str(name);
+                s.push_str("\":");
+                s.push_str(kv[name].as_str().unwrap_or("null"));
+            }
+            let b = |x: bool| if x { "true" } else { "false" };
+            let _ = write!(s, ",\"bs\":{},\"be\":{},\"content\":{}", b(r.bs), b(r.be), b(r.content));
+            let state = if r.visible {
+                "text"
+            } else if kv["pbb"].as_str() == Some("true") {
+                "kept"
+            } else {
+                "empty"
+            };
+            let _ = write!(s, ",\"state\":\"{state}\"");
+            for name in ["sb", "sa"] {
+                s.push_str(",\"");
+                s.push_str(name);
+                s.push_str("\":");
+                s.push_str(kv[name].as_str().unwrap_or("null"));
+            }
+            let cap = r.txt && kv["cap"].as_str() == Some("true");
+            let _ = write!(s, ",\"txt\":{},\"colon\":false,\"cap\":{}", b(r.txt), b(cap));
+        }
+        s.push('}');
+        Ok(s)
+    }
+
     fn para(&mut self, p: &Para) -> Result<ParaInfo, Refused> {
-        let k = pkey(p);
-        if let Some(found) = self.c.paras.get(&k) {
+        if let Some(found) = self.c.paras.get(p.pk.as_str()) {
             return Ok(found.clone());
         }
+        let k = pkey(p);
         let v = self.ask("para", &pkey_json(p))?;
-        let info = ParaInfo { v };
+        let info = ParaInfo { v: std::sync::Arc::new(v) };
         self.c.paras.insert(k, info.clone());
         Ok(info)
     }
@@ -1700,6 +1988,69 @@ impl<'a> Exporter<'a> {
     }
 }
 
+/// docx2svg's `table.paragraph_extent`: the narrowest and widest a cell paragraph's text
+/// goes in Word's autofit, twips; `None` where it cannot be measured so (a tab).
+fn paragraph_extent(t: &crate::measure::Tables, measure: &V, ind: [i64; 4], mode15: bool) -> Result<Option<(Q, Q)>, Refused> {
+    let runs = match measure {
+        V::Obj(o) => o.iter().find(|(k, _)| *k == "runs").map(|(_, v)| v.clone()).unwrap_or(V::List(vec![])),
+        _ => V::List(vec![]),
+    };
+    let mut text = String::from("{\"runs\":");
+    encode(&runs, &Dens { px: 1, w: 1 }, &mut text)?;
+    text.push_str(",\"mark_fmt\":0,\"label_height_fmts\":[],\"geometry\":{\"first_start\":0,\"start\":0,\"right\":0,\"tabs\":[],\"default_tab\":1,\"hanging_stop\":null,\"squeeze\":false,\"tab_origin\":0},\"rule\":0,\"line\":240,\"columns\":false}");
+    let m: ooxml_core::model::MeasureIn = serde_json::from_str(&text).map_err(|e| Refused(format!("a measuring input: {e}")))?;
+    let pieces = crate::linebreak::pieces(t, &m);
+    use crate::measure::{BREAK, SPACE, TAB};
+    if pieces.iter().any(|p| p.kind == TAB || p.kind > 4) {
+        return Ok(None);
+    }
+    let [left, right, first_line, hanging] = ind;
+    let first = first_line - hanging;
+    let first_start = if mode15 { left + first } else { left + first.min(0) };
+    let rest_start = if mode15 { left } else { first_start };
+    // widths in 1/s layout units; a twip is 4096/20 units
+    let unit = Q::new(20, 4096 * t.s as i128);
+    let zero = Q::from_integer(0);
+    let (mut widest, mut longest) = (zero, zero);
+    let (mut word, mut line, mut trailing) = (0i128, 0i128, 0i128);
+    let (mut start, mut first_word, mut first_line_) = (first_start, true, true);
+    let n = pieces.len();
+    for k in 0..=n {
+        let (kind, width) = if k < n { (pieces[k].kind, pieces[k].width as i128) } else { (BREAK, 0) };
+        if kind == BREAK {
+            let v = Q::from_integer(start as i128) + Q::from_integer(line - trailing) * unit;
+            if v > longest {
+                longest = v;
+            }
+            line = 0;
+            trailing = 0;
+            first_line_ = false;
+        }
+        if kind == SPACE || kind == BREAK {
+            if word != 0 {
+                let base = if first_word { first_start } else { rest_start };
+                let v = Q::from_integer(base as i128) + Q::from_integer(word) * unit;
+                if v > widest {
+                    widest = v;
+                }
+                first_word = false;
+            }
+            word = 0;
+            if kind == SPACE {
+                line += width;
+                trailing += width;
+            }
+            start = if first_line_ { first_start } else { rest_start };
+            continue;
+        }
+        word += width;
+        line += width;
+        trailing = 0;
+    }
+    let r = Q::from_integer(right as i128);
+    Ok(Some((widest.max(zero) + r, longest.max(zero) + r)))
+}
+
 /// A page field's switches: only `\* MERGEFORMAT` / `\* CHARFORMAT` (and `\h` on PAGEREF,
 /// docx2svg's `switches` reads flags apart); its argument for PAGEREF.
 fn page_field_switches(instruction: &str) -> Result<Option<String>, Refused> {
@@ -1898,7 +2249,21 @@ impl Doc {
             Block::T(t) => Some(t.skeleton.clone()),
             Block::P(_) => None,
         };
-        let rec = ex.ask_raw("record", &json!({"k": k, "xml": skeleton}))?;
+        let rec = match &u.block {
+            Block::P(p) if p.rec.simple => ex.para_record(p, k, 0, u.key.as_deref().unwrap_or(""), true)?,
+            Block::P(_) => ex.ask_raw("record", &json!({"k": k, "xml": skeleton}))?,
+            Block::T(t) => {
+                let mut paras = Vec::new();
+                for (j, p) in t.rows.iter().flat_map(|r| r.iter()).flat_map(|c| c.iter()).enumerate() {
+                    if p.rec.simple {
+                        paras.push(Value::String(ex.para_record(p, k, j, "", false)?));
+                    } else {
+                        paras.push(Value::Null);
+                    }
+                }
+                ex.ask_raw("record", &json!({"k": k, "xml": skeleton, "paras": paras}))?
+            }
+        };
         let rec = with_fields(rec, u, matches!(u.block, Block::T(_)));
         let item = match &u.block {
             Block::P(p) => {
@@ -2544,11 +2909,26 @@ fn table_item(
                 ext.push(p);
                 paras.push((m, info));
             }
-            let _ = (r, c);
-            extents_in.push(json!(ext.iter().map(|p| para_words(p)).collect::<Vec<_>>()));
+            let _ = (r, c, &ext);
             cells.push(paras);
         }
         cells_in.push(cells);
+    }
+    // each cell paragraph's narrowest and widest content, measured here
+    for row in cells_in.iter() {
+        for cell in row.iter() {
+            let mut exts = Vec::new();
+            for (m, info) in cell {
+                let ind = [info.i("left"), info.i("right"), info.i("first_line"), info.i("hanging")];
+                let mode15 = info.b("mode15");
+                let t = ex.tables()?;
+                match paragraph_extent(t, m, ind, mode15)? {
+                    Some((a, b)) => exts.push(json!([*a.numer() as i64, *a.denom() as i64, *b.numer() as i64, *b.denom() as i64])),
+                    None => exts.push(Value::Null),
+                }
+            }
+            extents_in.push(json!(exts));
+        }
     }
     let previous_key = previous.map(pkey_json);
     let v = ex.ask(
@@ -2658,17 +3038,6 @@ fn table_item(
         ("first_style", V::Int(fs)),
         ("rows", V::List(rows)),
     ]))
-}
-
-/// What the resolver measures of a cell paragraph for its table's autofit: its runs as
-/// keys and texts.
-fn para_words(p: &Para) -> Value {
-    json!({
-        "p": pkey_json(p),
-        "runs": p.runs.iter().map(|r| json!({"rpr": r.rpr, "toc": r.toc_link, "text": r.text,
-            "marks": r.marks.iter().map(|(a, b)| json!([a, b])).collect::<Vec<_>>(),
-            "field": r.field.as_ref().map(|f| json!([f.keyword, f.instruction]))})).collect::<Vec<_>>()
-    })
 }
 
 #[allow(dead_code)]
