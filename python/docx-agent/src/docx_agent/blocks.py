@@ -989,6 +989,11 @@ class Draft:
             pool.recording = None
 
 
+#: Lane G: the body's size in bytes (``word/document.xml``) above which an edit is not made on
+#: a draft (:meth:`Blocks.worth`): about 600 pages of text.
+DRAFT_BODY_LIMIT = 4 << 20
+
+
 class Blocks:
     """The Word format's :class:`ooxml_edit.tools.blocks.BlockEdits`."""
 
@@ -1003,6 +1008,19 @@ class Blocks:
 
     def alone(self, tool: str, arguments: Mapping[str, Any]) -> bool:
         return alone(tool, arguments)
+
+    def worth(self, document: Any) -> bool:
+        """Lane G: whether a draft of ``document`` is worth making (ooxml-edit's
+        ``BlockEdits.worth``): a draft is a copy of the whole document, read and indexed
+        again, so for a body over :data:`DRAFT_BODY_LIMIT` bytes it costs more than waiting
+        for the lock -- the call runs under the lock, as any call a draft does not take, with
+        the same result."""
+        from .revalidate import body_size, enabled
+
+        if not enabled():
+            return True
+        size = body_size(document)
+        return size is None or size <= DRAFT_BODY_LIMIT
 
     def draft(self, document: Any, committed: Any) -> Draft | None:
         make = getattr(getattr(committed, "make", None), "draft", None)

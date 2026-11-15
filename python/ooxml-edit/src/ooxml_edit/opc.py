@@ -25,10 +25,11 @@ from __future__ import annotations
 import copy
 import io
 import os
+from contextlib import contextmanager
 import posixpath
 import zipfile
 from dataclasses import dataclass
-from typing import BinaryIO, Callable, Iterable
+from typing import BinaryIO, Callable, Iterable, Iterator
 
 from lxml import etree
 
@@ -49,6 +50,14 @@ RELS_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
 #: A part kept compressed that is larger than this is parsed from its stream (the same
 #: tree), never inflated whole first.
 PARSE_STREAMED = 1 << 20
+
+#: ``OOXML_EDIT_VERIFY_SERIALIZED=1``: every kept serialization of an edited part is compared
+#: with the tree written out again (a test run's check that nothing changes a tree unseen).
+VERIFY_SERIALIZED = "OOXML_EDIT_VERIFY_SERIALIZED"
+
+
+def _verify_serialized() -> bool:
+    return os.environ.get(VERIFY_SERIALIZED, "").strip() not in ("", "0")
 #: An untouched part larger than this is saved a piece at a time -- where the compressor
 #: writes the same bytes for a part given in pieces as given whole
 #: (:func:`pieces_compress_alike`); else, and for a smaller part, it is inflated whole and
@@ -126,6 +135,16 @@ class OpcPackage:
         #: trees -- in the order they were first changed, which is the order new zip entries
         #: were appended in, so redo can append them in that order again.
         self._raw_changes: dict[str, None] = {}
+        #: 0.117.0: an edited part's bytes, written out once while its tree does not change
+        #: (:meth:`keep_serialized`): what a version's snapshot, its save and its readers
+        #: share -- one serialization per version, not one per reader.
+        self._serialized: dict[str, bytes] = {}
+        self._keep_serialized = False
+        #: How many :meth:`serializing` scopes are open: bytes are kept only inside one.
+        self._serial_scopes = 0
+        #: 0.117.0: each edited part's last snapshot (:class:`Pieces`), whose pieces the
+        #: next one shares where the bytes are the same: a version costs what it changed.
+        self._pieces: dict[str, "Pieces"] = {}
 
     # -- loading ---------------------------------------------------------------------------
 
@@ -147,8 +166,47 @@ class OpcPackage:
         """Current bytes of a part: the live tree if it was edited, the original otherwise."""
         path = normalize_part_path(path)
         if path in self._dirty:
-            return serialize(self._trees[path])
+            return self._serialize(path)
         return self._parts.get(path)
+
+    def _serialize(self, path: str) -> bytes:
+        """An edited part's tree written out: kept while :meth:`keep_serialized` says the
+        trees do not change, so the version's every reader shares one serialization."""
+        kept = self._serialized.get(path)
+        if kept is not None:
+            if _verify_serialized():
+                assert kept == serialize(self._trees[path]), f"{path}: kept bytes are not the tree's"
+            return kept
+        data = serialize(self._trees[path])
+        if self._keep_serialized:
+            self._serialized[path] = data
+        return data
+
+    def keep_serialized(self, keep: bool) -> None:
+        """Whether an edited part's bytes are kept once written out (0.117.0): ``True`` only
+        while no tree changes -- the history says so between one state change and the next
+        (:class:`~.history.History`: after an outermost batch closes or an undo, and never
+        while one is open) -- and only inside a :meth:`serializing` scope; ``False`` forgets
+        every kept part.  Marking a part dirty, putting a tree or a part in place, or
+        restoring forgets that part's (or every) kept bytes."""
+        self._keep_serialized = keep and self._serial_scopes > 0
+        if not keep:
+            self._serialized.clear()
+
+    @contextmanager
+    def serializing(self) -> Iterator[None]:
+        """A stretch in which nothing changes a tree but through the history (0.117.0): the
+        tool layer's one call on the document, its lock held -- its change, its undo step,
+        its commit and its readers share one serialization of the version it leaves.  Outside
+        one (an application editing trees between calls, as it may), nothing is kept: every
+        read writes the trees out again, as before."""
+        self._serial_scopes += 1
+        try:
+            yield
+        finally:
+            self._serial_scopes -= 1
+            if not self._serial_scopes:
+                self.keep_serialized(False)
 
     def open_part(self, path: str) -> BinaryIO | None:
         """A binary file over a part's current bytes: an untouched part inflated a piece at
@@ -156,7 +214,7 @@ class OpcPackage:
         edited one's tree written out.  ``None`` for no such part."""
         path = normalize_part_path(path)
         if path in self._dirty:
-            return io.BytesIO(serialize(self._trees[path]))
+            return io.BytesIO(self._serialize(path))
         return self._parts.open(path)
 
     def part_size(self, path: str) -> int | None:
@@ -164,7 +222,7 @@ class OpcPackage:
         ``None`` for no such part."""
         path = normalize_part_path(path)
         if path in self._dirty:
-            return len(serialize(self._trees[path]))
+            return len(self._serialize(path))
         return self._parts.size(path)
 
     def part_entry(self, path: str) -> ZipPart | None:
@@ -205,6 +263,7 @@ class OpcPackage:
         if path not in self._trees:
             raise KeyError(f"part {path!r} was never parsed, so it cannot be dirty")
         self._dirty.add(path)
+        self._serialized.pop(path, None)
         # A rels part that changed invalidates its cached relationships.
         self._rels_cache.pop(part_for_rels(path), None)
 
@@ -218,6 +277,7 @@ class OpcPackage:
             raise KeyError(f"no part {path!r}")
         self._trees[path] = root
         self._dirty.add(path)
+        self._serialized.pop(path, None)
         self._rels_cache.pop(part_for_rels(path), None)
 
     @property
@@ -244,6 +304,7 @@ class OpcPackage:
         self._parts[path] = data
         self._trees.pop(path, None)
         self._dirty.discard(path)
+        self._serialized.pop(path, None)
         self._rels_cache.pop(part_for_rels(path), None)
         self._raw_changes[path] = None
         if new:
@@ -289,6 +350,7 @@ class OpcPackage:
         del self._parts[path]
         self._trees.pop(path, None)
         self._dirty.discard(path)
+        self._serialized.pop(path, None)
         self._rels_cache.pop(part_for_rels(path), None)
         self._rels_cache.pop(path, None)
         self._raw_changes[path] = None
@@ -821,9 +883,17 @@ class OpcPackage:
         Parts written raw (added media, say) are captured by reference, not copied.
         """
         return PackageSnapshot(
-            trees={path: serialize(self._trees[path]) for path in self._dirty},
+            trees={path: self._snapshot_of(path) for path in self._dirty},
             raw={path: self._parts.stored(path) for path in self._raw_changes},
         )
+
+    def _snapshot_of(self, path: str) -> "Pieces":
+        """An edited part's bytes now as :class:`Pieces`: the pieces of its last snapshot
+        where the bytes are the same at the start and the end, only the stretch between
+        copied (0.117.0) -- every version of a long part held at the cost of its change."""
+        found = Pieces.of(self._serialize(path), self._pieces.get(path))
+        self._pieces[path] = found
+        return found
 
     def restore(self, snapshot: "PackageSnapshot") -> None:
         """Reset every edited part to a previous snapshot.
@@ -831,6 +901,7 @@ class OpcPackage:
         Parts that were edited then *and* now are reset to the snapshot; parts edited since are
         dropped back to their original bytes, and parts added since are removed.
         """
+        self._serialized.clear()
         # Raw parts first: a tree restored below may belong to a part that was re-added.
         for path in list(snapshot.raw) + [p for p in self._raw_changes if p not in snapshot.raw]:
             if path in snapshot.raw:
@@ -854,10 +925,12 @@ class OpcPackage:
             self._trees.pop(path, None)
             self._rels_cache.pop(part_for_rels(path), None)
         self._dirty = set()
-        for path, data in snapshot.trees.items():
-            self._trees[path] = parse_xml(data)
+        for path, kept in snapshot.trees.items():
+            self._trees[path] = parse_xml(bytes(kept))
             self._dirty.add(path)
             self._rels_cache.pop(part_for_rels(path), None)
+            if isinstance(kept, Pieces):
+                self._pieces[path] = kept
 
     # -- snapshots part by part (scoped undo) ----------------------------------------------
 
@@ -865,7 +938,7 @@ class OpcPackage:
         """A part's bytes in ``snapshot``; ``None`` when it did not exist then."""
         path = normalize_part_path(path)
         if path in snapshot.trees:
-            return snapshot.trees[path]
+            return bytes(snapshot.trees[path])
         if path in snapshot.raw:
             return _bytes(snapshot.raw[path])
         return self._original.get(path)
@@ -888,6 +961,8 @@ class OpcPackage:
             second = after.raw[path] if path in after.raw else self._original.stored(path)
             if first is second:
                 return True
+        if path in before.trees and path in after.trees:
+            return before.trees[path] == after.trees[path]       # pieces shared: not joined
         return self.snapshot_value(before, path) == self.snapshot_value(after, path)
 
     def snapshot_with(self, target: "PackageSnapshot", source: "PackageSnapshot",
@@ -930,6 +1005,7 @@ class OpcPackage:
 
     def _set_raw(self, path: str, data: "bytes | ZipPart") -> None:
         self._ensure_entry(path)
+        self._serialized.pop(path, None)
         self._parts[path] = data
 
     def _ensure_entry(self, path: str) -> None:
@@ -1034,11 +1110,75 @@ def _copy_entry(archive: zipfile.ZipFile, info: zipfile.ZipInfo, entry: "ZipPart
     archive.NameToInfo[out.filename] = out
 
 
+class Pieces:
+    """A part's bytes in a snapshot, as pieces (0.117.0): the pieces of the snapshot before
+    shared where the bytes are the same, so a long part's many versions are held at the
+    cost of what each changed, not a copy each.  ``bytes(pieces)`` is the bytes; two are
+    equal when their bytes are (shared pieces found the same objects, without joining)."""
+
+    __slots__ = ("pieces", "size")
+
+    #: A new piece's size: the stretch an edit changed is copied in pieces of this.
+    SIZE = 1 << 18
+
+    def __init__(self, pieces: tuple[bytes, ...]) -> None:
+        self.pieces = pieces
+        self.size = sum(len(piece) for piece in pieces)
+
+    @classmethod
+    def of(cls, data: bytes, before: "Pieces | None" = None) -> "Pieces":
+        """``data`` as pieces, sharing ``before``'s that are the same bytes at the same place
+        from the start, and from the end."""
+        size = cls.SIZE
+        if before is None or not before.pieces:
+            return cls(tuple(data[k:k + size] for k in range(0, len(data), size)) or (b"",))
+        view = memoryview(data)
+        old = before.pieces
+        head, at = 0, 0
+        while head < len(old) and at + len(old[head]) <= len(data) and view[at:at + len(old[head])] == old[head]:
+            at += len(old[head])
+            head += 1
+        if head == len(old) and at == len(data):
+            return before
+        tail, end = 0, len(data)
+        while tail < len(old) - head and end - len(old[-1 - tail]) >= at \
+                and view[end - len(old[-1 - tail]):end] == old[-1 - tail]:
+            end -= len(old[-1 - tail])
+            tail += 1
+        middle = tuple(data[k:min(k + size, end)] for k in range(at, end, size))
+        return cls(old[:head] + middle + (old[len(old) - tail:] if tail else ()))
+
+    def __bytes__(self) -> bytes:
+        return self.pieces[0] if len(self.pieces) == 1 else b"".join(self.pieces)
+
+    def __len__(self) -> int:
+        return self.size
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, Pieces):
+            if other is self or other.pieces is self.pieces:
+                return True
+            if other.size != self.size:
+                return False
+            if len(other.pieces) == len(self.pieces) and all(a is b or a == b for a, b in zip(self.pieces, other.pieces)):
+                return True
+            return bytes(self) == bytes(other)
+        if isinstance(other, (bytes, bytearray, memoryview)):
+            return self.size == len(other) and bytes(self) == other
+        return NotImplemented
+
+    __hash__ = None  # type: ignore[assignment]
+
+    def __repr__(self) -> str:
+        return f"Pieces({self.size} bytes in {len(self.pieces)})"
+
+
 @dataclass(frozen=True)
 class PackageSnapshot:
-    """What :meth:`OpcPackage.snapshot` captures: edited trees as bytes, raw parts by value."""
+    """What :meth:`OpcPackage.snapshot` captures: edited trees as bytes (0.117.0: as
+    :class:`Pieces`, ``bytes()`` of which is the bytes), raw parts by value."""
 
-    trees: dict[str, bytes]
+    trees: "dict[str, bytes | Pieces]"
     #: A part's bytes, or its compressed entry (:class:`~ooxml_common.zipparts.ZipPart`)
     #: when it is one read from the ZIP; ``None``: it did not exist.
     raw: "dict[str, bytes | ZipPart | None]"

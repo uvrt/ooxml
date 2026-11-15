@@ -109,6 +109,15 @@ with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS) as toolbox:
   changed, and a check of a range reads its facts there -- the same results, in tens of
   milliseconds. Requests and documents it does not model are checked as before
   (`docx_agent.rust.check` lists them). `DOCX_AGENT_RUST=0` in the environment turns it off.
+- **An edit costs what it changed** (0.1.115, ooxml-edit 0.117.0): its validation is found
+  from facts kept per block, again only where the bytes changed (`docx_agent.revalidate`,
+  the same problems as `Document.validate()`); each version is written out once and its
+  read copy opens from its parts, shared with the document's; a check never waits for the
+  lock an edit holds (it reads the version that edit commits). A body over 4 MB is edited
+  under its lock rather than on a draft. `DOCX_AGENT_INCREMENTAL=0` turns docx-agent's part
+  of it off (validation per change, read copies from parts, the kept parse, the draft limit);
+  `DOCX_AGENT_FULL_VALIDATE=1` runs the whole check beside it at every call and raises when
+  they differ.
 - **Saving refuses new validation problems**; only the application may allow them
   (`Toolbox(allow_new_problems=True)`). Check before save: every `check` carries
   `validation` (ooxml-edit 0.111.0, round 53) -- the problems the save would refuse as new,

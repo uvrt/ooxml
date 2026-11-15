@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import dataclasses
 import re
+import threading
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -111,7 +112,17 @@ class _Model:
         data = document.to_bytes()
         # Round 41: docx2svg's parse of these very bytes, where the caller has it (a worker's
         # check: the one its layout was made from, :func:`docx2svg.parsed_document`).
-        self.model = parsed[1] if parsed is not None and parsed[0] == data else parse_package(data)
+        if parsed is not None and parsed[0] == data:
+            self.model = parsed[1]
+        else:
+            # Lane G: the blocks of the document's last parse kept (docx2svg's KeptBlocks, the
+            # same model either way): a parse after an edit builds the blocks it changed.
+            kept = _kept_blocks(document)
+            if kept is None:
+                self.model = parse_package(data)
+            else:
+                with kept[1]:
+                    self.model = parse_package(data, kept=kept[0], segments=_segments(document, kept))
         self._paragraphs: dict[int, _model.Paragraph] = {}
         self._elements: dict[int, Element] = {}
         self._tables: dict[int, _model.Table] | None = None
@@ -433,6 +444,44 @@ def _table_style(element: Element) -> str | None:
         return None
     style = node.find(f"{_W}tblPr/{_W}tblStyle")
     return style.get(_W + "val") if style is not None else ""
+
+
+def _kept_blocks(document: "Document") -> "list | None":
+    """The document's own :class:`docx2svg.KeptBlocks`, the lock its parses take (one at a
+    time) and its last segments (:func:`_segments`); ``None`` for a read copy (of one version) and with the edit path per change
+    off (``DOCX_AGENT_INCREMENTAL=0``)."""
+    if document.__dict__.get("_live") is not None:
+        return None
+    from ..revalidate import enabled
+
+    if not enabled():
+        return None
+    found = document.__dict__.get("_effective_kept")
+    if found is None:
+        from docx2svg.parse.document import KeptBlocks
+
+        found = document.__dict__.setdefault("_effective_kept", [KeptBlocks(), threading.Lock(), {}])
+    return found
+
+
+def _segments(document: "Document", kept: list) -> list | None:
+    """docx2svg's segments of the main part as it is now (:func:`docx2svg.relayout.segments`),
+    read from the last ones (its ``previous`` scan, its ``known`` segments): only the stretch
+    an edit changed is read again.  ``None`` (the parse reads them) for a main part named
+    otherwise."""
+    from docx2svg.relayout import segments
+
+    package = document.package
+    main = package.document_part()
+    if main != "word/document.xml":
+        return None
+    xml = package.read(main) or b""
+    scanned: list = []
+    keep: dict = {}
+    found = segments(xml, kept[2].get("known"), keep, previous=kept[2].get("scan"), scanned=scanned)
+    kept[2]["known"] = keep
+    kept[2]["scan"] = scanned[0] if scanned else None
+    return found
 
 
 def seed_model(document: "Document", data: bytes, parsed: "_model.Document") -> None:

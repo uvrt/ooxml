@@ -5,6 +5,55 @@ docx-agent has not been released to PyPI. Each version that reaches `main` is ta
 snapshot commit; the development history before it is summarised here.
 [`ROADMAP.md`](ROADMAP.md) has the detail of every phase.
 
+## 0.1.115 -- unreleased
+
+- **Edits cost what they change, not the document's size.** The same results, field for
+  field and byte for byte; what changes is how long an edit takes on a long document and
+  what several writers on one document wait for.
+  - **Validation per change.** Every changing call's `validate`, `check`'s `validation` and
+    the save gate find the same problems as before (`Document.validate()`, which stays the
+    whole check), but from facts kept per top-level block of the body and per other part,
+    each found again only where its bytes changed (`docx_agent.revalidate`; its module
+    documentation says, rule by rule, how each is found). A version's problems are found
+    once, as it is committed, under the document's lock; the checks after an edit, which run
+    on the version's read copy, read them there without reading the copy's parts.
+    Anything the per-change path cannot read (a body not written as `w:` blocks, a part
+    that is not well formed, complex fields outside the blocks, a move range started twice
+    at the body's level) is checked whole, as before.
+  - **Read copies and versions share what did not change.** A version's read copy opens
+    from the version's parts -- the edited ones as the bytes its history already wrote them
+    out as, every other one shared with the document -- and its bytes are made only when
+    something asks for them (a worker's layout, a draft); before, every version was written
+    out, compressed and parsed again whole. With ooxml-edit 0.117.0 the history writes each
+    version out once (not once for its undo step, once for its commit and once more for its
+    checks) and keeps a long part's versions as pieces shared from one to the next.
+  - **Checks never wait for an edit's lock.** A check that comes while an edit holds the
+    document reads the version that edit commits (or a later one), waiting for the commit,
+    not for the lock (ooxml-edit 0.117.0).
+  - **What the profile showed next:** `word_edit_table`'s table as Markdown reads its
+    list counts with the lists listed once and its formatting from docx2svg's parse kept from
+    the last one (docx2svg's `KeptBlocks` and segments, the same model); a paragraph index
+    rebuilt in a fraction of the time; `check`'s `accept_loses_original` answered at once
+    when the version's body holds no deletion record; nothing written out to look for a
+    layout when none was made; and a document whose body is over 4 MB (about 600 pages) is
+    edited under its lock rather than on a draft, which copied the whole document.
+- **The Rust owner no longer keeps every version's bytes.** Each version's body summary it
+  kept held the one before (0.1.114), so a document's owner held the body of every version
+  it had followed: memory grew by the body's size with every edit (about 30 MB an edit on a
+  3,000-page report).
+- `DOCX_AGENT_INCREMENTAL=0` in the environment turns docx-agent's part of this off: the
+  whole check at every call, each version's bytes made at its commit and its read copy
+  parsed from them, the table's parse made whole, drafts at any size, as 0.1.114 did
+  (ooxml-edit's one serialization per call and shared pieces stay: the same bytes). `DOCX_AGENT_FULL_VALIDATE=1`
+  runs the whole check beside the per-change one at every call and raises when they differ
+  (docx-agent's own tests set it); `DOCX_AGENT_VALIDATE_STATS=<file>` adds each process's
+  count of per-change, served and whole validations to that file when it ends.
+- Tests: `tests/test_edit_per_change.py` runs made-up sequences (Markdown inserts, text set,
+  table rows and cells, fields updated, undo and redo, tracked edits, batches, several
+  writers) with the per-change path on and off and compares every result, the document's
+  bytes and validation after every step; and problems made by hand in a block, edited and
+  undone. Every test of the suite compares the per-change validation with the whole check.
+
 ## 0.1.114 -- unreleased
 
 - **A check of some ranges is answered by the Rust core** (needs ooxml-core 0.2.0, now a

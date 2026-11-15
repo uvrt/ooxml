@@ -7,6 +7,10 @@ import os
 
 import pytest
 
+# 0.117.0 (lane G): every kept serialization of an edited part is compared with the tree
+# written out again, at every use (ooxml_edit.opc.OpcPackage.keep_serialized).
+os.environ.setdefault("OOXML_EDIT_VERIFY_SERIALIZED", "1")
+
 
 def pytest_addoption(parser):
     parser.addoption("--run-slow", action="store_true", default=False,

@@ -1541,7 +1541,15 @@ class Toolbox:
                     # Round 45 (stage 2): a changing call's checks run on the version it made
                     # once its locks are let go (After), where its format copies documents.
                     after = None if reads_only else After()
-                    with locking(doc_ids + reading) as locked:
+                    with locking(doc_ids + reading) as locked, ExitStack() as serializing:
+                        if not reads_only:
+                            # 0.117.0: the call's change, undo step, commit and readers share
+                            # one serialization of each version it leaves (OpcPackage.
+                            # serializing), the documents held -- nothing else changes them.
+                            for entry in locked:
+                                scope = getattr(getattr(entry.document, "package", None), "serializing", None)
+                                if scope is not None and entry.pinned is None:
+                                    serializing.enter_context(scope())
                         if holding is not None:
                             holding.set()
                         entries = {entry.doc_id: entry for entry in locked}
@@ -1741,6 +1749,11 @@ class Toolbox:
                                       session)
             if admitted and self.block_edits == "auto" and editing.beside(entry) == 0:
                 admitted = self._alone(hook, tool, clean, roles)
+            # 0.117.0: a format may find a draft of this document not worth its copy
+            # (``BlockEdits.worth``: a long one): the call runs under the lock.
+            worth = getattr(hook, "worth", None)
+            if admitted and self.block_edits == "auto" and worth is not None and not worth(entry.document):
+                admitted = False
         except Exception:  # noqa: BLE001 -- not admitted: the call runs as before
             logger.exception("the %s format's admits failed", entry.kind)
             return None
