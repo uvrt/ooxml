@@ -212,6 +212,24 @@ def seen_before(document: Any, data: bytes | None = None) -> Any:
     return summary_for(document, key, conversion.layout) if conversion is not None else None
 
 
+def laid_before(document: Any, version: int | None = None) -> Any:
+    """0.1.117: where a fields update read the layout of the document's current version (or
+    ``version``) from its Rust owner (:mod:`docx_agent.rust.fields`), what docx-agent's own
+    update would have kept of it for the reflow: its page count (always more than
+    :data:`REFLOW_PAGES`: the reflow says :data:`STALE`); else ``None``."""
+    from ..rust.fields import laid_count
+
+    count = laid_count(document, version)
+    return _Laid(count) if count is not None else None
+
+
+class _Laid:
+    """A layout's page count, as :func:`laid_before` knows it."""
+
+    def __init__(self, count: int) -> None:
+        self.count = count
+
+
 def state_bytes(call: Any) -> bytes | None:
     """The bytes of the call's document as it is now, when the session has them already
     (round 45): its version's snapshot (``DocumentEntry.snapshot``, kept when the change
@@ -654,7 +672,7 @@ def wrap(handler: Callable[..., Any], *, mutates: bool, track: bool = True) -> C
         try:
             if mutates and call.entry is not None and call.changing:
                 if not any(isinstance(t, Before) for t in call.context.touched.get(call.entry.doc_id, [])):
-                    call.touch(Before(seen_before(call.document, state_bytes(call))))
+                    call.touch(Before(seen_before(call.document, state_bytes(call)) or laid_before(call.document)))
                 if track:
                     with tracked(call, call.entry):
                         returned = handler(call, **arguments)

@@ -51,12 +51,19 @@ STATS: Counter = Counter()
 
 def _stats_at_exit() -> None:
     """``DOCX_AGENT_RUST_STATS`` names a file: each process adds its :data:`STATS` to it, one
-    JSON line, when it ends (a test run's or a measurement's count of what fell back)."""
+    JSON line, when it ends (a test run's or a measurement's count of what fell back); with
+    the fields update's (:data:`.fields.STATS`) under ``"fields"``, where it ran."""
+    import sys
+
     path = os.environ.get("DOCX_AGENT_RUST_STATS")
-    if path and STATS:
+    stats: dict[str, Any] = dict(STATS)
+    fields = sys.modules.get("docx_agent.rust.fields")
+    if fields is not None and fields.STATS:
+        stats["fields"] = dict(fields.STATS)
+    if path and stats:
         try:
             with open(path, "a", encoding="utf-8") as out:
-                out.write(json.dumps(dict(STATS)) + "\n")
+                out.write(json.dumps(stats) + "\n")
         except OSError:
             pass
 
@@ -403,7 +410,26 @@ def committed(live: Any) -> None:
     del doc.commits[:-64]
 
 
-def _advance(c: Any, live: Any, doc: RustDoc, version: int) -> None:
+def sync_state(live: Any, doc: RustDoc) -> int | None:
+    """0.1.117: the live document's state now -- within an edit, a fields update between
+    its passes (:mod:`.fields`) -- handed to its owner where it changed since the state the
+    owner has; the owner's sequence number of it (``None``: the owner no longer follows).
+    It is no version of the document's: checks read the versions committed (``seqs``), and
+    the edit's commit takes the change from this state on.  Anything the mirror cannot
+    follow makes the owner stale (made again at the next check) and is raised."""
+    c = core()
+    if c is None or doc.stale is not None:
+        return None
+    try:
+        _advance(c, live, doc, None)
+    except Exception as why:
+        doc.stale = f"{type(why).__name__}: {why}"[:200]
+        STATS[f"stale: {doc.stale[:70]}"] += 1
+        raise
+    return doc.seq
+
+
+def _advance(c: Any, live: Any, doc: RustDoc, version: int | None) -> None:
     from ..tools.touched import _rescan, _scan
     from .exporter import Unsupported
 
@@ -427,6 +453,14 @@ def _advance(c: Any, live: Any, doc: RustDoc, version: int) -> None:
         new = _scan(data)
     if new is None or new.spans is None:
         raise Unsupported("the body's blocks are not read from its bytes")
+    if version is None and new is old and not changed:
+        return                  # (an edit's state, :func:`sync_state`: the owner's already)
+    laid = doc.__dict__.pop("fields_laid", None) if version is not None else None
+    if laid is not None and new is old and not changed and laid[0] == doc.seq:
+        # The version a fields update read the layout of last (:mod:`.fields`).
+        from .fields import note_laid
+
+        note_laid(live, version, laid[1])
     if new is old:
         before, after = len(old.spans), 0
     elif new.kept is not None and new.kept[2] is old:
@@ -482,8 +516,10 @@ def _advance(c: Any, live: Any, doc: RustDoc, version: int) -> None:
         text, stats = mirror.splice(lo, hi_old, elements, doc.seq, extra, same)
     _check_keys(mirror)
     c.commit(doc.key, text)
-    doc.version = version
     doc.summary = new
+    if version is None:
+        return                  # (an edit's state, :func:`sync_state`: no version of its own)
+    doc.version = version
     doc.seqs[version] = doc.seq
     while len(doc.seqs) > 64:
         doc.seqs.popitem(last=False)

@@ -3,6 +3,17 @@
 ooxml-core is the Rust core of the ooxml packages (`crates/`), as the Python module
 `ooxml_core`. Its version is the `crates/python` crate's.
 
+## 0.4.0 -- unreleased
+
+- **`ooxml_core.field_pages(doc, version, keys, info=False)`**: what a fields update reads
+  of one laid-out state of a document opened with `open_document`, at exactly that version
+  (a commit's sequence number; the interpreter lock let go throughout): the first page
+  (1-based, blank pages counted) each paragraph or table key is drawn on, `null` for one
+  not drawn, the page count, and with `info` every page's `[number, section, story kind
+  (0 default, 1 first, 2 even), blank]` (`ooxml_word::fieldpages`). `None` where that
+  version's snapshot is no longer kept. docx-agent 0.1.117's `word_fields` update reads
+  its pages here.
+
 ## 0.3.0 -- unreleased
 
 - **A snapshot no longer the latest lets go of what a check made of it.** The owner tells

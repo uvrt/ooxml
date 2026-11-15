@@ -5,6 +5,34 @@ docx-agent has not been released to PyPI. Each version that reaches `main` is ta
 snapshot commit; the development history before it is summarised here.
 [`ROADMAP.md`](ROADMAP.md) has the detail of every phase.
 
+## 0.1.117 -- unreleased
+
+- **`word_fields` update no longer lays the document out in Python.** The same results --
+  every field's result, the contents' entries, the dirty flags, the saved bytes and the
+  call's result, `checks.reflow` included -- but each round of the update (it lays out
+  again until the page numbers hold) reads its pages from the document's Rust owner, the
+  one a check of a range reads: the document as the round left it is handed to the owner
+  as a change set and its pages read back (ooxml-core 0.4.0's `field_pages`). A document
+  with no owner yet gets one opened by the update, as a check of a range opens it. On the
+  made-up reports measured (a contents of 381 / 1,270 / 3,873 entries, "page X of Y"), one
+  update after a heading was added took 1.7-3.6 s instead of 37-62 s at 295 pages,
+  7.8-18.5 s instead of 145-239 s at about 1,000 pages, and 23-55 s at about 3,000 pages,
+  where docx-agent's own update had not ended after 18 minutes. What is left is the
+  update's own Python: the contents rebuilt, and each rebuilt entry handed to the owner.
+  - What is updated as before, counted (`docx_agent.rust.fields.STATS`): a document of 20
+    pages or fewer (the next change's reflow compares the layout the update keeps),
+    `SECTIONPAGES` and `STYLEREF` fields, a page number format or switch other than
+    decimal, a document with more than one section, and a document the owner does not
+    model (notes, drawings, captions' `SEQ`, ...: `docx_agent.rust.check`).
+  - `DOCX_AGENT_RUST_FIELDS=0` turns it off (`DOCX_AGENT_RUST=0` turns every Rust path
+    off).
+- **The update's own passes cost less, either way:** a bookmark's markers are read once
+  per round rather than once per cross-reference, the fields of a round are looked up at
+  once rather than each against every other, a contents' entries are not rebuilt in a
+  later round that would write the very same entries, list numbers are counted only where
+  a listed heading is numbered, and a section's page number format is read once per round.
+- Needs ooxml-core 0.4.0.
+
 ## 0.1.116 -- unreleased
 
 - **The rest of an edit's whole-document passes cost what the edit changed.** The same

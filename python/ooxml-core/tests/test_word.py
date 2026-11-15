@@ -180,3 +180,35 @@ def test_registry(report):
     assert ("d1", "docx") not in ooxml_core.documents()
     with pytest.raises(Exception):
         ooxml_core.call("d1", 0, json.dumps({"blocks": []}))
+
+
+def test_field_pages(report):
+    """field_pages: each key's first page and every page's number, section, story kind and
+    blankness, of exactly one version (a fields update's reading); docx2svg's pages."""
+    ooxml_core = pytest.importorskip("ooxml_core")
+    pytest.importorskip("docx_agent")
+    if not hasattr(ooxml_core, "field_pages"):
+        pytest.skip("needs ooxml-core 0.4.0 (field_pages)")
+    from docx_agent import Document
+    from mirror import Mirror
+
+    document = Document.open(report.read_bytes())
+    mirror = Mirror(document)
+    text, _ = mirror.export()
+    ooxml_core.open_document("fp1", "docx", text)
+    try:
+        keys = [u.key for u in mirror.units]
+        answer = json.loads(ooxml_core.field_pages("fp1", 0, keys + ["p:00000000"], True))
+        layout = document.layout()
+        assert answer["pages"] == len(layout.pages) == len(answer["info"])
+        for row, page in zip(answer["info"], layout.pages):
+            assert row == [page.info.number, page.info.section, ("default", "first", "even").index(page.info.story),
+                           page.info.blank]
+        expected = []
+        for key in keys:
+            placed = layout.where(key)
+            expected.append(placed[0].page if placed else None)
+        assert answer["first"] == expected + [None]
+        assert "info" not in json.loads(ooxml_core.field_pages("fp1", 0, keys[:1]))
+    finally:
+        ooxml_core.close_document("fp1")
