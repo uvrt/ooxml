@@ -2088,7 +2088,7 @@ def _reader_class(kind: type) -> type:
             def to_bytes(self: Any) -> bytes:
                 frozen = self.__dict__.get("_frozen")
                 if frozen is not None and frozen[0] == self.history.version and frozen[1] == self._state:
-                    return frozen[2]
+                    return frozen[2]() if isinstance(frozen[2], _Later) else frozen[2]
                 return kind.to_bytes(self)
 
             namespace: dict = {name: _shared_attribute(name) for name in _SHARED_LAYOUT}
@@ -2129,6 +2129,11 @@ def read_copy(document: "Document"):
     document's layouts are, from its last one, and the document's next layout starts from
     the copy's).  Never edited: its tools only read."""
     _keeper(document)
+    # Lane G: this version's validation problems, found where it changed, for the checks
+    # its read copy runs (docx_agent.revalidate).
+    from . import revalidate
+
+    revalidate.committed(document)
     # Lane F: this version to the document's Rust owner, where it has one.
     if document.__dict__.get("_rust_doc") is not None:
         from .rust.check import committed
@@ -2148,9 +2153,19 @@ def read_copy(document: "Document"):
     engine = document.__dict__.pop("_checks_engine", None)
     if document.converter is engine:
         document.converter = None
+    # Lane G: what this version's bytes are made from, kept (its parts as they are now, the
+    # edited ones as the bytes the history wrote them out as, every other one shared): the
+    # copy opens from them, and the bytes are made only when something asks for them.
+    view = _package_view(document.package) if _views_on() else None
 
-    def make(data: bytes) -> "Document":
-        copy = _reader_class(kind).open(data, stamping=document.stamping)
+    def make(data: Any) -> "Document":
+        if view is not None and not isinstance(data, (bytes, bytearray)):
+            committed = data
+            copy = _reader_class(kind)(_reader_package(view), stamping=document.stamping)
+            _template_warning(copy)
+            data = _Later(committed)
+        else:
+            copy = _reader_class(kind).open(data, stamping=document.stamping)
         copy.__dict__["_live"] = document
         copy.history.continue_from(version, last)
         copy._ledger = ledger
@@ -2186,7 +2201,68 @@ def read_copy(document: "Document"):
         return copy
 
     make.draft = draft  # type: ignore[attr-defined]
+    if view is not None:
+        make.lazy = True  # type: ignore[attr-defined]
+        make.data_later = view.to_bytes  # type: ignore[attr-defined]
     return make
+
+
+def _views_on() -> bool:
+    from .revalidate import enabled
+
+    return enabled()
+
+
+def _package_view(package: Any) -> Any:
+    """``package`` as it is now, for a read copy (lane G): its zip entries and its parts in
+    the order its bytes would hold them, an edited part as its tree written out (the
+    history's own serialization of this version: no copy), every other part shared, as read.
+    Its :meth:`~ooxml_edit.opc.OpcPackage.to_bytes` writes what ``package``'s writes now."""
+    from ooxml_common.opc import normalize_part_path
+    from ooxml_common.zipparts import PartStore
+
+    entries = []
+    parts = PartStore()
+    for info in package._entries:
+        path = normalize_part_path(info.filename)
+        if path not in package._parts or path in parts:
+            continue
+        entries.append(info)
+        parts[path] = package.read(path) if path in package.dirty_parts else package._parts.stored(path)
+    return type(package)(entries, parts)
+
+
+def _reader_package(view: Any) -> Any:
+    """A package of its own over ``view``'s parts, for one read copy (its trees its own)."""
+    return type(view)(list(view._entries), view._parts.copy())
+
+
+def _template_warning(copy: Any) -> None:
+    """What :meth:`Document.open` says of a template, said of a read copy opened from a
+    version's parts as it is said of one opened from its bytes."""
+    package = copy.package
+    package.document_part()
+    if package.kind in ("dotx", "dotm"):
+        import warnings
+
+        from .edit.authoring import TemplateOpened
+
+        warnings.warn(TemplateOpened(
+            f"this file is a template (.{package.kind}): editing it edits the template. To make a document "
+            f"from it use Document.new(template=...); save('x.docx') writes a document either way"), stacklevel=3)
+
+
+class _Later:
+    """A committed version's bytes, made when first asked (:class:`ooxml_edit.tools.session.
+    Committed`'s ``data``): what a read copy's ``to_bytes`` gives while it is that version."""
+
+    __slots__ = ("committed",)
+
+    def __init__(self, committed: Any) -> None:
+        self.committed = committed
+
+    def __call__(self) -> bytes:
+        return self.committed.data
 
 
 def adopt(document: "Document", copy: "Document") -> None:

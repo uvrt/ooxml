@@ -335,7 +335,12 @@ def accept_loses_original(document: Any) -> list[dict[str, Any]]:
     ``fix`` the ``word_changes`` reject that keeps them.  ``[]`` at once where the body holds
     no deletion record of this session's."""
     from ..edit.tables import _cells
+    from ..revalidate import holds
 
+    if holds(document, "deletions") is False:
+        # Lane G: the version's body holds no deletion record (as its validation found it
+        # when it was committed): nothing to look for, and the body not read for it.
+        return []
     part = document.package.document_part()
     originals = Originals(document)
     root = document.package.tree(part)

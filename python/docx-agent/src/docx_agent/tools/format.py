@@ -154,7 +154,12 @@ def detect(data: bytes, name: str) -> bool:
 
 
 def problems(document: Document) -> list[Any]:
-    return list(document.validate())
+    """The format's ``problems``: :meth:`Document.validate`'s, found where the document
+    changed (:mod:`docx_agent.revalidate`; ``DOCX_AGENT_FULL_VALIDATE=1``: compared with the
+    whole check at every call)."""
+    from ..revalidate import problems as found
+
+    return list(found(document))
 
 
 def summary(document: Document) -> dict[str, Any]:

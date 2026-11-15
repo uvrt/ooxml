@@ -95,6 +95,11 @@ def valid_long_hex(raw: str | None) -> bool:
     return raw is not None and _HEX.fullmatch(raw) is not None and 0 < int(raw, 16) < PARA_ID_LIMIT
 
 
+#: :func:`valid_long_hex` as one pattern (lane G, for the loops over every paragraph): one to
+#: eight hex digits, not all zeros, below 0x80000000 (eight digits: the first 0-7).
+_VALID_LONG_HEX = re.compile(r"(?!0+\Z)(?:[0-9A-Fa-f]{1,7}|[0-7][0-9A-Fa-f]{7})")
+
+
 def live_elements(root: Element, tags: frozenset[str]) -> list[Element]:
     """Elements with one of ``tags`` in document order, skipping ``mc:Fallback`` subtrees: a
     fallback repeats its choice's content (paraIds included, which the specification allows)
@@ -157,48 +162,64 @@ class PartIndex:
         self._by_element: dict[int, ParagraphEntry | TableEntry] = {}
 
         everything = live_elements(root, frozenset({W_P, W_TR, W_TBL}))
-        seen: dict[str, int] = {}
+        # Lane G: one pass over the elements' tags and paraIds (read once each), the repeats
+        # counted only where some paraId is written twice -- the same entries as reading each
+        # element's attributes again in every loop, a fraction of the time on a long body.
+        tags = [node.tag for node in everything]
+        raws = [None if tag == W_TBL else node.get(PARA_ID) for node, tag in zip(everything, tags)]
+        keys = [raw.upper() for raw in raws if raw is not None]
+        repeats: list[int] | None = None
+        if len(set(keys)) != len(keys):
+            seen: dict[str, int] = {}
+            repeats = []
+            for raw in raws:
+                if raw is None:
+                    repeats.append(0)
+                    continue
+                key = raw.upper()
+                count = seen.get(key, 0)
+                repeats.append(count)
+                seen[key] = count + 1
         repeat_of: dict[int, int] = {}
-        for node in everything:
-            if node.tag == W_TBL:
-                continue
-            raw = node.get(PARA_ID)
-            if raw is None:
-                continue
-            key = raw.upper()
-            repeat_of[id(node)] = seen.get(key, 0)
-            seen[key] = seen.get(key, 0) + 1
+        if repeats is not None:
+            repeat_of = {id(node): repeat for node, raw, repeat in zip(everything, raws, repeats) if raw is not None}
+        ok = _VALID_LONG_HEX.fullmatch
 
+        paragraphs = self.paragraphs
+        by_id = self.by_id
+        by_element = self._by_element
+        entry_class = ParagraphEntry
         index = 0
-        for node in everything:
-            if node.tag != W_P:
+        missing_prefix = f"p@{story}/"
+        id_prefix = f"{prefix}p:"
+        for k, node in enumerate(everything):
+            if tags[k] != W_P:
                 continue
-            raw = node.get(PARA_ID)
+            raw = raws[k]
             if raw is None:
-                entry = ParagraphEntry(node, f"p@{story}/{index}", None, "missing", index)
+                entry = entry_class(node, f"{missing_prefix}{index}", None, "missing", index)
             else:
-                repeat = repeat_of[id(node)]
+                repeat = repeats[k] if repeats is not None else 0
                 if repeat:
-                    entry = ParagraphEntry(node, f"{prefix}p:{raw}#{repeat}", raw, "repeat", index)
+                    entry = entry_class(node, f"{id_prefix}{raw}#{repeat}", raw, "repeat", index)
                 else:
-                    state = "ok" if valid_long_hex(raw) else "invalid"
-                    entry = ParagraphEntry(node, f"{prefix}p:{raw}", raw, state, index)
-            self.paragraphs.append(entry)
-            self.by_id[entry.id] = entry
-            self._by_element[id(node)] = entry
+                    entry = entry_class(node, id_prefix + raw, raw, "ok" if ok(raw) is not None else "invalid", index)
+            paragraphs.append(entry)
+            by_id[entry.id] = entry
+            by_element[id(node)] = entry
             index += 1
 
         self.tables: list[TableEntry] = []
-        for number, node in enumerate(n for n in everything if n.tag == W_TBL):
+        for number, node in enumerate(n for n, tag in zip(everything, tags) if tag == W_TBL):
             rows = [row for row in live_elements(node, frozenset({W_TR})) if _owner_table(row) is node]
             first = rows[0].get(PARA_ID) if rows else None
-            unique = first is not None and valid_long_hex(first) and repeat_of.get(id(rows[0])) == 0
+            unique = first is not None and valid_long_hex(first) and repeat_of.get(id(rows[0]), 0) == 0
             table_id = f"{prefix}t:{first}" if unique else f"t@{story}/{number}"
             entry_t = TableEntry(node, table_id)
             for k, row in enumerate(rows):
                 raw = row.get(PARA_ID)
-                ok = raw is not None and valid_long_hex(raw) and repeat_of.get(id(row)) == 0
-                entry_t.rows.append((row, f"{prefix}tr:{raw}" if ok else f"{table_id}/r{k}"))
+                good = raw is not None and valid_long_hex(raw) and repeat_of.get(id(row), 0) == 0
+                entry_t.rows.append((row, f"{prefix}tr:{raw}" if good else f"{table_id}/r{k}"))
             self.tables.append(entry_t)
             self.by_id[table_id] = entry_t
             self._by_element[id(node)] = entry_t

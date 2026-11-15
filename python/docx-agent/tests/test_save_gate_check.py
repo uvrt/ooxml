@@ -124,14 +124,17 @@ def test_validate_the_calls_checks_and_validation_agree(box):
 
 def test_the_problems_are_found_once_per_version(box, monkeypatch):
     session, outcomes, _ = _shelf(box)
+    from docx_agent import revalidate
+
     found = []
-    real = Document.validate
+    real = revalidate._find
 
-    def counted(self, *args, **kwargs):
+    def counted(*args, **kwargs):
         found.append(1)
-        return real(self, *args, **kwargs)
+        return real(*args, **kwargs)
 
-    monkeypatch.setattr(Document, "validate", counted)
+    # Lane G: the problems are found per change (docx_agent.revalidate._find), once a version.
+    monkeypatch.setattr(revalidate, "_find", counted)
     _ok(box, session, "name_styles", doc="d1", paragraphs=",".join(outcomes))
     assert len(found) == 1                                  # the call's checks
     for asked in ([], ["validate"], ["layout"]):

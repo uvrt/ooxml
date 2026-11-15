@@ -51,7 +51,7 @@ from ..edit import ids as _ids
 from ..edit import text as _text
 from ..edit.annotations import control_kind, drawing_kind
 from ..edit.document import table_alt_text
-from ..edit.numbering import membership
+from ..edit.numbering import membership, reading
 from ..edit.table_format import read_look
 from ..oxml.xml import Element
 from . import model as m
@@ -373,7 +373,9 @@ class Reader:
         try:
             self._counting = True
             try:
-                self._records(groups[:place], part)
+                # Lane G: the lists and styles listed once for the count (a read of them).
+                with reading(self.document):
+                    self._records(groups[:place], part)
             finally:
                 self._counting = False
             records = self._table_with(table, part)

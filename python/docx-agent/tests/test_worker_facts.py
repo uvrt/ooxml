@@ -382,9 +382,9 @@ def test_the_facts_read_the_parse_the_layout_was_made_from(made, monkeypatch):
     parses = []
     real = effective.parse_package
 
-    def counted(data):
+    def counted(data, **kept):          # (lane G: the blocks kept from the last parse)
         parses.append(len(data))
-        return real(data)
+        return real(data, **kept)
 
     monkeypatch.setattr(effective, "parse_package", counted)
     with _toolbox(workers=0) as box:

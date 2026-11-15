@@ -703,7 +703,10 @@ def test_save_refuses_a_new_validation_problem(box, session, monkeypatch):
     d = open_doc(session)
     from docx_agent.validate import Problem
 
-    monkeypatch.setattr(Document, "validate", lambda self, target=None: [Problem("x", "word/document.xml", "bad")])
+    from docx_agent import revalidate
+
+    # Lane G: the tools find the problems per change (docx_agent.revalidate).
+    monkeypatch.setattr(revalidate, "problems", lambda document: [Problem("x", "word/document.xml", "bad")])
     error = fails(box, session, "save_document", "refused", doc=d, name="a.docx", format="docx")
     assert error.valid_options and session.take_outputs() == []
 

@@ -5,6 +5,14 @@ from pathlib import Path
 
 import pytest
 
+# Lane G: every validation found per change (docx_agent.revalidate) is compared with the whole
+# check, at every call of every test (a difference fails it: revalidate.Mismatch).
+os.environ.setdefault("DOCX_AGENT_FULL_VALIDATE", "1")
+
+# 0.117.0 (lane G): every kept serialization of an edited part is compared with the tree
+# written out again, at every use (ooxml_edit.opc.OpcPackage.keep_serialized).
+os.environ.setdefault("OOXML_EDIT_VERIFY_SERIALIZED", "1")
+
 FIXTURE_DIR = Path(__file__).parent / "fixtures"
 #: E6's new document, written where the corpus is read from (``new/document``): every gate
 #: and every phase's edit set holds for a document docx-agent made, as for one it opened.

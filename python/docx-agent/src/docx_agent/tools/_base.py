@@ -198,6 +198,10 @@ def seen_before(document: Any, data: bytes | None = None) -> Any:
     document's current state when it was laid out already -- here, or (round 38) in the
     worker that made a check's facts -- else ``None``.  ``data``: the state's bytes, when
     the caller has them (:func:`state_bytes`)."""
+    if not getattr(document, "_layout_summaries", None) and not getattr(document, "_layouts", None):
+        # Lane G: nothing laid out for the document (its checks answered elsewhere): no
+        # layout of its current state either, without writing its bytes out to look.
+        return None
     options = layout_options(document, {})
     data = document.to_bytes() if data is None else data
     key = layout_key(data, options)
@@ -217,7 +221,8 @@ def state_bytes(call: Any) -> bytes | None:
     kept = getattr(entry, "_snapshot", None)
     if kept is None or kept[0] != entry.version or entry.doc_id in call.context.changed_at:
         return None
-    return kept[1]
+    # (0.117.0: a committed version's bytes are made when asked; not made here for this.)
+    return kept[1] if isinstance(kept[1], (bytes, bytearray)) else None
 
 
 def cached_layout(document: Any, *, fetch: bool = True) -> Any:
