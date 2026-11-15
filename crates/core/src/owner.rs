@@ -25,6 +25,9 @@ pub trait Format: Send + 'static {
     fn apply(&mut self, commits: Vec<Self::Commit>) -> Self::Stat;
     fn snapshot(&self) -> Self::Snap;
     fn snap_version(snap: &Self::Snap) -> u64;
+    /// Lane H1: a snapshot that is no longer the latest (another was published): what a
+    /// reader made of it to read it faster may go (made again if it is read).
+    fn retire(_snap: &Self::Snap) {}
     /// Lane F: whether each commit is laid out and published on its own (every version
     /// read exactly: `Owner::wait_exact`) rather than coalesced with those that came with it.
     fn per_commit(&self) -> bool {
@@ -185,7 +188,8 @@ fn run<F: Format>(mut state: F, rx: Receiver<Msg>, shared: Arc<Shared<F>>) {
                             kept.pop_front();
                         }
                     }
-                    *shared.snap.lock().unwrap() = snap;
+                    let previous = std::mem::replace(&mut *shared.snap.lock().unwrap(), snap);
+                    F::retire(&previous);
                     shared.cv.notify_all();
                     let publish_ms = ms(tpub);
                     let waited = oldest.map_or(0.0, |o| o.elapsed().as_secs_f64() * 1000.0);

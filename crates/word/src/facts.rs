@@ -367,9 +367,9 @@ struct F<'a> {
     /// `CAP`, `EXTENT_PAGES`, `BREAKS_LISTED`, `TRIALS` as the request says them.
     caps: (usize, usize, usize, usize),
     /// Top-level key -> item.
-    items: &'a HashMap<String, usize>,
+    items: std::sync::Arc<HashMap<String, usize>>,
     /// Any paragraph key -> (item, paragraph in it).
-    paras: &'a HashMap<String, (usize, usize)>,
+    paras: std::sync::Arc<HashMap<String, (usize, usize)>>,
 }
 
 struct Ext {
