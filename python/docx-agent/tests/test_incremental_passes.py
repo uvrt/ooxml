@@ -56,9 +56,9 @@ def _sequence(session, doc):
     ]
 
 
-def _run(data: bytes, per_change: bool, monkeypatch) -> tuple[list, dict]:
+def _run(data: bytes, per_change: bool, monkeypatch, oracle: bool = True) -> tuple[list, dict]:
     monkeypatch.setenv("DOCX_AGENT_INCREMENTAL", "1" if per_change else "0")
-    monkeypatch.setenv("DOCX_AGENT_FULL_VALIDATE", "1" if per_change else "0")
+    monkeypatch.setenv("DOCX_AGENT_FULL_VALIDATE", "1" if per_change and oracle else "0")
     incremental.STATS.clear()
     out = []
     limits = Limits(render_timeout=600, layout_timeout=600, batch_timeout=900)
@@ -78,8 +78,9 @@ def _run(data: bytes, per_change: bool, monkeypatch) -> tuple[list, dict]:
     return out, dict(incremental.STATS)
 
 
-def test_passes_per_change_give_what_the_whole_passes_give(report, monkeypatch):
-    mine, stats = _run(report, True, monkeypatch)
+@pytest.mark.parametrize("oracle", [True, False], ids=["compared", "alone"])
+def test_passes_per_change_give_what_the_whole_passes_give(report, monkeypatch, oracle):
+    mine, stats = _run(report, True, monkeypatch, oracle)
     theirs, _ = _run(report, False, monkeypatch)
     assert len(mine) == len(theirs)
     for (tool, arguments, a, data_a, ids_a), (_, _, b, data_b, ids_b) in zip(mine, theirs):
@@ -89,5 +90,5 @@ def test_passes_per_change_give_what_the_whole_passes_give(report, monkeypatch):
         assert ids_a == ids_b, (tool, arguments)
     # each pass was made per change where it could be
     for name in ("ids note: incremental", "touched ids: incremental", "body index: per change",
-                 "restore: per block"):
+                 "restore: per block", *(() if oracle else ("used ids: pool",))):
         assert stats.get(name, 0) >= 1, (name, stats)
