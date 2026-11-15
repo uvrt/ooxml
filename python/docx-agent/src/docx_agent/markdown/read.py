@@ -182,6 +182,35 @@ class Marker:
 # -- the reader ------------------------------------------------------------------------------
 
 
+class _Before:
+    """The groups before a table :meth:`Reader.block` reads (0.1.118), made when asked
+    (:meth:`made`: as :meth:`Reader._groups` makes them, up to the table); made now, only
+    what reading the table takes from them: the paragraphs whose marks are removed just
+    before it that join it (``Reader._into``), as ``_groups`` finds them."""
+
+    def __init__(self, reader: "Reader", items: list, at: int, table: Element) -> None:
+        self.reader, self.items, self.at, self.table = reader, items, at, table
+        pending: list = []
+        for kind, value in reversed(items[:at]):
+            if kind == "tbl":
+                break
+            if kind == "p":
+                if reader._mark_removed(value) is None:
+                    break
+                pending.append(value)
+        pending.reverse()
+        if pending and reader.view == "current":
+            cut = max((k for k, p in enumerate(pending) if p.find(f"{_W}pPr/{_W}sectPr") is not None),
+                      default=-1)
+            if pending[cut + 1:]:
+                reader._into[table] = pending[cut + 1:]
+
+    def made(self) -> list:
+        groups = self.reader._groups(self.items[:self.at + 1])
+        assert groups and groups[-1] == ("tbl", self.table)
+        return groups[:-1]
+
+
 class Reader:
     """One reading of a document in one view; caches what every paragraph asks."""
 
@@ -378,15 +407,26 @@ class Reader:
             node = node.getparent()
         if node is None or table is None:
             return None
-        groups = self._groups(self._items(container, part))
-        place = next((k for k, (kind, value) in enumerate(groups) if kind == "tbl" and value is table), None)
-        if place is None:
-            return None
         # The part's list counts from the story's start, as story() counts them, and as
         # they were after: a reader that reads the story later counts it from the start.
         from ..revalidate import enabled, full_check_on
 
         fast = enabled() and not whole
+        items = self._items(container, part)
+        if fast:
+            # 0.1.118: the groups before the table made only when its reading counts them;
+            # what the table's reading takes from the paragraphs just before it (_into) read
+            # from those alone.
+            at = next((k for k, (kind, value) in enumerate(items) if kind == "tbl" and value is table), None)
+            if at is None:
+                return None
+            groups = _Before(self, items, at, table)
+            place = None
+        else:
+            groups = self._groups(items)
+            place = next((k for k, (kind, value) in enumerate(groups) if kind == "tbl" and value is table), None)
+            if place is None:
+                return None
         before = self._counters.pop(part, None)
         try:
             if fast:
@@ -394,7 +434,7 @@ class Reader:
                 # item of the part (:meth:`number`) -- the counts it reads are the same --
                 # and not at all when it numbers none; the table's own formatting is read
                 # from a model of it alone where that is the same (``effective.table_model``).
-                self._deferred = (part, groups[:place])
+                self._deferred = (part, groups)
                 try:
                     _effective.table_model(self.document, table)
                     records = self._table_with(table, part)
@@ -424,9 +464,11 @@ class Reader:
             return None
         return records
 
-    def _count_before(self, part: str, groups: list) -> None:
+    def _count_before(self, part: str, groups: "list | _Before") -> None:
         """The list items of ``groups`` (the blocks before a table :meth:`block` reads)
         counted, no record made."""
+        if isinstance(groups, _Before):
+            groups = groups.made()
         self._counting = True
         try:
             # Lane G: the lists and styles listed once for the count (a read of them).

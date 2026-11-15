@@ -3,6 +3,17 @@
 ooxml-core is the Rust core of the ooxml packages (`crates/`), as the Python module
 `ooxml_core`. Its version is the `crates/python` crate's.
 
+## 0.5.0 -- unreleased
+
+- **`ooxml_core.opcodes(a, b, width)`**: Python's
+  `difflib.SequenceMatcher(None, a, b, autojunk=False).get_opcodes()` over two sequences
+  of `width`-byte keys given joined, ported step for step (`ooxml_core::seqmatch`: the same
+  longest matches in the same order, joined the same way) -- the same opcodes, in
+  milliseconds for 30,000 keys where difflib takes a tenth of a second or more; the
+  interpreter lock let go. docx-agent 0.1.118 compares a version's blocks with the
+  version before here (the touched heading sections of a call's result). Tested against
+  difflib on random sequences with many repeated keys.
+
 ## 0.4.0 -- unreleased
 
 - **`ooxml_core.field_pages(doc, version, keys, info=False)`**: what a fields update reads

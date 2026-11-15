@@ -433,7 +433,7 @@ def _scan(data: bytes) -> tuple[list, tuple[int, int], bytes] | None:
 def _body_facts(state: State, package: Any, main: str, root: Any) -> tuple[Facts | None, dict, Any]:
     """The body's facts: the rest's (root, body element, its children not blocks) and the
     blocks' sum; and the body element.  Raises :class:`_Fallback`."""
-    from .tools.touched import _blocks, _common_prefix, _common_suffix
+    from .tools.touched import _blocks, _common_prefix, _common_suffix, _kept_counts
 
     body_element = root.find(_W + "body")
     if body_element is None:
@@ -454,12 +454,7 @@ def _body_facts(state: State, package: Any, main: str, root: Any) -> tuple[Facts
             if prefix >= body_at and len(old.data) - suffix <= body_end:
                 delta = len(data) - len(old.data)
                 spans = old.spans
-                before = 0
-                while before < len(spans) and spans[before][1] <= prefix:
-                    before += 1
-                after = 0
-                while after < len(spans) - before and spans[len(spans) - 1 - after][0] >= len(old.data) - suffix:
-                    after += 1
+                before, after = _kept_counts(spans, prefix, len(old.data) - suffix)
                 begin = spans[before - 1][1] if before else body_at
                 stop = spans[len(spans) - after][0] + delta if after else body_end + delta
                 middle = _blocks(data, begin, stop)
@@ -972,10 +967,35 @@ def committed(document: Any) -> None:
     version = document.history.version
     kept: OrderedDict = document.__dict__.setdefault("_problems_at", OrderedDict())
     if version in kept:
+        # 0.1.118: a version found before (an undo, a redo): its problems are kept, but the
+        # body as last read moves to it, so the next version's is read from this one's --
+        # the stretch the next edit changed, not every block between it and the version
+        # last read.
+        _refresh_body(document)
         return
     kept[version] = _find(document)
     while len(kept) > _KEPT:
         kept.popitem(last=False)
+
+
+def _refresh_body(document: Any) -> None:
+    """The body as last read (:class:`State`) made the document's body now, its blocks'
+    facts read where it differs (0.1.118)."""
+    state = _state(document)
+    package = document.package
+    with state.lock:
+        try:
+            main = package.document_part()
+            root = package.tree(main)
+            if root is None:
+                state.body = None
+                return
+            problems = state.body_problems
+            _body_facts(state, package, main, root)
+            state.body_problems = problems
+            STATS["body: refreshed"] += 1
+        except _Fallback:
+            state.body = None
 
 
 def body_size(document: Any) -> int | None:

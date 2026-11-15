@@ -96,6 +96,64 @@ def test_nothing_is_kept_while_a_batch_is_open():
         assert b"two" in package.read(synthetic.MAIN)
 
 
+# -- one serialization per version, from one call to the next (0.119.0) --------------------------
+
+
+def _counting(monkeypatch) -> list:
+    import ooxml_edit.opc as opc
+
+    calls = []
+    real = opc.serialize
+
+    def counted(root):
+        calls.append(1)
+        return real(root)
+
+    monkeypatch.setattr(opc, "serialize", counted)
+    monkeypatch.setenv("OOXML_EDIT_VERIFY_SERIALIZED", "0")
+    return calls
+
+
+def _edit_in_a_call(package, history, value):
+    with package.serializing():
+        with history.batch():
+            package.tree(synthetic.MAIN).append(make("tst:item", val=value))
+            package.mark_dirty(synthetic.MAIN)
+        return package.read(synthetic.MAIN)
+
+
+def test_the_next_call_starts_from_the_snapshot_the_last_one_left(monkeypatch):
+    package = _package(10)
+    history = History(package)
+    _edit_in_a_call(package, history, "one")
+    calls = _counting(monkeypatch)
+    data = _edit_in_a_call(package, history, "two")
+    assert len(calls) == 1                             # the version's own, not the state before
+    assert b"two" in data and history.undo()
+    assert b"two" not in package.read(synthetic.MAIN) and b"one" in package.read(synthetic.MAIN)
+
+
+def test_a_tree_handed_out_between_calls_or_marked_dirty_is_written_out_again(monkeypatch):
+    package = _package(10)
+    history = History(package)
+    _edit_in_a_call(package, history, "one")
+    # An application's own change between calls, through the tree it is handed.
+    package.tree(synthetic.MAIN).append(make("tst:item", val="between calls"))
+    _edit_in_a_call(package, history, "two")
+    assert history.undo()
+    assert b"between calls" in package.read(synthetic.MAIN)
+    # Through a tree it held, marked dirty as mark_dirty asks.
+    root = package.tree(synthetic.MAIN)
+    _edit_in_a_call(package, history, "three")
+    root.append(make("tst:item", val="held"))
+    package.mark_dirty(synthetic.MAIN)
+    calls = _counting(monkeypatch)
+    _edit_in_a_call(package, history, "four")
+    assert len(calls) == 2                             # the state before, and the version
+    assert history.undo()
+    assert b"held" in package.read(synthetic.MAIN) and b"four" not in package.read(synthetic.MAIN)
+
+
 # -- committed versions --------------------------------------------------------------------------
 
 

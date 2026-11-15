@@ -224,6 +224,9 @@ class PartIndex:
             self.tables.append(entry_t)
             self.by_id[table_id] = entry_t
             self._by_element[id(node)] = entry_t
+        #: 0.1.118: what the index was made from (:func:`walk_of`), for telling an index
+        #: still the tree's after a change (:func:`same_walk`).
+        self._walk = (everything, raws, _owners(everything, tags))
 
     def entry_for(self, element: Element) -> ParagraphEntry | TableEntry | None:
         return self._by_element.get(id(element))
@@ -305,6 +308,8 @@ def body_index(root: Element, data: bytes, base: "IndexBase | None") -> "tuple[P
 
 
 def _index_from(root, data, base, tops, _blocks, _common_prefix, _common_suffix):
+    from ..tools.touched import _kept_counts
+
     old = base.data
     prefix = _common_prefix(old, data)
     suffix = _common_suffix(old, data, min(len(old), len(data)) - prefix)
@@ -313,12 +318,7 @@ def _index_from(root, data, base, tops, _blocks, _common_prefix, _common_suffix)
         return None
     spans = base.spans
     n_old = len(spans)
-    before = 0
-    while before < n_old and spans[before][1] <= prefix:
-        before += 1
-    after = 0
-    while after < n_old - before and spans[n_old - 1 - after][0] >= len(old) - suffix:
-        after += 1
+    before, after = _kept_counts(spans, prefix, len(old) - suffix)
     delta = len(data) - len(old)
     begin = spans[before - 1][1] if before else body_at
     stop = spans[n_old - after][0] + delta if after else body_end + delta
@@ -352,11 +352,10 @@ def _index_from(root, data, base, tops, _blocks, _common_prefix, _common_suffix)
     if any(raw is None for raw, tag in zip(raws, tags) if tag != W_TBL):
         return None                        # a paragraph or row without a paraId: placed ids
     keys = base.keys.copy()
-    for entry in old_index.paragraphs[p_before:p_before + p_gone]:
-        keys[entry.raw.upper()] -= 1
+    # (0.1.118: a count gone to 0 taken out here, not every count looked through after)
+    _uncount(keys, [entry.raw.upper() for entry in old_index.paragraphs[p_before:p_before + p_gone]])
     for table in old_index.tables[t_before:t_before + t_gone]:
-        for _, rid in table.rows:
-            keys[rid.rpartition("tr:")[2].upper()] -= 1
+        _uncount(keys, [rid.rpartition("tr:")[2].upper() for _, rid in table.rows])
     new_keys = [raw.upper() for raw in raws if raw is not None]
     keys.update(new_keys)
     if any(keys[k] > 1 for k in new_keys):
@@ -409,9 +408,40 @@ def _index_from(root, data, base, tops, _blocks, _common_prefix, _common_suffix)
         by_id[entry_t.id] = entry_t
         by_element[id(entry_t.element)] = entry_t
     index.by_id, index._by_element = by_id, by_element
+    old_walk_raws = getattr(old_index, "_walk", None)
+    if old_walk_raws is not None:
+        _, base_raws, base_owners = old_walk_raws
+        index._walk = (walked, base_raws[:e_before] + raws + base_raws[len(base_raws) - e_after:],
+                       base_owners[:e_before] + _owners(everything, tags)
+                       + base_owners[len(base_owners) - e_after:])
+    else:
+        index._walk = None
     new_spans = spans[:before] + middle + [(s + delta, e + delta) for s, e in spans[n_old - after:]]
     new_counts = base.counts[:before] + counts + base.counts[n_old - after:]
-    return index, IndexBase(index, data, tops, new_spans, new_counts, +keys, (body_at, body_end + delta), walked)
+    return index, IndexBase(index, data, tops, new_spans, new_counts, keys, (body_at, body_end + delta), walked)
+
+
+def _owners(everything: list, tags: list) -> list:
+    """Each row's table (:func:`_owner_table`), ``None`` for a paragraph or table."""
+    return [_owner_table(node) if tag == W_TR else None for node, tag in zip(everything, tags)]
+
+
+def same_walk(index: "PartIndex") -> bool:
+    """Whether the tree ``index`` was made from still has its paragraphs, rows and tables:
+    the same elements in the same order, the same paraIds, each row in the same table --
+    all a :class:`PartIndex` reads, so the index is still the tree's (0.1.118: an index
+    kept through a change inside a table or a paragraph's text, not made again)."""
+    walk = getattr(index, "_walk", None)
+    if walk is None:
+        return False
+    everything, raws, owners = walk
+    now = live_elements(index.root, frozenset({W_P, W_TR, W_TBL}))
+    if len(now) != len(everything) or now != everything:
+        return False
+    tags = [node.tag for node in now]
+    if [None if tag == W_TBL else node.get(PARA_ID) for node, tag in zip(now, tags)] != raws:
+        return False
+    return _owners(now, tags) == owners
 
 
 def same_index(a: "PartIndex", b: "PartIndex") -> bool:
@@ -610,6 +640,16 @@ def _scanned_ids(data: bytes, begin: int, end: int) -> tuple[tuple[int, ...], tu
     return tuple(blocks), tuple(drawings)
 
 
+def _uncount(counts: Counter, keys: "tuple[int, ...]") -> None:
+    """``counts`` less one of each of ``keys`` (counted there), a key at 0 taken out."""
+    for key in keys:
+        value = counts[key] - 1
+        if value > 0:
+            counts[key] = value
+        else:
+            del counts[key]
+
+
 class IdScan:
     """:meth:`Ledger.note`'s reading of a state (every paraId and drawing number), per
     change (0.1.116): the body's top-level blocks read from the main part's bytes, each
@@ -662,7 +702,7 @@ class IdScan:
         return blocks, drawings
 
     def _main(self, data: bytes) -> "tuple[set[int], set[int]] | None":
-        from ..tools.touched import _blocks, _common_prefix, _common_suffix
+        from ..tools.touched import _blocks, _common_prefix, _common_suffix, _kept_counts
 
         old = self.data
         if old is not None and (old is data or old == data):
@@ -675,12 +715,7 @@ class IdScan:
             if prefix >= body_at and len(old) - suffix <= body_end:
                 delta = len(data) - len(old)
                 spans = self.spans
-                before = 0
-                while before < len(spans) and spans[before][1] <= prefix:
-                    before += 1
-                after = 0
-                while after < len(spans) - before and spans[len(spans) - 1 - after][0] >= len(old) - suffix:
-                    after += 1
+                before, after = _kept_counts(spans, prefix, len(old) - suffix)
                 begin = spans[before - 1][1] if before else body_at
                 stop = spans[len(spans) - after][0] + delta if after else body_end + delta
                 middle = _blocks(data, begin, stop)
@@ -690,14 +725,14 @@ class IdScan:
                     found = _scanned_ids(data, begin, stop)
                     if len(found[0]) + len(found[1]) == outside:
                         gone = self.units[before:len(spans) - after]
+                        # (0.1.118: the counts changed in place, a count gone to 0 taken
+                        # out -- not every count looked through again)
                         for unit in gone:
-                            self.blocks.subtract(unit[0])
-                            self.drawings.subtract(unit[1])
+                            _uncount(self.blocks, unit[0])
+                            _uncount(self.drawings, unit[1])
                         for unit in units:
                             self.blocks.update(unit[0])
                             self.drawings.update(unit[1])
-                        self.blocks = +self.blocks
-                        self.drawings = +self.drawings
                         self.units[before:len(spans) - after] = units
                         self.spans = (spans[:before] + middle
                                       + [(s + delta, e + delta) for s, e in spans[len(spans) - after:]])

@@ -149,8 +149,9 @@ dependencies = [
 
 [[package]]
 name = "ooxml-python"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
+ "ooxml-core",
  "ooxml-word",
  "pyo3",
  "serde_json",
