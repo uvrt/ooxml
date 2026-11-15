@@ -3,7 +3,7 @@
 ooxml-core is the Rust core of the ooxml packages (`crates/`), as the Python module
 `ooxml_core`. Its version is the `crates/python` crate's.
 
-## 0.5.0 -- unreleased
+## 0.6.0 -- unreleased
 
 - **`ooxml_core.Parser`: a Word document's body read in Rust** (`ooxml_word::parse`, the
   XML reader in `ooxml_core::xml`). `Parser.open(document_xml, resolver)` reads the body --

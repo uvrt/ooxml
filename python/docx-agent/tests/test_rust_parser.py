@@ -15,7 +15,7 @@ import pytest
 pytest.importorskip("ooxml_edit.tools.numbers", reason="needs ooxml-edit (numbers)")
 ooxml_core = pytest.importorskip("ooxml_core", reason="needs ooxml-core (the Rust path)")
 if not hasattr(ooxml_core, "Parser"):
-    pytest.skip("needs ooxml-core 0.5.0 (the Rust parser)", allow_module_level=True)
+    pytest.skip("needs ooxml-core 0.6.0 (the Rust parser)", allow_module_level=True)
 
 from ooxml_edit.tools import Toolbox  # noqa: E402
 from ooxml_edit.tools.limits import Limits  # noqa: E402
