@@ -299,6 +299,9 @@ class Importer:
                  bookmarks: str, at_part: str, anchor: Element | None, style_map: dict | None = None,
                  unmapped: str = "import") -> None:
         self.dest = destination
+        # 0.1.116: ids copied in are placed before they are remembered (Document._remember_ids):
+        # the ids in use are read from the parts again before each edit of this document.
+        destination.__dict__["_foreign_ids"] = True
         #: Source style name (casefolded) -> destination style name.
         self.name_map = {str(k).casefold(): v for k, v in (style_map or {}).items()}
         self.unmapped = unmapped

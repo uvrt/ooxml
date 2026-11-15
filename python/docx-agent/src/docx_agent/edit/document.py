@@ -1491,7 +1491,7 @@ class Document(TrackingOps, RevisionOps, TextOps, FormatOps, ListOps, LinkOps, P
 
     def _read_used(self) -> set[int]:
         pool = self._id_pool()
-        if _incremental.enabled() and not _incremental.verifying():
+        if _incremental.enabled() and not _incremental.verifying() and not self.__dict__.get("_foreign_ids"):
             # 0.1.116: the pool holds every id of every state read (Ledger.note) and every
             # one generated or copied in (_remember_ids) since: the ids in use are in it, and
             # reading them all again from every part added none (the oracle checks it).
@@ -1499,7 +1499,7 @@ class Document(TrackingOps, RevisionOps, TextOps, FormatOps, ListOps, LinkOps, P
             return pool
         roots = self._roots()
         used = _ids.used_long_hex(roots)
-        if _incremental.verifying() and _incremental.enabled():
+        if _incremental.verifying() and _incremental.enabled() and not self.__dict__.get("_foreign_ids"):
             _incremental.check("used ids", set(), used - pool)
         pool |= used
         return pool

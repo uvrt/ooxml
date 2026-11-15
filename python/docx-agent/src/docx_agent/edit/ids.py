@@ -235,15 +235,16 @@ class PartIndex:
 _BODY_BLOCKS = frozenset({W_P, W_TBL, _W + "sdt", _W + "customXml"})
 _P_START = re.compile(rb"<w:p(?=[\s/>])")
 _TBL_START = re.compile(rb"<w:tbl(?=[\s/>])")
+_TR_START = re.compile(rb"<w:tr(?=[\s/>])")
 _FALLBACK_BYTES = re.compile(rb"<mc:Fallback(?=[\s>]).*?</mc:Fallback>", re.S)
 
 
-def _span_counts(data: bytes, begin: int, end: int) -> tuple[int, int]:
-    """The paragraphs and tables (not under ``mc:Fallback``) in ``data[begin:end]``."""
+def _span_counts(data: bytes, begin: int, end: int) -> tuple[int, int, int]:
+    """The paragraphs, tables and rows (not under ``mc:Fallback``) in ``data[begin:end]``."""
     piece = data[begin:end]
     if b"<mc:Fallback" in piece:
         piece = _FALLBACK_BYTES.sub(b"", piece)
-    return len(_P_START.findall(piece)), len(_TBL_START.findall(piece))
+    return len(_P_START.findall(piece)), len(_TBL_START.findall(piece)), len(_TR_START.findall(piece))
 
 
 class IndexBase:
@@ -252,9 +253,11 @@ class IndexBase:
     their paragraphs' and tables' counts), and the paraIds' counts (upper case)."""
 
     def __init__(self, index: "PartIndex", data: bytes, tops: list, spans: list, counts: list,
-                 keys: Counter, body: tuple[int, int]) -> None:
+                 keys: Counter, body: tuple[int, int], everything: list) -> None:
         self.index, self.data, self.tops, self.spans, self.counts = index, data, tops, spans, counts
         self.keys, self.body = keys, body
+        #: The paragraphs, rows and tables in document order (what PartIndex walks).
+        self.everything = everything
 
 
 def _plain(index: "PartIndex") -> bool:
@@ -278,7 +281,8 @@ def body_index(root: Element, data: bytes, base: "IndexBase | None") -> "tuple[P
     made = None
     if base is not None and base.data is not data:
         made = _index_from(root, data, base, tops, _blocks, _common_prefix, _common_suffix)
-    elif base is not None and base.data is data and base.tops == tops:
+    elif base is not None and base.data is data and base.tops == tops and \
+            live_elements(root, frozenset({W_P, W_TR, W_TBL})) == base.everything:
         made = (base.index, base)
     if made is not None:
         from .. import incremental
@@ -291,11 +295,13 @@ def body_index(root: Element, data: bytes, base: "IndexBase | None") -> "tuple[P
         return index, None
     spans, body, _ = found
     counts = [_span_counts(data, a, b) for a, b in spans]
-    if sum(c[0] for c in counts) != len(index.paragraphs) or sum(c[1] for c in counts) != len(index.tables):
+    everything = live_elements(root, frozenset({W_P, W_TR, W_TBL}))
+    if sum(c[0] for c in counts) != len(index.paragraphs) or sum(c[1] for c in counts) != len(index.tables) \
+            or sum(sum(c) for c in counts) != len(everything):
         return index, None
     keys = Counter(e.raw.upper() for e in index.paragraphs)
     keys.update(rid.rpartition("tr:")[2].upper() for t in index.tables for _, rid in t.rows)
-    return index, IndexBase(index, data, tops, list(spans), counts, keys, body)
+    return index, IndexBase(index, data, tops, list(spans), counts, keys, body, everything)
 
 
 def _index_from(root, data, base, tops, _blocks, _common_prefix, _common_suffix):
@@ -323,22 +329,24 @@ def _index_from(root, data, base, tops, _blocks, _common_prefix, _common_suffix)
         return None                        # the kept blocks are not the same elements
     counts = [_span_counts(data, a, b) for a, b in middle]
     region = _span_counts(data, begin, stop)
-    if region != (sum(c[0] for c in counts), sum(c[1] for c in counts)):
+    if region != tuple(sum(c[k] for c in counts) for k in range(3)):
         return None
     old_index = base.index
     p_before = sum(c[0] for c in base.counts[:before])
     p_gone = sum(c[0] for c in base.counts[before:n_old - after])
     t_before = sum(c[1] for c in base.counts[:before])
     t_gone = sum(c[1] for c in base.counts[before:n_old - after])
-    # The changed blocks' entries, as PartIndex reads them.
-    everything = []
-    for top in tops[before:before + len(middle)]:
-        found = [node for node in top.iter(W_P, W_TR, W_TBL)]
-        fallbacks = [node for node in top.iter(MC_FALLBACK)]
-        if fallbacks:
-            hidden = {node for fallback in fallbacks for node in fallback.iter(W_P, W_TR, W_TBL)}
-            found = [node for node in found if node not in hidden]
-        everything += found
+    e_before = sum(sum(c) for c in base.counts[:before])
+    e_after = sum(sum(c) for c in base.counts[n_old - after:])
+    # Every paragraph, row and table as PartIndex walks them: those of the kept blocks must be
+    # the same elements as before (an element put in place of one written the same is not).
+    walked = live_elements(root, frozenset({W_P, W_TR, W_TBL}))
+    old_walk = base.everything
+    if len(walked) != e_before + e_after + sum(sum(c) for c in counts) \
+            or walked[:e_before] != old_walk[:e_before] \
+            or walked[len(walked) - e_after:] != old_walk[len(old_walk) - e_after:]:
+        return None
+    everything = walked[e_before:len(walked) - e_after]
     tags = [node.tag for node in everything]
     raws = [None if tag == W_TBL else node.get(PARA_ID) for node, tag in zip(everything, tags)]
     if any(raw is None for raw, tag in zip(raws, tags) if tag != W_TBL):
@@ -403,7 +411,7 @@ def _index_from(root, data, base, tops, _blocks, _common_prefix, _common_suffix)
     index.by_id, index._by_element = by_id, by_element
     new_spans = spans[:before] + middle + [(s + delta, e + delta) for s, e in spans[n_old - after:]]
     new_counts = base.counts[:before] + counts + base.counts[n_old - after:]
-    return index, IndexBase(index, data, tops, new_spans, new_counts, +keys, (body_at, body_end + delta))
+    return index, IndexBase(index, data, tops, new_spans, new_counts, +keys, (body_at, body_end + delta), walked)
 
 
 def same_index(a: "PartIndex", b: "PartIndex") -> bool:
