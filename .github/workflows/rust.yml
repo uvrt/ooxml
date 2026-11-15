@@ -193,6 +193,14 @@ jobs:
         env:
           DOCX_AGENT_RUST: "1"
         run: python -m pytest -q -ra -n 2 tests/test_rust_check.py tests/test_check_owner.py tests/test_check_timing.py tests/test_range_extent.py tests/test_keep_spans.py tests/test_keep_trials.py tests/test_numbers.py tests/test_ranges.py tests/test_check_speed_r57.py
+      # The fields update read from the Rust owner against docx-agent's own (it switches
+      # DOCX_AGENT_RUST_FIELDS itself, step by step).
+      - name: Fields update, Rust path on and off
+        working-directory: python/docx-agent
+        env:
+          DOCX_AGENT_RUST: "1"
+          DOCX_AGENT_FULL_VALIDATE: "1"
+        run: python -m pytest -q -ra -n 2 tests/test_rust_fields.py
       - name: Check tests, Rust path off
         working-directory: python/docx-agent
         env:
