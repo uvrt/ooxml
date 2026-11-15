@@ -43,11 +43,14 @@ toolbox's ``ContentStore``).
 from __future__ import annotations
 
 import difflib
+from collections import Counter
 import hashlib
 import re
 from typing import Any
 
 from lxml import etree
+
+from .. import incremental as _incremental
 
 from ..edit import ids as _ids
 from ..markdown.stylemap import DEFAULT as _STYLE_MAP
@@ -139,13 +142,23 @@ class _Summary:
                  body: tuple[int, int] | None = None) -> None:
         self.data, self.spans, self.digests, self.rest, self.body = data, spans, digests, rest, body
         self._ids, self._levels = ids, levels
+        #: Its paragraphs' and rows' paraIds per block (:class:`_Stamps`), where its ids were
+        #: read from its bytes (0.1.116: the next state's are read where it changed).
+        self._stamps: "_Stamps | None" = None
         #: Where this state's blocks came from another's (:func:`_rescan`): the blocks kept
         #: before and after the new ones, and that state, whose levels they share.
         self.kept: tuple[int, int, "_Summary"] | None = None
 
     def ids(self) -> list[str]:
         if self._ids is None:
-            self._ids = _fast_ids(self.data, self.spans) or _parsed(self.data)[0]
+            found = _kept_ids(self)
+            if found is not None and _incremental.verifying():
+                _incremental.check("touched ids", found, _fast_ids(self.data, self.spans))
+            if found is None:
+                found = _fast_ids(self.data, self.spans)
+                if found is not None and self.spans is not None and _incremental.enabled():
+                    self._stamps = _Stamps.of(self.data, self.spans)
+            self._ids = found or _parsed(self.data)[0]
         return self._ids
 
     def levels(self, document: Any, styles_changed: bool = True) -> list[int | None]:
@@ -316,6 +329,83 @@ def _fast_ids(data: bytes, spans: list[tuple[int, int]] | None) -> list[str] | N
     if spans is None or not _stamped(data):
         return None
     return _span_ids(data, spans)
+
+
+class _Stamps:
+    """What :func:`_stamped` reads of a state, per block (0.1.116): each block's count of
+    paragraphs and rows and its paraIds (upper case), outside ``mc:Fallback``; the counts of
+    each paraId and the totals over the body."""
+
+    def __init__(self, per: list, counts: Counter, elements: int, stamped: int) -> None:
+        self.per, self.counts, self.elements, self.stamped = per, counts, elements, stamped
+
+    @staticmethod
+    def block(data: bytes, begin: int, end: int) -> tuple[int, tuple[bytes, ...]]:
+        piece = data[begin:end]
+        live = _FALLBACK.sub(b"", piece) if b"<mc:Fallback" in piece else piece
+        return len(_PARA_OR_ROW.findall(live)), tuple(map(bytes.upper, _ALL_PARA_IDS.findall(live)))
+
+    @classmethod
+    def of(cls, data: bytes, spans: list[tuple[int, int]]) -> "_Stamps | None":
+        per = [cls.block(data, a, b) for a, b in spans]
+        counts: Counter = Counter()
+        for _, found in per:
+            counts.update(found)
+        elements = sum(n for n, _ in per)
+        stamped = sum(len(found) for _, found in per)
+        # (every paragraph and row in a block: none in the body's other bytes)
+        live = _FALLBACK.sub(b"", data) if b"<mc:Fallback" in data else data
+        if len(_PARA_OR_ROW.findall(live)) != elements:
+            return None
+        return cls(per, counts, elements, stamped)
+
+
+def _kept_ids(summary: "_Summary") -> list[str] | None:
+    """The blocks' ids of a state read from the state it was read from (``kept``) where
+    both were stamped (:func:`_stamped`): the kept blocks' ids as they were, the changed
+    blocks' read from their bytes, and whether it is still stamped told from the paraIds'
+    counts -- what :func:`_fast_ids` gives, in time proportional to the change.  ``None``
+    where that cannot be said so (then :func:`_fast_ids`)."""
+    kept = summary.kept
+    if kept is None or summary.spans is None or not _incremental.enabled():
+        return None
+    before, after, base = kept
+    stamps = base._stamps
+    if stamps is None or base._ids is None or base.spans is None:
+        return None
+    if any(i.startswith("cc:") for i in base._ids):
+        return None                    # content controls' ids are unique over the body
+    data, spans = summary.data, summary.spans
+    n_old, n_new = len(base.spans), len(spans)
+    middle = spans[before:n_new - after]
+    begin = spans[before - 1][1] if before else summary.body[0]
+    stop = spans[n_new - after][0] if after else summary.body[1]
+    if b"<w:sdt" in data[begin:stop]:
+        return None
+    per = [_Stamps.block(data, a, b) for a, b in middle]
+    region = _Stamps.block(data, begin, stop)
+    if region[0] != sum(n for n, _ in per) or len(region[1]) != sum(len(f) for _, f in per):
+        return None                    # a paragraph or row outside the blocks there
+    counts = stamps.counts.copy()
+    elements, stamped = stamps.elements, stamps.stamped
+    for n, found in stamps.per[before:n_old - after]:
+        counts.subtract(found)
+        elements -= n
+        stamped -= len(found)
+    for n, found in per:
+        counts.update(found)
+        elements += n
+        stamped += len(found)
+    counts = +counts
+    new = _Stamps(stamps.per[:before] + per + stamps.per[n_old - after:], counts, elements, stamped)
+    if elements != stamped or any(v > 1 for v in counts.values()):
+        return None                    # not stamped: _fast_ids reads none either
+    ids = _span_ids(data, middle)
+    if ids is None:
+        return None
+    summary._stamps = new
+    _incremental.STATS["touched ids: incremental"] += 1
+    return base._ids[:before] + ids + base._ids[n_old - after:]
 
 
 def _stamped(data: bytes) -> bool:

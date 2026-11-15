@@ -26,6 +26,7 @@ from ooxml_edit.history import History
 from ..oxml.package import WordPackage, story_name
 from ..oxml.xml import REVISION_PROPERTY_TAGS, Element, qn, remove
 from . import ids as _ids
+from .. import incremental as _incremental
 from .errors import EditError
 from . import text as _text
 from . import typography as _typography
@@ -1470,9 +1471,18 @@ class Document(TrackingOps, RevisionOps, TextOps, FormatOps, ListOps, LinkOps, P
         return False
 
     def _read_used(self) -> set[int]:
-        roots = self._roots()
         pool = self._id_pool()
-        pool |= _ids.used_long_hex(roots)
+        if _incremental.enabled() and not _incremental.verifying():
+            # 0.1.116: the pool holds every id of every state read (Ledger.note) and every
+            # one generated or copied in (_remember_ids) since: the ids in use are in it, and
+            # reading them all again from every part added none (the oracle checks it).
+            _incremental.STATS["used ids: pool"] += 1
+            return pool
+        roots = self._roots()
+        used = _ids.used_long_hex(roots)
+        if _incremental.verifying() and _incremental.enabled():
+            _incremental.check("used ids", set(), used - pool)
+        pool |= used
         return pool
 
     def _roots(self) -> list[Element]:
@@ -1490,7 +1500,16 @@ class Document(TrackingOps, RevisionOps, TextOps, FormatOps, ListOps, LinkOps, P
         ledger = self._ledger
         if ledger.pool is not None and ledger.version == self.history.version:
             return
-        ledger.note(self._roots(), self.history.version)
+        found = None
+        if ledger.pool is not None and _incremental.enabled():
+            scan = self.__dict__.get("_id_scan")
+            if scan is None:
+                scan = self.__dict__["_id_scan"] = _ids.IdScan()
+            found = scan.read(self)
+            _incremental.STATS["ids note: " + ("incremental" if found is not None else "whole")] += 1
+            if found is not None and _incremental.verifying():
+                _incremental.check("ids note", found, _ids.block_and_drawing_ids(self._roots()))
+        ledger.note(self._roots(), self.history.version, found)
 
     def id_state(self) -> str:
         """What this document's ids have been, as a short opaque string to keep beside its

@@ -60,6 +60,7 @@ import functools
 import hashlib
 import re
 import threading
+from collections import Counter
 from dataclasses import dataclass, field
 
 from lxml import etree
@@ -326,23 +327,18 @@ class Ledger:
         self.replaced = dict(loaded.replaced)
         self.earlier = dict(loaded.steps)
 
-    def note(self, roots: list[Element], version: int) -> None:
+    def note(self, roots: list[Element], version: int,
+             found: "tuple[set[int], set[int]] | None" = None) -> None:
         """Read the state ``roots`` are, as version ``version``: what is gone since the last
-        state read went in ``version``; what is back (an undone deletion) is no longer gone."""
+        state read went in ``version``; what is back (an undone deletion) is no longer gone.
+        ``found``: the state's block ids and drawing numbers, read already (:class:`IdScan`,
+        per change); else read here from ``roots``."""
         if self.version == version and self.pool is not None:
             return
-        blocks: set[int] = set()
-        drawings: set[int] = set()
-        for root in roots:
-            for node in root.iter(W_P, W_TR, WP_DOC_PR):
-                if node.tag == WP_DOC_PR:
-                    raw = node.get("id")
-                    if raw is not None and raw.isdigit():
-                        drawings.add(int(raw))
-                else:
-                    raw = node.get(PARA_ID)
-                    if raw is not None and _HEX.fullmatch(raw):
-                        blocks.add(int(raw, 16))
+        if found is not None and self.pool is not None:
+            blocks, drawings = found
+        else:
+            blocks, drawings = block_and_drawing_ids(roots)
         if self.pool is None:
             # The state as opened: every value in it.  Later states add only what generate
             # gave (into the pool itself), what a copy kept (Document._remember_ids) and
@@ -362,6 +358,196 @@ class Ledger:
         self.drawings = drawings
         self.highest_drawing = max(self.highest_drawing, max(drawings, default=0))
         self.version = version
+
+
+def block_and_drawing_ids(roots: list[Element]) -> tuple[set[int], set[int]]:
+    """Every paragraph's and row's paraId (as a value) and every drawing number in
+    ``roots``: what :meth:`Ledger.note` reads of a state."""
+    blocks: set[int] = set()
+    drawings: set[int] = set()
+    for root in roots:
+        for node in root.iter(W_P, W_TR, WP_DOC_PR):
+            if node.tag == WP_DOC_PR:
+                raw = node.get("id")
+                if raw is not None and raw.isdigit():
+                    drawings.add(int(raw))
+            else:
+                raw = node.get(PARA_ID)
+                if raw is not None and _HEX.fullmatch(raw):
+                    blocks.add(int(raw, 16))
+    return blocks, drawings
+
+
+_W_URI = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+_WP_URI = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+#: The prefixes :class:`IdScan` reads the body's bytes by, and the namespaces they must name.
+_SCAN_PREFIXES = {b"w": _W_URI.encode(), b"w14": W14.encode(), b"wp": _WP_URI.encode(), b"wp14": WP14.encode()}
+#: The start tags of the elements :func:`block_and_drawing_ids` reads, in such bytes.
+_SCANNED = re.compile(rb"<(w:p|w:tr|wp:docPr)(?=[\s/>])([^>]*)>")
+_SCANNED_ATTRIBUTE = re.compile(rb'\s([\w.:-]+)="([^"]*)"')
+_DECLARATION = re.compile(rb'\sxmlns(?::([\w.-]+))?="([^"]*)"')
+_REFERENCE = re.compile(r"&(#x[0-9A-Fa-f]+|#[0-9]+|amp|lt|gt|quot|apos);")
+_NAMED = {"amp": "&", "lt": "<", "gt": ">", "quot": '"', "apos": "'"}
+
+
+def _attribute_text(raw: bytes) -> str:
+    """An attribute's value as the parser reads it, from its bytes as lxml writes them."""
+    text = raw.decode("utf-8")
+    if "&" in text:
+        text = _REFERENCE.sub(lambda m: _NAMED.get(m.group(1)) or chr(
+            int(m.group(1)[2:], 16) if m.group(1)[1] == "x" else int(m.group(1)[1:])), text)
+    return text
+
+
+def _scanned_ids(data: bytes, begin: int, end: int) -> tuple[tuple[int, ...], tuple[int, ...]]:
+    """:func:`block_and_drawing_ids` of ``data[begin:end]`` (bytes as lxml writes a part
+    whose root declares :data:`_SCAN_PREFIXES` and nothing below it declares any)."""
+    blocks: list[int] = []
+    drawings: list[int] = []
+    for match in _SCANNED.finditer(data, begin, end):
+        docpr = match.group(1) == b"wp:docPr"
+        for attribute in _SCANNED_ATTRIBUTE.finditer(match.group(2)):
+            name = attribute.group(1)
+            if docpr and name == b"id":
+                raw = _attribute_text(attribute.group(2))
+                if raw.isdigit():
+                    drawings.append(int(raw))
+            elif not docpr and name == b"w14:paraId":
+                raw = _attribute_text(attribute.group(2))
+                if _HEX.fullmatch(raw):
+                    blocks.append(int(raw, 16))
+    return tuple(blocks), tuple(drawings)
+
+
+class IdScan:
+    """:meth:`Ledger.note`'s reading of a state (every paraId and drawing number), per
+    change (0.1.116): the body's top-level blocks read from the main part's bytes, each
+    block's ids kept, and only the blocks between the first and the last byte that differ
+    from the state read before read again (``docx_agent.tools.touched``'s rule); the other
+    parts read whole when their bytes changed.  ``None`` from :meth:`read` where the bytes
+    cannot be read so (a part not written by lxml with the usual prefixes): the whole
+    reading then, as before."""
+
+    def __init__(self) -> None:
+        #: The main part as last read: its bytes, blocks' spans, body span, each block's
+        #: ids, the ids outside blocks, and the counts of each.
+        self.data: bytes | None = None
+        self.spans: list[tuple[int, int]] = []
+        self.body: tuple[int, int] = (0, 0)
+        self.units: list[tuple[tuple[int, ...], tuple[int, ...]]] = []
+        self.blocks: Counter = Counter()
+        self.drawings: Counter = Counter()
+        #: Other parts: name -> (their bytes or stored token, block ids, drawing numbers).
+        self.parts: dict[str, tuple[object, set[int], set[int]]] = {}
+
+    def read(self, document) -> "tuple[set[int], set[int]] | None":
+        package = document.package
+        main = package.document_part()
+        blocks: set[int] = set()
+        drawings: set[int] = set()
+        seen: set[str] = set()
+        for part in document._parts():
+            root = package.tree(part)
+            if root is None:
+                continue
+            seen.add(part)
+            if part == main and part in package.dirty_parts:
+                found = self._main(package.read(part) or b"")
+                if found is None:
+                    return None
+                blocks |= found[0]
+                drawings |= found[1]
+                continue
+            token = package.read(part) if part in package.dirty_parts else package._parts.stored(part)
+            kept = self.parts.get(part)
+            if kept is None or not (kept[0] is token or (isinstance(token, bytes) and kept[0] == token)):
+                kept = (token, *block_and_drawing_ids([root]))
+                self.parts[part] = kept
+            blocks |= kept[1]
+            drawings |= kept[2]
+        for part in list(self.parts):
+            if part not in seen:
+                del self.parts[part]
+        return blocks, drawings
+
+    def _main(self, data: bytes) -> "tuple[set[int], set[int]] | None":
+        from ..tools.touched import _blocks, _common_prefix, _common_suffix
+
+        old = self.data
+        if old is not None and (old is data or old == data):
+            self.data = data
+            return set(self.blocks), set(self.drawings)
+        if old is not None:
+            prefix = _common_prefix(old, data)
+            suffix = _common_suffix(old, data, min(len(old), len(data)) - prefix)
+            body_at, body_end = self.body
+            if prefix >= body_at and len(old) - suffix <= body_end:
+                delta = len(data) - len(old)
+                spans = self.spans
+                before = 0
+                while before < len(spans) and spans[before][1] <= prefix:
+                    before += 1
+                after = 0
+                while after < len(spans) - before and spans[len(spans) - 1 - after][0] >= len(old) - suffix:
+                    after += 1
+                begin = spans[before - 1][1] if before else body_at
+                stop = spans[len(spans) - after][0] + delta if after else body_end + delta
+                middle = _blocks(data, begin, stop)
+                if middle is not None and b"xmlns" not in data[begin:stop]:
+                    units = [_scanned_ids(data, a, b) for a, b in middle]
+                    outside = sum(len(u[0]) + len(u[1]) for u in units)
+                    found = _scanned_ids(data, begin, stop)
+                    if len(found[0]) + len(found[1]) == outside:
+                        gone = self.units[before:len(spans) - after]
+                        for unit in gone:
+                            self.blocks.subtract(unit[0])
+                            self.drawings.subtract(unit[1])
+                        for unit in units:
+                            self.blocks.update(unit[0])
+                            self.drawings.update(unit[1])
+                        self.blocks = +self.blocks
+                        self.drawings = +self.drawings
+                        self.units[before:len(spans) - after] = units
+                        self.spans = (spans[:before] + middle
+                                      + [(s + delta, e + delta) for s, e in spans[len(spans) - after:]])
+                        self.body = (body_at, body_end + delta)
+                        self.data = data
+                        return set(self.blocks), set(self.drawings)
+        return self._whole(data)
+
+    def _whole(self, data: bytes) -> "tuple[set[int], set[int]] | None":
+        from ..revalidate import _scan
+
+        self.data = None
+        root_end = data.find(b">", data.find(b"<w:document"))
+        found = _scan(data)
+        if root_end < 0 or found is None:
+            return None
+        declared: dict[bytes, bytes] = {}
+        for match in _DECLARATION.finditer(data, 0, root_end):
+            if match.group(1) is None:
+                return None                  # a default namespace: elements unprefixed
+            declared[match.group(1)] = match.group(2)
+        for prefix, uri in declared.items():
+            if uri in _SCAN_PREFIXES.values() and _SCAN_PREFIXES.get(prefix) != uri:
+                return None                  # one of them under another prefix
+            if prefix in _SCAN_PREFIXES and _SCAN_PREFIXES[prefix] != uri:
+                return None
+        if data.find(b"xmlns", root_end) >= 0:
+            return None
+        spans, body, _head = found
+        units = [_scanned_ids(data, a, b) for a, b in spans]
+        everything = _scanned_ids(data, 0, len(data))
+        if sum(len(u[0]) + len(u[1]) for u in units) != len(everything[0]) + len(everything[1]):
+            return None                      # ids outside the body's blocks
+        self.spans, self.body, self.units = list(spans), body, units
+        self.blocks = Counter()
+        self.drawings = Counter()
+        for unit in units:
+            self.blocks.update(unit[0])
+            self.drawings.update(unit[1])
+        self.data = data
+        return set(self.blocks), set(self.drawings)
 
 
 def drawings_needing_ids(root: Element) -> list[Element]:
