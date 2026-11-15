@@ -23,6 +23,11 @@ snapshot commit; the development history before it is summarised here.
     elements (the tree is written out and compared with the version's bytes; where it does
     not write out the same, the part is parsed whole, as before) -- so what is kept per block
     stays after an undo too.
+  - **`word_edit_table`'s table as Markdown** costs the table's reading: the list items
+    before it are counted only when the table numbers one, and its paragraphs' formatting
+    is read from docx2svg's model of that table alone (the styles, numbering, theme and
+    settings parsed once until they change), not from a parse of the whole document; a
+    deleted paragraph mark in or just before the table reads the whole document, as before.
   - **The Rust owner's change sets** count list labels from the last marked state before the
     change and stop where the counters are as before (not every list item of the document
     after every edit), and a table's record reads the index made per change.
