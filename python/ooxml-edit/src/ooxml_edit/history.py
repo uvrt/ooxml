@@ -187,12 +187,21 @@ class History:
 
     # -- checkpoints -----------------------------------------------------------------------
 
+    def _keep(self, keep: bool) -> None:
+        """Tell the package whether its trees stay as they are until the next state change
+        (0.117.0, :meth:`~.opc.OpcPackage.keep_serialized`): ``False`` before a mutation,
+        ``True`` once a state change is made and nothing open would change it."""
+        keep_serialized = getattr(self._package, "keep_serialized", None)
+        if keep_serialized is not None and not (keep and self._batch_depth):
+            keep_serialized(keep)
+
     def checkpoint(self) -> None:
         """Record the state *before* a mutation.  Called by mutators, not by callers."""
         if self._batch_depth:
             # Inside a batch the only checkpoint that matters is the one taken on entry.
             return
         snapshot = self._package.snapshot()
+        self._keep(False)                   # the mutation follows
         self._push(snapshot)
         self._changed(snapshot, None)       # after: once the mutation is done
 
@@ -287,6 +296,7 @@ class History:
         step and keeps the version; a failed one rolls back and records none."""
         if self._batch_depth == 0:
             self._batch_snapshot = self._package.snapshot()
+            self._keep(False)               # the batch's mutations follow
         self._batch_depth += 1
         try:
             yield
@@ -301,7 +311,9 @@ class History:
         if self._batch_depth == 0 and self._batch_snapshot is not None:
             snapshot, self._batch_snapshot = self._batch_snapshot, None
             # A batch that changed nothing is no step: undo would otherwise undo nothing,
-            # and the version would claim a new state with the old content.
+            # and the version would claim a new state with the old content.  The state after
+            # is kept written out until the next change (one serialization per version).
+            self._keep(True)
             after = self._package.snapshot()
             if after != snapshot:
                 self._push(snapshot)
@@ -350,6 +362,7 @@ class History:
         current = self._package.snapshot()
         self._redo.append((current, self._version))
         self._package.restore(snapshot)
+        self._keep(True)
         self._version = version
         self._changed(current, snapshot)
         return True
@@ -361,6 +374,7 @@ class History:
         current = self._package.snapshot()
         self._undo.append((current, self._version))
         self._package.restore(snapshot)
+        self._keep(True)
         self._version = version
         self._changed(current, snapshot)
         return True
@@ -464,6 +478,7 @@ class History:
             rewritten.append((snapshot, new))
         new_current, new_version = rewritten.pop()
         package.restore(new_current)
+        self._keep(True)
         self._changed(current, new_current)
         self._undo = self._undo[:index] + rewritten
         self._version = new_version
@@ -507,6 +522,7 @@ class History:
         self._push(current)
         restored = package.snapshot_with(current, undone.after_snapshot, undone.parts)
         package.restore(restored)
+        self._keep(True)
         self._changed(current, restored)
         return ScopedStep(undone.parts, undone.before, undone.after, self._version)
 

@@ -4,6 +4,35 @@ Versions are those in `pyproject.toml`; none is published to PyPI yet. Each vers
 reaches `main` is tagged `v<version>` on the commit that brought it, from 0.62.0; the
 earlier ones were never tagged.
 
+## 0.117.0 -- unreleased
+
+- **One serialization per version a call leaves.** Inside `OpcPackage.serializing()` -- the
+  tool layer's changing call, its documents' locks held, where nothing changes a tree but
+  through the history -- an edited part's bytes are written out once while the history says
+  no tree changes (`keep_serialized`: after an outermost batch closes, an undo or a redo;
+  never while a batch is open or after a single checkpoint) and kept: the version's undo
+  snapshot, its touched parts, its commit and its readers share them. Marking a part dirty,
+  putting a tree or a part in place, or restoring forgets them; leaving the scope forgets
+  all. Outside one (an application editing trees between calls) nothing is kept, as before.
+  `OOXML_EDIT_VERIFY_SERIALIZED=1` compares every kept serialization with the tree written
+  out again (the test suites of the packages that use the history set it).
+- **A long part's versions share their pieces.** A snapshot holds an edited part as
+  `Pieces`: the previous snapshot's pieces where the bytes are the same from the start and
+  from the end, only the stretch between copied (in pieces of 256 KiB) -- every version of a
+  20 MB part held at the cost of its change, not a copy each. `bytes(pieces)` is the bytes;
+  `snapshot_value`, restore and the comparisons read them as before.
+- **A committed version's bytes are made when first asked.** A format's `read_copy` may give
+  its `make` a `data_later` (what makes the bytes) and `lazy` (the copy opens from the
+  `Committed` itself): `Committed.data` is then made once, when something needs the bytes,
+  not at every commit. `DocumentEntry.snapshot()` reads the committed version's bytes when it
+  is the version now.
+- **A read never waits for the lock an edit holds** (`DocumentEntry.committed_reader`): a
+  read that comes between an edit's change and its commit waits for that commit (or reads a
+  later one), never for the lock; the lock is taken only when it is free, or for a document
+  never committed.
+- `BlockEdits.worth(document)` (optional): a format may find a draft of a document not worth
+  its copy (a long one); the call then runs under the lock.
+
 ## 0.116.1 -- unreleased
 
 - **A read served a later version says so by commit order, not by version number.**

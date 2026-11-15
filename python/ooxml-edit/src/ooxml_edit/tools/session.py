@@ -566,8 +566,9 @@ class DocumentEntry:
     #: Callers' undos of their own changes, latest last, for their redo.
     own_undos: list[OwnUndo] = field(default_factory=list, repr=False)
     _own_version: int = field(default=0, repr=False)
-    #: ``(version, bytes)`` of the last :meth:`snapshot`.
-    _snapshot: tuple[int, bytes] | None = field(default=None, repr=False)
+    #: ``(version, bytes)`` of the last :meth:`snapshot` (0.117.0: or a committed version's
+    #: :class:`Committed`, whose bytes are made when first asked).
+    _snapshot: "tuple[int, Any] | None" = field(default=None, repr=False)
     #: Round 45: the last committed version, for reads (:meth:`commit`, :meth:`reader`).
     committed: "Committed | None" = field(default=None, repr=False)
     #: A reader's (:meth:`reader`): the version it is of, and the entry it reads for.
@@ -589,6 +590,9 @@ class DocumentEntry:
         default_factory=lambda: threading.Condition(threading.Lock()), repr=False)
     _draft_tokens: Any = field(default_factory=lambda: itertools.count(1), repr=False)
     _flight_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+    #: 0.117.0: told each time a version is committed (:meth:`commit`), for the reads that
+    #: wait for a commit rather than for the document's lock (:meth:`committed_reader`).
+    _commits: threading.Condition = field(default_factory=threading.Condition, repr=False)
     #: Round 45 (lane B): the changes the dispatcher made to the document, counted
     #: (:meth:`note_change`): the count, the version the last one left, and each part's
     #: count when it last changed -- what a patch prepared on an earlier version checks
@@ -654,10 +658,14 @@ class DocumentEntry:
                 self.committed = committed.with_refs(
                     dict(self.refs), dict(self.ref_states.get(version, self.refs)),
                     dict(self.ref_owners), tracking=self.tracking)
+                self._told()
             return
         try:
             make = read_copy(self.document)
-            data = self.snapshot()
+            # 0.117.0: a format that keeps what a version's bytes are made from (``make.
+            # data_later``) has them made when first asked, not at every commit.
+            later = getattr(make, "data_later", None)
+            data = later if later is not None else self.snapshot()
         except Exception:  # noqa: BLE001 -- reads take the lock, as before
             self.committed = None
             return
@@ -665,6 +673,51 @@ class DocumentEntry:
                                    dict(self.ref_states.get(version, self.refs)),
                                    tracking=self.tracking, owners=dict(self.owners),
                                    seq=self.change_seq, ref_owners=dict(self.ref_owners))
+        self._told()
+
+    def _told(self) -> None:
+        with self._commits:
+            self._commits.notify_all()
+
+    def committed_reader(self, fmt: "DocumentFormat | None") -> "DocumentEntry | None":
+        """0.117.0: the reader of the committed version a read that came now reads, without
+        waiting for the document's lock while an edit holds it: the copy of the version now
+        when it is committed (:meth:`reader`); else -- an edit's change made, its commit to
+        come when it lets the lock go -- the first version committed after this one came,
+        waited for as it is committed (the version that read would have found under the lock,
+        or a later one: what a read that waited for the lock and found other edits ahead of
+        it read).  The lock is taken only when it is free, or for a document never committed
+        (as before).  ``None``: read under the lock."""
+        reader = self.reader()
+        if reader is not None:
+            return reader
+        committed = self.committed
+        if committed is None or self.pinned is not None:
+            with self.lock:
+                self.commit(fmt)
+                return self.reader()
+        seq = committed.seq
+        while True:
+            if self.lock.acquire(blocking=False):
+                try:
+                    self.commit(fmt)
+                    return self.reader()
+                finally:
+                    self.lock.release()
+            with self._commits:
+                now = self.committed
+                if now is not None and now.seq > seq:
+                    return now.entry(self)
+                reader = self.reader()
+                if reader is not None:
+                    return reader
+                self._commits.wait(0.05)
+            now = self.committed
+            if now is not None and now.seq > seq:
+                return now.entry(self)
+            reader = self.reader()
+            if reader is not None:
+                return reader
 
     # -- calls in flight, and the changes made (round 45, lane B) ---------------------------
 
@@ -811,7 +864,7 @@ class DocumentEntry:
             keys=dict(self.keys), refs=dict(committed.refs), owners=dict(committed.owners),
             ref_owners=dict(committed.ref_owners))
         entry.ref_states[committed.version] = dict(committed.ref_state)
-        entry._snapshot = (committed.version, committed.data)
+        entry._snapshot = (committed.version, committed)
         return entry
 
     def reader(self) -> "DocumentEntry | None":
@@ -943,8 +996,18 @@ class DocumentEntry:
         version = self.version
         kept = self._snapshot
         if kept is not None and kept[0] == version:
+            if isinstance(kept[1], Committed):
+                data = kept[1].data
+                self._snapshot = (version, data)
+                return data
             return kept[1]
-        data = self.document.to_bytes()
+        committed = self.committed
+        if committed is not None and committed.version == version and self.pinned is None \
+                and committed.seq == self.change_seq:
+            # 0.117.0: the committed version's bytes, made once for every reader of it.
+            data = committed.data
+        else:
+            data = self.document.to_bytes()
         self._snapshot = (version, data)
         return data
 
@@ -971,7 +1034,7 @@ class Committed:
     the version, its bytes, the format's ``make`` for a copy, the refs then; the reader
     entry made from them once, when a read first asks (:meth:`entry`)."""
 
-    def __init__(self, version: int, data: bytes, make: Callable[[bytes], Any],
+    def __init__(self, version: int, data: "bytes | Callable[[], bytes]", make: Callable[[Any], Any],
                  refs: dict[str, str], ref_state: dict[str, str], *,
                  tracking: dict[str, Any] | None = None,
                  owners: dict[int, StepOwner] | None = None, seq: int = 0,
@@ -983,7 +1046,9 @@ class Committed:
         #: was committed: a patch prepared on it checks the parts changed since
         #: (:meth:`DocumentEntry.parts_changed_since`).
         self.seq = seq
-        self.data = data
+        #: The version's bytes, or (0.117.0) what makes them when first asked (:attr:`data`).
+        self._data = data
+        self._data_lock = threading.Lock()
         self.make = make
         self.refs = refs
         self.ref_state = ref_state
@@ -993,6 +1058,18 @@ class Committed:
         self._failed = False
         self._lock = threading.Lock()
 
+    @property
+    def data(self) -> bytes:
+        """The version's bytes (``document.to_bytes()`` as it was committed), made once when
+        the format keeps what they are made from (0.117.0, ``make.data_later``)."""
+        data = self._data
+        if callable(data):
+            with self._data_lock:
+                data = self._data
+                if callable(data):
+                    data = self._data = data()
+        return data
+
     def entry(self, live: DocumentEntry) -> DocumentEntry | None:
         """The reader entry: the copy, pinned to :attr:`version`, with a lock of its own,
         sharing ``live``'s caches (keyed by version: equal versions are equal content) and
@@ -1000,7 +1077,9 @@ class Committed:
         with self._lock:
             if self._entry is None and not self._failed:
                 try:
-                    document = self.make(self.data)
+                    # 0.117.0: a format whose copy opens from what the bytes are made of
+                    # (``make.lazy``) gets this version instead of its bytes.
+                    document = self.make(self if getattr(self.make, "lazy", False) else self.data)
                 except Exception:  # noqa: BLE001 -- reads take the lock, as before
                     self._failed = True
                     return None
@@ -1014,7 +1093,7 @@ class Committed:
                     owners=dict(self.owners), ref_owners=dict(self.ref_owners),
                     pinned=self.version, live=live)
                 entry.ref_states[self.version] = dict(self.ref_state)
-                entry._snapshot = (self.version, self.data)
+                entry._snapshot = (self.version, self)
                 self._entry = entry
             return self._entry
 
@@ -1026,7 +1105,8 @@ class Committed:
         reader made already is kept, its document and lock shared, with the refs and
         tracking now -- for the calls that read it next; the readers holding this one keep
         the refs they began with."""
-        again = Committed(self.version, self.data, self.make, refs, ref_state,
+        data = self._data
+        again = Committed(self.version, (lambda: self.data) if callable(data) else data, self.make, refs, ref_state,
                           tracking=tracking, owners=self.owners, seq=self.seq,
                           ref_owners=ref_owners)
         with self._lock:
@@ -1401,11 +1481,8 @@ class Session:
                 held = (pinned or {}).get(entry.doc_id) if copies else None
                 reader = held.entry(entry) if held is not None else None
                 if reader is None and copies:
-                    reader = entry.reader()
-                if reader is None and copies:
-                    with entry.lock:
-                        entry.commit(fmt)
-                        reader = entry.reader()
+                    # 0.117.0: never waits for the lock an edit holds (committed_reader).
+                    reader = entry.committed_reader(fmt)
                 if reader is None:
                     # A format that does not copy, or could not copy it: under its lock.
                     stack.enter_context(entry.lock)

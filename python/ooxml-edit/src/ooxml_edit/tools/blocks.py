@@ -69,6 +69,12 @@ class BlockEdits(Protocol):
         its document in flight (``block_edits="auto"``) -- one that may run long, so an edit
         that comes while it runs need not wait for it.  Without it: ``False``."""
 
+    def worth(self, document: Any) -> bool:
+        """Optional (0.117.0): whether a draft of ``document`` is worth making at all
+        (``block_edits="auto"``) -- a draft copies the document, which for a long one costs
+        more than waiting for its lock.  Read without the document's lock (a size it keeps).
+        Without it: ``True``."""
+
     def drew(self, draft: Any) -> bool:
         """Optional (round 47): whether the call on ``draft`` drew values from the
         document's sequences (ids).  One that failed, or changed nothing, after drawing
