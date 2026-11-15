@@ -19,7 +19,6 @@ use serde_json::{json, Map, Value};
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 
-
 pub const W: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 pub const W14: &str = "http://schemas.microsoft.com/office/word/2010/wordml";
 
@@ -163,7 +162,11 @@ pub struct Unit {
 const COMPUTED: [&str; 7] = ["PAGE", "NUMPAGES", "SECTIONPAGES", "PAGEREF", "REF", "SEQ", "STYLEREF"];
 
 fn keyword(instruction: &str) -> String {
-    instruction.split_whitespace().next().map(|w| w.to_uppercase()).unwrap_or_default()
+    instruction
+        .split_whitespace()
+        .next()
+        .map(|w| w.to_uppercase())
+        .unwrap_or_default()
 }
 
 fn merge_format(instruction: &str) -> bool {
@@ -194,7 +197,9 @@ impl Fields {
         self.stack.iter().all(|f| f.result_state && !f.computed)
     }
     fn in_toc_result(&self) -> bool {
-        self.stack.iter().any(|f| f.result_state && keyword(&f.instruction.concat()) == "TOC")
+        self.stack
+            .iter()
+            .any(|f| f.result_state && keyword(&f.instruction.concat()) == "TOC")
     }
     fn computes(instruction: &str) -> bool {
         COMPUTED.contains(&keyword(instruction).as_str())
@@ -271,7 +276,11 @@ impl Reader {
                     Some("end") if !fields.stack.is_empty() => {
                         let top = fields.stack.pop().unwrap();
                         let instruction = top.instruction.concat();
-                        let computed = if top.result_state { top.computed } else { Fields::computes(&instruction) };
+                        let computed = if top.result_state {
+                            top.computed
+                        } else {
+                            Fields::computes(&instruction)
+                        };
                         if top.visible && fields.visible() && computed {
                             flush(out, &mut text, &mut marks, &mut length);
                             let mut chosen = top.instr_rpr.clone();
@@ -283,7 +292,10 @@ impl Reader {
                                 toc_link: false,
                                 text: top.result.concat(),
                                 marks: vec![],
-                                field: Some(FieldRun { instruction: instruction.trim().to_string(), keyword: keyword(&instruction) }),
+                                field: Some(FieldRun {
+                                    instruction: instruction.trim().to_string(),
+                                    keyword: keyword(&instruction),
+                                }),
                             });
                         }
                     }
@@ -330,7 +342,11 @@ impl Reader {
                     let kind = node.attr_any("type").unwrap_or(name).to_string();
                     marks.push((length, kind));
                 }
-                "footnoteReference" | "endnoteReference" | "endnoteRef" | "footnoteRef" | "separator"
+                "footnoteReference"
+                | "endnoteReference"
+                | "endnoteRef"
+                | "footnoteRef"
+                | "separator"
                 | "continuationSeparator" => return refuse("a note"),
                 _ if RUN_OBJECTS.contains(&name) => return refuse(format!("a {name}")),
                 "rPr" | "lastRenderedPageBreak" | "commentReference" | "annotationRef" => {}
@@ -343,9 +359,18 @@ impl Reader {
         if out.len() == start
             && plain
             && fields.visible()
-            && !element.children.iter().any(|n| n.ns == w && (n.name == "fldChar" || n.name == "instrText"))
+            && !element
+                .children
+                .iter()
+                .any(|n| n.ns == w && (n.name == "fldChar" || n.name == "instrText"))
         {
-            out.push(Run { rpr: key, toc_link: false, text: String::new(), marks: vec![], field: None });
+            out.push(Run {
+                rpr: key,
+                toc_link: false,
+                text: String::new(),
+                marks: vec![],
+                field: None,
+            });
         }
         Ok(())
     }
@@ -358,14 +383,25 @@ impl Reader {
             if !fields.visible() {
                 return Ok(());
             }
-            let text: String = inner.iter().flat_map(|r| r.children_named(w, "t")).map(|t| t.text.as_str()).collect();
-            let rpr = if !inner.is_empty() && merge_format(&instruction) { self.rpr_key(inner[0].child(w, "rPr")) } else { None };
+            let text: String = inner
+                .iter()
+                .flat_map(|r| r.children_named(w, "t"))
+                .map(|t| t.text.as_str())
+                .collect();
+            let rpr = if !inner.is_empty() && merge_format(&instruction) {
+                self.rpr_key(inner[0].child(w, "rPr"))
+            } else {
+                None
+            };
             out.push(Run {
                 rpr,
                 toc_link: false,
                 text,
                 marks: vec![],
-                field: Some(FieldRun { instruction: instruction.trim().to_string(), keyword: keyword(&instruction) }),
+                field: Some(FieldRun {
+                    instruction: instruction.trim().to_string(),
+                    keyword: keyword(&instruction),
+                }),
             });
             return Ok(());
         }
@@ -414,7 +450,13 @@ impl Reader {
         Ok(())
     }
 
-    fn paragraph(&self, element: &Node, table_style: Option<&str>, conditions: &[&'static str], fields: &mut Fields) -> Result<Para, Refused> {
+    fn paragraph(
+        &self,
+        element: &Node,
+        table_style: Option<&str>,
+        conditions: &[&'static str],
+        fields: &mut Fields,
+    ) -> Result<Para, Refused> {
         let w = self.w;
         let ppr = element.child(w, "pPr");
         if let Some(p) = ppr {
@@ -422,7 +464,12 @@ impl Reader {
                 return refuse("a section break in a paragraph");
             }
             for n in p.descendants() {
-                if n.ns == w && matches!(n.name.as_str(), "ins" | "del" | "moveFrom" | "moveTo" | "pPrChange" | "rPrChange") {
+                if n.ns == w
+                    && matches!(
+                        n.name.as_str(),
+                        "ins" | "del" | "moveFrom" | "moveTo" | "pPrChange" | "rPrChange"
+                    )
+                {
                     return refuse("a tracked change of a paragraph's properties");
                 }
             }
@@ -433,7 +480,10 @@ impl Reader {
         let bookmarks = std::mem::replace(&mut fields.bookmarks, outer).unwrap_or_default();
         r?;
         for r in &runs {
-            if r.rpr.as_deref().is_some_and(|x| x.contains("Change") || x.contains(":ins") || x.contains(":del")) {
+            if r.rpr
+                .as_deref()
+                .is_some_and(|x| x.contains("Change") || x.contains(":ins") || x.contains(":del"))
+            {
                 // (a tracked change of a run's formatting: refused below by its key's parse)
             }
         }
@@ -452,7 +502,10 @@ impl Reader {
             rec,
             pk,
             ppr: ppr.map(|n| n.write(&self.names, Some(w))),
-            style_id: ppr.and_then(|p| p.child(w, "pStyle")).and_then(|s| s.attr_any("val")).map(str::to_string),
+            style_id: ppr
+                .and_then(|p| p.child(w, "pStyle"))
+                .and_then(|s| s.attr_any("val"))
+                .map(str::to_string),
             runs,
             bookmarks,
             para_id: element.attr(self.w14, "paraId").map(str::to_string),
@@ -474,7 +527,19 @@ impl Reader {
         fn visible(s: &Walk) -> bool {
             s.fields.iter().all(|r| *r)
         }
-        const RUN_DECLARES: [&str; 11] = ["b", "bCs", "i", "iCs", "u", "strike", "sz", "szCs", "rFonts", "color", "highlight"];
+        const RUN_DECLARES: [&str; 11] = [
+            "b",
+            "bCs",
+            "i",
+            "iCs",
+            "u",
+            "strike",
+            "sz",
+            "szCs",
+            "rFonts",
+            "color",
+            "highlight",
+        ];
         fn run(r: &Node, w: Ns, s: &mut Walk) {
             let mut had_text = false;
             for c in &r.children {
@@ -514,7 +579,13 @@ impl Reader {
                         s.text.push_str(&c.text);
                     }
                     "delText" => {}
-                    "br" => s.text.push(if matches!(c.attr(w, "type"), Some("page") | Some("column")) { '\u{0C}' } else { '\u{0B}' }),
+                    "br" => s
+                        .text
+                        .push(if matches!(c.attr(w, "type"), Some("page") | Some("column")) {
+                            '\u{0C}'
+                        } else {
+                            '\u{0B}'
+                        }),
                     "tab" | "ptab" => s.text.push('\t'),
                     "cr" => s.text.push('\u{0B}'),
                     "noBreakHyphen" => s.text.push('\u{2011}'),
@@ -523,14 +594,18 @@ impl Reader {
                         s.odd = true;
                         s.text.push('\u{FFFC}');
                     }
-                    "drawing" | "pict" | "object" | "footnoteReference" | "endnoteReference" | "footnoteRef" | "endnoteRef"
-                    | "contentPart" | "ruby" => s.text.push('\u{FFFC}'),
+                    "drawing" | "pict" | "object" | "footnoteReference" | "endnoteReference" | "footnoteRef"
+                    | "endnoteRef" | "contentPart" | "ruby" => s.text.push('\u{FFFC}'),
                     _ => {}
                 }
             }
             if had_text {
                 if let Some(rpr) = r.child(w, "rPr") {
-                    if rpr.children.iter().any(|x| x.ns == w && RUN_DECLARES.contains(&x.name.as_str())) {
+                    if rpr
+                        .children
+                        .iter()
+                        .any(|x| x.ns == w && RUN_DECLARES.contains(&x.name.as_str()))
+                    {
                         s.rdecl = true;
                     }
                 }
@@ -546,7 +621,9 @@ impl Reader {
                 }
                 match c.name.as_str() {
                     "r" => run(c, w, s),
-                    "hyperlink" | "smartTag" | "customXml" | "dir" | "bdo" | "fldSimple" | "ins" | "moveTo" => container(c, w, s),
+                    "hyperlink" | "smartTag" | "customXml" | "dir" | "bdo" | "fldSimple" | "ins" | "moveTo" => {
+                        container(c, w, s)
+                    }
                     "sdt" => {
                         if let Some(content) = c.child(w, "sdtContent") {
                             container(content, w, s);
@@ -556,14 +633,29 @@ impl Reader {
                 }
             }
         }
-        let mut s = Walk { fields: vec![], text: String::new(), rdecl: false, odd: false };
+        let mut s = Walk {
+            fields: vec![],
+            text: String::new(),
+            rdecl: false,
+            odd: false,
+        };
         container(element, w, &mut s);
         let nt: String = s.text.chars().map(|c| if c == '\u{FFFC}' { ' ' } else { c }).collect();
         let all = element.descendants();
-        let raw: String = all.iter().filter(|n| n.ns == w && n.name == "t").map(|n| n.text.as_str()).collect();
+        let raw: String = all
+            .iter()
+            .filter(|n| n.ns == w && n.name == "t")
+            .map(|n| n.text.as_str())
+            .collect();
         let ppr = element.child(w, "pPr");
         let pdecl = ppr.is_some_and(|p| {
-            p.children.iter().any(|c| c.ns == w && matches!(c.name.as_str(), "jc" | "spacing" | "ind" | "keepNext" | "keepLines" | "pageBreakBefore"))
+            p.children.iter().any(|c| {
+                c.ns == w
+                    && matches!(
+                        c.name.as_str(),
+                        "jc" | "spacing" | "ind" | "keepNext" | "keepLines" | "pageBreakBefore"
+                    )
+            })
         });
         let puncts = raw.chars().any(|c| ":;!?\u{AB}\u{BB}".contains(c));
         let ascii = raw.is_ascii() && nt.chars().all(|c| c.is_ascii() || !c.is_numeric());
@@ -583,8 +675,23 @@ impl Reader {
         };
         // _state: something drawn or a break, outside the properties
         const VISIBLE: [&str; 17] = [
-            "drawing", "pict", "object", "br", "cr", "sym", "tab", "ptab", "fldChar", "fldSimple", "instrText",
-            "footnoteReference", "endnoteReference", "commentReference", "sdt", "noBreakHyphen", "softHyphen",
+            "drawing",
+            "pict",
+            "object",
+            "br",
+            "cr",
+            "sym",
+            "tab",
+            "ptab",
+            "fldChar",
+            "fldSimple",
+            "instrText",
+            "footnoteReference",
+            "endnoteReference",
+            "commentReference",
+            "sdt",
+            "noBreakHyphen",
+            "softHyphen",
         ];
         let mut vis = false;
         for c in &element.children {
@@ -604,12 +711,30 @@ impl Reader {
                 break;
             }
         }
-        const CONTENT: [&str; 14] =
-            ["drawing", "pict", "object", "br", "cr", "sym", "tab", "ptab", "fldChar", "fldSimple", "footnoteReference", "endnoteReference", "sectPr", "framePr"];
+        const CONTENT: [&str; 14] = [
+            "drawing",
+            "pict",
+            "object",
+            "br",
+            "cr",
+            "sym",
+            "tab",
+            "ptab",
+            "fldChar",
+            "fldSimple",
+            "footnoteReference",
+            "endnoteReference",
+            "sectPr",
+            "framePr",
+        ];
         let content = all.iter().any(|n| n.ns == w && CONTENT.contains(&n.name.as_str()));
         let breaks: Vec<&&Node> = all
             .iter()
-            .filter(|n| n.ns == w && (matches!(n.name.as_str(), "br" | "tab" | "drawing") || (n.name == "t" && !py_strip(&n.text).is_empty())))
+            .filter(|n| {
+                n.ns == w
+                    && (matches!(n.name.as_str(), "br" | "tab" | "drawing")
+                        || (n.name == "t" && !py_strip(&n.text).is_empty()))
+            })
             .collect();
         let page = |n: &Node| n.name == "br" && n.attr(w, "type") == Some("page");
         let bs = breaks.first().is_some_and(|n| page(n));
@@ -644,7 +769,11 @@ impl Reader {
         }
         let _ = grid_seen;
         let tbl_pr = element.child(w, "tblPr");
-        let style = tbl_pr.and_then(|p| p.child(w, "tblStyle")).and_then(|s| s.attr_any("val")).unwrap_or("").to_string();
+        let style = tbl_pr
+            .and_then(|p| p.child(w, "tblStyle"))
+            .and_then(|s| s.attr_any("val"))
+            .unwrap_or("")
+            .to_string();
         let look = table_look(tbl_pr.and_then(|p| p.child(w, "tblLook")));
         let rows_el: Vec<&Node> = element.children_named(w, "tr").collect();
         let mut rows = Vec::new();
@@ -659,7 +788,11 @@ impl Reader {
                 }
             }
             if let Some(tr_pr) = row.child(w, "trPr") {
-                if tr_pr.children.iter().any(|n| matches!(n.name.as_str(), "del" | "ins" | "trPrChange")) {
+                if tr_pr
+                    .children
+                    .iter()
+                    .any(|n| matches!(n.name.as_str(), "del" | "ins" | "trPrChange"))
+                {
                     return refuse("a tracked row");
                 }
             }
@@ -667,7 +800,12 @@ impl Reader {
             let mut out_cells = Vec::new();
             for (n, cell) in cells.iter().enumerate() {
                 if let Some(tc_pr) = cell.child(w, "tcPr") {
-                    if tc_pr.children.iter().any(|x| matches!(x.name.as_str(), "cellDel" | "cellIns" | "cellMerge" | "tcPrChange" | "vMerge" | "hMerge")) {
+                    if tc_pr.children.iter().any(|x| {
+                        matches!(
+                            x.name.as_str(),
+                            "cellDel" | "cellIns" | "cellMerge" | "tcPrChange" | "vMerge" | "hMerge"
+                        )
+                    }) {
                         return refuse("a merged or tracked cell");
                     }
                 }
@@ -709,7 +847,11 @@ impl Reader {
                 }
             }
         }
-        Ok(Table { style, rows, skeleton: skel.write(&self.names, Some(w)) })
+        Ok(Table {
+            style,
+            rows,
+            skeleton: skel.write(&self.names, Some(w)),
+        })
     }
 }
 
@@ -747,20 +889,37 @@ fn cell_conditions(look: &[bool; 6], row: usize, column: usize, rows: usize, col
     let mut out = vec!["wholeTable"];
     if !look[5] && !(first_col || last_col) {
         let index = column - if look[2] { 1 } else { 0 };
-        out.push(if index.rem_euclid(2) == 0 { "band1Vert" } else { "band2Vert" });
+        out.push(if index.rem_euclid(2) == 0 {
+            "band1Vert"
+        } else {
+            "band2Vert"
+        });
     }
     if !look[4] && !(first_row || last_row) {
         let index = row - if look[0] { 1 } else { 0 };
-        out.push(if index.rem_euclid(2) == 0 { "band1Horz" } else { "band2Horz" });
+        out.push(if index.rem_euclid(2) == 0 {
+            "band1Horz"
+        } else {
+            "band2Horz"
+        });
     }
-    for (name, on) in [("firstCol", first_col), ("lastCol", last_col), ("firstRow", first_row), ("lastRow", last_row)] {
+    for (name, on) in [
+        ("firstCol", first_col),
+        ("lastCol", last_col),
+        ("firstRow", first_row),
+        ("lastRow", last_row),
+    ] {
         if on {
             out.push(name);
         }
     }
     if (first_row || last_row) && (first_col || last_col) {
         out.push(if first_col {
-            if first_row { "nwCell" } else { "swCell" }
+            if first_row {
+                "nwCell"
+            } else {
+                "swCell"
+            }
         } else if first_row {
             "neCell"
         } else {
@@ -791,20 +950,29 @@ type Fld = (Option<String>, Option<String>, Option<String>);
 
 /// `records.fields_of`: the fields begun in a block (the stack of those open before it
 /// carried on) and the bookmarks it starts.
-fn fields_of(names: &Names, w: Ns, element: &Node, stack: &mut Vec<(String, Option<bool>, Option<usize>)>) -> Result<(Vec<(String, Option<String>, Option<String>)>, Vec<String>), Refused> {
+fn fields_of(
+    names: &Names,
+    w: Ns,
+    element: &Node,
+    stack: &mut Vec<(String, Option<bool>, Option<usize>)>,
+) -> Result<(Vec<(String, Option<String>, Option<String>)>, Vec<String>), Refused> {
     let mut begun: Vec<Fld> = Vec::new();
     // [field index, text so far, ended, active]
     let mut tocs: Vec<(usize, String, bool)> = Vec::new();
     let _ = names;
-    fn walk(n: &Node, parent: Option<&Node>, w: Ns, f: &mut dyn FnMut(&Node, Option<&Node>) -> Result<(), Refused>) -> Result<(), Refused> {
+    fn walk(
+        n: &Node,
+        parent: Option<&Node>,
+        f: &mut dyn FnMut(&Node, Option<&Node>) -> Result<(), Refused>,
+    ) -> Result<(), Refused> {
         f(n, parent)?;
         for c in &n.children {
-            walk(c, Some(n), w, f)?;
+            walk(c, Some(n), f)?;
         }
         Ok(())
     }
     let mut names_out = Vec::new();
-    walk(element, None, w, &mut |node, parent| {
+    walk(element, None, &mut |node, parent| {
         if node.ns != w {
             return Ok(());
         }
@@ -842,9 +1010,21 @@ fn fields_of(names: &Names, w: Ns, element: &Node, stack: &mut Vec<(String, Opti
                 let kw = keyword(instruction);
                 let mut found: Fld = (Some(kw.clone()), target(instruction), None);
                 if kw == "TOC" {
-                    let text: String = node.descendants().iter().filter(|x| x.ns == w && x.name == "t").map(|x| x.text.as_str()).collect();
+                    let text: String = node
+                        .descendants()
+                        .iter()
+                        .filter(|x| x.ns == w && x.name == "t")
+                        .map(|x| x.text.as_str())
+                        .collect();
                     let s = py_strip(&text);
-                    found.2 = Some(if s.is_empty() || s == EMPTY_TOC { "empty" } else { "some" }.into());
+                    found.2 = Some(
+                        if s.is_empty() || s == EMPTY_TOC {
+                            "empty"
+                        } else {
+                            "some"
+                        }
+                        .into(),
+                    );
                 }
                 begun.push(found);
             }
@@ -882,7 +1062,14 @@ fn fields_of(names: &Names, w: Ns, element: &Node, stack: &mut Vec<(String, Opti
                             if t.0 == k {
                                 t.2 = true;
                                 let s = py_strip(t.1.trim_matches('\n'));
-                                begun[k].2 = Some(if s.is_empty() || s == EMPTY_TOC { "empty" } else { "some" }.into());
+                                begun[k].2 = Some(
+                                    if s.is_empty() || s == EMPTY_TOC {
+                                        "empty"
+                                    } else {
+                                        "some"
+                                    }
+                                    .into(),
+                                );
                             }
                         }
                     }
@@ -896,7 +1083,11 @@ fn fields_of(names: &Names, w: Ns, element: &Node, stack: &mut Vec<(String, Opti
     for t in &tocs {
         if !t.2 {
             let s = py_strip(t.1.trim_matches('\n'));
-            begun[t.0].2 = if !s.is_empty() && !EMPTY_TOC.starts_with(s) { Some("some".into()) } else { None };
+            begun[t.0].2 = if !s.is_empty() && !EMPTY_TOC.starts_with(s) {
+                Some("some".into())
+            } else {
+                None
+            };
         }
     }
     if stack.iter().any(|e| e.1.is_none()) {
@@ -921,13 +1112,23 @@ fn fields_of(names: &Names, w: Ns, element: &Node, stack: &mut Vec<(String, Opti
 pub type FEntry = (String, Option<bool>, Option<usize>);
 
 fn open_state(stack: &[Open]) -> Vec<(bool, bool, String)> {
-    stack.iter().map(|f| (f.result_state, f.computed, keyword(&f.instruction.concat()))).collect()
+    stack
+        .iter()
+        .map(|f| (f.result_state, f.computed, keyword(&f.instruction.concat())))
+        .collect()
 }
 
 impl Reader {
     /// One top-level element of the body: its block (parsed with the fields open before
     /// it, carried on) and what docx-agent's records read of its fields.
-    fn unit(&self, child: &Node, xml: String, uid: u64, fields: &mut Fields, fstack: &mut Vec<FEntry>) -> Result<Unit, Refused> {
+    fn unit(
+        &self,
+        child: &Node,
+        xml: String,
+        uid: u64,
+        fields: &mut Fields,
+        fstack: &mut Vec<FEntry>,
+    ) -> Result<Unit, Refused> {
         let w = self.w;
         if child.ns != w {
             return refuse(format!("a body's {}", child.name));
@@ -944,19 +1145,32 @@ impl Reader {
         let toc = toc_before || fld.iter().any(|f| f.0 == "TOC");
         let key = match &block {
             Block::P(p) => p.para_id.as_ref().map(|r| format!("p:{}", r.to_uppercase())),
-            Block::T(_) => child.child(w, "tr").and_then(|tr| tr.attr(self.w14, "paraId")).map(|r| format!("t:{}", r.to_uppercase())),
+            Block::T(_) => child
+                .child(w, "tr")
+                .and_then(|tr| tr.attr(self.w14, "paraId"))
+                .map(|r| format!("t:{}", r.to_uppercase())),
         };
         let mut refs = Vec::new();
         for node in child.descendants() {
             if node.ns == w && (node.name == "instrText" || node.name == "fldSimple") {
-                let text = if node.name == "instrText" { node.text.as_str() } else { node.attr_any("instr").unwrap_or("") };
+                let text = if node.name == "instrText" {
+                    node.text.as_str()
+                } else {
+                    node.attr_any("instr").unwrap_or("")
+                };
                 let words: Vec<&str> = text.split_whitespace().collect();
                 if words.len() > 1 && words[0].to_uppercase() == "REF" && !refs.contains(&words[1].to_string()) {
                     refs.push(words[1].to_string());
                 }
             }
         }
-        let pending = block.paragraphs().iter().any(|p| p.runs.iter().any(|r| r.field.as_ref().is_some_and(|f| f.keyword == "REF" || f.keyword == "SEQ")));
+        let pending = block.paragraphs().iter().any(|p| {
+            p.runs.iter().any(|r| {
+                r.field
+                    .as_ref()
+                    .is_some_and(|f| f.keyword == "REF" || f.keyword == "SEQ")
+            })
+        });
         Ok(Unit {
             uid,
             key,
@@ -1022,16 +1236,29 @@ fn cross_references(units: &[Unit]) -> Result<(Vec<(usize, Block)>, bool), Refus
     let mut out: Vec<(usize, Block)> = Vec::new();
     for (u, unit) in units.iter().enumerate() {
         let ps = &paras[u];
-        if !ps.iter().any(|p| p.runs.iter().any(|r| r.field.as_ref().is_some_and(|f| f.keyword == "REF"))) {
+        if !ps.iter().any(|p| {
+            p.runs
+                .iter()
+                .any(|r| r.field.as_ref().is_some_and(|f| f.keyword == "REF"))
+        }) {
             continue;
         }
         let mut block = unit.raw.clone();
         let targets: Vec<&mut Para> = match &mut block {
             Block::P(p) => vec![p],
-            Block::T(t) => t.rows.iter_mut().flat_map(|r| r.iter_mut()).flat_map(|c| c.iter_mut()).collect(),
+            Block::T(t) => t
+                .rows
+                .iter_mut()
+                .flat_map(|r| r.iter_mut())
+                .flat_map(|c| c.iter_mut())
+                .collect(),
         };
         for p in targets {
-            if !p.runs.iter().any(|r| r.field.as_ref().is_some_and(|f| f.keyword == "REF")) {
+            if !p
+                .runs
+                .iter()
+                .any(|r| r.field.as_ref().is_some_and(|f| f.keyword == "REF"))
+            {
                 continue;
             }
             let mut runs = Vec::new();
@@ -1054,7 +1281,11 @@ fn cross_references(units: &[Unit]) -> Result<(Vec<(usize, Block)>, bool), Refus
                 }
             }
             index_of.insert(p.runs.len(), runs.len());
-            p.bookmarks = p.bookmarks.iter().map(|(s, id, name, k)| (*s, id.clone(), name.clone(), *index_of.get(k).unwrap_or(k))).collect();
+            p.bookmarks = p
+                .bookmarks
+                .iter()
+                .map(|(s, id, name, k)| (*s, id.clone(), name.clone(), *index_of.get(k).unwrap_or(k)))
+                .collect();
             p.runs = runs;
         }
         out.push((u, block));
@@ -1108,13 +1339,21 @@ fn reference_runs(
         if !piece.marks.is_empty() {
             return Ok(None);
         }
-        if piece.field.as_ref().is_some_and(|f| matches!(f.keyword.as_str(), "PAGE" | "NUMPAGES" | "SECTIONPAGES" | "PAGEREF")) {
+        if piece
+            .field
+            .as_ref()
+            .is_some_and(|f| matches!(f.keyword.as_str(), "PAGE" | "NUMPAGES" | "SECTIONPAGES" | "PAGEREF"))
+        {
             return Ok(None);
         }
     }
     let text: String = source.iter().map(|p| p.text.as_str()).collect();
     if text.is_empty() {
-        return Ok(Some(vec![Run { field: None, text: String::new(), ..run.clone() }]));
+        return Ok(Some(vec![Run {
+            field: None,
+            text: String::new(),
+            ..run.clone()
+        }]));
     }
     // split where the properties' object changes: each source piece is its own
     let mut out = Vec::new();
@@ -1122,7 +1361,13 @@ fn reference_runs(
         if piece.text.is_empty() {
             continue;
         }
-        out.push(Run { rpr: piece.rpr.clone(), toc_link: run.toc_link, text: piece.text.clone(), marks: vec![], field: None });
+        out.push(Run {
+            rpr: piece.rpr.clone(),
+            toc_link: run.toc_link,
+            text: piece.text.clone(),
+            marks: vec![],
+            field: None,
+        });
     }
     Ok(Some(out))
 }
@@ -1151,7 +1396,9 @@ fn fmt_key(v: &Value) -> Result<FmtKey, Refused> {
         hp: a[3].as_i64().unwrap_or(0),
         whp: a[4].as_i64().unwrap_or(0),
         position: a[5].as_i64().unwrap_or(0),
-        border: a[6].as_array().map(|b| (b[0].as_i64().unwrap_or(0), b[1].as_i64().unwrap_or(0))),
+        border: a[6]
+            .as_array()
+            .map(|b| (b[0].as_i64().unwrap_or(0), b[1].as_i64().unwrap_or(0))),
     })
 }
 
@@ -1316,7 +1563,10 @@ enum V {
 
 fn q_of(v: &Value) -> Result<Q, Refused> {
     let a = v.as_array().ok_or_else(|| Refused(format!("a fraction {v}")))?;
-    Ok(Q::new(a[0].as_i64().unwrap_or(0) as i128, a[1].as_i64().unwrap_or(1) as i128))
+    Ok(Q::new(
+        a[0].as_i64().unwrap_or(0) as i128,
+        a[1].as_i64().unwrap_or(1) as i128,
+    ))
 }
 
 fn opt_str(v: &Value) -> V {
@@ -1636,7 +1886,12 @@ impl<'a> Exporter<'a> {
     /// resolver when they grew).
     fn tables(&mut self) -> Result<&crate::measure::Tables, Refused> {
         let e = &self.c.ex;
-        let counts = (e.font_list.len(), e.chars.len(), e.format_list.len(), e.kern_fonts.len());
+        let counts = (
+            e.font_list.len(),
+            e.chars.len(),
+            e.format_list.len(),
+            e.kern_fonts.len(),
+        );
         if self.c.tables.as_ref().map(|t| t.1) != Some(counts) {
             if self.c.units.is_none() {
                 let v = self.ask("units", &json!(null))?;
@@ -1646,9 +1901,11 @@ impl<'a> Exporter<'a> {
             }
             let arg = self_document_arg(&self.c.ex, &[]);
             let text = self.ask_raw("fonts", &arg)?;
-            let fonts: Vec<ooxml_core::model::FontIn> = serde_json::from_str(&text).map_err(|e| Refused(format!("fonts: {e}")))?;
+            let fonts: Vec<ooxml_core::model::FontIn> =
+                serde_json::from_str(&text).map_err(|e| Refused(format!("fonts: {e}")))?;
             let (px_den, lu) = self.c.units.unwrap();
-            let t = crate::measure::Tables::from_parts(&fonts, &self.c.ex.format_list, 20, px_den as i64, lu as i64, 300);
+            let t =
+                crate::measure::Tables::from_parts(&fonts, &self.c.ex.format_list, 20, px_den as i64, lu as i64, 300);
             self.c.tables = Some((t, counts));
         }
         Ok(&self.c.tables.as_ref().unwrap().0)
@@ -1724,7 +1981,9 @@ impl<'a> Exporter<'a> {
         }
         let k = pkey(p);
         let v = self.ask("para", &pkey_json(p))?;
-        let info = ParaInfo { v: std::sync::Arc::new(v) };
+        let info = ParaInfo {
+            v: std::sync::Arc::new(v),
+        };
         self.c.paras.insert(k, info.clone());
         Ok(info)
     }
@@ -1787,7 +2046,14 @@ impl<'a> Exporter<'a> {
             ("right", wd(&v["right"])?),
             ("tabs", V::List(tabs)),
             ("default_tab", wd(&v["default_tab"])?),
-            ("hanging_stop", if v["hanging_stop"].is_null() { V::Null } else { wd(&v["hanging_stop"])? }),
+            (
+                "hanging_stop",
+                if v["hanging_stop"].is_null() {
+                    V::Null
+                } else {
+                    wd(&v["hanging_stop"])?
+                },
+            ),
             ("squeeze", V::Bool(v["squeeze"].as_bool().unwrap_or(false))),
             ("tab_origin", wd(&v["tab_origin"])?),
         ]);
@@ -1796,7 +2062,12 @@ impl<'a> Exporter<'a> {
     }
 
     fn borders(&mut self, prev: Option<&Para>, p: &Para, next: Option<&Para>) -> Result<(Q, Q), Refused> {
-        let k = format!("{}#{}#{}", prev.map(pkey).unwrap_or_default(), pkey(p), next.map(pkey).unwrap_or_default());
+        let k = format!(
+            "{}#{}#{}",
+            prev.map(pkey).unwrap_or_default(),
+            pkey(p),
+            next.map(pkey).unwrap_or_default()
+        );
         if let Some(found) = self.c.borders.get(&k) {
             return Ok(*found);
         }
@@ -1832,7 +2103,10 @@ impl<'a> Exporter<'a> {
             }
             Some(Levels {
                 key: v["key"].as_str().unwrap_or("").to_string(),
-                restarts: v["restarts"].as_array().map(|a| a.iter().filter_map(|x| x.as_i64()).collect()).unwrap_or_default(),
+                restarts: v["restarts"]
+                    .as_array()
+                    .map(|a| a.iter().filter_map(|x| x.as_i64()).collect())
+                    .unwrap_or_default(),
                 levels,
             })
         };
@@ -1841,11 +2115,18 @@ impl<'a> Exporter<'a> {
     }
 
     /// `Exporter.measure_input` (with the mirror's additions), `geometry` given.
-    fn measure(&mut self, p: &Para, label: Option<&Option<String>>, info: &ParaInfo, geometry: V) -> Result<V, Refused> {
+    fn measure(
+        &mut self,
+        p: &Para,
+        label: Option<&Option<String>>,
+        info: &ParaInfo,
+        geometry: V,
+    ) -> Result<V, Refused> {
         let mut runs = Vec::new();
         for r in &p.runs {
             let ri = self.run(p, r)?;
-            let mut entry: Vec<(&'static str, V)> = vec![("text", V::Str(r.text.clone())), ("vanish", V::Bool(ri.vanish))];
+            let mut entry: Vec<(&'static str, V)> =
+                vec![("text", V::Str(r.text.clone())), ("vanish", V::Bool(ri.vanish))];
             if !ri.vanish {
                 let mut fmts: Vec<usize> = Vec::new();
                 let mut seen: HashMap<char, usize> = HashMap::new();
@@ -1897,13 +2178,21 @@ impl<'a> Exporter<'a> {
                 if kind == "noBreakHyphen" {
                     self.c.ex.chars.insert('\u{2011}');
                 }
-                if !matches!(kind.as_str(), "tab" | "br" | "textWrapping" | "page" | "column" | "cr" | "noBreakHyphen" | "softHyphen") {
+                if !matches!(
+                    kind.as_str(),
+                    "tab" | "br" | "textWrapping" | "page" | "column" | "cr" | "noBreakHyphen" | "softHyphen"
+                ) {
                     return refuse(format!("mark {kind:?}: not exported"));
                 }
             }
             entry.push((
                 "marks",
-                V::List(r.marks.iter().map(|(pos, kind)| V::List(vec![V::Int(*pos as i64), V::Str(kind.clone())])).collect()),
+                V::List(
+                    r.marks
+                        .iter()
+                        .map(|(pos, kind)| V::List(vec![V::Int(*pos as i64), V::Str(kind.clone())]))
+                        .collect(),
+                ),
             ));
             if let Some(f) = &r.field {
                 if matches!(f.keyword.as_str(), "SEQ" | "SECTIONPAGES" | "STYLEREF") {
@@ -1915,7 +2204,11 @@ impl<'a> Exporter<'a> {
                         "field",
                         V::List(vec![
                             V::Str(f.keyword.clone()),
-                            if f.keyword == "PAGEREF" { arg.map(V::Str).unwrap_or(V::Null) } else { V::Null },
+                            if f.keyword == "PAGEREF" {
+                                arg.map(V::Str).unwrap_or(V::Null)
+                            } else {
+                                V::Null
+                            },
                         ]),
                     ));
                 }
@@ -1990,15 +2283,25 @@ impl<'a> Exporter<'a> {
 
 /// docx2svg's `table.paragraph_extent`: the narrowest and widest a cell paragraph's text
 /// goes in Word's autofit, twips; `None` where it cannot be measured so (a tab).
-fn paragraph_extent(t: &crate::measure::Tables, measure: &V, ind: [i64; 4], mode15: bool) -> Result<Option<(Q, Q)>, Refused> {
+fn paragraph_extent(
+    t: &crate::measure::Tables,
+    measure: &V,
+    ind: [i64; 4],
+    mode15: bool,
+) -> Result<Option<(Q, Q)>, Refused> {
     let runs = match measure {
-        V::Obj(o) => o.iter().find(|(k, _)| *k == "runs").map(|(_, v)| v.clone()).unwrap_or(V::List(vec![])),
+        V::Obj(o) => o
+            .iter()
+            .find(|(k, _)| *k == "runs")
+            .map(|(_, v)| v.clone())
+            .unwrap_or(V::List(vec![])),
         _ => V::List(vec![]),
     };
     let mut text = String::from("{\"runs\":");
     encode(&runs, &Dens { px: 1, w: 1 }, &mut text)?;
     text.push_str(",\"mark_fmt\":0,\"label_height_fmts\":[],\"geometry\":{\"first_start\":0,\"start\":0,\"right\":0,\"tabs\":[],\"default_tab\":1,\"hanging_stop\":null,\"squeeze\":false,\"tab_origin\":0},\"rule\":0,\"line\":240,\"columns\":false}");
-    let m: ooxml_core::model::MeasureIn = serde_json::from_str(&text).map_err(|e| Refused(format!("a measuring input: {e}")))?;
+    let m: ooxml_core::model::MeasureIn =
+        serde_json::from_str(&text).map_err(|e| Refused(format!("a measuring input: {e}")))?;
     let pieces = crate::linebreak::pieces(t, &m);
     use crate::measure::{BREAK, SPACE, TAB};
     if pieces.iter().any(|p| p.kind == TAB || p.kind > 4) {
@@ -2014,9 +2317,8 @@ fn paragraph_extent(t: &crate::measure::Tables, measure: &V, ind: [i64; 4], mode
     let (mut widest, mut longest) = (zero, zero);
     let (mut word, mut line, mut trailing) = (0i128, 0i128, 0i128);
     let (mut start, mut first_word, mut first_line_) = (first_start, true, true);
-    let n = pieces.len();
-    for k in 0..=n {
-        let (kind, width) = if k < n { (pieces[k].kind, pieces[k].width as i128) } else { (BREAK, 0) };
+    let ends = std::iter::once((BREAK, 0i128));
+    for (kind, width) in pieces.iter().map(|p| (p.kind, p.width as i128)).chain(ends) {
         if kind == BREAK {
             let v = Q::from_integer(start as i128) + Q::from_integer(line - trailing) * unit;
             if v > longest {
@@ -2100,7 +2402,7 @@ pub struct Stats {
     pub export_ms: f64,
 }
 
-fn para_neighbour<'b>(units: &'b [Unit], k: usize, side: i64) -> Option<&'b Para> {
+fn para_neighbour(units: &[Unit], k: usize, side: i64) -> Option<&Para> {
     let j = k as i64 + side;
     if j < 0 || j as usize >= units.len() {
         return None;
@@ -2345,7 +2647,14 @@ impl Doc {
                     ("keep_next", V::Bool(info.b("keep_next"))),
                     ("keep_lines", V::Bool(info.b("keep_lines"))),
                     ("pbb", V::Bool(info.b("pbb"))),
-                    ("widow", if widow.is_null() { V::Null } else { V::Bool(widow.as_bool().unwrap_or(false)) }),
+                    (
+                        "widow",
+                        if widow.is_null() {
+                            V::Null
+                        } else {
+                            V::Bool(widow.as_bool().unwrap_or(false))
+                        },
+                    ),
                     ("section_start", V::Bool(k == 0)),
                     ("section_mark", V::Bool(false)),
                     ("measure", measure),
@@ -2353,7 +2662,9 @@ impl Doc {
             }
             Block::T(t) => {
                 let cell_labels: Vec<Option<Option<String>>> =
-                    (0..t.rows.iter().flat_map(|r| r.iter()).map(|c| c.len()).sum::<usize>()).map(|j| labels.get(&(u.uid, j)).cloned()).collect();
+                    (0..t.rows.iter().flat_map(|r| r.iter()).map(|c| c.len()).sum::<usize>())
+                        .map(|j| labels.get(&(u.uid, j)).cloned())
+                        .collect();
                 table_item(&mut ex, units, k, u, t, &cell_labels, rec)?
             }
         };
@@ -2374,7 +2685,10 @@ impl Doc {
         let sections = V::List(sections);
         let formats = formats_v(&ex.c.ex);
         let items = V::List(items);
-        let mut d = Dens { px: doc["lu_den"].as_i64().unwrap_or(1) as i128, w: 1 };
+        let mut d = Dens {
+            px: doc["lu_den"].as_i64().unwrap_or(1) as i128,
+            w: 1,
+        };
         dens(&sections, &mut d);
         dens(&items, &mut d);
         let px_den = d.px.lcm(&(96 * 20));
@@ -2394,7 +2708,10 @@ impl Doc {
             ("formats", formats),
             ("sections", sections),
             ("items", items),
-            ("constants", V::Raw(doc["constants"].as_str().unwrap_or("null").to_string())),
+            (
+                "constants",
+                V::Raw(doc["constants"].as_str().unwrap_or("null").to_string()),
+            ),
             ("px_den", V::Int(px_den as i64)),
             ("w_den", V::Int(w_den as i64)),
             ("lu", V::Int(lu.to_integer() as i64)),
@@ -2403,7 +2720,12 @@ impl Doc {
         encode(&obj, &d, &mut out)?;
         self.dens = (px_den, w_den);
         let e = &self.caches.ex;
-        self.sent = (e.font_list.len(), e.chars.clone(), e.kern_fonts.clone(), e.format_list.len());
+        self.sent = (
+            e.font_list.len(),
+            e.chars.clone(),
+            e.kern_fonts.clone(),
+            e.format_list.len(),
+        );
         Ok(out)
     }
 
@@ -2440,23 +2762,53 @@ impl Doc {
         wrapped.push_str("</root>");
         let root = xml::parse(wrapped.as_bytes(), &mut self.reader.names).map_err(|e| Refused(e.to_string()))?;
         let _ = offset;
-        root.children.into_iter().next().ok_or_else(|| Refused("an empty element".into()))
+        root.children
+            .into_iter()
+            .next()
+            .ok_or_else(|| Refused("an empty element".into()))
     }
 
     /// `Mirror.splice`: units `[lo, hi)` replaced by `elements` (new XML, or a unit kept),
     /// the complex fields threaded through them, the units relabelled and the neighbours
     /// made again; one commit (JSON) for the owner, `more` (a JSON object's text) added.
-    pub fn splice(&mut self, lo: usize, hi: usize, elements: Vec<Elem>, version: i64, more: Option<String>, r: &mut dyn Resolver) -> Result<(String, Stats), Refused> {
+    pub fn splice(
+        &mut self,
+        lo: usize,
+        hi: usize,
+        elements: Vec<Elem>,
+        version: i64,
+        more: Option<String>,
+        r: &mut dyn Resolver,
+    ) -> Result<(String, Stats), Refused> {
         let t0 = std::time::Instant::now();
         if lo > hi || hi > self.units.len() {
             return refuse("a splice off the body");
         }
-        let incoming = if lo < self.units.len() { self.units[lo].fields_before.clone() } else { self.fields_end.clone() };
-        let incoming_f = if lo < self.units.len() { self.units[lo].fstack_before.clone() } else { self.fstack_end.clone() };
-        let outgoing = if hi < self.units.len() { open_state(&self.units[hi].fields_before) } else { open_state(&self.fields_end) };
-        let outgoing_f = if hi < self.units.len() { self.units[hi].fstack_before.clone() } else { self.fstack_end.clone() };
+        let incoming = if lo < self.units.len() {
+            self.units[lo].fields_before.clone()
+        } else {
+            self.fields_end.clone()
+        };
+        let incoming_f = if lo < self.units.len() {
+            self.units[lo].fstack_before.clone()
+        } else {
+            self.fstack_end.clone()
+        };
+        let outgoing = if hi < self.units.len() {
+            open_state(&self.units[hi].fields_before)
+        } else {
+            open_state(&self.fields_end)
+        };
+        let outgoing_f = if hi < self.units.len() {
+            self.units[hi].fstack_before.clone()
+        } else {
+            self.fstack_end.clone()
+        };
         let old: Vec<Unit> = self.units[lo..hi].to_vec();
-        let mut fields = Fields { stack: incoming, bookmarks: None };
+        let mut fields = Fields {
+            stack: incoming,
+            bookmarks: None,
+        };
         let mut fstack = incoming_f;
         let mut region: Vec<Unit> = Vec::new();
         let mut pending = false;
@@ -2470,18 +2822,25 @@ impl Doc {
                     region.push(u);
                 }
                 Elem::Kept(i) => {
-                    let u = old.get(i.wrapping_sub(lo)).cloned().ok_or_else(|| Refused("a kept unit off the region".into()))?;
+                    let u = old
+                        .get(i.wrapping_sub(lo))
+                        .cloned()
+                        .ok_or_else(|| Refused("a kept unit off the region".into()))?;
                     let node = self.node_of(&u.xml)?;
                     if open_state(&u.fields_before) == open_state(&fields.stack) {
                         // kept: the fields threaded through it, its records' reading again
-                        let mut again = self.reader.unit(&node, u.xml.clone(), u.uid, &mut fields, &mut fstack)?;
+                        let mut again = self
+                            .reader
+                            .unit(&node, u.xml.clone(), u.uid, &mut fields, &mut fstack)?;
                         again.raw = u.raw.clone();
                         again.block = u.block.clone();
                         again.faces = u.faces.clone();
                         region.push(again);
                     } else {
                         self.next_uid += 1;
-                        let again = self.reader.unit(&node, u.xml.clone(), self.next_uid, &mut fields, &mut fstack)?;
+                        let again = self
+                            .reader
+                            .unit(&node, u.xml.clone(), self.next_uid, &mut fields, &mut fstack)?;
                         pending |= again.pending;
                         region.push(again);
                     }
@@ -2570,7 +2929,11 @@ impl Doc {
             }
         }
         let t1 = std::time::Instant::now();
-        let relabelled = if runs.is_empty() { HashSet::new() } else { self.relabel(r)? };
+        let relabelled = if runs.is_empty() {
+            HashSet::new()
+        } else {
+            self.relabel(r)?
+        };
         let mut covered: HashSet<usize> = HashSet::new();
         for (s, e, _) in &runs {
             covered.extend(*s..*e);
@@ -2600,16 +2963,28 @@ impl Doc {
                 items.push(self.unit_item(k, r)?);
             }
             n_items += items.len();
-            out_splices.push(V::Obj(vec![("at", V::Int(*at as i64)), ("remove", V::Int(*remove as i64)), ("items", V::List(items))]));
+            out_splices.push(V::Obj(vec![
+                ("at", V::Int(*at as i64)),
+                ("remove", V::Int(*remove as i64)),
+                ("items", V::List(items)),
+            ]));
         }
         let mut obj: Vec<(&'static str, V)> = vec![("version", V::Int(version)), ("splices", V::List(out_splices))];
         let mut text = String::new();
-        let d = Dens { px: self.dens.0, w: self.dens.1 };
+        let d = Dens {
+            px: self.dens.0,
+            w: self.dens.1,
+        };
         // the members `more` adds, as written
         let more_members = match &more {
             Some(m) => {
                 let t = m.trim();
-                let inner = t.strip_prefix('{').and_then(|x| x.strip_suffix('}')).unwrap_or("").trim().to_string();
+                let inner = t
+                    .strip_prefix('{')
+                    .and_then(|x| x.strip_suffix('}'))
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
                 inner
             }
             None => String::new(),
@@ -2774,7 +3149,10 @@ fn section_v(s: &Value) -> Result<V, Refused> {
                     } else {
                         let mut st = Vec::new();
                         for x in v.as_array().ok_or_else(|| Refused("stories".into()))? {
-                            st.push((kind_name(x[0].as_str().unwrap_or("")), V::List(vec![V::Len(Len::Px(q_of(&x[1])?)), V::Len(Len::Px(q_of(&x[2])?))])));
+                            st.push((
+                                kind_name(x[0].as_str().unwrap_or("")),
+                                V::List(vec![V::Len(Len::Px(q_of(&x[1])?)), V::Len(Len::Px(q_of(&x[2])?))]),
+                            ));
                         }
                         V::Obj(st)
                     }
@@ -2807,7 +3185,12 @@ fn bookmarks_of(p: &Para) -> V {
         p.bookmarks
             .iter()
             .filter(|(start, _, name, _)| *start && name.as_deref().is_some_and(|s| !s.is_empty()))
-            .map(|(_, _, name, run)| V::List(vec![V::Str(name.clone().unwrap()), V::Int(offsets[(*run).min(n)] as i64)]))
+            .map(|(_, _, name, run)| {
+                V::List(vec![
+                    V::Str(name.clone().unwrap()),
+                    V::Int(offsets[(*run).min(n)] as i64),
+                ])
+            })
             .collect(),
     )
 }
@@ -2923,7 +3306,12 @@ fn table_item(
                 let mode15 = info.b("mode15");
                 let t = ex.tables()?;
                 match paragraph_extent(t, m, ind, mode15)? {
-                    Some((a, b)) => exts.push(json!([*a.numer() as i64, *a.denom() as i64, *b.numer() as i64, *b.denom() as i64])),
+                    Some((a, b)) => exts.push(json!([
+                        *a.numer() as i64,
+                        *a.denom() as i64,
+                        *b.numer() as i64,
+                        *b.denom() as i64
+                    ])),
                     None => exts.push(Value::Null),
                 }
             }
@@ -2973,10 +3361,13 @@ fn table_item(
                 let widow = &info.v["widow"];
                 paras.push(V::Obj(vec![
                     ("block", V::Int(0)),
-                    ("key", match &p.para_id {
-                        Some(raw) => V::Str(format!("p:{}", raw.to_uppercase())),
-                        None => V::Null,
-                    }),
+                    (
+                        "key",
+                        match &p.para_id {
+                            Some(raw) => V::Str(format!("p:{}", raw.to_uppercase())),
+                            None => V::Null,
+                        },
+                    ),
                     ("bookmarks", bookmarks_of(p)),
                     ("before", V::Int(info.i("before"))),
                     ("after", V::Int(info.i("after"))),
@@ -2986,7 +3377,14 @@ fn table_item(
                     ("top_border", V::Len(Len::Px(top_border))),
                     ("border", V::Len(Len::Px(border))),
                     ("hidden", V::Bool(false)),
-                    ("widow", if widow.is_null() { V::Null } else { V::Bool(widow.as_bool().unwrap_or(false)) }),
+                    (
+                        "widow",
+                        if widow.is_null() {
+                            V::Null
+                        } else {
+                            V::Bool(widow.as_bool().unwrap_or(false))
+                        },
+                    ),
                     ("keep_next", V::Bool(info.b("keep_next"))),
                     ("measure", m),
                 ]));
@@ -3012,12 +3410,19 @@ fn table_item(
             ("keeps_next", V::Bool(keeps)),
             (
                 "tr_height",
-                if tr.is_null() { V::Null } else { V::List(vec![V::Len(Len::Px(q_of(&tr[0])?)), V::Raw(tr[1].to_string())]) },
+                if tr.is_null() {
+                    V::Null
+                } else {
+                    V::List(vec![V::Len(Len::Px(q_of(&tr[0])?)), V::Raw(tr[1].to_string())])
+                },
             ),
             ("cells", V::List(cells)),
         ]));
     }
-    let previous_style = previous.map(|p| ex.para(p)).transpose()?.and_then(|i| i.v["eff_style"].as_str().map(str::to_string));
+    let previous_style = previous
+        .map(|p| ex.para(p))
+        .transpose()?
+        .and_then(|i| i.v["eff_style"].as_str().map(str::to_string));
     let ps = ex.c.ex.style(previous_style.as_deref());
     let ds = ex.c.ex.style(v["default_style"].as_str());
     let fs = match &first_style {

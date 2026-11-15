@@ -260,14 +260,24 @@ impl ooxml_word::parse::Resolver for PyResolver<'_, '_> {
     fn call(&mut self, kind: &str, arg: &str) -> Result<String, String> {
         match self.f.call1((kind, arg)) {
             Ok(v) => v.extract::<String>().map_err(|e| e.to_string()),
-            Err(e) => Err(format!("{}: {}", e.get_type(self.f.py()).name().map(|n| n.to_string()).unwrap_or_default(), e.value(self.f.py()))),
+            Err(e) => Err(format!(
+                "{}: {}",
+                e.get_type(self.f.py())
+                    .name()
+                    .map(|n| n.to_string())
+                    .unwrap_or_default(),
+                e.value(self.f.py())
+            )),
         }
     }
 }
 
 fn stats_json(st: &ooxml_word::parse::Stats) -> serde_json::Value {
-    let calls: serde_json::Map<String, serde_json::Value> =
-        st.calls.iter().map(|(k, v)| (k.to_string(), serde_json::json!(v))).collect();
+    let calls: serde_json::Map<String, serde_json::Value> = st
+        .calls
+        .iter()
+        .map(|(k, v)| (k.to_string(), serde_json::json!(v)))
+        .collect();
     serde_json::json!({"items": st.items, "units": st.units, "calls": calls, "parse_ms": st.parse_ms,
                        "export_ms": st.export_ms})
 }
@@ -292,11 +302,17 @@ impl Parser {
     #[staticmethod]
     fn open(data: &[u8], resolver: &Bound<'_, PyAny>) -> PyResult<(Option<Parser>, Option<String>, String)> {
         let mut r = PyResolver { f: resolver };
-        let found = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| ooxml_word::parse::Doc::open(data, &mut r)));
+        let found = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            ooxml_word::parse::Doc::open(data, &mut r)
+        }));
         Ok(match found {
-            Ok(Ok((doc, text, st))) => {
-                (Some(Parser { inner: std::sync::Mutex::new(doc) }), Some(text), stats_json(&st).to_string())
-            }
+            Ok(Ok((doc, text, st))) => (
+                Some(Parser {
+                    inner: std::sync::Mutex::new(doc),
+                }),
+                Some(text),
+                stats_json(&st).to_string(),
+            ),
             Ok(Err(why)) => (None, None, refused(&why.0)),
             Err(_) => (None, None, refused("the parser failed")),
         })
@@ -326,7 +342,9 @@ impl Parser {
         }
         let mut r = PyResolver { f: resolver };
         let mut doc = self.inner.lock().unwrap();
-        let found = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| doc.splice(lo, hi, els, version, more, &mut r)));
+        let found = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            doc.splice(lo, hi, els, version, more, &mut r)
+        }));
         Ok(match found {
             Ok(Ok((text, st))) => (Some(text), stats_json(&st).to_string()),
             Ok(Err(why)) => (None, refused(&why.0)),

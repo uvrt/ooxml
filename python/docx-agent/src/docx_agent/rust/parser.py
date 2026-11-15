@@ -537,6 +537,9 @@ def export(document: Any, records: bool = True) -> tuple[str | None, dict, Resol
     (its ``parser``: the Rust parser following the document)."""
     import ooxml_core
 
+    if not hasattr(ooxml_core, "Parser"):
+        STATS["refused: ooxml-core without the Rust parser"] += 1
+        return None, {"refused": "ooxml-core without the Rust parser (0.5.0 or later)"}, None
     t0 = time.perf_counter()
     try:
         resolution = Resolution(document, records=records)

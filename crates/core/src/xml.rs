@@ -67,7 +67,10 @@ impl Node {
     }
     /// The value of the attribute `name` in namespace `ns`.
     pub fn attr(&self, ns: Ns, name: &str) -> Option<&str> {
-        self.attrs.iter().find(|a| a.ns == ns && a.name == name).map(|a| a.value.as_str())
+        self.attrs
+            .iter()
+            .find(|a| a.ns == ns && a.name == name)
+            .map(|a| a.value.as_str())
     }
     /// The value of the first attribute named `name`, whatever its namespace (as
     /// `ooxml_common.xmlutil.attr` reads one).
@@ -235,11 +238,16 @@ pub fn parse(data: &[u8], names: &mut Names) -> Result<Node, XmlError> {
         }
         let rest = &s[i..];
         if rest.starts_with("<?") {
-            i += rest.find("?>").ok_or_else(|| XmlError("an open processing instruction".into()))? + 2;
+            i += rest
+                .find("?>")
+                .ok_or_else(|| XmlError("an open processing instruction".into()))?
+                + 2;
         } else if rest.starts_with("<!--") {
             i += rest.find("-->").ok_or_else(|| XmlError("an open comment".into()))? + 3;
         } else if rest.starts_with("<![CDATA[") {
-            let end = rest.find("]]>").ok_or_else(|| XmlError("an open CDATA section".into()))?;
+            let end = rest
+                .find("]]>")
+                .ok_or_else(|| XmlError("an open CDATA section".into()))?;
             if let Some(top) = stack.last_mut() {
                 top.text.push_str(&rest[9..end]);
             }
@@ -253,7 +261,9 @@ pub fn parse(data: &[u8], names: &mut Names) -> Result<Node, XmlError> {
         } else if rest.starts_with("</") {
             let end = rest.find('>').ok_or_else(|| XmlError("an open end tag".into()))?;
             let qname = rest[2..end].trim();
-            let open = stack.pop().ok_or_else(|| XmlError("an end tag with no element".into()))?;
+            let open = stack
+                .pop()
+                .ok_or_else(|| XmlError("an end tag with no element".into()))?;
             if open.qname != qname {
                 return Err(XmlError(format!("</{qname}> closes <{}>", open.qname)));
             }
@@ -313,7 +323,9 @@ pub fn parse(data: &[u8], names: &mut Names) -> Result<Node, XmlError> {
                 }
                 let q = b[j];
                 let v0 = j + 1;
-                let v1 = memchr(q, &b[v0..]).map(|k| v0 + k).ok_or_else(|| XmlError("an open attribute".into()))?;
+                let v1 = memchr(q, &b[v0..])
+                    .map(|k| v0 + k)
+                    .ok_or_else(|| XmlError("an open attribute".into()))?;
                 let mut value = String::new();
                 decode_attr(&s[v0..v1], &mut value)?;
                 attrs.push((aname, value));
@@ -339,7 +351,11 @@ pub fn parse(data: &[u8], names: &mut Names) -> Result<Node, XmlError> {
                     continue;
                 }
                 let (ans, aname) = resolve(k, &bindings, false)?;
-                resolved.push(Attr { ns: ans, name: aname, value: v.clone() });
+                resolved.push(Attr {
+                    ns: ans,
+                    name: aname,
+                    value: v.clone(),
+                });
             }
             let open = Open {
                 qname,
@@ -395,11 +411,17 @@ fn close(open: Open, end: usize, bindings: &mut HashMap<String, Ns>) -> Node {
 fn resolve(qname: &str, bindings: &HashMap<String, Ns>, element: bool) -> Result<(Ns, String), XmlError> {
     match qname.split_once(':') {
         Some((p, local)) => {
-            let ns = *bindings.get(p).ok_or_else(|| XmlError(format!("an undeclared prefix {p}")))?;
+            let ns = *bindings
+                .get(p)
+                .ok_or_else(|| XmlError(format!("an undeclared prefix {p}")))?;
             Ok((ns, local.to_string()))
         }
         None => {
-            let ns = if element { bindings.get("").copied().unwrap_or(0) } else { 0 };
+            let ns = if element {
+                bindings.get("").copied().unwrap_or(0)
+            } else {
+                0
+            };
             Ok((ns, qname.to_string()))
         }
     }
@@ -415,7 +437,7 @@ fn decode(raw: &str, out: &mut String) -> Result<(), XmlError> {
         return Ok(());
     }
     let mut rest = raw;
-    while let Some(k) = rest.find(|c| c == '&' || c == '\r') {
+    while let Some(k) = rest.find(['&', '\r']) {
         out.push_str(&rest[..k]);
         if rest.as_bytes()[k] == b'\r' {
             // line ends normalised as an XML processor does
@@ -426,7 +448,10 @@ fn decode(raw: &str, out: &mut String) -> Result<(), XmlError> {
             }
             continue;
         }
-        let end = rest[k..].find(';').ok_or_else(|| XmlError("an open reference".into()))? + k;
+        let end = rest[k..]
+            .find(';')
+            .ok_or_else(|| XmlError("an open reference".into()))?
+            + k;
         let name = &rest[k + 1..end];
         match name {
             "lt" => out.push('<'),
@@ -442,7 +467,9 @@ fn decode(raw: &str, out: &mut String) -> Result<(), XmlError> {
                 } else {
                     None
                 };
-                let c = code.and_then(char::from_u32).ok_or_else(|| XmlError(format!("an entity &{name};")))?;
+                let c = code
+                    .and_then(char::from_u32)
+                    .ok_or_else(|| XmlError(format!("an entity &{name};")))?;
                 out.push(c);
             }
         }
@@ -455,8 +482,12 @@ fn decode(raw: &str, out: &mut String) -> Result<(), XmlError> {
 /// An attribute value: references decoded, and white space (tab, line ends) normalised to
 /// spaces as an XML processor does (character references kept as written).
 fn decode_attr(raw: &str, out: &mut String) -> Result<(), XmlError> {
-    if raw.contains(|c| c == '\t' || c == '\n' || c == '\r') {
-        let normal: String = raw.replace("\r\n", " ").chars().map(|c| if matches!(c, '\t' | '\n' | '\r') { ' ' } else { c }).collect();
+    if raw.contains(['\t', '\n', '\r']) {
+        let normal: String = raw
+            .replace("\r\n", " ")
+            .chars()
+            .map(|c| if matches!(c, '\t' | '\n' | '\r') { ' ' } else { c })
+            .collect();
         return decode(&normal, out);
     }
     decode(raw, out)

@@ -3,6 +3,22 @@
 ooxml-core is the Rust core of the ooxml packages (`crates/`), as the Python module
 `ooxml_core`. Its version is the `crates/python` crate's.
 
+## 0.5.0 -- unreleased
+
+- **`ooxml_core.Parser`: a Word document's body read in Rust** (`ooxml_word::parse`, the
+  XML reader in `ooxml_core::xml`). `Parser.open(document_xml, resolver)` reads the body --
+  paragraphs, tables, runs, the complex fields threaded through the body, bookmarks, `REF`
+  fields replaced by their bookmarks' text, list labels counted -- and makes the owner's
+  first input as docx-agent's mirror exports it, byte for byte; `splice(lo, hi, elements,
+  version, more, resolver)` makes each change set from the elements an edit changed (the
+  fields threaded through them again, `REF` fields computed again where a bookmark they
+  show changed, the list labels counted again, the neighbours made again), as the mirror's
+  `splice` does. What a block's formatting resolves to (the style cascade, a run's
+  character formats, geometry, borders, a table's grid) and what the parser does not read
+  itself are asked of `resolver(kind, argument)` once per distinct input. A cell
+  paragraph's autofit extent is measured with the core's own kernel. Anything the parser
+  does not read refuses the document whole (`None`, and why).
+
 ## 0.4.0 -- unreleased
 
 - **`ooxml_core.field_pages(doc, version, keys, info=False)`**: what a fields update reads
