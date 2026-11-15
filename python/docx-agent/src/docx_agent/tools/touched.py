@@ -151,10 +151,11 @@ def _opcodes(old: list[bytes], new: list[bytes]) -> list[tuple[str, int, int, in
     made per change; difflib itself otherwise (and beside it, compared, with
     ``DOCX_AGENT_FULL_VALIDATE=1``)."""
     core = _core() if _incremental.enabled() else None
-    if core is None or any(len(d) != 16 for d in old) or any(len(d) != 16 for d in new):
+    joined = (b"".join(old), b"".join(new)) if core is not None else None
+    if core is None or len(joined[0]) != 16 * len(old) or len(joined[1]) != 16 * len(new):
         _incremental.STATS["touched opcodes: difflib"] += 1
         return difflib.SequenceMatcher(None, old, new, autojunk=False).get_opcodes()
-    found = core.opcodes(b"".join(old), b"".join(new), 16)
+    found = core.opcodes(joined[0], joined[1], 16)
     _incremental.STATS["touched opcodes: rust"] += 1
     if _incremental.verifying():
         _incremental.check("touched opcodes", found,
@@ -370,13 +371,15 @@ def _gaps(data: bytes, spans: Any, begin: int, stop: int) -> list[bytes]:
 
 
 def _common_prefix(a: bytes, b: bytes) -> int:
-    """How many leading bytes ``a`` and ``b`` share (compared a block at a time)."""
-    limit, at, step = min(len(a), len(b)), 0, 4096
-    while at < limit and a[at:at + step] == b[at:at + step]:
-        at += step
-    if at >= limit:
-        return limit
-    low, high = at, min(at + step, limit)
+    """How many leading bytes ``a`` and ``b`` share (compared a stretch at a time: 1 MiB,
+    then 4 KiB, then halving -- 0.1.118)."""
+    limit, at = min(len(a), len(b)), 0
+    for step in (1 << 20, 1 << 12):
+        while at < limit and a[at:at + step] == b[at:at + step]:
+            at += step
+        if at >= limit:
+            return limit
+    low, high = at, min(at + (1 << 12), limit)
     while low < high:
         middle = (low + high + 1) // 2
         if a[at:middle] == b[at:middle]:
@@ -387,13 +390,16 @@ def _common_prefix(a: bytes, b: bytes) -> int:
 
 
 def _common_suffix(a: bytes, b: bytes, limit: int) -> int:
-    """How many trailing bytes ``a`` and ``b`` share, at most ``limit``."""
-    at, step = 0, 4096
-    while at < limit and a[len(a) - min(at + step, limit):len(a) - at] == b[len(b) - min(at + step, limit):len(b) - at]:
-        at = min(at + step, limit)
-    if at >= limit:
-        return limit
-    low, high = at, min(at + step, limit)
+    """How many trailing bytes ``a`` and ``b`` share, at most ``limit`` (compared as
+    :func:`_common_prefix` does, from the end)."""
+    at = 0
+    for step in (1 << 20, 1 << 12):
+        while at < limit and a[len(a) - min(at + step, limit):len(a) - at] == \
+                b[len(b) - min(at + step, limit):len(b) - at]:
+            at = min(at + step, limit)
+        if at >= limit:
+            return limit
+    low, high = at, min(at + (1 << 12), limit)
     while low < high:
         middle = (low + high + 1) // 2
         if a[len(a) - middle:len(a) - at] == b[len(b) - middle:len(b) - at]:

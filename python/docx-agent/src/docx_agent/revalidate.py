@@ -198,17 +198,9 @@ def _walk(top: Any, facts: Facts, *, root: bool = False, alone: bool = False,
         kids = children if (element is top and children is not None) else list(element)
         name = _pname(element)
         if name in CHILD_ORDER:
-            ranks = _ranks(name)
-            unknown = len(ranks) + 1
-            last = -1
-            for child in kids:
-                if not isinstance(child.tag, str):
-                    continue
-                rank = ranks.get(_pname(child), unknown)
-                if rank < last:
-                    facts.add("lw", ("child-order", f"{_pname(child)} in {name}"))
-                    break
-                last = rank
+            found = _child_order(name, kids)
+            if found is not None:
+                facts.add("lw", found)
         live = not is_root and not flags & _HIDDEN
         if tag.startswith(_W):
             local = tag[len(_W):]
@@ -320,6 +312,40 @@ def _walk(top: Any, facts: Facts, *, root: bool = False, alone: bool = False,
             stack.append((child, child_flags, False))
     if fields:
         facts.fld = (depth, low)
+
+
+#: 0.1.118: the last long list of children's order read, by their tags (``(tags, fact)``):
+#: a body's thousands of children are not ranked again while their tags are the same.
+_ORDER_KEPT: dict[str, tuple] = {}
+_ORDER_LONG = 512
+
+
+def _child_order(name: str, kids: list) -> "tuple[str, str] | None":
+    """The child-order fact of an element ``name`` with children ``kids`` (the first child
+    ranked before the one before it), ``None`` when they are in order."""
+    if len(kids) >= _ORDER_LONG:
+        tags = [child.tag for child in kids]
+        kept = _ORDER_KEPT.get(name)
+        if kept is not None and kept[0] == tags:
+            return kept[1]
+        found = _child_order_read(name, kids)
+        _ORDER_KEPT[name] = (tags, found)
+        return found
+    return _child_order_read(name, kids)
+
+
+def _child_order_read(name: str, kids: list) -> "tuple[str, str] | None":
+    ranks = _ranks(name)
+    unknown = len(ranks) + 1
+    last = -1
+    for child in kids:
+        if not isinstance(child.tag, str):
+            continue
+        rank = ranks.get(_pname(child), unknown)
+        if rank < last:
+            return ("child-order", f"{_pname(child)} in {name}")
+        last = rank
+    return None
 
 
 def _owns_runs(revision: Any) -> bool:

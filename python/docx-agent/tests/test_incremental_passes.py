@@ -56,7 +56,10 @@ def _sequence(session, doc):
     ]
 
 
-def _run(data: bytes, per_change: bool, monkeypatch, oracle: bool = True) -> tuple[list, dict]:
+def _run(data: bytes, per_change: bool, monkeypatch, oracle: bool = True, between: bool = True) -> tuple[list, dict]:
+    """The sequence's results, and after each step (``between``; else after the last only:
+    nothing reads the document between calls, so each call starts from the snapshot the one
+    before left, ooxml-edit 0.119.0) the saved bytes and the id state."""
     monkeypatch.setenv("DOCX_AGENT_INCREMENTAL", "1" if per_change else "0")
     monkeypatch.setenv("DOCX_AGENT_FULL_VALIDATE", "1" if per_change and oracle else "0")
     incremental.STATS.clear()
@@ -73,15 +76,20 @@ def _run(data: bytes, per_change: bool, monkeypatch, oracle: bool = True) -> tup
                 result = box.dispatch(view, tool, arguments).to_json()
             else:
                 result = box.dispatch(view, tool, {"doc": doc, **arguments}).to_json()
-            document = session.entry(doc).document
-            out.append((tool, arguments, result, document.to_bytes(), document.id_state()))
+            out.append([tool, arguments, result, None, None])
+            if between:
+                document = session.entry(doc).document
+                out[-1][3:] = [document.to_bytes(), document.id_state()]
+        document = session.entry(doc).document
+        out[-1][3:] = [document.to_bytes(), document.id_state()]
     return out, dict(incremental.STATS)
 
 
-@pytest.mark.parametrize("oracle", [True, False], ids=["compared", "alone"])
-def test_passes_per_change_give_what_the_whole_passes_give(report, monkeypatch, oracle):  # noqa: F811
-    mine, stats = _run(report, True, monkeypatch, oracle)
-    theirs, _ = _run(report, False, monkeypatch)
+@pytest.mark.parametrize("oracle, between", [(True, True), (False, True), (True, False)],
+                         ids=["compared", "alone", "settled"])
+def test_passes_per_change_give_what_the_whole_passes_give(report, monkeypatch, oracle, between):  # noqa: F811
+    mine, stats = _run(report, True, monkeypatch, oracle, between)
+    theirs, _ = _run(report, False, monkeypatch, between=between)
     assert len(mine) == len(theirs)
     for (tool, arguments, a, data_a, ids_a), (_, _, b, data_b, ids_b) in zip(mine, theirs):
         assert a.get("ok", True), (tool, arguments, a)
@@ -90,5 +98,13 @@ def test_passes_per_change_give_what_the_whole_passes_give(report, monkeypatch, 
         assert ids_a == ids_b, (tool, arguments)
     # each pass was made per change where it could be
     for name in ("ids note: incremental", "touched ids: incremental", "body index: per change",
-                 "restore: per block", *(() if oracle else ("used ids: pool",))):
+                 "restore: per block", "touched opcodes: rust", *(() if oracle else ("used ids: pool",)),
+                 *(() if between else ("restore: bytes from the blocks",))):
+        if name == "touched opcodes: rust":
+            try:
+                import ooxml_core
+            except ImportError:
+                continue
+            if not hasattr(ooxml_core, "opcodes"):
+                continue
         assert stats.get(name, 0) >= 1, (name, stats)

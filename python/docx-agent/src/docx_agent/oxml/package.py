@@ -86,7 +86,8 @@ class WordPackage(OpcPackage):
                 return super()._restored_tree(path, kept, pieces, tree)
             incremental.STATS["restore: per block"] += 1
         else:
-            incremental.STATS["restore: per block, written per block"] += 1
+            incremental.STATS["restore: per block"] += 1
+            incremental.STATS["restore: bytes from the blocks"] += 1
             if incremental.verifying() and _serialize(tree) != target:
                 raise incremental.Mismatch("restore: the blocks put back do not write out as the snapshot")
         if self._serial_scopes:

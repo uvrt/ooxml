@@ -5,6 +5,30 @@ docx-agent has not been released to PyPI. Each version that reaches `main` is ta
 snapshot commit; the development history before it is summarised here.
 [`ROADMAP.md`](ROADMAP.md) has the detail of every phase.
 
+## 0.1.118 -- unreleased
+
+- **An edit, an undo and a redo on a long document cost less again, with the same
+  results** -- field for field and byte for byte (tool results, saved bytes, id state,
+  validation, checks). What changed is the work each call did over the whole document:
+  - the body is written out once per version (it was twice: the state before the edit
+    and after), and not at all for an undo or a redo: the blocks put back tell the bytes
+    (ooxml-edit 0.119.0);
+  - the touched heading sections compare the version's blocks with the version before by
+    difflib's own algorithm ported to Rust (ooxml-core 0.5.0's `opcodes`: the same
+    opcodes, milliseconds instead of a tenth of a second or more at 30,000 blocks);
+    difflib itself without ooxml-core;
+  - the stretch an edit changed is found by bisection, and the counts of paraIds and ids
+    are changed where the blocks changed, not looked through again;
+  - validation's body moves with an undo or a redo, so the next edit's is read from the
+    stretch that edit changed, not from every block between it and the version last read;
+  - within a call, after a change that leaves every paragraph, row and table where it was
+    with its paraId (a cell's or a paragraph's text), the body's index is the one before,
+    not made again;
+  - a table's reading (`word_edit_table`'s result) reads the paragraphs just before it,
+    and the blocks before only when it numbers a list item.
+  - `DOCX_AGENT_INCREMENTAL=0` turns these off with the others (the whole passes, as
+    before); `DOCX_AGENT_FULL_VALIDATE=1` runs the whole pass beside each and compares.
+
 ## 0.1.117 -- unreleased
 
 - **`word_fields` update no longer lays the document out in Python.** The same results --
