@@ -29,7 +29,7 @@ from contextlib import contextmanager
 import posixpath
 import zipfile
 from dataclasses import dataclass
-from typing import BinaryIO, Callable, Iterable, Iterator
+from typing import Any, BinaryIO, Callable, Iterable, Iterator
 
 from lxml import etree
 
@@ -902,6 +902,10 @@ class OpcPackage:
         dropped back to their original bytes, and parts added since are removed.
         """
         self._serialized.clear()
+        # (0.118.0: each tree and its last snapshot's bytes as they were, for a format that
+        # puts back only what differs, _restored_tree)
+        current_trees = {path: self._trees.get(path) for path in snapshot.trees if path in self._dirty}
+        current_pieces = {path: self._pieces.get(path) for path in current_trees}
         # Raw parts first: a tree restored below may belong to a part that was re-added.
         for path in list(snapshot.raw) + [p for p in self._raw_changes if p not in snapshot.raw]:
             if path in snapshot.raw:
@@ -926,11 +930,18 @@ class OpcPackage:
             self._rels_cache.pop(part_for_rels(path), None)
         self._dirty = set()
         for path, kept in snapshot.trees.items():
-            self._trees[path] = parse_xml(bytes(kept))
+            self._trees[path] = self._restored_tree(path, kept, current_pieces.get(path), current_trees.get(path))
             self._dirty.add(path)
             self._rels_cache.pop(part_for_rels(path), None)
             if isinstance(kept, Pieces):
                 self._pieces[path] = kept
+
+    def _restored_tree(self, path: str, kept: Any, pieces: "Pieces | None", tree: "Element | None") -> Element:
+        """The tree of a part put back to ``kept`` (a snapshot's bytes) by :meth:`restore`:
+        parsed whole here.  ``pieces`` and ``tree`` are the part's last snapshot's bytes and
+        its tree before (``None``: none): a format may put back only the elements whose bytes
+        differ, as long as the tree it gives writes out as ``kept`` (0.118.0)."""
+        return parse_xml(bytes(kept))
 
     # -- snapshots part by part (scoped undo) ----------------------------------------------
 
