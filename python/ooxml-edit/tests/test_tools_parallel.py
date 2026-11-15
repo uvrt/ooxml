@@ -5,7 +5,6 @@ version made once, and the image budget asked before rendering."""
 from __future__ import annotations
 
 import threading
-import time
 
 import pytest
 
@@ -15,6 +14,7 @@ from ooxml_edit.tools import (ContentStore, InProcess, Limits, SubprocessPool, T
 from ooxml_edit.tools import worker as worker_module
 from ooxml_edit.tools.rendercache import ENTRY_OVERHEAD, code_stamp
 
+import gates
 import tools_toys
 
 
@@ -82,16 +82,20 @@ def test_a_new_worker_warms_up_first_and_the_warm_up_is_no_tasks_time(make):
         assert pool.killed == []
 
 
-def test_warm_starts_the_workers_ahead_of_use():
-    with WorkerPool(2, warm_up=[tools_toys.slow_warm_up]) as pool:
-        began = time.monotonic()
-        pool.warm()
-        assert time.monotonic() - began < 1.5          # in the background
+def test_warm_starts_the_workers_ahead_of_use(gate, monkeypatch):
+    monkeypatch.setenv(tools_toys.WARM_GATE, gate.path)
+    with WorkerPool(2, warm_up=[tools_toys.gated_warm_up]) as pool:
+        try:
+            pool.warm()                                # in the background: the warm-ups held
+            assert "warm out" not in gate.order() and pool.starting == 2
+        finally:
+            gate.open()
         pool.warm(wait=True)
         assert len(pool.pids()) == 2 and pool.starting == 0
-        began = time.monotonic()
+        pids = sorted(pool.pids())
         assert pool.run(tools_toys.warmed, timeout=1.0) == "1"
-        assert time.monotonic() - began < 1.5          # warm already
+        # Warm already: no worker started, nor warmed up, for the task.
+        assert sorted(pool.pids()) == pids and gate.order().count("warm in") == 2
 
 
 @pytest.mark.parametrize("warm_up", [tools_toys.failing_warm_up, tools_toys.raise_tool_error])
@@ -108,15 +112,16 @@ def test_the_in_process_runner_has_nothing_to_warm():
 # -- several tasks at once -----------------------------------------------------------------
 
 
-def test_run_all_runs_at_once_and_keeps_the_order():
+def test_run_all_runs_at_once_and_keeps_the_order(gate):
     with WorkerPool(3) as pool:
         pool.warm(wait=True)
-        began = time.monotonic()
-        results = run_all(pool, tools_toys.sleep_then,
-                          [(1.0, "a"), (0.2, "b"), (0.6, "c")], [30, 30, 30])
-        took = time.monotonic() - began
+        # The gate opens once all three are held at it: one after another, never.
+        opener = gates.open_when(gate, lambda: len(gate.order()) == 3)
+        results = run_all(pool, tools_toys.gated_value,
+                          [(gate.path, "a", "a"), (gate.path, "b", "b"), (gate.path, "c", "c")], [90, 90, 90])
+        opener.join()
     assert results == ["a", "b", "c"]
-    assert took < 2.0                                    # not 1.8 s one after another
+    assert sorted(gate.order()[:3]) == ["a in", "b in", "c in"], gate.order()
 
 
 def test_run_all_puts_an_exception_in_its_place():

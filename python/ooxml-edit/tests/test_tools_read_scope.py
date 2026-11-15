@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import dataclasses
 import threading
-import time
+import pytest
 
 from ooxml_edit.tools import Result, Toolbox, shared, string, tool
 from ooxml_edit.tools import session as session_module
@@ -19,7 +19,15 @@ from ooxml_edit.tools import session as session_module
 import synthetic
 import tools_toys
 
-STALL = 1.0
+#: The gate (tests/gates.py) the slow read holds at, its lock let go.
+HOLD: dict = {"gate": None}
+
+
+@pytest.fixture(autouse=True)
+def _hold(gate):
+    HOLD["gate"] = gate
+    yield
+    HOLD["gate"] = None
 
 
 @tool("toy_scoped_read", "Test only: a slow read of pages, the lock let go.",
@@ -29,7 +37,7 @@ def toy_scoped_read(call, doc, pages):
     if pages != "all":
         call.read_scope = frozenset(call.document.page(int(n)) for n in pages.split(","))
     with call.unlocked():
-        time.sleep(STALL)
+        HOLD["gate"].hold("read")
     return Result(summary="read")
 
 
@@ -57,9 +65,10 @@ def _read_while_editing(box, pages, edited=2, edits=1):
     reader = threading.Thread(target=lambda: out.setdefault("read", box.dispatch(
         session, "toy_scoped_read", {"doc": doc, "pages": pages})))
     reader.start()
-    time.sleep(0.3)
+    HOLD["gate"].wait_entered("read")
     for k in range(edits):
         assert box.dispatch(session, "toy_ppt_set_title", {"doc": doc, "page": edited, "text": f"New {k}"}).ok
+    HOLD["gate"].open()
     reader.join()
     return out["read"]
 

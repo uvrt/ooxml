@@ -20,13 +20,46 @@ import pytest
 
 from ooxml_edit.tools import Limits, Result, ToolError, Toolbox, shared, string, tool
 
+import gates
 import synthetic
 import tools_toys
 
-#: How long the slow toy work stalls: long enough that a call waiting for it would show.
+#: How long the slow toy work takes on the batch's clock (:class:`_Clock`), where a test
+#: sets one.
 STALL = 1.5
+#: Where the slow toy work holds (a gate, tests/gates.py, as ``read`` or ``ahead``), and the
+#: batch's clock it moves on, while a test sets them.
+HOLD: dict = {"gate": None, "clock": None}
 
 SEEN: list[dict] = []
+
+
+@pytest.fixture(autouse=True)
+def _hold():
+    HOLD.update(gate=None, clock=None)
+    yield
+    HOLD.update(gate=None, clock=None)
+
+
+def _slow(name: str) -> None:
+    """The slow part of the toy work: held at the test's gate, the batch's clock moved on."""
+    if HOLD["gate"] is not None:
+        HOLD["gate"].hold(name)
+    if HOLD["clock"] is not None:
+        HOLD["clock"].now += STALL
+
+
+class _Clock:
+    """The dispatcher's ``time`` with a ``perf_counter`` only the slow work moves on."""
+
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def perf_counter(self) -> float:
+        return self.now
+
+    def __getattr__(self, name):
+        return getattr(time, name)
 
 
 def _held_elsewhere(lock) -> bool:
@@ -54,7 +87,7 @@ def toy_slow_read(call, doc, page, mode="ok", target=None):
     may = call.may_unlock
     with call.unlocked() as released:
         held = _held_elsewhere(call.entry.lock)
-        time.sleep(STALL)
+        _slow("read")
     SEEN.append({"may_unlock": may, "released": released, "held_inside": held,
                  "in_batch": call.in_batch})
     if mode == "fail":
@@ -67,7 +100,7 @@ def _lay_out_ahead(call, doc, page, text, fail=False):
     may = call.may_unlock
     with call.unlocked() as released:
         held = _held_elsewhere(call.entry.lock)
-        time.sleep(STALL)
+        _slow("ahead")
     SEEN.append({"ahead": True, "may_unlock": may, "released": released, "held_inside": held,
                  "changing": call.changing})
     call.warn("read ahead")
@@ -113,28 +146,26 @@ def _set(doc, page, text):
     return _op("toy_ppt_set_title", doc=doc, page=page, text=text)
 
 
-def _edit_meanwhile(box, session, doc, text="Meanwhile"):
-    """An edit from another thread while the slow work runs: how long it waited."""
-    took = {}
-
-    def edit():
-        started = time.perf_counter()
-        took["result"] = box.dispatch(session, "toy_ppt_set_title",
-                                      {"doc": doc, "page": 2, "text": text})
-        took["seconds"] = time.perf_counter() - started
-
-    thread = threading.Thread(target=edit)
-    return thread, took
+def _edit_meanwhile(box, session, doc, gate, held, text="Meanwhile"):
+    """An edit once the slow work is held at ``gate`` as ``held``; the gate opened after.
+    Its result.  Had it waited for that work, the work's hold timed out first: the gate's
+    order says so."""
+    gate.wait_entered(held)
+    try:
+        return box.dispatch(session, "toy_ppt_set_title", {"doc": doc, "page": 2, "text": text})
+    finally:
+        gate.note("edited")
+        gate.open()
 
 
 # -- a batch's reads after its last change ------------------------------------------------------
 
 
 @pytest.mark.parametrize("atomic", [False, True])
-def test_a_read_after_the_last_change_does_not_hold_the_document(toolbox, atomic):
+def test_a_read_after_the_last_change_does_not_hold_the_document(toolbox, atomic, gate):
     session, doc = _open(toolbox)
     before = session.entry(doc).version
-    thread, took = _edit_meanwhile(toolbox, session, doc)
+    HOLD["gate"] = gate
     out = {}
 
     def batch():
@@ -143,13 +174,12 @@ def test_a_read_after_the_last_change_does_not_hold_the_document(toolbox, atomic
 
     runner = threading.Thread(target=batch)
     runner.start()
-    time.sleep(0.4)                           # the batch applied; its read is working
-    thread.start()
-    thread.join()
+    meanwhile = _edit_meanwhile(toolbox, session, doc, gate, "read")   # the read is working
     runner.join()
     result = out["result"]
     assert result.ok, result.to_json()
-    assert took["result"].ok and took["seconds"] < STALL - 0.5, "the edit waited for the read"
+    assert meanwhile.ok and gate.order() == ["read in", "edited", "read out"], "the edit waited for the read"
+    took = {"result": meanwhile}
     assert SEEN[-1] == {"may_unlock": True, "released": True, "held_inside": False,
                         "in_batch": False}
     # The read answered of the batch's version, which the batch's result reports; the edit
@@ -235,7 +265,11 @@ def test_a_read_after_the_last_change_names_the_failed_op_that_would_have_made_i
     assert error["code"] in ("not_found", "invalid_arguments"), error
 
 
-def test_a_read_after_the_last_change_past_the_deadline_is_not_run(toolbox):
+def test_a_read_after_the_last_change_past_the_deadline_is_not_run(toolbox, monkeypatch):
+    from ooxml_edit.tools import dispatch
+
+    HOLD["clock"] = clock = _Clock()             # the slow read takes STALL s on it, no more
+    monkeypatch.setattr(dispatch, "time", clock)
     session = toolbox.session(limits=Limits(batch_timeout=STALL / 2))
     doc = session.open(synthetic.outer_package(), "deck.pptx")
     result = toolbox.dispatch(session, "batch", {"atomic": True, "ops": [
@@ -249,10 +283,10 @@ def test_a_read_after_the_last_change_past_the_deadline_is_not_run(toolbox):
 # -- work ahead of a change ------------------------------------------------------------------
 
 
-def test_a_changing_call_s_work_ahead_lets_the_lock_go(toolbox):
+def test_a_changing_call_s_work_ahead_lets_the_lock_go(toolbox, gate):
     session, doc = _open(toolbox)
     before = session.entry(doc).version
-    thread, took = _edit_meanwhile(toolbox, session, doc)
+    HOLD["gate"] = gate
     out = {}
 
     def change():
@@ -261,13 +295,12 @@ def test_a_changing_call_s_work_ahead_lets_the_lock_go(toolbox):
 
     runner = threading.Thread(target=change)
     runner.start()
-    time.sleep(0.4)                           # working ahead, the lock let go
-    thread.start()
-    thread.join()
+    meanwhile = _edit_meanwhile(toolbox, session, doc, gate, "ahead")   # working ahead, unlocked
     runner.join()
     result = out["result"]
     assert result.ok, result.to_json()
-    assert took["result"].ok and took["seconds"] < STALL - 0.5, "the edit waited for the work"
+    assert meanwhile.ok and gate.order() == ["ahead in", "edited", "ahead out"], "the edit waited for the work"
+    took = {"result": meanwhile}
     ahead, handler = SEEN
     assert ahead == {"ahead": True, "may_unlock": True, "released": True, "held_inside": False,
                      "changing": True}
@@ -301,9 +334,11 @@ def test_inside_a_batch_there_is_no_work_ahead(toolbox):
     assert SEEN == [{"handler": True, "may_unlock": False, "held": True, "in_batch": True}]
 
 
-def test_concurrent_changes_with_work_ahead_each_apply_once(toolbox):
+def test_concurrent_changes_with_work_ahead_each_apply_once(toolbox, gate):
     session, doc = _open(toolbox)
     before = session.entry(doc).version
+    HOLD["gate"] = gate
+    opener = gates.open_when(gate, lambda: gate.order().count("ahead in") == 4)
     results = []
 
     def change(n):
@@ -311,13 +346,13 @@ def test_concurrent_changes_with_work_ahead_each_apply_once(toolbox):
                                         {"doc": doc, "page": str(1 + n % 2), "text": f"T{n}"}))
 
     threads = [threading.Thread(target=change, args=(n,)) for n in range(4)]
-    started = time.perf_counter()
     for thread in threads:
         thread.start()
     for thread in threads:
         thread.join()
+    opener.join()
     assert all(result.ok for result in results), [r.to_json() for r in results]
-    # Their slow work ran side by side, not one after another.
-    assert time.perf_counter() - started < 4 * STALL - 1
+    # Their slow work ran side by side, not one after another: all four held at once.
+    assert gate.order()[:4] == ["ahead in"] * 4, gate.order()
     assert sorted(result.version for result in results) == [before + n for n in range(1, 5)]
     assert session.entry(doc).version == before + 4

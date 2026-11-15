@@ -4,6 +4,7 @@ deadline counts from when a worker takes it, a worker past it finishes the image
 
 from __future__ import annotations
 
+import os
 import threading
 import time
 
@@ -14,8 +15,10 @@ from ooxml_edit.tools import InProcess, SubprocessPool, Toolbox, WorkerPool, ren
 from ooxml_edit.tools.results import ToolError
 from ooxml_edit.tools.worker import RENDER_LANE, run_all, takes_lane
 
+import gates
 import synthetic
 import tools_toys
+from gates import Gate
 
 
 @pytest.fixture
@@ -80,58 +83,81 @@ POOLS = [pytest.param(lambda size: WorkerPool(size), id="processes"),
 
 
 @pytest.mark.parametrize("make", POOLS)
-def test_a_render_task_yields_to_other_work_waiting_for_a_worker(make):
+def test_a_render_task_yields_to_other_work_waiting_for_a_worker(make, gate):
     with make(1) as pool:
         pool.warm(wait=True)
-        done: dict = {}
+        pool._condition = gates.Watched(pool._condition, gate)
 
-        def run(name, lane, seconds):
-            pool.run(tools_toys.keep_value, name, 1, seconds, timeout=120, lane=lane)
-            done[name] = time.monotonic()
+        def run(name, lane, hold):
+            pool.run(tools_toys.at_gate, gate.path, name, hold, timeout=120, lane=lane)
 
-        busy = threading.Thread(target=run, args=("busy", None, 2.0))
-        image = threading.Thread(target=run, args=("image", RENDER_LANE, 0.1))
-        layout = threading.Thread(target=run, args=("layout", None, 0.1))
+        busy = threading.Thread(target=run, args=("busy", None, True), name="busy")
+        image = threading.Thread(target=run, args=("image", RENDER_LANE, False), name="image")
+        layout = threading.Thread(target=run, args=("layout", None, False), name="layout")
         busy.start()
-        time.sleep(0.2)
-        image.start()                                # waits: the worker is busy
-        time.sleep(0.2)
+        gate.wait_entered("busy")                    # the one worker is busy
+        image.start()
+        gate.wait_noted("image waits")
         layout.start()                               # comes after it, waits too
-        deadline = time.monotonic() + 60
-        while pool._wanting != 1 and time.monotonic() < deadline:
-            time.sleep(0.01)
-        assert "busy" not in done, "the busy task ended before both waited: too slow a host"
+        gate.wait_noted("layout waits")
+        gates.until(lambda: pool._wanting == 1, "the layout never asked for a worker")
+        gate.open()
         for thread in (busy, image, layout):
             thread.join()
-        # The layout that came after the image takes the worker first.
-        assert done["busy"] < done["layout"] < done["image"]
+    # The layout that came after the image takes the worker first.
+    assert [o for o in gate.order() if not o.endswith("waits")] == [
+        "busy in", "busy out", "layout runs", "image runs"], gate.order()
 
 
-def test_render_workers_bounds_the_workers_drawing_at_once():
+def test_render_workers_bounds_the_workers_drawing_at_once(gate):
     with WorkerPool(2) as pool:
         pool.render_workers = 1
         pool.warm(wait=True)
-        began = time.monotonic()
-        pids = run_all(pool, tools_toys.keep_value, [("a", 1, 0.5), ("b", 1, 0.5)], [60, 60],
-                       [{"lane": RENDER_LANE}, {"lane": RENDER_LANE}])
-        assert time.monotonic() - began >= 0.95          # one after the other
-        assert all(isinstance(pid, tuple) for pid in pids)
-        # Other work still has the second worker meanwhile.
-        began = time.monotonic()
-        both = run_all(pool, tools_toys.keep_value, [("c", 1, 0.5), ("d", 1, 0.5)], [60, 60],
-                       [{"lane": RENDER_LANE}, {}])
-        assert time.monotonic() - began < 0.95 and both[0][0] != both[1][0]
+        pool._condition = watched = gates.Watched(pool._condition, gate)
+        out: dict = {}
+        drawing = threading.Thread(target=lambda: out.setdefault("pids", run_all(
+            pool, tools_toys.at_gate, [(gate.path, "a"), (gate.path, "b")], [60, 60],
+            [{"lane": RENDER_LANE}, {"lane": RENDER_LANE}])))
+        drawing.start()
+        gates.until(lambda: [o for o in gate.order() if o.endswith(" in")] and watched.waits,
+               "neither render began, or the other never waited")
+        held = [o for o in gate.order() if o.endswith(" in")]
+        gate.open()
+        drawing.join(120)
+        # One after the other: the second waited while the first drew, its worker idle.
+        assert len(held) == 1, gate.order()
+        steps = [o for o in gate.order() if not o.endswith("waits")]
+        assert steps in (["a in", "a out", "b in", "b out"], ["b in", "b out", "a in", "a out"]), steps
+        assert all(isinstance(pid, int) for pid in out["pids"])
+        # Other work still has the second worker meanwhile: it ran while the render drew.
+        gate.close()
+        other = Gate(gate.path + "-other")
+        os.makedirs(other.path)
+        both: dict = {}
+        mixed = threading.Thread(target=lambda: both.setdefault("pids", run_all(
+            pool, tools_toys.at_gate, [(other.path, "c"), (other.path, "d", False)], [60, 60],
+            [{"lane": RENDER_LANE}, {}])))
+        mixed.start()
+        other.wait_noted("d runs")
+        other.open()
+        mixed.join(120)
+        assert other.order() == ["c in", "d runs", "c out"]
+        assert both["pids"][0] != both["pids"][1]
 
 
 @pytest.mark.parametrize("make", POOLS)
-def test_a_render_task_past_its_deadline_is_finished_and_its_worker_kept(make):
+def test_a_render_task_past_its_deadline_is_finished_and_its_worker_kept(make, gate):
     with make(1) as pool:
         pool.warm(wait=True)
         before = pool.run(tools_toys.worker_pid, timeout=60)
         late: list = []
-        with pytest.raises(ToolError) as caught:
-            pool.run(tools_toys.keep_value, "late", 7, 0.9, timeout=0.6, lane=RENDER_LANE,
-                     on_late=late.append)
+        try:
+            # Held at the gate past its deadline; let go then, well inside as long again.
+            with pytest.raises(ToolError) as caught:
+                pool.run(tools_toys.keep_value, "late", 7, 0, gate.path, timeout=2.0,
+                         lane=RENDER_LANE, on_late=late.append)
+        finally:
+            gate.open()
         assert caught.value.code == "timeout" and "finishes it" in caught.value.message
         assert pool.run(tools_toys.worker_pid, timeout=60) == before     # waited for, kept
         deadline = time.monotonic() + 5
@@ -142,23 +168,23 @@ def test_a_render_task_past_its_deadline_is_finished_and_its_worker_kept(make):
 
 
 @pytest.mark.parametrize("make", POOLS)
-def test_a_render_task_still_busy_as_long_again_is_stopped(make):
+def test_a_render_task_still_busy_as_long_again_is_stopped(make, gate):
     with make(1) as pool:
         pool.warm(wait=True)
         before = pool.run(tools_toys.worker_pid, timeout=60)
-        with pytest.raises(ToolError):
-            pool.run(tools_toys.keep_value, "stuck", 1, 5.0, timeout=0.3, lane=RENDER_LANE)
+        with pytest.raises(ToolError):                 # held at a gate never opened
+            pool.run(tools_toys.keep_value, "stuck", 1, 0, gate.path, timeout=0.3, lane=RENDER_LANE)
         after = pool.run(tools_toys.worker_pid, timeout=60)
         assert after != before and pool.killed == [before]
         assert pool.overruns == {"finished": 0, "stopped": 1}
 
 
-def test_other_work_is_still_stopped_at_its_deadline():
+def test_other_work_is_still_stopped_at_its_deadline(gate):
     with WorkerPool(1) as pool:
         pool.warm(wait=True)
         before = pool.run(tools_toys.worker_pid, timeout=60)
-        with pytest.raises(ToolError, match="it was stopped"):
-            pool.run(tools_toys.keep_value, "slow", 1, 2.0, timeout=0.3)
+        with pytest.raises(ToolError, match="it was stopped"):   # held at a gate never opened
+            pool.run(tools_toys.keep_value, "slow", 1, 0, gate.path, timeout=0.3)
         assert pool.killed == [before]
 
 

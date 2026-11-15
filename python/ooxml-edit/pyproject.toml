@@ -78,4 +78,5 @@ ignore_missing_imports = true
 testpaths = ["tests"]
 markers = [
   "provider: calls a model provider's API online; skipped without its API key",
+  "slow: a timing measurement with a generous bound, run with --run-slow; the PR suites hold the order instead",
 ]

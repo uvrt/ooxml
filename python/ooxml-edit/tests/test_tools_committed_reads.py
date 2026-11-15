@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import dataclasses
 import threading
-import time
 
 import pytest
 
@@ -21,9 +20,18 @@ from ooxml_edit.tools import Result, Toolbox, integer, shared, string, tool
 import synthetic
 import tools_toys
 
-#: How long the slow edit holds the document: long enough that waiting for it would show.
-STALL = 2
+#: A stall of the slow tools: held at the test's gate (tests/gates.py) until it opens.
+STALL = 1
+#: The gate the slow tools and checks hold at; the checks only their first time.
+HOLD: dict = {"gate": None, "checks": 0}
 MADE: list[int] = []
+
+
+@pytest.fixture(autouse=True)
+def _hold(gate):
+    HOLD.update(gate=gate, checks=0)
+    yield
+    HOLD.update(gate=None, checks=0)
 
 
 def _read_copy(document):
@@ -42,7 +50,8 @@ TEXT = dataclasses.replace(tools_toys.TEXT, read_copy=_read_copy)
       kind="docx", mutates=True)
 def slow_insert(call, doc, text, stall):
     call.document.insert(text, "end")
-    time.sleep(stall)
+    if stall:
+        HOLD["gate"].hold("edit")
     return Result(summary="inserted", created=[f"item:{len(call.document.items())}"])
 
 
@@ -51,7 +60,8 @@ def slow_insert(call, doc, text, stall):
       kind="docx")
 def slow_read(call, doc, stall):
     items = call.document.items()
-    time.sleep(stall)
+    if stall:
+        HOLD["gate"].hold("read")
     return Result(summary="read", data={"items": items, "version": call.entry.version})
 
 
@@ -72,20 +82,21 @@ def _in_thread(fn):
     return thread, out
 
 
-def test_a_read_does_not_wait_for_an_edit_in_flight_and_reads_the_committed_version():
+def test_a_read_does_not_wait_for_an_edit_in_flight_and_reads_the_committed_version(gate):
     with _box() as box:
         session, doc = _open(box)
         box.dispatch(session, "toy_word_insert", {"doc": doc, "text": "first", "at": "end"})
         before = session.entry(doc).version
         thread, edit = _in_thread(lambda: box.dispatch(
             session, "toy_word_slow_insert", {"doc": doc, "text": "second", "stall": STALL}))
-        time.sleep(0.3)                                   # the edit holds the document
-        started = time.perf_counter()
+        gate.wait_entered("edit")                         # the edit holds the document
         read = box.dispatch(session, "toy_word_read", {"doc": doc})
-        took = time.perf_counter() - started
+        gate.note("read")
+        gate.open()
         thread.join()
         assert read.ok, read.to_json()
-        assert took < STALL - 0.5, f"the read waited {took:.1f} s for the edit"
+        # Had the read waited for the edit, the edit's hold timed out first.
+        assert gate.order() == ["edit in", "read", "edit out"]
         assert read.version == before and "second" not in read.data and "first" in read.data
         assert edit["result"].ok and edit["result"].version == before + 1
         after = box.dispatch(session, "toy_word_read", {"doc": doc})
@@ -102,19 +113,19 @@ def test_a_callers_own_edit_is_committed_before_its_next_read():
             assert f"item {n}" in read.data and read.version == edit.version
 
 
-def test_an_edit_does_not_wait_for_a_slow_read_of_the_committed_version():
+def test_an_edit_does_not_wait_for_a_slow_read_of_the_committed_version(gate):
     with _box() as box:
         session, doc = _open(box)
         box.dispatch(session, "toy_word_insert", {"doc": doc, "text": "first", "at": "end"})
         before = session.entry(doc).version
         thread, read = _in_thread(lambda: box.dispatch(
             session, "toy_word_slow_read", {"doc": doc, "stall": STALL}))
-        time.sleep(0.3)
-        started = time.perf_counter()
+        gate.wait_entered("read")
         edit = box.dispatch(session, "toy_word_insert", {"doc": doc, "text": "second", "at": "end"})
-        took = time.perf_counter() - started
+        gate.note("edited")
+        gate.open()
         thread.join()
-        assert edit.ok and took < STALL - 0.5, f"the edit waited {took:.1f} s for the read"
+        assert edit.ok and gate.order() == ["read in", "edited", "read out"]
         result = read["result"]
         assert result.ok and result.version == before and "second" not in result.data["items"]
         assert result.data["version"] == before          # the handler's entry is pinned
@@ -161,17 +172,23 @@ def test_refs_of_the_committed_version_resolve_in_its_reads():
         assert reader.refs == entry.refs == {"first": "item:1"}
 
 
-def test_a_format_that_does_not_copy_reads_under_the_lock_as_before():
+def test_a_format_that_does_not_copy_reads_under_the_lock_as_before(gate):
     with _box(tools_toys.TEXT) as box:
         session, doc = _open(box)
         box.dispatch(session, "toy_word_insert", {"doc": doc, "text": "first", "at": "end"})
         assert session.entry(doc).committed is None
         thread, edit = _in_thread(lambda: box.dispatch(
             session, "toy_word_slow_insert", {"doc": doc, "text": "second", "stall": STALL}))
-        time.sleep(0.3)
-        read = box.dispatch(session, "toy_word_read", {"doc": doc})
+        gate.wait_entered("edit")                         # the edit holds the document
+        reading, out = _in_thread(lambda: (box.dispatch(session, "toy_word_read", {"doc": doc}),
+                                           gate.note("read"))[0])
+        reading.join(0.5)        # a read that did not wait is done by now (unless the machine is busy)
+        gate.open()
+        reading.join()
         thread.join()
+        read = out["result"]
         assert read.ok and "second" in read.data          # it waited: the edit's version
+        assert gate.order() == ["edit in", "edit out", "read"]
 
 
 def test_a_copy_that_cannot_be_made_reads_under_the_lock():
@@ -234,7 +251,9 @@ CHECKED: list[tuple[int, list[str]]] = []
 
 def _slow_checks(entry, touched):
     items = entry.document.items()
-    time.sleep(STALL)
+    HOLD["checks"] += 1
+    if HOLD["checks"] == 1:                              # the first change's checks only
+        HOLD["gate"].hold("checks")
     CHECKED.append((entry.version, items))
     return {"items": len(items), "version": entry.version}
 
@@ -242,38 +261,42 @@ def _slow_checks(entry, touched):
 CHECKING = dataclasses.replace(TEXT, checks=_slow_checks)
 
 
-def test_an_edit_does_not_wait_for_the_checks_of_the_edit_before_it():
+def test_an_edit_does_not_wait_for_the_checks_of_the_edit_before_it(gate):
     with _box(CHECKING) as box:
         session, doc = _open(box)
         CHECKED.clear()
         thread, first = _in_thread(lambda: box.dispatch(
             session, "toy_word_insert", {"doc": doc, "text": "first", "at": "end"}))
-        time.sleep(0.5)                                   # its checks are running
-        started = time.perf_counter()
+        gate.wait_entered("checks")                       # its checks are running
         # A concurrent edit in between: it changes the document while the checks read.
         second = box.dispatch(session, "batch", {"ops": [
             {"tool": "toy_word_insert", "arguments": {"doc": doc, "text": "second", "at": "end"}}]})
-        edited = time.perf_counter() - started
+        gate.note("second")
+        gate.open()
         thread.join()
         first = first["result"]
         assert first.ok and second.ok
-        assert edited < 2 * STALL - 0.5, f"the second edit waited {edited:.1f} s"
+        assert gate.order() == ["checks in", "second", "checks out"]   # it did not wait for them
         # Each change's checks are of the version it made, whatever came after.
         assert first.checks == {"items": 1, "version": first.version}
         assert second.checks == {"items": 2, "version": second.version}
         assert sorted(CHECKED) == [(first.version, ["first"]), (second.version, ["first", "second"])]
 
 
-def test_without_copies_the_checks_run_under_the_lock_as_before():
+def test_without_copies_the_checks_run_under_the_lock_as_before(gate):
     plain = dataclasses.replace(tools_toys.TEXT, checks=_slow_checks)
     with _box(plain) as box:
         session, doc = _open(box)
         thread, first = _in_thread(lambda: box.dispatch(
             session, "toy_word_insert", {"doc": doc, "text": "first", "at": "end"}))
-        time.sleep(0.5)
-        started = time.perf_counter()
-        second = box.dispatch(session, "toy_word_insert", {"doc": doc, "text": "second", "at": "end"})
-        edited = time.perf_counter() - started
+        gate.wait_entered("checks")
+        editing, out = _in_thread(lambda: (box.dispatch(
+            session, "toy_word_insert", {"doc": doc, "text": "second", "at": "end"}), gate.note("second"))[0])
+        editing.join(0.5)        # an edit that did not wait is done by now (unless the machine is busy)
+        gate.open()
+        editing.join()
         thread.join()
-        assert second.ok and edited > STALL, "the checks did not hold the lock"
+        second = out["result"]
+        assert second.ok and gate.order() == ["checks in", "checks out", "second"], \
+            "the checks did not hold the lock"
         assert first["result"].checks == {"items": 1, "version": first["result"].version}

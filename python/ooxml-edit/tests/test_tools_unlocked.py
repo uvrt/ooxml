@@ -10,7 +10,6 @@ in the in-process fallback alike; inside a batch, or in a changing call, the loc
 from __future__ import annotations
 
 import threading
-import time
 
 import pytest
 
@@ -18,10 +17,6 @@ from ooxml_edit.tools import Result, Toolbox, shared, string, tool
 
 import synthetic
 import tools_toys
-
-#: How long the toy renderer stalls: long enough that an edit waiting for it would show.
-STALL = 2
-
 
 @pytest.fixture(params=[0, 1], ids=["in-process", "worker"])
 def toolbox(request):
@@ -36,7 +31,7 @@ def _open(box):
     return session, doc
 
 
-def test_an_edit_to_page_2_does_not_wait_for_a_render_of_page_1(toolbox):
+def test_an_edit_to_page_2_does_not_wait_for_a_render_of_page_1(toolbox, gate):
     session, doc = _open(toolbox)
     toolbox.dispatch(session, "toy_ppt_render", {"doc": doc, "page": 1, "width": 64})   # warm-up
     before = session.entry(doc).version
@@ -44,20 +39,19 @@ def test_an_edit_to_page_2_does_not_wait_for_a_render_of_page_1(toolbox):
 
     def render():
         rendered["result"] = toolbox.dispatch(
-            session, "toy_ppt_render", {"doc": doc, "page": 1, "width": 96, "stall": STALL})
-        rendered["done"] = time.perf_counter()
+            session, "toy_ppt_render", {"doc": doc, "page": 1, "width": 96, "gate": gate.path})
 
     thread = threading.Thread(target=render)
-    started = time.perf_counter()
     thread.start()
-    time.sleep(0.3)                                      # the render has its snapshot
+    gate.wait_entered("render")                          # the render has its snapshot
     edit = toolbox.dispatch(session, "toy_ppt_set_title", {"doc": doc, "page": 2, "text": "Edited"})
-    edited = time.perf_counter()
+    gate.note("edited")
+    gate.open()
     thread.join()
 
+    # It really ran while the render did: had it waited, the render's hold timed out first.
+    assert gate.order() == ["render in", "edited", "render out"]
     assert edit.ok and edit.version == before + 1
-    assert edited - started < STALL - 0.5, "the edit waited for the render"
-    assert rendered["done"] > edited                     # it really ran while the render did
     result = rendered["result"]
     assert result.ok and len(result.images) == 1
     assert result.version == before                      # what was drawn: the snapshot

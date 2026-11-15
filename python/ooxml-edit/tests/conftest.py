@@ -26,3 +26,27 @@ def data() -> bytes:
 @pytest.fixture
 def package(data) -> OpcPackage:
     return OpcPackage.open(data)
+
+
+@pytest.fixture
+def gate(tmp_path):
+    """A :class:`gates.Gate` of this test's own (tests/gates.py)."""
+    import gates
+
+    return gates.Gate(tmp_path)
+
+
+def pytest_addoption(parser):
+    parser.addoption("--run-slow", action="store_true", default=False,
+                     help="also run the timing measurements marked slow")
+
+
+def pytest_collection_modifyitems(config, items):
+    """The timing measurements marked slow run with ``--run-slow``: they hold on an idle
+    machine, and the PR suites hold the order of events they measure instead."""
+    if config.getoption("--run-slow"):
+        return
+    later = pytest.mark.skip(reason="a timing measurement: run with --run-slow")
+    for item in items:
+        if "slow" in item.keywords:
+            item.add_marker(later)

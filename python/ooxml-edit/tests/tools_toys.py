@@ -157,23 +157,33 @@ def png(width: int, height: int, rgb: tuple[int, int, int] = (40, 90, 160)) -> b
 
 
 @worker_task
-def render_page(data: bytes, number: int, width: int, seconds: float = 0.0) -> tuple[bytes, int, int]:
-    """What a renderer does in a worker: open the bytes, draw a page.  ``seconds`` stalls it."""
+def render_page(data: bytes, number: int, width: int, seconds: float = 0.0,
+                gate: str | None = None) -> tuple[bytes, int, int]:
+    """What a renderer does in a worker: open the bytes, draw a page.  ``seconds`` stalls it;
+    ``gate`` (a :class:`gates.Gate`'s folder) holds it there as ``render`` until it opens."""
     document = ToyDocument(data)
     document.page(number)
     if seconds:
         time.sleep(seconds)
+    if gate:
+        import gates
+        gates.Gate(gate).hold("render")
     height = width * 9 // 16
     return png(width, height), width, height
 
 
 @worker_task
-def read_title(data: bytes, number: int, seconds: float = 0.0) -> tuple[str, int, int]:
+def read_title(data: bytes, number: int, seconds: float = 0.0,
+               gate: str | None = None) -> tuple[str, int, int]:
     """A slow read in a worker (``Call.on_snapshot``): a page's title in the bytes, their
-    length and the worker's pid.  ``seconds`` stalls it."""
+    length and the worker's pid.  ``seconds`` stalls it; ``gate`` (a :class:`gates.Gate`'s
+    folder) holds it there as ``read`` until it opens."""
     import os
     if seconds:
         time.sleep(seconds)
+    if gate:
+        import gates
+        gates.Gate(gate).hold("read")
     return ToyDocument(data).title(number), len(data), os.getpid()
 
 
@@ -188,15 +198,34 @@ _KEPT: dict = {}
 
 
 @worker_task
-def keep_value(key: str, value: object, seconds: float = 0.0) -> tuple[int, object]:
+def keep_value(key: str, value: object, seconds: float = 0.0, gate: str | None = None,
+               name: str = "keep") -> tuple[int, object]:
     """Keep ``value`` under ``key`` in this process, after ``seconds``; the pid, and what
-    was kept there before (``None``: nothing -- this worker never held ``key``)."""
+    was kept there before (``None``: nothing -- this worker never held ``key``).  ``gate``
+    (a :class:`gates.Gate`'s folder) holds it there first, as ``name``, until it opens."""
     import os
     if seconds:
         time.sleep(seconds)
+    if gate:
+        import gates
+        gates.Gate(gate).hold(name)
     before = _KEPT.get(key)
     _KEPT[key] = value
     return os.getpid(), before
+
+
+@worker_task
+def at_gate(gate: str, name: str, hold: bool = True) -> int:
+    """In a worker: note ``<name> runs`` at a gate (tests/gates.py), holding there as
+    ``name`` until it opens when ``hold``; the worker's pid."""
+    import os
+
+    import gates
+    if hold:
+        gates.Gate(gate).hold(name)
+    else:
+        gates.Gate(gate).note(f"{name} runs")
+    return os.getpid()
 
 
 @worker_task
@@ -235,16 +264,18 @@ def toy_ppt_set_title(call, doc, page, text, key=None):
        "width": integer("Width in pixels, 16 to 2576. Default 1280.", minimum=16, maximum=2576,
                         optional=True),
        "stall": integer("Test only: seconds the renderer stalls.", minimum=0,
-                        optional=True)},
+                        optional=True),
+       "gate": string("Test only: a gate's folder the renderer holds at (tests/gates.py).",
+                      optional=True)},
       kind="pptx", group="toy_render")
-def toy_ppt_render(call, doc, page, width=1280, stall=0):
+def toy_ppt_render(call, doc, page, width=1280, stall=0, gate=None):
     entry = call.entry
     version = entry.version                  # the snapshot: this version's bytes
     key = ("page", page, width)
     hit = entry.render_cache.get((version, key))
     if hit is None:
         data = call.document.to_bytes()
-        hit = call.run_unlocked(render_page, data, page, width, stall)
+        hit = call.run_unlocked(render_page, data, page, width, stall, gate)
         entry.render_cache.put((version, key), hit)
     data, w, h = hit
     call.image(data, w, h, label=f"page {page}")
@@ -431,6 +462,53 @@ def concurrency_in_a_daemonic_process(queue, workers: int, count: int) -> None:
         queue.put({"error": f"{type(exc).__name__}: {exc}"})
 
 
+def overlap_in_a_daemonic_process(queue, workers: int, gate: str) -> None:
+    """In a daemonic process: two renders held at ``gate`` (tests/gates.py) at once, and an
+    edit while they are held, noted ``edited``; then the gate opened.  Puts ``{"runner",
+    "pids", "pid", "ran", "ok"}`` on ``queue`` (``ran``: the pid a task ran in), or
+    ``{"error": text}``.  Renders that cannot run side by side leave the second one out of
+    the gate until the first's hold timed out: the order says so."""
+    import os
+    import threading
+
+    import gates
+    from ooxml_edit.tools import Toolbox
+
+    try:
+        held = gates.Gate(gate)
+        with Toolbox(TOOLS, formats=FORMATS, workers=workers) as box:
+            session = box.session()
+            session.open(synthetic.outer_package(), "deck.pptx")
+            results: list = []
+
+            def render(page: int) -> None:
+                results.append(box.dispatch(session, "toy_ppt_render",
+                                            {"doc": "d1", "page": page, "width": 32, "gate": gate}))
+
+            threads = [threading.Thread(target=render, args=(page,)) for page in (1, 2)]
+            for thread in threads:
+                thread.start()
+            try:
+                held.wait_noted("render in")
+                if workers:
+                    ends = time.monotonic() + gates.TIMEOUT
+                    while held.order().count("render in") < 2 and time.monotonic() < ends:
+                        time.sleep(gates.POLL)
+                edit = box.dispatch(session, "toy_ppt_set_title",
+                                    {"doc": "d1", "page": 2, "text": "Edited"})
+                held.note("edited")
+            finally:
+                held.open()
+            for thread in threads:
+                thread.join()
+            ran = box.pool.run(worker_pid, timeout=60)
+            queue.put({"runner": getattr(box.pool, "runner", None), "pids": box.pool.pids(),
+                       "pid": os.getpid(), "ran": ran,
+                       "ok": all(result.ok for result in results) and edit.ok})
+    except BaseException as exc:  # noqa: BLE001 -- reported to the test
+        queue.put({"error": f"{type(exc).__name__}: {exc}"})
+
+
 # -- the subprocess worker's edge cases ---------------------------------------------------------
 
 
@@ -475,6 +553,26 @@ def slow_warm_up() -> None:
     """A warm-up that takes longer than the deadlines the tests give their tasks."""
     time.sleep(2.0)
     os.environ["OOXML_EDIT_TOYS_WARMED"] = "1"
+
+
+#: The environment variable naming the gate (tests/gates.py) :func:`gated_warm_up` holds at.
+WARM_GATE = "OOXML_EDIT_TOYS_WARM_GATE"
+
+
+@worker_task
+def gated_warm_up() -> None:
+    """A warm-up held, as ``warm``, at the gate the environment names until it opens."""
+    import gates
+    gates.Gate(os.environ[WARM_GATE]).hold("warm")
+    os.environ["OOXML_EDIT_TOYS_WARMED"] = "1"
+
+
+@worker_task
+def gated_value(gate: str, name: str, value: object) -> object:
+    """``value``, once held at ``gate`` (tests/gates.py) as ``name`` until it opens."""
+    import gates
+    gates.Gate(gate).hold(name)
+    return value
 
 
 @worker_task

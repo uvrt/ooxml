@@ -5,13 +5,13 @@ asked, and reads that wait for a commit, never for the lock an edit holds."""
 from __future__ import annotations
 
 import threading
-import time
 
 from ooxml_edit.history import History
 from ooxml_edit.opc import OpcPackage, Pieces
 from ooxml_edit.tools.session import Committed, DocumentEntry, DocumentFormat
 from ooxml_edit.xml import make, qn
 
+import gates
 import synthetic
 import tools_toys
 
@@ -204,9 +204,10 @@ def _entry() -> tuple[DocumentEntry, DocumentFormat]:
     return entry, fmt
 
 
-def test_a_read_waits_for_the_commit_not_for_the_lock():
+def test_a_read_waits_for_the_commit_not_for_the_lock(gate):
     entry, fmt = _entry()
-    changed, released = threading.Event(), []
+    entry._commits = watched = gates.Watched(entry._commits, gate)
+    changed = threading.Event()
 
     def edit():
         with entry.lock:
@@ -214,20 +215,31 @@ def test_a_read_waits_for_the_commit_not_for_the_lock():
                 entry.document.insert("new", "end")
             entry.note_change(None, 0)
             changed.set()
-            time.sleep(0.3)
-            entry.commit(fmt)                       # the version committed...
-            time.sleep(1.0)                         # ...and the lock held on after it
-            released.append(time.monotonic())
+            assert watched.waiting.wait(60)          # the read waits for the commit...
+            entry.commit(fmt)                       # ...the version committed...
+            gate.hold("lock")                       # ...and the lock held on after it
 
     thread = threading.Thread(target=edit)
     thread.start()
     changed.wait()
-    reader = entry.committed_reader(fmt)
-    got = time.monotonic()
+    got: dict = {}
+
+    def read():
+        got["reader"] = entry.committed_reader(fmt)
+        gate.note("read")
+
+    reading = threading.Thread(target=read, name="read")
+    reading.start()
+    reading.join(120)
+    reader = got["reader"]
+    gate.open()
     thread.join()
     assert reader is not None and reader.version == entry.version
     assert "new" in reader.document.items()
-    assert got < released[0]                         # it did not wait for the lock
+    # It waited for the commit and not for the lock: had it, the edit's hold timed out first.
+    order = gate.order()
+    assert order[0] == "read waits" and order[-1] == "lock out", order
+    assert sorted(order[1:3]) == ["lock in", "read"], order
 
 
 def test_a_read_with_the_lock_free_commits_as_before():
