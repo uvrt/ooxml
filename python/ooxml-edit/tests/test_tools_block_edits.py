@@ -507,22 +507,49 @@ def test_a_cells_from_left_empty_by_a_strict_decoder_is_no_source():
         assert result.summary == "1 cell(s): ''"
 
 
-def test_many_callers_on_drafts_keep_every_change_once():
+def test_many_callers_on_drafts_keep_every_change_once(monkeypatch):
     box, _hook = _box("auto")
+    gate = HOLD["gate"]
+    beside_seen = threading.Event()
+    beside = dispatch._Editing.beside
+
+    def counted(self, entry):
+        found = beside(self, entry)
+        if found:
+            beside_seen.set()                   # a call began beside another's edit
+        return found
+
+    monkeypatch.setattr(dispatch._Editing, "beside", counted)
     with box:
         session, doc = _open(box)
         before = session.entry(doc).version
 
+        views = [session.view(context={"agent": f"c{k}"}) for k in range(6)]
+
         def caller(k):
-            view = session.view(context={"agent": f"c{k}"})
-            return [box.dispatch(view, "toy_block_add", {"doc": doc, "text": f"{k}-{n}"}) for n in range(15)]
+            view = views[k]
+            # The first caller's first change is held (the document's lock with it) until
+            # another caller is seen beginning beside it -- drafted then -- so that some ran
+            # beside another call by construction, not by how the threads were scheduled.
+            return [box.dispatch(view, "toy_block_add", {"doc": doc, "text": f"{k}-{n}",
+                                                         **({"stall": STALL} if (k, n) == (0, 0) else {})})
+                    for n in range(15)]
 
         results: dict = {}
         threads = [threading.Thread(target=lambda k=k: results.setdefault(k, caller(k))) for k in range(6)]
-        for thread in threads:
-            thread.start()
-        for thread in threads:
-            thread.join()
+        threads[0].start()
+        try:
+            gate.wait_entered("0-0")
+            for thread in threads[1:]:
+                thread.start()
+            assert beside_seen.wait(gates.TIMEOUT), "no call began beside the held one"
+            gate.note("began beside")
+        finally:
+            gate.open()
+            for thread in threads:
+                if thread.ident is not None:
+                    thread.join()
+        assert gate.order() == ["0-0 in", "began beside", "0-0 out"], gate.order()
         made = [r for found in results.values() for r in found]
         assert all(r.ok for r in made)
         entry = session.entry(doc)
