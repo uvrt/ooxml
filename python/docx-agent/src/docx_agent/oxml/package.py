@@ -92,7 +92,7 @@ class WordPackage(OpcPackage):
                 raise incremental.Mismatch("restore: the blocks put back do not write out as the snapshot")
         if self._serial_scopes:
             self._serialized[path] = written
-        self._settled.add(path)
+            self._settled.add(path)
         return tree
 
     def document_part(self) -> str:

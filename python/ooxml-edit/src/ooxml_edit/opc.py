@@ -147,14 +147,17 @@ class OpcPackage:
         self._pieces: dict[str, "Pieces"] = {}
         #: 0.119.0: the edited parts whose last snapshot (``_pieces``) is their tree's bytes
         #: now -- taken once the history said the state is made (:meth:`keep_serialized`),
-        #: and nothing changed the part since.  The next snapshot shares it whole, and the
-        #: part's bytes are those pieces: one serialization per version, kept from one call
-        #: to the next.  The history's next checkpoint or batch, :meth:`mark_dirty`, putting
-        #: a tree or a part in place, restoring, and :meth:`tree` asked outside a
-        #: :meth:`serializing` scope (an application's own, which may change the tree
-        #: unseen) each forget it.
+        #: and nothing changed the part since -- inside a :meth:`serializing` scope.  The
+        #: next snapshot shares it whole, and the part's bytes are those pieces: one
+        #: serialization per version.  Kept from one call to the next where the scope says
+        #: so (``keep_settled``: the tool layer's calls, whose documents change between
+        #: calls only through the history or with :meth:`mark_dirty`); else forgotten when
+        #: the scope ends.  The history's next checkpoint or batch, :meth:`mark_dirty`,
+        #: putting a tree or a part in place, restoring, and :meth:`tree` asked outside a
+        #: scope each forget it too.
         self._settled: set[str] = set()
         self._settling = False
+        self._keep_settled = False
         self._restoring_settled: frozenset[str] = frozenset()
 
     # -- loading ---------------------------------------------------------------------------
@@ -216,22 +219,28 @@ class OpcPackage:
             self._settled.clear()
 
     @contextmanager
-    def serializing(self) -> Iterator[None]:
+    def serializing(self, keep_settled: bool = False) -> Iterator[None]:
         """A stretch in which nothing changes a tree but through the history (0.117.0): the
         tool layer's one call on the document, its lock held -- its change, its undo step,
         its commit and its readers share one serialization of the version it leaves.  Outside
         one (an application editing trees between calls, as it may), nothing is kept: every
         read writes the trees out again, as before."""
+        if not self._serial_scopes:
+            self._keep_settled = keep_settled
         self._serial_scopes += 1
         try:
             yield
         finally:
             self._serial_scopes -= 1
             if not self._serial_scopes:
-                # The bytes kept for readers go; a settled snapshot stays (0.119.0): it is
-                # the state's until the next change, whoever makes it.
+                # The bytes kept for readers go; a settled snapshot stays where the scope
+                # says nothing changes a tree between it and the next one but through the
+                # history or with mark_dirty (``keep_settled``, 0.119.0: the tool layer's
+                # documents), else it goes too.
                 self._keep_serialized = False
                 self._serialized.clear()
+                if not self._keep_settled:
+                    self._settled.clear()
 
     def open_part(self, path: str) -> BinaryIO | None:
         """A binary file over a part's current bytes: an untouched part inflated a piece at
@@ -931,7 +940,7 @@ class OpcPackage:
             return found
         found = Pieces.of(self._serialize(path), self._pieces.get(path))
         self._pieces[path] = found
-        if self._settling:
+        if self._settling and self._serial_scopes:
             self._settled.add(path)
         return found
 

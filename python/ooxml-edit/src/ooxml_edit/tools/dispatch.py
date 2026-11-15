@@ -1546,10 +1546,13 @@ class Toolbox:
                             # 0.117.0: the call's change, undo step, commit and readers share
                             # one serialization of each version it leaves (OpcPackage.
                             # serializing), the documents held -- nothing else changes them.
+                            # 0.119.0: and the snapshot the call leaves is the next call's
+                            # start (keep_settled): a toolbox's document changes between calls
+                            # only through the history, or marked dirty.
                             for entry in locked:
                                 scope = getattr(getattr(entry.document, "package", None), "serializing", None)
                                 if scope is not None and entry.pinned is None:
-                                    serializing.enter_context(scope())
+                                    serializing.enter_context(scope(keep_settled=True))
                         if holding is not None:
                             holding.set()
                         entries = {entry.doc_id: entry for entry in locked}

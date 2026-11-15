@@ -14,10 +14,14 @@ earlier ones were never tagged.
   for the state after), and an undo or a redo whose format tells the restored tree's bytes
   (docx-agent's Word package) not at all. The history's next checkpoint or batch,
   `mark_dirty`, putting a tree or a part in place, restoring, and `tree()` asked outside a
-  `serializing()` scope (an application's own, which may change the tree unseen) each
-  forget it; `OOXML_EDIT_VERIFY_SERIALIZED=1` compares it with the tree written out again.
-  An application that keeps a tree from inside a call and changes it between calls marks
-  the part dirty, as `mark_dirty` asks.
+  `serializing()` scope each forget it; `OOXML_EDIT_VERIFY_SERIALIZED=1` compares it with
+  the tree written out again. It is taken only inside a `serializing()` scope, and kept
+  past the scope's end only where the scope says so (`serializing(keep_settled=True)`):
+  the tool layer's calls, whose documents change between calls only through the history
+  or marked dirty (an application that changes a toolbox's document between calls through
+  a tree it kept marks the part dirty, as `mark_dirty` asks). A library's own use, with no
+  such scope, writes the state before each change out as before: a tree it holds may be
+  changed unmarked between changes.
 - `OpcPackage.restore` tells a format's `_restored_tree` which parts' last snapshots were
   their trees' bytes (`_restoring_settled`); a format that knows the tree it gives writes
   out as the snapshot may mark the part settled.

@@ -114,8 +114,8 @@ def _counting(monkeypatch) -> list:
     return calls
 
 
-def _edit_in_a_call(package, history, value):
-    with package.serializing():
+def _edit_in_a_call(package, history, value, keep_settled=True):
+    with package.serializing(keep_settled):
         with history.batch():
             package.tree(synthetic.MAIN).append(make("tst:item", val=value))
             package.mark_dirty(synthetic.MAIN)
@@ -152,6 +152,19 @@ def test_a_tree_handed_out_between_calls_or_marked_dirty_is_written_out_again(mo
     assert len(calls) == 2                             # the state before, and the version
     assert history.undo()
     assert b"held" in package.read(synthetic.MAIN) and b"four" not in package.read(synthetic.MAIN)
+
+
+def test_a_scope_that_does_not_keep_its_snapshot_leaves_the_next_to_write_it_out(monkeypatch):
+    package = _package(10)
+    history = History(package)
+    _edit_in_a_call(package, history, "one", keep_settled=False)
+    # A library's own use (no tool layer): a tree held from before, changed unmarked.
+    held = package._trees[synthetic.MAIN]
+    held.append(make("tst:item", val="unmarked"))
+    calls = _counting(monkeypatch)
+    _edit_in_a_call(package, history, "two", keep_settled=False)
+    assert len(calls) == 2
+    assert history.undo() and b"unmarked" in package.read(synthetic.MAIN)
 
 
 # -- committed versions --------------------------------------------------------------------------
