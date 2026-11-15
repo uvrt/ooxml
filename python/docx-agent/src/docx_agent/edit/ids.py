@@ -60,6 +60,7 @@ import functools
 import hashlib
 import re
 import threading
+from collections import Counter
 from dataclasses import dataclass, field
 
 from lxml import etree
@@ -231,6 +232,197 @@ class PartIndex:
         return {entry.raw.upper() for entry in self.paragraphs if entry.raw}
 
 
+_BODY_BLOCKS = frozenset({W_P, W_TBL, _W + "sdt", _W + "customXml"})
+_P_START = re.compile(rb"<w:p(?=[\s/>])")
+_TBL_START = re.compile(rb"<w:tbl(?=[\s/>])")
+_TR_START = re.compile(rb"<w:tr(?=[\s/>])")
+_FALLBACK_BYTES = re.compile(rb"<mc:Fallback(?=[\s>]).*?</mc:Fallback>", re.S)
+
+
+def _span_counts(data: bytes, begin: int, end: int) -> tuple[int, int, int]:
+    """The paragraphs, tables and rows (not under ``mc:Fallback``) in ``data[begin:end]``."""
+    piece = data[begin:end]
+    if b"<mc:Fallback" in piece:
+        piece = _FALLBACK_BYTES.sub(b"", piece)
+    return len(_P_START.findall(piece)), len(_TBL_START.findall(piece)), len(_TR_START.findall(piece))
+
+
+class IndexBase:
+    """What :func:`body_index` builds the body's next index from (0.1.116): an index, the
+    main part's bytes it was built from, the body's top-level blocks then (elements, spans,
+    their paragraphs' and tables' counts), and the paraIds' counts (upper case)."""
+
+    def __init__(self, index: "PartIndex", data: bytes, tops: list, spans: list, counts: list,
+                 keys: Counter, body: tuple[int, int], everything: list) -> None:
+        self.index, self.data, self.tops, self.spans, self.counts = index, data, tops, spans, counts
+        self.keys, self.body = keys, body
+        #: The paragraphs, rows and tables in document order (what PartIndex walks).
+        self.everything = everything
+
+
+def _plain(index: "PartIndex") -> bool:
+    """Whether an index's ids depend on no place: every paragraph's, table's and row's id
+    its own paraId's, none repeated (what follows the first edit's stamping)."""
+    return all(e.state == "ok" for e in index.paragraphs) and all(
+        t.id.startswith("t:") and all(rid.startswith("tr:") for _, rid in t.rows) for t in index.tables)
+
+
+def body_index(root: Element, data: bytes, base: "IndexBase | None") -> "tuple[PartIndex, IndexBase | None]":
+    """The body's :class:`PartIndex` (story ``body``) of the tree ``root`` whose part's bytes
+    are ``data``, made from ``base`` (the index of an earlier state of the same tree) where
+    only some top-level blocks changed: the entries of the blocks before and after them
+    kept (the later ones' places moved), those of the changed blocks made -- the same index,
+    in time proportional to the change.  The whole index where that cannot be said so."""
+    from ..revalidate import _scan
+    from ..tools.touched import _blocks, _common_prefix, _common_suffix
+
+    body_element = root.find(_W + "body")
+    tops = [child for child in body_element if child.tag in _BODY_BLOCKS] if body_element is not None else []
+    made = None
+    if base is not None and base.data is not data:
+        made = _index_from(root, data, base, tops, _blocks, _common_prefix, _common_suffix)
+    elif base is not None and base.data is data and base.tops == tops and \
+            live_elements(root, frozenset({W_P, W_TR, W_TBL})) == base.everything:
+        made = (base.index, base)
+    if made is not None:
+        from .. import incremental
+
+        incremental.STATS["body index: per change"] += 1
+        return made
+    index = PartIndex("body", root)
+    found = _scan(data) if _plain(index) else None
+    if found is None or len(found[0]) != len(tops):
+        return index, None
+    spans, body, _ = found
+    counts = [_span_counts(data, a, b) for a, b in spans]
+    everything = live_elements(root, frozenset({W_P, W_TR, W_TBL}))
+    if sum(c[0] for c in counts) != len(index.paragraphs) or sum(c[1] for c in counts) != len(index.tables) \
+            or sum(sum(c) for c in counts) != len(everything):
+        return index, None
+    keys = Counter(e.raw.upper() for e in index.paragraphs)
+    keys.update(rid.rpartition("tr:")[2].upper() for t in index.tables for _, rid in t.rows)
+    return index, IndexBase(index, data, tops, list(spans), counts, keys, body, everything)
+
+
+def _index_from(root, data, base, tops, _blocks, _common_prefix, _common_suffix):
+    old = base.data
+    prefix = _common_prefix(old, data)
+    suffix = _common_suffix(old, data, min(len(old), len(data)) - prefix)
+    body_at, body_end = base.body
+    if prefix < body_at or len(old) - suffix > body_end:
+        return None
+    spans = base.spans
+    n_old = len(spans)
+    before = 0
+    while before < n_old and spans[before][1] <= prefix:
+        before += 1
+    after = 0
+    while after < n_old - before and spans[n_old - 1 - after][0] >= len(old) - suffix:
+        after += 1
+    delta = len(data) - len(old)
+    begin = spans[before - 1][1] if before else body_at
+    stop = spans[n_old - after][0] + delta if after else body_end + delta
+    middle = _blocks(data, begin, stop)
+    if middle is None or len(tops) != before + len(middle) + after:
+        return None
+    if tops[:before] != base.tops[:before] or tops[len(tops) - after:] != base.tops[n_old - after:]:
+        return None                        # the kept blocks are not the same elements
+    counts = [_span_counts(data, a, b) for a, b in middle]
+    region = _span_counts(data, begin, stop)
+    if region != tuple(sum(c[k] for c in counts) for k in range(3)):
+        return None
+    old_index = base.index
+    p_before = sum(c[0] for c in base.counts[:before])
+    p_gone = sum(c[0] for c in base.counts[before:n_old - after])
+    t_before = sum(c[1] for c in base.counts[:before])
+    t_gone = sum(c[1] for c in base.counts[before:n_old - after])
+    e_before = sum(sum(c) for c in base.counts[:before])
+    e_after = sum(sum(c) for c in base.counts[n_old - after:])
+    # Every paragraph, row and table as PartIndex walks them: those of the kept blocks must be
+    # the same elements as before (an element put in place of one written the same is not).
+    walked = live_elements(root, frozenset({W_P, W_TR, W_TBL}))
+    old_walk = base.everything
+    if len(walked) != e_before + e_after + sum(sum(c) for c in counts) \
+            or walked[:e_before] != old_walk[:e_before] \
+            or walked[len(walked) - e_after:] != old_walk[len(old_walk) - e_after:]:
+        return None
+    everything = walked[e_before:len(walked) - e_after]
+    tags = [node.tag for node in everything]
+    raws = [None if tag == W_TBL else node.get(PARA_ID) for node, tag in zip(everything, tags)]
+    if any(raw is None for raw, tag in zip(raws, tags) if tag != W_TBL):
+        return None                        # a paragraph or row without a paraId: placed ids
+    keys = base.keys.copy()
+    for entry in old_index.paragraphs[p_before:p_before + p_gone]:
+        keys[entry.raw.upper()] -= 1
+    for table in old_index.tables[t_before:t_before + t_gone]:
+        for _, rid in table.rows:
+            keys[rid.rpartition("tr:")[2].upper()] -= 1
+    new_keys = [raw.upper() for raw in raws if raw is not None]
+    keys.update(new_keys)
+    if any(keys[k] > 1 for k in new_keys):
+        return None                        # a paraId written twice: repeats are placed
+    paragraphs: list[ParagraphEntry] = []
+    ok = _VALID_LONG_HEX.fullmatch
+    for node, tag, raw in zip(everything, tags, raws):
+        if tag == W_P:
+            if ok(raw) is None:
+                return None
+            paragraphs.append(ParagraphEntry(node, "p:" + raw, raw, "ok", p_before + len(paragraphs)))
+    tables: list[TableEntry] = []
+    for node in (n for n, tag in zip(everything, tags) if tag == W_TBL):
+        rows = [row for row in live_elements(node, frozenset({W_TR})) if _owner_table(row) is node]
+        first = rows[0].get(PARA_ID) if rows else None
+        if first is None or not valid_long_hex(first):
+            return None
+        entry_t = TableEntry(node, f"t:{first}")
+        for row in rows:
+            raw = row.get(PARA_ID)
+            if raw is None or not valid_long_hex(raw):
+                return None
+            entry_t.rows.append((row, f"tr:{raw}"))
+        tables.append(entry_t)
+    if len(paragraphs) != sum(c[0] for c in counts) or len(tables) != sum(c[1] for c in counts):
+        return None
+    index = PartIndex.__new__(PartIndex)
+    index.story, index.root = "body", root
+    gone_p = old_index.paragraphs[p_before:p_before + p_gone]
+    gone_t = old_index.tables[t_before:t_before + t_gone]
+    shift = len(paragraphs) - p_gone
+    rest = old_index.paragraphs[p_before + p_gone:]
+    if shift:
+        for entry in rest:
+            entry.index += shift
+    index.paragraphs = old_index.paragraphs[:p_before] + paragraphs + rest
+    index.tables = old_index.tables[:t_before] + tables + old_index.tables[t_before + t_gone:]
+    by_id = dict(old_index.by_id)
+    by_element = dict(old_index._by_element)
+    for entry in gone_p:
+        by_id.pop(entry.id, None)
+        by_element.pop(id(entry.element), None)
+    for entry_t in gone_t:
+        by_id.pop(entry_t.id, None)
+        by_element.pop(id(entry_t.element), None)
+    for entry in paragraphs:
+        by_id[entry.id] = entry
+        by_element[id(entry.element)] = entry
+    for entry_t in tables:
+        by_id[entry_t.id] = entry_t
+        by_element[id(entry_t.element)] = entry_t
+    index.by_id, index._by_element = by_id, by_element
+    new_spans = spans[:before] + middle + [(s + delta, e + delta) for s, e in spans[n_old - after:]]
+    new_counts = base.counts[:before] + counts + base.counts[n_old - after:]
+    return index, IndexBase(index, data, tops, new_spans, new_counts, +keys, (body_at, body_end + delta), walked)
+
+
+def same_index(a: "PartIndex", b: "PartIndex") -> bool:
+    """Whether two indexes name the same elements the same way (the oracle's test)."""
+    return ([(e.element, e.id, e.raw, e.state, e.index) for e in a.paragraphs]
+            == [(e.element, e.id, e.raw, e.state, e.index) for e in b.paragraphs]
+            and [(t.element, t.id, t.rows) for t in a.tables] == [(t.element, t.id, t.rows) for t in b.tables]
+            and {k: v.element for k, v in a.by_id.items()} == {k: v.element for k, v in b.by_id.items()}
+            and {k: v.element for k, v in a._by_element.items()} == {k: v.element for k, v in b._by_element.items()})
+
+
 def _owner_table(row: Element) -> Element | None:
     node = row.getparent()
     while node is not None and node.tag != W_TBL:
@@ -326,23 +518,18 @@ class Ledger:
         self.replaced = dict(loaded.replaced)
         self.earlier = dict(loaded.steps)
 
-    def note(self, roots: list[Element], version: int) -> None:
+    def note(self, roots: list[Element], version: int,
+             found: "tuple[set[int], set[int]] | None" = None) -> None:
         """Read the state ``roots`` are, as version ``version``: what is gone since the last
-        state read went in ``version``; what is back (an undone deletion) is no longer gone."""
+        state read went in ``version``; what is back (an undone deletion) is no longer gone.
+        ``found``: the state's block ids and drawing numbers, read already (:class:`IdScan`,
+        per change); else read here from ``roots``."""
         if self.version == version and self.pool is not None:
             return
-        blocks: set[int] = set()
-        drawings: set[int] = set()
-        for root in roots:
-            for node in root.iter(W_P, W_TR, WP_DOC_PR):
-                if node.tag == WP_DOC_PR:
-                    raw = node.get("id")
-                    if raw is not None and raw.isdigit():
-                        drawings.add(int(raw))
-                else:
-                    raw = node.get(PARA_ID)
-                    if raw is not None and _HEX.fullmatch(raw):
-                        blocks.add(int(raw, 16))
+        if found is not None and self.pool is not None:
+            blocks, drawings = found
+        else:
+            blocks, drawings = block_and_drawing_ids(roots)
         if self.pool is None:
             # The state as opened: every value in it.  Later states add only what generate
             # gave (into the pool itself), what a copy kept (Document._remember_ids) and
@@ -362,6 +549,196 @@ class Ledger:
         self.drawings = drawings
         self.highest_drawing = max(self.highest_drawing, max(drawings, default=0))
         self.version = version
+
+
+def block_and_drawing_ids(roots: list[Element]) -> tuple[set[int], set[int]]:
+    """Every paragraph's and row's paraId (as a value) and every drawing number in
+    ``roots``: what :meth:`Ledger.note` reads of a state."""
+    blocks: set[int] = set()
+    drawings: set[int] = set()
+    for root in roots:
+        for node in root.iter(W_P, W_TR, WP_DOC_PR):
+            if node.tag == WP_DOC_PR:
+                raw = node.get("id")
+                if raw is not None and raw.isdigit():
+                    drawings.add(int(raw))
+            else:
+                raw = node.get(PARA_ID)
+                if raw is not None and _HEX.fullmatch(raw):
+                    blocks.add(int(raw, 16))
+    return blocks, drawings
+
+
+_W_URI = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+_WP_URI = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+#: The prefixes :class:`IdScan` reads the body's bytes by, and the namespaces they must name.
+_SCAN_PREFIXES = {b"w": _W_URI.encode(), b"w14": W14.encode(), b"wp": _WP_URI.encode(), b"wp14": WP14.encode()}
+#: The start tags of the elements :func:`block_and_drawing_ids` reads, in such bytes.
+_SCANNED = re.compile(rb"<(w:p|w:tr|wp:docPr)(?=[\s/>])([^>]*)>")
+_SCANNED_ATTRIBUTE = re.compile(rb'\s([\w.:-]+)="([^"]*)"')
+_DECLARATION = re.compile(rb'\sxmlns(?::([\w.-]+))?="([^"]*)"')
+_REFERENCE = re.compile(r"&(#x[0-9A-Fa-f]+|#[0-9]+|amp|lt|gt|quot|apos);")
+_NAMED = {"amp": "&", "lt": "<", "gt": ">", "quot": '"', "apos": "'"}
+
+
+def _attribute_text(raw: bytes) -> str:
+    """An attribute's value as the parser reads it, from its bytes as lxml writes them."""
+    text = raw.decode("utf-8")
+    if "&" in text:
+        text = _REFERENCE.sub(lambda m: _NAMED.get(m.group(1)) or chr(
+            int(m.group(1)[2:], 16) if m.group(1)[1] == "x" else int(m.group(1)[1:])), text)
+    return text
+
+
+def _scanned_ids(data: bytes, begin: int, end: int) -> tuple[tuple[int, ...], tuple[int, ...]]:
+    """:func:`block_and_drawing_ids` of ``data[begin:end]`` (bytes as lxml writes a part
+    whose root declares :data:`_SCAN_PREFIXES` and nothing below it declares any)."""
+    blocks: list[int] = []
+    drawings: list[int] = []
+    for match in _SCANNED.finditer(data, begin, end):
+        docpr = match.group(1) == b"wp:docPr"
+        for attribute in _SCANNED_ATTRIBUTE.finditer(match.group(2)):
+            name = attribute.group(1)
+            if docpr and name == b"id":
+                raw = _attribute_text(attribute.group(2))
+                if raw.isdigit():
+                    drawings.append(int(raw))
+            elif not docpr and name == b"w14:paraId":
+                raw = _attribute_text(attribute.group(2))
+                if _HEX.fullmatch(raw):
+                    blocks.append(int(raw, 16))
+    return tuple(blocks), tuple(drawings)
+
+
+class IdScan:
+    """:meth:`Ledger.note`'s reading of a state (every paraId and drawing number), per
+    change (0.1.116): the body's top-level blocks read from the main part's bytes, each
+    block's ids kept, and only the blocks between the first and the last byte that differ
+    from the state read before read again (``docx_agent.tools.touched``'s rule); the other
+    parts read whole when their bytes changed.  ``None`` from :meth:`read` where the bytes
+    cannot be read so (a part not written by lxml with the usual prefixes): the whole
+    reading then, as before."""
+
+    def __init__(self) -> None:
+        #: The main part as last read: its bytes, blocks' spans, body span, each block's
+        #: ids, the ids outside blocks, and the counts of each.
+        self.data: bytes | None = None
+        self.spans: list[tuple[int, int]] = []
+        self.body: tuple[int, int] = (0, 0)
+        self.units: list[tuple[tuple[int, ...], tuple[int, ...]]] = []
+        self.blocks: Counter = Counter()
+        self.drawings: Counter = Counter()
+        #: Other parts: name -> (their bytes or stored token, block ids, drawing numbers).
+        self.parts: dict[str, tuple[object, set[int], set[int]]] = {}
+
+    def read(self, document) -> "tuple[set[int], set[int]] | None":
+        package = document.package
+        main = package.document_part()
+        blocks: set[int] = set()
+        drawings: set[int] = set()
+        seen: set[str] = set()
+        for part in document._parts():
+            root = package.tree(part)
+            if root is None:
+                continue
+            seen.add(part)
+            if part == main and part in package.dirty_parts:
+                found = self._main(package.read(part) or b"")
+                if found is None:
+                    return None
+                blocks |= found[0]
+                drawings |= found[1]
+                continue
+            token = package.read(part) if part in package.dirty_parts else package._parts.stored(part)
+            kept = self.parts.get(part)
+            if kept is None or not (kept[0] is token or (isinstance(token, bytes) and kept[0] == token)):
+                kept = (token, *block_and_drawing_ids([root]))
+                self.parts[part] = kept
+            blocks |= kept[1]
+            drawings |= kept[2]
+        for part in list(self.parts):
+            if part not in seen:
+                del self.parts[part]
+        return blocks, drawings
+
+    def _main(self, data: bytes) -> "tuple[set[int], set[int]] | None":
+        from ..tools.touched import _blocks, _common_prefix, _common_suffix
+
+        old = self.data
+        if old is not None and (old is data or old == data):
+            self.data = data
+            return set(self.blocks), set(self.drawings)
+        if old is not None:
+            prefix = _common_prefix(old, data)
+            suffix = _common_suffix(old, data, min(len(old), len(data)) - prefix)
+            body_at, body_end = self.body
+            if prefix >= body_at and len(old) - suffix <= body_end:
+                delta = len(data) - len(old)
+                spans = self.spans
+                before = 0
+                while before < len(spans) and spans[before][1] <= prefix:
+                    before += 1
+                after = 0
+                while after < len(spans) - before and spans[len(spans) - 1 - after][0] >= len(old) - suffix:
+                    after += 1
+                begin = spans[before - 1][1] if before else body_at
+                stop = spans[len(spans) - after][0] + delta if after else body_end + delta
+                middle = _blocks(data, begin, stop)
+                if middle is not None and b"xmlns" not in data[begin:stop]:
+                    units = [_scanned_ids(data, a, b) for a, b in middle]
+                    outside = sum(len(u[0]) + len(u[1]) for u in units)
+                    found = _scanned_ids(data, begin, stop)
+                    if len(found[0]) + len(found[1]) == outside:
+                        gone = self.units[before:len(spans) - after]
+                        for unit in gone:
+                            self.blocks.subtract(unit[0])
+                            self.drawings.subtract(unit[1])
+                        for unit in units:
+                            self.blocks.update(unit[0])
+                            self.drawings.update(unit[1])
+                        self.blocks = +self.blocks
+                        self.drawings = +self.drawings
+                        self.units[before:len(spans) - after] = units
+                        self.spans = (spans[:before] + middle
+                                      + [(s + delta, e + delta) for s, e in spans[len(spans) - after:]])
+                        self.body = (body_at, body_end + delta)
+                        self.data = data
+                        return set(self.blocks), set(self.drawings)
+        return self._whole(data)
+
+    def _whole(self, data: bytes) -> "tuple[set[int], set[int]] | None":
+        from ..revalidate import _scan
+
+        self.data = None
+        root_end = data.find(b">", data.find(b"<w:document"))
+        found = _scan(data)
+        if root_end < 0 or found is None:
+            return None
+        declared: dict[bytes, bytes] = {}
+        for match in _DECLARATION.finditer(data, 0, root_end):
+            if match.group(1) is None:
+                return None                  # a default namespace: elements unprefixed
+            declared[match.group(1)] = match.group(2)
+        for prefix, uri in declared.items():
+            if uri in _SCAN_PREFIXES.values() and _SCAN_PREFIXES.get(prefix) != uri:
+                return None                  # one of them under another prefix
+            if prefix in _SCAN_PREFIXES and _SCAN_PREFIXES[prefix] != uri:
+                return None
+        if data.find(b"xmlns", root_end) >= 0:
+            return None
+        spans, body, _head = found
+        units = [_scanned_ids(data, a, b) for a, b in spans]
+        everything = _scanned_ids(data, 0, len(data))
+        if sum(len(u[0]) + len(u[1]) for u in units) != len(everything[0]) + len(everything[1]):
+            return None                      # ids outside the body's blocks
+        self.spans, self.body, self.units = list(spans), body, units
+        self.blocks = Counter()
+        self.drawings = Counter()
+        for unit in units:
+            self.blocks.update(unit[0])
+            self.drawings.update(unit[1])
+        self.data = data
+        return set(self.blocks), set(self.drawings)
 
 
 def drawings_needing_ids(root: Element) -> list[Element]:

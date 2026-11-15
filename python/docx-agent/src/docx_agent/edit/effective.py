@@ -508,7 +508,7 @@ def run(document: "Document", paragraph: Element, run_element: Element | None,
     the paragraph's baseline, which the Markdown reader measures emphasis against.  With
     ``direct`` false: what the run would get with its character style but none of its
     direct formatting -- what its styles give it."""
-    state = model(document)
+    state = _model_for(document, paragraph)
     owner = state.paragraph(paragraph)
     properties = run_element.find(_W + "rPr") if run_element is not None else None
     style = properties.find(_W + "rStyle") if properties is not None else None
@@ -540,7 +540,7 @@ def _run(state: _Model, owner: _model.Paragraph, style_id: str | None, declared:
 def paragraph(document: "Document", element: Element, *, direct: bool = True) -> EffectiveParagraph:
     """``element``'s paragraph formatting as Word applies it; with ``direct`` false, what
     its styles (and its list, which clearing direct formatting keeps) give it."""
-    state = model(document)
+    state = _model_for(document, element)
     owner = state.paragraph(element)
     if not direct and owner.properties is not None:
         kept = {k: v for k, v in owner.properties.declared.items() if k.startswith("numPr.")}
@@ -588,3 +588,167 @@ def _paragraph(state: _Model, owner: _model.Paragraph) -> EffectiveParagraph:
         page_break_before=bool(resolved.get("pageBreakBefore")),
         widow_control=bool(resolved.get("widowControl", True)),
         outline_level=resolved.get("outlineLvl"), numbering=numbering, _resolved=resolved)
+
+
+# -- one top-level table's model (lane H1) ---------------------------------------------------------
+
+def _model_for(document: "Document", element: Element) -> _Model:
+    """:func:`model`, or -- for an element of a table :func:`table_model` made a model of,
+    in the state it was made for -- that table's own model."""
+    kept = document.__dict__.get("_effective_tables")
+    if kept is not None and kept[0] == document._state and kept[1]:
+        node = element
+        while node is not None:
+            found = kept[1].get(id(node))
+            if found is not None and found[0] is node:
+                return found[1]
+            node = node.getparent()
+    return model(document)
+
+
+def table_model(document: "Document", table: Element) -> bool:
+    """Make a top-level table of the body read its paragraphs' effective formatting from
+    docx2svg's parse of that table alone and of the parts every block's formatting reads
+    (styles, numbering, theme, settings), rather than of the whole document, until the
+    document changes -- the same models, at a table's cost (lane H1: ``word_edit_table``'s
+    Markdown of its table).  Whether it does.
+
+    The same because nothing else of the body reaches a table's paragraphs' properties,
+    their table style and conditional formats, or their places, but a paragraph mark
+    deleted in it or just before it (docx2svg's final view joins those across blocks,
+    ``_join`` and ``_following_properties``).  Not for a table with one, one inside a
+    content control or anything but the body, a document with picture bullets or a part
+    missing, nor with ``DOCX_AGENT_INCREMENTAL=0``: the whole document's model, as before.
+    With ``DOCX_AGENT_FULL_VALIDATE`` the Markdown read is compared with the whole
+    document's (``docx_agent.markdown.read``)."""
+    cached = document._effective
+    if cached is not None and cached[0] == document._state:
+        return False                        # the whole model is made already
+    kept = document.__dict__.get("_effective_tables")
+    if kept is None or kept[0] != document._state:
+        kept = (document._state, {})
+        document.__dict__["_effective_tables"] = kept
+    found = kept[1].get(id(table))
+    if found is not None and found[0] is table:
+        return True
+    made = _table_model(document, table)
+    if made is None:
+        return False
+    kept[1][id(table)] = (table, made)
+    return True
+
+
+_BLOCK_NAMES = frozenset({"p", "tbl", "sdt", "customXml"})
+
+
+def _table_model(document: "Document", table: Element) -> "_Model | None":
+    from docx2svg.parse import document as pdoc
+    from lxml import etree
+
+    from ..revalidate import enabled
+
+    if not enabled():
+        return None
+    package = document.package
+    main = package.document_part()
+    body = table.getparent()
+    root = package.tree(main) if main else None
+    if root is None or body is None or body.tag != _W + "body" or body.getparent() is not root:
+        return None
+    # A paragraph mark deleted in the table or just before it: joined across blocks.
+    if any(pdoc._mark_removed(p) for p in table.iter(_W + "p")):
+        return None
+    place = 1
+    before = True
+    for node in table.itersiblings(preceding=True):
+        if not isinstance(node.tag, str):
+            continue
+        name = _local(node.tag)
+        if name == "tbl":
+            place += 1
+        if before and name in _BLOCK_NAMES:
+            before = False
+            if name in ("sdt", "customXml") or (name == "p" and pdoc._mark_removed(node)):
+                return None
+    shared = _shared_model(document)
+    if shared is None:
+        return None
+    globals_, colours = shared
+    from docx2svg.parse.properties import theme_colours
+    from ooxml_common.xmlutil import parse_xml
+
+    element = parse_xml(etree.tostring(table))
+    out: list = []
+    with theme_colours(colours):
+        pdoc._block_of(element, "tbl", f"w:body/w:tbl[{place}]", None, (),
+                       pdoc._Fields([], cross_references=True, styleref=True), out)
+        blocks = pdoc._following_properties(pdoc._join(out))[0]
+    import copy
+
+    parsed = copy.copy(globals_)
+    parsed.body = blocks
+    parsed.paragraphs = [b for b in blocks if isinstance(b, _model.Paragraph)]
+    state = object.__new__(_Model)
+    state.document = document
+    state.model = parsed
+    state._paragraphs, state._elements, state._tables, state._held = {}, {}, None, []
+    state._mapped, state._by_path = False, None
+    state._paths = PathFinder()
+    return state
+
+
+def _shared_model(document: "Document"):
+    """docx2svg's reading of what every block's formatting reads -- the styles (with
+    ``w:docDefaults``), the numbering, the theme, the settings -- as ``parse_package``
+    reads them, under the theme's colours (``(model, colours)``), kept by those parts'
+    bytes; ``None`` where a part is missing or the numbering has picture bullets."""
+    from docx2svg.opc import REL_NUMBERING, REL_SETTINGS, REL_STYLES, REL_THEME
+    from docx2svg.parse import document as pdoc
+    from docx2svg.parse.properties import theme_colours
+
+    package = document.package
+    main = package.document_part()
+
+    def parts(kind: str) -> list[bytes] | None:
+        out = []
+        for name in package.related_parts_of_type(main, kind):
+            data = package.read(name)
+            if data is None:
+                return None
+            out.append(data)
+        return out
+
+    found = {kind: parts(kind) for kind in (REL_STYLES, REL_THEME, REL_SETTINGS, REL_NUMBERING)}
+    if any(v is None for v in found.values()):
+        return None
+    key = tuple((kind, tuple(found[kind][:1])) for kind in sorted(found))
+    kept = document.__dict__.get("_effective_shared")
+    if kept is not None and kept[0] == key:
+        return kept[1]
+    styles = found[REL_STYLES][0] if found[REL_STYLES] else None
+    theme = found[REL_THEME][0] if found[REL_THEME] else None
+    settings = found[REL_SETTINGS][0] if found[REL_SETTINGS] else None
+    numbering_xml = found[REL_NUMBERING][0] if found[REL_NUMBERING] else None
+    if numbering_xml is not None and pdoc.parse_picture_bullets(numbering_xml):
+        return None
+    colours = pdoc.word_theme_colour(pdoc.parse_theme_colors(theme) if theme is not None else {},
+                                     pdoc.parse_color_map(settings) if settings is not None else {})
+    with theme_colours(colours):
+        made = _model.Document()
+        if styles is not None:
+            made.default_run_properties, made.default_paragraph_properties = pdoc._doc_defaults(styles)
+            made.styles = pdoc.parse_styles(styles)
+        if theme is not None:
+            made.font_scheme = pdoc.parse_theme(theme)
+            made.theme_colors = pdoc.parse_theme_colors(theme)
+            made.theme_formats = pdoc.parse_theme_formats(theme)
+        if numbering_xml is not None:
+            numbering = pdoc.parse_numbering(numbering_xml, made.styles)
+            made.numbering = numbering.levels
+            made.numbering_lists = numbering.lists
+            made.numbering_restarts = numbering.restarts
+        if settings is not None:
+            for name, value in pdoc.settings_read(settings).items():
+                setattr(made, name, value)
+    document.__dict__["_effective_shared"] = (key, (made, colours))
+    return made, colours

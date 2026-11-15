@@ -4,6 +4,14 @@ Versions are those in `pyproject.toml`; none is published to PyPI yet. Each vers
 reaches `main` is tagged `v<version>` on the commit that brought it, from 0.62.0; the
 earlier ones were never tagged.
 
+## 0.118.0 -- unreleased
+
+- **A format may put back only what differs.** `OpcPackage.restore` (an undo, a redo, a
+  rolled back batch) asks `_restored_tree(path, kept, pieces, tree)` for each part's tree,
+  given the part's last snapshot's bytes and its tree before; ooxml-edit's own parses
+  `kept` whole, as before. docx-agent's Word package replaces only the body's blocks that
+  differ, and parses whole where the tree it gives does not write out as `kept`.
+
 ## 0.117.0 -- unreleased
 
 - **One serialization per version a call leaves.** Inside `OpcPackage.serializing()` -- the

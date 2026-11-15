@@ -123,6 +123,23 @@ def bookmarks_of(paragraph) -> list:
             if kind == "start" and name]
 
 
+#: A unit in this many carries the list counters' state before it (:meth:`Mirror._relabel`).
+_MARK_EVERY = 64
+
+
+def _state(counters: ListCounters) -> tuple:
+    """The list counters' state, as a value (compared, and counted on from)."""
+    return (tuple(sorted((repr(key), tuple(sorted(levels.items()))) for key, levels in counters.counts.items())),
+            frozenset(counters.used), {key: dict(levels) for key, levels in counters.counts.items()})
+
+
+def _restore(state: tuple) -> ListCounters:
+    counters = ListCounters()
+    counters.counts = {key: dict(levels) for key, levels in state[2].items()}
+    counters.used = set(state[1])
+    return counters
+
+
 @dataclasses.dataclass
 class Unit:
     """One top-level body element and what it makes."""
@@ -271,15 +288,84 @@ class Mirror:
     def _label_pass(self):
         """Every list label of the body, counted in document order (``paginate.flow``):
         ``{id(paragraph): label}`` and whether each numbered paragraph is; returns the
-        paragraphs whose label changed."""
+        paragraphs whose label changed.  Keeps the counters' state before every
+        :data:`_MARK_EVERY`-th unit (:attr:`marks`, by the unit) for :meth:`_relabel`."""
         counters = ListCounters()
         labels, numbered = {}, {}
-        for unit in self.units:
+        marks = {}
+        for k, unit in enumerate(self.units):
+            if k % _MARK_EVERY == 0:
+                marks[id(unit)] = (unit, _state(counters))
             for paragraph, pp in unit.numbered:
                 numbered[id(paragraph)] = True
                 labels[id(paragraph)] = counters.label(self.d2, paragraph, pp)
         changed = {k for k, v in labels.items() if self.labels.get(k, "\0") != v}
         self.labels, self.numbered = labels, numbered
+        self.marks = marks
+        self.relabelled_units = None
+        return changed
+
+    def _relabel(self, lo: int, hi: int, gone: list) -> set:
+        """:meth:`_label_pass` after units ``[lo, hi)`` (of the list now) replaced
+        ``gone``, counted from the last mark at or before ``lo`` and only as far as the
+        counters' state differs from the one marked before a unit after them (from there
+        on every label is what it was): the same labels, in time proportional to the lists
+        the change reaches (0.1.116).  Sets :attr:`relabelled_units`, the units whose
+        labels changed."""
+        from .. import incremental
+
+        marks = getattr(self, "marks", None)
+        if marks is None or not incremental.enabled() or not self.units:
+            self.relabelled_units = None
+            return self._label_pass()
+        labels, numbered = self.labels, self.numbered
+        kept = {id(u) for u in self.units[lo:hi]}
+        for unit in gone:
+            if id(unit) not in kept:
+                marks.pop(id(unit), None)
+                for paragraph, _ in unit.numbered or ():
+                    labels.pop(id(paragraph), None)
+                    numbered.pop(id(paragraph), None)
+        def marked(k: int):
+            found = marks.get(id(self.units[k]))
+            return found if found is not None and found[0] is self.units[k] else None
+
+        start = min(lo, len(self.units) - 1)
+        while start > 0 and marked(start) is None:
+            start -= 1
+        found = marked(start) if start >= 0 else None
+        if found is not None:
+            counters = _restore(found[1])
+        else:
+            start, counters = 0, ListCounters()
+        changed: set = set()
+        units: set = set()
+        k = start
+        while k < len(self.units):
+            unit = self.units[k]
+            mark = marks.get(id(unit))
+            if mark is not None and mark[0] is unit:
+                state = _state(counters)
+                if k >= hi and state == mark[1]:
+                    break                     # as before from here on
+                marks[id(unit)] = (unit, state)
+            elif k < hi and (k - lo) % _MARK_EVERY == 0:
+                marks[id(unit)] = (unit, _state(counters))
+            for paragraph, pp in unit.numbered:
+                label = counters.label(self.d2, paragraph, pp)
+                if labels.get(id(paragraph), "\0") != label:
+                    changed.add(id(paragraph))
+                    units.add(k)
+                labels[id(paragraph)] = label
+                numbered[id(paragraph)] = True
+            k += 1
+        self.relabelled_units = units
+        if incremental.verifying():
+            mine = (dict(labels), dict(numbered))
+            self._label_pass()
+            incremental.check("mirror labels", mine, (self.labels, self.numbered))
+            self.relabelled_units = units
+        incremental.STATS["mirror labels: incremental"] += 1
         return changed
 
     def _watched_parts(self):
@@ -928,7 +1014,12 @@ def _splice(self, lo: int, hi: int, elements: list, version: int, more: dict | N
             redo |= self._cross_references(lo, lo + len(region_units))
     t1 = time.perf_counter()
     stats["parse_s"] = t1 - t0
-    relabelled = self._label_pass() if runs else set()
+    if not runs:
+        relabelled = set()
+    elif redo:
+        relabelled = self._label_pass()       # units outside the region parsed again
+    else:
+        relabelled = self._relabel(lo, lo + len(region_units), old_units)
     t2 = time.perf_counter()
     stats["labels_s"] = t2 - t1
     covered = set()
@@ -938,9 +1029,12 @@ def _splice(self, lo: int, hi: int, elements: list, version: int, more: dict | N
     for start, end, _ in runs:
         extra.update(j for j in (start - 1, end) if 0 <= j < len(self.units))
     if relabelled:
-        for k, u in enumerate(self.units):
-            if any(id(p) in relabelled for p, _ in u.numbered):
-                extra.add(k)
+        if self.relabelled_units is not None:
+            extra |= self.relabelled_units
+        else:
+            for k, u in enumerate(self.units):
+                if any(id(p) in relabelled for p, _ in u.numbered):
+                    extra.add(k)
     splices = sorted(runs + [(k, k + 1, 1) for k in extra - covered])
     out = []
     n_items = 0

@@ -18,7 +18,7 @@ use rayon::prelude::*;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, OnceLock, RwLock};
 use std::time::Instant;
 
 /// One paragraph of an item (the item's own, or a cell's): what fields and facts read.
@@ -340,9 +340,9 @@ pub struct Snap {
     pub dens: (i64, i64, i64, i64),
     /// Lane F: the measuring tables (a keep's trial lays a copy out again: `crate::facts`).
     pub tables: Arc<Tables>,
-    keys: OnceLock<HashMap<String, usize>>,
+    keys: RwLock<Option<Arc<HashMap<String, usize>>>>,
     /// Every paragraph's key (cells' too) -> (item, paragraph in the item).
-    paras: OnceLock<HashMap<String, (usize, usize)>>,
+    paras: RwLock<Option<Arc<HashMap<String, (usize, usize)>>>>,
 }
 
 /// Items measured in parallel from this many on (fewer: on the owner's thread).
@@ -663,8 +663,8 @@ impl Engine {
             dpx: self.dens.1,
             dens: self.dens,
             tables: self.t.clone(),
-            keys: OnceLock::new(),
-            paras: OnceLock::new(),
+            keys: RwLock::new(None),
+            paras: RwLock::new(None),
         }
     }
 }
@@ -693,30 +693,44 @@ pub struct Query {
 }
 
 impl Snap {
-    pub(crate) fn keys(&self) -> &HashMap<String, usize> {
-        self.keys.get_or_init(|| {
-            let mut m = HashMap::with_capacity(self.aux.len());
-            for (i, a) in self.aux.iter().enumerate() {
-                if let Some(k) = &a.key {
-                    m.insert(k.clone(), i);
-                }
+    pub(crate) fn keys(&self) -> Arc<HashMap<String, usize>> {
+        if let Some(m) = self.keys.read().unwrap().as_ref() {
+            return m.clone();
+        }
+        let mut m = HashMap::with_capacity(self.aux.len());
+        for (i, a) in self.aux.iter().enumerate() {
+            if let Some(k) = &a.key {
+                m.insert(k.clone(), i);
             }
-            m
-        })
+        }
+        let m = Arc::new(m);
+        *self.keys.write().unwrap() = Some(m.clone());
+        m
     }
 
-    pub(crate) fn paras(&self) -> &HashMap<String, (usize, usize)> {
-        self.paras.get_or_init(|| {
-            let mut m = HashMap::with_capacity(self.aux.len() * 2);
-            for (i, a) in self.aux.iter().enumerate() {
-                for (pi, p) in a.paras.iter().enumerate() {
-                    if let Some(k) = &p.key {
-                        m.insert(k.clone(), (i, pi));
-                    }
+    pub(crate) fn paras(&self) -> Arc<HashMap<String, (usize, usize)>> {
+        if let Some(m) = self.paras.read().unwrap().as_ref() {
+            return m.clone();
+        }
+        let mut m = HashMap::with_capacity(self.aux.len() * 2);
+        for (i, a) in self.aux.iter().enumerate() {
+            for (pi, p) in a.paras.iter().enumerate() {
+                if let Some(k) = &p.key {
+                    m.insert(k.clone(), (i, pi));
                 }
             }
-            m
-        })
+        }
+        let m = Arc::new(m);
+        *self.paras.write().unwrap() = Some(m.clone());
+        m
+    }
+
+    /// Lane H1: let go of what a check made of this snapshot (its blocks' and paragraphs'
+    /// keys), made again if a check of its version comes: a snapshot that is no longer the
+    /// latest keeps only its layout (every version kept would otherwise hold the maps).
+    pub fn release(&self) {
+        *self.keys.write().unwrap() = None;
+        *self.paras.write().unwrap() = None;
     }
 
     /// The 1-based pages (blank pages counted) each paragraph or table is drawn on
@@ -966,6 +980,9 @@ impl crate::owner::Format for Engine {
     }
     fn snap_version(s: &Snap) -> u64 {
         s.version
+    }
+    fn retire(s: &Snap) {
+        s.release();
     }
     fn per_commit(&self) -> bool {
         true

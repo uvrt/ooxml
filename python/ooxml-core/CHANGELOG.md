@@ -3,6 +3,13 @@
 ooxml-core is the Rust core of the ooxml packages (`crates/`), as the Python module
 `ooxml_core`. Its version is the `crates/python` crate's.
 
+## 0.3.0 -- unreleased
+
+- **A snapshot no longer the latest lets go of what a check made of it.** The owner tells
+  the format when it publishes a newer snapshot (`Format::retire`); a Word snapshot then
+  drops its blocks' and paragraphs' key maps (made again if a check of that version comes),
+  so the 64 kept snapshots no longer each hold their own (several MB each at ~3,000 pages).
+
 ## 0.2.0 -- unreleased
 
 - **`ooxml_core.check(doc, version, request, seen=None)`**: docx-agent's check of some
