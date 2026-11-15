@@ -48,32 +48,36 @@ def test_an_exception_comes_back_as_itself():
         assert caught.value.code == "refused"
 
 
-def test_a_task_past_its_deadline_is_abandoned_and_keeps_its_slot_until_it_ends():
+def test_a_task_past_its_deadline_is_abandoned_and_keeps_its_slot_until_it_ends(gate):
     with ThreadRunner(1, max_abandoned=2) as runner:
-        started = time.monotonic()
-        with pytest.raises(ToolError) as caught:
-            runner.run(tools_toys.sleep_then, 1.5, "dropped", timeout=0.2)
-        assert caught.value.code == "timeout" and time.monotonic() - started < 1.0
+        with pytest.raises(ToolError) as caught:       # held at the gate till the test opens it
+            runner.run(tools_toys.gated_value, gate.path, "task", "dropped", timeout=0.2)
+        assert caught.value.code == "timeout" and gate.order() == ["task in"]   # not waited for
         assert "cannot be stopped" in caught.value.message
         assert caught.value.details == {"timeout": 0.2, "threads": True}
         assert runner.abandoned == 1 and runner.running_abandoned == 1
         # Its slot is not handed on while it runs: the next task waits, and times out.
-        with pytest.raises(ToolError) as busy:
-            runner.run(tools_toys.sleep_then, 0, "late", timeout=5, queue_timeout=0.2)
-        assert busy.value.code == "timeout" and "no thread was free" in busy.value.message
+        try:
+            with pytest.raises(ToolError) as busy:
+                runner.run(tools_toys.sleep_then, 0, "late", timeout=5, queue_timeout=0.2)
+            assert busy.value.code == "timeout" and "no thread was free" in busy.value.message
+        finally:
+            gate.open()
         assert _until(lambda: runner.running_abandoned == 0)
         assert runner.run(tools_toys.sleep_then, 0, "next", timeout=5) == "next"
         assert runner.abandoned == 1
 
 
-def test_past_the_cap_of_abandoned_tasks_new_work_is_refused_at_once():
+def test_past_the_cap_of_abandoned_tasks_new_work_is_refused_at_once(gate):
     with ThreadRunner(3, max_abandoned=1) as runner:
-        with pytest.raises(ToolError):
-            runner.run(tools_toys.sleep_then, 1.5, None, timeout=0.1)
-        started = time.monotonic()
-        with pytest.raises(ToolError) as caught:
-            runner.run(tools_toys.sleep_then, 0, "refused", timeout=5)
-        assert time.monotonic() - started < 0.5                 # not queued
+        with pytest.raises(ToolError):                 # held at the gate till the test opens it
+            runner.run(tools_toys.gated_value, gate.path, "task", None, timeout=0.1)
+        try:
+            with pytest.raises(ToolError) as caught:
+                runner.run(tools_toys.sleep_then, 0, "refused", timeout=5)
+            assert gate.order() == ["task in"]                  # refused while it still runs
+        finally:
+            gate.open()
         assert caught.value.code == "limit"
         assert "past their deadline are still running" in caught.value.message
         assert caught.value.details["abandoned_running"] == 1
@@ -191,8 +195,11 @@ def test_a_runner_by_name_is_one_of_these():
         _box(runner="fibres")
 
 
+@pytest.mark.slow
 @pytest.mark.skipif(gil_enabled(), reason="needs a free-threaded Python with the GIL off")
 def test_with_the_gil_off_work_that_would_hold_it_runs_side_by_side():
+    """A claim of time alone (two CPU-bound tasks take as long as one), measured on an idle
+    machine only (``--run-slow``)."""
     data = synthetic.outer_package()
     count = 20_000_000
 

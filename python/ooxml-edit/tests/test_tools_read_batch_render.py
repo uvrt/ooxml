@@ -25,15 +25,19 @@ from test_tools_shared import CLOCK, DECK, DECK_TOOLS, TEXT, TEXT_TOOLS, _ops
 
 #: Seconds the stalling renderer takes per chunk (set by a test).
 STALL = {"seconds": 0.0}
+#: A gate (tests/gates.py) the renderer holds at while a test sets one.
+HOLD: dict = {"gate": None}
 
 
 class StallingRenderer(tools_toys.ToyRenderer):
-    """The toy renderer, slowed down while a test needs it to be."""
+    """The toy renderer, slowed down or held at a gate while a test needs it to be."""
 
     name = "toy-stalling"
 
     def rasterise(self, views, raster):
         time.sleep(STALL["seconds"])
+        if HOLD["gate"] is not None:
+            HOLD["gate"].hold("render")
         return super().rasterise(views, raster)
 
 
@@ -92,9 +96,13 @@ TOOLS = [*TEXT_TOOLS, *DECK_TOOLS, render_deck, render_text, check_text, check_d
 @pytest.fixture
 def toolbox():
     STALL["seconds"] = 0.0
-    with Toolbox(TOOLS, formats=[DECK, TEXT], groups=shared.GROUPS + tools_toys.GROUPS,
-                 workers=0) as box:
-        yield box
+    HOLD["gate"] = None
+    try:
+        with Toolbox(TOOLS, formats=[DECK, TEXT], groups=shared.GROUPS + tools_toys.GROUPS,
+                     workers=0) as box:
+            yield box
+    finally:
+        HOLD["gate"] = None
 
 
 def _session(toolbox, **limits):
@@ -235,29 +243,28 @@ def test_the_session_s_image_budget_holds_inside_a_read_batch(toolbox):
 # -- locks -------------------------------------------------------------------------------------
 
 
-def test_a_render_in_a_read_batch_lets_its_document_go_while_it_draws(toolbox):
+def test_a_render_in_a_read_batch_lets_its_document_go_while_it_draws(toolbox, gate):
     session = _session(toolbox)
     toolbox.dispatch(session, "render", {"doc": "d2", "slides": ["1"], "width": 320})
-    STALL["seconds"] = 2.0
+    HOLD["gate"] = gate
     done: dict = {}
 
     def review():
         done["result"] = toolbox.dispatch(session, "read_batch", {"ops": _ops(
             ("render", {"doc": "d2", "slides": ["2"], "width": 330}), ("check", {"doc": "d2"}),
             ("toy_word_read", {"doc": "d1"}))})
-        done["at"] = time.perf_counter()
 
     thread = threading.Thread(target=review, daemon=True)
-    started = time.perf_counter()
     thread.start()
-    time.sleep(0.4)                           # the render has its snapshot and draws
+    gate.wait_entered("render")               # the render has its snapshot and draws
     edit = toolbox.dispatch(session, "toy_ppt_set_title",
                             {"doc": "d2", "page": 1, "text": "Edited meanwhile"})
-    edited = time.perf_counter()
-    thread.join(timeout=30)
+    gate.note("edited")
+    gate.open()
+    thread.join(timeout=60)
     assert not thread.is_alive(), "the read_batch hung"
-    assert edit.ok and edited - started < 1.5, "the edit waited for the render"
-    assert done["at"] > edited
+    # Had the edit waited for the render, the render's hold timed out before it.
+    assert edit.ok and gate.order()[:3] == ["render in", "edited", "render out"], gate.order()
     result = done["result"]
     assert [answer["op"] for answer in result.data["ops"]] == [0, 1, 2]
     rendered = result.data["ops"][0]

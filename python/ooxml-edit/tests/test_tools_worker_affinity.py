@@ -13,6 +13,7 @@ from ooxml_edit.tools import InProcess, SubprocessPool, ThreadRunner, WorkerPool
 from ooxml_edit.tools import worker as worker_module
 from ooxml_edit.tools.worker import takes_affinity
 
+import gates
 import tools_toys
 
 POOLS = [pytest.param(lambda: WorkerPool(2), id="processes"),
@@ -52,79 +53,98 @@ def test_work_without_a_key_goes_to_a_worker_holding_none():
         assert pool.affinity_counts["hit"] == 0
 
 
-def test_a_busy_holder_is_waited_for_within_the_wait():
+def _busy(pool, gate, value: int = 2, timeout: float = 90) -> threading.Thread:
+    """The holder of ``a`` kept busy keeping ``value``, held at ``gate`` as ``busy`` until
+    the test opens it, and a :class:`gates.Watched` on the pool's condition: who waits."""
+    pool._condition = gates.Watched(pool._condition, gate)
+    busy = threading.Thread(target=pool.run, args=(tools_toys.keep_value, "a", value, 0, gate.path, "busy"),
+                            kwargs={"timeout": timeout, "affinity": "a"}, daemon=True)
+    busy.start()
+    gate.wait_entered("busy")
+    return busy
+
+
+def _waiting(pool, gate, **options) -> tuple[threading.Thread, dict]:
+    """``keep_value("a", 3)`` from a thread named ``waiter``; the gate opened once it waits."""
+    out: dict = {}
+    thread = threading.Thread(target=lambda: out.setdefault("got", pool.run(
+        tools_toys.keep_value, "a", 3, timeout=60, affinity="a", **options)), name="waiter")
+    thread.start()
+    gate.wait_noted("waiter waits")
+    gate.open()
+    thread.join()
+    return thread, out
+
+
+def test_a_busy_holder_is_waited_for_within_the_wait(gate):
     with WorkerPool(2) as pool:
         _warm(pool)
         holder, _ = pool.run(tools_toys.keep_value, "a", 1, timeout=60, affinity="a")
-        busy = threading.Thread(target=pool.run, args=(tools_toys.keep_value, "a", 2, 1.0),
-                                kwargs={"timeout": 60, "affinity": "a"})
-        busy.start()
-        time.sleep(0.3)
-        pid, before = pool.run(tools_toys.keep_value, "a", 3, timeout=60, affinity="a",
-                               affinity_wait=30)
+        busy = _busy(pool, gate)
+        _, out = _waiting(pool, gate, affinity_wait=30)
+        pid, before = out["got"]
         busy.join()
         assert (pid, before) == (holder, 2)       # it waited, and found the newest
         assert pool.affinity_counts["waited"] == 1
 
 
-def test_a_holder_busy_past_the_wait_sends_the_task_elsewhere():
+def test_a_holder_busy_past_the_wait_sends_the_task_elsewhere(gate):
     with WorkerPool(2) as pool:
         _warm(pool)
         holder, _ = pool.run(tools_toys.keep_value, "a", 1, timeout=60, affinity="a")
-        busy = threading.Thread(target=pool.run, args=(tools_toys.keep_value, "a", 2, 3.0),
-                                kwargs={"timeout": 60, "affinity": "a"})
-        busy.start()
-        time.sleep(0.3)
+        busy = _busy(pool, gate)
         began = time.monotonic()
         pid, before = pool.run(tools_toys.keep_value, "a", 3, timeout=60, affinity="a",
                                affinity_wait=0.4)
         took = time.monotonic() - began
+        gate.note("elsewhere")
         assert pid != holder and before is None    # the other worker never held it: made afresh
-        assert 0.35 <= took < 2.5
+        assert took >= 0.35                        # it waited its wait (a lower bound only)
         assert pool.holder("a") == pid             # the newest state is there now
+        gate.open()
         busy.join()
+        # Gone elsewhere while the holder was still busy.
+        assert [o for o in gate.order() if not o.endswith("waits")] == ["busy in", "elsewhere", "busy out"]
         assert pool.affinity_counts["elsewhere"] == 1
 
 
-def test_by_default_a_busy_holder_is_waited_for_within_the_deadline():
+def test_by_default_a_busy_holder_is_waited_for_within_the_deadline(gate):
     with WorkerPool(2) as pool:
         _warm(pool)
         holder, _ = pool.run(tools_toys.keep_value, "a", 1, timeout=60, affinity="a")
-        busy = threading.Thread(target=pool.run, args=(tools_toys.keep_value, "a", 2, 1.5),
-                                kwargs={"timeout": 60, "affinity": "a"})
-        busy.start()
-        time.sleep(0.3)
-        pid, before = pool.run(tools_toys.keep_value, "a", 3, timeout=60, affinity="a")
+        busy = _busy(pool, gate)
+        _, out = _waiting(pool, gate)
+        pid, before = out["got"]
         busy.join()
         assert (pid, before) == (holder, 2)
 
 
-def test_with_no_wait_a_busy_holder_is_not_waited_for():
+def test_with_no_wait_a_busy_holder_is_not_waited_for(gate):
     with WorkerPool(2) as pool:
         _warm(pool)
         holder, _ = pool.run(tools_toys.keep_value, "a", 1, timeout=60, affinity="a")
-        busy = threading.Thread(target=pool.run, args=(tools_toys.keep_value, "a", 2, 2.0),
-                                kwargs={"timeout": 60, "affinity": "a"})
-        busy.start()
-        time.sleep(0.3)
-        began = time.monotonic()
+        busy = _busy(pool, gate)
         pid, _ = pool.run(tools_toys.keep_value, "a", 3, timeout=60, affinity="a", affinity_wait=0)
-        assert pid != holder and time.monotonic() - began < 1.5
+        gate.note("elsewhere")
+        gate.open()
         busy.join()
+        # Had it waited, the holder's hold timed out first.
+        assert pid != holder
+        assert [o for o in gate.order() if not o.endswith("waits")] == ["busy in", "elsewhere", "busy out"]
 
 
-def test_the_wait_for_a_holder_counts_against_the_deadline():
+def test_the_wait_for_a_holder_counts_against_the_deadline(gate):
     from ooxml_edit.tools import ToolError
     with WorkerPool(1) as pool:
         _warm_one = pool.run(tools_toys.keep_value, "a", 1, timeout=60, affinity="a")
         assert _warm_one[1] is None
-        busy = threading.Thread(target=pool.run, args=(tools_toys.keep_value, "a", 2, 3.0),
-                                kwargs={"timeout": 60, "affinity": "a"})
-        busy.start()
-        time.sleep(0.3)
-        with pytest.raises(ToolError) as caught:
-            pool.run(tools_toys.keep_value, "a", 3, timeout=0.5, affinity="a", affinity_wait=30)
-        assert caught.value.code == "timeout"
+        busy = _busy(pool, gate)                    # until the call below has timed out
+        try:
+            with pytest.raises(ToolError) as caught:
+                pool.run(tools_toys.keep_value, "a", 3, timeout=0.5, affinity="a", affinity_wait=30)
+            assert caught.value.code == "timeout"
+        finally:
+            gate.open()
         busy.join()
 
 
@@ -232,7 +252,7 @@ def test_an_application_runner_is_handed_a_key_only_when_it_says_it_takes_one():
         assert runner.kwargs[-1] == handed
 
 
-def test_tasks_waiting_for_a_holder_take_it_in_turn_and_others_leave_it_to_them():
+def test_tasks_waiting_for_a_holder_take_it_in_turn_and_others_leave_it_to_them(gate):
     """Three tasks wait for their busy holder; work without a key meanwhile goes to the other
     worker, never to the holder they wait for; they take the holder in the order they came."""
     with WorkerPool(2) as pool:
@@ -242,20 +262,22 @@ def test_tasks_waiting_for_a_holder_take_it_in_turn_and_others_leave_it_to_them(
         lock = threading.Lock()
 
         def keyed(value: int) -> None:
-            pid, before = pool.run(tools_toys.keep_value, "a", value, 0.2, timeout=60, affinity="a",
-                                   affinity_wait=30)
+            pid, before = pool.run(tools_toys.keep_value, "a", value, 0, gate.path, f"keep {value}",
+                                   timeout=90, affinity="a", affinity_wait=90)
             with lock:
                 order.append((value, pid, before))
 
+        pool._condition = gates.Watched(pool._condition, gate)
         busy = threading.Thread(target=keyed, args=(1,))
         busy.start()
-        time.sleep(0.3)
+        gate.wait_entered("keep 1")               # the holder busy until the gate opens
         waiters = []
-        for value in (2, 3, 4):
-            waiters.append(threading.Thread(target=keyed, args=(value,)))
+        for value in (2, 3, 4):                   # each comes once the one before waits
+            waiters.append(threading.Thread(target=keyed, args=(value,), name=f"keyed {value}"))
             waiters[-1].start()
-            time.sleep(0.15)
+            gate.wait_noted(f"keyed {value} waits")
         others = [pool.run(tools_toys.worker_pid, timeout=60) for _ in range(5)]
+        gate.open()
         busy.join()
         for thread in waiters:
             thread.join()
