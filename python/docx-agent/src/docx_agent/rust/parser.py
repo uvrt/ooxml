@@ -397,6 +397,7 @@ class Resolution:
 
         k = arg["k"]
         element = self.elements[k]
+        document = self.document
         key = _key_of(element)
         if element.tag == _P:
             rec = records.paragraph_record(self.ctx, element, key, top=True)
@@ -405,6 +406,13 @@ class Resolution:
             rec = records.table_record(self.ctx, element, key, skeleton, self.d2)
             rec.update(_table_geometry(self, element, skeleton))
         return json.dumps(rec, separators=(",", ":"))
+
+    def _fonts(self, arg: dict) -> str:
+        """``Mirror.fonts_json`` for a commit that measures new faces or characters."""
+        from . import exporter as lane_s
+
+        ex = _Ex(self.advances, self.metrics, arg["fonts"], arg["chars"], arg["kern"])
+        return json.dumps(lane_s.fonts_out(ex), separators=(",", ":"))
 
     def _document(self, arg: dict) -> dict:
         from docx2svg import vertical
@@ -456,7 +464,8 @@ def _table_geometry(resolution: Resolution, element: Any, table: Any) -> dict:
 
 def export(document: Any, records: bool = True) -> tuple[str | None, dict, Resolution | None]:
     """The owner's first input made by the Rust parser (``None`` where it refuses the
-    document: ``stats["refused"]`` says why), its statistics and the resolution it asked."""
+    document: ``stats["refused"]`` says why), its statistics and the resolution it asked
+    (its ``parser``: the Rust parser following the document)."""
     import ooxml_core
 
     t0 = time.perf_counter()
@@ -471,7 +480,8 @@ def export(document: Any, records: bool = True) -> tuple[str | None, dict, Resol
     try:
         if ctx is not None:
             ctx.__enter__()
-        text, stats = ooxml_core.parse_export(data, resolution)
+        parser, text, stats = ooxml_core.Parser.open(data, resolution)
+        resolution.parser = parser
     finally:
         if ctx is not None:
             ctx.__exit__(None, None, None)
@@ -589,3 +599,142 @@ class _RecordsContext:
         self.reading.__exit__(*exc)
         self.resolution.ctx = None
         self.document._effective = self.saved
+
+
+# -- the mirror the Rust parser keeps (lane I1, part 2) --------------------------------------------
+
+
+class Unit:
+    """One top-level body element as :class:`RustMirror` lists it (the Rust parser holds
+    what it makes)."""
+
+    __slots__ = ("element", "key")
+
+    def __init__(self, element: Any, key: str | None) -> None:
+        self.element = element
+        self.key = key
+
+
+class _Tables:
+    def __init__(self, found: dict) -> None:
+        self.chars = set(found["chars"])
+        self.drawn = {(f, c) for f, c in found["drawn"]}
+
+
+class RustMirror:
+    """docx-agent's mirror of a document (:class:`docx_agent.rust.mirror.Mirror`), its body
+    followed by the Rust parser: the first input made in Rust, each change set made from
+    the elements an edit changed (:meth:`splice`), no docx2svg model of the body in Python."""
+
+    rust = True
+
+    def __init__(self, document: Any, resolution: Resolution, text: str) -> None:
+        self.document = document
+        self.resolution = resolution
+        self.parser = resolution.parser
+        self.d2 = resolution.d2
+        self.fonts = resolution.fonts
+        self.advances, self.metrics = resolution.advances, resolution.metrics
+        self.heights_cache = resolution.heights_cache
+        self.units = [Unit(element, _key_of(element)) for element in resolution.elements]
+        tail = text[text.rindex('"px_den":'):]
+        found = json.loads("{" + tail)
+        self.px_den, self.w_den = found["px_den"], found["w_den"]
+        head = json.loads(text)
+        self.sections_sent = head["sections"]
+        self._tables: dict | None = None
+
+    # what check.py reads of a mirror
+
+    def tables(self) -> dict:
+        if self._tables is None:
+            self._tables = json.loads(self.parser.tables())
+        return self._tables
+
+    @property
+    def ex(self) -> _Tables:
+        return _Tables(self.tables())
+
+    def faces_list(self) -> list:
+        return self.tables()["faces"]
+
+    def encode(self, obj: Any) -> str:
+        px_den, w_den = self.px_den, self.w_den
+        from . import exporter as lane_s
+
+        def default(o: Any) -> int:
+            if isinstance(o, lane_s.Px):
+                v = o.v * px_den
+            elif isinstance(o, lane_s.Wd):
+                v = o.v * w_den
+            else:
+                raise TypeError(type(o))
+            if v.denominator != 1:
+                raise Unsupported(f"a length off the export's denominators: {o.v}")
+            return int(v)
+        return json.dumps(obj, default=default, separators=(",", ":"))
+
+    def _section_json(self, number: int, s: Any) -> dict:
+        from .mirror import Mirror
+
+        return Mirror._section_json(self, number, s)
+
+    def sections_json(self) -> list:
+        from .mirror import _sections_json
+
+        return _sections_json(self)
+
+    def story_of_part(self, part: str) -> Any:
+        from .mirror import _story_of_part
+
+        return _story_of_part(self, part)
+
+    def restory(self, part: str, data: bytes) -> None:
+        from .mirror import _restory
+
+        _restory(self, part, data)
+
+    def splice(self, lo: int, hi: int, elements: list, version: int, more: dict | None = None,
+               same: list | None = None) -> tuple[str, dict]:
+        """One commit (JSON) replacing units ``[lo, hi)`` by ``elements`` (the body's blocks
+        there now), as the mirror's ``splice`` makes it; raises ``Unsupported`` where the
+        Rust parser does not follow the change (the owner is then made again)."""
+        from lxml import etree
+
+        for element in elements:
+            if element.tag not in (_P, _TBL):
+                raise Unsupported(f"body element {element.tag}")
+        old = {id(u): lo + k for k, u in enumerate(self.units[lo:hi])}
+        region = []
+        arguments: list = []
+        for j, element in enumerate(elements):
+            kept = same[j] if same is not None else None
+            if kept is not None and id(kept) in old:
+                kept.element = element
+                region.append(kept)
+                arguments.append(old[id(kept)])
+            else:
+                region.append(Unit(element, _key_of(element)))
+                arguments.append(etree.tostring(element, with_tail=False).decode())
+        units = self.units[:lo] + region + self.units[hi:]
+        resolution = self.resolution
+        resolution.elements = [u.element for u in units]
+        text, stats = self.parser.splice(lo, hi, arguments, version,
+                                         json.dumps(more, separators=(",", ":")) if more else None, resolution)
+        stats = json.loads(stats)
+        if text is None:
+            STATS[f"stale: {stats['refused'][:60]}"] += 1
+            raise Unsupported(stats["refused"])
+        self.units = units
+        self._tables = None
+        STATS["splices"] += 1
+        return text, stats
+
+
+def open_mirror(document: Any) -> tuple[RustMirror | None, str | None, dict]:
+    """The document's first input made by the Rust parser and the mirror that follows it,
+    or ``(None, None, stats)`` where it refuses the document (counted in :data:`STATS`)."""
+    text, stats, resolution = export(document)
+    if text is None or resolution is None:
+        return None, None, stats
+    return RustMirror(document, resolution, text), text, stats

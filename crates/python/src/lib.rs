@@ -265,25 +265,82 @@ impl ooxml_word::parse::Resolver for PyResolver<'_, '_> {
     }
 }
 
-/// Lane I1: the owner's first input for a Word document's `document.xml`, made by the Rust
-/// parser (`ooxml_word::parse`), `resolver(kind, argument)` asked what the parser does not
-/// resolve itself (the interpreter lock held: it calls Python).  Returns `(export JSON or
-/// None, statistics JSON)`: `None` where the parser refuses the document (`"refused"` in the
-/// statistics says why).
-#[pyfunction]
-fn parse_export(data: &[u8], resolver: &Bound<'_, PyAny>) -> PyResult<(Option<String>, String)> {
-    let mut r = PyResolver { f: resolver };
-    let found = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| ooxml_word::parse::export(data, &mut r)));
-    match found {
-        Ok(Ok((text, st, _body))) => {
-            let calls: serde_json::Map<String, serde_json::Value> =
-                st.calls.iter().map(|(k, v)| (k.to_string(), serde_json::json!(v))).collect();
-            let stats = serde_json::json!({"items": st.items, "calls": calls, "parse_ms": st.parse_ms,
-                                           "export_ms": st.export_ms});
-            Ok((Some(text), stats.to_string()))
+fn stats_json(st: &ooxml_word::parse::Stats) -> serde_json::Value {
+    let calls: serde_json::Map<String, serde_json::Value> =
+        st.calls.iter().map(|(k, v)| (k.to_string(), serde_json::json!(v))).collect();
+    serde_json::json!({"items": st.items, "units": st.units, "calls": calls, "parse_ms": st.parse_ms,
+                       "export_ms": st.export_ms})
+}
+
+/// Lane I1: one Word document's body followed by the Rust parser (`ooxml_word::parse::Doc`):
+/// the owner's first input made from `document.xml`, then each change set from the
+/// elements an edit changed.  `resolver(kind, argument)` is asked what the parser does not
+/// resolve itself (the interpreter lock held: it calls Python).  A refusal returns `None`
+/// with `"refused"` in the statistics (the caller then follows the document its own way).
+#[pyclass(frozen)]
+struct Parser {
+    inner: std::sync::Mutex<ooxml_word::parse::Doc>,
+}
+
+fn refused(why: &str) -> String {
+    serde_json::json!({"refused": why}).to_string()
+}
+
+#[pymethods]
+impl Parser {
+    /// `(parser or None, the first input or None, statistics JSON)`.
+    #[staticmethod]
+    fn open(data: &[u8], resolver: &Bound<'_, PyAny>) -> PyResult<(Option<Parser>, Option<String>, String)> {
+        let mut r = PyResolver { f: resolver };
+        let found = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| ooxml_word::parse::Doc::open(data, &mut r)));
+        Ok(match found {
+            Ok(Ok((doc, text, st))) => {
+                (Some(Parser { inner: std::sync::Mutex::new(doc) }), Some(text), stats_json(&st).to_string())
+            }
+            Ok(Err(why)) => (None, None, refused(&why.0)),
+            Err(_) => (None, None, refused("the parser failed")),
+        })
+    }
+
+    /// One change set: units `[lo, hi)` replaced by `elements` (each an element's XML, or
+    /// the index of a unit kept as it was), `more` (a JSON object's text) added.  `(commit
+    /// JSON or None, statistics JSON)`; after a refusal the parser no longer follows the
+    /// document.
+    #[pyo3(signature = (lo, hi, elements, version, more, resolver))]
+    fn splice(
+        &self,
+        lo: usize,
+        hi: usize,
+        elements: Vec<Bound<'_, PyAny>>,
+        version: i64,
+        more: Option<String>,
+        resolver: &Bound<'_, PyAny>,
+    ) -> PyResult<(Option<String>, String)> {
+        let mut els = Vec::new();
+        for e in elements {
+            if let Ok(i) = e.extract::<usize>() {
+                els.push(ooxml_word::parse::Elem::Kept(i));
+            } else {
+                els.push(ooxml_word::parse::Elem::New(e.extract::<String>()?));
+            }
         }
-        Ok(Err(why)) => Ok((None, serde_json::json!({"refused": why.0}).to_string())),
-        Err(_) => Ok((None, serde_json::json!({"refused": "the parser failed"}).to_string())),
+        let mut r = PyResolver { f: resolver };
+        let mut doc = self.inner.lock().unwrap();
+        let found = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| doc.splice(lo, hi, els, version, more, &mut r)));
+        Ok(match found {
+            Ok(Ok((text, st))) => (Some(text), stats_json(&st).to_string()),
+            Ok(Err(why)) => (None, refused(&why.0)),
+            Err(_) => (None, refused("the parser failed")),
+        })
+    }
+
+    /// The exporter's tables and the units' keys and faces (JSON).
+    fn tables(&self) -> String {
+        self.inner.lock().unwrap().tables_json().to_string()
+    }
+
+    fn __len__(&self) -> usize {
+        self.inner.lock().unwrap().units.len()
     }
 }
 
@@ -430,7 +487,7 @@ fn ooxml_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<SnapshotE>()?;
     m.add_function(wrap_pyfunction!(noop, m)?)?;
     m.add_function(wrap_pyfunction!(open_document, m)?)?;
-    m.add_function(wrap_pyfunction!(parse_export, m)?)?;
+    m.add_class::<Parser>()?;
     m.add_function(wrap_pyfunction!(commit, m)?)?;
     m.add_function(wrap_pyfunction!(call, m)?)?;
     m.add_function(wrap_pyfunction!(close_document, m)?)?;

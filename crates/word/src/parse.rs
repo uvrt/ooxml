@@ -49,14 +49,14 @@ type Q = Ratio<i128>;
 // -- the model ---------------------------------------------------------------------------------
 
 /// A computed field's run (docx2svg's `Field`).
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct FieldRun {
     pub instruction: String,
     pub keyword: String,
 }
 
 /// One run as docx2svg reads it.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Run {
     /// Its `w:rPr`, written out (the resolution's key); `None`: none.
     pub rpr: Option<String>,
@@ -66,7 +66,7 @@ pub struct Run {
     pub field: Option<FieldRun>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Para {
     pub ppr: Option<String>,
     /// `w:pStyle`'s value as written.
@@ -81,7 +81,7 @@ pub struct Para {
     pub conditions: Vec<&'static str>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Table {
     /// `w:tblStyle` (`""`: none).
     pub style: String,
@@ -91,7 +91,7 @@ pub struct Table {
     pub skeleton: String,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Block {
     P(Para),
     T(Table),
@@ -109,7 +109,11 @@ impl Block {
 /// One top-level body element and what it makes.
 #[derive(Clone, Debug)]
 pub struct Unit {
+    /// Its identity across change sets (a unit kept by one is the same unit).
+    pub uid: u64,
     pub key: Option<String>,
+    /// Its block as parsed, and with its `REF` fields computed.
+    pub raw: Block,
     pub block: Block,
     /// The fields begun in it and the bookmarks it starts (docx-agent's `records.fields_of`),
     /// and whether it is in a table of contents.
@@ -118,7 +122,16 @@ pub struct Unit {
     pub toc: bool,
     /// The bookmarks its REF fields show.
     pub refs: Vec<String>,
-    pub span: (usize, usize),
+    /// The complex fields open before it, as docx2svg's parser and docx-agent's records
+    /// thread them.
+    fields_before: Vec<Open>,
+    fstack_before: Vec<FEntry>,
+    /// Its XML (what it is parsed again from, with the fields open before it changed).
+    xml: String,
+    /// The faces its text is measured in, in the order first named.
+    pub faces: Vec<String>,
+    /// Whether its parse holds a REF or SEQ field (computed over the body once in place).
+    pending: bool,
 }
 
 // -- the complex fields (docx2svg's `_Fields`) ------------------------------------------------
@@ -700,43 +713,34 @@ fn fields_of(names: &Names, w: Ns, element: &Node, stack: &mut Vec<(String, Opti
 
 // -- the body ----------------------------------------------------------------------------------
 
-/// The body read: its units, in order, and the reader's namespaces.
-pub struct Body {
-    pub reader: Reader,
-    pub units: Vec<Unit>,
+/// docx-agent's records' stack of open fields: `[instruction, separated, field begun here]`.
+pub type FEntry = (String, Option<bool>, Option<usize>);
+
+fn open_state(stack: &[Open]) -> Vec<(bool, bool, String)> {
+    stack.iter().map(|f| (f.result_state, f.computed, keyword(&f.instruction.concat()))).collect()
 }
 
-/// Reads `document.xml`'s body.
-pub fn read_body(data: &[u8]) -> Result<Body, Refused> {
-    let mut names = Names::new();
-    let root = xml::parse(data, &mut names).map_err(|e| Refused(e.to_string()))?;
-    let w = names.intern(W);
-    let w14 = names.intern(W14);
-    let reader = Reader { names, w, w14 };
-    let body = root.child(w, "body").ok_or_else(|| Refused("no body".into()))?;
-    let mut fields = Fields::default();
-    let mut units = Vec::new();
-    let mut fstack: Vec<(String, Option<bool>, Option<usize>)> = Vec::new();
-    let n = body.children.len();
-    for (k, child) in body.children.iter().enumerate() {
+impl Reader {
+    /// One top-level element of the body: its block (parsed with the fields open before
+    /// it, carried on) and what docx-agent's records read of its fields.
+    fn unit(&self, child: &Node, xml: String, uid: u64, fields: &mut Fields, fstack: &mut Vec<FEntry>) -> Result<Unit, Refused> {
+        let w = self.w;
         if child.ns != w {
             return refuse(format!("a body's {}", child.name));
         }
+        let fields_before = fields.stack.clone();
+        let fstack_before = fstack.clone();
         let toc_before = fstack.iter().any(|e| keyword(&e.0) == "TOC");
         let block = match child.name.as_str() {
-            "p" => Block::P(reader.paragraph(child, None, &[], &mut fields)?),
-            "tbl" => Block::T(reader.table(child, &mut fields)?),
-            "sectPr" if k == n - 1 => continue,
-            other => return refuse(format!("a body's {other}")),
+            "p" => Block::P(self.paragraph(child, None, &[], fields)?),
+            "tbl" => Block::T(self.table(child, fields)?),
+            other => return refuse(format!("body element {other}")),
         };
-        let (fld, bm) = fields_of(&reader.names, w, child, &mut fstack)?;
+        let (fld, bm) = fields_of(&self.names, w, child, fstack)?;
         let toc = toc_before || fld.iter().any(|f| f.0 == "TOC");
         let key = match &block {
             Block::P(p) => p.para_id.as_ref().map(|r| format!("p:{}", r.to_uppercase())),
-            Block::T(_) => child
-                .child(w, "tr")
-                .and_then(|tr| tr.attr(w14, "paraId"))
-                .map(|r| format!("t:{}", r.to_uppercase())),
+            Block::T(_) => child.child(w, "tr").and_then(|tr| tr.attr(self.w14, "paraId")).map(|r| format!("t:{}", r.to_uppercase())),
         };
         let mut refs = Vec::new();
         for node in child.descendants() {
@@ -748,31 +752,36 @@ pub fn read_body(data: &[u8]) -> Result<Body, Refused> {
                 }
             }
         }
-        units.push(Unit { key, block, fld, bm, toc, refs, span: child.span });
+        let pending = block.paragraphs().iter().any(|p| p.runs.iter().any(|r| r.field.as_ref().is_some_and(|f| f.keyword == "REF" || f.keyword == "SEQ")));
+        Ok(Unit {
+            uid,
+            key,
+            raw: block.clone(),
+            block,
+            fld,
+            bm,
+            toc,
+            refs,
+            fields_before,
+            fstack_before,
+            xml,
+            faces: vec![],
+            pending,
+        })
     }
-    if !fields.stack.is_empty() {
-        return refuse("a complex field open at the body's end");
-    }
-    let mut out = Body { reader, units };
-    cross_references(&mut out)?;
-    Ok(out)
 }
 
-/// docx2svg's `fields.cross_references` for what this reader supports: `REF` fields with
-/// at most `\h`, their bookmark in one paragraph of the body, replaced by its runs; `SEQ` is
-/// refused (the export refuses it too).
-fn cross_references(body: &mut Body) -> Result<(), Refused> {
-    // every paragraph of the body, in order
+/// docx2svg's `fields.cross_references` over the units' blocks as parsed (`raw`): `REF`
+/// fields with at most `\h`, their bookmark in one paragraph of the body, replaced by its
+/// runs; `SEQ` and `STYLEREF` refused (the export refuses them too).  Returns the new blocks
+/// of the units holding a `REF` (by index) and whether any could not be computed.
+fn cross_references(units: &[Unit]) -> Result<(Vec<(usize, Block)>, bool), Refused> {
     let mut index: Vec<(usize, usize)> = Vec::new(); // (unit, paragraph within it)
-    for (u, unit) in body.units.iter().enumerate() {
-        for k in 0..unit.block.paragraphs().len() {
-            index.push((u, k));
-        }
-    }
-    let para = |units: &Vec<Unit>, i: usize| -> Para { units[index[i].0].block.paragraphs()[index[i].1].clone() };
     let mut has_ref = false;
-    for unit in &body.units {
-        for p in unit.block.paragraphs() {
+    for (u, unit) in units.iter().enumerate() {
+        let ps = unit.raw.paragraphs();
+        for (k, p) in ps.iter().enumerate() {
+            index.push((u, k));
             for r in &p.runs {
                 if let Some(f) = &r.field {
                     match f.keyword.as_str() {
@@ -786,14 +795,14 @@ fn cross_references(body: &mut Body) -> Result<(), Refused> {
         }
     }
     if !has_ref {
-        return Ok(());
+        return Ok((vec![], false));
     }
-    // bookmarks: name -> (start (para, run), end)
+    let paras: Vec<Vec<&Para>> = units.iter().map(|u| u.raw.paragraphs()).collect();
+    let para = |i: usize| -> &Para { paras[index[i].0][index[i].1] };
     let mut starts: HashMap<String, (Option<String>, (usize, usize))> = HashMap::new();
     let mut ends: HashMap<Option<String>, (usize, usize)> = HashMap::new();
     for i in 0..index.len() {
-        let p = para(&body.units, i);
-        for (start, id, name, run) in &p.bookmarks {
+        for (start, id, name, run) in &para(i).bookmarks {
             if *start {
                 if let Some(n) = name {
                     if !n.is_empty() && !starts.contains_key(n) {
@@ -805,48 +814,54 @@ fn cross_references(body: &mut Body) -> Result<(), Refused> {
             }
         }
     }
-    let mut replaced: Vec<(usize, Vec<Run>, Vec<(bool, Option<String>, Option<String>, usize)>)> = Vec::new();
-    for i in 0..index.len() {
-        let p = para(&body.units, i);
-        if !p.runs.iter().any(|r| r.field.as_ref().is_some_and(|f| f.keyword == "REF")) {
+    let mut problems = false;
+    let mut out: Vec<(usize, Block)> = Vec::new();
+    for (u, unit) in units.iter().enumerate() {
+        let ps = &paras[u];
+        if !ps.iter().any(|p| p.runs.iter().any(|r| r.field.as_ref().is_some_and(|f| f.keyword == "REF"))) {
             continue;
         }
-        let mut runs = Vec::new();
-        let mut index_of: HashMap<usize, usize> = HashMap::new();
-        for (k, run) in p.runs.iter().enumerate() {
-            index_of.insert(k, runs.len());
-            let f = match &run.field {
-                Some(f) if f.keyword == "REF" => f,
-                _ => {
-                    runs.push(run.clone());
-                    continue;
-                }
-            };
-            match reference_runs(&body.units, &index, run, f, &starts, &ends)? {
-                Some(rs) => runs.extend(rs),
-                None => runs.push(run.clone()),
-            }
-        }
-        index_of.insert(p.runs.len(), runs.len());
-        let moved = p.bookmarks.iter().map(|(s, id, name, k)| (*s, id.clone(), name.clone(), *index_of.get(k).unwrap_or(k))).collect();
-        replaced.push((i, runs, moved));
-    }
-    for (i, runs, marks) in replaced {
-        let (u, k) = index[i];
-        let p: &mut Para = match &mut body.units[u].block {
-            Block::P(p) => p,
-            Block::T(t) => t.rows.iter_mut().flat_map(|r| r.iter_mut()).flat_map(|c| c.iter_mut()).nth(k).unwrap(),
+        let mut block = unit.raw.clone();
+        let targets: Vec<&mut Para> = match &mut block {
+            Block::P(p) => vec![p],
+            Block::T(t) => t.rows.iter_mut().flat_map(|r| r.iter_mut()).flat_map(|c| c.iter_mut()).collect(),
         };
-        p.runs = runs;
-        p.bookmarks = marks;
+        for p in targets {
+            if !p.runs.iter().any(|r| r.field.as_ref().is_some_and(|f| f.keyword == "REF")) {
+                continue;
+            }
+            let mut runs = Vec::new();
+            let mut index_of: HashMap<usize, usize> = HashMap::new();
+            for (k, run) in p.runs.iter().enumerate() {
+                index_of.insert(k, runs.len());
+                let f = match &run.field {
+                    Some(f) if f.keyword == "REF" => f,
+                    _ => {
+                        runs.push(run.clone());
+                        continue;
+                    }
+                };
+                match reference_runs(&paras, &index, run, f, &starts, &ends)? {
+                    Some(rs) => runs.extend(rs),
+                    None => {
+                        problems = true;
+                        runs.push(run.clone())
+                    }
+                }
+            }
+            index_of.insert(p.runs.len(), runs.len());
+            p.bookmarks = p.bookmarks.iter().map(|(s, id, name, k)| (*s, id.clone(), name.clone(), *index_of.get(k).unwrap_or(k))).collect();
+            p.runs = runs;
+        }
+        out.push((u, block));
     }
-    Ok(())
+    Ok((out, problems))
 }
 
 /// `fields.reference_runs`; `None` where Word's result cannot be computed (the field is
 /// drawn as cached, as docx2svg draws it).
 fn reference_runs(
-    units: &[Unit],
+    paras: &[Vec<&Para>],
     index: &[(usize, usize)],
     run: &Run,
     field: &FieldRun,
@@ -880,8 +895,7 @@ fn reference_runs(
         return Ok(None);
     }
     let (u, k) = index[sb];
-    let paras = units[u].block.paragraphs();
-    let source = &paras[k].runs;
+    let source = &paras[u][k].runs;
     if sr > er || er > source.len() {
         return refuse("a bookmark's end before its start");
     }
@@ -1343,8 +1357,9 @@ impl Counters {
 }
 
 /// The export's work: the resolver's answers cached by their keys.
-pub struct Exporter<'a> {
-    r: &'a mut dyn Resolver,
+/// What the export keeps between calls: the resolver's answers by their keys, the
+/// exporter's tables.
+pub struct Caches {
     paras: HashMap<String, ParaInfo>,
     runs: HashMap<String, RunInfo>,
     marks: HashMap<String, Value>,
@@ -1353,6 +1368,33 @@ pub struct Exporter<'a> {
     levels: HashMap<i64, Option<Levels>>,
     ex: Ex,
     pub calls: HashMap<&'static str, usize>,
+}
+
+impl Caches {
+    pub fn new() -> Caches {
+        Caches {
+            paras: HashMap::new(),
+            runs: HashMap::new(),
+            marks: HashMap::new(),
+            geoms: HashMap::new(),
+            borders: HashMap::new(),
+            levels: HashMap::new(),
+            ex: Ex::new(),
+            calls: HashMap::new(),
+        }
+    }
+}
+
+impl Default for Caches {
+    fn default() -> Caches {
+        Caches::new()
+    }
+}
+
+/// The export's work for one call: the caches and the resolver to ask.
+pub struct Exporter<'a> {
+    r: &'a mut dyn Resolver,
+    c: &'a mut Caches,
 }
 
 fn pkey(p: &Para) -> String {
@@ -1373,39 +1415,29 @@ fn pkey_json(p: &Para) -> Value {
 }
 
 impl<'a> Exporter<'a> {
-    pub fn new(r: &'a mut dyn Resolver) -> Exporter<'a> {
-        Exporter {
-            r,
-            paras: HashMap::new(),
-            runs: HashMap::new(),
-            marks: HashMap::new(),
-            geoms: HashMap::new(),
-            borders: HashMap::new(),
-            levels: HashMap::new(),
-            ex: Ex::new(),
-            calls: HashMap::new(),
-        }
+    pub fn new(r: &'a mut dyn Resolver, c: &'a mut Caches) -> Exporter<'a> {
+        Exporter { r, c }
     }
 
     fn ask(&mut self, kind: &'static str, arg: &Value) -> Result<Value, Refused> {
-        *self.calls.entry(kind).or_default() += 1;
+        *self.c.calls.entry(kind).or_default() += 1;
         let text = self.r.call(kind, &arg.to_string()).map_err(Refused)?;
         serde_json::from_str(&text).map_err(|e| Refused(format!("{kind}: {e}")))
     }
 
     fn ask_raw(&mut self, kind: &'static str, arg: &Value) -> Result<String, Refused> {
-        *self.calls.entry(kind).or_default() += 1;
+        *self.c.calls.entry(kind).or_default() += 1;
         self.r.call(kind, &arg.to_string()).map_err(Refused)
     }
 
     fn para(&mut self, p: &Para) -> Result<ParaInfo, Refused> {
         let k = pkey(p);
-        if let Some(found) = self.paras.get(&k) {
+        if let Some(found) = self.c.paras.get(&k) {
             return Ok(found.clone());
         }
         let v = self.ask("para", &pkey_json(p))?;
         let info = ParaInfo { v };
-        self.paras.insert(k, info.clone());
+        self.c.paras.insert(k, info.clone());
         Ok(info)
     }
 
@@ -1415,7 +1447,7 @@ impl<'a> Exporter<'a> {
         py_json_str(r.rpr.as_deref().unwrap_or(""), &mut k);
         k.push_str(if r.rpr.is_none() { "-" } else { "+" });
         k.push_str(if r.toc_link { "|t" } else { "|f" });
-        if let Some(found) = self.runs.get(&k) {
+        if let Some(found) = self.c.runs.get(&k) {
             return Ok(found.clone());
         }
         let v = self.ask("run", &json!({"p": pkey_json(p), "rpr": r.rpr, "toc": r.toc_link}))?;
@@ -1436,23 +1468,23 @@ impl<'a> Exporter<'a> {
             ea_lang: v["ea_lang"].as_str().map(str::to_string),
             slots,
         };
-        self.runs.insert(k, info.clone());
+        self.c.runs.insert(k, info.clone());
         Ok(info)
     }
 
     fn mark(&mut self, p: &Para) -> Result<Value, Refused> {
         let k = pkey(p);
-        if let Some(found) = self.marks.get(&k) {
+        if let Some(found) = self.c.marks.get(&k) {
             return Ok(found.clone());
         }
         let v = self.ask("mark", &json!({"p": pkey_json(p)}))?;
-        self.marks.insert(k, v.clone());
+        self.c.marks.insert(k, v.clone());
         Ok(v)
     }
 
     fn geometry(&mut self, p: &Para, width: Option<i64>) -> Result<V, Refused> {
         let k = format!("{}|{:?}", pkey(p), width);
-        if let Some(found) = self.geoms.get(&k) {
+        if let Some(found) = self.c.geoms.get(&k) {
             return Ok(found.clone());
         }
         let v = self.ask("geom", &json!({"p": pkey_json(p), "width": width}))?;
@@ -1471,13 +1503,13 @@ impl<'a> Exporter<'a> {
             ("squeeze", V::Bool(v["squeeze"].as_bool().unwrap_or(false))),
             ("tab_origin", wd(&v["tab_origin"])?),
         ]);
-        self.geoms.insert(k, g.clone());
+        self.c.geoms.insert(k, g.clone());
         Ok(g)
     }
 
     fn borders(&mut self, prev: Option<&Para>, p: &Para, next: Option<&Para>) -> Result<(Q, Q), Refused> {
         let k = format!("{}#{}#{}", prev.map(pkey).unwrap_or_default(), pkey(p), next.map(pkey).unwrap_or_default());
-        if let Some(found) = self.borders.get(&k) {
+        if let Some(found) = self.c.borders.get(&k) {
             return Ok(*found);
         }
         let v = self.ask(
@@ -1485,12 +1517,12 @@ impl<'a> Exporter<'a> {
             &json!({"prev": prev.map(pkey_json), "p": pkey_json(p), "next": next.map(pkey_json)}),
         )?;
         let out = (q_of(&v[0])?, q_of(&v[1])?);
-        self.borders.insert(k, out);
+        self.c.borders.insert(k, out);
         Ok(out)
     }
 
     fn levels(&mut self, num_id: i64) -> Result<Option<Levels>, Refused> {
-        if let Some(found) = self.levels.get(&num_id) {
+        if let Some(found) = self.c.levels.get(&num_id) {
             return Ok(found.clone());
         }
         let v = self.ask("levels", &json!(num_id))?;
@@ -1516,7 +1548,7 @@ impl<'a> Exporter<'a> {
                 levels,
             })
         };
-        self.levels.insert(num_id, found.clone());
+        self.c.levels.insert(num_id, found.clone());
         Ok(found)
     }
 
@@ -1535,11 +1567,11 @@ impl<'a> Exporter<'a> {
                         None => {
                             let slot = slot_index(c, ri.complex, ri.hint.as_deref(), ri.ea_lang.as_deref());
                             let f = ri.slots[slot].0.clone();
-                            let k = self.ex.fmt(&f, true);
+                            let k = self.c.ex.fmt(&f, true);
                             let drawn = if ri.caps { upper(c)? } else { c };
-                            self.ex.chars.insert(drawn);
-                            self.ex.chars.insert(c);
-                            self.ex.drawn.insert((f.face.clone(), drawn));
+                            self.c.ex.chars.insert(drawn);
+                            self.c.ex.chars.insert(c);
+                            self.c.ex.drawn.insert((f.face.clone(), drawn));
                             seen.insert(c, k);
                             k
                         }
@@ -1554,7 +1586,7 @@ impl<'a> Exporter<'a> {
                 } else {
                     let slot = slot_index(' ', ri.complex, ri.hint.as_deref(), ri.ea_lang.as_deref());
                     let f = ri.slots[slot].1.clone();
-                    vec![self.ex.fmt(&f, false)]
+                    vec![self.c.ex.fmt(&f, false)]
                 };
                 entry.push(("fmts", V::List(fmts.iter().map(|k| V::Int(*k as i64)).collect())));
                 entry.push(("tracking", V::Int(ri.tracking)));
@@ -1563,19 +1595,19 @@ impl<'a> Exporter<'a> {
                 entry.push(("caps", V::Bool(ri.caps)));
                 let slot = slot_index('-', ri.complex, ri.hint.as_deref(), ri.ea_lang.as_deref());
                 let hy = ri.slots[slot].0.clone();
-                let h = self.ex.fmt(&hy, true);
+                let h = self.c.ex.fmt(&hy, true);
                 entry.push(("hyphen_fmt", V::Int(h as i64)));
-                self.ex.chars.insert('-');
+                self.c.ex.chars.insert('-');
                 if ri.kern != 0 {
                     for k in &fmts {
-                        let font = self.ex.format_list[*k].0;
-                        self.ex.kern_fonts.insert(font);
+                        let font = self.c.ex.format_list[*k].0;
+                        self.c.ex.kern_fonts.insert(font);
                     }
                 }
             }
             for (_, kind) in &r.marks {
                 if kind == "noBreakHyphen" {
-                    self.ex.chars.insert('\u{2011}');
+                    self.c.ex.chars.insert('\u{2011}');
                 }
                 if !matches!(kind.as_str(), "tab" | "br" | "textWrapping" | "page" | "column" | "cr" | "noBreakHyphen" | "softHyphen") {
                     return refuse(format!("mark {kind:?}: not exported"));
@@ -1611,14 +1643,14 @@ impl<'a> Exporter<'a> {
         let mut out: Vec<(&'static str, V)> = vec![("runs", V::List(runs))];
         let mark = self.mark(p)?;
         let mark_fmt = fmt_key(&mark["space"])?;
-        out.push(("mark_fmt", V::Int(self.ex.fmt(&mark_fmt, false) as i64)));
+        out.push(("mark_fmt", V::Int(self.c.ex.fmt(&mark_fmt, false) as i64)));
         if let Some(label) = label {
             out.push(("label", self.label(label, &mark)?));
         }
         let mut lh = Vec::new();
         for f in mark["label_height"].as_array().unwrap_or(&vec![]) {
             let f = fmt_key(f)?;
-            lh.push(V::Int(self.ex.fmt(&f, false) as i64));
+            lh.push(V::Int(self.c.ex.fmt(&f, false) as i64));
         }
         out.push(("label_height_fmts", V::List(lh)));
         out.push(("geometry", geometry));
@@ -1651,14 +1683,14 @@ impl<'a> Exporter<'a> {
         for c in text.chars() {
             let f = slots[slot_index(c, complex, hint.as_deref(), ea.as_deref())].clone();
             let drawn = if caps { upper(c)? } else { c };
-            self.ex.chars.insert(drawn);
-            self.ex.drawn.insert((f.face.clone(), drawn));
-            let k = self.ex.fmt(&f, false);
+            self.c.ex.chars.insert(drawn);
+            self.c.ex.drawn.insert((f.face.clone(), drawn));
+            let k = self.c.ex.fmt(&f, false);
             chars.push(V::List(vec![V::Str(drawn.to_string()), V::Int(k as i64)]));
         }
         let sp = slots[slot_index(' ', complex, hint.as_deref(), ea.as_deref())].clone();
-        self.ex.chars.insert(' ');
-        let space = self.ex.fmt(&sp, false);
+        self.c.ex.chars.insert(' ');
+        let space = self.c.ex.fmt(&sp, false);
         Ok(V::Obj(vec![
             ("chars", V::List(chars)),
             ("align", V::Str(l["align"].as_str().unwrap_or("left").into())),
@@ -1711,6 +1743,7 @@ fn page_field_switches(instruction: &str) -> Result<Option<String>, Refused> {
 #[derive(Default, Debug)]
 pub struct Stats {
     pub items: usize,
+    pub units: usize,
     pub calls: HashMap<&'static str, usize>,
     pub parse_ms: f64,
     pub export_ms: f64,
@@ -1728,45 +1761,139 @@ fn para_neighbour<'b>(units: &'b [Unit], k: usize, side: i64) -> Option<&'b Para
     Some(if side > 0 { ps[0] } else { ps[ps.len() - 1] })
 }
 
-/// The owner's first input for `document.xml`'s body, made as docx-agent's mirror exports it:
-/// JSON text, and what it asked.  `fields_stack_end`: whether a field stays open after the
-/// body (refused).
-pub fn export(data: &[u8], r: &mut dyn Resolver) -> Result<(String, Stats, Body), Refused> {
-    let t0 = std::time::Instant::now();
-    let body = read_body(data)?;
-    let t1 = std::time::Instant::now();
-    let mut ex = Exporter::new(r);
-    let units = &body.units;
-    // keys: unique, every block one
-    let mut seen = HashSet::new();
-    for u in units {
-        match &u.key {
-            Some(k) if seen.insert(k.clone()) => {}
-            _ => return refuse("a block without a unique paraId"),
+/// A unit of a change set's region: a new element (its XML), or a unit kept as it was (its
+/// index before the change).
+pub enum Elem {
+    New(String),
+    Kept(usize),
+}
+
+/// One document's body as the Rust parser follows it: the units, the export's caches and
+/// what the owner has been sent (docx-agent's mirror, in Rust).
+pub struct Doc {
+    reader: Reader,
+    /// The root's namespace declarations (what a unit's own XML is read again with).
+    root_ns: Vec<(String, String)>,
+    pub units: Vec<Unit>,
+    next_uid: u64,
+    fields_end: Vec<Open>,
+    fstack_end: Vec<FEntry>,
+    pub caches: Caches,
+    labels: HashMap<(u64, usize), Option<String>>,
+    dens: (i128, i128),
+    sent: (usize, HashSet<char>, HashSet<i64>, usize),
+}
+
+impl Doc {
+    /// Reads `document.xml` and makes the owner's first input (JSON text).
+    pub fn open(data: &[u8], r: &mut dyn Resolver) -> Result<(Doc, String, Stats), Refused> {
+        let t0 = std::time::Instant::now();
+        let mut names = Names::new();
+        let root = xml::parse(data, &mut names).map_err(|e| Refused(e.to_string()))?;
+        let w = names.intern(W);
+        let w14 = names.intern(W14);
+        let src = std::str::from_utf8(data).map_err(|_| Refused("not UTF-8".into()))?;
+        let root_ns = root_declarations(src);
+        let reader = Reader { names, w, w14 };
+        let body = root.child(w, "body").ok_or_else(|| Refused("no body".into()))?;
+        let mut fields = Fields::default();
+        let mut fstack: Vec<FEntry> = Vec::new();
+        let mut units = Vec::new();
+        let n = body.children.len();
+        let mut uid = 0u64;
+        for (k, child) in body.children.iter().enumerate() {
+            if child.ns == w && child.name == "sectPr" && k == n - 1 {
+                continue;
+            }
+            let xml = src[child.span.0..child.span.1].to_string();
+            uid += 1;
+            units.push(reader.unit(child, xml, uid, &mut fields, &mut fstack)?);
         }
+        if !fields.stack.is_empty() {
+            return refuse("a complex field open at the body's end");
+        }
+        let (expanded, _problems) = cross_references(&units)?;
+        for (k, b) in expanded {
+            units[k].block = b;
+        }
+        let mut doc = Doc {
+            reader,
+            root_ns,
+            units,
+            next_uid: uid,
+            fields_end: fields.stack,
+            fstack_end: fstack,
+            caches: Caches::new(),
+            labels: HashMap::new(),
+            dens: (1, 1),
+            sent: (0, HashSet::new(), HashSet::new(), 0),
+        };
+        doc.check_keys()?;
+        let t1 = std::time::Instant::now();
+        doc.relabel(r)?;
+        let mut items = Vec::new();
+        for k in 0..doc.units.len() {
+            items.push(doc.unit_item(k, r)?);
+        }
+        let text = doc.first(items, r)?;
+        let t2 = std::time::Instant::now();
+        let stats = Stats {
+            items: 0,
+            units: doc.units.len(),
+            calls: doc.caches.calls.clone(),
+            parse_ms: (t1 - t0).as_secs_f64() * 1e3,
+            export_ms: (t2 - t1).as_secs_f64() * 1e3,
+        };
+        Ok((doc, text, stats))
     }
-    // list labels (`Mirror._label_pass`)
-    let mut counters = Counters::default();
-    let mut labels: HashMap<*const Para, Option<String>> = HashMap::new();
-    for u in units {
-        for p in u.block.paragraphs() {
-            let info = ex.para(p)?;
-            let num = &info.v["num"];
-            let num_id = num[0].as_i64().unwrap_or(0);
-            if num_id != 0 {
-                let ilvl = num[1].as_i64().unwrap_or(0);
-                let label = match ex.levels(num_id)? {
-                    Some(lv) => counters.count(&lv, num_id, ilvl)?,
-                    None => None,
-                };
-                labels.insert(p as *const Para, label);
+
+    fn check_keys(&self) -> Result<(), Refused> {
+        let mut seen = HashSet::new();
+        for u in &self.units {
+            match &u.key {
+                Some(k) if seen.insert(k.clone()) => {}
+                _ => return refuse("a block without a unique paraId"),
             }
         }
+        Ok(())
     }
-    let mut items: Vec<V> = Vec::new();
-    let mut faces: Vec<Vec<String>> = Vec::new();
-    for (k, u) in units.iter().enumerate() {
-        ex.ex.face_log.clear();
+
+    /// Every list label of the body counted again (`Mirror._label_pass`); the units (by
+    /// index) holding a numbered paragraph whose label changed.
+    fn relabel(&mut self, r: &mut dyn Resolver) -> Result<HashSet<usize>, Refused> {
+        let mut ex = Exporter::new(r, &mut self.caches);
+        let mut counters = Counters::default();
+        let mut labels: HashMap<(u64, usize), Option<String>> = HashMap::new();
+        let mut changed = HashSet::new();
+        for (k, u) in self.units.iter().enumerate() {
+            for (j, p) in u.block.paragraphs().iter().enumerate() {
+                let info = ex.para(p)?;
+                let num = &info.v["num"];
+                let num_id = num[0].as_i64().unwrap_or(0);
+                if num_id != 0 {
+                    let ilvl = num[1].as_i64().unwrap_or(0);
+                    let label = match ex.levels(num_id)? {
+                        Some(lv) => counters.count(&lv, num_id, ilvl)?,
+                        None => None,
+                    };
+                    if self.labels.get(&(u.uid, j)) != Some(&label) {
+                        changed.insert(k);
+                    }
+                    labels.insert((u.uid, j), label);
+                }
+            }
+        }
+        self.labels = labels;
+        Ok(changed)
+    }
+
+    /// The flow item of unit `k` (`Mirror.unit_items`), its record asked of the resolver.
+    fn unit_item(&mut self, k: usize, r: &mut dyn Resolver) -> Result<V, Refused> {
+        let mut ex = Exporter::new(r, &mut self.caches);
+        let units = &self.units;
+        let labels = &self.labels;
+        let u = &units[k];
+        ex.c.ex.face_log.clear();
         let skeleton = match &u.block {
             Block::T(t) => Some(t.skeleton.clone()),
             Block::P(_) => None,
@@ -1779,39 +1906,44 @@ pub fn export(data: &[u8], r: &mut dyn Resolver) -> Result<(String, Stats, Body)
                 if info.b("refused") {
                     return refuse(info.v["why"].as_str().unwrap_or("refused").to_string());
                 }
-                let label = labels.get(&(p as *const Para)).cloned();
-                let numbered = label.is_some();
+                let label = labels.get(&(u.uid, 0)).cloned();
+                let is_numbered = label.is_some();
                 let mut before = info.i("before");
                 let mut after = info.i("after");
-                let prev = para_neighbour(units, k, -1);
-                let next = para_neighbour(units, k, 1);
-                let kept = |n: Option<&Para>, end: bool| -> Option<bool> {
-                    match n {
-                        None => {
-                            if end {
-                                Some(false)
-                            } else {
-                                None
-                            }
+                let prev_unit = if k > 0 { Some(&units[k - 1]) } else { None };
+                let next_unit = units.get(k + 1);
+                // the paragraph before and after, cells included (`_neighbour_paragraph`)
+                let neighbour_numbered = |side: i64| -> Option<bool> {
+                    let q = para_neighbour(units, k, side)?;
+                    // find its unit: the nearest unit on that side holding paragraphs
+                    let mut j = k as i64 + side;
+                    while j >= 0 && (j as usize) < units.len() {
+                        let v = &units[j as usize];
+                        let ps = v.block.paragraphs();
+                        if !ps.is_empty() {
+                            let idx = if side > 0 { 0 } else { ps.len() - 1 };
+                            let _ = q;
+                            return Some(labels.contains_key(&(v.uid, idx)));
                         }
-                        Some(q) => Some(labels.contains_key(&(q as *const Para))),
+                        j += side;
                     }
+                    Some(false)
                 };
+                let _ = (&prev_unit, &next_unit);
                 if info.b("auto_before") {
-                    let nn = kept(prev, false);
-                    let keep = match nn {
+                    let keep = match neighbour_numbered(-1) {
                         None => false,
-                        Some(x) => !(numbered && x),
+                        Some(x) => !(is_numbered && x),
                     };
                     if !keep {
                         before = 0;
                     }
                 }
                 if info.b("auto_after") {
-                    let nn = kept(next, true);
+                    let nn = neighbour_numbered(1).or(Some(false));
                     let keep = match nn {
                         None => false,
-                        Some(x) => !(numbered && x),
+                        Some(x) => !(is_numbered && x),
                     };
                     if !keep {
                         after = 0;
@@ -1830,7 +1962,7 @@ pub fn export(data: &[u8], r: &mut dyn Resolver) -> Result<(String, Stats, Body)
                 let (top_border, border) = ex.borders(side(-1), p, side(1))?;
                 let geometry = ex.geometry(p, None)?;
                 let measure = ex.measure(p, label.as_ref(), &info, geometry)?;
-                let style = ex.ex.style(p.style_id.as_deref());
+                let style = ex.c.ex.style(p.style_id.as_deref());
                 let widow = &info.v["widow"];
                 V::Obj(vec![
                     ("rec", V::Raw(rec)),
@@ -1854,123 +1986,438 @@ pub fn export(data: &[u8], r: &mut dyn Resolver) -> Result<(String, Stats, Body)
                     ("measure", measure),
                 ])
             }
-            Block::T(t) => table_item(&mut ex, units, k, u, t, &labels, rec)?,
+            Block::T(t) => {
+                let cell_labels: Vec<Option<Option<String>>> =
+                    (0..t.rows.iter().flat_map(|r| r.iter()).map(|c| c.len()).sum::<usize>()).map(|j| labels.get(&(u.uid, j)).cloned()).collect();
+                table_item(&mut ex, units, k, u, t, &cell_labels, rec)?
+            }
         };
-        faces.push(ex.ex.face_log.clone());
-        items.push(item);
+        let faces = ex.c.ex.face_log.clone();
+        self.units[k].faces = faces;
+        Ok(item)
     }
-    let t2 = std::time::Instant::now();
-    // the document's own: the fonts measured, the sections, the constants
-    let font_list: Vec<Value> = ex.ex.font_list.iter().map(|(f, b, i)| json!([f, b, i])).collect();
-    let mut chars: Vec<char> = ex.ex.chars.iter().copied().collect();
-    chars.sort();
-    let mut kern: Vec<i64> = ex.ex.kern_fonts.iter().copied().collect();
-    kern.sort();
-    let mut drawn: Vec<Value> = ex.ex.drawn.iter().map(|(f, c)| json!([f, c.to_string()])).collect();
-    drawn.sort_by_key(|v| v.to_string());
-    let doc = ex.ask(
-        "document",
-        &json!({"fonts": font_list, "chars": chars.iter().collect::<String>(), "kern": kern, "drawn": drawn,
-                "faces": faces, "styles": ex.ex.style_count}),
-    )?;
-    let mut sections = Vec::new();
-    for s in doc["sections"].as_array().ok_or_else(|| Refused("sections".into()))? {
-        let mut o: Vec<(&'static str, V)> = Vec::new();
-        for (name, kind) in [
-            ("top", 'p'),
-            ("top_neg", 'b'),
-            ("header", 'p'),
-            ("bottom", 'p'),
-            ("bottom_neg", 'b'),
-            ("footer", 'p'),
-            ("title_page", 'b'),
-            ("start_type", 'r'),
-            ("new_page", 'b'),
-            ("page_number_start", 'r'),
-            ("stories", 's'),
-        ] {
-            let v = &s[name];
-            o.push((
-                name,
-                match kind {
-                    'p' => V::Len(Len::Px(q_of(v)?)),
-                    'b' => V::Bool(v.as_bool().unwrap_or(false)),
-                    'r' => V::Raw(v.to_string()),
-                    _ => {
-                        if v.is_null() {
-                            V::Null
-                        } else {
-                            let mut st = Vec::new();
-                            for x in v.as_array().ok_or_else(|| Refused("stories".into()))? {
-                                st.push((kind_name(x[0].as_str().unwrap_or("")), V::List(vec![V::Len(Len::Px(q_of(&x[1])?)), V::Len(Len::Px(q_of(&x[2])?))])));
-                            }
-                            V::Obj(st)
+
+    /// The first input: the items with the document's own (fonts, formats, sections,
+    /// constants), its denominators fixed for what follows.
+    fn first(&mut self, items: Vec<V>, r: &mut dyn Resolver) -> Result<String, Refused> {
+        let mut ex = Exporter::new(r, &mut self.caches);
+        let doc = ex.ask("document", &self_document_arg(&ex.c.ex, &self.units))?;
+        let mut sections = Vec::new();
+        for s in doc["sections"].as_array().ok_or_else(|| Refused("sections".into()))? {
+            sections.push(section_v(s)?);
+        }
+        let sections = V::List(sections);
+        let formats = formats_v(&ex.c.ex);
+        let items = V::List(items);
+        let mut d = Dens { px: doc["lu_den"].as_i64().unwrap_or(1) as i128, w: 1 };
+        dens(&sections, &mut d);
+        dens(&items, &mut d);
+        let px_den = d.px.lcm(&(96 * 20));
+        let w_den = d.w.lcm(&20);
+        let d = Dens { px: px_den, w: w_den };
+        let lu = q_of(&doc["lu"])? * Q::from_integer(px_den);
+        if !lu.is_integer() {
+            return refuse("the layout unit off the denominator");
+        }
+        let style_count = ex.c.ex.style_count;
+        let obj = V::Obj(vec![
+            ("compat", V::Raw(doc["compat"].to_string())),
+            ("even_odd", V::Bool(doc["even_odd"].as_bool().unwrap_or(false))),
+            ("dpi", V::Raw(doc["dpi"].to_string())),
+            ("styles", V::Int(style_count as i64)),
+            ("fonts", V::Raw(doc["fonts"].as_str().unwrap_or("[]").to_string())),
+            ("formats", formats),
+            ("sections", sections),
+            ("items", items),
+            ("constants", V::Raw(doc["constants"].as_str().unwrap_or("null").to_string())),
+            ("px_den", V::Int(px_den as i64)),
+            ("w_den", V::Int(w_den as i64)),
+            ("lu", V::Int(lu.to_integer() as i64)),
+        ]);
+        let mut out = String::with_capacity(1 << 20);
+        encode(&obj, &d, &mut out)?;
+        self.dens = (px_den, w_den);
+        let e = &self.caches.ex;
+        self.sent = (e.font_list.len(), e.chars.clone(), e.kern_fonts.clone(), e.format_list.len());
+        Ok(out)
+    }
+
+    /// The exporter's tables now: fonts, characters, kerned fonts, faces drawn, styles.
+    pub fn tables_json(&self) -> Value {
+        let e = &self.caches.ex;
+        let mut v = self_document_arg(e, &self.units);
+        let mut styles: Vec<(i64, Option<String>)> = e.styles.iter().map(|(k, v)| (*v, k.clone())).collect();
+        styles.sort();
+        v["style_names"] = json!(styles.iter().map(|(_, k)| k).collect::<Vec<_>>());
+        v["px_den"] = json!(self.dens.0 as i64);
+        v["w_den"] = json!(self.dens.1 as i64);
+        v["keys"] = json!(self.units.iter().map(|u| &u.key).collect::<Vec<_>>());
+        v
+    }
+
+    /// Re-reads a unit's XML (the root's namespaces declared around it).
+    fn node_of(&mut self, xml: &str) -> Result<Node, Refused> {
+        let mut wrapped = String::with_capacity(xml.len() + 512);
+        wrapped.push_str("<root");
+        for (p, uri) in &self.root_ns {
+            wrapped.push_str(" xmlns");
+            if !p.is_empty() {
+                wrapped.push(':');
+                wrapped.push_str(p);
+            }
+            wrapped.push_str("=\"");
+            wrapped.push_str(uri);
+            wrapped.push('"');
+        }
+        wrapped.push('>');
+        let offset = wrapped.len();
+        wrapped.push_str(xml);
+        wrapped.push_str("</root>");
+        let root = xml::parse(wrapped.as_bytes(), &mut self.reader.names).map_err(|e| Refused(e.to_string()))?;
+        let _ = offset;
+        root.children.into_iter().next().ok_or_else(|| Refused("an empty element".into()))
+    }
+
+    /// `Mirror.splice`: units `[lo, hi)` replaced by `elements` (new XML, or a unit kept),
+    /// the complex fields threaded through them, the units relabelled and the neighbours
+    /// made again; one commit (JSON) for the owner, `more` (a JSON object's text) added.
+    pub fn splice(&mut self, lo: usize, hi: usize, elements: Vec<Elem>, version: i64, more: Option<String>, r: &mut dyn Resolver) -> Result<(String, Stats), Refused> {
+        let t0 = std::time::Instant::now();
+        if lo > hi || hi > self.units.len() {
+            return refuse("a splice off the body");
+        }
+        let incoming = if lo < self.units.len() { self.units[lo].fields_before.clone() } else { self.fields_end.clone() };
+        let incoming_f = if lo < self.units.len() { self.units[lo].fstack_before.clone() } else { self.fstack_end.clone() };
+        let outgoing = if hi < self.units.len() { open_state(&self.units[hi].fields_before) } else { open_state(&self.fields_end) };
+        let outgoing_f = if hi < self.units.len() { self.units[hi].fstack_before.clone() } else { self.fstack_end.clone() };
+        let old: Vec<Unit> = self.units[lo..hi].to_vec();
+        let mut fields = Fields { stack: incoming, bookmarks: None };
+        let mut fstack = incoming_f;
+        let mut region: Vec<Unit> = Vec::new();
+        let mut pending = false;
+        for e in elements {
+            match e {
+                Elem::New(xml) => {
+                    let node = self.node_of(&xml)?;
+                    self.next_uid += 1;
+                    let u = self.reader.unit(&node, xml, self.next_uid, &mut fields, &mut fstack)?;
+                    pending |= u.pending;
+                    region.push(u);
+                }
+                Elem::Kept(i) => {
+                    let u = old.get(i.wrapping_sub(lo)).cloned().ok_or_else(|| Refused("a kept unit off the region".into()))?;
+                    let node = self.node_of(&u.xml)?;
+                    if open_state(&u.fields_before) == open_state(&fields.stack) {
+                        // kept: the fields threaded through it, its records' reading again
+                        let mut again = self.reader.unit(&node, u.xml.clone(), u.uid, &mut fields, &mut fstack)?;
+                        again.raw = u.raw.clone();
+                        again.block = u.block.clone();
+                        again.faces = u.faces.clone();
+                        region.push(again);
+                    } else {
+                        self.next_uid += 1;
+                        let again = self.reader.unit(&node, u.xml.clone(), self.next_uid, &mut fields, &mut fstack)?;
+                        pending |= again.pending;
+                        region.push(again);
+                    }
+                }
+            }
+        }
+        if open_state(&fields.stack) != outgoing {
+            return refuse("an edit changed the complex fields open after it");
+        }
+        if fstack != outgoing_f {
+            return refuse("an edit changed the fields open after it");
+        }
+        if hi == self.units.len() {
+            self.fields_end = fields.stack.clone();
+        }
+        // A REF showing a bookmark the region holds or held: every REF computed again.
+        let mut targets: HashSet<&String> = HashSet::new();
+        for (k, u) in self.units.iter().enumerate() {
+            if !(lo..hi).contains(&k) {
+                targets.extend(u.refs.iter());
+            }
+        }
+        let mut names: HashSet<String> = HashSet::new();
+        for u in old.iter().chain(region.iter()) {
+            for p in u.block.paragraphs() {
+                for (_, _, name, _) in &p.bookmarks {
+                    if let Some(n) = name {
+                        if !n.is_empty() {
+                            names.insert(n.clone());
                         }
                     }
-                },
-            ));
+                }
+            }
         }
-        sections.push(V::Obj(o));
+        let marks = !targets.is_empty() && targets.iter().any(|t| names.contains(*t));
+        let n_region = region.len();
+        let old_ids: Vec<u64> = old.iter().map(|u| u.uid).collect();
+        let new_ids: Vec<u64> = region.iter().map(|u| u.uid).collect();
+        self.units.splice(lo..hi, region);
+        self.check_keys()?;
+        // the runs of units that differ, in the new list's places
+        let mut runs: Vec<(usize, usize, usize)> = Vec::new();
+        let (mut i, mut j) = (0usize, 0usize);
+        let new_set: HashSet<u64> = new_ids.iter().copied().collect();
+        let old_set: HashSet<u64> = old_ids.iter().copied().collect();
+        while i < old_ids.len() || j < new_ids.len() {
+            if i < old_ids.len() && j < new_ids.len() && old_ids[i] == new_ids[j] {
+                i += 1;
+                j += 1;
+                continue;
+            }
+            let (ai, aj) = (i, j);
+            while i < old_ids.len() && !new_set.contains(&old_ids[i]) {
+                i += 1;
+            }
+            while j < new_ids.len() && !old_set.contains(&new_ids[j]) {
+                j += 1;
+            }
+            if (i, j) == (ai, aj) {
+                return refuse("units out of order");
+            }
+            runs.push((lo + aj, lo + j, i - ai));
+        }
+        let mut redo: HashSet<usize> = HashSet::new();
+        if pending || marks {
+            let (expanded, problems) = cross_references(&self.units)?;
+            if problems {
+                return refuse("cross reference problems");
+            }
+            let mut by: HashMap<usize, Block> = expanded.into_iter().collect();
+            for k in 0..self.units.len() {
+                let inside = lo <= k && k < lo + n_region;
+                let fresh = by.remove(&k);
+                if inside {
+                    if let Some(b) = fresh {
+                        self.units[k].block = b;
+                    } else if !self.units[k].refs.is_empty() || self.units[k].pending {
+                        self.units[k].block = self.units[k].raw.clone();
+                    }
+                } else if let Some(b) = fresh {
+                    if b != self.units[k].block {
+                        self.units[k].block = b;
+                        redo.insert(k);
+                    }
+                }
+            }
+        }
+        let t1 = std::time::Instant::now();
+        let relabelled = if runs.is_empty() { HashSet::new() } else { self.relabel(r)? };
+        let mut covered: HashSet<usize> = HashSet::new();
+        for (s, e, _) in &runs {
+            covered.extend(*s..*e);
+        }
+        let mut extra: HashSet<usize> = redo.clone();
+        for (s, e, _) in &runs {
+            if *s > 0 {
+                extra.insert(s - 1);
+            }
+            if *e < self.units.len() {
+                extra.insert(*e);
+            }
+        }
+        extra.extend(relabelled.iter().copied());
+        let mut splices: Vec<(usize, usize, usize)> = runs.clone();
+        for k in extra {
+            if !covered.contains(&k) {
+                splices.push((k, k + 1, 1));
+            }
+        }
+        splices.sort();
+        let mut out_splices = Vec::new();
+        let mut n_items = 0;
+        for (at, end, remove) in &splices {
+            let mut items = Vec::new();
+            for k in *at..*end {
+                items.push(self.unit_item(k, r)?);
+            }
+            n_items += items.len();
+            out_splices.push(V::Obj(vec![("at", V::Int(*at as i64)), ("remove", V::Int(*remove as i64)), ("items", V::List(items))]));
+        }
+        let mut obj: Vec<(&'static str, V)> = vec![("version", V::Int(version)), ("splices", V::List(out_splices))];
+        let mut text = String::new();
+        let d = Dens { px: self.dens.0, w: self.dens.1 };
+        // the members `more` adds, as written
+        let more_members = match &more {
+            Some(m) => {
+                let t = m.trim();
+                let inner = t.strip_prefix('{').and_then(|x| x.strip_suffix('}')).unwrap_or("").trim().to_string();
+                inner
+            }
+            None => String::new(),
+        };
+        let e = &self.caches.ex;
+        let fonts_changed = e.font_list.len() != self.sent.0 || e.chars != self.sent.1 || e.kern_fonts != self.sent.2;
+        let formats_changed = e.format_list.len() != self.sent.3;
+        let fonts_raw = if fonts_changed {
+            let arg = self_document_arg(e, &self.units);
+            let mut ex = Exporter::new(r, &mut self.caches);
+            Some(ex.ask_raw("fonts", &arg)?)
+        } else {
+            None
+        };
+        let e = &self.caches.ex;
+        if fonts_changed {
+            self.sent.0 = e.font_list.len();
+            self.sent.1 = e.chars.clone();
+            self.sent.2 = e.kern_fonts.clone();
+        }
+        let formats = if formats_changed {
+            self.sent.3 = e.format_list.len();
+            Some(formats_v(e))
+        } else {
+            None
+        };
+        // version, splices, then `more`, fonts, formats, in that order
+        text.push('{');
+        let head = V::Obj(std::mem::take(&mut obj));
+        let mut head_text = String::new();
+        encode(&head, &d, &mut head_text)?;
+        text.push_str(&head_text[1..head_text.len() - 1]);
+        if !more_members.is_empty() {
+            text.push(',');
+            text.push_str(&more_members);
+        }
+        if let Some(f) = fonts_raw {
+            text.push_str(",\"fonts\":");
+            text.push_str(&f);
+        }
+        if let Some(f) = formats {
+            text.push_str(",\"formats\":");
+            encode(&f, &d, &mut text)?;
+        }
+        text.push('}');
+        let t2 = std::time::Instant::now();
+        let stats = Stats {
+            items: n_items,
+            units: covered.len() + splices.len(),
+            calls: self.caches.calls.clone(),
+            parse_ms: (t1 - t0).as_secs_f64() * 1e3,
+            export_ms: (t2 - t1).as_secs_f64() * 1e3,
+        };
+        Ok((text, stats))
     }
-    let sections = V::List(sections);
-    let formats = V::List(
-        ex.ex
-            .format_list
+}
+
+fn root_declarations(src: &str) -> Vec<(String, String)> {
+    // the root's start tag: its xmlns attributes
+    let mut out = Vec::new();
+    let start = match src.find('<') {
+        Some(_) => {
+            let mut i = 0;
+            loop {
+                match src[i..].find('<') {
+                    Some(k) => {
+                        let at = i + k;
+                        if src[at..].starts_with("<?") || src[at..].starts_with("<!") {
+                            i = at + 2;
+                            continue;
+                        }
+                        break at;
+                    }
+                    None => return out,
+                }
+            }
+        }
+        None => return out,
+    };
+    let end = match src[start..].find('>') {
+        Some(e) => start + e,
+        None => return out,
+    };
+    let tag = &src[start..end];
+    let mut rest = tag;
+    while let Some(k) = rest.find("xmlns") {
+        rest = &rest[k + 5..];
+        let (prefix, after) = if let Some(r2) = rest.strip_prefix(':') {
+            let e = r2.find('=').unwrap_or(r2.len());
+            (r2[..e].trim().to_string(), &r2[e..])
+        } else {
+            (String::new(), rest)
+        };
+        let after = after.trim_start().strip_prefix('=').unwrap_or(after).trim_start();
+        let q = after.chars().next().unwrap_or('"');
+        let body = &after[1..];
+        let e = body.find(q).unwrap_or(body.len());
+        out.push((prefix, body[..e].to_string()));
+        rest = &body[e..];
+    }
+    out
+}
+
+fn self_document_arg(e: &Ex, units: &[Unit]) -> Value {
+    let font_list: Vec<Value> = e.font_list.iter().map(|(f, b, i)| json!([f, b, i])).collect();
+    let mut chars: Vec<char> = e.chars.iter().copied().collect();
+    chars.sort();
+    let mut kern: Vec<i64> = e.kern_fonts.iter().copied().collect();
+    kern.sort();
+    let mut drawn: Vec<Value> = e.drawn.iter().map(|(f, c)| json!([f, c.to_string()])).collect();
+    drawn.sort_by_key(|v| v.to_string());
+    let faces: Vec<&Vec<String>> = units.iter().map(|u| &u.faces).collect();
+    json!({"fonts": font_list, "chars": chars.iter().collect::<String>(), "kern": kern, "drawn": drawn,
+           "faces": faces, "styles": e.style_count})
+}
+
+fn formats_v(e: &Ex) -> V {
+    V::List(
+        e.format_list
             .iter()
-            .map(|(a, b, c, d, e)| {
+            .map(|(a, b, c, d, f)| {
                 V::List(vec![
                     V::Int(*a),
                     V::Int(*b),
                     V::Int(*c),
                     V::Int(*d),
-                    match e {
+                    match f {
                         Some((x, y)) => V::List(vec![V::Int(*x), V::Int(*y)]),
                         None => V::Null,
                     },
                 ])
             })
             .collect(),
-    );
-    let items = V::List(items);
-    let mut d = Dens { px: doc["lu_den"].as_i64().unwrap_or(1) as i128, w: 1 };
-    dens(&sections, &mut d);
-    dens(&items, &mut d);
-    let px_den = d.px.lcm(&(96 * 20));
-    let w_den = d.w.lcm(&20);
-    let d = Dens { px: px_den, w: w_den };
-    let lu = q_of(&doc["lu"])? * Q::from_integer(px_den);
-    if !lu.is_integer() {
-        return refuse("the layout unit off the denominator");
+    )
+}
+
+fn section_v(s: &Value) -> Result<V, Refused> {
+    let mut o: Vec<(&'static str, V)> = Vec::new();
+    for (name, kind) in [
+        ("top", 'p'),
+        ("top_neg", 'b'),
+        ("header", 'p'),
+        ("bottom", 'p'),
+        ("bottom_neg", 'b'),
+        ("footer", 'p'),
+        ("title_page", 'b'),
+        ("start_type", 'r'),
+        ("new_page", 'b'),
+        ("page_number_start", 'r'),
+        ("stories", 's'),
+    ] {
+        let v = &s[name];
+        o.push((
+            name,
+            match kind {
+                'p' => V::Len(Len::Px(q_of(v)?)),
+                'b' => V::Bool(v.as_bool().unwrap_or(false)),
+                'r' => V::Raw(v.to_string()),
+                _ => {
+                    if v.is_null() {
+                        V::Null
+                    } else {
+                        let mut st = Vec::new();
+                        for x in v.as_array().ok_or_else(|| Refused("stories".into()))? {
+                            st.push((kind_name(x[0].as_str().unwrap_or("")), V::List(vec![V::Len(Len::Px(q_of(&x[1])?)), V::Len(Len::Px(q_of(&x[2])?))])));
+                        }
+                        V::Obj(st)
+                    }
+                }
+            },
+        ));
     }
-    let n_items = match &items {
-        V::List(l) => l.len(),
-        _ => 0,
-    };
-    let obj = V::Obj(vec![
-        ("compat", V::Raw(doc["compat"].to_string())),
-        ("even_odd", V::Bool(doc["even_odd"].as_bool().unwrap_or(false))),
-        ("dpi", V::Raw(doc["dpi"].to_string())),
-        ("styles", V::Int(ex.ex.style_count as i64)),
-        ("fonts", V::Raw(doc["fonts"].as_str().unwrap_or("[]").to_string())),
-        ("formats", formats),
-        ("sections", sections),
-        ("items", items),
-        ("constants", V::Raw(doc["constants"].as_str().unwrap_or("null").to_string())),
-        ("px_den", V::Int(px_den as i64)),
-        ("w_den", V::Int(w_den as i64)),
-        ("lu", V::Int(lu.to_integer() as i64)),
-    ]);
-    let mut out = String::with_capacity(1 << 20);
-    encode(&obj, &d, &mut out)?;
-    let t3 = std::time::Instant::now();
-    let stats = Stats {
-        items: n_items,
-        calls: ex.calls.clone(),
-        parse_ms: (t1 - t0).as_secs_f64() * 1e3,
-        export_ms: (t3 - t1).as_secs_f64() * 1e3,
-    };
-    let _ = t2;
-    Ok((out, stats, body))
+    Ok(V::Obj(o))
 }
 
 fn kind_name(k: &str) -> &'static str {
@@ -2060,7 +2507,7 @@ fn table_item(
     k: usize,
     u: &Unit,
     t: &Table,
-    labels: &HashMap<*const Para, Option<String>>,
+    labels: &[Option<Option<String>>],
     rec: String,
 ) -> Result<V, Refused> {
     // every cell paragraph's measuring input but its geometry (the cell's width is not known
@@ -2080,6 +2527,7 @@ fn table_item(
     let _ = prev_info;
     // the measuring of each cell paragraph's words, for autofit: asked of the resolver per
     // paragraph text (it measures with docx2svg's pieces)
+    let mut flat = 0usize;
     for (r, row) in t.rows.iter().enumerate() {
         let mut cells = Vec::new();
         for (c, cell) in row.iter().enumerate() {
@@ -2090,7 +2538,8 @@ fn table_item(
                 if info.b("refused") {
                     return refuse(info.v["why"].as_str().unwrap_or("refused").to_string());
                 }
-                let label = labels.get(&(p as *const Para)).cloned();
+                let label = labels.get(flat).cloned().flatten();
+                flat += 1;
                 let m = ex.measure(p, label.as_ref(), &info, V::Null)?;
                 ext.push(p);
                 paras.push((m, info));
@@ -2138,9 +2587,9 @@ fn table_item(
                 if first_style.is_none() {
                     first_style = Some(p.style_id.clone());
                 }
-                let style = ex.ex.style(p.style_id.as_deref());
+                let style = ex.c.ex.style(p.style_id.as_deref());
                 let eff = info.v["eff_style"].as_str().map(str::to_string);
-                let effective = ex.ex.style(eff.as_deref());
+                let effective = ex.c.ex.style(eff.as_deref());
                 let widow = &info.v["widow"];
                 paras.push(V::Obj(vec![
                     ("block", V::Int(0)),
@@ -2189,10 +2638,10 @@ fn table_item(
         ]));
     }
     let previous_style = previous.map(|p| ex.para(p)).transpose()?.and_then(|i| i.v["eff_style"].as_str().map(str::to_string));
-    let ps = ex.ex.style(previous_style.as_deref());
-    let ds = ex.ex.style(v["default_style"].as_str());
+    let ps = ex.c.ex.style(previous_style.as_deref());
+    let ds = ex.c.ex.style(v["default_style"].as_str());
     let fs = match &first_style {
-        Some(s) => ex.ex.style(s.as_deref()),
+        Some(s) => ex.c.ex.style(s.as_deref()),
         None => -2,
     };
     Ok(V::Obj(vec![
