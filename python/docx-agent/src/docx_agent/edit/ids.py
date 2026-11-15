@@ -232,6 +232,189 @@ class PartIndex:
         return {entry.raw.upper() for entry in self.paragraphs if entry.raw}
 
 
+_BODY_BLOCKS = frozenset({W_P, W_TBL, _W + "sdt", _W + "customXml"})
+_P_START = re.compile(rb"<w:p(?=[\s/>])")
+_TBL_START = re.compile(rb"<w:tbl(?=[\s/>])")
+_FALLBACK_BYTES = re.compile(rb"<mc:Fallback(?=[\s>]).*?</mc:Fallback>", re.S)
+
+
+def _span_counts(data: bytes, begin: int, end: int) -> tuple[int, int]:
+    """The paragraphs and tables (not under ``mc:Fallback``) in ``data[begin:end]``."""
+    piece = data[begin:end]
+    if b"<mc:Fallback" in piece:
+        piece = _FALLBACK_BYTES.sub(b"", piece)
+    return len(_P_START.findall(piece)), len(_TBL_START.findall(piece))
+
+
+class IndexBase:
+    """What :func:`body_index` builds the body's next index from (0.1.116): an index, the
+    main part's bytes it was built from, the body's top-level blocks then (elements, spans,
+    their paragraphs' and tables' counts), and the paraIds' counts (upper case)."""
+
+    def __init__(self, index: "PartIndex", data: bytes, tops: list, spans: list, counts: list,
+                 keys: Counter, body: tuple[int, int]) -> None:
+        self.index, self.data, self.tops, self.spans, self.counts = index, data, tops, spans, counts
+        self.keys, self.body = keys, body
+
+
+def _plain(index: "PartIndex") -> bool:
+    """Whether an index's ids depend on no place: every paragraph's, table's and row's id
+    its own paraId's, none repeated (what follows the first edit's stamping)."""
+    return all(e.state == "ok" for e in index.paragraphs) and all(
+        t.id.startswith("t:") and all(rid.startswith("tr:") for _, rid in t.rows) for t in index.tables)
+
+
+def body_index(root: Element, data: bytes, base: "IndexBase | None") -> "tuple[PartIndex, IndexBase | None]":
+    """The body's :class:`PartIndex` (story ``body``) of the tree ``root`` whose part's bytes
+    are ``data``, made from ``base`` (the index of an earlier state of the same tree) where
+    only some top-level blocks changed: the entries of the blocks before and after them
+    kept (the later ones' places moved), those of the changed blocks made -- the same index,
+    in time proportional to the change.  The whole index where that cannot be said so."""
+    from ..revalidate import _scan
+    from ..tools.touched import _blocks, _common_prefix, _common_suffix
+
+    body_element = root.find(_W + "body")
+    tops = [child for child in body_element if child.tag in _BODY_BLOCKS] if body_element is not None else []
+    made = None
+    if base is not None and base.data is not data:
+        made = _index_from(root, data, base, tops, _blocks, _common_prefix, _common_suffix)
+    elif base is not None and base.data is data and base.tops == tops:
+        made = (base.index, base)
+    if made is not None:
+        from .. import incremental
+
+        incremental.STATS["body index: per change"] += 1
+        return made
+    index = PartIndex("body", root)
+    found = _scan(data) if _plain(index) else None
+    if found is None or len(found[0]) != len(tops):
+        return index, None
+    spans, body, _ = found
+    counts = [_span_counts(data, a, b) for a, b in spans]
+    if sum(c[0] for c in counts) != len(index.paragraphs) or sum(c[1] for c in counts) != len(index.tables):
+        return index, None
+    keys = Counter(e.raw.upper() for e in index.paragraphs)
+    keys.update(rid.rpartition("tr:")[2].upper() for t in index.tables for _, rid in t.rows)
+    return index, IndexBase(index, data, tops, list(spans), counts, keys, body)
+
+
+def _index_from(root, data, base, tops, _blocks, _common_prefix, _common_suffix):
+    old = base.data
+    prefix = _common_prefix(old, data)
+    suffix = _common_suffix(old, data, min(len(old), len(data)) - prefix)
+    body_at, body_end = base.body
+    if prefix < body_at or len(old) - suffix > body_end:
+        return None
+    spans = base.spans
+    n_old = len(spans)
+    before = 0
+    while before < n_old and spans[before][1] <= prefix:
+        before += 1
+    after = 0
+    while after < n_old - before and spans[n_old - 1 - after][0] >= len(old) - suffix:
+        after += 1
+    delta = len(data) - len(old)
+    begin = spans[before - 1][1] if before else body_at
+    stop = spans[n_old - after][0] + delta if after else body_end + delta
+    middle = _blocks(data, begin, stop)
+    if middle is None or len(tops) != before + len(middle) + after:
+        return None
+    if tops[:before] != base.tops[:before] or tops[len(tops) - after:] != base.tops[n_old - after:]:
+        return None                        # the kept blocks are not the same elements
+    counts = [_span_counts(data, a, b) for a, b in middle]
+    region = _span_counts(data, begin, stop)
+    if region != (sum(c[0] for c in counts), sum(c[1] for c in counts)):
+        return None
+    old_index = base.index
+    p_before = sum(c[0] for c in base.counts[:before])
+    p_gone = sum(c[0] for c in base.counts[before:n_old - after])
+    t_before = sum(c[1] for c in base.counts[:before])
+    t_gone = sum(c[1] for c in base.counts[before:n_old - after])
+    # The changed blocks' entries, as PartIndex reads them.
+    everything = []
+    for top in tops[before:before + len(middle)]:
+        found = [node for node in top.iter(W_P, W_TR, W_TBL)]
+        fallbacks = [node for node in top.iter(MC_FALLBACK)]
+        if fallbacks:
+            hidden = {node for fallback in fallbacks for node in fallback.iter(W_P, W_TR, W_TBL)}
+            found = [node for node in found if node not in hidden]
+        everything += found
+    tags = [node.tag for node in everything]
+    raws = [None if tag == W_TBL else node.get(PARA_ID) for node, tag in zip(everything, tags)]
+    if any(raw is None for raw, tag in zip(raws, tags) if tag != W_TBL):
+        return None                        # a paragraph or row without a paraId: placed ids
+    keys = base.keys.copy()
+    for entry in old_index.paragraphs[p_before:p_before + p_gone]:
+        keys[entry.raw.upper()] -= 1
+    for table in old_index.tables[t_before:t_before + t_gone]:
+        for _, rid in table.rows:
+            keys[rid.rpartition("tr:")[2].upper()] -= 1
+    new_keys = [raw.upper() for raw in raws if raw is not None]
+    keys.update(new_keys)
+    if any(keys[k] > 1 for k in new_keys):
+        return None                        # a paraId written twice: repeats are placed
+    paragraphs: list[ParagraphEntry] = []
+    ok = _VALID_LONG_HEX.fullmatch
+    for node, tag, raw in zip(everything, tags, raws):
+        if tag == W_P:
+            if ok(raw) is None:
+                return None
+            paragraphs.append(ParagraphEntry(node, "p:" + raw, raw, "ok", p_before + len(paragraphs)))
+    tables: list[TableEntry] = []
+    for node in (n for n, tag in zip(everything, tags) if tag == W_TBL):
+        rows = [row for row in live_elements(node, frozenset({W_TR})) if _owner_table(row) is node]
+        first = rows[0].get(PARA_ID) if rows else None
+        if first is None or not valid_long_hex(first):
+            return None
+        entry_t = TableEntry(node, f"t:{first}")
+        for row in rows:
+            raw = row.get(PARA_ID)
+            if raw is None or not valid_long_hex(raw):
+                return None
+            entry_t.rows.append((row, f"tr:{raw}"))
+        tables.append(entry_t)
+    if len(paragraphs) != sum(c[0] for c in counts) or len(tables) != sum(c[1] for c in counts):
+        return None
+    index = PartIndex.__new__(PartIndex)
+    index.story, index.root = "body", root
+    gone_p = old_index.paragraphs[p_before:p_before + p_gone]
+    gone_t = old_index.tables[t_before:t_before + t_gone]
+    shift = len(paragraphs) - p_gone
+    rest = old_index.paragraphs[p_before + p_gone:]
+    if shift:
+        for entry in rest:
+            entry.index += shift
+    index.paragraphs = old_index.paragraphs[:p_before] + paragraphs + rest
+    index.tables = old_index.tables[:t_before] + tables + old_index.tables[t_before + t_gone:]
+    by_id = dict(old_index.by_id)
+    by_element = dict(old_index._by_element)
+    for entry in gone_p:
+        by_id.pop(entry.id, None)
+        by_element.pop(id(entry.element), None)
+    for entry_t in gone_t:
+        by_id.pop(entry_t.id, None)
+        by_element.pop(id(entry_t.element), None)
+    for entry in paragraphs:
+        by_id[entry.id] = entry
+        by_element[id(entry.element)] = entry
+    for entry_t in tables:
+        by_id[entry_t.id] = entry_t
+        by_element[id(entry_t.element)] = entry_t
+    index.by_id, index._by_element = by_id, by_element
+    new_spans = spans[:before] + middle + [(s + delta, e + delta) for s, e in spans[n_old - after:]]
+    new_counts = base.counts[:before] + counts + base.counts[n_old - after:]
+    return index, IndexBase(index, data, tops, new_spans, new_counts, +keys, (body_at, body_end + delta))
+
+
+def same_index(a: "PartIndex", b: "PartIndex") -> bool:
+    """Whether two indexes name the same elements the same way (the oracle's test)."""
+    return ([(e.element, e.id, e.raw, e.state, e.index) for e in a.paragraphs]
+            == [(e.element, e.id, e.raw, e.state, e.index) for e in b.paragraphs]
+            and [(t.element, t.id, t.rows) for t in a.tables] == [(t.element, t.id, t.rows) for t in b.tables]
+            and {k: v.element for k, v in a.by_id.items()} == {k: v.element for k, v in b.by_id.items()}
+            and {k: v.element for k, v in a._by_element.items()} == {k: v.element for k, v in b._by_element.items()})
+
+
 def _owner_table(row: Element) -> Element | None:
     node = row.getparent()
     while node is not None and node.tag != W_TBL:

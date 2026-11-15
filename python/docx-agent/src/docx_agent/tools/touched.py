@@ -104,6 +104,9 @@ def body_sections(document: Any, before: bytes | None, after: bytes | None, *,
     # when the version is committed (docx_agent.rust.check.committed).
     history = getattr(document, "history", None)
     document.__dict__["_body_summary"] = (getattr(history, "version", None), new)
+    # 0.1.116: and the edits made by then (Document._state): the body's index is made from
+    # these bytes while no edit has been made since (Document._index).
+    document.__dict__["_body_summary_state"] = getattr(document, "_state", None)
     changed: set[int] = set()
     matcher = difflib.SequenceMatcher(None, old.digests, new.digests, autojunk=False)
     for tag, _i1, _i2, j1, j2 in matcher.get_opcodes():

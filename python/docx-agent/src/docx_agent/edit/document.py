@@ -1162,7 +1162,26 @@ class Document(TrackingOps, RevisionOps, TextOps, FormatOps, ListOps, LinkOps, P
             root = self.package.tree(part)
             if root is None:
                 raise KeyError(f"part {part} is missing")
-            index = PartIndex(self._story_of(part), root)
+            data = None
+            if _incremental.enabled() and part == self.package.document_part() and self._story_of(part) == "body":
+                # 0.1.116: the version's bytes, where they are written out already (the
+                # history keeps them until the next change): the body's index made from the
+                # last one where only some blocks changed.
+                data = getattr(self.package, "_serialized", {}).get(part)
+                held = self.__dict__.get("_body_summary")
+                if data is None and held is not None and held[0] == self.history.version and \
+                        part in self.package.dirty_parts and self.__dict__.get("_body_summary_state") == self._state:
+                    # (the version's body as the tool layer read it after the call that made
+                    # it: the Rust owner's change sets read the same, docx_agent.rust.check)
+                    data = held[1].data
+            if data is not None:
+                index, base = _ids.body_index(root, data, self.__dict__.get("_index_base"))
+                self.__dict__["_index_base"] = base
+                _incremental.STATS["body index: " + ("made" if base is not None else "whole")] += 1
+                if _incremental.verifying() and not _ids.same_index(index, PartIndex("body", root)):
+                    raise _incremental.Mismatch("body index: the index made per change differs")
+            else:
+                index = PartIndex(self._story_of(part), root)
             self._indexes[part] = index
         return index
 
