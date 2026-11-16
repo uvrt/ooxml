@@ -505,8 +505,8 @@ unsafe fn walk(d: &mut Digest, top: *const XmlNode, with_top: bool) -> bool {
 /// every one of them, so none is freed while it is kept), its kind, its `w14:paraId`, and a
 /// row's table (the nearest table above it).  Equal digests: the walk an index was made
 /// from, unchanged (`docx_agent.edit.ids.same_walk`).  A body's children are walked side by
-/// side, each to a digest of its own, joined in order.  `None` where a paraId is not plain
-/// text.
+/// side, their records joined in order and hashed as one.  `None` where a paraId is not
+/// plain text.
 #[pyfunction]
 pub fn index_walk<'py>(root: &Bound<'py, PyAny>) -> PyResult<Option<Bound<'py, PyBytes>>> {
     let py = root.py();
@@ -534,28 +534,28 @@ pub fn index_walk<'py>(root: &Bound<'py, PyAny>) -> PyResult<Option<Bound<'py, P
                 firsts.push(node as usize);
                 node = (*node).next;
             }
-            let found: Vec<Option<[u8; 16]>> = py.detach(|| {
+            // Each child's records walked side by side, then hashed in order as one stream:
+            // the digest of the walk in document order, whatever the children holding it.
+            let found: Vec<Option<Vec<u8>>> = py.detach(|| {
                 use rayon::prelude::*;
                 firsts
                     .par_iter()
                     .map(|&first| {
                         let mut part = Digest::new();
                         if walk(&mut part, first as *const XmlNode, true) {
-                            Some(part.finish())
+                            Some(part.buf)
                         } else {
                             None
                         }
                     })
                     .collect()
             });
-            d.tag(9);
-            for digest in found {
-                match digest {
-                    Some(digest) => d.buf.extend_from_slice(&digest),
+            for records in found {
+                match records {
+                    Some(records) => d.buf.extend_from_slice(&records),
                     None => return Ok(None),
                 }
             }
-            d.tag(10);
             child = (*child).next;
         }
     }
