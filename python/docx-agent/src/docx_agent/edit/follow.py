@@ -152,6 +152,10 @@ class _Styles:
             return None
 
 
+class _Preview(Exception):
+    """Raised inside :func:`follow`'s batch to roll a preview back."""
+
+
 def follow(document: "Document", sample: str, copies: list[str], *,
            sample_document: "Document | None" = None, preview: bool = False,
            report: str = "all") -> tuple[Any, dict]:
@@ -192,9 +196,6 @@ def follow(document: "Document", sample: str, copies: list[str], *,
     tracking = document._active_tracking()
     reports: list[dict] = []
     warnings: list[str] = list(dict.fromkeys(notes))
-
-    class _Preview(Exception):
-        pass
 
     def run() -> dict[str, str]:
         targets = []

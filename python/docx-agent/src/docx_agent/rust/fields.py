@@ -247,6 +247,16 @@ class following:
             STATS["stale: a fields update that failed"] += 1
 
 
+class _Reading:
+    """What :func:`docx_agent.rust.check.open_doc` reads of a call: the committed version's
+    read copy (``document``) and its entry."""
+
+    __slots__ = ("document", "entry")
+
+    def __init__(self, document: Any, entry: Any) -> None:
+        self.document, self.entry = document, entry
+
+
 def ahead(call: Any) -> bool:
     """``word_fields`` update's work ahead of its change: whether the update will be read
     from the document's owner (nothing laid out ahead in Python then).  A document with no
@@ -259,11 +269,7 @@ def ahead(call: Any) -> bool:
 
         reader = call.entry.reader() if core() is not None and call.entry is not None else None
         if reader is not None:
-            class _Reading:
-                pass
-
-            shim = _Reading()
-            shim.document, shim.entry = reader.document, reader   # type: ignore[attr-defined]
+            shim = _Reading(reader.document, reader)
             with call.unlocked():
                 try:
                     open_doc(shim)
