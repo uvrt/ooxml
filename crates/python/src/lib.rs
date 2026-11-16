@@ -370,6 +370,11 @@ impl Parser {
         })
     }
 
+    /// Lane J: of `names`, those the units' text is measured in, in the order first named.
+    fn faces_first(&self, py: Python<'_>, names: Vec<String>) -> Vec<String> {
+        self.held(py).faces_first(&names)
+    }
+
     /// The exporter's tables and the units' keys and faces (JSON).
     fn tables(&self, py: Python<'_>) -> String {
         self.held(py).tables_json().to_string()

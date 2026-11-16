@@ -18,6 +18,9 @@ ooxml-core is the Rust core of the ooxml packages (`crates/`), as the Python mod
 - **`ooxml_core.index_walk(root)`**: a digest of what docx-agent's index of a story reads --
   every paragraph, row and table not under `mc:Fallback`, by node, kind, `w14:paraId` and
   a row's table -- for telling the index unchanged without a walk in Python.
+- **`Parser.faces_first(names)`**: of `names`, the faces the units' text is measured in, in
+  the order the units first name them -- what a check says of the substituted faces, kept
+  per state by docx-agent 0.1.120 without making the exporter's tables whole.
 
 ## 0.6.0 -- unreleased
 

@@ -941,6 +941,13 @@ def _in_layout_order(mirror: Any, substitutions: dict) -> list:
     body's in the order its blocks first name them, then the rest (the headers' and
     footers') as the mirror met them."""
     left = dict(substitutions)
+    if not left:
+        return []
+    first = getattr(getattr(mirror, "parser", None), "faces_first", None) if getattr(mirror, "rust", False) else None
+    if first is not None:
+        # (lane J: found by the parser, not from the exporter's tables made whole)
+        out = [left.pop(face) for face in first(list(left))]
+        return out + list(left.values())
     out = []
     listed = mirror.faces_list() if getattr(mirror, "rust", False) else [unit.faces for unit in mirror.units]
     for faces in listed:
@@ -965,12 +972,15 @@ def _faces_state(mirror: Any) -> tuple:
     # face draws the character (docx2svg's layout records only those), or for a character
     # the body does not hold (a header's).  One such is said as docx2svg says it; several
     # would be said in the order the layout met them, which is not known here.
-    chars, drawn = mirror.ex.chars, mirror.ex.drawn
-    real = [(family, char, used) for (family, char), used in
-            list((getattr(fonts, "glyph_fallbacks", None) or {}).items())
-            if char not in chars or (family, char) in drawn]
-    if len(real) > 1 or any(char not in chars for _, char, _ in real):
-        return ("glyphs measured with other faces", [], [], [])
+    fallbacks = list((getattr(fonts, "glyph_fallbacks", None) or {}).items())
+    real: list = []
+    if fallbacks:
+        # (the exporter's tables read only where a glyph fell back: most states have none)
+        chars, drawn = mirror.ex.chars, mirror.ex.drawn
+        real = [(family, char, used) for (family, char), used in fallbacks
+                if char not in chars or (family, char) in drawn]
+        if len(real) > 1 or any(char not in chars for _, char, _ in real):
+            return ("glyphs measured with other faces", [], [], [])
     substitutions = _in_layout_order(mirror, dict(getattr(fonts, "substitutions", None) or {}))
     return (None, real, substitutions, list(mirror.d2.warnings))
 
