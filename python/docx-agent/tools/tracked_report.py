@@ -11,7 +11,7 @@ the ``TableGrid`` style.  Revisions from four authors: inserted and deleted runs
 paragraph formatting changes in the body and in table cells, and a tracked row in some tables;
 a comment on one paragraph of each section.  With ``--accepted`` the same words with every
 revision accepted and no comments.  Words, authors and dates are made up; the output is the
-same for the same arguments.  About 350 pages at the default 44 chapters (eight a chapter) (A4, Calibri 11).
+same for the same arguments.  About 340 pages at the default 44 chapters (A4, Calibri 11).
 """
 
 from __future__ import annotations

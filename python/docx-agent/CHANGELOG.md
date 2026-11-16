@@ -16,8 +16,8 @@ revisions, 264 comments) with `tools/tracked_report_bench.py`.
   `word_follow_sample`, a cell's formatting, keeps) read and compared every paragraph and run
   of the main part, once per target: 12 cells styled took 84 s, a batch of six table ops
   155 s. It now reads only the elements it formats (`_track_properties(within=...)`); the
-  bytes are the same edit for edit (tested against the whole-part reading). 12 cells: 1.4 s
-  (of which the result's table read-back and checks most).
+  bytes are the same edit for edit (tested against the whole-part reading). Alone, on the
+  same report: 12 cells 1.4-1.9 s, the batch of six 5.0-5.5 s.
 - **A revision's id and its author's listing find the annotations through lxml** (`iter` by
   tag), not every element of every story in Python: once per tracked step.
 - **`describe` of a long document no longer reads its whole layout here.** Its page count
