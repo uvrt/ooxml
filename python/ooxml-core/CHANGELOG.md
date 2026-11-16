@@ -10,7 +10,8 @@ ooxml-core is the Rust core of the ooxml packages (`crates/`), as the Python mod
   found from them (`advance`: the bytes alike at the start and the end, the blocks kept on
   either side, only the stretch between read again) -- docx-agent's `_scan`, `_blocks`,
   `_rescan` and `_kept_counts`, step for step. A step is kept by the version it starts
-  from, so every pass of the next version takes the same one. Each block's paragraph,
+  from (weakly: a version's reading keeps no later version alive), so every pass of the
+  next version takes the same one. Each block's paragraph,
   table and row counts (`counts`, `count_sum`, `stretch_counts`), and whether two
   versions' bytes outside the blocks are the same (`same_gaps`). The work is done with the
   interpreter lock let go; no Python object is made per block.

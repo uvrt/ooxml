@@ -10,7 +10,7 @@
 //! version to the next is made once and kept (`advance`), so each pass after the first
 //! takes it as it is.  The work is done with the interpreter lock let go.
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyList, PySlice, PyTuple};
+use pyo3::types::{PyBytes, PyList, PySlice, PyTuple, PyWeakrefMethods, PyWeakrefReference};
 use std::sync::{Arc, Mutex};
 
 /// The blocks' tags: `<w:p`, `<w:tbl`, `<w:sdt`, `<w:customXml`, `<w:body` (and their end
@@ -249,9 +249,11 @@ fn gaps<'a>(data: &'a [u8], spans: &'a [(usize, usize)], body: (usize, usize)) -
 
 /// One step from a version's blocks to the next's.
 struct Step {
-    /// The next version's bytes (held: the step is found by them).
-    data: Py<PyBytes>,
-    next: Py<BodySpans>,
+    /// The next version's bytes, by their address (the reading below holds them while it
+    /// lives), and that reading, held weakly: a version's reading keeps no later version
+    /// alive (a pass that keeps an old reading would keep every version after it).
+    data: usize,
+    next: Py<PyWeakrefReference>,
     before: usize,
     after: usize,
     begin: usize,
@@ -260,7 +262,7 @@ struct Step {
 
 /// A version of a body: its part's bytes, its top-level blocks' spans in them, the body's
 /// content span and where the root's start tag ends.
-#[pyclass(frozen, module = "ooxml_core")]
+#[pyclass(frozen, weakref, module = "ooxml_core")]
 pub struct BodySpans {
     data: Py<PyBytes>,
     spans: Arc<Vec<(usize, usize)>>,
@@ -329,14 +331,15 @@ impl BodySpans {
         {
             let steps = me.steps.lock().unwrap_or_else(|e| e.into_inner());
             for step in steps.iter() {
-                if step.data.as_ptr() == data.as_ptr() {
-                    return Ok(Some((
-                        step.next.clone_ref(py),
-                        step.before,
-                        step.after,
-                        step.begin,
-                        step.stop,
-                    )));
+                if step.data != data.as_ptr() as usize {
+                    continue;
+                }
+                if let Some(next) = step.next.bind(py).upgrade() {
+                    if let Ok(next) = next.cast_into::<BodySpans>() {
+                        if next.get().data.as_ptr() == data.as_ptr() {
+                            return Ok(Some((next.unbind(), step.before, step.after, step.begin, step.stop)));
+                        }
+                    }
                 }
             }
         }
@@ -391,8 +394,8 @@ impl BodySpans {
         )?;
         let mut steps = me.steps.lock().unwrap_or_else(|e| e.into_inner());
         steps.push(Step {
-            data: data.unbind(),
-            next: next.clone_ref(py),
+            data: data.as_ptr() as usize,
+            next: PyWeakrefReference::new(next.bind(py))?.unbind(),
             before,
             after,
             begin,
