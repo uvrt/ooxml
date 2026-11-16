@@ -245,7 +245,6 @@ def main() -> None:
             took = time.perf_counter() - w
             wait, hold = timed.take()
             j = result.to_json()
-            data = j.get("data") if isinstance(j.get("data"), dict) else {}
             row = {"who": who, "kind": kind, "at": round(w - t0, 2), "wall": round(took, 3),
                    "cpu": round(time.thread_time() - c, 3), "wait": round(wait, 3), "hold": round(hold, 3),
                    "ok": j.get("ok", True),
