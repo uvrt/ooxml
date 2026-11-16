@@ -1,0 +1,7 @@
+# Thresholds of the architecture's standards (docs/architecture/README.md, section 2).
+too-many-lines-threshold = 80
+too-many-arguments-threshold = 7
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+allow-indexing-slicing-in-tests = true
