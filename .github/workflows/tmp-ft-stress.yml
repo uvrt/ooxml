@@ -15,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        code: [branch, main]
+        code: [branch]
         python: ["3.15t", "3.14t"]
     steps:
       - uses: actions/checkout@v4
@@ -45,7 +45,7 @@ jobs:
         run: |
           mkdir -p work && cd work
           python -c "import sys; print('gil', sys._is_gil_enabled())"
-          python /tmp/stress/loop.py /tmp/stress 1,2,3,4,5 2700
+          python /tmp/stress/loop.py /tmp/stress 3 2700
       - uses: actions/upload-artifact@v4
         if: always()
         with:
