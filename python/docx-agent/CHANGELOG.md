@@ -16,11 +16,21 @@ snapshot commit; the development history before it is summarised here.
   into the new row looks like the rows around it -- before, it came out in the document's
   default font where the table's text was formatted run by run (the cells' marks bare).
   `tools/row_format_probe.py`, `tests/observations/row-format-word.json`.
-- Text written into a cell that is already empty takes that cell's paragraph mark, as Word
-  types into an empty cell (measured: the document default where the mark has no
-  formatting of its own, not the column's). Where that, or anything else written, leaves a
-  row unlike the rows around it, `word_edit_table` warns, naming the row and the
-  `word_format` call that makes it match.
+- **Text written into an empty cell takes its column's formatting** (a departure from
+  Word, on the writers' ask). Where `set_cells` (or `sync`, `grow`) writes into a cell that
+  was empty with an unformatted paragraph mark, and the same column's text in the nearest
+  rows above and below that the session did not write agree on a font, size or colour
+  other than what the text got, the text takes that cell's formatting (a copy of its first
+  run's), and the result says which and from which row: "t:…/c3,0: written in its column's
+  formatting, row 2's (Arial 8 pt colour 1F4E79); Word would give it the document default
+  (Calibri 11 pt colour auto)". Word itself types into such a cell in the document default
+  (measured). The rows taken from follow `row_text_format`'s rule below (header and total
+  rows, columns whose rows above and below differ, banded looks and empty cells left out);
+  where they do not agree, the text keeps the default. Tracked, the formatting is part of
+  the insertion. Before, such text came out in the document's default font.
+- Where text written still leaves a row unlike the rows around it (a row whose own runs
+  carry other formatting, kept by `set_cells`), `word_edit_table` warns, naming the row and
+  the `word_format` call that makes it match.
 - **`check` says a row that looks unlike its table:** `layout`'s new `row_text_format` lists
   each table row this session added or wrote into whose text is in another font, size or
   colour than the same column's text in the nearest rows above and below that the session

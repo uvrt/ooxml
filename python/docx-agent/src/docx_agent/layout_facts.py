@@ -1834,10 +1834,12 @@ def row_text_format(document: "Document", written: "set[str] | frozenset[str]", 
 _PARA_ID = "{http://schemas.microsoft.com/office/word/2010/wordml}paraId"
 
 
-def rows_unlike(document: "Document", table_id: str, element: Any, rows: list, marked: list[bool]
-                ) -> list[dict[str, Any]]:
+def rows_unlike(document: "Document", table_id: str, element: Any, rows: list, marked: list[bool], *,
+                sources: bool = False) -> list[dict[str, Any]]:
     """:func:`row_text_format`'s entries for one table: ``rows`` its own rows, ``marked``
-    which of them the session wrote."""
+    which of them the session wrote.  ``sources`` (round 58, the fallback of
+    ``word_edit_table``): each cell also says, as ``"_from"``, the row its ``around`` was
+    read from (the one above where there is one)."""
     from .edit.table_format import read_look
     from .edit.tables import _cells as _spans
 
@@ -1870,8 +1872,9 @@ def rows_unlike(document: "Document", table_id: str, element: Any, rows: list, m
         for (start, span), has in row_looks(r).items():
             if has is None:
                 continue
-            around = [row_looks(i).get((start, span)) for i in (above, below) if i is not None]
-            around = [a for a in around if a is not None]
+            seen = [(i, row_looks(i).get((start, span))) for i in (above, below) if i is not None]
+            seen = [(i, a) for i, a in seen if a is not None]
+            around = [a for _, a in seen]
             if not around or (len(around) == 2 and around[0] != around[1]):
                 continue
             nearby = range(max(0, r - _ROW_WINDOW), min(len(rows), r + _ROW_WINDOW + 1))
@@ -1884,6 +1887,8 @@ def rows_unlike(document: "Document", table_id: str, element: Any, rows: list, m
             cell_id = f"{table_id}/c{r},{start}"
             cells.append({"cell": cell_id, "has": {_ROW_LOOK[k][1]: has[k] for k in differs},
                           "around": {_ROW_LOOK[k][1]: expected[k] for k in differs}})
+            if sources:
+                cells[-1]["_from"] = seen[0][0]
             values = tuple((_ROW_LOOK[k][2], expected[k]) for k in differs)
             wanted.setdefault(values, []).append(cell_id)
         if cells:

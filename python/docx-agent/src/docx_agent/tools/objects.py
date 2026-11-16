@@ -6,6 +6,7 @@ controls (``word_controls``)."""
 
 from __future__ import annotations
 
+import copy
 import json
 import re
 import time
@@ -831,8 +832,10 @@ def _rows_written(document: Any, before: tuple[Any, list[tuple[Any, str]]]) -> l
     if entry is None:
         return []
     marked = [r in now or row.get(_PARA_ID) in written for r, row in enumerate(rows)]
-    unlike = [e for e in rows_unlike(document, entry.id, element, rows, marked) if e["row"] in now]
-    out = []
+    unlike = [e for e in rows_unlike(document, entry.id, element, rows, marked, sources=True) if e["row"] in now]
+    out = _like_the_column(document, rows, unlike)
+    if out:
+        unlike = [e for e in rows_unlike(document, entry.id, element, rows, marked) if e["row"] in now]
     for found in unlike[:_ROWS_SAID]:
         has = {key: value for cell in found["cells"] for key, value in cell["has"].items()}
         around = {key: value for cell in found["cells"] for key, value in cell["around"].items()}
@@ -842,6 +845,62 @@ def _rows_written(document: Any, before: tuple[Any, list[tuple[Any, str]]]) -> l
         out.append(f"{len(unlike) - _ROWS_SAID} more rows unlike the rows around them: check's row_text_format "
                    "lists them")
     return out
+
+
+def _like_the_column(document: Any, rows: list, unlike: list[dict[str, Any]]) -> list[str]:
+    """Round 58 (R126 b; the team's ask, a departure from Word): text a call wrote into a
+    cell that was empty with a bare paragraph mark -- the cell's mark and its text's runs
+    with no run formatting of their own, so the document default -- takes the formatting
+    of the same column's text in the rows around it where they agree
+    (:func:`~docx_agent.layout_facts.rows_unlike`'s rule: header and total rows, columns
+    whose rows above and below differ, banded looks and empty cells left out): each run's
+    properties become a copy of that cell's first run of text's.  Word gives such text the
+    document default (measured, ``tools/row_format_probe.py``, ``Empty``).  What it did,
+    said per cell; inside the call's own undo step."""
+    from ..edit.tables import _cells as _spans
+    from ..edit.text import first_text_run
+    from ..oxml.xml import REVISION_PROPERTY_TAGS, insert_in_order
+
+    def bare(node: Any) -> bool:
+        return node is None or all(not isinstance(c.tag, str) or c.tag in REVISION_PROPERTY_TAGS for c in node)
+
+    said = []
+    for found in unlike:
+        cells = {start: cell for cell, start, _ in _spans(rows[found["row"]])}
+        for entry in found["cells"]:
+            start = int(entry["cell"].rsplit(",", 1)[1])
+            cell, source_row = cells.get(start), entry.get("_from")
+            if cell is None or source_row is None:
+                continue
+            paragraphs = cell.findall(f"{_W}p")
+            runs = [run for p in paragraphs for run in p.iter(f"{_W}r") if run.find(f"{_W}t") is not None]
+            if not runs or not all(bare(p.find(f"{_W}pPr/{_W}rPr")) for p in paragraphs) \
+                    or not all(bare(run.find(f"{_W}rPr")) for run in runs):
+                continue
+            neighbour = {s: c for c, s, _ in _spans(rows[source_row])}.get(start)
+            sample = next((first_text_run(p) for p in neighbour.findall(f"{_W}p") if first_text_run(p) is not None),
+                          None) if neighbour is not None else None
+            formatting = sample.find(f"{_W}rPr") if sample is not None else None
+            if formatting is None:
+                continue
+            with document._edit():
+                for run in runs:
+                    own = run.find(f"{_W}rPr")
+                    new = copy.deepcopy(formatting)
+                    for child in list(new):
+                        if child.tag == f"{_W}rPrChange":
+                            new.remove(child)
+                    if own is not None:
+                        for child in own:                       # a revision record of its own stays
+                            if isinstance(child.tag, str):
+                                insert_in_order(new, copy.deepcopy(child))
+                        run.remove(own)
+                    insert_in_order(run, new)
+                document.package.mark_dirty(document.package.document_part())
+            said.append(f"{entry['cell']}: written in its column's formatting, row {source_row}'s "
+                        f"({_look_said(entry['around'])}); Word would give it the document default "
+                        f"({_look_said(entry['has'])}) -- the cell was empty, its mark unformatted")
+    return said
 
 
 def _look_said(look: dict[str, Any]) -> str:

@@ -206,29 +206,64 @@ def test_rows_grow_and_sync_add_look_like_the_last_row(toolbox):
 # -- R126 (b): an empty cell, as Word types into it; check says the row (rule 7) ---------------
 
 
-def test_text_in_an_empty_cell_takes_its_mark_as_word_and_check_names_the_row(toolbox):
+@pytest.mark.parametrize("tracked", [False, True])
+def test_text_in_an_empty_cell_takes_its_columns_formatting_where_word_gives_the_default(toolbox, tracked):
     """Word types into an empty cell with a bare mark in the document default (measured,
-    ``Empty``): so does set_cells; the warning and row_text_format say the row is unlike the
-    rows around it, with the word_format call that makes it match -- which clears it."""
+    ``Empty``); set_cells writes it in the formatting the same column's rows around it
+    share (the team's ask, a departure from Word), and says so, naming the row."""
     assert OBSERVED["Empty"][1]["cells"][1]["runs"] == [["", "typed"]]
     session, document = _open(toolbox, _shelf([ROWS[0], ROWS[1], None, ROWS[2]]))
     table = document.tables()[0].id
+    if tracked:
+        assert toolbox.dispatch(session, "word_set_tracking", {"doc": "d1", "on": True, "author": "Editor A"}).ok
     result = _edit(toolbox, session, table=table, action="set_cells",
                    cells=[{"row": 3, "col": 0, "text": "Rug"}, {"row": 3, "col": 2, "text": "7"}])
-    assert any("row 3 of" in w and "Calibri 11 pt" in w and "word_format" in w for w in result.warnings), \
+    table = document.tables()[0].id
+    assert _look(document, f"{table}/c3,0") == ("Arial", 8.0, "1F4E79", False)
+    assert _look(document, f"{table}/c3,2") == ("Arial", 8.0, "1F4E79", True)
+    notes = [w for w in result.warnings if "column's formatting" in w]
+    assert len(notes) == 2 and "row 2's (Arial 8 pt colour 1F4E79)" in notes[0]
+    assert "Word would give it the document default (Calibri 11 pt colour auto)" in notes[0]
+    assert not [w for w in result.warnings if "word_format makes it match" in w]
+    assert _check(toolbox, session)["row_text_format"] == []
+    validate = toolbox.dispatch(session, "check", {"doc": "d1", "include": ["validate"]}).data["validate"]
+    assert validate["new"] == [], validate
+    if tracked:
+        rejected = Document.open(document.to_bytes())
+        rejected.reject()
+        assert "Rug" not in rejected.to_markdown()
+
+
+def test_a_row_unlike_its_table_the_fallback_does_not_cover_is_said_with_the_call(toolbox):
+    """Text written over a cell's own formatting keeps it (set_text): a red row among blue
+    ones stays red, and the warning and row_text_format name it with the word_format call
+    that makes it match -- which clears it."""
+    colors = ["1F4E79", "1F4E79", "C00000", "1F4E79"]
+    session, document = _open(toolbox, _shelf(ROWS, colors=colors))
+    table = document.tables()[0].id
+    result = _edit(toolbox, session, table=table, action="set_cells", cells=[{"row": 3, "col": 0, "text": "Rug"}])
+    assert any("row 3 of" in w and "colour C00000" in w and "word_format" in w for w in result.warnings), \
         result.warnings
-    table = document.tables()[0].id                                    # its id once stamped
+    table = document.tables()[0].id
     entry, = _check(toolbox, session)["row_text_format"]
     assert entry["table"] == table and entry["row"] == 3
-    assert [c["cell"] for c in entry["cells"]] == [f"{table}/c3,0", f"{table}/c3,2"]
-    assert entry["cells"][0]["has"] == {"font": "Calibri", "sz": 11.0, "color": "auto"}
-    assert entry["cells"][0]["around"] == {"font": "Arial", "sz": 8.0, "color": "1F4E79"}
+    cells = [f"{table}/c3,{c}" for c in range(3)]
+    assert entry["cells"] == [{"cell": c, "has": {"color": "C00000"}, "around": {"color": "1F4E79"}} for c in cells]
     fix = entry["fix"]
-    assert fix == {"tool": "word_format", "calls": [{"targets": [f"{table}/c3,0", f"{table}/c3,2"],
-                                                     "font": "Arial", "size": 8.0, "color": "1F4E79"}]}
+    assert fix == {"tool": "word_format", "calls": [{"targets": cells, "color": "1F4E79"}]}
     for call in fix["calls"]:
         assert toolbox.dispatch(session, fix["tool"], {"doc": "d1", **call}).ok
     assert _check(toolbox, session)["row_text_format"] == []
+
+
+def test_neighbours_that_disagree_give_no_formatting(toolbox):
+    """Rows above and below in two colours: the empty cell's text keeps Word's default."""
+    colors = ["1F4E79", "C00000", "1F4E79", "7F7F7F"]
+    session, document = _open(toolbox, _shelf([ROWS[0], ROWS[1], None, ROWS[2]], colors=colors))
+    table = document.tables()[0].id
+    result = _edit(toolbox, session, table=table, action="set_cells", cells=[{"row": 3, "col": 0, "text": "Rug"}])
+    assert not [w for w in result.warnings if "column's formatting" in w]
+    assert _look(document, f"{document.tables()[0].id}/c3,0")[0] == "Calibri"
 
 
 def test_rows_that_legitimately_differ_are_not_said(toolbox):
@@ -243,14 +278,15 @@ def test_rows_that_legitimately_differ_are_not_said(toolbox):
     assert _check(toolbox, session)["row_text_format"] == []
 
 
-def test_a_written_row_between_rows_that_agree_is_said_once_rows_are_written_after_it(toolbox):
-    """Rows written in the session are not the rows a written row is compared with."""
+def test_rows_written_one_after_another_each_take_the_unwritten_rows_formatting(toolbox):
+    """Rows written in the session are not the rows a written row takes its formatting from."""
     session, document = _open(toolbox, _shelf([ROWS[0], None, None, ROWS[1]]))
     table = document.tables()[0].id
     _edit(toolbox, session, table=table, action="set_cells", cells=[{"row": 2, "col": 0, "text": "Rug"}])
     _edit(toolbox, session, table=table, action="set_cells", cells=[{"row": 3, "col": 0, "text": "Vase"}])
-    found = _check(toolbox, session)["row_text_format"]
-    assert [e["row"] for e in found] == [2, 3]
+    table = document.tables()[0].id
+    assert _look(document, f"{table}/c2,0")[:3] == _look(document, f"{table}/c3,0")[:3] == ("Arial", 8.0, "1F4E79")
+    assert _check(toolbox, session)["row_text_format"] == []
 
 
 def test_a_check_of_a_range_elsewhere_leaves_the_table_out(toolbox):

@@ -181,10 +181,12 @@ the header row repeated. A whole call is one undo step, and tracked while tracki
 Rows that look like their table (round 58): a row `insert_row`, `grow` or `sync` adds takes,
 cell by cell, the row beside it's paragraph properties and its first run of text's
 formatting as its paragraph mark's -- Word's Insert Rows (measured) -- so text `set_cells`
-writes into it looks like its column. Text written into an empty cell takes that cell's mark,
-as Word types into it (the document default where the mark has none); where that leaves a
-row unlike the rows around it, the call's warning and `check`'s `row_text_format` say so,
-with the `word_format` call that makes it match. `copy_row` copies row `index` with its
+writes into it looks like its column. Text written into a cell that was empty with an
+unformatted mark takes the formatting the same column's text shares in the nearest rows above
+and below that the session did not write (the result names the row) -- where Word would give
+it the document default; where those rows differ it keeps the default. A row still unlike the
+rows around it is said in the call's warning and `check`'s `row_text_format`, with the
+`word_format` call that makes it match. `copy_row` copies row `index` with its
 content beside it (`side`), tracked as an insertion while tracking is on; `word_inspect`'s
 `new_text` says what text written over a paragraph would look like where that is not its
 `effective` formatting.
