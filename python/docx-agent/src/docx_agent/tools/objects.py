@@ -1900,6 +1900,9 @@ def word_format_table(call: Any, doc: str, table: str, scope: str, row: int | No
             renamed = {k: v for edit in edits if edit is not None for k, v in edit.renamed.items()}
             edits.append(document.fit_table_to_window(renamed.get(table, table), width_percent or 100))
         result = outcome(edits, f"Formatted {table}", changed=[table])
+        if style is not None or look is not None:
+            # Round 58 (R129): regions the table's style formats that its look leaves off.
+            result.warnings.extend(_regions_off(document, result.renamed.get(table, table)))
         if not values and not any(edit.changed for edit in edits):
             # Round 27, W7: asked for what the table already is (keep_together false on a
             # table not kept together): as asked, the warnings say why nothing changed.
@@ -1976,6 +1979,23 @@ def word_format_table(call: Any, doc: str, table: str, scope: str, row: int | No
     result = outcome(edits, f"Formatted {scope} of {table}", changed=[table])
     result.warnings.extend(accepted.notes)
     return result
+
+
+def _regions_off(document: Any, table: str) -> list[str]:
+    """Round 58 (R129): a note where the table's style formats a region (``word_styles``
+    ``regions``) that the table's look turns off -- the region does not show there -- with
+    the ``look`` that shows it."""
+    from .style import looks_off
+
+    name = document.table_properties(table)["style"]
+    style = document.styles.find(name, "table") if name else None
+    if style is None:
+        return []
+    found = next((entry for entry in looks_off(document, style) if entry["table"] == table), None)
+    if found is None:
+        return []
+    return [f"{table}'s style {name!r} formats {', '.join(found['off'])}, which its look turns off (not shown): "
+            f"look {json.dumps(found['fix']['look'])} shows them"]
 
 
 #: keep_together on a table taller than a page (round 25): Word does keep it, so does the tool.

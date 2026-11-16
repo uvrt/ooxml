@@ -5,6 +5,29 @@ docx2svg has not been released to PyPI. Each version that reaches `main` is tagg
 snapshot commit; the development history before it is summarised here.
 [`ROADMAP.md`](ROADMAP.md) records every measurement in detail.
 
+## 0.13.0 -- unreleased
+
+- **A table style's regions drawn as Word draws them** (round 58, measured in Word 16.106 for
+  Mac by docx-agent's `tools/table_regions_probe.py`; its tests compare this drawing of the
+  probe document with Word's, cell by cell and line by line):
+  - where conditional formats overlap, a column band is over a row band (ECMA-376 orders
+    them the other way): row band, column band, first/last column, first/last row, corner;
+  - a `w:tblStylePr` of type `wholeTable` is drawn nowhere (the style's own properties are
+    the whole table's);
+  - every row at the top marked to repeat (`w:tblHeader`) is the header row when its option
+    is on, and the row bands count from the row after them (header option off: those rows
+    are even bands);
+  - band sizes above 1 (`w:tblStyleRowBandSize`, `w:tblStyleColBandSize`) band several rows
+    or columns at a time: `cell_conditions` now says bands as positions (`hBand:<n>`,
+    `vBand:<n>`) and `resolve.cascade.banded` names them against the style's sizes
+    (`cell_conditions` takes the header rows; `parse.document.leading_header_rows` counts
+    them);
+  - a region's borders are the region's: a row region's `left` at its rows' start, `right` at
+    their end, `insideV` between its cells, `insideH` between its rows; a column region's
+    `top` on the table's first row, `bottom` on its last;
+  - text whose colour is automatic is drawn white on a cell fill darker than Rec. 601 luma 60
+    (`layout.automatic_text_on_cell`: grey 3B white, 3C black).
+
 ## 0.12.1 -- unreleased
 
 - **A layout made from a previous one says its substituted faces as a full layout does.**

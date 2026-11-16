@@ -3,6 +3,7 @@ the general setter ``word_format``."""
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any
 
@@ -10,6 +11,7 @@ from ooxml_edit.tools import (Result, ToolError, array, boolean, integer, number
 
 from ..edit.addresses import is_text_range, span_ends
 from ..edit.document import Cell, EditError, EditResult, Paragraph, Table
+from ..edit.frames import FrameError
 from ..edit.ranges import TextRange
 from ..edit.styles import StyleError
 from ..markdown import model as m
@@ -601,8 +603,9 @@ _INSERT_MARKDOWN = {"doc": DOC,
                     "date_format": DATE_FORMAT,
                     "at": AT,
                     "style_map": STYLE_MAP,
-                    # Round 42, R47: list items like given paragraphs (edit/like.py).
-                    "like": array(string(), "Paragraphs list items look like, by level (first: the top).",
+                    # Round 42, R47: list items like given paragraphs (edit/like.py); round 58,
+                    # R129: a table whose frame new tables take (edit/frames.py).
+                    "like": array(string(), "Paragraphs list items look like, by level; a table: tables take its frame.",
                                   or_single=True, optional=True),
                     "key": string("Retry key: a repeat with the same key makes nothing new.", optional=True),
                     "ref": BLOCKS_REF}
@@ -658,14 +661,21 @@ def word_insert_markdown(call: Any, doc: str, at: str, markdown: str | None = No
         if found:
             markdown, facts = field_text.with_markdown(call, markdown, found)
     at = _at(call, at)
+    like, table_like = _table_like(call, like)
     levels, style_map, read_as = _levels_like(call, like, style_map)
     try:
         edit = call.document.insert_markdown(markdown, at=at, style_map=_style_map(style_map),
                                              images=images_from(call), fetch=None, html="refuse",
-                                             like=levels)
+                                             like=levels, table_like=table_like)
     except StyleError as error:
         raise ToolError("not_found", str(error), field="style_map",
                         valid_options=[s.name for s in call.document.styles][:50]) from None
+    except FrameError as error:
+        # Round 58 (R129, rule 2): why, the sample's shape and Markdown that fits it.
+        shape = json.dumps(error.shape, ensure_ascii=False) if error.shape else ""
+        fits = f"; Markdown that fits it:\n{error.skeleton}" if error.skeleton else ""
+        raise ToolError("invalid_arguments", f"{error}{' -- the sample: ' + shape if shape else ''}{fits}",
+                        field="like") from None
     data: dict = {"blocks": edit.blocks}
     said = _fields_placed(call, markdown, field, edit.blocks, facts)
     if said is not None:
@@ -742,6 +752,28 @@ def _fields_placed(call: Any, markdown: str, field: Any, blocks: list[str],
     note = None if lined_up else ("the values written by reference could not be lined up with the blocks "
                                   "made: word_read the new blocks to see which is which")
     return out, note
+
+
+def _table_like(call: Any, like: list[str] | None) -> tuple[list[str] | None, str | None]:
+    """Round 58 (R129): ``like``'s table, whose frame the Markdown's tables take, apart from
+    its paragraphs (list levels).  One table at most; a cell is a paragraph's place."""
+    if not like:
+        return like, None
+    tables, rest = [], []
+    for k, sample in enumerate(like):
+        address = resolve(call, sample) if isinstance(sample, str) and sample else sample
+        if isinstance(address, str) and address.rpartition("/")[2].startswith("t:") and ".." not in address:
+            tables.append((k, address))
+            rest.append("")                  # its level, if any, given no paragraph
+        else:
+            rest.append(sample)
+    if len(tables) > 1:
+        raise ToolError("invalid_arguments", f"like names one table whose frame new tables take, and "
+                        f"{len(tables)} are given: {', '.join(t for _, t in tables)}", field="like",
+                        valid_options=[t for _, t in tables])
+    while rest and not rest[-1]:
+        rest.pop()
+    return (rest or None), (tables[0][1] if tables else None)
 
 
 def _levels_like(call: Any, like: list[str] | None,

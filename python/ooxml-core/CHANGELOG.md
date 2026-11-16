@@ -3,6 +3,13 @@
 ooxml-core is the Rust core of the ooxml packages (`crates/`), as the Python module
 `ooxml_core`. Its version is the `crates/python` crate's.
 
+## 0.8.1 -- unreleased
+
+- The Word parse says a table cell's conditional formats as docx2svg 0.13.0 does (round 58,
+  measured in Word): row band before column band, the bands as positions (`hBand:<n>`,
+  `vBand:<n>`) named against the style's band sizes by the resolver, every leading header
+  row (`w:tblHeader`) the header row, no `wholeTable`.
+
 ## 0.8.0 -- unreleased
 
 - **`ooxml_core.BodySpans`**: a Word body's top-level blocks (`w:p`, `w:tbl`, `w:sdt`,

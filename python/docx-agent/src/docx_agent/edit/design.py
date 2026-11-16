@@ -62,6 +62,7 @@ from typing import TYPE_CHECKING, Any
 
 from docx2svg import model as _model
 from docx2svg.parse.document import cell_conditions
+from docx2svg.resolve.cascade import banded, style_chain
 from docx2svg.paths import resolve_path
 from docx2svg.table import edge_winner, resolve_table, table_style_id
 
@@ -503,7 +504,10 @@ def _places(document: "Document", style_id: str, look: dict, cell_style: str | N
     band = "band" if not look["noHBand"] else "body"
     wanted.append((f"{band}1" if band == "band" else "body", first_row, first_column))
     if band == "band":
-        wanted.append(("band2", first_row + 1, first_column))
+        # The first row of the second band: the style's row band size on (round 58).
+        size = next((s.table["tblStyleRowBandSize"] for s in reversed(style_chain(sheet.styles, style_id, "table"))
+                     if s.table.get("tblStyleRowBandSize") is not None), 1) or 1
+        wanted.append(("band2", min(first_row + size, rows - 1), first_column))
     if look["firstColumn"]:
         wanted.append(("first_column", first_row, 0))
     if look["lastColumn"]:
@@ -532,8 +536,10 @@ def _place(document: "Document", resolved: Any, r: int, c: int, conditions: tupl
     text = _text_look(document, run)
     if paragraph.alignment != "left":
         text["alignment"] = paragraph.alignment
-    themed = _table_theme_colors(document, style_id, conditions)
-    out = {"conditions": [k for k in conditions if k != "wholeTable"], "fill": _fill(cell.properties.get("shd"))}
+    # The band positions named against the style's band sizes (docx2svg's ``banded``).
+    named = banded(style_chain(_effective.model(document).model.styles, style_id, "table"), conditions)
+    themed = _table_theme_colors(document, style_id, named)
+    out = {"conditions": list(named), "fill": _fill(cell.properties.get("shd"))}
     if out["fill"] in themed["fill"]:
         out["fill"], out["theme_fill"] = themed["fill"][out["fill"]]
     out["borders"] = {side: _themed_border(border, themed["border"]) for side, border in

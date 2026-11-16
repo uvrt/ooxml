@@ -31,6 +31,47 @@ snapshot commit; the development history before it is summarised here.
   need lxml's finalizer fixed, or every lxml tree used by one thread only.
 - A free-threaded-only test runs 8 to 24 writers on one document
   (`tests/test_block_edits_ft.py`); with the interpreter lock it is skipped.
+## 0.1.124 -- unreleased
+
+- **A table style's formatting by region** (round 58, R129). `word_styles` `add` (`kind:
+  "table"`; `regions` alone says a table style) and `modify` take `regions`: per Table Design
+  region -- `whole_table` (the style's own properties), `header_row`, `total_row`,
+  `first_column`, `last_column`, `banded_rows`, `even_banded_rows`, `banded_columns`,
+  `even_banded_columns`, `top_left_cell`, `top_right_cell`, `bottom_left_cell`,
+  `bottom_right_cell` -- its `shading`, text `color`, `bold`, `italic`, `size`, `alignment`,
+  `borders` (`{style, sides, color, width}`, `inside_h` / `inside_v` between the region's
+  cells) and `band_size`; `clear` first removes what the region states. A new table style is
+  written as Word writes one (custom, based on Normal Table, the whole table's shading in its
+  own cell properties, a band size wherever bands are formatted: Word draws no band without
+  one). `describe` reads the regions back, the look options they show under
+  (`shown_with_look`) and the tables in the style with those options off, each with the
+  `word_format_table` call that turns them on; `modify` and `word_format_table` (setting a
+  style or look) say the same as a warning. A change that leaves the style as it was is no
+  change, said. Writers see:
+  `word_styles {"action": "add", "name": "Ledger", "kind": "table", "regions": [{"region":
+  "header_row", "shading": "1F3864", "color": "FFFFFF", "bold": true, "borders": {"style":
+  "single", "sides": ["bottom"], "width": 1.5}}, {"region": "banded_rows", "shading":
+  "F2F2F2"}]}` -> `Added style Ledger`, the regions as read back, "rows banded one at a time
+  (band_size 1)". Measured in Word for Mac (`tools/table_regions_probe.py`,
+  `tests/observations/table-regions-word.json`, made-up tables): which region wins where they
+  overlap (row band, then column band, first/last column, header/total row, corner), header
+  rows, band sizes, region borders, the whole table, automatic text on dark fills -- and
+  docx2svg 0.13.0 now draws them so; `word_inspect`'s effective formatting reads them
+  through it.
+- **A style cannot single out a middle column; a table's frame can.** A table style's
+  columns are the first, the last and the bands (measured: no other region exists), as the
+  tool description and docs say. `word_insert_markdown` `like` now takes a table (beside the
+  paragraphs list items look like): the Markdown's tables take its frame -- its table, row
+  and cell properties (shading, borders, widths, merges across, vertical alignment), each
+  cell's paragraph properties and text formatting (its first run's, as Word's Insert Rows
+  gives a new row), its header rows first, its body rows repeated in their order, its total
+  row last, none of its text; an empty Markdown table gives an empty frame. Tracked as an
+  insertion when tracking is on; one undo step. Refused, with the sample's shape and a
+  Markdown table that fits it, where a frame cannot be copied faithfully: body rows merged
+  down, nested tables, content controls around rows or cells, rows off the grid, pending
+  cell changes, another column count, text in a cell a merge covers.
+- Depends on docx2svg 0.13.0 and ooxml-core 0.8.1 (the conditional formats said the same
+  way by both).
 
 ## 0.1.123 -- unreleased
 

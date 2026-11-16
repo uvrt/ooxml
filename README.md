@@ -63,9 +63,16 @@ example `pip install ./python/ooxml-common ./python/ooxml-edit ./python/docx2svg
   and the packages that depend on them run (`tools/ci.py` holds the dependency graph and
   each package's install and test command; `python tools/ci.py affected <paths>` shows
   what a change selects). A change to `.github/` or `tools/` runs everything; main, the
-  nightly run and a manual run take everything. Branch protection requires the jobs
-  `required (ubuntu, build)` and `required (windows)`, which pass when every leg they
-  cover passed or was left out.
+  nightly run and a manual run take every package. Production runs CPython 3.15 (moving
+  to the free-threaded 3.15t) and development runs on macOS, so a pull request and a push
+  to main run Linux and Windows on 3.15 and no macOS; the nightly run and a manual run
+  run Linux on every Python from the package's minimum (3.10 or 3.11), Windows and macOS
+  on 3.15 (`tools/ci.py`, `LEGS`; its tests: `python -m unittest discover -s tools`). The
+  free-threaded legs (`.github/workflows/freethreading.yml`, 3.15t) run on Linux on every
+  event. A newer push to a pull request or to main cancels the older push's run.
+  Branch protection requires the jobs `required (ubuntu, build)` and `required
+  (windows)`, which pass when every leg they cover passed or was left out; the macOS and
+  free-threaded legs are not required.
 - Rust (`.github/workflows/rust.yml`): fmt, clippy, tests, the differential tests and the
   wheels, when a change touches the workspace, ooxml-core or the packages it is compared
   with; gate job `required (rust)`.
@@ -86,3 +93,8 @@ git log --oneline -- python/<package>         # its history since
 
 Until the switch, fixes that still land in the old repositories come in with
 `tools/sync-from-old.sh <package>`, again as a merge commit.
+
+## Architecture
+
+The approved design for moving the document work into one shared Rust core, with Python as a thin
+layer, is in [docs/architecture/README.md](docs/architecture/README.md).

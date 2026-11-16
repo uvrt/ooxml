@@ -9,6 +9,12 @@ differences live here and nowhere else:
         is set, printed otherwise), and whether rust.yml's jobs run (`rust`).  On a pull request only the packages a change touches, and
         every package that depends on one of them (USES below); a change to the workflows or
         to tools/ runs everything.  A push to main, the nightly run and a manual run take all.
+        Which Pythons each OS runs depends on the event (LEGS below): production runs
+        CPython 3.15 (moving to 3.15t), development runs on macOS and macOS runners are
+        scarce, so a pull request and a push to main run Linux and Windows on the newest
+        Python and no macOS; the nightly and a manual run add every older Python on Linux
+        and the newest on macOS.
+        The free-threaded legs (`ft`, freethreading.yml) run on Linux only, every event.
     python tools/ci.py affected FILE...
         The packages those changed files select, one per line (for a quick look by hand).
     python tools/ci.py install PACKAGE [--free-threading]
@@ -56,8 +62,9 @@ PACKAGES: dict[str, dict] = {
         "pytest": [],
         "check_version": "tools/check_version.py",
         "mypy": True,
-        # One leg (ubuntu, 3.12) runs the suite under coverage instead, with this floor: the
-        # suite is meant to hold the package by itself, not through the renderers' suites.
+        # One leg (ubuntu, the newest Python) runs the suite under coverage instead, with
+        # this floor: the suite is meant to hold the package by itself, not through the
+        # renderers' suites.
         "coverage": "87",
         "gil_imports": "import fontTools.ttLib",
     },
@@ -195,30 +202,56 @@ def _pythons(name: str) -> list[str]:
     return [v for v in PYTHONS if tuple(map(int, v.split("."))) >= tuple(map(int, low.split(".")))]
 
 
+#: Which of a package's Pythons each OS runs, per event: "all" (from the package's
+#: min_python to the newest), "newest" or None (no legs).  Production runs CPython 3.15 and
+#: is moving to 3.15t (the `ft` legs, Linux, every event); development and local test runs
+#: happen on macOS, whose runners are few and shared by every run.  So a pull request and a
+#: push to main run Linux and Windows on the newest Python and no macOS; the nightly run
+#: and a manual run (FULL_LEGS, also any event not named here) run every Python on Linux,
+#: so the older ones requires-python still allows keep working, and the newest on Windows
+#: and macOS.
+LEGS: dict[str, dict[str, str | None]] = {
+    "pull_request": {"linux": "newest", "windows": "newest", "macos": None},
+    "push": {"linux": "newest", "windows": "newest", "macos": None},
+}
+FULL_LEGS: dict[str, str | None] = {"linux": "all", "windows": "newest", "macos": "newest"}
+RUNNERS = {"linux": "ubuntu-latest", "windows": "windows-latest", "macos": "macos-latest"}
+
+
+def _select(versions: list[str], which: str | None) -> list[str]:
+    if which is None:
+        return []
+    if which == "all":
+        return versions
+    if which == "newest":
+        return versions[-1:]
+    raise ValueError(which)
+
+
 def plan(event: str, changed: list[str] | None) -> dict[str, str]:
     full = event != "pull_request"
     names = list(PACKAGES) if full or changed is None else affected(changed)
-    linux, windows, macos, ft_linux, ft_macos = [], [], [], [], []
+    legs = LEGS.get(event, FULL_LEGS)
+    matrices: dict[str, list[dict[str, str | bool]]] = {os_: [] for os_ in RUNNERS}
     for name in names:
         versions = _pythons(name)
-        for v in versions:
-            linux.append({"package": name, "os": "ubuntu-latest", "python": v})
-            windows.append({"package": name, "os": "windows-latest", "python": v})
-            # On a pull request macOS runs only the oldest and the newest Python: its
-            # runners are the scarce ones.  Everything else takes the whole matrix.
-            if full or v in (versions[0], versions[-1]):
-                macos.append({"package": name, "os": "macos-latest", "python": v})
-        ft_linux.append({"package": name, "os": "ubuntu-latest", "python": "3.15t"})
-        if full:
-            ft_macos.append({"package": name, "os": "macos-latest", "python": "3.15t"})
+        for os_, runner in RUNNERS.items():
+            for v in _select(versions, legs[os_]):
+                leg = {"package": name, "os": runner, "python": v}
+                if os_ == "linux" and v == versions[-1]:
+                    # The coverage leg (PACKAGES' "coverage"): Linux, the newest Python,
+                    # which every event runs.
+                    leg["coverage"] = True
+                matrices[os_].append(leg)
     out = {
         "packages": names,
         "any": bool(names),
         "rust": full or changed is None or rust_affected(changed),
-        "linux": {"include": linux},
-        "windows": {"include": windows},
-        "macos": {"include": macos},
-        "ft": {"include": ft_linux + ft_macos},
+        **{os_: {"include": legs_} for os_, legs_ in matrices.items()},
+        # The free-threaded legs (freethreading.yml): Linux only, on every event.
+        "ft": {"include": [{"package": n, "os": RUNNERS["linux"], "python": "3.15t"} for n in names]},
+        # Whether ci.yml's macOS call runs at all: an empty matrix is an error in Actions.
+        "any_macos": bool(matrices["macos"]),
         "build": {"include": [{"package": n} for n in names]},
     }
     return {k: json.dumps(v) if not isinstance(v, bool) else str(v).lower() for k, v in out.items()}

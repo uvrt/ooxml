@@ -120,6 +120,8 @@ class Options:
     fetch: Callable[[str], bytes] | None = None
     #: Round 42, R47: the looks list items take by level (:class:`~docx_agent.edit.like.LevelLooks`).
     like: object = None
+    #: Round 58, R129: the frame tables take (:class:`~docx_agent.edit.frames.TableFrame`).
+    frame: object = None
 
 
 @dataclass
@@ -145,7 +147,8 @@ class _Place:
 
 def insert_markdown(document: "Document", md: str, *, at: str = "end", style_map: StyleMap | None = None,
                     images=None, fetch: Callable[[str], bytes] | None = None, html: str = "refuse",
-                    emphasis: str = "styles", keep_settings: bool = True, like=None) -> "EditResult":
+                    emphasis: str = "styles", keep_settings: bool = True, like=None,
+                    table_like: str | None = None) -> "EditResult":
     """See :meth:`docx_agent.Document.insert_markdown`."""
     if not isinstance(md, str):
         raise EditError("insert_markdown takes Markdown text")
@@ -153,11 +156,27 @@ def insert_markdown(document: "Document", md: str, *, at: str = "end", style_map
         raise EditError(f"html is one of {', '.join(HTML_MODES)}")
     if emphasis not in EMPHASIS_MODES:
         raise EditError(f"emphasis is one of {', '.join(EMPHASIS_MODES)}")
-    options = Options(html, emphasis, images, fetch, _levels(document, like))
+    options = Options(html, emphasis, images, fetch, _levels(document, like), _frame(document, table_like))
     blocks = parse_model(md)
     notes = {b.label: b for b in blocks if isinstance(b, m.FootnoteDef)}
     blocks = [b for b in blocks if not isinstance(b, (m.FootnoteDef, m.Comment))]
-    return _write(document, blocks, notes, options, at, coerce(style_map), keep_settings)
+    if options.frame is not None and not any(isinstance(b, m.Table) for b in _walk_blocks(blocks)):
+        raise EditError(f"like {table_like} is a table: the Markdown has none to write in its frame -- write a "
+                        f"table, e.g.\n{options.frame.skeleton()}")
+    result = _write(document, blocks, notes, options, at, coerce(style_map), keep_settings)
+    if options.frame is not None:
+        result.warnings[:0] = options.frame.notes
+    return result
+
+
+def _frame(document: "Document", table: str | None):
+    """``insert_markdown``'s ``table_like`` read (:class:`~docx_agent.edit.frames.TableFrame`),
+    or ``None``: the frame is taken before anything changes."""
+    if not table:
+        return None
+    from ..edit.frames import TableFrame
+
+    return TableFrame(document, table)
 
 
 def insert_blocks(document: "Document", blocks: list, *, at: str = "end",
@@ -951,6 +970,8 @@ class Writer:
         return paragraph
 
     def table(self, block: m.Table) -> Element:
+        if self.options.frame is not None:
+            return self.framed_table(block)
         rows = ([block.header] if block.headed else []) + block.rows
         columns = max((len(r) for r in rows), default=0) or 1
         style = self.style("table")
@@ -985,6 +1006,39 @@ class Writer:
                 style, align = looks[c]
                 cell.append(self.paragraph(inline, style, align=align))
         self.tables.append((table, shares))
+        return table
+
+    def framed_table(self, block: m.Table) -> Element:
+        """A Markdown table in a sample table's frame (round 58, R129: :mod:`docx_agent.edit.frames`):
+        its rows take the sample's rows' looks, its text each cell's text formatting with the
+        Markdown's emphasis over it.  The Markdown's header row fills the sample's header
+        row(s) -- empty, it leaves them empty; where the sample has none, an empty header row
+        is none, and one with text is the first row (said)."""
+        from ..edit.frames import merge_run_properties
+
+        frame = self.options.frame
+        rows = list(block.rows)
+        if frame.header or block.headed:
+            rows.insert(0, block.header)
+            if block.headed and not frame.header:
+                self._warn_once(f"like {frame.sample}: the sample has no header row -- the Markdown's header row "
+                                "is its first row")
+
+        def write_cell(paragraph: Element, base: Element | None, value) -> None:
+            for node in self.inline(value or []):
+                runs = [node] if node.tag == _W + "r" else list(node.iter(_W + "r"))
+                for run in runs:
+                    own = run.find(_W + "rPr")
+                    merged = merge_run_properties(base, own)
+                    if own is not None:
+                        remove(own)
+                    if merged is not None:
+                        run.insert(0, merged)
+                paragraph.append(node)
+
+        table = frame.table(rows, write_cell)
+        widths = [int(c.get(_W + "w") or 0) for c in table.find(_W + "tblGrid").findall(_W + "gridCol")]
+        self.tables.append((table, widths))
         return table
 
     def cell_look(self, align: str | None) -> tuple[str | None, str | None]:

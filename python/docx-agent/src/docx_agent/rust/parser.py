@@ -646,7 +646,7 @@ def _properties_only(element: Any) -> Any:
 def _table_context(element: Any) -> tuple:
     """A paragraph's table style (``""``: its table names none) and its cell's conditional
     formats, as docx2svg's parser gives them; ``(None, ())`` outside a table."""
-    from docx2svg.parse.document import _table_look, cell_conditions
+    from docx2svg.parse.document import _table_look, cell_conditions, leading_header_rows
     from ooxml_common.xmlutil import element_child as child
 
     cell = element.getparent()
@@ -660,7 +660,8 @@ def _table_context(element: Any) -> tuple:
     look = _table_look(child(properties, "tblLook") if properties is not None else None)
     rows = table.findall(_W + "tr")
     cells = row.findall(_W + "tc")
-    return style, cell_conditions(look, rows.index(row), cells.index(cell), len(rows), len(cells))
+    return style, cell_conditions(look, rows.index(row), cells.index(cell), len(rows), len(cells),
+                                  leading_header_rows(rows))
 
 
 class _RecordsContext:
