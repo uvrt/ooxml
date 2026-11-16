@@ -2,7 +2,7 @@ name: Python tests (one OS)
 
 # Called by ci.yml (one call per OS, so each OS's legs can be required or not on its own)
 # and by freethreading.yml.  `matrix` is tools/ci.py plan's output for that call: a list of
-# {package, os, python}.  Each leg installs the package and the siblings it needs from this
+# {package, os, python} (and `coverage` on the leg that runs the suite under coverage).  Each leg installs the package and the siblings it needs from this
 # checkout, then runs the suite as the package's own repository's CI ran it
 # (tools/ci.py install / test; the differences between the packages live there).
 
@@ -103,4 +103,4 @@ jobs:
       # provider tests need an API key, which CI does not hold.  Both skip.
       - name: Test
         shell: bash
-        run: python tools/ci.py test ${{ matrix.package }} --event ${{ github.event_name }} ${{ inputs.free-threading && '--free-threading' || '' }} ${{ (matrix.os == 'ubuntu-latest' && matrix.python == '3.12') && '--coverage' || '' }}
+        run: python tools/ci.py test ${{ matrix.package }} --event ${{ github.event_name }} ${{ inputs.free-threading && '--free-threading' || '' }} ${{ matrix.coverage && '--coverage' || '' }}

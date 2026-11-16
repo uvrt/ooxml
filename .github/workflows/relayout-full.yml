@@ -22,9 +22,11 @@ on:
   schedule:
     - cron: "57 3 * * *"
 
+# As ci.yml: a newer push to a pull request or to main cancels the older push's run;
+# the nightly run and a manual run are never cancelled.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ (github.event_name == 'pull_request' || github.event_name == 'push') && github.event_name || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
 
 jobs:
   relayout-full:
