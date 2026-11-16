@@ -20,7 +20,7 @@ from ooxml_edit.tools.render import png_size
 
 from ..edit.document import Document
 from ..edit.properties import refreshed_app
-from ..layout import (affinity, canon_of, check_facts, failed_layout, font_dirs_of, held_state, keep_layout,
+from ..layout import (BARE_REQUEST, affinity, canon_of, check_facts, failed_layout, font_dirs_of, held_state, keep_layout,
                       kept_layout,
                       lay_out_unlocked, layout_key, layout_options, locale_of, note_made, summary_for)
 from ..layout_facts import (CAP, empty_paragraphs, layout_facts, numbering_skips_level, punctuation_spacing,
@@ -163,8 +163,13 @@ def save_document(call: Any, doc: str, name: str, format: str, clean: bool = Fal
 
 def _coverage(call: Any) -> dict[str, Any]:
     """How much of the document docx2svg could lay out (``coverage_facts``): a check
-    that passed on a complete layout is told from one that could not see everything."""
+    that passed on a complete layout is told from one that could not see everything.
+    Round 58: read where the layout is held (:func:`check_facts`), as ``check``'s are;
+    laid out here only where the document has no such worker, or the call holds it."""
     try:
+        made = check_facts(call.document, call.unlocked, dict(BARE_REQUEST)) if call.may_unlock else None
+        if made is not None:
+            return made[0]["reflow"]["coverage"]
         return call.document.layout().coverage_facts()
     except ToolError as error:
         return {"error": f"{error.code}: {error.message}"}
@@ -405,14 +410,25 @@ def _range_pages(call: Any, ranges: list[str], pages: list[int] | None) -> tuple
     scope = Scope(document, ranges)
     if pages is None:
         call.read_scope = read_scope(scope, layout=True)     # what it draws (round 47)
-    version = entry.version
-    layout = (lay_out_unlocked(document, call.unlocked, lambda: entry.version == version) if call.may_unlock
-              else document.layout())
-    scoped, on = range_pages(scope, layout)
+    # Round 58: the ranges' pages read where the layout is held (check_facts, the lock let
+    # go while it lays out): the layout never comes here for them.  Laid out here only where
+    # the document has no such worker, or the call holds it (in a batch).
+    made = (check_facts(document, call.unlocked, {**BARE_REQUEST, "ranges": scope.spec()})
+            if call.may_unlock else None)
+    if made is not None:
+        facts = made[0]
+        scoped = [{key: found[key] for key in ("range", "blocks", "pages")} for found in facts["range"]]
+        on, count = facts["on"], facts["reflow"]["pages"]
+    else:
+        version = entry.version
+        layout = (lay_out_unlocked(document, call.unlocked, lambda: entry.version == version)
+                  if call.may_unlock else document.layout())
+        scoped, on = range_pages(scope, layout)
+        count = layout.page_count
     if not on:
         raise ToolError("not_found", "the range's blocks are drawn on no page (hidden, or past where the "
                         "layout stopped)", field="range",
-                        valid_options=list(range(1, layout.page_count + 1))[:50])
+                        valid_options=list(range(1, count + 1))[:50])
     if pages is not None:
         wanted = [p for p in on if p in pages]
         if not wanted:

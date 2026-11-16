@@ -27,7 +27,7 @@ from typing import Any, Callable, Iterable, Iterator, Mapping, Sequence
 
 from ooxml_edit.tools import Result, ToolError, page_list, tool as _tool, validation
 
-from ooxml_edit.tools.worker import takes_affinity
+from ooxml_edit.tools.worker import takes_affinity, takes_lane
 
 from ..layout import (adopt, affinity, canon_of, known_summary, layout_key, summary_for, cache_key, convert_bytes, held_state, lay_out_bytes,
                       lay_out_unlocked, layout_options, twin, twin_of)
@@ -45,8 +45,13 @@ class Engine:
     """``document.converter``: docx-agent lays a document out through it
     (:func:`docx_agent.layout.lay_out_bytes` in a worker process), so a layout, a reflow,
     ``update_fields``' passes and a TOC's page numbers share one deadline
-    (``Limits.layout_timeout``, 30 s), and a worker still busy at it is killed and the call
-    reports ``timeout``.
+    (``Limits.layout_timeout``, 30 s): the call reports ``timeout`` at it.
+
+    Round 58: the worker is not stopped there (``overrun``, where the pool takes it: its
+    own runners do).  It finishes the layout -- for at most as long again (ooxml-edit's
+    ``OVERRUN``) -- and keeps it, as a render's layout does: a long document's first layout
+    that passed the deadline was lost with its worker before, so the next call laid it out
+    whole again, and passed the deadline again.
 
     Round 38: a document's layouts stay in the worker that made them, and its layout tasks
     go there (ooxml-edit 0.90.0's affinity, keyed by the document's lineage), waiting for
@@ -55,12 +60,14 @@ class Engine:
     ``document``'s layouts."""
 
     def __init__(self, run: Callable[..., Any], timeout: float, *, keyed: bool = False,
-                 document: Any = None) -> None:
+                 document: Any = None, overrun: bool = False) -> None:
         self._run = run
         self.timeout = timeout
         self.deadline = time.monotonic() + timeout
         self.keyed = keyed
         self.document = document
+        #: Whether a layout task past its deadline is finished and kept, not stopped (round 58).
+        self.overrun = overrun
 
     def arm(self, timeout: float | None = None) -> "Engine":
         if timeout is not None:
@@ -75,7 +82,7 @@ class Engine:
         """:func:`docx_agent.layout.lay_out_bytes` in a worker process, under the deadline:
         the layout kept for the next version (round 33), in the worker holding it (round 38)."""
         return self._run(lay_out_bytes, data, options, state, timeout=self._remaining(),
-                         **self.keys(state))
+                         **self.keys(state), **self._overrun())
 
     def check(self, data: bytes, options: dict, state: Any, request: dict) -> dict:
         """``check``'s layout facts made in the worker holding the document's layout (round
@@ -83,7 +90,10 @@ class Engine:
         from .check_worker import check_bytes
 
         return self._run(check_bytes, data, options, state, request, timeout=self._remaining(),
-                         **self.keys(state))
+                         **self.keys(state), **self._overrun())
+
+    def _overrun(self) -> dict:
+        return {"overrun": True} if self.overrun else {}
 
     def keys(self, state: Any) -> dict:
         """The pool's ``affinity`` and ``affinity_wait`` for a task handed ``state``: the
@@ -113,7 +123,7 @@ def engage(call: Any) -> None:
     for entry in call.entries.values():
         if entry.kind == "docx":
             entry.document.converter = Engine(pool.run, timeout, keyed=takes_affinity(pool),
-                                              document=entry.document)
+                                              document=entry.document, overrun=takes_lane(pool))
 
 
 def release(entries: Iterable[Any]) -> None:

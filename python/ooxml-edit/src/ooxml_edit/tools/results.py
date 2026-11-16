@@ -139,6 +139,17 @@ class Result:
     #: neither.
     #: A result with ``data.timing`` also says ``redo`` there, from one up.
     block: dict[str, Any] | None = None
+    #: Set by the dispatcher, for the application (round 58) -- never in :meth:`to_json`:
+    #: where the call's time went, in seconds (:mod:`.timing`): ``total``; ``lock_wait``, waiting
+    #: for its documents (an edit in flight; a read, the copy of the version it reads);
+    #: ``work``, the rest; ``cpu``, the thread's own (``work - cpu``: waiting for a worker
+    #: process or for the interpreter while other threads held it); ``held``, how long it
+    #: held its documents' locks.  ``None`` for a result the dispatcher did not make.
+    timing: dict[str, float] | None = None
+    #: Set by a handler that measures it, for the application (round 58) -- never in
+    #: :meth:`to_json`: what the process holds, in MB (``describe``: the document's own share
+    #: and the process's, :mod:`.memory`), so a run sees its own growth.
+    memory: dict[str, float] | None = None
 
     @classmethod
     def failure(cls, error: ToolError, **fields: Any) -> "Result":

@@ -170,7 +170,7 @@ def format_like(document: "Document", identifier: str, look: Look, *,
         return EditResult(entry.id, changed=False), []
     with document._edit():
         renames = document._prepare(part, [entry])
-        with document._track_properties([part]):
+        with document._track_properties([part], within=[entry.element]):
             changed = take(entry.element, look, set(skip))
         removed = _numbering.reap(document, {before.num_id}) if before is not None and "list" in changed else []
         document.package.mark_dirty(part)

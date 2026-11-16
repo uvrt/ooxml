@@ -67,6 +67,8 @@ ANNOTATIONS = frozenset(_W + name for name in (
     "cellMerge", "customXmlInsRangeStart", "customXmlInsRangeEnd", "customXmlDelRangeStart",
     "customXmlDelRangeEnd", "customXmlMoveFromRangeStart", "customXmlMoveFromRangeEnd",
     "customXmlMoveToRangeStart", "customXmlMoveToRangeEnd", "permStart", "permEnd"))
+#: :data:`ANNOTATIONS` in a fixed order, for lxml's ``iter(*tags)``.
+_ANNOTATION_TAGS = tuple(sorted(ANNOTATIONS))
 
 _FIELD_REFERENCE = re.compile(r"(?i)(\b(?:REF|PAGEREF|NOTEREF)\s+)(\"?)([^\s\"\\]+)(\2)")
 
@@ -306,12 +308,14 @@ class LinkOps:
         ids": stricter than the specification, and what Word does)."""
         largest = -1
         for part in self._parts():
-            for node in self.package.tree(part).iter():
-                if isinstance(node.tag, str) and node.tag in ANNOTATIONS:
-                    try:
-                        largest = max(largest, int(node.get(_W + "id")))
-                    except (TypeError, ValueError):
-                        pass
+            # Round 58: lxml picks the annotations out itself (``iter`` by tag), so a long
+            # document's other elements are never made Python objects -- every tracked
+            # edit asks this once per step.
+            for node in self.package.tree(part).iter(*_ANNOTATION_TAGS):
+                try:
+                    largest = max(largest, int(node.get(_W + "id")))
+                except (TypeError, ValueError):
+                    pass
         return largest + 1
 
     # -- hyperlinks --------------------------------------------------------------------------

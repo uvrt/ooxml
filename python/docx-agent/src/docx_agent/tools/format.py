@@ -23,7 +23,7 @@ from ..edit.ids import DeletedId
 from ..edit.inline import SpanError
 from ..edit.pictures import PictureError
 from ..edit.ranges import AmbiguousAnchor, AnchorNotFound
-from ..layout import read_copy
+from ..layout import read_copy, release_document
 from ._base import checks, problem_key
 from .owner import read_version
 from .render import warm_up
@@ -257,4 +257,4 @@ FORMAT = DocumentFormat(
     read_provenance=read_provenance, restored=restored, own_facts=dict(OWN_REFUSED),
     tool_hints=TOOL_HINTS, warm_up=warm_up, touched=touched, number_texts=number_texts,
     scale_values=scale_values, state=id_state, open_with_state=open_docx_with_state,
-    read_copy=read_copy, blocks=BLOCKS, read_version=read_version)
+    read_copy=read_copy, blocks=BLOCKS, read_version=read_version, closed=release_document)

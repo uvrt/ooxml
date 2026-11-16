@@ -4,6 +4,22 @@ Versions are those in `pyproject.toml`; none is published to PyPI yet. Each vers
 reaches `main` is tagged `v<version>` on the commit that brought it, from 0.62.0; the
 earlier ones were never tagged.
 
+## 0.121.0 -- unreleased
+
+- **`Result.timing`: where a call's time went** (round 58), for the application, never in
+  the model's JSON: `total`, `lock_wait` (waiting for its documents' locks or their committed
+  copies, every time it took one), `work` (the rest), `cpu` (the thread's own: `work - cpu` is
+  time spent waiting for a worker process or for the interpreter while other threads held it)
+  and `held` (how long it held its documents). A document's lock is a `tools.timing.TimedLock`
+  (an `RLock` that counts each thread's wait and hold).
+- **`DocumentFormat.closed(document)`**: what the format lets go of when `Session.close`
+  closes a document (docx-agent: its layouts and its Rust owner).
+- `Result.memory` (set by a handler, for the application) and `tools.memory.process_memory()`
+  (resident and proportional memory from `/proc` on Linux, else the peak); `History.
+  kept_bytes()`, what a history's states hold, each shared piece once.
+- The bytes `Pieces` keep beside the latest snapshots are kept within 64 MB as well as by
+  count (the latest two whatever their size): a long report's main part is tens of MB.
+
 ## 0.120.0 -- unreleased
 
 - **A format may write an edited part from its last bytes** (`OpcPackage._write_tree(path,

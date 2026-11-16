@@ -132,6 +132,7 @@ from .logs import CallRecord
 from .numbers import NumberRules, rules_of
 from .registry import role_set
 from .results import ToolError
+from .timing import TimedLock
 from ..errors import ArgumentError, ArgumentTypeError
 
 Clock = Callable[[], _dt.datetime]
@@ -348,6 +349,11 @@ class DocumentFormat:
     #: is now.  :meth:`Session.save` and a save tool's output (:attr:`Output.state`) carry
     #: it; :meth:`Session.open`'s ``state`` hands it back.  ``None``: the format keeps none.
     state: Callable[[Any], Any] | None = None
+    #: Round 58: what the format lets go of when a document is closed (:meth:`Session.close`)
+    #: -- the work it kept for the document in this process (layouts, an owner in native
+    #: code): ``closed(document)``, after the document has left the session.  ``None``:
+    #: nothing beyond what the garbage collector takes.
+    closed: Callable[[Any], None] | None = None
     #: Opens bytes with the state saved beside them: ``open_with_state(data, state) ->
     #: document``.  It refuses a state that is not these bytes' (an
     #: :class:`~ooxml_edit.errors.ArgumentError` saying what to pass instead).
@@ -536,7 +542,9 @@ class DocumentEntry:
     locale: Any = None
     baseline_problems: list[Any] = field(default_factory=list)
     tracking: dict[str, Any] | None = None
-    lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
+    #: Round 58: a :class:`~.timing.TimedLock` (an ``RLock`` that counts each thread's wait
+    #: and hold, for :attr:`~.results.Result.timing`).
+    lock: TimedLock = field(default_factory=TimedLock, repr=False)
     render_cache: LRU = field(default_factory=lambda: LRU(16), repr=False)
     check_cache: LRU = field(default_factory=lambda: LRU(16), repr=False)
     #: What each view was drawn as, by version: ``(version, view, options...)`` -> the
@@ -1413,13 +1421,17 @@ class Session:
         """Close a document; the addresses of the datasets derived from it, which stay,
         each as stale or current as it is now, for good."""
         entry = self.entry(doc_id)
-        with entry.lock, self._lock:
-            self.documents.pop(doc_id, None)
-            kept = []
-            for dataset in self.datasets.values():
-                if dataset.doc == doc_id and not dataset.closed:
-                    kept.append(dataset.address)
-                dataset.document_closed(doc_id)     # its own source, and any it also read
+        with entry.lock:
+            with self._lock:
+                self.documents.pop(doc_id, None)
+                kept = []
+                for dataset in self.datasets.values():
+                    if dataset.doc == doc_id and not dataset.closed:
+                        kept.append(dataset.address)
+                    dataset.document_closed(doc_id)     # its own source, and any it also read
+            fmt = self.formats.get(entry.kind)
+            if fmt is not None and fmt.closed is not None:
+                fmt.closed(entry.document)          # round 58: what the format kept for it
             return kept
 
     @contextmanager

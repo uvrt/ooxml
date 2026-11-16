@@ -13,6 +13,7 @@ from ..markdown.read import _TYPED_NUMBER
 from ._base import resolve, short, tool_names, word_tool
 
 DOC = string("Document id.")
+_AUTHOR = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}author"
 CURSOR = string("next_cursor of the previous page.", optional=True)
 
 #: Leave room in a page for the envelope around the Markdown.
@@ -44,12 +45,42 @@ def heading_tree(document: Any) -> list[dict[str, Any]]:
 
 
 def _pages(call: Any) -> Any:
+    """The page count, or ``at least N (layout stopped)``.  Round 58: asked of the worker
+    holding the document's layout (:func:`docx_agent.layout.check_facts`, a check's bare
+    facts, the call's lock let go while it lays out) -- the layout never comes here for a
+    number: a long document's whole layout read into this process for each version kept
+    hundreds of megabytes per version here.  Laid out here only where the document has no
+    such worker (a converter of the old protocol, a layout kept as its pickle) or the call
+    holds the document (inside a batch)."""
+    from ..layout import BARE_REQUEST, check_facts
+
     try:
+        made = check_facts(call.document, call.unlocked, dict(BARE_REQUEST)) if call.may_unlock else None
+        if made is not None:
+            reflow = made[0]["reflow"]
+            return reflow["pages"] if reflow["complete"] else f"at least {reflow['pages']} (layout stopped)"
         layout = call.document.layout()
     except ToolError as error:
         return f"{error.code}: {error.message}"
     known = layout.pages_known
     return known if known is not None else f"at least {layout.page_count} (layout stopped)"
+
+
+def _memory(call: Any) -> dict[str, Any]:
+    """Round 58: what this process holds, in MB -- ``document``, the document's undo history
+    (each distinct piece of its states once) and the layouts of it kept in this process
+    (:func:`docx_agent.layout.layout_cost`, an estimate: about a megabyte a page), and the
+    process's own (:func:`ooxml_edit.tools.memory.process_memory`: ``rss`` and ``pss`` where
+    the system says, else ``peak_rss``) -- so a run sees its own growth, call by call."""
+    from ooxml_edit.tools.memory import process_memory
+
+    from ..layout import layout_cost
+
+    live = call.session.documents.get(call.entry.doc_id) if call.entry is not None else None
+    document = live.document if live is not None else call.document
+    kept = document.history.kept_bytes()
+    kept += sum(layout_cost(conversion.raw) for conversion in list(getattr(document, "_layouts", {}).values()))
+    return {"document": round(kept / 2 ** 20, 1), **process_memory()}
 
 
 def _sections(document: Any) -> list[dict[str, Any]]:
@@ -70,10 +101,20 @@ def _sections(document: Any) -> list[dict[str, Any]]:
 
 
 def _styles_in_use(document: Any) -> list[dict[str, Any]]:
-    counts: Counter = Counter()
+    """The paragraph styles applied, by name, most used first.  Round 58: counted by the
+    style each paragraph declares, then each one's name found once -- a paragraph's
+    ``style_name`` reads every style in the document, which made describe of a long
+    document read the styles part once per paragraph."""
+    declared: Counter = Counter()
     for story in document.stories:
         for paragraph in story.paragraphs:
-            counts[paragraph.style_name] += 1
+            declared[paragraph.style] += 1
+    styles = document.styles
+    default = styles.default("paragraph")
+    counts: Counter = Counter()
+    for style_id, n in declared.items():
+        found = (styles.find(style_id, "paragraph") if style_id else None) or default
+        counts[found.name if found else None] += n
     return [{"name": name, "paragraphs": n} for name, n in counts.most_common(40) if name]
 
 
@@ -83,7 +124,10 @@ def word_describe(call: Any, doc: str) -> Result:
     entry = call.entry
     comments = document.comments()
     threads = [c for c in comments if c.parent is None]
-    revisions = document.revisions()
+    # Round 58: the records' authors read from the records found once (a revision's
+    # ``author`` finds its record again among them all: describe of a document with
+    # thousands of revisions read them all once per revision).
+    revisions = [element for _, _, element in document._revision_elements()]
     fields = Counter(f.keyword for f in document.fields())
     data: dict[str, Any] = {
         "name": entry.name, "pages": _pages(call), "compatibility_mode": document.compatibility_mode,
@@ -96,7 +140,7 @@ def word_describe(call: Any, doc: str) -> Result:
         "comments": {"threads": len(threads), "open": sum(1 for c in threads if not c.done),
                      "by_author": dict(Counter(c.author for c in comments))},
         "revisions": {"records": len(revisions), "changes": len(document.changes()),
-                      "by_author": dict(Counter(r.author for r in revisions))},
+                      "by_author": dict(Counter(element.get(_AUTHOR) for element in revisions))},
         "fields": dict(fields),
         # Round 54 (lanes M, R): rows and columns as word_edit_table counts them (accepted).
         "tables": [{"id": t.id, **_accepted_size(document, t),
@@ -118,7 +162,9 @@ def word_describe(call: Any, doc: str) -> Result:
         data["tagged"] = named[:30]
     if len(data["headings"]) == 80:
         data["headings_note"] = "the first 80 headings; word_read a range for the rest"
-    return Result(summary=f"Described {entry.name}", data=data)
+    result = Result(summary=f"Described {entry.name}", data=data)
+    result.memory = _memory(call)        # round 58: the application's, never the model's
+    return result
 
 
 def _accepted_size(document: Any, table: Any) -> dict:

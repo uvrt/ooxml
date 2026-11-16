@@ -532,7 +532,7 @@ class TableFormatOps:
         entries = [found for found in (index.entry_for(node) for node, _ in changes) if found is not None]
         with self._edit():
             renames = self._prepare(part, entries)
-            with self._track_properties([part]):
+            with self._track_properties([part], within=[node for node, _ in changes]):
                 for node, values in changes:
                     _formatting.write_paragraph(node, values)
             self.package.mark_dirty(part)
@@ -648,7 +648,7 @@ class TableFormatOps:
         entries = [found for found in (index.entry_for(lead) for lead, _ in changes) if found is not None]
         with self._edit():
             renames = self._prepare(part, entries)
-            with self._track_properties([part]):
+            with self._track_properties([part], within=[lead for lead, _ in changes]):
                 for lead, value in changes:
                     _formatting.write_paragraph(lead, {"keep_with_next": value})
             self.package.mark_dirty(part)
@@ -1264,7 +1264,7 @@ class TableFormatOps:
             # Not the rows: Word changes a row a vertical text direction needs without a
             # record (measured).
             tracker = TableTracker(element, rows=False) if tracking is not None else None
-            with self._track_properties([part]):
+            with self._track_properties([part], within=[element]):
                 cell = self._cell_element(entry.id, row, column)
                 properties = cell.find(_W + "tcPr")
                 if properties is None:

@@ -503,12 +503,13 @@ class CommentOps:
         from .annotations import REVISION_KINDS
 
         out: set[str] = set()
+        tags = (*REVISION_KINDS, _W + "comment")
         for part in self._parts():
-            for node in self.package.tree(part).iter():
-                if isinstance(node.tag, str) and (node.tag in REVISION_KINDS or node.tag == _W + "comment"):
-                    author = node.get(_W + "author")
-                    if author is not None:
-                        out.add(author)
+            # Round 58: picked out by lxml (``iter`` by tag), not every element in Python.
+            for node in self.package.tree(part).iter(*tags):
+                author = node.get(_W + "author")
+                if author is not None:
+                    out.add(author)
         return out
 
     def _tidy_people(self: "Document", before: set[str]) -> None:

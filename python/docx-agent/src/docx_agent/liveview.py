@@ -58,7 +58,8 @@ from typing import Any, Iterator, Mapping, MutableMapping
 
 import docx2svg
 
-from .layout import _Conversion, _keeper, cache_key, convert, group_ids, tag_with
+from . import layout as _layout
+from .layout import _Conversion, _keeper, cache_key, convert, group_ids, layout_cost, tag_with
 
 __all__ = ["PageSvg", "UnknownToken", "View", "ViewPage", "embed_images", "externalise_images",
            "page_svg", "view"]
@@ -195,8 +196,12 @@ def _seen(document: Any, conversion: _Conversion) -> tuple[str, _Seen]:
         tokens = _tokens(document)
         tokens[token] = seen
         tokens.move_to_end(token)
-        while len(tokens) > VIEW_TOKENS:
-            tokens.popitem(last=False)
+        # Round 58: within a quarter of the layouts' memory (docx_agent.layout.LAYOUT_MEMORY)
+        # as well as VIEW_TOKENS -- the two used last kept whatever they cost: a view since the
+        # last token compares those two.
+        total = sum(layout_cost(kept.conversion.raw) for kept in tokens.values())
+        while len(tokens) > VIEW_TOKENS or (len(tokens) > 2 and total > _layout.LAYOUT_MEMORY // 4):
+            total -= layout_cost(tokens.popitem(last=False)[1].conversion.raw)
     return token, seen
 
 
