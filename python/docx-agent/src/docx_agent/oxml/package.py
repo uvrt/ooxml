@@ -358,12 +358,39 @@ def _verify() -> bool:
     return _verify_serialized()
 
 
+_CORE: list = []
+
+
 def _core():
+    """``ooxml_core`` where its tree digests are there and read this lxml's trees as they
+    should (:func:`_reads_trees`, tried once), else ``None``."""
+    if not _CORE:
+        try:
+            import ooxml_core
+        except ImportError:  # pragma: no cover -- the core is a dependency
+            ooxml_core = None
+        if ooxml_core is not None and not (hasattr(ooxml_core, "tree_digests") and _reads_trees(ooxml_core)):
+            ooxml_core = None
+        _CORE.append(ooxml_core)
+    return _CORE[0]
+
+
+def _reads_trees(core) -> bool:
+    """Whether the core's digests of a small made-up tree change where it is changed and
+    nowhere else (a check of lxml's element layout as the core reads it)."""
     try:
-        import ooxml_core
-    except ImportError:  # pragma: no cover -- the core is a dependency
-        return None
-    return ooxml_core if hasattr(ooxml_core, "tree_digests") else None
+        root = etree.fromstring(b'<w:document xmlns:w="urn:w"><w:body><w:p a="1"/><w:p/>'
+                                b'<w:tbl><w:tr><w:p/></w:tr></w:tbl></w:body></w:document>')
+        body = root[0]
+        skeleton, units, elements = core.tree_digests(root, body)
+        walk = core.index_walk(root)
+        body[1].set("b", "2")
+        skeleton2, units2, _ = core.tree_digests(root, body)
+        return (elements and len(units) == 48 and skeleton2 == skeleton and units2[:16] == units[:16]
+                and units2[16:32] != units[16:32] and units2[32:] == units[32:]
+                and core.index_walk(root) == walk)
+    except Exception:  # noqa: BLE001 -- not read as it should be: written whole
+        return False
 
 
 _BODY = qn("w:body")

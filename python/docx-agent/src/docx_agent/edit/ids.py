@@ -481,11 +481,10 @@ def walk_digest(root: Element) -> bytes | None:
 
     if not incremental.enabled():
         return None
-    try:
-        import ooxml_core
-    except ImportError:  # pragma: no cover -- the core is a dependency
-        return None
-    walk = getattr(ooxml_core, "index_walk", None)
+    from ..oxml.package import _core
+
+    core = _core()
+    walk = getattr(core, "index_walk", None)
     return walk(root) if walk is not None else None
 
 
