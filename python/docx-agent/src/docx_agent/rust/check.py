@@ -975,10 +975,17 @@ def _faces_state(mirror: Any) -> tuple:
     fallbacks = list((getattr(fonts, "glyph_fallbacks", None) or {}).items())
     real: list = []
     if fallbacks:
-        # (the exporter's tables read only where a glyph fell back: most states have none)
-        chars, drawn = mirror.ex.chars, mirror.ex.drawn
-        real = [(family, char, used) for (family, char), used in fallbacks
-                if char not in chars or (family, char) in drawn]
+        reads = getattr(getattr(mirror, "parser", None), "glyph_reads", None) if getattr(mirror, "rust", False) \
+            else None
+        if reads is not None:
+            # (lane J: asked of the parser, not from the exporter's tables made whole)
+            held = reads([(family or "", char) for (family, char), _used in fallbacks])
+        else:
+            chars, drawn = mirror.ex.chars, mirror.ex.drawn
+            held = [(char in chars, (family, char) in drawn) for (family, char), _used in fallbacks]
+        real = [(family, char, used) for ((family, char), used), (holds, draws) in zip(fallbacks, held)
+                if not holds or draws]
+        chars = {char for ((_family, char), _used), (holds, _draws) in zip(fallbacks, held) if holds}
         if len(real) > 1 or any(char not in chars for _, char, _ in real):
             return ("glyphs measured with other faces", [], [], [])
     substitutions = _in_layout_order(mirror, dict(getattr(fonts, "substitutions", None) or {}))

@@ -20,7 +20,9 @@ ooxml-core is the Rust core of the ooxml packages (`crates/`), as the Python mod
   a row's table -- for telling the index unchanged without a walk in Python.
 - **`Parser.faces_first(names)`**: of `names`, the faces the units' text is measured in, in
   the order the units first name them -- what a check says of the substituted faces, kept
-  per state by docx-agent 0.1.120 without making the exporter's tables whole.
+  per state by docx-agent 0.1.120 without making the exporter's tables whole; and
+  **`Parser.glyph_reads(pairs)`**: per `(face, character)`, whether the body holds the
+  character and the face draws it (the exporter's `chars` and `drawn`).
 
 ## 0.6.0 -- unreleased
 

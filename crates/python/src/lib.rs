@@ -370,6 +370,11 @@ impl Parser {
         })
     }
 
+    /// Lane J: per `(face, character)`, whether the body holds it and the face draws it.
+    fn glyph_reads(&self, py: Python<'_>, pairs: Vec<(String, String)>) -> Vec<(bool, bool)> {
+        self.held(py).glyph_reads(&pairs)
+    }
+
     /// Lane J: of `names`, those the units' text is measured in, in the order first named.
     fn faces_first(&self, py: Python<'_>, names: Vec<String>) -> Vec<String> {
         self.held(py).faces_first(&names)
