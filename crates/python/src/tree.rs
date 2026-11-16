@@ -125,12 +125,16 @@ fn keys() -> &'static (RandomState, RandomState) {
 /// at the end.
 struct Digest {
     buf: Vec<u8>,
+    /// Lane K: each namespace met, as the digest of its prefix and URI (taken once per
+    /// namespace struct and walk: an element's URI is not copied into the stream again).
+    namespaces: Vec<(*const XmlNs, [u8; 16])>,
 }
 
 impl Digest {
     fn new() -> Self {
         Digest {
-            buf: Vec::with_capacity(1 << 12),
+            buf: Vec::with_capacity(256),
+            namespaces: Vec::new(),
         }
     }
     fn tag(&mut self, value: u8) {
@@ -165,11 +169,28 @@ impl Digest {
 unsafe fn ns(d: &mut Digest, ns: *const XmlNs) {
     if ns.is_null() {
         d.tag(0);
-    } else {
-        d.tag(1);
-        d.text((*ns).prefix);
-        d.text((*ns).href);
+        return;
     }
+    d.tag(1);
+    for (p, digest) in d.namespaces.iter() {
+        if *p == ns {
+            let digest = *digest;
+            d.buf.extend_from_slice(&digest);
+            return;
+        }
+    }
+    // (the walk changes nothing: a namespace struct is the same namespace throughout it)
+    let mut own = Digest {
+        buf: Vec::with_capacity(96),
+        namespaces: Vec::new(),
+    };
+    own.text((*ns).prefix);
+    own.text((*ns).href);
+    let digest = own.finish();
+    if d.namespaces.len() < 32 {
+        d.namespaces.push((ns, digest));
+    }
+    d.buf.extend_from_slice(&digest);
 }
 
 /// An element's start: its name, namespace, declarations and attributes (each attribute's
@@ -436,23 +457,72 @@ unsafe fn named(text: *const c_char, name: &[u8]) -> bool {
     !text.is_null() && CStr::from_ptr(text).to_bytes() == name
 }
 
+/// Lane K: which of the three namespaces a walk asks about a namespace is (1 main, 2 w14,
+/// 3 markup compatibility, 0 another), its answer kept for the namespace's struct: a tree's
+/// elements share a few of them, so the URI is compared once per struct, not per element.
+#[derive(Default)]
+struct Kinds {
+    seen: Vec<(*const XmlNs, u8)>,
+}
+
+impl Kinds {
+    /// # Safety
+    /// `ns` is null or a live libxml2 namespace.
+    unsafe fn of(&mut self, ns: *const XmlNs) -> u8 {
+        if ns.is_null() {
+            return 0;
+        }
+        for &(p, k) in &self.seen {
+            if p == ns {
+                return k;
+            }
+        }
+        let k = if href_is(ns, W_NS) {
+            1
+        } else if href_is(ns, W14_NS) {
+            2
+        } else if href_is(ns, MC_NS) {
+            3
+        } else {
+            0
+        };
+        if self.seen.len() < 64 {
+            self.seen.push((ns, k));
+        }
+        k
+    }
+}
+
 /// Which of a paragraph, a row and a table an element is (1, 2, 3), else 0.
 ///
 /// # Safety
 /// `node` is a live libxml2 element.
-unsafe fn walked_kind(node: *const XmlNode) -> u8 {
-    if !href_is((*node).ns, W_NS) {
+unsafe fn walked_kind(kinds: &mut Kinds, node: *const XmlNode) -> u8 {
+    if kinds.of((*node).ns) != 1 {
         return 0;
     }
-    if named((*node).name, b"p") {
-        1
-    } else if named((*node).name, b"tr") {
-        2
-    } else if named((*node).name, b"tbl") {
-        3
-    } else {
-        0
+    let name = (*node).name;
+    if name.is_null() {
+        return 0;
     }
+    // (names compared by their bytes: "p", "tr", "tbl")
+    let b0 = *name as u8;
+    if b0 == b'p' {
+        if *name.add(1) == 0 {
+            return 1;
+        }
+        return 0;
+    }
+    if b0 == b't' {
+        let b1 = *name.add(1) as u8;
+        if b1 == b'r' && *name.add(2) == 0 {
+            return 2;
+        }
+        if b1 == b'b' && *name.add(2) as u8 == b'l' && *name.add(3) == 0 {
+            return 3;
+        }
+    }
+    0
 }
 
 /// One element of an index's walk: its kind, its node, its `w14:paraId`, a row's table.
@@ -460,13 +530,13 @@ unsafe fn walked_kind(node: *const XmlNode) -> u8 {
 ///
 /// # Safety
 /// `node` is a live libxml2 element of kind `kind` (not 0).
-unsafe fn walked(d: &mut Digest, node: *const XmlNode, kind: u8) -> bool {
+unsafe fn walked(kinds: &mut Kinds, d: &mut Digest, node: *const XmlNode, kind: u8) -> bool {
     d.tag(kind);
     d.buf.extend_from_slice(&(node as usize).to_le_bytes());
     let mut attr = (*node).properties;
     let mut found: *const c_char = std::ptr::null();
     while !attr.is_null() {
-        if href_is((*attr).ns, W14_NS) && named((*attr).name, b"paraId") {
+        if kinds.of((*attr).ns) == 2 && named((*attr).name, b"paraId") {
             let child = (*attr).children;
             if child.is_null() {
                 found = c"".as_ptr();
@@ -482,7 +552,7 @@ unsafe fn walked(d: &mut Digest, node: *const XmlNode, kind: u8) -> bool {
     d.text(found);
     if kind == 2 {
         let mut up = (*node).parent;
-        while !up.is_null() && !((*up).kind == ELEMENT && walked_kind(up) == 3) {
+        while !up.is_null() && !((*up).kind == ELEMENT && walked_kind(kinds, up) == 3) {
             up = (*up).parent;
         }
         d.buf.extend_from_slice(&(up as usize).to_le_bytes());
@@ -495,14 +565,14 @@ unsafe fn walked(d: &mut Digest, node: *const XmlNode, kind: u8) -> bool {
 ///
 /// # Safety
 /// `top` is a live libxml2 node of a tree no other thread changes.
-unsafe fn walk(d: &mut Digest, top: *const XmlNode, with_top: bool) -> bool {
+unsafe fn walk(kinds: &mut Kinds, d: &mut Digest, top: *const XmlNode, with_top: bool) -> bool {
     let mut node = top;
     loop {
         let mut descend = false;
-        if (*node).kind == ELEMENT && !(href_is((*node).ns, MC_NS) && named((*node).name, b"Fallback")) {
+        if (*node).kind == ELEMENT && !(kinds.of((*node).ns) == 3 && named((*node).name, b"Fallback")) {
             if node != top || with_top {
-                let kind = walked_kind(node);
-                if kind != 0 && !walked(d, node, kind) {
+                let kind = walked_kind(kinds, node);
+                if kind != 0 && !walked(kinds, d, node, kind) {
                     return false;
                 }
             }
@@ -525,67 +595,183 @@ unsafe fn walk(d: &mut Digest, top: *const XmlNode, with_top: bool) -> bool {
     }
 }
 
+/// What [`walks`] reads of a story's tree.
+struct Walks {
+    /// The whole walk's digest: of every record in document order (as lane J's, whatever
+    /// the children holding them).
+    whole: [u8; 16],
+    /// Each body child's (as lxml counts them): its digest, its place among the children,
+    /// whether it is a top-level block (`w:p`, `w:tbl`, `w:sdt`, `w:customXml`), whether its
+    /// walk has a record.
+    children: Vec<([u8; 16], u32, bool, bool)>,
+    /// Whether anything outside the body's children has a record.
+    outside: bool,
+}
+
+/// Whether a body child is a top-level block as docx-agent counts them.
+///
+/// # Safety
+/// `node` is a live libxml2 node.
+unsafe fn is_block(kinds: &mut Kinds, node: *const XmlNode) -> bool {
+    (*node).kind == ELEMENT
+        && kinds.of((*node).ns) == 1
+        && (named((*node).name, b"p")
+            || named((*node).name, b"tbl")
+            || named((*node).name, b"sdt")
+            || named((*node).name, b"customXml"))
+}
+
+/// The walks of a story's tree.  `None` where a paraId is not plain text.
+///
+/// # Safety
+/// `top` is a live element of a tree no other thread changes while the walk runs.
+unsafe fn walks(py: Python<'_>, top: *const XmlNode) -> Option<Walks> {
+    let mut kinds = Kinds::default();
+    let mut d = Digest::new();
+    let mut out = Walks {
+        whole: [0; 16],
+        children: Vec::new(),
+        outside: false,
+    };
+    if kinds.of((*top).ns) == 3 && named((*top).name, b"Fallback") {
+        out.whole = d.finish();
+        return Some(out);
+    }
+    let mut child = (*top).children;
+    while !child.is_null() {
+        let body = (*child).kind == ELEMENT && kinds.of((*child).ns) == 1 && named((*child).name, b"body");
+        if !body {
+            let before = d.buf.len();
+            if !walk(&mut kinds, &mut d, child, true) {
+                return None;
+            }
+            out.outside |= d.buf.len() != before;
+            child = (*child).next;
+            continue;
+        }
+        let mut firsts: Vec<(usize, bool)> = Vec::new();
+        let mut node = (*child).children;
+        while !node.is_null() {
+            if counted((*node).kind) {
+                firsts.push((node as usize, is_block(&mut kinds, node)));
+            }
+            node = (*node).next;
+        }
+        // Each child walked side by side (its own nodes only), its records hashed alone.
+        let found: Vec<Option<(Vec<u8>, [u8; 16])>> = py.detach(|| {
+            use rayon::prelude::*;
+            pool().install(|| {
+                firsts
+                    .par_iter()
+                    .map_init(Kinds::default, |kinds, &(first, _)| {
+                        let mut part = Digest::new();
+                        if walk(kinds, &mut part, first as *const XmlNode, true) {
+                            let records = part.buf.clone();
+                            Some((records, part.finish()))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
+            })
+        });
+        for (k, (found, &(_, block))) in found.into_iter().zip(firsts.iter()).enumerate() {
+            let (records, digest) = found?;
+            d.buf.extend_from_slice(&records);
+            out.children.push((digest, k as u32, block, !records.is_empty()));
+        }
+        child = (*child).next;
+    }
+    out.whole = d.finish();
+    Some(out)
+}
+
 /// The digest of what docx-agent's index of a story reads of its tree (lane J): every
 /// paragraph, row and table under `root` (not `root` itself, none under an
 /// `mc:Fallback`), in document order -- each element's node (the node itself: an index holds
 /// every one of them, so none is freed while it is kept), its kind, its `w14:paraId`, and a
 /// row's table (the nearest table above it).  Equal digests: the walk an index was made
 /// from, unchanged (`docx_agent.edit.ids.same_walk`).  A body's children are walked side by
-/// side, their records joined in order and hashed as one.  `None` where a paraId is not
-/// plain text.
+/// side, each child's records hashed alone and their digests hashed in order with the
+/// records around them (lane K: [`index_walks`] gives the children's too).  `None` where a
+/// paraId is not plain text.
 #[pyfunction]
 pub fn index_walk<'py>(root: &Bound<'py, PyAny>) -> PyResult<Option<Bound<'py, PyBytes>>> {
     let py = root.py();
     let top = node_of(root)?;
-    let mut d = Digest::new();
     // SAFETY: a live element's tree, read under the interpreter lock (the walks side by side
     // read nodes of their own only).
-    unsafe {
-        if href_is((*top).ns, MC_NS) && named((*top).name, b"Fallback") {
-            return Ok(Some(PyBytes::new(py, &d.finish())));
+    Ok(unsafe { walks(py, top) }.map(|w| PyBytes::new(py, &w.whole)))
+}
+
+/// Lane K: `index_walk(root)` and the body's blocks' walks: `(whole, blocks, places,
+/// elsewhere)` -- `whole` as `index_walk`; `blocks` each top-level block's walk digest (16
+/// bytes each, joined, in order); `places` each block's place among the body's children as
+/// lxml counts them (4 bytes each, little-endian); `elsewhere` whether anything outside the
+/// blocks (the body's other children, the root's) has a paragraph, row or table.  An index
+/// made per change compares the blocks it keeps by these, not by walking them in Python.
+/// `None` as `index_walk`.
+#[pyfunction]
+#[allow(clippy::type_complexity)]
+pub fn index_walks<'py>(
+    root: &Bound<'py, PyAny>,
+) -> PyResult<Option<(Bound<'py, PyBytes>, Bound<'py, PyBytes>, Bound<'py, PyBytes>, bool)>> {
+    let py = root.py();
+    let top = node_of(root)?;
+    // SAFETY: as index_walk.
+    let found = match unsafe { walks(py, top) } {
+        Some(found) => found,
+        None => return Ok(None),
+    };
+    let mut blocks = Vec::new();
+    let mut places = Vec::new();
+    let mut elsewhere = found.outside;
+    for (digest, place, block, any) in &found.children {
+        if *block {
+            blocks.extend_from_slice(digest);
+            places.extend_from_slice(&place.to_le_bytes());
+        } else {
+            elsewhere |= *any;
         }
-        let mut child = (*top).children;
+    }
+    Ok(Some((
+        PyBytes::new(py, &found.whole),
+        PyBytes::new(py, &blocks),
+        PyBytes::new(py, &places),
+        elsewhere,
+    )))
+}
+
+/// Lane K: a body's children that are not top-level blocks: `(places, blocks, plain)` --
+/// each such element's place among the children as lxml counts them, how many children are
+/// blocks (`w:p`, `w:tbl`, `w:sdt`, `w:customXml`), and whether every child lxml counts is
+/// an element (no comment, processing instruction or reference node among them).  The
+/// children's own links followed in Rust, none of them made a Python object.
+#[pyfunction]
+pub fn body_others(body: &Bound<'_, PyAny>) -> PyResult<(Vec<usize>, usize, bool)> {
+    let node = node_of(body)?;
+    let mut kinds = Kinds::default();
+    let mut places = Vec::new();
+    let mut blocks = 0;
+    let mut plain = true;
+    let mut k = 0;
+    // SAFETY: a live element's children, read under the interpreter lock.
+    unsafe {
+        let mut child = (*node).children;
         while !child.is_null() {
-            let body = (*child).kind == ELEMENT && href_is((*child).ns, W_NS) && named((*child).name, b"body");
-            if !body {
-                if !walk(&mut d, child, true) {
-                    return Ok(None);
+            let kind = (*child).kind;
+            if counted(kind) {
+                if kind != ELEMENT {
+                    plain = false;
+                } else if is_block(&mut kinds, child) {
+                    blocks += 1;
+                } else {
+                    places.push(k);
                 }
-                child = (*child).next;
-                continue;
-            }
-            let mut firsts: Vec<usize> = Vec::new();
-            let mut node = (*child).children;
-            while !node.is_null() {
-                firsts.push(node as usize);
-                node = (*node).next;
-            }
-            // Each child's records walked side by side, then hashed in order as one stream:
-            // the digest of the walk in document order, whatever the children holding it.
-            let found: Vec<Option<Vec<u8>>> = py.detach(|| {
-                use rayon::prelude::*;
-                pool().install(|| {
-                    firsts
-                        .par_iter()
-                        .map(|&first| {
-                            let mut part = Digest::new();
-                            if walk(&mut part, first as *const XmlNode, true) {
-                                Some(part.buf)
-                            } else {
-                                None
-                            }
-                        })
-                        .collect()
-                })
-            });
-            for records in found {
-                match records {
-                    Some(records) => d.buf.extend_from_slice(&records),
-                    None => return Ok(None),
-                }
+                k += 1;
             }
             child = (*child).next;
         }
     }
-    Ok(Some(PyBytes::new(py, &d.finish())))
+    Ok((places, blocks, plain))
 }

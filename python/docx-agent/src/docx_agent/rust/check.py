@@ -36,6 +36,8 @@ import time
 from collections import Counter, OrderedDict
 from typing import Any
 
+from .. import incremental as _incremental
+
 _W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 _P, _TBL = _W + "p", _W + "tbl"
 _BLOCKS = frozenset({_P, _TBL, _W + "sdt", _W + "customXml"})
@@ -471,9 +473,9 @@ def _advance(c: Any, live: Any, doc: RustDoc, version: int | None) -> None:
     else:
         data = package.read(main)
     old = doc.summary
-    new = _rescan(data, old) if old.data != data else old
+    new = _rescan(data, old, live) if old.data != data else old
     if new is None:
-        new = _scan(data)
+        new = _scan(data, live)
     if new is None or new.spans is None:
         raise Unsupported("the body's blocks are not read from its bytes")
     if version is None and new is old and not changed:
@@ -504,7 +506,8 @@ def _advance(c: Any, live: Any, doc: RustDoc, version: int | None) -> None:
         new.kept = None
     stories = _definitions(doc, changed) if changed else False
     body = package.tree(main).find(_W + "body")
-    blocks = [child for child in body if child.tag in _BLOCKS]
+    # (lane K: the blocks found by lxml in C, no tag read in Python per child)
+    blocks = list(body.iterchildren(*_BLOCKS))
     if len(blocks) != len(new.spans):
         raise Unsupported("the body's blocks and its bytes' differ")
     elements = blocks[lo:hi_new]
@@ -537,7 +540,15 @@ def _advance(c: Any, live: Any, doc: RustDoc, version: int | None) -> None:
         for unit, element in zip(mirror.units[hi_old:], blocks[hi_new:]):
             unit.element = element
         text, stats = mirror.splice(lo, hi_old, elements, doc.seq, extra, same)
-    _check_keys(mirror)
+    if not getattr(mirror, "rust", False):
+        _check_keys(mirror)
+    elif _incremental.verifying():
+        # (lane K: the Rust parser refuses a change set whose blocks lack a unique key, so
+        # its mirror's keys are looked through again only to compare)
+        try:
+            _check_keys(mirror)
+        except Unsupported:
+            raise _incremental.Mismatch("owner keys: the Rust parser took keys the mirror refuses") from None
     c.commit(doc.key, text)
     doc.summary = new
     if version is None:

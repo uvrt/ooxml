@@ -1676,7 +1676,7 @@ impl ParaInfo {
 }
 
 /// List counting: docx2svg's `ListCounters`, the levels as the resolver gives them.
-#[derive(Default)]
+#[derive(Default, Clone, PartialEq, Debug)]
 struct Counters {
     counts: HashMap<String, Vec<(i64, i64)>>,
     used: HashSet<(i64, i64)>,
@@ -1819,7 +1819,7 @@ pub struct Caches {
     marks: HashMap<String, Value>,
     geoms: HashMap<String, V>,
     borders: HashMap<String, (Q, Q)>,
-    levels: HashMap<i64, Option<Levels>>,
+    levels: HashMap<i64, Option<std::sync::Arc<Levels>>>,
     ex: Ex,
     pub calls: HashMap<&'static str, usize>,
     /// The measuring tables (fonts' advances, formats) as of the counts they were made at.
@@ -2080,7 +2080,7 @@ impl<'a> Exporter<'a> {
         Ok(out)
     }
 
-    fn levels(&mut self, num_id: i64) -> Result<Option<Levels>, Refused> {
+    fn levels(&mut self, num_id: i64) -> Result<Option<std::sync::Arc<Levels>>, Refused> {
         if let Some(found) = self.c.levels.get(&num_id) {
             return Ok(found.clone());
         }
@@ -2101,14 +2101,14 @@ impl<'a> Exporter<'a> {
                     },
                 );
             }
-            Some(Levels {
+            Some(std::sync::Arc::new(Levels {
                 key: v["key"].as_str().unwrap_or("").to_string(),
                 restarts: v["restarts"]
                     .as_array()
                     .map(|a| a.iter().filter_map(|x| x.as_i64()).collect())
                     .unwrap_or_default(),
                 levels,
-            })
+            }))
         };
         self.c.levels.insert(num_id, found.clone());
         Ok(found)
@@ -2392,6 +2392,26 @@ fn page_field_switches(instruction: &str) -> Result<Option<String>, Refused> {
     Ok(arg)
 }
 
+/// Lane K: the time of each step of a change set, as it goes.
+struct Phases {
+    at: std::time::Instant,
+    done: Vec<(&'static str, f64)>,
+}
+
+impl Phases {
+    fn new() -> Self {
+        Phases {
+            at: std::time::Instant::now(),
+            done: Vec::new(),
+        }
+    }
+    fn mark(&mut self, name: &'static str) {
+        let now = std::time::Instant::now();
+        self.done.push((name, (now - self.at).as_secs_f64() * 1e3));
+        self.at = now;
+    }
+}
+
 /// The export's statistics (calls asked, items made).
 #[derive(Default, Debug)]
 pub struct Stats {
@@ -2400,6 +2420,50 @@ pub struct Stats {
     pub calls: HashMap<&'static str, usize>,
     pub parse_ms: f64,
     pub export_ms: f64,
+    /// Lane K: milliseconds per step of a change set, in order.
+    pub phases: Vec<(&'static str, f64)>,
+}
+
+/// Lane K: whether the per-change passes are compared with the whole ones
+/// (`DOCX_AGENT_FULL_VALIDATE=1`, as docx-agent's own).
+fn verifying() -> bool {
+    std::env::var("DOCX_AGENT_FULL_VALIDATE")
+        .map(|v| v.trim() == "1")
+        .unwrap_or(false)
+}
+
+fn bump(counts: &mut HashMap<String, u32>, key: &str, by: i32) {
+    if by > 0 {
+        *counts.entry(key.to_string()).or_insert(0) += 1;
+    } else if let Some(v) = counts.get_mut(key) {
+        *v -= 1;
+        if *v == 0 {
+            counts.remove(key);
+        }
+    }
+}
+
+/// A unit's key counted in or out; `bad` the units without a key plus the repeats.
+fn count_key(counts: &mut HashMap<String, u32>, bad: &mut usize, key: Option<&String>, by: i32) {
+    match key {
+        None => {
+            if by > 0 {
+                *bad += 1;
+            } else {
+                *bad -= 1;
+            }
+        }
+        Some(k) => {
+            let before = counts.get(k.as_str()).copied().unwrap_or(0);
+            bump(counts, k, by);
+            // a count above one is that many less one repeats
+            if by > 0 && before >= 1 {
+                *bad += 1;
+            } else if by < 0 && before >= 2 {
+                *bad -= 1;
+            }
+        }
+    }
 }
 
 fn para_neighbour(units: &[Unit], k: usize, side: i64) -> Option<&Para> {
@@ -2433,6 +2497,16 @@ pub struct Doc {
     fstack_end: Vec<FEntry>,
     pub caches: Caches,
     labels: HashMap<(u64, usize), Option<String>>,
+    /// Lane K: the list counters before each unit and after the last (`units.len() + 1`
+    /// states, a state shared while no label is counted), for counting the labels again
+    /// from a change on; empty until the labels are first counted.
+    label_states: Vec<std::sync::Arc<Counters>>,
+    /// Lane K: how many units have each key, and how many keys are missing or repeated
+    /// (`check_keys` kept per change).
+    key_counts: HashMap<String, u32>,
+    keys_bad: usize,
+    /// Lane K: how many units' REF fields show each bookmark (the targets kept per change).
+    ref_counts: HashMap<String, u32>,
     dens: (i128, i128),
     sent: (usize, HashSet<char>, HashSet<i64>, usize),
 }
@@ -2478,12 +2552,19 @@ impl Doc {
             fstack_end: fstack,
             caches: Caches::new(),
             labels: HashMap::new(),
+            label_states: Vec::new(),
+            key_counts: HashMap::new(),
+            keys_bad: 0,
+            ref_counts: HashMap::new(),
             dens: (1, 1),
             sent: (0, HashSet::new(), HashSet::new(), 0),
         };
+        for k in 0..doc.units.len() {
+            doc.count_unit(k, 1);
+        }
         doc.check_keys()?;
         let t1 = std::time::Instant::now();
-        doc.relabel(r)?;
+        doc.relabel(r, None)?;
         let mut items = Vec::new();
         for k in 0..doc.units.len() {
             items.push(doc.unit_item(k, r)?);
@@ -2496,29 +2577,95 @@ impl Doc {
             calls: doc.caches.calls.clone(),
             parse_ms: (t1 - t0).as_secs_f64() * 1e3,
             export_ms: (t2 - t1).as_secs_f64() * 1e3,
+            phases: Vec::new(),
         };
         Ok((doc, text, stats))
     }
 
+    /// Every unit has a key, none repeated: from the counts kept per change (lane K); with
+    /// `DOCX_AGENT_FULL_VALIDATE=1` compared with every key looked through.
     fn check_keys(&self) -> Result<(), Refused> {
-        let mut seen = HashSet::new();
-        for u in &self.units {
-            match &u.key {
-                Some(k) if seen.insert(k.clone()) => {}
-                _ => return refuse("a block without a unique paraId"),
-            }
+        let ok = self.keys_bad == 0;
+        if verifying() && ok != self.check_keys_whole() {
+            return refuse("lane K: the keys' counts differ from the keys");
         }
-        Ok(())
+        if ok {
+            Ok(())
+        } else {
+            refuse("a block without a unique paraId")
+        }
+    }
+
+    fn check_keys_whole(&self) -> bool {
+        let mut seen = HashSet::new();
+        self.units.iter().all(|u| matches!(&u.key, Some(k) if seen.insert(k)))
+    }
+
+    /// Unit `k`'s key and REF targets counted in (`by` 1) or out (`by` -1).
+    fn count_unit(&mut self, k: usize, by: i32) {
+        let u = &self.units[k];
+        count_key(&mut self.key_counts, &mut self.keys_bad, u.key.as_ref(), by);
+        for t in &u.refs {
+            bump(&mut self.ref_counts, t, by);
+        }
     }
 
     /// Every list label of the body counted again (`Mirror._label_pass`); the units (by
     /// index) holding a numbered paragraph whose label changed.
-    fn relabel(&mut self, r: &mut dyn Resolver) -> Result<HashSet<usize>, Refused> {
+    ///
+    /// Lane K: `change` (`lo`, the units the region held, the units it holds now) counts
+    /// from the counters as they were before `lo`, and stops at the first unit after the
+    /// region whose counters before it are those it had before the change (every label from
+    /// there on is as it was); `None`, or no counters kept, counts from the start.  With
+    /// `DOCX_AGENT_FULL_VALIDATE=1` the labels and units changed are compared with a count
+    /// from the start.
+    fn relabel(
+        &mut self,
+        r: &mut dyn Resolver,
+        change: Option<(usize, usize, usize)>,
+    ) -> Result<HashSet<usize>, Refused> {
+        let n = self.units.len();
+        let change = change.filter(|&(lo, old_n, new_n)| {
+            lo + new_n <= n && self.label_states.len() == n - new_n + old_n + 1 && lo + old_n < self.label_states.len()
+        });
+        let check = if change.is_some() && verifying() {
+            Some(self.labels.clone())
+        } else {
+            None
+        };
+        let changed = match change {
+            None => self.relabel_whole(r)?,
+            Some((lo, old_n, new_n)) => self.relabel_from(r, lo, old_n, new_n)?,
+        };
+        if let Some(before) = check {
+            let (labels, states) = (self.labels.clone(), self.label_states.clone());
+            self.labels = before;
+            let whole = self.relabel_whole(r)?;
+            if whole != changed
+                || labels != self.labels
+                || states.len() != self.label_states.len()
+                || states.iter().zip(self.label_states.iter()).any(|(a, b)| **a != **b)
+            {
+                return refuse("lane K: the labels counted from a change differ from those counted whole");
+            }
+        }
+        Ok(changed)
+    }
+
+    fn relabel_whole(&mut self, r: &mut dyn Resolver) -> Result<HashSet<usize>, Refused> {
         let mut ex = Exporter::new(r, &mut self.caches);
         let mut counters = Counters::default();
         let mut labels: HashMap<(u64, usize), Option<String>> = HashMap::new();
         let mut changed = HashSet::new();
+        let mut states = Vec::with_capacity(self.units.len() + 1);
+        let mut current = std::sync::Arc::new(Counters::default());
+        let mut dirty = false;
         for (k, u) in self.units.iter().enumerate() {
+            if dirty {
+                current = std::sync::Arc::new(counters.clone());
+                dirty = false;
+            }
+            states.push(current.clone());
             for (j, p) in u.block.paragraphs().iter().enumerate() {
                 let info = ex.para(p)?;
                 let num = &info.v["num"];
@@ -2526,7 +2673,10 @@ impl Doc {
                 if num_id != 0 {
                     let ilvl = num[1].as_i64().unwrap_or(0);
                     let label = match ex.levels(num_id)? {
-                        Some(lv) => counters.count(&lv, num_id, ilvl)?,
+                        Some(lv) => {
+                            dirty = true;
+                            counters.count(&lv, num_id, ilvl)?
+                        }
                         None => None,
                     };
                     if self.labels.get(&(u.uid, j)) != Some(&label) {
@@ -2536,7 +2686,82 @@ impl Doc {
                 }
             }
         }
+        if dirty {
+            current = std::sync::Arc::new(counters);
+        }
+        states.push(current);
         self.labels = labels;
+        self.label_states = states;
+        Ok(changed)
+    }
+
+    fn relabel_from(
+        &mut self,
+        r: &mut dyn Resolver,
+        lo: usize,
+        old_n: usize,
+        new_n: usize,
+    ) -> Result<HashSet<usize>, Refused> {
+        let n = self.units.len();
+        let mut ex = Exporter::new(r, &mut self.caches);
+        let mut counters: Counters = (*self.label_states[lo]).clone();
+        let mut current = self.label_states[lo].clone();
+        let mut dirty = false;
+        let mut states: Vec<std::sync::Arc<Counters>> = Vec::new();
+        let mut changed = HashSet::new();
+        let mut joined: Option<usize> = None;
+        let mut k = lo;
+        while k < n {
+            if k >= lo + new_n {
+                // after the region: the counters as they were before this unit, all as before
+                let old_k = k - new_n + old_n;
+                if *self.label_states[old_k] == counters {
+                    joined = Some(old_k);
+                    break;
+                }
+            }
+            if dirty {
+                current = std::sync::Arc::new(counters.clone());
+                dirty = false;
+            }
+            states.push(current.clone());
+            let u = &self.units[k];
+            for (j, p) in u.block.paragraphs().iter().enumerate() {
+                let info = ex.para(p)?;
+                let num = &info.v["num"];
+                let num_id = num[0].as_i64().unwrap_or(0);
+                if num_id != 0 {
+                    let ilvl = num[1].as_i64().unwrap_or(0);
+                    let label = match ex.levels(num_id)? {
+                        Some(lv) => {
+                            dirty = true;
+                            counters.count(&lv, num_id, ilvl)?
+                        }
+                        None => None,
+                    };
+                    let previous = self.labels.insert((u.uid, j), label.clone());
+                    if previous.as_ref() != Some(&label) {
+                        changed.insert(k);
+                    }
+                } else {
+                    self.labels.remove(&(u.uid, j));
+                }
+            }
+            k += 1;
+        }
+        let old_len = self.label_states.len();
+        match joined {
+            Some(old_k) => {
+                self.label_states.splice(lo..old_k, states);
+            }
+            None => {
+                if dirty {
+                    current = std::sync::Arc::new(counters);
+                }
+                states.push(current);
+                self.label_states.splice(lo..old_len, states);
+            }
+        }
         Ok(changed)
     }
 
@@ -2781,6 +3006,7 @@ impl Doc {
         r: &mut dyn Resolver,
     ) -> Result<(String, Stats), Refused> {
         let t0 = std::time::Instant::now();
+        let mut ph = Phases::new();
         if lo > hi || hi > self.units.len() {
             return refuse("a splice off the body");
         }
@@ -2856,11 +3082,31 @@ impl Doc {
         if hi == self.units.len() {
             self.fields_end = fields.stack.clone();
         }
-        // A REF showing a bookmark the region holds or held: every REF computed again.
-        let mut targets: HashSet<&String> = HashSet::new();
-        for (k, u) in self.units.iter().enumerate() {
-            if !(lo..hi).contains(&k) {
-                targets.extend(u.refs.iter());
+        ph.mark("region");
+        // A REF showing a bookmark the region holds or held: every REF computed again.  (Lane
+        // K: the bookmarks REF fields outside the region show, from the counts kept over the
+        // body less the region's.)
+        let mut region_refs: HashMap<String, u32> = HashMap::new();
+        for u in &old {
+            for t in &u.refs {
+                bump(&mut region_refs, t, 1);
+            }
+        }
+        let targets: HashSet<&String> = self
+            .ref_counts
+            .iter()
+            .filter(|(t, n)| **n > region_refs.get(t.as_str()).copied().unwrap_or(0))
+            .map(|(t, _)| t)
+            .collect();
+        if verifying() {
+            let mut whole: HashSet<&String> = HashSet::new();
+            for (k, u) in self.units.iter().enumerate() {
+                if !(lo..hi).contains(&k) {
+                    whole.extend(u.refs.iter());
+                }
+            }
+            if whole != targets {
+                return refuse("lane K: the REF targets' counts differ from the units'");
             }
         }
         let mut names: HashSet<String> = HashSet::new();
@@ -2876,11 +3122,29 @@ impl Doc {
             }
         }
         let marks = !targets.is_empty() && targets.iter().any(|t| names.contains(*t));
+        ph.mark("refs");
         let n_region = region.len();
         let old_ids: Vec<u64> = old.iter().map(|u| u.uid).collect();
         let new_ids: Vec<u64> = region.iter().map(|u| u.uid).collect();
+        for k in lo..hi {
+            self.count_unit(k, -1);
+        }
         self.units.splice(lo..hi, region);
+        for k in lo..lo + n_region {
+            self.count_unit(k, 1);
+        }
+        // the labels of the units gone (a unit's uid is never another's)
+        {
+            let kept: HashSet<u64> = new_ids.iter().copied().collect();
+            for u in old.iter().filter(|u| !kept.contains(&u.uid)) {
+                for j in 0..u.block.paragraphs().len() {
+                    self.labels.remove(&(u.uid, j));
+                }
+            }
+        }
+        ph.mark("units");
         self.check_keys()?;
+        ph.mark("keys");
         // the runs of units that differ, in the new list's places
         let mut runs: Vec<(usize, usize, usize)> = Vec::new();
         let (mut i, mut j) = (0usize, 0usize);
@@ -2904,6 +3168,7 @@ impl Doc {
             }
             runs.push((lo + aj, lo + j, i - ai));
         }
+        ph.mark("runs");
         let mut redo: HashSet<usize> = HashSet::new();
         if pending || marks {
             let (expanded, problems) = cross_references(&self.units)?;
@@ -2928,12 +3193,17 @@ impl Doc {
                 }
             }
         }
+        ph.mark("cross references");
         let t1 = std::time::Instant::now();
         let relabelled = if runs.is_empty() {
             HashSet::new()
+        } else if redo.is_empty() {
+            self.relabel(r, Some((lo, hi - lo, n_region)))?
         } else {
-            self.relabel(r)?
+            // a block outside the region read again (its REF fields): counted from the start
+            self.relabel(r, None)?
         };
+        ph.mark("relabel");
         let mut covered: HashSet<usize> = HashSet::new();
         for (s, e, _) in &runs {
             covered.extend(*s..*e);
@@ -2969,6 +3239,7 @@ impl Doc {
                 ("items", V::List(items)),
             ]));
         }
+        ph.mark("items");
         let mut obj: Vec<(&'static str, V)> = vec![("version", V::Int(version)), ("splices", V::List(out_splices))];
         let mut text = String::new();
         let d = Dens {
@@ -3011,6 +3282,7 @@ impl Doc {
         } else {
             None
         };
+        ph.mark("fonts");
         // version, splices, then `more`, fonts, formats, in that order
         text.push('{');
         let head = V::Obj(std::mem::take(&mut obj));
@@ -3030,6 +3302,7 @@ impl Doc {
             encode(&f, &d, &mut text)?;
         }
         text.push('}');
+        ph.mark("encode");
         let t2 = std::time::Instant::now();
         let stats = Stats {
             items: n_items,
@@ -3037,6 +3310,7 @@ impl Doc {
             calls: self.caches.calls.clone(),
             parse_ms: (t1 - t0).as_secs_f64() * 1e3,
             export_ms: (t2 - t1).as_secs_f64() * 1e3,
+            phases: ph.done,
         };
         Ok((text, stats))
     }
