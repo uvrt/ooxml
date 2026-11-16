@@ -216,7 +216,7 @@ def follow(document: "Document", sample: str, copies: list[str], *,
             sample_kind = "table" if sample_element.tag == _W + "tbl" else "paragraph"
             if kind == sample_kind == "table":
                 tracker = TableTracker(element, rows=True) if tracking is not None else None
-                with document._track_properties([part]):
+                with document._track_properties([part], within=[element]):
                     rows = _follow_table(document, source, element, sample_element, styles, log)
                 if tracker is not None:
                     from ..revisions.stamp import Stamp
@@ -228,7 +228,7 @@ def follow(document: "Document", sample: str, copies: list[str], *,
                 if tracking is not None and log.rows and not warnings:
                     warnings.append("Word does not track a row's height, breaking or header: applied untracked")
             elif kind == sample_kind:
-                with document._track_properties([part]):
+                with document._track_properties([part], within=[element]):
                     _follow_paragraph(document, source, element, sample_element, styles, log)
             document.package.mark_dirty(part)
             reports.append({"asked": asked, "id": identifier, "part": part, "log": log,

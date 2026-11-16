@@ -33,6 +33,7 @@ import os
 import re
 import threading
 import time
+import weakref
 from collections import Counter, OrderedDict
 from typing import Any
 
@@ -290,6 +291,9 @@ def _open(call: Any, copy: Any, live: Any, found: Any) -> "RustDoc | None":
     if found is not None:
         found.close()
     live.__dict__["_rust_doc"] = doc
+    # Round 58: the owner (its snapshots and layouts, in native memory) goes with the
+    # document when it is collected -- closed, it goes at once (layout.release_document).
+    weakref.finalize(live, doc.close)
     # Versions committed while it was made: followed now where the document is free, as
     # each commit would have; else by the next commit (never a wait for an edit in flight).
     if live.history.version != version and entry.lock.acquire(blocking=False):

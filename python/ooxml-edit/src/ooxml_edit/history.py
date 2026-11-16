@@ -342,6 +342,29 @@ class History:
     def in_batch(self) -> bool:
         return self._batch_depth > 0
 
+    def kept_bytes(self) -> int:
+        """What the history's states hold, in bytes (round 58): every distinct piece of the
+        parts its snapshots keep -- undo, redo and steps taken out -- counted once however
+        many snapshots share it (:class:`~.opc.Pieces`), a raw part's bytes once as well.
+        What a run reads to see its own growth."""
+        seen: set[int] = set()
+        total = 0
+
+        def count(snapshot: Any) -> None:
+            nonlocal total
+            for kept in (*getattr(snapshot, "trees", {}).values(), *getattr(snapshot, "raw", {}).values()):
+                for piece in getattr(kept, "pieces", (kept,)):
+                    if id(piece) not in seen and isinstance(piece, (bytes, bytearray)):
+                        seen.add(id(piece))
+                        total += len(piece)
+
+        for snapshot, _version in (*self._undo, *self._redo):
+            count(snapshot)
+        for undone in self._undone:
+            count(undone.before_snapshot)
+            count(undone.after_snapshot)
+        return total
+
     # -- moving through history ------------------------------------------------------------
 
     def can_undo(self) -> bool:

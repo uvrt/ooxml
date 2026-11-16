@@ -687,6 +687,9 @@ _BODY_OPEN = re.compile(rb"<w:body(?=[\s>])")
 _BODIES: "dict[bytes, _Body | None]" = {}
 _BODIES_LOCK = threading.Lock()
 _BODIES_KEPT = 8
+#: Round 58: and within this many bytes of the parts they were read from (each key is a
+#: whole main part, tens of megabytes in a long report): the latest kept whatever its size.
+_BODIES_BYTES = 64 * 2 ** 20
 
 
 def read_body(data: bytes | None) -> _Body | None:
@@ -705,7 +708,9 @@ def read_body(data: bytes | None) -> _Body | None:
     found = (base is not None and _reread_body(data, base)) or _read_body(data)
     with _BODIES_LOCK:
         _BODIES[data] = found
-        while len(_BODIES) > _BODIES_KEPT:
+        total = sum(len(kept) for kept in _BODIES)
+        while len(_BODIES) > 1 and (len(_BODIES) > _BODIES_KEPT or total > _BODIES_BYTES):
+            total -= len(next(iter(_BODIES)))
             _BODIES.pop(next(iter(_BODIES)))
     return found
 
@@ -1390,7 +1395,8 @@ class Blocks:
         document.typography_spaced = getattr(document, "typography_spaced", 0) + plan.patch.spaced
         engine = plan.patch.engine
         if isinstance(engine, Engine):
-            document._checks_engine = Engine(engine._run, engine.timeout, keyed=engine.keyed, document=document)
+            document._checks_engine = Engine(engine._run, engine.timeout, keyed=engine.keyed, document=document,
+                                             overrun=engine.overrun)
         patched_from = document.__dict__.pop("_patched_from", None)
         for k, scope in enumerate(touched):
             if isinstance(scope, Before):

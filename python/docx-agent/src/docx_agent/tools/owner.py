@@ -57,14 +57,15 @@ def _needs_layout(arguments: Any) -> bool:
 
 
 def _engine(toolbox: Any, session: Any, document: Any) -> Any:
-    from ooxml_edit.tools.worker import takes_affinity
+    from ooxml_edit.tools.worker import takes_affinity, takes_lane
 
     from ._base import Engine
 
     pool = toolbox.pool
     if not takes_affinity(pool):
         return None       # a pool without affinity: each layout where it lands, as before
-    return Engine(pool.run, session.limits.layout_timeout, keyed=True, document=document)
+    return Engine(pool.run, session.limits.layout_timeout, keyed=True, document=document,
+                  overrun=takes_lane(pool))
 
 
 def _committed(entry: Any, fmt: Any) -> Any:

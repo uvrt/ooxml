@@ -109,10 +109,18 @@ class TrackingOps:
         return self._tracking
 
     @contextmanager
-    def _track_properties(self: "Document", parts) -> Iterator[None]:
+    def _track_properties(self: "Document", parts, within=None) -> Iterator[None]:
         """Inside an edit: when tracking, record every paragraph-property and
         run-property change the code inside makes in ``parts`` as ``w:pPrChange`` /
-        ``w:rPrChange`` (:class:`~docx_agent.revisions.track.PropertyTracker`)."""
+        ``w:rPrChange`` (:class:`~docx_agent.revisions.track.PropertyTracker`).
+
+        ``within`` (round 58): the elements of the one part in ``parts`` the code inside
+        formats -- the paragraphs, cells or tables it writes properties on -- so that only
+        their paragraphs and runs are read before and compared after, not every one of the
+        part's: tracked formatting then costs what it formats, not what the document holds
+        (a paragraph styled in a 350-page report read the whole body twice).  An element
+        it formats outside them is not recorded, so a caller names every one, or leaves
+        ``within`` out (the whole of each part)."""
         from . import track as _track
         from .stamp import Stamp
 
@@ -120,7 +128,13 @@ class TrackingOps:
         if tracking is None:
             yield
             return
-        trackers = [(part, _track.PropertyTracker([self.package.tree(part)])) for part in dict.fromkeys(parts)]
+        parts = list(dict.fromkeys(parts))
+        if within is not None:
+            if len(parts) != 1:
+                raise ValueError("within names elements of one part")
+            trackers = [(parts[0], _track.PropertyTracker(_track.outermost(within)))]
+        else:
+            trackers = [(part, _track.PropertyTracker([self.package.tree(part)])) for part in parts]
         try:
             yield
         except BaseException:
