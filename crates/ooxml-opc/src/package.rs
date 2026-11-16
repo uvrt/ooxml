@@ -204,7 +204,8 @@ impl Package {
     }
 
     /// The package's bytes. Untouched entries are copied raw (an unchanged package saves
-    /// byte for byte as it was read); touched parts are written as Python's `to_bytes()`
+    /// byte for byte as it was read when its entries lie end to end from the start, as
+    /// writers lay them out: bytes between or before entries are not kept); touched parts are written as Python's `to_bytes()`
     /// writes them: the entry's name, time, attributes and method kept, a new part's as
     /// `ooxml_edit` makes one.
     pub fn save(&self) -> Result<Vec<u8>, OpcError> {

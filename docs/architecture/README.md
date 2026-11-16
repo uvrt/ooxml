@@ -281,7 +281,7 @@ That is about 5k lines, down from about 19k, because the reply wording moves to 
 - A `PackageVersion` is a persistent map from part name to a `PartVersion`.
 - A `PartVersion` is either `Raw(stored entry)` or `Tree(green root)`. A raw part is untouched: it is never parsed unless read, and it is written by raw copy, compressed bytes included.
 - Relationships and content types are typed and persistent.
-- Directory entries (names ending in `/`) are not parts: they are kept and copied raw, where `ooxml_edit` leaves them out of a save. Two entries that name one part are refused.
+- Directory entries (names ending in `/`) are not parts: they are kept and copied raw, where `ooxml_edit` leaves them out of a save. Two entries that name one part are refused. A raw copy keeps an entry's local record byte for byte, so an unchanged package saves as it was read when its entries lie end to end (bytes between entries, which no Office writer leaves, are not kept).
 
 **The write contract (ADR-004).**
 - A touched part is written exactly as `ooxml_edit.xml.serialize` writes it today, i.e. libxml2's xmlsave:

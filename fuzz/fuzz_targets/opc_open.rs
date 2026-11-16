@@ -1,5 +1,7 @@
 //! OPC packages: no input panics; every part's tree and bytes can be asked for; an unchanged
-//! save is the input, and a save with every XML part touched opens again with the same parts.
+//! save opens again with every entry's stored bytes as they were (byte for byte the input when
+//! its entries lie end to end, as writers lay them out; gaps between entries are not kept), and
+//! a save with every XML part touched opens again with the same parts.
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
@@ -18,7 +20,11 @@ fuzz_target!(|data: &[u8]| {
         }
     }
     if let Ok(saved) = package.save() {
-        assert_eq!(&saved[..], data, "an unchanged package saves as it was read");
+        let again = Package::open(Arc::from(saved), &limits).expect("an unchanged save opens");
+        assert_eq!(again.part_names(), package.part_names());
+        for name in package.part_names() {
+            assert_eq!(again.read(&name).ok(), package.read(&name).ok(), "{name}");
+        }
     }
     if let Ok(saved) = touched.save() {
         let again = Package::open(Arc::from(saved), &limits).expect("a saved package opens");
