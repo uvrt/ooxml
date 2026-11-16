@@ -73,7 +73,7 @@ if TYPE_CHECKING:
     from .measure import Advances
     from .vertical import FaceMetrics
 
-__version__ = "0.12.0"
+__version__ = "0.12.1"
 
 __all__ = [
     "Conversion",
@@ -406,7 +406,9 @@ def lay_out_docx(source, options: ConvertOptions | None = None, *, previous=None
                                        locale=options.locale, placer=placer)
     for code in document.warnings:
         options.warnings.append(Warning(code, _PARSER_WARNINGS.get(code, "a body element is not read")))
-    for substitution in getattr(fonts, "substitutions", {}).values():
+    from .coverage import in_layout_order
+
+    for substitution in in_layout_order(layout, getattr(fonts, "substitutions", None) or {}):
         options.warnings.append(Warning("font-substituted", substitution.message()))
     glyphs: dict = {}
     for (family, char), used in getattr(fonts, "glyph_fallbacks", {}).items():
