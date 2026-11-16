@@ -15,7 +15,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use std::ffi::{c_char, c_int, c_void, CStr};
 use std::hash::BuildHasher;
-use std::sync::OnceLock;
+use std::sync::{Arc, Mutex, OnceLock};
 
 #[repr(C)]
 struct XmlNs {
@@ -90,16 +90,29 @@ fn node_of(element: &Bound<'_, PyAny>) -> PyResult<*const XmlNode> {
 }
 
 /// The threads the walks share: two, so the walks of an edit leave the other cores to the
-/// checks and layouts running beside it.
-fn pool() -> &'static rayon::ThreadPool {
-    static POOL: OnceLock<rayon::ThreadPool> = OnceLock::new();
-    POOL.get_or_init(|| {
+/// checks and layouts running beside it.  Made again in a process forked from the one that
+/// made them (a fork has none of its parent's threads: a pool of them would never answer).
+fn pool() -> Arc<rayon::ThreadPool> {
+    static POOL: Mutex<Option<(u32, Arc<rayon::ThreadPool>)>> = Mutex::new(None);
+    let pid = std::process::id();
+    let mut held = POOL.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((owner, pool)) = held.as_ref() {
+        if *owner == pid {
+            return pool.clone();
+        }
+        // The parent's pool, its threads gone: kept, never dropped (dropping it would wait
+        // for them).
+        std::mem::forget(pool.clone());
+    }
+    let pool = Arc::new(
         rayon::ThreadPoolBuilder::new()
             .num_threads(2)
             .thread_name(|k| format!("ooxml-tree-{k}"))
             .build()
-            .expect("the tree walks' threads")
-    })
+            .expect("the tree walks' threads"),
+    );
+    *held = Some((pid, pool.clone()));
+    pool
 }
 
 fn keys() -> &'static (RandomState, RandomState) {
