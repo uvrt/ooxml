@@ -57,9 +57,16 @@ snapshot commit; the development history before it is summarised here.
   meanwhile is a conflict, prepared again (the stress found the table indented as the list
   item that was no longer before it). With no paragraph before the table, the call takes
   the document's lock.
+- **A check of a range served by the Rust owner says the faces of the version it checks.**
+  Its `reflow` (`coverage.substituted_fonts`, the `font-substituted` warnings) was read from
+  the owner's mirror as it was when the check got its version's layout, so an edit
+  committed meanwhile -- a paragraph in another substituted face -- showed in the check of
+  the version before it, and the faces' order could be a later state's (the free-threaded
+  stress: two writers' checks of one version differed). Each state handed to the owner now
+  keeps what its faces are (`RustDoc.faces`); a check reads its version's, and checks the
+  Python way where that is no longer kept.
 - Needs docx2svg 0.12.1: a check's substituted faces said in the order a full layout says
-  them, whichever layout it was made from (two writers' checks of one version said them
-  in different orders).
+  them, whichever layout it was made from.
 - What a call that ran on a draft (beside other edits of its document) held the document's
   lock for to check and apply its change is in `Result.block["held"]` (ooxml-edit 0.120.0).
 - `DOCX_AGENT_INCREMENTAL=0` turns these off with the other per-change passes;

@@ -126,6 +126,17 @@ class RustDoc:
         self.undefined: set[str] = set()
         self.opened: dict[str, Any] = {}
         self.commits: list[dict[str, Any]] = []
+        #: Lane J: the owner's sequence number -> what a check's ``reflow`` says of the faces
+        #: at it (:func:`_faces_state`), taken when the mirror was at that state (the latest
+        #: few): a check of a version reads its own, never the mirror's later state.
+        self.faces: OrderedDict = OrderedDict({0: _faces_state(mirror)})
+
+    def keep_faces(self) -> None:
+        """What the faces are at :attr:`seq` (the mirror at that state, under the document's
+        lock), kept for the checks of it."""
+        self.faces[self.seq] = _faces_state(self.mirror)
+        while len(self.faces) > 64:
+            self.faces.popitem(last=False)
 
     def close(self) -> None:
         c = core()
@@ -539,6 +550,7 @@ def _advance(c: Any, live: Any, doc: RustDoc, version: int | None) -> None:
         text, stats = mirror.splice(lo, hi_old, elements, doc.seq, extra, same)
     _check_keys(mirror)
     c.commit(doc.key, text)
+    doc.keep_faces()
     doc.summary = new
     if version is None:
         return                  # (an edit's state, :func:`sync_state`: no version of its own)
@@ -778,7 +790,10 @@ def _serve(c: Any, call: Any, arguments: dict[str, Any], timing: Any) -> Any:
     on = answer["on"]
     if "reflow" in wanted:
         count = answer["pages"]
-        coverage, warnings = _coverage(doc.mirror, count, answer["blocks"])
+        faces = doc.faces.get(seq)
+        if faces is None:
+            raise Fallback("the faces of the version checked are not kept")
+        coverage, warnings = _coverage(faces, count, answer["blocks"])
         reflow: dict[str, Any] = {"pages": count, "complete": True, "coverage": coverage}
         found = answer.get("since")
         if found is not None:
@@ -938,27 +953,40 @@ def _in_layout_order(mirror: Any, substitutions: dict) -> list:
     return out + list(left.values())
 
 
-def _coverage(mirror: Any, pages: int, blocks: int) -> tuple[dict[str, Any], list[str]]:
-    """``reflow``'s ``coverage`` and ``layout_warnings`` of a complete layout
-    (``layout.coverage_facts``, docx2svg's ``coverage_of`` and the conversion's warnings):
-    the faces substituted as the mirror measured them, the parser's warnings."""
-    import docx2svg
-
-    from ..tools._base import short
-
+def _faces_state(mirror: Any) -> tuple:
+    """What :func:`_coverage` reads of the mirror, as it is now (lane J: taken at each state
+    the owner is handed, :meth:`RustDoc.keep_faces`): why a check falls back (``None``:
+    it does not), the glyph fallbacks it says, the faces substituted in the layout's order,
+    the parser's warnings."""
     fonts = mirror.fonts
     if getattr(fonts, "missing", None):
-        raise Fallback("a face missing")
+        return ("a face missing", [], [], [])
     # The exporter asks every face for every character it sends; a fallback counts where the
     # face draws the character (docx2svg's layout records only those), or for a character
     # the body does not hold (a header's).  One such is said as docx2svg says it; several
     # would be said in the order the layout met them, which is not known here.
     chars, drawn = mirror.ex.chars, mirror.ex.drawn
     real = [(family, char, used) for (family, char), used in
-            (getattr(fonts, "glyph_fallbacks", None) or {}).items()
+            list((getattr(fonts, "glyph_fallbacks", None) or {}).items())
             if char not in chars or (family, char) in drawn]
     if len(real) > 1 or any(char not in chars for _, char, _ in real):
-        raise Fallback("glyphs measured with other faces")
+        return ("glyphs measured with other faces", [], [], [])
+    substitutions = _in_layout_order(mirror, dict(getattr(fonts, "substitutions", None) or {}))
+    return (None, real, substitutions, list(mirror.d2.warnings))
+
+
+def _coverage(faces: tuple, pages: int, blocks: int) -> tuple[dict[str, Any], list[str]]:
+    """``reflow``'s ``coverage`` and ``layout_warnings`` of a complete layout
+    (``layout.coverage_facts``, docx2svg's ``coverage_of`` and the conversion's warnings):
+    the faces substituted as the mirror measured them at the version checked
+    (:func:`_faces_state`), the parser's warnings."""
+    import docx2svg
+
+    from ..tools._base import short
+
+    why, real, substitutions, parser_warnings = faces
+    if why is not None:
+        raise Fallback(why)
     from ..layout import coverage_facts
 
     # (docx2svg's StopInfo of such a fallback: its text is the reason, no message)
@@ -966,13 +994,12 @@ def _coverage(mirror: Any, pages: int, blocks: int) -> tuple[dict[str, Any], lis
                        "reason": f"{family!r} has no glyph for {char!r}: measured with "
                                  f"{'its missing glyph' if used == '.notdef' else repr(used)}"}
                       for family, char, used in real]
-    substitutions = _in_layout_order(mirror, getattr(fonts, "substitutions", None) or {})
     coverage = coverage_facts({"complete": True, "pages": pages, "blocks_laid_out": blocks, "blocks": blocks,
                                "estimate_source": "layout", "stop": None, "story_stops": [],
                                "substituted_fonts": [s.as_dict() for s in substitutions],
                                "missing_fonts": [], "approximations": approximations})
     warnings = [docx2svg.Warning(code, docx2svg._PARSER_WARNINGS.get(code, "a body element is not read"))
-                for code in mirror.d2.warnings]
+                for code in parser_warnings]
     warnings += [docx2svg.Warning("font-substituted", s.message()) for s in substitutions]
     for family, char, used in real:
         source = "its missing glyph (.notdef)" if used == ".notdef" else repr(used)
