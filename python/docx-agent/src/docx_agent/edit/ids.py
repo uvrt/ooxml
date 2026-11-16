@@ -58,6 +58,7 @@ from __future__ import annotations
 
 import functools
 import hashlib
+import operator
 import re
 import threading
 from collections import Counter
@@ -227,6 +228,8 @@ class PartIndex:
         #: 0.1.118: what the index was made from (:func:`walk_of`), for telling an index
         #: still the tree's after a change (:func:`same_walk`).
         self._walk = (everything, raws, _owners(everything, tags))
+        #: Lane J: the walk's digest (``ooxml_core.index_walk``), for :func:`same_walk`.
+        self._walk_digest = walk_digest(root)
 
     def entry_for(self, element: Element) -> ParagraphEntry | TableEntry | None:
         return self._by_element.get(id(element))
@@ -307,6 +310,10 @@ def body_index(root: Element, data: bytes, base: "IndexBase | None") -> "tuple[P
     return index, IndexBase(index, data, tops, list(spans), counts, keys, body, everything)
 
 
+_FIRST = operator.itemgetter(0)
+_SECOND = operator.itemgetter(1)
+
+
 def _index_from(root, data, base, tops, _blocks, _common_prefix, _common_suffix):
     from ..tools.touched import _kept_counts
 
@@ -332,12 +339,13 @@ def _index_from(root, data, base, tops, _blocks, _common_prefix, _common_suffix)
     if region != tuple(sum(c[k] for c in counts) for k in range(3)):
         return None
     old_index = base.index
-    p_before = sum(c[0] for c in base.counts[:before])
-    p_gone = sum(c[0] for c in base.counts[before:n_old - after])
-    t_before = sum(c[1] for c in base.counts[:before])
-    t_gone = sum(c[1] for c in base.counts[before:n_old - after])
-    e_before = sum(sum(c) for c in base.counts[:before])
-    e_after = sum(sum(c) for c in base.counts[n_old - after:])
+    # (lane J: summed in C, not by a generator over every block)
+    p_before = sum(map(_FIRST, base.counts[:before]))
+    p_gone = sum(map(_FIRST, base.counts[before:n_old - after]))
+    t_before = sum(map(_SECOND, base.counts[:before]))
+    t_gone = sum(map(_SECOND, base.counts[before:n_old - after]))
+    e_before = sum(map(sum, base.counts[:before]))
+    e_after = sum(map(sum, base.counts[n_old - after:]))
     # Every paragraph, row and table as PartIndex walks them: those of the kept blocks must be
     # the same elements as before (an element put in place of one written the same is not).
     walked = live_elements(root, frozenset({W_P, W_TR, W_TBL}))
@@ -419,6 +427,7 @@ def _index_from(root, data, base, tops, _blocks, _common_prefix, _common_suffix)
                        + base_owners[len(base_owners) - e_after:])
     else:
         index._walk = None
+    index._walk_digest = walk_digest(root) if index._walk is not None else None
     new_spans = spans[:before] + middle + [(s + delta, e + delta) for s, e in spans[n_old - after:]]
     new_counts = base.counts[:before] + counts + base.counts[n_old - after:]
     return index, IndexBase(index, data, tops, new_spans, new_counts, keys, (body_at, body_end + delta), walked)
@@ -437,6 +446,24 @@ def same_walk(index: "PartIndex") -> bool:
     walk = getattr(index, "_walk", None)
     if walk is None:
         return False
+    digest = getattr(index, "_walk_digest", None)
+    if digest is not None:
+        # Lane J (0.1.120): the walk read in Rust, as a digest of the elements (the nodes:
+        # the index holds each, so none is freed and another made where it was), their
+        # kinds, paraIds and rows' tables -- what is compared below, milliseconds instead of
+        # a walk in Python.
+        now_digest = walk_digest(index.root)
+        if now_digest is not None:
+            same = now_digest == digest
+            from .. import incremental
+
+            if incremental.verifying() and same != _same_walk(index, walk):
+                raise incremental.Mismatch("same walk: the walk's digest differs from the walk")
+            return same
+    return _same_walk(index, walk)
+
+
+def _same_walk(index: "PartIndex", walk: tuple) -> bool:
     everything, raws, owners = walk
     now = live_elements(index.root, frozenset({W_P, W_TR, W_TBL}))
     if len(now) != len(everything) or now != everything:
@@ -445,6 +472,21 @@ def same_walk(index: "PartIndex") -> bool:
     if [None if tag == W_TBL else node.get(PARA_ID) for node, tag in zip(now, tags)] != raws:
         return False
     return _owners(now, tags) == owners
+
+
+def walk_digest(root: Element) -> bytes | None:
+    """``ooxml_core.index_walk(root)`` (lane J), or ``None`` without the core, with the
+    per-change passes off, or where the walk cannot be read so."""
+    from .. import incremental
+
+    if not incremental.enabled():
+        return None
+    try:
+        import ooxml_core
+    except ImportError:  # pragma: no cover -- the core is a dependency
+        return None
+    walk = getattr(ooxml_core, "index_walk", None)
+    return walk(root) if walk is not None else None
 
 
 def same_index(a: "PartIndex", b: "PartIndex") -> bool:

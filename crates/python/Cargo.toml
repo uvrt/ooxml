@@ -1,6 +1,6 @@
 [package]
 name = "ooxml-python"
-version = "0.6.0"
+version = "0.7.0"
 description = "The Python module ooxml_core (PyO3): documents' owners by id, and Word's layout"
 edition.workspace = true
 license.workspace = true
@@ -22,6 +22,9 @@ ooxml-core = { path = "../core" }
 ooxml-word = { path = "../word" }
 pyo3 = { workspace = true, features = ["extension-module"] }
 serde_json.workspace = true
+# Lane J: the digests of a tree's parts (tree.rs); already in the lock through hashbrown.
+foldhash = "0.2"
+rayon.workspace = true
 
 [features]
 # The stable ABI from 3.10: one wheel for every GIL build of CPython 3.10 and later.  Left

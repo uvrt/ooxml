@@ -5,6 +5,31 @@ docx-agent has not been released to PyPI. Each version that reaches `main` is ta
 snapshot commit; the development history before it is summarised here.
 [`ROADMAP.md`](ROADMAP.md) has the detail of every phase.
 
+## 0.1.120 -- unreleased
+
+- **An edit writes out only the blocks it changed.** The same results -- every tool result,
+  the saved bytes, every version undo, redo and `read_version` give, the ids -- but a
+  version's main part is written from the version before's bytes: each top-level block of
+  the body (with the text after it) is read as a digest of everything Word's XML writer
+  writes of it (`ooxml-core` 0.7.0's `tree_digests`, read from the tree itself, in Rust), and
+  only the blocks whose digests are new are written again, in place; the rest are the last
+  bytes'. The whole part is written where anything outside the blocks changed (the
+  document's or the body's start, the last section's properties), a block declares a
+  namespace of its own, the body holds something not an element (a comment), or the core
+  is missing. TIMING_WRITE
+- **A batch's ops after the first no longer index the body whole**: between ops the body's
+  bytes are written from the last ones and the index is made from the last one where it
+  changed. TIMING_BATCH
+- **The body's index is told unchanged in Rust** (`index_walk`: the paragraphs, rows and
+  tables, their paraIds and rows' tables, as a digest), milliseconds instead of a walk in
+  Python; and an edit's stamping does not look through an index already found stamped.
+- What a call that ran on a draft (beside other edits of its document) held the document's
+  lock for to check and apply its change is in `Result.block["held"]` (ooxml-edit 0.120.0).
+- `DOCX_AGENT_INCREMENTAL=0` turns these off with the other per-change passes;
+  `OOXML_EDIT_VERIFY_SERIALIZED=1` compares every write with the tree written out whole,
+  `DOCX_AGENT_FULL_VALIDATE=1` the index's walk with the walk in Python (the tests set both).
+- Needs ooxml-edit 0.120.0 and ooxml-core 0.7.0.
+
 ## 0.1.119 -- unreleased
 
 - **The Rust owner's input is made by a Rust parser of the body.** The same results -- every

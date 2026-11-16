@@ -4,6 +4,17 @@ Versions are those in `pyproject.toml`; none is published to PyPI yet. Each vers
 reaches `main` is tagged `v<version>` on the commit that brought it, from 0.62.0; the
 earlier ones were never tagged.
 
+## 0.120.0 -- unreleased
+
+- **A format may write an edited part from its last bytes** (`OpcPackage._write_tree(path,
+  root)`, what every read, snapshot and save of an edited part writes; `serialize` here):
+  docx-agent 0.1.120 writes the main part's changed blocks only. With
+  `OOXML_EDIT_VERIFY_SERIALIZED=1` such a write is compared with the tree written out whole.
+- **`Pieces` keep the bytes they were made of** beside the latest few: the state before and
+  after a call, read whole by what its result says, are not joined from their pieces again.
+- `Result.block["held"]`: how long a call prepared on a draft held its document's lock to
+  check and apply its change (seconds).
+
 ## 0.119.0 -- unreleased
 
 - **One serialization per version, from one call to the next.** A snapshot the history

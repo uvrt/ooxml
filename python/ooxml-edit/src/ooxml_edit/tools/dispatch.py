@@ -2031,7 +2031,8 @@ class Toolbox:
                     return None
                 # Round 50: and the documents it read rows of, so none changes between the
                 # check that each is at the version read and the change applied.
-                with session.lock([doc, *(other for other in read if other in session.documents)]):
+                with session.lock([doc, *(other for other in read if other in session.documents)]), \
+                        _held(stats):
                     if session.documents.get(doc) is not entry:
                         stats["lock"] = "closed"
                         return None     # closed meanwhile: the call says so, as before
@@ -3991,6 +3992,17 @@ class _Editing:
         counts, self._counts = self._counts, {}
         for entry, _count in counts.values():
             entry.end_edit()
+
+
+@contextmanager
+def _held(stats: dict[str, Any]) -> Iterator[None]:
+    """0.120.0 (lane J): the seconds a call on a draft held its document's lock to check and
+    apply its change, added to ``stats["held"]`` (:attr:`Result.block`)."""
+    began = time.perf_counter()
+    try:
+        yield
+    finally:
+        stats["held"] = round(stats.get("held", 0.0) + time.perf_counter() - began, 4)
 
 
 class _Drafting:

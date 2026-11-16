@@ -7,6 +7,8 @@ use ooxml_word::snapshot::Snapshot;
 use pyo3::prelude::*;
 use std::sync::Arc;
 
+mod tree;
+
 #[pyclass(frozen)]
 struct Snap {
     inner: Arc<Snapshot>,
@@ -555,5 +557,8 @@ fn ooxml_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(documents, m)?)?;
     m.add_function(wrap_pyfunction!(spin, m)?)?;
     m.add_function(wrap_pyfunction!(spin_held, m)?)?;
+    m.add_function(wrap_pyfunction!(tree::tree_digests, m)?)?;
+    m.add_function(wrap_pyfunction!(tree::unit_starts, m)?)?;
+    m.add_function(wrap_pyfunction!(tree::index_walk, m)?)?;
     Ok(())
 }

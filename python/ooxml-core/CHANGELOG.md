@@ -3,6 +3,21 @@
 ooxml-core is the Rust core of the ooxml packages (`crates/`), as the Python module
 `ooxml_core`. Its version is the `crates/python` crate's.
 
+## 0.7.0 -- unreleased
+
+- **`ooxml_core.tree_digests(root, body)`**: digests of an lxml tree read from libxml2's
+  nodes (lxml's public `struct LxmlElement`, libxml2's `xmlNode`), of everything libxml2's
+  serializer writes: one per child of `body` as lxml counts children (the child, its subtree
+  and its tail), one for the rest of the part; 128 bits each (two foldhash hashes seeded at
+  random per process), the children read side by side, the interpreter lock let go.
+  `None` where a node is of a kind it does not read. docx-agent 0.1.120 writes again only
+  the blocks whose digests changed.
+- **`ooxml_core.unit_starts(data, start, end)`**: where each child of a body begins in the
+  bytes libxml2 wrote (its tail runs to the next).
+- **`ooxml_core.index_walk(root)`**: a digest of what docx-agent's index of a story reads --
+  every paragraph, row and table not under `mc:Fallback`, by node, kind, `w14:paraId` and
+  a row's table -- for telling the index unchanged without a walk in Python.
+
 ## 0.6.0 -- unreleased
 
 - **`ooxml_core.Parser`: a Word document's body read in Rust** (`ooxml_word::parse`, the

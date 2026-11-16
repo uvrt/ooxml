@@ -76,8 +76,9 @@ class held:
 
 
 def _shape(block):
-    """``Result.block`` less ``cpu`` (the drafts' own preparation time)."""
-    return {key: value for key, value in (block or {}).items() if key != "cpu"}
+    """``Result.block`` less ``cpu`` (the drafts' own preparation time) and ``held`` (the
+    time the change held the document's lock)."""
+    return {key: value for key, value in (block or {}).items() if key not in ("cpu", "held")}
 
 
 def _in_thread(fn):
