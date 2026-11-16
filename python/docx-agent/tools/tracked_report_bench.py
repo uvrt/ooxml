@@ -17,8 +17,8 @@ run ends after ``--minutes`` or ``--edits`` changing calls, whichever comes firs
 
 Per call: ``wall`` (the dispatch), ``cpu`` (this thread's), and the document lock's ``wait``
 (seconds spent taking it) and ``hold`` (seconds it was held) as measured here around
-``DocumentEntry.lock``; and the result's own ``timing`` where it reports one.  Every
-``--sample`` seconds: this process's resident memory, its worker processes', and (Linux)
+``DocumentEntry.lock``; and the result's own ``timing`` where it reports one.  After every
+changing call, and every ``--sample`` seconds: this process's resident memory, its worker processes', and (Linux)
 proportional set sizes and the glibc arena count.  A run whose processes together pass
 ``--stop-mb`` stops (the memory left as found, the calls so far written out).  The JSON holds
 every call, every sample, and per call kind the p50/p99 of wall, wait, hold and cpu.
@@ -192,22 +192,26 @@ def main() -> None:
     from docx_agent.tools import FORMAT, GROUPS, TOOLS
 
     data = Path(args.doc).read_bytes() if args.doc else build()[0]
-    out: dict = {"args": vars(args), "python": sys.version, "started": time.time(), "calls": [], "samples": []}
+    out: dict = {"args": vars(args), "python": sys.version, "started": time.time(), "calls": [], "samples": [],
+                 "by_edit": []}
     calls, lock = out["calls"], threading.Lock()
     stop = threading.Event()
     edits = [0]
     limits = Limits(render_timeout=3600, layout_timeout=3600, batch_timeout=3600, worker_queue_timeout=3600)
     pid = os.getpid()
 
+    def sample(t0: float) -> dict:
+        kids = _children(pid)
+        me = _memory(pid)
+        theirs = [_memory(k) for k in kids]
+        return {"t": round(time.perf_counter() - t0, 1), "rss_mb": me.get("rss"), "pss_mb": me.get("pss"),
+                "workers_rss_mb": round(sum(m.get("rss") or 0 for m in theirs), 1),
+                "workers_pss_mb": round(sum(m.get("pss") or 0 for m in theirs), 1) if theirs and
+                theirs[0].get("pss") is not None else None, **_maps(pid)}
+
     def sampler(t0: float) -> None:
         while not stop.is_set():
-            kids = _children(pid)
-            me = _memory(pid)
-            theirs = [_memory(k) for k in kids]
-            row = {"t": round(time.perf_counter() - t0, 1), "rss_mb": me.get("rss"), "pss_mb": me.get("pss"),
-                   "workers_rss_mb": round(sum(m.get("rss") or 0 for m in theirs), 1),
-                   "workers_pss_mb": round(sum(m.get("pss") or 0 for m in theirs), 1) if theirs and
-                   theirs[0].get("pss") is not None else None, **_maps(pid)}
+            row = sample(t0)
             with lock:
                 row["calls"] = len(calls)
                 out["samples"].append(row)
@@ -244,15 +248,24 @@ def main() -> None:
             data = j.get("data") if isinstance(j.get("data"), dict) else {}
             row = {"who": who, "kind": kind, "at": round(w - t0, 2), "wall": round(took, 3),
                    "cpu": round(time.thread_time() - c, 3), "wait": round(wait, 3), "hold": round(hold, 3),
-                   "ok": j.get("ok", True), "timing": data.get("timing") or j.get("timing")}
+                   "ok": j.get("ok", True),
+                   # ooxml-edit 0.121.0: where the call's time went (Result.timing), else none.
+                   "timing": getattr(result, "timing", None)}
             if not row["ok"]:
                 row["error"] = str(j.get("error"))[:300]
+            changing = kind not in ("describe", "check")
             with lock:
                 calls.append(row)
-                if kind not in ("describe", "check"):
+                if changing:
                     edits[0] += 1
+                    count = edits[0]
                     if args.edits and edits[0] >= args.edits:
                         stop.set()
+            if changing:
+                # Memory by version: what a run's growth is measured by.
+                memory = sample(t0)
+                with lock:
+                    out["by_edit"].append({"edits": count, **memory})
 
         def done() -> bool:
             return stop.is_set() or time.perf_counter() > deadline
