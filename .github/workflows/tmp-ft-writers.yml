@@ -111,3 +111,26 @@ jobs:
         with:
           name: bench-${{ matrix.config }}
           path: out
+
+  lxml-proxy:
+    name: TEMPORARY lxml proxy finalized on another thread (${{ matrix.lock }})
+    if: contains(github.event.head_commit.message, '[lxml]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        lock: [lock, no-lock]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.15t"
+          allow-prereleases: true
+      - name: Install
+        run: python -m pip install --pre "lxml>=7.0.0b1"
+      - name: Run
+        env:
+          PYTHON_GIL: "0"
+        run: |
+          for k in 1 2 3 4 5; do python .github/tmp-ft/lxml_proxy.py 120 ${{ matrix.lock == 'no-lock' && '--no-lock' || '' }} || true; done
