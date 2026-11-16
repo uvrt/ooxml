@@ -89,6 +89,19 @@ fn node_of(element: &Bound<'_, PyAny>) -> PyResult<*const XmlNode> {
     Ok(node)
 }
 
+/// The threads the walks share: two, so the walks of an edit leave the other cores to the
+/// checks and layouts running beside it.
+fn pool() -> &'static rayon::ThreadPool {
+    static POOL: OnceLock<rayon::ThreadPool> = OnceLock::new();
+    POOL.get_or_init(|| {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(2)
+            .thread_name(|k| format!("ooxml-tree-{k}"))
+            .build()
+            .expect("the tree walks' threads")
+    })
+}
+
 fn keys() -> &'static (RandomState, RandomState) {
     static KEYS: OnceLock<(RandomState, RandomState)> = OnceLock::new();
     KEYS.get_or_init(|| (RandomState::default(), RandomState::default()))
@@ -300,7 +313,7 @@ pub fn tree_digests<'py>(
         // nothing changes the tree meanwhile: its document's lock is the caller's).
         let found: Vec<Option<[u8; 16]>> = py.detach(|| {
             use rayon::prelude::*;
-            firsts.par_iter().map(|&first| unit(first as *const XmlNode)).collect()
+            pool().install(|| firsts.par_iter().map(|&first| unit(first as *const XmlNode)).collect())
         });
         let mut units = Vec::with_capacity(16 * found.len());
         for digest in found {
@@ -538,17 +551,19 @@ pub fn index_walk<'py>(root: &Bound<'py, PyAny>) -> PyResult<Option<Bound<'py, P
             // the digest of the walk in document order, whatever the children holding it.
             let found: Vec<Option<Vec<u8>>> = py.detach(|| {
                 use rayon::prelude::*;
-                firsts
-                    .par_iter()
-                    .map(|&first| {
-                        let mut part = Digest::new();
-                        if walk(&mut part, first as *const XmlNode, true) {
-                            Some(part.buf)
-                        } else {
-                            None
-                        }
-                    })
-                    .collect()
+                pool().install(|| {
+                    firsts
+                        .par_iter()
+                        .map(|&first| {
+                            let mut part = Digest::new();
+                            if walk(&mut part, first as *const XmlNode, true) {
+                                Some(part.buf)
+                            } else {
+                                None
+                            }
+                        })
+                        .collect()
+                })
             });
             for records in found {
                 match records {
