@@ -1,5 +1,15 @@
 [workspace]
-members = ["crates/core", "crates/word", "crates/python"]
+members = [
+    "crates/core",
+    "crates/word",
+    "crates/python",
+    "crates/ooxml-base",
+    "crates/ooxml-xml",
+    "crates/ooxml-zip",
+    "crates/ooxml-opc",
+]
+# cargo-fuzz's layout: its own workspace, built with `cargo fuzz` (nightly).
+exclude = ["fuzz"]
 resolver = "2"
 
 [workspace.package]
@@ -16,6 +26,31 @@ num-rational = { version = "0.4", default-features = false, features = ["std"] }
 num-integer = "0.1"
 num-traits = "0.2"
 pyo3 = "0.30"
+thiserror = "2"
+flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
+imbl = "7"
+ooxml-base = { path = "crates/ooxml-base" }
+ooxml-xml = { path = "crates/ooxml-xml" }
+ooxml-zip = { path = "crates/ooxml-zip" }
+ooxml-opc = { path = "crates/ooxml-opc" }
+
+# The architecture's standards (docs/architecture/README.md, section 2), for every crate that
+# says `[lints] workspace = true` -- the new crates; the prototype crates (core, word, python)
+# keep their own until they are replaced.  Tests may unwrap (clippy.toml).
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+indexing_slicing = "deny"
+todo = "deny"
+unimplemented = "deny"
+too_many_lines = "warn"
+cognitive_complexity = "warn"
+too_many_arguments = "deny"
 
 [profile.release]
 opt-level = 3

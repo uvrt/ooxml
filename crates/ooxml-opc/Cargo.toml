@@ -1,0 +1,18 @@
+[package]
+name = "ooxml-opc"
+version = "0.1.0"
+description = "The OPC package as a persistent value: parts (raw until read, trees once parsed), relationships, content types, save"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+ooxml-base.workspace = true
+ooxml-xml.workspace = true
+ooxml-zip.workspace = true
+thiserror.workspace = true
+imbl.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,17 @@
+[package]
+name = "ooxml-base"
+version = "0.1.0"
+description = "Units, exact arithmetic, digests, limits, locale and the Context ports every crate shares"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+num-rational.workspace = true
+num-integer.workspace = true
+num-traits.workspace = true
+
+[lints]
+workspace = true

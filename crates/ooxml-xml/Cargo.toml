@@ -1,0 +1,15 @@
+[package]
+name = "ooxml-xml"
+version = "0.1.0"
+description = "The lossless immutable XML tree: parser, libxml2-form writer, cursors, patches and structural diff"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+ooxml-base.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true
