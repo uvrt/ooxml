@@ -102,3 +102,25 @@ def test_not_an_element():
     root, body = _tree(random.Random(1), 2)
     with pytest.raises(ValueError):
         ooxml_core.tree_digests(body, root)
+
+
+def test_the_walk_reads_paragraphs_rows_and_tables_only():
+    """``index_walk``: the paragraphs, rows and tables in order, with their paraIds and rows'
+    tables -- another element put between blocks (a comment's range marks) leaves it; a
+    paraId changed, or a paragraph put in, does not."""
+    w14 = "http://schemas.microsoft.com/office/word/2010/wordml"
+    root = etree.fromstring(
+        f'<w:document xmlns:w="{W}" xmlns:w14="{w14}"><w:body><w:p w14:paraId="1"/>'
+        f'<w:tbl><w:tr w14:paraId="2"><w:tc><w:p w14:paraId="3"/></w:tc></w:tr></w:tbl>'
+        f'<w:p w14:paraId="4"/></w:body></w:document>'.encode())
+    body = root[0]
+    walk = ooxml_core.index_walk(root)
+    body.insert(1, etree.Element(f"{{{W}}}commentRangeStart"))
+    body.insert(3, etree.Element(f"{{{W}}}commentRangeEnd"))
+    assert ooxml_core.index_walk(root) == walk
+    body[0].set(f"{{{w14}}}paraId", "5")
+    assert ooxml_core.index_walk(root) != walk
+    body[0].set(f"{{{w14}}}paraId", "1")
+    assert ooxml_core.index_walk(root) == walk
+    body.append(etree.Element(f"{{{W}}}p"))
+    assert ooxml_core.index_walk(root) != walk
