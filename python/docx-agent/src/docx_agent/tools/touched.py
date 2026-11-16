@@ -207,6 +207,13 @@ class _Summary:
             if _incremental.verifying():
                 _incremental.check("touched rest", self.rest_kept, self.rest == other.rest)
             return self.rest_kept
+        if hasattr(self.spans, "same_gaps") and hasattr(other.spans, "same_gaps") \
+                and self._rest is None and other._rest is None:
+            # Lane K: the two streams compared in Rust, neither digested block by block.
+            same = self.spans.same_gaps(other.spans)
+            if _incremental.verifying():
+                _incremental.check("touched rest", same, self.rest == other.rest)
+            return same
         return self.rest == other.rest
 
     def ids(self) -> list[str]:

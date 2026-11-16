@@ -240,6 +240,13 @@ pub fn span_counts(data: &[u8], begin: usize, end: usize) -> [u32; 3] {
     ]
 }
 
+/// The stretches of `data` within `body` outside the blocks at `spans`, in order.
+fn gaps<'a>(data: &'a [u8], spans: &'a [(usize, usize)], body: (usize, usize)) -> impl Iterator<Item = &'a [u8]> + 'a {
+    let starts = std::iter::once(body.0).chain(spans.iter().map(|s| s.1));
+    let ends = spans.iter().map(|s| s.0).chain(std::iter::once(body.1));
+    starts.zip(ends).map(move |(a, b)| &data[a..b])
+}
+
 /// One step from a version's blocks to the next's.
 struct Step {
     /// The next version's bytes (held: the step is found by them).
@@ -422,6 +429,17 @@ impl BodySpans {
         let data = self.data.bind(py).as_bytes();
         let c = py.detach(|| span_counts(data, begin, end));
         (c[0], c[1], c[2])
+    }
+
+    /// Whether the bytes of the body outside its blocks (before the first, between them,
+    /// after the last), taken as one stream, are `other`'s: what docx-agent's touched
+    /// sections compare as that stream's digest (`tools/touched._rest`), compared here
+    /// whole, the lock let go.
+    fn same_gaps(&self, py: Python<'_>, other: &BodySpans) -> bool {
+        let (a, b) = (self.data.bind(py).as_bytes(), other.data.bind(py).as_bytes());
+        let (sa, sb) = (self.spans.clone(), other.spans.clone());
+        let (ba, bb) = (self.body, other.body);
+        py.detach(|| gaps(a, &sa, ba).flatten().eq(gaps(b, &sb, bb).flatten()))
     }
 
     /// `_kept_counts(spans, prefix, suffix_at)`.
@@ -663,13 +681,16 @@ pub fn write_assemble<'py>(
         Some(found) => found,
         None => return Ok(None),
     };
+    // (the new bytes filled with the lock let go: no one else sees them yet)
     let out = PyBytes::new_with(py, total, |buf| {
-        let mut at = 0;
-        for &(a, b, piece) in &segments {
-            let src: &[u8] = if piece { pieces[a] } else { &data[a..b] };
-            buf[at..at + src.len()].copy_from_slice(src);
-            at += src.len();
-        }
+        py.detach(|| {
+            let mut at = 0;
+            for &(a, b, piece) in &segments {
+                let src: &[u8] = if piece { pieces[a] } else { &data[a..b] };
+                buf[at..at + src.len()].copy_from_slice(src);
+                at += src.len();
+            }
+        });
         Ok(())
     })?;
     Ok(Some((

@@ -3,6 +3,36 @@
 ooxml-core is the Rust core of the ooxml packages (`crates/`), as the Python module
 `ooxml_core`. Its version is the `crates/python` crate's.
 
+## 0.8.0 -- unreleased
+
+- **`ooxml_core.BodySpans`**: a Word body's top-level blocks (`w:p`, `w:tbl`, `w:sdt`,
+  `w:customXml`) found in its part's bytes by their tags (`scan`), and the next version's
+  found from them (`advance`: the bytes alike at the start and the end, the blocks kept on
+  either side, only the stretch between read again) -- docx-agent's `_scan`, `_blocks`,
+  `_rescan` and `_kept_counts`, step for step. A step is kept by the version it starts
+  from, so every pass of the next version takes the same one. Each block's paragraph,
+  table and row counts (`counts`, `count_sum`, `stretch_counts`), and whether two
+  versions' bytes outside the blocks are the same (`same_gaps`). The work is done with the
+  interpreter lock let go; no Python object is made per block.
+- **`common_ends`, `common_prefix_of`, `common_suffix_of`**: how many bytes two byte
+  strings share at the start and the end, the lock let go.
+- **`write_plan`, `write_assemble`, `Starts`**: a part written from its last bytes -- the
+  body's children whose digests are not among the last write's named, and the new bytes
+  and the children's places put together from the last bytes and the children written
+  again (filled with the lock let go).
+- **`index_walks(root)`**: `index_walk`'s digest and each top-level block's own walk
+  digest and place among the body's children, and whether anything outside the blocks has
+  a paragraph, row or table. **`body_others(body)`**: the places of a body's children that
+  are not blocks.
+- The tree walks (`tree_digests`, `index_walk`) read a namespace's prefix and URI once per
+  namespace and walk, not once per element.
+- The Word parser's change set (`Parser.splice`) counts list labels from the change on
+  (the counters before each unit kept, the count stopping where they are as they were),
+  keeps its units' keys and `REF` targets counted per change, and takes a unit kept within
+  the change whole where the fields open before it are those it was read with. With
+  `DOCX_AGENT_FULL_VALIDATE=1` each is compared with the whole reading. Its statistics give
+  each step's time (`phases`).
+
 ## 0.7.0 -- unreleased
 
 - **`ooxml_core.tree_digests(root, body)`**: digests of an lxml tree read from libxml2's

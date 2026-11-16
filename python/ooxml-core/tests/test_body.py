@@ -106,7 +106,19 @@ def test_the_blocks_and_each_step_are_the_python_readings(seed):
         assert [e - s for s, e in old[len(old) - after:]] == [e - s for s, e in spans[len(spans) - after:]]
         assert _blocks(new, begin, stop) == spans[before:len(spans) - after]
         assert nxt.counts(0, len(nxt)) == ooxml_core.BodySpans.scan(new).counts(0, len(nxt))
+        assert reading.same_gaps(nxt) == (_gaps(reading) == _gaps(nxt))
         reading = nxt
+    other = ooxml_core.BodySpans.scan(_document(blocks).replace(b"<w:sectPr/>", b"<w:sectPr></w:sectPr>"))
+    assert not reading.same_gaps(other) and reading.same_gaps(ooxml_core.BodySpans.scan(_document(blocks)))
+
+
+def _gaps(reading) -> bytes:
+    data, (at, end) = reading.data, reading.body
+    out = []
+    for a, b in reading[:]:
+        out.append(data[at:a])
+        at = b
+    return b"".join(out) + data[at:end]
 
 
 def test_a_change_outside_the_body_or_tags_that_do_not_nest_is_no_step():

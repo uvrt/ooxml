@@ -173,7 +173,7 @@ fn merge_format(instruction: &str) -> bool {
     instruction.to_uppercase().replace(' ', "").contains("MERGEFORMAT")
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 struct Open {
     visible: bool,
     instruction: Vec<String>,
@@ -3052,6 +3052,41 @@ impl Doc {
                         .get(i.wrapping_sub(lo))
                         .cloned()
                         .ok_or_else(|| Refused("a kept unit off the region".into()))?;
+                    // Lane K: a kept unit met with the very fields it was read with is read
+                    // as it was: taken whole, the fields after it those the unit after it was
+                    // read with (a batch's edits far apart re-read none of the blocks between).
+                    // With DOCX_AGENT_FULL_VALIDATE=1 it is read again and compared.
+                    let k = i - lo;
+                    let same = u.fields_before == fields.stack && u.fstack_before == fstack;
+                    let after = if !same {
+                        None
+                    } else if k + 1 < old.len() {
+                        Some((old[k + 1].fields_before.clone(), old[k + 1].fstack_before.clone()))
+                    } else if hi < self.units.len() {
+                        Some((
+                            self.units[hi].fields_before.clone(),
+                            self.units[hi].fstack_before.clone(),
+                        ))
+                    } else {
+                        Some((self.fields_end.clone(), self.fstack_end.clone()))
+                    };
+                    if let Some((stack, entries)) = after {
+                        if !verifying() {
+                            fields.stack = stack;
+                            fstack = entries;
+                            region.push(u);
+                            continue;
+                        }
+                        let node = self.node_of(&u.xml)?;
+                        let again = self
+                            .reader
+                            .unit(&node, u.xml.clone(), u.uid, &mut fields, &mut fstack)?;
+                        if fields.stack != stack || fstack != entries || again.refs != u.refs || again.key != u.key {
+                            return refuse("lane K: a kept unit read again differs from the unit kept");
+                        }
+                        region.push(u);
+                        continue;
+                    }
                     let node = self.node_of(&u.xml)?;
                     if open_state(&u.fields_before) == open_state(&fields.stack) {
                         // kept: the fields threaded through it, its records' reading again
