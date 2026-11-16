@@ -30,8 +30,9 @@ class PlanTest(unittest.TestCase):
         self.assertEqual(out["packages"], list(ci.PACKAGES))
         for name in ci.PACKAGES:
             versions = ci._pythons(name)
-            self.assertEqual(_legs(out, "linux")[name], [versions[0], versions[-1]])
-            self.assertEqual(_legs(out, "windows")[name], [versions[-1]])
+            self.assertEqual(_legs(out, "linux")[name], ["3.15"])
+            self.assertEqual(_legs(out, "windows")[name], ["3.15"])
+            self.assertEqual(versions[-1], "3.15")
         self.assertEqual(out["macos"]["include"], [])
         self.assertIs(out["any_macos"], False)
 
@@ -44,9 +45,8 @@ class PlanTest(unittest.TestCase):
     def test_push(self) -> None:
         out = _plan("push")
         for name in ci.PACKAGES:
-            versions = ci._pythons(name)
-            self.assertEqual(_legs(out, "linux")[name], versions)
-            self.assertEqual(_legs(out, "windows")[name], [versions[0], versions[-1]])
+            self.assertEqual(_legs(out, "linux")[name], ["3.15"])
+            self.assertEqual(_legs(out, "windows")[name], ["3.15"])
         self.assertEqual(out["macos"]["include"], [])
         self.assertIs(out["any_macos"], False)
 
@@ -56,9 +56,10 @@ class PlanTest(unittest.TestCase):
             self.assertIs(out["any_macos"], True)
             for name in ci.PACKAGES:
                 versions = ci._pythons(name)
+                self.assertEqual(versions[0], ci.PACKAGES[name]["min_python"])
                 self.assertEqual(_legs(out, "linux")[name], versions, event)
-                self.assertEqual(_legs(out, "windows")[name], versions, event)
-                self.assertEqual(_legs(out, "macos")[name], [versions[-1]], event)
+                self.assertEqual(_legs(out, "windows")[name], ["3.15"], event)
+                self.assertEqual(_legs(out, "macos")[name], ["3.15"], event)
 
     def test_free_threaded_legs_linux_only(self) -> None:
         for event in ("pull_request", "push", "schedule", "workflow_dispatch"):

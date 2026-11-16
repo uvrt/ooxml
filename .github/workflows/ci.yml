@@ -4,11 +4,11 @@ name: CI
 # the packages its change touches and every package that depends on one of them run
 # (tools/ci.py, PACKAGES: the dependency graph); a change to the workflows or to tools/
 # runs them all.  A push to main, the nightly run and a manual run take every package.
-# The Pythons per OS (tools/ci.py, LEGS), sparing the few macOS runners (development and
-# local test runs already happen on macOS):
-#   pull request:          Linux oldest + newest, Windows newest, no macOS;
-#   push to main:          Linux every Python, Windows oldest + newest, no macOS;
-#   nightly, manual run:   Linux and Windows every Python, macOS the newest.
+# The Pythons per OS (tools/ci.py, LEGS): production runs CPython 3.15 (moving to 3.15t,
+# freethreading.yml); development runs on macOS, whose runners are few:
+#   pull request, push to main:  Linux 3.15, Windows 3.15, no macOS;
+#   nightly, manual run:         Linux every Python from the package's minimum,
+#                                Windows 3.15, macOS 3.15.
 #
 # Branch protection requires the `required (...)` jobs at the end, not the legs: a leg
 # that a path filter leaves out never reports, and a required check that never reports
@@ -68,7 +68,7 @@ jobs:
     with:
       matrix: ${{ needs.plan.outputs.windows }}
 
-  # Nightly and manual runs only, the newest Python.  Not required: it has no `required`
+  # Nightly and manual runs only, 3.15.  Not required: it has no `required`
   # job (macOS runners can queue for a long time).
   test-macos:
     name: test

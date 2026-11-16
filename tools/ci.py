@@ -9,9 +9,11 @@ differences live here and nowhere else:
         is set, printed otherwise), and whether rust.yml's jobs run (`rust`).  On a pull request only the packages a change touches, and
         every package that depends on one of them (USES below); a change to the workflows or
         to tools/ runs everything.  A push to main, the nightly run and a manual run take all.
-        Which Pythons each OS runs depends on the event (LEGS below): macOS runners are
-        the scarce ones and development already runs on macOS, so a pull request and a
-        push to main run no macOS leg, and the nightly and a manual run one per package.
+        Which Pythons each OS runs depends on the event (LEGS below): production runs
+        CPython 3.15 (moving to 3.15t), development runs on macOS and macOS runners are
+        scarce, so a pull request and a push to main run Linux and Windows on the newest
+        Python and no macOS; the nightly and a manual run add every older Python on Linux
+        and the newest on macOS.
         The free-threaded legs (`ft`, freethreading.yml) run on Linux only, every event.
     python tools/ci.py affected FILE...
         The packages those changed files select, one per line (for a quick look by hand).
@@ -200,16 +202,19 @@ def _pythons(name: str) -> list[str]:
     return [v for v in PYTHONS if tuple(map(int, v.split("."))) >= tuple(map(int, low.split(".")))]
 
 
-#: Which of a package's Pythons each OS runs, per event: "all", "ends" (the oldest and the
-#: newest), "newest" or None (no legs).  macOS runners are few and shared by every run,
-#: and development and local test runs already happen on macOS, so a pull request and a
-#: push to main run no macOS leg; the nightly run and a manual run (FULL_LEGS, also any
-#: event not named here) take every Python on Linux and Windows and the newest on macOS.
+#: Which of a package's Pythons each OS runs, per event: "all" (from the package's
+#: min_python to the newest), "newest" or None (no legs).  Production runs CPython 3.15 and
+#: is moving to 3.15t (the `ft` legs, Linux, every event); development and local test runs
+#: happen on macOS, whose runners are few and shared by every run.  So a pull request and a
+#: push to main run Linux and Windows on the newest Python and no macOS; the nightly run
+#: and a manual run (FULL_LEGS, also any event not named here) run every Python on Linux,
+#: so the older ones requires-python still allows keep working, and the newest on Windows
+#: and macOS.
 LEGS: dict[str, dict[str, str | None]] = {
-    "pull_request": {"linux": "ends", "windows": "newest", "macos": None},
-    "push": {"linux": "all", "windows": "ends", "macos": None},
+    "pull_request": {"linux": "newest", "windows": "newest", "macos": None},
+    "push": {"linux": "newest", "windows": "newest", "macos": None},
 }
-FULL_LEGS: dict[str, str | None] = {"linux": "all", "windows": "all", "macos": "newest"}
+FULL_LEGS: dict[str, str | None] = {"linux": "all", "windows": "newest", "macos": "newest"}
 RUNNERS = {"linux": "ubuntu-latest", "windows": "windows-latest", "macos": "macos-latest"}
 
 
@@ -220,8 +225,6 @@ def _select(versions: list[str], which: str | None) -> list[str]:
         return versions
     if which == "newest":
         return versions[-1:]
-    if which == "ends":
-        return sorted({versions[0], versions[-1]}, key=versions.index)
     raise ValueError(which)
 
 
