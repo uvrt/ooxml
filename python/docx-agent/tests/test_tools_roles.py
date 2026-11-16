@@ -73,8 +73,8 @@ REVIEW_CORE_GUARD = 3001
 #: round 45, R68 (word_comments' ``target`` names a table or row, +4; the R65/R66 tools are an
 #: editor's) 8,349; round 49, R91 (word_links' ``target`` says add_bookmark takes blocks,
 #: +12: 8,346 -> 8,358) 8,358; round 56, R121 (word_changes' ``preview``, +2) 8,360; round 58,
-#: R129 (word_styles' ``regions``, a reviewer's for its describe, +372) 8,732.
-REVIEW_ALL_GUARD = 8732
+#: R129 (word_styles' ``regions``, a reviewer's for its describe, +372; with resolve 8,740) 8,740.
+REVIEW_ALL_GUARD = 8740
 
 REVIEW_CORE = {"save_document", "describe", "find_text", "render", "check", "open_document",
                "batch", "read_batch", "word_read", "word_comments", "word_changes"}
