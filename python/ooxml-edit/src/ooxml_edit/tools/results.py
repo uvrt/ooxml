@@ -134,7 +134,9 @@ class Result:
     #: did not apply did not: another call's change came first) and, when it ran on the
     #: document under its lock after all, ``lock`` (why); and, for a call that takes the
     #: document's lock, ``waited`` (s) when it first waited for a long draft in flight to
-    #: be applied (:meth:`~.session.DocumentEntry.wait_for_long_drafts`).  ``None``: neither.
+    #: be applied (:meth:`~.session.DocumentEntry.wait_for_long_drafts`); ``held`` (s, 0.120.0)
+    #: how long the call held the document's lock to check and apply its change.  ``None``:
+    #: neither.
     #: A result with ``data.timing`` also says ``redo`` there, from one up.
     block: dict[str, Any] | None = None
 

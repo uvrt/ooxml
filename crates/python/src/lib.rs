@@ -7,6 +7,8 @@ use ooxml_word::snapshot::Snapshot;
 use pyo3::prelude::*;
 use std::sync::Arc;
 
+mod tree;
+
 #[pyclass(frozen)]
 struct Snap {
     inner: Arc<Snapshot>,
@@ -368,6 +370,16 @@ impl Parser {
         })
     }
 
+    /// Lane J: per `(face, character)`, whether the body holds it and the face draws it.
+    fn glyph_reads(&self, py: Python<'_>, pairs: Vec<(String, String)>) -> Vec<(bool, bool)> {
+        self.held(py).glyph_reads(&pairs)
+    }
+
+    /// Lane J: of `names`, those the units' text is measured in, in the order first named.
+    fn faces_first(&self, py: Python<'_>, names: Vec<String>) -> Vec<String> {
+        self.held(py).faces_first(&names)
+    }
+
     /// The exporter's tables and the units' keys and faces (JSON).
     fn tables(&self, py: Python<'_>) -> String {
         self.held(py).tables_json().to_string()
@@ -555,5 +567,8 @@ fn ooxml_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(documents, m)?)?;
     m.add_function(wrap_pyfunction!(spin, m)?)?;
     m.add_function(wrap_pyfunction!(spin_held, m)?)?;
+    m.add_function(wrap_pyfunction!(tree::tree_digests, m)?)?;
+    m.add_function(wrap_pyfunction!(tree::unit_starts, m)?)?;
+    m.add_function(wrap_pyfunction!(tree::index_walk, m)?)?;
     Ok(())
 }

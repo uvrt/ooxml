@@ -76,8 +76,9 @@ class held:
 
 
 def _shape(block):
-    """``Result.block`` less ``cpu`` (the drafts' own preparation time)."""
-    return {key: value for key, value in (block or {}).items() if key != "cpu"}
+    """``Result.block`` less ``cpu`` (the drafts' own preparation time) and ``held`` (the
+    time the change held the document's lock)."""
+    return {key: value for key, value in (block or {}).items() if key not in ("cpu", "held")}
 
 
 def _in_thread(fn):
@@ -1309,3 +1310,97 @@ def test_a_call_that_frees_the_largest_annotation_id_then_draws_keeps_the_lock()
                                                  "target": f"{layout.bodies[0][0]}@0:4", "bookmark": "new_mark"}}]})
         assert result.ok and result.block.get("lock") == "annotation ids", result.block
         assert not block_stress.repeated_ids(session.entry(doc).document.to_bytes())
+
+
+def test_drafts_by_default_only_without_the_interpreter_lock(monkeypatch):
+    """Lane J (0.1.120): ``block_edits="auto"`` drafts an edit beside another only where the
+    interpreter runs without its lock, unless ``DOCX_AGENT_DRAFTS`` says (``1``, ``0``)."""
+    import sys
+
+    from docx_agent import blocks
+
+    hook = blocks.Blocks()
+    document = Document.open(block_stress.made(2))
+    monkeypatch.delenv("DOCX_AGENT_DRAFTS", raising=False)
+    monkeypatch.setattr(sys, "_is_gil_enabled", lambda: True, raising=False)
+    assert not blocks.drafts_on() and not hook.worth(document)
+    monkeypatch.setattr(sys, "_is_gil_enabled", lambda: False, raising=False)
+    assert blocks.drafts_on() and hook.worth(document)
+    monkeypatch.setenv("DOCX_AGENT_DRAFTS", "0")
+    assert not hook.worth(document)
+    monkeypatch.setenv("DOCX_AGENT_DRAFTS", "1")
+    monkeypatch.setattr(sys, "_is_gil_enabled", lambda: True, raising=False)
+    assert hook.worth(document)
+    monkeypatch.delenv("DOCX_AGENT_DRAFTS")
+    # A fill from a dataset, which ``auto`` drafts even alone where drafts are on: here under
+    # the document's lock, with the same result.
+    with opened("auto") as (box, session, doc, layout):
+        result = box.dispatch(session, "word_edit_table", {"doc": doc, "table": layout.fill, "action": "set_cells",
+                                                           "grow": True, "from": "d:rows"})
+        assert result.ok and result.block is None
+
+
+def test_a_relationship_let_go_on_a_draft_and_used_meanwhile_is_kept(monkeypatch):
+    """Lane J (0.1.120): a tracked ``word_set_text`` replacing the only paragraph that links
+    to an address lets the link's relationship go on its draft; meanwhile another call links
+    another paragraph to the same address, taking that relationship.  The first call's
+    change is a conflict and is prepared again -- its result and the bytes those of the two
+    run one at a time in commit order -- never a body naming a relationship that is gone
+    (the free-threaded stress's ``relationship-id-unknown``)."""
+    url = "https://example.com/shared"
+    outcomes = []
+    for concurrent in (True, False):
+        with opened("always" if concurrent else "off") as (box, session, doc, layout):
+            block_stress.track(box, session, doc)
+            first, second = layout.bodies[0][1], layout.bodies[1][1]
+            linked = box.dispatch(session, "word_links", {"doc": doc, "action": "add_hyperlink",
+                                                          "target": f"{first}@0:4", "url": url})
+            assert linked.ok, linked.to_json()
+            replace = ("word_set_text", {"doc": doc, "target": first, "text": "Replaced, the link gone."})
+            link = ("word_links", {"doc": doc, "action": "add_hyperlink", "target": f"{second}@0:4", "url": url})
+            found: dict = {}
+            if concurrent:
+                with held(monkeypatch) as hold:
+                    thread, slow = _in_thread(lambda: box.dispatch(session.view(context={"agent": "x"}), *replace))
+                    assert hold.ready.wait(60)
+                    found["link"] = box.dispatch(session.view(context={"agent": "y"}), *link)
+                    hold.release()
+                    thread.join()
+                    found["replace"] = slow["result"]
+                assert found["replace"].block["conflicts"] == ["a relationship it let go is used by another block now"]
+            else:
+                found["link"] = box.dispatch(session, *link)
+                found["replace"] = box.dispatch(session, *replace)
+            assert found["replace"].ok and found["link"].ok
+            assert found["replace"].to_json()["checks"]["validate"]["new"] == []
+            outcomes.append((block_stress.normal(found["replace"]), session.entry(doc).document.to_bytes()))
+    assert outcomes[0] == outcomes[1]
+
+
+def test_a_tables_width_of_the_body_reads_the_paragraph_before_it(monkeypatch):
+    """Lane J (0.1.120): ``word_format_table``'s width "of the body" reads the nearest
+    paragraph before the table (its indents); a paragraph put between them meanwhile -- the
+    list item that was before the table no longer the nearest -- is a conflict, prepared
+    again: the same width and indent as the two calls one at a time in commit order."""
+    outcomes = []
+    for concurrent in (True, False):
+        with opened("always" if concurrent else "off") as (box, session, doc, layout):
+            table, item = layout.tables[0], layout.items[0][-1]
+            width = ("word_format_table", {"doc": doc, "table": table, "scope": "table", "width_of": "body"})
+            insert = ("word_insert_markdown", {"doc": doc, "at": f"after:{item}", "markdown": "A plain paragraph."})
+            found: dict = {}
+            if concurrent:
+                with held(monkeypatch) as hold:
+                    thread, slow = _in_thread(lambda: box.dispatch(session.view(context={"agent": "x"}), *width))
+                    assert hold.ready.wait(60)
+                    found["insert"] = box.dispatch(session.view(context={"agent": "y"}), *insert)
+                    hold.release()
+                    thread.join()
+                    found["width"] = slow["result"]
+                assert found["width"].block["tries"] == 2, found["width"].block
+            else:
+                found["insert"] = box.dispatch(session, *insert)
+                found["width"] = box.dispatch(session, *width)
+            assert found["width"].ok and found["insert"].ok
+            outcomes.append((block_stress.normal(found["width"]), session.entry(doc).document.to_bytes()))
+    assert outcomes[0] == outcomes[1]

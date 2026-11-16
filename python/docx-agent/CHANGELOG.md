@@ -5,6 +5,75 @@ docx-agent has not been released to PyPI. Each version that reaches `main` is ta
 snapshot commit; the development history before it is summarised here.
 [`ROADMAP.md`](ROADMAP.md) has the detail of every phase.
 
+## 0.1.120 -- unreleased
+
+- **An edit writes out only the blocks it changed.** The same results -- every tool result,
+  the saved bytes, every version undo, redo and `read_version` give, the ids -- but a
+  version's main part is written from the version before's bytes: each top-level block of
+  the body (with the text after it) is read as a digest of everything Word's XML writer
+  writes of it (`ooxml-core` 0.7.0's `tree_digests`, read from the tree itself, in Rust), and
+  only the blocks whose digests are new are written again, in place; the rest are the last
+  bytes'. The whole part is written where anything outside the blocks changed (the
+  document's or the body's start, the last section's properties), a block declares a
+  namespace of its own, the body holds something not an element (a comment), or the core
+  is missing. On the made-up report of about 3,000 pages (body 20 MB) a version is
+  written in 50-80 ms instead of 0.2 s. One writer, wall p50 (295 / ~1,000 / ~3,000 pages):
+  Markdown insert 0.08 / 0.26 / 0.57 s (was 0.11 / 0.27 / 0.77), `set_text` 0.08 / 0.18 /
+  0.43 s (0.09 / 0.27 / 0.80), `set_cells` 0.13 / 0.31 / 0.67 s (0.15 / 0.39 / 1.42), undo
+  0.06 / 0.16 / 0.35 s (0.07 / 0.17 / 0.51).
+- **A batch's ops after the first no longer index the body whole**: between ops the body's
+  bytes are written from the last ones and the index is made from the last one where it
+  changed. A batch of a Markdown insert and a `set_text`: 0.19 / 0.37 / 0.82 s
+  (was 0.33 / 0.74 / 1.95), no more than the two as separate calls at ~1,000 and ~3,000
+  pages.
+- **The body's index is told unchanged in Rust** (`index_walk`: the paragraphs, rows and
+  tables, their paraIds and rows' tables, as a digest), milliseconds instead of a walk in
+  Python; and an edit's stamping does not look through an index already found stamped.
+- **Edits beside other edits of their document no longer go on drafts where the interpreter
+  has its lock** (`block_edits="auto"`; `docx_agent.blocks.drafts_on`): each call takes the
+  document's lock in turn instead. With the lock, the calls' Python runs one at a time
+  either way, and a draft repeats the call's work (a copy of the document read and indexed,
+  the per-version passes run on both, the call prepared again after a conflict), so drafts
+  made the same edits cost more and wait longer. On the made-up report of 295 pages with
+  24 writers (a batch and a check each, three turns): edit p99 6.0 s instead of 58-65 s,
+  CPU 23 s instead of 121-128 s, memory 0.4 GB instead of 1.7 GB. The results are the
+  same either way (the calls one at a time, in the order their changes were made). Where
+  the interpreter runs without its lock (a free-threaded build) edits go on drafts as
+  before; `DOCX_AGENT_DRAFTS=1` drafts with the lock too, `DOCX_AGENT_DRAFTS=0` never.
+- **A change made on a draft no longer takes away a relationship another call's change
+  uses.** A call that removed the last link to an address (a tracked `word_set_text` over
+  the only paragraph linking there) let the link's relationship go on its draft; when
+  another call, meanwhile, linked another paragraph to the same address (taking that very
+  relationship), the first call's change applied anyway, and the version named a
+  relationship that was gone (`relationship-id-unknown`; the stress on free-threaded
+  Python, about one run in a hundred, also on 0.1.119). Such a change is now a conflict,
+  prepared again on the version committed (`Blocks.check`), as is a change that let a
+  part go while others added relationships. Present since drafts merged relationships
+  others added (round 48).
+- **A table's width "of the body" made on a draft reads the paragraph before the table**:
+  `word_format_table` with `width_of: "body"` sizes the table to the lines of the nearest
+  paragraph before it (its indents); the draft now records every block from the table to
+  that paragraph as read, so a paragraph put between them, or that paragraph changed,
+  meanwhile is a conflict, prepared again (the stress found the table indented as the list
+  item that was no longer before it). With no paragraph before the table, the call takes
+  the document's lock.
+- **A check of a range served by the Rust owner says the faces of the version it checks.**
+  Its `reflow` (`coverage.substituted_fonts`, the `font-substituted` warnings) was read from
+  the owner's mirror as it was when the check got its version's layout, so an edit
+  committed meanwhile -- a paragraph in another substituted face -- showed in the check of
+  the version before it, and the faces' order could be a later state's (the free-threaded
+  stress: two writers' checks of one version differed). Each state handed to the owner now
+  keeps what its faces are (`RustDoc.faces`); a check reads its version's, and checks the
+  Python way where that is no longer kept.
+- Needs docx2svg 0.12.1: a check's substituted faces said in the order a full layout says
+  them, whichever layout it was made from.
+- What a call that ran on a draft (beside other edits of its document) held the document's
+  lock for to check and apply its change is in `Result.block["held"]` (ooxml-edit 0.120.0).
+- `DOCX_AGENT_INCREMENTAL=0` turns these off with the other per-change passes;
+  `OOXML_EDIT_VERIFY_SERIALIZED=1` compares every write with the tree written out whole,
+  `DOCX_AGENT_FULL_VALIDATE=1` the index's walk with the walk in Python (the tests set both).
+- Needs ooxml-edit 0.120.0 and ooxml-core 0.7.0.
+
 ## 0.1.119 -- unreleased
 
 - **The Rust owner's input is made by a Rust parser of the body.** The same results -- every

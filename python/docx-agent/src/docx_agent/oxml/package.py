@@ -95,6 +95,38 @@ class WordPackage(OpcPackage):
             self._settled.add(path)
         return tree
 
+    #: Lane J (0.1.120): the main part's bytes as last written out, with what they were
+    #: written from (:class:`_Written`), for writing the next version from them.
+    _written: "_Written | None" = None
+
+    def _write_tree(self, path, root):
+        """The main part written out from its last bytes (lane J, 0.1.120): the tree's parts
+        are read as digests (``ooxml_core.tree_digests``: everything libxml2's serializer
+        writes, per top-level child of the body and for the rest of the part), and only the
+        children whose digests are not among the last bytes' are written again, in place
+        (:func:`in_place`); the rest are the last bytes' as they were.  Written out whole
+        where the rest of the part changed, there is no last write, a child is not an
+        element or declares a namespace of its own, or the core is missing;
+        ``DOCX_AGENT_INCREMENTAL=0`` always.  ``OOXML_EDIT_VERIFY_SERIALIZED=1`` compares
+        every such write with the tree written out whole."""
+        from .. import incremental
+
+        if not incremental.enabled() or path != self.document_part():
+            return super()._write_tree(path, root)
+        written = _write_from(self._written, root)
+        if written is None:
+            data = super()._write_tree(path, root)
+            self._written = _Written.read(root, data)
+            incremental.STATS["write: whole"] += 1
+            return data
+        self._written = written
+        incremental.STATS["write: per block"] += 1
+        if _verify():
+            whole = super()._write_tree(path, root)
+            if whole != written.data:
+                raise incremental.Mismatch("write: the blocks written again do not make the tree's bytes")
+        return written.data
+
     def document_part(self) -> str:
         """The main document part (``word/document.xml`` in every file Word writes)."""
         main = self.main_document_part()
@@ -315,3 +347,176 @@ def in_place(node, declared: frozenset) -> bytes | None:
 
 
 _BLOCK_TAGS = frozenset(qn(t) for t in ("w:p", "w:tbl", "w:sdt", "w:customXml"))
+
+
+# -- writing the main part from its last bytes (lane J) ------------------------------------------
+
+
+def _verify() -> bool:
+    from ooxml_edit.opc import _verify_serialized
+
+    return _verify_serialized()
+
+
+_CORE: list = []
+
+
+def _core():
+    """``ooxml_core`` where its tree digests are there and read this lxml's trees as they
+    should (:func:`_reads_trees`, tried once), else ``None``."""
+    if not _CORE:
+        try:
+            import ooxml_core
+        except ImportError:  # pragma: no cover -- the core is a dependency
+            ooxml_core = None
+        if ooxml_core is not None and not (hasattr(ooxml_core, "tree_digests") and _reads_trees(ooxml_core)):
+            ooxml_core = None
+        _CORE.append(ooxml_core)
+    return _CORE[0]
+
+
+def _reads_trees(core) -> bool:
+    """Whether the core's digests of a small made-up tree change where it is changed and
+    nowhere else (a check of lxml's element layout as the core reads it)."""
+    try:
+        root = etree.fromstring(b'<w:document xmlns:w="urn:w"><w:body><w:p a="1"/><w:p/>'
+                                b'<w:tbl><w:tr><w:p/></w:tr></w:tbl></w:body></w:document>')
+        body = root[0]
+        skeleton, units, elements = core.tree_digests(root, body)
+        walk = core.index_walk(root)
+        body[1].set("b", "2")
+        skeleton2, units2, _ = core.tree_digests(root, body)
+        return (elements and len(units) == 48 and skeleton2 == skeleton and units2[:16] == units[:16]
+                and units2[16:32] != units[16:32] and units2[32:] == units[32:]
+                and core.index_walk(root) == walk)
+    except Exception:  # noqa: BLE001 -- not read as it should be: written whole
+        return False
+
+
+_BODY = qn("w:body")
+
+
+class _Written:
+    """A main part's bytes as written out, and what they were written from: the digest of
+    everything but the body's children, each child's digest (16 bytes each, joined), where
+    each child begins in the bytes and where the body's content ends."""
+
+    __slots__ = ("data", "skeleton", "units", "starts", "end")
+
+    def __init__(self, data: bytes, skeleton: bytes, units: bytes, starts: list, end: int) -> None:
+        self.data = data
+        self.skeleton = skeleton
+        self.units = units
+        self.starts = starts
+        self.end = end
+
+    @classmethod
+    def read(cls, root, data: bytes) -> "_Written | None":
+        """What a whole write of ``root`` as ``data`` leaves, or ``None`` where the next
+        write cannot start from it."""
+        core = _core()
+        body = root.find(_BODY)
+        if core is None or body is None:
+            return None
+        found = core.tree_digests(root, body)
+        if found is None or not found[2]:
+            return None
+        skeleton, units, _elements = found
+        opening = _BODY_OPEN.search(data)
+        end = data.rfind(b"</w:body>")
+        if opening is None or end < 0:
+            return None
+        start = data.index(b">", opening.end()) + 1
+        if data[start - 2:start] == b"/>":
+            return None
+        starts = core.unit_starts(data, start, end)
+        if starts is None or len(starts) * 16 != len(units):
+            return None
+        return cls(data, skeleton, units, starts, end)
+
+
+_BODY_OPEN = re.compile(rb"<w:body(?=[\s>/])")
+
+
+#: Children written again beyond which an old child is looked for by a table of the last
+#: digests rather than by searching them.
+_FOUND_BY_SEARCH = 32
+
+
+def _aligned(old: bytes, digest: bytes) -> "int | None":
+    """Which of the joined 16-byte digests ``old`` is ``digest``, or ``None``."""
+    at = old.find(digest)
+    while at >= 0:
+        if at % 16 == 0:
+            return at // 16
+        at = old.find(digest, at + 1)
+    return None
+
+
+def _write_from(last: "_Written | None", root) -> "_Written | None":
+    """``root`` written out from ``last`` -- its body's children whose digests are among
+    ``last``'s taken from its bytes, the others written in place -- or ``None`` where it
+    cannot be (written out whole then)."""
+    core = _core()
+    if last is None or core is None:
+        return None
+    body = root.find(_BODY)
+    if body is None:
+        return None
+    found = core.tree_digests(root, body)
+    if found is None or not found[2] or found[0] != last.skeleton:
+        return None
+    units = found[1]
+    old = last.units
+    n, m = len(old) // 16, len(units) // 16
+    if units == old:
+        return _Written(last.data, last.skeleton, units, last.starts, last.end)
+    from ..tools.touched import _common_prefix, _common_suffix
+
+    least = min(n, m)
+    head = min(least, _common_prefix(old, units) // 16)
+    tail = _common_suffix(old, units, 16 * (least - head)) // 16
+    data, starts = last.data, last.starts
+
+    def span(k: int) -> tuple[int, int]:
+        return starts[k], (starts[k + 1] if k + 1 < n else last.end)
+
+    first = starts[0] if n else last.end
+    out: list[bytes] = [data[:first]]
+    new_starts: list[int] = list(starts[:head])
+    at = first
+    if head:
+        out.append(data[first:span(head - 1)[1]])
+        at = span(head - 1)[1]
+    declared = None
+    where: "dict[bytes, int] | None" = None
+    children = None
+    for k in range(head, m - tail):
+        digest = units[16 * k:16 * k + 16]
+        if where is None and m - tail - head > _FOUND_BY_SEARCH:
+            where = {old[16 * j:16 * j + 16]: j for j in range(n)}
+        j = where.get(digest) if where is not None else _aligned(old, digest)
+        if j is not None:
+            a, b = span(j)
+            piece = data[a:b]
+        else:
+            if declared is None:
+                declared = _declared(root)
+                children = list(body)
+                if len(children) != m:
+                    return None
+            piece = in_place(children[k], declared)
+            if piece is None:
+                return None
+        new_starts.append(at)
+        out.append(piece)
+        at += len(piece)
+    if tail:
+        a = span(n - tail)[0]
+        delta = at - a
+        new_starts.extend(start + delta for start in starts[n - tail:])
+        out.append(data[a:last.end])
+        at += last.end - a
+    end = at
+    out.append(data[last.end:])
+    return _Written(b"".join(out), last.skeleton, units, new_starts, end)

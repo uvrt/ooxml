@@ -5,6 +5,17 @@ docx2svg has not been released to PyPI. Each version that reaches `main` is tagg
 snapshot commit; the development history before it is summarised here.
 [`ROADMAP.md`](ROADMAP.md) records every measurement in detail.
 
+## 0.12.1 -- unreleased
+
+- **A layout made from a previous one says its substituted faces as a full layout does.**
+  It measures with the previous layout's faces, whose record lists each substituted face in
+  the order the earlier versions first met it; the coverage's `substituted_fonts` and the
+  `font-substituted` warnings listed them in that order, so the same bytes were said
+  differently after different earlier layouts (two writers' checks on one document,
+  depending on which layout each was made from). They are now said in the order the
+  layout's body draws their faces, page by page, then the others as recorded
+  (`docx2svg.coverage.in_layout_order`): the order a full layout says them in.
+
 ## 0.12.0 -- unreleased
 
 - **A layout from a previous one costs what the edit changed** (round 57, lane R). On a

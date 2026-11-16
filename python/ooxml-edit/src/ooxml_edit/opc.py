@@ -27,6 +27,7 @@ import io
 import os
 from contextlib import contextmanager
 import posixpath
+import threading
 import zipfile
 from dataclasses import dataclass
 from typing import Any, BinaryIO, Callable, Iterable, Iterator
@@ -203,10 +204,18 @@ class OpcPackage:
             if _verify_serialized():
                 assert data == serialize(self._trees[path]), f"{path}: settled bytes are not the tree's"
         else:
-            data = serialize(self._trees[path])
+            data = self._write_tree(path, self._trees[path])
         if self._keep_serialized:
             self._serialized[path] = data
         return data
+
+    def _write_tree(self, path: str, root: Element) -> bytes:
+        """An edited part's tree written out (:func:`~.xml.serialize`): what every read of
+        its bytes, snapshot and save writes.  A format may write a part from its last bytes,
+        only what changed written again (0.120.0), as long as the bytes are the tree's;
+        ``OOXML_EDIT_VERIFY_SERIALIZED=1`` makes it compare them with the tree written out
+        whole."""
+        return serialize(root)
 
     def keep_serialized(self, keep: bool) -> None:
         """Whether an edited part's bytes are kept once written out (0.117.0): ``True`` only
@@ -1215,7 +1224,14 @@ class Pieces:
     @classmethod
     def of(cls, data: bytes, before: "Pieces | None" = None) -> "Pieces":
         """``data`` as pieces, sharing ``before``'s that are the same bytes at the same place
-        from the start, and from the end."""
+        from the start, and from the end.  (0.120.0: ``data`` is what the pieces join to,
+        kept beside the latest few, :func:`_joined`.)"""
+        found = cls._of(data, before)
+        _keep_joined(found, data)
+        return found
+
+    @classmethod
+    def _of(cls, data: bytes, before: "Pieces | None" = None) -> "Pieces":
         size = cls.SIZE
         if before is None or not before.pieces:
             return cls(tuple(data[k:k + size] for k in range(0, len(data), size)) or (b"",))
@@ -1236,7 +1252,14 @@ class Pieces:
         return cls(old[:head] + middle + (old[len(old) - tail:] if tail else ()))
 
     def __bytes__(self) -> bytes:
-        return self.pieces[0] if len(self.pieces) == 1 else b"".join(self.pieces)
+        if len(self.pieces) == 1:
+            return self.pieces[0]
+        found = _joined(self)
+        if found is None:
+            return b"".join(self.pieces)
+        if _verify_serialized():
+            assert found == b"".join(self.pieces), "kept bytes are not the pieces'"
+        return found
 
     def __len__(self) -> int:
         return self.size
@@ -1268,6 +1291,35 @@ class Pieces:
 
     def __repr__(self) -> str:
         return f"Pieces({self.size} bytes in {len(self.pieces)})"
+
+
+#: 0.120.0: the bytes the latest few :class:`Pieces` made (:meth:`Pieces.of`) join to,
+#: the very ``bytes`` they were made of -- an edit's state before and after, read whole by
+#: what the edit's result says (``Change.before``/``after``), are not joined again.  Held for
+#: the latest :data:`_JOINED_KEPT` only (a long part's every version would be its copy).
+_JOINED: "list[tuple[Pieces, bytes]]" = []
+_JOINED_KEPT = 4
+_JOINED_LOCK = threading.Lock()
+
+
+def _keep_joined(pieces: "Pieces", data: bytes) -> None:
+    if len(pieces.pieces) < 2 or not isinstance(data, bytes):
+        return
+    with _JOINED_LOCK:
+        for k, (kept, _data) in enumerate(_JOINED):
+            if kept is pieces:
+                del _JOINED[k]
+                break
+        _JOINED.append((pieces, data))
+        del _JOINED[:-_JOINED_KEPT]
+
+
+def _joined(pieces: "Pieces") -> "bytes | None":
+    with _JOINED_LOCK:
+        for kept, data in reversed(_JOINED):
+            if kept is pieces:
+                return data
+    return None
 
 
 @dataclass(frozen=True)
