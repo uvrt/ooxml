@@ -60,12 +60,17 @@ class PlanTest(unittest.TestCase):
                 self.assertEqual(_legs(out, "windows")[name], versions, event)
                 self.assertEqual(_legs(out, "macos")[name], [versions[-1]], event)
 
-    def test_no_free_threaded_legs(self) -> None:
+    def test_free_threaded_legs_linux_only(self) -> None:
         for event in ("pull_request", "push", "schedule", "workflow_dispatch"):
             out = _plan(event, ["tools/ci.py"] if event == "pull_request" else None)
-            self.assertNotIn("ft", out)
+            self.assertEqual(out["ft"]["include"],
+                             [{"package": n, "os": "ubuntu-latest", "python": "3.15t"} for n in ci.PACKAGES], event)
             for os_ in ci.RUNNERS:
                 self.assertFalse([leg for leg in out[os_]["include"] if leg["python"].endswith("t")])
+
+    def test_free_threaded_legs_follow_the_path_filter(self) -> None:
+        out = _plan("pull_request", ["python/pptx-agent/src/pptx_agent/x.py"])
+        self.assertEqual([leg["package"] for leg in out["ft"]["include"]], ["pptx-agent", "xlsx-agent"])
 
     def test_one_coverage_leg_per_package_every_event(self) -> None:
         for event in ("pull_request", "push", "schedule"):

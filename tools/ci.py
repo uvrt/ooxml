@@ -1,6 +1,6 @@
 """What CI runs for the Python packages, in one place.
 
-The workflows (.github/workflows/ci.yml, rust.yml, release.yml) call this script
+The workflows (.github/workflows/ci.yml, freethreading.yml, release.yml) call this script
 rather than spell out each package's installs and test command, so the seven packages'
 differences live here and nowhere else:
 
@@ -12,13 +12,17 @@ differences live here and nowhere else:
         Which Pythons each OS runs depends on the event (LEGS below): macOS runners are
         the scarce ones and development already runs on macOS, so a pull request and a
         push to main run no macOS leg, and the nightly and a manual run one per package.
+        The free-threaded legs (`ft`, freethreading.yml) run on Linux only, every event.
     python tools/ci.py affected FILE...
         The packages those changed files select, one per line (for a quick look by hand).
-    python tools/ci.py install PACKAGE
+    python tools/ci.py install PACKAGE [--free-threading]
         pip-installs the package (editable, with its test extras) and the siblings it needs,
         all from this checkout -- never from the old repositories.
-    python tools/ci.py test PACKAGE [--event EVENT]
+    python tools/ci.py test PACKAGE [--event EVENT] [--free-threading]
         Runs the package's suite as its own repository's CI ran it.
+    python tools/ci.py gil-check PACKAGE
+        On a free-threaded Python: importing the package, its modules and its extras' modules
+        leaves the GIL off.
     python tools/ci.py build-check PACKAGE
         The build job's checks: the version agrees with CHANGELOG.md, ruff, mypy where the
         package type checks.
@@ -60,6 +64,7 @@ PACKAGES: dict[str, dict] = {
         # this floor: the suite is meant to hold the package by itself, not through the
         # renderers' suites.
         "coverage": "87",
+        "gil_imports": "import fontTools.ttLib",
     },
     "ooxml-edit": {
         "uses": ["ooxml-common", "ooxml-edit"],
@@ -67,9 +72,12 @@ PACKAGES: dict[str, dict] = {
         "extras": "dev",
         "min_python": "3.10",
         "pytest": [],
+        "ft_pytest": ["-v", "-o", "faulthandler_timeout=300"],
         "check_version": ".github/check_version.py",
         "mypy": True,
         "mypy_siblings": ["ooxml-common"],
+        "lxml7": True,
+        "gil_imports": "import lxml.etree, lxml.html",
     },
     "docx2svg": {
         "uses": ["ooxml-common", "docx2svg"],
@@ -80,12 +88,14 @@ PACKAGES: dict[str, dict] = {
         # A pull request leaves out the tests marked long; main, nightly and manual runs
         # take them.
         "pr_pytest": ["-m", "not long"],
+        "ft_pytest": [],
         "check_version": "tools/check_version.py",
         "mypy": True,
         "mypy_siblings": ["ooxml-common"],
         "fonts": True,
         # The committed fixture is regenerable and current.
         "fixture_check": True,
+        "gil_imports": "import resvg_py, pypdfium2, fontTools.ttLib, numpy",
     },
     "pptx2svg": {
         "uses": ["ooxml-common", "pptx2svg"],
@@ -96,6 +106,7 @@ PACKAGES: dict[str, dict] = {
         "pytest": [],
         "check_version": "tools/check_version.py",
         "mypy": False,
+        "gil_imports": "import resvg_py, pypdfium2, fontTools.ttLib, PIL.Image, numpy",
     },
     "docx-agent": {
         # ooxml-core (the Rust core, built here by maturin) serves its checks of ranges.
@@ -104,10 +115,13 @@ PACKAGES: dict[str, dict] = {
         "extras": "dev,png",
         "min_python": "3.10",
         "pytest": ["-n", "auto", "--durations=30"],
+        "ft_pytest": ["-n", "auto", "-o", "faulthandler_timeout=300", "-v"],
         "compile": ["src", "tests", "tools", "examples"],
         "check_version": "tools/check_version.py",
         "mypy": False,
         "fonts": True,
+        "lxml7": True,
+        "gil_imports": "import lxml.etree, lxml.html, docx2svg, resvg_py",
     },
     "pptx-agent": {
         "uses": ["ooxml-common", "ooxml-edit", "pptx2svg", "pptx-agent"],
@@ -118,8 +132,11 @@ PACKAGES: dict[str, dict] = {
         "pip_extra": ["pytest-xdist>=3"],
         "min_python": "3.10",
         "pytest": ["-n", "auto", "--durations=30"],
+        "ft_pytest": [],
         "check_version": "tools/check_version.py",
         "mypy": False,
+        "lxml7": True,
+        "gil_imports": "import lxml.etree, lxml.html, pptx2svg, resvg_py, PIL.Image",
     },
     "xlsx-agent": {
         "uses": ["ooxml-common", "ooxml-edit", "pptx2svg", "pptx-agent", "docx2svg", "ooxml-core", "docx-agent",
@@ -132,10 +149,13 @@ PACKAGES: dict[str, dict] = {
         "extras": "test",
         "min_python": "3.11",
         "pytest": [],
+        "ft_pytest": [],
         "compile": ["src", "tests"],
         "check_version": "tools/check_version.py",
         "mypy": True,
         "mypy_siblings": ["ooxml-common", "ooxml-edit"],
+        "lxml7": True,
+        "gil_imports": "import lxml.etree, lxml.html, pptx_agent, pptx2svg",
     },
 }
 
@@ -225,6 +245,8 @@ def plan(event: str, changed: list[str] | None) -> dict[str, str]:
         "any": bool(names),
         "rust": full or changed is None or rust_affected(changed),
         **{os_: {"include": legs_} for os_, legs_ in matrices.items()},
+        # The free-threaded legs (freethreading.yml): Linux only, on every event.
+        "ft": {"include": [{"package": n, "os": RUNNERS["linux"], "python": "3.15t"} for n in names]},
         # Whether ci.yml's macOS call runs at all: an empty matrix is an error in Actions.
         "any_macos": bool(matrices["macos"]),
         "build": {"include": [{"package": n} for n in names]},
@@ -244,9 +266,13 @@ def _req(path: str) -> str:
     return str(PY / base) + (f"[{extras}" if extras else "")
 
 
-def install(name: str) -> None:
+def install(name: str, free_threading: bool) -> None:
     spec = PACKAGES[name]
     _pip("--upgrade", "pip")
+    if free_threading and spec.get("lxml7"):
+        # lxml 6 turns the GIL back on when imported on 3.15t; lxml 7 (a pre-release for
+        # now) does not, so it goes in first and the other installs find it there.
+        _pip("--pre", "lxml>=7.0.0b1")
     args = [_req(s) for s in spec["siblings"]]
     for s in spec.get("editable_siblings", []):
         args += ["-e", _req(s)]
@@ -256,20 +282,28 @@ def install(name: str) -> None:
     _pip(*args)
 
 
-def test(name: str, event: str, coverage: bool = False) -> int:
+def test(name: str, event: str, free_threading: bool, coverage: bool = False) -> int:
     spec = PACKAGES[name]
     cwd = PY / name
-    if "compile" in spec:
+    if "compile" in spec and not free_threading:
         # A docstring's invalid escape is a SyntaxWarning, printed once and easy to miss.
         subprocess.run(
             [sys.executable, "-W", "error::SyntaxWarning", "-W", "error::DeprecationWarning",
              "-m", "compileall", "-q", "-f", *spec["compile"]],
             cwd=cwd, check=True,
         )
-    args = ["-m", "pytest", "-q", *spec["pytest"]]
-    if event == "pull_request":
-        args += spec.get("pr_pytest", [])
+    if free_threading:
+        args = ["-W", "error::RuntimeWarning", "-m", "pytest", "-q", "-W", "error::RuntimeWarning"]
+        if spec.get("lxml7"):
+            args += ["-W", "error::pytest.PytestUnraisableExceptionWarning"]
+        args += spec.get("ft_pytest", [])
+    else:
+        args = ["-m", "pytest", "-q", *spec["pytest"]]
+        if event == "pull_request":
+            args += spec.get("pr_pytest", [])
     env = dict(os.environ)
+    if free_threading:
+        env["PYTHON_GIL"] = "0"
     if coverage and spec.get("coverage"):
         _pip("coverage>=7.6")
         env["COVERAGE_CORE"] = "sysmon"
@@ -282,7 +316,7 @@ def test(name: str, event: str, coverage: bool = False) -> int:
     if coverage and spec.get("coverage"):
         code = subprocess.run([sys.executable, "-m", "coverage", "report", f"--fail-under={spec['coverage']}",
                                "--sort=cover"], cwd=cwd).returncode
-    if not code and spec.get("fixture_check"):
+    if not code and spec.get("fixture_check") and not free_threading:
         code = fixture_check(cwd)
     return code
 
@@ -307,6 +341,25 @@ def fixture_check(cwd: Path) -> int:
     return code
 
 
+def gil_check(name: str) -> int:
+    spec = PACKAGES[name]
+    code = f"""
+import importlib, pkgutil, sys
+assert hasattr(sys, "_is_gil_enabled"), "not a free-threaded build"
+import {IMPORT_NAMES[name]} as package
+for module in pkgutil.walk_packages(package.__path__, package.__name__ + "."):
+    if not module.name.endswith("__main__"):
+        importlib.import_module(module.name)
+{spec['gil_imports']}  # the extras' modules
+if {bool(spec.get('lxml7'))}:
+    import lxml.etree
+    assert lxml.etree.LXML_VERSION >= (7,), lxml.etree.LXML_VERSION
+print(sys.version)
+sys.exit("the GIL is enabled" if sys._is_gil_enabled() else 0)
+"""
+    return subprocess.run([sys.executable, "-W", "error::RuntimeWarning", "-c", code]).returncode
+
+
 def build_check(name: str) -> None:
     spec = PACKAGES[name]
     cwd = PY / name
@@ -327,9 +380,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--changed", action="append", help="a changed path (repeat); default: git diff HEAD^1 HEAD")
     a = sub.add_parser("affected")
     a.add_argument("files", nargs="+")
-    for command in ("install", "test", "build-check"):
+    for command in ("install", "test", "gil-check", "build-check"):
         s = sub.add_parser(command)
         s.add_argument("package", choices=list(PACKAGES))
+        if command in ("install", "test"):
+            s.add_argument("--free-threading", action="store_true")
         if command == "test":
             s.add_argument("--event", default=os.environ.get("GITHUB_EVENT_NAME", "push"))
             s.add_argument("--coverage", action="store_true", help="the coverage leg, where the package has one")
@@ -356,10 +411,12 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{k}={v}")
         return 0
     if args.command == "install":
-        install(args.package)
+        install(args.package, args.free_threading)
         return 0
     if args.command == "test":
-        return test(args.package, args.event, args.coverage)
+        return test(args.package, args.event, args.free_threading, args.coverage)
+    if args.command == "gil-check":
+        return gil_check(args.package)
     if args.command == "build-check":
         build_check(args.package)
         return 0

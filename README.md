@@ -68,10 +68,12 @@ example `pip install ./python/ooxml-common ./python/ooxml-edit ./python/docx2svg
   Linux on the oldest and the newest Python, Windows on the newest, no macOS; a push to
   main runs Linux on every Python, Windows on the oldest and the newest, no macOS; the
   nightly run and a manual run take every Python on Linux and Windows and the newest on
-  macOS (`tools/ci.py`, `LEGS`; its tests: `python -m unittest discover -s tools`). A newer push to a pull request or to main cancels the
-  older push's run. Branch protection requires the jobs `required (ubuntu, build)` and
-  `required (windows)`, which pass when every leg they cover passed or was left out;
-  macOS legs are not required.
+  macOS (`tools/ci.py`, `LEGS`; its tests: `python -m unittest discover -s tools`). The
+  free-threaded legs (`.github/workflows/freethreading.yml`, 3.15t) run on Linux only, on
+  every event. A newer push to a pull request or to main cancels the older push's run.
+  Branch protection requires the jobs `required (ubuntu, build)` and `required
+  (windows)`, which pass when every leg they cover passed or was left out; the macOS and
+  free-threaded legs are not required.
 - Rust (`.github/workflows/rust.yml`): fmt, clippy, tests, the differential tests and the
   wheels, when a change touches the workspace, ooxml-core or the packages it is compared
   with; gate job `required (rust)`.
