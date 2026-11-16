@@ -14,10 +14,10 @@ while sleep 15; do
     for k in 1 2; do
       echo "== cpu ticks (tid comm utime stime)" >> $f
       for t in /proc/$pid/task/*; do echo "$(basename $t) $(cat $t/comm) $(awk '{print $14, $15}' $t/stat)" >> $f; done
-      kill -USR1 $pid; sleep 20
+      kill -USR1 $pid; sleep 20; echo "== python stacks (SIGUSR1) so far" >> $f; cat out/stacks.txt >> $f
     done
     echo "== native" >> $f
-    sudo gdb -p $pid -batch -ex "set pagination off" -ex "thread apply all bt 50" >> $f 2>&1
+    sudo gdb -iex "set debuginfod enabled off" -p $pid -batch -ex "set pagination off" -ex "info threads" -ex "thread apply all bt 50" >> $f 2>&1
     kill -9 $pid
     exit 0
   fi

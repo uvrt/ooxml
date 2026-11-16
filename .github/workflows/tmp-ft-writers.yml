@@ -34,11 +34,11 @@ jobs:
           DOCX_AGENT_FULL_VALIDATE: "1"
           OOXML_EDIT_VERIFY_SERIALIZED: "1"
           DOCX_AGENT_DRAFTS: "1"
-          LOOP_ROUND: "2"
+          LOOP_ROUND: "3"
         run: |
           mkdir -p work/out && cd work
           if [ ${{ matrix.shard }} -gt 4 ]; then export MODES=more-tracked THREADS=8,16,24; fi
-          ../.github/tmp-ft/watchdog.sh 600 &
+          ../.github/tmp-ft/watchdog.sh 420 &
           python ../.github/tmp-ft/loop.py ../python/docx-agent/tests ${{ matrix.shard }}${LOOP_ROUND:-0} 2400
       - uses: actions/upload-artifact@v4
         if: always()
