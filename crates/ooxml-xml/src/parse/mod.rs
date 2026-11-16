@@ -124,15 +124,15 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Advance past the next `pattern`, returning what came before it.
-    fn until(&mut self, pattern: &[u8], message: &'static str) -> Result<&'a str, XmlError> {
+    /// Advance past the next `delimiter`, returning what came before it.
+    fn until(&mut self, delimiter: &[u8], message: &'static str) -> Result<&'a str, XmlError> {
         let rest = self.s.get(self.i..).unwrap_or_default();
         let at = rest
-            .windows(pattern.len())
-            .position(|w| w == pattern)
+            .windows(delimiter.len())
+            .position(|w| w == delimiter)
             .ok_or_else(|| self.err(message))?;
         let found = self.slice(self.i, self.i + at);
-        self.i += at + pattern.len();
+        self.i += at + delimiter.len();
         Ok(found)
     }
 

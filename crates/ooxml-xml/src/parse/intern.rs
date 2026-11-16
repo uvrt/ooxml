@@ -5,13 +5,13 @@
 //!
 //! Strings, heads and elements are shared through direct-mapped caches of fixed size: a fast
 //! hash picks the slot, the slot is checked by comparing, and a miss overwrites it. Sharing
-//! is best-effort (what is used often stays cached), costs one probe whatever the input, and
+//! is best-effort (what is used often stays cached), costs one lookup whatever the input, and
 //! needs no table that grows with the part. Names are resolved exactly, once per namespace
 //! scope, in tables with the standard library's keyed hasher (so crafted input cannot make
 //! them quadratic), behind a cache of the same kind.
 //!
 //! Must not: outlive the parse (the tables are dropped with it; what they built is shared by
-//! the tree), or decide anything a reader could observe other than allocation identity.
+//! the tree), or decide anything a reader could observe other than which allocations are shared.
 
 use crate::name::{Atom, Name, QName};
 use crate::node::{Attribute, Element, Head, NamespaceDecl, Node};

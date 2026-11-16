@@ -3,7 +3,7 @@
 //!
 //! The function is SipHash-2-4 with 128-bit output (Aumasson and Bernstein), written here
 //! so the base layer needs no dependency. It is a keyed PRF: with a key the input's author
-//! does not know, finding two inputs with one digest is infeasible; with a known key it is
+//! does not know, producing two inputs with one digest is infeasible; with a known key it is
 //! not. A session that keys caches on untrusted content takes a [`DigestKey`] from a random
 //! source (a leaf crate's job: this crate does no I/O); tests may use a fixed one.
 //!
@@ -163,7 +163,7 @@ mod tests {
 
     #[test]
     fn matches_the_reference_vectors() {
-        // vectors_sip128 from the SipHash reference implementation: messages 00, 00 01, ...
+        // vectors_sip128 of SipHash's reference code: messages 00, 00 01, ...
         assert_eq!(
             Digest::of(reference_key(), b"").to_string(),
             "a3817f04ba25a8e66df67214c7550293"
