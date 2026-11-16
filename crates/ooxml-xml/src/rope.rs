@@ -26,6 +26,9 @@ pub struct Children(Chunk);
 enum Chunk {
     #[default]
     Empty,
+    /// One child, held inline (no allocation: nearly half of a document's elements have
+    /// exactly one child).
+    One(Node),
     Leaf(Arc<[Node]>),
     Branch(Arc<Branch>),
 }
@@ -39,34 +42,55 @@ struct Branch {
 }
 
 impl Chunk {
+    /// A leaf's nodes; `None` for a branch.
+    fn items(&self) -> Option<&[Node]> {
+        match self {
+            Chunk::Empty => Some(&[]),
+            Chunk::One(n) => Some(std::slice::from_ref(n)),
+            Chunk::Leaf(l) => Some(l),
+            Chunk::Branch(_) => None,
+        }
+    }
+
+    /// A leaf of `nodes` (inline for one).
+    fn leaf(mut nodes: Vec<Node>) -> Chunk {
+        match nodes.len() {
+            0 => Chunk::Empty,
+            1 => nodes.pop().map_or(Chunk::Empty, Chunk::One),
+            _ => Chunk::Leaf(nodes.into()),
+        }
+    }
+
     fn len(&self) -> usize {
         match self {
-            Chunk::Empty => 0,
-            Chunk::Leaf(l) => l.len(),
             Chunk::Branch(b) => b.len,
+            leaf => leaf.items().map_or(0, <[Node]>::len),
         }
     }
 
     fn branch(kids: Vec<Chunk>) -> Chunk {
         let sizes: Box<[usize]> = kids.iter().map(Chunk::len).collect();
-        Chunk::Branch(Arc::new(Branch { len: sizes.iter().sum(), sizes, kids: kids.into() }))
+        Chunk::Branch(Arc::new(Branch {
+            len: sizes.iter().sum(),
+            sizes,
+            kids: kids.into(),
+        }))
     }
 
     fn width(&self) -> usize {
         match self {
-            Chunk::Empty => 0,
-            Chunk::Leaf(l) => l.len(),
             Chunk::Branch(b) => b.kids.len(),
+            leaf => leaf.len(),
         }
     }
 
     /// One chunk holding `a` then `b` (both of one height), when they fit in one.
     fn merged(a: &Chunk, b: &Chunk) -> Option<Chunk> {
-        match (a, b) {
-            (Chunk::Leaf(x), Chunk::Leaf(y)) if x.len() + y.len() <= LEAF_MAX => {
-                Some(Chunk::Leaf(x.iter().chain(y.iter()).cloned().collect()))
+        match (a, b, a.items(), b.items()) {
+            (_, _, Some(x), Some(y)) if x.len() + y.len() <= LEAF_MAX => {
+                Some(Chunk::leaf(x.iter().chain(y.iter()).cloned().collect()))
             }
-            (Chunk::Branch(x), Chunk::Branch(y)) if x.kids.len() + y.kids.len() <= BRANCH_MAX => {
+            (Chunk::Branch(x), Chunk::Branch(y), _, _) if x.kids.len() + y.kids.len() <= BRANCH_MAX => {
                 Some(Chunk::branch(x.kids.iter().chain(y.kids.iter()).cloned().collect()))
             }
             _ => None,
@@ -91,7 +115,7 @@ fn balanced<T>(items: Vec<T>, max: usize, make: impl Fn(Vec<T>) -> Chunk) -> Vec
 }
 
 fn leaves(nodes: Vec<Node>) -> Vec<Chunk> {
-    balanced(nodes, LEAF_MAX, |v| Chunk::Leaf(v.into()))
+    balanced(nodes, LEAF_MAX, Chunk::leaf)
 }
 
 /// Chunks of one height under as few new levels as it takes to make one root.
@@ -124,7 +148,9 @@ fn collapse(mut chunk: Chunk) -> Chunk {
 fn merge_small(kids: &mut Vec<Chunk>, lo: usize, hi: usize) {
     let mut i = lo;
     while i + 1 < hi.min(kids.len()) {
-        let (Some(a), Some(b)) = (kids.get(i), kids.get(i + 1)) else { break };
+        let (Some(a), Some(b)) = (kids.get(i), kids.get(i + 1)) else {
+            break;
+        };
         if a.width() < MERGE_BELOW || b.width() < MERGE_BELOW {
             if let Some(m) = Chunk::merged(a, b) {
                 kids.splice(i..i + 2, [m]);
@@ -138,16 +164,16 @@ fn merge_small(kids: &mut Vec<Chunk>, lo: usize, hi: usize) {
 /// `chunk` with `range` replaced by `with` (taken by the first chunk that reaches the
 /// range's start): zero or more chunks of the same height.
 fn splice(chunk: &Chunk, range: Range<usize>, with: &mut Option<Vec<Node>>) -> Vec<Chunk> {
-    match chunk {
-        Chunk::Empty => leaves(with.take().unwrap_or_default()),
-        Chunk::Leaf(l) => {
+    match (chunk, chunk.items()) {
+        (Chunk::Branch(b), _) => splice_branch(b, range, with),
+        (_, l) => {
+            let l = l.unwrap_or_default();
             let mut items: Vec<Node> = Vec::with_capacity(l.len() + with.as_ref().map_or(0, Vec::len));
             items.extend(l.iter().take(range.start).cloned());
             items.extend(with.take().unwrap_or_default());
             items.extend(l.iter().skip(range.end).cloned());
             leaves(items)
         }
-        Chunk::Branch(b) => splice_branch(b, range, with),
     }
 }
 
@@ -194,6 +220,7 @@ impl Children {
         let n = kids.len().saturating_sub(start);
         match n {
             0 => Children(Chunk::Empty),
+            1 => Children(kids.pop().map_or(Chunk::Empty, Chunk::One)),
             _ if n <= LEAF_MAX => Children(Chunk::Leaf(kids.drain(start..).collect())),
             _ => Children::from_vec(kids.split_off(start)),
         }
@@ -219,8 +246,6 @@ impl Children {
         let mut chunk = &self.0;
         loop {
             match chunk {
-                Chunk::Empty => return None,
-                Chunk::Leaf(l) => return l.get(index),
                 Chunk::Branch(b) => {
                     let mut found = None;
                     for (kid, &size) in b.kids.iter().zip(b.sizes.iter()) {
@@ -232,15 +257,25 @@ impl Children {
                     }
                     chunk = found?;
                 }
+                leaf => return leaf.items()?.get(index),
             }
         }
     }
 
     /// The children in order.
     pub fn iter(&self) -> Iter<'_> {
-        let mut it = Iter { stack: Vec::new(), leaf: [].iter() };
+        let mut it = Iter {
+            stack: Vec::new(),
+            leaf: [].iter(),
+        };
         it.descend(&self.0);
         it
+    }
+
+    /// The children as one slice, when they are held in one leaf (an element of at most
+    /// [`LEAF_MAX`] children); `None` for a wide element.
+    pub fn as_slice(&self) -> Option<&[Node]> {
+        self.0.items()
     }
 
     /// The children as a vector.
@@ -263,6 +298,8 @@ impl Children {
     pub fn ptr_eq(&self, other: &Children) -> bool {
         match (&self.0, &other.0) {
             (Chunk::Empty, Chunk::Empty) => true,
+            (Chunk::One(Node::Element(a)), Chunk::One(Node::Element(b))) => Arc::ptr_eq(a, b),
+            (Chunk::One(Node::Text(a)), Chunk::One(Node::Text(b))) => Arc::ptr_eq(a, b),
             (Chunk::Leaf(a), Chunk::Leaf(b)) => Arc::ptr_eq(a, b),
             (Chunk::Branch(a), Chunk::Branch(b)) => Arc::ptr_eq(a, b),
             _ => false,
@@ -317,11 +354,6 @@ impl<'a> Iter<'a> {
     fn descend(&mut self, mut chunk: &'a Chunk) {
         loop {
             match chunk {
-                Chunk::Empty => return,
-                Chunk::Leaf(l) => {
-                    self.leaf = l.iter();
-                    return;
-                }
                 Chunk::Branch(b) => {
                     let mut kids = b.kids.iter();
                     match kids.next() {
@@ -331,6 +363,10 @@ impl<'a> Iter<'a> {
                         }
                         None => return,
                     }
+                }
+                leaf => {
+                    self.leaf = leaf.items().unwrap_or_default().iter();
+                    return;
                 }
             }
         }
@@ -399,7 +435,13 @@ mod tests {
                 model.splice(a..b, with);
                 assert_eq!(rope.len(), model.len());
             }
-            assert_eq!(values(&rope), model.iter().map(|n| n.as_text().unwrap().to_owned()).collect::<Vec<_>>());
+            assert_eq!(
+                values(&rope),
+                model
+                    .iter()
+                    .map(|n| n.as_text().unwrap().to_owned())
+                    .collect::<Vec<_>>()
+            );
             for (i, node) in model.iter().enumerate() {
                 assert_eq!(rope.get(i), Some(node));
             }

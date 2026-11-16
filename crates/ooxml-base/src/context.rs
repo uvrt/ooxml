@@ -109,7 +109,10 @@ pub struct Context {
 
 impl std::fmt::Debug for Context {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Context").field("limits", &self.limits).field("locale", &self.locale).finish_non_exhaustive()
+        f.debug_struct("Context")
+            .field("limits", &self.limits)
+            .field("locale", &self.locale)
+            .finish_non_exhaustive()
     }
 }
 
@@ -130,13 +133,19 @@ mod tests {
             Ok(None)
         }
         fn store(&self, _: &str, _: Arc<[u8]>) -> Result<(), BaseError> {
-            Err(BaseError::Port { port: "parts", message: "read-only".into() })
+            Err(BaseError::Port {
+                port: "parts",
+                message: "read-only".into(),
+            })
         }
     }
     struct Fixed;
     impl Clock for Fixed {
         fn now(&self) -> Timestamp {
-            Timestamp { seconds: 1_700_000_000, nanos: 0 }
+            Timestamp {
+                seconds: 1_700_000_000,
+                nanos: 0,
+            }
         }
         fn monotonic(&self) -> Duration {
             Duration::ZERO
@@ -145,7 +154,11 @@ mod tests {
     struct Budget(AtomicUsize, usize);
     impl CacheBudget for Budget {
         fn reserve(&self, bytes: usize) -> bool {
-            self.0.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |u| (u + bytes <= self.1).then_some(u + bytes)).is_ok()
+            let now = self.0.fetch_add(bytes, Ordering::SeqCst) + bytes;
+            if now > self.1 {
+                self.0.fetch_sub(bytes, Ordering::SeqCst);
+            }
+            now <= self.1
         }
         fn release(&self, bytes: usize) {
             self.0.fetch_sub(bytes, Ordering::SeqCst);
@@ -182,7 +195,14 @@ mod tests {
         assert_eq!(shared.cancel.check(), Err(BaseError::Cancelled));
         assert_eq!(context.limits.xml.max_depth, 256);
         assert!(context.parts.store("x", Arc::from(&b"y"[..])).is_err());
-        assert_eq!(context.fonts.face(&FaceRequest { family: "Calibri".into(), bold: false, italic: false }), Ok(None));
+        assert_eq!(
+            context.fonts.face(&FaceRequest {
+                family: "Calibri".into(),
+                bold: false,
+                italic: false
+            }),
+            Ok(None)
+        );
         assert_eq!(context.clock.now().seconds, 1_700_000_000);
     }
 }

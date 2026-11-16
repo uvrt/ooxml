@@ -10,6 +10,7 @@
 
 mod content_types;
 mod error;
+mod map;
 pub mod name;
 mod package;
 mod rels;

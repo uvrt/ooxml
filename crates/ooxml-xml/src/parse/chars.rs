@@ -13,8 +13,7 @@ pub(crate) fn is_name_start(c: char) -> bool {
 
 /// `NameChar`.
 pub(crate) fn is_name_char(c: char) -> bool {
-    is_name_start(c)
-        || matches!(c, '-' | '.' | '0'..='9' | '\u{B7}' | '\u{300}'..='\u{36F}' | '\u{203F}'..='\u{2040}')
+    is_name_start(c) || matches!(c, '-' | '.' | '0'..='9' | '\u{B7}' | '\u{300}'..='\u{36F}' | '\u{203F}'..='\u{2040}')
 }
 
 /// ASCII name characters: 1 may start a name, 2 may continue one (3 both).

@@ -56,14 +56,21 @@ impl Relationships {
 
     /// The internal targets of relationships of type `rel_type`, in document order.
     pub fn targets_of_type<'a>(&'a self, rel_type: &'a str) -> impl Iterator<Item = &'a str> {
-        self.items.iter().filter(move |r| r.rel_type == rel_type).filter_map(|r| r.target_part.as_deref())
+        self.items
+            .iter()
+            .filter(move |r| r.rel_type == rel_type)
+            .filter_map(|r| r.target_part.as_deref())
     }
 }
 
 impl Package {
     /// The relationships of the part `source` (`""` for the package's own).
     pub fn relationships(&self, source: &str) -> Result<Relationships, OpcError> {
-        let source = if source.is_empty() { String::new() } else { normalize(source) };
+        let source = if source.is_empty() {
+            String::new()
+        } else {
+            normalize(source)
+        };
         let Some(tree) = self.tree(&rels_for(&source))? else {
             return Ok(Relationships::default());
         };
@@ -73,7 +80,11 @@ impl Package {
             .child_elements()
             .filter(|e| e.name().is(Some(RELS_NS), "Relationship"))
             .filter_map(|e| {
-                let (id, rel_type, target) = (e.attribute(None, "Id")?, e.attribute(None, "Type")?, e.attribute(None, "Target")?);
+                let (id, rel_type, target) = (
+                    e.attribute(None, "Id")?,
+                    e.attribute(None, "Type")?,
+                    e.attribute(None, "Target")?,
+                );
                 let external = e.attribute(None, "TargetMode") == Some("External");
                 Some(Relationship {
                     id: id.to_owned(),

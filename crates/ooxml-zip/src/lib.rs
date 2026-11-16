@@ -25,7 +25,14 @@ mod tests {
     use std::sync::Arc;
 
     fn entry(name: &str, method: Method) -> NewEntry {
-        NewEntry { name: name.into(), method, dos_time: 0, dos_date: 33, external_attr: 0, create_system: 3 }
+        NewEntry {
+            name: name.into(),
+            method,
+            dos_time: 0,
+            dos_date: 33,
+            external_attr: 0,
+            create_system: 3,
+        }
     }
 
     fn archive(parts: &[(&str, &[u8], Method)]) -> Vec<u8> {
@@ -39,7 +46,10 @@ mod tests {
     #[test]
     fn written_entries_read_back() {
         let xml = b"<a>".repeat(1000);
-        let bytes = archive(&[("[Content_Types].xml", &xml, Method::Deflated), ("media/\u{e9}.png", b"\x89PNG", Method::Stored)]);
+        let bytes = archive(&[
+            ("[Content_Types].xml", &xml, Method::Deflated),
+            ("media/\u{e9}.png", b"\x89PNG", Method::Stored),
+        ]);
         let a = Archive::read(bytes.into(), &Limits::default()).unwrap();
         assert_eq!(a.entries().len(), 2);
         let [first, second] = a.entries() else { panic!() };
@@ -67,11 +77,26 @@ mod tests {
     fn limits_refuse_bombs_and_damage() {
         let big = vec![0u8; 3 << 20];
         let bytes = archive(&[("zeros", &big, Method::Deflated)]);
-        let tight = Limits { max_ratio: 100, ..Limits::default() };
-        assert!(matches!(Archive::read(Arc::from(bytes.clone()), &tight), Err(ZipError::Limit { .. })));
-        let small = Limits { max_entry_size: 1 << 20, ..Limits::default() };
-        assert!(matches!(Archive::read(Arc::from(bytes.clone()), &small), Err(ZipError::Limit { .. })));
-        assert!(matches!(Archive::read(Arc::from(&b"not a zip"[..]), &Limits::default()), Err(ZipError::Malformed(_))));
+        let tight = Limits {
+            max_ratio: 100,
+            ..Limits::default()
+        };
+        assert!(matches!(
+            Archive::read(Arc::from(bytes.clone()), &tight),
+            Err(ZipError::Limit { .. })
+        ));
+        let small = Limits {
+            max_entry_size: 1 << 20,
+            ..Limits::default()
+        };
+        assert!(matches!(
+            Archive::read(Arc::from(bytes.clone()), &small),
+            Err(ZipError::Limit { .. })
+        ));
+        assert!(matches!(
+            Archive::read(Arc::from(&b"not a zip"[..]), &Limits::default()),
+            Err(ZipError::Malformed(_))
+        ));
         // a flipped byte in the data: the CRC-32 check refuses it
         let mut damaged = archive(&[("a.bin", b"0123456789", Method::Stored)]);
         if let Some(b) = damaged.get_mut(30 + 5 + 3) {

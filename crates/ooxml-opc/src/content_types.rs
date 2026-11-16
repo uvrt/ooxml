@@ -31,7 +31,11 @@ impl ContentTypes {
         }
         // `path.rsplit(".", 1)[-1].lower() if "." in path else ""`
         let extension = part.rsplit_once('.').map_or(String::new(), |(_, e)| e.to_lowercase());
-        self.defaults.iter().rev().find(|(e, _)| e.to_lowercase() == extension).map(|(_, t)| t.as_str())
+        self.defaults
+            .iter()
+            .rev()
+            .find(|(e, _)| e.to_lowercase() == extension)
+            .map(|(_, t)| t.as_str())
     }
 }
 
@@ -45,7 +49,9 @@ impl Package {
         for e in tree.root().child_elements() {
             let attr = |n| e.attribute(None, n).unwrap_or_default().to_owned();
             if e.name().is(Some(CONTENT_TYPES_NS), "Override") {
-                types.overrides.push((normalize(&attr("PartName")), attr("ContentType")));
+                types
+                    .overrides
+                    .push((normalize(&attr("PartName")), attr("ContentType")));
             } else if e.name().is(Some(CONTENT_TYPES_NS), "Default") {
                 types.defaults.push((attr("Extension"), attr("ContentType")));
             }

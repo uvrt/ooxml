@@ -164,9 +164,15 @@ mod tests {
     #[test]
     fn matches_the_reference_vectors() {
         // vectors_sip128 from the SipHash reference implementation: messages 00, 00 01, ...
-        assert_eq!(Digest::of(reference_key(), b"").to_string(), "a3817f04ba25a8e66df67214c7550293");
+        assert_eq!(
+            Digest::of(reference_key(), b"").to_string(),
+            "a3817f04ba25a8e66df67214c7550293"
+        );
         let fifteen: Vec<u8> = (0..15).collect();
-        assert_eq!(Digest::of(reference_key(), &fifteen).to_string(), "5493e99933b0a8117e08ec0f97cfc3d9");
+        assert_eq!(
+            Digest::of(reference_key(), &fifteen).to_string(),
+            "5493e99933b0a8117e08ec0f97cfc3d9"
+        );
     }
 
     #[test]

@@ -69,7 +69,13 @@ impl<'a> Parser<'a> {
                 kids.push(Node::Element(element));
             } else {
                 let start = kids.len();
-                stack.push(Open { head: tag.head, raw: tag.raw, start, scope_len: tag.scope_len, scope_id: tag.scope_id });
+                stack.push(Open {
+                    head: tag.head,
+                    raw: tag.raw,
+                    start,
+                    scope_len: tag.scope_len,
+                    scope_id: tag.scope_id,
+                });
             }
             // content up to the next start tag, closing elements on the way
             loop {
@@ -138,7 +144,10 @@ impl<'a> Parser<'a> {
     /// A start tag at nesting `depth` (0 for the root): name, declarations, attributes.
     fn start_tag(&mut self, depth: usize) -> Result<StartTag<'a>, XmlError> {
         if depth >= self.limits.max_depth {
-            return Err(XmlError::Limit { what: "element depth", limit: self.limits.max_depth });
+            return Err(XmlError::Limit {
+                what: "element depth",
+                limit: self.limits.max_depth,
+            });
         }
         self.count_node()?;
         let tag_start = self.i;
@@ -148,13 +157,22 @@ impl<'a> Parser<'a> {
             let raw = self.slice(tag_start + 1, tag_start + 1 + found.head.name.qualified().len());
             self.i = tag_start + tag.map_or(0, <[u8]>::len);
             let (scope_len, scope_id) = (self.scope.len(), self.scope_id);
-            return Ok(StartTag { head: found.head, raw, empty: found.empty, scope_len, scope_id });
+            return Ok(StartTag {
+                head: found.head,
+                raw,
+                empty: found.empty,
+                scope_len,
+                scope_id,
+            });
         }
         self.i += 1;
         let at = self.i;
         let raw = self.name("an element name was expected")?;
         if !is_qname(raw) {
-            return Err(XmlError::Syntax { offset: at, message: "an element name is not a valid QName" });
+            return Err(XmlError::Syntax {
+                offset: at,
+                message: "an element name is not a valid QName",
+            });
         }
         let (scope_len, scope_id) = (self.scope.len(), self.scope_id);
         // the buffers are reused from tag to tag (taken here, given back below)
@@ -180,7 +198,13 @@ impl<'a> Parser<'a> {
                 self.interner.remember_tag(scope_id, bytes, &head, empty);
             }
         }
-        Ok(StartTag { head, raw, empty, scope_len, scope_id })
+        Ok(StartTag {
+            head,
+            raw,
+            empty,
+            scope_len,
+            scope_id,
+        })
     }
 
     /// The declarations and attributes of a start tag, up to `>` or `/>`; whether it was
@@ -212,7 +236,10 @@ impl<'a> Parser<'a> {
             self.skip_space();
             let value = self.attribute_value()?;
             if namespaces.len() + raw_attributes.len() >= self.limits.max_attributes {
-                return Err(XmlError::Limit { what: "attributes on an element", limit: self.limits.max_attributes });
+                return Err(XmlError::Limit {
+                    what: "attributes on an element",
+                    limit: self.limits.max_attributes,
+                });
             }
             if let Some(decl) = self.namespace_decl(name, offset, value.clone())? {
                 namespaces.push(decl);
@@ -235,12 +262,23 @@ impl<'a> Parser<'a> {
         };
         match prefix {
             Some("xml") if &*uri == XML_NAMESPACE => return Ok(None),
-            Some("xml" | "xmlns") => return Err(XmlError::Syntax { offset, message: "a reserved prefix redeclared" }),
+            Some("xml" | "xmlns") => {
+                return Err(XmlError::Syntax {
+                    offset,
+                    message: "a reserved prefix redeclared",
+                })
+            }
             Some(p) if p.contains(':') || p.is_empty() => {
-                return Err(XmlError::Syntax { offset, message: "a namespace prefix is not a valid NCName" })
+                return Err(XmlError::Syntax {
+                    offset,
+                    message: "a namespace prefix is not a valid NCName",
+                })
             }
             Some(_) if uri.is_empty() => {
-                return Err(XmlError::Syntax { offset, message: "an empty namespace URI for a prefix" })
+                return Err(XmlError::Syntax {
+                    offset,
+                    message: "an empty namespace URI for a prefix",
+                })
             }
             _ => {}
         }
@@ -253,7 +291,10 @@ impl<'a> Parser<'a> {
             return;
         }
         debug_assert_eq!(self.scope.len(), scope_len);
-        self.scope.extend(declared.iter().map(|d| Binding { prefix: d.prefix.clone(), uri: d.uri.clone() }));
+        self.scope.extend(declared.iter().map(|d| Binding {
+            prefix: d.prefix.clone(),
+            uri: d.uri.clone(),
+        }));
         self.scopes_made += 1;
         self.scope_id = self.scopes_made;
     }
@@ -267,10 +308,20 @@ impl<'a> Parser<'a> {
                 Some("xml") => Some(XML_NAMESPACE),
                 Some(p) => match scope.iter().rev().find(|b| b.prefix.as_deref() == Some(p)) {
                     Some(b) => Some(&*b.uri),
-                    None => return Err(XmlError::UndefinedPrefix { prefix: p.to_owned(), offset }),
+                    None => {
+                        return Err(XmlError::UndefinedPrefix {
+                            prefix: p.to_owned(),
+                            offset,
+                        })
+                    }
                 },
                 None if attribute => None,
-                None => scope.iter().rev().find(|b| b.prefix.is_none()).map(|b| &*b.uri).filter(|u| !u.is_empty()),
+                None => scope
+                    .iter()
+                    .rev()
+                    .find(|b| b.prefix.is_none())
+                    .map(|b| &*b.uri)
+                    .filter(|u| !u.is_empty()),
             };
             Ok(uri.map(|u| interner.atom(u)))
         })
@@ -282,12 +333,17 @@ impl<'a> Parser<'a> {
         let mut seen: Option<HashSet<(Option<Atom>, String)>> = (raw.len() > 16).then(HashSet::new);
         for &(name, offset, ref value) in raw {
             if !is_qname(name) {
-                return Err(XmlError::Syntax { offset, message: "an attribute name is not a valid QName" });
+                return Err(XmlError::Syntax {
+                    offset,
+                    message: "an attribute name is not a valid QName",
+                });
             }
             let name = self.resolve(name, true, offset)?;
             let duplicate = match seen.as_mut() {
                 Some(seen) => {
-                    let by_namespace = name.namespace().map(|ns| (Some(Atom::from(ns)), name.local().to_owned()));
+                    let by_namespace = name
+                        .namespace()
+                        .map(|ns| (Some(Atom::from(ns)), name.local().to_owned()));
                     let as_written = !seen.insert((None, name.qualified().to_owned()));
                     as_written || by_namespace.is_some_and(|k| !seen.insert(k))
                 }
@@ -299,11 +355,16 @@ impl<'a> Parser<'a> {
                 }),
             };
             if duplicate {
-                return Err(XmlError::Syntax { offset, message: "an attribute is redefined" });
+                return Err(XmlError::Syntax {
+                    offset,
+                    message: "an attribute is redefined",
+                });
             }
-            out.push(Attribute { name, value: value.clone() });
+            out.push(Attribute {
+                name,
+                value: value.clone(),
+            });
         }
         Ok(())
     }
 }
-

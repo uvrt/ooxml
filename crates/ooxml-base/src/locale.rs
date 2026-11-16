@@ -11,7 +11,9 @@ pub struct Locale {
 
 impl Default for Locale {
     fn default() -> Self {
-        Locale { tag: "en-US".to_owned() }
+        Locale {
+            tag: "en-US".to_owned(),
+        }
     }
 }
 

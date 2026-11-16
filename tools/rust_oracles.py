@@ -16,7 +16,9 @@ each distinct part once: ``N.raw`` (its bytes) and ``N.ref`` (what
 every other part replaced by its own bytes).  ``crates/ooxml-opc/examples/save_contract.rs``
 writes ``N.rs`` (the Rust package's save with every part touched) and ``N.same`` (its
 unchanged save); ``compare-saves`` then checks that ``N.same`` equals ``N.in`` byte for byte
-and that ``N.rs`` has ``N.py``'s entries: names, order, metadata and uncompressed bytes.
+and that ``N.rs`` has ``N.py``'s part entries: names, order, metadata and uncompressed bytes.
+Directory entries (``word/``) are not parts: the Rust package copies them raw, as every
+untouched entry, where ``OpcPackage`` leaves them out; they are counted, not compared.
 
 Needs ooxml-edit and ooxml-common importable (this checkout's ``python/*/src``).
 """
@@ -118,7 +120,8 @@ def entries(data: bytes) -> list[tuple]:
 
 
 def compare_saves(out: Path) -> dict:
-    counts = {"packages": 0, "unchanged_identical": 0, "touched_equal": 0, "different": []}
+    counts = {"packages": 0, "unchanged_identical": 0, "touched_equal": 0,
+              "with_directory_entries": 0, "different": []}
     for source in sorted(out.glob("*.in")):
         counts["packages"] += 1
         name = source.with_suffix(".name").read_text()
@@ -130,6 +133,8 @@ def compare_saves(out: Path) -> dict:
         if not rust.exists():
             counts["different"].append(f"{name}: no Rust save")
             continue
+        with zipfile.ZipFile(source) as archive:
+            counts["with_directory_entries"] += any(i.is_dir() for i in archive.infolist())
         ours, theirs = entries(rust.read_bytes()), entries(python.read_bytes())
         if ours == theirs:
             counts["touched_equal"] += 1

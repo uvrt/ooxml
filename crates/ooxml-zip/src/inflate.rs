@@ -12,7 +12,10 @@ impl Archive {
     /// An entry's uncompressed bytes, checked against its stated size and CRC-32.
     pub fn read_entry(&self, entry: &Entry) -> Result<Vec<u8>, ZipError> {
         let meta = entry.meta();
-        let corrupt = |message: &str| ZipError::Corrupt { name: meta.name.clone(), message: message.to_owned() };
+        let corrupt = |message: &str| ZipError::Corrupt {
+            name: meta.name.clone(),
+            message: message.to_owned(),
+        };
         if meta.flags & 0x1 != 0 {
             return Err(ZipError::Unsupported(format!("{}: encrypted", meta.name)));
         }
@@ -20,7 +23,9 @@ impl Archive {
         let size = usize::try_from(meta.size).map_err(|_| corrupt("its size does not fit this platform"))?;
         let data = match meta.method {
             Method::Stored => stored.to_vec(),
-            Method::Deflated => inflate(stored, size).ok_or_else(|| corrupt("its data does not inflate to its size"))?,
+            Method::Deflated => {
+                inflate(stored, size).ok_or_else(|| corrupt("its data does not inflate to its size"))?
+            }
             Method::Other(m) => return Err(ZipError::Unsupported(format!("{}: compression method {m}", meta.name))),
         };
         if data.len() != size {
@@ -43,7 +48,9 @@ fn inflate(stored: &[u8], size: usize) -> Option<Vec<u8>> {
     let mut d = Decompress::new(false);
     loop {
         let consumed = usize::try_from(d.total_in()).ok()?;
-        let status = d.decompress_vec(stored.get(consumed..)?, &mut out, FlushDecompress::Finish).ok()?;
+        let status = d
+            .decompress_vec(stored.get(consumed..)?, &mut out, FlushDecompress::Finish)
+            .ok()?;
         match status {
             Status::StreamEnd => return (out.len() == size).then_some(out),
             _ if out.len() > size => return None,

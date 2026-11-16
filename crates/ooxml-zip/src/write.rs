@@ -58,15 +58,23 @@ impl Writer {
     /// central record's with the new offset.
     pub fn copy(&mut self, archive: &Archive, entry: &Entry) -> Result<(), ZipError> {
         let offset: u32 = small(self.out.len(), "an offset")?;
-        let local = archive.bytes().get(entry.local()).ok_or_else(|| ZipError::Malformed("entry bounds".into()))?;
-        let central = archive.bytes().get(entry.central()).ok_or_else(|| ZipError::Malformed("entry bounds".into()))?;
+        let local = archive
+            .bytes()
+            .get(entry.local())
+            .ok_or_else(|| ZipError::Malformed("entry bounds".into()))?;
+        let central = archive
+            .bytes()
+            .get(entry.central())
+            .ok_or_else(|| ZipError::Malformed("entry bounds".into()))?;
         self.out.extend_from_slice(local);
         let start = self.central.len();
         self.central.extend_from_slice(central);
         // the offset field is at byte 42 of a central record; 0xFFFFFFFF means ZIP64's
         if let Some(field) = self.central.get_mut(start + 42..start + 46) {
             if field == u32::MAX.to_le_bytes() {
-                return Err(ZipError::Unsupported("copying an entry whose offset is in a ZIP64 field".into()));
+                return Err(ZipError::Unsupported(
+                    "copying an entry whose offset is in a ZIP64 field".into(),
+                ));
             }
             field.copy_from_slice(&offset.to_le_bytes());
         }
@@ -86,12 +94,19 @@ impl Writer {
             Method::Other(m) => return Err(ZipError::Unsupported(format!("writing compression method {m}"))),
         };
         let offset: u32 = small(self.out.len(), "an offset")?;
-        let (size, compressed): (u32, u32) = (small(data.len(), "an entry's size")?, small(body.len(), "an entry's size")?);
+        let (size, compressed): (u32, u32) = (
+            small(data.len(), "an entry's size")?,
+            small(body.len(), "an entry's size")?,
+        );
         let name = entry.name.as_bytes();
         let name_len: u16 = small(name.len(), "a name")?;
         let flags: u16 = if entry.name.is_ascii() { 0 } else { 0x800 };
         let crc = crc32(data);
-        let external = if entry.external_attr == 0 { 0o600 << 16 } else { entry.external_attr };
+        let external = if entry.external_attr == 0 {
+            0o600 << 16
+        } else {
+            entry.external_attr
+        };
         // local header
         let o = &mut self.out;
         put32(o, 0x0403_4b50);

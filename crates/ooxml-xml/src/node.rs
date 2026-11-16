@@ -132,7 +132,11 @@ impl Element {
     /// An element from its parts.
     pub fn new(name: Name, namespaces: Vec<NamespaceDecl>, attributes: Vec<Attribute>, children: Vec<Node>) -> Element {
         Element {
-            head: Arc::new(Head { name, namespaces: namespaces.into(), attributes: attributes.into() }),
+            head: Arc::new(Head {
+                name,
+                namespaces: namespaces.into(),
+                attributes: attributes.into(),
+            }),
             children: Children::from_vec(children),
         }
     }
@@ -164,7 +168,11 @@ impl Element {
 
     /// The value of the attribute `{namespace}local`, if present.
     pub fn attribute(&self, namespace: Option<&str>, local: &str) -> Option<&str> {
-        self.head.attributes.iter().find(|a| a.name.is(namespace, local)).map(|a| &*a.value)
+        self.head
+            .attributes
+            .iter()
+            .find(|a| a.name.is(namespace, local))
+            .map(|a| &*a.value)
     }
 
     /// The children.
@@ -184,12 +192,18 @@ impl Element {
 
     /// This element with other children (the head shared).
     pub fn with_children(&self, children: Children) -> Element {
-        Element { head: Arc::clone(&self.head), children }
+        Element {
+            head: Arc::clone(&self.head),
+            children,
+        }
     }
 
     /// This element with another head (the children shared).
     pub fn with_head(&self, head: Head) -> Element {
-        Element { head: Arc::new(head), children: self.children.clone() }
+        Element {
+            head: Arc::new(head),
+            children: self.children.clone(),
+        }
     }
 
     /// The text of every text node below this element, in document order.
@@ -243,7 +257,12 @@ impl Tree {
     /// A tree from its parts. `prolog` and `epilog` hold only comments and processing
     /// instructions (the writer writes whatever they hold).
     pub fn new(doctype: Option<Doctype>, prolog: Vec<Node>, root: Arc<Element>, epilog: Vec<Node>) -> Tree {
-        Tree { doctype: doctype.map(Arc::new), prolog: prolog.into(), root, epilog: epilog.into() }
+        Tree {
+            doctype: doctype.map(Arc::new),
+            prolog: prolog.into(),
+            root,
+            epilog: epilog.into(),
+        }
     }
 
     /// A tree of just a root element.
@@ -273,7 +292,12 @@ impl Tree {
 
     /// This tree with another root (everything around it shared).
     pub fn with_root(&self, root: Arc<Element>) -> Tree {
-        Tree { doctype: self.doctype.clone(), prolog: Arc::clone(&self.prolog), root, epilog: Arc::clone(&self.epilog) }
+        Tree {
+            doctype: self.doctype.clone(),
+            prolog: Arc::clone(&self.prolog),
+            root,
+            epilog: Arc::clone(&self.epilog),
+        }
     }
 
     /// Whether two trees are the same version (their roots one allocation).

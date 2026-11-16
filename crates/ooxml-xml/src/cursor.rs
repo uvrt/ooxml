@@ -21,7 +21,11 @@ pub struct Cursor {
 impl Cursor {
     /// The root element of `tree`.
     pub fn root(tree: &Tree) -> Cursor {
-        Cursor { node: Node::Element(Arc::clone(tree.root())), parent: None, index: 0 }
+        Cursor {
+            node: Node::Element(Arc::clone(tree.root())),
+            parent: None,
+            index: 0,
+        }
     }
 
     /// The node.
@@ -47,12 +51,19 @@ impl Cursor {
     /// The `index`th child.
     pub fn child(&self, index: usize) -> Option<Cursor> {
         let node = self.element()?.children().get(index)?.clone();
-        Some(Cursor { node, parent: Some(Arc::new(self.clone())), index })
+        Some(Cursor {
+            node,
+            parent: Some(Arc::new(self.clone())),
+            index,
+        })
     }
 
     /// The children, in order.
     pub fn children(&self) -> ChildCursors {
-        ChildCursors { parent: Arc::new(self.clone()), next: 0 }
+        ChildCursors {
+            parent: Arc::new(self.clone()),
+            next: 0,
+        }
     }
 
     /// The next sibling.
@@ -110,6 +121,10 @@ impl Iterator for ChildCursors {
         let node = self.parent.element()?.children().get(self.next)?.clone();
         let index = self.next;
         self.next += 1;
-        Some(Cursor { node, parent: Some(Arc::clone(&self.parent)), index })
+        Some(Cursor {
+            node,
+            parent: Some(Arc::clone(&self.parent)),
+            index,
+        })
     }
 }

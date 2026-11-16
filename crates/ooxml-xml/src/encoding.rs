@@ -23,7 +23,9 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<Cow<'_, str>, XmlError> {
                 Some(at) => Err(XmlError::Encoding(format!("byte {at} is not US-ASCII"))),
                 None => utf8(bytes),
             },
-            Some("iso-8859-1" | "latin1" | "iso_8859-1" | "latin-1") => Ok(Cow::Owned(bytes.iter().map(|&b| char::from(b)).collect())),
+            Some("iso-8859-1" | "latin1" | "iso_8859-1" | "latin-1") => {
+                Ok(Cow::Owned(bytes.iter().map(|&b| char::from(b)).collect()))
+            }
             Some(other) => Err(XmlError::Encoding(format!("encoding {other:?} is not supported"))),
         },
     }
@@ -50,7 +52,12 @@ fn declared_encoding(bytes: &[u8]) -> Option<&str> {
     let decl = bytes.strip_prefix(b"<?xml")?;
     let end = decl.windows(2).position(|w| w == b"?>")?;
     let decl = std::str::from_utf8(decl.get(..end)?).ok()?;
-    let after = decl.split_once("encoding")?.1.trim_start().strip_prefix('=')?.trim_start();
+    let after = decl
+        .split_once("encoding")?
+        .1
+        .trim_start()
+        .strip_prefix('=')?
+        .trim_start();
     let quote = after.chars().next().filter(|q| *q == '"' || *q == '\'')?;
     let value = after.get(1..)?;
     value.split(quote).next()
@@ -109,7 +116,10 @@ pub(crate) fn find_either(bytes: &[u8], a: u8, b: u8) -> usize {
         }
         i += 8;
     }
-    bytes.get(i..).and_then(|rest| rest.iter().position(|&c| c == a || c == b)).map_or(bytes.len(), |k| i + k)
+    bytes
+        .get(i..)
+        .and_then(|rest| rest.iter().position(|&c| c == a || c == b))
+        .map_or(bytes.len(), |k| i + k)
 }
 
 #[cfg(test)]
@@ -119,11 +129,20 @@ mod tests {
     #[test]
     fn decodes_what_libxml2_reads() {
         assert_eq!(decode(b"\xEF\xBB\xBF<a/>").unwrap(), "<a/>");
-        let le: Vec<u8> = "\u{feff}<a>\u{e9}</a>".encode_utf16().flat_map(u16::to_le_bytes).collect();
+        let le: Vec<u8> = "\u{feff}<a>\u{e9}</a>"
+            .encode_utf16()
+            .flat_map(u16::to_le_bytes)
+            .collect();
         assert_eq!(decode(&le).unwrap(), "<a>\u{e9}</a>");
-        let be: Vec<u8> = "<?xml version='1.0'?><a/>".encode_utf16().flat_map(u16::to_be_bytes).collect();
+        let be: Vec<u8> = "<?xml version='1.0'?><a/>"
+            .encode_utf16()
+            .flat_map(u16::to_be_bytes)
+            .collect();
         assert_eq!(decode(&be).unwrap(), "<?xml version='1.0'?><a/>");
-        assert_eq!(decode(b"<?xml version=\"1.0\" encoding=\"ISO-8859-1\"?><a>\xe9</a>").unwrap(), "<?xml version=\"1.0\" encoding=\"ISO-8859-1\"?><a>\u{e9}</a>");
+        assert_eq!(
+            decode(b"<?xml version=\"1.0\" encoding=\"ISO-8859-1\"?><a>\xe9</a>").unwrap(),
+            "<?xml version=\"1.0\" encoding=\"ISO-8859-1\"?><a>\u{e9}</a>"
+        );
         assert!(decode(b"<?xml version=\"1.0\" encoding=\"US-ASCII\"?><a>\xc3</a>").is_err());
         assert!(decode(b"<?xml version=\"1.0\" encoding=\"windows-1252\"?><a/>").is_err());
         assert!(decode(b"<a>\xff</a>").is_err());

@@ -34,7 +34,10 @@ pub fn exact_div(a: i128, b: i128) -> Result<i64, BaseError> {
         return Err(BaseError::ZeroDenominator);
     }
     if a % b != 0 {
-        return Err(BaseError::Inexact { numerator: a, denominator: b });
+        return Err(BaseError::Inexact {
+            numerator: a,
+            denominator: b,
+        });
     }
     i64::try_from(a / b).map_err(|_| BaseError::Overflow("exact_div"))
 }
@@ -81,23 +84,35 @@ macro_rules! unit {
 
 unit!(
     /// English Metric Units: 12,700 to the point (DrawingML's lengths).
-    Emu, 12_700, 1
+    Emu,
+    12_700,
+    1
 );
 unit!(
     /// Twentieths of a point (WordprocessingML's page and indent lengths).
-    Twips, 20, 1
+    Twips,
+    20,
+    1
 );
 unit!(
     /// Half points (WordprocessingML's font sizes).
-    HalfPoints, 2, 1
+    HalfPoints,
+    2,
+    1
 );
 unit!(
     /// 1/4096 point: Word's layout unit, in which character advances are kept.
-    Pt4096, 4096, 1
+    Pt4096,
+    4096,
+    1
 );
 
 /// A length converted between units, which must be exact.
-pub fn convert<A, B>(from: A, to_points: fn(A) -> Q, from_points: fn(&Q) -> Result<B, BaseError>) -> Result<B, BaseError> {
+pub fn convert<A, B>(
+    from: A,
+    to_points: fn(A) -> Q,
+    from_points: fn(&Q) -> Result<B, BaseError>,
+) -> Result<B, BaseError> {
     from_points(&to_points(from))
 }
 
@@ -147,7 +162,10 @@ impl PxScale {
     pub fn of(&self, x: &Q) -> Result<i64, BaseError> {
         let v = checked_mul(x, &Q::from_integer(i128::from(self.den)))?;
         if !v.is_integer() {
-            return Err(BaseError::Inexact { numerator: *v.numer(), denominator: *v.denom() });
+            return Err(BaseError::Inexact {
+                numerator: *v.numer(),
+                denominator: *v.denom(),
+            });
         }
         v.to_integer().to_i64().ok_or(BaseError::Overflow("PxScale::of"))
     }
@@ -161,21 +179,37 @@ mod tests {
     fn units_convert_exactly() {
         assert_eq!(Twips(20).points(), Q::from_integer(1));
         assert_eq!(convert(Twips(1), Twips::points, Emu::from_points), Ok(Emu(635)));
-        assert_eq!(convert(HalfPoints(24), HalfPoints::points, Pt4096::from_points), Ok(Pt4096(49_152)));
-        assert!(matches!(convert(Emu(1), Emu::points, Twips::from_points), Err(BaseError::Inexact { .. })));
+        assert_eq!(
+            convert(HalfPoints(24), HalfPoints::points, Pt4096::from_points),
+            Ok(Pt4096(49_152))
+        );
+        assert!(matches!(
+            convert(Emu(1), Emu::points, Twips::from_points),
+            Err(BaseError::Inexact { .. })
+        ));
     }
 
     #[test]
     fn exact_division_refuses_remainders() {
         assert_eq!(exact_div(10, 5), Ok(2));
-        assert_eq!(exact_div(10, 3), Err(BaseError::Inexact { numerator: 10, denominator: 3 }));
+        assert_eq!(
+            exact_div(10, 3),
+            Err(BaseError::Inexact {
+                numerator: 10,
+                denominator: 3
+            })
+        );
         assert_eq!(exact_div(1, 0), Err(BaseError::ZeroDenominator));
         assert_eq!(q(1, 0), Err(BaseError::ZeroDenominator));
     }
 
     #[test]
     fn px_scale_matches_the_prototype() {
-        let s = PxScale { den: 4096 * 72, lu: 96, dpi: 96 };
+        let s = PxScale {
+            den: 4096 * 72,
+            lu: 96,
+            dpi: 96,
+        };
         // floor(204.8 * 3 + 1/2) = 614 layout units
         assert_eq!(s.twips(Twips(3)), Ok(614 * 96));
         // one layout unit is 1/3072 px at 96 dpi: 1/1000 px is 3.072 units, half up 3

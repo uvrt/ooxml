@@ -30,7 +30,10 @@ use std::sync::Arc;
 pub fn parse(input: &[u8], limits: &XmlLimits) -> Result<Tree, XmlError> {
     let text = encoding::decode(input)?;
     if let Some(offset) = encoding::first_invalid_char(&text) {
-        return Err(XmlError::Syntax { offset, message: "a character XML does not allow" });
+        return Err(XmlError::Syntax {
+            offset,
+            message: "a character XML does not allow",
+        });
     }
     Parser::new(&text, limits).document()
 }
@@ -97,7 +100,10 @@ impl<'a> Parser<'a> {
     }
 
     fn err(&self, message: &'static str) -> XmlError {
-        XmlError::Syntax { offset: self.i, message }
+        XmlError::Syntax {
+            offset: self.i,
+            message,
+        }
     }
 
     /// Skip whitespace; whether there was any.
@@ -121,7 +127,10 @@ impl<'a> Parser<'a> {
     /// Advance past the next `pattern`, returning what came before it.
     fn until(&mut self, pattern: &[u8], message: &'static str) -> Result<&'a str, XmlError> {
         let rest = self.s.get(self.i..).unwrap_or_default();
-        let at = rest.windows(pattern.len()).position(|w| w == pattern).ok_or_else(|| self.err(message))?;
+        let at = rest
+            .windows(pattern.len())
+            .position(|w| w == pattern)
+            .ok_or_else(|| self.err(message))?;
         let found = self.slice(self.i, self.i + at);
         self.i += at + pattern.len();
         Ok(found)
@@ -134,7 +143,10 @@ impl<'a> Parser<'a> {
             return Err(self.err(message));
         }
         if len > self.limits.max_name_len {
-            return Err(XmlError::Limit { what: "name length", limit: self.limits.max_name_len });
+            return Err(XmlError::Limit {
+                what: "name length",
+                limit: self.limits.max_name_len,
+            });
         }
         let name = self.slice(self.i, self.i + len);
         self.i += len;
@@ -144,7 +156,10 @@ impl<'a> Parser<'a> {
     fn count_node(&mut self) -> Result<(), XmlError> {
         self.nodes += 1;
         if self.nodes > self.limits.max_nodes {
-            return Err(XmlError::Limit { what: "nodes in a part", limit: self.limits.max_nodes });
+            return Err(XmlError::Limit {
+                what: "nodes in a part",
+                limit: self.limits.max_nodes,
+            });
         }
         Ok(())
     }
@@ -265,11 +280,17 @@ impl<'a> Parser<'a> {
         };
         self.skip_space();
         if self.peek() == Some(b'[') {
-            return Err(XmlError::Unsupported { what: "an internal DTD subset", offset: self.i });
+            return Err(XmlError::Unsupported {
+                what: "an internal DTD subset",
+                offset: self.i,
+            });
         }
         self.expect(b'>', "DOCTYPE improperly terminated")?;
         self.keep_entities = external.is_some() && !self.standalone;
-        Ok(Doctype { name: name.into(), external })
+        Ok(Doctype {
+            name: name.into(),
+            external,
+        })
     }
 
     fn require_space(&mut self) -> Result<(), XmlError> {
@@ -286,7 +307,10 @@ impl<'a> Parser<'a> {
         let start = self.i;
         let body = self.until(b"-->", "an unterminated comment")?;
         if body.contains("--") || body.ends_with('-') {
-            return Err(XmlError::Syntax { offset: start, message: "double hyphen within a comment" });
+            return Err(XmlError::Syntax {
+                offset: start,
+                message: "double hyphen within a comment",
+            });
         }
         self.count_node()?;
         Ok(Node::Comment(self.interner.atom(&normalise_eol(body))))
@@ -309,7 +333,10 @@ impl<'a> Parser<'a> {
         };
         self.count_node()?;
         let data = self.interner.atom(&normalise_eol(data));
-        Ok(Node::Pi(Arc::new(Pi { target: self.interner.atom(target), data })))
+        Ok(Node::Pi(Arc::new(Pi {
+            target: self.interner.atom(target),
+            data,
+        })))
     }
 }
 

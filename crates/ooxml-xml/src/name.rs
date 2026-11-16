@@ -30,14 +30,22 @@ impl QName {
             Some(p) if !p.is_empty() => (format!("{p}:{local}"), u32::try_from(p.len()).unwrap_or(0)),
             _ => (local.to_owned(), 0),
         };
-        QName { qualified: qualified.into(), colon, namespace: namespace.map(Atom::from) }
+        QName {
+            qualified: qualified.into(),
+            colon,
+            namespace: namespace.map(Atom::from),
+        }
     }
 
     /// A name from its qualified form as written and its resolved namespace (the parser's
     /// constructor; `qualified` was checked to hold at most one colon, not at either end).
     pub(crate) fn from_parts(qualified: Atom, namespace: Option<Atom>) -> QName {
         let colon = qualified.find(':').and_then(|i| u32::try_from(i).ok()).unwrap_or(0);
-        QName { qualified, colon, namespace }
+        QName {
+            qualified,
+            colon,
+            namespace,
+        }
     }
 
     /// The name as written: `w:p`.
@@ -88,7 +96,10 @@ mod tests {
     #[test]
     fn parts() {
         let n = QName::new(Some("w"), "p", Some("urn:w"));
-        assert_eq!((n.qualified(), n.prefix(), n.local(), n.namespace()), ("w:p", Some("w"), "p", Some("urn:w")));
+        assert_eq!(
+            (n.qualified(), n.prefix(), n.local(), n.namespace()),
+            ("w:p", Some("w"), "p", Some("urn:w"))
+        );
         assert!(n.is(Some("urn:w"), "p"));
         let m = QName::new(None, "a", None);
         assert_eq!((m.qualified(), m.prefix(), m.local()), ("a", None, "a"));

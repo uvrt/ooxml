@@ -7,9 +7,9 @@
 //! Must not: know any format's parts beyond OPC's own (relationships and content types are
 //! in their own modules), or change a part in place.
 
+use crate::map::PartMap;
 use crate::name::normalize;
 use crate::OpcError;
-use imbl::OrdMap;
 use ooxml_base::Limits;
 use ooxml_xml::{parse, Tree};
 use ooxml_zip::{Archive, Entry, Method, NewEntry, Writer};
@@ -46,7 +46,7 @@ struct Slot {
 #[derive(Debug, Clone)]
 pub struct Package {
     archive: Arc<Archive>,
-    slots: OrdMap<String, Slot>,
+    slots: PartMap<Slot>,
     next_order: u64,
     limits: Limits,
 }
@@ -55,25 +55,43 @@ impl Package {
     /// Open a package from its bytes within `limits`. No part is inflated or parsed.
     pub fn open(bytes: Arc<[u8]>, limits: &Limits) -> Result<Package, OpcError> {
         let archive = Arc::new(Archive::read(bytes, &limits.zip)?);
-        let mut slots = OrdMap::new();
+        let mut slots = PartMap::default();
         for (index, entry) in archive.entries().iter().enumerate() {
             let name = slot_name(entry);
-            let raw = PartVersion::Raw(RawPart { index, tree: Arc::new(OnceLock::new()) });
-            let slot = Slot { order: index as u64, entry: Some(index), content: raw };
-            if slots.insert(name.clone(), slot).is_some() {
+            let raw = PartVersion::Raw(RawPart {
+                index,
+                tree: Arc::new(OnceLock::new()),
+            });
+            let slot = Slot {
+                order: index as u64,
+                entry: Some(index),
+                content: raw,
+            };
+            let (next, replaced) = slots.insert(&name, slot);
+            if replaced.is_some() {
                 return Err(OpcError::DuplicatePart(name));
             }
+            slots = next;
         }
         let next_order = archive.entries().len() as u64;
-        Ok(Package { archive, slots, next_order, limits: *limits })
+        Ok(Package {
+            archive,
+            slots,
+            next_order,
+            limits: *limits,
+        })
     }
 
     /// The part names, in archive order (directory entries left out).
     pub fn part_names(&self) -> Vec<String> {
-        let mut named: Vec<(u64, &String)> =
-            self.slots.iter().filter(|(n, _)| !n.ends_with('/')).map(|(n, s)| (s.order, n)).collect();
+        let mut named: Vec<(u64, &str)> = self
+            .slots
+            .iter()
+            .filter(|(n, _)| !n.ends_with('/'))
+            .map(|(n, s)| (s.order, n))
+            .collect();
         named.sort_unstable();
-        named.into_iter().map(|(_, n)| n.clone()).collect()
+        named.into_iter().map(|(_, n)| n.to_owned()).collect()
     }
 
     /// Whether the package has the part `name` (any spelling of it).
@@ -100,14 +118,22 @@ impl Package {
     /// the part untouched), parsed from bytes put in place, or the tree put in place.
     pub fn tree(&self, name: &str) -> Result<Option<Tree>, OpcError> {
         let name = normalize(name);
-        let Some(slot) = self.slots.get(&name) else { return Ok(None) };
-        let xml = |e| OpcError::Xml { part: name.clone(), error: e };
+        let Some(slot) = self.slots.get(&name) else {
+            return Ok(None);
+        };
+        let xml = |e| OpcError::Xml {
+            part: name.clone(),
+            error: e,
+        };
         match &slot.content {
             PartVersion::Tree(tree) => Ok(Some(tree.clone())),
             PartVersion::Bytes(bytes) => parse(bytes, &self.limits.xml).map(Some).map_err(xml),
             PartVersion::Raw(raw) => raw
                 .tree
-                .get_or_init(|| self.inflate(raw.index).and_then(|b| parse(&b, &self.limits.xml).map_err(xml)))
+                .get_or_init(|| {
+                    self.inflate(raw.index)
+                        .and_then(|b| parse(&b, &self.limits.xml).map_err(xml))
+                })
                 .clone()
                 .map(Some),
         }
@@ -124,13 +150,20 @@ impl Package {
         let key = normalize(name);
         let mut next = self.clone();
         let slot = match self.slots.get(&key) {
-            Some(s) => Slot { content: PartVersion::Bytes(bytes), ..s.clone() },
+            Some(s) => Slot {
+                content: PartVersion::Bytes(bytes),
+                ..s.clone()
+            },
             None => {
                 next.next_order += 1;
-                Slot { order: self.next_order, entry: None, content: PartVersion::Bytes(bytes) }
+                Slot {
+                    order: self.next_order,
+                    entry: None,
+                    content: PartVersion::Bytes(bytes),
+                }
             }
         };
-        next.slots.insert(key, slot);
+        next.slots = next.slots.insert(&key, slot).0;
         next
     }
 
@@ -138,7 +171,7 @@ impl Package {
     pub fn without(&self, name: &str) -> Result<Package, OpcError> {
         let key = normalize(name);
         let mut next = self.clone();
-        next.slots.remove(&key).ok_or(OpcError::NoPart(key))?;
+        next.slots = next.slots.remove(&key).ok_or(OpcError::NoPart(key))?.0;
         Ok(next)
     }
 
@@ -146,12 +179,24 @@ impl Package {
         let key = normalize(name);
         let slot = self.slots.get(&key).ok_or_else(|| OpcError::NoPart(key.clone()))?;
         let mut next = self.clone();
-        next.slots.insert(key, Slot { content, ..slot.clone() });
+        next.slots = next
+            .slots
+            .insert(
+                &key,
+                Slot {
+                    content,
+                    ..slot.clone()
+                },
+            )
+            .0;
         Ok(next)
     }
 
     fn entry(&self, index: usize) -> Result<&Entry, OpcError> {
-        self.archive.entries().get(index).ok_or_else(|| OpcError::NoPart(format!("entry {index}")))
+        self.archive
+            .entries()
+            .get(index)
+            .ok_or_else(|| OpcError::NoPart(format!("entry {index}")))
     }
 
     fn inflate(&self, index: usize) -> Result<Vec<u8>, OpcError> {
@@ -163,7 +208,7 @@ impl Package {
     /// writes them: the entry's name, time, attributes and method kept, a new part's as
     /// `ooxml_edit` makes one.
     pub fn save(&self) -> Result<Vec<u8>, OpcError> {
-        let mut slots: Vec<(&String, &Slot)> = self.slots.iter().collect();
+        let mut slots: Vec<(&str, &Slot)> = self.slots.iter().collect();
         slots.sort_unstable_by_key(|(_, s)| s.order);
         let mut w = Writer::new();
         for (name, slot) in slots {
@@ -193,7 +238,11 @@ impl Package {
             // ooxml_edit's _new_entry: 1980-01-01, Unix, XML deflated and the rest stored
             None => NewEntry {
                 name: name.to_owned(),
-                method: if name.ends_with(".xml") || name.ends_with(".rels") { Method::Deflated } else { Method::Stored },
+                method: if name.ends_with(".xml") || name.ends_with(".rels") {
+                    Method::Deflated
+                } else {
+                    Method::Stored
+                },
                 dos_time: 0,
                 dos_date: 1 << 5 | 1,
                 external_attr: 0,

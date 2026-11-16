@@ -19,8 +19,10 @@ struct Counts {
 }
 
 fn check(dir: &Path, counts: &mut Counts) -> std::io::Result<()> {
-    let mut raws: Vec<PathBuf> =
-        std::fs::read_dir(dir)?.filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.extension().is_some_and(|x| x == "raw")).collect();
+    let mut raws: Vec<PathBuf> = std::fs::read_dir(dir)?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|x| x == "raw"))
+        .collect();
     raws.sort();
     for raw_path in raws {
         let raw = std::fs::read(&raw_path)?;
@@ -39,7 +41,9 @@ fn check(dir: &Path, counts: &mut Counts) -> std::io::Result<()> {
             },
             Err(_) => match ours {
                 Err(_) => counts.refused_both += 1,
-                Ok(_) => counts.different.push(format!("{name}: lxml refused it, the parser did not")),
+                Ok(_) => counts
+                    .different
+                    .push(format!("{name}: lxml refused it, the parser did not")),
             },
         }
     }

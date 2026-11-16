@@ -29,7 +29,9 @@ fn touched(package: &Package) -> Result<Package, OpcError> {
 
 fn run(dir: &Path) -> Result<usize, Box<dyn std::error::Error>> {
     let mut n = 0;
-    let mut inputs: Vec<_> = std::fs::read_dir(dir)?.filter_map(|e| e.ok().map(|e| e.path())).collect();
+    let mut inputs: Vec<_> = std::fs::read_dir(dir)?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .collect();
     inputs.retain(|p| p.extension().is_some_and(|x| x == "in"));
     inputs.sort();
     for input in inputs {

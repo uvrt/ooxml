@@ -24,10 +24,10 @@ const SHARE_MAX: usize = 64;
 /// Elements with at most this many children are hash-consed.
 const CONS_MAX_CHILDREN: usize = 16;
 /// Slots in the caches (powers of two).
-const STRING_SLOTS: usize = 1 << 14;
+const STRING_SLOTS: usize = 1 << 15;
 const NAME_SLOTS: usize = 1 << 10;
-const HEAD_SLOTS: usize = 1 << 14;
-const ELEMENT_SLOTS: usize = 1 << 16;
+const HEAD_SLOTS: usize = 1 << 15;
+const ELEMENT_SLOTS: usize = 1 << 17;
 const TAG_SLOTS: usize = 1 << 12;
 /// Start tags at most this long are remembered.
 const TAG_MAX: usize = 256;
@@ -139,14 +139,22 @@ impl Interner {
         qualified: &str,
         resolve: impl FnOnce(&mut Self) -> Result<Option<Atom>, E>,
     ) -> Result<Name, E> {
-        let at = slot(bytes_hash(mix(scope as u64, u64::from(attribute)), qualified.as_bytes()), NAME_SLOTS);
+        let at = slot(
+            bytes_hash(mix(scope as u64, u64::from(attribute)), qualified.as_bytes()),
+            NAME_SLOTS,
+        );
         if let Some(Some((s, a, n))) = self.recent_names.get(at) {
             if *s == scope && *a == attribute && n.qualified() == qualified {
                 return Ok(Arc::clone(n));
             }
         }
         let kind = usize::from(attribute);
-        let known = self.names.get(scope).and_then(|t| t.get(kind)).and_then(|t| t.get(qualified)).cloned();
+        let known = self
+            .names
+            .get(scope)
+            .and_then(|t| t.get(kind))
+            .and_then(|t| t.get(qualified))
+            .cloned();
         let name = match known {
             Some(n) => n,
             None => {
@@ -173,7 +181,10 @@ impl Interner {
             return None;
         }
         match self.tags.get(slot(bytes_hash(scope as u64, bytes), TAG_SLOTS))? {
-            Some(t) if t.scope == scope && *t.bytes == *bytes => Some(TagFound { head: Arc::clone(&t.head), empty: t.empty }),
+            Some(t) if t.scope == scope && *t.bytes == *bytes => Some(TagFound {
+                head: Arc::clone(&t.head),
+                empty: t.empty,
+            }),
             _ => None,
         }
     }
@@ -184,7 +195,12 @@ impl Interner {
             return;
         }
         if let Some(cached) = self.tags.get_mut(slot(bytes_hash(scope as u64, bytes), TAG_SLOTS)) {
-            *cached = Some(Tag { scope, bytes: bytes.into(), head: Arc::clone(head), empty });
+            *cached = Some(Tag {
+                scope,
+                bytes: bytes.into(),
+                head: Arc::clone(head),
+                empty,
+            });
         }
     }
 
@@ -198,7 +214,13 @@ impl Interner {
         for a in attributes {
             h = mix(mix(h, addr(&a.name)), addr(&a.value));
         }
-        let make = || Arc::new(Head { name: name.clone(), namespaces: namespaces.into(), attributes: attributes.into() });
+        let make = || {
+            Arc::new(Head {
+                name: name.clone(),
+                namespaces: namespaces.into(),
+                attributes: attributes.into(),
+            })
+        };
         let Some(cached) = self.heads.get_mut(slot(avalanche(h), HEAD_SLOTS)) else {
             return make();
         };
@@ -246,10 +268,12 @@ fn cons_key(head: &Arc<Head>, children: &[Node]) -> Option<u64> {
 }
 
 fn same_children(have: &Children, want: &[Node]) -> bool {
-    have.len() == want.len()
-        && have.iter().zip(want).all(|(a, b)| match (a, b) {
-            (Node::Element(x), Node::Element(y)) => Arc::ptr_eq(x, y),
-            (Node::Text(x), Node::Text(y)) => Arc::ptr_eq(x, y),
-            _ => false,
-        })
+    have.as_slice().is_some_and(|have| {
+        have.len() == want.len()
+            && have.iter().zip(want).all(|(a, b)| match (a, b) {
+                (Node::Element(x), Node::Element(y)) => Arc::ptr_eq(x, y),
+                (Node::Text(x), Node::Text(y)) => Arc::ptr_eq(x, y),
+                _ => false,
+            })
+    })
 }

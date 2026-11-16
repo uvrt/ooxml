@@ -54,12 +54,22 @@ pub struct Patch {
 impl Patch {
     /// A splice of `parent`'s children.
     pub fn splice(parent: NodePath, start: usize, removed: Vec<Node>, inserted: Vec<Node>) -> Patch {
-        Patch { parent, start, removed, inserted }
+        Patch {
+            parent,
+            start,
+            removed,
+            inserted,
+        }
     }
 
     /// The root element replaced.
     pub fn replace_root(old: &Arc<Element>, new: Arc<Element>) -> Patch {
-        Patch::splice(NodePath::document(), 0, vec![Node::Element(Arc::clone(old))], vec![Node::Element(new)])
+        Patch::splice(
+            NodePath::document(),
+            0,
+            vec![Node::Element(Arc::clone(old))],
+            vec![Node::Element(new)],
+        )
     }
 
     /// The parent's path.
@@ -84,7 +94,12 @@ impl Patch {
 
     /// The patch that undoes this one, applied to this one's result.
     pub fn inverse(&self) -> Patch {
-        Patch::splice(self.parent.clone(), self.start, self.inserted.clone(), self.removed.clone())
+        Patch::splice(
+            self.parent.clone(),
+            self.start,
+            self.inserted.clone(),
+            self.removed.clone(),
+        )
     }
 
     /// The tree with this patch applied; the nodes it removes must be at its position.
@@ -103,7 +118,10 @@ impl Patch {
         match (self.start, self.removed.as_slice(), self.inserted.as_slice()) {
             (0, [Node::Element(old)], [Node::Element(new)]) => {
                 if !Arc::ptr_eq(old, tree.root()) {
-                    return Err(PatchError::Stale { parent: Vec::new(), start: 0 });
+                    return Err(PatchError::Stale {
+                        parent: Vec::new(),
+                        start: 0,
+                    });
                 }
                 Ok(tree.with_root(Arc::clone(new)))
             }
@@ -130,7 +148,10 @@ impl Patch {
     }
 
     fn splice_here(&self, element: &Element) -> Result<Element, PatchError> {
-        let stale = || PatchError::Stale { parent: self.parent.0.clone(), start: self.start };
+        let stale = || PatchError::Stale {
+            parent: self.parent.0.clone(),
+            start: self.start,
+        };
         let children = element.children();
         for (k, node) in self.removed.iter().enumerate() {
             if !children.get(self.start + k).is_some_and(|have| have.same(node)) {
@@ -138,7 +159,9 @@ impl Patch {
             }
         }
         let end = self.start + self.removed.len();
-        let spliced = children.splice(self.start..end, self.inserted.clone()).ok_or_else(stale)?;
+        let spliced = children
+            .splice(self.start..end, self.inserted.clone())
+            .ok_or_else(stale)?;
         Ok(element.with_children(spliced))
     }
 
@@ -173,7 +196,12 @@ impl Patch {
                 }
             }
         } else if self.parent.is_ancestor_of(&earlier.parent) {
-            let index = earlier.parent.0.get(self.parent.0.len()).copied().ok_or_else(conflict)?;
+            let index = earlier
+                .parent
+                .0
+                .get(self.parent.0.len())
+                .copied()
+                .ok_or_else(conflict)?;
             if (self.start..self.start + self.removed.len()).contains(&index) {
                 return Err(conflict());
             }

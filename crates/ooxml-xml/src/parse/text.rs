@@ -54,7 +54,9 @@ impl<'a> TextBuf<'a> {
 /// The character a reference names, if it is one XML allows.
 fn char_ref(body: &str) -> Option<char> {
     let value = match body.strip_prefix('x') {
-        Some(hex) if !hex.is_empty() && hex.bytes().all(|b| b.is_ascii_hexdigit()) => u32::from_str_radix(hex, 16).ok()?,
+        Some(hex) if !hex.is_empty() && hex.bytes().all(|b| b.is_ascii_hexdigit()) => {
+            u32::from_str_radix(hex, 16).ok()?
+        }
         Some(_) => return None,
         None if !body.is_empty() && body.bytes().all(|b| b.is_ascii_digit()) => body.parse().ok()?,
         None => return None,
@@ -95,7 +97,10 @@ impl<'a> Parser<'a> {
 
     fn check_text_len(&self, text: &TextBuf<'a>) -> Result<(), XmlError> {
         if text.len() > self.limits.max_text_len {
-            return Err(XmlError::Limit { what: "text node length", limit: self.limits.max_text_len });
+            return Err(XmlError::Limit {
+                what: "text node length",
+                limit: self.limits.max_text_len,
+            });
         }
         Ok(())
     }
@@ -122,7 +127,10 @@ impl<'a> Parser<'a> {
         let len = crate::encoding::find_either(rest, b'<', b'&');
         let run = self.slice(start, start + len);
         if let Some(at) = run.find("]]>") {
-            return Err(XmlError::Syntax { offset: start + at, message: "']]>' is not allowed in content" });
+            return Err(XmlError::Syntax {
+                offset: start + at,
+                message: "']]>' is not allowed in content",
+            });
         }
         self.i = start + len;
         self.append_text(text, run)
@@ -134,17 +142,25 @@ impl<'a> Parser<'a> {
         self.i += 1;
         let body = self.until(b";", "a reference was not terminated")?;
         if let Some(number) = body.strip_prefix('#') {
-            return char_ref(number)
-                .map(Reference::Char)
-                .ok_or(XmlError::Syntax { offset: at, message: "a character reference to a character XML does not allow" });
+            return char_ref(number).map(Reference::Char).ok_or(XmlError::Syntax {
+                offset: at,
+                message: "a character reference to a character XML does not allow",
+            });
         }
         if super::chars::name_len(body) != body.len() || body.is_empty() {
-            return Err(XmlError::Syntax { offset: at, message: "an entity reference is not a name" });
+            return Err(XmlError::Syntax {
+                offset: at,
+                message: "an entity reference is not a name",
+            });
         }
         Ok(predefined(body).map_or(Reference::Entity(body), Reference::Char))
     }
 
-    pub(super) fn reference_in_content(&mut self, text: &mut TextBuf<'a>, kids: &mut Vec<Node>) -> Result<(), XmlError> {
+    pub(super) fn reference_in_content(
+        &mut self,
+        text: &mut TextBuf<'a>,
+        kids: &mut Vec<Node>,
+    ) -> Result<(), XmlError> {
         let at = self.i;
         match self.reference()? {
             Reference::Char(c) => {
@@ -158,7 +174,10 @@ impl<'a> Parser<'a> {
                 kids.push(Node::EntityRef(name));
                 Ok(())
             }
-            Reference::Entity(name) => Err(XmlError::UndefinedEntity { name: name.to_owned(), offset: at }),
+            Reference::Entity(name) => Err(XmlError::UndefinedEntity {
+                name: name.to_owned(),
+                offset: at,
+            }),
         }
     }
 
@@ -171,10 +190,16 @@ impl<'a> Parser<'a> {
         self.i += 1;
         let start = self.i;
         let rest = self.s.get(start..).unwrap_or_default();
-        let len = rest.iter().position(|&b| b == quote).ok_or_else(|| self.err("an attribute value was not closed"))?;
+        let len = rest
+            .iter()
+            .position(|&b| b == quote)
+            .ok_or_else(|| self.err("an attribute value was not closed"))?;
         let raw = self.slice(start, start + len);
         if let Some(at) = raw.find('<') {
-            return Err(XmlError::Syntax { offset: start + at, message: "'<' is not allowed in an attribute value" });
+            return Err(XmlError::Syntax {
+                offset: start + at,
+                message: "'<' is not allowed in an attribute value",
+            });
         }
         let value = if raw.bytes().any(|b| matches!(b, b'&' | b'\t' | b'\n' | b'\r')) {
             let v = self.normalised_value(raw, start)?;
@@ -183,7 +208,10 @@ impl<'a> Parser<'a> {
             self.interner.atom(raw)
         };
         if value.len() > self.limits.max_attribute_len {
-            return Err(XmlError::Limit { what: "attribute value length", limit: self.limits.max_attribute_len });
+            return Err(XmlError::Limit {
+                what: "attribute value length",
+                limit: self.limits.max_attribute_len,
+            });
         }
         self.i = start + len + 1;
         Ok(value)
@@ -205,10 +233,16 @@ impl<'a> Parser<'a> {
                     match self.reference()? {
                         Reference::Char(c) => out.push(c),
                         Reference::Entity(_) if self.keep_entities => {
-                            return Err(XmlError::Unsupported { what: "an entity reference in an attribute value", offset: start + k })
+                            return Err(XmlError::Unsupported {
+                                what: "an entity reference in an attribute value",
+                                offset: start + k,
+                            })
                         }
                         Reference::Entity(name) => {
-                            return Err(XmlError::UndefinedEntity { name: name.to_owned(), offset: start + k })
+                            return Err(XmlError::UndefinedEntity {
+                                name: name.to_owned(),
+                                offset: start + k,
+                            })
                         }
                     }
                     while chars.next_if(|&(j, _)| j <= end).is_some() {}

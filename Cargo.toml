@@ -28,11 +28,9 @@ num-traits = "0.2"
 pyo3 = "0.30"
 thiserror = "2"
 flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
-imbl = "7"
 ooxml-base = { path = "crates/ooxml-base" }
 ooxml-xml = { path = "crates/ooxml-xml" }
 ooxml-zip = { path = "crates/ooxml-zip" }
-ooxml-opc = { path = "crates/ooxml-opc" }
 
 # The architecture's standards (docs/architecture/README.md, section 2), for every crate that
 # says `[lints] workspace = true` -- the new crates; the prototype crates (core, word, python)

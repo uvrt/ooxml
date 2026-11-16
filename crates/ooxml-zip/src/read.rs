@@ -152,7 +152,10 @@ impl<'a> Fields<'a> {
         self.take::<8>().map(u64::from_le_bytes)
     }
     fn bytes(&mut self, n: usize) -> Result<&'a [u8], ZipError> {
-        let b = self.s.get(self.at..self.at + n).ok_or_else(|| malformed("a field runs past the end of the archive"))?;
+        let b = self
+            .s
+            .get(self.at..self.at + n)
+            .ok_or_else(|| malformed("a field runs past the end of the archive"))?;
         self.at += n;
         Ok(b)
     }
@@ -179,11 +182,16 @@ impl Archive {
     pub fn read(bytes: Arc<[u8]>, limits: &ZipLimits) -> Result<Archive, ZipError> {
         let dir = end_of_directory(&bytes)?;
         if dir.count > limits.max_entries as u64 {
-            return Err(ZipError::Limit { what: "entries", limit: limits.max_entries as u64 });
+            return Err(ZipError::Limit {
+                what: "entries",
+                limit: limits.max_entries as u64,
+            });
         }
         let mut entries = Vec::with_capacity(to_usize(dir.count)?.min(1 << 16));
         let mut at = to_usize(dir.offset)?;
-        let end = at.checked_add(to_usize(dir.size)?).ok_or_else(|| malformed("central directory size"))?;
+        let end = at
+            .checked_add(to_usize(dir.size)?)
+            .ok_or_else(|| malformed("central directory size"))?;
         let mut total: u64 = 0;
         for _ in 0..dir.count {
             let entry = central_record(&bytes, at)?;
@@ -195,7 +203,11 @@ impl Archive {
             return Err(malformed("the central directory is longer than its stated size"));
         }
         check_overlaps(&entries, dir.offset)?;
-        Ok(Archive { bytes, entries, comment: dir.comment })
+        Ok(Archive {
+            bytes,
+            entries,
+            comment: dir.comment,
+        })
     }
 
     /// The entries, in central-directory order.
@@ -221,14 +233,23 @@ impl Archive {
 
 fn check_limits(meta: &EntryMeta, limits: &ZipLimits, total: &mut u64) -> Result<(), ZipError> {
     if meta.size > limits.max_entry_size {
-        return Err(ZipError::Limit { what: "uncompressed size of an entry", limit: limits.max_entry_size });
+        return Err(ZipError::Limit {
+            what: "uncompressed size of an entry",
+            limit: limits.max_entry_size,
+        });
     }
     *total = total.saturating_add(meta.size);
     if *total > limits.max_total_size {
-        return Err(ZipError::Limit { what: "uncompressed size of all entries", limit: limits.max_total_size });
+        return Err(ZipError::Limit {
+            what: "uncompressed size of all entries",
+            limit: limits.max_total_size,
+        });
     }
     if meta.size > limits.ratio_floor && meta.size / meta.compressed_size.max(1) > limits.max_ratio {
-        return Err(ZipError::Limit { what: "compression ratio of an entry", limit: limits.max_ratio });
+        return Err(ZipError::Limit {
+            what: "compression ratio of an entry",
+            limit: limits.max_ratio,
+        });
     }
     Ok(())
 }
@@ -268,7 +289,12 @@ fn end_of_directory(bytes: &[u8]) -> Result<Directory, ZipError> {
     if disk != 0 || dir_disk != 0 {
         return Err(ZipError::Unsupported("archives split over several disks".into()));
     }
-    let mut dir = Directory { offset: u64::from(offset), size: u64::from(size), count: u64::from(count), comment };
+    let mut dir = Directory {
+        offset: u64::from(offset),
+        size: u64::from(size),
+        count: u64::from(count),
+        comment,
+    };
     if count == 0xFFFF || size == u32::MAX || offset == u32::MAX {
         zip64_directory(bytes, at, &mut dir)?;
     }
@@ -289,7 +315,12 @@ fn zip64_directory(bytes: &[u8], end_at: usize, dir: &mut Directory) -> Result<(
     let _record_size = g.u64()?;
     let (_made_by, _needed, _disk, _dir_disk) = (g.u16()?, g.u16()?, g.u32()?, g.u32()?);
     let (_count_here, count, size, offset) = (g.u64()?, g.u64()?, g.u64()?, g.u64()?);
-    *dir = Directory { offset, size, count, comment: dir.comment.clone() };
+    *dir = Directory {
+        offset,
+        size,
+        count,
+        comment: dir.comment.clone(),
+    };
     Ok(())
 }
 
@@ -332,7 +363,12 @@ fn central_record(bytes: &[u8], at: usize) -> Result<Entry, ZipError> {
         comment,
     };
     let (local, data) = local_record(bytes, to_usize(local_offset)?, &meta)?;
-    Ok(Entry { meta, local, data, central: at..f.at })
+    Ok(Entry {
+        meta,
+        local,
+        data,
+        central: at..f.at,
+    })
 }
 
 /// The ZIP64 extended information extra field's values for the fields stored as 0xFFFFFFFF.
@@ -368,7 +404,9 @@ fn local_record(bytes: &[u8], at: usize, meta: &EntryMeta) -> Result<(Range<usiz
     }
     f.at += extra_len;
     let start = f.at;
-    let end = start.checked_add(to_usize(meta.compressed_size)?).ok_or_else(|| malformed("entry size"))?;
+    let end = start
+        .checked_add(to_usize(meta.compressed_size)?)
+        .ok_or_else(|| malformed("entry size"))?;
     if end > bytes.len() {
         return Err(malformed("an entry's data is cut short"));
     }
