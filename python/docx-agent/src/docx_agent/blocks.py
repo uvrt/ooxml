@@ -687,6 +687,9 @@ _BODY_OPEN = re.compile(rb"<w:body(?=[\s>])")
 _BODIES: "dict[bytes, _Body | None]" = {}
 _BODIES_LOCK = threading.Lock()
 _BODIES_KEPT = 8
+#: Round 58: and within this many bytes of the parts they were read from (each key is a
+#: whole main part, tens of megabytes in a long report): the latest kept whatever its size.
+_BODIES_BYTES = 64 * 2 ** 20
 
 
 def read_body(data: bytes | None) -> _Body | None:
@@ -705,7 +708,9 @@ def read_body(data: bytes | None) -> _Body | None:
     found = (base is not None and _reread_body(data, base)) or _read_body(data)
     with _BODIES_LOCK:
         _BODIES[data] = found
-        while len(_BODIES) > _BODIES_KEPT:
+        total = sum(len(kept) for kept in _BODIES)
+        while len(_BODIES) > 1 and (len(_BODIES) > _BODIES_KEPT or total > _BODIES_BYTES):
+            total -= len(next(iter(_BODIES)))
             _BODIES.pop(next(iter(_BODIES)))
     return found
 
@@ -1280,6 +1285,13 @@ class Blocks:
             # after it -- one another call's block uses now (a link to the same target
             # takes the relationship there already): the call run now keeps it.
             raise BlockConflict("a relationship it let go is used by another block now")
+        if _kept_unused(patch.body, document.package.read(_rels_path(patch.body)), placed, parts, spliced,
+                        patch.before_body):
+            # Lane L: and the other way round -- the call stopped using a relationship in its
+            # blocks and kept it, because another block of its version used it; no block
+            # uses it now (that block's use was undone or replaced meanwhile): the call run
+            # now lets it go (``OpcPackage.release``).
+            raise BlockConflict("a relationship it kept is used by no block now")
         if any(before is not None and after is None for _p, before, after in parts) \
                 and _rels_path(patch.body) in changed:
             # And a part it let go (a picture's), while others added relationships, which
@@ -1383,7 +1395,8 @@ class Blocks:
         document.typography_spaced = getattr(document, "typography_spaced", 0) + plan.patch.spaced
         engine = plan.patch.engine
         if isinstance(engine, Engine):
-            document._checks_engine = Engine(engine._run, engine.timeout, keyed=engine.keyed, document=document)
+            document._checks_engine = Engine(engine._run, engine.timeout, keyed=engine.keyed, document=document,
+                                             overrun=engine.overrun)
         patched_from = document.__dict__.pop("_patched_from", None)
         for k, scope in enumerate(touched):
             if isinstance(scope, Before):
@@ -1672,6 +1685,44 @@ def _let_go(body: str, parts: list[tuple[str, bytes | None, bytes | None]]) -> s
             kept = set(_REL_ID.findall(after)) if after is not None else set()
             return {value.decode() for value in set(_REL_ID.findall(before)) - kept}
     return set()
+
+
+def _kept_unused(body: str, live_rels: bytes | None, placed: list[tuple[int, int, "_Window"]],
+                 parts: list[tuple[str, bytes | None, bytes | None]], spliced: bytes,
+                 drafted_body: bytes | None) -> set[str]:
+    """Lane L: the ids of the body part's relationships the call stopped using in its blocks
+    (an attribute holding the id in a window before the call, in none after) and kept --
+    in its relationships part after the patch (the document's now where the call did not
+    change it) -- because a block of its version outside its windows used them
+    (``drafted_body``), where no attribute of the body uses them once the patch is spliced
+    in.  An edit that stops using a relationship lets it go where nothing in the part uses it
+    (``OpcPackage.release``, which counts any attribute holding the id); a draft decided that
+    on its version's body."""
+    path = _rels_path(body)
+    rels = next((after for found, before, after in parts if found == path), live_rels)
+    if not rels:
+        return set()
+    ids = set(_REL_ID.findall(rels))
+    if not ids:
+        return set()
+
+    def used(data: bytes) -> set[bytes]:
+        return {value for value in ids if b'="' + value + b'"' in data}
+
+    before: set[bytes] = set()
+    after: set[bytes] = set()
+    for _begin, _end, window in placed:
+        before |= used(window.before)
+        after |= used(window.after)
+
+    def elsewhere(value: bytes) -> bool:
+        if drafted_body is None:
+            return True
+        mark = b'="' + value + b'"'
+        return drafted_body.count(mark) > sum(window.before.count(mark) for _b, _e, window in placed)
+
+    return {value.decode() for value in before - after
+            if elsewhere(value) and b'="' + value + b'"' not in spliced}
 
 
 def _relinked_window(window: "_Window", renamed: Mapping[str, str]) -> "_Window":

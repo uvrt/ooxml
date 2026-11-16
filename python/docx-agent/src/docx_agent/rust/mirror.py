@@ -31,6 +31,7 @@ from docx2svg.resolve import resolve_run
 from docx2svg.vertical import autospace_kept, paragraph_borders_px
 
 from . import exporter as lane_s
+from .classes import once
 
 _W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 _P, _TBL = _W + "p", _W + "tbl"
@@ -1155,67 +1156,73 @@ class MirrorModel:
     else by a whole parse, made once if asked (lane E's prototype, moved here)."""
 
     def __new__(cls, document, mirror):
-        from ..edit import effective
+        return _mirrored_class()(document, mirror)
 
-        class _Mirrored(effective._Model):
-            def __init__(self, document, mirror):
-                self.document = document
-                self.mirror = mirror
-                self.model = mirror.d2
-                self.fallback = None
-                self._paragraphs, self._elements, self._tables, self._held = {}, {}, None, []
-                self._mapped, self._by_path = False, None
-                self._paths = effective.PathFinder()
 
-            @property
-            def paragraphs(self):
-                return self._whole().paragraphs
+@once
+def _mirrored_class() -> type:
+    """:class:`MirrorModel`'s class (made once: :mod:`.classes`)."""
+    from ..edit import effective
 
-            @property
-            def elements(self):
-                return self._whole().elements
+    class _Mirrored(effective._Model):
+        def __init__(self, document, mirror):
+            self.document = document
+            self.mirror = mirror
+            self.model = mirror.d2
+            self.fallback = None
+            self._paragraphs, self._elements, self._tables, self._held = {}, {}, None, []
+            self._mapped, self._by_path = False, None
+            self._paths = effective.PathFinder()
 
-            def _whole(self):
-                if self.fallback is None:
-                    self.fallback = effective._Model(self.document)
-                    STATS["model_whole"] += 1
-                return self.fallback
+        @property
+        def paragraphs(self):
+            return self._whole().paragraphs
 
-            def _found(self, element):
-                raw = element.get(_PARA_ID)
-                unit = self.mirror.by_raw.get(raw.upper()) if raw else None
-                if unit is None or not unit.blocks:
-                    return self._whole()._found(element)
-                parent = element.getparent()
-                block = unit.blocks[0]
-                if parent is not None and parent.tag == _W + "body" and not hasattr(block, "rows"):
-                    return block
-                try:
-                    tc = parent
-                    tr = tc.getparent()
-                    tbl = tr.getparent()
-                    r = [x for x in tbl if x.tag == _W + "tr"].index(tr)
-                    c = [x for x in tr if x.tag == _W + "tc"].index(tc)
-                    j = [x for x in tc if x.tag == _P].index(element)
-                    return block.rows[r][c][j]
-                except (AttributeError, ValueError, IndexError):
-                    return self._whole()._found(element)
+        @property
+        def elements(self):
+            return self._whole().elements
 
-            def paragraph(self, element):
-                found = self._found(element)
-                if found is not None and not found.joins:
-                    return found
-                return effective._Model.paragraph(self, element)
+        def _whole(self):
+            if self.fallback is None:
+                self.fallback = effective._Model(self.document)
+                STATS["model_whole"] += 1
+            return self.fallback
 
-            def table(self, element):
-                key = key_of(element)
-                k = self.mirror.keys().get(key)
-                parent = element.getparent()
-                if k is not None and parent is not None and parent.tag == _W + "body":
-                    return self.mirror.units[k].blocks[0]
-                return self._whole().table(element)
+        def _found(self, element):
+            raw = element.get(_PARA_ID)
+            unit = self.mirror.by_raw.get(raw.upper()) if raw else None
+            if unit is None or not unit.blocks:
+                return self._whole()._found(element)
+            parent = element.getparent()
+            block = unit.blocks[0]
+            if parent is not None and parent.tag == _W + "body" and not hasattr(block, "rows"):
+                return block
+            try:
+                tc = parent
+                tr = tc.getparent()
+                tbl = tr.getparent()
+                r = [x for x in tbl if x.tag == _W + "tr"].index(tr)
+                c = [x for x in tr if x.tag == _W + "tc"].index(tc)
+                j = [x for x in tc if x.tag == _P].index(element)
+                return block.rows[r][c][j]
+            except (AttributeError, ValueError, IndexError):
+                return self._whole()._found(element)
 
-        return _Mirrored(document, mirror)
+        def paragraph(self, element):
+            found = self._found(element)
+            if found is not None and not found.joins:
+                return found
+            return effective._Model.paragraph(self, element)
+
+        def table(self, element):
+            key = key_of(element)
+            k = self.mirror.keys().get(key)
+            parent = element.getparent()
+            if k is not None and parent is not None and parent.tag == _W + "body":
+                return self.mirror.units[k].blocks[0]
+            return self._whole().table(element)
+
+    return _Mirrored
 
 
 #: What the mirror-backed model did (tests and measurements).

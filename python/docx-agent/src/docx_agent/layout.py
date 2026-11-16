@@ -70,6 +70,7 @@ import re
 import threading
 import time
 import uuid
+import weakref
 from collections import OrderedDict
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -1686,7 +1687,7 @@ def own_layout(document: "Document", data: bytes, converter: Any) -> "dict | Non
         return {"layout": 0.0, "facts": 0.0}
     if _kept_failure(document, cache_key(data, options)) is not None:
         return None
-    request = dict(_BARE_REQUEST)
+    request = dict(BARE_REQUEST)
     state = kept_layout(document, data, options)
     try:
         result = converter.check(data, dict(options), state, {**request, "summary": True})
@@ -1703,8 +1704,9 @@ def own_layout(document: "Document", data: bytes, converter: Any) -> "dict | Non
     return {"layout": float(worker.get("layout", 0.0)), "facts": float(worker.get("facts", 0.0))}
 
 
-#: The request of a check that asks nothing but the layout's own facts (:func:`check_facts`).
-_BARE_REQUEST = {"pages": None, "ranges": None, "layout": False, "min_size": None, "styles": None,
+#: The request of a check that asks nothing but the layout's own facts (:func:`check_facts`):
+#: the page count, whether it is complete, the coverage (``describe``'s pages, round 58).
+BARE_REQUEST = {"pages": None, "ranges": None, "layout": False, "min_size": None, "styles": None,
                  "keeps": None}
 
 
@@ -1747,10 +1749,69 @@ def _keeper(document: "Document") -> threading.Lock:
                 document._layout_failures = OrderedDict()
                 # Lane O: one owner of the document's layouts for the checks that wait.
                 document._layout_owner = Owner()
+                # Round 58: the layouts this process holds of it go with it.
+                weakref.finalize(document, forget_lineage, document._layout_lineage)
     return lock
 
 
 _KEEPERS_LOCK = threading.Lock()
+
+
+# -- letting go (round 58) ------------------------------------------------------------------------
+
+
+def forget_lineage(lineage: str) -> None:
+    """Drop the layouts this process holds of the document of ``lineage`` (:data:`_HELD`),
+    but those a task has taken out now: run when the document is closed or collected, so a
+    process that served many documents -- a pooled worker, an application's own -- keeps
+    none of a document that is gone."""
+    with _HELD_LOCK:
+        for token in [t for t, held in _HELD.items() if held.lineage == lineage]:
+            del _HELD[token]
+
+
+def release_document(document: "Document") -> None:
+    """What docx-agent kept for ``document`` in this process, let go -- when it is closed
+    (ooxml-edit's ``DocumentFormat.closed``; or by the application): its layouts and what
+    was read of them, its live view's tokens, the layouts held of its lineage here, and its
+    Rust owner (:mod:`docx_agent.rust`).  The document stays usable: whatever it needs
+    again is made again.  Layouts a worker process holds of it are that process's, kept
+    within its :data:`LAYOUT_MEMORY` and dropped as other documents need the room."""
+    lock = getattr(document, "_layout_lock", None)
+    if lock is not None:
+        with lock:
+            document._layouts.clear()
+            document._layout_kept = None
+            document._layout_summaries.clear()
+            document._check_facts.clear()
+            document.__dict__.pop("_view_tokens", None)
+        forget_lineage(document._layout_lineage)
+    rust = document.__dict__.pop("_rust_doc", None)
+    if rust is not None:
+        rust.close()
+
+
+def clear_caches() -> None:
+    """Let go of everything docx-agent keeps for any document in this process (round 58):
+    the layouts it made or read (:data:`_RECENT`, :data:`_HELD` but those a task has taken),
+    what their flows measured (:data:`_MEASURES`), the bodies read (``blocks``), the table
+    shapes and keep trials (``layout_facts``, ``keep_trials``).  For an application between
+    runs, or a worker it reuses; nothing is wrong after it, only made again when next
+    needed.  A document's own (its kept layouts) go with :func:`release_document`."""
+    from . import blocks, layout_facts
+    from .tools import keep_trials
+
+    with _RECENT_LOCK:
+        _RECENT.clear()
+    with _HELD_LOCK:
+        _HELD.clear()
+    _MEASURES.clear()
+    with blocks._BODIES_LOCK:
+        blocks._BODIES.clear()
+    with layout_facts._RAGGED_LOCK:
+        layout_facts._RAGGED.clear()
+    with keep_trials._RESULTS_LOCK:
+        keep_trials._RESULTS.clear()
 
 
 def kept_layout(document: "Document", data: bytes, options: dict, *, may_wait: bool = True) -> Any:
@@ -1968,10 +2029,16 @@ def _lay_out(document: "Document", data: bytes, options: dict, converter: Any = 
 
 
 def keep(document: "Document", key: str, conversion: _Conversion) -> _Conversion:
-    """Cache ``conversion`` -- of the bytes and options ``key`` names -- on ``document``."""
-    document._layouts[key] = conversion
-    while len(document._layouts) > _CACHE_SIZE:
-        document._layouts.pop(next(iter(document._layouts)))
+    """Cache ``conversion`` -- of the bytes and options ``key`` names -- on ``document``:
+    the newest kept, and as many before it as :data:`_CACHE_SIZE` and a quarter of
+    :data:`LAYOUT_MEMORY` allow (round 58: by what they cost, :func:`layout_cost`, as the
+    process's other layouts are; by count alone, a long document kept eight whole layouts
+    here, about half a gigabyte each at 360 pages)."""
+    layouts = document._layouts
+    layouts[key] = conversion
+    total = sum(layout_cost(kept.raw) for kept in layouts.values())
+    while len(layouts) > 1 and (len(layouts) > _CACHE_SIZE or total > LAYOUT_MEMORY // 4):
+        total -= layout_cost(layouts.pop(next(iter(layouts))).raw)
     return conversion
 
 

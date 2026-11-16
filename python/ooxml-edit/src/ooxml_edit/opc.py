@@ -1299,6 +1299,9 @@ class Pieces:
 #: the latest :data:`_JOINED_KEPT` only (a long part's every version would be its copy).
 _JOINED: "list[tuple[Pieces, bytes]]" = []
 _JOINED_KEPT = 4
+#: Round 58: and within this many bytes (a long report's main part is tens of megabytes):
+#: the latest two -- an edit's before and after -- kept whatever their size.
+_JOINED_BYTES = 64 * 2 ** 20
 _JOINED_LOCK = threading.Lock()
 
 
@@ -1312,6 +1315,9 @@ def _keep_joined(pieces: "Pieces", data: bytes) -> None:
                 break
         _JOINED.append((pieces, data))
         del _JOINED[:-_JOINED_KEPT]
+        total = sum(len(kept) for _, kept in _JOINED)
+        while len(_JOINED) > 2 and total > _JOINED_BYTES:
+            total -= len(_JOINED.pop(0)[1])
 
 
 def _joined(pieces: "Pieces") -> "bytes | None":

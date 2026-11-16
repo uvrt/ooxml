@@ -496,6 +496,21 @@ def record_run_change(owner: Element, old: Element, stamp: Stamp, part: str) -> 
     append_in_order(properties, record)
 
 
+def outermost(elements) -> list[Element]:
+    """``elements`` without repeats and without any inside another of them, in the order
+    given: the roots a :class:`PropertyTracker` reads each paragraph and run under once."""
+    given = list({id(e): e for e in elements}.values())
+    chosen = {id(e) for e in given}
+    out = []
+    for element in given:
+        parent = element.getparent()
+        while parent is not None and id(parent) not in chosen:
+            parent = parent.getparent()
+        if parent is None:
+            out.append(element)
+    return out
+
+
 #: The temporary mark :class:`PropertyTracker` puts on paragraphs and runs: an attribute in
 #: no namespace, so no declaration is left behind once it is taken off.
 TAG = "_docx_agent_tracking"

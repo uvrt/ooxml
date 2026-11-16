@@ -33,10 +33,12 @@ import os
 import re
 import threading
 import time
+import weakref
 from collections import Counter, OrderedDict
 from typing import Any
 
 from .. import incremental as _incremental
+from .classes import once
 
 _W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 _P, _TBL = _W + "p", _W + "tbl"
@@ -289,6 +291,9 @@ def _open(call: Any, copy: Any, live: Any, found: Any) -> "RustDoc | None":
     if found is not None:
         found.close()
     live.__dict__["_rust_doc"] = doc
+    # Round 58: the owner (its snapshots and layouts, in native memory) goes with the
+    # document when it is collected -- closed, it goes at once (layout.release_document).
+    weakref.finalize(live, doc.close)
     # Versions committed while it was made: followed now where the document is free, as
     # each commit would have; else by the next commit (never a wait for an edit in flight).
     if live.history.version != version and entry.lock.acquire(blocking=False):
@@ -876,7 +881,9 @@ def _keep_scope(call: Any, ranges: list[str], scope: Any) -> None:
     call.__dict__["_rust_scope"] = (tuple(ranges), scope)
 
 
-def _rust_scope_class() -> Any:
+@once
+def _rust_scope_class() -> type:
+    """:func:`RustScope`'s class (made once: :mod:`.classes`)."""
     from ..scope import Range, Scope
 
     class _RustScope(Scope):

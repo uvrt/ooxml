@@ -7,6 +7,8 @@ members = [
     "crates/ooxml-xml",
     "crates/ooxml-zip",
     "crates/ooxml-opc",
+    "crates/ooxml-store",
+    "crates/ooxml-derive",
 ]
 # cargo-fuzz's layout: its own workspace, built with `cargo fuzz` (nightly).
 exclude = ["fuzz"]
@@ -28,6 +30,8 @@ num-traits = "0.2"
 pyo3 = "0.30"
 thiserror = "2"
 flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
+arc-swap = "1"
+loom = "0.7"
 ooxml-base = { path = "crates/ooxml-base" }
 ooxml-xml = { path = "crates/ooxml-xml" }
 ooxml-zip = { path = "crates/ooxml-zip" }
@@ -38,6 +42,8 @@ ooxml-zip = { path = "crates/ooxml-zip" }
 [workspace.lints.rust]
 unsafe_code = "forbid"
 missing_docs = "warn"
+# ooxml-store's commit path is model-checked with loom: `RUSTFLAGS="--cfg loom"`.
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(loom)"] }
 
 [workspace.lints.clippy]
 unwrap_used = "deny"

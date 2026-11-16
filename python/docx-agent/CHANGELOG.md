@@ -5,6 +5,72 @@ docx-agent has not been released to PyPI. Each version that reaches `main` is ta
 snapshot commit; the development history before it is summarised here.
 [`ROADMAP.md`](ROADMAP.md) has the detail of every phase.
 
+## 0.1.126 -- unreleased
+
+Round 58 (R132, R133): a long report with many tracked changes and comments, several writers
+and reviewers on it. Measured on `tools/tracked_report.py`'s made-up 340-page report (3,636
+revisions, 264 comments) with `tools/tracked_report_bench.py`.
+
+- **Tracked formatting costs what it formats, not what the document holds.** With tracking
+  on, every formatting edit (`word_format` paragraph style or run formatting, `like`,
+  `word_follow_sample`, a cell's formatting, keeps) read and compared every paragraph and run
+  of the main part, once per target: 12 cells styled took 84 s, a batch of six table ops
+  155 s. It now reads only the elements it formats (`_track_properties(within=...)`); the
+  bytes are the same edit for edit (tested against the whole-part reading). Alone, on the
+  same report: 12 cells 1.4-1.9 s, the batch of six 5.0-5.5 s.
+- **A revision's id and its author's listing find the annotations through lxml** (`iter` by
+  tag), not every element of every story in Python: once per tracked step.
+- **`describe` of a long document no longer reads its whole layout here.** Its page count
+  comes from the worker holding the layout, as `check`'s facts do (`check_facts`); so do
+  `render`'s range pages and `save_document`'s coverage. Before, each version's whole layout
+  (about 330 MB at 340 pages) was read into the calling process for a number and kept (eight
+  per document): 2.3 GB after five versions, against 0.8 GB now. Its styles in use and
+  revision authors are counted in one pass (a revision's author found its record among
+  all of them, for every revision): 120-175 s -> 11-21 s on the report.
+- **What this process keeps of layouts is bounded by what it costs.** A document's kept
+  layouts and a live view's tokens are kept within a quarter of `LAYOUT_MEMORY` each (the
+  newest, and a view's last two, whatever they cost), no longer by count alone; the bodies
+  read for drafts (`blocks.read_body`) within 64 MB.
+- **A layout past `layout_timeout` is finished and kept by its worker**, not stopped with it
+  (the pool's `overrun`, as a render's layout already was): the call reports `timeout`, and
+  the next one finds the layout. Before, a long document's first layout that passed the
+  deadline was lost with its worker, and the next call laid it out whole again.
+- **Closing a document lets go of what was kept for it** (`docx_agent.layout.
+  release_document`, ooxml-edit's `DocumentFormat.closed`): its layouts, its live view's
+  tokens, the layouts this process holds of it, and its Rust owner; a collected document's
+  go too. `docx_agent.layout.clear_caches()` lets go of every document's, between runs.
+- `describe`'s result carries `Result.memory` for the application (never the model): the
+  document's undo history and layouts kept here, and the process's resident memory.
+- `tools/tracked_report.py` (the made-up report) and `tools/tracked_report_bench.py` (writers
+  and reviewers through `Toolbox.dispatch`, per call wait, work, hold and CPU, memory over
+  time).
+
+## 0.1.125 -- unreleased
+
+- **Many writers on one document under free-threaded Python (3.15t, lxml 7).** A free-threaded
+  stress (`block_stress`, plain, `--more`, `--more --tracked`, 4 to 24 threads on one
+  document, edits on drafts) found one way the results differed from the same calls one at
+  a time in commit order, now fixed: a draft that stopped using a relationship in its blocks
+  (a link's) kept it because another block of its version used it; when that block's use
+  went meanwhile (undone or replaced), the change applied left a relationship no block uses
+  where the call run in its turn lets it go. Now a conflict ("a relationship it kept is used
+  by no block now"): the call is prepared again on the version committed meanwhile. (The
+  reverse case was lane J's, 0.1.120.)
+- Classes that were made per call (the Rust mirror's and parser's models, the Rust check's
+  scope, small shims) are made once (`docx_agent.rust.classes`) or at module level. A
+  free-threaded CPython 3.15.2 can hang for good when several threads make classes at once
+  (round 47 found it); with many writers every call made them. Also faster: attribute
+  lookups on those classes now stay in the type cache.
+- Two failures on 3.15t are lxml 7.0.0b1's, not docx-agent's, and remain: an `_Element`'s
+  finalizer drops references while it holds its document's (non-reentrant) proxy lock, so
+  when CPython 3.15 frees another element of the same document right there -- it merges a
+  waiting thread's queued objects on that thread's behalf (`_Py_brc_queue_object`) -- the
+  thread waits for itself, holding the document's lock (a hang: native stacks of 6 hangs in
+  CI all show it); and an `AssertionError: invalid Element proxy` in a read (5 seen), most
+  likely the same finalizer invalidating a proxy another thread obtained meanwhile. Both
+  need lxml's finalizer fixed, or every lxml tree used by one thread only.
+- A free-threaded-only test runs 8 to 24 writers on one document
+  (`tests/test_block_edits_ft.py`); with the interpreter lock it is skipped.
 ## 0.1.124 -- unreleased
 
 - **A table style's formatting by region** (round 58, R129). `word_styles` `add` (`kind:

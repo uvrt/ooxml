@@ -99,7 +99,7 @@ class FormatOps:
             raise EditError(str(error)) from None
         with self._edit():
             renames = self._prepare(part, [entry])
-            with self._track_properties([part]):
+            with self._track_properties([part], within=[entry.element]):
                 style_id = styles._ensure(name, "paragraph") if name is not None else None
                 default = styles.default("paragraph")
                 properties = entry.element.find(_W + "pPr")
@@ -168,7 +168,7 @@ class FormatOps:
         part, entry = self._paragraph_entry(identifier)
         with self._edit():
             renames = self._prepare(part, [entry])
-            with self._track_properties([part]):
+            with self._track_properties([part], within=[entry.element]):
                 _formatting.write_paragraph(entry.element, paragraph_values)
                 if run_values:
                     runs = _text.runs(entry.element)
@@ -205,7 +205,7 @@ class FormatOps:
             raise EditError(f"{entry.id} has no run r{index}")
         with self._edit():
             renames = self._prepare(part, [entry])
-            with self._track_properties([part]):
+            with self._track_properties([part], within=[entry.element]):
                 _formatting.write_run(_text.runs(entry.element)[index], values, self._theme_color)
             self.package.mark_dirty(part)
         return EditResult(renames.get(entry.id, entry.id), renamed=renames)
@@ -222,7 +222,7 @@ class FormatOps:
         part, entry = self._paragraph_entry(target)
         with self._edit():
             renames = self._prepare(part, [entry])
-            with self._track_properties([part]):
+            with self._track_properties([part], within=[entry.element]):
                 for run in _text.runs(entry.element):
                     _formatting.clear_run(run)
                 if paragraph:
@@ -254,7 +254,7 @@ class FormatOps:
             except _inline.SpanError as error:
                 raise EditError(f"{where.id}: {error}") from None
             spans.append((entry, start, end))
-        with self._edit(), self._track_properties([part]):
+        with self._edit(), self._track_properties([part], within=[e.element for e in entries]):
             renames = self._prepare(part, entries)
             for k, (entry, start, end) in enumerate(spans):
                 runs = _inline.isolate(entry.element, start, end)
@@ -294,7 +294,7 @@ class FormatOps:
         for start, end, *_ in spans:
             if not 0 <= start <= end <= length:
                 raise EditError(f"{entry.id}@{start}:{end} is outside its {length} characters")
-        with self._edit(), self._track_properties([part]):
+        with self._edit(), self._track_properties([part], within=[entry.element]):
             renames = self._prepare(part, [entry])
             element = entry.element
             ids = {name: styles._ensure(name, "character") for name in names}

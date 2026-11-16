@@ -124,6 +124,7 @@ from .session import (NO_CONTEXT, REF, REF_USE, Clock, Committed, DocumentEntry,
 from .session import _folded_use, _misspelt_ref
 from .sources import Rows, qualify, refusal, resolve as resolve_rows
 from .rendercache import ContentStore
+from .timing import CallClock
 from .savegate import validation
 from .worker import (InProcess, SubprocessPool, ThreadRunner, WorkerPool, default_workers,
                      gil_enabled, refuse_while_bootstrapping, run_all, takes_affinity,
@@ -1467,6 +1468,7 @@ class Toolbox:
                        holding: threading.Event | None, turn: "_Turn | None" = None) -> Result:
         session, roles, caller = _caller(session, roles, context)
         started = time.perf_counter()
+        clock = CallClock()         # round 58: Result.timing
         tool: Tool | None = None
         doc_ids: list[str] = []
         primary: DocumentEntry | None = None
@@ -1601,6 +1603,7 @@ class Toolbox:
                 result.version = primary.version
         result.tool = name
         result.duration = time.perf_counter() - started
+        result.timing = clock.timing()
         if block:
             result.block = dict(block)
             _redo_timing(result, len(block.get("conflicts") or ()))

@@ -7,13 +7,16 @@ theirs until they are replaced.
 
 | Dependency | Licence | Used by | Why |
 |---|---|---|---|
-| `thiserror` 2 | MIT or Apache-2.0 | ooxml-base, ooxml-xml, ooxml-zip, ooxml-opc | One typed error enum per crate (section 2.5). Approved (Q7). |
+| `thiserror` 2 | MIT or Apache-2.0 | ooxml-base, ooxml-xml, ooxml-zip, ooxml-opc, ooxml-derive, ooxml-store | One typed error enum per crate (section 2.5). Approved (Q7). |
 | `num-rational`, `num-integer`, `num-traits` | MIT or Apache-2.0 | ooxml-base | Exact rationals (`Q`) for layout arithmetic, as the prototype's `units.rs` (which `ooxml_base::units` comes from) uses them; already in the workspace. |
 | `flate2` 1, `zlib-rs` backend only (pulls `zlib-rs`, Zlib) | MIT or Apache-2.0 | ooxml-zip | Raw deflate and inflate of ZIP entries, in Rust (no C zlib). Approved (Q7: "flate2 with zlib-rs"). |
+| `arc-swap` 1 | MIT or Apache-2.0 | ooxml-store | The published head version: readers load it without a lock and never wait for a writer (section 6). Approved (Q7). |
+| `loom` 0.7 (pulls `generator`, `scoped-tls`, `tracing`, `tracing-subscriber` and their dependencies) | MIT (its dependencies MIT, Apache-2.0 or Unlicense) | ooxml-store, only when built with `RUSTFLAGS="--cfg loom"` | Model-checks every interleaving of the commit path (section 12, acceptance 3 of section 15); no ordinary build compiles it. Its Windows dependencies bring a second `syn` major version into Cargo.lock for that build only. |
 | `libfuzzer-sys` 0.4 (pulls `arbitrary`, `cc`) | MIT or Apache-2.0, NCSA | `fuzz/` only (its own workspace) | cargo-fuzz's harness for the fuzz targets section 11 asks for; never part of a shipped crate. |
 
 Considered and not taken:
 - `imbl` (persistent collections; on the approved list as the alternative to an in-house rope) is
   MPL-2.0, which section 2.7 allows only at file level for the MTX decoder port. ooxml-xml's child
-  rope and ooxml-opc's part map are in-house (a measurement of the rope against `imbl::Vector` is
-  in ADR-003).
+  rope, ooxml-opc's part map and ooxml-store's per-key write stamps
+  (`crates/ooxml-store/src/stamps.rs`) are in-house (a measurement of the rope against
+  `imbl::Vector` is in ADR-003).
