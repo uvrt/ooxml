@@ -39,7 +39,8 @@ DATA_FIELDS = ("data_sha", "data_keys", "data_sha_core")
 
 
 def without(data, keys: list[str]):
-    """``data`` less ``keys`` (``key`` or ``key.sub``)."""
+    """``data`` less ``keys`` (``key`` or ``key.sub``, ``sub`` of a dict or of each dict in a
+    list)."""
     if not isinstance(data, dict):
         return data
     out = {}
@@ -48,6 +49,10 @@ def without(data, keys: list[str]):
             continue
         if isinstance(value, dict):
             value = {sub: v for sub, v in value.items() if f"{key}.{sub}" not in keys}
+        elif isinstance(value, list):
+            # a list's items, each a dict: ``blocks.new_text`` is each block's new key
+            value = [{sub: v for sub, v in item.items() if f"{key}.{sub}" not in keys}
+                     if isinstance(item, dict) else item for item in value]
         out[key] = value
     return out
 

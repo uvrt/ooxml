@@ -469,7 +469,7 @@ def _aligned(old: bytes, digest: bytes) -> "int | None":
 
 
 def _write_assembled(core, last: "_Written", root, body, units: bytes) -> "_Written | None":
-    """:func:`_write_from`'s write made in Rust (lane K, 0.1.121): which children are not
+    """:func:`_write_from`'s write made in Rust (lane K, 0.1.123): which children are not
     among the last bytes' found there (``ooxml_core.write_plan``), those written in place
     here, and the bytes and the children's places put together there
     (``ooxml_core.write_assemble``), with no Python object per child."""

@@ -163,7 +163,10 @@ def _earlier_merge_form(document: Document) -> bytes:
 
 def test_a_tracked_merge_off_its_grid_is_said_with_the_call_until_accepted(toolbox):
     """A document arriving with a tracked merge off its grid (docx-agent's earlier form, or
-    another writer's): check says it, tracked, with the accept that settles it."""
+    another writer's): check says it, tracked, with the changes that widen it named and
+    the call that settles only them (round 58, R128: here their accept -- rejecting them
+    keeps the cells beside the first cell's span, a row wider than the others; never an
+    accept of every change within the table)."""
     session, document = _open(toolbox, _earlier_merge_form(_shelf()))
     table = document.tables()[0].id
     result = toolbox.dispatch(session, "check", {"doc": "d1", "include": ["layout"]})
@@ -171,9 +174,11 @@ def test_a_tracked_merge_off_its_grid_is_said_with_the_call_until_accepted(toolb
     entry, = result.data["layout"]["table_grid_mismatch"]
     assert entry["rows"] == [{"row": 1, "reaches": 5}] and entry["tracked"] is True
     fix = entry["fix"]
-    assert fix == {"tool": "word_changes", "calls": [{"action": "accept", "within": table}]}
-    accepted = toolbox.dispatch(session, fix["tool"], {"doc": "d1", **fix["calls"][0]})
-    assert accepted.ok, accepted.to_json()
+    assert entry["changes"] == ["rev:900", "rev:901"]
+    assert fix == {"tool": "word_changes", "calls": [{"action": "accept", "ids": ["rev:900", "rev:901"]}]}
+    assert table not in str(fix)
+    settled = toolbox.dispatch(session, fix["tool"], {"doc": "d1", **fix["calls"][0]})
+    assert settled.ok, settled.to_json()
     again = toolbox.dispatch(session, "check", {"doc": "d1", "include": ["layout"]})
     assert again.data["layout"]["table_grid_mismatch"] == [] and _fits(document)
 

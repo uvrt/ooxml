@@ -178,6 +178,19 @@ place some of a source's rows, name them: `d:checks/#2:` (row 2 to the last),
 `t:Sales/#1:#9` (a workbook's rows 1 to 9). Word flows a long table over pages itself,
 the header row repeated. A whole call is one undo step, and tracked while tracking is on.
 
+Rows that look like their table (round 58): a row `insert_row`, `grow` or `sync` adds takes,
+cell by cell, the row beside it's paragraph properties and its first run of text's
+formatting as its paragraph mark's -- Word's Insert Rows (measured) -- so text `set_cells`
+writes into it looks like its column. Text written into a cell that was empty with an
+unformatted mark takes the formatting the same column's text shares in the nearest rows above
+and below that the session did not write (the result names the row) -- where Word would give
+it the document default; where those rows differ it keeps the default. A row still unlike the
+rows around it is said in the call's warning and `check`'s `row_text_format`, with the
+`word_format` call that makes it match. `copy_row` copies row `index` with its
+content beside it (`side`), tracked as an insertion while tracking is on; `word_inspect`'s
+`new_text` says what text written over a paragraph would look like where that is not its
+`effective` formatting.
+
 A column at once (round 48): a `cells` entry with `rows` in place of `row` writes its column's
 cells over those rows with the entry's one `text` or one value (`from`, or a reference in the
 text, read once): `{col: 2, rows: "*", text: "Yes"}`. `rows` is `*` (every row below the

@@ -72,13 +72,13 @@
    "expect": {
     "ok": true,
     "summary": "Inspected p:77B9C794",
-    "data_sha": "3ff2b298716a29a2",
+    "data_sha": "c36760b9608dc98d",
     "data_keys": [
      "blocks",
      "styles",
      "styles.Normal"
     ],
-    "data_sha_core": "3ff2b298716a29a2"
+    "data_sha_core": "c36760b9608dc98d"
    }
   },
   {

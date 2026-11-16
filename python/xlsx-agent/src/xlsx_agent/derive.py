@@ -276,6 +276,7 @@ from .clean import UNMATCHED
 from .dataset import DatasetTable, as_dataset
 from .fill import Filled, FilledTable, filled_table
 from .join import JOIN_KEYS, Joined, JoinedTable, joined_table, rows_table
+from .split import Split, SplitTable, split_table
 from .profile import FIRST_ADDRESSES, Count, _add_partial, majority_type
 from .query import LOOSENED, QueryError, _Bad, _iso_key, _key, _operand, _tests
 from .read.regions import Region, RegionError, Span
@@ -578,6 +579,9 @@ class Derived:
     cache: dict[str, int] = field(default_factory=dict)
     joined: "Joined | None" = None
     filled: "tuple[Filled, ...]" = ()
+    #: Round 58 (R127): what a ``split`` did (:class:`~xlsx_agent.split.Split`), ``None``
+    #: without one.
+    split: "Split | None" = None
     formats: dict[str, "str | None"] = field(default_factory=dict)
     #: Round 48: the Markdown of each text value that is one cell's rich text or list lines
     #: (:func:`field_markdowns`), by (row, column) from 0: ooxml-edit's ``Dataset.markdown``.
@@ -663,17 +667,20 @@ def derive(workbook: "Workbook | None",
            coerce: "Sequence[str] | None" = None, id: str | None = None,
            join: "Mapping[str, Any] | None" = None,
            pivot_values: "Sequence[Any] | None" = None,
-           fill: "Sequence[Mapping[str, Any]] | Mapping[str, Any] | None" = None) -> Derived:
+           fill: "Sequence[Mapping[str, Any]] | Mapping[str, Any] | None" = None,
+           split: "Mapping[str, Any] | None" = None) -> Derived:
     """Figures from a table, name or region, or from a dataset (``workbook`` may then be
     ``None``); see the module's notes.  ``join`` adds another table's or dataset's columns
     to each row first (:mod:`xlsx_agent.join`); ``fill`` then gives blank cells another
-    column's value of the same row (:mod:`xlsx_agent.fill`); ``pivot_values`` lists the
+    column's value of the same row (:mod:`xlsx_agent.fill`); ``split`` then makes a
+    column's text a row per part (:mod:`xlsx_agent.split`); ``pivot_values`` lists the
     pivot's columns, in order."""
-    if join is not None or fill is not None \
+    if join is not None or fill is not None or split is not None \
             or _filter_only(where, group_by, measures, bins, pivot, pivot_values):
         return _join(workbook, from_, join, where=where, group_by=group_by,
                      measures=measures, bins=bins, pivot=pivot, sort=sort, top=top,
-                     round=round, coerce=coerce, id=id, pivot_values=pivot_values, fill=fill)
+                     round=round, coerce=coerce, id=id, pivot_values=pivot_values, fill=fill,
+                     split=split)
     region = _region(workbook, from_)
     plan = _Plan(workbook, region, where=where, group_by=group_by, measures=measures,
                  bins=bins, pivot=pivot, coerce=coerce, id=id, pivot_values=pivot_values)
@@ -725,10 +732,12 @@ def _filter_only(where: Any, group_by: Any, measures: Any, bins: Any, pivot: Any
 
 def _join(workbook: "Workbook | None", from_: Any, join: Any, *, where: Any, group_by: Any,
           measures: Any, bins: Any, pivot: Any, sort: Any, top: Any, round: Any, coerce: Any,
-          id: str | None, pivot_values: Any = None, fill: Any = None) -> Derived:
+          id: str | None, pivot_values: Any = None, fill: Any = None, split: Any = None
+          ) -> Derived:
     """A derive of ``from_``'s rows joined with ``join["from"]``'s (see
-    :mod:`xlsx_agent.join`) and their blanks filled (:mod:`xlsx_agent.fill`): the pipeline
-    on those rows, or the rows themselves."""
+    :mod:`xlsx_agent.join`), their blanks filled (:mod:`xlsx_agent.fill`) and a column split
+    into a row per part (:mod:`xlsx_agent.split`): the pipeline on those rows, or the rows
+    themselves."""
     left = _region(workbook, from_)
     table: "Region | DatasetTable" = left
     if join is not None:
@@ -743,6 +752,8 @@ def _join(workbook: "Workbook | None", from_: Any, join: Any, *, where: Any, gro
             raise DeriveError("bad_join", f"join's {error.message}", field="join") from None
         table = joined_table(workbook, left, right, join)
     table = filled_table(workbook, table, fill)
+    table = split_table(workbook, table, split)
+    made_split = table.split if isinstance(table, SplitTable) else None
     if not isinstance(table, JoinedTable):          # no fill after all, and no join
         if not _filter_only(where, group_by, measures, bins, pivot, pivot_values):
             return derive(workbook, table, where=where, group_by=group_by,
@@ -755,10 +766,10 @@ def _join(workbook: "Workbook | None", from_: Any, join: Any, *, where: Any, gro
         derived = derive(workbook, table, where=where, group_by=group_by, measures=measures,
                          bins=bins, pivot=pivot, sort=sort, top=top, round=round,
                          coerce=coerce, id=id, pivot_values=pivot_values)
-        return replace(derived, joined=table.joined, filled=filled)
+        return replace(derived, joined=table.joined, filled=filled, split=made_split)
     if round is not None:
-        what = "a join" if join is not None else "a fill" if isinstance(table, FilledTable) \
-            else "where"
+        what = "a join" if join is not None else "a split" if made_split is not None \
+            else "a fill" if isinstance(table, FilledTable) else "where"
         raise DeriveError("bad_round", f"round rounds measures; {what} without group_by or "
                           "measures gives its rows' cells as stored", field="round")
     marks = table.marks if isinstance(table, FilledTable) else {}
@@ -841,7 +852,7 @@ def _join(workbook: "Workbook | None", from_: Any, join: Any, *, where: Any, gro
         loosened={c: counter.done() for c, counter in state.loosened.items()},
         notes=_filter_notes(plan.tests, types),
         hidden=state.hidden.done(), date1904=date1904,
-        cache=_cache(state.cache, None), joined=table.joined, filled=filled,
+        cache=_cache(state.cache, None), joined=table.joined, filled=filled, split=made_split,
         formats={c: table.column_formats.get(c) for c in columns})
     return replace(made, markdown=field_markdowns(workbook, made))
 

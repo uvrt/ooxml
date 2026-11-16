@@ -548,6 +548,10 @@ class Table:
         """A new row beside row ``index``: :meth:`Document.insert_row`."""
         return self._document.insert_row(self._id, index, below=below, plain=plain)
 
+    def copy_row(self, index: int | None = None, *, below: bool = True) -> EditResult:
+        """A copy of row ``index`` with its content beside it: :meth:`Document.copy_row`."""
+        return self._document.copy_row(self._id, index, below=below)
+
     def delete_row(self, index: int) -> EditResult:
         """Delete row ``index``: :meth:`Document.delete_row`."""
         return self._document.delete_row(self._id, index)
@@ -3348,8 +3352,8 @@ def _make_trackable() -> None:
                    "format_run", "clear_formatting", "insert_paragraph", "append_paragraph", "delete_block",
                    "move_block", "move_blocks", "replace", "insert_text", "delete_text", "add_to_list", "set_list_level",
                    "restart_numbering", "continue_numbering", "remove_from_list", "set_list_format",
-                   "add_hyperlink", "insert_cross_reference", "insert_picture", "insert_row", "delete_row",
-                   "insert_column", "delete_column", "merge_cells", "split_cell", "insert_table", "set_table",
+                   "add_hyperlink", "insert_cross_reference", "insert_picture", "insert_row", "copy_row",
+                   "delete_row", "insert_column", "delete_column", "merge_cells", "split_cell", "insert_table", "set_table",
                    "set_column_width", "set_row", "set_cell", "float_drawing", "inline_drawing", "set_drawing",
                    "move_drawing", "resize_drawing", "insert_text_box", "insert_shape", "fill_control",
                    "insert_control", "remove_control", "add_bookmark", "rename_bookmark",
@@ -3368,7 +3372,7 @@ def _make_trackable() -> None:
         Run: ("format",),
         TextRange: ("replace", "delete", "insert_before", "insert_after", "format", "set_style",
                     "clear_formatting", "add_hyperlink", "add_bookmark", "insert_picture"),
-        Table: ("insert_row", "delete_row", "insert_column", "delete_column", "merge", "split", "set",
+        Table: ("insert_row", "copy_row", "delete_row", "insert_column", "delete_column", "merge", "split", "set",
                 "set_column_width", "set_row", "set_cell"),
         _Hyperlink: ("set_target", "remove"),
         Picture: ("replace", "resize", "delete"),

@@ -1,5 +1,5 @@
 """The body's top-level blocks in its part's bytes, one reading per version shared by the
-passes (lane K, 0.1.121).
+passes (lane K, 0.1.123).
 
 Each pass that reads a version per change -- the touched sections (:mod:`.tools.touched`),
 revalidate's body facts (:mod:`.revalidate`), the ids note (:class:`.edit.ids.IdScan`), the

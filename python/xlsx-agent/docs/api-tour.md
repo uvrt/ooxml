@@ -526,6 +526,24 @@ nothing, and is counted by that reason; with `coerce` (`number`, `date`) text is
 derive's `coerce` reads it, and a value of another type is `wrong_type`. Several fills apply
 in order, so a second one fills what the first left blank.
 
+**Splits** (round 58, R127; `xlsx_agent.split`).  `split` makes a column's text one row per
+part, after the join and the fills and before `where`: the text cut at line breaks (a cell's
+Alt+Enter), or at `by`, each part trimmed, empty parts dropped, the row's other cells
+repeated; `group_by` on the split column then gives one row per part:
+
+```python
+ds = wb.derive("t:Chores", split={"column": "Helpers"}, group_by=["Helpers"],
+               measures=[{"fn": "count", "as": "chores"},
+                         {"fn": "distinct", "column": "Room", "as": "rooms"}], id="by_helper")
+ds.split.as_dict()   # {'column': 'Helpers', 'by': 'line breaks', 'rows': 9, 'from_rows': 6,
+                     #  'split_rows': {'count': 3, ...}, 'blank': {...}, 'repeated': {...}}
+wb.derive("t:Chores", split={"column": "Tags", "by": ";"})   # the rows themselves
+```
+
+No row is lost: a blank cell (or one of separators only) is kept once, blank; a cell of
+another type than text as it is; a part twice in a cell is kept twice and counted
+(`repeated`). A part's sources are its cell's.
+
 ## Trace: the rows a row rests on
 
 ```python

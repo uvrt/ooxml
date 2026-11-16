@@ -330,7 +330,7 @@ def _walks_core():
 
 
 def _body_index_spans(root, data, base, holder):
-    """:func:`body_index` from readings in Rust (lane K, 0.1.121): the spans of the body's
+    """:func:`body_index` from readings in Rust (lane K, 0.1.123): the spans of the body's
     blocks (:mod:`docx_agent.bodyscan`, the step shared with the other passes), each block's
     paragraph, table and row counts, and each block's walk (``ooxml_core.index_walks``: its
     paragraphs, rows and tables as elements, paraIds and rows' tables) -- the blocks kept

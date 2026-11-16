@@ -678,6 +678,8 @@ def _check(call: Any, doc: str, slides: list | None, pages: list[int] | None, in
             # Round 57 (R122): the file's text a pending deletion of this session removes --
             # read here, beside the file as opened (a worker's copy has only the bytes).
             report["layout"] = _original_lost(document, scope, report["layout"])
+            # Round 58 (R126): rows this session wrote whose text looks unlike the rows around.
+            report["layout"] = _row_text_format(document, scope, report["layout"])
             # Round 57 (R125): a ragged table's call of this session that made it so.
             from .objects import ragged_made_by
 
@@ -716,6 +718,26 @@ def _original_lost(document: Document, scope: Any, facts: Any) -> Any:
     out = {**facts, "accept_loses_original": found[:CAP]}
     if len(found) > CAP:
         out["accept_loses_original_left_out"] = len(found) - CAP
+    return out
+
+
+def _row_text_format(document: Document, scope: Any, facts: Any) -> Any:
+    """The layout facts with ``row_text_format`` (:func:`~docx_agent.layout_facts.
+    row_text_format`) added, of the rows this session's ``word_edit_table`` calls wrote (kept
+    on the document: a read copy's are its document's): at most :data:`CAP` entries,
+    ``row_text_format_left_out`` the rest (a new dict: the worker's may be kept)."""
+    from ..layout_facts import row_text_format
+    from .objects import ROWS_WRITTEN
+
+    if not isinstance(facts, dict):
+        return facts
+    live = document.__dict__.get("_live", document)
+    written = live.__dict__.get(ROWS_WRITTEN) or set()
+    found = row_text_format(document, frozenset(written),
+                            keep=None if scope is None else lambda table: scope.about({"table": table}))
+    out = {**facts, "row_text_format": found[:CAP]}
+    if len(found) > CAP:
+        out["row_text_format_left_out"] = len(found) - CAP
     return out
 
 
