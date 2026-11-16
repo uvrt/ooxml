@@ -299,7 +299,6 @@ class Styles:
         """:meth:`add` of a table style (round 58, R129): as Word writes a new one (measured:
         ``w:customStyle``, its name, ``w:basedOn`` Normal Table, the whole table's shading
         in its own ``w:tcPr``, a band size in its ``w:tblPr``), with its regions."""
-        from . import table_styles as _regions
         from .document import EditError, EditResult
 
         if next_style is not None:
