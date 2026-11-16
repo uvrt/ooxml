@@ -184,7 +184,7 @@ impl<'a> Parser<'a> {
         attributes.clear();
         let empty = self.tag_body(&mut namespaces, &mut raw_attributes);
         let head = empty.and_then(|empty| {
-            self.enter_scope(&namespaces, scope_len);
+            self.enter_scope(&namespaces);
             let name = self.resolve(raw, false, at)?;
             self.attributes(&raw_attributes, &mut attributes)?;
             Ok((self.interner.head(name, &namespaces, &attributes), empty))
@@ -286,11 +286,10 @@ impl<'a> Parser<'a> {
         Ok(Some(NamespaceDecl { prefix, uri }))
     }
 
-    fn enter_scope(&mut self, declared: &[NamespaceDecl], scope_len: usize) {
+    fn enter_scope(&mut self, declared: &[NamespaceDecl]) {
         if declared.is_empty() {
             return;
         }
-        debug_assert_eq!(self.scope.len(), scope_len);
         self.scope.extend(declared.iter().map(|d| Binding {
             prefix: d.prefix.clone(),
             uri: d.uri.clone(),
