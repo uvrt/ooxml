@@ -77,13 +77,17 @@ def note_change(entry, parts, before, *more):
 
 
 DocumentEntry.note_change = note_change
+import faulthandler
 started = time.time()
 runs = fails = 0
 while time.time() - started < budget:
     for seed in seeds:
         LOG.clear()
+        # a run that has not ended in 5 minutes: every thread's stack, then out
+        faulthandler.dump_traceback_later(300, exit=True)
         found = block_stress.run(seed, threads=4, calls=8, chapters=3, first_fill=bool(seed % 2), tracked=True,
                                  more=True)
+        faulthandler.cancel_dump_traceback_later()
         runs += 1
         if not found["same"]:
             fails += 1
