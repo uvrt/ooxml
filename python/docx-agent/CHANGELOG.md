@@ -40,6 +40,19 @@ snapshot commit; the development history before it is summarised here.
   same either way (the calls one at a time, in the order their changes were made). Where
   the interpreter runs without its lock (a free-threaded build) edits go on drafts as
   before; `DOCX_AGENT_DRAFTS=1` drafts with the lock too, `DOCX_AGENT_DRAFTS=0` never.
+- **A change made on a draft no longer takes away a relationship another call's change
+  uses.** A call that removed the last link to an address (a tracked `word_set_text` over
+  the only paragraph linking there) let the link's relationship go on its draft; when
+  another call, meanwhile, linked another paragraph to the same address (taking that very
+  relationship), the first call's change applied anyway, and the version named a
+  relationship that was gone (`relationship-id-unknown`; the stress on free-threaded
+  Python, about one run in a hundred, also on 0.1.119). Such a change is now a conflict,
+  prepared again on the version committed (`Blocks.check`), as is a change that let a
+  part go while others added relationships. Present since drafts merged relationships
+  others added (round 48).
+- Needs docx2svg 0.12.1: a check's substituted faces said in the order a full layout says
+  them, whichever layout it was made from (two writers' checks of one version said them
+  in different orders).
 - What a call that ran on a draft (beside other edits of its document) held the document's
   lock for to check and apply its change is in `Result.block["held"]` (ooxml-edit 0.120.0).
 - `DOCX_AGENT_INCREMENTAL=0` turns these off with the other per-change passes;

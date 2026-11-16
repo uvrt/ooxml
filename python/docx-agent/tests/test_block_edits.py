@@ -1338,3 +1338,40 @@ def test_drafts_by_default_only_without_the_interpreter_lock(monkeypatch):
         result = box.dispatch(session, "word_edit_table", {"doc": doc, "table": layout.fill, "action": "set_cells",
                                                            "grow": True, "from": "d:rows"})
         assert result.ok and result.block is None
+
+
+def test_a_relationship_let_go_on_a_draft_and_used_meanwhile_is_kept(monkeypatch):
+    """Lane J (0.1.120): a tracked ``word_set_text`` replacing the only paragraph that links
+    to an address lets the link's relationship go on its draft; meanwhile another call links
+    another paragraph to the same address, taking that relationship.  The first call's
+    change is a conflict and is prepared again -- its result and the bytes those of the two
+    run one at a time in commit order -- never a body naming a relationship that is gone
+    (the free-threaded stress's ``relationship-id-unknown``)."""
+    url = "https://example.com/shared"
+    outcomes = []
+    for concurrent in (True, False):
+        with opened("always" if concurrent else "off") as (box, session, doc, layout):
+            block_stress.track(box, session, doc)
+            first, second = layout.bodies[0][1], layout.bodies[1][1]
+            linked = box.dispatch(session, "word_links", {"doc": doc, "action": "add_hyperlink",
+                                                          "target": f"{first}@0:4", "url": url})
+            assert linked.ok, linked.to_json()
+            replace = ("word_set_text", {"doc": doc, "target": first, "text": "Replaced, the link gone."})
+            link = ("word_links", {"doc": doc, "action": "add_hyperlink", "target": f"{second}@0:4", "url": url})
+            found: dict = {}
+            if concurrent:
+                with held(monkeypatch) as hold:
+                    thread, slow = _in_thread(lambda: box.dispatch(session.view(context={"agent": "x"}), *replace))
+                    assert hold.ready.wait(60)
+                    found["link"] = box.dispatch(session.view(context={"agent": "y"}), *link)
+                    hold.release()
+                    thread.join()
+                    found["replace"] = slow["result"]
+                assert found["replace"].block["conflicts"] == ["a relationship it let go is used by another block now"]
+            else:
+                found["link"] = box.dispatch(session, *link)
+                found["replace"] = box.dispatch(session, *replace)
+            assert found["replace"].ok and found["link"].ok
+            assert found["replace"].to_json()["checks"]["validate"]["new"] == []
+            outcomes.append((block_stress.normal(found["replace"]), session.entry(doc).document.to_bytes()))
+    assert outcomes[0] == outcomes[1]

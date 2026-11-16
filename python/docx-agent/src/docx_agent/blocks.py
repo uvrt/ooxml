@@ -1249,7 +1249,19 @@ class Blocks:
         if moved and any(before is None for _p, before, _a in parts):
             parts = _named_again(patch.parts, parts, moved)
         merged = {**{path: kind for path, kind in merges.items()}, **({merge: "sources"} if merge else {})}
-        return Plan(patch, _spliced(data, live, placed, moved), renames, pool, parts, before=data, moved=moved,
+        spliced = _spliced(data, live, placed, moved)
+        let_go = _let_go(patch.body, parts)
+        if let_go and let_go & {found.group(2).decode() for found in _REL_REFERENCE.finditer(spliced)}:
+            # Lane J: the call let a relationship go that no block of its version used
+            # after it -- one another call's block uses now (a link to the same target
+            # takes the relationship there already): the call run now keeps it.
+            raise BlockConflict("a relationship it let go is used by another block now")
+        if any(before is not None and after is None for _p, before, after in parts) \
+                and _rels_path(patch.body) in changed:
+            # And a part it let go (a picture's), while others added relationships, which
+            # may lead to it: the call run now finds them.
+            raise BlockConflict("a part it let go may be used by a relationship added meanwhile")
+        return Plan(patch, spliced, renames, pool, parts, before=data, moved=moved,
                     placed=placed, merged=merged, relinked=relinked, remarked=ids)
 
     def replay_changes(self, document: Any, plan: Plan, op_changes: list[tuple[int, str, Any]]
@@ -1618,6 +1630,24 @@ def _merge_added(kind: str, live: bytes, before: bytes | None, after: bytes | No
 
 
 _REL_REFERENCE = re.compile(rb'(r:(?:id|embed|link|pict)=")(rId\d+)(")')
+_REL_ID = re.compile(rb'<Relationship\b[^>]*?\bId="([^"]*)"')
+
+
+def _rels_path(body: str) -> str:
+    from ooxml_edit.opc import rels_path_for
+
+    return rels_path_for(body)
+
+
+def _let_go(body: str, parts: list[tuple[str, bytes | None, bytes | None]]) -> set[str]:
+    """The ids of the body part's relationships a call's patch takes away (lane J): in its
+    relationships part before and not after."""
+    path = _rels_path(body)
+    for found, before, after in parts:
+        if found == path and before is not None:
+            kept = set(_REL_ID.findall(after)) if after is not None else set()
+            return {value.decode() for value in set(_REL_ID.findall(before)) - kept}
+    return set()
 
 
 def _relinked_window(window: "_Window", renamed: Mapping[str, str]) -> "_Window":
