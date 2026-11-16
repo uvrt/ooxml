@@ -93,3 +93,8 @@ git log --oneline -- python/<package>         # its history since
 
 Until the switch, fixes that still land in the old repositories come in with
 `tools/sync-from-old.sh <package>`, again as a merge commit.
+
+## Architecture
+
+The approved design for moving the document work into one shared Rust core, with Python as a thin
+layer, is in [docs/architecture/README.md](docs/architecture/README.md).
