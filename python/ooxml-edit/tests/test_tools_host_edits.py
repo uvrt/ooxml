@@ -10,11 +10,18 @@ supported; it is counted at the next lock let go, commit, or read that commits.
 
 from __future__ import annotations
 
-import time
-
 import pytest
 
+import test_tools_block_edits
 from test_tools_block_edits import STALL, _box, _open, _shape, _thread
+
+
+@pytest.fixture(autouse=True)
+def _hold(gate):
+    """The slow toy edits hold at this test's gate (tests/gates.py)."""
+    test_tools_block_edits.HOLD["gate"] = gate
+    yield
+    test_tools_block_edits.HOLD["gate"] = None
 
 
 def _host_insert(session, doc, *texts, batch=False):
@@ -89,11 +96,9 @@ def test_commit_while_holding_the_lock_lets_reads_and_drafts_go_on():
             entry.document.insert("host", "end")
             version = session.commit(doc)
             assert version == entry.version == entry.committed.version
-            started = time.perf_counter()
             thread, read = _thread(lambda: box.dispatch(session, "toy_word_read", {"doc": doc}))
-            thread.join(timeout=STALL)
-            took = time.perf_counter() - started
-            assert not thread.is_alive() and took < STALL - 0.5    # the read did not wait
+            thread.join(timeout=60)
+            assert not thread.is_alive()             # the read did not wait: the lock is held on
             assert "host" in read["result"].data
         result = box.dispatch(session, "toy_block_add", {"doc": doc, "text": "after"})
         assert result.ok and result.block["tries"] == 1 and result.block["conflicts"] == []
@@ -113,24 +118,27 @@ def test_a_change_is_counted_even_when_the_block_raised():
         assert result.ok and result.block["tries"] == 1
 
 
-def test_a_draft_in_flight_is_checked_against_the_parts_the_application_changed():
+def test_a_draft_in_flight_is_checked_against_the_parts_the_application_changed(gate):
     box, _hook = _box("always")
     with box:
         session, doc = _open(box)
         # An append commutes with the application's append: applied on the first try.
         thread, slow = _thread(lambda: box.dispatch(
             session, "toy_block_add", {"doc": doc, "text": "slow", "stall": STALL}))
-        time.sleep(0.3)
+        gate.wait_entered("slow")
         _host_insert(session, doc, "host")
+        gate.open()
         thread.join()
         result = slow["result"]
         assert result.ok and _shape(result.block) == {"tries": 1, "conflicts": []}
         assert session.entry(doc).document.items() == ["host", "slow"]
         # One that read every item conflicts with it, and is prepared again.
+        gate.close()
         thread, slow = _thread(lambda: box.dispatch(
             session, "toy_block_first", {"doc": doc, "text": "first", "stall": STALL}))
-        time.sleep(0.3)
+        gate.wait_entered("first")
         _host_insert(session, doc, "host two")
+        gate.open()
         thread.join()
         result = slow["result"]
         assert result.ok and _shape(result.block) == {"tries": 2, "conflicts": ["the items changed"]}

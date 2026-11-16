@@ -25,6 +25,8 @@ from docx_agent import layout as layout_module
 from docx_agent import liveview
 from docx_agent.liveview import UnknownToken, embed_images, page_svg, view
 
+from gates import Arrivals, Gate, Watched
+
 pytestmark = pytest.mark.any_faces
 
 #: How long the calls of one threaded test may take in all before it calls them deadlocked.
@@ -251,17 +253,23 @@ def _toolbox():
     return Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, workers=0)
 
 
-def _counted(monkeypatch, stall: float = 0.0) -> tuple[list, threading.Event]:
-    """docx2svg's layouts counted (and each stalled by ``stall``); the event is set when the
-    first began."""
+def _counted(monkeypatch, stall: float = 0.0, hold=None) -> tuple[list, threading.Event]:
+    """docx2svg's layouts counted (and each stalled by ``stall``, to mix the calls of a
+    stress run); the event is set when the first began.  ``hold``: called in the first
+    layout before it goes on -- where a test holds it until the others did what they should
+    do meanwhile (an order of events, not a stall long enough)."""
     calls: list = []
     started = threading.Event()
     run = docx2svg.lay_out_docx
 
     def counted(*args, **kwargs):
         calls.append(1)
+        first = not started.is_set()
         started.set()
-        time.sleep(stall)
+        if first and hold is not None:
+            hold()
+        if stall:
+            time.sleep(stall)
         return run(*args, **kwargs)
 
     monkeypatch.setattr(docx2svg, "lay_out_docx", counted)
@@ -318,7 +326,23 @@ def _all_finish(jobs: list) -> list:
 def test_a_view_waits_for_a_checks_layout_with_the_lock_let_go(made, monkeypatch):
     """A lone check lays the version out (stalled); views asked meanwhile wait for that one
     layout, the document's lock let go -- one layout in all."""
-    calls, started = _counted(monkeypatch, STALL)
+    waiting = Arrivals()
+    wait = layout_module._Flight.wait
+
+    def counted(flight):
+        waiting.arrive()
+        return wait(flight)
+
+    monkeypatch.setattr(layout_module._Flight, "wait", counted)
+    # The first view waits for the check's layout where the layouts are held (the others
+    # for that view's): as long as it takes here, not the few seconds it waits at most.
+    held = Watched()
+    monkeypatch.setattr(layout_module, "_HELD_LOCK", held)
+    monkeypatch.setattr(layout_module, "_HELD_WAIT", 60.0)
+    reached: list = []
+    # The check's layout is held until the three views wait for it.
+    calls, started = _counted(monkeypatch, hold=lambda: reached.append(
+        waiting.until(2) and held.until_waiting(1)))
     with _toolbox() as box:
         session = box.session()
         d1 = session.open(made, "report.docx")
@@ -334,6 +358,7 @@ def test_a_view_waits_for_a_checks_layout_with_the_lock_let_go(made, monkeypatch
         views = _all_finish([lambda: view(session, d1)] * 3)
         first.join(DEADLINE)
         assert not first.is_alive()
+    assert reached == [True] and waiting.count == 2
     assert len(calls) == 1
     assert len({v.token for v in views}) == 1
 
@@ -341,7 +366,8 @@ def test_a_view_waits_for_a_checks_layout_with_the_lock_let_go(made, monkeypatch
 def test_a_view_by_a_thread_holding_the_lock_lays_out_on_its_own(made, monkeypatch):
     """The application's thread holds the document's lock: its view never waits for the
     check's layout in progress (whose owner takes that lock back) -- it lays out alone."""
-    calls, started = _counted(monkeypatch, STALL)
+    gate = Gate()
+    calls, started = _counted(monkeypatch, hold=lambda: gate.hold("check's layout"))
     with _toolbox() as box:
         session = box.session()
         d1 = session.open(made, "report.docx")
@@ -355,9 +381,15 @@ def test_a_view_by_a_thread_holding_the_lock_lays_out_on_its_own(made, monkeypat
             with entry.lock:
                 return view(session, d1)
 
-        [shown] = _all_finish([held])
+        try:
+            [shown] = _all_finish([held])
+            gate.note("view")
+        finally:
+            gate.open()
         first.join(DEADLINE)
         assert not first.is_alive()
+    # The view came back with the check's layout still held: laid out on its own.
+    assert gate.order == ["check's layout in", "view", "check's layout out"], gate.order
     assert shown.page_count > 3 and len(calls) == 2
 
 

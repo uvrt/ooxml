@@ -53,14 +53,13 @@ def test_an_exception_comes_back_as_itself(pool):
     assert caught.value.code == "refused" and caught.value.valid_options == ["a", "b"]
 
 
-def test_a_task_past_its_deadline_is_killed_and_reports_timeout(pool):
+def test_a_task_past_its_deadline_is_killed_and_reports_timeout(pool, gate):
     pool.run(tools_toys.worker_pid, timeout=60)        # a warm worker
     victim = pool.pids()[0]
-    started = time.monotonic()
-    with pytest.raises(ToolError) as caught:
-        pool.run(tools_toys.render_page, synthetic.outer_package(), 1, 32, 30, timeout=1.5)
+    with pytest.raises(ToolError) as caught:           # held at a gate never opened
+        pool.run(tools_toys.render_page, synthetic.outer_package(), 1, 32, 0, gate.path, timeout=1.5)
     assert caught.value.code == "timeout"
-    assert time.monotonic() - started < 10
+    assert gate.order() == ["render in"]               # stopped at its deadline, never let go
     assert pool.killed[-1] == victim
     deadline = time.monotonic() + 10
     while _alive(victim) and time.monotonic() < deadline:
@@ -85,19 +84,21 @@ def test_a_killed_render_returns_a_timeout_result():
         assert after.ok
 
 
-def test_waiting_for_a_busy_pool_counts_against_the_deadline():
+def test_waiting_for_a_busy_pool_counts_against_the_deadline(gate):
     import threading
     with WorkerPool(1) as pool:
         pool.run(tools_toys.worker_pid, timeout=60)
-        blocker = threading.Thread(target=lambda: pytest.raises(
-            ToolError, pool.run, tools_toys.render_page, synthetic.outer_package(), 1, 32, 5,
-            timeout=3))
+        blocker = threading.Thread(target=pool.run, args=(
+            tools_toys.render_page, synthetic.outer_package(), 1, 32, 0, gate.path), kwargs={"timeout": 90})
         blocker.start()
-        time.sleep(0.5)
-        with pytest.raises(ToolError) as caught:
-            pool.run(tools_toys.worker_pid, timeout=0.5)
-        assert caught.value.code == "timeout"
-        blocker.join(30)
+        gate.wait_entered("render")                    # the one worker busy until the gate opens
+        try:
+            with pytest.raises(ToolError) as caught:
+                pool.run(tools_toys.worker_pid, timeout=0.5)
+            assert caught.value.code == "timeout"
+        finally:
+            gate.open()
+        blocker.join(90)
 
 
 # -- a daemonic parent, workers=0, an injected runner -----------------------------------------
@@ -144,19 +145,30 @@ def test_a_pool_refuses_an_unknown_fallback():
             WorkerPool(1, fallback=fallback)
 
 
-def test_workers_zero_runs_in_this_process_with_its_deadline():
+def test_workers_zero_runs_in_this_process_with_its_deadline(gate):
+    import threading
     with WorkerPool(0) as pool:
         assert pool.in_process
         assert pool.run(tools_toys.worker_pid, timeout=60) == os.getpid()
         with pytest.raises(IndexError, match="no page 9"):
             pool.run(tools_toys.render_page, synthetic.outer_package(), 9, 32, timeout=60)
-        started = time.monotonic()
         with pytest.raises(ToolError) as caught:
-            pool.run(tools_toys.render_page, synthetic.outer_package(), 1, 32, 2, timeout=0.3)
+            pool.run(tools_toys.render_page, synthetic.outer_package(), 1, 32, 0, gate.path, timeout=0.3)
         assert caught.value.code == "timeout" and caught.value.details["in_process"]
-        assert time.monotonic() - started < 1.5 and pool.abandoned == 1
+        assert gate.order() == ["render in"] and pool.abandoned == 1     # abandoned, still held
         # The abandoned task holds the only slot until it ends: the next one waits for it.
-        assert pool.run(tools_toys.worker_pid, timeout=10) == os.getpid()
+        out: dict = {}
+
+        def after():
+            out["pid"] = pool.run(tools_toys.worker_pid, timeout=90)
+            gate.note("next")
+
+        nxt = threading.Thread(target=after)
+        nxt.start()
+        nxt.join(0.5)        # one that did not wait is done by now (unless the machine is busy)
+        gate.open()
+        nxt.join(90)
+        assert out["pid"] == os.getpid() and gate.order() == ["render in", "render out", "next"]
 
 
 def test_a_toolbox_with_workers_zero_or_a_runner_renders_in_process():

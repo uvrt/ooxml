@@ -16,7 +16,6 @@ from __future__ import annotations
 import dataclasses
 import json
 import threading
-import time
 
 import pytest
 
@@ -26,8 +25,16 @@ import synthetic
 import tools_toys
 from test_tools_block_edits import ToyBlocks
 
-#: How long a slow edit holds the document: long enough that waiting for it would show.
-STALL = 2
+#: A stall of the slow tools: held at the test's gate (tests/gates.py) until it opens.
+STALL = 1
+HOLD: dict = {"gate": None}
+
+
+@pytest.fixture(autouse=True)
+def _hold(gate):
+    HOLD["gate"] = gate
+    yield
+    HOLD["gate"] = None
 #: What ``toy_ref_after`` made, by its target.
 MADE: list[str] = []
 
@@ -40,7 +47,7 @@ def ref_make(call, doc, text, ref, stall=0):
     call.document.insert(text, "end")
     call.define_ref(ref, f"item:{len(call.document.items())}")
     if stall:
-        time.sleep(stall)
+        HOLD["gate"].hold("make")
     return Result(summary=f"added {text}", created=[f"item:{len(call.document.items())}"])
 
 
@@ -59,7 +66,7 @@ def ref_name(call, doc, name, address):
       kind="docx", mutates=True, refs=("target",))
 def ref_after(call, doc, target, ref=None, stall=0):
     if stall:
-        time.sleep(stall)
+        HOLD["gate"].hold("after")
     call.document.insert(f"after {target}", "end")
     if ref:
         call.define_ref(ref, f"item:{len(call.document.items())}")
@@ -130,15 +137,16 @@ def test_reading_refs_at_the_committed_version_does_not_wait_for_an_edit_in_flig
         _ok(box.dispatch(session, "toy_ref_make", {"doc": doc, "text": "one", "ref": "one"}))
         thread, edit = _thread(lambda: box.dispatch(
             session, "toy_ref_make", {"doc": doc, "text": "two", "ref": "two", "stall": STALL}))
-        time.sleep(0.3)                                      # the edit holds the document
-        started = time.perf_counter()
+        HOLD["gate"].wait_entered("make")                    # the edit holds the document
         refs = session.read_refs(doc)
         resolved = session.read_resolve_ref(doc, "$one/x")
-        took = time.perf_counter() - started
         with pytest.raises(ToolError) as missing:
             session.read_resolve_ref(doc, "$two")            # not committed yet
+        HOLD["gate"].note("read")
+        HOLD["gate"].open()
         thread.join()
-        assert took < STALL - 0.5, f"reading refs waited {took:.1f} s for the edit"
+        # Had reading the refs waited for the edit, its hold timed out first.
+        assert HOLD["gate"].order() == ["make in", "read", "make out"]
         assert refs == {"one": "item:1"} and resolved == "item:1/x"
         assert missing.value.code == "not_found" and missing.value.valid_options == ["$one"]
         _ok(edit["result"])
@@ -293,8 +301,9 @@ def test_a_ref_pointed_elsewhere_before_a_drafts_change_is_applied_sends_it_ther
         _ok(box.dispatch(one, "toy_ref_name", {"doc": doc, "name": "spot", "address": "item:1"}))
         thread, slow = _thread(lambda: box.dispatch(
             two, "toy_ref_after", {"doc": doc, "target": "$spot", "stall": STALL}))
-        time.sleep(0.3)                          # its draft resolved $spot to item:1
+        HOLD["gate"].wait_entered("after")       # its draft resolved $spot to item:1
         _ok(box.dispatch(one, "toy_ref_name", {"doc": doc, "name": "spot", "address": "item:7"}))
+        HOLD["gate"].open()
         thread.join()
         result = _ok(slow["result"])
         assert result.block["conflicts"] == ["the document's refs changed"] and result.block["tries"] == 2
@@ -309,8 +318,9 @@ def test_a_ref_another_caller_took_before_a_drafts_change_is_applied_is_refused(
         version = session.entry(doc).version
         thread, slow = _thread(lambda: box.dispatch(
             two, "toy_ref_after", {"doc": doc, "target": "item:1", "ref": "spot", "stall": STALL}))
-        time.sleep(0.3)                          # its draft names spot, which nobody has yet
+        HOLD["gate"].wait_entered("after")       # its draft names spot, which nobody has yet
         _ok(box.dispatch(one, "toy_ref_name", {"doc": doc, "name": "spot", "address": "item:9"}))
+        HOLD["gate"].open()
         thread.join()
         result = slow["result"]
         assert not result.ok and result.error.field == "ref" and "another caller" in result.error.message
@@ -325,8 +335,9 @@ def test_a_refusal_for_another_callers_ref_is_said_of_the_refs_the_change_is_app
         thread, slow = _thread(lambda: box.dispatch(two, "batch", {"ops": [
             {"tool": "toy_ref_after", "arguments": {"doc": doc, "target": "item:0", "ref": "spot"}},
             {"tool": "toy_ref_after", "arguments": {"doc": doc, "target": "item:0", "stall": STALL}}]}))
-        time.sleep(0.3)                          # its draft: op 0 refused, spot naming item:5
+        HOLD["gate"].wait_entered("after")       # its draft: op 0 refused, spot naming item:5
         _ok(box.dispatch(one, "toy_ref_name", {"doc": doc, "name": "spot", "address": "item:9"}))
+        HOLD["gate"].open()
         thread.join()
         result = _ok(slow["result"])
         assert result.block["conflicts"] == ["the document's refs changed"]

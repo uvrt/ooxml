@@ -9,13 +9,12 @@
   changed the document meanwhile, the work ahead is done again from there.  Same results as
   before.
 
-Made-up documents only; the layout engine is slowed down where a test times a read
-against it (``Engine.lay_out``)."""
+Made-up documents only; the layout engine is held where a test reads beside it
+(``Engine.lay_out``): the order of events tells, not clock readings."""
 
 from __future__ import annotations
 
 import threading
-import time
 
 import pytest
 
@@ -23,10 +22,9 @@ from docx_agent import Document
 from docx_agent.tools import _base
 from docx_agent.tools.shared import BATCH_CHECK
 
-pytestmark = pytest.mark.any_faces
+from gates import Gate
 
-#: How long the slowed layout engine stalls before each layout.
-STALL = 1.0
+pytestmark = pytest.mark.any_faces
 
 
 def report(chapters: int = 3) -> bytes:
@@ -63,40 +61,42 @@ def _toolbox(**options):
 
 
 class Slowed:
-    """``Engine.lay_out`` stalled by :data:`STALL`: when each layout began and ended, and
-    whether the document's lock was free while it ran."""
+    """``Engine.lay_out`` and ``Engine.check`` (a lone check's facts, round 38) watched: the
+    order in which layouts began and ended (``gate.order``: ``"layout <n> in"``, ``"layout
+    <n> out"``, ``"layout <n> ended"``), and whether the document's lock was free while each
+    ran.  The first ``hold`` of them are held at the gate until the test lets them go
+    (:class:`gates.Gate`) -- in place of a stall long enough to see a wait."""
 
-    def __init__(self, monkeypatch, entry=None) -> None:
-        self.began: list[float] = []
-        self.ended: list[float] = []
+    def __init__(self, monkeypatch, entry=None, hold: int = 0) -> None:
+        self.gate = Gate()
         self.free: list[bool] = []
-        self.started = threading.Event()
+        self.count = 0
         self.entry = entry
+        self.hold = hold
+        self._lock = threading.Lock()
         run = _base.Engine.lay_out
-
-        def slow(engine, data, options, state=None):
-            self.began.append(time.perf_counter())
-            if self.entry is not None:
-                self.free.append(_free(self.entry.lock))
-            self.started.set()
-            time.sleep(STALL)
-            try:
-                return run(engine, data, options, state)
-            finally:
-                self.ended.append(time.perf_counter())
-
         facts = _base.Engine.check
 
-        def slow_facts(engine, data, options, state, request):     # a lone check's (round 38)
-            self.began.append(time.perf_counter())
+        def watched(work):
+            with self._lock:
+                number = self.count
+                self.count += 1
             if self.entry is not None:
                 self.free.append(_free(self.entry.lock))
-            self.started.set()
-            time.sleep(STALL)
+            if number < self.hold:
+                self.gate.hold(f"layout {number}")
+            else:
+                self.gate.note(f"layout {number} in")
             try:
-                return facts(engine, data, options, state, request)
+                return work()
             finally:
-                self.ended.append(time.perf_counter())
+                self.gate.note(f"layout {number} ended")
+
+        def slow(engine, data, options, state=None):
+            return watched(lambda: run(engine, data, options, state))
+
+        def slow_facts(engine, data, options, state, request):     # a lone check's (round 38)
+            return watched(lambda: facts(engine, data, options, state, request))
 
         monkeypatch.setattr(_base.Engine, "lay_out", slow)
         monkeypatch.setattr(_base.Engine, "check", slow_facts)
@@ -118,21 +118,33 @@ def _free(lock) -> bool:
 
 
 def _behind(box, session, doc, slowed, slow_call):
-    """Run ``slow_call`` in a thread; once its first layout began, read a paragraph.  The
-    read's result, when it came back, and the slow call's result."""
+    """Run ``slow_call`` in a thread, its first layout held (``slowed.hold``); once that
+    began, read a paragraph, then let the layout go.  The read's result and the slow
+    call's; ``"read"`` noted in ``slowed.gate.order`` when the read came back."""
     out = {}
 
     def run():
         out["slow"] = slow_call()
 
+    slowed.hold = 1
     thread = threading.Thread(target=run)
     thread.start()
-    assert slowed.started.wait(60)
-    first = session.entry(doc).document.paragraphs()[0].id
-    out["read"] = box.dispatch(session, "word_read", {"doc": doc, "range": first})
-    out["read_at"] = time.perf_counter()
-    thread.join()
+    try:
+        slowed.gate.wait_entered()
+        first = session.entry(doc).document.paragraphs()[0].id
+        out["read"] = box.dispatch(session, "word_read", {"doc": doc, "range": first})
+        slowed.gate.note("read")
+    finally:
+        slowed.gate.open()
+        thread.join()
     return out
+
+
+def _read_while_held(slowed) -> bool:
+    """The read came back while the first layout was held -- let go after it, not timed out."""
+    order = slowed.gate.order
+    assert "layout 0 out" in order, order
+    return order.index("layout 0 in") < order.index("read") < order.index("layout 0 out")
 
 
 def test_a_check_after_the_batch_s_last_change_lays_out_unlocked(made, monkeypatch):
@@ -152,6 +164,7 @@ def test_a_check_after_the_batch_s_last_change_lays_out_unlocked(made, monkeypat
     # The document's lock was free while the check laid out (a read of the new version
     # meanwhile then costs only its own work).
     assert out["read"].ok and slowed.free == [True]
+    assert _read_while_held(slowed)
     check = result.data["ops"][1]
     assert check["tool"] == "check" and check["data"]["reflow"]["pages"] >= 4
     assert not any(BATCH_CHECK in w for w in result.warnings)
@@ -202,7 +215,7 @@ def test_word_fields_update_lays_out_ahead_unlocked(made, monkeypatch):
                       lambda: box.dispatch(session, "word_fields", {"doc": doc, "action": "update"}))
     update = out["slow"]
     assert update.ok, update.to_json()
-    assert out["read"].ok and out["read_at"] < slowed.ended[0]     # read while it laid out
+    assert out["read"].ok and _read_while_held(slowed)     # read while it laid out
     # Every pass laid out ahead, on a copy, unlocked; the update under the lock found each
     # pass's layout of the bytes it wrote, and laid nothing out.
     assert slowed.free and all(slowed.free), slowed.free
@@ -236,34 +249,38 @@ def test_an_edit_while_fields_lay_out_ahead_goes_first_and_the_update_sees_it(ma
         entry = session.entry(doc)
         body = [p for p in entry.document.paragraphs() if len(p.text) > 200]
         before = entry.version
-        slowed = Slowed(monkeypatch, entry)
+        slowed = Slowed(monkeypatch, entry, hold=1)     # the update's first layout ahead
         out = {}
         # When the edit's change was in, its lock let go (round 45: its checks, a reflow laid
-        # out by the same slowed engine, run after that, on the version's read copy).
-        committed: dict = {}
+        # out by the same engine, run after that, on the version's read copy).
         commit = type(entry).commit
 
-        def timed(self, fmt):
+        def noted(self, fmt):
             commit(self, fmt)
             if self is entry and self.version == before + 1:
-                committed.setdefault("at", time.perf_counter())
+                slowed.gate.note("edit committed")
 
-        monkeypatch.setattr(type(entry), "commit", timed)
+        monkeypatch.setattr(type(entry), "commit", noted)
 
         def update():
             out["update"] = box.dispatch(session, "word_fields", {"doc": doc, "action": "update"})
 
         thread = threading.Thread(target=update)
         thread.start()
-        assert slowed.started.wait(60)
-        edit = box.dispatch(session, "word_set_text", {"doc": doc, "target": body[0].id,
-                                                       "text": LONG})
-        edited_at = committed["at"]
-        thread.join()
+        try:
+            slowed.gate.wait_entered()
+            edit = box.dispatch(session, "word_set_text", {"doc": doc, "target": body[0].id,
+                                                           "text": LONG})
+        finally:
+            slowed.gate.open()
+            thread.join()
         expected = Document.open(made)
         expected.paragraph(body[0].id).set_text(LONG)
         expected.update_fields()
-    assert edit.ok and edited_at < slowed.ended[0]
+    # The edit went first: committed while the update's first layout ahead was held.
+    order = slowed.gate.order
+    assert edit.ok and "layout 0 out" in order, order
+    assert order.index("layout 0 in") < order.index("edit committed") < order.index("layout 0 out"), order
     assert out["update"].ok and out["update"].version == before + 2
     # Done ahead twice (the document moved on during the first), all of it unlocked.
     assert len(slowed.free) >= 2 and all(slowed.free), slowed.free
@@ -280,7 +297,7 @@ def test_fields_that_need_no_layout_lay_nothing_out_ahead(monkeypatch):
         handle = session.open(doc.to_bytes(), "plain.docx")
         slowed = Slowed(monkeypatch)
         update = box.dispatch(session, "word_fields", {"doc": handle, "action": "update"})
-    assert update.ok and slowed.began == []
+    assert update.ok and slowed.count == 0
 
 
 def test_concurrent_field_updates_and_edits_stay_consistent(made):

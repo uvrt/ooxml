@@ -79,13 +79,12 @@ def test_what_a_task_prints_does_not_reach_the_protocol(capfd):
     assert all(f"noise from {how}" in err for how in ("print y", "fd 1", "__stdout__")), err
 
 
-def test_a_task_past_its_deadline_is_killed_and_the_next_call_works(pool):
+def test_a_task_past_its_deadline_is_killed_and_the_next_call_works(pool, gate):
     victim = pool.run(tools_toys.worker_pid, timeout=60)
-    started = time.monotonic()
-    with pytest.raises(ToolError) as caught:
-        pool.run(tools_toys.render_page, synthetic.outer_package(), 1, 32, 30, timeout=1.5)
+    with pytest.raises(ToolError) as caught:           # held at a gate never opened
+        pool.run(tools_toys.render_page, synthetic.outer_package(), 1, 32, 0, gate.path, timeout=1.5)
     assert caught.value.code == "timeout" and "stopped" in caught.value.message
-    assert time.monotonic() - started < 10
+    assert gate.order() == ["render in"]               # stopped at its deadline, never let go
     assert pool.killed[-1] == victim and _gone(victim)
     after = pool.run(tools_toys.worker_pid, timeout=60)
     assert after not in (victim, os.getpid())
@@ -265,7 +264,31 @@ def _measured(workers: int, holds) -> dict:
     return got
 
 
-def test_in_a_daemonic_process_renders_run_in_parallel_and_edits_do_not_wait():
+def test_in_a_daemonic_process_renders_run_in_parallel_and_edits_do_not_wait(gate):
+    """Two renders held at once, each in its own subprocess, and an edit made while both
+    are held.  Renders that ran one after the other, or an edit that waited for them, would
+    leave a hold to time out first: the order says which."""
+    got = _daemonic(tools_toys.overlap_in_a_daemonic_process, 2, gate.path)
+    assert "error" not in got, got
+    assert got["runner"] == "subprocesses" and got["ok"], got
+    assert len(got["pids"]) == 2 and os.getpid() not in got["pids"] and got["ran"] in got["pids"]
+    assert gate.order() == ["render in", "render in", "edited", "render out", "render out"]
+
+
+def test_in_a_daemonic_process_in_process_work_runs_in_that_process(gate):
+    """The control's part that holds on any machine: with ``workers=0`` the work runs in
+    the daemonic process itself, on its threads (the measurement below shows what that
+    costs where the work holds the GIL)."""
+    got = _daemonic(tools_toys.overlap_in_a_daemonic_process, 0, gate.path)
+    assert "error" not in got, got
+    assert got["runner"] == "in-process" and got["ok"], got
+    assert got["ran"] == got["pid"] != os.getpid()
+
+
+@pytest.mark.slow
+def test_in_a_daemonic_process_renders_run_in_parallel_and_edits_do_not_wait_as_measured():
+    """Measured: two renders at once take about as long as one, an edit does not wait.
+    Timings: on an idle machine only (``--run-slow``); the order is held above."""
     got = _measured(2, lambda got: got["two"] < 1.5 * got["one"]
                     and got["edit"] < 0.4 * got["one"])
     assert got["runner"] == "subprocesses" and got["ok"], got
@@ -275,11 +298,14 @@ def test_in_a_daemonic_process_renders_run_in_parallel_and_edits_do_not_wait():
     assert got["edit"] < 0.4 * one, got  # an edit does not wait for the render
 
 
+@pytest.mark.slow
 @pytest.mark.skipif(not getattr(sys, "_is_gil_enabled", lambda: True)(),
                     reason="the GIL is off (free-threaded build): in-process work no longer serialises")
 def test_in_a_daemonic_process_in_process_work_serialises_as_measured():
     """The control: the same work in-process (``workers=0``) holds the GIL, so two renders
-    take twice as long and an edit waits for the render."""
+    take twice as long and an edit waits for the render.  A claim of time alone -- which
+    thread the GIL lets run is the operating system's to say -- so measured, on an idle
+    machine only (``--run-slow``), with bounds well inside the 2x it shows there."""
     got = _measured(0, lambda got: got["two"] > 1.6 * got["one"]
                     and got["edit"] > 0.4 * got["one"])
     assert got["runner"] == "in-process" and got["ok"], got

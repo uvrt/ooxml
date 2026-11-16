@@ -15,28 +15,30 @@ import datetime
 import hashlib
 import json
 import threading
-import time
 
 import pytest
 
-from ooxml_edit.tools import Result, Toolbox, integer, string
+from ooxml_edit.tools import Result, Toolbox, boolean, string
 
 from docx_agent import Document
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
 from docx_agent.tools._base import word_tool
 
+from gates import Gate
+
 pytestmark = pytest.mark.any_faces
 
-#: How long the slow edit holds the document.
-STALL = 3
+#: Where the slow edit holds the document until the test lets it go (``hold`` true).
+EDIT = [Gate()]
 
 
-@word_tool("word_test_slow_edit", "Test only: set a paragraph's text, holding the document a while.",
+@word_tool("word_test_slow_edit", "Test only: set a paragraph's text, holding the document until let go.",
            {"doc": string("Document id."), "target": string("Paragraph."), "text": string("Text."),
-            "stall": integer("Seconds.", minimum=0)}, group="text", mutates=True)
-def slow_edit(call, doc, target, text, stall):
+            "hold": boolean("Whether to hold.")}, group="text", mutates=True)
+def slow_edit(call, doc, target, text, hold):
     call.document.paragraph(target).set_text(text)
-    time.sleep(stall)
+    if hold:
+        EDIT[0].hold("edit")
     return Result(summary="set", changed=[target])
 
 
@@ -119,17 +121,21 @@ def test_a_check_does_not_wait_for_an_edit_in_flight():
         assert box.dispatch(session, "check", {"doc": doc}).ok
         before = session.entry(doc).version
         out: dict = {}
+        gate = EDIT[0] = Gate()
         thread = threading.Thread(target=lambda: out.setdefault("edit", box.dispatch(
-            session, "word_test_slow_edit", {"doc": doc, "target": ids[3], "text": "Slow.", "stall": STALL})))
+            session, "word_test_slow_edit", {"doc": doc, "target": ids[3], "text": "Slow.", "hold": True})))
         thread.start()
-        time.sleep(0.5)
-        started = time.perf_counter()
-        check = box.dispatch(session, "check", {"doc": doc, "range": [ids[6]]})
-        read = box.dispatch(session, "word_read", {"doc": doc, "range": ids[3]})
-        took = time.perf_counter() - started
-        thread.join()
+        try:
+            gate.wait_entered()                         # the edit holds the document
+            check = box.dispatch(session, "check", {"doc": doc, "range": [ids[6]]})
+            read = box.dispatch(session, "word_read", {"doc": doc, "range": ids[3]})
+            gate.note("reads")
+        finally:
+            gate.open()
+            thread.join()
         assert check.ok and read.ok, (check.to_json(), read.to_json())
-        assert took < STALL - 1, f"the reads waited {took:.1f} s"
+        # Back while the edit still held the document: they did not wait for it.
+        assert gate.order == ["edit in", "reads", "edit out"], gate.order
         assert check.version == before and read.version == before
         assert "Slow." not in read.data
         assert out["edit"].ok and out["edit"].version == before + 1

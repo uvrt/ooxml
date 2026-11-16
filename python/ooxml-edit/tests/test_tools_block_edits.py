@@ -23,11 +23,21 @@ from ooxml_edit.tools.blocks import BlockConflict, token_renamer, renamed
 from ooxml_edit.tools.limits import Limits
 from ooxml_edit.xml import make
 
+import gates
 import synthetic
 import tools_toys
 
-STALL = 2
+#: A stall of the slow tools: held at the test's gate (tests/gates.py), as the item's text.
+STALL = 1
 PROBES: dict[str, threading.Event] = {}
+HOLD: dict = {"gate": None}
+
+
+@pytest.fixture(autouse=True)
+def _hold(gate):
+    HOLD["gate"] = gate
+    yield
+    HOLD["gate"] = None
 
 
 @tool("toy_block_add", "Test only: append an item; stall seconds on the way.",
@@ -38,7 +48,7 @@ PROBES: dict[str, threading.Event] = {}
 def block_add(call, doc, text, stall=0, key=None):
     call.document.insert(text, "end")
     if stall:
-        time.sleep(stall)
+        HOLD["gate"].hold(text)
     return Result(summary=f"added {text}", created=[f"item:{text}"])
 
 
@@ -52,7 +62,7 @@ def block_first(call, doc, text, stall=0, burn=0):
     while time.thread_time() - started < burn:
         sum(range(1000))
     if stall:
-        time.sleep(stall)
+        HOLD["gate"].hold(text)
     call.document.insert(text, "start")
     return Result(summary=f"{len(call.document.items())} items", created=[f"item:{text}"])
 
@@ -203,8 +213,11 @@ def test_auto_drafts_beside_another_edit_never_beside_reads_alone():
         assert entry.editing == 0 and entry.document.items()[-2:] == ["one", "two"]
 
 
-def test_an_edit_counts_as_editing_until_its_change_is_made_not_through_its_checks(monkeypatch):
+def test_an_edit_counts_as_editing_until_its_change_is_made_not_through_its_checks(monkeypatch, gate):
     box, _hook = _box("auto")
+    beside = dispatch._Editing.beside
+    monkeypatch.setattr(dispatch._Editing, "beside",
+                        lambda self, entry: (lambda n: (gate.note(f"beside {n}"), n)[1])(beside(self, entry)))
     with box:
         session, doc = _open(box)
         entry = session.entry(doc)
@@ -218,10 +231,15 @@ def test_an_edit_counts_as_editing_until_its_change_is_made_not_through_its_chec
         monkeypatch.setattr(dispatch.After, "run", run)
         thread, slow = _thread(lambda: box.dispatch(session, "toy_block_add",
                                                     {"doc": doc, "text": "slow", "stall": STALL}))
-        time.sleep(0.3)
+        gate.wait_entered("slow")
         assert entry.editing == 1                    # its change in the making
-        result = box.dispatch(session, "toy_block_add", {"doc": doc, "text": "beside"})
+        other, out = _thread(lambda: box.dispatch(session, "toy_block_add", {"doc": doc, "text": "beside"}))
+        gate.wait_noted("beside 1")                  # it began beside that edit
+        gate.open()
+        other.join()
         thread.join()
+        result = out["result"]
+        assert [o for o in gate.order() if o.startswith("slow")] == ["slow in", "slow out"]
         assert slow["result"].ok and slow["result"].block is None
         assert result.ok and result.block is not None    # drafted beside it
         assert entry.editing == 0
@@ -245,52 +263,75 @@ def test_a_call_the_format_says_is_worth_a_draft_alone_drafts_alone():
         assert long.ok and _shape(long.block) == {"tries": 1, "conflicts": []} and hook.drafts == 1
 
 
-def test_a_call_that_takes_the_lock_waits_for_a_long_draft_in_flight_to_apply():
+def _late(box, session, doc, gate):
+    """A call that takes the document's lock, in a thread named ``late``, once a draft is
+    held at ``gate``: the gate opened once it waits for that draft.  Its result."""
+    entry = session.entry(doc)
+    entry._drafts_ended = gates.Watched(entry._drafts_ended, gate)
+    out: dict = {}
+    thread = threading.Thread(target=lambda: out.setdefault("result", box.dispatch(
+        session, "toy_word_insert", {"doc": doc, "text": "late", "at": "end"})), name="late")
+    thread.start()
+    gate.wait_noted("late waits")
+    gate.open()
+    thread.join()
+    return out["result"]
+
+
+def test_a_call_that_takes_the_lock_waits_for_a_long_draft_in_flight_to_apply(gate):
     """A draft prepared for longer than ``block_redo_cpu`` is not made to run again by a
     call that takes the document's lock: that call waits until the draft is applied, then
-    runs on the version it made.  The draft runs once."""
-    box, _hook = _box("always", limits=Limits(block_redo_cpu=0.3))
+    runs on the version it made.  The draft runs once.  (``block_redo_cpu=0``: every draft
+    in flight is long, so no time need pass.)"""
+    box, _hook = _box("always", limits=Limits(block_redo_cpu=0))
     with box:
         session, doc = _open(box)
         thread, slow = _thread(lambda: box.dispatch(session, "toy_block_first",
                                                     {"doc": doc, "text": "first", "stall": STALL}))
-        time.sleep(0.8)
-        late = box.dispatch(session, "toy_word_insert", {"doc": doc, "text": "late", "at": "end"})
+        gate.wait_entered("first")
+        late = _late(box, session, doc, gate)
         thread.join()
         first = slow["result"]
         assert first.ok and _shape(first.block) == {"tries": 1, "conflicts": []}
-        assert late.ok and late.block is not None and late.block["waited"] > 0.5
+        assert gate.order() == ["first in", "late waits", "first out"]
+        # It waited: the order says so.  (How long is not asserted: ``block["waited"]`` is
+        # left out under a millisecond, which a coarse clock -- Windows' -- can read.)
+        assert late.ok
         assert late.version == first.version + 1
         items = session.entry(doc).document.items()
         assert items[0] == "first" and items[-1] == "late"
         assert session.entry(doc).drafts_in_flight == {}
 
 
-def test_a_draft_not_yet_long_is_not_waited_for():
+def test_a_draft_not_yet_long_is_not_waited_for(gate):
     box, _hook = _box("always", limits=Limits(block_redo_cpu=30))
     with box:
         session, doc = _open(box)
         thread, slow = _thread(lambda: box.dispatch(session, "toy_block_first",
                                                     {"doc": doc, "text": "first", "stall": STALL}))
-        time.sleep(0.5)
+        gate.wait_entered("first")
         late = box.dispatch(session, "toy_word_insert", {"doc": doc, "text": "late", "at": "end"})
+        gate.note("late")
+        gate.open()
         thread.join()
+        assert gate.order()[:3] == ["first in", "late", "first out"]
         assert late.ok and late.block is None
         assert slow["result"].ok and slow["result"].block["tries"] == 2   # prepared again
 
 
-def test_a_long_draft_that_cannot_apply_does_not_hold_up_a_call_that_takes_the_lock(monkeypatch):
+def test_a_long_draft_that_cannot_apply_does_not_hold_up_a_call_that_takes_the_lock(monkeypatch, gate):
     """A long draft whose change cannot be a patch takes the lock: a call waiting for it
     goes on then (each in turn under the lock), never waiting for its rerun."""
-    box, hook = _box("always", limits=Limits(block_redo_cpu=0.3))
+    box, hook = _box("always", limits=Limits(block_redo_cpu=0))
     monkeypatch.setattr(hook, "prepared", lambda draft, result, arguments: None)
     with box:
         session, doc = _open(box)
         thread, slow = _thread(lambda: box.dispatch(session, "toy_block_add",
                                                     {"doc": doc, "text": "first", "stall": STALL}))
-        time.sleep(0.8)
-        late = box.dispatch(session, "toy_word_insert", {"doc": doc, "text": "late", "at": "end"})
+        gate.wait_entered("first")
+        late = _late(box, session, doc, gate)
         thread.join()
+        assert gate.order()[:3] == ["first in", "late waits", "first out"]
         assert late.ok and slow["result"].ok and slow["result"].block["lock"] == "not a patch"
         assert session.entry(doc).drafts_in_flight == {}
 
@@ -315,18 +356,19 @@ def test_an_admitted_call_runs_on_a_draft_and_its_change_is_one_step_of_its_own(
         assert entry.log[-2].tool == "toy_block_add"              # the call log is the document's
 
 
-def test_an_edit_on_a_draft_does_not_hold_up_another_edit():
+def test_an_edit_on_a_draft_does_not_hold_up_another_edit(gate):
     box, _hook = _box("always")
     with box:
         session, doc = _open(box)
         thread, slow = _thread(lambda: box.dispatch(session, "toy_block_add",
                                                     {"doc": doc, "text": "slow", "stall": STALL}))
-        time.sleep(0.3)
-        started = time.perf_counter()
+        gate.wait_entered("slow")
         fast = box.dispatch(session, "toy_block_add", {"doc": doc, "text": "fast"})
-        took = time.perf_counter() - started
+        gate.note("fast")
+        gate.open()
         thread.join()
-        assert fast.ok and took < STALL - 0.5, f"the edit waited {took:.1f} s"
+        # Had the edit waited, the slow one's hold timed out first.
+        assert fast.ok and gate.order() == ["slow in", "fast", "slow out"]
         result = slow["result"]
         assert result.ok and _shape(result.block) == {"tries": 1, "conflicts": []}
         items = session.entry(doc).document.items()
@@ -334,14 +376,15 @@ def test_an_edit_on_a_draft_does_not_hold_up_another_edit():
         assert result.version == fast.version + 1
 
 
-def test_a_conflict_prepares_the_call_again_on_what_is_committed_then():
+def test_a_conflict_prepares_the_call_again_on_what_is_committed_then(gate):
     box, hook = _box("always")
     with box:
         session, doc = _open(box)
         thread, slow = _thread(lambda: box.dispatch(session, "toy_block_first",
                                                     {"doc": doc, "text": "first", "stall": STALL}))
-        time.sleep(0.3)
+        gate.wait_entered("first")
         assert box.dispatch(session, "toy_block_add", {"doc": doc, "text": "meanwhile"}).ok
+        gate.open()
         thread.join()
         result = slow["result"]
         assert result.ok and result.block["tries"] == 2
@@ -351,14 +394,15 @@ def test_a_conflict_prepares_the_call_again_on_what_is_committed_then():
         assert result.summary == f"{len(items)} items"            # read on the version it changed
 
 
-def test_past_its_tries_a_call_runs_on_the_document_under_its_lock():
+def test_past_its_tries_a_call_runs_on_the_document_under_its_lock(gate):
     box, _hook = _box("always", limits=Limits(block_tries=1))
     with box:
         session, doc = _open(box)
         thread, slow = _thread(lambda: box.dispatch(session, "toy_block_first",
                                                     {"doc": doc, "text": "first", "stall": STALL}))
-        time.sleep(0.3)
+        gate.wait_entered("first")
         assert box.dispatch(session, "toy_block_add", {"doc": doc, "text": "meanwhile"}).ok
+        gate.open()
         thread.join()
         result = slow["result"]
         assert result.ok and _shape(result.block) == {"tries": 1, "conflicts": ["the items changed"],
@@ -366,7 +410,7 @@ def test_past_its_tries_a_call_runs_on_the_document_under_its_lock():
         assert session.entry(doc).document.items()[0] == "first"
 
 
-def test_a_conflict_after_a_long_preparation_takes_the_lock_at_once():
+def test_a_conflict_after_a_long_preparation_takes_the_lock_at_once(gate):
     """Its preparation past ``Limits.block_redo_cpu`` seconds of its thread's CPU, a conflict
     sends the call to the document's lock instead of preparing it again: once more, not
     ``block_tries`` times.  A short one is prepared again as before."""
@@ -375,8 +419,9 @@ def test_a_conflict_after_a_long_preparation_takes_the_lock_at_once():
         session, doc = _open(box)
         thread, slow = _thread(lambda: box.dispatch(session, "toy_block_first",
                                                     {"doc": doc, "text": "first", "burn": 0.6, "stall": STALL}))
-        time.sleep(0.3 + 0.6)
+        gate.wait_entered("first")                  # its 0.6 s of CPU spent
         assert box.dispatch(session, "toy_block_add", {"doc": doc, "text": "meanwhile"}).ok
+        gate.open()
         thread.join()
         result = slow["result"]
         assert result.ok and _shape(result.block) == {"tries": 1, "conflicts": ["the items changed"],
@@ -464,22 +509,49 @@ def test_a_cells_from_left_empty_by_a_strict_decoder_is_no_source():
         assert result.summary == "1 cell(s): ''"
 
 
-def test_many_callers_on_drafts_keep_every_change_once():
+def test_many_callers_on_drafts_keep_every_change_once(monkeypatch):
     box, _hook = _box("auto")
+    gate = HOLD["gate"]
+    beside_seen = threading.Event()
+    beside = dispatch._Editing.beside
+
+    def counted(self, entry):
+        found = beside(self, entry)
+        if found:
+            beside_seen.set()                   # a call began beside another's edit
+        return found
+
+    monkeypatch.setattr(dispatch._Editing, "beside", counted)
     with box:
         session, doc = _open(box)
         before = session.entry(doc).version
 
+        views = [session.view(context={"agent": f"c{k}"}) for k in range(6)]
+
         def caller(k):
-            view = session.view(context={"agent": f"c{k}"})
-            return [box.dispatch(view, "toy_block_add", {"doc": doc, "text": f"{k}-{n}"}) for n in range(15)]
+            view = views[k]
+            # The first caller's first change is held (the document's lock with it) until
+            # another caller is seen beginning beside it -- drafted then -- so that some ran
+            # beside another call by construction, not by how the threads were scheduled.
+            return [box.dispatch(view, "toy_block_add", {"doc": doc, "text": f"{k}-{n}",
+                                                         **({"stall": STALL} if (k, n) == (0, 0) else {})})
+                    for n in range(15)]
 
         results: dict = {}
         threads = [threading.Thread(target=lambda k=k: results.setdefault(k, caller(k))) for k in range(6)]
-        for thread in threads:
-            thread.start()
-        for thread in threads:
-            thread.join()
+        threads[0].start()
+        try:
+            gate.wait_entered("0-0")
+            for thread in threads[1:]:
+                thread.start()
+            assert beside_seen.wait(gates.TIMEOUT), "no call began beside the held one"
+            gate.note("began beside")
+        finally:
+            gate.open()
+            for thread in threads:
+                if thread.ident is not None:
+                    thread.join()
+        assert gate.order() == ["0-0 in", "began beside", "0-0 out"], gate.order()
         made = [r for found in results.values() for r in found]
         assert all(r.ok for r in made)
         entry = session.entry(doc)

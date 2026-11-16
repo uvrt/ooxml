@@ -32,6 +32,7 @@ from docx_agent.tools import _base as base_module  # noqa: E402
 from docx_agent.tools import owner as owner_module  # noqa: E402
 from docx_agent.tools.scoped import range_pages  # noqa: E402
 
+from gates import Watched  # noqa: E402
 from test_tables_from_data import ds_put  # noqa: E402
 
 TOOLS = [*WORD_TOOLS, ds_put]
@@ -87,30 +88,29 @@ class _Version:
 
 def test_owner_lays_out_once_for_every_check_waiting_and_then_the_newest():
     owner = Owner()
+    owner._cond = cond = Watched()          # who waits on the owner, counted
     newest = [_Version(1)]
     laid: list[int] = []
     gate = threading.Event()
+    laying = threading.Event()
 
     def lay(target):
         laid.append(target.version)
         if target.version == 1:
-            assert gate.wait(5)
+            laying.set()
+            assert gate.wait(60)
         return True
 
     served: dict[str, int] = {}
 
-    entered: list[str] = []
-
     def check(name, version):
-        entered.append(name)
         found = owner.serve(version, lambda: newest[0], lay)
         served[name] = found.version
         owner.release(found.version)            # its facts made
 
     first = threading.Thread(target=check, args=("first", 1))
     first.start()
-    while not laid:
-        time.sleep(0.01)
+    assert laying.wait(60)
     # Commits and checks while version 1 is laid out: all served by one layout of the newest.
     newest[0] = _Version(2)
     waiting = [threading.Thread(target=check, args=(f"w{v}", v)) for v in (1, 2)]
@@ -119,12 +119,10 @@ def test_owner_lays_out_once_for_every_check_waiting_and_then_the_newest():
     newest[0] = _Version(4)
     late = threading.Thread(target=check, args=("w4", 4))
     late.start()
-    while len(entered) < 4:
-        time.sleep(0.01)
-    time.sleep(0.2)
+    assert cond.until_waiting(3)                   # all three wait for the layout in flight
     gate.set()
     for thread in [first, *waiting, late]:
-        thread.join(5)
+        thread.join(60)
     assert served["first"] == 1 and served["w1"] in (1, 4)     # version 1 includes it
     assert served["w2"] == 4 and served["w4"] == 4             # the next layout: the newest
     assert laid == [1, 4] and owner.flights == 2 and owner.readers == {}
@@ -134,8 +132,9 @@ def test_the_next_layout_waits_for_the_checks_reading_the_last_one(monkeypatch):
     """Their facts are made from the layout they read, before it is taken on to the next."""
     import docx_agent.layout as layout_module
 
-    monkeypatch.setattr(layout_module, "READERS_WAIT", 5.0)
+    monkeypatch.setattr(layout_module, "READERS_WAIT", 60.0)
     owner = Owner()
+    owner._cond = cond = Watched()
     order: list[str] = []
     assert owner.serve(1, lambda: _Version(1), lambda target: True).version == 1      # a reader of 1
 
@@ -144,10 +143,10 @@ def test_the_next_layout_waits_for_the_checks_reading_the_last_one(monkeypatch):
 
     thread = threading.Thread(target=later)
     thread.start()
-    time.sleep(0.3)
+    assert cond.until_waiting(1)                   # the next layout waits for the reader of 1
     order.append("facts of 1")
     owner.release(1)
-    thread.join(5)
+    thread.join(60)
     assert order == ["facts of 1", "layout 2"]
     # A reader that never says it is done is waited for READERS_WAIT s at most.
     monkeypatch.setattr(layout_module, "READERS_WAIT", 0.2)
@@ -250,11 +249,13 @@ def test_a_check_waiting_for_a_layout_reads_the_newest_version_and_says_so(made,
         first = threading.Thread(target=lambda: out.setdefault("first", box.dispatch(session, "check", {"doc": doc})))
         first.start()
         assert started.wait(30)        # the layout of the first edit's version is in flight
+        owner = session.entry(doc).document._layout_owner
+        owner._cond = cond = Watched()
         assert edit(2).ok
         at_call = session.entry(doc).version
         second = threading.Thread(target=lambda: out.setdefault("second", box.dispatch(session, "check", {"doc": doc})))
         second.start()
-        time.sleep(0.5)
+        assert cond.until_waiting(1)          # the second check waits for the layout in flight
         assert edit(3).ok              # committed while the second check waits
         newest = session.entry(doc).version
         gate.set()
@@ -364,9 +365,8 @@ def test_relayout_on_commit_lays_out_the_new_version_while_checks_ask(made, monk
         flights = owner.flights
         assert box.dispatch(session, "word_insert_markdown", {"doc": doc, "at": f"before:{heads[1]}",
                                                               "markdown": "Laid out at once."}).ok
-        deadline = time.monotonic() + 60
-        while owner.flights == flights and time.monotonic() < deadline:
-            time.sleep(0.05)
+        # The edit's checks started the relayout, if any, before the edit came back.
+        assert owner_module.wait_for_relayouts(60)
         assert owner.flights == flights + 1 and owner.done.version == session.entry(doc).version
         result = box.dispatch(session, "check", {"doc": doc})
         assert result.ok and result.version == owner.done.version
@@ -375,11 +375,7 @@ def test_relayout_on_commit_lays_out_the_new_version_while_checks_ask(made, monk
         for k in range(2):
             assert box.dispatch(session, "word_insert_markdown", {"doc": doc, "at": f"before:{heads[2]}",
                                                                   "markdown": f"Edit {k}."}).ok
-            deadline = time.monotonic() + 60
-            while owner.flying is not None or (k == 0 and owner.flights == flights + 1
-                                               and time.monotonic() < deadline):
-                time.sleep(0.05)
-        time.sleep(0.5)
+            assert owner_module.wait_for_relayouts(60)
         assert owner.flights == flights + 2 and owner.done.version == session.entry(doc).version - 1
     monkeypatch.setattr(owner_module, "ASKED_SECONDS", 0.0)
     with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, workers=0) as box:
@@ -389,7 +385,7 @@ def test_relayout_on_commit_lays_out_the_new_version_while_checks_ask(made, monk
         flights = owner.flights
         assert box.dispatch(session, "word_insert_markdown", {"doc": doc, "at": f"before:{_heads(document)[1]}",
                                                               "markdown": "Not laid out yet."}).ok
-        time.sleep(0.5)
+        assert owner_module.wait_for_relayouts(60)
         assert owner.flights == flights                     # off: the next check lays it out
 
 

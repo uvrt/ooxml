@@ -11,13 +11,14 @@ break, a style, fields, deletions), including those docx2svg lays out whole for
 from __future__ import annotations
 
 import threading
-import time
 
 import pytest
 
 from docx_agent import Document
 from docx_agent import layout as layout_module
 from docx_agent.layout_facts import layout_facts
+
+from gates import Arrivals, Gate
 
 # What each test compares holds with whatever faces the layout finds: run where Office's
 # faces are absent too (CI), laid out with the stand-ins docx2svg picks.
@@ -203,14 +204,23 @@ def test_concurrent_callers_of_one_state_share_one_layout(made):
     started = threading.Event()
     calls = []
     real = layout_module.lay_out_bytes
+    waiting = Arrivals()
+    wait = layout_module._Flight.wait
+    reached: list = []
+
+    def counted(flight):
+        waiting.arrive()
+        return wait(flight)
 
     def slow(data, options, state=None):
         calls.append(1)
         started.set()
-        time.sleep(0.3)                   # the others ask while it runs
+        # The others ask while it runs: held until all seven wait for this flight.
+        reached.append(waiting.until(7))
         return real(data, options, state)
 
     layout_module.lay_out_bytes = slow
+    layout_module._Flight.wait = counted
     got: list = [None] * 8
     errors: list = []
 
@@ -230,8 +240,9 @@ def test_concurrent_callers_of_one_state_share_one_layout(made):
             thread.join(120)
     finally:
         layout_module.lay_out_bytes = real
+        layout_module._Flight.wait = wait
     assert not any(thread.is_alive() for thread in threads)
-    assert errors == [] and len(calls) == 1
+    assert errors == [] and len(calls) == 1 and reached == [True] and waiting.count == 7
     assert all(layout is got[0] for layout in got)
 
 
@@ -296,10 +307,13 @@ def test_a_failed_layout_fails_every_caller_waiting_for_it_and_is_not_kept(made)
     document = Document.open(made)
     started = threading.Event()
     real = layout_module.lay_out_bytes
+    both = Arrivals()
+    overlapped: list = []
 
     def failing(data, options, state=None):
         started.set()
-        time.sleep(0.2)
+        both.arrive()
+        overlapped.append(both.until(2))      # each fails once the other is laying out too
         raise RuntimeError("the layout failed")
 
     layout_module.lay_out_bytes = failing
@@ -324,6 +338,7 @@ def test_a_failed_layout_fails_every_caller_waiting_for_it_and_is_not_kept(made)
     # Round 53 (R107): layout_failed, the failure its reason; not docx2svg's own, so not kept.
     assert len(errors) == 2 and all(e.startswith("laying the document out failed: RuntimeError: the layout failed")
                                     for e in errors)
+    assert overlapped == [True, True]
     assert document._layout_flights == {} and document._layout_kept is None
     assert document.layout().page_count > 1          # and the next one is laid out
 
@@ -335,10 +350,18 @@ def test_waiting_callers_wait_unlocked(made):
     started = threading.Event()
     real = layout_module.lay_out_bytes
     inside: list = []
+    waiting = Arrivals()
+    wait = layout_module._Flight.wait
+    reached: list = []
+
+    def counted(flight):
+        inside.append(("wait", threading.current_thread().name))
+        waiting.arrive()
+        return wait(flight)
 
     def slow(data, options, state=None):
         started.set()
-        time.sleep(0.3)
+        reached.append(waiting.until(1))      # held until the other caller waits for it
         return real(data, options, state)
 
     class Unlocked:
@@ -352,15 +375,20 @@ def test_waiting_callers_wait_unlocked(made):
             inside.append(("out", self.name))
 
     layout_module.lay_out_bytes = slow
+    layout_module._Flight.wait = counted
     try:
         first = threading.Thread(target=lambda: layout_module.convert(document, unlocked=lambda: Unlocked("a")))
         first.start()
-        started.wait(10)
+        assert started.wait(60)
         layout_module.convert(document, unlocked=lambda: Unlocked("b"))
         first.join()
     finally:
         layout_module.lay_out_bytes = real
-    assert ("in", "b") in inside and ("out", "b") in inside
+        layout_module._Flight.wait = wait
+    # "b" waited for "a"'s layout, and did so inside its ``unlocked``.
+    me = threading.current_thread().name
+    assert reached == [True] and inside.count(("wait", me)) == 1
+    assert inside.index(("in", "b")) < inside.index(("wait", me)) < inside.index(("out", "b"))
 
 
 # -- page-scoped facts --------------------------------------------------------------------------
@@ -426,18 +454,16 @@ def test_concurrent_checks_of_one_version_lay_it_out_once_unlocked(made, monkeyp
     import docx2svg
 
     laid = []
-    started = threading.Event()
-    ended: list = []
+    gate = Gate()
+    calls: list = []
     run = _base.Engine.check
     real = docx2svg.lay_out_docx
 
     def slow(self, data, options, state, request):     # a lone check's facts (round 38)
-        started.set()
-        time.sleep(1.0)
-        try:
-            return run(self, data, options, state, request)
-        finally:
-            ended.append(time.perf_counter())
+        calls.append(1)
+        if len(calls) == 1:
+            gate.hold("first check")                  # held until the read is back
+        return run(self, data, options, state, request)
 
     monkeypatch.setattr(_base.Engine, "check", slow)
     monkeypatch.setattr(docx2svg, "lay_out_docx", lambda *a, **k: laid.append(1) or real(*a, **k))
@@ -452,14 +478,18 @@ def test_concurrent_checks_of_one_version_lay_it_out_once_unlocked(made, monkeyp
 
         threads = [threading.Thread(target=check, args=(k,)) for k in range(6)]
         threads[0].start()
-        started.wait(30)
-        for thread in threads[1:]:
-            thread.start()
-        read = box.dispatch(session, "word_read", {"doc": doc, "range": first})
-        read_at = time.perf_counter()
-        for thread in threads:
-            thread.join()
-    assert read.ok and read_at < ended[0]          # read while the layout went on
+        try:
+            gate.wait_entered()
+            for thread in threads[1:]:
+                thread.start()
+            read = box.dispatch(session, "word_read", {"doc": doc, "range": first})
+            gate.note("read")
+        finally:
+            gate.open()
+            for thread in threads:
+                thread.join()
+    # Read while the first check went on: back before that check was let go.
+    assert read.ok and gate.order == ["first check in", "read", "first check out"], gate.order
     assert all(r.ok for r in results) and len(laid) == 1
     assert len({r.data["reflow"]["pages"] for r in results}) == 1
 
