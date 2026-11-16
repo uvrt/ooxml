@@ -19,7 +19,7 @@ Every later lane is held to this document. Where it and the code differ, fix one
 - **Python boundary:** one PyO3 module, JSON tool calls in and out, with the interpreter lock released. A call costs 4 µs (12 µs counting Python's `json`). Four threads used 3.9 of 4 logical CPUs; with the lock held they used 1.23.
 - **Migration:** a strangler, Word first. From phase 2 Rust owns the document; Python tools not yet ported run through an explicit, metered bridge.
 
-**Effort:** about 80 agent lanes in 8 phases, which is about 35 waves with at most 3 agents at once. Phase 0 (the foundation) is ready to brief (§15).
+**Effort:** about 88 agent lanes in 9 phases, which is about 38 waves with at most 3 agents at once. Phase 0 (the foundation) is ready to brief (§15). **Priority (2026-11-16):** the Word layout moves to Rust right after the foundation (phase PL, §13), before the edit phases.
 
 **The user's decisions** on §14's questions are in [Decisions](#decisions).
 
@@ -642,28 +642,41 @@ No parser contains unsafe code.
 
 | Phase | Scope | Exit criteria | Lanes |
 |---|---|---|---|
-| **P0 Foundation** | base, xml, zip, opc, store, derive, tools (contract and derive), session and python skeletons, xtask, CI | §15 | 5 |
-| **P1 Word model and reads** | Generated `w:` views, cascade, numbering, fields threading, sections, addresses and ledger (`docx-ids.1.`-compatible), Markdown out; `describe`, `word_read`, `word_inspect`, `find_text`, `read_batch`; open in Rust (replaces the mirror and the exporter) | Read tools equal on every fixture and transcript; open ≤ 1.5 s at 3k | 8 |
+| **P0 Foundation** | base, xml, zip, opc, store, derive, tools (contract and derive), session and python skeletons, xtask, CI. The layout track needs only base, xml, zip, opc and derive; the rest runs beside it | §15 | 5 |
+| **PL Word layout in Rust (priority, from 2026-11-16)** | Four steps, below. Replaces the old P3a and takes the read-side model out of P1 | Below | 20 |
+| &nbsp;&nbsp;L1 Text engine | `ooxml-fonts`, `ooxml-text`: sfnt reader, Office's measured tables, Word's advances, one break loop with Word's rules as data, hyphenation. Starts once `ooxml-base` is merged; runs beside L2 | Measures and line breaks equal docx2svg's on every corpus paragraph | 4 |
+| &nbsp;&nbsp;L2 Word model for layout | Generated `w:` views, the styles cascade, numbering, fields threading, sections; open a version in Rust from its parts | Resolved blocks equal docx2svg's layout input on every fixture; open ≤ 1.5 s at 3k | 5 |
+| &nbsp;&nbsp;L3 Word layout | `ooxml-word-layout`, seeded from `crates/word`, up to docx2svg's coverage (notes, columns, floats, sections, hyphenation, merged and nested cells, vertical alignment, keeps); layout facts for check; fields update; SVG for text, tables and pictures. Drawings, charts and SmartArt get their extents from Rust and are painted by docx2svg's Python painters until P3 (metered) | Relayout equals full; SVG byte-identical to docx2svg on the VRT and corpus; check's layout facts and fields equal | 8 |
+| &nbsp;&nbsp;L4 Switch | docx-agent's layout, `describe`, check's layout facts, `render` and the live view use the Rust layout. Python still owns the document: each version's touched parts go to Rust, which reuses every unchanged block's memo. No layout objects in Python, no pickles. docx2svg's Python layout is frozen as a fallback and deleted in P4 | A made-up 360-page tracked report with 12 writers and 2 readers: memory flat across versions; one kept layout ≤ 50 MB; an edit's own work unaffected by kept layouts; relayout after a one-block edit ≤ 100 ms at 3k pages | 3 |
+| **P1 Word reads** | Addresses and ledger (`docx-ids.1.`-compatible), Markdown out; `describe`, `word_read`, `word_inspect`, `find_text`, `read_batch` on the L2 model (replaces the mirror and the exporter) | Read tools equal on every fixture and transcript | 4 |
 | **P2 Word common edits; Rust owns the document** | Transactions, `EditSink`, `RevisionPolicy`; set_text, insert_text, insert_markdown (Markdown in), delete, set_cells, undo, redo, batch, replace_text; validation per change; `touched`; the save gate and save; the bridge; docx-agent switched to the Rust session | Differential equal on transcripts and multi-writer seeds; 24 writers at 3k: edit p99 ≤ 250 ms, check p99 ≤ 100 ms | 10 |
-| **P3a Text, fonts, Word layout** | fonts, text, word-layout up to docx2svg's coverage (notes, columns, floats, sections, hyphenation, merged and nested cells, vertical alignment, keeps); check facts, fields update; SVG for text, tables and pictures | Relayout equals full; VRT equal; check and fields equal; zero bridge calls for these tools | 10 |
-| **P3b DrawingML, charts, metafiles, render** | colour, schema (`a:`, `c:`), drawingml, chart, metafile, scene, render (PNG via resvg); Word drawings, charts and SmartArt | ooxml-common goldens equal; Word VRT complete; PNG equal or within SSIM bounds | 12 |
+| **P3 DrawingML, charts, metafiles, render** | colour, schema (`a:`, `c:`), drawingml, chart, metafile, scene, render (PNG via resvg); Word drawings, charts and SmartArt (ends L3's metered Python painting) | ooxml-common goldens equal; Word VRT complete; PNG equal or within SSIM bounds | 12 |
 | **P4 Remaining Word tools** | Revision and comment tools, structure (move, copy_from, sections, headers and footers, fields, notes, links), objects (format_table, drawings, sdt elements, charts, SmartArt), style (format, lists, styles, template, design facts, compare, follow), numbers and scales facts; then delete docx-agent's and docx2svg's legacy | Zero bridge calls; docx-agent is a shim; legacy deleted | 12 |
 | **P5 PowerPoint** | slides, slides-layout (one inheritance resolver), 36 tools, fit, compare; delete the legacy | pptx VRT, corpus and transcripts equal | 12 |
 | **P6 Excel** | sheets (pull reader, one tokenizer), 21 tools, derive and query | Differential equal; the save-time read-back becomes a test | 10 |
 | **P7 Cleanup** | Remove the bridge, the frozen legacy, the switches; final deprecations | No legacy imports left | 3 |
 
-**Totals:** about 82 lanes. With at most 3 agents at once, and phase dependencies keeping the average at about 2.3 busy, that is about 35 waves.
+**Totals:** about 88 lanes. With at most 3 agents at once, and phase dependencies keeping the average at about 2.3 busy, that is about 38 waves. The Rust layout reaches production after P0 and PL, about 11 waves.
 
 **Why this order:**
 - **Word first.** It carries production's load and the measured pain, and the existing Rust and oracles are for Word.
 - **Foundation first,** so Word is not built on the prototype's JSON model.
-- **P3a after P2,** because layout reads the Rust model.
-- **P3b before PowerPoint,** because DrawingML, charts and metafiles serve both formats, and Word's drawings need them.
+- **Layout before edits (2026-11-16).** Production's first large tracked report (about 360 pages, 12 writers)
+  showed that the Python layout dominates both memory and CPU:
+  - each kept whole-document layout is about 0.4 GB of Python objects, and the process grew to 5.4 GB;
+  - Python's garbage collector walks those objects on every edit, so an edit's own work rose from 0.3 s to 10–14 s;
+  - laying out the report costs 25–280 s of CPU under the interpreter lock per version.
+
+  Edits in Python, by contrast, cost well under a second once layouts are out of the heap. So the layout moves first.
+  - It needs only the read-side model (L2), not Rust ownership of the document (P2). Python keeps owning the
+    document until P2, and hands Rust each version's touched parts.
+  - A Python-side stopgap that bounds what is kept (round 58) holds production until L4.
+- **P3 before PowerPoint,** because DrawingML, charts and metafiles serve both formats, and Word's drawings need them.
 - **Excel last.** It shares the least, has no layout engine, and its pain is smallest; it could become a third lane from P3 (Q4).
 
 **When each package becomes a shim:**
 - docx-agent at the end of P4 (its tool calls go through Rust from P2);
-- docx2svg at the end of P3b, with its API kept as `ooxml_core` render calls;
+- docx2svg's layout at the end of PL (L4), and its painting at the end of P3, with its API kept as `ooxml_core` render calls;
 - ooxml-edit's tool layer at P2, and its editing core deleted at P7;
 - ooxml-common at the end of P5;
 - pptx2svg and pptx-agent at P5;
@@ -721,7 +734,7 @@ No parser contains unsafe code.
   - one real read-only tool end to end: `describe` over package parts, rendered for both providers by the Python adapters.
 - **xtask:** check-layers, a codegen skeleton (relationships and content-types schemas), data-table packing, lint configuration.
 - **CI:** fmt, clippy with the §2 lints, deny, doc, tests, fuzz (5 minutes per target), iai budgets, abi3 wheels.
-- The prototype crates stay as they are, beside the new ones, until P1 and P2 replace them.
+- The prototype crates stay as they are, beside the new ones, until PL, P1 and P2 replace them.
 
 **Acceptance tests:**
 1. **Writer:** `write(parse(raw))` equals `serialize(parse_xml(raw))` for every XML part of every package in all seven packages' tests and fixtures, plus packages made by the generators. The spike's 620 parts are the floor.
@@ -859,3 +872,6 @@ The user's answers to §14's questions (2026-11-16):
    arc-swap, rayon, thiserror, tracing, PyO3, flate2 with zlib-rs.
 8. **Cooperative cancellation** instead of killing worker processes.
 9. **The seven distribution names** stay, each pinning `ooxml-core` exactly.
+10. **The Word layout moves to Rust as the priority (2026-11-16).** After production's large tracked report, the
+    layout (phase PL) comes right after the foundation and before the edit phases, with the fidelity gates unchanged
+    (SVG byte-identical, relayout equals full).
