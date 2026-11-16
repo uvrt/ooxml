@@ -1,0 +1,53 @@
+# TEMPORARY (lane J): loops block_stress's --more --tracked mix on free-threaded Python,
+# against main e39128d9's code and this branch's, to find an intermittent difference.
+# Removed before the branch is handed back.
+name: TEMPORARY free-threaded stress loop
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  loop:
+    name: TEMPORARY stress loop (${{ matrix.code }}, ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        code: [branch]
+        python: ["3.15t", "3.14t"]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Keep the loop and the stress of this branch
+        run: |
+          mkdir -p /tmp/stress
+          cp python/docx-agent/tests/block_stress.py /tmp/stress/
+          cp .github/tmp-ft/loop.py /tmp/stress/
+      - name: Main's code
+        if: matrix.code == 'main'
+        run: git checkout e39128d9b3b9772ab70bc0327648755ccea232d4 -- python crates Cargo.toml Cargo.lock tools
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          allow-prereleases: true
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install
+        run: python tools/ci.py install docx-agent --free-threading
+      - name: Loop
+        env:
+          PYTHON_GIL: "0"
+          DOCX_AGENT_FULL_VALIDATE: "1"
+          OOXML_EDIT_VERIFY_SERIALIZED: "1"
+          DOCX_AGENT_DRAFTS: "1"
+        run: |
+          mkdir -p work && cd work
+          python -c "import sys; print('gil', sys._is_gil_enabled())"
+          python /tmp/stress/loop.py /tmp/stress 1,2,3,4,5 2700
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: stress-${{ matrix.code }}-${{ matrix.python }}
+          path: work/out
