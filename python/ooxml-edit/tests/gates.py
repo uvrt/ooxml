@@ -5,9 +5,9 @@ notes that X is done, then opens the gate: the order the notes come in is the cl
 waited for Y, Y's hold times out (:data:`TIMEOUT`) and notes so, and the test fails on the
 order -- it never passes slowly, and a busy machine cannot make it fail.
 
-A gate lives in a directory, so a worker process can hold it as a thread can: the notes are
-lines appended to a file there (under a lock: :meth:`Gate._locked`), the gate is open once a
-file named ``open`` is there.  A :class:`Gate` pickles as its path."""
+A gate lives in a directory, so a worker process can hold it as a thread can: each note is a
+file made there in turn (:meth:`Gate.note`), the gate is open once a file named ``open`` is
+there.  A :class:`Gate` pickles as its path."""
 
 from __future__ import annotations
 
@@ -18,9 +18,6 @@ from pathlib import Path
 
 #: How long a hold waits for the test to open its gate before it notes that it timed out.
 TIMEOUT = 60.0
-
-#: How old the gate's lock is when it is taken as left behind by a killed worker (seconds).
-STALE = 10.0
 
 #: How often a hold looks whether its gate is open (seconds).
 POLL = 0.005
@@ -37,49 +34,28 @@ class Gate:
     def _dir(self) -> Path:
         return Path(self.path)
 
-    def _locked(self):
-        """The gate's lock across threads and processes: a directory made, then removed.
-        Windows emulates an append as a seek and a write, so appends from two processes
-        can land on one another; the notes are written and read under this instead."""
-        gate = self
-
-        class _Lock:
-            def __enter__(self):
-                ends = time.monotonic() + TIMEOUT
-                while True:
-                    try:
-                        os.mkdir(gate._dir / "lock")
-                        return self
-                    except FileExistsError:
-                        # One left by a worker killed while it wrote (a test kills some) is
-                        # taken over: nobody holds it this long otherwise.
-                        try:
-                            if time.time() - os.stat(gate._dir / "lock").st_mtime > STALE:
-                                os.rmdir(gate._dir / "lock")
-                                continue
-                        except FileNotFoundError:
-                            continue
-                        assert time.monotonic() < ends, f"the gate's lock was never let go: {gate.path}"
-                        time.sleep(POLL / 5)
-
-            def __exit__(self, *exc):
-                os.rmdir(gate._dir / "lock")
-                return False
-
-        return _Lock()
-
     def note(self, what: str) -> None:
-        """Append ``what`` to the order (one line, under the gate's lock)."""
-        with self._locked():
-            with open(self._dir / "order", "a", encoding="utf-8") as out:
-                out.write(what + "\n")
+        """``what`` happened now: the next note in turn, made as a file of its own whose name
+        is its number and its text.  Making a file that must not exist yet is atomic on every
+        platform, between processes too (an append is not on Windows, which emulates it as a
+        seek and a write: two processes' notes could land on one another)."""
+        notes = self._dir / "notes"
+        notes.mkdir(exist_ok=True)
+        number = len(os.listdir(notes)) + 1
+        while True:
+            try:
+                os.close(os.open(notes / f"{number:06d}-{what.encode().hex()}",
+                                 os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+                return
+            except FileExistsError:
+                number += 1
 
     def order(self) -> list[str]:
-        with self._locked():
-            try:
-                return (self._dir / "order").read_text(encoding="utf-8").splitlines()
-            except FileNotFoundError:
-                return []
+        try:
+            names = sorted(os.listdir(self._dir / "notes"))
+        except FileNotFoundError:
+            return []
+        return [bytes.fromhex(name.split("-", 1)[1]).decode() for name in names]
 
     def hold(self, name: str = "held", timeout: float = TIMEOUT) -> bool:
         """Note ``<name> in``, wait until the gate is open, note ``<name> out`` -- or, past
