@@ -1375,3 +1375,32 @@ def test_a_relationship_let_go_on_a_draft_and_used_meanwhile_is_kept(monkeypatch
             assert found["replace"].to_json()["checks"]["validate"]["new"] == []
             outcomes.append((block_stress.normal(found["replace"]), session.entry(doc).document.to_bytes()))
     assert outcomes[0] == outcomes[1]
+
+
+def test_a_tables_width_of_the_body_reads_the_paragraph_before_it(monkeypatch):
+    """Lane J (0.1.120): ``word_format_table``'s width "of the body" reads the nearest
+    paragraph before the table (its indents); a paragraph put between them meanwhile -- the
+    list item that was before the table no longer the nearest -- is a conflict, prepared
+    again: the same width and indent as the two calls one at a time in commit order."""
+    outcomes = []
+    for concurrent in (True, False):
+        with opened("always" if concurrent else "off") as (box, session, doc, layout):
+            table, item = layout.tables[0], layout.items[0][-1]
+            width = ("word_format_table", {"doc": doc, "table": table, "scope": "table", "width_of": "body"})
+            insert = ("word_insert_markdown", {"doc": doc, "at": f"after:{item}", "markdown": "A plain paragraph."})
+            found: dict = {}
+            if concurrent:
+                with held(monkeypatch) as hold:
+                    thread, slow = _in_thread(lambda: box.dispatch(session.view(context={"agent": "x"}), *width))
+                    assert hold.ready.wait(60)
+                    found["insert"] = box.dispatch(session.view(context={"agent": "y"}), *insert)
+                    hold.release()
+                    thread.join()
+                    found["width"] = slow["result"]
+                assert found["width"].block["tries"] == 2, found["width"].block
+            else:
+                found["insert"] = box.dispatch(session, *insert)
+                found["width"] = box.dispatch(session, *width)
+            assert found["width"].ok and found["insert"].ok
+            outcomes.append((block_stress.normal(found["width"]), session.entry(doc).document.to_bytes()))
+    assert outcomes[0] == outcomes[1]

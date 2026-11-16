@@ -50,6 +50,13 @@ snapshot commit; the development history before it is summarised here.
   prepared again on the version committed (`Blocks.check`), as is a change that let a
   part go while others added relationships. Present since drafts merged relationships
   others added (round 48).
+- **A table's width "of the body" made on a draft reads the paragraph before the table**:
+  `word_format_table` with `width_of: "body"` sizes the table to the lines of the nearest
+  paragraph before it (its indents); the draft now records every block from the table to
+  that paragraph as read, so a paragraph put between them, or that paragraph changed,
+  meanwhile is a conflict, prepared again (the stress found the table indented as the list
+  item that was no longer before it). With no paragraph before the table, the call takes
+  the document's lock.
 - Needs docx2svg 0.12.1: a check's substituted faces said in the order a full layout says
   them, whichever layout it was made from (two writers' checks of one version said them
   in different orders).

@@ -445,6 +445,30 @@ class DraftOps:
                 recording.read(self, part, entry.element)
         return part, entries
 
+    def body_lines(self, table: str) -> Any:
+        # Lane J: where the body's lines run beside a table (a table's width "of the body")
+        # reads the nearest paragraph before it, else after it: every block from the table
+        # to that paragraph, in a row -- one put between them, or that paragraph changed,
+        # meanwhile is a conflict.  None before it (one put before it meanwhile would be the
+        # one read): the lock.
+        found = super().body_lines(table)  # type: ignore[misc]
+        recording = self.__dict__.get("_recording")
+        if recording is not None:
+            from .edit.table_format import _previous_block
+
+            part, entry = self._table_entry(table)  # type: ignore[attr-defined]
+            passed = [entry.element]
+            node = _previous_block(entry.element)
+            while node is not None and node.tag != _W + "p":
+                passed.append(node)
+                node = _previous_block(node)
+            if node is None:
+                self._draft_cannot("a table's lines read with no paragraph before it")
+            else:
+                for element in passed + [node]:
+                    recording.read(self, part, element)
+        return found
+
     def range(self, identifier: str, *, view: str = "current") -> Any:
         # Round 48: a text range's paragraphs, from its first to its last.
         found = super().range(identifier, view=view)  # type: ignore[misc]
