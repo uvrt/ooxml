@@ -16,10 +16,16 @@ snapshot commit; the development history before it is summarised here.
   bytes'. The whole part is written where anything outside the blocks changed (the
   document's or the body's start, the last section's properties), a block declares a
   namespace of its own, the body holds something not an element (a comment), or the core
-  is missing. TIMING_WRITE
+  is missing. On the made-up report of about 3,000 pages (body 20 MB) a version is
+  written in 50-80 ms instead of 0.2 s. One writer, wall p50 (295 / ~1,000 / ~3,000 pages):
+  Markdown insert 0.08 / 0.26 / 0.57 s (was 0.11 / 0.27 / 0.77), `set_text` 0.08 / 0.18 /
+  0.43 s (0.09 / 0.27 / 0.80), `set_cells` 0.13 / 0.31 / 0.67 s (0.15 / 0.39 / 1.42), undo
+  0.06 / 0.16 / 0.35 s (0.07 / 0.17 / 0.51).
 - **A batch's ops after the first no longer index the body whole**: between ops the body's
   bytes are written from the last ones and the index is made from the last one where it
-  changed. TIMING_BATCH
+  changed. A batch of a Markdown insert and a `set_text`: 0.19 / 0.37 / 0.82 s
+  (was 0.33 / 0.74 / 1.95), no more than the two as separate calls at ~1,000 and ~3,000
+  pages.
 - **The body's index is told unchanged in Rust** (`index_walk`: the paragraphs, rows and
   tables, their paraIds and rows' tables, as a digest), milliseconds instead of a walk in
   Python; and an edit's stamping does not look through an index already found stamped.
@@ -28,7 +34,9 @@ snapshot commit; the development history before it is summarised here.
   document's lock in turn instead. With the lock, the calls' Python runs one at a time
   either way, and a draft repeats the call's work (a copy of the document read and indexed,
   the per-version passes run on both, the call prepared again after a conflict), so drafts
-  made the same edits cost more and wait longer. TIMING_DRAFTS The results are the
+  made the same edits cost more and wait longer. On the made-up report of 295 pages with
+  24 writers (a batch and a check each, three turns): edit p99 6.0 s instead of 58-65 s,
+  CPU 23 s instead of 121-128 s, memory 0.4 GB instead of 1.7 GB. The results are the
   same either way (the calls one at a time, in the order their changes were made). Where
   the interpreter runs without its lock (a free-threaded build) edits go on drafts as
   before; `DOCX_AGENT_DRAFTS=1` drafts with the lock too, `DOCX_AGENT_DRAFTS=0` never.

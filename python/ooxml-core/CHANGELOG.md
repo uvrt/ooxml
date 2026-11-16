@@ -9,7 +9,8 @@ ooxml-core is the Rust core of the ooxml packages (`crates/`), as the Python mod
   nodes (lxml's public `struct LxmlElement`, libxml2's `xmlNode`), of everything libxml2's
   serializer writes: one per child of `body` as lxml counts children (the child, its subtree
   and its tail), one for the rest of the part; 128 bits each (two foldhash hashes seeded at
-  random per process), the children read side by side, the interpreter lock let go.
+  random per process), the children read side by side on two threads of the core's own
+  (made again in a forked process), the interpreter lock let go.
   `None` where a node is of a kind it does not read. docx-agent 0.1.120 writes again only
   the blocks whose digests changed.
 - **`ooxml_core.unit_starts(data, start, end)`**: where each child of a body begins in the
