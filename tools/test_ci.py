@@ -47,15 +47,18 @@ class PlanTest(unittest.TestCase):
             versions = ci._pythons(name)
             self.assertEqual(_legs(out, "linux")[name], versions)
             self.assertEqual(_legs(out, "windows")[name], [versions[0], versions[-1]])
-            self.assertEqual(_legs(out, "macos")[name], [versions[-1]])
-        self.assertIs(out["any_macos"], True)
+        self.assertEqual(out["macos"]["include"], [])
+        self.assertIs(out["any_macos"], False)
 
-    def test_nightly_and_manual_take_everything(self) -> None:
+    def test_nightly_and_manual(self) -> None:
         for event in ("schedule", "workflow_dispatch"):
             out = _plan(event)
-            for os_ in ci.RUNNERS:
-                for name in ci.PACKAGES:
-                    self.assertEqual(_legs(out, os_)[name], ci._pythons(name), (event, os_))
+            self.assertIs(out["any_macos"], True)
+            for name in ci.PACKAGES:
+                versions = ci._pythons(name)
+                self.assertEqual(_legs(out, "linux")[name], versions, event)
+                self.assertEqual(_legs(out, "windows")[name], versions, event)
+                self.assertEqual(_legs(out, "macos")[name], [versions[-1]], event)
 
     def test_no_free_threaded_legs(self) -> None:
         for event in ("pull_request", "push", "schedule", "workflow_dispatch"):

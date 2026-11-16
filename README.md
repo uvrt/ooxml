@@ -64,10 +64,11 @@ example `pip install ./python/ooxml-common ./python/ooxml-edit ./python/docx2svg
   each package's install and test command; `python tools/ci.py affected <paths>` shows
   what a change selects). A change to `.github/` or `tools/` runs everything; main, the
   nightly run and a manual run take every package. The Pythons per OS spare the few macOS
-  runners: a pull request runs Linux on the oldest and the newest Python, Windows on the
-  newest, no macOS; a push to main runs Linux on every Python, Windows on the oldest and
-  the newest, macOS on the newest; the nightly run and a manual run take every Python on
-  every OS (`tools/ci.py`, `LEGS`; its tests: `python -m unittest discover -s tools`). A newer push to a pull request or to main cancels the
+  runners (development and local test runs already happen on macOS): a pull request runs
+  Linux on the oldest and the newest Python, Windows on the newest, no macOS; a push to
+  main runs Linux on every Python, Windows on the oldest and the newest, no macOS; the
+  nightly run and a manual run take every Python on Linux and Windows and the newest on
+  macOS (`tools/ci.py`, `LEGS`; its tests: `python -m unittest discover -s tools`). A newer push to a pull request or to main cancels the
   older push's run. Branch protection requires the jobs `required (ubuntu, build)` and
   `required (windows)`, which pass when every leg they cover passed or was left out;
   macOS legs are not required.

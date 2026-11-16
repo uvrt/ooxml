@@ -10,8 +10,8 @@ differences live here and nowhere else:
         every package that depends on one of them (USES below); a change to the workflows or
         to tools/ runs everything.  A push to main, the nightly run and a manual run take all.
         Which Pythons each OS runs depends on the event (LEGS below): macOS runners are
-        the scarce ones, so a pull request runs none, a push to main the newest Python, and
-        only the nightly and a manual run take every Python on every OS.
+        the scarce ones and development already runs on macOS, so a pull request and a
+        push to main run no macOS leg, and the nightly and a manual run one per package.
     python tools/ci.py affected FILE...
         The packages those changed files select, one per line (for a quick look by hand).
     python tools/ci.py install PACKAGE
@@ -181,14 +181,15 @@ def _pythons(name: str) -> list[str]:
 
 
 #: Which of a package's Pythons each OS runs, per event: "all", "ends" (the oldest and the
-#: newest), "newest" or None (no legs).  macOS runners are few and shared by every run, so
-#: a pull request runs no macOS leg and a push to main one per package; the nightly run and
-#: a manual run take the whole matrix.  An event not named here takes the whole matrix too.
+#: newest), "newest" or None (no legs).  macOS runners are few and shared by every run,
+#: and development and local test runs already happen on macOS, so a pull request and a
+#: push to main run no macOS leg; the nightly run and a manual run (FULL_LEGS, also any
+#: event not named here) take every Python on Linux and Windows and the newest on macOS.
 LEGS: dict[str, dict[str, str | None]] = {
     "pull_request": {"linux": "ends", "windows": "newest", "macos": None},
-    "push": {"linux": "all", "windows": "ends", "macos": "newest"},
+    "push": {"linux": "all", "windows": "ends", "macos": None},
 }
-FULL_LEGS: dict[str, str | None] = {"linux": "all", "windows": "all", "macos": "all"}
+FULL_LEGS: dict[str, str | None] = {"linux": "all", "windows": "all", "macos": "newest"}
 RUNNERS = {"linux": "ubuntu-latest", "windows": "windows-latest", "macos": "macos-latest"}
 
 
