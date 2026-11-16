@@ -1,0 +1,46 @@
+# TEMPORARY (lane L): block_stress on free-threaded Python in a loop, many shards, a watchdog
+# that takes Python and native stacks of a hang.  Removed before the branch is handed back.
+name: TEMPORARY free-threaded writers loop
+
+on:
+  push:
+    branches: [ft-writers]
+  workflow_dispatch:
+    inputs:
+      budget:
+        default: "2400"
+
+jobs:
+  loop:
+    name: TEMPORARY writers loop (shard ${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.15t"
+          allow-prereleases: true
+      - uses: dtolnay/rust-toolchain@stable
+      - name: gdb
+        run: sudo apt-get -o Acquire::Retries=5 install -y --no-install-recommends gdb || true
+      - name: Install
+        run: python tools/ci.py install docx-agent --free-threading
+      - name: Loop
+        env:
+          PYTHON_GIL: "0"
+          DOCX_AGENT_FULL_VALIDATE: "1"
+          OOXML_EDIT_VERIFY_SERIALIZED: "1"
+          DOCX_AGENT_DRAFTS: "1"
+        run: |
+          mkdir -p work && cd work
+          python ../.github/tmp-ft/loop.py ../python/docx-agent/tests ${{ matrix.shard }} ${{ inputs.budget || '2400' }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: loop-shard-${{ matrix.shard }}
+          path: work/out
