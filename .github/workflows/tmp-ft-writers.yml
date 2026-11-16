@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -34,9 +34,12 @@ jobs:
           DOCX_AGENT_FULL_VALIDATE: "1"
           OOXML_EDIT_VERIFY_SERIALIZED: "1"
           DOCX_AGENT_DRAFTS: "1"
+          LOOP_ROUND: "2"
         run: |
-          mkdir -p work && cd work
-          python ../.github/tmp-ft/loop.py ../python/docx-agent/tests ${{ matrix.shard }} 2400
+          mkdir -p work/out && cd work
+          if [ ${{ matrix.shard }} -gt 4 ]; then export MODES=more-tracked THREADS=8,16,24; fi
+          ../.github/tmp-ft/watchdog.sh 600 &
+          python ../.github/tmp-ft/loop.py ../python/docx-agent/tests ${{ matrix.shard }}${LOOP_ROUND:-0} 2400
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -17,15 +17,60 @@ import traceback
 sys.path.insert(0, sys.argv[1])
 import block_stress  # noqa: E402
 import lxml.etree  # noqa: E402
+import difflib  # noqa: E402
+import io  # noqa: E402
+import signal  # noqa: E402
+import zipfile  # noqa: E402
+
+# What a failed run is made of: the calls, the commits, both final documents.
+SEEN = {}
+_order, _replay, _repeated = block_stress._order, block_stress.replay, block_stress.repeated_ids
+
+
+def order(calls, commits):
+    SEEN["calls"], SEEN["commits"] = calls, commits
+    return _order(calls, commits)
+
+
+def replay(data, order_, *a, **k):
+    out = _replay(data, order_, *a, **k)
+    SEEN["serial"] = out["final"]
+    SEEN["order"] = [item["call"] for item in order_]
+    return out
+
+
+def repeated(data):
+    SEEN["final"] = data
+    return _repeated(data)
+
+
+block_stress._order, block_stress.replay, block_stress.repeated_ids = order, replay, repeated
+
+
+def part_diffs(a, b):
+    za, zb = zipfile.ZipFile(io.BytesIO(a)), zipfile.ZipFile(io.BytesIO(b))
+    na, nb = set(za.namelist()), set(zb.namelist())
+    out = {"only_concurrent": sorted(na - nb), "only_serial": sorted(nb - na), "parts": {}}
+    for name in sorted(na & nb):
+        x, y = za.read(name), zb.read(name)
+        if x != y:
+            xs = x.decode("utf-8", "replace").replace("><", ">\n<").splitlines()
+            ys = y.decode("utf-8", "replace").replace("><", ">\n<").splitlines()
+            out["parts"][name] = list(difflib.unified_diff(xs, ys, "concurrent", "serial", n=6, lineterm=""))[:400]
+    return out
 
 shard = int(sys.argv[2])
 budget = float(sys.argv[3])
 WATCHDOG = float(os.environ.get("WATCHDOG", "420"))
 os.makedirs("out", exist_ok=True)
 faulthandler.enable()
+# The watchdog outside the process (the workflow's) sends SIGUSR1: every thread's Python
+# stack, written by faulthandler's own signal handler (no eval loop needed).
+faulthandler.register(signal.SIGUSR1, file=open("out/stacks.txt", "a"), all_threads=True)
 
-MODES = (("plain", False, False), ("more", True, False), ("more-tracked", True, True))
-THREADS = (4, 8, 16, 24)
+MODES = tuple(m for m in (("plain", False, False), ("more", True, False), ("more-tracked", True, True))
+              if m[0] in os.environ.get("MODES", "plain,more,more-tracked").split(","))
+THREADS = tuple(int(t) for t in os.environ.get("THREADS", "4,8,16,24").split(","))
 
 
 class Logged(logging.Handler):
@@ -94,14 +139,17 @@ runs = 0
 fails = []
 i = 0
 while time.time() - started < budget:
-    name, more, tracked = MODES[i % 3]
-    threads = THREADS[(i // 3) % 4]
+    name, more, tracked = MODES[i % len(MODES)]
+    threads = THREADS[(i // len(MODES)) % len(THREADS)]
     seed = 1000 * shard + i
     i += 1
     info = {"seed": seed, "mode": name, "threads": threads}
     done = threading.Event()
     watch = threading.Thread(target=lambda: done.wait(WATCHDOG) or hang(info), daemon=True)
     watch.start()
+    with open("out/current.json", "w") as f:
+        json.dump({**info, "pid": os.getpid(), "at": time.time()}, f)
+    SEEN.clear()
     logged.found.clear()
     t = time.time()
     found = block_stress.run(seed, threads=threads, calls=8 if threads <= 8 else 6, chapters=4,
@@ -115,6 +163,17 @@ while time.time() - started < budget:
         fails.append(row)
         with open(f"out/fail-shard{shard}-seed{seed}.json", "w") as f:
             json.dump({**row, **found, "logged": logged.found}, f, default=str, indent=1)
+        detail = {"order": SEEN.get("order"), "commits": SEEN.get("commits"),
+                  "calls": [{k: c[k] for k in ("call", "thread", "name", "arguments", "version", "start", "end", "block")}
+                            for c in SEEN.get("calls") or []]}
+        if SEEN.get("final") is not None and SEEN.get("serial") is not None and SEEN["final"] != SEEN["serial"]:
+            detail["bytes"] = part_diffs(SEEN["final"], SEEN["serial"])
+            with open(f"out/final-shard{shard}-seed{seed}-concurrent.docx", "wb") as f:
+                f.write(SEEN["final"])
+            with open(f"out/final-shard{shard}-seed{seed}-serial.docx", "wb") as f:
+                f.write(SEEN["serial"])
+        with open(f"out/detail-shard{shard}-seed{seed}.json", "w") as f:
+            json.dump(detail, f, default=str, indent=1)
 summary = {"shard": shard, "runs": runs, "fails": len(fails), "failed": fails}
 print("SUMMARY " + json.dumps(summary), flush=True)
 with open(f"out/summary-shard{shard}.json", "w") as f:
