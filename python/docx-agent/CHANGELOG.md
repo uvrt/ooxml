@@ -5,6 +5,33 @@ docx-agent has not been released to PyPI. Each version that reaches `main` is ta
 snapshot commit; the development history before it is summarised here.
 [`ROADMAP.md`](ROADMAP.md) has the detail of every phase.
 
+## 0.1.125 -- unreleased
+
+- **Many writers on one document under free-threaded Python (3.15t, lxml 7).** A free-threaded
+  stress (`block_stress`, plain, `--more`, `--more --tracked`, 4 to 24 threads on one
+  document, edits on drafts) found one way the results differed from the same calls one at
+  a time in commit order, now fixed: a draft that stopped using a relationship in its blocks
+  (a link's) kept it because another block of its version used it; when that block's use
+  went meanwhile (undone or replaced), the change applied left a relationship no block uses
+  where the call run in its turn lets it go. Now a conflict ("a relationship it kept is used
+  by no block now"): the call is prepared again on the version committed meanwhile. (The
+  reverse case was lane J's, 0.1.120.)
+- Classes that were made per call (the Rust mirror's and parser's models, the Rust check's
+  scope, small shims) are made once (`docx_agent.rust.classes`) or at module level. A
+  free-threaded CPython 3.15.2 can hang for good when several threads make classes at once
+  (round 47 found it); with many writers every call made them. Also faster: attribute
+  lookups on those classes now stay in the type cache.
+- Two failures on 3.15t are lxml 7.0.0b1's, not docx-agent's, and remain: an `_Element`'s
+  finalizer drops references while it holds its document's (non-reentrant) proxy lock, so
+  when CPython 3.15 frees another element of the same document right there -- it merges a
+  waiting thread's queued objects on that thread's behalf (`_Py_brc_queue_object`) -- the
+  thread waits for itself, holding the document's lock (a hang: native stacks of 6 hangs in
+  CI all show it); and an `AssertionError: invalid Element proxy` in a read (5 seen), most
+  likely the same finalizer invalidating a proxy another thread obtained meanwhile. Both
+  need lxml's finalizer fixed, or every lxml tree used by one thread only.
+- A free-threaded-only test runs 8 to 24 writers on one document
+  (`tests/test_block_edits_ft.py`); with the interpreter lock it is skipped.
+
 ## 0.1.123 -- unreleased
 
 - **The work each version costs is now in proportion to the change, most of it in Rust with
