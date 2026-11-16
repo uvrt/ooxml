@@ -64,8 +64,6 @@ def main():
     print(out, len(data))
 
 
-if __name__ == "__main__" and not globals().get("NOMAIN"):
-    main()
 
 
 def grow(base: str, times: int, out: str) -> None:
@@ -96,3 +94,7 @@ def grow(base: str, times: int, out: str) -> None:
         for info, data in items:
             z.writestr(info, grown.encode() if info.filename == "word/document.xml" else data)
     print(out, count * times, "chapters")
+
+
+if __name__ == "__main__" and not globals().get("NOMAIN"):
+    main()
