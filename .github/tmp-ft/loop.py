@@ -120,9 +120,10 @@ while time.time() - started < budget:
     logged.found.clear()
     t = time.time()
     found = block_stress.run(seed, threads=threads, calls=8 if threads <= 8 else 6, chapters=4,
-                             first_fill=bool(seed % 2), tracked=tracked, more=more)
+                             first_fill=bool(seed % 2), tracked=tracked, more=more,
+                             mode=os.environ.get("BLOCK_MODE", "always"))
     runs += 1
-    row = {**info, "s": round(time.time() - t, 1), "same": found["same"], "drafted": found["drafted"],
+    row = {**info, "block_mode": os.environ.get("BLOCK_MODE", "always"), "s": round(time.time() - t, 1), "same": found["same"], "drafted": found["drafted"],
            "conflicts": found["conflicts"], "calls": found["calls"], "logged": len(logged.found)}
     print(json.dumps(row), flush=True)
     if not found["same"] or logged.found:

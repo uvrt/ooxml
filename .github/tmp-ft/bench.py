@@ -28,6 +28,43 @@ WORDS = ("lantern meadow river stone harbour quiet orchard copper valley signal 
          "window garden timber bridge market evening canvas thread pebble summit").split()
 INCLUDE = ["validate", "layout", "numbers", "reflow", "fields"]
 GC = {"n": [0, 0, 0], "s": [0.0, 0.0, 0.0], "max": 0.0}
+PHASES: dict = {}
+_PHASE_LOCK = None
+
+
+def timed_phases():
+    """Wall and CPU time per phase of a change's critical section and of a draft's work, summed
+    over the run (the thread's own CPU)."""
+    global _PHASE_LOCK
+    import threading as _t
+
+    _PHASE_LOCK = _t.Lock()
+    from docx_agent import blocks as _blocks
+    from ooxml_edit.tools import session as _session
+
+    def wrap(owner, name, label):
+        original = getattr(owner, name)
+
+        def timed(*args, **kwargs):
+            w, c = time.perf_counter(), time.thread_time()
+            try:
+                return original(*args, **kwargs)
+            finally:
+                dw, dc = time.perf_counter() - w, time.thread_time() - c
+                with _PHASE_LOCK:
+                    item = PHASES.setdefault(label, [0, 0.0, 0.0])
+                    item[0] += 1
+                    item[1] += dw
+                    item[2] += dc
+        setattr(owner, name, timed)
+
+    wrap(_blocks.Blocks, "draft", "draft: copy made or reused")
+    wrap(_blocks.Blocks, "prepared", "draft: patch made")
+    wrap(_blocks.Blocks, "check", "lock: check")
+    wrap(_blocks.Blocks, "apply", "lock: apply")
+    wrap(_blocks.Blocks, "settle", "lock: settle")
+    wrap(_session.DocumentEntry, "commit", "lock: commit (read copy kept)")
+    wrap(_session.DocumentEntry, "snapshot", "lock: snapshot")
 
 
 def sentence(rng, n=12):
@@ -68,6 +105,7 @@ def main():
     ap.add_argument("--no-worth", action="store_true", help="drafts at any size (DRAFT_BODY_LIMIT off)")
     args = ap.parse_args()
     gc_watch()
+    timed_phases()
     if args.no_worth:
         import docx_agent.blocks as blocks
         blocks.DRAFT_BODY_LIMIT = 1 << 40
@@ -158,7 +196,8 @@ def main():
         "draft_cpu": summary([b.get("cpu") for b in blocks_ if b.get("cpu") is not None]),
         "peak_rss_mb": round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024),
         "gc": {"runs": GC["n"], "pause_s": [round(x, 3) for x in GC["s"]], "max_pause_s": round(GC["max"], 4)},
-        "failed": [c for c in calls if not c["ok"]][:10], "errors": errors[:10]})
+        "failed": [c for c in calls if not c["ok"]][:10], "errors": errors[:10],
+        "phases": {k: {"n": v[0], "wall_s": round(v[1], 3), "cpu_s": round(v[2], 3)} for k, v in PHASES.items()}})
     out["calls"] = calls
     with open(args.out, "w") as f:
         json.dump(out, f, indent=1, default=str)
