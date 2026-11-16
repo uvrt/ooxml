@@ -29,6 +29,17 @@ def test_concurrent_tracked_edits_equal_their_commit_order_run_alone(seed):
     assert found["drafted"] > 0 and found["revisions"] > 0 and not found["repeated_ids"]
 
 
+@pytest.mark.parametrize("seed, tracked", [(2, False), (3, True)])
+def test_concurrent_edits_with_redo_fields_lists_and_neighbours_equal_their_commit_order(seed, tracked):
+    """Lane J: the mix with redo, fields updates, lists put by the chapters' lists and two
+    neighbouring blocks edited in one batch (``block_stress.more_call``) -- the same results,
+    bytes and id state as one call at a time in commit order."""
+    found = block_stress.run(seed, threads=4, calls=8, chapters=3, first_fill=bool(seed % 2), tracked=tracked,
+                             more=True)
+    assert found["same"], found
+    assert found["drafted"] > 0
+
+
 @pytest.mark.slow
 @pytest.mark.parametrize("seed", range(2, 8))
 def test_many_callers_long(seed):

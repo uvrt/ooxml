@@ -129,7 +129,9 @@ from __future__ import annotations
 import contextlib
 import difflib
 import json
+import os
 import re
+import sys
 import threading
 import weakref
 from collections import Counter
@@ -442,6 +444,30 @@ class DraftOps:
             for entry in entries:
                 recording.read(self, part, entry.element)
         return part, entries
+
+    def body_lines(self, table: str) -> Any:
+        # Lane J: where the body's lines run beside a table (a table's width "of the body")
+        # reads the nearest paragraph before it, else after it: every block from the table
+        # to that paragraph, in a row -- one put between them, or that paragraph changed,
+        # meanwhile is a conflict.  None before it (one put before it meanwhile would be the
+        # one read): the lock.
+        found = super().body_lines(table)  # type: ignore[misc]
+        recording = self.__dict__.get("_recording")
+        if recording is not None:
+            from .edit.table_format import _previous_block
+
+            part, entry = self._table_entry(table)  # type: ignore[attr-defined]
+            passed = [entry.element]
+            node = _previous_block(entry.element)
+            while node is not None and node.tag != _W + "p":
+                passed.append(node)
+                node = _previous_block(node)
+            if node is None:
+                self._draft_cannot("a table's lines read with no paragraph before it")
+            else:
+                for element in passed + [node]:
+                    recording.read(self, part, element)
+        return found
 
     def range(self, identifier: str, *, view: str = "current") -> Any:
         # Round 48: a text range's paragraphs, from its first to its last.
@@ -989,6 +1015,24 @@ class Draft:
             pool.recording = None
 
 
+def drafts_on() -> bool:
+    """Lane J (0.1.120): whether an edit beside another of its document is prepared on a
+    draft (``block_edits="auto"``): ``DOCX_AGENT_DRAFTS=1`` yes, ``0`` no; unset, only where
+    the interpreter runs without its lock (a free-threaded build).  With the lock, the
+    calls' Python runs one at a time whichever way they go, and a draft repeats the work
+    the call does on the document -- a copy of it, read and indexed, the passes run on both,
+    and the call prepared again after a conflict -- so the same edits cost more CPU and
+    wait longer than taking the document's lock in turn (measured on a made-up report of
+    295 pages with 24 writers: edit p99 65 s with drafts, 9 s without; CPU 121 s against
+    28 s).  Either way the results are those of the calls one at a time in the order their
+    changes were made."""
+    setting = os.environ.get("DOCX_AGENT_DRAFTS", "").strip()
+    if setting in ("0", "1"):
+        return setting == "1"
+    gil = getattr(sys, "_is_gil_enabled", None)
+    return gil is not None and not gil()
+
+
 #: Lane G: the body's size in bytes (``word/document.xml``) above which an edit is not made on
 #: a draft (:meth:`Blocks.worth`): about 600 pages of text.
 DRAFT_BODY_LIMIT = 4 << 20
@@ -1017,6 +1061,8 @@ class Blocks:
         the same result."""
         from .revalidate import body_size, enabled
 
+        if not drafts_on():
+            return False
         if not enabled():
             return True
         size = body_size(document)
@@ -1227,7 +1273,19 @@ class Blocks:
         if moved and any(before is None for _p, before, _a in parts):
             parts = _named_again(patch.parts, parts, moved)
         merged = {**{path: kind for path, kind in merges.items()}, **({merge: "sources"} if merge else {})}
-        return Plan(patch, _spliced(data, live, placed, moved), renames, pool, parts, before=data, moved=moved,
+        spliced = _spliced(data, live, placed, moved)
+        let_go = _let_go(patch.body, parts)
+        if let_go and let_go & {found.group(2).decode() for found in _REL_REFERENCE.finditer(spliced)}:
+            # Lane J: the call let a relationship go that no block of its version used
+            # after it -- one another call's block uses now (a link to the same target
+            # takes the relationship there already): the call run now keeps it.
+            raise BlockConflict("a relationship it let go is used by another block now")
+        if any(before is not None and after is None for _p, before, after in parts) \
+                and _rels_path(patch.body) in changed:
+            # And a part it let go (a picture's), while others added relationships, which
+            # may lead to it: the call run now finds them.
+            raise BlockConflict("a part it let go may be used by a relationship added meanwhile")
+        return Plan(patch, spliced, renames, pool, parts, before=data, moved=moved,
                     placed=placed, merged=merged, relinked=relinked, remarked=ids)
 
     def replay_changes(self, document: Any, plan: Plan, op_changes: list[tuple[int, str, Any]]
@@ -1596,6 +1654,24 @@ def _merge_added(kind: str, live: bytes, before: bytes | None, after: bytes | No
 
 
 _REL_REFERENCE = re.compile(rb'(r:(?:id|embed|link|pict)=")(rId\d+)(")')
+_REL_ID = re.compile(rb'<Relationship\b[^>]*?\bId="([^"]*)"')
+
+
+def _rels_path(body: str) -> str:
+    from ooxml_edit.opc import rels_path_for
+
+    return rels_path_for(body)
+
+
+def _let_go(body: str, parts: list[tuple[str, bytes | None, bytes | None]]) -> set[str]:
+    """The ids of the body part's relationships a call's patch takes away (lane J): in its
+    relationships part before and not after."""
+    path = _rels_path(body)
+    for found, before, after in parts:
+        if found == path and before is not None:
+            kept = set(_REL_ID.findall(after)) if after is not None else set()
+            return {value.decode() for value in set(_REL_ID.findall(before)) - kept}
+    return set()
 
 
 def _relinked_window(window: "_Window", renamed: Mapping[str, str]) -> "_Window":

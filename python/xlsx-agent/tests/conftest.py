@@ -11,6 +11,10 @@ import pytest
 # written out again, at every use (ooxml_edit.opc.OpcPackage.keep_serialized).
 os.environ.setdefault("OOXML_EDIT_VERIFY_SERIALIZED", "1")
 
+# docx-agent 0.1.120 (lane J): a Word document's edits beside other edits go on drafts here,
+# as before, with the interpreter lock or without (test_derive_sync_draft.py drafts them).
+os.environ.setdefault("DOCX_AGENT_DRAFTS", "1")
+
 
 def pytest_addoption(parser):
     parser.addoption("--run-slow", action="store_true", default=False,

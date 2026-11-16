@@ -1179,13 +1179,21 @@ class Document(TrackingOps, RevisionOps, TextOps, FormatOps, ListOps, LinkOps, P
                     # it: the Rust owner's change sets read the same, docx_agent.rust.check)
                     data = held[1].data
             last = self.__dict__.get("_index_last", {}).get(part) if _incremental.enabled() else None
+            kept = data is None and last is not None and last.root is root and _ids.same_walk(last)
+            if data is None and not kept and self.__dict__.get("_index_base") is not None \
+                    and _incremental.enabled() and part == self.package.document_part() \
+                    and part in self.package.dirty_parts and getattr(self.package, "_written", None) is not None:
+                # Lane J (0.1.120): between a batch's ops, where nothing keeps the bytes, the
+                # part written out from its last bytes (only the blocks changed written
+                # again), and the index made from the last one per change.
+                data = self.package.read(part)
             if data is not None:
                 index, base = _ids.body_index(root, data, self.__dict__.get("_index_base"))
                 self.__dict__["_index_base"] = base
                 _incremental.STATS["body index: " + ("made" if base is not None else "whole")] += 1
                 if _incremental.verifying() and not _ids.same_index(index, PartIndex("body", root)):
                     raise _incremental.Mismatch("body index: the index made per change differs")
-            elif last is not None and last.root is root and _ids.same_walk(last):
+            elif kept:
                 # 0.1.118: within a call, after a change that left every paragraph, row and
                 # table where it was with its paraId (a cell's or a paragraph's text): the
                 # index before it, not one made again.
@@ -1651,10 +1659,17 @@ class Document(TrackingOps, RevisionOps, TextOps, FormatOps, ListOps, LinkOps, P
         renames: dict[str, str] = {}
         for part in self._parts():
             index = self._index(part)
-            paragraphs = [e for e in index.paragraphs if e.needs_stamp]
             prefix = "" if index.story == "body" else f"{index.story}/"
-            rows = [(table, k, row, row_id) for table in index.tables
-                    for k, (row, row_id) in enumerate(table.rows) if not row_id.startswith(prefix + "tr:")]
+            if index.__dict__.get("_stamping_due") is False:
+                # Lane J (0.1.120): an index whose every paragraph and row is stamped
+                # (:meth:`_stamping_due`, read once per index) is not looked through again.
+                paragraphs, rows = [], []
+            else:
+                paragraphs = [e for e in index.paragraphs if e.needs_stamp]
+                rows = [(table, k, row, row_id) for table in index.tables
+                        for k, (row, row_id) in enumerate(table.rows) if not row_id.startswith(prefix + "tr:")]
+                if not paragraphs and not rows:
+                    index.__dict__["_stamping_due"] = False
             drawings = _ids.drawings_needing_ids(index.root)
             if not paragraphs and not rows and not drawings:
                 continue

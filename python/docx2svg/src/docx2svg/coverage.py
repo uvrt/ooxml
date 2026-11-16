@@ -138,6 +138,26 @@ def _reason(code: str) -> str:
     return code.split(":", 1)[1] if ":" in code else code
 
 
+def in_layout_order(layout, substitutions: dict) -> list:
+    """``substitutions`` (:attr:`docx2svg.fonts.InstalledFonts.substitutions`, by family) in
+    the order ``layout`` meets their faces: those its body's lines draw text in, in the
+    order the body's lines draw them (page by page), then the others as they were recorded
+    (0.12.1).  A layout made from a previous one measures with the previous one's faces,
+    whose record holds the faces in the order the earlier versions met them: so the faces
+    are said in the order of the document laid out, as a layout made afresh says them,
+    whatever layouts came before."""
+    if len(substitutions) < 2:
+        return list(substitutions.values())
+    body: dict = {}
+    for page in layout.pages:
+        for line in page.lines:
+            if line.story is None:
+                for span in line.spans:
+                    body.setdefault(span.face, None)
+    first = [substitutions[face] for face in body if face in substitutions]
+    return first + [found for face, found in substitutions.items() if face not in body]
+
+
 def coverage_of(layout, document, package: bytes | None = None, fonts=None) -> Coverage:
     """The :class:`Coverage` of ``layout`` (:class:`docx2svg.layout.Layout`) of
     ``document``; ``fonts`` the :class:`docx2svg.fonts.InstalledFonts` it was measured
@@ -177,7 +197,7 @@ def coverage_of(layout, document, package: bytes | None = None, fonts=None) -> C
                 laid_out = max(0, len(body) - (layout.pages[stop.page - 1].stop.remaining if stop.page else 0))
 
     # Any measuring object may stand in for InstalledFonts; one that substitutes nothing says so.
-    substituted = [s.as_dict() for s in getattr(fonts, "substitutions", {}).values()]
+    substituted = [s.as_dict() for s in in_layout_order(layout, getattr(fonts, "substitutions", None) or {})]
     missing = sorted(getattr(fonts, "missing", ()))
     # A body block drawn as a placeholder is not laid out.
     skipped = {path for *_, path in getattr(layout, "placeholders", ()) if path}

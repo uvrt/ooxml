@@ -135,6 +135,12 @@ class Layout:
         tables = document.tables()
         self.fill = next(t.id for t in tables if t.cell(0, 0).text == "code")
         self.tables = [t.id for t in tables if t.cell(0, 0).text == "Item"]
+        # Lane J: each chapter's list items (its bullet and numbered lists' paragraphs).
+        styles = {p.id: (p.style or "") for p in paragraphs}
+        self.items = []
+        for head, end in zip(self.heads, self.ends):
+            span = ids[ids.index(head):ids.index(end)]
+            self.items.append([i for i in span if "List" in styles.get(i, "")])
 
 
 def made_short(parts: int = 10, *, first_fill: bool = False) -> bytes:
@@ -266,17 +272,21 @@ def block_edit(rng: random.Random, doc: str, span: str, target: str, table: str 
                                                 "bookmark": f"mark_{rng.randrange(10_000)}"}}
 
 
-def plan(seed: int, threads: int, calls: int, layout: Layout, doc: str, sync: bool = False
-         ) -> list[list[tuple[str, dict]]]:
+def plan(seed: int, threads: int, calls: int, layout: Layout, doc: str, sync: bool = False,
+         more: bool = False) -> list[list[tuple[str, dict]]]:
     """Each thread's calls, from ``seed``: mostly its own chapter's, often another's.
     ``sync`` (round 49): a quarter of the calls keep the table to fill in step by key instead
-    -- from one of two datasets, its rows gone listed or removed."""
+    -- from one of two datasets, its rows gone listed or removed.  ``more`` (lane J): a fifth
+    of the calls from :func:`more_call` instead -- redo, a fields update, lists put next to
+    the chapter's lists, edits of two neighbouring blocks in one batch."""
     out = []
     chapters = len(layout.heads)
     for k in range(threads):
         rng = random.Random(seed * 1000 + k)
         # Round 48's edits of known blocks drawn from their own sequence: the calls as before.
         extra = random.Random((seed * 1000 + k) * 31 + 7)
+        # Lane J's calls from their own sequence too.
+        other = random.Random((seed * 1000 + k) * 17 + 3)
         own = k % chapters
         mine: list[tuple[str, dict]] = []
         for c in range(calls):
@@ -288,6 +298,9 @@ def plan(seed: int, threads: int, calls: int, layout: Layout, doc: str, sync: bo
             md = (f"### Note {k}.{c}\n\n{sentence(rng, 10)}" if rng.random() < 0.5
                   else f"- {sentence(rng, 4)}\n- {sentence(rng, 3)}" if rng.random() < 0.5
                   else f"| A | B |\n|---|---|\n| {sentence(rng, 1)[:-1]} | {c} |")
+            if more and other.random() < 0.2:
+                mine.append(more_call(other, doc, layout, chapter, k, c))
+                continue
             if sync and extra.random() < 0.25:
                 mine.append(("word_edit_table", {"doc": doc, "table": layout.fill, "action": "sync",
                                                  "from": extra.choice(["d:rows", "d:other"]),
@@ -340,6 +353,37 @@ def plan(seed: int, threads: int, calls: int, layout: Layout, doc: str, sync: bo
                 mine.append(("describe", {"doc": doc}))
         out.append(mine)
     return out
+
+
+def more_call(rng: random.Random, doc: str, layout: Layout, chapter: int, k: int, c: int) -> tuple[str, dict]:
+    """Lane J's calls: a redo (of one's own undo, or nothing to redo), a fields update (the
+    whole document's: under the lock), a list put just before or after one of the chapter's
+    list items, or two neighbouring blocks edited in one batch -- a paragraph's text set and
+    a block put right after it, or a list item's text set and the item after it formatted."""
+    body = layout.bodies[chapter]
+    roll = rng.random()
+    if roll < 0.2:
+        return "undo", {"doc": doc, "redo": True}
+    if roll < 0.3:
+        return "word_fields", {"doc": doc, "action": "update"}
+    if roll < 0.6:
+        items = layout.items[chapter]
+        place = rng.choice([f"before:{rng.choice(items)}", f"after:{rng.choice(items)}"])
+        md = rng.choice([f"- {sentence(rng, 3)}\n- {sentence(rng, 4)}",
+                         f"1. {sentence(rng, 3)}\n2. {sentence(rng, 2)}",
+                         f"{sentence(rng, 6)}"])
+        return "word_insert_markdown", {"doc": doc, "at": place, "markdown": md}
+    if roll < 0.8:
+        at = rng.randrange(len(body))
+        return "batch", {"ops": [
+            {"tool": "word_set_text", "arguments": {"doc": doc, "target": body[at], "text": sentence(rng, 9)}},
+            {"tool": "word_insert_markdown", "arguments": {"doc": doc, "at": f"after:{body[at]}",
+                                                           "markdown": f"Next to it {k}.{c}: {sentence(rng, 5)}"}}]}
+    items = layout.items[chapter]
+    at = rng.randrange(len(items) - 1)
+    return "batch", {"ops": [
+        {"tool": "word_set_text", "arguments": {"doc": doc, "target": items[at], "text": sentence(rng, 4)}},
+        {"tool": "word_format", "arguments": {"doc": doc, "targets": [items[at + 1]], "italic": True}}]}
 
 
 #: The note of a check served a version committed after it was called (docx-agent 0.1.112).
@@ -412,12 +456,14 @@ def _box(mode: str) -> Toolbox:
 
 
 def run(seed: int, threads: int, calls: int, chapters: int = 4, mode: str = "always",
-        first_fill: bool = False, shape: str = "report", sync: bool = False, tracked: bool = False) -> dict:
+        first_fill: bool = False, shape: str = "report", sync: bool = False, tracked: bool = False,
+        more: bool = False) -> dict:
     """One stress run and its replay; ``{"same": bool, ...}`` with what differed.
     ``first_fill``: on a report with no provenance yet (:func:`made`).  ``shape``:
     ``"report"`` (:func:`made`, :func:`plan`) or ``"short"`` (:func:`made_short`, one part per
     thread, :func:`plan_short`).  ``sync``: :func:`plan`'s syncs (round 49), from ``d:rows``
-    and ``d:other``.  ``tracked`` (round 50): every edit a tracked change (:data:`AUTHOR`)."""
+    and ``d:other``.  ``tracked`` (round 50): every edit a tracked change (:data:`AUTHOR`).
+    ``more`` (lane J): :func:`plan`'s further calls (:func:`more_call`)."""
     if shape == "short":
         data = made_short(threads, first_fill=first_fill)
         layout: Any = ShortLayout(Document.open(data))
@@ -433,7 +479,7 @@ def run(seed: int, threads: int, calls: int, chapters: int = 4, mode: str = "alw
         if tracked:
             track(box, session, doc)
         plans = (plan_short(seed, threads, calls, layout, doc) if shape == "short"
-                 else plan(seed, threads, calls, layout, doc, sync=sync))
+                 else plan(seed, threads, calls, layout, doc, sync=sync, more=more))
         initial = session.entry(doc).version
         made_calls: list[dict] = []
         lock = threading.Lock()
@@ -632,6 +678,8 @@ if __name__ == "__main__":
                         help="report: chapters of text; short: one all but empty part per thread")
     parser.add_argument("--sync", action="store_true", help="syncs of the table to fill (round 49)")
     parser.add_argument("--tracked", action="store_true", help="every edit a tracked change (round 50)")
+    parser.add_argument("--more", action="store_true",
+                        help="redo, fields updates, lists by lists, neighbouring blocks (lane J)")
     parser.add_argument("--first-fill", default="odd", choices=("none", "odd", "all"),
                         help="which seeds run on a report with no provenance yet (default: odd ones)")
     args = parser.parse_args()
@@ -640,7 +688,7 @@ if __name__ == "__main__":
         started = time.perf_counter()
         first = args.first_fill == "all" or (args.first_fill == "odd" and seed % 2 == 1)
         found = run(seed, args.threads, args.calls, args.chapters, args.mode, first_fill=first, shape=args.shape,
-                    sync=args.sync, tracked=args.tracked)
+                    sync=args.sync, tracked=args.tracked, more=args.more)
         print(json.dumps({"seed": seed, "first_fill": first, "s": round(time.perf_counter() - started, 1),
                           **{k: v for k, v in found.items() if k not in ("differ",)}}), flush=True)
         if not found["same"]:
