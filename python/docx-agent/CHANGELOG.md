@@ -30,9 +30,14 @@ snapshot commit; the development history before it is summarised here.
     and takes a block kept within the change whole where the fields around it are as they
     were (a batch's two edits far apart no longer read every block between them again).
   Python allocates far fewer objects per version: on the made-up report of about 3,000
-  pages an ordinary edit runs no collection of the oldest generation and few or none of the
-  young (was about 150 young and 13 middle collections per edit). One writer, wall p50
-  at about 3,000 pages: Markdown insert RESULTS.
+  pages an edit runs about 10 young and 1 middle collection (was about 170 and 16). One
+  writer, wall p50 (295 / ~1,000 / ~3,000 pages): Markdown insert 0.06 / 0.10 / 0.18 s (was
+  0.08 / 0.22 / 0.81), `set_text` 0.05 / 0.10 / 0.19 s (0.09 / 0.17 / 0.55), `set_cells`
+  0.15 / 0.24 / 0.50 s (0.13 / 0.33 / 1.03), undo 0.04 / 0.08 / 0.16 s (0.06 / 0.17 / 0.49),
+  a batch of a Markdown insert and a `set_text` 0.19 / 0.24 / 0.50 s (0.20 / 0.42 / 1.08).
+  24 writers on one document (a batch and a check each, three turns), ~3,000 pages: edit
+  p50 23 s and p99 27 s (was 39 and 46 s), CPU 121 s (171 s), memory 2.6 GB (2.4 GB); at
+  295 pages edit p99 4.5 s (5.7 s).
 - `DOCX_AGENT_INCREMENTAL=0` turns these off with the other per-change passes;
   `DOCX_AGENT_FULL_VALIDATE=1` (the tests set it) runs each pass made per change beside the
   whole one -- in Python and in Rust -- and raises where they differ.
