@@ -78,6 +78,33 @@ snapshot commit; the development history before it is summarised here.
   same either way (the calls one at a time, in the order their changes were made). Where
   the interpreter runs without its lock (a free-threaded build) edits go on drafts as
   before; `DOCX_AGENT_DRAFTS=1` drafts with the lock too, `DOCX_AGENT_DRAFTS=0` never.
+- **A change made on a draft no longer takes away a relationship another call's change
+  uses.** A call that removed the last link to an address (a tracked `word_set_text` over
+  the only paragraph linking there) let the link's relationship go on its draft; when
+  another call, meanwhile, linked another paragraph to the same address (taking that very
+  relationship), the first call's change applied anyway, and the version named a
+  relationship that was gone (`relationship-id-unknown`; the stress on free-threaded
+  Python, about one run in a hundred, also on 0.1.119). Such a change is now a conflict,
+  prepared again on the version committed (`Blocks.check`), as is a change that let a
+  part go while others added relationships. Present since drafts merged relationships
+  others added (round 48).
+- **A table's width "of the body" made on a draft reads the paragraph before the table**:
+  `word_format_table` with `width_of: "body"` sizes the table to the lines of the nearest
+  paragraph before it (its indents); the draft now records every block from the table to
+  that paragraph as read, so a paragraph put between them, or that paragraph changed,
+  meanwhile is a conflict, prepared again (the stress found the table indented as the list
+  item that was no longer before it). With no paragraph before the table, the call takes
+  the document's lock.
+- **A check of a range served by the Rust owner says the faces of the version it checks.**
+  Its `reflow` (`coverage.substituted_fonts`, the `font-substituted` warnings) was read from
+  the owner's mirror as it was when the check got its version's layout, so an edit
+  committed meanwhile -- a paragraph in another substituted face -- showed in the check of
+  the version before it, and the faces' order could be a later state's (the free-threaded
+  stress: two writers' checks of one version differed). Each state handed to the owner now
+  keeps what its faces are (`RustDoc.faces`); a check reads its version's, and checks the
+  Python way where that is no longer kept.
+- Needs docx2svg 0.12.1: a check's substituted faces said in the order a full layout says
+  them, whichever layout it was made from.
 - What a call that ran on a draft (beside other edits of its document) held the document's
   lock for to check and apply its change is in `Result.block["held"]` (ooxml-edit 0.120.0).
 - `DOCX_AGENT_INCREMENTAL=0` turns these off with the other per-change passes;

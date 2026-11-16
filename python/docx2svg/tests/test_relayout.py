@@ -663,3 +663,30 @@ def test_the_header_shows_each_pages_heading_and_follows_an_edit_of_it():
     assert again.relaid is None
     shown = [k + 1 for k, page in enumerate(again.pages) if "Part made up anew" in _text_of(page, "header")]
     assert shown and set(shown) <= set(again.changed_pages)
+
+
+def _faced(face: str, text: str) -> "report_docs.Block":
+    """A paragraph in ``face``, a made-up name no machine has (laid out with a substitute)."""
+    return report_docs.Block("raw", f'<w:p><w:r><w:rPr><w:rFonts w:ascii="{face}" w:hAnsi="{face}"/></w:rPr>'
+                                    f'<w:t>{text}</w:t></w:r></w:p>')
+
+
+def test_substituted_faces_are_said_as_a_full_layout_says_them():
+    """0.12.1: a layout made from a previous one measures with the previous one's faces,
+    whose record lists the faces in the order the earlier versions met them; the layout of
+    the new bytes says its substituted faces (``coverage``, ``font-substituted``) in the
+    order the document meets them, as a full layout does, whatever came before."""
+    first = [report_docs.Block("para", "A paragraph first."), _faced("Beta Madeup Face", "In beta.")]
+    second = [report_docs.Block("para", "A paragraph first."), _faced("Alpha Madeup Face", "In alpha."),
+              _faced("Beta Madeup Face", "In beta.")]
+    previous, _, _ = lay_out_docx(report_docs.package(first), ConvertOptions())
+    options = ConvertOptions()
+    lay_out_docx(report_docs.package(second), options, previous=previous)
+    _full_layout, _svgs, full_options = _full(report_docs.package(second))
+
+    def faces(found):
+        return [s["family"] for s in found.coverage.as_dict()["substituted_fonts"] if "Madeup" in s["family"]]
+
+    assert faces(options) == faces(full_options) == ["Alpha Madeup Face", "Beta Madeup Face"]
+    assert [w.message for w in options.warnings if w.code == "font-substituted"] == \
+        [w.message for w in full_options.warnings if w.code == "font-substituted"]

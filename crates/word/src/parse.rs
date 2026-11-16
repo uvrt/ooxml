@@ -2955,6 +2955,39 @@ impl Doc {
     }
 
     /// The exporter's tables now: fonts, characters, kerned fonts, faces drawn, styles.
+    /// For each `(face, character)`: whether the body holds the character, and whether the
+    /// face draws it (lane J: the exporter's `chars` and `drawn`, without the tables).
+    pub fn glyph_reads(&self, pairs: &[(String, String)]) -> Vec<(bool, bool)> {
+        let e = &self.caches.ex;
+        pairs
+            .iter()
+            .map(|(face, text)| match text.chars().next() {
+                Some(c) if text.chars().count() == 1 => {
+                    (e.chars.contains(&c), e.drawn.contains(&(Some(face.clone()), c)))
+                }
+                _ => (false, false),
+            })
+            .collect()
+    }
+
+    /// Of `names`, those some unit's text is measured in, in the order the units first
+    /// name them (lane J: the substituted faces in the layout's order, without the tables).
+    pub fn faces_first(&self, names: &[String]) -> Vec<String> {
+        let mut left: Vec<&String> = names.iter().collect();
+        let mut out = Vec::new();
+        for u in &self.units {
+            for face in &u.faces {
+                if let Some(k) = left.iter().position(|n| *n == face) {
+                    out.push(left.remove(k).clone());
+                }
+            }
+            if left.is_empty() {
+                break;
+            }
+        }
+        out
+    }
+
     pub fn tables_json(&self) -> Value {
         let e = &self.caches.ex;
         let mut v = self_document_arg(e, &self.units);
