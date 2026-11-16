@@ -186,7 +186,11 @@ def _about(entry: Any) -> dict[str, Any]:
                      "After join: each blank of column takes the same row's value of "
                      "the fill's from column, e.g. {column: \"Limit\", from: \"Default\"}. "
                      "Sources kept, marked filled.",
-                     optional=True)},
+                     optional=True),
+       # Round 58 (R127): a column's text made a row per part (xlsx_agent.split).
+       "split": obj({"column": string(), "by": string("Default: line breaks.", optional=True)},
+                    "After fill: a row per part of column's text, other cells repeated.",
+                    optional=True)},
       group=CORE, datasets=("from",))
 @handler
 def xlsx_derive(call: Any, id: str, doc: str | None = None, **arguments: Any) -> Result:
@@ -241,6 +245,8 @@ def _options(arguments: dict[str, Any]) -> dict[str, Any]:
             out[name] = arguments[name]
     if arguments.get("join") is not None:
         out["join"] = clean(arguments["join"])
+    if arguments.get("split") is not None:
+        out["split"] = clean(arguments["split"])
     return out
 
 
@@ -291,6 +297,9 @@ def _derived_result(call: Any, name: str, derived: Any, table: DatasetTable) -> 
         data["joined"] = derived.joined.as_dict()
     if derived.filled:
         data["filled"] = [f.as_dict() for f in derived.filled]
+    if derived.split is not None:
+        # Round 58 (R127): how many rows the split made from how many.
+        data["split"] = derived.split.as_dict()
     total = len(derived.rows)
     cut: dict[str, Any] = {}
     chars = call.limits.max_result_chars

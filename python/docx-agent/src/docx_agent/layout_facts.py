@@ -165,10 +165,15 @@ takes its targets as one list with the values for all, so it is ``calls``, not `
     widened to that row, a column wider than the others, as the render draws it (measured)
     -- else ``"short"`` (the shorter rows end early).  ``tracked``: the table holds tracked
     cell changes -- a merge or column deletion tracked as Word tracks one keeps the cells
-    merged away (``w:cellDel``) until accepted, which is what widens it; ``fix`` accepts
-    them (``word_changes`` ``within`` the table), after which the grid fits.  Read from the
-    document, so listed where the layout failed too; :func:`table_grid_mismatch` has the
-    rule.
+    merged away (``w:cellDel``) until accepted, which is what widens it; ``changes`` the
+    tracked changes that do (round 58, R128: the cell and row records in the rows off the
+    grid, and the grid's own record, as ``word_changes`` names them) and ``fix`` the
+    ``word_changes`` call that settles only them -- their reject where that leaves every
+    row on the grid and the rows lined up (tried on a copy), else their accept; the call that made it this
+    session can be undone instead (``made_by``).  Accepting every change ``within`` the
+    table settles others' changes too: never suggested, it is there on request.  Read
+    from the document, so listed where the layout failed too; :func:`table_grid_mismatch`
+    has the rule.
 ``accept_loses_text`` (round 54, lane R)
     ``{"cell", "text", "change", "author", "fix", "pages"}``: a table cell (of any depth, in
     the body) with no next cell in its row whose last paragraph mark is a pending tracked
@@ -189,6 +194,20 @@ takes its targets as one list with the values for all, so it is ``calls``, not `
     ``sample`` of up to 3 places (cells on the document's grid) with their text, ``fix`` the
     reject that keeps them.  Made by ``check`` beside the file as opened
     (:func:`docx_agent.tools.originals.accept_loses_original`), not per page.
+``row_text_format`` (round 58, R126)
+    ``{"table", "row", "cells": [{"cell", "has", "around"}], "fix"}``: a table row this
+    session added or wrote into (``word_edit_table``) whose text looks unlike the rows
+    around it -- in a column, its cell's text in another font, size or colour (``has``)
+    than the same column's cells in the nearest row above and below that the session did
+    not write (``around``: what they share).  Rows that legitimately differ are not
+    compared: a header row (``w:tblHeader``, or the table's first row), the last row where
+    the table's look has a total row, a column where the rows above and below differ from
+    each other, and a cell whose look a row the session did not write has in that column
+    within 4 rows (:data:`_ROW_WINDOW`: banded or alternating rows); a cell shows its first
+    run of text's
+    formatting, and an empty cell nothing.  ``fix``: ``word_format`` calls giving the
+    cells the formatting around them.  Read from the document, so listed where the layout
+    failed too; not per page.
 ``uncertain``
     ``{"page", "placeholders", "approximations", "story_stops"}``: the pages the layout drew
     a placeholder on, laid out by a rule it has not measured, or could not draw a header,
@@ -1579,16 +1598,9 @@ def table_grid_mismatch(document: "Document", keep: Any = None) -> list[dict[str
     index = document._index(part)
     tables = [table for table in index.tables if keep is None or keep(table.id)]
     found: list[dict[str, Any]] = []
+    revisions: list = []
     for table in tables:
-        grid = table.element.find(_W + "tblGrid")
-        count = len(grid.findall(_W + "gridCol")) if grid is not None else 0
-        rows = []
-        for r, (row, _) in enumerate(table.rows):
-            reach = _int(_find(row, "w:trPr/w:gridBefore"), 0) + _int(_find(row, "w:trPr/w:gridAfter"), 0)
-            for cell in _cells(row):
-                reach += max(1, _int(_find(cell, "w:tcPr/w:gridSpan"), 1))
-            if reach != count:
-                rows.append({"row": r, "reaches": reach})
+        count, rows = off_grid_rows(table.element, [row for row, _ in table.rows])
         if not rows:
             continue
         entry: dict[str, Any] = {"table": table.id, "grid": count, "rows": rows[:CAP],
@@ -1597,7 +1609,7 @@ def table_grid_mismatch(document: "Document", keep: Any = None) -> list[dict[str
             entry["rows_left_out"] = len(rows) - CAP
         if any(node.tag in _TRACKED_CELLS for node in table.element.iter() if isinstance(node.tag, str)):
             entry["tracked"] = True
-            entry["fix"] = {"tool": "word_changes", "calls": [{"action": "accept", "within": table.id}]}
+            entry.update(_grid_settled_by(document, table, rows, revisions))
         found.append(entry)
     off_grid = {entry["table"] for entry in found}
     for table in tables:
@@ -1606,6 +1618,85 @@ def table_grid_mismatch(document: "Document", keep: Any = None) -> list[dict[str
         if ragged is not None and (ragged["after_accept"] or table.id not in off_grid):
             found.append(ragged)
     return found
+
+
+def off_grid_rows(element: Any, rows: list) -> tuple[int, list[dict[str, Any]]]:
+    """A table's grid columns, and its rows (``rows``, its own, in order) whose cells -- with
+    ``w:gridBefore`` and ``w:gridAfter`` -- do not reach exactly across them:
+    ``{"row", "reaches"}``."""
+    grid = element.find(_W + "tblGrid")
+    count = len(grid.findall(_W + "gridCol")) if grid is not None else 0
+    out = []
+    for r, row in enumerate(rows):
+        reach = _int(_find(row, "w:trPr/w:gridBefore"), 0) + _int(_find(row, "w:trPr/w:gridAfter"), 0)
+        for cell in _cells(row):
+            reach += max(1, _int(_find(cell, "w:tcPr/w:gridSpan"), 1))
+        if reach != count:
+            out.append({"row": r, "reaches": reach})
+    return count, out
+
+
+def _grid_settled_by(document: "Document", table: Any, rows: list[dict[str, Any]], revisions: list
+                     ) -> dict[str, Any]:
+    """Round 58 (R128): the tracked changes that put a table off its grid -- the cell and
+    row records in its rows off the grid and its grid's own record (``changes``, as
+    ``word_changes`` names them) -- and the ``fix`` that settles only them: rejecting them
+    where that leaves every row on the grid (tried on a copy of the table), else accepting
+    them.  Accepting every change in the table (``within``) settles others' changes too,
+    so it is never the fix: it is ``word_changes`` ``accept`` ``within`` the table, on
+    request.  Nothing (``{}``) where the records cannot be named."""
+    element = table.element
+    off = {e["row"] for e in rows}
+    own_rows = [row for row, _ in table.rows]
+    records = [node for r in sorted(off) for node in own_rows[r].iter(*_TRACKED_CELLS)]
+    grid = element.find(_W + "tblGrid")
+    if grid is not None:
+        records += list(grid.iter(_W + "tblGridChange"))
+    if not records:
+        return {}
+    if not revisions:
+        held = document._revision_elements()       # held: the map is keyed by the proxies' id()
+        revisions.append(({id(node): identifier for _, identifier, node in held}, held))
+    by_node = revisions[0][0]
+    changes = list(dict.fromkeys(by_node[id(node)] for node in records if id(node) in by_node))
+    if not changes:
+        return {}
+    out: dict[str, Any] = {"changes": changes[:CAP]}
+    for action in ("reject", "accept"):
+        if _fits_after(element, records, action == "accept"):
+            out["fix"] = {"tool": "word_changes", "calls": [{"action": action, "ids": changes}]}
+            break
+    return out
+
+
+def _fits_after(element: Any, records: list, accept: bool) -> bool:
+    """Whether a copy of table ``element``, ``records`` (its tracked changes) accepted or
+    rejected by docx-agent's review, has every row on its grid and its rows lined up (not
+    ragged: review fits a grid to the cells it keeps, :func:`~docx_agent.edit.tables.
+    fit_grid`, which can leave one row over more columns than the others)."""
+    from .edit.document import Document as _Document
+    from .edit.tables import own_table_rows
+
+    nodes = list(element.iter())
+    at = {id(node): k for k, node in enumerate(nodes)}
+    wanted = [at[id(node)] for node in records if id(node) in at]
+    scratch = _Document.new()
+    body = scratch.package.tree(scratch.package.document_part()).find(_W + "body")
+    body.insert(0, copy.deepcopy(element))
+    scratch._invalidate()
+    copied = list(body.find(_W + "tbl").iter())
+    targets = {id(copied[k]) for k in wanted}
+    ids = [identifier for _, identifier, node in scratch._revision_elements() if id(node) in targets]
+    if not ids:
+        return False
+    try:
+        scratch.accept(ids) if accept else scratch.reject(ids)
+    except Exception:  # noqa: BLE001 - a review the copy refuses settles nothing
+        return False
+    settled = body.find(_W + "tbl")
+    # On its grid, and not ragged either: a grid widened to fit cells kept is no settlement.
+    return settled is not None and not off_grid_rows(settled, own_table_rows(settled))[1] \
+        and _shape(settled) is None
 
 
 #: Records whose acceptance changes which cells a table's rows keep (round 57, R125).
@@ -1708,6 +1799,109 @@ def ragged_rows(document: "Document", table: Any) -> dict[str, Any] | None:
     if len(off) > CAP:
         entry["rows_left_out"] = len(off) - CAP
     return entry
+
+
+#: How far from a written row ``row_text_format`` looks for rows of the table with its look
+#: (round 58, R126): rows in a pattern (banded, alternating) are within so many rows.
+_ROW_WINDOW = 4
+#: What ``row_text_format`` compares (round 58, R126): the effective run field, its JSON key,
+#: and ``word_format``'s name for it.
+_ROW_LOOK = (("font", "font", "font"), ("size", "sz", "size"), ("color", "color", "color"))
+
+
+def row_text_format(document: "Document", written: "set[str] | frozenset[str]", *,
+                    keep: Any = None) -> list[dict[str, Any]]:
+    """``check``'s ``row_text_format`` (round 58, R126; the module says what each entry
+    holds): of the body's tables (those ``keep(table id)`` keeps), the rows whose
+    ``w14:paraId`` is in ``written`` -- the rows the session added or wrote into -- whose
+    text looks unlike the rows around them."""
+    if not written:
+        return []
+    part = document.package.document_part()
+    index = document._index(part)
+    found: list[dict[str, Any]] = []
+    for table in index.tables:
+        if keep is not None and not keep(table.id):
+            continue
+        rows = [row for row, _ in table.rows]
+        marked = [row.get(_PARA_ID) in written for row in rows]
+        if not any(marked):
+            continue
+        found += rows_unlike(document, table.id, table.element, rows, marked)
+    return found
+
+
+_PARA_ID = "{http://schemas.microsoft.com/office/word/2010/wordml}paraId"
+
+
+def rows_unlike(document: "Document", table_id: str, element: Any, rows: list, marked: list[bool]
+                ) -> list[dict[str, Any]]:
+    """:func:`row_text_format`'s entries for one table: ``rows`` its own rows, ``marked``
+    which of them the session wrote."""
+    from .edit.table_format import read_look
+    from .edit.tables import _cells as _spans
+
+    look = read_look(element.find(f"{_W}tblPr/{_W}tblLook"))
+    last = len(rows) - 1
+
+    def header(r: int) -> bool:
+        return r == 0 or rows[r].find(f"{_W}trPr/{_W}tblHeader") is not None
+
+    def compared(r: int) -> bool:
+        return not marked[r] and not header(r) and not (r == last and look.get("last_row"))
+
+    looks: dict[int, dict[tuple[int, int], tuple | None]] = {}
+
+    def row_looks(r: int) -> dict[tuple[int, int], tuple | None]:
+        if r not in looks:
+            looks[r] = {(start, span): _cell_look(document, cell) for cell, start, span in _spans(rows[r])}
+        return looks[r]
+
+    found: list[dict[str, Any]] = []
+    for r, row in enumerate(rows):
+        if not marked[r] or header(r):
+            continue
+        above = next((i for i in range(r - 1, -1, -1) if compared(i)), None)
+        below = next((i for i in range(r + 1, len(rows)) if compared(i)), None)
+        if above is None and below is None:
+            continue
+        cells = []
+        wanted: dict[tuple, list[str]] = {}
+        for (start, span), has in row_looks(r).items():
+            if has is None:
+                continue
+            around = [row_looks(i).get((start, span)) for i in (above, below) if i is not None]
+            around = [a for a in around if a is not None]
+            if not around or (len(around) == 2 and around[0] != around[1]):
+                continue
+            nearby = range(max(0, r - _ROW_WINDOW), min(len(rows), r + _ROW_WINDOW + 1))
+            if any(compared(i) and row_looks(i).get((start, span)) == has for i in nearby):
+                continue            # a look the table's own rows have nearby: banded, alternating
+            expected = around[0]
+            differs = [k for k in range(len(_ROW_LOOK)) if has[k] != expected[k]]
+            if not differs:
+                continue
+            cell_id = f"{table_id}/c{r},{start}"
+            cells.append({"cell": cell_id, "has": {_ROW_LOOK[k][1]: has[k] for k in differs},
+                          "around": {_ROW_LOOK[k][1]: expected[k] for k in differs}})
+            values = tuple((_ROW_LOOK[k][2], expected[k]) for k in differs)
+            wanted.setdefault(values, []).append(cell_id)
+        if cells:
+            calls = [{"targets": targets, **dict(values)} for values, targets in wanted.items()]
+            found.append({"table": table_id, "row": r, "cells": cells[:CAP],
+                          "fix": {"tool": "word_format", "calls": calls}})
+    return found
+
+
+def _cell_look(document: "Document", cell: Any) -> tuple | None:
+    """A cell's text's font, size and colour: its first run of text's, in its first
+    paragraph with text; ``None`` for a cell that shows no text."""
+    for paragraph in cell.iter(_W + "p"):
+        run = _text.first_text_run(paragraph)
+        if run is not None:
+            got = _effective.run(document, paragraph, run)
+            return tuple(getattr(got, name) for name, _, _ in _ROW_LOOK)
+    return None
 
 
 def empty_paragraphs(document: "Document") -> list[dict[str, Any]]:

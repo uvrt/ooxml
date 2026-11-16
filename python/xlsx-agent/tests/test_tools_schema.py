@@ -204,8 +204,13 @@ CORE_COUNTED_BUDGET = 7000
 #: every definition 7,074 -> 7,373; the core unchanged.
 #: Round 54, R113: xlsx_record_values gains type and add, its value a string or a number
 #: (orNumber): every definition 7,373 -> 7,427; the core unchanged.
-CORE_GUARD = 4925
-ALL_GUARD = 7430
+#: Round 58, R127: xlsx_derive's ``split`` (a column's text a row per part, after the fills;
+#: ``{column, by}``, by default line breaks), its words kept to the least that says it: the
+#: core 4,920 -> 4,995 estimated (about 7,090 online at the counted ratio, 6,981 / 4,920:
+#: past the 7,000 guidance; the main session counts it), every definition 7,427 -> 7,502.
+#: ``xlsx_derive`` is not strict: the strict set is unchanged.
+CORE_GUARD = 4995
+ALL_GUARD = 7505
 
 
 @pytest.fixture(scope="module")

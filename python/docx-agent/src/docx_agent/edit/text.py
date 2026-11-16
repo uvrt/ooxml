@@ -441,6 +441,23 @@ def run_properties_for(paragraph: Element, reference: Element | None) -> Element
     return properties if len(properties) else None
 
 
+def first_text_run(paragraph: Element) -> Element | None:
+    """Round 58 (R126): ``paragraph``'s first run that shows text (a ``w:t``; not one a
+    tracked deletion or move takes away, nor one in a text box) -- the run whose formatting
+    new text replacing the paragraph's takes; ``None`` in a paragraph with no text."""
+    for run in paragraph.iter(W_R):
+        if run.find(W_T) is None:
+            continue
+        holder = run.getparent()
+        while holder is not None and holder is not paragraph:
+            if holder.tag in (_W + "moveFrom", _W + "del", W_P, _W + "txbxContent"):
+                break
+            holder = holder.getparent()
+        else:
+            return run
+    return None
+
+
 def make_run(text: str, properties: Element | None, *, verbatim: bool = False) -> Element:
     """A run of ``text``; ``verbatim`` (code) is not given the language's spacing."""
     run = _make("w:r")

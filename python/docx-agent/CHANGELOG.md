@@ -5,6 +5,51 @@ docx-agent has not been released to PyPI. Each version that reaches `main` is ta
 snapshot commit; the development history before it is summarised here.
 [`ROADMAP.md`](ROADMAP.md) has the detail of every phase.
 
+## 0.1.122 -- unreleased
+
+- **A row added to a table looks like its table.** A row `word_edit_table` adds with
+  `insert_row`, with `set_cells` `grow` or with `sync` now takes, in each cell, the formatting
+  of the text in the cell beside it: its empty paragraph's mark is formatted as that cell's
+  first run of text, as Word's Insert Rows Above and Below do (measured in Word for Mac
+  16.106: the new mark takes the first run's font, size, colour and bold even where the old
+  mark said otherwise, and text typed there takes the mark's). So `set_cells` text written
+  into the new row looks like the rows around it -- before, it came out in the document's
+  default font where the table's text was formatted run by run (the cells' marks bare).
+  `tools/row_format_probe.py`, `tests/observations/row-format-word.json`.
+- Text written into a cell that is already empty takes that cell's paragraph mark, as Word
+  types into an empty cell (measured: the document default where the mark has no
+  formatting of its own, not the column's). Where that, or anything else written, leaves a
+  row unlike the rows around it, `word_edit_table` warns, naming the row and the
+  `word_format` call that makes it match.
+- **`check` says a row that looks unlike its table:** `layout`'s new `row_text_format` lists
+  each table row this session added or wrote into whose text is in another font, size or
+  colour than the same column's text in the nearest rows above and below that the session
+  did not write, with the cells, what they have, what the rows around have, and the
+  `word_format` calls (`fix`) that make them match. Rows that legitimately differ are not
+  compared: header rows (repeating, or the first row), a total row (the table's look), a
+  column where the rows above and below differ, a look rows nearby have (banded or
+  alternating rows), empty cells.
+- **`word_edit_table` `copy_row`:** a copy of row `index` (default the last) with its
+  content, after it or before it (`side`): its properties, cells and text as shown (pending
+  insertions kept, deletions dropped), every id fresh; bookmarks and comments stay on the row
+  copied (said). Tracked, the copy is an insertion (the row, every mark and run), as Word's
+  tracked paste. A row with a cell merged down, a note reference, a pending deletion or
+  tracked cell changes is refused, with the `insert_row` and `set_cells` calls that make
+  such a row instead. Python: `Document.copy_row`, `Table.copy_row`.
+- `word_inspect`'s paragraphs say `new_text`: the font, size, colour, bold and italic that
+  text written over the paragraph gets (its first run's, else its mark's) where that differs
+  from `effective` (which is what the paragraph's style gives).
+- **`table_grid_mismatch` no longer suggests accepting the whole table.** A tracked table
+  off its grid names the tracked changes that put it there (`changes`: the cell and row
+  records of the rows off the grid, and the grid's own) and its `fix` settles only those:
+  their reject where that leaves every row on the grid and lined up (tried on a copy), else
+  their accept. Accepting every change within the table -- other authors' too -- is still
+  there on request (`word_changes` `accept` `within`), but never the suggested fix. A
+  `word_edit_table` call that puts a table off its grid says so, with its undo, and the fact
+  names it (`made_by`).
+- `word_edit_table`'s definition +9 estimated tokens (the `copy_row` action named in `index`
+  and `side`); the core and the strict set unchanged.
+
 ## 0.1.119 -- unreleased
 
 - **The Rust owner's input is made by a Rust parser of the body.** The same results -- every
