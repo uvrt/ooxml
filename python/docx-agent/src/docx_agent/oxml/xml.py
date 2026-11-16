@@ -189,6 +189,8 @@ register_child_order({
         "w:tblDescription", "w:tblPrChange",
     ),
     "w:tblGrid": ("w:gridCol", "w:tblGridChange"),
+    # CT_TblStylePr: a table style's conditional format (round 58).
+    "w:tblStylePr": ("w:pPr", "w:rPr", "w:tblPr", "w:trPr", "w:tcPr"),
     "w:tr": ("w:tblPrEx", "w:trPr", ("w:tc", "w:customXml", "w:sdt") + _RANGE_MARKUP),
     # CT_TrPrBase is a repeating choice, so its members share a rank.
     "w:trPr": (

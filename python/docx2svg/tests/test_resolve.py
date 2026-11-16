@@ -142,7 +142,7 @@ def test_table_conditional_formats_apply_by_cell_and_override_each_other():
     table = next(block for block in document.body if isinstance(block, Table))
     corner = table.rows[0][0][0]
     body = table.rows[1][1][0]
-    assert corner.table_conditions == ("wholeTable", "firstCol", "firstRow", "nwCell")
+    assert corner.table_conditions == ("firstCol", "firstRow", "nwCell")
     resolved = resolve_run(document, corner, corner.runs[0])
     assert resolved.get("b") is True
     assert resolved.origins["b"][0].level == "table style"

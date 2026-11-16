@@ -10,6 +10,7 @@ import json
 
 from ooxml_edit.tools import REVIEW, Result, ToolError, array, boolean, integer, number, obj, page_list, string
 
+from ..edit import table_styles as _regions
 from ..edit.design import ALL_KINDS, CAPS, KINDS
 from ..edit.formatting import RUN_PROPERTIES, read_paragraph, read_run, read_shading
 from ..edit.errors import EditError
@@ -232,6 +233,23 @@ def unnumbered_styles_like(document: Any, style_id: str, limit: int = 6) -> list
 
 # -- W21 word_styles ---------------------------------------------------------------------------
 
+#: Round 58 (R129): a table style's formatting by region (:mod:`docx_agent.edit.table_styles`).
+REGION_BORDERS = obj({"style": string(enum=list(_regions.BORDER_STYLES)),
+                      "sides": array(string(enum=list(_regions.SIDES)), "Default all; inside_*: between its cells.",
+                                     optional=True),
+                      "color": string("RRGGBB.", optional=True),
+                      "width": number("Points. Default 0.5.", minimum=0.25, maximum=6, optional=True)},
+                     "Sides' borders; other styles: repeat the region.", optional=True)
+REGION = obj({"region": string("Where. Columns: first, last, banded only.", enum=[r for r in _regions.REGIONS]),
+              "shading": string("Fill: RRGGBB, theme colour, or none.", optional=True),
+              "color": string("Text colour.", optional=True),
+              "bold": boolean(optional=True), "italic": boolean(optional=True),
+              "size": number("Text size.", minimum=1, maximum=1638, optional=True),
+              "alignment": string(enum=["left", "center", "right", "justify"], optional=True),
+              "borders": REGION_BORDERS,
+              "band_size": integer("Banded: rows/columns per band.", minimum=1, maximum=100, optional=True),
+              "clear": boolean("Remove its formatting first.", optional=True)})
+
 
 def _style_element(document: Any, style_id: str) -> Any:
     from ..edit.styles import _W
@@ -275,6 +293,18 @@ def describe_style(document: Any, style: Any) -> dict[str, Any]:
         if tabs is not None:
             declared["tabs"] = tabs                   # round 31, R4: its own stops, clears too
         data["declared"] = declared
+        if style.kind == "table":
+            # Round 58 (R129): its formatting by region, the look options they show under,
+            # and the tables in it with those options off.
+            regions = _regions.read_regions(node)
+            if regions:
+                data["regions"] = regions
+                data["shown_with_look"] = _regions.needed_looks(regions)
+                off = looks_off(document, style)
+                if off:
+                    data["tables_with_look_off"] = off[:10]
+                    if len(off) > 10:
+                        data["tables_with_look_off_left_out"] = len(off) - 10
         if style.kind == "paragraph":
             # Round 30, W15: the list level it numbers at, its own or through based_on.
             from ..edit.numbering import style_link
@@ -293,7 +323,61 @@ def describe_style(document: Any, style: Any) -> dict[str, Any]:
     return data
 
 
-@word_tool("word_styles", "The style sheet: list, describe (formatting, usage), add, modify, remove (with a replacement while used), purge unused, set_default (the table style new tables get), set_language (the language text is proofed and spaced in: the document's, or name's).",
+def looks_off(document: Any, style: Any) -> list[dict]:
+    """The tables in table style ``style`` whose look turns off a region the style formats
+    (round 58): each with the options off and the ``word_format_table`` call that turns them
+    on -- the options the table has on, and these."""
+    from .objects import LOOK_NAMES
+
+    node = _style_element(document, style.id)
+    regions = _regions.read_regions(node) if node is not None else {}
+    wanted = _regions.needed_looks({k: v for k, v in regions.items() if k in _regions.LOOK_OF})
+    if not wanted:
+        return []
+    out = []
+    for table, look in _tables_in_style(document, style.id):
+        on = [name for name, key in LOOK_NAMES.items() if look.get(key)]
+        off = [name for name in wanted if name not in on]
+        if off:
+            out.append({"table": table, "off": off,
+                        "fix": {"tool": "word_format_table", "table": table, "scope": "table",
+                                "look": on + [name for name in off if name not in on]}})
+    return out
+
+
+def _tables_in_style(document: Any, style_id: str) -> list[tuple[str, dict]]:
+    """``(table id, look)`` of every table in table style ``style_id``, in every story
+    (nested ones too); the look as :func:`~docx_agent.edit.table_format.read_look` reads it."""
+    from ..edit.table_format import read_look
+    from ..edit.styles import _W
+
+    out = []
+    for story in document.stories:
+        for table in story.tables:
+            _, entry = document._table_entry(table.id)
+            properties = entry.element.find(_W + "tblPr")
+            named = properties.find(_W + "tblStyle") if properties is not None else None
+            if named is not None and named.get(_W + "val") == style_id:
+                out.append((table.id, read_look(properties.find(_W + "tblLook"))))
+    return out
+
+
+def _look_warnings(document: Any, name: str) -> list[str]:
+    """After a table style's regions change: the tables in it that will not show them."""
+    style = document.styles.find(name, "table")
+    if style is None:
+        return []
+    off = looks_off(document, style)
+    if not off:
+        return []
+    named = "; ".join(f"{entry['table']} has {', '.join(entry['off'])} off" for entry in off[:5])
+    more = f" and {len(off) - 5} more" if len(off) > 5 else ""
+    first = off[0]["fix"]
+    return [f"{len(off)} table(s) in {name!r} do not show a region it formats ({named}{more}): a region shows where "
+            f"the table's look turns it on -- word_format_table {json.dumps({k: v for k, v in first.items() if k != 'tool'})}"]
+
+
+@word_tool("word_styles", "The style sheet: list, describe, add, modify (a table style per region; no middle column), remove (replacement while used), purge unused, set_default (the style new tables get), set_language (the language text is proofed and spaced in: the document's, or name's).",
            {"doc": DOC,
             "action": string("What to do.", enum=["list", "describe", "add", "modify", "remove", "purge_unused",
                                                   "set_default", "set_language"]),
@@ -317,13 +401,16 @@ def describe_style(document: Any, style: Any) -> dict[str, Any]:
                                                    enum=list(TAB_ALIGNMENTS), optional=True),
                                "leader": string("Default none.", enum=list(TAB_LEADERS), optional=True)}),
                           "add, modify: the style's tab stops, replacing its own; [] removes them.", optional=True),
+            # Round 58 (R129): a table style's formatting by region.
+            "regions": array(REGION, "Table style, add/modify: formatting per region (whole_table: the style's own).",
+                             optional=True),
             **STYLE_FIELDS},
            group="word_style", mutates=True, track=False,
            action_roles={"list": REVIEW, "describe": REVIEW})
 def word_styles(call: Any, doc: str, action: str, name: str | None = None, kind: str | None = None,
                 based_on: str | None = None, next_style: str | None = None, replacement: str | None = None,
                 language: str | None = None, in_use_only: bool = False, numbering: dict | None = None, tabs: list[dict] | None = None,
-                **values: Any) -> Result:
+                regions: list[dict] | None = None, **values: Any) -> Result:
     document = call.document
     styles = document.styles
     try:
@@ -352,6 +439,11 @@ def word_styles(call: Any, doc: str, action: str, name: str | None = None, kind:
             raise ToolError("invalid_arguments", f"numbering is modify's: {action} takes none", field="numbering")
         if tabs is not None and action not in ("add", "modify"):
             raise ToolError("invalid_arguments", f"tabs is add's and modify's: {action} takes none", field="tabs")
+        regions = [{k: v for k, v in item.items() if v is not None} for item in regions or []
+                   if isinstance(item, dict)] or None     # [] and nulls: a strict decoder's (rule 1)
+        if regions and action not in ("add", "modify"):
+            raise ToolError("invalid_arguments", f"regions are add's and modify's (a table style): {action} takes none",
+                            field="regions")
         if action == "describe":
             return Result(summary=f"Style {name}", data=describe_style(document, styles.get(name, kind)))
         if action == "remove":
@@ -371,9 +463,29 @@ def word_styles(call: Any, doc: str, action: str, name: str | None = None, kind:
             formatting["shading"] = None if values["shading"].strip().lower() == "none" else values["shading"]
         if tabs is not None:
             formatting["tabs"] = [{k: v for k, v in stop.items() if v is not None} for stop in tabs]
-        if action == "add":
-            edit = styles.add(name, kind or "paragraph", based_on=based_on, next_style=next_style, **formatting)
-            return outcome([edit], f"Added style {name}")
+        note = None
+        if regions and action == "add" and kind is None:
+            kind = "table"           # regions say a table style (rule 1), said in the result
+            note = "regions given: added as a table style (kind table)"
+        try:
+            if action == "add":
+                edit = styles.add(name, kind or "paragraph", based_on=based_on, next_style=next_style,
+                                  regions=regions, **formatting)
+                result = outcome([edit], f"Added style {name}")
+                if note:
+                    result.warnings.insert(0, note)
+                if (kind or "paragraph") == "table":
+                    result.data = {"regions": describe_style(document, styles.get(name, "table")).get("regions", {})}
+                return result
+            if regions:
+                edit = styles.modify(name, kind, regions=regions, **formatting)
+                result = outcome([edit], f"Modified style {name}" if edit.changed else f"No change to style {name}")
+                result.data = {"regions": describe_style(document, styles.get(name, kind)).get("regions", {})}
+                result.warnings.extend(_look_warnings(document, name))
+                return result
+        except _regions.RegionError as error:
+            raise ToolError("invalid_arguments", str(error), field=error.field or "regions",
+                            valid_options=error.options[:50]) from None
         if numbering is not None:
             given = numbering["list"].strip()
             unlink = given.lower() == "none"

@@ -959,6 +959,7 @@ def _table(element: Element, path: str = "", fields: _Fields | None = None) -> t
         gone_cells.update(id(shown[n]) for n in gone)
     rows, row_properties, cell_properties, conditions, cell_paths = [], [], [], [], []
     moved: list = []
+    headers = leading_header_rows(row for _, row in row_elements)
     for k, ((i, row), (shown, groups)) in enumerate(zip(row_elements, plans)):
         kept = {id(shown[group[0]]) for group in groups}
         taken = {id(shown[group[0]]): [shown[n] for n in group[1:]] for group in groups}
@@ -970,7 +971,8 @@ def _table(element: Element, path: str = "", fields: _Fields | None = None) -> t
                 properties_of.append(_accepted_cell_properties(cell))
             elif cells and _cell_deleted(cell) and _content_kept(cell):
                 _absorb(properties_of[-1], read_table_properties(child(cell, "tcPr")))
-        row_conditions = tuple(cell_conditions(look, k, n, len(row_elements), len(cells)) for n in range(len(cells)))
+        row_conditions = tuple(cell_conditions(look, k, n, len(row_elements), len(cells), headers)
+                               for n in range(len(cells)))
         paths = tuple(f"{path}/w:tr[{i + 1}]/w:tc[{j + 1}]" for j, _ in cells)
         row_blocks = []
         for n, (j, cell) in enumerate(cells):
@@ -1111,31 +1113,57 @@ def _table_look(element: Element | None) -> dict[str, bool]:
     return look
 
 
-def cell_conditions(look: dict[str, bool], row: int, column: int, rows: int, columns: int) -> tuple[str, ...]:
-    """The conditional formats for cell (row, column), in ECMA-376 17.7.6's order.
+def cell_conditions(look: dict[str, bool], row: int, column: int, rows: int, columns: int,
+                    header_rows: int = 0) -> tuple[str, ...]:
+    """Where cell (row, column) is in its table, for the table style's conditional formats,
+    in the order Word lets them override one another (measured, round 58: docx-agent's
+    ``tools/table_regions_probe.py``, ``tests/observations/table-regions-word.json``).
 
-    Whole table first, then banding, then first/last column, then first/last row, then
-    the corner cells -- each later one overriding the earlier.  Band sizes are taken as
-    1 (``w:tblStyleRowBandSize`` is not read).  Measured on one case only: in
-    ``sample-simple.docx`` the top-left cell, where a bold first row meets a bold first
-    column, is drawn bold -- so conditional formats override one another inside the
-    table level rather than toggling.
-    """
-    first_row, last_row = look["firstRow"] and row == 0, look["lastRow"] and row == rows - 1
+    Lowest first: the row band, the column band, the first and last column, the first and
+    last row, the corner cell -- each later one over the earlier, property by property (a
+    column band's fill over a row band's, a header row's over a column band's, a corner's
+    over both).  ECMA-376 17.7.6 puts the column bands first; Word draws them over the row
+    bands.  ``wholeTable`` is not among them: Word draws a ``w:tblStylePr`` of that type
+    nowhere (a style's own properties are the whole table's).
+
+    ``header_rows``: how many rows at the table's start repeat as header rows
+    (``w:tblHeader``, :func:`leading_header_rows`).  With the header row option on they
+    are all the header row (``firstRow``), one at least; the row bands are counted from the
+    first row after them, the header option on or off -- off, the header rows themselves
+    are drawn as even bands.  Columns are counted by cell, not grid column (a cell
+    spanning two columns is one band).
+
+    The bands are said as positions -- ``hBand:<n>``, ``vBand:<n>``, ``n`` the row's or
+    cell's index from the first banded one (negative before it) -- because the band they
+    fall in depends on the style's band sizes: :func:`docx2svg.resolve.cascade.banded`
+    names them (``band1Horz`` ... ``band2Vert``) against the style."""
+    heading = max(header_rows, 1) if look["firstRow"] else header_rows
+    first_row = look["firstRow"] and row < heading
+    last_row = look["lastRow"] and row == rows - 1
     first_col, last_col = look["firstColumn"] and column == 0, look["lastColumn"] and column == columns - 1
-    out = ["wholeTable"]
-    if not look["noVBand"] and not (first_col or last_col):
-        index = column - (1 if look["firstColumn"] else 0)
-        out.append("band1Vert" if index % 2 == 0 else "band2Vert")
+    out = []
     if not look["noHBand"] and not (first_row or last_row):
-        index = row - (1 if look["firstRow"] else 0)
-        out.append("band1Horz" if index % 2 == 0 else "band2Horz")
+        out.append(f"hBand:{row - heading}")
+    if not look["noVBand"] and not (first_col or last_col):
+        out.append(f"vBand:{column - (1 if look['firstColumn'] else 0)}")
     out += [name for name, on in (("firstCol", first_col), ("lastCol", last_col),
                                   ("firstRow", first_row), ("lastRow", last_row)) if on]
     if (first_row or last_row) and (first_col or last_col):
         out.append(("nw" if first_row else "sw") + "Cell" if first_col
                    else ("ne" if first_row else "se") + "Cell")
     return tuple(out)
+
+
+def leading_header_rows(rows) -> int:
+    """How many of ``rows`` (``w:tr`` elements, in order) at the start are marked to
+    repeat as header rows (``w:trPr/w:tblHeader``, not ``w:val="0"``)."""
+    count = 0
+    for row in rows:
+        flag = child(child(row, "trPr"), "tblHeader")
+        if flag is None or attr(flag, "val") in ("0", "false", "off"):
+            break
+        count += 1
+    return count
 
 
 #: The old name, kept for docx-agent until it moves.

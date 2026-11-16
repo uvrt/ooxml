@@ -77,7 +77,7 @@ pub struct Para {
     /// The table's style id (`""`: none named) for a cell paragraph, and the cell's
     /// conditional formats.
     pub table_style: Option<String>,
-    pub conditions: Vec<&'static str>,
+    pub conditions: Vec<String>,
     /// What docx-agent's record of it reads of its text and structure.
     pub rec: RecInfo,
     /// Its resolution's key (`w:pPr`, table style, conditions).
@@ -454,7 +454,7 @@ impl Reader {
         &self,
         element: &Node,
         table_style: Option<&str>,
-        conditions: &[&'static str],
+        conditions: &[String],
         fields: &mut Fields,
     ) -> Result<Para, Refused> {
         let w = self.w;
@@ -778,6 +778,7 @@ impl Reader {
         let rows_el: Vec<&Node> = element.children_named(w, "tr").collect();
         let mut rows = Vec::new();
         let n_rows = rows_el.len();
+        let headers = leading_header_rows(&rows_el, w);
         for (k, row) in rows_el.iter().enumerate() {
             for c in &row.children {
                 if c.ns != w || !matches!(c.name.as_str(), "trPr" | "tc" | "tblPrEx") {
@@ -809,7 +810,7 @@ impl Reader {
                         return refuse("a merged or tracked cell");
                     }
                 }
-                let conditions = cell_conditions(&look, k, n, n_rows, cells.len());
+                let conditions = cell_conditions(&look, k, n, n_rows, cells.len(), headers);
                 let mut paras = Vec::new();
                 for b in &cell.children {
                     if b.ns != w {
@@ -880,28 +881,48 @@ fn table_look(element: Option<&Node>) -> [bool; 6] {
     }
 }
 
-fn cell_conditions(look: &[bool; 6], row: usize, column: usize, rows: usize, columns: usize) -> Vec<&'static str> {
+/// How many rows at the table's start repeat as header rows (`w:trPr/w:tblHeader`, not
+/// `w:val="0"`): docx2svg's `leading_header_rows`.
+fn leading_header_rows(rows: &[&Node], w: Ns) -> usize {
+    let mut count = 0;
+    for row in rows {
+        let flag = row.child(w, "trPr").and_then(|p| p.child(w, "tblHeader"));
+        match flag {
+            Some(f) if !matches!(f.attr_any("val"), Some("0" | "false" | "off")) => count += 1,
+            _ => break,
+        }
+    }
+    count
+}
+
+/// docx2svg's `cell_conditions` (measured, round 58): row band, column band, first and last
+/// column, first and last row, corner -- the bands as positions (`hBand:<n>`, `vBand:<n>`)
+/// that the resolver names against the style's band sizes; the header rows (`w:tblHeader`)
+/// all the header row when its option is on, the row bands counted after them.
+fn cell_conditions(
+    look: &[bool; 6],
+    row: usize,
+    column: usize,
+    rows: usize,
+    columns: usize,
+    header_rows: usize,
+) -> Vec<String> {
     let (row, column, rows, columns) = (row as i64, column as i64, rows as i64, columns as i64);
-    let first_row = look[0] && row == 0;
+    let heading = if look[0] {
+        (header_rows as i64).max(1)
+    } else {
+        header_rows as i64
+    };
+    let first_row = look[0] && row < heading;
     let last_row = look[1] && row == rows - 1;
     let first_col = look[2] && column == 0;
     let last_col = look[3] && column == columns - 1;
-    let mut out = vec!["wholeTable"];
-    if !look[5] && !(first_col || last_col) {
-        let index = column - if look[2] { 1 } else { 0 };
-        out.push(if index.rem_euclid(2) == 0 {
-            "band1Vert"
-        } else {
-            "band2Vert"
-        });
-    }
+    let mut out = Vec::new();
     if !look[4] && !(first_row || last_row) {
-        let index = row - if look[0] { 1 } else { 0 };
-        out.push(if index.rem_euclid(2) == 0 {
-            "band1Horz"
-        } else {
-            "band2Horz"
-        });
+        out.push(format!("hBand:{}", row - heading));
+    }
+    if !look[5] && !(first_col || last_col) {
+        out.push(format!("vBand:{}", column - if look[2] { 1 } else { 0 }));
     }
     for (name, on) in [
         ("firstCol", first_col),
@@ -910,21 +931,24 @@ fn cell_conditions(look: &[bool; 6], row: usize, column: usize, rows: usize, col
         ("lastRow", last_row),
     ] {
         if on {
-            out.push(name);
+            out.push(name.to_string());
         }
     }
     if (first_row || last_row) && (first_col || last_col) {
-        out.push(if first_col {
-            if first_row {
-                "nwCell"
+        out.push(
+            if first_col {
+                if first_row {
+                    "nwCell"
+                } else {
+                    "swCell"
+                }
+            } else if first_row {
+                "neCell"
             } else {
-                "swCell"
+                "seCell"
             }
-        } else if first_row {
-            "neCell"
-        } else {
-            "seCell"
-        });
+            .to_string(),
+        );
     }
     out
 }

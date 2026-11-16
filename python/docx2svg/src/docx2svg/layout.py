@@ -723,6 +723,25 @@ def _shading(value) -> str | None:
     return _color(fill)
 
 
+#: Automatic text on a table cell's fill darker than this is drawn white (the fill's Rec. 601
+#: luma, 0-255).  Measured (round 58, docx-agent's ``tools/table_regions_probe.py``, case ``A``,
+#: ``tests/observations/table-regions-word.json``): greys ``3B`` (59) and darker, ``C00000``
+#: (57.4), ``006100`` (56.9), ``203864`` (53.9), ``0000FF`` (29.1) turn it white; grey ``3C``
+#: (60), ``FF0000`` (76.2), ``008000`` (75.1), ``375623`` (70.9), ``7030A0`` (79.9) leave it
+#: black.  A shape's threshold is another (:data:`docx2svg.drawing.AUTOMATIC_WHITE_BELOW`).
+AUTOMATIC_WHITE_BELOW_CELL = 60
+
+
+def automatic_text_on_cell(shd) -> str | None:
+    """``FFFFFF`` where a cell's shading (``w:shd``, as resolved) is a fill dark enough that
+    Word draws text whose colour is automatic white, else ``None`` (black)."""
+    fill = _shading(shd)
+    if fill is None:
+        return None
+    red, green, blue = (int(fill[k:k + 2], 16) for k in (0, 2, 4))
+    return "FFFFFF" if 0.299 * red + 0.587 * green + 0.114 * blue < AUTOMATIC_WHITE_BELOW_CELL else None
+
+
 def _marks(page: Page, log: list) -> tuple:
     """How long ``page``'s lists and its warnings ``log`` are: what a header or footer
     drawn next adds is what comes after (:mod:`docx2svg.relayout` draws them again on a
@@ -2633,6 +2652,7 @@ class _Placer:
                     offset = table_model.align_offset(cell, space)
                 line_y = content_top + margin_top + offset
                 paragraph_top = line_y
+                automatic = automatic_text_on_cell(cell.cell.properties.get("shd"))
                 for k in lines:
                     placed = cell.stack[k]
                     paragraph = placed.paragraph
@@ -2669,7 +2689,7 @@ class _Placer:
                     # taller than the page, below mode 15) is not drawn.
                     if placed.number not in paragraph.undrawn and top < page.height_px:
                         self._cell_line(page, paragraph, placed.number, top, height, baseline, band,
-                                        cell.box.text_left)
+                                        cell.box.text_left, automatic=automatic)
                     if paragraph.anchors:
                         self._cell_anchors(page, item, flow, piece, cell, paragraph, placed.number, top, height,
                                            paragraph_top, content_top, offset)
@@ -2999,20 +3019,21 @@ class _Placer:
             drawn[whole] = (page.lines[-1], info.paragraph.path)
 
     def _cell_line(self, page: Page, paragraph, number: int, top: Fraction, height, baseline: int,
-                   band: tuple[int, int], left) -> None:
+                   band: tuple[int, int], left, *, automatic: str | None = None) -> None:
         """:meth:`_line` for a line of a cell's paragraph (``paragraph``, a
         :class:`docx2svg.table.CellParagraph`) -- or the same line a layout drew before, moved,
         as :meth:`_body_line` takes a body's: by the paragraph's measured pieces and lines (the
         very objects: a table's flow taken from :attr:`memo` holds the ones it was measured
-        with), its line number and the cell's text start."""
+        with), its line number and the cell's text start.  ``automatic``: the colour the cell's
+        fill gives text whose colour is automatic (:func:`automatic_text_on_cell`)."""
         info = _Paragraph(paragraph.paragraph, paragraph.resolved, paragraph.pieces, paragraph.lines,
                           paragraph.geometry, paragraph.label)
         drawn = self.lines_drawn
         log = self.layout.log
         if drawn is None or log is None or getattr(self, "_column_box", None) is not None:
-            self._line(page, info, None, number, top, height, baseline, band, left=left)
+            self._line(page, info, None, number, top, height, baseline, band, left=left, automatic=automatic)
             return
-        whole = (("cell", id(paragraph.pieces)), number, left)
+        whole = (("cell", id(paragraph.pieces)), number, left, automatic)
         found = drawn.get(whole)
         if found is None and self.line_cache is not None:
             found = self.line_cache.get(whole)
@@ -3022,13 +3043,14 @@ class _Placer:
             return
         marks = (len(page.lines), len(page.rules), len(page.pictures), len(page.floats), len(page.boxes), len(log),
                  page.defs is None, self.__dict__.get("_float_count", [0])[0])
-        self._line(page, info, None, number, top, height, baseline, band, left=left)
+        self._line(page, info, None, number, top, height, baseline, band, left=left, automatic=automatic)
         if (len(page.lines) - 1, len(page.rules), len(page.pictures), len(page.floats), len(page.boxes), len(log),
                 page.defs is None, self.__dict__.get("_float_count", [0])[0]) == marks:
             drawn[whole] = (page.lines[-1], paragraph.paragraph.path, paragraph.pieces, paragraph.lines)
 
     def _line(self, page: Page, info: _Paragraph, item: paginate.Para | None, number: int, top: Fraction,
-              height, baseline: int, band: tuple[int, int], *, left: Fraction | int | None = None) -> None:
+              height, baseline: int, band: tuple[int, int], *, left: Fraction | int | None = None,
+              automatic: str | None = None) -> None:
         document = self.document
         paragraph = info.paragraph
         pieces = info.pieces
@@ -3171,6 +3193,12 @@ class _Placer:
                 continue
             shift = positions[j] - x0
             self._leader(line, info, pieces[j], leader, column_left, positions[j], x1 + shift, baseline, height)
+        if automatic is not None and _shading(info.resolved.get("shd")) is None:
+            # Automatic text on a dark cell fill (:func:`automatic_text_on_cell`), where the
+            # paragraph and the run have no background of their own.
+            for span in line.spans:
+                if span.color is None and span.highlight is None and span.shading is None:
+                    span.color = automatic
         self._decorate(page, line)
         if item is not None and item.anchors:
             self._anchors(page, info, item, number, top, height, positions)

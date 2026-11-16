@@ -302,10 +302,17 @@ from docx_agent.tools import FORMAT, GROUPS, TOOLS, WORD_TOOLS  # noqa: E402
 #: in ``index`` and ``side``: +9 to every definition (15,737 -> 15,746), none to the core
 #: (3,192).  The guard rises to 15,746.  An enum value, no parameter: the strict set is
 #: unchanged (6 tools, 24 optional parameters).
+#: Round 58, R129: word_styles' ``regions`` (a table style's formatting per Table Design
+#: region: region, shading, color, bold, italic, size, alignment, borders {style, sides,
+#: color, width}, band_size, clear) and its description (+435), word_insert_markdown's
+#: ``like`` saying a table's frame (+4): +440 to every definition (15,746 -> 16,186), none to
+#: the core (3,192).  The guard rises to 16,186.  word_styles is not strict (deferred, in
+#: word_style); word_insert_markdown is strict, its description only: the strict set is
+#: unchanged (6 tools, 24 optional parameters).
 CHARS_PER_TOKEN = 3.5
 COUNTED_PER_ESTIMATED = 1.48
 CORE_COUNTED_BUDGET = 6500
-ALL_GUARD = 15746
+ALL_GUARD = 16186
 
 
 @pytest.fixture(scope="module")

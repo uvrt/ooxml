@@ -193,19 +193,39 @@ def _table_style_id(sheet: StyleSheet | None, paragraph: Paragraph) -> str | Non
 
 
 def banded(chain: list[Style], conditions: tuple[str, ...]) -> tuple[str, ...]:
-    """``conditions`` less the banding ones the table style does not turn on: row bands
-    (``band1Horz`` / ``band2Horz``) only where its chain states ``w:tblStyleRowBandSize``,
-    column bands only where it states ``w:tblStyleColBandSize``.  Measured by
-    ``make_table_border_probe.py`` (``style``): a table style with a ``band1Horz`` shading
-    and no band size draws no band; Word's own table styles all state a size of 1.
-    (A size above 1 -- bands of several rows -- is not modelled: bands are one row.)"""
-    from ..table import STAGES
+    """``conditions`` with the band positions (``hBand:<n>``, ``vBand:<n>``,
+    :func:`docx2svg.parse.document.cell_conditions`) named against the table style: a row
+    ``n`` rows into the banded ones is in ``band1Horz`` when ``n // size`` is even and
+    ``band2Horz`` when odd (a negative ``n``, a header row with the header option off:
+    ``band2Horz``), ``size`` the chain's ``w:tblStyleRowBandSize`` (the style nearest the
+    table stating one); columns likewise with ``w:tblStyleColBandSize``.
 
-    if "borders" not in STAGES:
-        return conditions
-    rows = any((style.table.get("tblStyleRowBandSize") or 0) > 0 for style in chain)
-    columns = any((style.table.get("tblStyleColBandSize") or 0) > 0 for style in chain)
-    return tuple(c for c in conditions if not ((c.endswith("Horz") and not rows) or (c.endswith("Vert") and not columns)))
+    A chain stating no size (or 0) draws no band of that kind: measured by
+    ``make_table_border_probe.py`` (``style``), a table style with a ``band1Horz`` shading
+    and no band size draws no band; Word's own table styles all state a size of 1.  Sizes
+    of 2 band two rows (columns) at a time (measured, round 58: docx-agent's
+    ``tools/table_regions_probe.py``, case ``N``)."""
+    sizes = {"h": 0, "v": 0}
+    for style in chain:
+        for kind, name in (("h", "tblStyleRowBandSize"), ("v", "tblStyleColBandSize")):
+            value = style.table.get(name)
+            if value is not None:
+                sizes[kind] = value or 0
+    out = []
+    for condition in conditions:
+        if condition[1:6] != "Band:" or condition[0] not in "hv":
+            out.append(condition)
+            continue
+        size = sizes[condition[0]]
+        if size <= 0:
+            continue
+        try:
+            index = int(condition[6:])
+        except ValueError:
+            continue
+        odd = index >= 0 and (index // size) % 2 == 0
+        out.append(("band1" if odd else "band2") + ("Horz" if condition[0] == "h" else "Vert"))
+    return tuple(out)
 
 
 # -- merging -------------------------------------------------------------------------

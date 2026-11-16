@@ -239,6 +239,7 @@ class _Light(_Reader):
 
     def __init__(self, document: "Document", body: Any, frame: Any, properties_of: Any, conditions_of: Any,
                  look_of: Any) -> None:
+        from docx2svg.parse.document import leading_header_rows as header_rows_of
         from docx2svg.paths import row_level
 
         self.document, self.frame = document, frame
@@ -271,10 +272,11 @@ class _Light(_Reader):
             look: list = []
             tblLook = properties.find(_W + "tblLook") if properties is not None else None
             rows = list(row_level(element, "tr"))
+            headers = header_rows_of(rows)
             for k, row in enumerate(rows):
                 cells = list(row_level(row, "tc"))
                 for j, cell in enumerate(cells):
-                    blocks(cell, style, (look, tblLook, k, j, len(rows), len(cells)))
+                    blocks(cell, style, (look, tblLook, k, j, len(rows), len(cells), headers))
 
         self._conditions_of, self._look_of = conditions_of, look_of
         blocks(body, None, ())
@@ -290,10 +292,10 @@ class _Light(_Reader):
         style, cell = self._context.get(id(element), (_effective._table_style(element), ()))
         conditions: tuple = ()
         if cell:
-            look, tblLook, k, j, rows, cells = cell
+            look, tblLook, k, j, rows, cells, headers = cell
             if not look:
                 look.append(self._look_of(tblLook))
-            conditions = self._conditions_of(look[0], k, j, rows, cells)
+            conditions = self._conditions_of(look[0], k, j, rows, cells, headers)
         properties = element.find(_W + "pPr")
         key = (etree.tostring(properties) if properties is not None else b"", style, conditions)
         found = self._models.get(key)

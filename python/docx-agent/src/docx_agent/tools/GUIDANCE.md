@@ -131,6 +131,24 @@ How to use them:
 - **The template's own table style for new tables:** `word_styles` `set_default` (a table
   style) is Word's Table Design > Set as Default; `word_insert_markdown` and new tables use it
   before the most used one, and `list` marks it `default`.
+- **A table look writers apply, not format** (round 58): `word_styles` `add` (`kind: "table"`)
+  or `modify` with `regions` -- per region `shading`, `color`, `bold`, `italic`, `size`,
+  `alignment`, `borders` (`{style, sides, color, width}`; repeat the region for another
+  style) and `band_size`; `clear` first removes what the region states. The regions are Word's
+  Table Design ones: `whole_table` (the style's own), `header_row`, `total_row`,
+  `first_column`, `last_column`, `banded_rows` / `even_banded_rows`, `banded_columns` /
+  `even_banded_columns`, and the four corner cells. Where they overlap Word draws, lowest
+  first: row band, column band, first/last column, header/total row, corner (measured: a
+  column band's fill over a row band's). Every row at the top marked to repeat is the header
+  row. A region's borders are its own edges (a row band's `left` at its rows' start,
+  `inside_v` between its cells). A region shows only where the table's `look` has it on:
+  `describe` lists the looks (`shown_with_look`) and the tables with them off, with the
+  `word_format_table` call. **A style cannot single out a middle column** -- only the first,
+  the last, and bands (every other column, or every n-th with `band_size`): for a look with
+  a column of its own, format a sample table's cells once and write new tables in its frame,
+  `word_insert_markdown` `like: "t:<sample>"` -- its table, row and cell formatting and each
+  cell's text formatting, header rows first, body rows repeated in order, total row last,
+  none of its text (an empty Markdown table gives an empty frame).
 - **The document's language** (what its text is proofed and spaced in): `word_styles`
   `set_language` with `language` (`fr-BE`, `nl-BE`...) sets it where the template states
   it -- its default and the styles in its own language (Normal's, the default's); styles in
