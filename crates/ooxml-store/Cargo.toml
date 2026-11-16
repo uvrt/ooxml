@@ -1,0 +1,20 @@
+[package]
+name = "ooxml-store"
+version = "0.1.0"
+description = "Format-neutral versions, transactions (MVCC with typed read and write sets), history and snapshots"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+arc-swap.workspace = true
+
+# The commit path is model-checked with loom (tests/loom.rs): with RUSTFLAGS="--cfg loom"
+# its locks and atomics are loom's (src/sync.rs); ordinary builds never compile loom.
+[target.'cfg(loom)'.dependencies]
+loom.workspace = true
+
+[lints]
+workspace = true

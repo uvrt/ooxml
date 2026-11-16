@@ -1,0 +1,36 @@
+//! Owns: [`DocModel`], what the store needs to know of a document: its keys, its changes,
+//! how a change applies and how it is undone.
+//!
+//! Must not: carry any format's names; the format crates implement the trait.
+
+use crate::KeySet;
+use std::fmt::Debug;
+
+/// A document as the store keeps it: a persistent value (cloning is cheap and shares
+/// structure), changed only by applying [`DocModel::Change`]s.
+pub trait DocModel: Clone + Send + Sync + 'static {
+    /// What a transaction reads and a change writes: a block, a part, a style, a list chain.
+    type Key: Clone + Ord + Debug + Send + Sync + 'static;
+    /// One primitive of a change set (a tree patch, a ledger addition, ...).
+    type Change: Clone + Debug + Send + Sync + 'static;
+    /// Why a change could not be applied or inverted.
+    type Error: std::error::Error + Send + Sync + 'static;
+
+    /// Apply `change`. On an error the store discards the value, so it need not be left as
+    /// it was. Applied to a version that agrees on every key the change's transaction read,
+    /// the result must be what the transaction's `prepare` would have made there.
+    fn apply(&mut self, change: &Self::Change) -> Result<(), Self::Error>;
+
+    /// The change that undoes `change` when applied right after it; `self` is the version
+    /// `change` applies to.
+    fn inverse(&self, change: &Self::Change) -> Result<Self::Change, Self::Error>;
+
+    /// Whether `self` and `other` hold the same content under every key of `keys` (the
+    /// whole document for [`KeySet::Everything`]). Versions share structure, so pointer
+    /// equality answers most of it.
+    fn agrees(&self, other: &Self, keys: &KeySet<Self::Key>) -> bool;
+
+    /// Add the keys `change` writes to `into` ([`KeySet::insert_everything`] when its extent
+    /// is not known).
+    fn written(change: &Self::Change, into: &mut KeySet<Self::Key>);
+}

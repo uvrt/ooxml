@@ -3,6 +3,7 @@ members = [
     "crates/core",
     "crates/word",
     "crates/python",
+    "crates/ooxml-store",
     "crates/ooxml-derive",
 ]
 resolver = "2"
@@ -22,6 +23,8 @@ num-integer = "0.1"
 num-traits = "0.2"
 pyo3 = "0.30"
 thiserror = "2"
+arc-swap = "1"
+loom = "0.7"
 
 # The architecture's standards (docs/architecture/README.md, section 2), for every crate that
 # says `[lints] workspace = true` -- the new crates; the prototype crates (core, word, python)
@@ -29,6 +32,8 @@ thiserror = "2"
 [workspace.lints.rust]
 unsafe_code = "forbid"
 missing_docs = "warn"
+# ooxml-store's commit path is model-checked with loom: `RUSTFLAGS="--cfg loom"`.
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(loom)"] }
 
 [workspace.lints.clippy]
 unwrap_used = "deny"
