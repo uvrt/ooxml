@@ -219,17 +219,33 @@ class Styles:
     # -- editing -----------------------------------------------------------------------------
 
     def add(self, name: str, kind: str = "paragraph", *, based_on: str | None = None,
-            next_style: str | None = None, tabs=None, **formatting) -> "EditResult":
+            next_style: str | None = None, tabs=None, regions=None, **formatting) -> "EditResult":
         """A new style named ``name`` (refused if the name is taken), based on ``based_on``
         (a name), with run formatting (and, for a paragraph style, paragraph formatting)
         as :mod:`docx_agent.edit.formatting` takes it, and ``shading`` (its forms there: a
         fill, a theme colour lighter or darker) -- a paragraph style's behind its
         paragraphs, a character style's behind its text.  Its id is the name without spaces
-        or punctuation, numbered if taken.  ``tabs``: its tab stops, as :meth:`modify` takes them."""
+        or punctuation, numbered if taken.  ``tabs``: its tab stops, as :meth:`modify` takes them.
+
+        Round 58 (R129): ``kind="table"`` makes a table style -- based on ``based_on``, by
+        default the document's Normal Table -- its run and paragraph formatting and
+        ``shading`` the whole table's, ``regions`` its formatting by region
+        (:mod:`docx_agent.edit.table_styles`, as :meth:`modify` takes them)::
+
+            doc.styles.add("Ledger", "table", size=9, regions=[
+                {"region": "header_row", "shading": "1F3864", "color": "FFFFFF", "bold": True,
+                 "borders": {"bottom": "single"}},
+                {"region": "banded_rows", "shading": "F2F2F2"},
+                {"region": "first_column", "bold": True}])"""
         from .document import EditError, EditResult
 
+        if kind == "table":
+            return self._add_table(name, based_on=based_on, next_style=next_style, tabs=tabs, regions=regions,
+                                   **formatting)
+        if regions:
+            raise EditError(f"regions are a table style's: a {kind} style has none (kind table)")
         if kind not in ("paragraph", "character"):
-            raise EditError("add() makes paragraph and character styles")
+            raise EditError("add() makes paragraph, character and table styles")
         if tabs and kind != "paragraph":
             raise EditError("a character style has no tab stops")
         if not name.strip() or len(name) > 253:
@@ -278,8 +294,103 @@ class Styles:
                 write_tabs(node, stops)
         return EditResult(f"style:{style_id}", created=[f"style:{style_id}"], warnings=warnings)
 
+    def _add_table(self, name: str, *, based_on: str | None, next_style: str | None, tabs, regions,
+                   **formatting) -> "EditResult":
+        """:meth:`add` of a table style (round 58, R129): as Word writes a new one (measured:
+        ``w:customStyle``, its name, ``w:basedOn`` Normal Table, the whole table's shading
+        in its own ``w:tcPr``, a band size in its ``w:tblPr``), with its regions."""
+        from .document import EditError, EditResult
+
+        if next_style is not None:
+            raise EditError("next_style is a paragraph style's: a table style has none")
+        if tabs:
+            raise EditError("a table style has no tab stops: give its paragraphs a paragraph style with them")
+        if not name.strip() or len(name) > 253:
+            raise EditError("a style name is 1 to 253 characters")
+        if self.find(name) is not None:
+            raise EditError(f"the document already has a style {name!r}")
+        if based_on is not None:
+            self.resolve(based_on, "table")
+        plain = self.default("table")
+        items = self._region_items(regions)
+        document = self._document
+        with document._edit():
+            base = self._ensure(based_on, "table") if based_on is not None else (plain.id if plain else None)
+            style_id = self._new_id(name)
+            node = make("w:style")
+            node.set(qn("w:type"), "table")
+            node.set(qn("w:customStyle"), "1")
+            node.set(qn("w:styleId"), style_id)
+            append_in_order(node, make("w:name", **{"w:val": name}))
+            if base is not None:
+                append_in_order(node, make("w:basedOn", **{"w:val": base}))
+            self._append(node)
+            warnings = self._write_table_formatting(node, formatting, items)
+        return EditResult(f"style:{style_id}", created=[f"style:{style_id}"], warnings=warnings)
+
+    def _region_items(self, regions) -> list[tuple[str, dict]]:
+        """``regions`` (a list of ``{region, ...fields}``, or ``{region: {fields}}``) read and
+        checked: ``[(region, fields)]`` in order, the notes on names read as others kept."""
+        from . import table_styles as _regions
+        from .document import EditError
+
+        if not regions:
+            return []
+        entries = [{"region": k, **(v or {})} for k, v in regions.items()] if isinstance(regions, dict) \
+            else list(regions)
+        out = []
+        self._region_notes: list[str] = []
+        for entry in entries:
+            if not isinstance(entry, dict) or not entry.get("region"):
+                raise EditError("a region is {region, shading, color, bold, italic, size, alignment, borders, "
+                                "band_size, clear}")
+            region, note = _regions.region_name(entry["region"])
+            if note:
+                self._region_notes.append(note)
+            values = {k: v for k, v in entry.items() if k != "region"}
+            _regions.check_region(region, values)
+            out.append((region, values))
+        return out
+
+    def _write_table_formatting(self, node: Element, formatting: dict, items: list[tuple[str, dict]]) -> list[str]:
+        """A table style's whole-table formatting (run, paragraph, ``shading``) and regions,
+        written on ``node`` inside an edit; returns the notes."""
+        from . import table_styles as _regions
+        from .document import EditError
+
+        document = self._document
+        formatting = dict(formatting)
+        shading = formatting.pop("shading", _NOT_GIVEN)
+        run_values = {k: v for k, v in formatting.items() if k in _formatting.RUN_PROPERTIES}
+        paragraph_values = {k: v for k, v in formatting.items() if k not in _formatting.RUN_PROPERTIES}
+        notes = list(getattr(self, "_region_notes", []))
+        self._region_notes = []
+        try:
+            _formatting.check_run(run_values)
+            _formatting.check_paragraph(paragraph_values)
+            _formatting.write_paragraph(node, paragraph_values)
+            _formatting.write_run(node, run_values, document._theme_color)
+            if shading is not _NOT_GIVEN:
+                notes += _regions.write_region(document, node, "whole_table",
+                                               {"shading": "none" if shading is None else shading})
+            for region, values in items:
+                notes += _regions.write_region(document, node, region, values)
+        except _formatting.FormattingError as error:
+            raise EditError(str(error)) from None
+        except _regions.RegionError as error:
+            raise EditError(str(error)) from None
+        notes += _regions.ensure_band_sizes(document, node, {region for region, values in items
+                                                             if any(v is not None for k, v in values.items()
+                                                                    if k != "clear")})
+        for tag in ("w:pPr", "w:rPr"):
+            child = node.find(qn(tag))
+            if child is not None and not len(child):
+                remove(child)
+        document.package.mark_dirty(document.package.styles_part())
+        return notes
+
     def modify(self, name: str, kind: str | None = None, *, numbering=_NOT_GIVEN, tabs=_NOT_GIVEN,
-               **formatting) -> "EditResult":
+               regions=None, **formatting) -> "EditResult":
         """Change a style's run and paragraph formatting and its ``shading`` (``None``
         removes a value).
 
@@ -316,6 +427,10 @@ class Styles:
             raise EditError(f"{name!r} is a {style.kind} style: only a paragraph style is linked to a list level")
         if tabs is not _NOT_GIVEN and style.kind != "paragraph":
             raise EditError(f"{name!r} is a {style.kind} style: only a paragraph style has tab stops")
+        if style.kind == "table":
+            return self._modify_table(style, numbering, tabs, regions, formatting)
+        if regions:
+            raise EditError(f"{name!r} is a {style.kind} style: regions are a table style's")
         stops, tab_warnings = ([], []) if tabs is _NOT_GIVEN or tabs is None else \
             self._tab_stops(style.id, tabs)
         link = None if numbering is _NOT_GIVEN or numbering is None else self._list_level(numbering)
@@ -372,6 +487,29 @@ class Styles:
                 if child is not None and not len(child):
                     remove(child)
             document.package.mark_dirty(document.package.styles_part())
+        return EditResult(f"style:{style.id}", changed=changed, warnings=warnings)
+
+    def _modify_table(self, style: "Style", numbering, tabs, regions, formatting: dict) -> "EditResult":
+        """:meth:`modify` of a table style (round 58, R129): the whole table's run and
+        paragraph formatting and ``shading``, and ``regions`` -- each region's fields given
+        replaced, the others kept (``clear`` first removes what the region states).  A change
+        that leaves the style as it was is no change (rule 3)."""
+        from . import table_styles as _regions
+        from .document import EditError, EditResult
+
+        if numbering is not _NOT_GIVEN:
+            raise EditError(f"{style.name!r} is a table style: only a paragraph style is linked to a list level")
+        if tabs is not _NOT_GIVEN:
+            raise EditError(f"{style.name!r} is a table style: only a paragraph style has tab stops")
+        items = self._region_items(regions)
+        document = self._document
+        node = self._node(style.id)
+        before = _regions.snapshot(node)
+        with document._edit():
+            warnings = self._write_table_formatting(node, formatting, items)
+            changed = _regions.snapshot(node) != before
+        if not changed:
+            warnings.append(f"{style.name!r} already has this formatting: left as it was")
         return EditResult(f"style:{style.id}", changed=changed, warnings=warnings)
 
     def inherited_tabs(self, style_id: str) -> dict[int, tuple[str, str | None]]:

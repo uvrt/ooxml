@@ -2804,7 +2804,8 @@ class Document(TrackingOps, RevisionOps, TextOps, FormatOps, ListOps, LinkOps, P
                            stories=stories)
 
     def insert_markdown(self, md: str, *, at: str = "end", style_map=None, images=None, fetch=None,
-                        html: str = "refuse", emphasis: str = "styles", keep_settings: bool = True, like=None) -> EditResult:
+                        html: str = "refuse", emphasis: str = "styles", keep_settings: bool = True, like=None,
+                        table_like: str | None = None) -> EditResult:
         """Write Markdown as the document's own blocks (:mod:`docx_agent.markdown.write`).
 
         ``at``: ``"end"`` (the body's end) or ``"end:<story>"``; ``"after:<id>"``,
@@ -2835,6 +2836,14 @@ class Document(TrackingOps, RevisionOps, TextOps, FormatOps, ListOps, LinkOps, P
         ``{1: "p:3", 2: "p:4"}``, a role (``"bullet2"``: a bullet list's second level), or
         one id for the top level -- each taking its paragraph's style, list at its level
         (numbered on), indents and page settings (:class:`~docx_agent.edit.like.LevelLooks`).
+        ``table_like`` (round 58, R129): a table whose frame the Markdown's tables take --
+        its table, row and cell properties, each cell's paragraph and text formatting, its
+        rows' looks (header rows, body rows repeated, total row), none of its text
+        (:mod:`docx_agent.edit.frames`): for a look no table style can carry, such as a
+        middle column of its own::
+
+            doc.insert_markdown("| Item | Q1 | Q2 |\n|---|---|---|\n| Rent | 10 | 12 |", at="end",
+                                table_like="t:0A1B2C3D")
 
         At ``"replace:..."`` the new paragraphs keep the settings of the paragraphs they
         replace (round 42; ``keep_settings=False``: not), matched by kind -- a paragraph, a
@@ -2851,7 +2860,7 @@ class Document(TrackingOps, RevisionOps, TextOps, FormatOps, ListOps, LinkOps, P
         from ..markdown.write import insert_markdown
 
         return insert_markdown(self, md, at=at, style_map=style_map, images=images, fetch=fetch, html=html,
-                               emphasis=emphasis, keep_settings=keep_settings, like=like)
+                               emphasis=emphasis, keep_settings=keep_settings, like=like, table_like=table_like)
 
     def state(self, range: str | None = None, *, view: str = "final", layout: bool = False,
               xml: bool = False, style_map=None) -> dict:

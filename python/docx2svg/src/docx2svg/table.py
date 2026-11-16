@@ -28,7 +28,7 @@ import dataclasses
 import math
 from dataclasses import dataclass, field
 from fractions import Fraction
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from .linebreak import UNITS_PER_TWIP, twips_to_units
 from .model import Document, Paragraph, Table
@@ -169,11 +169,13 @@ class ResolvedTable:
         return len(self.grid)
 
 
-def _merge(chain, attribute: str, direct: dict, conditions: tuple[str, ...] = (), index: int | None = None) -> dict:
+def _merge(chain, attribute: str, direct: dict, conditions: tuple[str, ...] = (), index: int | None = None,
+           outer: Callable[[str], dict[str, bool]] | None = None) -> dict:
     """``attribute`` of each style in ``chain``, root first, each followed by its
     conditional formats' part ``index`` for ``conditions`` (the banding ones only where
     the style turns banding on: :func:`docx2svg.resolve.cascade.banded`); then
-    ``direct``."""
+    ``direct``.  ``outer``: for a cell, which of its sides are on its region's edge, per
+    condition (:func:`_region_borders`)."""
     from .resolve.cascade import banded
 
     conditions = banded(chain, conditions)
@@ -183,9 +185,68 @@ def _merge(chain, attribute: str, direct: dict, conditions: tuple[str, ...] = ()
         if index is not None:
             for condition in conditions:
                 if condition in style.conditional:
-                    out.update(style.conditional[condition][index])
+                    part = style.conditional[condition][index]
+                    out.update(_region_borders(part, outer(condition)) if outer is not None else part)
     out.update(direct)
     return out
+
+
+#: The conditional formats that are rows of the table, and those that are columns.
+_ROW_REGIONS = frozenset({"band1Horz", "band2Horz", "firstRow", "lastRow"})
+_COLUMN_REGIONS = frozenset({"band1Vert", "band2Vert", "firstCol", "lastCol"})
+_INSIDE = {"top": "insideH", "bottom": "insideH", "left": "insideV", "right": "insideV"}
+
+
+def _region_borders(part: dict, outer: dict[str, bool]) -> dict:
+    """A conditional format's cell properties for one cell of its region: its
+    ``w:tcBorders`` sides are the region's -- ``top``, ``bottom``, ``left``, ``right`` on
+    the region's edges, ``insideH`` / ``insideV`` between its cells -- so each side of the
+    cell takes the one for where it is (``outer``: which sides are on the region's edge).
+
+    Measured (round 58, docx-agent's ``tools/table_regions_probe.py``, cases ``E``, ``F``,
+    ``Q``): a row band's ``left`` is drawn at its row's start only, its ``right`` at the
+    end, its ``insideV`` between the cells; a column region's ``top`` on the table's first
+    row only, ``bottom`` on its last, ``insideH`` between the rows; a band of two rows has
+    its ``top`` over the first, ``insideH`` between them, ``bottom`` under the second."""
+    if not any(key.startswith("tcBorders.") for key in part):
+        return part
+    out = {k: v for k, v in part.items() if k not in _BORDER_KEYS}
+    for side in SIDES:
+        key = f"tcBorders.{side}" if outer[side] else f"tcBorders.{_INSIDE[side]}"
+        if key in part:
+            out[f"tcBorders.{side}"] = part[key]
+    return out
+
+
+_BORDER_KEYS = frozenset(f"tcBorders.{side}" for side in ("top", "left", "bottom", "right", "insideH", "insideV"))
+
+
+def _regions(named: list[list[tuple[str, ...]]]) -> Callable[[int, int], Callable[[str], dict[str, bool]]]:
+    """For cell ``(r, c)`` of a table whose cells' conditional formats are ``named``, which
+    of its sides are on the edge of each condition's region: a row region is the run of
+    rows holding the condition, across the row; a column region the run of cells holding
+    it, down the table; a corner, the cell."""
+    def has(r: int, c: int | None, condition: str) -> bool:
+        if not 0 <= r < len(named):
+            return False
+        row = named[r]
+        if c is None:
+            return any(condition in cell for cell in row)
+        return 0 <= c < len(row) and condition in row[c]
+
+    def at(r: int, c: int) -> Callable[[str], dict[str, bool]]:
+        last_cell = len(named[r]) - 1
+
+        def outer(condition: str) -> dict[str, bool]:
+            if condition in _ROW_REGIONS:
+                return {"top": not has(r - 1, None, condition), "bottom": not has(r + 1, None, condition),
+                        "left": c == 0, "right": c == last_cell}
+            if condition in _COLUMN_REGIONS:
+                return {"top": r == 0, "bottom": r == len(named) - 1,
+                        "left": not has(r, c - 1, condition), "right": not has(r, c + 1, condition)}
+            return {"top": True, "bottom": True, "left": True, "right": True}
+        return outer
+    return at
 
 
 def _margin(value) -> int:
@@ -256,6 +317,10 @@ def resolve_table(document: Document, table: Table) -> ResolvedTable:
     indent_stated = "tblInd" in table.properties or any("tblInd" in style.table for style in chain)
     rows: list[Row] = []
     count = len(table.rows)
+    from .resolve.cascade import banded
+
+    named = [[banded(chain, cell) for cell in row] for row in table.conditions]
+    region_of = _regions(named)
     for r, cells in enumerate(table.rows):
         row_direct = table.row_properties[r] if r < len(table.row_properties) else {}
         row_conditions = table.conditions[r][0] if r < len(table.conditions) and table.conditions[r] else ()
@@ -267,8 +332,8 @@ def resolve_table(document: Document, table: Table) -> ResolvedTable:
         for c, blocks in enumerate(cells):
             direct = table.cell_properties[r][c] if r < len(table.cell_properties) and c < len(
                 table.cell_properties[r]) else {}
-            conditions = table.conditions[r][c] if r < len(table.conditions) and c < len(table.conditions[r]) else ()
-            props = _merge(chain, "table_cell", direct, conditions, 4)
+            conditions = named[r][c] if r < len(named) and c < len(named[r]) else ()
+            props = _merge(chain, "table_cell", direct, conditions, 4, outer=region_of(r, c) if conditions else None)
             span = max(1, props.get("gridSpan", 1) or 1)
             known = table.cell_paths[r] if r < len(table.cell_paths) else ()
             cell = Cell(r, c, column, span, tuple(blocks), props, props.get("vMerge"),
