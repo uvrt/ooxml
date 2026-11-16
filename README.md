@@ -32,7 +32,7 @@ A Cargo workspace at the root, its crates under `crates/`:
 `cargo test --workspace` runs the Rust tests; `python/ooxml-core/tests` compares the Rust
 layout with docx2svg's on made-up documents (`cargo build --release -p ooxml-word`, `pip
 install ./python/ooxml-core`, then `pytest` there). Wheels: one abi3 wheel per platform for
-CPython 3.10 and later, and one for the free-threaded 3.15t.
+CPython 3.10 and later.
 
 ## Installing
 
@@ -63,9 +63,14 @@ example `pip install ./python/ooxml-common ./python/ooxml-edit ./python/docx2svg
   and the packages that depend on them run (`tools/ci.py` holds the dependency graph and
   each package's install and test command; `python tools/ci.py affected <paths>` shows
   what a change selects). A change to `.github/` or `tools/` runs everything; main, the
-  nightly run and a manual run take everything. Branch protection requires the jobs
-  `required (ubuntu, build)` and `required (windows)`, which pass when every leg they
-  cover passed or was left out.
+  nightly run and a manual run take every package. The Pythons per OS spare the few macOS
+  runners: a pull request runs Linux on the oldest and the newest Python, Windows on the
+  newest, no macOS; a push to main runs Linux on every Python, Windows on the oldest and
+  the newest, macOS on the newest; the nightly run and a manual run take every Python on
+  every OS (`tools/ci.py`, `LEGS`; its tests: `python -m unittest discover -s tools`). A newer push to a pull request or to main cancels the
+  older push's run. Branch protection requires the jobs `required (ubuntu, build)` and
+  `required (windows)`, which pass when every leg they cover passed or was left out;
+  macOS legs are not required.
 - Rust (`.github/workflows/rust.yml`): fmt, clippy, tests, the differential tests and the
   wheels, when a change touches the workspace, ooxml-core or the packages it is compared
   with; gate job `required (rust)`.

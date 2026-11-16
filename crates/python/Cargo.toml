@@ -27,6 +27,5 @@ foldhash = "0.2"
 rayon.workspace = true
 
 [features]
-# The stable ABI from 3.10: one wheel for every GIL build of CPython 3.10 and later.  Left
-# off for the free-threaded build, which gets a wheel of its own.
+# The stable ABI from 3.10: one wheel for every CPython 3.10 and later.
 abi3 = ["pyo3/abi3-py310"]
