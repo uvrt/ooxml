@@ -23,6 +23,15 @@ snapshot commit; the development history before it is summarised here.
 - **The body's index is told unchanged in Rust** (`index_walk`: the paragraphs, rows and
   tables, their paraIds and rows' tables, as a digest), milliseconds instead of a walk in
   Python; and an edit's stamping does not look through an index already found stamped.
+- **Edits beside other edits of their document no longer go on drafts where the interpreter
+  has its lock** (`block_edits="auto"`; `docx_agent.blocks.drafts_on`): each call takes the
+  document's lock in turn instead. With the lock, the calls' Python runs one at a time
+  either way, and a draft repeats the call's work (a copy of the document read and indexed,
+  the per-version passes run on both, the call prepared again after a conflict), so drafts
+  made the same edits cost more and wait longer. TIMING_DRAFTS The results are the
+  same either way (the calls one at a time, in the order their changes were made). Where
+  the interpreter runs without its lock (a free-threaded build) edits go on drafts as
+  before; `DOCX_AGENT_DRAFTS=1` drafts with the lock too, `DOCX_AGENT_DRAFTS=0` never.
 - What a call that ran on a draft (beside other edits of its document) held the document's
   lock for to check and apply its change is in `Result.block["held"]` (ooxml-edit 0.120.0).
 - `DOCX_AGENT_INCREMENTAL=0` turns these off with the other per-change passes;

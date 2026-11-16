@@ -13,6 +13,11 @@ os.environ.setdefault("DOCX_AGENT_FULL_VALIDATE", "1")
 # written out again, at every use (ooxml_edit.opc.OpcPackage.keep_serialized).
 os.environ.setdefault("OOXML_EDIT_VERIFY_SERIALIZED", "1")
 
+# Lane J (0.1.120): edits beside another edit of their document go on drafts here, as before,
+# with the interpreter lock or without (unset, docx-agent drafts only without it:
+# docx_agent.blocks.drafts_on); test_block_edits.py tests the default.
+os.environ.setdefault("DOCX_AGENT_DRAFTS", "1")
+
 FIXTURE_DIR = Path(__file__).parent / "fixtures"
 #: E6's new document, written where the corpus is read from (``new/document``): every gate
 #: and every phase's edit set holds for a document docx-agent made, as for one it opened.

@@ -1310,3 +1310,31 @@ def test_a_call_that_frees_the_largest_annotation_id_then_draws_keeps_the_lock()
                                                  "target": f"{layout.bodies[0][0]}@0:4", "bookmark": "new_mark"}}]})
         assert result.ok and result.block.get("lock") == "annotation ids", result.block
         assert not block_stress.repeated_ids(session.entry(doc).document.to_bytes())
+
+
+def test_drafts_by_default_only_without_the_interpreter_lock(monkeypatch):
+    """Lane J (0.1.120): ``block_edits="auto"`` drafts an edit beside another only where the
+    interpreter runs without its lock, unless ``DOCX_AGENT_DRAFTS`` says (``1``, ``0``)."""
+    import sys
+
+    from docx_agent import blocks
+
+    hook = blocks.Blocks()
+    document = Document.open(block_stress.made(2))
+    monkeypatch.delenv("DOCX_AGENT_DRAFTS", raising=False)
+    monkeypatch.setattr(sys, "_is_gil_enabled", lambda: True, raising=False)
+    assert not blocks.drafts_on() and not hook.worth(document)
+    monkeypatch.setattr(sys, "_is_gil_enabled", lambda: False, raising=False)
+    assert blocks.drafts_on() and hook.worth(document)
+    monkeypatch.setenv("DOCX_AGENT_DRAFTS", "0")
+    assert not hook.worth(document)
+    monkeypatch.setenv("DOCX_AGENT_DRAFTS", "1")
+    monkeypatch.setattr(sys, "_is_gil_enabled", lambda: True, raising=False)
+    assert hook.worth(document)
+    monkeypatch.delenv("DOCX_AGENT_DRAFTS")
+    # A fill from a dataset, which ``auto`` drafts even alone where drafts are on: here under
+    # the document's lock, with the same result.
+    with opened("auto") as (box, session, doc, layout):
+        result = box.dispatch(session, "word_edit_table", {"doc": doc, "table": layout.fill, "action": "set_cells",
+                                                           "grow": True, "from": "d:rows"})
+        assert result.ok and result.block is None

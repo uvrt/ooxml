@@ -129,7 +129,9 @@ from __future__ import annotations
 import contextlib
 import difflib
 import json
+import os
 import re
+import sys
 import threading
 import weakref
 from collections import Counter
@@ -989,6 +991,24 @@ class Draft:
             pool.recording = None
 
 
+def drafts_on() -> bool:
+    """Lane J (0.1.120): whether an edit beside another of its document is prepared on a
+    draft (``block_edits="auto"``): ``DOCX_AGENT_DRAFTS=1`` yes, ``0`` no; unset, only where
+    the interpreter runs without its lock (a free-threaded build).  With the lock, the
+    calls' Python runs one at a time whichever way they go, and a draft repeats the work
+    the call does on the document -- a copy of it, read and indexed, the passes run on both,
+    and the call prepared again after a conflict -- so the same edits cost more CPU and
+    wait longer than taking the document's lock in turn (measured on a made-up report of
+    295 pages with 24 writers: edit p99 65 s with drafts, 9 s without; CPU 121 s against
+    28 s).  Either way the results are those of the calls one at a time in the order their
+    changes were made."""
+    setting = os.environ.get("DOCX_AGENT_DRAFTS", "").strip()
+    if setting in ("0", "1"):
+        return setting == "1"
+    gil = getattr(sys, "_is_gil_enabled", None)
+    return gil is not None and not gil()
+
+
 #: Lane G: the body's size in bytes (``word/document.xml``) above which an edit is not made on
 #: a draft (:meth:`Blocks.worth`): about 600 pages of text.
 DRAFT_BODY_LIMIT = 4 << 20
@@ -1017,6 +1037,8 @@ class Blocks:
         the same result."""
         from .revalidate import body_size, enabled
 
+        if not drafts_on():
+            return False
         if not enabled():
             return True
         size = body_size(document)
