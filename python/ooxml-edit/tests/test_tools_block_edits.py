@@ -294,7 +294,9 @@ def test_a_call_that_takes_the_lock_waits_for_a_long_draft_in_flight_to_apply(ga
         first = slow["result"]
         assert first.ok and _shape(first.block) == {"tries": 1, "conflicts": []}
         assert gate.order() == ["first in", "late waits", "first out"]
-        assert late.ok and late.block is not None and "waited" in late.block
+        # It waited: the order says so.  (How long is not asserted: ``block["waited"]`` is
+        # left out under a millisecond, which a coarse clock -- Windows' -- can read.)
+        assert late.ok
         assert late.version == first.version + 1
         items = session.entry(doc).document.items()
         assert items[0] == "first" and items[-1] == "late"
