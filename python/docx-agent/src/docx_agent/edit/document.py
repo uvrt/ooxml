@@ -1188,7 +1188,7 @@ class Document(TrackingOps, RevisionOps, TextOps, FormatOps, ListOps, LinkOps, P
                 # again), and the index made from the last one per change.
                 data = self.package.read(part)
             if data is not None:
-                index, base = _ids.body_index(root, data, self.__dict__.get("_index_base"))
+                index, base = _ids.body_index(root, data, self.__dict__.get("_index_base"), self)
                 self.__dict__["_index_base"] = base
                 _incremental.STATS["body index: " + ("made" if base is not None else "whole")] += 1
                 if _incremental.verifying() and not _ids.same_index(index, PartIndex("body", root)):
@@ -1551,10 +1551,18 @@ class Document(TrackingOps, RevisionOps, TextOps, FormatOps, ListOps, LinkOps, P
             scan = self.__dict__.get("_id_scan")
             if scan is None:
                 scan = self.__dict__["_id_scan"] = _ids.IdScan()
-            found = scan.read(self)
+            before = _ids.copy_ledger(ledger) if _incremental.verifying() else None
+            found = scan.read(self, ledger)
             _incremental.STATS["ids note: " + ("incremental" if found is not None else "whole")] += 1
             if found is not None and _incremental.verifying():
-                _incremental.check("ids note", found, _ids.block_and_drawing_ids(self._roots()))
+                _incremental.check("ids note", (set(found[0]), set(found[1])),
+                                   _ids.block_and_drawing_ids(self._roots()))
+            if found is not None and before is not None:
+                # (lane K: the ledger's note from the change compared with one from the sets)
+                ledger.note(self._roots(), self.history.version, found)
+                before.note(self._roots(), self.history.version, (set(found[0]), set(found[1])))
+                _incremental.check("ids note: ledger", _ids.ledger_state(ledger), _ids.ledger_state(before))
+                return
         ledger.note(self._roots(), self.history.version, found)
 
     def id_state(self) -> str:

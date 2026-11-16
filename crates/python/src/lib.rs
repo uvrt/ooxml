@@ -7,6 +7,7 @@ use ooxml_word::snapshot::Snapshot;
 use pyo3::prelude::*;
 use std::sync::Arc;
 
+mod body;
 mod tree;
 
 #[pyclass(frozen)]
@@ -281,7 +282,8 @@ fn stats_json(st: &ooxml_word::parse::Stats) -> serde_json::Value {
         .map(|(k, v)| (k.to_string(), serde_json::json!(v)))
         .collect();
     serde_json::json!({"items": st.items, "units": st.units, "calls": calls, "parse_ms": st.parse_ms,
-                       "export_ms": st.export_ms})
+                       "export_ms": st.export_ms,
+                       "phases": st.phases.iter().map(|(k, v)| serde_json::json!([k, v])).collect::<Vec<_>>()})
 }
 
 /// Lane I1: one Word document's body followed by the Rust parser (`ooxml_word::parse::Doc`):
@@ -570,5 +572,15 @@ fn ooxml_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(tree::tree_digests, m)?)?;
     m.add_function(wrap_pyfunction!(tree::unit_starts, m)?)?;
     m.add_function(wrap_pyfunction!(tree::index_walk, m)?)?;
+    m.add_function(wrap_pyfunction!(tree::index_walks, m)?)?;
+    m.add_function(wrap_pyfunction!(tree::body_others, m)?)?;
+    m.add_class::<body::BodySpans>()?;
+    m.add_function(wrap_pyfunction!(body::body_blocks, m)?)?;
+    m.add_function(wrap_pyfunction!(body::common_ends, m)?)?;
+    m.add_function(wrap_pyfunction!(body::common_prefix_of, m)?)?;
+    m.add_function(wrap_pyfunction!(body::common_suffix_of, m)?)?;
+    m.add_class::<body::Starts>()?;
+    m.add_function(wrap_pyfunction!(body::write_plan, m)?)?;
+    m.add_function(wrap_pyfunction!(body::write_assemble, m)?)?;
     Ok(())
 }

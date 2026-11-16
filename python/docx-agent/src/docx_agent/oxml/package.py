@@ -211,9 +211,21 @@ def _restore_body(root, current: bytes, target: bytes, settled: bool = False, hi
     from ..revalidate import _scan
     from ..tools.touched import _blocks, _common_prefix, _common_suffix, _kept_counts
 
-    prefix = _common_prefix(current, target)
-    suffix = _common_suffix(current, target, min(len(current), len(target)) - prefix)
-    if hint is not None:
+    if hint is not None and hasattr(hint[0], "advance"):
+        # Lane K: the step read in Rust (docx_agent.bodyscan), kept by the reading for the
+        # passes that read the version put back.
+        found = hint[0].advance(target)
+        if found is None:
+            return None
+        reading, before, after, begin, stop = found
+        body_at, body_end = reading.body
+    else:
+        found = None
+    prefix = _common_prefix(current, target) if found is None else 0
+    suffix = _common_suffix(current, target, min(len(current), len(target)) - prefix) if found is None else 0
+    if found is not None:
+        pass
+    elif hint is not None:
         # 0.1.118: the blocks around the change from ``current``'s spans; only the stretch
         # between them is read in ``target``.
         spans, (body_at, body_end) = hint
@@ -245,7 +257,9 @@ def _restore_body(root, current: bytes, target: bytes, settled: bool = False, hi
     body = root.find(qn("w:body"))
     if body is None:
         return None
-    blocks = [child for child in body if child.tag in _BLOCK_TAGS]
+    # (lane K: the blocks found by lxml in C, and the children between the kept ones taken by
+    # their places, none read in Python one by one)
+    blocks = list(body.iterchildren(*_BLOCK_TAGS))
     head = target[:body_at]
     try:
         fragment = parse_xml(head + target[begin:stop] + target[body_end:])
@@ -255,14 +269,13 @@ def _restore_body(root, current: bytes, target: bytes, settled: bool = False, hi
     if new_body is None:
         return None
     # The live body's children between the kept blocks (blocks and whatever else is there).
-    children = list(body)
     first_kept = blocks[before - 1] if before else None
     last_kept = blocks[len(blocks) - after] if after else None
     if len(blocks) < before + after:
         return None
-    lo = children.index(first_kept) + 1 if first_kept is not None else 0
-    hi = children.index(last_kept) if last_kept is not None else len(children)
-    for node in children[lo:hi]:
+    lo = body.index(first_kept) + 1 if first_kept is not None else 0
+    hi = body.index(last_kept) if last_kept is not None else len(body)
+    for node in body[lo:hi]:
         body.remove(node)
     if first_kept is not None:
         first_kept.tail = new_body.text
@@ -432,6 +445,8 @@ class _Written:
         starts = core.unit_starts(data, start, end)
         if starts is None or len(starts) * 16 != len(units):
             return None
+        if hasattr(core, "write_assemble"):
+            starts = core.Starts(starts)      # (lane K: held in Rust)
         return cls(data, skeleton, units, starts, end)
 
 
@@ -453,6 +468,36 @@ def _aligned(old: bytes, digest: bytes) -> "int | None":
     return None
 
 
+def _write_assembled(core, last: "_Written", root, body, units: bytes) -> "_Written | None":
+    """:func:`_write_from`'s write made in Rust (lane K, 0.1.123): which children are not
+    among the last bytes' found there (``ooxml_core.write_plan``), those written in place
+    here, and the bytes and the children's places put together there
+    (``ooxml_core.write_assemble``), with no Python object per child."""
+    _head, _tail, missing = core.write_plan(last.units, units)
+    pieces = []
+    if missing:
+        declared = _declared(root)
+        if len(missing) > _FOUND_BY_SEARCH:
+            children = list(body)
+            if len(children) * 16 != len(units):
+                return None
+            take = children.__getitem__
+        else:
+            if len(body) * 16 != len(units):
+                return None
+            take = body.__getitem__
+        for k in missing:
+            piece = in_place(take(k), declared)
+            if piece is None:
+                return None
+            pieces.append(piece)
+    found = core.write_assemble(last.data, last.starts, last.end, last.units, units, pieces)
+    if found is None:
+        return None
+    data, starts, end = found
+    return _Written(data, last.skeleton, units, starts, end)
+
+
 def _write_from(last: "_Written | None", root) -> "_Written | None":
     """``root`` written out from ``last`` -- its body's children whose digests are among
     ``last``'s taken from its bytes, the others written in place -- or ``None`` where it
@@ -471,6 +516,8 @@ def _write_from(last: "_Written | None", root) -> "_Written | None":
     n, m = len(old) // 16, len(units) // 16
     if units == old:
         return _Written(last.data, last.skeleton, units, last.starts, last.end)
+    if hasattr(core, "write_assemble") and hasattr(last.starts, "list"):
+        return _write_assembled(core, last, root, body, units)
     from ..tools.touched import _common_prefix, _common_suffix
 
     least = min(n, m)

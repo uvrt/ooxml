@@ -51,6 +51,7 @@ from typing import Any
 
 from lxml import etree
 
+from .. import bodyscan as _bodyscan
 from .. import incremental as _incremental
 
 from ..edit import ids as _ids
@@ -206,6 +207,13 @@ class _Summary:
             if _incremental.verifying():
                 _incremental.check("touched rest", self.rest_kept, self.rest == other.rest)
             return self.rest_kept
+        if hasattr(self.spans, "same_gaps") and hasattr(other.spans, "same_gaps") \
+                and self._rest is None and other._rest is None:
+            # Lane K: the two streams compared in Rust, neither digested block by block.
+            same = self.spans.same_gaps(other.spans)
+            if _incremental.verifying():
+                _incremental.check("touched rest", same, self.rest == other.rest)
+            return same
         return self.rest == other.rest
 
     def ids(self) -> list[str]:
@@ -243,7 +251,7 @@ def _summary(document: Any, data: bytes, base: _Summary | None = None) -> _Summa
         if len(found.data) == len(data) and found.data == data:
             cache.append(cache.pop(k))      # the latest last
             return found
-    found = (base is not None and _rescan(data, base)) or _scan(data) or _parse(document, data)
+    found = (base is not None and _rescan(data, base, document)) or _scan(data, document) or _parse(document, data)
     cache.append(found)
     del cache[:-_KEPT]
     return found
@@ -291,9 +299,15 @@ def _rest(data: bytes, spans: list[tuple[int, int]], body: tuple[int, int]) -> b
     return rest.digest()
 
 
-def _scan(data: bytes) -> _Summary | None:
+def _scan(data: bytes, document: Any = None) -> _Summary | None:
     """The body's blocks from its bytes, by their tags; ``None`` when the part does not
-    write the main namespace as ``w:``, or the tags do not nest."""
+    write the main namespace as ``w:``, or the tags do not nest.  (Lane K: read in Rust,
+    :mod:`docx_agent.bodyscan`, where the core is there.)"""
+    if _bodyscan.core() is not None:
+        spans = _bodyscan.scan(document, data)
+        if spans is None:
+            return None
+        return _Summary(data, spans, [_digest(data[begin:end]) for begin, end in spans[:]], None, body=spans.body)
     root_end = data.find(b">", data.find(b"<w:document"))
     if root_end < 0 or _W_DECLARED not in data[:root_end]:
         return None
@@ -308,13 +322,33 @@ def _scan(data: bytes) -> _Summary | None:
     return _Summary(data, spans, [_digest(data[begin:end]) for begin, end in spans], None, body=body)
 
 
-def _rescan(data: bytes, base: _Summary) -> _Summary | None:
+def _restep(data: bytes, base: _Summary, document: Any) -> _Summary | None:
+    """:func:`_rescan` from a reading in Rust (lane K, :func:`docx_agent.bodyscan.step`):
+    the same blocks, kept and read again, the step shared with the other passes."""
+    found = _bodyscan.step(document, base.spans, data)
+    if found is None:
+        return None
+    spans, before, after, begin, stop = found
+    n_old, n_new = len(base.spans), len(spans)
+    middle = spans[before:n_new - after]
+    digests = base.digests[:before] + [_digest(data[s:e]) for s, e in middle] + base.digests[n_old - after:]
+    summary = _Summary(data, spans, digests, None, body=spans.body)
+    summary.kept = (before, after, base)
+    old_stop = stop - (len(data) - len(base.data))
+    summary.rest_kept = b"".join(_gaps(base.data, base.spans[before:n_old - after], begin, old_stop)) == \
+        b"".join(_gaps(data, middle, begin, stop))
+    return summary
+
+
+def _rescan(data: bytes, base: _Summary, document: Any = None) -> _Summary | None:
     """``data``'s summary from ``base``'s, another state of the same body: the blocks
     before the first byte that differs and after the last are ``base``'s, only those
     between are read again -- a call's cost is its change's, not the document's.  ``None``
     when the change reaches outside the body, or ``base`` was not read from its bytes."""
     if base.spans is None or base.body is None:
         return None
+    if hasattr(base.spans, "advance"):
+        return _restep(data, base, document)
     old = base.data
     prefix = _common_prefix(old, data)
     suffix = _common_suffix(old, data, min(len(old), len(data)) - prefix)
@@ -345,6 +379,8 @@ def _rescan(data: bytes, base: _Summary) -> _Summary | None:
 def _kept_counts(spans: list[tuple[int, int]], prefix: int, suffix_at: int) -> tuple[int, int]:
     """How many blocks end within the first ``prefix`` bytes, and how many of the rest start
     at or after ``suffix_at`` (spans in order): by bisection (0.1.118)."""
+    if hasattr(spans, "kept_counts"):
+        return spans.kept_counts(prefix, suffix_at)
     n = len(spans)
     before = bisect.bisect_right(spans, prefix, key=_end)
     after = n - max(before, bisect.bisect_left(spans, suffix_at, key=_start))
@@ -372,7 +408,18 @@ def _gaps(data: bytes, spans: Any, begin: int, stop: int) -> list[bytes]:
 
 def _common_prefix(a: bytes, b: bytes) -> int:
     """How many leading bytes ``a`` and ``b`` share (compared a stretch at a time: 1 MiB,
-    then 4 KiB, then halving -- 0.1.118)."""
+    then 4 KiB, then halving -- 0.1.118; lane K: in Rust where the core is there, the lock
+    let go, no stretch copied)."""
+    c = _bodyscan.core()
+    if c is not None and type(a) is bytes and type(b) is bytes:
+        found = c.common_prefix_of(a, b)
+        if _incremental.verifying():
+            _incremental.check("common prefix", found, _python_prefix(a, b))
+        return found
+    return _python_prefix(a, b)
+
+
+def _python_prefix(a: bytes, b: bytes) -> int:
     limit, at = min(len(a), len(b)), 0
     for step in (1 << 20, 1 << 12):
         while at < limit and a[at:at + step] == b[at:at + step]:
@@ -392,6 +439,16 @@ def _common_prefix(a: bytes, b: bytes) -> int:
 def _common_suffix(a: bytes, b: bytes, limit: int) -> int:
     """How many trailing bytes ``a`` and ``b`` share, at most ``limit`` (compared as
     :func:`_common_prefix` does, from the end)."""
+    c = _bodyscan.core()
+    if c is not None and type(a) is bytes and type(b) is bytes:
+        found = c.common_suffix_of(a, b, max(0, limit))
+        if _incremental.verifying():
+            _incremental.check("common suffix", found, _python_suffix(a, b, limit))
+        return found
+    return _python_suffix(a, b, limit)
+
+
+def _python_suffix(a: bytes, b: bytes, limit: int) -> int:
     at = 0
     for step in (1 << 20, 1 << 12):
         while at < limit and a[len(a) - min(at + step, limit):len(a) - at] == \
@@ -463,7 +520,12 @@ def _kept_ids(summary: "_Summary") -> list[str] | None:
     stamps = base._stamps
     if stamps is None or base._ids is None or base.spans is None:
         return None
-    if any(i.startswith("cc:") for i in base._ids):
+    has_cc = base.__dict__.get("_has_cc")
+    if has_cc is None:
+        has_cc = base.__dict__["_has_cc"] = any(i.startswith("cc:") for i in base._ids)
+    elif _incremental.verifying():
+        _incremental.check("touched cc", has_cc, any(i.startswith("cc:") for i in base._ids))
+    if has_cc:
         return None                    # content controls' ids are unique over the body
     data, spans = summary.data, summary.spans
     n_old, n_new = len(base.spans), len(spans)
@@ -506,6 +568,9 @@ def _kept_ids(summary: "_Summary") -> list[str] | None:
     if ids is None:
         return None
     summary._stamps = new
+    # (lane K: none of the kept blocks' ids is a content control's, and the stretch read
+    # again holds none: neither does the new state's)
+    summary.__dict__["_has_cc"] = False
     _incremental.STATS["touched ids: incremental"] += 1
     return base._ids[:before] + ids + base._ids[n_old - after:]
 

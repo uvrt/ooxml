@@ -5,6 +5,44 @@ docx-agent has not been released to PyPI. Each version that reaches `main` is ta
 snapshot commit; the development history before it is summarised here.
 [`ROADMAP.md`](ROADMAP.md) has the detail of every phase.
 
+## 0.1.123 -- unreleased
+
+- **The work each version costs is now in proportion to the change, most of it in Rust with
+  the interpreter's lock let go.** The same results -- every tool result, the saved bytes,
+  every version undo, redo and `read_version` give, the ids, validation, checks -- but the
+  passes each edit, undo or redo ran over the whole body now read only the blocks that
+  changed:
+  - the body's top-level blocks are read from the version's bytes once, in Rust
+    (`ooxml-core` 0.8.0's `BodySpans`), and the step from the version before (the bytes
+    alike at the start and the end, the blocks kept on either side) is made once and
+    shared by the touched sections, revalidate's body facts, the ids note, the body's
+    index, the Rust owner's change set and an undo's restore (`docx_agent.bodyscan`);
+  - the body's index compares the blocks it keeps by a digest of each block's walk
+    (`index_walks`), not by walking the body in Python;
+  - the ids note hands the ledger only the ids gone and come;
+  - revalidate finds the body's other children (the last section's properties) in Rust,
+    keeps the paraIds counted more than once as the counts change, and no longer looks
+    through every block's facts or the body's children's order;
+  - a version is written from the last one's bytes in Rust (`write_plan`,
+    `write_assemble`), the bytes filled with the lock let go;
+  - the Rust owner's change set counts list labels from the change on, stopping where the
+    counters are as they were, keeps its blocks' keys and `REF` targets counted per change,
+    and takes a block kept within the change whole where the fields around it are as they
+    were (a batch's two edits far apart no longer read every block between them again).
+  Python allocates far fewer objects per version: on the made-up report of about 3,000
+  pages an edit runs about 10 young and 1 middle collection (was about 170 and 16). One
+  writer, wall p50 (295 / ~1,000 / ~3,000 pages): Markdown insert 0.06 / 0.10 / 0.18 s (was
+  0.08 / 0.22 / 0.81), `set_text` 0.05 / 0.10 / 0.19 s (0.09 / 0.17 / 0.55), `set_cells`
+  0.15 / 0.24 / 0.50 s (0.13 / 0.33 / 1.03), undo 0.04 / 0.08 / 0.16 s (0.06 / 0.17 / 0.49),
+  a batch of a Markdown insert and a `set_text` 0.19 / 0.24 / 0.50 s (0.20 / 0.42 / 1.08).
+  24 writers on one document (a batch and a check each, three turns), ~3,000 pages: edit
+  p50 23 s and p99 27 s (was 39 and 46 s), CPU 121 s (171 s), memory 2.6 GB (2.4 GB); at
+  295 pages edit p99 4.5 s (5.7 s).
+- `DOCX_AGENT_INCREMENTAL=0` turns these off with the other per-change passes;
+  `DOCX_AGENT_FULL_VALIDATE=1` (the tests set it) runs each pass made per change beside the
+  whole one -- in Python and in Rust -- and raises where they differ.
+- Needs ooxml-core 0.8.0.
+
 ## 0.1.122 -- unreleased
 
 - **A row added to a table looks like its table.** A row `word_edit_table` adds with

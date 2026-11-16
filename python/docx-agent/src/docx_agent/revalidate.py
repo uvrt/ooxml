@@ -80,6 +80,7 @@ from typing import Any
 
 from lxml import etree
 
+from . import bodyscan as _bodyscan
 from . import validate as _v
 from .edit.ids import MC_FALLBACK, PARA_ID, TEXT_ID, valid_long_hex
 from .oxml.package import CONTENT_TYPES_PART
@@ -178,12 +179,13 @@ class Facts:
 
 
 def _walk(top: Any, facts: Facts, *, root: bool = False, alone: bool = False,
-          children: list | None = None) -> None:
+          children: list | None = None, order: Any = False) -> None:
     """``top``'s facts into ``facts``: ``top`` and its descendants (``alone``: ``top`` only --
     its children's order read, none of them visited; ``children`` its children when the
     caller has them), in document order, as :mod:`docx_agent.validate`'s rules read them.
     ``root``: ``top`` is the part's root (which the rules that skip ``mc:Fallback`` content
-    never count)."""
+    never count).  ``order``: ``top``'s child-order fact found already (lane K: the body's,
+    :func:`_body_order`), else ``False``."""
     depth, low = 0, 0
     fields = False
     stack = [(top, 0, root)]
@@ -198,7 +200,7 @@ def _walk(top: Any, facts: Facts, *, root: bool = False, alone: bool = False,
         kids = children if (element is top and children is not None) else list(element)
         name = _pname(element)
         if name in CHILD_ORDER:
-            found = _child_order(name, kids)
+            found = order if (element is top and order is not False) else _child_order(name, kids)
             if found is not None:
                 facts.add("lw", found)
         live = not is_root and not flags & _HIDDEN
@@ -314,6 +316,68 @@ def _walk(top: Any, facts: Facts, *, root: bool = False, alone: bool = False,
         facts.fld = (depth, low)
 
 
+#: Lane K: the body's children that are not top-level blocks (elements only: the order and
+#: the facts read only elements).
+_OTHERS = "*[not(self::w:p or self::w:tbl or self::w:sdt or self::w:customXml)]"
+_OTHERS_NS = {"w": _W[1:-1]}
+
+
+class _BlocksOf:
+    """The body's top-level blocks (lane K): ``n`` of them, the body's other children at
+    ``places`` (``ooxml_core.body_others``), each block taken by its place when asked."""
+
+    def __init__(self, body: Any, places: list, n: int) -> None:
+        self.body = body
+        self.places = places
+        self.n = n
+        self._all: list | None = None
+        self._asked = 0
+
+    def __len__(self) -> int:
+        return self.n
+
+    def __getitem__(self, j: int) -> Any:
+        if self._all is None and self._asked >= 8:
+            self._all = list(self.body.iterchildren(*_BLOCKS))     # (many asked: all taken)
+        if self._all is not None:
+            return self._all[j]
+        self._asked += 1
+        place = j
+        for at in self.places:            # the others before it (in order)
+            if at <= place:
+                place += 1
+            else:
+                break
+        return self.body[place]
+
+    def __iter__(self):
+        if self._all is None:
+            self._all = list(self.body.iterchildren(*_BLOCKS))
+        return iter(self._all)
+
+
+def _body_order(body: Any, others: list) -> "tuple[str, str] | None":
+    """``_child_order("w:body", list(body))`` from the body's other children alone (lane K):
+    every top-level block ranks the same (0) in the body's order, so an element is out of
+    order only beside one of ``others`` -- one of them ranked below the element before it,
+    or a block after one of them ranked above the blocks.  The first such, in order."""
+    ranks = _ranks("w:body")
+    unknown = len(ranks) + 1
+    for other in others:
+        rank = ranks.get(_pname(other), unknown)
+        previous = other.getprevious()
+        while previous is not None and not isinstance(previous.tag, str):
+            previous = previous.getprevious()
+        if previous is not None and rank < ranks.get(_pname(previous), unknown):
+            return ("child-order", f"{_pname(other)} in w:body")
+        following = other.getnext()
+        while following is not None and not isinstance(following.tag, str):
+            following = following.getnext()
+        if following is not None and following.tag in _BLOCKS and ranks.get(_pname(following), unknown) < rank:
+            return ("child-order", f"{_pname(following)} in w:body")
+    return None
+
+
 #: 0.1.118: the last long list of children's order read, by their tags (``(tags, fact)``):
 #: a body's thousands of children are not ranked again while their tags are the same.
 _ORDER_KEPT: dict[str, tuple] = {}
@@ -362,11 +426,27 @@ def _facts_of(element: Any, **how: Any) -> Facts:
 _EMPTY = Facts()
 
 
+#: Lane K: the key of a body's sum that holds the paraIds counted more than once (a set kept
+#: as the counts change, :func:`_sum`; made the first time it is asked, :func:`_repeated`).
+_PID_OVER = "pid>1"
+
+
 def _sum(into: dict[str, Counter], facts: Facts, sign: int = 1) -> None:
     for key, counter in facts.c.items():
         total = into.get(key)
         if total is None:
             total = into[key] = Counter()
+        if key == "pid" and _PID_OVER in into:
+            over = into[_PID_OVER]
+            for raw, n in counter.items():
+                before = total[raw]
+                after = before + n if sign > 0 else before - n
+                total[raw] = after
+                if after > 1 >= before:
+                    over.add(raw)
+                elif before > 1 >= after:
+                    over.discard(raw)
+            continue
         if sign > 0:
             total.update(counter)
         else:
@@ -380,7 +460,7 @@ class _Body:
     """The body as last read: its bytes, the blocks' spans and keys, their facts, the facts
     of their sum."""
 
-    __slots__ = ("data", "spans", "body", "head", "keys", "facts", "total", "pending", "token")
+    __slots__ = ("data", "spans", "body", "head", "keys", "facts", "total", "pending", "token", "known")
 
     def __init__(self, data: bytes, spans: list, body: tuple[int, int], head: bytes, keys: list,
                  facts: list, total: dict[str, Counter]) -> None:
@@ -390,6 +470,9 @@ class _Body:
         self.pending: list[int] | None = None
         #: The main part's stored entry when the bytes are those it was read as.
         self.token: Any = None
+        #: Lane K: every block's facts known once the pending ones are read (:func:`_fill`
+        #: then looks through none of them).
+        self.known = False
 
 
 class State:
@@ -456,9 +539,18 @@ def _scan(data: bytes) -> tuple[list, tuple[int, int], bytes] | None:
     return spans, body, data[:root_end + 1]
 
 
-def _body_facts(state: State, package: Any, main: str, root: Any) -> tuple[Facts | None, dict, Any]:
+def _tree_core() -> Any:
+    from .oxml.package import _core
+
+    return _core()
+
+
+def _body_facts(state: State, package: Any, main: str, root: Any,
+                holder: Any = None) -> tuple[Facts | None, dict, Any]:
     """The body's facts: the rest's (root, body element, its children not blocks) and the
-    blocks' sum; and the body element.  Raises :class:`_Fallback`."""
+    blocks' sum; and the body element.  Raises :class:`_Fallback`.  ``holder``: the
+    document, whose readings of its body's blocks the passes share (lane K,
+    :mod:`docx_agent.bodyscan`)."""
     from .tools.touched import _blocks, _common_prefix, _common_suffix, _kept_counts
 
     body_element = root.find(_W + "body")
@@ -473,6 +565,13 @@ def _body_facts(state: State, package: Any, main: str, root: Any) -> tuple[Facts
         new = None
         if old is not None and old.data == data:
             new = old
+        elif old is not None and hasattr(old.spans, "advance"):
+            found = _bodyscan.step(holder, old.spans, data)
+            if found is not None:
+                spans, before, after, begin, stop = found
+                middle = spans[before:len(spans) - after]
+                new = _splice(state, old, data, before, after, middle, len(data) - len(old.data), begin, stop,
+                              spans)
         elif old is not None:
             prefix = _common_prefix(old.data, data)
             suffix = _common_suffix(old.data, data, min(len(old.data), len(data)) - prefix)
@@ -487,16 +586,40 @@ def _body_facts(state: State, package: Any, main: str, root: Any) -> tuple[Facts
                 if middle is not None:
                     new = _splice(state, old, data, before, after, middle, delta, begin, stop)
         if new is None:
-            new = _whole(state, data)
+            new = _whole(state, data, holder)
         new.token = token
         state.body = new
-    blocks = []
-    others = []
-    for child in body_element:
-        (blocks if child.tag in _BLOCKS else others).append(child)
+    core = _bodyscan.core()
+    if core is not None and hasattr(core, "body_others") and _tree_core() is not None:
+        # Lane K: the body's other children found in Rust (by their places), the blocks
+        # counted there and taken by their places when asked: none of the thousands of
+        # blocks read in Python.  (A comment or processing instruction among the children:
+        # read as before.)
+        places, n_blocks, plain = core.body_others(body_element)
+        if not plain:
+            core = None
+    else:
+        core = None
+    if core is not None:
+        if len(places) > 8:
+            children = list(body_element)
+            others = [children[k] for k in places]
+        else:
+            others = [body_element[k] for k in places]
+        blocks = _BlocksOf(body_element, places, n_blocks)
+        if full_check_on() and others != body_element.xpath(_OTHERS, namespaces=_OTHERS_NS):
+            raise Mismatch("the body's other children found in Rust differ")
+    else:
+        blocks = []
+        others = []
+        for child in body_element:
+            (blocks if child.tag in _BLOCKS else others).append(child)
     # validate._body_problems, from the body's children not blocks.
     sections = [child for child in others if child.tag == _W + "sectPr"]
-    last = body_element[-1] if len(body_element) else None
+    try:
+        last = body_element[-1]       # (lane K: not the children counted for it)
+    except IndexError:
+        last = None
     while last is not None and not isinstance(last.tag, str):
         last = last.getprevious()
     if sections and last is not sections[-1]:
@@ -514,7 +637,15 @@ def _body_facts(state: State, package: Any, main: str, root: Any) -> tuple[Facts
     for child in root:
         if child is not body_element:
             _walk(child, rest)
-    _walk(body_element, rest, alone=True, children=list(body_element))
+    if isinstance(blocks, _BlocksOf):
+        order = _body_order(body_element, others)
+        if full_check_on():
+            whole = _child_order("w:body", list(body_element))
+            if whole != order:
+                raise Mismatch(f"the body's children's order per change {order} differs from the whole {whole}")
+        _walk(body_element, rest, alone=True, children=[], order=order)
+    else:
+        _walk(body_element, rest, alone=True, children=list(body_element))
     for child in others:
         _walk(child, rest)
     if rest.fld is not None:
@@ -522,22 +653,26 @@ def _body_facts(state: State, package: Any, main: str, root: Any) -> tuple[Facts
     return rest, new.total, body_element
 
 
-def _whole(state: State, data: bytes) -> _Body:
-    found = _scan(data)
+def _whole(state: State, data: bytes, holder: Any = None) -> _Body:
+    reading = _bodyscan.scan(holder, data) if _bodyscan.core() is not None else None
+    if reading is not None:
+        found = (reading, reading.body, data[:reading.root_end + 1])
+    else:
+        found = None if _bodyscan.core() is not None else _scan(data)
     if found is None:
         raise _Fallback("the body's blocks are not read from its bytes")
     spans, body, head = found
     if not _well_formed(data):
         raise _Fallback("not well formed")
     hk = _digest(head)
-    keys = [(hk, _digest(data[a:b])) for a, b in spans]
+    keys = [(hk, _digest(data[a:b])) for a, b in spans[:]]
     return _Body(data, spans, body, head, keys, [None] * len(keys), {})
 
 
 def _splice(state: State, old: _Body, data: bytes, before: int, after: int, middle: list, delta: int,
-            begin: int, stop: int) -> _Body:
+            begin: int, stop: int, reading: Any = None) -> _Body:
     """The body from ``old``'s: ``before`` blocks before and ``after`` after kept, ``middle``
-    (spans in ``data``) read again."""
+    (spans in ``data``) read again; ``reading``: the new spans as read in Rust (lane K)."""
     n = len(old.spans)
     # What is between the blocks of the stretch read again (and the head and tail around it):
     # well formed.
@@ -572,7 +707,10 @@ def _splice(state: State, old: _Body, data: bytes, before: int, after: int, midd
                 break
             for _ in range(count):
                 _sum(total, facts, -1)
-    spans = old.spans[:before] + middle + [(s + delta, e + delta) for s, e in old.spans[n - after:]]
+    if reading is not None:
+        spans = reading
+    else:
+        spans = old.spans[:before] + middle + [(s + delta, e + delta) for s, e in old.spans[n - after:]]
     keys = old.keys[:before] + new_keys + old.keys[n - after:]
     facts = old.facts[:before] + [None] * len(middle) + old.facts[n - after:]
     found = _Body(data, spans, (old.body[0], old.body[1] + delta), old.head, keys, facts,
@@ -594,6 +732,7 @@ def _splice(state: State, old: _Body, data: bytes, before: int, after: int, midd
             facts[before + j] = known
     found.facts = facts
     found.pending = pending
+    found.known = old.known
     return found
 
 
@@ -609,7 +748,10 @@ def _fill(state: State, body: _Body, blocks: list) -> None:
             body.facts[j] = facts
             _sum(body.total, facts)
         body.pending = None
-    if any(facts is None for facts in body.facts):
+    if body.known:
+        if full_check_on() and any(facts is None for facts in body.facts):
+            raise Mismatch("a block's facts missing where all were known")
+    elif any(facts is None for facts in body.facts):
         total: dict[str, Counter] = {}
         for j, key in enumerate(body.keys):
             facts = body.facts[j]
@@ -620,6 +762,7 @@ def _fill(state: State, body: _Body, blocks: list) -> None:
                 body.facts[j] = facts
             _sum(total, facts)
         body.total = total
+    body.known = True
     # Keep the cache to about what the body holds (and the last few versions' blocks).
     if len(cache) > 2 * len(body.keys) + 4096:
         keep = dict(zip(body.keys, body.facts))
@@ -672,7 +815,7 @@ def _incremental(document: Any) -> list:
     main_root = package.tree(main)
     if main_root is None:
         raise _Fallback("no main part")
-    rest, total, body = _body_facts(state, package, main, main_root)
+    rest, total, body = _body_facts(state, package, main, main_root, document)
     roots[main] = main_root
     main_total: dict[str, Counter] = dict(total)
     for key, counter in rest.c.items():
@@ -692,7 +835,7 @@ def _incremental(document: Any) -> list:
     for name in word_parts:
         for (code, detail), n in counted(name, "lw").items():
             problems += [Problem(code, name, detail)] * n
-        problems += [Problem("paraid-repeated", name, raw) for raw, n in counted(name, "pid").items() if n > 1]
+        problems += [Problem("paraid-repeated", name, raw) for raw in _repeated(name, main, total, rest, counted)]
         problems += _fields(name, state.body, rest) if name == main else _fields(name, None, facts_of[name])
         problems += _v._ignorable_problems(name, roots[name])
     story = [p for p in [main] + package.story_parts() if p in roots]
@@ -709,6 +852,23 @@ def _incremental(document: Any) -> list:
     problems += state.body_problems
     state.holds = {"deletions": any(n > 0 for n in counted(main, "dl").values())}
     return sorted(problems)
+
+
+def _repeated(name: str, main: str, total: dict, rest: Facts, counted: Any) -> Any:
+    """The paraIds counted more than once in part ``name`` -- for the body (lane K), the
+    set its sum keeps as the counts change, not every count looked through."""
+    if name != main or "pid" in rest.c:
+        return [raw for raw, n in counted(name, "pid").items() if n > 1]
+    over = total.get(_PID_OVER)
+    if over is None:
+        over = {raw for raw, n in (total.get("pid") or {}).items() if n > 1}
+        if total:
+            total[_PID_OVER] = over
+    elif full_check_on():
+        whole = {raw for raw, n in (total.get("pid") or {}).items() if n > 1}
+        if whole != over:
+            raise Mismatch("the paraIds counted more than once, kept per change, differ")
+    return list(over)
 
 
 def _fields(name: str, body: _Body | None, facts: Facts) -> list:
@@ -1017,7 +1177,7 @@ def _refresh_body(document: Any) -> None:
                 state.body = None
                 return
             problems = state.body_problems
-            _body_facts(state, package, main, root)
+            _body_facts(state, package, main, root, document)
             state.body_problems = problems
             STATS["body: refreshed"] += 1
         except _Fallback:
