@@ -175,7 +175,10 @@ CHARS_PER_TOKEN = 3.5
 COUNTED_PER_ESTIMATED = 1.48
 #: Round 35: user (2026-11-06): the budget is guidance, clear tools first; 6,800 -> 7,000;
 #: join.on / pivot_values / coerce wording restored.
-CORE_COUNTED_BUDGET = 7000
+#: Round 58, R127: xlsx_derive's ``split`` costs about 106 counted tokens (the core 7,079
+#: counted online, claude-sonnet-5-5, 2026-11-16); the 7,000 is guidance (the user: token
+#: budgets are soft), so 7,000 -> 7,100.
+CORE_COUNTED_BUDGET = 7100
 #: The core's estimate, a regression guard (round 25: past the proxy's budget, by choice).
 #: Round 35: the restored wording, 4,783 -> 4,829 and 5,754 -> 5,800; then fill's, join's,
 #: join.columns' and two cursors' wording, -> 4,844 and 5,816.
@@ -204,8 +207,13 @@ CORE_COUNTED_BUDGET = 7000
 #: every definition 7,074 -> 7,373; the core unchanged.
 #: Round 54, R113: xlsx_record_values gains type and add, its value a string or a number
 #: (orNumber): every definition 7,373 -> 7,427; the core unchanged.
-CORE_GUARD = 4925
-ALL_GUARD = 7430
+#: Round 58, R127: xlsx_derive's ``split`` (a column's text a row per part, after the fills;
+#: ``{column, by}``, by default line breaks), its words kept to the least that says it: the
+#: core 4,920 -> 4,995 estimated (about 7,090 online at the counted ratio, 6,981 / 4,920:
+#: past the 7,000 guidance; the main session counts it), every definition 7,427 -> 7,502.
+#: ``xlsx_derive`` is not strict: the strict set is unchanged.
+CORE_GUARD = 4995
+ALL_GUARD = 7505
 
 
 @pytest.fixture(scope="module")

@@ -382,7 +382,8 @@ def test_cleaning_changes_no_tool_definition():
 #: counted 7,010 online, past 7,000; -90).
 #: Round 51, R104: xlsx_derive's description says where alone gives the rows and how to
 #: count them, its list of what the rows go through dropped (-14).
-XLSX_CHARS = 13_061
+#: Round 58, R127: xlsx_derive's split (a column's text a row per part; +263).
+XLSX_CHARS = 13_324
 
 
 def test_a_deck_table_from_a_cleaned_table_warns_in_the_tools_result():

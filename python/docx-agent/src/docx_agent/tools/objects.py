@@ -6,6 +6,8 @@ controls (``word_controls``)."""
 
 from __future__ import annotations
 
+import copy
+import json
 import re
 import time
 from typing import Any
@@ -410,7 +412,7 @@ def _text(table: Any, row: int, col: int) -> str:
 @word_tool("word_edit_table", "Change a table's cells and structure: set cells by position or labels, insert or delete rows and columns, merge, split, sync rows by key. Returns it as Markdown.",
            {"doc": DOC, "table": TABLE,
             "action": string("What to do.", enum=["set_cells", "insert_row", "delete_row", "insert_column",
-                                                   "delete_column", "merge", "split", "sync"]),
+                                                   "delete_column", "merge", "split", "sync", "copy_row"]),
             "cells": array(CELL, "set_cells: the cells.", optional=True),
             "from": string("set_cells, sync: rows of d:<id> or t:<table>, from row index.", optional=True),
             "from_columns": SYNC_COLUMNS,
@@ -423,11 +425,12 @@ def _text(table: Any, row: int, col: int) -> str:
             "match": SYNC_PAIRS,
             "header": HEADER,
             "date_format": DATE_FORMAT,
-            "index": integer("insert_*, delete_*: row or column from 0. Default the last. "
+            "index": integer("insert_*, delete_*, copy_row: row or column from 0. Default the last. "
                              "set_cells from: first row.", minimum=0, optional=True),
             # Round 40: rows added for the data, each like the last row (insert_row's).
             "grow": boolean("set_cells from: add rows the data needs.", optional=True),
-            "side": string("insert_*: relative to index. Default after.", enum=["after", "before"], optional=True),
+            "side": string("insert_*, copy_row: relative to index. Default after.", enum=["after", "before"],
+                           optional=True),
             "first": POSITION, "last": POSITION,
             "rows": integer("split: into rows. Default 1.", minimum=1, maximum=63, optional=True),
             "columns": integer("split: columns. Default span or 2", minimum=1, maximum=63, optional=True)},
@@ -443,6 +446,27 @@ def word_edit_table(call: Any, doc: str, table: str, action: str, cells: list[di
                     date_format: str | None = None, grow: bool | None = None, key: str | None = None,
                     remove: bool | None = None, loose: str | None = None, match: list[dict] | None = None,
                     **given: Any) -> Result:
+    # Round 58 (R126): the rows a call adds or writes into are kept for check's
+    # row_text_format, and one whose text looks unlike the rows around it is said.
+    before = _row_states(call.document, resolve(call, table)) if action in _WRITES_ROWS else None
+    result = _edit_table(call, doc, table, action, cells, index, side, first, last, rows, columns,
+                         from_columns, header, date_format, grow, key, remove, loose, match, **given)
+    if before is not None:
+        result.warnings.extend(_rows_written(call.document, before))
+    return result
+
+
+#: The ``word_edit_table`` actions that add rows or write into them (round 58, R126).
+_WRITES_ROWS = frozenset({"set_cells", "insert_row", "copy_row", "sync"})
+
+
+def _edit_table(call: Any, doc: str, table: str, action: str, cells: list[dict] | None = None,
+                index: int | None = None, side: str = "after", first: dict | None = None,
+                last: dict | None = None, rows: int = 1, columns: int | None = None,
+                from_columns: list[str] | None = None, header: list[str] | None = None,
+                date_format: str | None = None, grow: bool | None = None, key: str | None = None,
+                remove: bool | None = None, loose: str | None = None, match: list[dict] | None = None,
+                **given: Any) -> Result:
     document = call.document
     table = resolve(call, table)
     try:
@@ -494,6 +518,9 @@ def word_edit_table(call: Any, doc: str, table: str, action: str, cells: list[di
     # Round 57 (R125): whether the table is ragged as Accept All leaves it, before a change of
     # its shape -- an edit that makes it so says so, and check names the edit.
     ragged_before = _ragged(document, table) if action not in ("set_cells", "insert_row") else None
+    # Round 58 (R128): whether the table was off its grid before -- an edit that puts it off
+    # says so, and check's table_grid_mismatch names the call (its undo).
+    off_before = _off_grid(document, table)
     edits = []
     watch: Watch | None = None          # round 57 (R122): the file's text a deletion removes
     facts: list[dict[str, Any]] | None = None
@@ -534,6 +561,11 @@ def word_edit_table(call: Any, doc: str, table: str, action: str, cells: list[di
         if accepted.rows_active:
             index = accepted.to_row(accepted.height - 1 if index is None else index, "index")
         edits.append(document.insert_row(table, index, below=side == "after", plain=True))
+    elif action == "copy_row":
+        # Round 58 (R126): the row named, as accepted, copied with its content beside it.
+        if accepted.rows_active:
+            index = accepted.to_row(accepted.height - 1 if index is None else index, "index")
+        edits.append(_copy_row(document, doc, table, index, side))
     elif action == "delete_row":
         index = need(index, "index")
         if accepted.rows_active:
@@ -594,6 +626,10 @@ def word_edit_table(call: Any, doc: str, table: str, action: str, cells: list[di
         made = _made_ragged(call, document, now, ragged_before)
         if made:
             result.warnings.append(made)
+    if not off_before:
+        made = _made_off_grid(call, document, now)
+        if made:
+            result.warnings.append(made)
     if fills:
         # The cells' paragraphs (changed, made and removed) are the table's: named by it, not
         # one by one (rule 4; a 431-row column listed 431 ids).
@@ -609,6 +645,24 @@ def word_edit_table(call: Any, doc: str, table: str, action: str, cells: list[di
         if made and table in made:
             made[now] = made.pop(table)
     return note_small_text(call, result, [now]) if action == "set_cells" else result
+
+
+def _copy_row(document: Any, doc: str, table: str, index: int | None, side: str) -> Any:
+    """Round 58 (R126): ``copy_row``'s edit; a row it cannot copy refused with the calls that
+    add a row like it and fill it (rule 2)."""
+    from ..edit.document import EditError
+
+    try:
+        return document.copy_row(table, index, below=side == "after")
+    except EditError as error:
+        rows = len(document.table(table).rows)
+        at = rows - 1 if index is None else index
+        raise ToolError("refused", str(error), field="index", details={"calls": [
+            {"tool": "word_edit_table", "arguments": {"doc": doc, "table": table, "action": "insert_row",
+                                                      "index": at, "side": side}},
+            {"tool": "word_edit_table", "arguments": {"doc": doc, "table": table, "action": "set_cells",
+                                                      "cells": [{"row": at + 1 if side == "after" else at,
+                                                                 "col": 0, "text": "..."}]}}]}) from None
 
 
 def _sync(call: Any, view: Any, source: str | None, cells: Any, index: Any, from_columns: Any, header: Any,
@@ -735,6 +789,131 @@ def _ragged(document: Any, table: str) -> dict[str, Any] | None:
     return ragged_rows(document, entry) if entry is not None else None
 
 
+#: Where a document keeps the rows this session added or wrote into (round 58, R126): their
+#: ``w14:paraId`` values, read by ``check``'s ``row_text_format``.
+ROWS_WRITTEN = "_rows_written"
+#: Rows a ``word_edit_table`` warning names at most (the rest counted; check lists them).
+_ROWS_SAID = 3
+
+
+def _row_states(document: Any, table: str) -> tuple[Any, list[tuple[Any, str]]] | None:
+    """``table``'s element and each of its rows with its text, before a call that may write
+    rows (held: the rows are found again as the same elements), or ``None``."""
+    entry = _table_entry(document, table)
+    if entry is None:
+        return None
+    return entry.element, [(row, _row_shown(row)) for row, _ in entry.rows]
+
+
+def _row_shown(row: Any) -> str:
+    return "".join(node.text or "" for node in row.iter(f"{_W}t"))
+
+
+def _rows_written(document: Any, before: tuple[Any, list[tuple[Any, str]]]) -> list[str]:
+    """Round 58 (R126): after a ``word_edit_table`` call, its table's rows that are new or
+    whose text changed, kept on the document (:data:`ROWS_WRITTEN`); and a warning for
+    each of them whose text looks unlike the rows around it (``check``'s
+    ``row_text_format``, :func:`~docx_agent.layout_facts.rows_unlike`), with the call that
+    makes it match."""
+    from ..edit.tables import own_table_rows
+    from ..layout_facts import _PARA_ID, rows_unlike
+
+    element, old = before
+    if element.getparent() is None:
+        return []
+    texts = {id(row): text for row, text in old}
+    rows = own_table_rows(element)
+    now = {r for r, row in enumerate(rows) if texts.get(id(row)) != _row_shown(row)}
+    if not now:
+        return []
+    written = document.__dict__.setdefault(ROWS_WRITTEN, set())
+    written.update(rows[r].get(_PARA_ID) for r in now if rows[r].get(_PARA_ID))
+    entry = document._index(document.package.document_part()).entry_for(element)
+    if entry is None:
+        return []
+    marked = [r in now or row.get(_PARA_ID) in written for r, row in enumerate(rows)]
+    unlike = [e for e in rows_unlike(document, entry.id, element, rows, marked, sources=True) if e["row"] in now]
+    out = _like_the_column(document, rows, unlike)
+    if out:
+        unlike = [e for e in rows_unlike(document, entry.id, element, rows, marked) if e["row"] in now]
+    for found in unlike[:_ROWS_SAID]:
+        has = {key: value for cell in found["cells"] for key, value in cell["has"].items()}
+        around = {key: value for cell in found["cells"] for key, value in cell["around"].items()}
+        out.append(f"row {found['row']} of {entry.id}: its text is {_look_said(has)} where the rows around it are "
+                   f"{_look_said(around)}; word_format makes it match: {json.dumps(found['fix']['calls'])}")
+    if len(unlike) > _ROWS_SAID:
+        out.append(f"{len(unlike) - _ROWS_SAID} more rows unlike the rows around them: check's row_text_format "
+                   "lists them")
+    return out
+
+
+def _like_the_column(document: Any, rows: list, unlike: list[dict[str, Any]]) -> list[str]:
+    """Round 58 (R126 b; the team's ask, a departure from Word): text a call wrote into a
+    cell that was empty with a bare paragraph mark -- the cell's mark and its text's runs
+    with no run formatting of their own, so the document default -- takes the formatting
+    of the same column's text in the rows around it where they agree
+    (:func:`~docx_agent.layout_facts.rows_unlike`'s rule: header and total rows, columns
+    whose rows above and below differ, banded looks and empty cells left out): each run's
+    properties become a copy of that cell's first run of text's.  Word gives such text the
+    document default (measured, ``tools/row_format_probe.py``, ``Empty``).  What it did,
+    said per cell; inside the call's own undo step."""
+    from ..edit.tables import _cells as _spans
+    from ..edit.text import first_text_run
+    from ..oxml.xml import REVISION_PROPERTY_TAGS, insert_in_order
+
+    def bare(node: Any) -> bool:
+        return node is None or all(not isinstance(c.tag, str) or c.tag in REVISION_PROPERTY_TAGS for c in node)
+
+    said = []
+    for found in unlike:
+        cells = {start: cell for cell, start, _ in _spans(rows[found["row"]])}
+        for entry in found["cells"]:
+            start = int(entry["cell"].rsplit(",", 1)[1])
+            cell, source_row = cells.get(start), entry.get("_from")
+            if cell is None or source_row is None:
+                continue
+            paragraphs = cell.findall(f"{_W}p")
+            runs = [run for p in paragraphs for run in p.iter(f"{_W}r") if run.find(f"{_W}t") is not None]
+            if not runs or not all(bare(p.find(f"{_W}pPr/{_W}rPr")) for p in paragraphs) \
+                    or not all(bare(run.find(f"{_W}rPr")) for run in runs):
+                continue
+            neighbour = {s: c for c, s, _ in _spans(rows[source_row])}.get(start)
+            sample = next((first_text_run(p) for p in neighbour.findall(f"{_W}p") if first_text_run(p) is not None),
+                          None) if neighbour is not None else None
+            formatting = sample.find(f"{_W}rPr") if sample is not None else None
+            if formatting is None:
+                continue
+            with document._edit():
+                for run in runs:
+                    own = run.find(f"{_W}rPr")
+                    new = copy.deepcopy(formatting)
+                    for child in list(new):
+                        if child.tag == f"{_W}rPrChange":
+                            new.remove(child)
+                    if own is not None:
+                        for child in own:                       # a revision record of its own stays
+                            if isinstance(child.tag, str):
+                                insert_in_order(new, copy.deepcopy(child))
+                        run.remove(own)
+                    insert_in_order(run, new)
+                document.package.mark_dirty(document.package.document_part())
+            said.append(f"{entry['cell']}: written in its column's formatting, row {source_row}'s "
+                        f"({_look_said(entry['around'])}); Word would give it the document default "
+                        f"({_look_said(entry['has'])}) -- the cell was empty, its mark unformatted")
+    return said
+
+
+def _look_said(look: dict[str, Any]) -> str:
+    parts = []
+    if "font" in look:
+        parts.append(str(look["font"]))
+    if "sz" in look:
+        parts.append(f"{look['sz']:g} pt")
+    if "color" in look:
+        parts.append(f"colour {look['color']}")
+    return " ".join(parts)
+
+
 #: Where a document keeps the call that left each table ragged after Accept All, this
 #: session (round 57, R125): table id -> ``{"tool", "arguments"}``.
 RAGGED_BY = "_ragged_by"
@@ -763,14 +942,47 @@ def _made_ragged(call: Any, document: Any, table: str, before: dict[str, Any] | 
 def ragged_made_by(document: Any, layout: Any) -> None:
     """Round 57 (R125): each ragged entry of ``check``'s ``table_grid_mismatch`` in
     ``layout`` given ``made_by``, the call of this session that left its table so, where one
-    did (:func:`_made_ragged`)."""
+    did (:func:`_made_ragged`); round 58 (R128): each entry of a table off its grid too
+    (:func:`_made_off_grid`)."""
     live = document.__dict__.get("_live", document)       # a read copy: the document's
-    made = live.__dict__.get(RAGGED_BY) if isinstance(layout, dict) else None
-    if not made:
+    if not isinstance(layout, dict):
+        return
+    made = live.__dict__.get(RAGGED_BY) or {}
+    off = live.__dict__.get(OFF_GRID_BY) or {}
+    if not made and not off:
         return
     for entry in layout.get("table_grid_mismatch") or ():
-        if isinstance(entry, dict) and entry.get("drawn") == "ragged" and entry.get("table") in made:
-            entry["made_by"] = made[entry["table"]]
+        if not isinstance(entry, dict):
+            continue
+        by = made if entry.get("drawn") == "ragged" else off
+        if entry.get("table") in by:
+            entry["made_by"] = by[entry["table"]]
+
+
+#: Where a document keeps the call that put each table off its grid, this session (round 58,
+#: R128): table id -> ``{"tool", "arguments"}``.
+OFF_GRID_BY = "_off_grid_by"
+
+
+def _off_grid(document: Any, table: str) -> bool:
+    """Whether a row of ``table`` does not reach exactly across its grid (``check``'s
+    ``table_grid_mismatch``, widened or short)."""
+    from ..layout_facts import off_grid_rows
+
+    entry = _table_entry(document, table)
+    return entry is not None and bool(off_grid_rows(entry.element, [row for row, _ in entry.rows])[1])
+
+
+def _made_off_grid(call: Any, document: Any, table: str) -> str | None:
+    """Round 58 (R128): a ``word_edit_table`` change that puts ``table`` off its grid where
+    it was not: the call kept for ``check``'s ``table_grid_mismatch`` (``made_by``), and the
+    warning with its undo."""
+    if not _off_grid(document, table):
+        return None
+    arguments = {k: v for k, v in (call.arguments or {}).items() if v is not None}
+    document.__dict__.setdefault(OFF_GRID_BY, {})[table] = {"tool": "word_edit_table", "arguments": arguments}
+    return (f"{table} is off its grid now (a row's cells do not reach across its columns: check's "
+            "table_grid_mismatch); this call made it so (undo reverses it)")
 
 
 def _by_position(document: Any, view: Any, cells: list[dict], texts: list[str],
@@ -1474,9 +1686,9 @@ class _Kept:
         columns = [dict(c) for c in record.get("columns") or []]
         if action == "set_cells":
             columns = [c for c in columns if c.get("col") not in self.dropped]
-        elif action in ("insert_row", "delete_row"):
+        elif action in ("insert_row", "copy_row", "delete_row"):
             top, last = self._block()
-            if action == "insert_row":
+            if action != "delete_row":           # a row added (round 58: a copy too)
                 # the new row's place among the rows now, then among the accepted ones
                 xml = self.total - 1 if index is None else index
                 at = xml + 1 if side == "after" else xml

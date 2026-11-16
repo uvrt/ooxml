@@ -232,6 +232,85 @@ def _empty_paragraph_like(paragraph: Element | None) -> Element:
     return new
 
 
+_WP_DOC_PR = "{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}docPr"
+
+
+def _uncopyable(row: Element) -> str | None:
+    """Why :meth:`TableOps.copy_row` refuses ``row``, or ``None``."""
+    if any(_vmerge(cell) is not None for cell, _, _ in _cells(row)):
+        return "has a cell merged down (a copy would cut the merge)"
+    if any(True for _ in row.iter(_W + "footnoteReference", _W + "endnoteReference")):
+        return "holds a footnote or endnote reference (a note is not copied with a row)"
+    properties = row.find(_W + "trPr")
+    if properties is not None and properties.find(_W + "del") is not None:
+        return "is a pending tracked deletion (accept or reject it first)"
+    if any(True for _ in row.iter(*_CELL_RECORDS[:3])):
+        return "holds tracked cell changes (accept or reject them first, word_changes within the row's table)"
+    return None
+
+
+def _row_copy(row: Element) -> tuple[Element, list[str]]:
+    """A copy of ``row`` for :meth:`TableOps.copy_row`, not yet placed: the current view of
+    it, without bookmarks, permission ranges and comment ranges and references (they stay
+    with ``row``); and what was left out, said as the result's warning."""
+    from .importing import _current_view
+
+    new = copy.deepcopy(row)
+    _current_view(new)
+    dropped: list[str] = []
+    marks = list(new.iter(_W + "bookmarkStart"))
+    if marks:
+        dropped.append(f"{len(marks)} bookmark(s)")
+    for node in list(new.iter(_W + "bookmarkStart", _W + "bookmarkEnd", _W + "permStart", _W + "permEnd")):
+        remove(node)
+    comments = {node.get(_W + "id") for node in new.iter(_W + "commentReference", _W + "commentRangeStart")}
+    if comments:
+        dropped.append(f"{len(comments)} comment(s)")
+    for node in list(new.iter(_W + "commentRangeStart", _W + "commentRangeEnd", _W + "commentReference")):
+        if node.tag == _W + "commentReference":
+            _drop_run_of(node)
+        else:
+            remove(node)
+    return new, dropped
+
+
+def _new_row_paragraph(cell: Element) -> Element:
+    """The empty paragraph a row added beside ``cell``'s row gets in its place (round 58,
+    R126): the cell's first paragraph's properties (:func:`_empty_paragraph_like`), its mark
+    formatted as that paragraph's first run of text -- its run properties, without revision
+    records -- where it has one, else as its own mark.  Word's Insert Rows Above and Below
+    (measured, ``tools/row_format_probe.py``, ``tests/observations/row-format-word.json``):
+    the new mark takes the first run's formatting even over a mark formatted otherwise, and
+    text typed into the new cell takes the mark's -- so a row added beside rows whose text
+    is formatted run by run (their marks bare, as many writers leave them) looks like them
+    when filled."""
+    from .text import first_text_run
+
+    source = cell.find(W_P)
+    new = _empty_paragraph_like(source)
+    run = first_text_run(source) if source is not None else None
+    if run is None:
+        return new
+    properties = run.find(_W + "rPr")
+    formatting = copy.deepcopy(properties) if properties is not None else make("w:rPr")
+    for child in list(formatting):
+        if child.tag == _W + "rPrChange":
+            remove(child)
+    paragraph_properties = new.find(W_PPR)
+    old = paragraph_properties.find(_W + "rPr") if paragraph_properties is not None else None
+    if old is not None:
+        remove(old)
+    if not len(formatting):
+        if paragraph_properties is not None and not len(paragraph_properties):
+            remove(paragraph_properties)
+        return new
+    if paragraph_properties is None:
+        paragraph_properties = make("w:pPr")
+        new.insert(0, paragraph_properties)
+    insert_in_order(paragraph_properties, formatting)
+    return new
+
+
 #: The width of a grid column added for a cell past the grid that states none, twips: what
 #: Word gives it (docx2svg's ``table.UNSIZED_COLUMN``, measured).
 UNSIZED_COLUMN = 360
@@ -465,6 +544,71 @@ class TableOps:
                                               entry.element if plain else None)
         return EditResult(new_id, created=[new_id], renamed=renames, warnings=[note] if note else [])
 
+    def copy_row(self: "Document", table: str, index: int | None = None, *, below: bool = True) -> "EditResult":
+        """Round 58 (R126): a copy of row ``index`` (0-based; the last by default) with its
+        content, below it unless ``below=False`` -- Word's copy and paste of a row: its
+        properties, cells and text as the current view shows them (insertions kept,
+        deletions dropped, change records dropped), every id fresh; bookmarks and comment
+        ranges stay with the row copied (a bookmark's name is the document's once).  Tracked,
+        the copy is an insertion: the row's, every paragraph mark's and run's, as Word's
+        tracked paste writes it.
+
+        Refused (``EditError``, saying what to do instead) for a row with a cell merged
+        down (a copy would cut the merge), a footnote or endnote reference, a pending
+        deletion of the row or tracked cell changes."""
+        from .document import EditError, EditResult
+
+        part, entry = self._table_entry(table)
+        rows = [row for row, _ in entry.rows]
+        index = len(rows) - 1 if index is None else index
+        if not 0 <= index < len(rows):
+            raise EditError(f"{entry.id} has no row {index} (rows 0-{len(rows) - 1})")
+        problem = _uncopyable(rows[index])
+        if problem:
+            raise EditError(f"row {index} of {entry.id} {problem}: insert_row beside it, then set_cells the "
+                            "values")
+        tracking = self._active_tracking()
+        with self._edit():
+            renames = self._prepare(part, [])
+            part, entry = self._table_entry(renames.get(table, table))
+            source = [row for row, _ in entry.rows][index]
+            known = self._known_ids()
+            row, dropped = _row_copy(source)
+            if any(True for _ in row.iter(_WP_DOC_PR, _W + "sdtPr")):
+                from .importing import Importer
+
+                importer = Importer(self, self, styles="use_destination", lists="separate", bookmarks="drop",
+                                    at_part=part, anchor=None)
+                importer._drawing_ids([row])
+                importer._control_ids([row])
+            if below:
+                source.addnext(row)
+            else:
+                source.addprevious(row)
+            from .importing import _stamp
+
+            _stamp(self, part, [row], known)
+            if tracking is not None:
+                from ..markdown.write import _insert_content
+                from ..revisions import track as _track
+                from ..revisions.stamp import Stamp
+
+                stamp = Stamp(self, tracking)
+                properties = row.find(_W + "trPr")
+                if properties is None:
+                    properties = make("w:trPr")
+                    insert_in_order(row, properties)
+                insert_in_order(properties, stamp.make("w:ins", part))
+                for paragraph in row.iter(W_P):
+                    _insert_content(paragraph, stamp, part)
+                    _track.mark(paragraph, "ins", stamp, part)
+                stamp.finish()
+            self.package.mark_dirty(part)
+        story = self._story_of(part)
+        new_id = ("" if story == "body" else f"{story}/") + f"tr:{row.get(_ids.PARA_ID)}"
+        warnings = [f"left on row {index}, not copied: {', '.join(dropped)}"] if dropped else []
+        return EditResult(new_id, created=[new_id], renamed=renames, warnings=warnings)
+
     def _put_row_like(self: "Document", part: str, reference: Element, neighbour: Element | None,
                       below: bool, tracking, table: Element | None = None) -> tuple[str, str | None]:
         """:meth:`insert_row`'s change, inside its edit: the new row beside ``reference``
@@ -519,7 +663,7 @@ class TableOps:
                 if (start, span) in after_cells and _vmerge(after_cells[(start, span)]) == "continue":
                     insert_in_order(properties, make("w:vMerge"))
             new_cell.append(properties)
-            paragraph = _empty_paragraph_like(cell.find(W_P))
+            paragraph = _new_row_paragraph(cell)
             new_cell.append(paragraph)
             row.append(new_cell)
             records = _pending_column(cell)

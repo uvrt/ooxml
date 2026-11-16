@@ -32,6 +32,22 @@ has the detail of every milestone. Why each dependency is needed at its version:
   5,754 -> 5,815 (guards 4,785 -> 4,845 and 5,755 -> 5,820); a reviewer's core 4,629 ->
   4,690.
 
+## 0.1.41 (unreleased) -- a column's text split into a row per part
+
+- **`xlsx_derive`'s `split`:** `{column, by}` makes a column's text one row per part, the
+  row's other cells repeated: cut at line breaks (a cell's Alt+Enter; `\r\n` and `\r` too),
+  or at `by` (`";"`), each part trimmed, empty parts dropped. It runs after the join and the
+  fills and before `where`, so `group_by` on the split column gives one row per part (with
+  `count`, `distinct` or any measure over the rows holding it). The result's `split` says how
+  many rows it made from how many source rows, the rows cut, the rows kept once with the cell
+  blank (blank, or separators only), the cells not text (kept as they are), and the parts
+  that came twice in their cell (kept, as Power Query splits a column into rows). No row is
+  lost. A part's sources are its cell's. Python: `wb.derive(..., split=...)`,
+  `xlsx_agent.split`.
+- `xlsx_derive`'s definition +75 estimated tokens; the core 4,920 -> 4,995 estimated (about
+  7,090 counted online at the last counted ratio: past the 7,000 guidance); the strict set
+  unchanged (`xlsx_derive` is not strict).
+
 ## 0.1.40 (unreleased) -- a shared key refuses its value only
 
 - **A shared key no longer refuses the call** (round 55, R118): 0.1.39's

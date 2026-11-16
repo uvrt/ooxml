@@ -34,7 +34,10 @@ run's effective formatting: the same as its paragraph's baseline).  Lengths are 
     ``runs`` (``t``, ``style``, ``direct`` -- the properties declared on the run itself --
     and the effective values that differ from the baseline: ``b``, ``i``, ``u``, ``strike``,
     ``dstrike``, ``caps``, ``small_caps``, ``sz``, ``font``, ``color``, ``highlight``,
-    ``valign``; ``rev`` when the run is inside a revision); ``links`` (``id``, ``href``,
+    ``valign``; ``rev`` when the run is inside a revision); ``new_text`` (round 58: what new
+    text written over the paragraph's gets -- its first run of text's formatting, else its
+    mark's -- where that differs from ``effective``: ``font``, ``sz``, ``color``, ``b``,
+    ``i``; absent where it is the baseline); ``links`` (``id``, ``href``,
     ``t``); ``bookmarks``; ``notes``; ``comments``;
     ``revisions``; ``pictures`` (``id``, ``name``, ``alt``, ``floating``, ``size``);
     ``drawings`` (``id``, ``kind``, ``name``, ``alt``, ``floating``; a chart's ``chart``
@@ -66,6 +69,7 @@ run's effective formatting: the same as its paragraph's baseline).  Lengths are 
 from __future__ import annotations
 
 import base64
+import copy
 from typing import TYPE_CHECKING
 
 from lxml import etree
@@ -214,6 +218,9 @@ class _Writer:
             "page_break_before": para.page_break_before, "outline_level": para.outline_level,
         }
         out["runs"] = [self.run(run, base) for run in record.runs]
+        written = new_text(self.document, element, base)
+        if written:
+            out["new_text"] = written
         for key, values in (("links", record.links), ("bookmarks", record.bookmarks), ("notes", record.notes),
                             ("comments", record.comments), ("revisions", [r for r in record.revisions if r]),
                             ("pictures", record.pictures), ("drawings", record.drawings),
@@ -382,6 +389,38 @@ class _Writer:
             sections.append(entry)
         return {"compatibility_mode": self.document.compatibility_mode, "kind": package.kind,
                 "stories": stories, "sections": sections}
+
+
+#: The formatting ``new_text`` compares (round 58, R126): the JSON key of each.
+_NEW_TEXT_FIELDS = (("font", "font"), ("size", "sz"), ("color", "color"), ("bold", "b"), ("italic", "i"))
+
+
+def new_text(document: "Document", element, base) -> dict:
+    """Round 58 (R126): the formatting new text written over ``element``'s (``set_text``,
+    ``word_edit_table``'s ``set_cells``) gets where it differs from the paragraph's baseline
+    ``base`` -- its first run of text's, else (an empty paragraph) its mark's, as Word gives
+    text typed there (measured, ``tools/row_format_probe.py``) -- ``{}`` where it is the
+    baseline's.  A paragraph whose runs carry their formatting with a bare mark (as many
+    writers leave a table's cells) states ``effective`` as its style's; this says what text
+    written into it looks like."""
+    from .edit.text import first_text_run
+    from .oxml.xml import REVISION_PROPERTY_TAGS, make
+
+    run = first_text_run(element)
+    if run is None:
+        mark = element.find(f"{_W}pPr/{_W}rPr")
+        if mark is None:
+            return {}
+        properties = make("w:rPr")
+        for child in mark:
+            if isinstance(child.tag, str) and child.tag not in REVISION_PROPERTY_TAGS:
+                properties.append(copy.deepcopy(child))
+        if not len(properties):
+            return {}
+        run = make("w:r")
+        run.append(properties)
+    got = _effective.run(document, element, run, "a")
+    return {key: getattr(got, name) for name, key in _NEW_TEXT_FIELDS if getattr(got, name) != getattr(base, name)}
 
 
 def _points(twips: str | None) -> float | None:

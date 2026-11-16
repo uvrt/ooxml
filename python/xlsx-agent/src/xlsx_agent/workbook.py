@@ -1402,7 +1402,7 @@ class Workbook:
     def derive(self, from_: "str | TableAddress | Region | Derived | Dataset", *, where=None,
                group_by=None, measures=None, bins=None, pivot=None, sort=None,
                top: int | None = None, round: "int | dict[str, int] | None" = None, coerce=None,
-               id: str | None = None, join=None, pivot_values=None, fill=None) -> Derived:
+               id: str | None = None, join=None, pivot_values=None, fill=None, split=None) -> Derived:
         """Figures from a table, name or region (``t:Products``), computed here, each with
         the cells it came from: ``where`` (:mod:`xlsx_agent.query`'s filters), ``group_by``
         (column names), ``measures`` (``[{"fn": "mean", "column": "Price", "as":
@@ -1421,10 +1421,13 @@ class Workbook:
         in that order, rows or none; rows of other values are left out and named in
         ``pivot_unlisted``.  ``fill`` (``[{"column": "Limit", "from": "Default limit",
         "coerce": "number"}]``) gives a column's blank cells another column's value of the
-        same row, after the join, each with the cells it came from (:mod:`xlsx_agent.fill`)."""
+        same row, after the join, each with the cells it came from (:mod:`xlsx_agent.fill`).
+        ``split`` (``{"column": "Owners", "by": ";"}``; default: at line breaks) then makes a
+        column's text one row per part, the other cells repeated (:mod:`xlsx_agent.split`)."""
         return derive(self, from_, where=where, group_by=group_by, measures=measures,
                       bins=bins, pivot=pivot, sort=sort, top=top, round=round,
-                      coerce=coerce, id=id, join=join, pivot_values=pivot_values, fill=fill)
+                      coerce=coerce, id=id, join=join, pivot_values=pivot_values, fill=fill,
+                      split=split)
 
     def record_values(self, table: "str | TableAddress", *, key: str, source: str,
                       column: str, values: "Sequence[Mapping[str, Any]]",

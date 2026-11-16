@@ -710,7 +710,7 @@ def _serve(c: Any, call: Any, arguments: dict[str, Any], timing: Any) -> Any:
 
     from ..scope import MAX_RANGES, Scope, ranges_of, read_scope
     from ..tools import keep_trials
-    from ..tools.shared import KEEP_TRIALS, _original_lost, _field_facts, resolve
+    from ..tools.shared import KEEP_TRIALS, _original_lost, _field_facts, _row_text_format, resolve
 
     document, entry = call.document, call.entry
     include = arguments.get("include")
@@ -805,6 +805,7 @@ def _serve(c: Any, call: Any, arguments: dict[str, Any], timing: Any) -> Any:
         _seen_add(live, doc, seq, version, snap, "rust")
     layout = answer["layout"]
     layout = _original_lost(document, scope, layout)
+    layout = _row_text_format(document, scope, layout)          # round 58 (R126)
     from ..tools.objects import ragged_made_by
 
     ragged_made_by(document, layout)
