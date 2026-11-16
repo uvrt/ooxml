@@ -1280,6 +1280,13 @@ class Blocks:
             # after it -- one another call's block uses now (a link to the same target
             # takes the relationship there already): the call run now keeps it.
             raise BlockConflict("a relationship it let go is used by another block now")
+        if _kept_unused(patch.body, document.package.read(_rels_path(patch.body)), placed, parts, spliced,
+                        patch.before_body):
+            # Lane L: and the other way round -- the call stopped using a relationship in its
+            # blocks and kept it, because another block of its version used it; no block
+            # uses it now (that block's use was undone or replaced meanwhile): the call run
+            # now lets it go (``OpcPackage.release``).
+            raise BlockConflict("a relationship it kept is used by no block now")
         if any(before is not None and after is None for _p, before, after in parts) \
                 and _rels_path(patch.body) in changed:
             # And a part it let go (a picture's), while others added relationships, which
@@ -1672,6 +1679,44 @@ def _let_go(body: str, parts: list[tuple[str, bytes | None, bytes | None]]) -> s
             kept = set(_REL_ID.findall(after)) if after is not None else set()
             return {value.decode() for value in set(_REL_ID.findall(before)) - kept}
     return set()
+
+
+def _kept_unused(body: str, live_rels: bytes | None, placed: list[tuple[int, int, "_Window"]],
+                 parts: list[tuple[str, bytes | None, bytes | None]], spliced: bytes,
+                 drafted_body: bytes | None) -> set[str]:
+    """Lane L: the ids of the body part's relationships the call stopped using in its blocks
+    (an attribute holding the id in a window before the call, in none after) and kept --
+    in its relationships part after the patch (the document's now where the call did not
+    change it) -- because a block of its version outside its windows used them
+    (``drafted_body``), where no attribute of the body uses them once the patch is spliced
+    in.  An edit that stops using a relationship lets it go where nothing in the part uses it
+    (``OpcPackage.release``, which counts any attribute holding the id); a draft decided that
+    on its version's body."""
+    path = _rels_path(body)
+    rels = next((after for found, before, after in parts if found == path), live_rels)
+    if not rels:
+        return set()
+    ids = set(_REL_ID.findall(rels))
+    if not ids:
+        return set()
+
+    def used(data: bytes) -> set[bytes]:
+        return {value for value in ids if b'="' + value + b'"' in data}
+
+    before: set[bytes] = set()
+    after: set[bytes] = set()
+    for _begin, _end, window in placed:
+        before |= used(window.before)
+        after |= used(window.after)
+
+    def elsewhere(value: bytes) -> bool:
+        if drafted_body is None:
+            return True
+        mark = b'="' + value + b'"'
+        return drafted_body.count(mark) > sum(window.before.count(mark) for _b, _e, window in placed)
+
+    return {value.decode() for value in before - after
+            if elsewhere(value) and b'="' + value + b'"' not in spliced}
 
 
 def _relinked_window(window: "_Window", renamed: Mapping[str, str]) -> "_Window":

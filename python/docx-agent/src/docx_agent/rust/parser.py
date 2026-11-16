@@ -26,6 +26,7 @@ from collections import Counter
 from fractions import Fraction
 from typing import Any
 
+from .classes import once
 from .exporter import RULES, Unsupported
 
 _W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
@@ -524,10 +525,17 @@ def _key_of(element: Any) -> str | None:
 def _table_geometry(resolution: Resolution, element: Any, table: Any) -> dict:
     from .mirror import _table_geometry as geometry
 
-    class _Self:
-        d2 = resolution.d2
+    return geometry(_Definitions(resolution.d2), element, table)
 
-    return geometry(_Self(), element, table)
+
+class _Definitions:
+    """What :func:`docx_agent.rust.mirror._table_geometry` reads of its first argument: the
+    definitions' model (``d2``)."""
+
+    __slots__ = ("d2",)
+
+    def __init__(self, d2: Any) -> None:
+        self.d2 = d2
 
 
 def export(document: Any, records: bool = True) -> tuple[str | None, dict, Resolution | None]:
@@ -573,50 +581,56 @@ class _ModelParagraphs:
     the document."""
 
     def __new__(cls, document: Any, d2: Any) -> Any:
-        from ..edit import effective
+        return _paragraphs_model_class()(document, d2)
 
-        class _Model(effective._Model):
-            def __init__(self, document: Any, d2: Any) -> None:
-                self.document = document
-                self.model = d2
-                self.fallback = None
-                self._paragraphs, self._elements, self._tables, self._held = {}, {}, None, []
-                self._mapped, self._by_path = False, None
-                self._paths = effective.PathFinder()
-                self._found_cache: dict = {}
 
-            @property
-            def paragraphs(self):
-                return self._whole().paragraphs
+@once
+def _paragraphs_model_class() -> type:
+    """:class:`_ModelParagraphs`' class (made once: :mod:`.classes`)."""
+    from ..edit import effective
 
-            @property
-            def elements(self):
-                return self._whole().elements
+    class _Model(effective._Model):
+        def __init__(self, document: Any, d2: Any) -> None:
+            self.document = document
+            self.model = d2
+            self.fallback = None
+            self._paragraphs, self._elements, self._tables, self._held = {}, {}, None, []
+            self._mapped, self._by_path = False, None
+            self._paths = effective.PathFinder()
+            self._found_cache: dict = {}
 
-            def _whole(self):
-                if self.fallback is None:
-                    self.fallback = effective._Model(self.document)
-                    STATS["model_whole"] += 1
-                return self.fallback
+        @property
+        def paragraphs(self):
+            return self._whole().paragraphs
 
-            def _found(self, element):
-                found = self._found_cache.get(id(element))
-                if found is not None and found[0] is element:
-                    return found[1]
-                from docx2svg.parse import document as pdoc
+        @property
+        def elements(self):
+            return self._whole().elements
 
-                style, conditions = _table_context(element)
-                paragraph = pdoc._paragraph(_properties_only(element), style, conditions)
-                self._found_cache[id(element)] = (element, paragraph)
-                return paragraph
+        def _whole(self):
+            if self.fallback is None:
+                self.fallback = effective._Model(self.document)
+                STATS["model_whole"] += 1
+            return self.fallback
 
-            def paragraph(self, element):
-                return self._found(element)
+        def _found(self, element):
+            found = self._found_cache.get(id(element))
+            if found is not None and found[0] is element:
+                return found[1]
+            from docx2svg.parse import document as pdoc
 
-            def table(self, element):
-                return self._whole().table(element)
+            style, conditions = _table_context(element)
+            paragraph = pdoc._paragraph(_properties_only(element), style, conditions)
+            self._found_cache[id(element)] = (element, paragraph)
+            return paragraph
 
-        return _Model(document, d2)
+        def paragraph(self, element):
+            return self._found(element)
+
+        def table(self, element):
+            return self._whole().table(element)
+
+    return _Model
 
 
 def _properties_only(element: Any) -> Any:
