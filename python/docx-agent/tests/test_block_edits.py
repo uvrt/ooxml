@@ -12,7 +12,9 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import io
 import threading
+import zipfile
 
 import pytest
 
@@ -1374,6 +1376,47 @@ def test_a_relationship_let_go_on_a_draft_and_used_meanwhile_is_kept(monkeypatch
             assert found["replace"].ok and found["link"].ok
             assert found["replace"].to_json()["checks"]["validate"]["new"] == []
             outcomes.append((block_stress.normal(found["replace"]), session.entry(doc).document.to_bytes()))
+    assert outcomes[0] == outcomes[1]
+
+
+def test_a_relationship_kept_on_a_draft_and_unused_meanwhile_goes(monkeypatch):
+    """Lane L (0.1.125): the other way round.  Two paragraphs link to one address (one
+    relationship); a tracked ``word_set_text`` replacing the first keeps the relationship on
+    its draft, the second paragraph still using it; meanwhile the second's link is undone.
+    The first call's change is a conflict and is prepared again: the relationship goes, as
+    with the two calls one at a time in commit order -- never a relationship left that no
+    block uses (the free-threaded stress's bytes differing in ``document.xml.rels``)."""
+    url = "https://example.com/shared"
+    outcomes = []
+    for concurrent in (True, False):
+        with opened("always" if concurrent else "off") as (box, session, doc, layout):
+            block_stress.track(box, session, doc)
+            first, second = layout.bodies[0][1], layout.bodies[1][1]
+            other = session.view(context={"agent": "y"})
+            for view, target in ((session, first), (other, second)):
+                linked = box.dispatch(view, "word_links", {"doc": doc, "action": "add_hyperlink",
+                                                           "target": f"{target}@0:4", "url": url})
+                assert linked.ok, linked.to_json()
+            replace = ("word_set_text", {"doc": doc, "target": first, "text": "Replaced, the link gone."})
+            undo = ("undo", {"doc": doc})
+            found: dict = {}
+            if concurrent:
+                with held(monkeypatch) as hold:
+                    thread, slow = _in_thread(lambda: box.dispatch(session.view(context={"agent": "x"}), *replace))
+                    assert hold.ready.wait(60)
+                    found["undo"] = box.dispatch(other, *undo)
+                    hold.release()
+                    thread.join()
+                    found["replace"] = slow["result"]
+                assert found["replace"].block["conflicts"] == ["a relationship it kept is used by no block now"]
+            else:
+                found["undo"] = box.dispatch(other, *undo)
+                found["replace"] = box.dispatch(session.view(context={"agent": "x"}), *replace)
+            assert found["replace"].ok and found["undo"].ok, (found["replace"].to_json(), found["undo"].to_json())
+            data = session.entry(doc).document.to_bytes()
+            with zipfile.ZipFile(io.BytesIO(data)) as archive:
+                assert url.encode() not in archive.read("word/_rels/document.xml.rels")
+            outcomes.append((block_stress.normal(found["replace"]), data))
     assert outcomes[0] == outcomes[1]
 
 

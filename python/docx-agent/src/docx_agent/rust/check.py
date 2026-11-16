@@ -37,6 +37,7 @@ from collections import Counter, OrderedDict
 from typing import Any
 
 from .. import incremental as _incremental
+from .classes import once
 
 _W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 _P, _TBL = _W + "p", _W + "tbl"
@@ -876,7 +877,9 @@ def _keep_scope(call: Any, ranges: list[str], scope: Any) -> None:
     call.__dict__["_rust_scope"] = (tuple(ranges), scope)
 
 
-def _rust_scope_class() -> Any:
+@once
+def _rust_scope_class() -> type:
+    """:func:`RustScope`'s class (made once: :mod:`.classes`)."""
     from ..scope import Range, Scope
 
     class _RustScope(Scope):
