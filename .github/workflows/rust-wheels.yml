@@ -1,8 +1,8 @@
 name: ooxml-core wheels
 
 # The wheels of ooxml-core (the Rust core's Python module), built by maturin; called by
-# rust.yml and release.yml.  Per target: one abi3 wheel for every CPython from 3.10
-# (crates/python's feature abi3).  `full`:
+# rust.yml and release.yml.  Per target: one abi3 wheel for every GIL build of CPython from
+# 3.10 (crates/python's feature abi3), and one wheel for the free-threaded 3.15t.  `full`:
 # Linux x86_64 and aarch64 (manylinux), macOS x86_64 and arm64, Windows x86_64; otherwise
 # (a pull request) Linux x86_64 and macOS x86_64 only.  A wheel built for the runner's own
 # machine is installed and imported before it is uploaded.
@@ -25,8 +25,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # The host Python for the abi3 wheel (on Linux the manylinux container builds with its
-      # own; this one installs the wheel).
+      # The host Pythons: 3.12 for the abi3 wheel, 3.15t for the free-threaded one (on Linux
+      # the manylinux container builds with its own; this one installs the wheel).
+      - uses: actions/setup-python@v5
+        id: ft
+        with:
+          python-version: "3.15t"
+          allow-prereleases: true
       - uses: actions/setup-python@v5
         id: py
         with:
@@ -40,13 +45,30 @@ jobs:
           manylinux: ${{ runner.os == 'Linux' && 'auto' || '' }}
           args: --release --features abi3 --out ../../dist -i ${{ runner.os == 'Linux' && 'python3.12' || steps.py.outputs.python-path }}
 
-      - name: The wheel installs and imports
+      - name: Free-threaded wheel (CPython 3.15t)
+        uses: PyO3/maturin-action@v1
+        with:
+          working-directory: python/ooxml-core
+          target: ${{ matrix.rust }}
+          manylinux: ${{ runner.os == 'Linux' && 'auto' || '' }}
+          args: --release --out ../../dist -i ${{ runner.os == 'Linux' && 'python3.15t' || steps.ft.outputs.python-path }}
+
+      - name: The wheels install and import
         if: matrix.native
         shell: bash
         run: |
           ls -l dist
           python -m pip install --no-index --find-links dist ooxml-core
           python -c "import ooxml_core, sys; print(sys.version, sorted(n for n in dir(ooxml_core) if not n.startswith('_')))"
+
+      - name: The free-threaded wheel installs and imports with the GIL off
+        if: matrix.native
+        shell: bash
+        env:
+          FT: ${{ steps.ft.outputs.python-path }}
+        run: |
+          "$FT" -m pip install --no-index --find-links dist ooxml-core
+          "$FT" -W error::RuntimeWarning -c "import sys, ooxml_core; print(sys.version); sys.exit('the GIL is enabled' if sys._is_gil_enabled() else 0)"
 
       - uses: actions/upload-artifact@v4
         with:

@@ -32,7 +32,7 @@ A Cargo workspace at the root, its crates under `crates/`:
 `cargo test --workspace` runs the Rust tests; `python/ooxml-core/tests` compares the Rust
 layout with docx2svg's on made-up documents (`cargo build --release -p ooxml-word`, `pip
 install ./python/ooxml-core`, then `pytest` there). Wheels: one abi3 wheel per platform for
-CPython 3.10 and later.
+CPython 3.10 and later, and one for the free-threaded 3.15t.
 
 ## Installing
 
