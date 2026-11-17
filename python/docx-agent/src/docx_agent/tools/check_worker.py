@@ -19,33 +19,8 @@ from __future__ import annotations
 import time
 from typing import Any
 
-import docx2svg
 
-from ..layout import DocumentLayout, LayoutSummary, _in_body, _put_held, held_layout, made_facts
-
-
-def _opened(held: Any, data: bytes, options: dict) -> DocumentLayout:
-    """The layout of ``held`` mapped to ids on a copy of the document opened from ``data``,
-    made once per layout held (kept with it)."""
-    found = held.extra.get("layout")
-    if found is None:
-        from ..edit.document import Document, WordPackage
-
-        # Opened as the package it is (a template too, without Document.open's warning: the
-        # caller opened it already, and said so).
-        owner = Document(WordPackage.open(data))
-        owner.font_dirs = options.get("font_dirs")
-        owner.locale = options.get("locale")
-        layout, _, warnings = held.laid
-        parsed = getattr(docx2svg, "parsed_document", None)
-        if parsed is not None:
-            # Round 41: the facts read docx2svg's parse of these bytes that the layout was made
-            # from, not a second parse of them (docx2svg 0.11.10).
-            from ..edit.effective import seed_model
-
-            seed_model(owner, data, parsed(layout, data))
-        found = held.extra["layout"] = DocumentLayout(owner, layout, warnings)
-    return found
+from ..layout import LayoutSummary, _in_body, _put_held, held_layout, made_facts, opened_layout
 
 
 def check_bytes(data: bytes, options: dict, state: tuple, request: dict) -> dict:
@@ -88,7 +63,7 @@ def _facts(held: Any, data: bytes, options: dict, request: dict) -> dict:
     from ._base import short
     from .scoped import range_pages
 
-    layout = _opened(held, data, options)
+    layout = opened_layout(held, data, options)
     reflow: dict[str, Any] = {"pages": layout.page_count, "complete": layout.pages_known is not None}
     if layout.stopped is not None:
         reflow["stopped"] = {"page": layout.stopped.page, "reason": layout.stopped.reason,

@@ -78,6 +78,16 @@ is finished, handed to ``on_late`` (the caller keeps it for the next call) and t
 kept, with its warm state and its layouts; only one still busy then is stopped.  Starting
 a worker again costs more than most images (its imports, its fonts, its first layout).
 
+**Messages to every worker** (round 58).  What a task left in a worker -- a document's
+layouts -- may be let go of before the worker needs the room: ``broadcast(fn, *args)``
+runs ``fn(*args)`` once in every worker the pool has, the idle ones at once and the busy
+ones as their task ends, before they take another (a worker started later has nothing to
+let go of, and is not told).  A note that fails is logged; a worker that does not answer
+one within :data:`TELL_TIMEOUT` is stopped.  ``later=True`` only queues the note, without
+taking a lock -- what a finalizer, run wherever the garbage collector runs, may do -- and
+the workers run it as they come back from their next task, or at the next ``broadcast``.
+In-process runners run it in the caller's thread.
+
 **Three runners** (and a fourth, below).
 
 * :class:`WorkerPool` -- :mod:`multiprocessing` workers, the default.  ``spawn`` is the
@@ -127,7 +137,7 @@ import sys
 import threading
 import time
 import weakref
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from concurrent.futures import ThreadPoolExecutor
 from multiprocessing.connection import wait as wait_for
 from typing import Any, Callable, Sequence
@@ -164,6 +174,8 @@ LANES = (None, RENDER_LANE)
 #: How much longer than its deadline a :data:`RENDER_LANE` task's worker may go on with it
 #: (as a share of the deadline) before it is stopped.
 OVERRUN = 1.0
+#: How long a worker may take to run a note (:meth:`_Pool.broadcast`) before it is stopped.
+TELL_TIMEOUT = 30.0
 #: :attr:`_Pool.start_timeout`'s default: seconds to start one worker and warm it.
 START_TIMEOUT = 120.0
 #: A :class:`WorkerPool` worker's process name, which spawn sets before the main module
@@ -537,6 +549,14 @@ class _Pool:
         #: Render tasks past their deadline whose worker finished them (kept), and those
         #: stopped after all (also in :attr:`killed`).
         self.overruns = {"finished": 0, "stopped": 0}
+        #: Notes for every worker (:meth:`broadcast`): ``(number, fn, args)``, kept until
+        #: every worker has run them; per ``id(worker)``, the number of the last it ran (or
+        #: the last there was when it started).
+        self._notes: list[tuple[int, Callable[..., Any], tuple]] = []
+        self._noted = 0
+        self._read: dict[int, int] = {}
+        #: ``broadcast(..., later=True)``'s notes, put without the lock.
+        self._later: deque = deque()
 
     def _failure(self, exc: BaseException) -> None:
         """Remember ``exc`` if it is lasting (called with the condition held)."""
@@ -577,6 +597,7 @@ class _Pool:
         self._keyed_at.pop(id(worker), None)
         self._waiting.pop(id(worker), None)
         self._rendering.discard(id(worker))
+        self._read.pop(id(worker), None)
 
     def _yields(self) -> bool:
         """Whether a :data:`RENDER_LANE` task waits now rather than take a worker: another
@@ -726,6 +747,7 @@ class _Pool:
             raise
         with self._condition:
             self._starting -= 1
+            self._read[id(worker)] = self._noted       # nothing to let go of yet
             holder = self._holders.get(affinity) if affinity is not None else None
             self._took(worker, affinity, "", holder)
             if rendering:
@@ -767,6 +789,7 @@ class _Pool:
             return
         with self._condition:
             self._starting -= 1
+            self._read[id(worker)] = self._noted       # nothing to let go of yet
         self._release(worker)
 
     def _warm_tasks(self, run: Callable[[Callable[[], Any]], Any]) -> None:
@@ -783,7 +806,73 @@ class _Pool:
     def _forget(self, worker: Any) -> None:
         """A worker leaves the pool for good (called with the condition held)."""
 
+    # -- notes to every worker (round 58) ----------------------------------------------------
+
+    def broadcast(self, fn: Callable[..., Any], *args: Any, later: bool = False) -> None:
+        """``fn(*args)`` once in every worker the pool has: the idle ones now, in this
+        thread; the busy ones as their task ends, before they take another (the module's
+        notes).  ``later``: only queued, without a lock (safe from a finalizer): run as the
+        workers come back from their next task, or at the next ``broadcast``."""
+        if later:
+            self._later.append((fn, args))
+            return
+        self._may_tell(fn)
+        with self._condition:
+            if self._closed:
+                return
+            self._note_later()
+            self._noted += 1
+            self._notes.append((self._noted, fn, args))
+            # Taken out while they are told (the pool's size holds: none is started meanwhile).
+            idle, self._idle = self._idle, []
+        for worker in idle:
+            self._release(worker)
+
+    def _may_tell(self, fn: Callable[..., Any]) -> None:
+        """Refuse a note this pool's workers cannot run (a subclass's rule)."""
+
+    def _tell(self, worker: Any, fn: Callable[..., Any], args: tuple) -> None:
+        """Run ``fn(*args)`` in ``worker`` and wait for it: raises ``_Gone`` (or ``OSError``)
+        where the worker broke or did not answer within :data:`TELL_TIMEOUT`, and the note's
+        own error otherwise."""
+        raise NotImplementedError
+
+    def _note_later(self) -> None:
+        """Number the notes queued with ``later`` (condition held)."""
+        while self._later:
+            fn, args = self._later.popleft()
+            self._noted += 1
+            self._notes.append((self._noted, fn, args))
+
+    def _deliver(self, worker: Any) -> bool:
+        """Run the notes ``worker`` has not run yet; ``False`` where it broke (discarded)."""
+        with self._condition:
+            self._note_later()
+            seen = self._read.setdefault(id(worker), self._noted)
+            owed = [note for note in self._notes if note[0] > seen]
+        if not owed:
+            return True
+        for number, fn, args in owed:
+            try:
+                self._tell(worker, fn, args)
+            except (_Gone, OSError, EOFError) as exc:
+                logger.warning("a worker did not run a note (%s) and is stopped: %s",
+                               getattr(fn, "__qualname__", fn), exc)
+                self._discard(worker)
+                return False
+            except Exception as exc:  # noqa: BLE001 -- the note's own failure; the worker serves
+                logger.warning("a note to a worker failed: %s: %s: %s",
+                               getattr(fn, "__qualname__", fn), type(exc).__name__, exc)
+            with self._condition:
+                self._read[id(worker)] = number
+        with self._condition:
+            low = min(self._read.values(), default=self._noted)
+            self._notes = [note for note in self._notes if note[0] > low]
+        return True
+
     def _release(self, worker: Any) -> None:
+        if not self._closed and not self._deliver(worker):
+            return
         with self._condition:
             self._rendering.discard(id(worker))
             if self._closed:
@@ -853,6 +942,8 @@ class _Pool:
             self._holders.clear()
             self._keyed_at.clear()
             self._waiting.clear()
+            self._notes.clear()
+            self._read.clear()
             self._condition.notify_all()
         return idle
 
@@ -964,6 +1055,15 @@ class _Worker:
         if status == "error":
             raise value
         return value
+
+    def tell(self, fn: Callable[..., Any], args: tuple) -> None:
+        """``fn(*args)`` here, waited for at most :data:`TELL_TIMEOUT` (a note)."""
+        self.conn.send((fn, args, {}))
+        if not self.conn.poll(TELL_TIMEOUT):
+            raise _Gone(f"no answer within {TELL_TIMEOUT:g} s")
+        status, value = self.conn.recv()
+        if status == "error":
+            raise value
 
     def _exit_code(self) -> int | None:
         self.process.join(2)
@@ -1317,6 +1417,26 @@ class SubprocessPool(_Pool):
     def _forget(self, worker: Any) -> None:
         self._all.discard(worker)
 
+    def _may_tell(self, fn: Callable[..., Any]) -> None:
+        if task_reference(fn) is None:
+            raise ArgumentError(f"{getattr(fn, '__qualname__', fn)!r} is not a registered worker "
+                                "task (ooxml_edit.tools.worker_task): a subprocess worker runs "
+                                "nothing else")
+
+    def _tell(self, worker: Any, fn: Callable[..., Any], args: tuple) -> None:
+        reference = task_reference(fn)
+        worker.send(("task", reference, pickle.dumps((args, {}), protocol=_PROTOCOL)))
+        reply = worker.wait(TELL_TIMEOUT)
+        if reply is None:
+            raise _Gone(f"no answer within {TELL_TIMEOUT:g} s")
+        _outcome(reply)
+
+    def broadcast(self, fn: Callable[..., Any], *args: Any, later: bool = False) -> None:
+        """:meth:`_Pool.broadcast`; the unregistered tasks' in-process runner too."""
+        super().broadcast(fn, *args, later=later)
+        if self._inline is not None:
+            self._inline.broadcast(fn, *args, later=later)
+
     def close(self) -> None:
         if self._inline is not None:
             self._inline.close()
@@ -1345,6 +1465,8 @@ class _Threads:
         #: Tasks given up at a deadline: all so far, and those still running.
         self.abandoned = 0
         self.running_abandoned = 0
+        #: Notes to run before the next task (:meth:`broadcast`).
+        self._later: deque = deque()
 
     #: What a thread serving a task is called.
     _thread_name = "ooxml-edit-tools-inprocess"
@@ -1358,10 +1480,31 @@ class _Threads:
         return ToolError("timeout", f"no worker was free within {wait:g} s",
                          details={"timeout": wait, "in_process": True})
 
+    def broadcast(self, fn: Callable[..., Any], *args: Any, later: bool = False) -> None:
+        """``fn(*args)`` once in this process (the module's notes): now, in this thread, or --
+        ``later`` -- before the next task."""
+        self._later.append((fn, args))
+        if not later:
+            self._tell_all()
+
+    def _tell_all(self) -> None:
+        notes = self._later
+        while notes:
+            try:
+                fn, args = notes.popleft()
+            except IndexError:          # another thread ran it meanwhile
+                return
+            try:
+                fn(*args)
+            except Exception as exc:  # noqa: BLE001 -- logged; the work goes on
+                logger.warning("a note failed: %s: %s: %s", getattr(fn, "__qualname__", fn),
+                               type(exc).__name__, exc)
+
     def _run(self, fn: Callable[..., Any], args: tuple, kwargs: dict, timeout: float,
              queue_timeout: float | None) -> Any:
         if self._closed:
             raise RuntimeError("the worker pool is closed")
+        self._tell_all()
         wait = timeout if queue_timeout is None else queue_timeout
         deadline = time.monotonic() + timeout
         if not self._slots.acquire(timeout=max(0.0, wait)):
@@ -1822,6 +1965,17 @@ class WorkerPool(_Pool):
         if self._subprocesses is not None:
             return self._subprocesses.pids()
         return super().pids()
+
+    def _tell(self, worker: Any, fn: Callable[..., Any], args: tuple) -> None:
+        worker.tell(fn, args)
+
+    def broadcast(self, fn: Callable[..., Any], *args: Any, later: bool = False) -> None:
+        """:meth:`_Pool.broadcast`: to this pool's workers and to those of the runner it fell
+        back to, if any."""
+        super().broadcast(fn, *args, later=later)
+        for other in (self._inline, self._subprocesses):
+            if other is not None:
+                other.broadcast(fn, *args, later=later)
 
     @property
     def affinity_counts(self) -> dict[str, int]:

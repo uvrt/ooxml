@@ -81,6 +81,7 @@ import docx2svg
 from docx2svg.paths import path_part, resolve_path
 from docx2svg.relayout import MeasureStore
 from ooxml_edit.tools.results import ToolError
+from ooxml_edit.tools.worker import InProcess, ThreadRunner
 
 from .edit.effective import PathFinder
 from .edit import ids as _ids
@@ -1068,9 +1069,6 @@ class _Conversion:
     #: Held while a page is drawn from this layout (its faces are written to as pages are
     #: drawn): lock 4 of the module's order.
     drawing: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
-    #: Per 0-based page, the digest of what it draws (docx2svg's ``relayout.drawing``):
-    #: what :mod:`docx_agent.liveview` compares versions by, made once.
-    digests: dict[int, bytes] = field(default_factory=dict, repr=False, compare=False)
 
 
 def check_options(options: dict, method: str) -> None:
@@ -1297,16 +1295,39 @@ def _taken(blob: bytes) -> tuple:
 class _Held:
     """A layout a process holds: ``(layout, fonts, warnings)``, and what was read from it
     since (:attr:`extra`: the document opened from its bytes, its :class:`DocumentLayout`,
-    its summary), all of one state."""
+    its summary), all of one state.  Round 58 (Q2): ``extra["views"]``, the layouts of the
+    versions a live view was given (:mod:`docx_agent.liveview`), go on with the lineage's
+    newest layout, each laid out again from it -- so the task that takes the lineage takes
+    them too, and no two tasks draw with the faces the versions share."""
 
-    __slots__ = ("laid", "extra", "lineage", "cost")
+    __slots__ = ("laid", "extra", "lineage", "cost", "token")
 
     def __init__(self, laid: tuple, extra: dict | None = None) -> None:
         self.laid = laid
         self.extra: dict = extra if extra is not None else {}
         self.lineage: str | None = None
-        #: What keeping it costs (:func:`layout_cost`).
+        #: What keeping it costs (:func:`held_cost`).
         self.cost = layout_cost(laid[0])
+        #: The token it is held under (:func:`_put_held`).
+        self.token: tuple | None = None
+
+
+def held_cost(held: _Held) -> int:
+    """What keeping ``held`` costs: its layout's :func:`layout_cost`, and :data:`PAGE_COST`
+    for each page of a live view's layout kept with it (``extra["views"]``, each with its
+    ``laid``) that is not one of the newest layout's own -- a layout made from another
+    keeps the pages an edit did not reach, the very objects."""
+    layout = held.laid[0]
+    cost = layout_cost(layout)
+    views = held.extra.get("views")
+    if views:
+        counted = {id(page) for page in getattr(layout, "pages", None) or ()}
+        for kept in views.values():
+            for page in getattr(kept.laid[0], "pages", None) or ():
+                if id(page) not in counted:
+                    counted.add(id(page))
+                    cost += PAGE_COST
+    return cost
 
 
 #: The layouts this process holds, by token, the newest last: one per lineage, within
@@ -1376,8 +1397,10 @@ def _put_held(token: tuple, held: _Held, lineage: str) -> None:
     lineage dropped), those of other lineages used longest ago dropped while all cost more
     than :data:`LAYOUT_MEMORY` (round 39)."""
     held.extra.pop("summary before", None)
+    held.cost = held_cost(held)
     with _HELD_LOCK:
         held.lineage = lineage
+        held.token = token
         for other in [t for t, entry in _HELD.items() if entry.lineage == lineage or t == token]:
             del _HELD[other]
         _HELD[token] = held
@@ -1409,6 +1432,9 @@ def held_layout(data: bytes, options: dict, state: tuple, *, changed_pages: bool
         _let_go_held(lineage)
         raise
     made = _Held((layout, fonts, list(convert_options.warnings)))
+    if found is not None and found.extra.get("views"):
+        # Round 58 (Q2): a live view's versions go on with the lineage's newest layout.
+        made.extra["views"] = found.extra["views"]
     summary = found.extra.get("summary") if found is not None else None
     if summary is not None:
         # The summary of the layout this one was made from, for this one's (round 39:
@@ -1416,6 +1442,31 @@ def held_layout(data: bytes, options: dict, state: tuple, *, changed_pages: bool
         # task ends (:func:`_put_held`), so it never keeps the earlier layout's pages.
         made.extra["summary before"] = summary
     return made, how, seconds
+
+
+def opened_layout(held: _Held, data: bytes, options: dict) -> DocumentLayout:
+    """The layout of ``held`` mapped to ids on a copy of the document opened from ``data``
+    (ids are the bytes' own: ``w14:paraId``, or a block's place), made once per layout held
+    (kept with it): what a worker reads facts and pages from (round 38)."""
+    found = held.extra.get("layout")
+    if found is None:
+        from .edit.document import Document, WordPackage
+
+        # Opened as the package it is (a template too, without Document.open's warning: the
+        # caller opened it already, and said so).
+        owner = Document(WordPackage.open(data))
+        owner.font_dirs = options.get("font_dirs")
+        owner.locale = options.get("locale")
+        layout, _, warnings = held.laid
+        parsed = getattr(docx2svg, "parsed_document", None)
+        if parsed is not None:
+            # Round 41: the facts read docx2svg's parse of these bytes that the layout was made
+            # from, not a second parse of them (docx2svg 0.11.10).
+            from .edit.effective import seed_model
+
+            seed_model(owner, data, parsed(layout, data))
+        found = held.extra["layout"] = DocumentLayout(owner, layout, warnings)
+    return found
 
 
 def made_facts(held: _Held, how: str, seconds: float) -> dict:
@@ -1749,8 +1800,10 @@ def _keeper(document: "Document") -> threading.Lock:
                 document._layout_failures = OrderedDict()
                 # Lane O: one owner of the document's layouts for the checks that wait.
                 document._layout_owner = Owner()
-                # Round 58: the layouts this process holds of it go with it.
-                weakref.finalize(document, forget_lineage, document._layout_lineage)
+                # Round 58: the layouts this process holds of it go with it, and (Q2) those
+                # the workers of the runners that laid it out hold (:func:`remember_runner`).
+                document._layout_runners = []
+                weakref.finalize(document, _collected, document._layout_lineage, document._layout_runners)
     return lock
 
 
@@ -1761,13 +1814,115 @@ _KEEPERS_LOCK = threading.Lock()
 
 
 def forget_lineage(lineage: str) -> None:
-    """Drop the layouts this process holds of the document of ``lineage`` (:data:`_HELD`),
-    but those a task has taken out now: run when the document is closed or collected, so a
-    process that served many documents -- a pooled worker, an application's own -- keeps
-    none of a document that is gone."""
+    """Drop the layouts this process holds of the document of ``lineage`` (:data:`_HELD`,
+    a live view's with them) and what their flows measured (:data:`_MEASURES`), but those
+    a task has taken out now: run when the document is closed or collected, so a process
+    that served many documents -- a pooled worker, an application's own -- keeps none of a
+    document that is gone."""
     with _HELD_LOCK:
-        for token in [t for t, held in _HELD.items() if held.lineage == lineage]:
-            del _HELD[token]
+        dropped = [_HELD.pop(t) for t, held in list(_HELD.items()) if held.lineage == lineage]
+    # What their flows measured (docx2svg's own lineages: one per unbroken run of layouts,
+    # a live view's versions among them) goes with them.
+    measured = set()
+    for held in dropped:
+        layouts = [held.laid[0], *(version.laid[0] for version in (held.extra.get("views") or {}).values())]
+        measured.update(getattr(getattr(layout, "state", None), "lineage", None) for layout in layouts)
+    for found in measured - {None}:
+        _MEASURES.forget(found)
+
+
+def drop_lineage(lineage: str) -> None:
+    """In a worker (round 58, Q2): :func:`forget_lineage`, and the memory it freed handed
+    back to the system at once -- the cycles a layout's objects make collected, and the
+    allocator's free pages released (:func:`release_free_memory`) -- so the worker's
+    resident memory falls back when the document is closed, not when it next allocates."""
+    forget_lineage(lineage)
+    import gc
+
+    gc.collect()
+    release_free_memory()
+
+
+# A task ooxml-edit's workers run (the mark): the note a closed document sends them all.
+drop_lineage.__ooxml_edit_task__ = True  # type: ignore[attr-defined]
+
+
+def release_free_memory() -> None:
+    """Hand the C allocator's free pages back to the system: macOS's
+    ``malloc_zone_pressure_relief`` (every zone), glibc's ``malloc_trim``; elsewhere
+    nothing.  Python frees a layout's objects into the allocator, which keeps the pages for
+    later use until it is asked."""
+    import ctypes
+    import ctypes.util
+    import sys
+
+    try:
+        if sys.platform == "darwin":
+            libc = ctypes.CDLL(ctypes.util.find_library("c"))
+            libc.malloc_zone_pressure_relief.restype = ctypes.c_size_t
+            libc.malloc_zone_pressure_relief(None, ctypes.c_size_t(0))
+        elif sys.platform.startswith("linux"):
+            libc = ctypes.CDLL("libc.so.6")
+            libc.malloc_trim(ctypes.c_size_t(0))
+    except (OSError, AttributeError):
+        pass                                # another C library: nothing to ask
+
+
+def remember_runner(document: "Document", runner: Any) -> None:
+    """``runner`` -- a tool layer's worker pool (ooxml-edit's) -- lays ``document`` out
+    (round 58, Q2): a live view's tasks go to it (:func:`runner_of`), and when the document
+    is closed or collected its workers are told to let go of its layouts
+    (:func:`drop_lineage` through ``runner.broadcast``).  Kept weakly."""
+    _keeper(document)
+    runners = document._layout_runners
+    with _KEEPERS_LOCK:
+        if runners and runners[-1]() is runner:
+            return
+        try:
+            mine = weakref.ref(runner)
+        except TypeError:                   # an application's runner that cannot be: none kept
+            return
+        runners[:] = [ref for ref in runners if ref() is not None and ref() is not runner] + [mine]
+
+
+def runner_of(document: "Document") -> Any:
+    """The runner whose workers laid ``document`` out last (:func:`remember_runner`), or
+    ``None`` -- also where that runner runs its tasks in this process (:func:`runs_here`):
+    the document's layouts are this process's own then."""
+    runners = getattr(document, "_layout_runners", None) or ()
+    for ref in reversed(list(runners)):
+        runner = ref()
+        if runner is not None:
+            return None if runs_here(runner) else runner
+    return None
+
+
+def runs_here(runner: Any) -> bool:
+    """Whether ``runner`` runs its tasks in this process (ooxml-edit's ``InProcess`` and
+    ``ThreadRunner``, a ``WorkerPool`` of none or fallen back to them): its tasks' layouts
+    are held here, beside this process's own."""
+    return isinstance(runner, (InProcess, ThreadRunner)) or bool(getattr(runner, "in_process", False))
+
+
+def _tell_runners(runners: list, lineage: str, *, later: bool) -> None:
+    """Every runner of ``runners`` (weak references) with workers of their own told to drop
+    ``lineage`` (:func:`drop_lineage`); one running in this process forgot it already."""
+    for ref in list(runners):
+        runner = ref()
+        broadcast = getattr(runner, "broadcast", None)
+        if runner is None or broadcast is None or runs_here(runner):
+            continue
+        try:
+            broadcast(drop_lineage, lineage, later=later)
+        except Exception as error:  # noqa: BLE001 -- a pool closed or broken: its workers are gone
+            logger.debug("the workers were not told to drop a closed document's layouts: %s", error)
+
+
+def _collected(lineage: str, runners: list) -> None:
+    """A document was collected: its lineage forgotten here, and queued for the workers
+    (``later``: a finalizer takes no lock)."""
+    forget_lineage(lineage)
+    _tell_runners(runners, lineage, later=True)
 
 
 def release_document(document: "Document") -> None:
@@ -1775,8 +1930,9 @@ def release_document(document: "Document") -> None:
     (ooxml-edit's ``DocumentFormat.closed``; or by the application): its layouts and what
     was read of them, its live view's tokens, the layouts held of its lineage here, and its
     Rust owner (:mod:`docx_agent.rust`).  The document stays usable: whatever it needs
-    again is made again.  Layouts a worker process holds of it are that process's, kept
-    within its :data:`LAYOUT_MEMORY` and dropped as other documents need the room."""
+    again is made again.  The workers of the runners that laid it out
+    (:func:`remember_runner`) are told to drop its layouts too (:func:`drop_lineage`): the
+    idle ones at once, the busy ones as their task ends."""
     lock = getattr(document, "_layout_lock", None)
     if lock is not None:
         with lock:
@@ -1786,6 +1942,9 @@ def release_document(document: "Document") -> None:
             document._check_facts.clear()
             document.__dict__.pop("_view_tokens", None)
         forget_lineage(document._layout_lineage)
+        # Round 58 (Q2): the workers that hold its layouts let them go now, not when other
+        # documents need the room (the idle at once, the busy as their task ends).
+        _tell_runners(document._layout_runners, document._layout_lineage, later=False)
     rust = document.__dict__.pop("_rust_doc", None)
     if rust is not None:
         rust.close()
@@ -2089,7 +2248,7 @@ def twin(data: bytes, like: dict) -> "Document":
 _SHARED_LAYOUT = ("_layout_lock", "_layout_flights", "_layout_kept", "_layout_count",
                   "_layout_tickets", "_layout_lineage", "_layout_fresh", "_layout_summaries",
                   "_check_facts", "_layout_failures", "_layouts", "_layout_stats", "_tool_seen_layout",
-                  "_layout_owner",
+                  "_layout_owner", "_layout_runners",
                   # Lane F: the document's Rust owner and what its checks saw (docx_agent.rust).
                   "_rust_doc", "_rust_refused", "_rust_seen",
                   # The tools' caches keyed by content or by version, set whole (a tuple) or
@@ -2480,21 +2639,6 @@ def tag_with(svg: str, id_of: Any) -> str:
         return match.group(0)[:-1] + f' data-docx-agent-id="{_escape(identifier)}">'
 
     return _GROUP.sub(tag, svg)
-
-
-def group_ids(document: "Document", conversion: _Conversion) -> dict:
-    """``(path, part) -> id`` for every paragraph group the layout's pages draw, as
-    :func:`_tag` would tag it (``part`` the group's ``data-docx-part``, ``None`` in the
-    body): read once from the document the layout is of, under its lock, so that pages
-    drawn later -- the document changed meanwhile -- are tagged with that version's ids."""
-    layout = conversion.layout
-    out: dict = {}
-    for page in conversion.raw.pages:
-        for line in page.text_lines():
-            key = (line.path, getattr(line, "part", None) if getattr(line, "story", None) else None)
-            if key not in out:
-                out[key] = layout.id_for_path(_part_of(document, *key), key[0])
-    return out
 
 
 def _escape(value: str) -> str:

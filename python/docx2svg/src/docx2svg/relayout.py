@@ -592,6 +592,13 @@ class MeasureStore:
         with self._lock:
             return self._count
 
+    def forget(self, lineage: bytes) -> None:
+        """Drop what ``lineage`` measured (its document is closed: round 58)."""
+        with self._lock:
+            kept = self._kept.pop(lineage, None)
+            if kept is not None:
+                self._count -= len(kept)
+
     def clear(self) -> None:
         with self._lock:
             self._kept.clear()

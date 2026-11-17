@@ -18,12 +18,13 @@ of its own::
 * :func:`view` -- the pages in order, each with the ids of the body's top-level blocks it
   shows and its size; the pages whose drawing changed since ``since`` (every page without
   one); a new ``token``, naming this version's layout.  ``stale`` (with a ``note``) when
-  ``since`` names no layout kept for the document: every page is listed then.
+  ``since`` names no version kept for the document: every page is listed then.
 * :func:`page_svg` -- one page of the version a token names, as SVG, drawn from that
-  layout even when the document moved on since: ``text="outlines"`` draws text as glyph
-  paths (``glyphs``: one set kept across pages, docx2svg's ``ConvertOptions.glyphs``);
-  ``images="external"`` gives pictures back by name (:func:`externalise_images`, the
-  names pptx2svg's ``liveview`` gives), ``"embedded"`` keeps them in the SVG.
+  version's layout even when the document moved on since: ``text="outlines"`` draws text
+  as glyph paths (``glyphs``: one set kept across pages, docx2svg's
+  ``ConvertOptions.glyphs``); ``images="external"`` gives pictures back by name
+  (:func:`externalise_images`, the names pptx2svg's ``liveview`` gives), ``"embedded"``
+  keeps them in the SVG.
 
 Pages changed are those whose drawing differs from the same page of the token's version
 (docx2svg's ``relayout.drawing``: the SVG less its ``data-docx-*`` attributes), and those
@@ -31,16 +32,23 @@ it did not have: what docx2svg's ``Layout.changed_pages`` says for a layout made
 one before.  Pages equal in the layout (and every part but the document's text the same)
 are not drawn to tell.
 
+**Where the layouts are** (round 58, Q2).  A document a toolbox's calls laid out has its
+layouts in that toolbox's workers (:func:`docx_agent.layout.remember_runner`), and the view
+asks there: :func:`view_bytes` and :func:`page_bytes` run in the worker holding the
+document's layouts (the pool's affinity, as ``check``'s facts do), the versions a view was
+given kept with them (``extra["views"]`` of :class:`~docx_agent.layout._Held`, each laid out
+again from the newest where the worker no longer has it).  This process keeps, per token,
+the version's bytes and its pages -- never a layout -- and the worker sends back the pages,
+the pages changed, one page's SVG.  A document no toolbox laid out (``view(document)``, an
+application's own) is laid out here, the same tasks run in this process.
+
 **Locks** (the order is :mod:`docx_agent.layout`'s; round 34's rule: never wait for a
 layout in progress holding the document's lock).  ``view(session, doc)`` takes the
-document's lock to read its bytes and version, and lets it go while the version is laid out
--- waiting there for a layout another call has in progress -- then takes it back to map the
-pages to ids.  Called by a thread that holds the lock already, it lays out on its own
-instead of waiting.  ``view(document)`` (a document outside a session: no lock) never
-waits; either way the version's layout is the one cached for all.  Pages are compared, and
-:func:`page_svg` draws, with no document lock held (only the layout's drawing lock, under
-which nothing is waited for).  Laid out in this process (the application's thread), never
-through a tool call's worker engine.
+document's lock to read its bytes and version, and lets it go while its task runs; the task
+waits for a layout of the document in progress where it is held.  Called by a thread that
+holds the lock already, it lays out on its own instead of waiting.  ``view(document)`` (a
+document outside a session: no lock) never waits; either way the version's layout is the
+one kept for all.  :func:`page_svg` takes no document lock.
 """
 
 from __future__ import annotations
@@ -59,15 +67,22 @@ from typing import Any, Iterator, Mapping, MutableMapping
 import docx2svg
 
 from . import layout as _layout
-from .layout import _Conversion, _keeper, cache_key, convert, group_ids, layout_cost, tag_with
+from .layout import (_MEASURES, _PASSED_ON, PAGE_COST, _Held, _failed, _keeper, _kept_failure, _let_go_held,
+                     _put_held, _tag, _take_held, cache_key, held_layout, keep_layout, kept_layout, layout_key,
+                     layout_options, made_facts, note_made, opened_layout, runner_of)
 
 __all__ = ["PageSvg", "UnknownToken", "View", "ViewPage", "embed_images", "externalise_images",
-           "page_svg", "view"]
+           "page_bytes", "page_svg", "view", "view_bytes"]
 
-#: Tokens -- versions' layouts -- kept per document for ``since`` and :func:`page_svg`, the
-#: least recently used dropped first.  Each holds its layout (about 80 MB at 79 pages while
-#: the layout cache has it too; ``ROADMAP.md``, "Reflow feedback").
+#: Tokens -- versions -- kept per document for ``since`` and :func:`page_svg`, the least
+#: recently used dropped first: here their bytes and pages, in the worker their layouts
+#: (within a quarter of :data:`~docx_agent.layout.LAYOUT_MEMORY` but the two used last).
 VIEW_TOKENS = 4
+
+#: How long a view's or a page's task may take in a worker -- a long document's first
+#: layout among it -- before the call reports ``timeout`` (the worker finishes it and keeps
+#: it where its pool lets it, as a layout's task does).
+VIEW_TIMEOUT = 600.0
 
 #: :func:`page_svg`'s ``text`` and ``images``.
 TEXT_MODES = ("text", "outlines")
@@ -100,7 +115,7 @@ class View:
     changed: list[int]
     #: The token the pages were compared with, as given.
     since: str | None = None
-    #: ``since`` names no layout kept for this document (another document's, one from
+    #: ``since`` names no version kept for this document (another document's, one from
     #: before a restart, or older than the last :data:`VIEW_TOKENS`): every page is in
     #: ``changed``, and ``note`` says so.
     stale: bool = False
@@ -130,16 +145,15 @@ class UnknownToken(LookupError):
     """A token :func:`page_svg` was given that names no layout kept for the document."""
 
 
-@dataclass
-class _Seen:
-    """A version a view was given: its layout, its pages, its groups' ids, its parts."""
+@dataclass(frozen=True)
+class _Shown:
+    """What this process keeps of a version a view was given: its bytes (laid out again in a
+    worker that no longer holds its layout), the options it was laid out with, its pages."""
 
-    conversion: _Conversion
+    data: bytes
+    options: dict
     pages: list[ViewPage]
-    ids: dict
-    #: A digest of every part but the main document's and ``docProps``: what a page drawn
-    #: from equal layouts may still draw differently by (a picture's bytes, a face).
-    parts: bytes
+    version: int | None
 
 
 # -- view ----------------------------------------------------------------------------------------
@@ -151,61 +165,63 @@ def view(where: Any, *args: str, since: str | None = None) -> View:
     document's id (``"d1"``)."""
     document, entry, _ = _target(where, args, "view", 0)
     if entry is None:
-        conversion = convert(document, converter=None)
-        token, seen = _seen(document, conversion)
-        version = None
-    else:
-        with entry.lock:
-            version = entry.version
-            conversion = convert(document, unlocked=lambda: _let_go(entry.lock),
-                                 current=lambda: entry.version == version, converter=None)
-            # The pages mapped to ids under the lock: the layout's document is this version.
-            token, seen = _seen(document, conversion)
-    # Compared with no lock held: drawing a page to tell takes only its layout's.
-    if since is None:
-        return View(token, seen.pages, [p.number for p in seen.pages], version=version)
-    if since == token:
-        return View(token, seen.pages, [], since, version=version)
+        return _view(document, document.to_bytes(), None, since, may_wait=False)
+    with entry.lock:
+        version = entry.version
+        data = document.to_bytes()
+        # Its task runs with the lock let go: it may wait there for a layout in progress.
+        with _let_go(entry.lock) as released:
+            return _view(document, data, version, since, may_wait=released)
+
+
+def _view(document: Any, data: bytes, version: int | None, since: str | None, *, may_wait: bool) -> View:
+    options = layout_options(document, {})
+    token = _token(document, data, options)
     with _keeper(document):
-        old = _tokens(document).get(since)
-        if old is not None:
-            _tokens(document).move_to_end(since)
-    if old is None:
-        return View(token, seen.pages, [p.number for p in seen.pages], since, stale=True, version=version,
+        tokens = _tokens(document)
+        shown = tokens.get(token)
+        old = tokens.get(since) if since is not None and since != token else None
+        for used in (since, token):
+            if used in tokens:
+                tokens.move_to_end(used)
+    stale = since is not None and since != token and old is None
+    changed: list[int] | None = None
+    if shown is None or old is not None:
+        request = {"token": token, "since": since if old is not None else None,
+                   "since_data": old.data if old is not None else None}
+        result = _run(document, view_bytes, data, options, request, may_wait=may_wait, new=True)
+        changed = result.get("changed")
+        if shown is None:
+            shown = _Shown(data, options, [ViewPage(number, tuple(blocks), width, height)
+                                           for number, blocks, width, height in result["pages"]], version)
+            with _keeper(document):
+                tokens[token] = shown
+                tokens.move_to_end(token)
+                while len(tokens) > VIEW_TOKENS:
+                    tokens.popitem(last=False)
+    pages = shown.pages
+    if since is None:
+        return View(token, pages, [p.number for p in pages], version=version)
+    if since == token:
+        return View(token, pages, [], since, version=version)
+    if stale:
+        return View(token, pages, [p.number for p in pages], since, stale=True, version=version,
                     note=f"since {since!r} names no layout kept for this document (another document's, one "
                     f"from before a restart, or older than the last {VIEW_TOKENS}): every page is listed "
                     "as changed")
-    return View(token, seen.pages, _changed(old, seen), since, version=version)
+    assert changed is not None
+    return View(token, pages, changed, since, version=version)
 
 
-def _seen(document: Any, conversion: _Conversion) -> tuple[str, _Seen]:
-    """The token of ``conversion`` and what a view keeps of it, made once per version."""
-    lock = _keeper(document)
-    with lock:
+def _token(document: Any, data: bytes, options: dict) -> str:
+    """The token of ``data`` laid out with ``options``: the document's own nonce (another
+    document's tokens are not its) and a digest of what is laid out."""
+    with _keeper(document):
         nonce = document.__dict__.setdefault("_view_nonce", secrets.token_hex(4))
-        token = f"{nonce}-{hashlib.sha256(cache_key(conversion.data, conversion.options).encode()).hexdigest()[:24]}"
-        seen = _tokens(document).get(token)
-        if seen is not None and seen.conversion is not conversion:
-            seen = None                       # the same version laid out again: keep the new one
-    if seen is None:
-        layout = conversion.layout
-        pages = [ViewPage(page.number + 1, tuple(layout.blocks_on(page.number + 1)), page.width_pt, page.height_pt)
-                 for page in conversion.raw.pages]
-        seen = _Seen(conversion, pages, group_ids(layout._document, conversion), _parts(conversion.data))
-    with lock:
-        tokens = _tokens(document)
-        tokens[token] = seen
-        tokens.move_to_end(token)
-        # Round 58: within a quarter of the layouts' memory (docx_agent.layout.LAYOUT_MEMORY)
-        # as well as VIEW_TOKENS -- the two used last kept whatever they cost: a view since the
-        # last token compares those two.
-        total = sum(layout_cost(kept.conversion.raw) for kept in tokens.values())
-        while len(tokens) > VIEW_TOKENS or (len(tokens) > 2 and total > _layout.LAYOUT_MEMORY // 4):
-            total -= layout_cost(tokens.popitem(last=False)[1].conversion.raw)
-    return token, seen
+    return f"{nonce}-{hashlib.sha256(cache_key(data, options).encode()).hexdigest()[:24]}"
 
 
-def _tokens(document: Any) -> "OrderedDict[str, _Seen]":
+def _tokens(document: Any) -> "OrderedDict[str, _Shown]":
     """The document's kept tokens (under its layouts' lock, :func:`_keeper`)."""
     tokens = document.__dict__.get("_view_tokens")
     if tokens is None:
@@ -213,38 +229,169 @@ def _tokens(document: Any) -> "OrderedDict[str, _Seen]":
     return tokens
 
 
-def _changed(old: _Seen, new: _Seen) -> list[int]:
+def _run(document: Any, task: Any, data: bytes, options: dict, request: dict, *, may_wait: bool,
+         new: bool) -> dict:
+    """``task(data, options, state, request)`` where the document's layouts are: in the
+    worker of the runner that laid it out (:func:`~docx_agent.layout.runner_of`, with its
+    affinity), else in this process.  ``new``: ``data`` is the document's version now, laid
+    out and kept as its last (as a check's layout is); else a version the view was given."""
+    key = cache_key(data, options)
+    if new:
+        failed = _kept_failure(document, key)
+        if failed is not None:
+            raise failed
+        state = kept_layout(document, data, options, may_wait=may_wait)
+    else:
+        state = _held_state(document, data, options, may_wait)
+    runner = runner_of(document)
+    try:
+        if runner is None:
+            result = task(data, dict(options), state, request)
+        else:
+            from .tools._base import Engine
+
+            result = Engine.of(runner, VIEW_TIMEOUT, document).task(task, data, dict(options), state, request)
+    except _PASSED_ON:
+        raise
+    except Exception as error:
+        if not new:
+            raise
+        raise _failed(document, key, error) from error
+    if new:
+        keep_layout(document, data, options, layout_key(data, options))
+        note_made(document, result)
+    return result
+
+
+def _held_state(document: Any, data: bytes, options: dict, may_wait: bool) -> tuple:
+    """The ``("held", ...)`` state of a task drawing ``data`` -- a version a view was given,
+    perhaps not the document's last -- that takes the document's layouts where they are held
+    and puts them back as they were (:func:`page_bytes`): no layout of it is started here."""
+    _keeper(document)
+    kept = document._layout_kept
+    key = layout_key(data, options)
+    token = kept[1] if kept is not None and isinstance(kept[1], tuple) and kept[0][1] == key[1] else None
+    state = ("held", key, token, document._layout_lineage)
+    return state if may_wait else (*state, False)
+
+
+# -- in the worker holding the layouts -------------------------------------------------------------
+
+
+class _Version:
+    """In the process holding a document's layouts: a version a view was given -- its layout
+    ``laid`` (``(layout, fonts, warnings)``), its bytes and options -- and what was read of
+    it: its pages' blocks and sizes, the layout mapped to ids (``layout``; kept for the
+    lineage's newest only), a digest of its parts but the text, and of each page's drawing."""
+
+    __slots__ = ("laid", "data", "options", "layout", "pages", "parts", "digests")
+
+    def __init__(self, laid: tuple, data: bytes, options: dict) -> None:
+        self.laid = laid
+        self.data = data
+        self.options = options
+        self.layout: Any = None
+        self.pages: list | None = None
+        self.parts: bytes | None = None
+        #: Per 0-based page, the digest of what it draws (docx2svg's ``relayout.drawing``).
+        self.digests: dict[int, bytes] = {}
+
+    def mapped(self, held: "_Held | None") -> Any:
+        """The layout mapped to ids on a copy opened from the bytes -- the lineage's own
+        where ``held`` is this version's (:func:`~docx_agent.layout.opened_layout`, which a
+        check's facts read too)."""
+        if self.layout is None:
+            if held is None or held.laid is not self.laid:
+                held = _Held(self.laid)
+            self.layout = opened_layout(held, self.data, self.options)
+        return self.layout
+
+    def page_list(self, held: "_Held | None") -> list:
+        if self.pages is None:
+            layout = self.mapped(held)
+            self.pages = [(page.number + 1, tuple(layout.blocks_on(page.number + 1)), page.width_pt, page.height_pt)
+                          for page in self.laid[0].pages]
+        return self.pages
+
+    def parts_digest(self) -> bytes:
+        if self.parts is None:
+            self.parts = _parts(self.data)
+        return self.parts
+
+    def digest(self, index: int) -> bytes:
+        """What page ``index`` draws, digested (docx2svg's ``relayout.drawing``), made once:
+        the layout's own where docx2svg made it when it compared versions."""
+        found = self.digests.get(index)
+        if found is None:
+            from docx2svg import relayout
+
+            raw = self.laid[0]
+            state = getattr(raw, "state", None)
+            found = (getattr(state, "drawings", None) or {}).get(index)
+            if found is None:
+                found = relayout.drawing(raw.pages[index], self.data, self.laid[1])
+            self.digests[index] = found
+        return found
+
+
+def _versions(held: _Held) -> "OrderedDict[str, _Version]":
+    """The versions a view was given, kept with the lineage's newest layout ``held``."""
+    views = held.extra.get("views")
+    if views is None:
+        views = held.extra["views"] = OrderedDict()
+    return views
+
+
+def _lay_out_version(laid: "tuple | None", data: bytes, options: dict) -> _Version:
+    """A version this process no longer holds, laid out again -- from ``laid``, a layout of
+    the same document, where there is one (the pages it reaches only)."""
+    convert_options = docx2svg.ConvertOptions(**options)
+    layout, _, fonts = docx2svg.lay_out_docx(data, convert_options, previous=laid[0] if laid else None,
+                                             measures=_MEASURES, changed_pages=False)
+    return _Version((layout, fonts, list(convert_options.warnings)), data, options)
+
+
+def _trim(views: "OrderedDict[str, _Version]", held: _Held) -> None:
+    """At most :data:`VIEW_TOKENS` versions, the least recently used dropped first while
+    those not the newest layout's own pages cost more than a quarter of
+    :data:`~docx_agent.layout.LAYOUT_MEMORY` (the two used last kept whatever they cost);
+    only the newest keeps its layout mapped to ids."""
+    while len(views) > VIEW_TOKENS:
+        views.popitem(last=False)
+    while len(views) > 2 and _views_cost(views, held) > _layout.LAYOUT_MEMORY // 4:
+        views.popitem(last=False)
+    for version in views.values():
+        if version.laid is not held.laid:
+            version.layout = None
+
+
+def _views_cost(views: "OrderedDict[str, _Version]", held: _Held) -> int:
+    counted = {id(page) for page in held.laid[0].pages}
+    cost = 0
+    for version in views.values():
+        for page in version.laid[0].pages:
+            if id(page) not in counted:
+                counted.add(id(page))
+                cost += PAGE_COST
+    return cost
+
+
+def _changed(old: _Version, new: _Version) -> list[int]:
     """The 1-based pages of ``new`` whose drawing differs from ``old``'s page of the same
     number, and those ``old`` did not have."""
-    if old.conversion is new.conversion:
+    if old.laid is new.laid:
         return []
-    before, after = old.conversion.raw.pages, new.conversion.raw.pages
-    same_parts = old.parts == new.parts
+    before, after = old.laid[0].pages, new.laid[0].pages
+    same_parts = old.parts_digest() == new.parts_digest()
     out = []
     for index, page in enumerate(after):
         if index >= len(before):
             out.append(index + 1)
         elif same_parts and page == before[index]:
             continue
-        elif _digest(old.conversion, index) != _digest(new.conversion, index):
+        elif old.digest(index) != new.digest(index):
             out.append(index + 1)
     return out
-
-
-def _digest(conversion: _Conversion, index: int) -> bytes:
-    """What page ``index`` draws, digested (docx2svg's ``relayout.drawing``), made once:
-    the layout's own where docx2svg made it when it compared versions."""
-    from docx2svg import relayout
-
-    with conversion.drawing:
-        found = conversion.digests.get(index)
-        if found is None:
-            state = getattr(conversion.raw, "state", None)
-            found = (getattr(state, "drawings", None) or {}).get(index)
-            if found is None:
-                found = relayout.drawing(conversion.raw.pages[index], conversion.data, conversion.fonts)
-            conversion.digests[index] = found
-    return found
 
 
 def _parts(data: bytes) -> bytes:
@@ -256,6 +403,83 @@ def _parts(data: bytes) -> bytes:
                 continue
             digest.update(name.encode() + b"\0" + package.read(info) + b"\0")
     return digest.digest()
+
+
+def view_bytes(data: bytes, options: dict, state: tuple, request: dict) -> dict:
+    """In the worker holding the document's layouts (round 58, Q2): the layout of ``data``
+    -- the one held, or laid out from the one found (:func:`~docx_agent.layout.held_layout`,
+    kept as the lineage's newest, as a check's is) -- and what :func:`view` answers of it:
+    ``pages`` (each ``(number, blocks, width, height)``) and, with ``request["since"]``,
+    ``changed`` -- against that token's version, kept here, else laid out again from
+    ``since_data``.  ``request["token"]`` names this version among those kept.  Plus how the
+    layout was found or made (:func:`~docx_agent.layout.made_facts`)."""
+    held, how, seconds = held_layout(data, options, state)
+    try:
+        out = made_facts(held, how, seconds)
+        views = _versions(held)
+        token = request["token"]
+        new = views.get(token)
+        if new is None or new.laid is not held.laid:
+            new = views[token] = _Version(held.laid, data, options)
+        out["pages"] = new.page_list(held)
+        since = request.get("since")
+        if since is not None:
+            old = views.get(since)
+            if old is None:
+                old = views[since] = _lay_out_version(held.laid, request["since_data"], options)
+            views.move_to_end(since)
+            out["changed"] = _changed(old, new)
+        views.move_to_end(token)
+        _trim(views, held)
+    finally:
+        _put_held(state[1], held, state[3])       # a layout of these bytes either way
+    return out
+
+
+# A task ooxml-edit's workers may run (the mark, as the layout's tasks set it).
+view_bytes.__ooxml_edit_task__ = True  # type: ignore[attr-defined]
+
+
+def page_bytes(data: bytes, options: dict, state: tuple, request: dict) -> dict:
+    """In the worker holding the document's layouts (round 58, Q2): page ``request["page"]``
+    of the version ``request["token"]`` names -- kept with the lineage's layouts, else laid
+    out again from the newest of them -- drawn as :func:`page_svg` says (``text``; with
+    ``glyphs`` true, the glyph definitions apart) and tagged with that version's ids:
+    ``{"svg", "glyphs", "warnings"}``.  The lineage's layouts are put back as they were: a
+    page of an older version never becomes the newest."""
+    lineage = state[3]
+    found, _ = _take_held(state[1], state[2], lineage, state[4] if len(state) > 4 else True)
+    try:
+        token = request["token"]
+        version = _versions(found).get(token) if found is not None else None
+        if version is None:
+            version = _lay_out_version(found.laid if found is not None else None, data, options)
+        if found is None:
+            # Nothing of the document here: what was laid out is kept as its layouts.
+            found = _Held(version.laid)
+            found.token = state[1]
+        views = _versions(found)
+        views[token] = version
+        views.move_to_end(token)
+        layout = version.mapped(found)
+        drawing = docx2svg.ConvertOptions(**{**version.options, "pages": [request["page"]],
+                                             "text": request["text"],
+                                             "glyphs": {} if request["glyphs"] else None})
+        svg = docx2svg.page_svgs(version.laid[0], version.data, drawing, fonts=version.laid[1])[0]
+        out = {"svg": _tag(layout._document, layout, svg), "glyphs": drawing.glyphs or {},
+               "warnings": [str(w) for w in drawing.warnings]}
+        _trim(views, found)
+    except BaseException:
+        if found is not None and found.token is not None:
+            _put_held(found.token, found, lineage)
+        else:
+            _let_go_held(lineage)
+        raise
+    _put_held(found.token, found, lineage)
+    return out
+
+
+page_bytes.__ooxml_edit_task__ = True  # type: ignore[attr-defined]
 
 
 # -- one page --------------------------------------------------------------------------------------
@@ -283,27 +507,37 @@ def page_svg(where: Any, *args: Any, text: str = "text", images: str = "external
         raise ValueError(f"images must be one of {', '.join(IMAGE_MODES)}, not {images!r}")
     if glyphs is not None and text != "outlines":
         raise ValueError("glyphs is the glyph set of outlined pages: give text=\"outlines\" with it")
-    document, _, (page, token) = _target(where, args, "page_svg", 2)
+    document, entry, (page, token) = _target(where, args, "page_svg", 2)
     with _keeper(document):
-        seen = _tokens(document).get(token)
-        if seen is not None:
+        shown = _tokens(document).get(token)
+        if shown is not None:
             _tokens(document).move_to_end(token)
-    if seen is None:
+    if shown is None:
         raise UnknownToken(f"token {token!r} names no layout kept for this document (another document's, "
                            f"one from before a restart, or older than the last {VIEW_TOKENS}); call view() for a "
                            "current token and the pages it changed")
-    count = len(seen.pages)
+    count = len(shown.pages)
     if not isinstance(page, int) or not 1 <= page <= count:
         raise IndexError(f"page {page!r}: the version {token!r} names has {count} page(s), 1 to {count}")
-    conversion = seen.conversion
-    options = docx2svg.ConvertOptions(**{**conversion.options, "pages": [page], "text": text, "glyphs": glyphs})
-    with conversion.drawing:
-        svg = docx2svg.page_svgs(conversion.raw, conversion.data, options, fonts=conversion.fonts)[0]
-    svg = tag_with(svg, lambda path, part: seen.ids.get((path, part)))
+    # Round 34's rule: a thread holding the document's lock never waits for a layout.
+    may_wait = entry is None or not _owned(entry.lock)
+    drawn = _run(document, page_bytes, shown.data, shown.options,
+                 {"token": token, "page": page, "text": text, "glyphs": glyphs is not None},
+                 may_wait=may_wait, new=False)
+    if glyphs is not None:
+        for name, definition in drawn["glyphs"].items():
+            glyphs.setdefault(name, definition)
+    svg = drawn["svg"]
     store: dict[str, bytes] = {}
     if images == "external":
         svg = externalise_images(svg, store)
-    return PageSvg(page, token, svg, store, [str(w) for w in options.warnings])
+    return PageSvg(page, token, svg, store, list(drawn["warnings"]))
+
+
+def _owned(lock: Any) -> bool:
+    """Whether this thread holds ``lock`` (one that cannot say counts as held)."""
+    owned = getattr(lock, "_is_owned", None)
+    return owned is None or owned()
 
 
 # -- the target ------------------------------------------------------------------------------------
