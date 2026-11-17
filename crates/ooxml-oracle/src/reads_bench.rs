@@ -126,11 +126,13 @@ pub fn run(args: &[String]) -> Result<(), String> {
     let page: WordRead = arg(json!({"doc": "d1"}))?;
     let find: FindText = arg(json!({"doc": "d1", "text": "the"}))?;
     let start = Instant::now();
-    let probe = Docx::open(&package).map_err(|e| e.to_string())?;
+    let opened = Docx::open(&package).map_err(|e| e.to_string())?;
     out.insert("open_ms".into(), json!(start.elapsed().as_secs_f64() * 1000.0));
-    let span = middle_span(&probe).ok_or("no span")?;
+    let span = middle_span(&opened).ok_or("no span")?;
     out.insert("span".into(), json!(span));
+    let other = span.split("..").next().unwrap_or("").to_owned();
     let span: WordRead = arg(json!({"doc": "d1", "range": span}))?;
+    let other: WordRead = arg(json!({"doc": "d1", "range": other}))?;
     // Version 1: read cold once, then warm.
     let versions = Versions::new();
     let v1 = Version {
@@ -143,6 +145,12 @@ pub fn run(args: &[String]) -> Result<(), String> {
     describe(&d, &v1, &Never).map_err(|e| e.message().to_owned())?;
     out.insert("describe_cold_ms".into(), json!(start.elapsed().as_secs_f64() * 1000.0));
     timed(&mut out, "describe_ms", rounds, || describe(&d, &v1, &Never).map(drop));
+    let start = Instant::now();
+    word_read(&page, &v1, &Never).map_err(|e| e.message().to_owned())?;
+    out.insert("word_read_page_first_ms".into(), json!(start.elapsed().as_secs_f64() * 1000.0));
+    let start = Instant::now();
+    word_read(&span, &v1, &Never).map_err(|e| e.message().to_owned())?;
+    out.insert("word_read_span_first_ms".into(), json!(start.elapsed().as_secs_f64() * 1000.0));
     timed(&mut out, "word_read_page_ms", rounds, || {
         word_read(&page, &v1, &Never).map(drop)
     });
@@ -154,7 +162,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
     });
     let (copied, bridged) = edited(&package, &main)?;
     for (name, edited) in [("path_copy", &copied), ("bridge", &bridged)] {
-        let mut best = (f64::MAX, f64::MAX);
+        let mut best = (f64::MAX, f64::MAX, f64::MAX);
         for _ in 0..rounds {
             let versions = Versions::new();
             let v1 = Version {
@@ -176,10 +184,15 @@ pub fn run(args: &[String]) -> Result<(), String> {
             let start = Instant::now();
             word_read(&span, &v2, &Never).map_err(|e| e.message().to_owned())?;
             let read = start.elapsed().as_secs_f64() * 1000.0;
-            best = (best.0.min(first), best.1.min(read));
+            // Another span of the same version: its lookups read already.
+            let start = Instant::now();
+            word_read(&other, &v2, &Never).map_err(|e| e.message().to_owned())?;
+            let again = start.elapsed().as_secs_f64() * 1000.0;
+            best = (best.0.min(first), best.1.min(read), best.2.min(again));
         }
         out.insert(format!("{name}_describe_ms"), json!(best.0));
-        out.insert(format!("{name}_word_read_span_ms"), json!(best.1));
+        out.insert(format!("{name}_word_read_span_first_ms"), json!(best.1));
+        out.insert(format!("{name}_word_read_other_span_ms"), json!(best.2));
     }
     println!("{}", Value::Object(out));
     Ok(())
