@@ -79,7 +79,9 @@ pub(crate) fn sync(sink: &mut EditSink<'_, '_>) -> Result<()> {
     let stories: Vec<String> = sink.base().docx()?.parts.iter().map(|p| p.part.clone()).collect();
     for part in &stories {
         let part = part.as_str();
-        let (Some(old), Some(new)) = (sink.base().tree(part)?, sink.doc().tree(part)?) else { continue };
+        let (Some(old), Some(new)) = (sink.base().tree(part)?, sink.doc().tree(part)?) else {
+            continue;
+        };
         if old.ptr_eq(&new) {
             continue;
         }
