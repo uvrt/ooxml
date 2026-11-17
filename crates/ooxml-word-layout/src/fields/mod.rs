@@ -54,6 +54,45 @@ struct Pages<'a> {
     layout: &'a DocumentLayout,
     item_of_block: HashMap<usize, usize>,
     lines: HashMap<usize, Vec<usize>>,
+    /// A table cell's paragraph -> the page of its first line drawn.
+    cells: HashMap<usize, usize>,
+}
+
+/// Each table cell paragraph's first page: the page its part of its row is on, for each
+/// line it draws (`paginate.drawn_pages`).
+fn cell_pages(layout: &DocumentLayout) -> HashMap<usize, usize> {
+    let items = &layout.flow.items;
+    let mut out = HashMap::new();
+    for page in &layout.pagination.pages {
+        let (start, end) = (&page.start, &page.end);
+        for index in start.item..(end.item + 1).min(items.len()) {
+            let Some(FlowItem::Table(t)) = items.get(index) else {
+                continue;
+            };
+            let rows = t.flow.rows();
+            let first_row = if index == start.item { start.line } else { 0 };
+            let last_row = if index == end.item { end.line } else { rows };
+            for r in first_row..(last_row + 1).min(rows) {
+                for (c, stack) in t.flow.stacks(r).iter().enumerate() {
+                    let at = |p: &[u32]| p.get(c).map_or(0, |v| usize::try_from(*v).unwrap_or(0));
+                    let lo = if index == start.item && r == start.line && !start.part.is_empty() {
+                        at(&start.part)
+                    } else {
+                        0
+                    };
+                    let hi = match (index == end.item && r == end.line, end.part.is_empty()) {
+                        (true, false) => at(&end.part),
+                        (true, true) => 0,
+                        (false, _) => stack.len(),
+                    };
+                    for block in stack.get(lo..hi).unwrap_or_default().iter().flatten() {
+                        out.entry(t.block + block).or_insert(page.page);
+                    }
+                }
+            }
+        }
+    }
+    out
 }
 
 impl<'a> Pages<'a> {
@@ -79,6 +118,7 @@ impl<'a> Pages<'a> {
             })
             .collect();
         Pages {
+            cells: cell_pages(layout),
             layout,
             item_of_block,
             lines,
@@ -87,7 +127,9 @@ impl<'a> Pages<'a> {
 
     /// The page a body paragraph's character `offset` is drawn on (`_page_of`).
     fn page_of(&self, block: usize, offset: i64) -> Option<usize> {
-        let index = *self.item_of_block.get(&block)?;
+        let Some(&index) = self.item_of_block.get(&block) else {
+            return self.cells.get(&block).copied();
+        };
         let FlowItem::Para(p) = self.layout.flow.items.get(index)? else {
             return None;
         };

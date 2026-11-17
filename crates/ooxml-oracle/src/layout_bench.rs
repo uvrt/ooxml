@@ -4,10 +4,6 @@
 //! passes and what the relayout laid out again, as one JSON line. `--check` also lays the
 //! edited version out whole in a fresh engine and model and compares the pages.
 //!
-//! Tables: the Word layout's tables are lane L3b's; for a timing of the whole body, each
-//! table here is a stand-in of fixed-height rows ([`FixedRows`]) -- a measurement aid, not
-//! a layout, never compared with docx2svg.
-//!
 //! Must not: be used by any library; it is a measurement instrument.
 
 use crate::bench::edited;
@@ -16,95 +12,18 @@ use crate::text::fonts_of;
 use ooxml_base::{Limits, Locale};
 use ooxml_derive::CacheBudget;
 use ooxml_opc::Package;
-use ooxml_word_layout::px::Px;
-use ooxml_word_layout::sections::SectionGeometry;
-use ooxml_word_layout::table::{PlacedRow, TableFlow, TableLayout, TablePage, TableRequest, Unsupported};
+use ooxml_word_layout::tables::WordTables;
 use ooxml_word_layout::{WordGlyphs, WordLayout};
-use ooxml_word_model::model::{Paragraph, Table};
-use ooxml_word_model::value::Text;
-use ooxml_word_model::{Model, WordDocument};
+use ooxml_word_model::Model;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Instant;
-
-/// A stand-in table: its rows, each 40 px, never split, moved whole to the next page.
-#[derive(Debug)]
-pub struct FixedRows {
-    rows: usize,
-}
-
-const ROW: i64 = 40;
-
-impl TableFlow for FixedRows {
-    fn rows(&self) -> usize {
-        self.rows
-    }
-    fn keeps_with_next(&self, _row: usize) -> bool {
-        false
-    }
-    fn header_rows(&self) -> usize {
-        0
-    }
-    fn first_style(&self) -> Option<Text> {
-        None
-    }
-    fn top_border(&self) -> Px {
-        Px::ZERO
-    }
-    fn bottom_border(&self) -> Px {
-        Px::ZERO
-    }
-    fn place(&self, request: &TableRequest) -> Result<TablePage, Unsupported> {
-        let mut y = request.y;
-        let mut rows = Vec::new();
-        for row in request.row..self.rows {
-            let h = Px::int(ROW);
-            if y + h > request.bottom && !(rows.is_empty() && request.first_on_page) {
-                return Ok(TablePage {
-                    end: y,
-                    next: Some((row, Vec::new())),
-                    rows,
-                });
-            }
-            rows.push(PlacedRow {
-                row,
-                header: false,
-                top: y,
-                height: h,
-                part: Vec::new(),
-            });
-            y += h;
-        }
-        Ok(TablePage {
-            end: y,
-            next: None,
-            rows,
-        })
-    }
-}
-
-/// Lays every table out as [`FixedRows`].
-#[derive(Debug, Clone, Copy, Default)]
-pub struct FixedRowTables;
-
-impl TableLayout for FixedRowTables {
-    fn flow_table(
-        &self,
-        _document: &WordDocument,
-        table: &Table,
-        _section: &SectionGeometry,
-        _previous: Option<&Paragraph>,
-        _labels: &[Option<String>],
-    ) -> Result<Arc<dyn TableFlow>, Unsupported> {
-        Ok(Arc::new(FixedRows { rows: table.rows.len() }))
-    }
-}
 
 fn engine(fonts: &Value, bytes: &[u8]) -> Result<WordLayout, String> {
     let budget: Arc<dyn CacheBudget> = Arc::new(Unlimited);
     Ok(WordLayout::new(
         Arc::new(WordGlyphs::new(fonts_of(fonts, Some(bytes))?)),
-        Arc::new(FixedRowTables),
+        Arc::new(WordTables),
         Locale::default(),
         &budget,
         KEY,
@@ -174,7 +93,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
     }
     let line = json!({
         "file": path, "rounds": rounds, "open_s": open_best, "full_layout_s": full_best,
-        "relayout_s": relayout_best, "tables": "fixed-row stand-in", "layout": report,
+        "relayout_s": relayout_best, "layout": report,
     });
     println!("{line}");
     Ok(())

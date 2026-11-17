@@ -40,6 +40,7 @@ fn main() {
         "whole": outcome.whole,
         "cut": outcome.cut.len(),
         "paragraphs": outcome.paragraphs,
+        "tables": outcome.tables,
         "lines": outcome.lines,
         "pages": outcome.pages,
         "placed_lines": outcome.placed,

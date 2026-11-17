@@ -8,7 +8,8 @@
 //! the Word model's differential -- the model of a document as JSON, field by field in the
 //! form `python/word_model_diff.py` writes docx2svg's model in ([`export`]) -- and the
 //! model's open and reopen benchmark ([`bench`](mod@bench)); the Word layout's differential
-//! ([`layout`]: docx2svg's layout records in, every difference out) and its benchmark
+//! ([`layout`]: docx2svg's layout records in, every difference out; tables in
+//! [`layout_tables`]) and its benchmark
 //! ([`layout_bench`]); and the DrawingML differential's Rust side ([`dml`]:
 //! `python/drawingml_diff.py` compares it with ooxml-common).
 //!
@@ -24,6 +25,7 @@ mod export_parts;
 pub mod glyphs;
 pub mod layout;
 pub mod layout_bench;
+pub mod layout_tables;
 pub mod records;
 pub mod replay;
 pub mod text;
