@@ -102,6 +102,8 @@ pub struct Span {
     pub kind: SpanKind,
     /// The line's baseline.
     pub line_baseline: i64,
+    /// `w:vertAlign` of the glyph that opened it, where a script (`Span.vertical_align`).
+    pub vertical_align: Option<Text>,
 }
 
 /// A filled rectangle the text needs (`layout.Rule`).
@@ -157,6 +159,14 @@ pub struct PaintedLine {
     pub number: usize,
     /// Its baseline.
     pub baseline: i64,
+    /// The exact top of its pitch, px from the page's top (`Line.top`).
+    pub top: Px,
+    /// Its pitch (`Line.pitch`).
+    pub pitch: Px,
+    /// Its text column, in a section of several columns (`Line.column`).
+    pub column: Option<usize>,
+    /// The device-pixel rows its text fills (`Line.band`).
+    pub band: (i64, i64),
     /// Its spans.
     pub spans: Vec<Span>,
     /// A header's or footer's line: its kind and part.

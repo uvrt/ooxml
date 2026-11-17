@@ -252,6 +252,7 @@ impl LinePainter<'_, '_> {
             shading: shading(props.get("shd")),
             kind: key.kind,
             line_baseline: self.job.line.baseline,
+            vertical_align: None,
         };
         self.spans.push((key, span));
     }
@@ -294,6 +295,9 @@ impl LinePainter<'_, '_> {
         };
         if !self.open || self.spans.last().is_none_or(|(k, _)| *k != key) {
             self.open_span(key, &props, path, x);
+            if let Some((_, span)) = self.spans.last_mut() {
+                span.vertical_align.clone_from(&format.vertical_align);
+            }
         }
         let note_number = piece.source >= 0
             && self
@@ -538,6 +542,10 @@ pub(super) fn paint_line(cx: &PaintContext<'_>, job: &LineJob<'_>, out: &mut Pag
         paragraph_id: job.paragraph.para_id.clone(),
         number: job.line.number,
         baseline: job.line.baseline,
+        top: job.line.top,
+        pitch: job.line.pitch,
+        column: job.line.column,
+        band: job.line.band,
         spans,
         story: None,
     })
@@ -606,6 +614,7 @@ impl LinePainter<'_, '_> {
             shading: None,
             kind: SpanKind::Tab,
             line_baseline: self.job.line.baseline,
+            vertical_align: None,
         };
         let key = SpanKey {
             run: None,
@@ -744,6 +753,7 @@ impl LinePainter<'_, '_> {
             shading: None,
             kind: SpanKind::Leader,
             line_baseline: self.job.line.baseline,
+            vertical_align: format.vertical_align.clone(),
         };
         let key = SpanKey {
             run: None,

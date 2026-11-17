@@ -573,6 +573,7 @@ dependencies = [
  "ooxml-tools-word",
  "ooxml-word-layout",
  "ooxml-word-model",
+ "ooxml-word-pages",
  "ooxml-xml",
  "ooxml-zip",
  "serde_json",
@@ -597,9 +598,13 @@ name = "ooxml-python-session"
 version = "0.1.0"
 dependencies = [
  "ooxml-base",
+ "ooxml-derive",
+ "ooxml-fonts",
  "ooxml-session",
  "ooxml-store",
  "ooxml-tools",
+ "ooxml-word-layout",
+ "ooxml-word-pages",
  "pyo3",
  "serde_json",
 ]
@@ -745,6 +750,22 @@ dependencies = [
  "ooxml-xml",
  "ooxml-zip",
  "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "ooxml-word-pages"
+version = "0.1.0"
+dependencies = [
+ "ooxml-base",
+ "ooxml-derive",
+ "ooxml-fonts",
+ "ooxml-metafile",
+ "ooxml-opc",
+ "ooxml-word-layout",
+ "ooxml-word-model",
+ "ooxml-xml",
+ "ooxml-zip",
  "thiserror",
 ]
 
