@@ -9,14 +9,16 @@
 //! form `python/word_model_diff.py` writes docx2svg's model in ([`export`]) -- and the
 //! model's open and reopen benchmark ([`bench`](mod@bench)); the Word layout's differential
 //! ([`layout`]: docx2svg's layout records in, every difference out) and its benchmark
-//! ([`layout_bench`]); and the DrawingML differential's Rust side ([`dml`]:
-//! `python/drawingml_diff.py` compares it with ooxml-common).
+//! ([`layout_bench`]); the DrawingML differential's Rust side ([`dml`]:
+//! `python/drawingml_diff.py` compares it with ooxml-common); and the charts' ([`chart`]:
+//! `python/chart_diff.py`).
 //!
 //! Must not: be depended on by a shipped crate. The two adapters move to the layout and
 //! session crates (L3, L4) when those exist.
 #![forbid(unsafe_code)]
 
 pub mod bench;
+pub mod chart;
 pub mod disk;
 pub mod dml;
 pub mod export;

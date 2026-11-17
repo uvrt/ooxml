@@ -86,6 +86,8 @@ pub struct OfficeSubstitution {
     /// The measured table it is measured with ([`crate::office::office_face`]): the
     /// substitute's own, or the nearest one where no clone exists.
     pub metrics: String,
+    /// Whether it draws East Asian text.
+    pub east_asian: bool,
 }
 
 impl OfficeSubstitution {
@@ -113,6 +115,7 @@ fn table() -> &'static Table {
                     substitute: fields.next()?.to_owned(),
                     same_metrics: fields.next()? == "1",
                     metrics: fields.next()?.to_owned(),
+                    east_asian: fields.next()? == "1",
                 })
             })
             .collect();

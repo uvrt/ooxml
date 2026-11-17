@@ -16,6 +16,10 @@ ooxml-xml = { path = "../crates/ooxml-xml" }
 ooxml-zip = { path = "../crates/ooxml-zip" }
 ooxml-opc = { path = "../crates/ooxml-opc" }
 ooxml-metafile = { path = "../crates/ooxml-metafile" }
+ooxml-colour = { path = "../crates/ooxml-colour" }
+ooxml-drawingml = { path = "../crates/ooxml-drawingml" }
+ooxml-numfmt = { path = "../crates/ooxml-numfmt" }
+ooxml-chart = { path = "../crates/ooxml-chart" }
 
 [workspace]
 
@@ -43,6 +47,13 @@ bench = false
 [[bin]]
 name = "metafile_draw"
 path = "fuzz_targets/metafile_draw.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "chart_layout"
+path = "fuzz_targets/chart_layout.rs"
 test = false
 doc = false
 bench = false

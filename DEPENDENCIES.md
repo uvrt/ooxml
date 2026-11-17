@@ -28,6 +28,8 @@ theirs until they are replaced.
 | `thiserror` (as above) | | ooxml-metafile | `ReadError`, why a record cannot be read (section 2.5). |
 | `flate2` (as above, `zlib-rs` backend) | | ooxml-metafile | The PNGs a metafile's bitmaps and path gradients are embedded as (zlib at level 9, as ooxml-common writes them), and reading back an EMF+ PNG's pixels to pad it. zlib-rs's deflate stream is not always the C zlib's byte for byte at level 9 (measured: 14 of the 14,711 recorded and mutated cases of lane P3b1's gate): the pixels are equal, and the differential compares embedded PNGs by their pixels, as ooxml-common's goldens do. |
 | `ooxml-metafile`, `ooxml-scene` (workspace crates) | | ooxml-oracle (test support only) | The metafile players' differential (`metafile-diff`, `tests/metafile_cases.rs`). |
+| `thiserror` (as above) | | ooxml-numfmt | `LocaleError`, why a locale or language tag is refused (section 2.5). |
+| `ooxml-chart`, `ooxml-numfmt` (workspace crates); `serde_json`'s `float_roundtrip` feature (no new crate) | | ooxml-oracle (test support only) | The chart differential (`chart-model`, `python/chart_diff.py`, `tests/chart_layout.rs`). `float_roundtrip` makes serde_json read the frozen Python answers' numbers exactly: its default reading can be a unit in the last place off, which a byte-for-byte comparison reports. |
 | `libfuzzer-sys` 0.4 (pulls `arbitrary`, `cc`) | MIT or Apache-2.0, NCSA | `fuzz/` only (its own workspace) | cargo-fuzz's harness for the fuzz targets section 11 asks for; never part of a shipped crate. |
 
 Considered and not taken:
