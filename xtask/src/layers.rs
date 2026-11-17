@@ -42,6 +42,7 @@ pub const MAP: &[(&str, Place)] = &[
     ("ooxml-text", Place::Layer(1, 0)),
     ("ooxml-schema", Place::Layer(1, 0)),
     ("ooxml-colour", Place::Layer(1, 0)),
+    ("ooxml-numfmt", Place::Layer(1, 0)),
     ("ooxml-drawingml", Place::Layer(2, 0)),
     // charts lower to DrawingML's drawable elements (section 8), so they rank above it
     ("ooxml-chart", Place::Layer(2, 1)),

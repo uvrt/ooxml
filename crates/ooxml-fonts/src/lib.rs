@@ -2,7 +2,8 @@
 //! 8; layer 1).
 //!
 //! Owns: the one sfnt reader ([`Face`], on read-fonts), Office's measured face data (the
-//! recorded symbol faces, the substitution table), Word's font lookup order and
+//! recorded symbol faces, the substitution table, PowerPoint's advance tables
+//! ([`advances`])), Word's font lookup order and
 //! substitution grades ([`WordFonts`], [`Grade`]), embedded faces, and the fonts epoch a
 //! cached measure is keyed by ([`WordFonts::epoch`]).
 //!
@@ -15,6 +16,7 @@
 //! render phases, from ooxml-common's `fonts.office`, `fonts.eot` and `fonts.mtx`.
 #![forbid(unsafe_code)]
 
+pub mod advances;
 mod be;
 pub mod catalogue;
 mod cmap;

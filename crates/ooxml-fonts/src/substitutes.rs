@@ -83,6 +83,10 @@ pub struct OfficeSubstitution {
     pub substitute: String,
     /// Whether the two were measured to the same advances and line metrics.
     pub same_metrics: bool,
+    /// The advance table it is measured with (`crate::advances`).
+    pub metrics: String,
+    /// Whether it draws East Asian text.
+    pub east_asian: bool,
 }
 
 struct Table {
@@ -102,6 +106,8 @@ fn table() -> &'static Table {
                     office: fields.next()?.to_owned(),
                     substitute: fields.next()?.to_owned(),
                     same_metrics: fields.next()? == "1",
+                    metrics: fields.next()?.to_owned(),
+                    east_asian: fields.next()? == "1",
                 })
             })
             .collect();
