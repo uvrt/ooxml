@@ -83,6 +83,7 @@ opening, as ``w:updateFields`` would (measured: Word's export blocks on the ques
 
 from __future__ import annotations
 
+import collections as _collections
 import copy
 import datetime as _dt
 import hashlib
@@ -947,7 +948,28 @@ class FieldOps:
         """The page number Word shows for the page a block starts on (its section's start
         and format), from docx2svg's layout (0.1.117: or the Rust owner's, as an update reads
         it); ``None`` where the layout cannot say."""
-        context = _Context(self._update_layout(), self.sections(), _dt.date.today())
+        from ..rust.fields import layout_for
+
+        layout = layout_for(self, self._all_fields())
+        if layout is None:
+            # Round 59 (R135): the page read in the worker holding the document's layouts
+            # (layout.held_answers), where there is one: a batch of page references brought
+            # the whole layout here once per reference.
+            from ..layout import held_answers
+
+            told = held_answers(self, {"page_infos": [identifier]})
+            if told is not None:
+                info = told["page_infos"].get(identifier)
+                if info is None:
+                    return None
+                page = _ToldPage(info)
+                context = _Context(None, self.sections(), _dt.date.today())
+                try:
+                    return _page_text(" PAGEREF x ", page, context)
+                except _Unknown:
+                    return None
+            layout = self.layout()
+        context = _Context(layout, self.sections(), _dt.date.today())
         placed = context.layout.where(identifier)
         if not placed:
             return None
@@ -1467,6 +1489,19 @@ def _looks_key(document: "Document") -> bytes:
 
 class _Unknown(Exception):
     """A result the layout cannot say."""
+
+
+class _ToldPage:
+    """A page as the worker told it (:func:`docx_agent.layout.page_infos_of`): what
+    :func:`_page_text` reads of a layout's page -- its count from 0 and its info (the number
+    its section gives it, the section's index), or no info."""
+
+    def __init__(self, told: dict) -> None:
+        self.number = told["page"] - 1
+        self.info = (_TOLD_INFO(told["number"], told["section"]) if told["number"] is not None else None)
+
+
+_TOLD_INFO = _collections.namedtuple("_TOLD_INFO", "number section")
 
 
 def _page_text(instruction: str, page, context: _Context) -> str:

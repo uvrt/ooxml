@@ -50,6 +50,8 @@ pub const MAP: &[(&str, Place)] = &[
     ("ooxml-scene", Place::Layer(2, 0)),
     ("ooxml-metafile", Place::Layer(2, 1)),
     ("ooxml-chart", Place::Layer(2, 1)),
+    // The DrawingML painter: drawables (a chart's, a slide's, a document's) onto the scene.
+    ("ooxml-render", Place::Layer(2, 1)),
     // ooxml-word in the design; the prototype holds that package name (lane L2)
     ("ooxml-word-model", Place::Layer(3, 0)),
     ("ooxml-word-layout", Place::Layer(3, 1)),

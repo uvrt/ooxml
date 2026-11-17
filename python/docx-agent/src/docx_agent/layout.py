@@ -2602,7 +2602,7 @@ def holding() -> Any:
 
 def held_answers(document: "Document", request: dict, unlocked: Any = None) -> "dict | None":
     """Round 59 (R134): what ``request`` asks of the document's layout (:func:`check_facts`'
-    keys besides :data:`BARE_REQUEST`'s: ``where``, ``extents``), answered in the worker of
+    keys besides :data:`BARE_REQUEST`'s: ``where``, ``extents``, ``page_infos``), answered in the worker of
     the toolbox holding its layouts, so the layout never comes to this process for them --
     ``unlocked`` (``Call.unlocked``; default :func:`holding`) let go while it lays out where
     it may.  ``None`` where the document has no such worker (no toolbox laid it out, or one
@@ -2619,6 +2619,17 @@ def held_answers(document: "Document", request: dict, unlocked: Any = None) -> "
     if request.get("extents") is not None:
         request["extents"] = {name: [canon(identifier) for identifier in ids]
                               for name, ids in request["extents"].items()}
+    if request.get("page_infos") is not None:
+        asked = list(request["page_infos"])
+        request["page_infos"] = [canon(identifier) for identifier in asked]
+        made = check_facts(document, unlocked if unlocked is not None else holding, {**BARE_REQUEST, **request})
+        if made is None:
+            return None
+        found = made[0]
+        infos = found.get("page_infos") or {}
+        found["page_infos"] = {identifier: infos[canon(identifier)] for identifier in asked
+                               if canon(identifier) in infos}
+        return found
     made = check_facts(document, unlocked if unlocked is not None else holding, {**BARE_REQUEST, **request})
     return made[0] if made is not None else None
 
@@ -2636,6 +2647,24 @@ def placements_of(layout: "DocumentLayout", asked: "list[list[str]]") -> list:
                 break
             found = layout.where(other)
         out.append(found)
+    return out
+
+
+def page_infos_of(layout: "DocumentLayout", identifiers: "list[str]") -> dict:
+    """Round 59 (R135): ``{id: {"page", "number", "section"}}`` -- the page each block is
+    first drawn on (from 1), its number as its section counts it and that section's index
+    (``None`` where the layout does not say: a reference then reads the page's own count)
+    -- for the ids drawn: what a ``PAGEREF`` to them reads (:meth:`~docx_agent.Document.
+    page_label`), without the layout coming to the caller."""
+    out = {}
+    for identifier in identifiers:
+        placed = layout.where(identifier)
+        if not placed:
+            continue
+        page = layout.pages[placed[0].page - 1]
+        info = page.info
+        out[identifier] = {"page": placed[0].page, "number": info.number if info is not None else None,
+                           "section": info.section if info is not None else None}
     return out
 
 

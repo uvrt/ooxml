@@ -122,8 +122,11 @@ def word_describe(call: Any, doc: str) -> Result:
     """The shared ``describe``'s Word handler: the document at a glance."""
     document = call.document
     entry = call.entry
-    comments = document.comments()
-    threads = [c for c in comments if c.parent is None]
+    # Round 59 (R135): the comments' records found once -- each comment's ``author``,
+    # ``parent`` and ``done`` found its record again among them all, three times per
+    # comment: a long report's describe spent seconds there, more with each comment.
+    comments = document._comment_records()
+    threads = [c for c in comments if c["parent"] is None]
     # Round 58: the records' authors read from the records found once (a revision's
     # ``author`` finds its record again among them all: describe of a document with
     # thousands of revisions read them all once per revision).
@@ -137,8 +140,8 @@ def word_describe(call: Any, doc: str) -> Result:
         "headings": heading_tree(document)[:80],
         "sections": _sections(document),
         "styles_in_use": _styles_in_use(document),
-        "comments": {"threads": len(threads), "open": sum(1 for c in threads if not c.done),
-                     "by_author": dict(Counter(c.author for c in comments))},
+        "comments": {"threads": len(threads), "open": sum(1 for c in threads if not c["done"]),
+                     "by_author": dict(Counter(c["author"] for c in comments))},
         "revisions": {"records": len(revisions), "changes": len(document.changes()),
                       "by_author": dict(Counter(element.get(_AUTHOR) for element in revisions))},
         "fields": dict(fields),

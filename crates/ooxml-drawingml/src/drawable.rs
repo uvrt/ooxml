@@ -1,6 +1,7 @@
-//! Owns: the drawable elements -- shapes, connectors and groups with their transforms,
-//! geometry, concrete fills and outlines, and resolved text bodies -- that a chart (and, in
-//! P3c, a slide's or a document's drawing) is lowered to, equal to ooxml-common's
+//! Owns: the drawable elements -- shapes, connectors, pictures, tables and groups with their
+//! transforms, geometry, concrete fills, outlines and effects, resolved text bodies, and
+//! what addresses them (alternative text, hyperlinks, ids) -- that a chart, a slide's or a
+//! document's drawing is lowered to, equal to ooxml-common's
 //! `drawingml/scene.py` elements. Every colour is a concrete `#rrggbb` string as its producer
 //! wrote it (the case is kept: it is written into the SVG as it stands), every face a real
 //! name, every inherited property merged down; lengths stay in EMU.
@@ -217,7 +218,7 @@ pub struct CustomPath {
     pub commands: String,
 }
 
-/// A shape's outline.
+/// A shape's outline (a `rect` preset by default, as an unknown one draws).
 #[derive(Debug, Clone, PartialEq)]
 pub enum Geometry {
     /// A preset by name, with its adjust values in order.
@@ -229,6 +230,12 @@ pub enum Geometry {
     },
     /// Custom paths.
     Custom(Vec<CustomPath>),
+}
+
+impl Default for Geometry {
+    fn default() -> Self {
+        Geometry::preset("rect")
+    }
 }
 
 impl Geometry {
@@ -456,8 +463,124 @@ pub struct TextBody {
     pub properties: BodyProperties,
 }
 
-/// A shape.
+/// A shadow cast outside the shape.
 #[derive(Debug, Clone, PartialEq)]
+pub struct OuterShadow {
+    /// The blur radius, EMU.
+    pub blur_radius: f64,
+    /// The distance, EMU.
+    pub distance: f64,
+    /// The direction, degrees.
+    pub direction: f64,
+    /// The colour.
+    pub colour: Colour,
+    /// The alignment.
+    pub alignment: String,
+    /// Whether it turns with the shape.
+    pub rotate_with_shape: bool,
+}
+
+/// A shadow cast inside the shape.
+#[derive(Debug, Clone, PartialEq)]
+pub struct InnerShadow {
+    /// The blur radius, EMU.
+    pub blur_radius: f64,
+    /// The distance, EMU.
+    pub distance: f64,
+    /// The direction, degrees.
+    pub direction: f64,
+    /// The colour.
+    pub colour: Colour,
+}
+
+/// A glow.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Glow {
+    /// The radius, EMU.
+    pub radius: f64,
+    /// The colour.
+    pub colour: Colour,
+}
+
+/// A shape's effects.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Effects {
+    /// `a:outerShdw`.
+    pub outer_shadow: Option<OuterShadow>,
+    /// `a:innerShdw`.
+    pub inner_shadow: Option<InnerShadow>,
+    /// `a:glow`.
+    pub glow: Option<Glow>,
+    /// `a:softEdge`'s radius, EMU.
+    pub soft_edge: Option<f64>,
+}
+
+/// A picture's colour effects (`a:blip`'s children).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct BlipEffects {
+    /// `a:grayscl`.
+    pub grayscale: bool,
+    /// `a:biLevel`'s threshold, 0-1.
+    pub bi_level: Option<f64>,
+    /// `a:blur`: its radius (EMU) and whether it grows the bounds.
+    pub blur: Option<(f64, bool)>,
+    /// `a:lum`: brightness and contrast, 0-1.
+    pub lum: Option<(f64, f64)>,
+    /// `a:duotone`'s two colours.
+    pub duotone: Option<(Colour, Colour)>,
+    /// `a:clrChange`: the colour from and the colour to.
+    pub clr_change: Option<(Colour, Colour)>,
+    /// `a:alphaModFix`, 0-1.
+    pub alpha: Option<f64>,
+}
+
+/// Insets as fractions of a box: `a:srcRect`, `a:fillRect`.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Insets {
+    /// From the left.
+    pub left: f64,
+    /// From the top.
+    pub top: f64,
+    /// From the right.
+    pub right: f64,
+    /// From the bottom.
+    pub bottom: f64,
+}
+
+impl Insets {
+    /// Whether any side is inset.
+    pub fn any(&self) -> bool {
+        self.left != 0.0 || self.top != 0.0 || self.right != 0.0 || self.bottom != 0.0
+    }
+}
+
+/// A custom geometry's text rectangle as written, with what evaluates it: its adjustments
+/// and guides, and `a:rect`'s four guide names or literals.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct TextRect {
+    /// `a:avLst` as `(name, formula)`.
+    pub adjustments: Vec<(String, String)>,
+    /// `a:gdLst` as `(name, formula)`.
+    pub guides: Vec<(String, String)>,
+    /// `l`, `t`, `r`, `b`.
+    pub rect: [String; 4],
+}
+
+/// What addresses an element and what it says about itself.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Meta {
+    /// Its alternative text.
+    pub alt_text: Option<String>,
+    /// Its hyperlink.
+    pub hyperlink: Option<Hyperlink>,
+    /// Its id, for an editor.
+    pub element_id: Option<String>,
+    /// Its position in its tree, for an editor.
+    pub element_path: Option<String>,
+}
+
+/// A shape.
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Shape {
     /// Where it stands.
     pub transform: Transform,
@@ -469,10 +592,18 @@ pub struct Shape {
     pub outline: Option<Outline>,
     /// Its text.
     pub text: Option<TextBody>,
+    /// The box its text is laid out in where not its own (SmartArt's `dsp:txXfrm`).
+    pub text_transform: Option<Transform>,
+    /// A custom geometry's text rectangle.
+    pub text_rect: Option<TextRect>,
+    /// Its effects.
+    pub effects: Option<Effects>,
+    /// What addresses it.
+    pub meta: Meta,
 }
 
 /// A connector.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Connector {
     /// Where it stands.
     pub transform: Transform,
@@ -480,10 +611,113 @@ pub struct Connector {
     pub geometry: Geometry,
     /// Its outline.
     pub outline: Option<Outline>,
+    /// Its effects.
+    pub effects: Option<Effects>,
+    /// What addresses it.
+    pub meta: Meta,
+}
+
+/// A picture.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Image {
+    /// Where it stands.
+    pub transform: Transform,
+    /// The picture, base64.
+    pub data: String,
+    /// Its media type.
+    pub mime: String,
+    /// Its effects.
+    pub effects: Option<Effects>,
+    /// Its colour effects.
+    pub blip_effects: Option<BlipEffects>,
+    /// `a:srcRect`.
+    pub src_rect: Option<Insets>,
+    /// `a:stretch/a:fillRect`.
+    pub stretch: Option<Insets>,
+    /// `a:tile`.
+    pub tile: Option<ImageTile>,
+    /// The frame's geometry.
+    pub geometry: Option<Geometry>,
+    /// The frame's outline.
+    pub outline: Option<Outline>,
+    /// What addresses it.
+    pub meta: Meta,
+}
+
+/// A table cell's borders.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct CellBorders {
+    /// Top.
+    pub top: Option<Outline>,
+    /// Bottom.
+    pub bottom: Option<Outline>,
+    /// Left.
+    pub left: Option<Outline>,
+    /// Right.
+    pub right: Option<Outline>,
+}
+
+/// A table cell.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TableCell {
+    /// Its text.
+    pub text: Option<TextBody>,
+    /// Its fill.
+    pub fill: Option<Fill>,
+    /// Its borders.
+    pub borders: Option<CellBorders>,
+    /// Columns spanned.
+    pub grid_span: i64,
+    /// Rows spanned.
+    pub row_span: i64,
+    /// Covered by a cell to its left.
+    pub h_merge: bool,
+    /// Covered by a cell above.
+    pub v_merge: bool,
+}
+
+impl Default for TableCell {
+    fn default() -> Self {
+        TableCell {
+            text: None,
+            fill: None,
+            borders: None,
+            grid_span: 1,
+            row_span: 1,
+            h_merge: false,
+            v_merge: false,
+        }
+    }
+}
+
+/// A table row.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct TableRow {
+    /// Its height, EMU (a minimum).
+    pub height: f64,
+    /// Its cells.
+    pub cells: Vec<TableCell>,
+}
+
+/// A table.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Table {
+    /// Where it stands.
+    pub transform: Transform,
+    /// Its rows.
+    pub rows: Vec<TableRow>,
+    /// Its columns' widths, EMU.
+    pub columns: Vec<f64>,
+    /// The style's background under the cells.
+    pub background: Option<Fill>,
+    /// The table's effects.
+    pub effects: Option<Effects>,
+    /// What addresses it.
+    pub meta: Meta,
 }
 
 /// A group: children mapped from its child space onto its box.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Group {
     /// Its box.
     pub transform: Transform,
@@ -491,6 +725,8 @@ pub struct Group {
     pub child_transform: Transform,
     /// Its children.
     pub children: Vec<Element>,
+    /// What addresses it.
+    pub meta: Meta,
 }
 
 /// A drawable element.
@@ -500,6 +736,10 @@ pub enum Element {
     Shape(Box<Shape>),
     /// A connector (boxed likewise).
     Connector(Box<Connector>),
-    /// A group.
-    Group(Group),
+    /// A picture.
+    Image(Box<Image>),
+    /// A table.
+    Table(Box<Table>),
+    /// A group (boxed likewise).
+    Group(Box<Group>),
 }

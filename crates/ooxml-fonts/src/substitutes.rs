@@ -88,6 +88,9 @@ pub struct OfficeSubstitution {
     pub metrics: String,
     /// Whether it draws East Asian text.
     pub east_asian: bool,
+    /// Whether an italic cut of it exists (the Office face's or the substitute's); where
+    /// none does, PowerPoint slants the upright itself.
+    pub has_italic_cut: bool,
 }
 
 impl OfficeSubstitution {
@@ -116,6 +119,7 @@ fn table() -> &'static Table {
                     same_metrics: fields.next()? == "1",
                     metrics: fields.next()?.to_owned(),
                     east_asian: fields.next()? == "1",
+                    has_italic_cut: fields.next()? == "1",
                 })
             })
             .collect();

@@ -454,6 +454,9 @@ pub fn element(e: &Element) -> J {
                 ("children", J::Array(g.children.iter().map(element).collect())),
             ],
         ),
+        // A chart lays out no picture or table.
+        Element::Image(_) => class("ImageElement", vec![("type", json!("image"))]),
+        Element::Table(_) => class("TableElement", vec![("type", json!("table"))]),
     }
 }
 
@@ -598,6 +601,17 @@ pub fn case(case: &Case<'_>) -> J {
         kinds.sort_unstable();
         return json!({"notes": [format!("not drawn: {}", kinds.join(","))]});
     };
+    let notes = notes(&laid);
+    json!({
+        "notes": notes,
+        "elements": J::Array(laid.elements.iter().map(element).collect()),
+        "data": data_json(&laid.data),
+    })
+}
+
+/// What the golden harness notes of a laid-out chart: 3-D flattened, a default title
+/// wanted, axis titles not drawn.
+pub fn notes(laid: &ooxml_chart::layout::Laid) -> Vec<String> {
     let mut notes: Vec<String> = Vec::new();
     if !laid.flattened_three_d.is_empty() {
         notes.push(format!("flattened: {}", laid.flattened_three_d.join(",")));
@@ -610,9 +624,5 @@ pub fn case(case: &Case<'_>) -> J {
             .iter()
             .map(|r| format!("axis title not drawn: {r}")),
     );
-    json!({
-        "notes": notes,
-        "elements": J::Array(laid.elements.iter().map(element).collect()),
-        "data": data_json(&laid.data),
-    })
+    notes
 }

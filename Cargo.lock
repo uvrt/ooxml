@@ -380,6 +380,8 @@ dependencies = [
  "ooxml-metafile",
  "ooxml-numfmt",
  "ooxml-opc",
+ "ooxml-render",
+ "ooxml-scene",
  "ooxml-schema",
  "ooxml-text",
  "ooxml-word-layout",
@@ -412,6 +414,15 @@ dependencies = [
  "ooxml-tools",
  "pyo3",
  "serde_json",
+]
+
+[[package]]
+name = "ooxml-render"
+version = "0.1.0"
+dependencies = [
+ "ooxml-drawingml",
+ "ooxml-fonts",
+ "ooxml-scene",
 ]
 
 [[package]]

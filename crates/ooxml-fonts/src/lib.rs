@@ -39,7 +39,7 @@ pub use css::{font_family_value, FontMapping};
 pub use drawing::{DrawingFonts, DrawingIndex, DrawingName};
 pub use embedded::{deobfuscate, embedded_face, EmbeddedPart};
 pub use error::FontError;
-pub use office::{office_face, office_metrics_for, OfficeFace};
+pub use office::{office_face, office_metrics_for, KernTable, KerningSource, OfficeFace};
 pub use recorded::{recorded_face, RecordedFace};
 pub use sfnt::{face_offsets, Decorations, Face, FaceMetrics};
 pub use store::{FileStamp, FontFile, FontStore};
