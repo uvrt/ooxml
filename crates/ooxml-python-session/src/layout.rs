@@ -20,7 +20,7 @@ use ooxml_word_layout::px::Px;
 use ooxml_word_pages::{DiskFonts, EngineOptions, FontSetup, LaidVersion, PageEngine, PageView};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyTuple};
+use pyo3::types::{PyBytes, PyDict, PyTuple};
 use std::sync::{Arc, Mutex, PoisonError};
 
 pyo3::create_exception!(
@@ -32,6 +32,9 @@ pyo3::create_exception!(
 
 /// An exact length as `(numerator, denominator)`.
 type Exact = (i128, i128);
+
+/// A line's digest row (see `LaidPages.digests`).
+type LineDigest<'py> = (String, Option<&'static str>, Option<String>, Bound<'py, PyBytes>);
 
 /// A body line as a check reads it: `(path, number, top, pitch, baseline, column)`.
 type BodyLine = (String, usize, Exact, Exact, i64, Option<usize>);
@@ -380,6 +383,34 @@ impl PyLaidPages {
             .detach(|| lock(engine).page(version, page))
             .ok_or_else(|| PyValueError::new_err(format!("no page {page} (0-based) of {}", version.page_count())))?;
         view_dict(py, &view)
+    }
+
+    /// What every page paints, digested (bytes), painted here: per page `(rest, lines)`,
+    /// `rest` its frame, rules, pictures and drawings, each line `(path, story, part, digest)` --
+    /// what tells two versions' pages apart, no page read into Python.
+    fn digests<'py>(&self, py: Python<'py>) -> PyResult<Vec<(Bound<'py, PyBytes>, Vec<LineDigest<'py>>)>> {
+        let (version, engine) = (&self.version, &self.engine);
+        let pages = py.detach(|| {
+            let mut engine = lock(engine);
+            (0..version.page_count())
+                .map(|k| engine.page_digests(version, k))
+                .collect::<Option<Vec<_>>>()
+        });
+        let pages = pages.ok_or_else(|| PyRuntimeError::new_err("a page of another engine generation"))?;
+        Ok(pages
+            .into_iter()
+            .map(|p| {
+                let lines = p
+                    .lines
+                    .into_iter()
+                    .map(|(path, story, d)| {
+                        let (kind, part) = story.map_or((None, None), |(k, p)| (Some(k), Some(p.to_string())));
+                        (path, kind, part, PyBytes::new(py, &d.0))
+                    })
+                    .collect();
+                (PyBytes::new(py, &p.rest.0), lines)
+            })
+            .collect())
     }
 
     /// Page `page` (0-based) as SVG, byte for byte docx2svg's where the list beside it is

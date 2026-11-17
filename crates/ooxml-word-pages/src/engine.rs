@@ -63,6 +63,24 @@ struct Generation {
     last: Option<Arc<LaidVersion>>,
 }
 
+/// A line's paragraph path, its story (a header's or footer's: its kind and part), its
+/// paint digested.
+pub type LineDigest = (
+    String,
+    Option<(&'static str, ooxml_word_model::value::Text)>,
+    ooxml_base::Digest,
+);
+
+/// What a page paints, digested ([`PageEngine::page_digests`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PageDigests {
+    /// Its frame, rules, pictures and drawings.
+    pub rest: ooxml_base::Digest,
+    /// Each line: its paragraph's path, its story (a header's or footer's: its kind and
+    /// part), its paint.
+    pub lines: Vec<LineDigest>,
+}
+
 /// The package a version was read from, kept to read the next one against.
 struct Source {
     archive: Arc<Archive>,
@@ -258,6 +276,13 @@ impl PageEngine {
         let started = Instant::now();
         let document = generation.model.open(package)?;
         self.stats.open_time += started.elapsed();
+        if generation.model.stats().context_changed && generation.last.is_some() {
+            // The styles, numbering, settings or theme changed: what was measured under the
+            // old ones is not this version's (the measures are keyed by content), so it is
+            // laid out whole, with fresh memos.
+            generation.last = None;
+            generation.layout = new_layout(&generation.fonts, &self.locale, &self.budget);
+        }
         if let Some(why) = support::unsupported(&document) {
             generation.last = None;
             self.stats.fallbacks += 1;
@@ -297,11 +322,10 @@ impl PageEngine {
 
     fn new_generation(&mut self, fonts: DocumentFonts) -> Generation {
         self.generations += 1;
-        let faces: Arc<dyn ooxml_word_layout::Faces> = Arc::clone(&fonts.glyphs) as Arc<dyn ooxml_word_layout::Faces>;
         Generation {
             number: self.generations,
             model: Model::new(Arc::clone(&self.budget), KEY),
-            layout: WordLayout::new(faces, Arc::new(WordTables), self.locale.clone(), &self.budget, KEY),
+            layout: new_layout(&fonts, &self.locale, &self.budget),
             fonts,
             last: None,
         }
@@ -330,6 +354,74 @@ impl PageEngine {
         let paint = paint_page(&version.layout, &mut generation.model, page, &parts, &cx)?;
         self.stats.pages_painted += 1;
         Some(paint)
+    }
+
+    /// What page `page` of `version` paints, digested: what besides its lines (its frame,
+    /// rules, pictures and drawings), and each line by its paragraph's path and story --
+    /// what tells two versions' pages apart without a reader reading them.
+    pub fn page_digests(&mut self, version: &LaidVersion, page: usize) -> Option<PageDigests> {
+        let paint = self.paint(version, page)?;
+        let digest = |value: &dyn std::fmt::Debug| ooxml_base::Digest::of(KEY, format!("{value:?}").as_bytes());
+        // What docx-agent's summary digests (`_page_digest`, `_line_digest`): what is drawn
+        // and where, never the paths it is drawn for (an edit before a page moves them).
+        let rules: Vec<_> = paint
+            .rules
+            .iter()
+            .map(|r| (r.kind, r.x, r.y, r.width, r.height, &r.color))
+            .collect();
+        let pictures: Vec<_> = paint
+            .pictures
+            .iter()
+            .map(|p| (&p.relationship, &p.part, p.x, p.y, p.width, p.height))
+            .collect();
+        let drawings: Vec<_> = paint
+            .drawings
+            .iter()
+            .map(|d| (d.x, d.y, d.width, d.height, d.layer, d.story.as_ref().map(|s| s.0)))
+            .collect();
+        let frame = (paint.geometry.frame.width_px, paint.geometry.frame.height_px);
+        let rest = digest(&(frame, rules, pictures, drawings));
+        let lines = paint
+            .lines
+            .iter()
+            .map(|line| {
+                let spans: Vec<_> = line
+                    .spans
+                    .iter()
+                    .map(|s| {
+                        (
+                            &s.chars,
+                            &s.xs,
+                            s.y,
+                            s.end,
+                            &s.face,
+                            s.bold,
+                            s.italic,
+                            s.half_points,
+                            &s.color,
+                            &s.underline,
+                            (
+                                s.strike,
+                                s.double_strike,
+                                s.highlight,
+                                &s.shading,
+                                s.kind,
+                                &s.vertical_align,
+                            ),
+                        )
+                    })
+                    .collect();
+                let drawn = digest(&(
+                    line.story.as_ref().map(|s| s.0),
+                    line.baseline,
+                    line.top,
+                    line.pitch,
+                    spans,
+                ));
+                (line.path.to_string(), line.story.clone(), drawn)
+            })
+            .collect();
+        Some(PageDigests { rest, lines })
     }
 
     /// Page `page` of `version` as a reader sees it.
@@ -389,6 +481,12 @@ impl PageEngine {
         };
         Some((page_svg(&paint, &cx), missing))
     }
+}
+
+/// A layout engine with no memos, measuring with `fonts`.
+fn new_layout(fonts: &DocumentFonts, locale: &Locale, budget: &Arc<dyn CacheBudget>) -> WordLayout {
+    let faces: Arc<dyn ooxml_word_layout::Faces> = Arc::clone(&fonts.glyphs) as Arc<dyn ooxml_word_layout::Faces>;
+    WordLayout::new(faces, Arc::new(WordTables), locale.clone(), budget, KEY)
 }
 
 /// A page's drawings as their painters filled them, asked once each.

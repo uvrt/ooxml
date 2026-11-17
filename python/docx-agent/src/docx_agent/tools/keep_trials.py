@@ -40,6 +40,8 @@ from collections import OrderedDict
 from fractions import Fraction
 from typing import Any
 
+from .. import pages
+
 #: Trial layouts one check makes at most (rule 4).
 TRIALS = 4
 #: Seconds of trial layouts one check spends at most: none is started past them (a check's
@@ -188,6 +190,15 @@ class _Index:
                 self.order.append(key)
 
 
+def _trial_layout(data: bytes, options: dict, previous: Any) -> Any:
+    """A trial's bytes laid out in Rust (lane L4) where the layout checked was: by an engine
+    of its own for the document's trials (a trial is no version of the document), each from
+    the trial before; ``None`` where docx2svg's Python layout lays it out."""
+    if not pages.is_rust(previous):
+        return None
+    return pages.lay_out(data, options, f"{previous.lineage}/trials")
+
+
 def _trial(previous: Any, data: bytes, options: dict, layout: Any, index: _Index, found: Any,
            on: bool) -> "dict[str, Any] | None":
     import docx2svg
@@ -215,8 +226,13 @@ def _trial(previous: Any, data: bytes, options: dict, layout: Any, index: _Index
     global laid_out
     convert_options = docx2svg.ConvertOptions(**options)
     laid_out += 1
-    trial, _, _ = docx2svg.lay_out_docx(_changed(data, document, changes), convert_options, previous=previous,
-                                        measures=_MEASURES, keep=False, changed_pages=False)
+    changed = _changed(data, document, changes)
+    trial = _trial_layout(changed, options, previous)
+    if trial is None:
+        if pages.is_rust(previous):
+            previous = None
+        trial, _, _ = docx2svg.lay_out_docx(changed, convert_options, previous=previous,
+                                            measures=_MEASURES, keep=False, changed_pages=False)
     now = _Pages(layout.pages, keys, after)
     then = _Pages(trial.pages, keys, after)
     if now.start is None or then.start is None:

@@ -369,7 +369,14 @@ class _Facts:
         return found
 
     def _placed(self) -> dict[str, list]:
+        """canon id -> [(1-based page, line)], every story's: of a layout in Rust (lane L4)
+        from its body's lines, a header's, footer's or note's paragraph found when asked
+        (:meth:`DocumentLayout._drawn`, the pages painted then)."""
         placed: dict[str, list] = {}
+        if self.layout._rust:
+            for key, found in self.layout._drawn().items():
+                placed[key] = [(number + 1, line) for number, _, line in found]
+            return _PlacedOnDemand(placed, self.layout)
         for number, lines in enumerate(self.layout._lines, start=1):
             for key, line in lines:
                 if key is not None:
@@ -498,10 +505,10 @@ class _Facts:
     def text_sizes(self, out: dict) -> None:
         smallest: dict[str, float] = {}
         small: dict[tuple, dict] = {}
-        for number, lines in enumerate(self.layout._lines, start=1):
+        for number in range(1, len(self.layout.pages) + 1):
             if self.wanted is not None and number not in self.wanted:
                 continue
-            for key, line in lines:
+            for key, line in self.layout._lines[number - 1]:
                 if self.scoped is not None and (key is None or self.layout._canon(key) not in self.scoped):
                     continue
                 kind = _kind(line)
@@ -793,10 +800,10 @@ class _Facts:
     def keep_with_next(self) -> list[dict]:
         position = {self.layout._canon(identifier): k for k, (_, _, identifier) in enumerate(self.top_level)}
         entries = []
-        for number, lines in enumerate(self.layout._lines, start=1):
+        for number in range(1, len(self.layout.pages) + 1):
             if not self.shown([number]):
                 continue
-            body = [(line.top, key, line) for key, line in lines if key is not None and _in_body(line)]
+            body = [(line.top, key, line) for key, line in self.layout._body(number - 1) if key is not None]
             if not body:
                 continue
             _, key, line = max(body, key=lambda b: b[0])
@@ -1035,13 +1042,15 @@ class _Facts:
         rows: dict[str, dict[int, dict[int, set]]] = {}
         table_pages: dict[str, set] = {}
         for number, page in enumerate(self.layout.pages, start=1):
-            for line in page.lines:
-                match = _ROW.match(line.path) if line.story is None else None
+            for _, line in self.layout._body(number - 1):
+                match = _ROW.match(line.path)
                 if match:
                     table, row = match.group(1), int(match.group(2)) - 1
                     rows.setdefault(table, {}).setdefault(row, {}).setdefault(number, set()).add(
                         (line.path, line.number))
                     table_pages.setdefault(table, set()).add(number)
+            if self.layout._rust and not any(_ROW.match(key) for key in page.blocks):
+                continue              # no table drawn: nothing painted to read its rules
             for rule in page.rules:
                 match = _ROW.match(rule.path or "")
                 if match:
@@ -1095,9 +1104,14 @@ class _Facts:
         # each: an entry is of the whole table).
         shown = None if self.wanted is None else {
             match.group(1) for number in self.wanted if 1 <= number <= len(self.layout.pages)
-            for line in self.layout.pages[number - 1].lines
-            for match in [_CELL_LINE.match(line.path) if line.story is None else None] if match}
+            for _, line in self.layout._body(number - 1)
+            for match in [_CELL_LINE.match(line.path)] if match}
         for number, page in enumerate(self.layout.pages, start=1):
+            # Only the pages drawing a cell's line measured (lane L4: a page in Rust is
+            # painted when its lines are read).
+            if not any(match and (shown is None or match.group(1) in shown)
+                       for _, line in self.layout._body(number - 1) for match in [_CELL_LINE.match(line.path)]):
+                continue
             for line in page.lines:
                 match = _CELL_LINE.match(line.path) if line.story is None else None
                 if not match or (shown is not None and match.group(1) not in shown):
@@ -2142,3 +2156,22 @@ def _int_of(value: str | None) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+class _PlacedOnDemand(dict):
+    """:meth:`_Facts._placed` of a layout in Rust: its body's lines at once; a header's,
+    footer's or note's paragraph -- not among them -- read when first asked for, from where
+    the layout draws it (:meth:`DocumentLayout._drawn`)."""
+
+    def __init__(self, body: dict, layout: "DocumentLayout") -> None:
+        super().__init__(body)
+        self._layout = layout
+
+    def get(self, key, default=None):
+        if key in self:
+            return self[key]
+        found = self._layout._drawn().get(key)
+        if not found:
+            return default
+        out = self[key] = [(number + 1, line) for number, _, line in found]
+        return out

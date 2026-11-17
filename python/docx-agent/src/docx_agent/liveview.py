@@ -69,7 +69,8 @@ import docx2svg
 from . import layout as _layout
 from .layout import (_MEASURES, _PASSED_ON, PAGE_COST, _Held, _failed, _keeper, _kept_failure, _let_go_held,
                      _put_held, _tag, _take_held, cache_key, held_layout, keep_layout, kept_layout, layout_key,
-                     layout_options, made_facts, note_made, opened_layout, runner_of)
+                     layout_options, made_facts, note_made, opened_layout, runner_of, svgs_of)
+from . import pages as _pages
 
 __all__ = ["PageSvg", "UnknownToken", "View", "ViewPage", "embed_images", "externalise_images",
            "page_bytes", "page_svg", "view", "view_bytes"]
@@ -326,6 +327,10 @@ class _Version:
             from docx2svg import relayout
 
             raw = self.laid[0]
+            if _pages.is_rust(raw):
+                # Lane L4: what a page laid out in Rust paints, digested.
+                found = self.digests[index] = hashlib.sha256(repr(raw.laid.page(index)).encode()).digest()
+                return found
             state = getattr(raw, "state", None)
             found = (getattr(state, "drawings", None) or {}).get(index)
             if found is None:
@@ -342,9 +347,16 @@ def _versions(held: _Held) -> "OrderedDict[str, _Version]":
     return views
 
 
-def _lay_out_version(laid: "tuple | None", data: bytes, options: dict) -> _Version:
-    """A version this process no longer holds, laid out again -- from ``laid``, a layout of
-    the same document, where there is one (the pages it reaches only)."""
+def _lay_out_version(laid: "tuple | None", data: bytes, options: dict, lineage: str) -> _Version:
+    """A version this process no longer holds, laid out again -- in Rust where it lays it out
+    (lane L4: by an engine of the lineage's for its views, no version of the document), else
+    from ``laid``, a layout of the same document, where there is one (the pages it reaches
+    only)."""
+    rust = _pages.lay_out(data, options, f"{lineage}/views")
+    if rust is not None:
+        return _Version((rust, None, list(rust.warnings)), data, options)
+    if laid is not None and _pages.is_rust(laid[0]):
+        laid = None
     convert_options = docx2svg.ConvertOptions(**options)
     layout, _, fonts = docx2svg.lay_out_docx(data, convert_options, previous=laid[0] if laid else None,
                                              measures=_MEASURES, changed_pages=False)
@@ -369,6 +381,9 @@ def _views_cost(views: "OrderedDict[str, _Version]", held: _Held) -> int:
     counted = {id(page) for page in held.laid[0].pages}
     cost = 0
     for version in views.values():
+        if _pages.is_rust(version.laid[0]):
+            cost += _layout.layout_cost(version.laid[0])      # held in Rust (lane L4)
+            continue
         for page in version.laid[0].pages:
             if id(page) not in counted:
                 counted.add(id(page))
@@ -426,7 +441,7 @@ def view_bytes(data: bytes, options: dict, state: tuple, request: dict) -> dict:
         if since is not None:
             old = views.get(since)
             if old is None:
-                old = views[since] = _lay_out_version(held.laid, request["since_data"], options)
+                old = views[since] = _lay_out_version(held.laid, request["since_data"], options, state[3])
             views.move_to_end(since)
             out["changed"] = _changed(old, new)
         views.move_to_end(token)
@@ -453,7 +468,7 @@ def page_bytes(data: bytes, options: dict, state: tuple, request: dict) -> dict:
         token = request["token"]
         version = _versions(found).get(token) if found is not None else None
         if version is None:
-            version = _lay_out_version(found.laid if found is not None else None, data, options)
+            version = _lay_out_version(found.laid if found is not None else None, data, options, lineage)
         if found is None:
             # Nothing of the document here: what was laid out is kept as its layouts.
             found = _Held(version.laid)
@@ -462,12 +477,10 @@ def page_bytes(data: bytes, options: dict, state: tuple, request: dict) -> dict:
         views[token] = version
         views.move_to_end(token)
         layout = version.mapped(found)
-        drawing = docx2svg.ConvertOptions(**{**version.options, "pages": [request["page"]],
-                                             "text": request["text"],
-                                             "glyphs": {} if request["glyphs"] else None})
-        svg = docx2svg.page_svgs(version.laid[0], version.data, drawing, fonts=version.laid[1])[0]
-        out = {"svg": _tag(layout._document, layout, svg), "glyphs": drawing.glyphs or {},
-               "warnings": [str(w) for w in drawing.warnings]}
+        drawing = {"text": request["text"], "glyphs": {} if request["glyphs"] else None}
+        svg = svgs_of(version.laid[0], version.data, version.laid[1], version.options, [request["page"]], drawing)[0]
+        out = {"svg": _tag(layout._document, layout, svg), "glyphs": drawing.get("glyphs") or {},
+               "warnings": [str(w) for w in drawing.get("warnings") or ()]}
         _trim(views, found)
     except BaseException:
         if found is not None and found.token is not None:

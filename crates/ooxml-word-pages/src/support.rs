@@ -36,6 +36,8 @@ pub const STYLEREF: &str = "STYLEREF field";
 pub const FOOTNOTES_IN_COLUMNS: &str = "footnotes in columns";
 /// Footnotes placed beneath the text (`w:pos="beneathText"`).
 pub const FOOTNOTES_BENEATH_TEXT: &str = "footnotes beneath the text";
+/// A body the layout gives no page (docx2svg draws one blank page).
+pub const NO_PAGES: &str = "no pages";
 /// The layout stopped at a block it cannot lay out.
 pub const LAYOUT_STOPPED: &str = "layout stopped";
 /// A header or footer it cannot measure.
@@ -64,6 +66,7 @@ pub const REASONS: &[&str] = &[
     STYLEREF,
     FOOTNOTES_IN_COLUMNS,
     FOOTNOTES_BENEATH_TEXT,
+    NO_PAGES,
     LAYOUT_STOPPED,
     STORY_UNSUPPORTED,
     LINE_NUMBERS,
@@ -115,6 +118,9 @@ pub fn unsupported(document: &WordDocument) -> Option<Fallback> {
 /// Why a version laid out cannot be taken as docx2svg's: the layout stopped, a story was
 /// not measured, or endnotes go on under the continuation separator.
 pub fn stopped(layout: &DocumentLayout) -> Option<Fallback> {
+    if layout.page_count() == 0 {
+        return Some(fallback(NO_PAGES, "w:body"));
+    }
     if let Some(stop) = &layout.pagination.stopped {
         return Some(fallback(LAYOUT_STOPPED, &stop.reason));
     }

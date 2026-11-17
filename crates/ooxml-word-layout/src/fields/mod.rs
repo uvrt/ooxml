@@ -157,42 +157,53 @@ impl<'a> Pages<'a> {
 
     /// `NUMPAGES`: every page, blank ones included; unknown past a stop.
     fn page_count(&self) -> Option<i64> {
-        let p = &self.layout.pagination;
-        if p.stopped.is_some() {
-            return None;
-        }
-        Some(i64::try_from(p.info.len().max(1)).unwrap_or(i64::MAX))
+        page_count(self.layout)
     }
 
     /// `SECTIONPAGES`: the pages a section has content on.
     fn section_pages(&self, section: usize) -> Option<i64> {
-        let p = &self.layout.pagination;
-        let items = &self.layout.flow.items;
-        if let Some(stopped) = &p.stopped {
-            if items.get(stopped.item).is_some_and(|i| section >= i.section()) {
-                return None;
-            }
-        }
-        let mut pages = BTreeSet::new();
-        for page in &p.pages {
-            let lines = page.lines.iter().map(|l| l.item);
-            let rows = page.rows.iter().map(|r| r.item);
-            if lines
-                .chain(rows)
-                .any(|item| items.get(item).is_some_and(|i| i.section() == section))
-            {
-                pages.insert(page.page);
-            }
-        }
-        i64::try_from(pages.len()).ok()
+        section_pages(self.layout, section)
     }
+}
+
+/// `NUMPAGES`: every page, blank ones included; unknown past a stop.
+fn page_count(layout: &DocumentLayout) -> Option<i64> {
+    let p = &layout.pagination;
+    if p.stopped.is_some() {
+        return None;
+    }
+    Some(i64::try_from(p.info.len().max(1)).unwrap_or(i64::MAX))
+}
+
+/// `SECTIONPAGES`: the pages a section has content on.
+fn section_pages(layout: &DocumentLayout, section: usize) -> Option<i64> {
+    let p = &layout.pagination;
+    let items = &layout.flow.items;
+    if let Some(stopped) = &p.stopped {
+        if items.get(stopped.item).is_some_and(|i| section >= i.section()) {
+            return None;
+        }
+    }
+    let mut pages = BTreeSet::new();
+    for page in &p.pages {
+        let lines = page.lines.iter().map(|l| l.item);
+        let rows = page.rows.iter().map(|r| r.item);
+        if lines
+            .chain(rows)
+            .any(|item| items.get(item).is_some_and(|i| i.section() == section))
+        {
+            pages.insert(page.page);
+        }
+    }
+    i64::try_from(pages.len()).ok()
 }
 
 /// `NUMPAGES` and section `section`'s `SECTIONPAGES` of a layout, `None` where unknown
 /// (`_page_count`, `_section_pages`): what a header's or footer's fields show.
 pub fn page_counts(layout: &DocumentLayout, section: usize) -> (Option<i64>, Option<i64>) {
-    let pages = Pages::new(layout);
-    (pages.page_count(), pages.section_pages(section))
+    // Without the whole document's line index (`Pages::new`): a page's header and footer
+    // read only these two counts.
+    (page_count(layout), section_pages(layout, section))
 }
 
 /// Bookmark name -> `(paragraph, run)` of its start, the first of a name winning.

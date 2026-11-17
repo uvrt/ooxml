@@ -1,0 +1,186 @@
+//! The page engine over made-up packages: a version read again from its bytes keeps the
+//! parts whose stored bytes did not change and is laid out from the version before; a
+//! version given as its touched parts is the version given whole; a document the layout
+//! does not lay out yet is a fallback with its reason. The faces are the open ones the
+//! repository ships.
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+use ooxml_derive::CacheBudget;
+use ooxml_fonts::{Folder, Location, WordFontOptions};
+use ooxml_word_layout::paint::svg::NoDrawings;
+use ooxml_word_pages::{support, DiskFonts, EngineOptions, FontSetup, PageEngine};
+use ooxml_zip::{Method, NewEntry, Writer};
+use std::sync::Arc;
+
+const W: &str = r#"xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main""#;
+
+struct Unlimited;
+
+impl CacheBudget for Unlimited {
+    fn reserve(&self, _bytes: usize) -> bool {
+        true
+    }
+    fn release(&self, _bytes: usize) {}
+    fn used(&self) -> usize {
+        0
+    }
+}
+
+fn document_xml(body: &str) -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document {W}><w:body>{body}</w:body></w:document>"#
+    )
+}
+
+fn package(body: &str) -> Vec<u8> {
+    package_styled(body, None)
+}
+
+/// A package of `body` with `styles` (`w:styles`' content) where given.
+fn package_styled(body: &str, styles: Option<&str>) -> Vec<u8> {
+    let entry = |name: &str| NewEntry {
+        name: name.into(),
+        method: Method::Deflated,
+        dos_time: 0x6000,
+        dos_date: 0x5a21,
+        external_attr: 0,
+        create_system: 0,
+    };
+    let rels = r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+    let styles_rel = r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>"#;
+    let files = [
+        (
+            "[Content_Types].xml",
+            r#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>"#.to_owned(),
+        ),
+        ("_rels/.rels", rels.to_owned()),
+        ("word/document.xml", document_xml(body)),
+        ("word/_rels/document.xml.rels", styles_rel.to_owned()),
+        (
+            "word/styles.xml",
+            format!(r#"<w:styles {W}>{}</w:styles>"#, styles.unwrap_or_default()),
+        ),
+    ];
+    let mut w = Writer::new();
+    for (name, data) in files {
+        w.add(&entry(name), data.as_bytes()).unwrap();
+    }
+    w.finish(b"").unwrap()
+}
+
+fn paragraphs(n: usize, edited: Option<usize>) -> String {
+    (0..n)
+        .map(|k| {
+            let text = if Some(k) == edited {
+                "changed words here"
+            } else {
+                "some words on a line of the body"
+            };
+            format!("<w:p><w:r><w:t>{k} {text}</w:t></w:r></w:p>")
+        })
+        .collect()
+}
+
+/// The open faces the repository ships (pptx2svg-fonts), Calibri laid out with Carlito.
+fn engine() -> PageEngine {
+    let folder = Folder {
+        location: Location::Folder,
+        path: concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../python/pptx2svg/packages/pptx2svg-fonts/src/pptx2svg_fonts/files"
+        )
+        .to_owned(),
+    };
+    let options = WordFontOptions {
+        substitutes: vec![("calibri".to_owned(), "Carlito".to_owned())],
+        recorded_faces: false,
+        fallbacks: false,
+    };
+    let setup = Arc::new(FontSetup::new(Arc::new(DiskFonts), &[folder], options));
+    PageEngine::new(setup, EngineOptions::default(), Arc::new(Unlimited))
+}
+
+fn svgs(engine: &mut PageEngine, version: &ooxml_word_pages::LaidVersion) -> Vec<String> {
+    (0..version.page_count())
+        .map(|k| engine.page_svg(version, k, &NoDrawings).unwrap().0)
+        .collect()
+}
+
+#[test]
+fn a_version_is_laid_out_from_the_one_before_reading_only_what_changed() {
+    let mut kept = engine();
+    let first = kept
+        .lay_out_bytes(Arc::from(package(&paragraphs(120, None))))
+        .unwrap()
+        .unwrap();
+    assert!(!first.relaid());
+    let edited = package(&paragraphs(120, Some(60)));
+    let second = kept.lay_out_bytes(Arc::from(edited.clone())).unwrap().unwrap();
+    assert!(second.relaid());
+    let stats = kept.stats();
+    assert_eq!(stats.parts_read, 1, "only word/document.xml changed: {stats:?}");
+    assert_eq!(stats.parts_kept, 4);
+    let mut fresh = engine();
+    let whole = fresh.lay_out_bytes(Arc::from(edited)).unwrap().unwrap();
+    assert_eq!(svgs(&mut kept, &second), svgs(&mut fresh, &whole));
+    assert_eq!(second.facts(), whole.facts());
+}
+
+#[test]
+fn a_version_given_by_its_touched_parts_is_the_version_given_whole() {
+    let mut kept = engine();
+    kept.lay_out_bytes(Arc::from(package(&paragraphs(40, None))))
+        .unwrap()
+        .unwrap();
+    let touched: Arc<[u8]> = Arc::from(document_xml(&paragraphs(40, Some(3))).into_bytes());
+    let updated = kept
+        .update(&[("word/document.xml".to_owned(), Some(touched))])
+        .unwrap()
+        .unwrap();
+    let mut fresh = engine();
+    let whole = fresh
+        .lay_out_bytes(Arc::from(package(&paragraphs(40, Some(3)))))
+        .unwrap()
+        .unwrap();
+    assert_eq!(svgs(&mut kept, &updated), svgs(&mut fresh, &whole));
+}
+
+#[test]
+fn a_floating_table_falls_back_with_its_reason() {
+    let body = format!(
+        r#"<w:tbl><w:tblPr><w:tblpPr w:tblpX="500" w:tblpY="500"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:p/></w:tc></w:tr></w:tbl>{}"#,
+        paragraphs(2, None)
+    );
+    let fallback = engine().lay_out_bytes(Arc::from(package(&body))).unwrap().unwrap_err();
+    assert_eq!(fallback.reason, support::FLOATING_TABLE);
+    assert!(support::REASONS.contains(&fallback.reason));
+}
+
+#[test]
+fn a_page_of_another_generation_is_not_painted() {
+    let mut first = engine();
+    let version = first
+        .lay_out_bytes(Arc::from(package(&paragraphs(3, None))))
+        .unwrap()
+        .unwrap();
+    let mut other = engine();
+    assert!(other.paint(&version, 0).is_none());
+    assert!(first.paint(&version, 0).is_some());
+}
+
+#[test]
+fn a_change_of_the_styles_lays_the_version_out_whole() {
+    let body = paragraphs(60, None);
+    let large = r#"<w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val="40"/></w:rPr></w:rPrDefault></w:docDefaults>"#;
+    let mut kept = engine();
+    kept.lay_out_bytes(Arc::from(package_styled(&body, None)))
+        .unwrap()
+        .unwrap();
+    let styled = package_styled(&body, Some(large));
+    let again = kept.lay_out_bytes(Arc::from(styled.clone())).unwrap().unwrap();
+    assert!(!again.relaid(), "laid out whole: {:?}", kept.stats());
+    let mut fresh = engine();
+    let whole = fresh.lay_out_bytes(Arc::from(styled)).unwrap().unwrap();
+    assert_eq!(again.page_count(), whole.page_count());
+    assert_eq!(svgs(&mut kept, &again), svgs(&mut fresh, &whole));
+}

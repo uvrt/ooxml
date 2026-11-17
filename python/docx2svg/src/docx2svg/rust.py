@@ -25,6 +25,7 @@ the body first draws them in.
 
 from __future__ import annotations
 
+import hashlib
 import threading
 from collections import Counter, OrderedDict
 from fractions import Fraction
@@ -118,6 +119,9 @@ class Engine:
         self.key = (_fonts_key(options), options.locale.decimal_separator if options.locale else ".",
                     options.glyph_size)
         self._pages = ooxml_core.WordPages(word_fonts(options), decimal=self.key[1], glyph_size=options.glyph_size)
+        self._lock = threading.Lock()
+        #: The last version laid out, by the digest of its bytes: asked again, the same.
+        self._last: tuple | None = None
 
     def fits(self, options) -> bool:
         """Whether this engine lays out with ``options`` (the same fonts, decimal, glyphs)."""
@@ -133,15 +137,24 @@ class Engine:
         if why is not None:
             count_fallback(why)
             return None
+        digest = hashlib.sha256(data).digest()
+        with self._lock:
+            if self._last is not None and self._last[0] == digest:
+                return self._last[1]
         try:
             laid = self._pages.lay_out(data)
         except ooxml_core.LayoutFallback as fallback:
             count_fallback(fallback.args[0])
             return None
-        return RustLayout(laid, data, options)
+        made = RustLayout(laid, data, options)
+        with self._lock:
+            self._last = (digest, made)
+        return made
 
     def forget(self) -> None:
         """Let go of the last version and the memos."""
+        with self._lock:
+            self._last = None
         self._pages.forget()
 
     def stats(self) -> dict:
@@ -161,6 +174,8 @@ class RustLayout:
     to another process: a version is laid out from the one before in Rust)."""
 
     state = None
+    #: The document lineage whose engine laid it out, where its caller names one.
+    lineage: str | None = None
     relaid = None
     relaid_cause = None
     changed_pages = None
@@ -176,6 +191,10 @@ class RustLayout:
         self._blocks: list | None = None
         self._coverage = None
         self._warnings: list | None = None
+
+    def __reduce__(self):
+        raise TypeError("a layout held in Rust is not pickled: lay the bytes out where they are needed "
+                        "(docx2svg.rust.Engine)")
 
     # -- what docx2svg's layout has -------------------------------------------------------
 
