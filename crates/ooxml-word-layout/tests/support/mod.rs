@@ -15,7 +15,7 @@ use ooxml_zip::{Method, NewEntry, Writer};
 use std::sync::Arc;
 
 /// The namespaces every made-up part declares.
-pub const W: &str = r#"xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships""#;
+pub const W: &str = r#"xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing""#;
 
 /// A budget without a limit.
 pub struct Unlimited;
@@ -74,6 +74,20 @@ fn rel(id: &str, kind: &str, target: &str) -> String {
 
 /// A package of `body` (`w:body`'s content) and `settings` (`w:settings`' content).
 pub fn package(body: &str, settings: Option<&str>) -> Package {
+    package_with(body, settings, &[])
+}
+
+/// A part of the main document beside its body: its relationship id, type and name, and
+/// its whole XML.
+pub struct Part<'a> {
+    pub id: &'a str,
+    pub kind: &'a str,
+    pub name: &'a str,
+    pub xml: String,
+}
+
+/// A package of `body`, `settings` and `parts`.
+pub fn package_with(body: &str, settings: Option<&str>, parts: &[Part<'_>]) -> Package {
     let mut w = Writer::new();
     let entry = |name: &str| NewEntry {
         name: name.into(),
@@ -96,6 +110,10 @@ pub fn package(body: &str, settings: Option<&str>) -> Package {
             "word/settings.xml".into(),
             format!(r#"<w:settings {W}>{content}</w:settings>"#),
         ));
+    }
+    for part in parts {
+        rels.push_str(&rel(part.id, part.kind, part.name));
+        files.push((format!("word/{}", part.name), part.xml.clone()));
     }
     files.push((
         "word/_rels/document.xml.rels".into(),
@@ -138,6 +156,43 @@ pub fn engine() -> WordLayout {
 /// Open `body` in `model`.
 pub fn open(model: &mut Model, body: &str, settings: Option<&str>) -> WordDocument {
     model.open(&package(body, settings)).unwrap()
+}
+
+/// Open `body` with `parts` in `model`.
+pub fn open_with(model: &mut Model, body: &str, settings: Option<&str>, parts: &[Part<'_>]) -> WordDocument {
+    model.open(&package_with(body, settings, parts)).unwrap()
+}
+
+/// A floating drawing `cx` x `cy` twips at the column's and paragraph's offsets `x`, `y`
+/// twips, wrapped by `wrap` (`wrapSquare`, `wrapTopAndBottom`...).
+pub fn anchor(wrap: &str, x: i64, y: i64, cx: i64, cy: i64) -> String {
+    let side = if wrap == "wrapSquare" {
+        r#" wrapText="bothSides""#
+    } else {
+        ""
+    };
+    format!(
+        r#"<w:r><w:drawing><wp:anchor distT="0" distB="0" distL="0" distR="0" simplePos="0" relativeHeight="1" behindDoc="0" locked="0" layoutInCell="1" allowOverlap="1"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>{}</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>{}</wp:posOffset></wp:positionV><wp:extent cx="{}" cy="{}"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:{wrap}{side}/><wp:docPr id="1" name="d"/></wp:anchor></w:drawing></w:r>"#,
+        x * 635,
+        y * 635,
+        cx * 635,
+        cy * 635
+    )
+}
+
+/// A notes part (`footnote` or `endnote`): its separators and `notes` (id, text).
+pub fn notes_part(kind: &str, notes: &[(u32, String)]) -> String {
+    let mut xml = format!(
+        r#"<w:{kind}s {W}><w:{kind} w:type="separator" w:id="-1"><w:p><w:r><w:separator/></w:r></w:p></w:{kind}><w:{kind} w:type="continuationSeparator" w:id="0"><w:p><w:r><w:continuationSeparator/></w:r></w:p></w:{kind}>"#
+    );
+    for (id, text) in notes {
+        xml.push_str(&format!(
+            r#"<w:{kind} w:id="{id}"><w:p><w:r><w:{kind}Ref/></w:r>{}</w:p></w:{kind}>"#,
+            run(text)
+        ));
+    }
+    xml.push_str(&format!("</w:{kind}s>"));
+    xml
 }
 
 /// A paragraph: `ppr` its properties, `content` its runs' XML.

@@ -1,15 +1,17 @@
 //! Relayout equals full layout (docs/architecture/README.md, section 8): made-up documents
 //! of paragraphs of every length -- keeps, page breaks, widow control off, spacing, exact
 //! lines, section breaks of every kind and of several columns, `PAGE`, `NUMPAGES`,
-//! `PAGEREF`, `SEQ` and `REF` fields with their bookmarks -- edited one block at a time (text, a keep, a
-//! paragraph inserted or deleted), each version laid out again from the one before and
+//! `PAGEREF`, `SEQ` and `REF` fields with their bookmarks, footnote and endnote references,
+//! floating drawings text wraps beside or top and bottom of, a header of changing height --
+//! edited one block at a time (text, a keep, a note, a drawing, a paragraph inserted or
+//! deleted, the header), each version laid out again from the one before and
 //! laid out whole in a fresh engine and model: the pages, their numbers and the fields'
 //! values are equal. Fixed seeds here; `many_seeds` (ignored) runs many.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
 
 mod support;
 
-use support::{engine, field, model, open, para, run, sect};
+use support::{anchor, engine, field, model, notes_part, open, open_with, para, run, sect, Part};
 
 /// xorshift64*: the tests' own generator, seeded.
 struct Rng(u64);
@@ -43,6 +45,9 @@ struct Spec {
     section: Option<(&'static str, u32)>,
     field: Option<String>,
     bookmark: Option<String>,
+    footnote: Option<u64>,
+    endnote: Option<u64>,
+    drawing: Option<(&'static str, i64)>,
 }
 
 fn spec(rng: &mut Rng, k: usize) -> Spec {
@@ -72,6 +77,62 @@ fn spec(rng: &mut Rng, k: usize) -> Spec {
         section,
         field,
         bookmark: Some(format!("b{k}")),
+        footnote: rng.chance(12).then(|| 1 + rng.below(8)),
+        endnote: rng.chance(5).then(|| 1 + rng.below(4)),
+        drawing: drawing(rng),
+    }
+}
+
+fn drawing(rng: &mut Rng) -> Option<(&'static str, i64)> {
+    let wrap = ["wrapSquare", "wrapTopAndBottom", "wrapNone"][usize::try_from(rng.below(3)).unwrap()];
+    rng.chance(8).then(|| (wrap, i64::try_from(rng.below(1200)).unwrap()))
+}
+
+/// A document's parts beside its body: its footnotes and endnotes, and a header of
+/// `header` words.
+struct Extra {
+    footnotes: Vec<(u32, String)>,
+    endnotes: Vec<(u32, String)>,
+    header: u64,
+}
+
+impl Extra {
+    fn new(rng: &mut Rng) -> Extra {
+        let mut text = |k: u64| {
+            (0..1 + rng.below(40))
+                .map(|w| format!("n{k}x{}", w % 5))
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        Extra {
+            footnotes: (1..=8).map(|k| (u32::try_from(k).unwrap(), text(k))).collect(),
+            endnotes: (1..=4).map(|k| (u32::try_from(k).unwrap(), text(k))).collect(),
+            header: 3,
+        }
+    }
+
+    fn parts(&self) -> Vec<Part<'static>> {
+        let header = (0..self.header).map(|w| format!("h{w}")).collect::<Vec<_>>().join(" ");
+        vec![
+            Part {
+                id: "rIdF",
+                kind: "footnotes",
+                name: "footnotes.xml",
+                xml: notes_part("footnote", &self.footnotes),
+            },
+            Part {
+                id: "rIdE",
+                kind: "endnotes",
+                name: "endnotes.xml",
+                xml: notes_part("endnote", &self.endnotes),
+            },
+            Part {
+                id: "rIdH",
+                kind: "header",
+                name: "header1.xml",
+                xml: format!(r#"<w:hdr {}>{}</w:hdr>"#, support::W, para("", &run(&header))),
+            },
+        ]
     }
 }
 
@@ -103,6 +164,9 @@ fn xml(specs: &[Spec]) -> String {
         }
         let words: Vec<String> = (0..s.words).map(|w| format!("w{}x{}", k, w % 7)).collect();
         let mut content = String::new();
+        if let Some((wrap, x)) = s.drawing {
+            content.push_str(&anchor(wrap, x, 0, 720, 400));
+        }
         if let Some(name) = &s.bookmark {
             content.push_str(&format!(r#"<w:bookmarkStart w:id="{k}" w:name="{name}"/>"#));
         }
@@ -113,19 +177,32 @@ fn xml(specs: &[Spec]) -> String {
         if s.page_break {
             content.push_str(r#"<w:r><w:br w:type="page"/></w:r>"#);
         }
+        if let Some(id) = s.footnote {
+            content.push_str(&format!(r#"<w:r><w:footnoteReference w:id="{id}"/></w:r>"#));
+        }
+        if let Some(id) = s.endnote {
+            content.push_str(&format!(r#"<w:r><w:endnoteReference w:id="{id}"/></w:r>"#));
+        }
         if let Some(instruction) = &s.field {
             content.push_str(&run(" p"));
             content.push_str(&field(instruction, "1"));
         }
         body.push_str(&para(&ppr, &content));
     }
-    body.push_str(&sect("nextPage", 1));
+    body.push_str(&sect("nextPage", 1).replace(
+        "<w:sectPr>",
+        r#"<w:sectPr><w:headerReference w:type="default" r:id="rIdH"/>"#,
+    ));
     body
 }
 
-fn edit(rng: &mut Rng, specs: &mut Vec<Spec>) {
+fn edit(rng: &mut Rng, specs: &mut Vec<Spec>, extra: &mut Extra) {
     let k = usize::try_from(rng.below(u64::try_from(specs.len()).unwrap())).unwrap();
-    match rng.below(5) {
+    match rng.below(9) {
+        5 => specs[k].footnote = (specs[k].footnote.is_none()).then(|| 1 + rng.below(8)),
+        6 => specs[k].drawing = drawing(rng),
+        7 => specs[k].endnote = (specs[k].endnote.is_none()).then(|| 1 + rng.below(4)),
+        8 if rng.chance(30) => extra.header = 1 + rng.below(30),
         0 => specs[k].words = 1 + rng.below(80),
         1 => specs[k].keep_next = !specs[k].keep_next,
         2 => {
@@ -139,24 +216,37 @@ fn edit(rng: &mut Rng, specs: &mut Vec<Spec>) {
     }
 }
 
-fn check(seed: u64, versions: usize) {
+/// What a run laid out: pages with footnotes, with bands, beside drawings, and endnote
+/// paragraphs.
+#[derive(Default, Debug)]
+struct Seen {
+    notes: usize,
+    bands: usize,
+    wraps: usize,
+    endnotes: usize,
+}
+
+fn check(seed: u64, versions: usize) -> Seen {
+    let mut seen = Seen::default();
     let mut rng = Rng(seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1);
     let mut specs: Vec<Spec> = (0..40).map(|k| spec(&mut rng, k)).collect();
+    let mut extra = Extra::new(&mut rng);
     let settings = Some(
         r#"<w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/></w:compat>"#,
     );
     let settings = if seed.is_multiple_of(2) { settings } else { None };
     let mut kept_model = model();
     let mut kept = engine();
-    let first = open(&mut kept_model, &xml(&specs), settings);
+    let first = open_with(&mut kept_model, &xml(&specs), settings, &extra.parts());
     let mut previous = kept.lay_out(&mut kept_model, &first);
     for version in 0..versions {
-        edit(&mut rng, &mut specs);
+        edit(&mut rng, &mut specs, &mut extra);
         let body = xml(&specs);
-        let document = open(&mut kept_model, &body, settings);
+        let parts = extra.parts();
+        let document = open_with(&mut kept_model, &body, settings, &parts);
         let relaid = kept.relayout(&mut kept_model, &document, &previous);
         let mut fresh_model = model();
-        let fresh_document = open(&mut fresh_model, &body, settings);
+        let fresh_document = open_with(&mut fresh_model, &body, settings, &parts);
         let whole = engine().lay_out(&mut fresh_model, &fresh_document);
         if relaid.pagination != whole.pagination {
             let (a, b) = (&relaid.pagination, &whole.pagination);
@@ -195,22 +285,37 @@ fn check(seed: u64, versions: usize) {
             (whole.passes, whole.settled),
             "seed {seed} version {version}"
         );
+        let pages = &relaid.pagination.pages;
+        seen.notes += pages.iter().filter(|p| !p.notes.is_empty()).count();
+        seen.bands += pages.iter().filter(|p| !p.bands.is_empty()).count();
+        seen.wraps += pages.iter().filter(|p| !p.wraps.is_empty()).count();
+        seen.endnotes += relaid.roles.iter().filter(|r| r.is_some()).count();
         previous = relaid;
     }
+    seen
 }
 
 #[test]
 fn relayout_equals_full_layout() {
+    let mut seen = Seen::default();
     for seed in 1..=6 {
-        check(seed, 8);
+        let found = check(seed, 8);
+        seen.notes += found.notes;
+        seen.bands += found.bands;
+        seen.wraps += found.wraps;
+        seen.endnotes += found.endnotes;
     }
+    assert!(
+        seen.notes > 0 && seen.bands > 0 && seen.wraps > 0 && seen.endnotes > 0,
+        "the documents exercise notes and drawings: {seen:?}"
+    );
 }
 
 #[test]
 #[ignore = "many seeds: run at the end of a lane and nightly"]
 fn many_seeds() {
     for seed in 1..=300 {
-        check(seed, 12);
+        let _ = check(seed, 12);
     }
 }
 
@@ -222,6 +327,9 @@ fn an_edit_late_in_the_body_lays_out_few_pages() {
             let mut s = spec(&mut rng, k);
             s.section = None;
             s.field = None;
+            s.footnote = None;
+            s.endnote = None;
+            s.drawing = None;
             s
         })
         .collect();
