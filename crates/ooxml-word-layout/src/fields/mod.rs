@@ -45,9 +45,7 @@ pub type FieldValues = BTreeMap<FieldKey, String>;
 
 /// Every run of the body holding a page-number field.
 pub fn page_fields(document: &WordDocument) -> Vec<FieldKey> {
-    let __t17 = std::time::Instant::now();
     let (paragraphs, _) = body_paragraphs(&document.body);
-    eprintln!("PROF 17:paragraphs____body_paragraphs {:?}", __t17.elapsed());
     let mut out = Vec::new();
     for (block, paragraph) in paragraphs.iter().enumerate() {
         for (k, run) in paragraph.runs.iter().enumerate() {
@@ -306,22 +304,16 @@ pub fn field_values(document: &WordDocument, layout: &DocumentLayout, keys: &[Fi
     if keys.is_empty() {
         return out;
     }
-    let __t18 = std::time::Instant::now();
     let (paragraphs, _) = body_paragraphs(&document.body);
-    eprintln!("PROF 18:paragraphs____body_paragraphs {:?}", __t18.elapsed());
     let field_of = |(block, k): (usize, usize)| paragraphs.get(block)?.runs.get(k)?.field.clone();
     let refers = keys
         .iter()
         .any(|key| field_of(*key).is_some_and(|f| &*f.keyword == "PAGEREF"));
-    let __t19 = std::time::Instant::now();
     let targets: HashMap<String, (usize, usize)> = if refers { bookmarks(&paragraphs) } else { HashMap::new() };
-    eprintln!("PROF 19:targets_ashap {:?}", __t19.elapsed());
     // Only the paragraphs holding fields, and the bookmarks PAGEREF points at, are looked up.
     let mut asked: BTreeSet<usize> = keys.iter().map(|(block, _)| *block).collect();
     asked.extend(targets.values().map(|(block, _)| *block));
-    let __t20 = std::time::Instant::now();
     let pages = Pages::new(layout, Some(&asked));
-    eprintln!("PROF 20:pages__agesnew {:?}", __t20.elapsed());
     let mut section_pages: HashMap<usize, Option<i64>> = HashMap::new();
     let format_of = |section: usize| {
         layout
