@@ -4,7 +4,8 @@
 //! Owns: immutable versions published through a lock-free head ([`Store::snapshot`]); the
 //! transaction ([`Txn`]) with its typed read and write sets and its change set; the commit
 //! (validate, prepare on a snapshot, commit in a short critical section with conflict
-//! detection and redo, then a run under the commit lock after
+//! detection -- a change set disjoint from the commits since its snapshot is rebased past
+//! theirs ([`DocModel::rebase`]) -- and redo, then a run under the commit lock after
 //! [`StoreConfig::optimistic_tries`] conflicts); batches as one transaction and one history
 //! step ([`Batch`]); history (undo, redo, scoped undo that refuses entangled steps); version
 //! numbers and id sequences that are never given twice, also across a reopen ([`Counters`]).

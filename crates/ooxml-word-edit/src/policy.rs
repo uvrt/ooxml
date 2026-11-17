@@ -1,0 +1,90 @@
+//! Owns: [`RevisionPolicy`], whether an edit writes its primitives as they are or as
+//! tracked changes (design section 4, "Tracked changes are a strategy, not branches"), the
+//! [`Tracking`] they are written by, and [`Stamp`], one edit's revision records: their ids
+//! -- one above the largest annotation id in use in any story, as docx-agent allocates
+//! them -- and the attributes Word 16.106 writes (`revisions/stamp.py`).
+//!
+//! Must not: read the clock (a tracking's date is given), or decide what an edit changes.
+
+use crate::names::{W, W16DU};
+use crate::work::{Id, Work};
+
+/// Who makes tracked changes, and when (ISO 8601, minutes, UTC with a `Z`, as Word writes a
+/// revision's date).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Tracking {
+    /// The author every record carries.
+    pub author: String,
+    /// The date every record carries, `w:date` and `w16du:dateUtc` alike.
+    pub date: String,
+}
+
+/// How an edit's primitives are written.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum RevisionPolicy {
+    /// As they are.
+    #[default]
+    Untracked,
+    /// As tracked changes by this author at this date.
+    Tracked(Tracking),
+}
+
+/// One edit's revision records: the ids it gives and the attributes it writes.
+#[derive(Debug)]
+pub(crate) struct Stamp {
+    tracking: Tracking,
+    next: i64,
+    /// Whether a record carries `w16du:dateUtc` (its part's root then declares it).
+    pub(crate) dated: bool,
+}
+
+impl Stamp {
+    /// Records by `tracking`, numbered from `next` (one above the largest annotation id).
+    pub(crate) fn new(tracking: Tracking, next: i64) -> Stamp {
+        Stamp {
+            tracking,
+            next,
+            dated: false,
+        }
+    }
+
+    /// The next revision id.
+    pub(crate) fn next_id(&mut self) -> String {
+        let value = self.next;
+        self.next += 1;
+        value.to_string()
+    }
+
+    /// Whether ids were given.
+    pub(crate) fn gave(&self, first: i64) -> bool {
+        self.next != first
+    }
+
+    /// The author.
+    pub(crate) fn author(&self) -> &str {
+        &self.tracking.author
+    }
+
+    /// A revision record (`w:ins`, `w:del`), detached: its id, author, date and UTC date.
+    pub(crate) fn make(&mut self, work: &mut Work, local: &str) -> Id {
+        let element = work.new_element(work.qname(W, local, "w"));
+        let id = self.next_id();
+        for (name, value) in [
+            ("id", id.as_str()),
+            ("author", &self.tracking.author),
+            ("date", &self.tracking.date),
+        ] {
+            let name = work.qname(W, name, "w");
+            work.set(element, name, value);
+        }
+        let utc = work.qname(W16DU, "dateUtc", "w16du");
+        work.set(element, utc, &self.tracking.date);
+        self.dated = true;
+        element
+    }
+
+    /// Whether a revision record is this edit's author's.
+    pub(crate) fn same(&self, work: &Work, element: Id) -> bool {
+        work.get(element, Some(W), "author") == Some(self.tracking.author.as_str())
+    }
+}

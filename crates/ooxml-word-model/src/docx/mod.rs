@@ -65,10 +65,16 @@ pub struct StoryPart {
 
 impl StoryPart {
     /// The part `part` of the story `story`, whose tree is `tree`; `earlier`, the same
-    /// part in a version before.
+    /// part of the same story in a version before (its ids and facts are taken for every
+    /// block the two share).
     #[must_use]
     pub fn new(part: String, story: String, tree: Tree, earlier: Option<&StoryPart>) -> StoryPart {
-        let ids = PartIds::new(&story, tree.root());
+        // a part changed by a path copy (or handed over and shared again with the version
+        // before): only what changed is walked again
+        let ids = match earlier {
+            Some(earlier) => earlier.ids.after(earlier.root(), tree.root()),
+            None => PartIds::new(&story, tree.root()),
+        };
         StoryPart {
             part,
             story,
@@ -139,7 +145,9 @@ impl Docx {
                 continue;
             }
             let story = story_name(&main, &part);
-            let earlier = before.and_then(|b| b.parts.iter().find(|p| p.part == part));
+            let earlier = before
+                .and_then(|b| b.parts.iter().find(|p| p.part == part))
+                .filter(|p| p.story == story);
             parts.push(Arc::new(StoryPart::new(part, story, tree, earlier.map(|e| &**e))));
         }
         let (styles, style_order) = read_styles(package, &main)?;

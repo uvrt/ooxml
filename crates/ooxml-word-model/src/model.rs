@@ -121,8 +121,8 @@ pub enum BodyValue {
     Str(Text),
 }
 
-/// What a drawing shows, as the file says it (DrawingML), its painting left to the
-/// DrawingML model (phase P3).
+/// What a drawing shows, as the file says it (DrawingML); how it is painted is read from
+/// its [`Graphic::source`] by its painter.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Graphic {
     /// `picture`, `shape`, `group`, `chart`, `diagram` or `other`.
@@ -155,6 +155,11 @@ pub struct Graphic {
     pub uri: Option<Text>,
     /// The structural path of its content.
     pub path: Text,
+    /// The DrawingML element it was read from (`pic:pic`, `wps:wsp`, `wpg:wgp`,
+    /// `wpg:grpSp`), for its painter to read how it is painted (its geometry, fill,
+    /// outline, effects, style references and crop); `None` for a chart, a diagram, VML
+    /// or anything else.
+    pub source: Option<ooxml_xml::Element>,
 }
 
 /// One run as the layout reads it.

@@ -33,6 +33,9 @@ sample), the time Python's garbage collector ran (``gc.callbacks``: per sample, 
 generation, the longest pause), and per sample the sizes of what the session keeps beside
 the document (owners, refs by version, the call log, the changes kept, the history).
 
+``--figures``: the report with a chart, a picture and a floating shape in each chapter
+(``tracked_report.py --figures``).
+
 ``--views``: an application's live view beside them (:mod:`docx_agent.liveview`): for each
 version committed, ``view`` since the last token and ``page_svg`` of up to ``--view-pages``
 of the pages it changed.  ``--close``: the document closed at the end (the bench's own references to it dropped
@@ -315,6 +318,8 @@ def main() -> None:
     ap.add_argument("--add-fields", action="store_true", help="--mix full: add the fields through the tools first")
     ap.add_argument("--python-reads", action="store_true",
                     help="answer the reading tools by the Python path (before lane P1c), not the Rust session")
+    ap.add_argument("--figures", action="store_true", help="the report with charts, pictures and shapes "
+                    "(tracked_report.py --figures)")
     args = ap.parse_args()
     if args.python_reads:
         from docx_agent.rust import reads as _reads
@@ -328,7 +333,7 @@ def main() -> None:
 
     from docx_agent.tools import FORMAT, GROUPS, TOOLS
 
-    data = Path(args.doc).read_bytes() if args.doc else build(fields=args.mix == "full")[0]
+    data = Path(args.doc).read_bytes() if args.doc else build(fields=args.mix == "full", figures=args.figures)[0]
     out: dict = {"args": vars(args), "python": sys.version, "started": time.time(), "calls": [], "samples": [],
                  "by_edit": []}
     calls, lock = out["calls"], threading.Lock()

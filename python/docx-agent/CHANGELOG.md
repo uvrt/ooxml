@@ -34,6 +34,18 @@ writers' Python edits. The answers are today's (`tests/test_rust_reads_on.py`).
   `ooxml_core.Session` (`None`: by the Python path).
 - `RustTools.dispatch` reads `ooxml_core.Session.call`'s new third item.
 
+## 0.1.137 -- unreleased
+
+Phase PL/P3, lane L4c: a document's drawings painted in Rust. A version holding floating or
+inline pictures, shapes, groups or charts is laid out and drawn by the Rust engine (it fell
+back to docx2svg's Python layout before, reason `drawing`); its pages' SVG and its layout
+warnings are docx2svg's, byte for byte. Text boxes, SmartArt and VML shapes still fall back,
+each under a reason of its own (`text box`, `SmartArt`, `VML shape`).
+
+- `tools/tracked_report.py --figures` and `tools/tracked_report_bench.py --figures`: the
+  made-up report with a bar chart, a picture and a shape floating behind the heading in each
+  chapter.
+
 ## 0.1.136 -- unreleased
 
 Phase PL, lane L4: the Word layout in Rust. Every layout docx-agent makes of a version -- a

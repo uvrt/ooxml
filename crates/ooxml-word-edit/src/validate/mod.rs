@@ -1,0 +1,361 @@
+//! Owns: validation per change (design sections 5 and 7): docx-agent's problems of a
+//! version ([`problems`], its `validate.py` `check`), found from facts memoised by content
+//! -- each block's ([`ElementFacts`], one walk of the block, kept while the block is
+//! unchanged) and each part's (kept while the part is unchanged) -- so a new version reads
+//! only its changed blocks; the delta against a baseline as the save gate compares it
+//! ([`Delta`]); and the largest annotation id in use ([`annotation_ceiling`]), which
+//! tracked edits number their revisions from.
+//!
+//! The whole-document rules are folded from the memoised facts of every block: no block's
+//! XML is read again, and the fold is pointer and counter work. The full check without
+//! memos ([`full_problems`]) is the test oracle.
+//!
+//! Must not: change a document, or hold anything but caches that belong to the document.
+
+mod facts;
+mod grid;
+mod order;
+mod rules;
+
+pub(crate) use facts::ElementFacts;
+
+use crate::doc::WordDoc;
+use crate::Result;
+use ooxml_derive::{CacheBudget, Memo, Weigh};
+use ooxml_word_model::ids::W;
+use ooxml_xml::{Element, Node, Tree};
+use order::Orders;
+use rules::{body_problem, Inputs, PartFacts};
+use std::fmt;
+use std::sync::{Arc, Mutex, PoisonError};
+
+/// A validation problem, as docx-agent reports it.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Problem {
+    /// What is wrong (`paraid-repeated`, `bookmark-unpaired`...).
+    pub code: String,
+    /// The part it is in.
+    pub part: String,
+    /// The value or place it concerns.
+    pub detail: String,
+}
+
+impl fmt::Display for Problem {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "[{}] {}: {}", self.code, self.part, self.detail)
+    }
+}
+
+/// The problems of a version against a baseline (the save gate's comparison).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Delta {
+    /// Each problem now that the baseline lacks, in order.
+    pub new: Vec<String>,
+    /// Each baseline problem gone now.
+    pub fixed: Vec<String>,
+    /// How many problems the baseline has.
+    pub baseline: usize,
+}
+
+impl Delta {
+    /// `now` against `baseline`, compared as `(code, part, text)`.
+    #[must_use]
+    pub fn of(baseline: &[Problem], now: &[Problem]) -> Delta {
+        let before: std::collections::HashSet<&Problem> = baseline.iter().collect();
+        let after: std::collections::HashSet<&Problem> = now.iter().collect();
+        Delta {
+            new: now
+                .iter()
+                .filter(|p| !before.contains(p))
+                .map(ToString::to_string)
+                .collect(),
+            fixed: baseline
+                .iter()
+                .filter(|p| !after.contains(p))
+                .map(ToString::to_string)
+                .collect(),
+            baseline: baseline.len(),
+        }
+    }
+}
+
+/// A memo entry: the element (held, so its address is not given to another) and its facts.
+struct Held<T> {
+    element: Arc<Element>,
+    facts: Arc<T>,
+}
+
+impl<T> Clone for Held<T> {
+    fn clone(&self) -> Self {
+        Held {
+            element: Arc::clone(&self.element),
+            facts: Arc::clone(&self.facts),
+        }
+    }
+}
+
+impl Weigh for Held<ElementFacts> {
+    fn weight(&self) -> usize {
+        std::mem::size_of::<ElementFacts>() + 32 * (self.facts.para_ids.len() + self.facts.r_values.len() + 4)
+    }
+}
+
+impl Weigh for Held<PartFacts> {
+    fn weight(&self) -> usize {
+        std::mem::size_of::<PartFacts>() + 8 * self.facts.blocks.len()
+    }
+}
+
+/// The facts of one document's blocks and parts, memoised by content (an element's
+/// identity: green nodes are immutable).
+pub struct Facts {
+    orders: Orders,
+    blocks: Mutex<Memo<usize, Held<ElementFacts>>>,
+    parts: Mutex<Memo<(usize, String), Held<PartFacts>>>,
+    /// Each part's latest facts read: the next version's are made from them.
+    latest: Mutex<std::collections::HashMap<String, Arc<PartFacts>>>,
+}
+
+impl fmt::Debug for Facts {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Facts").finish_non_exhaustive()
+    }
+}
+
+/// How a part is walked: the main part by its body's children, a story part by its root's,
+/// any other part whole.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    Main,
+    Story,
+    Other,
+}
+
+impl Facts {
+    /// Facts kept within `budget`.
+    #[must_use]
+    pub fn new(budget: Arc<dyn CacheBudget>) -> Facts {
+        Facts {
+            orders: Orders::load(),
+            blocks: Mutex::new(Memo::new(Arc::clone(&budget))),
+            parts: Mutex::new(Memo::new(budget)),
+            latest: Mutex::new(std::collections::HashMap::new()),
+        }
+    }
+
+    /// The facts of one element (a block), from the memo when it is unchanged.
+    pub(crate) fn element(&self, element: &Arc<Element>) -> Arc<ElementFacts> {
+        let key = Arc::as_ptr(element) as usize;
+        let held = self.blocks.lock().unwrap_or_else(PoisonError::into_inner).get(&key);
+        if let Some(held) = held.filter(|h| Arc::ptr_eq(&h.element, element)) {
+            return held.facts;
+        }
+        let facts = Arc::new(ElementFacts::of(element, &self.orders));
+        let held = Held {
+            element: Arc::clone(element),
+            facts: Arc::clone(&facts),
+        };
+        self.blocks
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(key, held);
+        facts
+    }
+
+    fn part(&self, name: &str, tree: &Tree, kind: Kind) -> Arc<PartFacts> {
+        let root = tree.root();
+        let key = (Arc::as_ptr(root) as usize, name.to_owned());
+        let held = self.parts.lock().unwrap_or_else(PoisonError::into_inner).get(&key);
+        if let Some(held) = held.filter(|h| Arc::ptr_eq(&h.element, root)) {
+            return held.facts;
+        }
+        let previous = self
+            .latest
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(name)
+            .cloned();
+        let facts = Arc::new(self.read_part(root, kind, previous.as_deref()));
+        self.latest
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(name.to_owned(), Arc::clone(&facts));
+        let held = Held {
+            element: Arc::clone(root),
+            facts: Arc::clone(&facts),
+        };
+        self.parts
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(key, held);
+        facts
+    }
+
+    fn read_part(&self, root: &Arc<Element>, kind: Kind, previous: Option<&PartFacts>) -> PartFacts {
+        let body = (kind == Kind::Main).then(|| root.find(Some(W), "body")).flatten();
+        let holder: Option<&Arc<Element>> = match kind {
+            Kind::Main => body,
+            Kind::Story => Some(root),
+            Kind::Other => None,
+        };
+        let elements: Vec<Arc<Element>> = match holder {
+            Some(holder) => holder.children().iter().filter_map(Node::as_element).cloned().collect(),
+            None => vec![Arc::clone(root)],
+        };
+        // a block at the same place as in the previous reading, the same allocation, has
+        // its facts; only the others are looked up (or read)
+        let blocks = elements
+            .iter()
+            .enumerate()
+            .map(|(k, block)| {
+                previous
+                    .and_then(|p| p.elements.get(k).filter(|e| Arc::ptr_eq(e, block)).and(p.blocks.get(k)))
+                    .map_or_else(|| self.element(block), Arc::clone)
+            })
+            .collect();
+        let rest = match kind {
+            Kind::Other => ElementFacts::default(),
+            Kind::Story => ElementFacts::of_rest(root, None, &self.orders),
+            Kind::Main => ElementFacts::of_rest(root, body.map(|b| &**b), &self.orders),
+        };
+        PartFacts {
+            blocks,
+            elements,
+            rest,
+            root: Arc::clone(root),
+            body: (kind == Kind::Main).then(|| body_problem(root)).flatten(),
+        }
+    }
+}
+
+/// A version's parts as validation reads them.
+struct Read {
+    main: String,
+    stories: Vec<String>,
+    parts: Vec<(String, std::result::Result<Arc<PartFacts>, String>)>,
+}
+
+/// Every XML part of `doc` read for validation: its facts, or why it is not XML.
+fn read_parts(doc: &WordDoc, facts: Option<&Facts>) -> Result<Read> {
+    let docx = doc.docx()?;
+    let stories: Vec<String> = docx.parts.iter().map(|p| p.part.clone()).collect();
+    let fresh;
+    let facts = match facts {
+        Some(f) => f,
+        None => {
+            fresh = Facts::new(Arc::new(Unlimited));
+            &fresh
+        }
+    };
+    let mut parts = Vec::new();
+    for name in doc.package().part_names() {
+        if !(name.ends_with(".xml") || name.ends_with(".rels")) {
+            continue;
+        }
+        let kind = if name == docx.main {
+            Kind::Main
+        } else if stories.contains(&name) {
+            Kind::Story
+        } else {
+            Kind::Other
+        };
+        let found = match doc.package().tree(&name) {
+            Ok(Some(tree)) => Ok(facts.part(&name, &tree, kind)),
+            Ok(None) => continue,
+            Err(error) => Err(error.to_string()),
+        };
+        parts.push((name, found));
+    }
+    Ok(Read {
+        main: docx.main.clone(),
+        stories,
+        parts,
+    })
+}
+
+/// The problems of `doc`, sorted, from its memoised facts.
+///
+/// # Errors
+/// When the document cannot be read as a Word document.
+pub fn problems(doc: &WordDoc) -> Result<Vec<Problem>> {
+    let read = read_parts(doc, Some(&doc.shared().facts))?;
+    Ok(rules::problems(&Inputs {
+        package: doc.package(),
+        main: &read.main,
+        stories: &read.stories,
+        parts: &read.parts,
+    }))
+}
+
+/// The problems of `doc` found with no memo at all: the oracle [`problems`] is tested
+/// against.
+///
+/// # Errors
+/// As [`problems`].
+pub fn full_problems(doc: &WordDoc) -> Result<Vec<Problem>> {
+    let read = read_parts(doc, None)?;
+    Ok(rules::problems(&Inputs {
+        package: doc.package(),
+        main: &read.main,
+        stories: &read.stories,
+        parts: &read.parts,
+    }))
+}
+
+/// Whether a story part of `doc` has a live drawing without its anchorId and editId.
+///
+/// # Errors
+/// When the document cannot be read as a Word document.
+pub(crate) fn unstamped_drawings(doc: &WordDoc, part: &str) -> Result<bool> {
+    let docx = doc.docx()?;
+    let Some(story) = docx.part(part) else { return Ok(false) };
+    let kind = if story.part == docx.main {
+        Kind::Main
+    } else {
+        Kind::Story
+    };
+    let facts = doc.shared().facts.part(&story.part, &story.tree, kind);
+    Ok(facts
+        .blocks
+        .iter()
+        .map(|b| &**b)
+        .chain(std::iter::once(&facts.rest))
+        .any(|f| f.unstamped_drawings > 0))
+}
+
+/// The largest annotation id in use in any story of `doc`, `-1` when none is.
+///
+/// # Errors
+/// When the document cannot be read as a Word document.
+pub(crate) fn annotation_ceiling(doc: &WordDoc) -> Result<i64> {
+    let docx = doc.docx()?;
+    let facts = &doc.shared().facts;
+    let mut ceiling = -1;
+    for story in &docx.parts {
+        let kind = if story.part == docx.main {
+            Kind::Main
+        } else {
+            Kind::Story
+        };
+        let part = facts.part(&story.part, &story.tree, kind);
+        for f in part.blocks.iter().map(|b| &**b).chain(std::iter::once(&part.rest)) {
+            if let Some(max) = f.annotation_max {
+                ceiling = ceiling.max(max);
+            }
+        }
+    }
+    Ok(ceiling)
+}
+
+/// A budget with no limit, for the oracle's memo-free check.
+struct Unlimited;
+
+impl CacheBudget for Unlimited {
+    fn reserve(&self, _bytes: usize) -> bool {
+        true
+    }
+    fn release(&self, _bytes: usize) {}
+    fn used(&self) -> usize {
+        0
+    }
+}

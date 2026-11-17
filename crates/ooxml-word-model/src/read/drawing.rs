@@ -6,7 +6,7 @@
 //! DrawingML one.
 //!
 //! Must not: read how a shape is painted -- geometry, fill, outline, effects, a picture's
-//! crop -- which is the DrawingML model's (phase P3).
+//! crop -- which its painter reads from the element kept as the graphic's `source`.
 
 use super::fields::Fields;
 use super::Reader;
@@ -261,6 +261,9 @@ impl Reader<'_> {
             "wgp" | "grpSp" => self.group(element, path, fields),
             _ => return None,
         };
+        if matches!(local(element), "pic" | "wsp" | "wgp" | "grpSp") {
+            g.source = Some(element.clone());
+        }
         g.path = text(path);
         Some(g)
     }

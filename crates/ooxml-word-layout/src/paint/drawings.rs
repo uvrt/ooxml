@@ -16,9 +16,10 @@ use crate::paragraph::MeasuredParagraph;
 use crate::px::Px;
 use ooxml_base::Q;
 use ooxml_text::{Geometry, Piece, Units};
-use ooxml_word_model::model::{Anchor, Paragraph};
+use ooxml_word_model::model::{Anchor, Graphic, Paragraph};
 use ooxml_word_model::value::{Text, Value};
 use ooxml_word_model::ResolvedParagraph;
+use std::sync::Arc;
 
 /// Which layer a drawing paints in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,6 +57,10 @@ pub struct DrawingSlot {
     pub order: (i64, usize),
     /// A header's or footer's drawing: the story's kind and part.
     pub story: Option<(&'static str, Text)>,
+    /// What it shows, as the model read it (`None`: an anchor whose graphic was not read).
+    pub graphic: Option<Arc<Graphic>>,
+    /// Whether text may not overlap it (`allowOverlap="0"`): Word moves it clear.
+    pub no_overlap: bool,
 }
 
 /// The pen x, layout units from the column's left, of the character a drawing anchored
@@ -198,6 +203,8 @@ pub(super) fn line_floats(job: &FloatJob<'_>, count: &mut usize) -> (Vec<Drawing
             layer: if a.anchor.behind { Layer::Behind } else { Layer::Front },
             order: (a.anchor.relative_height, *count),
             story: None,
+            graphic: a.anchor.graphic.clone(),
+            no_overlap: !a.anchor.allow_overlap,
         });
     }
     (out, missed)

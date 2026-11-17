@@ -23,6 +23,7 @@ pub struct LaidVersion {
     pub(crate) layout: DocumentLayout,
     pub(crate) facts: OnceLock<LayoutFacts>,
     pub(crate) pictures: Option<PackagePictures>,
+    pub(crate) drawings: Option<crate::drawings::WordDrawings>,
     pub(crate) glyphs: Arc<WordGlyphs>,
     pub(crate) names: Arc<dyn FaceNames>,
     pub(crate) relaid: bool,

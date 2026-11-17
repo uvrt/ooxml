@@ -14,7 +14,6 @@ use ooxml_fonts::{Folder, Location, WordFontOptions};
 use ooxml_word_layout::facts::BlockKeeps;
 use ooxml_word_layout::fields::update::PageNumbers;
 use ooxml_word_layout::paint::drawings::{DrawingSlot, Layer};
-use ooxml_word_layout::paint::svg::Drawings;
 use ooxml_word_layout::paint::{Drawn, GlyphSize, PaintedLine, Rule, Span};
 use ooxml_word_layout::px::Px;
 use ooxml_word_pages::{DiskFonts, EngineOptions, FontSetup, LaidVersion, PageEngine, PageView};
@@ -449,19 +448,16 @@ impl PyLaidPages {
     }
 
     /// Page `page` (0-based) as SVG, byte for byte docx2svg's where the list beside it is
-    /// empty; else it names what is not drawn as docx2svg draws it. `painter`, called with
-    /// each drawing's slot (a dict), answers its paint as lines of markup, or `None`.
-    #[pyo3(signature = (page, painter = None))]
-    fn svg(&self, py: Python<'_>, page: usize, painter: Option<Py<PyAny>>) -> PyResult<(String, Vec<String>)> {
+    /// empty, its drawings painted in Rust; else it names what is not drawn as docx2svg
+    /// draws it.
+    fn svg(&self, py: Python<'_>, page: usize) -> PyResult<(String, Vec<String>)> {
         let (version, engine) = (&self.version, &self.engine);
-        let painter = Painter(painter);
-        py.detach(|| lock(engine).page_svg(version, page, &painter))
-            .ok_or_else(|| {
-                PyRuntimeError::new_err(format!(
-                    "page {page} not painted (0-based, of {})",
-                    version.page_count()
-                ))
-            })
+        py.detach(|| lock(engine).page_svg(version, page)).ok_or_else(|| {
+            PyRuntimeError::new_err(format!(
+                "page {page} not painted (0-based, of {})",
+                version.page_count()
+            ))
+        })
     }
 }
 
@@ -530,20 +526,6 @@ fn page_row(info: &ooxml_word_layout::paginate::PageInfo, frame: &ooxml_word_lay
             ),
         ),
     )
-}
-
-/// Python's painter of drawings, called with the interpreter lock taken back.
-struct Painter(Option<Py<PyAny>>);
-
-impl Drawings for Painter {
-    fn drawing(&self, slot: &DrawingSlot) -> Option<Vec<String>> {
-        let painter = self.0.as_ref()?;
-        Python::attach(|py| {
-            let slot = slot_dict(py, slot).ok()?;
-            let answer = painter.call1(py, (slot,)).ok()?;
-            answer.extract::<Option<Vec<String>>>(py).ok().flatten()
-        })
-    }
 }
 
 fn slot_dict<'py>(py: Python<'py>, slot: &DrawingSlot) -> PyResult<Bound<'py, PyDict>> {

@@ -12,6 +12,7 @@
 //! Must not: be used by two callers at once (its owner locks it), or keep more than the
 //! last version laid out.
 
+use crate::drawings::WordDrawings;
 use crate::error::{Fallback, PagesError};
 use crate::fonts::{DocumentFonts, FontSetup};
 use crate::pictures::PackagePictures;
@@ -20,7 +21,6 @@ use crate::version::{LaidVersion, PageView};
 use ooxml_base::{DigestKey, Limits, Locale};
 use ooxml_derive::CacheBudget;
 use ooxml_opc::Package;
-use ooxml_word_layout::paint::drawings::DrawingSlot;
 use ooxml_word_layout::paint::svg::{page_svg, Drawings, Pictures, SvgContext};
 use ooxml_word_layout::paint::{paint_page, GlyphSize, PagePaint, PaintContext};
 use ooxml_word_layout::tables::WordTables;
@@ -299,7 +299,7 @@ impl PageEngine {
             generation.layout = new_layout(&generation.fonts, &self.locale, &self.budget);
             cause = Some(context_cause(&self.changed));
         }
-        if let Some(why) = support::unsupported(&document) {
+        if let Some(why) = unsupported(&document, &self.locale) {
             generation.last = None;
             self.stats.fallbacks += 1;
             return Ok(Err(why));
@@ -326,13 +326,25 @@ impl PageEngine {
         } else {
             self.stats.full += 1;
         }
-        let said = crate::warnings::said(&mut generation.model, &laid);
+        let pictures = PackagePictures::new(package.clone());
+        let drawings = pictures.clone().map(|p| WordDrawings::new(&document, p));
+        let said = {
+            let mut painter = DrawingWarnings {
+                layout: &mut generation.layout,
+                fonts: &generation.fonts,
+                drawings: drawings.as_ref(),
+                glyph_size: self.glyph_size,
+                decimal: self.decimal,
+            };
+            crate::warnings::said(&mut generation.model, &laid, &mut painter)
+        };
         let version = Arc::new(LaidVersion {
+            drawings,
             said,
             relaid_cause: cause,
             layout: laid,
             facts: std::sync::OnceLock::new(),
-            pictures: PackagePictures::new(package.clone()),
+            pictures,
             glyphs: Arc::clone(&generation.fonts.glyphs),
             names: Arc::clone(&generation.fonts.names),
             relaid,
@@ -478,30 +490,24 @@ impl PageEngine {
     }
 
     /// Page `page` of `version` as SVG, byte for byte docx2svg's where nothing is listed
-    /// beside it; the drawings filled by `drawings`. Beside it, what is not drawn as
-    /// docx2svg draws it (empty where nothing): the version's reason, the page's own, and
-    /// each drawing `drawings` left empty.
-    pub fn page_svg(
-        &mut self,
-        version: &LaidVersion,
-        page: usize,
-        drawings: &dyn Drawings,
-    ) -> Option<(String, Vec<String>)> {
+    /// beside it; its drawings painted by the version's painter. Beside it, what is not
+    /// drawn as docx2svg draws it (empty where nothing): the page's own reasons.
+    pub fn page_svg(&mut self, version: &LaidVersion, page: usize) -> Option<(String, Vec<String>)> {
         let paint = self.paint(version, page)?;
         let mut missing: Vec<String> = paint.unpainted.iter().map(|_| support::UNPAINTED.to_owned()).collect();
-        let filled = Filled(
-            paint
-                .drawings
-                .iter()
-                .map(|slot| (slot.clone(), drawings.drawing(slot)))
-                .collect(),
-        );
-        if filled.0.iter().any(|(_, drawn)| drawn.is_none()) {
-            missing.push(support::DRAWINGS.to_owned());
-        }
         let none = ooxml_word_layout::paint::svg::NoPictures;
+        let no_drawings = ooxml_word_layout::paint::svg::NoDrawings;
+        let drawings: &dyn Drawings = match &version.drawings {
+            Some(d) => d,
+            None => {
+                if !paint.drawings.is_empty() {
+                    missing.push(support::DRAWINGS.to_owned());
+                }
+                &no_drawings
+            }
+        };
         let cx = SvgContext {
-            drawings: &filled,
+            drawings,
             names: version.names.as_ref(),
             pictures: version
                 .pictures
@@ -517,18 +523,6 @@ impl PageEngine {
 fn new_layout(fonts: &DocumentFonts, locale: &Locale, budget: &Arc<dyn CacheBudget>) -> WordLayout {
     let faces: Arc<dyn ooxml_word_layout::Faces> = Arc::clone(&fonts.glyphs) as Arc<dyn ooxml_word_layout::Faces>;
     WordLayout::new(faces, Arc::new(WordTables), locale.clone(), budget, KEY)
-}
-
-/// A page's drawings as their painters filled them, asked once each.
-struct Filled(Vec<(DrawingSlot, Option<Vec<String>>)>);
-
-impl Drawings for Filled {
-    fn drawing(&self, slot: &DrawingSlot) -> Option<Vec<String>> {
-        self.0
-            .iter()
-            .find(|(s, _)| s == slot)
-            .and_then(|(_, drawn)| drawn.clone())
-    }
 }
 
 /// Why a version was laid out whole although a version before was laid out
@@ -638,4 +632,82 @@ fn whole_cause(
         });
     }
     None
+}
+
+/// What a version's drawings say, painted page by page as its warnings are gathered
+/// (docx2svg says them as it draws them, laying out).
+struct DrawingWarnings<'a> {
+    layout: &'a mut WordLayout,
+    fonts: &'a DocumentFonts,
+    drawings: Option<&'a WordDrawings>,
+    glyph_size: GlyphSize,
+    decimal: char,
+}
+
+impl crate::warnings::PageDrawings for DrawingWarnings<'_> {
+    fn said(
+        &mut self,
+        model: &mut Model,
+        laid: &ooxml_word_layout::DocumentLayout,
+        page: usize,
+    ) -> Vec<crate::warnings::LayoutWarning> {
+        let Some(drawings) = self.drawings else {
+            return Vec::new();
+        };
+        let parts = self.layout.page_parts(model, laid, page);
+        let cx = PaintContext {
+            faces: self.fonts.glyphs.as_ref(),
+            names: self.fonts.names.as_ref(),
+            glyph_size: self.glyph_size,
+            decimal: self.decimal,
+        };
+        let Some(paint) = paint_page(laid, model, page, &parts, &cx) else {
+            return Vec::new();
+        };
+        let number = Some(page + 1);
+        let mut out = Vec::new();
+        for path in &paint.unplaced {
+            out.push(crate::warnings::LayoutWarning {
+                code: "drawing-position-unknown".into(),
+                message: format!(
+                    "a floating drawing ({path}) is positioned against a frame that is not modelled: it is not drawn"
+                ),
+                page: number,
+            });
+        }
+        let mut defs = ooxml_word_layout::paint::svg::PageDefs::default();
+        for slot in &paint.drawings {
+            if slot.no_overlap {
+                out.push(crate::warnings::LayoutWarning {
+                    code: "drawing-overlap-not-modelled".into(),
+                    message: "a floating drawing that may not overlap another (allowOverlap=\"0\") is drawn where it \
+                              is positioned; Word moves it clear of the drawings before it"
+                        .into(),
+                    page: number,
+                });
+            }
+            for (code, message) in drawings.paint(slot, &mut defs).warnings {
+                out.push(crate::warnings::LayoutWarning {
+                    code,
+                    message,
+                    page: number,
+                });
+            }
+        }
+        out
+    }
+}
+
+/// Why `document` cannot be laid out by the engine as docx2svg lays it out: what the layout
+/// does not take yet, or a chart in a locale other than en-US.
+fn unsupported(document: &ooxml_word_model::WordDocument, locale: &Locale) -> Option<Fallback> {
+    support::unsupported(document).or_else(|| {
+        (locale.tag() != "en-US")
+            .then(|| support::first_chart(document))
+            .flatten()
+            .map(|at| Fallback {
+                reason: support::CHART_LOCALE,
+                at,
+            })
+    })
 }
