@@ -88,7 +88,17 @@ example `pip install ./python/ooxml-common ./python/ooxml-edit ./python/docx2svg
   free-threaded legs are not required.
 - Rust (`.github/workflows/rust.yml`): fmt, clippy, tests, the differential tests and the
   wheels, when a change touches the workspace, ooxml-core or the packages it is compared
-  with; gate job `required (rust)`.
+  with; gate job `required (rust)`. The architecture's crates add jobs that run on a pull
+  request only when it changes their own paths (`tools/ci.py`, `RUST_JOBS`), and on main,
+  nightly and manual runs: `loom` (ooxml-store's commit path), `oracles`
+  (`tools/rust_oracles.py`: the XML writer and the package save against ooxml-edit),
+  `word-model` (the Word model against docx2svg, on the repository's documents and those
+  docx2svg's `tools/make_*.py` make) and `cargo-deny` (`deny.toml`: the licences
+  `DEPENDENCIES.md` allows), all under `required (rust)`; and `fuzz` (the three targets in
+  `fuzz/`, 5 minutes each, nightly and manual runs, not on a push to main), which is not
+  required. ooxml-oracle's `text-diff` (the text engine against docx2svg's records) needs
+  Word's own fonts, so it is not in CI: it stays a local gate for changes to ooxml-fonts and
+  ooxml-text.
 - Releases (`.github/workflows/release.yml`): pushing a date tag builds and checks every
   distribution, creates the GitHub Release and deploys the package index of every release
   to GitHub Pages (`tools/simple_index.py`, tests `tools/test_simple_index.py`); a manual

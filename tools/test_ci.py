@@ -83,5 +83,72 @@ class PlanTest(unittest.TestCase):
                 self.assertEqual(leg["python"], ci._pythons(leg["package"])[-1])
 
 
+def _workspace_deps(crate: str) -> set[str]:
+    """``crate`` and the architecture's crates it depends on, transitively (Cargo.toml)."""
+    import tomllib
+
+    found, todo = set(), [crate]
+    while todo:
+        name = todo.pop()
+        if name in found:
+            continue
+        found.add(name)
+        manifest = tomllib.loads((ci.ROOT / "crates" / name / "Cargo.toml").read_text())
+        for table in ("dependencies", "dev-dependencies", "build-dependencies"):
+            todo += [dep for dep in manifest.get(table, {}) if (ci.ROOT / "crates" / dep).is_dir()]
+    return found
+
+
+class RustPlanTest(unittest.TestCase):
+    def test_rust_prefixes(self) -> None:
+        for path in ("clippy.toml", "deny.toml", "DEPENDENCIES.md", "fuzz/fuzz_targets/zip_read.rs",
+                     "xtask/src/codegen.rs", "crates/ooxml-store/src/lib.rs"):
+            out = _plan("pull_request", [path])
+            self.assertIs(out["rust"], True, path)
+        self.assertIs(_plan("pull_request", ["docs/architecture/README.md"])["rust"], False)
+        # The Python module is not built from these: no package suite runs.
+        self.assertEqual(ci.affected(["fuzz/fuzz_targets/zip_read.rs", "xtask/src/codegen.rs", "clippy.toml",
+                                      "DEPENDENCIES.md", "deny.toml", "rustfmt.toml"]), [])
+        self.assertEqual(ci.affected(["crates/ooxml-store/src/lib.rs"]), ["docx-agent", "xlsx-agent"])
+
+    def _jobs(self, event: str, changed: list[str] | None = None) -> set[str]:
+        out = _plan(event, changed)
+        return {job for job in ci.RUST_JOBS if out[f"rust_{job}"]}
+
+    def test_rust_jobs_follow_their_paths(self) -> None:
+        cases = {
+            "python/pptx-agent/src/pptx_agent/x.py": set(),
+            "crates/word/src/lib.rs": set(),
+            "fuzz/fuzz_targets/opc_open.rs": {"fuzz"},
+            "fuzz/Cargo.toml": {"fuzz", "deny"},
+            "crates/ooxml-store/src/lib.rs": {"loom"},
+            "crates/ooxml-store/Cargo.toml": {"loom", "deny"},
+            "crates/ooxml-opc/src/lib.rs": {"fuzz", "oracles", "word_model"},
+            "crates/ooxml-text/src/lib.rs": {"word_model"},
+            "crates/ooxml-oracle/python/word_model_diff.py": {"word_model"},
+            "xtask/src/codegen.rs": {"word_model"},
+            "python/docx2svg/src/docx2svg/model.py": {"word_model"},
+            "python/ooxml-edit/src/ooxml_edit/opc.py": {"oracles"},
+            "python/ooxml-common/src/ooxml_common/x.py": {"oracles", "word_model"},
+            "DEPENDENCIES.md": {"deny"},
+            "Cargo.lock": set(ci.RUST_JOBS),
+            "tools/rust_oracles.py": set(ci.RUST_JOBS),
+            ".github/workflows/rust.yml": set(ci.RUST_JOBS),
+        }
+        for path, jobs in cases.items():
+            self.assertEqual(self._jobs("pull_request", [path]), jobs, path)
+
+    def test_rust_jobs_per_event(self) -> None:
+        self.assertEqual(self._jobs("push"), set(ci.RUST_JOBS) - {"fuzz"})
+        for event in ("schedule", "workflow_dispatch"):
+            self.assertEqual(self._jobs(event), set(ci.RUST_JOBS), event)
+
+    @unittest.skipIf(sys.version_info < (3, 11), "tomllib")
+    def test_crate_lists_cover_their_dependencies(self) -> None:
+        for job_crate, listed in (("ooxml-opc", ci.FUZZ_CRATES), ("ooxml-store", ci.LOOM_CRATES),
+                                  ("ooxml-oracle", ci.WORD_MODEL_CRATES)):
+            self.assertEqual(_workspace_deps(job_crate), set(listed), job_crate)
+
+
 if __name__ == "__main__":
     unittest.main()

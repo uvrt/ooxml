@@ -10,8 +10,22 @@ name: Rust
 #   nightly and manual runs every target.
 # On a pull request these run when the change touches the workspace, ooxml-core, the
 # packages the differential tests compare with (tools/ci.py, RUST_PREFIXES and
-# RUST_REFERENCE), .github/ or tools/.  `required (rust)` is the gate to require: it
-# passes when every job passed or was left out.
+# RUST_REFERENCE), .github/ or tools/.
+# The architecture's crates add jobs that run on a pull request only when it changes their
+# own paths, .github/, tools/ or the workspace's Cargo files (tools/ci.py, RUST_JOBS), and on
+# every push to main, nightly and manual run (fuzz: nightly and manual only):
+# - `loom`: ooxml-store's commit path model-checked (--cfg loom, its own target dir);
+# - `oracles`: tools/rust_oracles.py -- the XML writer and the package save against
+#   ooxml-edit's on every document of the repository;
+# - `word-model`: the Word model against docx2svg's layout input, on the repository's
+#   documents and on those docx2svg's tools/make_*.py make;
+# - `cargo-deny`: licences, duplicate versions, sources and advisories (deny.toml);
+# - `fuzz`: fuzz/'s three targets, 5 minutes each.  Not part of `required (rust)`: a find
+#   shows as a failed job with the crashing input uploaded, without blocking a merge.
+# Not in CI: ooxml-oracle's `text-diff` (the text engine against docx2svg's records) needs
+# Word's own fonts, so it stays a local gate (README, Development).
+# `required (rust)` is the gate to require: it passes when every job it covers passed or
+# was left out.
 
 on:
   push:
@@ -35,6 +49,11 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       rust: ${{ steps.plan.outputs.rust }}
+      fuzz: ${{ steps.plan.outputs.rust_fuzz }}
+      loom: ${{ steps.plan.outputs.rust_loom }}
+      oracles: ${{ steps.plan.outputs.rust_oracles }}
+      word_model: ${{ steps.plan.outputs.rust_word_model }}
+      deny: ${{ steps.plan.outputs.rust_deny }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -225,15 +244,162 @@ jobs:
     with:
       full: ${{ github.event_name != 'pull_request' }}
 
+  loom:
+    name: ooxml-store (loom)
+    needs: plan
+    if: needs.plan.outputs.loom == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      # Its own target dir: --cfg loom rebuilds every crate, and would otherwise evict the
+      # ordinary build from the cache.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target/loom"
+          key: loom
+      - name: cargo test --test loom (RUSTFLAGS="--cfg loom")
+        env:
+          RUSTFLAGS: --cfg loom
+          CARGO_TARGET_DIR: target/loom
+        run: cargo test --locked -p ooxml-store --test loom --release
+
+  oracles:
+    name: oracles (XML writer, package save)
+    needs: plan
+    if: needs.plan.outputs.oracles == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # ooxml-edit is the reference (tools/rust_oracles.py's docstring).
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install ./python/ooxml-common ./python/ooxml-edit
+          cargo build --locked --release -p ooxml-xml -p ooxml-opc --example xml_contract --example save_contract
+      # Every distinct XML part of the repository's documents: the Rust writer's bytes are
+      # ooxml-edit's, and it refuses what lxml refuses.
+      - name: XML pairs
+        run: |
+          python tools/rust_oracles.py xml-pairs "$RUNNER_TEMP/xml-pairs"
+          target/release/examples/xml_contract "$RUNNER_TEMP/xml-pairs"
+      # Every document saved unchanged (byte for byte the input) and with every part
+      # touched (ooxml-edit's entries: names, order, metadata, bytes).
+      - name: Touched saves
+        run: |
+          python tools/rust_oracles.py touched-save "$RUNNER_TEMP/saves"
+          target/release/examples/save_contract "$RUNNER_TEMP/saves"
+          python tools/rust_oracles.py compare-saves "$RUNNER_TEMP/saves"
+
+  word-model:
+    name: Word model (differential)
+    needs: plan
+    if: needs.plan.outputs.word_model == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install ./python/ooxml-common ./python/docx2svg
+          cargo build --locked --release -p ooxml-oracle --bin word-model
+      # Each generator in its own folder, run from there: they write there by default
+      # (tools/make_layout_sweep.py and make_style_document.py rewrite docx2svg's committed
+      # fixtures instead, which the --tree python below reads).
+      - name: Make docx2svg's generated documents
+        run: |
+          for script in "$GITHUB_WORKSPACE"/python/docx2svg/tools/make_*.py; do
+            dir="$RUNNER_TEMP/made/$(basename "$script" .py)"
+            mkdir -p "$dir"
+            (cd "$dir" && python "$script" > log.txt) || { cat "$dir/log.txt"; exit 1; }
+          done
+          find "$RUNNER_TEMP/made" -name '*.docx' | wc -l
+      # Field by field; exits 1 on any difference.
+      - name: Differential
+        run: >-
+          python crates/ooxml-oracle/python/word_model_diff.py --rust target/release/word-model
+          --tree python --tree "$RUNNER_TEMP/made"
+
+  cargo-deny:
+    name: cargo-deny
+    needs: plan
+    if: needs.plan.outputs.deny == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # cargo-deny 0.20.2; deny.toml holds the policy (DEPENDENCIES.md's licences).
+      - uses: EmbarkStudios/cargo-deny-action@v2.1.1
+        with:
+          command: check
+
+  # Not required (the workflow's header).  Built as P0a ran it: stable rustc with
+  # cargo-fuzz's coverage instrumentation (no sanitizer), for the runner's target so build
+  # scripts and macros are left uninstrumented; seeded with the repository's documents and
+  # their XML parts (tools/ci.py fuzz-seeds).
+  fuzz:
+    name: fuzz (5 minutes per target)
+    needs: plan
+    if: needs.plan.outputs.fuzz == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "fuzz -> target"
+          key: fuzz
+      - name: Build the targets
+        working-directory: fuzz
+        env:
+          RUSTFLAGS: >-
+            -Cpasses=sancov-module -Cllvm-args=-sanitizer-coverage-level=4
+            -Cllvm-args=-sanitizer-coverage-inline-8bit-counters -Cllvm-args=-sanitizer-coverage-pc-table
+            -Cllvm-args=-sanitizer-coverage-trace-compares -Cdebug-assertions -Coverflow-checks
+        run: cargo build --locked --release --target x86_64-unknown-linux-gnu
+      - name: Seed corpora
+        run: python3 tools/ci.py fuzz-seeds "$RUNNER_TEMP/seeds"
+      # Each target writes the inputs it finds to its own corpus and reads the seeds; every
+      # target runs even when one finds a crash.
+      - name: Fuzz
+        run: |
+          bin=fuzz/target/x86_64-unknown-linux-gnu/release
+          status=0
+          for pair in xml_roundtrip:xml zip_read:package opc_open:package; do
+            target=${pair%%:*}
+            mkdir -p "$RUNNER_TEMP/corpus/$target" "$RUNNER_TEMP/crashes/$target"
+            "$bin/$target" "$RUNNER_TEMP/corpus/$target" "$RUNNER_TEMP/seeds/${pair##*:}" \
+              -max_total_time=300 -rss_limit_mb=1536 -max_len=1048576 -timeout=20 -print_final_stats=1 \
+              -artifact_prefix="$RUNNER_TEMP/crashes/$target/" || { echo "::error::$target failed"; status=1; }
+          done
+          exit $status
+      - name: Upload the crashing inputs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crashes
+          path: ${{ runner.temp }}/crashes/
+          if-no-files-found: ignore
+
   required-rust:
     name: required (rust)
-    needs: [plan, rust, differential, rust-check, wheels]
+    needs: [plan, rust, differential, rust-check, wheels, loom, oracles, word-model, cargo-deny]
     if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Every Rust job passed or was left out
         env:
-          RESULTS: ${{ needs.plan.result }} ${{ needs.rust.result }} ${{ needs.differential.result }} ${{ needs.rust-check.result }} ${{ needs.wheels.result }}
+          RESULTS: ${{ needs.plan.result }} ${{ needs.rust.result }} ${{ needs.differential.result }} ${{ needs.rust-check.result }} ${{ needs.wheels.result }} ${{ needs.loom.result }} ${{ needs.oracles.result }} ${{ needs.word-model.result }} ${{ needs.cargo-deny.result }}
         run: |
-          echo "plan, rust, differential, rust-check, wheels: $RESULTS"
+          echo "plan, rust, differential, rust-check, wheels, loom, oracles, word-model, cargo-deny: $RESULTS"
           for r in $RESULTS; do case "$r" in success|skipped) ;; *) exit 1 ;; esac; done
