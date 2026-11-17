@@ -3,6 +3,7 @@
 
     python tools/tracked_report.py out.docx [--chapters 44] [--seed 1]
     python tools/tracked_report.py out.docx --accepted     # the same text, no revisions or comments
+    python tools/tracked_report.py out.docx --fields       # with a table of contents and page references
 
 Each chapter: a level-1 heading, six sections (a level-2 heading, six body paragraphs of about
 80 words, a table of ten rows by four columns), then an "End of chapter" paragraph.  Every
@@ -10,7 +11,10 @@ other table is formatted by hand (shading, bold, size and colour on its runs); t
 the ``TableGrid`` style.  Revisions from four authors: inserted and deleted runs, run and
 paragraph formatting changes in the body and in table cells, and a tracked row in some tables;
 a comment on one paragraph of each section.  With ``--accepted`` the same words with every
-revision accepted and no comments.  Words, authors and dates are made up; the output is the
+revision accepted and no comments.  With ``--fields``: a table of contents (a ``TOC`` field, its
+result not yet made) after the title, a bookmark on each chapter's heading, and in each
+chapter's end paragraph a ``PAGEREF`` to the next chapter's heading -- the fields a
+``word_fields`` update lays the document out for.  Words, authors and dates are made up; the output is the
 same for the same arguments.  About 340 pages at the default 44 chapters (A4, Calibri 11).
 """
 
@@ -205,11 +209,17 @@ class Report:
             rows.append(f"<w:tr>{trpr}{''.join(cells)}</w:tr>")
         return f"<w:tbl>{tblpr}<w:tblGrid>{grid}</w:tblGrid>{''.join(rows)}</w:tbl>"
 
-    def body(self, chapters: int) -> str:
+    def body(self, chapters: int, fields: bool = False) -> str:
         rng = self.rng
         out: list[str] = [self._paragraph(_run("A made-up report"), "Title")]
+        if fields:
+            out.append(self._paragraph(_field(' TOC \\o "1-2" \\h \\z \\u ', "Contents to be made.")))
         for ch in range(chapters):
-            out.append(self._paragraph(_run(f"Chapter {ch + 1} {_words(rng, 2).title()}"), "Heading1"))
+            heading = _run(f"Chapter {ch + 1} {_words(rng, 2).title()}")
+            if fields:
+                heading = (f'<w:bookmarkStart w:id="{9000 + ch}" w:name="chapter{ch + 1}"/>{heading}'
+                           f'<w:bookmarkEnd w:id="{9000 + ch}"/>')
+            out.append(self._paragraph(heading, "Heading1"))
             for s in range(SECTIONS):
                 out.append(self._paragraph(_run(f"Section {ch + 1}.{s + 1} {_words(rng, 3).title()}"), "Heading2"))
                 for k in range(PARAGRAPHS):
@@ -219,8 +229,20 @@ class Report:
                     out.append(self._paragraph(inner, changed=rng.random() < 0.05))
                 out.append(self._paragraph(_run(f"Table {ch + 1}.{s + 1} {_words(rng, 3)}"), "Caption"))
                 out.append(self._table(ch, s))
-            out.append(self._paragraph(_run(f"End of chapter {ch + 1}.")))
+            end = _run(f"End of chapter {ch + 1}.")
+            if fields and ch + 1 < chapters:
+                end += _run(" The next chapter starts on page ") + _field(f" PAGEREF chapter{ch + 2} \\h ", "1") + _run(".")
+            out.append(self._paragraph(end))
         return "".join(out)
+
+
+def _field(instruction: str, result: str) -> str:
+    """A complex field's runs: its instruction and the result as last made."""
+    def mark(kind: str) -> str:
+        return f'<w:r><w:fldChar w:fldCharType="{kind}"/></w:r>'
+
+    return (mark("begin") + f'<w:r><w:instrText xml:space="preserve">{escape(instruction)}</w:instrText></w:r>'
+            + mark("separate") + _run(result) + mark("end"))
 
 
 def _styles() -> str:
@@ -265,10 +287,10 @@ def _styles() -> str:
         "</w:styles>")
 
 
-def build(chapters: int = 44, seed: int = 1, accepted: bool = False) -> tuple[bytes, dict]:
+def build(chapters: int = 44, seed: int = 1, accepted: bool = False, fields: bool = False) -> tuple[bytes, dict]:
     """The report's bytes, and what it holds (revisions, comments, paragraphs, tables)."""
     report = Report(seed, accepted)
-    body = report.body(chapters)
+    body = report.body(chapters, fields)
     section = ('<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" '
                'w:bottom="1440" w:left="1440" w:header="708" w:footer="708" w:gutter="0"/></w:sectPr>')
     types = {"word/document.xml": WML + ".document.main+xml", "word/styles.xml": WML + ".styles+xml",
@@ -314,8 +336,9 @@ def main() -> None:
     ap.add_argument("--chapters", type=int, default=44)
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--accepted", action="store_true", help="every revision accepted, no comments")
+    ap.add_argument("--fields", action="store_true", help="a table of contents and page references")
     args = ap.parse_args()
-    data, counts = build(args.chapters, args.seed, args.accepted)
+    data, counts = build(args.chapters, args.seed, args.accepted, args.fields)
     with open(args.out, "wb") as handle:
         handle.write(data)
     print({"bytes": len(data), **counts})
