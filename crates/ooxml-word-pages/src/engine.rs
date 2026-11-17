@@ -307,7 +307,6 @@ impl PageEngine {
             self.stats.full += 1;
         }
         let version = Arc::new(LaidVersion {
-            unpaintable: support::unpaintable(&laid.document),
             layout: laid,
             facts: std::sync::OnceLock::new(),
             pictures: PackagePictures::new(package.clone()),
@@ -457,8 +456,7 @@ impl PageEngine {
         drawings: &dyn Drawings,
     ) -> Option<(String, Vec<String>)> {
         let paint = self.paint(version, page)?;
-        let mut missing: Vec<String> = version.unpaintable.iter().map(|f| f.reason.to_owned()).collect();
-        missing.extend(paint.unpainted.iter().map(|_| support::UNPAINTED.to_owned()));
+        let mut missing: Vec<String> = paint.unpainted.iter().map(|_| support::UNPAINTED.to_owned()).collect();
         let filled = Filled(
             paint
                 .drawings

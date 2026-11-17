@@ -6,8 +6,9 @@
 //!
 //! - **layout** ([`unsupported`]): the pages or the facts would differ; the caller lays the
 //!   whole document out another way (docx2svg's Python layout, frozen for this);
-//! - **paint** ([`unpaintable`]): the layout and its facts are docx2svg's, but some pages'
-//!   SVG is not yet; a caller drawing such a page draws it another way.
+//! - **paint** (a page's paint's own `unpainted`, and drawings for their painters): the
+//!   layout and its facts are docx2svg's, but that page's SVG is not yet; a caller drawing
+//!   such a page draws it another way.
 //!
 //! Each reason is one of [`REASONS`], a stable label for a counter. The tests are
 //! conservative: a document is sent back where a case might apply, never laid out wrong.
@@ -45,6 +46,8 @@ pub const NO_PAGES: &str = "no pages";
 pub const LAYOUT_STOPPED: &str = "layout stopped";
 /// A header or footer it cannot measure.
 pub const STORY_UNSUPPORTED: &str = "header or footer not measured";
+/// A section of unequal columns: the paint places its re-broken lines from L3f.
+pub const UNEQUAL_COLUMNS: &str = "unequal columns";
 /// Line numbers (`w:lnNumType`): drawn by the paint only from L3f.
 pub const LINE_NUMBERS: &str = "line numbers";
 /// A line between columns (`w:cols/@w:sep`).
@@ -76,6 +79,7 @@ pub const REASONS: &[&str] = &[
     NO_PAGES,
     LAYOUT_STOPPED,
     STORY_UNSUPPORTED,
+    UNEQUAL_COLUMNS,
     LINE_NUMBERS,
     COLUMN_SEPARATOR,
     FRAME,
@@ -100,8 +104,24 @@ fn fallback(reason: &'static str, at: &str) -> Fallback {
 pub fn unsupported(document: &WordDocument) -> Option<Fallback> {
     let multi = document.sections.iter().any(|s| s.properties.column_count > 1);
     for section in document.sections.iter() {
-        if section.properties.footnotes.position.as_deref() == Some("beneathText") {
+        let props = &section.properties;
+        if props.footnotes.position.as_deref() == Some("beneathText") {
             return Some(fallback(FOOTNOTES_BENEATH_TEXT, "w:sectPr"));
+        }
+        // The page's rules and lines a check reads hold them too: the whole document.
+        if props.line_numbering.is_some() {
+            return Some(fallback(LINE_NUMBERS, "w:lnNumType"));
+        }
+        if props.column_separator && props.column_count > 1 {
+            return Some(fallback(COLUMN_SEPARATOR, "w:cols"));
+        }
+        if props.column_count > 1
+            && props
+                .columns
+                .windows(2)
+                .any(|w| w.first().map(|c| c.0) != w.get(1).map(|c| c.0))
+        {
+            return Some(fallback(UNEQUAL_COLUMNS, "w:cols"));
         }
     }
     let mut scan = Scan {
@@ -141,21 +161,6 @@ pub fn stopped(layout: &DocumentLayout) -> Option<Fallback> {
         .iter()
         .find(|p| p.opens.is_some())
         .map(|p| fallback(ENDNOTES_CONTINUED, &format!("page {}", p.page + 1)))
-}
-
-/// Why some pages of a version laid out are not drawn as docx2svg draws them, where every
-/// page is concerned: the sections' line numbers and column separators. (A page's own
-/// reasons are its paint's `unpainted`.)
-pub fn unpaintable(document: &WordDocument) -> Option<Fallback> {
-    for section in document.sections.iter() {
-        if section.properties.line_numbering.is_some() {
-            return Some(fallback(LINE_NUMBERS, "w:lnNumType"));
-        }
-        if section.properties.column_separator && section.properties.column_count > 1 {
-            return Some(fallback(COLUMN_SEPARATOR, "w:cols"));
-        }
-    }
-    None
 }
 
 /// Whether a paragraph is framed (`w:framePr` declared): `Some(true)` as a drop cap.

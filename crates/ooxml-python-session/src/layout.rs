@@ -231,13 +231,6 @@ impl PyLaidPages {
         self.version.weight()
     }
 
-    /// Why its pages are not drawn as docx2svg draws them, where every page is concerned:
-    /// `(reason, where)`, or `None`.
-    #[getter]
-    fn unpaintable(&self) -> Option<(&'static str, String)> {
-        self.version.unpaintable().map(|f| (f.reason, f.at.clone()))
-    }
-
     /// Every page's frame and what the paginator knows of it: `((number, section,
     /// section_first, story, blank), (width_px, height_px, width_pt, height_pt, (left, right,
     /// top, bottom)))` (docx2svg's `Page.column`), the points and the box exact.

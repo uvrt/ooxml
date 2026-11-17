@@ -1,13 +1,12 @@
 //! Owns: one version of a document laid out ([`LaidVersion`]): its layout, its facts made
 //! once when first asked for, what its pages' SVG reads (its pictures, how faces are
-//! named), and why some of its pages are not drawn as docx2svg draws them; and one page
+//! named); and one page
 //! as a reader sees it ([`PageView`]: docx2svg's `Page` -- its frame, its lines with their
 //! spans, rules, pictures and drawings' slots, the body blocks it draws).
 //!
 //! Must not: lay out or paint (the engine does, under its owner's lock), or change once
 //! made: a version is shared by every reader holding it.
 
-use crate::error::Fallback;
 use crate::pictures::PackagePictures;
 use ooxml_word_layout::facts::LayoutFacts;
 use ooxml_word_layout::geometry::PageFrame;
@@ -26,7 +25,6 @@ pub struct LaidVersion {
     pub(crate) pictures: Option<PackagePictures>,
     pub(crate) glyphs: Arc<WordGlyphs>,
     pub(crate) names: Arc<dyn FaceNames>,
-    pub(crate) unpaintable: Option<Fallback>,
     pub(crate) relaid: bool,
     pub(crate) generation: u64,
 }
@@ -64,12 +62,6 @@ impl LaidVersion {
     /// It was laid out from the version before (not whole).
     pub fn relaid(&self) -> bool {
         self.relaid
-    }
-
-    /// Why some of its pages are not drawn as docx2svg draws them, where it concerns every
-    /// page (a page's own reasons are its view's `unpainted`).
-    pub fn unpaintable(&self) -> Option<&Fallback> {
-        self.unpaintable.as_ref()
     }
 
     /// The engine generation that laid it out: a version is painted by that engine only.
