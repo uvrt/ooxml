@@ -226,7 +226,11 @@ fn through_session(
         call("word_read", spans.0.clone(), &CallContext::default())?;
         let start = Instant::now();
         let (_, version) = session
-            .commit(&doc, vec![(main.to_owned(), Some(Arc::clone(&written)))], &CallContext::default())
+            .commit(
+                &doc,
+                vec![(main.to_owned(), Some(Arc::clone(&written)))],
+                &CallContext::default(),
+            )
             .map_err(|e| e.to_string())?;
         let commit = start.elapsed().as_secs_f64() * 1000.0;
         let at = CallContext {

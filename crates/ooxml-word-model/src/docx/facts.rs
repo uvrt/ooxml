@@ -52,10 +52,9 @@ impl PartFacts {
             .unwrap_or_default();
         let mut blocks = Vec::new();
         let mut take = |element: &Arc<Element>, place: Vec<u32>| {
-            let facts = known.get(&Arc::as_ptr(element)).map_or_else(
-                || Arc::new(BlockFacts::read(element)),
-                |found| Arc::clone(found),
-            );
+            let facts = known
+                .get(&Arc::as_ptr(element))
+                .map_or_else(|| Arc::new(BlockFacts::read(element)), |found| Arc::clone(found));
             blocks.push(Block {
                 element: Arc::clone(element),
                 place: place.into_boxed_slice(),
@@ -98,7 +97,9 @@ impl PartFacts {
 
     /// The bookmarks the part's hyperlinks point at (fallbacks' too), each once per block.
     pub fn anchors(&self) -> impl Iterator<Item = &str> {
-        self.blocks.iter().flat_map(|b| b.facts.anchors.iter().map(String::as_str))
+        self.blocks
+            .iter()
+            .flat_map(|b| b.facts.anchors.iter().map(String::as_str))
     }
 
     /// Whether a table cell of the part ends with a paragraph mark that is deleted or moved

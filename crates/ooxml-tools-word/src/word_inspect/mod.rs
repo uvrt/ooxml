@@ -117,9 +117,9 @@ pub fn word_inspect(args: &WordInspect, version: &Version<'_>, cancel: &dyn Canc
     let mut data = Value::Object(data);
     if let (Some(placer), Some(asked)) = (placer, writer.placing.take()) {
         cancel.check().map_err(cancelled)?;
-        let answers = placer.place(&asked).ok_or_else(|| {
-            ToolError::internal("the layout did not place the blocks", "word_inspect:layout")
-        })?;
+        let answers = placer
+            .place(&asked)
+            .ok_or_else(|| ToolError::internal("the layout did not place the blocks", "word_inspect:layout"))?;
         crate::placements::fill(&mut data, &answers);
     }
     let mut done = Done::new(format!("Inspected {}", args.target));

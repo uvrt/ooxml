@@ -62,7 +62,14 @@ impl std::fmt::Debug for CallContext {
         f.debug_struct("CallContext")
             .field("caller", &self.caller)
             .field("deadline", &self.deadline)
-            .field("at", &self.at.iter().map(|o| (o.id().to_string(), o.version())).collect::<Vec<_>>())
+            .field(
+                "at",
+                &self
+                    .at
+                    .iter()
+                    .map(|o| (o.id().to_string(), o.version()))
+                    .collect::<Vec<_>>(),
+            )
             .finish_non_exhaustive()
     }
 }

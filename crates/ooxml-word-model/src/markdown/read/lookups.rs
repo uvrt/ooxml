@@ -87,11 +87,12 @@ impl Shared {
                 .into_iter()
                 .map(|d| (key(&d.part, &d.path), d.id))
                 .collect(),
-            graphics: drawings.iter().filter(|d| summarised(d)).map(|d| d.id.clone()).collect(),
-            drawings: drawings
-                .into_iter()
-                .map(|d| (key(&d.part, &d.path), d.id))
+            graphics: drawings
+                .iter()
+                .filter(|d| summarised(d))
+                .map(|d| d.id.clone())
                 .collect(),
+            drawings: drawings.into_iter().map(|d| (key(&d.part, &d.path), d.id)).collect(),
             cell_ends: docx.parts.iter().any(|p| p.facts().cell_ends()),
             notes: notes_of(docx),
             anchors: anchors(docx),

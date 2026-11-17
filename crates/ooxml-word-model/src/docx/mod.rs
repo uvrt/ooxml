@@ -39,10 +39,10 @@ pub use walk::{at_path, live_paths, Found};
 use crate::ids::{story_name, PartIds, W};
 use crate::parts::{main_part, story_parts};
 use crate::WordError;
+use facts::PartFacts;
 use ooxml_opc::Package;
 use ooxml_xml::{Element, Tree};
 use std::collections::HashMap;
-use facts::PartFacts;
 use std::sync::{Arc, OnceLock};
 
 /// One story part: its tree, its block ids, and what the document-wide lookups read of it

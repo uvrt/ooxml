@@ -87,7 +87,10 @@ impl Parser {
 
     fn eat(&mut self, text: &str) -> bool {
         let n = text.chars().count();
-        let found = self.chars.get(self.at..self.at + n).is_some_and(|s| s.iter().copied().eq(text.chars()));
+        let found = self
+            .chars
+            .get(self.at..self.at + n)
+            .is_some_and(|s| s.iter().copied().eq(text.chars()));
         if found {
             self.at += n;
         }
@@ -102,7 +105,8 @@ impl Parser {
     fn leading_flags(&mut self) -> Result<(), Unsupported> {
         let mut multiline = false;
         while self.peek() == Some('(') && self.peek_at(1) == Some('?') {
-            let flags: String = self.rest(self.at + 2)
+            let flags: String = self
+                .rest(self.at + 2)
                 .iter()
                 .take_while(|c| c.is_ascii_alphabetic())
                 .collect();
@@ -304,11 +308,19 @@ impl Parser {
     /// `(?i:...)`, `(?-i:...)`, `(?s-i:...)`; a global flag past the start is refused, as
     /// Python refuses it.
     fn scoped_flags(&mut self) -> Result<Atom, Unsupported> {
-        let on: String = self.rest(self.at).iter().take_while(|c| c.is_ascii_alphabetic()).collect();
+        let on: String = self
+            .rest(self.at)
+            .iter()
+            .take_while(|c| c.is_ascii_alphabetic())
+            .collect();
         self.at += on.chars().count();
         let mut off = String::new();
         if self.eat("-") {
-            off = self.rest(self.at).iter().take_while(|c| c.is_ascii_alphabetic()).collect();
+            off = self
+                .rest(self.at)
+                .iter()
+                .take_while(|c| c.is_ascii_alphabetic())
+                .collect();
             self.at += off.chars().count();
             if off.is_empty() {
                 return Err(refuse("missing flag"));
@@ -568,7 +580,11 @@ fn braces(chars: &[char]) -> Option<(usize, Option<usize>, usize)> {
         return None;
     }
     let low_n = if low.is_empty() { 0 } else { low.parse().ok()? };
-    let high_n = if high.is_empty() { None } else { Some(high.parse().ok()?) };
+    let high_n = if high.is_empty() {
+        None
+    } else {
+        Some(high.parse().ok()?)
+    };
     Some((low_n, high_n, k + 1))
 }
 

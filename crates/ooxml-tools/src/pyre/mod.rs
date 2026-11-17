@@ -70,7 +70,7 @@ impl PyRegex {
     /// start and end in characters.
     ///
     /// # Errors
-    /// [`Unsupported`] where a search would take more than [`BACKTRACK_LIMIT`] steps.
+    /// [`Unsupported`] where a search would take more than a million backtracking steps.
     pub fn find(&self, text: &str) -> Result<Vec<(usize, usize)>, Unsupported> {
         let mut out = Vec::new();
         let mut chars = 0;
@@ -127,8 +127,24 @@ mod tests {
     #[test]
     fn what_python_refuses_or_reads_otherwise_is_refused() {
         for pattern in [
-            "a*", "(?x)a b", "(?a)\\w", r"\p{L}", r"\N{BULLET}", r"\12", r"\0", "(?(1)a|b)", "(", ")", "*a",
-            "a**", "a(?i)b", r"\q", r"[\B]", r"\1(a)", "(?<n>a)", "[a-",
+            "a*",
+            "(?x)a b",
+            "(?a)\\w",
+            r"\p{L}",
+            r"\N{BULLET}",
+            r"\12",
+            r"\0",
+            "(?(1)a|b)",
+            "(",
+            ")",
+            "*a",
+            "a**",
+            "a(?i)b",
+            r"\q",
+            r"[\B]",
+            r"\1(a)",
+            "(?<n>a)",
+            "[a-",
         ] {
             assert!(refused(pattern), "{pattern} should be refused");
         }

@@ -322,7 +322,10 @@ fn a_call_reads_the_version_its_context_names() {
         ..CallContext::default()
     };
     let read = Value::Object(s.call("describe", json!({"doc": "d1"}), &at).to_json());
-    assert_eq!((read["version"].clone(), read["data"]["controls"].clone()), (json!(1), json!(2)));
+    assert_eq!(
+        (read["version"].clone(), read["data"]["controls"].clone()),
+        (json!(1), json!(2))
+    );
     assert_eq!(call(&s, "describe", json!({"doc": "d1"}))["data"]["controls"], json!(3));
     let batch = json!({"ops": [{"tool": "describe", "arguments": {"doc": "d1"}}]});
     let read = Value::Object(s.call("read_batch", batch, &at).to_json());
@@ -351,7 +354,8 @@ fn inspect_with_layout_asks_the_context_s_placer() {
         r#"<w:document {W} xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml"><w:body><w:p w14:paraId="00000001"><w:r><w:t>a</w:t></w:r></w:p></w:body></w:document>"#
     );
     let d = s.open(Arc::from(docx()), DocKind::Docx, "a.docx").unwrap();
-    s.update(&d, vec![put("word/document.xml", &doc)], &CallContext::default()).unwrap();
+    s.update(&d, vec![put("word/document.xml", &doc)], &CallContext::default())
+        .unwrap();
     let arguments = json!({"doc": "d1", "target": "body", "layout": true});
     let refused = call(&s, "word_inspect", arguments.clone());
     assert_eq!(refused["error"]["code"], json!("refused"));
@@ -375,10 +379,18 @@ fn a_part_parsed_again_shares_what_did_not_change() {
         format!("<w:document {W}><w:body><w:p><w:r><w:t>one</w:t></w:r></w:p>{middle}<w:p><w:r><w:t>three</w:t></w:r></w:p></w:body></w:document>")
     };
     let (_, first) = s
-        .commit(&d, vec![put("word/document.xml", &body("<w:p><w:r><w:t>two</w:t></w:r></w:p>"))], &context)
+        .commit(
+            &d,
+            vec![put("word/document.xml", &body("<w:p><w:r><w:t>two</w:t></w:r></w:p>"))],
+            &context,
+        )
         .unwrap();
     let (_, second) = s
-        .commit(&d, vec![put("word/document.xml", &body("<w:p><w:r><w:t>2</w:t></w:r></w:p>"))], &context)
+        .commit(
+            &d,
+            vec![put("word/document.xml", &body("<w:p><w:r><w:t>2</w:t></w:r></w:p>"))],
+            &context,
+        )
         .unwrap();
     let blocks = |o: &ooxml_session::Opened| -> Vec<Arc<ooxml_xml::Element>> {
         let tree = o.package().tree("word/document.xml").unwrap().unwrap();
