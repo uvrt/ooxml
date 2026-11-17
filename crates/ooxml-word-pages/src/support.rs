@@ -49,6 +49,9 @@ pub const STORY_UNSUPPORTED: &str = "header or footer not measured";
 pub const LINE_NUMBERS: &str = "line numbers";
 /// A line between columns (`w:cols/@w:sep`).
 pub const COLUMN_SEPARATOR: &str = "column separator";
+/// A frame other than a drop cap (`w:framePr`): docx2svg lays it out by an approximate
+/// rule and says so in its coverage, which the Rust layout does not.
+pub const FRAME: &str = "frame";
 /// A drop cap: the text beside it is the paint's from L3f.
 pub const DROP_CAP: &str = "drop cap";
 /// Endnotes going on to a page under the continuation separator, which the paint draws
@@ -75,6 +78,7 @@ pub const REASONS: &[&str] = &[
     STORY_UNSUPPORTED,
     LINE_NUMBERS,
     COLUMN_SEPARATOR,
+    FRAME,
     DROP_CAP,
     ENDNOTES_CONTINUED,
     DRAWINGS,
@@ -154,15 +158,16 @@ pub fn unpaintable(document: &WordDocument) -> Option<Fallback> {
     None
 }
 
-fn drop_cap(paragraph: &Paragraph) -> bool {
-    let Some(props) = paragraph.properties.as_ref() else {
-        return false;
-    };
+/// Whether a paragraph is framed (`w:framePr` declared): `Some(true)` as a drop cap.
+fn frame(paragraph: &Paragraph) -> Option<bool> {
+    let props = paragraph.properties.as_ref()?;
     match props.declared.get("framePr") {
-        Some(Value::Attrs(attrs)) => attrs
-            .iter()
-            .any(|(k, v)| &**k == "dropCap" && matches!(&**v, "drop" | "margin")),
-        _ => false,
+        Some(Value::Attrs(attrs)) => Some(
+            attrs
+                .iter()
+                .any(|(k, v)| &**k == "dropCap" && matches!(&**v, "drop" | "margin")),
+        ),
+        _ => None,
     }
 }
 
@@ -202,9 +207,16 @@ impl Scan {
     }
 
     fn paragraph(&mut self, paragraph: &Paragraph, in_cell: bool) {
-        if drop_cap(paragraph) {
-            self.found = Some(fallback(DROP_CAP, &paragraph.path));
-            return;
+        match frame(paragraph) {
+            Some(true) => {
+                self.found = Some(fallback(DROP_CAP, &paragraph.path));
+                return;
+            }
+            Some(false) => {
+                self.found = Some(fallback(FRAME, &paragraph.path));
+                return;
+            }
+            None => {}
         }
         for run in paragraph.runs.iter() {
             if run

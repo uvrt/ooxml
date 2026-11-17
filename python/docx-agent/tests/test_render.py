@@ -176,6 +176,7 @@ def test_a_frame_is_laid_out_approximately_and_the_layout_goes_on(markup_doc):
     assert layout.compare(before).unknown == []
 
 
+@pytest.mark.usefixtures("python_layout")  # lane L4: docx2svg's Python layout itself
 def test_a_stop_is_carried_through(markup_doc, monkeypatch):
     """Where docx2svg is made to stop at what it cannot lay out (``CARRY_ON`` off, as it did
     before round 16), what is past the stop is unknown."""
@@ -199,6 +200,7 @@ def test_png(markup_doc):
     assert len(pngs) == 1 and pngs[0].startswith(b"\x89PNG")
 
 
+@pytest.mark.usefixtures("python_layout")  # lane L4: docx2svg's Python layout itself
 def test_a_render_and_a_layout_lay_the_document_out_once(markup_doc, monkeypatch):
     import docx2svg
 
