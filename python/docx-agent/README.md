@@ -137,6 +137,25 @@ validation -- each run as written by the tests: [docs/common-tasks.md](docs/comm
   [SUPPORTED.md](src/docx_agent/tools/SUPPORTED.md); guidance for the application's
   thinking layer: [GUIDANCE.md](src/docx_agent/tools/GUIDANCE.md).
 
+## Memory on Linux
+
+A document's undo history, read copy and layouts live in the process that opened it, and
+its layouts in the toolbox's workers. `Session.close` lets go of all of it, in both, and
+hands the freed pages back to the system (`malloc_trim` on glibc). Two settings matter for
+an application that keeps running:
+
+- **`MALLOC_ARENA_MAX=2`** for a process whose threads edit documents (several writers and
+  readers on one document, a live view beside them). glibc gives each thread an arena of
+  its own (up to eight per core) and keeps what is freed in each; with two the process
+  stays smaller. Measured on the made-up 340-page report (`tools/tracked_report_bench.py`,
+  12 writers, 2 readers, a live view, about 160 edits, Python 3.15): the calling process
+  peaked at 1.84 GB with glibc's default arenas (31 of them) and at 1.35 GB with
+  `MALLOC_ARENA_MAX=2` (6). Set it in the environment before Python starts.
+- **Close documents you are done with** (`session.close(doc)`). What a closed document
+  leaves is the allocators' free space: Python's own (`pymalloc`) keeps a 1 MB arena while
+  any object in it lives, so the process does not shrink back to where it started; it
+  reuses that space for the next document.
+
 ## Status
 
 Pre-release (0.1.0); the API may still change. Golden transcripts replay the end-to-end

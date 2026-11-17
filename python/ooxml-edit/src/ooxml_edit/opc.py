@@ -1320,6 +1320,15 @@ def _keep_joined(pieces: "Pieces", data: bytes) -> None:
             total -= len(_JOINED.pop(0)[1])
 
 
+def forget_joined() -> None:
+    """Drop the joined bytes kept (:data:`_JOINED`), when a document is closed (round 58,
+    Q3): they are kept by their pieces, not by document, so a closed document's would stay
+    until other edits pushed them out -- up to 64 MB of a long part's states.  Another
+    document's are joined again when next asked."""
+    with _JOINED_LOCK:
+        _JOINED.clear()
+
+
 def _joined(pieces: "Pieces") -> "bytes | None":
     with _JOINED_LOCK:
         for kept, data in reversed(_JOINED):

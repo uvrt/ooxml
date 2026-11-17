@@ -4,6 +4,19 @@ Versions are those in `pyproject.toml`; none is published to PyPI yet. Each vers
 reaches `main` is tagged `v<version>` on the commit that brought it, from 0.62.0; the
 earlier ones were never tagged.
 
+## 0.123.0 -- unreleased
+
+- **Closing a document gives its memory back** (round 58, Q3). `Session.close` empties what
+  the entry keeps beside the document (`DocumentEntry.release`: its undo history, redo and
+  scoped steps, the committed version's read copy and bytes, the last snapshot, the changes
+  counted, the call caches; its log, refs and owners stay), drops the joined bytes kept of
+  parts' states (`opc.forget_joined`: kept by their pieces, for every document, up to 64 MB),
+  and once the entry is let go runs `tools.memory.reclaim()`: `gc.collect()`, then the C
+  allocator's free pages handed back (`tools.memory.release_free_memory`: glibc
+  `malloc_trim(0)`, macOS `malloc_zone_pressure_relief`; docx-agent's workers use the same).
+  An application that still holds the entry or the document keeps it usable, emptied of its
+  history and copies.
+
 ## 0.122.0 -- unreleased
 
 - **A note to every worker** (round 58, for docx-agent's live view): `broadcast(fn, *args)`

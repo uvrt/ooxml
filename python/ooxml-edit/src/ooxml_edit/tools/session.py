@@ -129,6 +129,8 @@ from .datasets import DATASET_PREFIX, DatasetEntry, dataset_id
 from .limits import LimitError, Limits, check_declared_type, check_image, check_package
 from .savegate import keep_problems
 from .logs import CallRecord
+from .memory import reclaim
+from ..opc import forget_joined
 from .numbers import NumberRules, rules_of
 from .registry import role_set
 from .results import ToolError
@@ -996,6 +998,23 @@ class DocumentEntry:
         """The refs of the version the document is at now (after an undo or redo)."""
         self.refs = dict(self.ref_states.get(self.version, {}))
 
+    def release(self) -> None:
+        """Let go of what this entry keeps beside its document (round 58, Q3; when it is
+        closed): the document's undo history (redo and scoped steps too), the committed
+        version's read copy and bytes, the last snapshot, the changes counted and the call
+        caches.  Its log, refs and owners stay (small, and a transcript reads them).  Under
+        the document's lock."""
+        history = self.history
+        clear = getattr(history, "clear", None)
+        if clear is not None:
+            clear()
+        self.committed = None
+        self._snapshot = None
+        self.changes_kept.clear()
+        self.own_undos.clear()
+        for cache in (self.render_cache, self.check_cache, self.render_keys, self.font_keys):
+            cache.clear()
+
     def snapshot(self) -> bytes:
         """The document's bytes (``document.to_bytes()``) at this version, made once per
         version: what work in a worker process gets.  Take it under the document's lock.
@@ -1419,7 +1438,19 @@ class Session:
 
     def close(self, doc_id: str) -> list[str]:
         """Close a document; the addresses of the datasets derived from it, which stay,
-        each as stale or current as it is now, for good."""
+        each as stale or current as it is now, for good.
+
+        Round 58 (Q3): what was kept for it goes -- the format's own (``DocumentFormat.
+        closed``), then the entry's (:meth:`DocumentEntry.release`: its undo history, read
+        copy, bytes and caches) -- and once the entry is let go here, the memory is given
+        back (:func:`~.memory.reclaim`: a collection, and the allocator's free pages
+        released), so the process's resident memory falls back now.  What the application
+        still holds (the entry, the document) stays, its history and copies emptied."""
+        kept = self._close(doc_id)
+        reclaim()
+        return kept
+
+    def _close(self, doc_id: str) -> list[str]:
         entry = self.entry(doc_id)
         with entry.lock:
             with self._lock:
@@ -1432,6 +1463,10 @@ class Session:
             fmt = self.formats.get(entry.kind)
             if fmt is not None and fmt.closed is not None:
                 fmt.closed(entry.document)          # round 58: what the format kept for it
+            entry.release()
+            # Q3: the joined bytes of its parts' states (kept by their pieces, for every
+            # document) go too.
+            forget_joined()
             return kept
 
     @contextmanager

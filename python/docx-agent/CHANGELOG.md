@@ -5,6 +5,31 @@ docx-agent has not been released to PyPI. Each version that reaches `main` is ta
 snapshot commit; the development history before it is summarised here.
 [`ROADMAP.md`](ROADMAP.md) has the detail of every phase.
 
+## 0.1.130 -- unreleased
+
+Round 58 follow-up (Q3): what the calling process gives back when a document closes.
+Measured on macOS on `tools/tracked_report.py`'s made-up 340-page report, 12 writers, 2
+readers and a live view (`tools/tracked_report_bench.py`, 150 changing calls).
+
+- **A document is collected again.** The Rust owner's finalizer (`rust.check`, round 58) was
+  `weakref.finalize(document, owner.close)`: the bound method held the owner, its mirror, the
+  read copy the mirror was made from and, through that copy, the document -- so the finalizer
+  never ran and the document, its undo history, its read copies and the mirror stayed for as
+  long as the process ran, closed or not (and one more owner's mirror and copy each time an
+  owner was made again). The finalizer now holds the owner's key alone (`_close_owner`);
+  closing the owner takes it back. Before: the calling process at 1,330 MB at the end, 1,329
+  MB after `Session.close`. After: BENCH_FINAL.
+- **Closing a document lets go of the rest** (with ooxml-edit 0.123.0's `Session.close`: the
+  entry's history, read copy, bytes and caches, the joined bytes of its parts' states, then a
+  collection and `malloc_trim`/`malloc_zone_pressure_relief`): also the bodies read of its
+  versions (`blocks.forget_bodies`; kept by their bytes, every document's, up to 64 MB: 88 MB
+  of the C allocator's memory at 60 edits). `layout.release_free_memory` is ooxml-edit's
+  `tools.memory.release_free_memory`.
+- `tools/tracked_report_bench.py`: `before_open` (this process before the document was
+  opened), `close_s`, and with `--close` its own references to the document dropped first and
+  the three seconds sampled after the close returns.
+- README: "Memory on Linux" (`MALLOC_ARENA_MAX=2`).
+
 ## 0.1.127 -- unreleased
 
 Round 58 follow-up (R133): the live view, and what is let go of when a document closes.
