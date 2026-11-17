@@ -5,6 +5,12 @@ ooxml-core is the Rust core of the ooxml packages (`crates/`), as the Python mod
 
 ## 0.10.0 -- unreleased
 
+- **Drawings painted in Rust (phase PL/P3, lane L4c).** `ooxml_word_pages::drawings` paints a
+  page's pictures, shapes, groups and charts as docx2svg does (through `ooxml-render` and
+  `ooxml-chart`, with Word's colours, theme style references and chart rules) and says what
+  docx2svg says of them; the `drawing` fallback is gone. `LaidPages.svg(page)` takes no
+  painter: nothing calls back into Python to draw.
+
 - **The Word layout in Rust (phase PL, lane L4).** `WordFonts` (a machine's fonts, scanned
   once), `WordPages` (one document's page engine: each version laid out from the one
   before, given as its package's bytes -- only the parts whose stored bytes changed read

@@ -33,12 +33,24 @@ impl Pictures for NoPictures {
     }
 }
 
+/// The resources a page's drawings declare -- gradients, patterns, markers, filters, each
+/// a line of markup -- and the count their ids are minted from: one per page, shared by
+/// its drawings in the order they were placed (docx2svg's page `Defs`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PageDefs {
+    /// The resources, in order.
+    pub defs: Vec<String>,
+    /// The ids minted so far.
+    pub ids: u32,
+}
+
 /// Where the SVG reads a drawing's paint: the port to the painters of DrawingML, charts and
 /// SmartArt. It answers with the drawing's group's content in its box -- its primitives,
-/// its text boxes' lines -- each a line of markup, or `None` where it has no painter.
+/// its text boxes' lines -- each a line of markup, its resources added to `defs`, or `None`
+/// where it has no painter.
 pub trait Drawings {
     /// The paint of the drawing in `slot`.
-    fn drawing(&self, slot: &DrawingSlot) -> Option<Vec<String>>;
+    fn drawing(&self, slot: &DrawingSlot, defs: &mut PageDefs) -> Option<Vec<String>>;
 }
 
 /// No painters: no drawing is drawn.
@@ -46,7 +58,7 @@ pub trait Drawings {
 pub struct NoDrawings;
 
 impl Drawings for NoDrawings {
-    fn drawing(&self, _slot: &DrawingSlot) -> Option<Vec<String>> {
+    fn drawing(&self, _slot: &DrawingSlot, _defs: &mut PageDefs) -> Option<Vec<String>> {
         None
     }
 }
@@ -299,13 +311,25 @@ pub fn page_element(paint: &PagePaint, cx: &SvgContext<'_>) -> Element {
             .attr("height", Value::Int(frame.height_px))
             .attr("fill", Value::Plain("#FFFFFF".into())),
     );
-    let mut slots: Vec<&DrawingSlot> = paint.drawings.iter().collect();
-    slots.sort_by_key(|d| d.order);
-    let layer = |l: Layer, story: bool| -> Vec<&DrawingSlot> {
+    // Painted in the order they were placed, which is the order their resources' ids are
+    // minted in; written by layer.
+    let mut defs = PageDefs::default();
+    let painted: Vec<(&DrawingSlot, Option<Vec<String>>)> = paint
+        .drawings
+        .iter()
+        .map(|slot| (slot, cx.drawings.drawing(slot, &mut defs)))
+        .collect();
+    if !defs.defs.is_empty() {
+        root.children
+            .push(Element::raw(format!("<defs>{}</defs>", defs.defs.concat())));
+    }
+    let mut slots: Vec<&(&DrawingSlot, Option<Vec<String>>)> = painted.iter().collect();
+    slots.sort_by_key(|(d, _)| d.order);
+    let layer = |l: Layer, story: bool| -> Vec<&(&DrawingSlot, Option<Vec<String>>)> {
         slots
             .iter()
             .copied()
-            .filter(|d| d.layer == l && d.story.is_some() == story)
+            .filter(|(d, _)| d.layer == l && d.story.is_some() == story)
             .collect()
     };
     let (story_behind, story_front) = (layer(Layer::Behind, true), layer(Layer::Front, true));
@@ -316,34 +340,34 @@ pub fn page_element(paint: &PagePaint, cx: &SvgContext<'_>) -> Element {
     let over = paint.rules.iter().filter(|r| under_rank(r.kind).is_none()).map(rect);
     let pictures = paint.pictures.iter().map(|d| picture(d, cx));
     if story_behind.is_empty() && story_front.is_empty() && !(story_lines && !body_behind.is_empty()) {
-        root.children.extend(floats(&body_behind, cx));
+        root.children.extend(floats(&body_behind));
         root.children.extend(under.into_iter().map(rect));
         root.children.extend(lines(&paint.lines, cx));
         root.children.extend(over);
         root.children.extend(pictures);
-        root.children.extend(floats(&body_front, cx));
+        root.children.extend(floats(&body_front));
         return root;
     }
     let (stories, body): (Vec<PaintedLine>, Vec<PaintedLine>) =
         paint.lines.iter().cloned().partition(|l| l.story.is_some());
-    root.children.extend(floats(&story_behind, cx));
+    root.children.extend(floats(&story_behind));
     root.children.extend(lines(&stories, cx));
-    root.children.extend(floats(&story_front, cx));
-    root.children.extend(floats(&body_behind, cx));
+    root.children.extend(floats(&story_front));
+    root.children.extend(floats(&body_behind));
     root.children.extend(under.into_iter().map(rect));
     root.children.extend(lines(&body, cx));
     root.children.extend(over);
     root.children.extend(pictures);
-    root.children.extend(floats(&body_front, cx));
+    root.children.extend(floats(&body_front));
     root
 }
 
 /// Drawings as groups of their painters' paint (`_float`); one with no painter is not
 /// written.
-fn floats(slots: &[&DrawingSlot], cx: &SvgContext<'_>) -> Vec<Element> {
+fn floats(slots: &[&(&DrawingSlot, Option<Vec<String>>)]) -> Vec<Element> {
     let mut out = Vec::new();
-    for slot in slots {
-        let Some(paint) = cx.drawings.drawing(slot) else {
+    for (slot, paint) in slots {
+        let Some(paint) = paint else {
             continue;
         };
         let side = if slot.layer == Layer::Behind { "behind" } else { "front" };
@@ -356,7 +380,7 @@ fn floats(slots: &[&DrawingSlot], cx: &SvgContext<'_>) -> Vec<Element> {
                 .attr("data-docx-story", Value::Plain((*kind).to_owned()))
                 .attr("data-docx-part", Value::Text(part.to_string()));
         }
-        g.children = paint.into_iter().map(Element::raw).collect();
+        g.children = paint.iter().cloned().map(Element::raw).collect();
         out.push(g);
     }
     out
