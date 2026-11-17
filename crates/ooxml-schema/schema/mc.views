@@ -1,0 +1,16 @@
+# Markup compatibility (`mc:`, ECMA-376 Part 3): the source of src/mc.rs (`cargo xtask
+# codegen`; the grammar is in xtask/src/codegen.rs). A reader takes the first branch it can
+# use; what it can use is the reader's to say.
+
+ns mc http://schemas.openxmlformats.org/markup-compatibility/2006
+
+view AlternateContent AlternateContent mc | `mc:AlternateContent`: the same content as one or more choices and a fallback.
+  children choices Choice Choice
+  child fallback Fallback Fallback
+  order Choice Fallback
+view Choice Choice mc | `mc:Choice`: content that needs the namespaces `Requires` names.
+  attr requires str Requires
+  all content Any
+view Fallback Fallback mc | `mc:Fallback`: content every reader understands.
+  all content Any
+view Any * | Any element, read by what it holds.

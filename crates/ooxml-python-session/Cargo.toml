@@ -1,0 +1,26 @@
+[package]
+name = "ooxml-python-session"
+version = "0.1.0"
+description = "The session API of the Python module ooxml_core (PyO3): sessions, calls as JSON, the specs' export"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lib]
+# Registered into the one extension module, ooxml_core (crates/python's cdylib), until
+# that module is this crate's own (section 13: ooxml-python replaces crates/python).
+# Linked into an extension module only: python/ooxml-core/tests tests it.
+test = false
+doctest = false
+
+[dependencies]
+ooxml-base.workspace = true
+ooxml-store.workspace = true
+ooxml-session.workspace = true
+ooxml-tools.workspace = true
+serde_json.workspace = true
+pyo3.workspace = true
+
+[lints]
+workspace = true

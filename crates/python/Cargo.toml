@@ -1,6 +1,6 @@
 [package]
 name = "ooxml-python"
-version = "0.8.1"
+version = "0.9.0"
 description = "The Python module ooxml_core (PyO3): documents' owners by id, and Word's layout"
 edition.workspace = true
 license.workspace = true
@@ -20,6 +20,9 @@ doctest = false
 [dependencies]
 ooxml-core = { path = "../core" }
 ooxml-word = { path = "../word" }
+# Lane P0d: the session API (ooxml_core.Session, CancelToken, tool_specs), added to this
+# module so that one native module ships until ooxml-python-session replaces this crate.
+ooxml-python-session.workspace = true
 pyo3 = { workspace = true, features = ["extension-module"] }
 serde_json.workspace = true
 # Lane J: the digests of a tree's parts (tree.rs); already in the lock through hashbrown.
