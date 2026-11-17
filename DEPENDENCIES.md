@@ -12,6 +12,10 @@ theirs until they are replaced.
 | `flate2` 1, `zlib-rs` backend only (pulls `zlib-rs`, Zlib) | MIT or Apache-2.0 | ooxml-zip | Raw deflate and inflate of ZIP entries, in Rust (no C zlib). Approved (Q7: "flate2 with zlib-rs"). |
 | `arc-swap` 1 | MIT or Apache-2.0 | ooxml-store | The published head version: readers load it without a lock and never wait for a writer (section 6). Approved (Q7). |
 | `loom` 0.7 (pulls `generator`, `scoped-tls`, `tracing`, `tracing-subscriber` and their dependencies) | MIT (its dependencies MIT, Apache-2.0 or Unlicense) | ooxml-store, only when built with `RUSTFLAGS="--cfg loom"` | Model-checks every interleaving of the commit path (section 12, acceptance 3 of section 15); no ordinary build compiles it. Its Windows dependencies bring a second `syn` major version into Cargo.lock for that build only. |
+| `read-fonts` 0.47 (fontations; pulls `font-types`, `bytemuck` with `bytemuck_derive`, `yoke` with `yoke-derive`, `zerofrom` with `zerofrom-derive`, `stable_deref_trait`, `synstructure`) | MIT or Apache-2.0 (`bytemuck`: Zlib, Apache-2.0 or MIT; `yoke`, `zerofrom`: Unicode-3.0) | ooxml-fonts | The one sfnt reader (section 2.2): font collections and table directories, and the bounds-checked big-endian reads every table field is taken with. Approved (Q7, "the fontations crates"). `skrifa` is not taken: no outline or shaping is read yet. |
+| `flate2` (as above) | | ooxml-text | Reading the gzip-compressed English hyphenation word list docx2svg ships (`patterns/en-moby.txt.gz`), compiled in. |
+| `num-rational`, `num-integer`, `num-traits` (as above) | | ooxml-text | Exact widths in 1/4096 pt (`Units`): an advance at a size is a rational wherever the face's units per em does not divide it. |
+| `serde_json` (already in the workspace) | MIT or Apache-2.0 | ooxml-oracle (test support only) | Reading docx2svg's differential records. |
 | `libfuzzer-sys` 0.4 (pulls `arbitrary`, `cc`) | MIT or Apache-2.0, NCSA | `fuzz/` only (its own workspace) | cargo-fuzz's harness for the fuzz targets section 11 asks for; never part of a shipped crate. |
 
 Considered and not taken:

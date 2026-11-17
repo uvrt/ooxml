@@ -1,0 +1,16 @@
+[package]
+name = "ooxml-fonts"
+version = "0.1.0"
+description = "One sfnt reader on the fontations crates, Office's measured face data, Word's font lookup order and substitution grades, embedded faces"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+ooxml-base.workspace = true
+read-fonts.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

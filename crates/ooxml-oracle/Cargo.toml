@@ -1,0 +1,20 @@
+[package]
+name = "ooxml-oracle"
+version = "0.1.0"
+description = "Test support: differential harnesses against the Python packages (the text engine's first), and the adapters they run the core through"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+ooxml-base.workspace = true
+ooxml-fonts.workspace = true
+ooxml-text.workspace = true
+ooxml-zip.workspace = true
+ooxml-derive.workspace = true
+serde_json.workspace = true
+flate2.workspace = true
+
+[lints]
+workspace = true

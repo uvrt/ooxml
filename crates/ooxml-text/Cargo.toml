@@ -1,0 +1,20 @@
+[package]
+name = "ooxml-text"
+version = "0.1.0"
+description = "The shared text engine: Word's advances in 1/4096 pt, break opportunities, one break loop with Word's compatibility rules as data, hyphenation, measures memoised by content"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+ooxml-base.workspace = true
+ooxml-derive.workspace = true
+num-rational.workspace = true
+num-integer.workspace = true
+num-traits.workspace = true
+flate2.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true
