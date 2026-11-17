@@ -8,7 +8,7 @@
 //! the new flow from its start (the property `tests/relayout.rs` checks).
 
 use crate::flow::FlowItem;
-use crate::paginate::{LaidPage, PageContext, Pagination, Paginator, Position, Resume};
+use crate::paginate::{LaidPage, LineStore, PageContext, Pagination, Paginator, Position, Resume};
 use std::sync::Arc;
 
 /// Items `[a, b_old)` of the old flow are `[a, b_new)` of the new one; the rest are the
@@ -43,6 +43,13 @@ pub fn same_item(old: &FlowItem, new: &FlowItem) -> bool {
                 && a.widow == b.widow
                 && a.section_start == b.section_start
                 && a.section_mark == b.section_mark
+                && a.notes == b.notes
+                && a.role == b.role
+                && a.continuation == b.continuation
+                && a.anchors == b.anchors
+                && a.source == b.source
+                && a.drop_cap == b.drop_cap
+                && a.note_forms == b.note_forms
         }
         (FlowItem::Table(a), FlowItem::Table(b)) => {
             Arc::ptr_eq(&a.flow, &b.flow) && a.section == b.section && a.section_start == b.section_start
@@ -114,6 +121,8 @@ fn moved(page: &LaidPage, items: isize, pages: isize, numbers: i64) -> LaidPage 
     for row in &mut out.rows {
         row.item = row.item.saturating_add_signed(items);
     }
+    out.lines_before = shifted(&page.lines_before, items);
+    out.broken = shifted(&page.broken, items);
     out
 }
 
@@ -121,7 +130,7 @@ fn moved(page: &LaidPage, items: isize, pages: isize, numbers: i64) -> LaidPage 
 fn base_of(old: &Pagination, q: usize) -> usize {
     q.checked_sub(1)
         .and_then(|k| old.pages.get(k))
-        .map_or(0, |b| b.page + 1)
+        .map_or(0, |b| b.page + 1 + usize::from(b.continued.is_some()))
 }
 
 /// Where a page's number or place has a parity that decides something -- blank pages
@@ -147,6 +156,11 @@ fn joins(old: &Pagination, change: Change, delta: isize, parity: bool, state: &R
     let old_position = shift(&state.position, -delta);
     let q = old.pages.binary_search_by(|page| page.start.cmp(&old_position)).ok()?;
     let page = old.pages.get(q)?;
+    if page.carried != state.carry || shifted(&page.lines_before, delta) != state.lines {
+        // The page's foot opens with other lines of a note, or its paragraphs are broken
+        // otherwise.
+        return None;
+    }
     let page_shift = i64::try_from(state.page).unwrap_or(0) - i64::try_from(base_of(old, q)).unwrap_or(0);
     let number_shift = state.number - page.number_before;
     let odd = page_shift.rem_euclid(2) != 0 || number_shift.rem_euclid(2) != 0;
@@ -240,7 +254,7 @@ pub fn repaginate(cx: &PageContext<'_>, old: &Pagination, changes: &[Change]) ->
         return (old.clone(), RelayoutStats::default());
     };
     let parity = parity_decides(cx);
-    let mut p = first_reaching(old, 0, &Position::at(first.a, 0));
+    let mut p = clean_restart(old, first_reaching(old, 0, &Position::at(first.a, 0)), first.a);
     let mut out = Pagination {
         pages: old.pages.get(..p).unwrap_or_default().to_vec(),
         info: old.info.get(..base_of(old, p)).unwrap_or_default().to_vec(),
@@ -262,6 +276,8 @@ pub fn repaginate(cx: &PageContext<'_>, old: &Pagination, changes: &[Change]) ->
             position: shift_position(&page.start, shift.items),
             page: base_of(old, p).saturating_add_signed(shift.pages),
             number: page.number_before + shift.numbers,
+            carry: std::sync::Arc::clone(&page.carried),
+            lines: shifted(&page.lines_before, shift.items),
         });
         let change = changes.get(i).copied().unwrap_or(*first);
         let delta = isize::try_from(change.b_new).unwrap_or(0) - isize::try_from(change.b_old).unwrap_or(0);
@@ -289,7 +305,7 @@ pub fn repaginate(cx: &PageContext<'_>, old: &Pagination, changes: &[Change]) ->
             Some(c) => {
                 // The next change, where the old pages' items stand.
                 let target = shift_position(&Position::at(c.a, 0), -shift.items);
-                let n = first_reaching(old, q, &target);
+                let n = clean_restart(old, first_reaching(old, q, &target), target.item).max(q);
                 copy_moved(&mut out, old, q, n, shift);
                 p = n;
             }
@@ -304,6 +320,28 @@ pub fn repaginate(cx: &PageContext<'_>, old: &Pagination, changes: &[Change]) ->
         }
     }
     (out, stats)
+}
+
+/// The page a relayout restarts at, at or before `p`: one whose state holds no paragraph
+/// broken again at or past the change at item `a` (the old flow's lines of it).
+fn clean_restart(old: &Pagination, mut p: usize, a: usize) -> usize {
+    while p > 0
+        && old
+            .pages
+            .get(p)
+            .is_some_and(|page| page.lines_before.range(a..).next().is_some())
+    {
+        p -= 1;
+    }
+    p
+}
+
+/// A line store with its items moved by `by`.
+fn shifted(lines: &LineStore, by: isize) -> LineStore {
+    lines
+        .iter()
+        .map(|(k, v)| (k.saturating_add_signed(by), std::sync::Arc::clone(v)))
+        .collect()
 }
 
 fn shift_position(p: &Position, by: isize) -> Position {

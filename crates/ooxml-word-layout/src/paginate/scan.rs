@@ -1,15 +1,20 @@
-//! Owns: one page (or one text column) stacked from a start (docx2svg's `paginate._scan`
-//! without notes, floating drawings and wraps, which lane L3c adds): paragraphs' lines
-//! placed under their spacing and borders until one does not fit, a page or column break,
-//! a section that starts a page or a continuous one of other columns; tables placed
-//! through their [`crate::table::TableFlow`]; where the stack ends and why.
+//! Owns: one page (or one text column) stacked from a start (docx2svg's `paginate._scan`):
+//! paragraphs' lines placed under their spacing and borders until one does not fit, a
+//! page or column break, a section that starts a page or a continuous one of other
+//! columns; tables placed through their [`crate::table::TableFlow`]; the footnotes at the
+//! foot (a line referencing notes fits with them under it, `notes`); where the stack
+//! ends and why.
 //!
 //! Must not: decide where a page ends past an overflow (`keeps` does), or lay out more
 //! than one column (`columns` does).
 
-use super::{LaidPage, PageContext, PlacedLine, PlacedTableRow, Position, Stopped, Why};
+use super::floats::{clear_of_bands, Band, Floats, Top, Tops};
+use super::notes::{Fitted, Foot};
+use super::{LaidPage, NoteRest, PageContext, PlacedLine, PlacedNote, PlacedTableRow, Position, Stopped, Why};
 use crate::flow::{FlowItem, ParaItem, TableItem};
+use crate::notes::NoteLines;
 use crate::px::Px;
+use crate::rebreak::Lines;
 use crate::sections::StoryKind;
 use crate::table::TableRequest;
 use crate::vertical::{keeps_space_before_at_page_top, page_top_gap, paragraph_gap};
@@ -40,6 +45,14 @@ pub(crate) struct Frame {
     pub first_top: Option<Px>,
     /// The item the stack's next paragraph spaces itself from.
     pub last: Option<usize>,
+    /// It starts at the page's top.
+    pub page_top: bool,
+    /// In mode 15, a column of several whose notes go to the page's note area.
+    pub pooled: bool,
+    /// The footnotes at its foot (below mode 15), or referenced in it (pooled).
+    pub notes: Vec<PlacedNote>,
+    /// The lines of notes the column (or page) before could not hold, at its foot first.
+    pub carried: NoteRest,
 }
 
 impl Frame {
@@ -62,6 +75,10 @@ impl Frame {
             region_top: top,
             first_top: None,
             last: None,
+            page_top: false,
+            pooled: false,
+            notes: Vec::new(),
+            carried: std::sync::Arc::from(Vec::new()),
         }
     }
 }
@@ -87,7 +104,7 @@ struct At<'s> {
 }
 
 /// One scan's moving state.
-struct Stack<'o> {
+pub(super) struct Stack<'o> {
     y: Px,
     /// The top of the first paragraph or table, past the space before it.
     first_top: Option<Px>,
@@ -98,6 +115,14 @@ struct Stack<'o> {
     /// Where this scan's lines and rows start in `out`.
     lines_from: usize,
     rows_from: usize,
+    /// The page's (or column's) foot: its notes as placed.
+    pub(super) foot: Foot,
+    /// The bands its lines keep off.
+    bands: Vec<Band>,
+    /// The drawings its lines go beside.
+    wraps: &'o [crate::wrap::Wrap],
+    /// The lines it placed, for the drawings anchored on them.
+    tops: &'o mut Tops,
 }
 
 /// A step of the stack: go on with the next item, or end the scan.
@@ -135,41 +160,130 @@ impl PageContext<'_> {
         &self,
         start: &Position,
         story: StoryKind,
+        carry: &NoteRest,
+        page_index: usize,
     ) -> Result<LaidPage, (LaidPage, Stopped)> {
-        let mut page = LaidPage {
-            page: 0,
-            number_before: 0,
-            start: start.clone(),
-            end: start.clone(),
-            reach: start.clone(),
-            forced: false,
-            lines: Vec::new(),
-            rows: Vec::new(),
-        };
-        match self.scan(start, story, None, &mut page) {
-            Ok(end) => {
-                page.end = end.end;
-                page.reach = end.reach;
-                page.forced = end.forced;
-                Ok(page)
+        let laid = |floats: Floats<'_>, tops: &mut Tops| {
+            let mut page = LaidPage::empty(start, std::sync::Arc::clone(carry));
+            let scanned = self.scan(start, story, None, &mut page, floats, tops);
+            match scanned {
+                Ok(end) => {
+                    page.end = end.end;
+                    page.reach = end.reach;
+                    page.forced = end.forced;
+                    Ok(page)
+                }
+                Err(stopped) => Err((page, stopped)),
             }
-            Err(stopped) => Err((page, stopped)),
+        };
+        // Laid out once without the bands of its drawings, which are positioned from that
+        // layout, and again with them.
+        let mut tops = Tops::default();
+        let first = laid(Floats::default(), &mut tops);
+        let mut bands = self.page_bands(&tops, page_index);
+        let mut stacked_reach = start.clone();
+        if bands.len() > 1 && first.is_ok() {
+            let (stacked, reach) = self.stacked_bands(start, story, carry, page_index, bands);
+            bands = stacked;
+            stacked_reach = reach;
         }
+        let wraps = if self.wraps {
+            self.page_wraps(&tops, page_index)
+        } else {
+            Vec::new()
+        };
+        if bands.is_empty() && wraps.is_empty() {
+            return first;
+        }
+        let first_reach = match &first {
+            Ok(page) | Err((page, _)) => page.reach.clone(),
+        };
+        let again = laid(
+            Floats {
+                bands: &bands,
+                wraps: &wraps,
+            },
+            &mut Tops::default(),
+        );
+        let mut page = match (first, again) {
+            (Err((_, stopped)), Ok(page) | Err((page, _))) => return Err((with_floats(page, bands, wraps), stopped)),
+            (Ok(_), Err((page, stopped))) => return Err((with_floats(page, bands, wraps), stopped)),
+            (Ok(_), Ok(page)) => page,
+        };
+        page.bands = bands;
+        page.wraps = wraps;
+        // The page reaches as far as its layout without its drawings read.
+        page.reach = page.reach.clone().max(first_reach).max(stacked_reach);
+        Ok(page)
     }
 
-    /// Stack one page or column from `start` (`_scan`); its lines and rows go to `out`.
+    /// The page's bands, each drawing positioned from the page laid out with the bands of
+    /// the drawings before it (`_stacked_bands`): one whose anchor the bands before it
+    /// push off the page goes with its paragraph, and so do those after it; and how far
+    /// those layouts read.
+    fn stacked_bands(
+        &self,
+        start: &Position,
+        story: StoryKind,
+        carry: &NoteRest,
+        page_index: usize,
+        bands: Vec<Band>,
+    ) -> (Vec<Band>, Position) {
+        let mut reach = start.clone();
+        let mut fixed: Vec<Band> = bands.iter().take(1).copied().collect();
+        for band in bands.iter().skip(1) {
+            let mut found = Tops::default();
+            let mut scratch = LaidPage::empty(start, std::sync::Arc::clone(carry));
+            let floats = Floats {
+                bands: &fixed,
+                wraps: &[],
+            };
+            match self.scan(start, story, None, &mut scratch, floats, &mut found) {
+                Ok(end) => reach = reach.max(end.reach),
+                Err(_) => break,
+            }
+            let again = self.page_bands(&found, page_index);
+            match again.into_iter().find(|b| b.key == band.key) {
+                Some(placed) => fixed.push(placed),
+                None => break,
+            }
+        }
+        (fixed, reach)
+    }
+
+    /// Stack one page or column from `start` (`_scan`); its lines, rows and footnotes go
+    /// to `out` (a column's footnotes to its frame), the notes the page before could not
+    /// hold being `out.carried` (a column's, its frame's).
     pub(super) fn scan(
         &self,
         start: &Position,
         story: StoryKind,
         frame: Option<&mut Frame>,
         out: &mut LaidPage,
+        floats: Floats<'_>,
+        tops: &mut Tops,
     ) -> Result<ScanEnd, Stopped> {
         let first_section = self.items.get(start.item).map_or(0, FlowItem::section);
         let (top, bottom) = match frame.as_deref() {
             Some(f) => (f.top, f.bottom),
             None => self.edges(first_section, story),
         };
+        let carry = frame
+            .as_deref()
+            .map_or_else(|| std::sync::Arc::clone(&out.carried), |f| f.carried.clone());
+        let foot = Foot::new(self, first_section, frame.as_deref(), carry);
+        let mut top = top;
+        let opens_endnotes = match self.items.get(start.item) {
+            Some(FlowItem::Para(p)) => p.continuation.filter(|_| frame.as_deref().is_none_or(|f| f.page_top)),
+            _ => None,
+        };
+        if let Some(pitch) = opens_endnotes {
+            // A page the endnotes go on to: the continuation separator's line first.
+            if frame.is_none() {
+                out.opens = Some(super::OpeningLine { top, pitch });
+            }
+            top += pitch;
+        }
         let mut stack = Stack {
             y: top,
             first_top: None,
@@ -179,6 +293,10 @@ impl PageContext<'_> {
             lines_from: out.lines.len(),
             rows_from: out.rows.len(),
             out,
+            foot,
+            bands: across(floats.bands, frame.as_deref(), self),
+            wraps: floats.wraps,
+            tops,
         };
         let (mut index, mut line) = (start.item, start.line);
         let end = loop {
@@ -269,108 +387,243 @@ impl PageContext<'_> {
         }
     }
 
-    fn scan_para(&self, p: &ParaItem, at: &At<'_>, stack: &mut Stack<'_>) -> Step {
-        let At {
-            index,
-            line,
-            start,
-            bottom,
-            frame,
-        } = *at;
-        if !stack.first_on_page && line == 0 {
+    /// Where a paragraph that does not start the page ends it first: a section that
+    /// starts a page, `pageBreakBefore`; or, holding only a section break, where it is
+    /// placed taking no room.
+    fn para_entry(&self, p: &ParaItem, at: &At<'_>, stack: &mut Stack<'_>) -> Option<Step> {
+        let (index, frame) = (at.index, at.frame);
+        if !stack.first_on_page && at.line == 0 {
             let previous_section = stack.previous.and_then(|k| self.items.get(k)).map(FlowItem::section);
             let new_section = previous_section.is_some_and(|s| s != p.section) && self.sections.new_page(p.section);
             if new_section || p.page_break_before {
                 let at = Position::at(index, 0);
-                return done(at.clone(), true, Why::Page, at);
+                return Some(done(at.clone(), true, Why::Page, at));
             }
         }
         let previous_is_table = matches!(stack.previous.and_then(|k| self.items.get(k)), Some(FlowItem::Table(_)));
         if p.section_mark && !stack.first_on_page && !(self.mode15 && previous_is_table) {
             // On this page, and taking no room: the stack goes on as if it were not there.
             // It is drawn where it stands, past its space before (the page walk's).
-            let pitch = p.measured.heights.first().map_or(Px::ZERO, |h| h.pitch);
+            let pitch = self.lines_of(index, p).heights().first().map_or(Px::ZERO, |h| h.pitch);
             let (gap, box_top) = self.first_line_gap(p, index, stack);
             let line = placed(frame, index, 0, stack.y + gap + p.top_border, pitch, box_top);
             stack.out.lines.push(line);
-            return Step::Next;
+            stack.foot.mark(Position::at(index, 0));
+            let y = stack.y;
+            stack.tops.record(top_of(frame, index, 0, (y, pitch, y)));
+            return Some(Step::Next);
+        }
+        None
+    }
+
+    fn scan_para(&self, p: &ParaItem, at: &At<'_>, stack: &mut Stack<'_>) -> Step {
+        if let Some(step) = self.para_entry(p, at, stack) {
+            return step;
         }
         let mut paragraph_top = stack.y;
-        let count = p.count();
-        for number in line..count {
-            let Some(height) = p.measured.heights.get(number) else {
-                break;
-            };
+        if let Some(source) = &p.source {
+            // Lines an earlier layout of this page broke beside a drawing are broken again
+            // in the whole column.
+            let current = self.lines_of(at.index, p);
+            self.broken(at.index, self.breaker.plain(source, &current, at.line));
+        }
+        let mut number = at.line;
+        while number < self.lines_of(at.index, p).count() {
             if number == 0 {
-                let (gap, box_top) = self.first_line_gap(p, index, stack);
+                let (gap, box_top) = self.first_line_gap(p, at.index, stack);
                 paragraph_top = box_top;
                 stack.y += gap + p.top_border;
                 if stack.first_top.is_none() {
                     stack.first_top = Some(stack.y - p.top_border);
                 }
             }
-            let last = number + 1 == count;
-            let border = if last || !self.mode15 { p.border } else { Px::ZERO };
-            if !stack.first_on_page && !p.section_mark && stack.y + height.fit() + border > bottom {
-                let mut overflow = Position::at(index, number);
-                if frame.is_none()
-                    && number > 0
-                    && p.measured.auto_hyphen_ends.contains(&(number - 1))
-                    && Position::at(index, number - 1) > *start
-                    && self.hyphen_at_page_end != super::HyphenMove::Nothing
-                {
-                    overflow = Position::at(index, number - 1);
-                }
-                let empty_ok = frame.is_some_and(|f| !f.first_on_page);
-                let end = self.break_before(start, overflow.clone(), empty_ok);
-                return done(end, false, Why::Full, overflow);
+            if let Some(step) = self.place_line(p, at, stack, number, paragraph_top) {
+                return step;
             }
-            stack
-                .out
-                .lines
-                .push(placed(frame, index, number, stack.y, height.pitch, paragraph_top));
-            stack.y += height.pitch;
-            let end_y = stack.y + if last { p.border } else { Px::ZERO };
-            stack.stack_ends.push((Position::at(index, number), end_y));
-            stack.first_on_page = false;
-            let next = if number + 1 < count {
-                Position::at(index, number + 1)
-            } else {
-                Position::at(index + 1, 0)
-            };
-            if p.measured.page_breaks.contains(&number) {
-                return done(next, true, Why::Page, Position::at(index, number));
-            }
-            if p.measured.column_breaks.contains(&number) {
-                return done(next, true, Why::Column, Position::at(index, number));
-            }
+            number += 1;
         }
         stack.y += p.border;
-        stack.previous = Some(index);
+        stack.previous = Some(at.index);
         Step::Next
+    }
+
+    /// Line `number` of a paragraph placed at the stack's foot, its footnotes at the
+    /// page's; where it does not fit, or ends the page or column, how the scan ends.
+    fn place_line(
+        &self,
+        p: &ParaItem,
+        at: &At<'_>,
+        stack: &mut Stack<'_>,
+        number: usize,
+        paragraph_top: Px,
+    ) -> Option<Step> {
+        let (index, start, frame) = (at.index, at.start, at.frame);
+        if let (Some(source), Some(f)) = (&p.source, frame.filter(|f| f.multi)) {
+            // One of unequal columns: the line is as wide as its column.
+            let current = self.lines_of(index, p);
+            self.broken(index, self.breaker.fit_width(source, &current, number, f.width));
+        }
+        let lines = self.lines_of(index, p);
+        let height = *lines.heights().get(number)?;
+        let height = &height;
+        let count = lines.count();
+        let last = number + 1 == count;
+        if !stack.bands.is_empty() {
+            // Below mode 15 a paragraph's last line reaches down to the end of its space
+            // after; in mode 15 to the end of its pitch.
+            let after = if last && !self.mode15 {
+                Px::twips(p.after)
+            } else {
+                Px::ZERO
+            };
+            stack.y = clear_of_bands(stack.y, height.pitch + after, &stack.bands);
+        }
+        if let (false, Some(source)) = (stack.wraps.is_empty(), &p.source) {
+            stack.y = self.beside(p, at, stack, source, number);
+        }
+        // The line as broken beside the drawings.
+        let lines = self.lines_of(index, p);
+        let height = *lines.heights().get(number)?;
+        let height = &height;
+        let count = lines.count();
+        let last = number + 1 == count;
+        let border = if last || !self.mode15 { p.border } else { Px::ZERO };
+        let after = if last { Px::twips(p.after) } else { Px::ZERO };
+        let fitted = Fitted {
+            y: stack.y,
+            height,
+            border,
+            after,
+            bottom: at.bottom,
+        };
+        let mut new_notes = lines.notes_on(number);
+        if let Some(f) = frame.filter(|f| f.multi && !f.pooled) {
+            // In one of unequal columns, a note broken in the column's width.
+            for note in &mut new_notes {
+                let id = note.first().and_then(|l| l.note);
+                if let Some(found) = id.and_then(|id| self.notes_at.get(&(id, p.section, f.width))) {
+                    *note = NoteLines::clone(found);
+                }
+            }
+        }
+        let need = stack.foot.need(new_notes.iter(), &fitted);
+        if !stack.first_on_page && !p.section_mark && stack.y + height.fit() + border > at.bottom - need {
+            let overflow = self.hyphen_overflow(p, at, &lines, number);
+            let empty_ok = frame.is_some_and(|f| !f.first_on_page);
+            let end = self.break_before(start, overflow.clone(), empty_ok);
+            return Some(done(end, false, Why::Full, overflow));
+        }
+        stack.foot.place(new_notes.iter(), &fitted);
+        stack.foot.mark(Position::at(index, number));
+        stack
+            .tops
+            .record(top_of(frame, index, number, (stack.y, height.pitch, paragraph_top)));
+        stack
+            .out
+            .lines
+            .push(placed(frame, index, number, stack.y, height.pitch, paragraph_top));
+        stack.y += height.pitch;
+        let end_y = stack.y + if last { p.border } else { Px::ZERO };
+        stack.stack_ends.push((Position::at(index, number), end_y));
+        stack.first_on_page = false;
+        let next = if number + 1 < count {
+            Position::at(index, number + 1)
+        } else {
+            Position::at(index + 1, 0)
+        };
+        if lines.measured().page_breaks.contains(&number) {
+            return Some(done(next, true, Why::Page, Position::at(index, number)));
+        }
+        if lines.measured().column_breaks.contains(&number) {
+            return Some(done(next, true, Why::Column, Position::at(index, number)));
+        }
+        None
+    }
+
+    /// Line `number` broken beside the drawings it reaches into, and where its top is.
+    fn beside(
+        &self,
+        p: &ParaItem,
+        at: &At<'_>,
+        stack: &Stack<'_>,
+        source: &crate::rebreak::ParaSource,
+        number: usize,
+    ) -> Px {
+        let current = self.lines_of(at.index, p);
+        let column = at.frame.filter(|f| f.multi).map(|f| (f.offset, f.width));
+        let Some(section) = self.sections.get(p.section) else {
+            return stack.y;
+        };
+        let beside = crate::rebreak::Beside {
+            number,
+            last: number + 1 == current.count(),
+            after: Px::twips(p.after).value(),
+            wraps: stack.wraps,
+            column: super::floats::wrap_column(section, self.mode15, column),
+        };
+        let (y, found) = self.breaker.fit_beside(source, &current, &beside, stack.y.value());
+        self.broken(at.index, found);
+        Px::from(y)
+    }
+
+    /// Where a page ends whose line `number` does not fit, past an automatic hyphen ending
+    /// the line before: in mode 15 that line goes too -- or, where Word moves only the
+    /// word, the line keeps its text before the word and the next starts with it.
+    fn hyphen_overflow(&self, p: &ParaItem, at: &At<'_>, lines: &Lines<'_>, number: usize) -> Position {
+        let (index, start) = (at.index, at.start);
+        let at_hyphen = at.frame.is_none()
+            && number > 0
+            && lines.measured().auto_hyphen_ends.contains(&(number - 1))
+            && Position::at(index, number - 1) > *start;
+        if !at_hyphen {
+            return Position::at(index, number);
+        }
+        let moved = match (&p.source, self.hyphen_at_page_end) {
+            (Some(source), super::HyphenMove::Word) if source.section.is_none() => {
+                let found = self.breaker.move_hyphenated_word(source, lines, number - 1);
+                let moved = found.is_some();
+                self.broken(index, found);
+                moved
+            }
+            _ => false,
+        };
+        match self.hyphen_at_page_end {
+            super::HyphenMove::Nothing => Position::at(index, number),
+            _ if moved => Position::at(index, number),
+            _ => Position::at(index, number - 1),
+        }
     }
 
     /// The space between the item before and a table (`table_gap_px`).
     fn table_gap(&self, previous: Option<usize>, t: &TableItem) -> Px {
-        match previous.and_then(|k| self.items.get(k)) {
-            Some(FlowItem::Table(before)) => {
-                if t.flow.rows() == 0 {
-                    Px::ZERO
-                } else {
-                    -before.flow.bottom_border().min(t.flow.top_border())
-                }
-            }
-            Some(FlowItem::Para(before)) => {
-                if before.contextual && t.flow.opens_with_style(before.style.as_deref()) {
-                    Px::ZERO
-                } else {
-                    Px::twips(before.after)
-                }
-            }
-            _ => Px::ZERO,
-        }
+        table_gap(previous.and_then(|k| self.items.get(k)), t)
     }
+}
 
+/// The space between `previous` and a table after it (`table_gap_px`): the paragraph's
+/// space after, whole, unless contextual against the table's first paragraph's style;
+/// between two tables, one edge.
+pub(crate) fn table_gap(previous: Option<&FlowItem>, t: &TableItem) -> Px {
+    match previous {
+        Some(FlowItem::Table(before)) => {
+            if t.flow.rows() == 0 {
+                Px::ZERO
+            } else {
+                -before.flow.bottom_border().min(t.flow.top_border())
+            }
+        }
+        Some(FlowItem::Para(before)) => {
+            if before.contextual && t.flow.opens_with_style(before.style.as_deref()) {
+                Px::ZERO
+            } else {
+                Px::twips(before.after)
+            }
+        }
+        _ => Px::ZERO,
+    }
+}
+
+impl PageContext<'_> {
     fn scan_table(&self, t: &TableItem, at: &At<'_>, stack: &mut Stack<'_>) -> Result<Step, Stopped> {
         let At {
             index,
@@ -420,6 +673,13 @@ impl PageContext<'_> {
             laid = t.flow.place(&request).map_err(stopped)?;
         }
         record_rows(stack, index, &laid);
+        for row in laid.rows.iter().filter(|r| !r.header) {
+            stack.foot.mark(Position {
+                item: index,
+                line: row.row,
+                part: row.part(),
+            });
+        }
         if let Some((next_row, next_part)) = laid.next.clone() {
             return Ok(self.table_page_end(&laid, at, next_row, next_part));
         }
@@ -477,6 +737,44 @@ impl PageContext<'_> {
     }
 }
 
+/// The bands of `bands` a column's lines keep off: in a column of several, those of
+/// drawings across it.
+fn across(bands: &[Band], frame: Option<&Frame>, cx: &PageContext<'_>) -> Vec<Band> {
+    let Some(f) = frame.filter(|f| f.multi && !bands.is_empty()) else {
+        return bands.to_vec();
+    };
+    let left = cx.sections.get(f.section).map_or(Px::ZERO, |s| {
+        let m = &s.props.margins;
+        Px::from(ooxml_base::Q::new(i128::from(m.left + m.gutter + f.offset) * 300, 1440))
+    });
+    let right = left + Px::from(ooxml_base::Q::new(i128::from(f.width) * 300, 1440));
+    bands
+        .iter()
+        .filter(|b| b.span.is_none_or(|(l, r)| l < right && r > left))
+        .copied()
+        .collect()
+}
+
+/// A line placed at `(top, pitch, paragraph top)`, as a drawing anchored on it is
+/// positioned against it.
+fn top_of(frame: Option<&Frame>, item: usize, line: usize, at: (Px, Px, Px)) -> Top {
+    Top {
+        item,
+        line,
+        top: at.0,
+        pitch: at.1,
+        paragraph_top: at.2,
+        column: frame.filter(|f| f.multi).map(|f| (f.offset, f.width)),
+    }
+}
+
+/// `page` with the bands and wraps its lines kept off.
+fn with_floats(mut page: LaidPage, bands: Vec<Band>, wraps: Vec<crate::wrap::Wrap>) -> LaidPage {
+    page.bands = bands;
+    page.wraps = wraps;
+    page
+}
+
 /// A scan's end: what the page holds ends where the next starts (lines and rows the keeps
 /// sent on are dropped), and the column records where its stack ends.
 fn finish(stack: Stack<'_>, end: &ScanEnd, frame: Option<&mut Frame>) {
@@ -504,7 +802,9 @@ fn finish(stack: Stack<'_>, end: &ScanEnd, frame: Option<&mut Frame>) {
         })
         .collect();
     stack.out.rows.extend(rows);
+    let notes = stack.foot.kept(&end.end);
     if let Some(f) = frame {
+        f.notes = notes;
         if f.first_top.is_none() {
             f.first_top = stack.first_top;
         }
@@ -517,6 +817,12 @@ fn finish(stack: Stack<'_>, end: &ScanEnd, frame: Option<&mut Frame>) {
             .rev()
             .find(|(position, _)| *position < end.end)
             .map_or(f.top, |(_, y)| *y);
+    } else {
+        // What of its last footnote the page cannot hold goes on to the next (`_carried`).
+        stack.out.carry_out = notes
+            .last()
+            .map_or_else(|| std::sync::Arc::from(Vec::new()), |n| n.rest().into());
+        stack.out.notes = notes;
     }
 }
 

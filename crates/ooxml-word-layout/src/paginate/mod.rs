@@ -7,19 +7,57 @@
 //! document with a section of several columns); where it ends when a line does not fit
 //! is `keeps`'.
 //!
+//! A page's footnotes stand at its foot ([`PlacedNote`]): each line referencing notes
+//! fits with them under it, and what of a note a page cannot hold goes on at the next
+//! page's foot ([`NoteRest`]) -- on a page of its own in mode 15 after a forced break.
+//!
 //! Must not: measure (the flow is measured), lay tables out (a [`crate::table::TableFlow`]
-//! places a table's rows), or lay out notes, floating drawings, headers and footers (lane
-//! L3c: their heights come through [`crate::stories::StoryHeights`]).
+//! places a table's rows), or lay out headers and footers (their heights come through
+//! [`crate::stories::StoryHeights`]).
 
 mod columns;
+mod floats;
 mod keeps;
+mod notes;
 mod scan;
+pub(crate) use scan::table_gap;
 
-use crate::flow::FlowItem;
+use crate::flow::{FlowItem, ParaItem};
+use crate::notes::{NoteLine, NoteLines};
 use crate::px::Px;
+use crate::rebreak::{Breaker, Lines, Rebroken};
 use crate::sections::{Sections, StoryKind};
 use crate::stories::StoryHeights;
 use crate::table::PlacedRow;
+pub use floats::{Band, DrawingKey};
+use std::cell::RefCell;
+use std::collections::BTreeMap;
+use std::sync::Arc;
+
+/// The lines of a note a page (or column) could not hold, which go on at the next one's
+/// foot under the continuation separator.
+pub type NoteRest = Arc<[NoteLine]>;
+
+/// A footnote at a page's (or column's) foot: its lines and how many of them are there.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlacedNote {
+    /// The note's lines.
+    pub lines: NoteLines,
+    /// How many of them are on the page.
+    pub taken: usize,
+}
+
+impl PlacedNote {
+    /// The lines that go on to the next page or column.
+    pub fn rest(&self) -> &[NoteLine] {
+        self.lines.get(self.taken..).unwrap_or_default()
+    }
+}
+
+/// The lines of `notes` not placed, in order (`note_rest`).
+pub fn note_rest(notes: &[PlacedNote]) -> NoteRest {
+    notes.iter().flat_map(|n| n.rest().iter().copied()).collect()
+}
 
 /// A line of the flow: `item` indexes the flow, `line` the item's lines (a table's rows),
 /// and `part`, inside a table row split across pages, each cell's first stacked line on
@@ -124,6 +162,63 @@ pub struct LaidPage {
     pub lines: Vec<PlacedLine>,
     /// Its tables' rows.
     pub rows: Vec<PlacedTableRow>,
+    /// The lines of a note the page before could not hold, at its foot first.
+    pub carried: NoteRest,
+    /// The footnotes at its foot (none listed on a page of several columns, whose notes
+    /// stand at its columns' feet).
+    pub notes: Vec<PlacedNote>,
+    /// The lines of a note it could not hold, for the next page's foot.
+    pub carry_out: NoteRest,
+    /// The rest of a note that a page of its own holds after this one (mode 15, a forced
+    /// break ending this page).
+    pub continued: Option<NoteRest>,
+    /// A page the endnotes go on to: the continuation separator's line at its top, above
+    /// its first line.
+    pub opens: Option<OpeningLine>,
+    /// The bands its drawings text wraps top and bottom of keep its lines off.
+    pub bands: Vec<Band>,
+    /// The drawings its lines go beside.
+    pub wraps: Vec<crate::wrap::Wrap>,
+    /// The paragraphs broken again before it, from its first item on: what laying it out
+    /// again starts from.
+    pub lines_before: LineStore,
+    /// Its paragraphs broken again, as it placed them.
+    pub broken: LineStore,
+}
+
+/// A line a page opens with that is no line of the flow: the endnotes' continuation
+/// separator's, on a page they go on to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct OpeningLine {
+    /// Its top, px from the page's top.
+    pub top: Px,
+    /// Its pitch.
+    pub pitch: Px,
+}
+
+impl LaidPage {
+    /// A page from `start` with nothing on it yet.
+    pub fn empty(start: &Position, carried: NoteRest) -> LaidPage {
+        LaidPage {
+            page: 0,
+            number_before: 0,
+            start: start.clone(),
+            end: start.clone(),
+            reach: start.clone(),
+            forced: false,
+            lines: Vec::new(),
+            rows: Vec::new(),
+            carried,
+            notes: Vec::new(),
+            carry_out: Arc::from(Vec::new()),
+            continued: None,
+            opens: None,
+            bands: Vec::new(),
+            wraps: Vec::new(),
+            lines_before: LineStore::new(),
+            broken: LineStore::new(),
+        }
+    }
 }
 
 /// Where the layout stopped: the flow item it could not lay out.
@@ -153,6 +248,21 @@ impl Pagination {
     pub fn page_count(&self) -> usize {
         self.info.len()
     }
+
+    /// Per page (0-based, blank pages counted) with footnotes at its foot: the lines a
+    /// page before could not hold, and the notes placed on it.
+    pub fn notes(&self) -> BTreeMap<usize, (NoteRest, Vec<PlacedNote>)> {
+        let mut out = BTreeMap::new();
+        for page in &self.pages {
+            if !page.carried.is_empty() || !page.notes.is_empty() {
+                out.insert(page.page, (Arc::clone(&page.carried), page.notes.clone()));
+            }
+            if let Some(rest) = &page.continued {
+                out.insert(page.page + 1, (Arc::clone(rest), Vec::new()));
+            }
+        }
+        out
+    }
 }
 
 /// What laying out a page reads: the flow, the sections, the compatibility rules and the
@@ -168,6 +278,40 @@ pub struct PageContext<'a> {
     pub hyphen_at_page_end: HyphenMove,
     /// The headers' and footers' heights.
     pub stories: &'a dyn StoryHeights,
+    /// Per section, its footnote separator's and continuation separator's heights.
+    pub separators: &'a BTreeMap<usize, (Px, Px)>,
+    /// In mode 15, the footnotes of sections of several columns as flows of their own.
+    pub note_items: &'a crate::flow::NoteItems,
+    /// The body has drawings text wraps beside or floating tables: each page's are found
+    /// and its lines broken beside them.
+    pub wraps: bool,
+    /// Below mode 15, footnotes broken in the widths of unequal columns.
+    pub notes_at: &'a crate::flow::NotesAt,
+    /// What breaking a paragraph again needs.
+    pub breaker: Breaker<'a>,
+    /// The paragraphs broken again so far: the paginator's state, which every layout of a
+    /// page reads and breaks again (`Para.set_lines`), carried from page to page.
+    pub lines: RefCell<LineStore>,
+}
+
+/// Flow index -> a paragraph's lines as the paginator last broke them again.
+pub type LineStore = BTreeMap<usize, Arc<Rebroken>>;
+
+impl PageContext<'_> {
+    /// Item `index`'s lines as the paginator reads them now.
+    pub(crate) fn lines_of<'s>(&self, index: usize, p: &'s ParaItem) -> Lines<'s> {
+        match self.lines.borrow().get(&index) {
+            Some(found) => Lines::Again(Arc::clone(found)),
+            None => Lines::Flow(p),
+        }
+    }
+
+    /// Item `index` broken again as `found` says, where it is.
+    pub(crate) fn broken(&self, index: usize, found: Option<Rebroken>) {
+        if let Some(found) = found {
+            self.lines.borrow_mut().insert(index, Arc::new(found));
+        }
+    }
 }
 
 /// What Word does with a page whose last line would end in an automatic hyphen
@@ -191,6 +335,10 @@ pub struct Resume {
     pub page: usize,
     /// The number of the page before.
     pub number: i64,
+    /// The lines of a note the page before could not hold.
+    pub carry: NoteRest,
+    /// The paragraphs broken again before it, from its first item on.
+    pub lines: LineStore,
 }
 
 /// Lays pages out from a start until the end, a stop, or until a caller says the rest is
@@ -215,17 +363,27 @@ impl<'a> Paginator<'a> {
             mut position,
             mut page,
             mut number,
+            mut carry,
+            lines,
         } = resume.unwrap_or(Resume {
             position: Position::default(),
             page: 0,
             number: 0,
+            carry: Arc::from(Vec::new()),
+            lines: LineStore::new(),
         });
+        cx.lines.replace(lines);
         let mut first = true;
         while position.item < cx.items.len() {
+            // What is broken again before the page's first item is never read again.
+            cx.lines.borrow_mut().retain(|k, _| *k >= position.item);
+            let lines_before = cx.lines.borrow().clone();
             let state = Resume {
                 position: position.clone(),
                 page,
                 number,
+                carry: Arc::clone(&carry),
+                lines: lines_before.clone(),
             };
             if !first && until(&state) {
                 return (out, Some(state));
@@ -234,14 +392,12 @@ impl<'a> Paginator<'a> {
             let number_before = number;
             let info = self.page_info(&position, &mut page, &mut number, &mut out.info);
             out.info.push(info);
-            let laid = cx.lay_page(&position, info.story);
-            match laid {
-                Ok(mut laid) => {
-                    laid.page = page;
-                    laid.number_before = number_before;
-                    position = laid.end.clone();
-                    out.pages.push(laid);
-                }
+            let laid = cx.lay_page(&position, info.story, &carry, page);
+            let mut laid = match laid.map_err(|(mut laid, stopped)| {
+                laid.lines_before = lines_before.clone();
+                (laid, stopped)
+            }) {
+                Ok(laid) => laid,
                 Err((mut laid, stopped)) => {
                     laid.page = page;
                     laid.number_before = number_before;
@@ -249,8 +405,34 @@ impl<'a> Paginator<'a> {
                     out.stopped = Some(stopped);
                     return (out, None);
                 }
-            }
+            };
+            laid.page = page;
+            laid.number_before = number_before;
+            laid.lines_before = lines_before;
+            laid.broken = cx
+                .lines
+                .borrow()
+                .range(laid.start.item..=laid.end.item)
+                .map(|(k, v)| (*k, Arc::clone(v)))
+                .collect();
+            position = laid.end.clone();
+            carry = Arc::clone(&laid.carry_out);
             page += 1;
+            if !carry.is_empty() && laid.forced && cx.mode15 {
+                // The rest of the note takes a page of its own before the forced break's.
+                number += 1;
+                out.info.push(PageInfo {
+                    number,
+                    section: info.section,
+                    section_first: false,
+                    story: cx.sections.story_kind(info.section, false, number),
+                    blank: true,
+                });
+                laid.continued = Some(carry);
+                carry = Arc::from(Vec::new());
+                page += 1;
+            }
+            out.pages.push(laid);
         }
         (out, None)
     }
@@ -297,12 +479,23 @@ impl<'a> Paginator<'a> {
 impl PageContext<'_> {
     /// One page from `start`: laid out, or laid out up to where the layout stops.
     #[allow(clippy::result_large_err)]
-    fn lay_page(&self, start: &Position, story: StoryKind) -> Result<LaidPage, (LaidPage, Stopped)> {
+    fn lay_page(
+        &self,
+        start: &Position,
+        story: StoryKind,
+        carry: &NoteRest,
+        page: usize,
+    ) -> Result<LaidPage, (LaidPage, Stopped)> {
         if self.sections.any_multi_column() {
-            self.lay_columns_page(start, story)
+            self.lay_columns_page(start, story, carry, page)
         } else {
-            self.lay_one_column_page(start, story)
+            self.lay_one_column_page(start, story, carry, page)
         }
+    }
+
+    /// Section `section`'s footnote separator's and continuation separator's heights.
+    fn separators(&self, section: usize) -> (Px, Px) {
+        self.separators.get(&section).copied().unwrap_or((Px::ZERO, Px::ZERO))
     }
 
     /// Where the page's text starts and ends.

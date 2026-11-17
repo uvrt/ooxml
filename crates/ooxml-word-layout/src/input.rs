@@ -110,8 +110,8 @@ fn flag(props: &Props, key: &str) -> bool {
     props.get(key).is_some_and(Value::truthy)
 }
 
-/// One run as the text engine reads it; `note_number`: the run draws a note's number.
-pub fn text_run(document: &WordDocument, run: &Run, resolved: &Props, note_number: bool) -> TextRun {
+/// One run as the text engine reads it.
+pub fn text_run(document: &WordDocument, run: &Run, resolved: &Props) -> TextRun {
     let marks = run.breaks.iter().map(|(at, kind)| (*at, mark(kind))).collect();
     let blank = CharFormat {
         face: None,
@@ -158,7 +158,7 @@ pub fn text_run(document: &WordDocument, run: &Run, resolved: &Props, note_numbe
         scale: u32::try_from(small("w", 100)).unwrap_or(100),
         kern: u32::try_from(small("kern", 0)).unwrap_or(0),
         caps: flag(resolved, "caps"),
-        note_number,
+        note_number: run.note_number,
         lang: resolved.get("lang.val").and_then(Value::str).map(str::to_owned),
         no_proof: flag(resolved, "noProof"),
     }
@@ -218,21 +218,18 @@ pub fn rules(document: &WordDocument) -> WordRules {
     }
 }
 
-/// The paragraph as the text engine measures it: `label` its list label's text, `notes`
-/// the runs that draw a note's number.
+/// The paragraph as the text engine measures it: `label` its list label's text.
 pub fn text_paragraph(
     document: &WordDocument,
     paragraph: &Paragraph,
     resolved: &ResolvedParagraph,
     label: Option<&str>,
-    notes: &[bool],
 ) -> TextParagraph {
     let runs = paragraph
         .runs
         .iter()
         .zip(resolved.runs.iter())
-        .enumerate()
-        .map(|(k, (run, props))| text_run(document, run, props, notes.get(k).copied().unwrap_or(false)))
+        .map(|(run, props)| text_run(document, run, props))
         .collect();
     let hyphenation = document
         .context

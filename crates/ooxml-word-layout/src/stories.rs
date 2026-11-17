@@ -4,9 +4,12 @@
 //! section of one column (docx2svg's `paginate.story_document`, `stack_height`,
 //! `story_references`, `_stories`).
 //!
-//! Must not: draw a story, or lay out what lane L3c lays out in one (floating drawings
-//! text wraps around, tables until L3b, list labels the model does not count in a
-//! story): a story holding any of them is reported in [`StoryTable::unsupported`].
+//! A story's list items are counted from scratch in it; its tables are placed by the
+//! table layout as a page places them.
+//!
+//! Must not: draw a story, or lay out a floating drawing text wraps around in one
+//! (docx2svg stands an estimate in for its paragraph): a story holding one is reported in
+//! [`StoryTable::unsupported`].
 
 use crate::flow::{FlowContext, FlowItem, FlowMaker, FlowState, Labels};
 use crate::px::Px;
@@ -100,43 +103,70 @@ fn story_section(props: &SectionProps, paragraphs: usize) -> Section {
     }
 }
 
-/// What in a story this layout does not lay out.
+/// What in a story this layout does not lay out: a floating drawing text wraps around.
 fn unsupported_in(blocks: &[Block]) -> Option<&'static str> {
-    for block in blocks {
-        match block {
-            Block::Table(_) => return Some("a table"),
-            Block::Paragraph(p) => {
-                if p.runs.iter().any(|r| {
-                    r.anchors
-                        .iter()
-                        .any(|a| !matches!(a.wrap.as_deref(), None | Some("wrapNone")))
-                }) {
-                    return Some("a floating drawing text wraps around");
-                }
-                let numbered = p.properties.as_ref().is_some_and(|pp| {
-                    pp.declared
-                        .get("numPr.numId")
-                        .and_then(Value::int)
-                        .is_some_and(|n| n != 0)
-                });
-                if numbered {
-                    return Some("a list item");
-                }
+    let wraps = |p: &ooxml_word_model::model::Paragraph| {
+        p.runs.iter().any(|r| r.anchors.iter().any(crate::floating::moves_text))
+    };
+    blocks
+        .iter()
+        .any(|b| matches!(b, Block::Paragraph(p) if wraps(p)))
+        .then_some("a floating drawing text wraps around")
+}
+
+/// A story's paragraphs' list labels, document order (cells included), counted from
+/// scratch in the story (`flow`'s `ListCounters` over a story document).
+pub fn story_labels(model: &mut Model, document: &WordDocument, blocks: &[Block]) -> Vec<Option<String>> {
+    let (paragraphs, _) = crate::flow::body_paragraphs(blocks);
+    let mut counters = ooxml_word_model::labels::Counters::default();
+    paragraphs
+        .iter()
+        .map(|p| {
+            let pp = model.resolve_paragraph_props(document, p);
+            let num_id = pp.get("numPr.numId").and_then(Value::int).unwrap_or(0);
+            if num_id == 0 {
+                return None;
             }
-        }
-    }
-    None
+            let ilvl = pp.get("numPr.ilvl").and_then(Value::int).unwrap_or(0);
+            counters.item(&document.context.numbering, num_id, ilvl)
+        })
+        .collect()
 }
 
 /// How far a story's items reach stacked from its edge distance (`stack_height`): the
 /// first paragraph's space before kept, the gaps and borders between them, and the last
-/// paragraph's space after. A stop ends the stack.
+/// paragraph's space after; a table's rows as placed. A stop ends the stack.
 pub fn stack_height(items: &[FlowItem], mode15: bool) -> Px {
     let mut y = Px::ZERO;
     let mut previous: Option<&FlowItem> = None;
     let mut first = true;
     for item in items {
-        let FlowItem::Para(p) = item else { break };
+        let p = match item {
+            FlowItem::Para(p) => p,
+            FlowItem::Table(t) => {
+                // Its rows as a page places them, from where the stack is.
+                if !first {
+                    y += crate::paginate::table_gap(previous, t);
+                }
+                let request = crate::table::TableRequest {
+                    y,
+                    bottom: y + Px::int(10_000_000),
+                    row: 0,
+                    part: Vec::new(),
+                    first_on_page: first,
+                    mode15,
+                    split_kept: false,
+                };
+                match t.flow.place(&request) {
+                    Ok(laid) => y = laid.end,
+                    Err(_) => break,
+                }
+                first = false;
+                previous = Some(item);
+                continue;
+            }
+            FlowItem::Stop(_) => break,
+        };
         for (number, height) in p.measured.heights.iter().enumerate() {
             if number == 0 {
                 let gap = if first {
@@ -169,14 +199,40 @@ pub fn stack_height(items: &[FlowItem], mode15: bool) -> Px {
 
 type HeightKey = (Text, i64, i64, [i64; 7]);
 
+/// How far a header or footer reaches from its edge distance: its blocks laid out as the
+/// body of one section of one column with the page's size and margins, stacked
+/// (`story_height`).
+pub fn story_height(
+    cx: &StoryContext<'_>,
+    model: &mut Model,
+    state: &mut FlowState,
+    blocks: &[Block],
+    props: &SectionProps,
+) -> Px {
+    let document = cx.document;
+    let paragraphs = blocks.iter().filter(|b| matches!(b, Block::Paragraph(_))).count();
+    let sections = Sections::new(&[story_section(props, paragraphs)], false);
+    let labels = story_labels(model, document, blocks);
+    let fcx = FlowContext {
+        document,
+        blocks,
+        sections: &sections,
+        labels: Labels::Given(&labels),
+        faces: cx.faces,
+        locale: cx.locale,
+        tables: cx.tables,
+        roles: &[],
+    };
+    let flow = FlowMaker::new(&fcx, model, state).build();
+    stack_height(&flow.items, crate::input::rules(document).mode15())
+}
+
 impl StoryTable {
     /// Every section's header and footer heights by kind.
     pub fn compute(cx: &StoryContext<'_>, model: &mut Model, state: &mut FlowState) -> StoryTable {
         let document = cx.document;
-        let mode15 = crate::input::rules(document).mode15();
         let mut table = StoryTable::default();
         let mut memo: HashMap<HeightKey, Px> = HashMap::new();
-        let note_runs = HashMap::new();
         for (index, (headers, footers)) in story_references(&document.sections).into_iter().enumerate() {
             let Some(section) = document.sections.get(index) else {
                 continue;
@@ -202,20 +258,7 @@ impl StoryTable {
                 if let Some(why) = unsupported_in(blocks) {
                     table.unsupported.push(format!("{id}: {why}"));
                 }
-                let paragraphs = blocks.iter().filter(|b| matches!(b, Block::Paragraph(_))).count();
-                let sections = Sections::new(&[story_section(props, paragraphs)], false);
-                let fcx = FlowContext {
-                    document,
-                    blocks,
-                    sections: &sections,
-                    labels: Labels::None,
-                    faces: cx.faces,
-                    locale: cx.locale,
-                    tables: cx.tables,
-                    note_runs: &note_runs,
-                };
-                let flow = FlowMaker::new(&fcx, model, state).build();
-                let found = stack_height(&flow.items, mode15);
+                let found = story_height(cx, model, state, blocks, props);
                 memo.insert(key, found);
                 found
             };
