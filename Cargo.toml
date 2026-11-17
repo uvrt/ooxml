@@ -15,6 +15,8 @@ members = [
     "crates/ooxml-oracle",
     "crates/ooxml-tools-derive",
     "crates/ooxml-tools",
+    "crates/ooxml-scene",
+    "crates/ooxml-metafile",
     "xtask",
 ]
 # cargo-fuzz's layout: its own workspace, built with `cargo fuzz` (nightly).
@@ -47,6 +49,8 @@ ooxml-derive = { path = "crates/ooxml-derive" }
 ooxml-fonts = { path = "crates/ooxml-fonts" }
 ooxml-text = { path = "crates/ooxml-text" }
 ooxml-word-model = { path = "crates/ooxml-word-model" }
+ooxml-scene = { path = "crates/ooxml-scene" }
+ooxml-metafile = { path = "crates/ooxml-metafile" }
 ooxml-tools-derive = { path = "crates/ooxml-tools-derive" }
 read-fonts = { version = "0.47", default-features = false, features = ["std"] }
 

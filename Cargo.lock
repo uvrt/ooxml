@@ -309,6 +309,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "ooxml-metafile"
+version = "0.1.0"
+dependencies = [
+ "flate2",
+ "ooxml-base",
+ "ooxml-fonts",
+ "ooxml-scene",
+ "ooxml-text",
+ "thiserror",
+]
+
+[[package]]
 name = "ooxml-opc"
 version = "0.1.0"
 dependencies = [
@@ -326,6 +338,7 @@ dependencies = [
  "ooxml-base",
  "ooxml-derive",
  "ooxml-fonts",
+ "ooxml-metafile",
  "ooxml-opc",
  "ooxml-text",
  "ooxml-word-model",
@@ -344,6 +357,10 @@ dependencies = [
  "rayon",
  "serde_json",
 ]
+
+[[package]]
+name = "ooxml-scene"
+version = "0.1.0"
 
 [[package]]
 name = "ooxml-store"

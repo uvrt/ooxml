@@ -15,6 +15,7 @@ ooxml-text.workspace = true
 ooxml-zip.workspace = true
 ooxml-derive.workspace = true
 ooxml-word-model.workspace = true
+ooxml-metafile.workspace = true
 serde_json.workspace = true
 flate2.workspace = true
 

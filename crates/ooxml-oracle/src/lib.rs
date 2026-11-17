@@ -18,6 +18,7 @@ pub mod disk;
 pub mod export;
 mod export_parts;
 pub mod glyphs;
+pub mod metafile;
 pub mod records;
 pub mod replay;
 pub mod text;

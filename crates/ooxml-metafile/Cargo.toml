@@ -1,0 +1,19 @@
+[package]
+name = "ooxml-metafile"
+version = "0.1.0"
+description = "EMF, EMF+ and WMF players and DIB decoding, with Windows as the reference, lowered to a scene"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+ooxml-base.workspace = true
+ooxml-scene.workspace = true
+ooxml-fonts.workspace = true
+ooxml-text.workspace = true
+flate2.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

@@ -191,7 +191,7 @@ RUST_WORKSPACE = ("Cargo.toml", "Cargo.lock", ".cargo/")
 FUZZ_CRATES = ("ooxml-base", "ooxml-xml", "ooxml-zip", "ooxml-opc")
 LOOM_CRATES = ("ooxml-store",)
 WORD_MODEL_CRATES = ("ooxml-oracle", "ooxml-base", "ooxml-xml", "ooxml-zip", "ooxml-opc", "ooxml-derive",
-                     "ooxml-fonts", "ooxml-text", "ooxml-word-model")
+                     "ooxml-fonts", "ooxml-text", "ooxml-word-model", "ooxml-scene", "ooxml-metafile")
 
 
 def _crates(names: tuple[str, ...]) -> tuple[str, ...]:
