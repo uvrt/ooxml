@@ -234,13 +234,15 @@ fn first_reaching(old: &Pagination, from: usize, target: &Position) -> usize {
 /// Old laid pages `from..to` (and their blank pages' info) moved by `shift`.
 fn copy_moved(out: &mut Pagination, old: &Pagination, from: usize, to: usize, shift: Shift) {
     let to = to.min(old.pages.len());
-    out.pages.extend(
-        old.pages
-            .get(from..to)
-            .unwrap_or_default()
-            .iter()
-            .map(|page| moved(page, shift.items, shift.pages, shift.numbers)),
-    );
+    out.pages
+        .extend(old.pages.get(from..to).unwrap_or_default().iter().map(|page| {
+            if shift.items == 0 && shift.pages == 0 && shift.numbers == 0 {
+                // A page that stays where it was is the old one.
+                Arc::clone(page)
+            } else {
+                Arc::new(moved(page, shift.items, shift.pages, shift.numbers))
+            }
+        }));
     let info_to = if to < old.pages.len() {
         base_of(old, to)
     } else {

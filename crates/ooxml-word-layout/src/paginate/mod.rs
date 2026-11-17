@@ -247,8 +247,9 @@ pub struct Stopped {
 /// The pages of a flow.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Pagination {
-    /// Each page laid out, in order.
-    pub pages: Vec<LaidPage>,
+    /// Each page laid out, in order: shared with the layouts of other versions where a
+    /// relayout kept it where it was.
+    pub pages: Vec<Arc<LaidPage>>,
     /// Every page, blank ones included, by its 0-based place.
     pub info: Vec<PageInfo>,
     /// Where the layout stopped, if it did.
@@ -432,7 +433,7 @@ impl<'a> Paginator<'a> {
                 Err((mut laid, stopped)) => {
                     laid.page = page;
                     laid.number_before = number_before;
-                    out.pages.push(laid);
+                    out.pages.push(Arc::new(laid));
                     out.stopped = Some(stopped);
                     return (out, None);
                 }
@@ -463,7 +464,7 @@ impl<'a> Paginator<'a> {
                 carry = Arc::from(Vec::new());
                 page += 1;
             }
-            out.pages.push(laid);
+            out.pages.push(Arc::new(laid));
         }
         (out, None)
     }
