@@ -12,12 +12,15 @@
 //! Must not: place anything on a page, or lay tables out (a [`TableLayout`] does).
 
 use crate::faces::Faces;
+pub use crate::floating::{anchors_of, moves_text, AnchorRef, SIDE_WRAPS};
 use crate::input::section_geometry;
+use crate::notes::flowed::NoteMaker;
+use crate::notes::{NoteLines, NoteRole};
 use crate::paragraph::{measure_paragraph, MeasureContext, MeasuredParagraph, ParagraphJob, Unmeasured};
 use crate::px::Px;
 use crate::sections::Sections;
 use crate::table::{TableContext, TableFlow, TableJob, TableLayout, Unsupported};
-use crate::vertical::{autospace_kept, border_px};
+use crate::vertical::autospace_kept;
 use ooxml_base::Locale;
 use ooxml_text::Measurer;
 use ooxml_word_model::model::{Block, Paragraph, SectionProps, Table};
@@ -61,12 +64,34 @@ pub struct ParaItem {
     pub section_start: bool,
     /// An empty paragraph holding a section break: it takes no room of its own.
     pub section_mark: bool,
+    /// The footnotes referenced in it, each as its lines, by the line its reference is on
+    /// (in line order, each line's in the order referenced).
+    pub notes: Vec<(usize, NoteLines)>,
+    /// What of the endnotes placed in the flow it is.
+    pub role: Option<NoteRole>,
+    /// An endnote's paragraph: the pitch of the continuation separator's line a page it
+    /// starts opens with.
+    pub continuation: Option<Px>,
+    /// Its floating drawings that take no room in their line: those text does not wrap
+    /// around, and those it wraps top and bottom of or beside (`anchors_of`).
+    pub anchors: Vec<AnchorRef>,
+    /// What its lines are broken from, where the paginator may break them again.
+    pub source: Option<Arc<crate::rebreak::ParaSource>>,
+    /// The drop cap that drops into it.
+    pub drop_cap: Option<Arc<DropCap>>,
+    /// What a page lays its footnotes out from beyond their lines.
+    pub note_forms: NoteForms,
 }
 
 impl ParaItem {
     /// How many lines it has.
     pub fn count(&self) -> usize {
         self.measured.heights.len()
+    }
+
+    /// The footnotes referenced on line `line`.
+    pub fn notes_on(&self, line: usize) -> impl Iterator<Item = &NoteLines> {
+        self.notes.iter().filter(move |(l, _)| *l == line).map(|(_, n)| n)
     }
 }
 
@@ -151,6 +176,30 @@ impl FlowItem {
 pub struct Flow {
     /// Its items, in order.
     pub items: Vec<FlowItem>,
+    /// Per section whose paragraphs reference footnotes, the heights of its footnote
+    /// separator and continuation separator.
+    pub separators: std::collections::BTreeMap<usize, (Px, Px)>,
+    /// In mode 15, per footnote referenced in a section of several columns, its paragraphs
+    /// as a flow in that section's columns: what the page's note area is laid out from.
+    pub note_items: NoteItems,
+    /// Below mode 15, per footnote referenced in a section of unequal columns, its lines
+    /// broken in each of the section's column widths: what a column's foot holds of it.
+    pub notes_at: NotesAt,
+    /// The body has drawings text wraps beside or floating tables.
+    pub wraps: bool,
+}
+
+/// `(note, section, width)` -> the note's lines broken in a column that wide.
+pub type NotesAt = std::collections::BTreeMap<(i64, usize, i64), NoteLines>;
+
+/// `(note, section)` -> the note's paragraphs as a flow in the section's columns.
+pub type NoteItems = std::collections::BTreeMap<(i64, usize), Arc<[FlowItem]>>;
+
+impl Flow {
+    /// Section `section`'s footnote separator's and continuation separator's heights.
+    pub fn separators(&self, section: usize) -> (Px, Px) {
+        self.separators.get(&section).copied().unwrap_or((Px::ZERO, Px::ZERO))
+    }
 }
 
 /// What a block's measure depends on beyond its content: its section's geometry, its list
@@ -160,7 +209,6 @@ struct Kept {
     paragraph: Arc<Paragraph>,
     section: Arc<SectionProps>,
     label: Option<String>,
-    notes: Vec<bool>,
     measured: Result<Arc<MeasuredParagraph>, Unmeasured>,
 }
 
@@ -207,13 +255,11 @@ impl MeasureCache {
         paragraph: &Arc<Paragraph>,
         section: &Arc<SectionProps>,
         label: Option<&str>,
-        notes: &[bool],
     ) -> Option<Result<Arc<MeasuredParagraph>, Unmeasured>> {
         let kept = self.blocks.get(&(Arc::as_ptr(paragraph) as usize))?;
         let same = Arc::ptr_eq(&kept.paragraph, paragraph)
             && (Arc::ptr_eq(&kept.section, section) || kept.section == *section)
-            && kept.label.as_deref() == label
-            && kept.notes == notes;
+            && kept.label.as_deref() == label;
         same.then(|| kept.measured.clone())
     }
 
@@ -269,8 +315,8 @@ pub struct FlowContext<'a> {
     pub locale: &'a Locale,
     /// The table layout.
     pub tables: &'a dyn TableLayout,
-    /// Per top-level block, per run, whether a run draws a note's number (empty: none).
-    pub note_runs: &'a HashMap<usize, Vec<bool>>,
+    /// Per top-level block, what of the notes placed in the flow it is (empty: none is).
+    pub roles: &'a [Option<NoteRole>],
 }
 
 /// What the flow maker keeps between versions: the measures by block and by content.
@@ -323,69 +369,14 @@ pub(crate) fn is_empty(paragraph: &Paragraph) -> bool {
         .any(|r| !r.text.is_empty() || !r.breaks.is_empty() || !r.anchors.is_empty())
 }
 
-const BORDER_SIDES: [&str; 6] = ["top", "left", "bottom", "right", "between", "bar"];
+pub use crate::borders::paragraph_borders;
 
-fn border_of<'a>(pp: &'a Props, side: &str) -> Option<&'a ooxml_word_model::value::Border> {
-    match pp.get(format!("pBdr.{side}").as_str()) {
-        Some(Value::Border(b)) => Some(b),
-        _ => None,
-    }
-}
-
-fn drawn(border: Option<&ooxml_word_model::value::Border>) -> bool {
-    border.is_some_and(|b| !matches!(b.style.as_deref(), None | Some("nil" | "none")))
-}
-
-/// The height one `w:pBdr` side takes (`side_px`): space and width, a `double` line
-/// three widths; a `w:between` border its space on both sides.
-fn side_px(border: Option<&ooxml_word_model::value::Border>, between: bool) -> Px {
-    let Some(b) = border.filter(|b| drawn(Some(b))) else {
-        return Px::ZERO;
-    };
-    let tall = if b.style.as_deref() == Some("double") { 3 } else { 1 };
-    let height = border_px(b.size * tall, b.space);
-    if between {
-        height + Px::twips(b.space * 20)
-    } else {
-        height
-    }
-}
-
-/// What decides whether two consecutive paragraphs share one border box (`border_box`).
-fn border_box(pp: &Props) -> (Vec<Option<&ooxml_word_model::value::Border>>, i64, i64) {
-    (
-        BORDER_SIDES.iter().map(|s| border_of(pp, s)).collect(),
-        int(pp, "ind.left"),
-        int(pp, "ind.right"),
-    )
-}
-
-/// `(above, below)`: the room a paragraph's borders take above its first line and below
-/// its last, given the paragraphs beside it (`paragraph_borders_px`).
-pub fn paragraph_borders(pp: &Props, previous: Option<&Props>, following: Option<&Props>) -> (Px, Px) {
-    let own = border_box(pp);
-    if !own.0.iter().any(|b| drawn(*b)) {
-        return (Px::ZERO, Px::ZERO);
-    }
-    let after_same = following.is_some_and(|f| border_box(f) == own);
-    let before_same = previous.is_some_and(|p| border_box(p) == own);
-    let between = border_of(pp, "between");
-    let upper = match between.filter(|b| drawn(Some(b))) {
-        Some(b) => Px::twips(b.space * 20),
-        None => Px::ZERO,
-    };
-    let above = if before_same {
-        side_px(between, true) - upper
-    } else {
-        side_px(border_of(pp, "top"), false)
-    };
-    let below = if after_same {
-        upper
-    } else {
-        side_px(border_of(pp, "bottom"), false)
-    };
-    (above, below)
-}
+mod drop;
+mod notes;
+mod source;
+pub use drop::DropCap;
+pub use notes::NoteForms;
+use notes::ParaNotes;
 
 /// Whether a side of a resolved paragraph is autospaced (`autospaced`).
 fn autospaced(document: &WordDocument, pp: &Props, side: &str) -> bool {
@@ -403,6 +394,16 @@ impl FlowState {
     }
 }
 
+/// Where the layout stops at block `block` (top-level `body`, in `section`), and why.
+fn stop(block: usize, body: usize, section: usize, reason: impl Into<String>) -> FlowItem {
+    FlowItem::Stop(Arc::new(StopItem {
+        block,
+        body,
+        section,
+        reason: reason.into(),
+    }))
+}
+
 /// Builds one version's flow.
 pub struct FlowMaker<'a, 'm> {
     cx: &'a FlowContext<'a>,
@@ -411,6 +412,14 @@ pub struct FlowMaker<'a, 'm> {
     paragraphs: Vec<Arc<Paragraph>>,
     firsts: Vec<usize>,
     resolved: HashMap<usize, Arc<Props>>,
+    notes: NoteMaker,
+    separators: std::collections::BTreeMap<usize, (Px, Px)>,
+    note_items: NoteItems,
+    notes_at: NotesAt,
+    /// The body has drawings text wraps beside or floating tables, or drop caps.
+    wraps: bool,
+    /// The drop cap the next paragraph carries.
+    pending_drop: Option<Arc<DropCap>>,
 }
 
 impl<'a, 'm> FlowMaker<'a, 'm> {
@@ -424,6 +433,12 @@ impl<'a, 'm> FlowMaker<'a, 'm> {
             paragraphs,
             firsts,
             resolved: HashMap::new(),
+            notes: NoteMaker::default(),
+            separators: std::collections::BTreeMap::new(),
+            note_items: NoteItems::new(),
+            notes_at: NotesAt::new(),
+            wraps: source::wraps(cx.blocks),
+            pending_drop: None,
         }
     }
 
@@ -448,6 +463,8 @@ impl<'a, 'm> FlowMaker<'a, 'm> {
         let mut items = Vec::with_capacity(body.len());
         let mut top_level = 0;
         let mut seen = vec![false; self.cx.sections.list.len().max(1)];
+        let drops = self.drop_caps();
+        self.wraps = self.wraps || !drops.is_empty();
         for (index, block) in body.iter().enumerate() {
             let first = self.firsts.get(index).copied().unwrap_or(0);
             let section = self.cx.sections.section_of(top_level);
@@ -458,6 +475,14 @@ impl<'a, 'm> FlowMaker<'a, 'm> {
             let item = match block {
                 Block::Table(t) => self.table_item(t, index, first, section, section_start),
                 Block::Paragraph(p) => {
+                    if drops.contains(&index) {
+                        // A drop cap: not in the stack; the paragraph after it carries it.
+                        self.pending_drop = self.drop_cap(p, index, section).map(Arc::new);
+                        if self.pending_drop.is_some() {
+                            top_level += 1;
+                            continue;
+                        }
+                    }
                     let item = self.paragraph_item(p, index, first, top_level, section, section_start);
                     top_level += 1;
                     item
@@ -465,7 +490,13 @@ impl<'a, 'm> FlowMaker<'a, 'm> {
             };
             items.push(item);
         }
-        Flow { items }
+        Flow {
+            items,
+            separators: self.separators,
+            note_items: self.note_items,
+            notes_at: self.notes_at,
+            wraps: self.wraps,
+        }
     }
 
     fn table_item(
@@ -573,16 +604,11 @@ impl<'a, 'm> FlowMaker<'a, 'm> {
     ) -> Result<Arc<MeasuredParagraph>, Unmeasured> {
         let document = self.cx.document;
         let label = self.cx.labels.of(self.firsts.get(body).copied().unwrap_or(0));
-        let notes = self.cx.note_runs.get(&body).cloned().unwrap_or_default();
         let geometry = self.cx.sections.get(section).cloned();
         let Some(geometry) = geometry else {
             return Err(Unmeasured::Text("no section".into()));
         };
-        if let Some(found) = self
-            .state
-            .cache
-            .get(paragraph, &geometry.props, label.as_deref(), &notes)
-        {
+        if let Some(found) = self.state.cache.get(paragraph, &geometry.props, label.as_deref()) {
             return found;
         }
         let resolved = self.model.resolve_paragraph(document, paragraph);
@@ -598,7 +624,6 @@ impl<'a, 'm> FlowMaker<'a, 'm> {
             geometry: &text_geometry,
             columns: geometry.multi_column(),
             label: label.as_deref(),
-            notes: &notes,
         };
         let measured = measure_paragraph(&mcx, &mut self.state.measurer, &job).map(Arc::new);
         self.state.cache.blocks.insert(
@@ -607,7 +632,6 @@ impl<'a, 'm> FlowMaker<'a, 'm> {
                 paragraph: Arc::clone(paragraph),
                 section: Arc::clone(&geometry.props),
                 label,
-                notes,
                 measured: measured.clone(),
             },
         );
@@ -623,22 +647,6 @@ impl<'a, 'm> FlowMaker<'a, 'm> {
             }
             Block::Table(_) => None,
         }
-    }
-
-    /// What of a paragraph this layout does not lay out: a drop cap's frame and a section
-    /// of unequal columns (a paragraph broken again for each column's width).
-    fn not_laid_out(&mut self, block: usize, section: usize) -> Option<&'static str> {
-        if self.cx.sections.get(section).is_some_and(|s| s.unequal_columns()) {
-            return Some("a section of unequal columns");
-        }
-        let pp = self.props_of_block(block)?;
-        let drop_cap = match pp.get("framePr") {
-            Some(Value::Attrs(attrs)) => attrs
-                .iter()
-                .any(|(k, v)| &**k == "dropCap" && matches!(&**v, "drop" | "margin")),
-            _ => false,
-        };
-        drop_cap.then_some("a drop cap")
     }
 
     fn spacing(&mut self, pp: &Props, block: usize) -> (i64, i64) {
@@ -673,51 +681,34 @@ impl<'a, 'm> FlowMaker<'a, 'm> {
         section: usize,
         section_start: bool,
     ) -> FlowItem {
-        if let Some(why) = self.not_laid_out(block, section) {
-            return FlowItem::Stop(Arc::new(StopItem {
-                block,
-                body,
-                section,
-                reason: why.into(),
-            }));
-        }
         let measured = match self.measured(paragraph, body, section) {
             Ok(m) => m,
-            Err(why) => {
-                return FlowItem::Stop(Arc::new(StopItem {
-                    block,
-                    body,
-                    section,
-                    reason: format!("{why:?}"),
-                }))
-            }
+            Err(why) => return stop(block, body, section, format!("{why:?}")),
         };
-        if !measured.auto_hyphen_ends.is_empty()
-            && crate::engine::hyphen_at_page_end(self.cx.document) == crate::paginate::HyphenMove::Word
-        {
-            // Word moves only the hyphenated word to the next page: the paragraph is broken
-            // again from it, which this layout does not do.
-            return FlowItem::Stop(Arc::new(StopItem {
-                block,
-                body,
-                section,
-                reason: "a hyphenated word Word moves to the next page".into(),
-            }));
-        }
         let Some(pp) = self.props_of_block(block) else {
-            return FlowItem::Stop(Arc::new(StopItem {
-                block,
-                body,
-                section,
-                reason: "unresolved".into(),
-            }));
+            return stop(block, body, section, "unresolved");
         };
-        let (before, after) = self.spacing(&pp, block);
+        let (mut before, after) = self.spacing(&pp, block);
+        let role = self.cx.roles.get(body).copied().flatten();
+        if role == Some(NoteRole::Separator) && crate::input::rules(self.cx.document).mode15() {
+            // The endnotes' separator keeps no space before in mode 15.
+            before = 0;
+        }
+        let ParaNotes {
+            notes,
+            continuation,
+            forms,
+        } = match self.paragraph_notes(paragraph, &measured, section, role) {
+            Ok(found) => found,
+            Err(note) => return stop(block, body, section, format!("footnote {} cannot be laid out", note.0)),
+        };
         let previous = self.neighbour_props(body, -1);
         let following = self.neighbour_props(body, 1);
         let (top_border, border) = paragraph_borders(&pp, previous.as_deref(), following.as_deref());
         let section_mark =
             self.cx.sections.ends_section(top_level) && is_empty(paragraph) && measured.heights.len() == 1;
+        let anchors = anchors_of(paragraph, &measured);
+        let source = self.para_source(paragraph, &measured, section);
         FlowItem::Para(Arc::new(ParaItem {
             block,
             body,
@@ -735,6 +726,13 @@ impl<'a, 'm> FlowMaker<'a, 'm> {
             section_start,
             section_mark,
             measured,
+            notes,
+            role,
+            continuation,
+            anchors,
+            source,
+            drop_cap: self.pending_drop.take(),
+            note_forms: forms,
         }))
     }
 }

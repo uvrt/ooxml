@@ -40,7 +40,7 @@ fn prop(pp: &Props, key: &str) -> i64 {
 /// A paragraph's pieces (no list label) and its resolved properties.
 fn pieces(cx: &mut TableContext<'_, '_>, paragraph: &Paragraph) -> Result<(Vec<Piece>, Arc<Props>), Unsupported> {
     let resolved = cx.model.resolve_paragraph(cx.document, paragraph);
-    let input = text_paragraph(cx.document, paragraph, &resolved, None, &[]);
+    let input = text_paragraph(cx.document, paragraph, &resolved, None);
     let found = ooxml_text::pieces(cx.faces, &input).map_err(|e| {
         Unsupported(format!(
             "a cell paragraph that cannot be measured ({}: {e})",

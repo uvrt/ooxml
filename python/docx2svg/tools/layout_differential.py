@@ -5,11 +5,13 @@ Lays every document given out with docx2svg (``convert_docx_to_layout``) and rec
 the body's last layout pass, its flow -- every top-level item, a paragraph with its lines
 (the line breaker's pieces from ``start`` to ``end``), each line's height, its spacing,
 borders, keeps and section facts; a table, a stand-in box or an obstacle by its kind --
-its pagination (every page's start and :class:`docx2svg.paginate.PageInfo`), and every
-body line the layout drew (its paragraph's path, its number, its top, pitch and
-baseline, its column).  Nothing of docx2svg changes: ``paginate.flow``,
-``paginate.paginate`` and ``linebreak.break_paragraph`` are wrapped for the run of this
-tool only.
+its pagination (every page's start and :class:`docx2svg.paginate.PageInfo`, and the
+footnotes at its foot: how many lines of a note the page before could not hold, and of
+each note how many of its lines are on the page), every body line the layout drew (its
+paragraph's path, its number, its top, pitch and baseline, its column), and apart from
+them the footnotes' lines drawn at its foot.  Nothing of docx2svg changes:
+``paginate.flow``, ``paginate.paginate`` and ``linebreak.break_paragraph`` are wrapped for
+the run of this tool only.
 
 The Rust layout (``crates/ooxml-word-layout``) lays the same documents out over the same
 fonts -- ``cargo run -p ooxml-oracle --bin layout-diff -- <records>`` -- and reports every
@@ -41,6 +43,11 @@ from docx2svg import convert_docx_to_layout, linebreak, paginate  # noqa: E402
 from docx2svg import fields as fields_module  # noqa: E402
 from docx2svg.fonts import font_table_classes  # noqa: E402
 from text_differential import documents, embedded_fonts, location, number  # noqa: E402
+
+
+#: Where a footnote's (or its separator's) line comes from: drawn at the page's foot, not
+#: a line of the body's flow (endnotes are).
+FOOTNOTE_PATHS = ("w:footnote",)
 
 
 def height(h) -> list:
@@ -155,18 +162,25 @@ def layout_record(capture: Capture, layout) -> dict:
     pages = []
     for page in layout.pages:
         info = page.info
+        body = [line for line in page.lines if line.story is None]
         pages.append({
             "info": None if info is None else [info.number, info.section, info.section_first, info.story, info.blank],
             "lines": [[line.path, line.number, number(line.top), number(line.pitch), line.baseline, line.column]
-                      for line in page.lines if line.story is None],
+                      for line in body if not line.path.startswith(FOOTNOTE_PATHS)],
+            "note_lines": [[line.path, line.number, number(line.top), number(line.pitch), line.baseline, line.column]
+                           for line in body if line.path.startswith(FOOTNOTE_PATHS)],
             "stop": None if page.stop is None else page.stop.reason,
         })
     fields = [[block, k, run.text]
               for block, paragraph in enumerate(fields_module.body_paragraphs(document.body))
               for k, run in enumerate(paragraph.runs)
               if run.field is not None and run.field.keyword in ("PAGE", "NUMPAGES", "SECTIONPAGES", "PAGEREF")]
+    notes = [[page, len(carried), carried[0].note if carried else None,
+               [[lines[0].note if lines else None, taken, len(lines)] for lines, taken in placed]]
+             for page, (carried, placed) in sorted(result.notes.items())]
     return {
         "fields": fields,
+        "notes": notes,
         "flow": [item_record(item, paragraphs, breaks) for item in items],
         "starts": [position(p) for p in result.starts],
         "info": [[k, i.number, i.section, i.section_first, i.story, i.blank] for k, i in sorted(result.info.items())],

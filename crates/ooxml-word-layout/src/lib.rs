@@ -25,22 +25,27 @@
 //! task at a time and its values are `Send + Sync`.
 #![forbid(unsafe_code)]
 
+pub mod borders;
 pub mod engine;
 mod error;
 pub mod faces;
 pub mod fields;
+pub mod floating;
 pub mod flow;
 pub mod heights;
 pub mod incremental;
 pub mod input;
+pub mod notes;
 pub mod paginate;
 pub mod paragraph;
 pub mod px;
+pub mod rebreak;
 pub mod sections;
 pub mod stories;
 pub mod table;
 pub mod tables;
 pub mod vertical;
+pub mod wrap;
 
 pub use engine::{DocumentLayout, WordLayout};
 pub use error::LayoutError;

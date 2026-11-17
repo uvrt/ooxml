@@ -62,6 +62,7 @@ impl RunContext<'_> {
                 anchors: Arc::from(p.anchors),
                 field: None,
                 toc_link: false,
+                note_number: false,
             });
         }
     }

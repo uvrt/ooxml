@@ -118,8 +118,7 @@ fn numbers_as_one(text: &str) -> String {
 }
 
 /// One paragraph to measure: the paragraph, its resolved formats, the geometry its lines
-/// break at, whether its section has several columns, its list label's text and the runs
-/// that draw a note's number.
+/// break at, whether its section has several columns and its list label's text.
 pub struct ParagraphJob<'a> {
     /// The paragraph.
     pub paragraph: &'a Paragraph,
@@ -131,8 +130,6 @@ pub struct ParagraphJob<'a> {
     pub columns: bool,
     /// Its list label's text.
     pub label: Option<&'a str>,
-    /// Per run, whether it draws a note's number.
-    pub notes: &'a [bool],
 }
 
 /// Measure a paragraph: its pieces and lines from the text engine (memoised by content in
@@ -142,11 +139,37 @@ pub fn measure_paragraph(
     measurer: &mut Measurer,
     job: &ParagraphJob<'_>,
 ) -> Result<MeasuredParagraph, Unmeasured> {
-    let input = text_paragraph(cx.document, job.paragraph, job.resolved, job.label, job.notes);
+    let input = text_paragraph(cx.document, job.paragraph, job.resolved, job.label);
     let measured = measurer
         .measure(cx.faces, &input, job.geometry, job.columns, cx.locale)
         .map_err(|e| Unmeasured::Text(e.to_string()))?;
-    let (heights, undrawn) = line_heights(cx, job, &measured)?;
+    let lines = LinesOf {
+        paragraph: job.paragraph,
+        resolved: job.resolved,
+        columns: job.columns,
+    };
+    derive(cx, &lines, measured)
+}
+
+/// A paragraph whose lines are given: what each line's height and breaks are read from.
+pub struct LinesOf<'a> {
+    /// The paragraph.
+    pub paragraph: &'a Paragraph,
+    /// Its resolved formats.
+    pub resolved: &'a ResolvedParagraph,
+    /// Its section has several columns (a column break ends a column, not a page).
+    pub columns: bool,
+}
+
+/// What follows from a paragraph's pieces and lines: each line's height, the lines a
+/// page or column break ends, the lines that draw nothing, the lines ending in an
+/// automatic hyphen (`ParaSource.derive`).
+pub fn derive(
+    cx: &MeasureContext<'_>,
+    of: &LinesOf<'_>,
+    measured: Arc<Measured>,
+) -> Result<MeasuredParagraph, Unmeasured> {
+    let (heights, undrawn) = line_heights(cx, of, &measured)?;
     let (pieces, lines) = (&measured.pieces, &measured.lines);
     let last_char = |l: &ooxml_text::Line| l.end.checked_sub(1).and_then(|k| pieces.get(k)).map_or('\0', |p| p.ch);
     let forced_by = |c: char| -> Vec<usize> {
@@ -158,8 +181,8 @@ pub fn measure_paragraph(
             .collect()
     };
     let mut page_breaks = forced_by('\u{c}');
-    let column_breaks = if job.columns { forced_by('\u{b}') } else { Vec::new() };
-    if !job.columns {
+    let column_breaks = if of.columns { forced_by('\u{b}') } else { Vec::new() };
+    if !of.columns {
         page_breaks.extend(forced_by('\u{b}'));
         page_breaks.sort_unstable();
     }
@@ -179,64 +202,96 @@ pub fn measure_paragraph(
     })
 }
 
-/// Each line's height, and the lines that draw nothing.
-fn line_heights(
-    cx: &MeasureContext<'_>,
-    job: &ParagraphJob<'_>,
-    measured: &Measured,
-) -> Result<(Vec<LineHeight>, Vec<usize>), Unmeasured> {
-    let (document, resolved) = (cx.document, job.resolved);
-    let pp = &resolved.paragraph;
-    let rule = LineRule::parse(pp.get("spacing.lineRule").and_then(Value::str));
-    let line = pp.get("spacing.line").and_then(Value::int).unwrap_or(240);
-    let mut rules = HeightRules::new(cx.faces, rule, line, crate::input::rules(document).mode15());
-    let mark = height_item(RunFormatter::new(document, &resolved.mark).format(' '));
-    let label = label_items(document, resolved);
-    let runs: Vec<(usize, bool, &str)> = job
-        .paragraph
-        .runs
-        .iter()
-        .zip(resolved.runs.iter())
-        .enumerate()
-        .map(|(k, (run, props))| (k, props.get("vanish").is_some_and(Value::truthy), &*run.text))
-        .collect();
-    let mut formatters: Vec<RunFormatter<'_>> = resolved
-        .runs
-        .iter()
-        .map(|props| RunFormatter::new(document, props))
-        .collect();
-    let (pieces, lines) = (&measured.pieces, &measured.lines);
-    let shares = shares(pieces, lines, &runs);
-    let mut heights = Vec::with_capacity(lines.len());
-    for (number, (line, share)) in lines.iter().zip(&shares).enumerate() {
-        let chars: Vec<(HeightItem, char)> = share
+/// What a paragraph's lines' heights are made with: the rule, the mark's and the label's
+/// items, each run's character formats.
+struct HeightMaker<'a> {
+    rules: HeightRules<'a>,
+    mark: HeightItem,
+    label: Vec<HeightItem>,
+    formatters: Vec<RunFormatter<'a>>,
+}
+
+impl<'a> HeightMaker<'a> {
+    fn new(cx: &MeasureContext<'a>, resolved: &'a ResolvedParagraph) -> HeightMaker<'a> {
+        let document = cx.document;
+        let pp = &resolved.paragraph;
+        let rule = LineRule::parse(pp.get("spacing.lineRule").and_then(Value::str));
+        let line = pp.get("spacing.line").and_then(Value::int).unwrap_or(240);
+        HeightMaker {
+            rules: HeightRules::new(cx.faces, rule, line, crate::input::rules(document).mode15()),
+            mark: height_item(RunFormatter::new(document, &resolved.mark).format(' ')),
+            label: label_items(document, resolved),
+            formatters: resolved
+                .runs
+                .iter()
+                .map(|props| RunFormatter::new(document, props))
+                .collect(),
+        }
+    }
+
+    /// The height of a line holding `chars` (`(run, character)`) and the pieces
+    /// `on_line`; the paragraph's first where `first` (`lines.line_height`, or
+    /// `object_line_height` for a line holding inline pictures).
+    fn height(&mut self, chars: &[(usize, char)], on_line: &[ooxml_text::Piece], first: bool) -> Option<LineHeight> {
+        let formatters = &mut self.formatters;
+        let chars: Vec<(HeightItem, char)> = chars
             .iter()
             .filter_map(|&(run, ch)| Some((height_item(formatters.get_mut(run)?.format(ch)), ch)))
             .collect();
-        let label = if number == 0 { label.as_slice() } else { &[] };
-        let on_line = pieces.get(line.start..line.end).unwrap_or_default();
+        let label = if first { self.label.as_slice() } else { &[] };
         let objects: Vec<i64> = on_line
             .iter()
             .filter(|p| p.kind == PieceKind::Object)
             .map(|p| p.height)
             .collect();
-        let height = if objects.is_empty() {
-            rules.line_height(&chars, &mark, label)
-        } else {
-            let mut object_runs: Vec<usize> = on_line
-                .iter()
-                .filter(|p| p.kind == PieceKind::Object)
-                .filter_map(|p| usize::try_from(p.run).ok())
-                .collect();
-            object_runs.sort_unstable();
-            object_runs.dedup();
-            let run_items: Vec<HeightItem> = object_runs
-                .iter()
-                .filter_map(|r| Some(height_item(formatters.get_mut(*r)?.format(' '))))
-                .collect();
-            rules.object_line_height(&chars, &mark, label, &objects, &run_items)
-        };
-        heights.push(height.ok_or(Unmeasured::NoFaceMetrics)?);
+        if objects.is_empty() {
+            return self.rules.line_height(&chars, &self.mark, label);
+        }
+        let mut object_runs: Vec<usize> = on_line
+            .iter()
+            .filter(|p| p.kind == PieceKind::Object)
+            .filter_map(|p| usize::try_from(p.run).ok())
+            .collect();
+        object_runs.sort_unstable();
+        object_runs.dedup();
+        let run_items: Vec<HeightItem> = object_runs
+            .iter()
+            .filter_map(|r| Some(height_item(self.formatters.get_mut(*r)?.format(' '))))
+            .collect();
+        self.rules
+            .object_line_height(&chars, &self.mark, label, &objects, &run_items)
+    }
+}
+
+/// Each run's index, whether it is hidden, and its text.
+fn runs_of<'a>(of: &'a LinesOf<'_>) -> Vec<(usize, bool, &'a str)> {
+    of.paragraph
+        .runs
+        .iter()
+        .zip(of.resolved.runs.iter())
+        .enumerate()
+        .map(|(k, (run, props))| (k, props.get("vanish").is_some_and(Value::truthy), &*run.text))
+        .collect()
+}
+
+/// Each line's height, and the lines that draw nothing.
+fn line_heights(
+    cx: &MeasureContext<'_>,
+    of: &LinesOf<'_>,
+    measured: &Measured,
+) -> Result<(Vec<LineHeight>, Vec<usize>), Unmeasured> {
+    let mut maker = HeightMaker::new(cx, of.resolved);
+    let runs = runs_of(of);
+    let (pieces, lines) = (&measured.pieces, &measured.lines);
+    let shares = shares(pieces, lines, &runs);
+    let mut heights = Vec::with_capacity(lines.len());
+    for (number, (line, share)) in lines.iter().zip(&shares).enumerate() {
+        let on_line = pieces.get(line.start..line.end).unwrap_or_default();
+        heights.push(
+            maker
+                .height(share, on_line, number == 0)
+                .ok_or(Unmeasured::NoFaceMetrics)?,
+        );
     }
     let undrawn = shares
         .iter()
@@ -245,6 +300,34 @@ fn line_heights(
         .map(|(k, _)| k)
         .collect();
     Ok((heights, undrawn))
+}
+
+/// One line's height on its own: the characters of its pieces (no tab, break or
+/// object), the paragraph's first line where `first` (`ParaSource.height`).
+pub fn line_height(
+    cx: &MeasureContext<'_>,
+    of: &LinesOf<'_>,
+    pieces: &[ooxml_text::Piece],
+    line: &ooxml_text::Line,
+    first: bool,
+) -> Option<LineHeight> {
+    let mut by_source: std::collections::HashMap<i64, (usize, char)> = std::collections::HashMap::new();
+    let mut index = 0i64;
+    for (k, hidden, text) in runs_of(of) {
+        for (offset, ch) in text.chars().enumerate() {
+            if !hidden {
+                by_source.insert(index + i64::try_from(offset).unwrap_or(0), (k, ch));
+            }
+        }
+        index += i64::try_from(text.chars().count()).unwrap_or(0);
+    }
+    let on_line = pieces.get(line.start..line.end).unwrap_or_default();
+    let chars: Vec<(usize, char)> = on_line
+        .iter()
+        .filter(|p| p.source >= 0 && !matches!(p.kind, PieceKind::Tab | PieceKind::Break | PieceKind::Object))
+        .filter_map(|p| by_source.get(&p.source).copied())
+        .collect();
+    HeightMaker::new(cx, of.resolved).height(&chars, on_line, first)
 }
 
 #[cfg(test)]

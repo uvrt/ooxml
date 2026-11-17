@@ -490,7 +490,6 @@ impl Laying<'_, '_, '_, '_> {
                 geometry: &text_geometry,
                 columns: false,
                 label: label.as_deref(),
-                notes: &[],
             },
         )
         .map_err(|why| match why {
