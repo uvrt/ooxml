@@ -62,6 +62,60 @@ impl Default for ZipLimits {
     }
 }
 
+/// Limits on one metafile (EMF, EMF+ or WMF) and the bitmaps it carries. The defaults are
+/// ooxml-common's metafile player's, whose output the Rust players reproduce: generous for
+/// real files (the largest metafile in a normal deck has a few thousand records and tens of
+/// thousands of points), and what a hostile file may ask for at most.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MetafileLimits {
+    /// Largest metafile, in bytes.
+    pub max_input_bytes: usize,
+    /// Largest EMF record, in bytes.
+    pub max_record_bytes: usize,
+    /// Most records played.
+    pub max_records: usize,
+    /// Most points over every shape of one metafile.
+    pub max_points: u64,
+    /// Highest object slot.
+    pub max_objects: u32,
+    /// Deepest saved-state stack (GDI's `SAVEDC`, GDI+'s saves and containers).
+    pub max_save_depth: usize,
+    /// Most characters of SVG one metafile may draw.
+    pub max_output_chars: usize,
+    /// Most decoded pixels over every bitmap of one metafile, and of one bitmap.
+    pub max_pixels: u64,
+    /// Most characters one text call draws.
+    pub max_text_chars: usize,
+    /// Largest EMF+ object, in bytes (a continued object's whole size).
+    pub max_plus_object_bytes: usize,
+    /// Most pixels shaded for path gradients over one metafile ...
+    pub max_gradient_pixels: u64,
+    /// ... and the most for one gradient before it is sampled more coarsely.
+    pub max_gradient_image: u64,
+    /// How deep metafiles drawn as EMF+ images may nest.
+    pub max_nesting: u32,
+}
+
+impl Default for MetafileLimits {
+    fn default() -> Self {
+        MetafileLimits {
+            max_input_bytes: 8 * 1024 * 1024,
+            max_record_bytes: 4 * 1024 * 1024,
+            max_records: 100_000,
+            max_points: 500_000,
+            max_objects: 65_536,
+            max_save_depth: 1_024,
+            max_output_chars: 32 * 1024 * 1024,
+            max_pixels: 64_000_000,
+            max_text_chars: 8_192,
+            max_plus_object_bytes: 4 * 1024 * 1024,
+            max_gradient_pixels: 1_000_000,
+            max_gradient_image: 250_000,
+            max_nesting: 2,
+        }
+    }
+}
+
 /// Every limit, as one value carried by a [`crate::Context`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Limits {
@@ -69,4 +123,6 @@ pub struct Limits {
     pub xml: XmlLimits,
     /// Per archive.
     pub zip: ZipLimits,
+    /// Per metafile.
+    pub metafile: MetafileLimits,
 }

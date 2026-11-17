@@ -24,6 +24,7 @@ mod export_parts;
 pub mod glyphs;
 pub mod layout;
 pub mod layout_bench;
+pub mod metafile;
 pub mod records;
 pub mod replay;
 pub mod text;

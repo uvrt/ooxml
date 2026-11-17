@@ -2,8 +2,9 @@
 //! and 3).
 //!
 //! Owns: the layer map -- each crate's layer, and its rank inside the layer where the
-//! design orders crates within one (`ooxml-base` under the other layer-0 crates; the tool
-//! contract's derive under the contract, and the contract under each format's tools) --
+//! design orders crates within one (`ooxml-base` under the other layer-0 crates; the scene
+//! under what lowers to it; the tool contract's derive under the contract, and the contract
+//! under each format's tools) --
 //! and the check: every dependency of a crate, read from `cargo metadata`, points to a
 //! lower place in the map. A sideways or upward edge fails, as does a crate the map does
 //! not place; the allow-list of exceptions ([`ALLOWED`]) starts empty.
@@ -43,6 +44,9 @@ pub const MAP: &[(&str, Place)] = &[
     ("ooxml-schema", Place::Layer(1, 0)),
     ("ooxml-colour", Place::Layer(1, 0)),
     ("ooxml-drawingml", Place::Layer(2, 0)),
+    // Charts and metafiles lower to a scene (design section 8): the scene under them.
+    ("ooxml-scene", Place::Layer(2, 0)),
+    ("ooxml-metafile", Place::Layer(2, 1)),
     // ooxml-word in the design; the prototype holds that package name (lane L2)
     ("ooxml-word-model", Place::Layer(3, 0)),
     ("ooxml-word-layout", Place::Layer(3, 1)),
