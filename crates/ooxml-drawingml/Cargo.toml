@@ -1,0 +1,16 @@
+[package]
+name = "ooxml-drawingml"
+version = "0.1.0"
+description = "DrawingML's model and resolution: shapes and shape trees, the preset geometries, fills, lines, effects, text bodies and the theme, read as stated and resolved through the colour engine"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+ooxml-xml.workspace = true
+ooxml-schema.workspace = true
+ooxml-colour.workspace = true
+
+[lints]
+workspace = true

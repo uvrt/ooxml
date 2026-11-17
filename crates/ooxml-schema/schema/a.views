@@ -1,0 +1,499 @@
+# DrawingML (`a:`) and the shape-tree elements every host spells alike: the source of
+# src/a.rs (`cargo xtask codegen`; the grammar is in xtask/src/codegen.rs). What
+# ooxml-drawingml reads -- colours, fills, lines, effects, transforms, geometry, the theme,
+# text bodies, shape trees and tables -- and no more: a reader that needs another child or
+# attribute adds it here.
+#
+# Elements and attributes are found by local name, as ooxml-common reads them, so a shape
+# tree reads alike under `p:` (slides), `dsp:` (SmartArt drawings), `xdr:` and `cdr:`, and a
+# strict-namespace part as a transitional one. Only `nsattr` attributes are read in their
+# exact namespace. A view with a prefix has a constructor (`create`); child sequences
+# (`order`) follow the schema, as the repository's insertion tables state them.
+
+ns a http://schemas.openxmlformats.org/drawingml/2006/main
+ns r http://schemas.openxmlformats.org/officeDocument/2006/relationships
+
+# -- any element ---------------------------------------------------------------------------
+
+view Any * | Any element, read by its children and attributes alone.
+  all elements Any
+  alltext content
+view Val * | An element whose meaning is its `val` (`a:prstDash`, `a:spcPts`, a colour transform...).
+  attr val str val
+  attr num num val
+view Fills * | Any element that holds a fill choice (`a:spPr`, `a:ln`, `a:tcPr`, `a:grpSpPr`, `p:bgPr`...).
+  child solid SolidFill solidFill
+  child none Any noFill
+  child gradient GradFill gradFill
+  child blip BlipFill blipFill
+  child pattern PattFill pattFill
+  child group Any grpFill
+view RelativeRect * | `a:srcRect`, `a:fillRect`, `a:fillToRect`: insets in 1/1000 percent.
+  attr l num l
+  attr t num t
+  attr r num r
+  attr b num b
+
+# -- colours -------------------------------------------------------------------------------
+
+view SrgbColour srgbClr a | `a:srgbClr`: an sRGB colour as hex.
+  attr val str val
+view SchemeColour schemeClr a | `a:schemeClr`: a colour-map slot or a theme colour.
+  attr val str val
+view SystemColour sysClr a | `a:sysClr`: a system colour, with the value it last had.
+  attr val str val
+  attr last str lastClr
+view PresetColour prstClr a | `a:prstClr`: a named colour.
+  attr val str val
+view ScrgbColour scrgbClr a | `a:scrgbClr`: linear-light channels in 1/1000 percent.
+  attr r num r
+  attr g num g
+  attr b num b
+view HslColour hslClr a | `a:hslClr`: hue in 1/60000 degree, saturation and luminance in 1/1000 percent.
+  attr hue num hue
+  attr sat num sat
+  attr lum num lum
+
+# -- fills ---------------------------------------------------------------------------------
+
+view SolidFill solidFill a | `a:solidFill`: one colour choice.
+  all elements Any
+view GradFill gradFill a | `a:gradFill`: stops, and a linear or path shade.
+  child stops GradientStops gsLst
+  child path PathShade path
+  child linear LinearShade lin
+  attr rotate_with_shape str rotWithShape
+  order gsLst lin/path tileRect
+view GradientStops gsLst a | `a:gsLst`.
+  children stops GradientStop gs
+view GradientStop gs a | `a:gs`: a position in 1/1000 percent and a colour choice.
+  attr pos num pos
+  all elements Any
+view PathShade path a | `a:path` of a gradient: `circle`, `rect` or `shape`, about `a:fillToRect`.
+  attr path str path
+  child fill_to RelativeRect fillToRect
+view LinearShade lin a | `a:lin`: an angle in 1/60000 degree.
+  attr angle num ang
+  attr scaled str scaled
+view BlipFill blipFill | `a:blipFill` / `p:blipFill`: a picture, cropped, stretched or tiled.
+  child blip Blip blip
+  child tile Tile tile
+  child src_rect RelativeRect srcRect
+  child stretch Stretch stretch
+  order blip srcRect tile/stretch
+view Blip blip a | `a:blip`: the picture's relationship, its extensions and its effects.
+  nsattr embed r embed
+  nsattr link r link
+  child extensions ExtensionList extLst
+  child grayscale Any grayscl
+  child bi_level BiLevel biLevel
+  child blur BlipBlur blur
+  child luminance Luminance lum
+  child duotone Any duotone
+  child colour_change ColourChange clrChange
+  child alpha_mod_fix AlphaModFix alphaModFix
+view ExtensionList extLst | `extLst`.
+  children extensions Extension ext
+view Extension ext | `ext`: an extension, by its `uri`.
+  attr uri str uri
+  child svg_blip SvgBlip svgBlip
+view SvgBlip svgBlip | `asvg:svgBlip`: a picture's vector original.
+  nsattr embed r embed
+view Tile tile a | `a:tile`: offsets in EMU, scales in 1/1000 percent, flip and alignment.
+  attr tx num tx
+  attr ty num ty
+  attr sx num sx
+  attr sy num sy
+  attr flip str flip
+  attr align str algn
+view Stretch stretch a | `a:stretch`.
+  child fill_rect RelativeRect fillRect
+view PattFill pattFill a | `a:pattFill`: a preset pattern in two colours.
+  attr preset str prst
+  child foreground Any fgClr
+  child background Any bgClr
+
+# -- lines ---------------------------------------------------------------------------------
+
+view Ln ln a | `a:ln` (and a cell's `a:lnL`, `a:lnR`, `a:lnT`, `a:lnB`): a line's width, fill, dash, cap, join and ends.
+  attr width num w
+  attr cap str cap
+  attr compound str cmpd
+  child preset_dash Val prstDash
+  child custom_dash CustomDash custDash
+  child round Any round
+  child bevel Any bevel
+  child miter Any miter
+  child head_end LineEnd headEnd
+  child tail_end LineEnd tailEnd
+  order noFill/solidFill/gradFill/pattFill prstDash/custDash round/bevel/miter headEnd tailEnd extLst
+view CustomDash custDash a | `a:custDash`.
+  children segments DashStop ds
+view DashStop ds a | `a:ds`: a dash and a space in 1/1000 percent of the width.
+  attr dash num d
+  attr space num sp
+view LineEnd * | `a:headEnd` / `a:tailEnd`: an arrowhead's type, width and length.
+  attr kind str type
+  attr width str w
+  attr length str len
+
+# -- shape styles and effects ----------------------------------------------------------------
+
+view ShapeStyle style | `p:style` / `wps:style`: references into the theme's format and font schemes.
+  child fill_ref StyleRef fillRef
+  child line_ref StyleRef lnRef
+  child effect_ref StyleRef effectRef
+  child font_ref StyleRef fontRef
+view StyleRef * | `a:fillRef`, `a:lnRef`, `a:effectRef`, `a:fontRef`: an index and a colour choice.
+  attr idx str idx
+  attr number num idx
+  all elements Any
+view EffectList effectLst a | `a:effectLst`.
+  child outer_shadow Shadow outerShdw
+  child inner_shadow Shadow innerShdw
+  child glow Glow glow
+  child soft_edge SoftEdge softEdge
+view Shadow * | `a:outerShdw` / `a:innerShdw`: blur and distance in EMU, direction in 1/60000 degree.
+  attr blur num blurRad
+  attr distance num dist
+  attr direction num dir
+  attr align str algn
+  attr rotate_with_shape str rotWithShape
+  all elements Any
+view Glow glow a | `a:glow`: a radius in EMU and a colour.
+  attr radius num rad
+  all elements Any
+view SoftEdge softEdge a | `a:softEdge`: a radius in EMU.
+  attr radius num rad
+view BiLevel biLevel a | `a:biLevel`: a threshold in 1/1000 percent.
+  attr threshold num thresh
+view BlipBlur blur a | `a:blur` of a picture.
+  attr radius num rad
+  attr grow str grow
+view Luminance lum a | `a:lum`: brightness and contrast in 1/1000 percent.
+  attr bright num bright
+  attr contrast num contrast
+view ColourChange clrChange a | `a:clrChange`: one colour replaced by another.
+  child from Any clrFrom
+  child to Any clrTo
+view AlphaModFix alphaModFix a | `a:alphaModFix`: an opacity in 1/1000 percent.
+  attr amount num amt
+
+# -- transforms and geometry ------------------------------------------------------------------
+
+view Xfrm xfrm | `a:xfrm` / `p:xfrm` / `dsp:txXfrm`: offset, extent, rotation and flips (a group's child space too).
+  child offset Point off
+  child extent Size ext
+  child child_offset Point chOff
+  child child_extent Size chExt
+  attr rotation num rot
+  attr flip_h str flipH
+  attr flip_v str flipV
+  order off ext chOff chExt
+view Point * | `a:off`, `a:chOff`: a point in EMU.
+  attr x num x
+  attr y num y
+view Size * | `a:ext`, `a:chExt`: a size in EMU.
+  attr cx num cx
+  attr cy num cy
+view ShapeProperties spPr | `spPr` in any host: transform, geometry, fill, line and effects.
+  child xfrm Xfrm xfrm
+  child preset PresetGeometry prstGeom
+  child custom CustomGeometry custGeom
+  child line Ln ln
+  child effects EffectList effectLst
+  order xfrm custGeom/prstGeom noFill/solidFill/gradFill/blipFill/pattFill/grpFill ln effectLst/effectDag scene3d sp3d extLst
+view PresetGeometry prstGeom a | `a:prstGeom`: a preset's name and its adjustments.
+  attr preset str prst
+  child adjustments GuideList avLst
+view CustomGeometry custGeom a | `a:custGeom`: adjustments, guides, a text rectangle and paths.
+  child adjustments GuideList avLst
+  child guides GuideList gdLst
+  child rect GeometryRect rect
+  child paths PathList pathLst
+view GuideList * | `a:avLst` / `a:gdLst`.
+  children guides Guide gd
+view Guide gd a | `a:gd`: a name and a formula.
+  attr name str name
+  attr formula str fmla
+view GeometryRect rect a | `a:rect` of a custom geometry: guide names or literals.
+  attr l str l
+  attr t str t
+  attr r str r
+  attr b str b
+view PathList pathLst a | `a:pathLst`.
+  children paths Path path
+view Path path a | `a:path` of a geometry: its own space, paint flags and commands.
+  attr w num w
+  attr h num h
+  attr fill str fill
+  attr stroke str stroke
+  all commands PathCommand
+view PathCommand * | A path command (`a:moveTo`, `a:lnTo`, `a:arcTo`, `a:quadBezTo`, `a:cubicBezTo`, `a:close`).
+  children points PathPoint pt
+  attr width_radius str wR
+  attr height_radius str hR
+  attr start_angle str stAng
+  attr swing_angle str swAng
+view PathPoint pt a | `a:pt`: guide names or literals.
+  attr x str x
+  attr y str y
+
+# -- the theme -------------------------------------------------------------------------------
+
+view Theme theme a | `a:theme`, a theme part's root.
+  attr name str name
+  child elements ThemeElements themeElements
+view ThemeElements themeElements a | `a:themeElements`.
+  child colours ColourScheme clrScheme
+  child fonts FontScheme fontScheme
+  child formats FormatScheme fmtScheme
+view ColourScheme clrScheme a | `a:clrScheme`: twelve slots, each holding one colour choice.
+  attr name str name
+  all slots Any
+view FontScheme fontScheme a | `a:fontScheme`.
+  child major FontCollection majorFont
+  child minor FontCollection minorFont
+view FontCollection * | `a:majorFont` / `a:minorFont`: three typefaces and the per-script list.
+  child latin TextFont latin
+  child east_asian TextFont ea
+  child complex_script TextFont cs
+  children scripts TextFont font
+view TextFont * | `a:latin`, `a:ea`, `a:cs`, `a:font`, `a:buFont`: a typeface.
+  attr typeface str typeface
+  attr script str script
+  attr panose str panose
+view FormatScheme fmtScheme a | `a:fmtScheme`: the styles a shape style's `idx` selects.
+  child fill_styles Any fillStyleLst
+  child line_styles LineStyleList lnStyleLst
+  child effect_styles EffectStyleList effectStyleLst
+  child background_fill_styles Any bgFillStyleLst
+view LineStyleList lnStyleLst a | `a:lnStyleLst`.
+  children lines Ln ln
+view EffectStyleList effectStyleLst a | `a:effectStyleLst`.
+  children styles EffectStyle effectStyle
+view EffectStyle effectStyle a | `a:effectStyle`.
+  child effects EffectList effectLst
+view ColourMap * | `p:clrMap`, `a:overrideClrMapping`, `c:clrMapOvr`: colour-map slot -> theme colour.
+  attr bg1 str bg1
+  attr tx1 str tx1
+  attr bg2 str bg2
+  attr tx2 str tx2
+  attr accent1 str accent1
+  attr accent2 str accent2
+  attr accent3 str accent3
+  attr accent4 str accent4
+  attr accent5 str accent5
+  attr accent6 str accent6
+  attr hlink str hlink
+  attr fol_hlink str folHlink
+view ColourMapOverride clrMapOvr | `p:clrMapOvr`: the master's map, or one of its own.
+  child master Any masterClrMapping
+  child mapping ColourMap overrideClrMapping
+
+# -- text ------------------------------------------------------------------------------------
+
+view TextBody * | `p:txBody`, `a:txBody`, `c:rich`, `c:txPr`: body properties, a list style and paragraphs.
+  child body BodyProperties bodyPr
+  child list_style ListStyle lstStyle
+  children paragraphs Paragraph p
+  order bodyPr lstStyle p
+view BodyProperties bodyPr a | `a:bodyPr`: insets in EMU, anchoring, wrapping, autofit, columns, rotation.
+  attr inset_left num lIns
+  attr inset_right num rIns
+  attr inset_top num tIns
+  attr inset_bottom num bIns
+  attr anchor str anchor
+  attr wrap str wrap
+  attr vert str vert
+  attr columns num numCol
+  attr rotation num rot
+  attr tab_size num defTabSz
+  child norm_autofit NormAutofit normAutofit
+  child shape_autofit Any spAutoFit
+  child no_autofit Any noAutofit
+  order prstTxWarp noAutofit/normAutofit/spAutoFit scene3d sp3d/flatTx extLst
+view NormAutofit normAutofit a | `a:normAutofit`: a font scale and a line-spacing reduction in 1/1000 percent.
+  attr font_scale num fontScale
+  attr line_reduction num lnSpcReduction
+view ListStyle * | `a:lstStyle`, `p:titleStyle`, `p:bodyStyle`, `a:defaultTextStyle`: paragraph properties per level.
+  child default ParagraphProperties defPPr
+  child level1 ParagraphProperties lvl1pPr
+  child level2 ParagraphProperties lvl2pPr
+  child level3 ParagraphProperties lvl3pPr
+  child level4 ParagraphProperties lvl4pPr
+  child level5 ParagraphProperties lvl5pPr
+  child level6 ParagraphProperties lvl6pPr
+  child level7 ParagraphProperties lvl7pPr
+  child level8 ParagraphProperties lvl8pPr
+  child level9 ParagraphProperties lvl9pPr
+view Paragraph p a | `a:p`: properties, runs, breaks and fields in order, and the end mark's properties.
+  child properties ParagraphProperties pPr
+  child end RunProperties endParaRPr
+  all items TextRun
+  order pPr r/br/fld endParaRPr
+view ParagraphProperties * | `a:pPr`, `a:defPPr`, `a:lvlNpPr`: alignment, level, indents, spacing, bullet, tabs, default run.
+  attr align str algn
+  attr level num lvl
+  attr margin_left num marL
+  attr indent num indent
+  child line_spacing Spacing lnSpc
+  child space_before Spacing spcBef
+  child space_after Spacing spcAft
+  child bullet_none Any buNone
+  child bullet_blip BulletBlip buBlip
+  child bullet_char BulletChar buChar
+  child bullet_auto AutoNumber buAutoNum
+  child bullet_font TextFont buFont
+  child bullet_colour Any buClr
+  child bullet_size_percent Val buSzPct
+  child bullet_size_points Val buSzPts
+  child tabs TabList tabLst
+  child default_run RunProperties defRPr
+  order lnSpc spcBef spcAft buClrTx/buClr buSzTx/buSzPct/buSzPts buFontTx/buFont buNone/buAutoNum/buChar/buBlip tabLst defRPr extLst
+view Spacing * | `a:lnSpc`, `a:spcBef`, `a:spcAft`: points (1/100 pt) or a percentage (1/1000 percent).
+  child points Val spcPts
+  child percent Val spcPct
+view BulletBlip buBlip a | `a:buBlip`: a picture bullet.
+  child blip Blip blip
+view BulletChar buChar a | `a:buChar`: a character bullet.
+  attr char str char
+view AutoNumber buAutoNum a | `a:buAutoNum`: a numbering scheme and where it starts.
+  attr scheme str type
+  attr start num startAt
+view TabList tabLst a | `a:tabLst`.
+  children tabs Tab tab
+view Tab tab a | `a:tab`: a position in EMU and an alignment.
+  attr position num pos
+  attr align str algn
+view TextRun * | `a:r`, `a:fld`, `a:br`: run properties, text, and a field's type.
+  child properties RunProperties rPr
+  child text Any t
+  attr field_type str type
+view RunProperties * | `a:rPr`, `a:defRPr`, `a:endParaRPr`: character formatting.
+  attr bold str b
+  attr italic str i
+  attr underline str u
+  attr strike str strike
+  attr baseline num baseline
+  attr size num sz
+  attr lang str lang
+  attr alt_lang str altLang
+  child line Ln ln
+  child fill SolidFill solidFill
+  child highlight Any highlight
+  child latin TextFont latin
+  child east_asian TextFont ea
+  child complex_script TextFont cs
+  child hyperlink Hyperlink hlinkClick
+  order ln noFill/solidFill/gradFill/blipFill/pattFill/grpFill effectLst/effectDag highlight uLnTx/uLn uFillTx/uFill latin ea cs sym hlinkClick hlinkMouseOver rtl extLst
+view Hyperlink * | `a:hlinkClick`: a relationship and a tooltip.
+  nsattr id r id
+  attr tooltip str tooltip
+
+# -- shape trees -----------------------------------------------------------------------------
+
+view ShapeTree * | `p:spTree`, `dsp:spTree`, a group: its members in z-order.
+  all members Any
+view Shape sp | `sp`: a shape.
+  child non_visual NonVisual nvSpPr
+  child properties ShapeProperties spPr
+  child style ShapeStyle style
+  child text TextBody txBody
+  child text_xfrm Xfrm txXfrm
+  order nvSpPr spPr style txBody extLst
+view NonVisual * | `nvSpPr`, `nvPicPr`, `nvCxnSpPr`, `nvGrpSpPr`, `nvGraphicFramePr`.
+  child drawing DrawingProperties cNvPr
+  child application ApplicationProperties nvPr
+view DrawingProperties cNvPr | `cNvPr`: id, name, description, hidden, and a click's hyperlink.
+  attr id str id
+  attr name str name
+  attr descr str descr
+  attr hidden str hidden
+  child hyperlink Hyperlink hlinkClick
+view ApplicationProperties nvPr | `p:nvPr`.
+  child placeholder Placeholder ph
+view Placeholder ph | `p:ph`: a placeholder's type and index.
+  attr kind str type
+  attr idx num idx
+view Connector cxnSp | `cxnSp`: a connector.
+  child non_visual NonVisual nvCxnSpPr
+  child properties ShapeProperties spPr
+  child style ShapeStyle style
+view Picture pic | `pic`: a picture.
+  child non_visual NonVisual nvPicPr
+  child blip_fill BlipFill blipFill
+  child properties ShapeProperties spPr
+view GroupShape grpSp | `grpSp`: a group and its members.
+  child non_visual NonVisual nvGrpSpPr
+  child properties GroupProperties grpSpPr
+  all members Any
+view GroupProperties grpSpPr | `grpSpPr`: a group's transform (with its child space), fill and effects.
+  child xfrm Xfrm xfrm
+  child effects EffectList effectLst
+view GraphicFrame graphicFrame | `graphicFrame`: a table, chart, diagram or object in a frame.
+  child non_visual NonVisual nvGraphicFramePr
+  child xfrm Xfrm xfrm
+  child graphic Graphic graphic
+view Graphic graphic a | `a:graphic`.
+  child data GraphicData graphicData
+view GraphicData graphicData a | `a:graphicData`: what the frame holds, by `uri`.
+  attr uri str uri
+  child table Table tbl
+  child chart ChartReference chart
+  child relationship_ids RelationshipIds relIds
+  child ole OleObject oleObj
+  all elements Any
+view ChartReference chart | `c:chart` in a frame: the chart part's relationship.
+  nsattr id r id
+view RelationshipIds relIds | `dgm:relIds`: a diagram's data, layout, style and colour parts.
+  nsattr data r dm
+  nsattr layout r lo
+  nsattr style r qs
+  nsattr colours r cs
+view OleObject oleObj | `p:oleObj`: an embedded object and its picture.
+  child picture Picture pic
+
+# -- tables ----------------------------------------------------------------------------------
+
+view Table tbl a | `a:tbl`.
+  child properties TableProperties tblPr
+  child grid TableGrid tblGrid
+  children rows TableRow tr
+  order tblPr tblGrid tr
+view TableProperties tblPr a | `a:tblPr`: which style regions apply, and the style.
+  attr first_row str firstRow
+  attr last_row str lastRow
+  attr first_col str firstCol
+  attr last_col str lastCol
+  attr band_row str bandRow
+  attr band_col str bandCol
+  child style_id Any tableStyleId
+  order noFill/solidFill/gradFill/blipFill/pattFill/grpFill effectLst/effectDag tableStyle/tableStyleId extLst
+view TableGrid tblGrid a | `a:tblGrid`.
+  children columns GridColumn gridCol
+view GridColumn gridCol a | `a:gridCol`: a width in EMU.
+  attr width num w
+view TableRow tr a | `a:tr`: a height in EMU and cells.
+  attr height num h
+  children cells TableCell tc
+  order tc extLst
+view TableCell tc a | `a:tc`: spans, merges, text and properties.
+  attr grid_span num gridSpan
+  attr row_span num rowSpan
+  attr h_merge str hMerge
+  attr v_merge str vMerge
+  child text TextBody txBody
+  child properties TableCellProperties tcPr
+  order txBody tcPr extLst
+view TableCellProperties tcPr a | `a:tcPr`: margins in EMU, anchoring, borders and fill.
+  attr margin_left num marL
+  attr margin_right num marR
+  attr margin_top num marT
+  attr margin_bottom num marB
+  attr anchor str anchor
+  child border_left Ln lnL
+  child border_right Ln lnR
+  child border_top Ln lnT
+  child border_bottom Ln lnB
+  order lnL lnR lnT lnB lnTlToBr lnBlToTr cell3D noFill/solidFill/gradFill/blipFill/pattFill/grpFill headers extLst

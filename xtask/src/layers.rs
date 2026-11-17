@@ -40,6 +40,9 @@ pub const MAP: &[(&str, Place)] = &[
     ("ooxml-opc", Place::Layer(1, 0)),
     ("ooxml-fonts", Place::Layer(1, 0)),
     ("ooxml-text", Place::Layer(1, 0)),
+    ("ooxml-schema", Place::Layer(1, 0)),
+    ("ooxml-colour", Place::Layer(1, 0)),
+    ("ooxml-drawingml", Place::Layer(2, 0)),
     // ooxml-word in the design; the prototype holds that package name (lane L2)
     ("ooxml-word-model", Place::Layer(3, 0)),
     ("ooxml-tools-derive", Place::Layer(4, 0)),
