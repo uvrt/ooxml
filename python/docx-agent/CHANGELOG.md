@@ -20,7 +20,7 @@ Answers are docx2svg's: the same pages, signatures, facts and SVG (`tests/test_r
   table, text beside a drawing, a drawing in a table cell -- one text wraps around there
   under a reason of its own --, a text box, a frame or drop cap, STYLEREF, footnotes in
   columns or beneath the text, endnotes continued, line numbers, column separators,
-  unequal columns; `ooxml_word_pages::support`), docx2svg's Python layout lays it
+  unequal columns, a table in a document of columns; `ooxml_word_pages::support`), docx2svg's Python layout lays it
   out as before -- frozen as that fallback -- and the reason is counted
   (`docx_agent.pages.fallbacks()`, `layout_fallbacks{reason}`). A page whose drawings wait
   for their painters (phase P3) is drawn by docx2svg, counted the same way.
