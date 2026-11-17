@@ -2,9 +2,12 @@ name: Python tests (one OS)
 
 # Called by ci.yml (one call per OS, so each OS's legs can be required or not on its own)
 # and by freethreading.yml.  `matrix` is tools/ci.py plan's output for that call: a list of
-# {package, os, python} (and `coverage` on the leg that runs the suite under coverage).  Each leg installs the package and the siblings it needs from this
-# checkout, then runs the suite as the package's own repository's CI ran it
-# (tools/ci.py install / test; the differences between the packages live there).
+# {package, os, python}, and `coverage` on the leg that runs the suite under coverage,
+# `core` on the legs whose install builds the Rust core (ooxml-core), `shard` and `shards`
+# on the legs of a suite split into several jobs.  Each leg installs the package and the
+# siblings it needs from this checkout, then runs the suite (or its shard's test files) as
+# the package's own repository's CI ran it (tools/ci.py install / test; the differences
+# between the packages live there).
 
 on:
   workflow_call:
@@ -18,7 +21,7 @@ on:
 
 jobs:
   test:
-    name: ${{ matrix.package }} (${{ matrix.os }}, ${{ matrix.python }})
+    name: ${{ matrix.package }} (${{ matrix.os }}, ${{ matrix.python }}${{ matrix.shards && format(', {0}/{1}', matrix.shard, matrix.shards) || '' }})
     runs-on: ${{ matrix.os }}
     # A hang fails the job (a test still running after 300 s prints every thread's
     # traceback on the free-threading legs) instead of running for 6 hours.
@@ -36,6 +39,17 @@ jobs:
           # 3.15.0 is out (2026-10-09) but setup-python's version list may still offer only
           # its release candidates; this takes a final release whenever there is one.
           allow-prereleases: true
+
+      # pip builds ooxml-core with maturin into the workspace's target/: its dependencies
+      # come from the Rust build cache, saved by runs on main only (a pull request's
+      # branch cannot share its cache with the next pull request anyway).
+      - uses: dtolnay/rust-toolchain@stable
+        if: matrix.core
+      - uses: Swatinem/rust-cache@v2
+        if: matrix.core
+        with:
+          key: python-${{ matrix.python }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install
         run: python tools/ci.py install ${{ matrix.package }} ${{ inputs.free-threading && '--free-threading' || '' }}
@@ -101,6 +115,17 @@ jobs:
 
       # The Office oracle tests are opt-in and need Office, which no runner has; the
       # provider tests need an API key, which CI does not hold.  Both skip.
+      # A shard runs its test files only and writes a JUnit report, kept for a week:
+      # `python tools/ci.py durations PACKAGE junit-*.xml` refreshes tools/ci_durations.json
+      # from a run's reports when the shards' times drift apart.
       - name: Test
         shell: bash
-        run: python tools/ci.py test ${{ matrix.package }} --event ${{ github.event_name }} ${{ inputs.free-threading && '--free-threading' || '' }} ${{ matrix.coverage && '--coverage' || '' }}
+        run: python tools/ci.py test ${{ matrix.package }} --event ${{ github.event_name }} ${{ inputs.free-threading && '--free-threading' || '' }} ${{ matrix.coverage && '--coverage' || '' }} ${{ matrix.shards && format('--shard {0}/{1} --junit junit.xml', matrix.shard, matrix.shards) || '' }}
+      - name: Keep the shard's JUnit report
+        if: always() && matrix.shards
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-${{ matrix.package }}-${{ matrix.python }}-${{ matrix.shard }}
+          path: junit.xml
+          retention-days: 7
+          if-no-files-found: ignore

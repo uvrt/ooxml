@@ -21,8 +21,14 @@ differences live here and nowhere else:
     python tools/ci.py install PACKAGE [--free-threading]
         pip-installs the package (editable, with its test extras) and the siblings it needs,
         all from this checkout -- never from the old repositories.
-    python tools/ci.py test PACKAGE [--event EVENT] [--free-threading]
-        Runs the package's suite as its own repository's CI ran it.
+    python tools/ci.py test PACKAGE [--event EVENT] [--free-threading] [--shard K/N] [--junit FILE]
+        Runs the package's suite as its own repository's CI ran it; with --shard, only the
+        test files of shard K of N (SHARDS below), with --junit, a JUnit report of it.
+    python tools/ci.py shard PACKAGE K/N
+        The test files shard K of N runs, one per line.
+    python tools/ci.py durations PACKAGE JUNIT...
+        Rewrites the package's entry in tools/ci_durations.json from the JUnit reports of a
+        run's shards (the `junit-*` artifacts of python-tests.yml), so the split stays even.
     python tools/ci.py gil-check PACKAGE
         On a free-threaded Python: importing the package, its modules and its extras' modules
         leaves the GIL off.
@@ -72,6 +78,9 @@ PACKAGES: dict[str, dict] = {
         # this floor: the suite is meant to hold the package by itself, not through the
         # renderers' suites.
         "coverage": "87",
+        # Windows's font folders (fonts/office.py, rasterdb.py): a Windows leg on every
+        # event (LEGS, "smoke").
+        "windows_smoke": True,
         "gil_imports": "import fontTools.ttLib",
     },
     "ooxml-edit": {
@@ -85,6 +94,9 @@ PACKAGES: dict[str, dict] = {
         "mypy": True,
         "mypy_siblings": ["ooxml-common"],
         "lxml7": True,
+        # The worker's pipes in binary mode (tools/subworker.py, msvcrt) and zlib-ng's
+        # deflate (opc.py): a Windows leg on every event (LEGS, "smoke").
+        "windows_smoke": True,
         "gil_imports": "import lxml.etree, lxml.html",
     },
     "docx2svg": {
@@ -124,6 +136,9 @@ PACKAGES: dict[str, dict] = {
         "min_python": "3.10",
         "pytest": ["-n", "auto", "--durations=30"],
         "ft_pytest": ["-n", "auto", "-o", "faulthandler_timeout=300", "-v"],
+        # The suite takes about 18 minutes on one Linux runner: split into this many jobs
+        # on Linux (SHARDS below).
+        "shards": 4,
         "compile": ["src", "tests", "tools", "examples"],
         "check_version": "tools/check_version.py",
         "mypy": False,
@@ -269,46 +284,68 @@ def _pythons(name: str) -> list[str]:
 
 
 #: Which of a package's Pythons each OS runs, per event: "all" (from the package's
-#: min_python to the newest), "newest" or None (no legs).  Production runs CPython 3.15 and
-#: is moving to 3.15t (the `ft` legs, Linux, every event); development and local test runs
+#: min_python to the newest), "newest", "smoke" (the newest, for the packages marked
+#: windows_smoke only) or None (no legs).  Production runs CPython 3.15 on Linux and is
+#: moving to 3.15t (the `ft` legs, Linux, every event); development and local test runs
 #: happen on macOS, whose runners are few and shared by every run.  So a pull request and a
-#: push to main run Linux and Windows on the newest Python and no macOS; the nightly run
-#: and a manual run (FULL_LEGS, also any event not named here) run every Python on Linux,
-#: so the older ones requires-python still allows keep working, and the newest on Windows
-#: and macOS.
+#: push to main run Linux on the newest Python, Windows only for the packages with code of
+#: their own there (windows_smoke: a few minutes each), and no macOS; the nightly run and a
+#: manual run (FULL_LEGS, also any event not named here) run every Python on Linux, so the
+#: older ones requires-python still allows keep working, and the newest on Windows and
+#: macOS for every package.
 LEGS: dict[str, dict[str, str | None]] = {
-    "pull_request": {"linux": "newest", "windows": "newest", "macos": None},
-    "push": {"linux": "newest", "windows": "newest", "macos": None},
+    "pull_request": {"linux": "newest", "windows": "smoke", "macos": None},
+    "push": {"linux": "newest", "windows": "smoke", "macos": None},
 }
 FULL_LEGS: dict[str, str | None] = {"linux": "all", "windows": "newest", "macos": "newest"}
 RUNNERS = {"linux": "ubuntu-latest", "windows": "windows-latest", "macos": "macos-latest"}
 
 
-def _select(versions: list[str], which: str | None) -> list[str]:
+def _select(name: str, versions: list[str], which: str | None) -> list[str]:
     if which is None:
         return []
     if which == "all":
         return versions
     if which == "newest":
         return versions[-1:]
+    if which == "smoke":
+        return versions[-1:] if PACKAGES[name].get("windows_smoke") else []
     raise ValueError(which)
+
+
+#: The packages whose install builds the Rust core (ooxml-core, by maturin): their legs
+#: carry `core`, and python-tests.yml restores the Rust build cache for them.
+def _builds_core(name: str) -> bool:
+    return "ooxml-core" in PACKAGES[name]["siblings"]
+
+
+def _sharded(leg: dict[str, str | bool | int]) -> list[dict[str, str | bool | int]]:
+    """``leg``, or one copy per shard (``shard``, ``shards``) for a package split on Linux."""
+    count = PACKAGES[str(leg["package"])].get("shards", 1)
+    if count == 1 or leg["os"] != RUNNERS["linux"]:
+        return [leg]
+    return [{**leg, "shard": k, "shards": count} for k in range(1, count + 1)]
 
 
 def plan(event: str, changed: list[str] | None) -> dict[str, str]:
     full = event != "pull_request"
     names = list(PACKAGES) if full or changed is None else affected(changed)
     legs = LEGS.get(event, FULL_LEGS)
-    matrices: dict[str, list[dict[str, str | bool]]] = {os_: [] for os_ in RUNNERS}
+    matrices: dict[str, list[dict[str, str | bool | int]]] = {os_: [] for os_ in RUNNERS}
     for name in names:
         versions = _pythons(name)
         for os_, runner in RUNNERS.items():
-            for v in _select(versions, legs[os_]):
-                leg = {"package": name, "os": runner, "python": v}
+            for v in _select(name, versions, legs[os_]):
+                leg: dict[str, str | bool | int] = {"package": name, "os": runner, "python": v}
                 if os_ == "linux" and v == versions[-1]:
                     # The coverage leg (PACKAGES' "coverage"): Linux, the newest Python,
                     # which every event runs.
                     leg["coverage"] = True
-                matrices[os_].append(leg)
+                if _builds_core(name):
+                    leg["core"] = True
+                matrices[os_].extend(_sharded(leg))
+    ft = [{"package": n, "os": RUNNERS["linux"], "python": "3.15t", **({"core": True} if _builds_core(n) else {})}
+          for n in names]
     out = {
         "packages": names,
         "any": bool(names),
@@ -317,8 +354,10 @@ def plan(event: str, changed: list[str] | None) -> dict[str, str]:
         **{f"rust_{job}": rust_job_runs(job, event, changed) for job in RUST_JOBS},
         **{os_: {"include": legs_} for os_, legs_ in matrices.items()},
         # The free-threaded legs (freethreading.yml): Linux only, on every event.
-        "ft": {"include": [{"package": n, "os": RUNNERS["linux"], "python": "3.15t"} for n in names]},
-        # Whether ci.yml's macOS call runs at all: an empty matrix is an error in Actions.
+        "ft": {"include": [shard for leg in ft for shard in _sharded(leg)]},
+        # Whether ci.yml's Windows and macOS calls run at all: an empty matrix is an error
+        # in Actions.
+        "any_windows": bool(matrices["windows"]),
         "any_macos": bool(matrices["macos"]),
         "build": {"include": [{"package": n} for n in names]},
     }
@@ -353,10 +392,12 @@ def install(name: str, free_threading: bool) -> None:
     _pip(*args)
 
 
-def test(name: str, event: str, free_threading: bool, coverage: bool = False) -> int:
+def test(name: str, event: str, free_threading: bool, coverage: bool = False,
+         shard: tuple[int, int] | None = None, junit: Path | None = None) -> int:
     spec = PACKAGES[name]
     cwd = PY / name
-    if "compile" in spec and not free_threading:
+    first = shard is None or shard[0] == 1      # the whole-package checks: once per suite
+    if "compile" in spec and not free_threading and first:
         # A docstring's invalid escape is a SyntaxWarning, printed once and easy to miss.
         subprocess.run(
             [sys.executable, "-W", "error::SyntaxWarning", "-W", "error::DeprecationWarning",
@@ -372,6 +413,11 @@ def test(name: str, event: str, free_threading: bool, coverage: bool = False) ->
         args = ["-m", "pytest", "-q", *spec["pytest"]]
         if event == "pull_request":
             args += spec.get("pr_pytest", [])
+    if junit is not None:
+        # xunit1: each test case carries its file, which `durations` sums by.
+        args += [f"--junitxml={junit.resolve()}", "-o", "junit_family=xunit1"]
+    if shard is not None:
+        args += shard_files(name, *shard)
     env = dict(os.environ)
     if free_threading:
         env["PYTHON_GIL"] = "0"
@@ -387,9 +433,77 @@ def test(name: str, event: str, free_threading: bool, coverage: bool = False) ->
     if coverage and spec.get("coverage"):
         code = subprocess.run([sys.executable, "-m", "coverage", "report", f"--fail-under={spec['coverage']}",
                                "--sort=cover"], cwd=cwd).returncode
-    if not code and spec.get("fixture_check") and not free_threading:
+    if not code and spec.get("fixture_check") and not free_threading and first:
         code = fixture_check(cwd)
     return code
+
+
+#: Each sharded package's recorded time per test file, in seconds summed over its tests
+#: (`durations` writes it from a run's JUnit reports).  A file not in it counts as the
+#: median of those that are, so a new test file lands somewhere sensible until the next
+#: refresh; a stale entry only makes the split less even, never drops a test.
+DURATIONS = ROOT / "tools" / "ci_durations.json"
+
+
+def test_files(name: str) -> list[str]:
+    """The package's test files, relative to its folder: what pytest collects from tests/."""
+    folder = PY / name
+    return sorted(p.relative_to(folder).as_posix() for p in (folder / "tests").rglob("test_*.py"))
+
+
+def _durations(name: str) -> dict[str, float]:
+    if not DURATIONS.is_file():
+        return {}
+    return json.loads(DURATIONS.read_text(encoding="utf-8")).get(name, {})
+
+
+def split(files: list[str], durations: dict[str, float], count: int) -> list[list[str]]:
+    """``files`` in ``count`` shards of about equal recorded time: the longest file first,
+    each to the shard with the least time so far (the lowest-numbered on a tie).  The
+    same inputs give the same split on every runner."""
+    known = sorted(durations.values())
+    default = known[len(known) // 2] if known else 1.0
+    weight = {f: durations.get(f, default) for f in files}
+    shards: list[list[str]] = [[] for _ in range(count)]
+    totals = [0.0] * count
+    for f in sorted(files, key=lambda f: (-weight[f], f)):
+        k = min(range(count), key=lambda i: (totals[i], i))
+        shards[k].append(f)
+        totals[k] += weight[f]
+    return [sorted(s) for s in shards]
+
+
+def shard_files(name: str, index: int, count: int) -> list[str]:
+    """The test files shard ``index`` (from 1) of ``count`` runs."""
+    if not 1 <= index <= count:
+        raise ValueError(f"shard {index} of {count}")
+    return split(test_files(name), _durations(name), count)[index - 1]
+
+
+def durations_from_junit(reports: list[Path]) -> dict[str, float]:
+    """Seconds per test file, summed over the test cases of JUnit (xunit1) reports."""
+    import xml.etree.ElementTree as ET
+
+    out: dict[str, float] = {}
+    for report in reports:
+        for case in ET.parse(report).getroot().iter("testcase"):
+            f = case.get("file")
+            if f:
+                out[f] = out.get(f, 0.0) + float(case.get("time") or 0.0)
+    return {f: round(t, 1) for f, t in sorted(out.items())}
+
+
+def write_durations(name: str, reports: list[Path]) -> dict[str, float]:
+    found = durations_from_junit(reports)
+    data = json.loads(DURATIONS.read_text(encoding="utf-8")) if DURATIONS.is_file() else {}
+    data[name] = found
+    DURATIONS.write_text(json.dumps(data, indent=1, sort_keys=True) + "\n", encoding="utf-8")
+    return found
+
+
+def _shard_arg(text: str) -> tuple[int, int]:
+    index, _, count = text.partition("/")
+    return int(index), int(count)
 
 
 def fixture_check(cwd: Path) -> int:
@@ -521,6 +635,12 @@ def main(argv: list[str] | None = None) -> int:
     a.add_argument("files", nargs="+")
     f = sub.add_parser("fuzz-seeds")
     f.add_argument("out", type=Path)
+    sh = sub.add_parser("shard")
+    sh.add_argument("package", choices=list(PACKAGES))
+    sh.add_argument("shard", type=_shard_arg, help="K/N")
+    du = sub.add_parser("durations")
+    du.add_argument("package", choices=list(PACKAGES))
+    du.add_argument("reports", nargs="+", type=Path)
     for command in ("install", "test", "gil-check", "build-check"):
         s = sub.add_parser(command)
         s.add_argument("package", choices=list(PACKAGES))
@@ -529,6 +649,8 @@ def main(argv: list[str] | None = None) -> int:
         if command == "test":
             s.add_argument("--event", default=os.environ.get("GITHUB_EVENT_NAME", "push"))
             s.add_argument("--coverage", action="store_true", help="the coverage leg, where the package has one")
+            s.add_argument("--shard", type=_shard_arg, help="K/N: only shard K of N's test files")
+            s.add_argument("--junit", type=Path, help="write a JUnit (xunit1) report here")
     args = parser.parse_args(argv)
 
     if args.command == "affected":
@@ -558,7 +680,14 @@ def main(argv: list[str] | None = None) -> int:
         install(args.package, args.free_threading)
         return 0
     if args.command == "test":
-        return test(args.package, args.event, args.free_threading, args.coverage)
+        return test(args.package, args.event, args.free_threading, args.coverage, args.shard, args.junit)
+    if args.command == "shard":
+        print("\n".join(shard_files(args.package, *args.shard)))
+        return 0
+    if args.command == "durations":
+        found = write_durations(args.package, args.reports)
+        print(f"{len(found)} files, {sum(found.values()):.0f} s", file=sys.stderr)
+        return 0
     if args.command == "gil-check":
         return gil_check(args.package)
     if args.command == "build-check":

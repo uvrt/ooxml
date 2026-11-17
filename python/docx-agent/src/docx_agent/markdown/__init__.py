@@ -293,7 +293,9 @@ def _span(reader: Reader, part: str, first: str | None, last: str | None) -> lis
     """The records a span's blocks are cut from: its story's, where the reader read the story
     already; else the span's own blocks (:meth:`Reader.span`, round 59), or the story's
     where those cannot be read alone.  With ``DOCX_AGENT_FULL_VALIDATE``, the span read alone
-    is compared with the story's records."""
+    is compared with the story's records, read by a reader of their own once per ``reader``
+    (the document does not change while one is used): a test reading every insertion back
+    through one reader read the whole story again for each."""
     if "_stories" in reader.__dict__ and part in reader.__dict__["_stories"]:
         return _story(reader, part)
     alone = reader.span(part, first, last)
@@ -303,7 +305,10 @@ def _span(reader: Reader, part: str, first: str | None, last: str | None) -> lis
 
     if full_check_on():
         document = reader.document
-        whole = Reader(document, reader.view_name, reader.map).story(part)
+        checked = reader.__dict__.setdefault("_stories_checked", {})
+        if part not in checked:
+            checked[part] = Reader(document, reader.view_name, reader.map).story(part)
+        whole = checked[part]
         cut = [_cut(document, records, first, last) for records in (alone, whole)]
         if cut[0] != cut[1]:
             raise AssertionError(f"{first}..{last}: the span read alone differs from the span read in its story")
