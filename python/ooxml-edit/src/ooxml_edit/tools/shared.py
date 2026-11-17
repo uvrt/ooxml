@@ -405,9 +405,10 @@ SPECS: dict[str, Spec] = {spec.name: spec for spec in [
          kind_fields={"slides": _SLIDES, "range": ("docx", "xlsx"),
                       "stories": ("pptx", "docx")},
          kind_values={"stories": _STORY_VALUES},
-         kind_descriptions={"stories": _STORY_TEXTS,
-                            "range": {"docx": "Only within this block or span (p:A..t:B).",
-                                      "xlsx": "Only within this sheet, range or table."}},
+         # In the schema's order (range, then stories): the Rust definition writes them so.
+         kind_descriptions={"range": {"docx": "Only within this block or span (p:A..t:B).",
+                                      "xlsx": "Only within this sheet, range or table."},
+                            "stories": _STORY_TEXTS},
          # Round 31 (R5e): a workbook's search is all its text, so body and all ask it
          # nothing; layouts and masters are still refused there.
          kind_neutral={"stories": ("body", "all")}),

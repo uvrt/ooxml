@@ -16,7 +16,9 @@ pub use fonts::{
     character_format, complex_script, slot_for, theme_face, CharacterFormat, Slot, APPLICATION_HALF_POINTS,
 };
 pub use run::{resolve_run, RunInput};
-pub use table::{border_twips, drawn, edge_winner, fitted_grid, Edge, ResolvedCell, ResolvedRow, ResolvedTable, SIDES};
+pub use table::{
+    border_twips, drawn, edge_winner, fitted_grid, resolve_table, Edge, ResolvedCell, ResolvedRow, ResolvedTable, SIDES,
+};
 
 use crate::document::{Context, ResolvedParagraph};
 use crate::model::{ParaProps, Paragraph, Run, RunProps, Table};

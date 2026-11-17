@@ -21,6 +21,7 @@
 //! only its table of documents, held for a lookup.
 #![forbid(unsafe_code)]
 
+mod batch;
 mod context;
 mod error;
 mod ids;
@@ -29,6 +30,7 @@ mod registry;
 mod session;
 mod update;
 
+pub use batch::{ReadBatch, ReadOp, BATCH_TIMEOUT, MAX_READ_BATCH_CHARS, READ_BATCH};
 pub use context::{CallContext, CancelToken};
 pub use error::SessionError;
 pub use ids::{DocId, DocKind};

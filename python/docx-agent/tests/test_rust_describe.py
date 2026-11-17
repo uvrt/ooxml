@@ -114,7 +114,8 @@ def test_the_rust_definition_is_todays_byte_for_byte():
 
     assert GOLDEN.read_text(encoding="utf-8") == text(export(_python_tool()))
     rust = RustTools()
-    assert [tool.name for tool in rust.tools] == ["describe", "word_read"]
+    assert [tool.name for tool in rust.tools] == ["describe", "word_read", "word_inspect", "find_text",
+                                                  "read_batch"]
     assert json.loads(ooxml_core.tool_specs("docx"))[0] == json.loads(GOLDEN.read_text(encoding="utf-8"))
 
 
@@ -150,9 +151,6 @@ def _assert_equal(today: dict, result) -> None:
     assert list(rust["data"]) == [k for k in RUST_DESCRIBED if k in rust["data"]]
     assert set(RUST_DESCRIBED) - set(rust["data"]) <= {"tagged", "headings_note"}
     for key in rust["data"]:
-        if key == "revisions":      # its changes (grouped records) are not given yet
-            assert rust["data"][key] == {k: v for k, v in today["data"][key].items() if k != "changes"}
-            continue
         assert rust["data"][key] == today["data"][key], key
     assert set(today["data"]) - set(RUST_DESCRIBED) <= NOT_YET, set(today["data"]) - set(RUST_DESCRIBED) - NOT_YET
 

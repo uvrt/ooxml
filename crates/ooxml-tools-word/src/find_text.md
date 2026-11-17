@@ -1,0 +1,1 @@
+Find text: each match's address, kind and context, in order, across slides, notes, tables, SmartArt, a document's stories and a workbook's cells, names and comments.

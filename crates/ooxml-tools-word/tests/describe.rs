@@ -6,7 +6,8 @@
 use ooxml_base::{Cancel, Limits};
 use ooxml_opc::Package;
 use ooxml_tools::{ToolArgs, ToolResult};
-use ooxml_tools_word::{describe, Describe, DESCRIBED, KIND};
+use ooxml_tools_word::{describe, Describe, Version, DESCRIBED, KIND};
+use ooxml_word_model::docx::Versions;
 use ooxml_zip::{Method, NewEntry, Writer};
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -120,7 +121,17 @@ fn args() -> Describe {
 
 #[test]
 fn describes_what_the_parts_say() {
-    let done = describe(&args(), &made_up(), "plan.docx", &Never).unwrap();
+    let done = describe(
+        &args(),
+        &Version {
+            name: "plan.docx",
+            package: &made_up(),
+            number: 1,
+            versions: &Versions::new(),
+        },
+        &Never,
+    )
+    .unwrap();
     assert_eq!(done.summary, "Described plan.docx");
     let data = done.data.unwrap();
     assert_eq!(
@@ -134,7 +145,7 @@ fn describes_what_the_parts_say() {
             "sections": [],
             "styles_in_use": [],
             "comments": {"threads": 2, "open": 1, "by_author": {"Ann": 1, "Bob": 1, "null": 1}},
-            "revisions": {"records": 0, "by_author": {}},
+            "revisions": {"records": 0, "changes": 0, "by_author": {}},
             "fields": {},
             "tables": [],
             "drawings": [],
@@ -158,7 +169,19 @@ fn a_bare_package_has_the_defaults() {
         ("_rels/.rels", root),
         ("word/document.xml", format!("<w:document {W}><w:body/></w:document>")),
     ]);
-    let data = describe(&args(), &p, "a.docx", &Never).unwrap().data.unwrap();
+    let data = describe(
+        &args(),
+        &Version {
+            name: "a.docx",
+            package: &p,
+            number: 1,
+            versions: &Versions::new(),
+        },
+        &Never,
+    )
+    .unwrap()
+    .data
+    .unwrap();
     assert_eq!(data["compatibility_mode"], json!(12));
     assert_eq!(data["properties"], json!({}));
     assert_eq!(data["comments"], json!({"threads": 0, "open": 0, "by_author": {}}));
@@ -169,7 +192,17 @@ fn a_bare_package_has_the_defaults() {
 #[test]
 fn cancellation_stops_it_with_timeout() {
     // the first check passes, the next one stops it
-    let error = describe(&args(), &made_up(), "plan.docx", &After(AtomicBool::new(false))).unwrap_err();
+    let error = describe(
+        &args(),
+        &Version {
+            name: "plan.docx",
+            package: &made_up(),
+            number: 1,
+            versions: &Versions::new(),
+        },
+        &After(AtomicBool::new(false)),
+    )
+    .unwrap_err();
     assert_eq!(error.code().as_str(), "timeout");
     let result = ToolResult::<Value>::failed(error);
     assert!(result.to_text(None).contains("\"code\":\"timeout\""));
@@ -178,7 +211,17 @@ fn cancellation_stops_it_with_timeout() {
 #[test]
 fn not_a_word_package_is_an_internal_error() {
     let p = package(&[("other.xml", "<a/>".into())]);
-    let error = describe(&args(), &p, "x.docx", &Never).unwrap_err();
+    let error = describe(
+        &args(),
+        &Version {
+            name: "x.docx",
+            package: &p,
+            number: 1,
+            versions: &Versions::new(),
+        },
+        &Never,
+    )
+    .unwrap_err();
     assert_eq!(error.code().as_str(), "internal");
 }
 

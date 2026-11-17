@@ -1,15 +1,114 @@
-//! Owns: the document-wide lookups a reading starts from: every note with its id
-//! (`fn:1`, `en:2`), by its reference's kind and `w:id`, and the bookmark names internal
-//! hyperlinks point at (shown even when hidden, as `_Toc` ones are).
+//! Owns: the document-wide lookups every reading of a version starts from ([`Shared`],
+//! read once per version and kept with it): the styles, numbering and theme formatting
+//! resolves against, the lists, the ids of controls, revision records, pictures and
+//! drawings by their place, every note with its id (`fn:1`, `en:2`) by its reference's
+//! kind and `w:id`, the comments by `w:id`, and the bookmark names internal hyperlinks
+//! point at (shown even when hidden, as `_Toc` ones are).
 //!
 //! Must not: read a story's blocks.
 
 use super::{index, Placed};
+use crate::docx::cells::TableFacts;
+use crate::docx::comments::{comments, Comment};
+use crate::docx::controls::controls;
+use crate::docx::drawings::{all_drawings, pictures};
+use crate::docx::formatting::Formatting;
+use crate::docx::numbering::Lists;
+use crate::docx::revisions::records as revision_records;
 use crate::docx::Docx;
+use crate::ids::TableId;
 use crate::ids::W;
 use ooxml_xml::Node;
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
+
+/// An element's key: its part and its place there.
+type Key = (String, Box<[u32]>);
+
+/// The document-wide lookups of one version.
+pub struct Shared {
+    /// What formatting resolves against.
+    pub(super) formatting: Formatting,
+    /// The lists.
+    pub(super) lists: Lists,
+    /// Content controls' ids by place.
+    pub(super) controls: HashMap<Key, String>,
+    /// Revision records' ids by place.
+    pub(super) revisions: HashMap<Key, String>,
+    /// Pictures' ids by place.
+    pub(super) pictures: HashMap<Key, String>,
+    /// Drawings' ids by place.
+    pub(super) drawings: HashMap<Key, String>,
+    /// Notes' ids by `(fn|en, w:id)`.
+    pub(super) notes: HashMap<(String, String), String>,
+    /// Bookmarks internal hyperlinks point at.
+    pub(super) anchors: HashSet<String>,
+    /// Comments by `w:id`.
+    pub(super) comments: HashMap<String, Comment>,
+    /// What the layout model reads of each top-level table read so far, by part and place.
+    tables: Mutex<HashMap<Key, Arc<TableFacts>>>,
+}
+
+impl std::fmt::Debug for Shared {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Shared").finish_non_exhaustive()
+    }
+}
+
+impl Shared {
+    /// The lookups of `docx`.
+    #[must_use]
+    pub fn read(docx: &Docx) -> Shared {
+        let key = |part: &str, path: &[u32]| (part.to_owned(), Box::<[u32]>::from(path));
+        Shared {
+            formatting: Formatting::read(docx),
+            lists: Lists::read(docx),
+            controls: controls(docx)
+                .into_iter()
+                .map(|c| (key(&c.part, &c.path), c.id))
+                .collect(),
+            revisions: revision_records(docx)
+                .into_iter()
+                .map(|r| (key(&r.part, &r.path), r.id))
+                .collect(),
+            pictures: pictures(docx)
+                .into_iter()
+                .map(|d| (key(&d.part, &d.path), d.id))
+                .collect(),
+            drawings: all_drawings(docx)
+                .into_iter()
+                .map(|d| (key(&d.part, &d.path), d.id))
+                .collect(),
+            notes: notes_of(docx),
+            anchors: anchors(docx),
+            comments: comments(docx)
+                .into_iter()
+                .filter_map(|c| c.w_id.clone().map(|w| (w, c)))
+                .collect(),
+            tables: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// What the layout model reads of the table `table` of `part`, read once.
+    pub fn table_facts(&self, part: &str, table: &TableId) -> Arc<TableFacts> {
+        let key = (part.to_owned(), table.path.clone());
+        if let Some(found) = self.tables.lock().unwrap_or_else(PoisonError::into_inner).get(&key) {
+            return Arc::clone(found);
+        }
+        let made = Arc::new(TableFacts::read(&self.formatting, &table.element));
+        self.tables
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(key, Arc::clone(&made));
+        made
+    }
+
+    /// What formatting resolves against.
+    #[must_use]
+    pub fn formatting(&self) -> &Formatting {
+        &self.formatting
+    }
+}
 
 /// The notes by `(fn|en, w:id)`.
 pub(super) fn notes_of(docx: &Docx) -> HashMap<(String, String), String> {

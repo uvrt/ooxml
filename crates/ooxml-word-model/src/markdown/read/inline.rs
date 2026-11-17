@@ -6,14 +6,15 @@
 //!
 //! Must not: group paragraphs or render text.
 
+use super::detail::{drawing_record, every_hyperlink};
 use super::{child_at, comment, index, ParagraphRecord, Placed, Reader};
 use crate::docx::controls::control_kind;
 use crate::docx::drawings::drawing_kind;
-use crate::docx::formatting::EffectiveRun;
+use crate::docx::formatting::{Cell, EffectiveRun};
 use crate::docx::text::{leading_text, View, NON_BREAKING_HYPHEN, OBJECT, SOFT_HYPHEN};
 use crate::docx::{child_val, live_paths};
 use crate::ids::{MC, W, WP};
-use crate::markdown::model::{Inline, Mark, Marks};
+use crate::markdown::model::{plain_text, Inline, Mark, Marks};
 use crate::markdown::stylemap::Construct;
 use ooxml_xml::{Element, Node};
 use std::sync::Arc;
@@ -36,11 +37,15 @@ pub(super) struct Walk<'r, 'a> {
     reader: &'r mut Reader<'a>,
     record: &'r mut ParagraphRecord,
     paragraph: &'r Placed,
-    table_style: Option<&'r str>,
+    cell: Option<Cell>,
     href: Vec<Option<String>>,
     /// Open complex fields: in their result, marked in the markup view, the instruction.
     fields: Vec<(bool, bool, String)>,
     baseline: Option<EffectiveRun>,
+    /// The places of the paragraph's hyperlinks, in document order (their `hl:` numbers).
+    links: Vec<Box<[u32]>>,
+    /// The revisions the walk is inside.
+    revision: Vec<Option<String>>,
 }
 
 fn is_w(e: &Element, names: &[&str]) -> bool {
@@ -52,16 +57,18 @@ impl<'r, 'a> Walk<'r, 'a> {
         reader: &'r mut Reader<'a>,
         record: &'r mut ParagraphRecord,
         paragraph: &'r Placed,
-        table_style: Option<&'r str>,
+        cell: Option<Cell>,
     ) -> Walk<'r, 'a> {
         Walk {
             reader,
             record,
             paragraph,
-            table_style,
+            cell,
             href: Vec::new(),
             fields: Vec::new(),
             baseline: None,
+            links: every_hyperlink(&paragraph.element, &paragraph.path),
+            revision: Vec::new(),
         }
     }
 
@@ -124,6 +131,8 @@ impl<'r, 'a> Walk<'r, 'a> {
 
     fn simple_field(&mut self, node: &Placed) {
         let instruction = node.element.attribute(Some(W), "instr").unwrap_or("").trim().to_owned();
+        self.record.detail.fields.push((instruction.clone(), String::new()));
+        let start = self.record.inline.len();
         let marked = self.reader.view == View::Markup && self.visible();
         if marked {
             self.record
@@ -131,6 +140,10 @@ impl<'r, 'a> Walk<'r, 'a> {
                 .push(Inline::Html(comment(&format!("field: {instruction}"))));
         }
         self.container(node);
+        let result = plain_text(self.record.inline.get(start..).unwrap_or(&[]));
+        if let Some(last) = self.record.detail.fields.last_mut() {
+            last.1 = result;
+        }
         if marked {
             self.record.inline.push(Inline::Html(comment("/field")));
         }
@@ -145,19 +158,23 @@ impl<'r, 'a> Walk<'r, 'a> {
         if let Some(anchor) = node.element.attribute(Some(W), "anchor").filter(|a| !a.is_empty()) {
             target = Some(format!("{}#{anchor}", target.unwrap_or_default()));
         }
-        self.href.push(target);
+        let number = self.links.iter().position(|p| *p == node.path);
+        let start = self.record.inline.len();
+        self.href.push(target.clone());
         self.container(node);
         self.href.pop();
+        if let Some(number) = number {
+            let text = plain_text(self.record.inline.get(start..).unwrap_or(&[]));
+            let id = format!("hl:{}/{number}", self.record.id);
+            self.record.detail.links.push((id, target, text));
+        }
     }
 
     fn inline_control(&mut self, node: &Placed) {
-        let id = self
-            .reader
-            .controls
-            .get(&self.key(&node.path))
-            .cloned()
-            .unwrap_or_else(|| "None".to_owned());
+        let found = self.reader.shared.controls.get(&self.key(&node.path)).cloned();
         let kind = control_kind(&node.element);
+        self.record.detail.controls.push((found.clone(), kind));
+        let id = found.unwrap_or_else(|| "None".to_owned());
         let mut words = vec![format!("{id} {kind}")];
         words.extend(control_words(&node.element));
         self.record.inline.push(Inline::Html(comment(&words.join(" "))));
@@ -178,22 +195,24 @@ impl<'r, 'a> Walk<'r, 'a> {
         } else {
             self.reader.view != View::Current
         };
+        let found = self.reader.shared.revisions.get(&self.key(&node.path)).cloned();
+        if !self.record.detail.revisions.contains(&found) {
+            self.record.detail.revisions.push(found.clone());
+        }
         if !shown {
             return;
         }
+        self.revision.push(found.clone());
         if self.reader.view != View::Markup {
             self.container(node);
+            self.revision.pop();
             return;
         }
-        let id = self
-            .reader
-            .revisions
-            .get(&self.key(&node.path))
-            .cloned()
-            .unwrap_or_else(|| "None".to_owned());
+        let id = found.unwrap_or_else(|| "None".to_owned());
         let sign = if inserted { "++" } else { "--" };
         self.record.inline.push(Inline::Critic(format!("{{{sign}")));
         self.container(node);
+        self.revision.pop();
         self.record.inline.push(Inline::Critic(format!("{sign}}}")));
         let author = node.element.attribute(Some(W), "author").unwrap_or("");
         let moved = if is_w(&node.element, &["moveTo", "moveFrom"]) {
@@ -208,9 +227,10 @@ impl<'r, 'a> Walk<'r, 'a> {
 
     fn bookmark(&mut self, node: &Element) {
         let name = node.attribute(Some(W), "name").unwrap_or("");
-        if name.is_empty() || (name.starts_with('_') && !self.reader.anchors.contains(name)) {
+        if name.is_empty() || (name.starts_with('_') && !self.reader.shared.anchors.contains(name)) {
             return;
         }
+        self.record.detail.bookmarks.push(format!("bm:{name}"));
         self.record.inline.push(Inline::Html(comment(&format!("bm:{name}"))));
     }
 
@@ -219,15 +239,20 @@ impl<'r, 'a> Walk<'r, 'a> {
         let base = match &self.baseline {
             Some(b) => b.clone(),
             None => {
-                let b = self.reader.formatting.run(&paragraph, None, 'a', self.table_style);
+                let b = self
+                    .reader
+                    .shared
+                    .formatting
+                    .run(&paragraph, None, 'a', self.cell.as_ref());
                 self.baseline = Some(b.clone());
                 b
             }
         };
         let effective = self
             .reader
+            .shared
             .formatting
-            .run(&paragraph, Some(run), first, self.table_style);
+            .run(&paragraph, Some(run), first, self.cell.as_ref());
         let mut marks = Marks::new();
         if effective.bold && !base.bold {
             marks.insert(Mark::Strong);
@@ -261,6 +286,7 @@ impl<'r, 'a> Walk<'r, 'a> {
         if effective.hidden {
             return;
         }
+        self.run_record(run, &pieces, effective.clone());
         let href = self.href.last().cloned().flatten();
         let mut buffer = String::new();
         for piece in pieces {
@@ -295,12 +321,26 @@ impl<'r, 'a> Walk<'r, 'a> {
                 href,
             });
         }
+        if let Some((k, _)) =
+            child_at(&run.element, "rPr").and_then(|(k, p)| child_at(&p, "rPrChange").map(|(j, c)| ([k, j], c)))
+        {
+            let found = self
+                .reader
+                .shared
+                .revisions
+                .get(&self.key(&[&run.path[..], &k].concat()))
+                .cloned();
+            if !self.record.detail.revisions.contains(&found) {
+                self.record.detail.revisions.push(found);
+            }
+        }
         if self.reader.view == View::Markup {
             if let Some((k, change)) =
                 child_at(&run.element, "rPr").and_then(|(k, p)| child_at(&p, "rPrChange").map(|(j, c)| ([k, j], c)))
             {
                 let id = self
                     .reader
+                    .shared
                     .revisions
                     .get(&self.key(&[&run.path[..], &k].concat()))
                     .cloned()
@@ -311,6 +351,42 @@ impl<'r, 'a> Walk<'r, 'a> {
                     .push(Inline::Html(comment(format!("{id} formatting {author}").trim())));
             }
         }
+    }
+
+    /// The run's record for `word_inspect`, where it has text.
+    fn run_record(&mut self, run: &Placed, pieces: &[Piece], effective: EffectiveRun) {
+        let text: String = pieces
+            .iter()
+            .filter_map(|p| if let Piece::Char(c) = p { Some(*c) } else { None })
+            .collect();
+        if text.is_empty() {
+            return;
+        }
+        let style = effective
+            .style
+            .as_ref()
+            .and_then(|id| match self.reader.docx.style(id) {
+                Some(found) => crate::docx::style_name(found).map(str::to_owned),
+                None => Some(id.clone()),
+            });
+        let direct = run
+            .element
+            .find(Some(W), "rPr")
+            .map(|p| {
+                p.child_elements()
+                    .filter(|c| !c.name().is(Some(W), "rStyle"))
+                    .map(|c| c.name().local().to_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let revision = self.revision.last().cloned().flatten();
+        self.record.detail.runs.push(super::RunRecord {
+            text,
+            style,
+            direct,
+            effective,
+            revision,
+        });
     }
 
     /// The run's content in the view.
@@ -326,6 +402,9 @@ impl<'r, 'a> Walk<'r, 'a> {
                 let take = is_w(e, &["instrText"]) || self.reader.view != View::Current;
                 if let Some(top) = self.fields.last_mut().filter(|f| !f.0 && take) {
                     top.2 = format!("{}{}", top.2, leading_text(e)).trim().to_owned();
+                    if let Some(last) = self.record.detail.fields.last_mut() {
+                        last.0 = format!("{}{}", last.0, leading_text(e)).trim().to_owned();
+                    }
                 }
                 continue;
             }
@@ -357,7 +436,10 @@ impl<'r, 'a> Walk<'r, 'a> {
 
     fn field_char(&mut self, e: &Element, out: &mut Vec<Piece>) {
         match e.attribute(Some(W), "fldCharType") {
-            Some("begin") => self.fields.push((false, false, String::new())),
+            Some("begin") => {
+                self.fields.push((false, false, String::new()));
+                self.record.detail.fields.push((String::new(), String::new()));
+            }
             Some("separate") => {
                 let markup = self.reader.view == View::Markup;
                 if let Some(top) = self.fields.last_mut() {
@@ -392,7 +474,15 @@ impl<'r, 'a> Walk<'r, 'a> {
             return;
         }
         match local {
-            "t" => out.extend(leading_text(e).chars().map(Piece::Char)),
+            "t" => {
+                let text = leading_text(e);
+                if !self.fields.is_empty() {
+                    if let Some(last) = self.record.detail.fields.last_mut() {
+                        last.1.push_str(&text);
+                    }
+                }
+                out.extend(text.chars().map(Piece::Char));
+            }
             "delText" if self.reader.view != View::Current => out.extend(leading_text(e).chars().map(Piece::Char)),
             "br" | "cr" => out.push(match e.attribute(Some(W), "type") {
                 Some("page") => Piece::Html(comment("page break")),
@@ -411,7 +501,7 @@ impl<'r, 'a> Walk<'r, 'a> {
             "footnoteReference" | "endnoteReference" => {
                 let prefix = if local == "footnoteReference" { "fn" } else { "en" };
                 let id = e.attribute(Some(W), "id").unwrap_or("None").to_owned();
-                if let Some(found) = self.reader.notes.get(&(prefix.to_owned(), id)) {
+                if let Some(found) = self.reader.shared.notes.get(&(prefix.to_owned(), id)) {
                     out.push(Piece::Note(found.clone()));
                 }
             }
@@ -421,12 +511,13 @@ impl<'r, 'a> Walk<'r, 'a> {
     }
 
     fn comment_reference(&mut self, w_id: &str) {
+        let Some(record) = self.reader.shared.comments.get(w_id).cloned() else {
+            return;
+        };
+        self.record.detail.comments.push(record.id.clone());
         if self.reader.view != View::Markup {
             return;
         }
-        let Some(record) = self.reader.comments.get(w_id).cloned() else {
-            return;
-        };
         let mut who: Vec<&str> = Vec::new();
         who.extend(record.author.as_deref().filter(|a| !a.is_empty()));
         if record.parent.is_some() {
@@ -463,7 +554,14 @@ impl<'r, 'a> Walk<'r, 'a> {
             let doc_pr = frame.element.find(Some(WP), "docPr");
             let name = doc_pr.and_then(|d| d.attribute(None, "name")).map(str::to_owned);
             let alt = doc_pr.and_then(|d| d.attribute(None, "descr")).unwrap_or("").to_owned();
-            if let Some(id) = self.reader.pictures.get(&key).cloned() {
+            self.record.detail.drawings.push(drawing_record(
+                &frame.element,
+                self.reader.shared.pictures.get(&key).cloned(),
+                self.reader.shared.drawings.get(&key).cloned(),
+                name.clone(),
+                alt.clone(),
+            ));
+            if let Some(id) = self.reader.shared.pictures.get(&key).cloned() {
                 self.record.inline.push(Inline::Image {
                     alt,
                     src: id,
@@ -474,6 +572,7 @@ impl<'r, 'a> Walk<'r, 'a> {
             }
             let id = self
                 .reader
+                .shared
                 .drawings
                 .get(&key)
                 .cloned()

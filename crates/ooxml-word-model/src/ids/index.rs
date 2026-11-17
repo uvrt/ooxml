@@ -91,6 +91,10 @@ pub struct PartIds {
     by_path: HashMap<Path, Entry>,
 }
 
+/// A row as its table's ids read it: its raw paraId, how often that value came before, its
+/// place.
+type RowFound<'a> = (Option<&'a str>, usize, &'a Path);
+
 /// A live `w:p`, `w:tr` or `w:tbl` as the walk meets it.
 struct Found {
     element: Arc<Element>,
@@ -158,14 +162,15 @@ impl PartIds {
     fn index_tables(&mut self, found: &[Found], raws: &[Option<&str>], repeats: &[usize]) {
         let prefix = self.prefix();
         let tables: Vec<&Found> = found.iter().filter(|f| f.kind == Kind::Tbl).collect();
+        // Each table's rows, in document order, gathered in one pass.
+        let mut rows_of: HashMap<&Path, Vec<RowFound<'_>>> = HashMap::new();
+        for ((f, raw), repeat) in found.iter().zip(raws).zip(repeats) {
+            if let (Kind::Tr, Some(owner)) = (f.kind, f.owner.as_ref()) {
+                rows_of.entry(owner).or_default().push((*raw, *repeat, &f.path));
+            }
+        }
         for (number, table) in tables.into_iter().enumerate() {
-            let rows: Vec<(Option<&str>, usize, &Path)> = found
-                .iter()
-                .zip(raws)
-                .zip(repeats)
-                .filter(|((f, _), _)| f.kind == Kind::Tr && f.owner.as_ref() == Some(&table.path))
-                .map(|((f, raw), repeat)| (*raw, *repeat, &f.path))
-                .collect();
+            let rows = rows_of.remove(&table.path).unwrap_or_default();
             let id = match rows.first().and_then(|(raw, repeat, _)| good(*raw, *repeat)) {
                 Some(first) => format!("{prefix}t:{first}"),
                 None => format!("t@{}/{number}", self.story),
@@ -284,19 +289,19 @@ fn walk(element: &Element, path: &mut Vec<u32>, tables: &mut Vec<Path>, out: &mu
         } else {
             None
         };
-        let here: Path = path.clone().into_boxed_slice();
         if let Some(kind) = kind {
+            let here: Path = path.clone().into_boxed_slice();
             out.push(Found {
                 element: Arc::clone(child),
                 path: here.clone(),
                 kind,
                 owner: if kind == Kind::Tr { tables.last().cloned() } else { None },
             });
+            if kind == Kind::Tbl {
+                tables.push(here);
+            }
         }
         let table = kind == Some(Kind::Tbl);
-        if table {
-            tables.push(here);
-        }
         walk(child, path, tables, out);
         if table {
             tables.pop();
