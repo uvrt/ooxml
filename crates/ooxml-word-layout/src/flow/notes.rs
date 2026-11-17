@@ -47,7 +47,63 @@ impl PartialEq for NoteForms {
 
 impl Eq for NoteForms {}
 
+/// The footnotes referenced in a table's cells (`cell_notes`): per cell paragraph (its
+/// index among the table's paragraphs) each reference's text index and note, and each
+/// note's lines laid out in the section's width.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CellNotes {
+    /// Cell paragraph -> its references `(text index, note)`, in order.
+    pub references: std::collections::BTreeMap<usize, Vec<(i64, i64)>>,
+    /// Note -> its lines.
+    pub lines: std::collections::BTreeMap<i64, NoteLines>,
+}
+
+impl CellNotes {
+    /// Whether no cell references a note.
+    pub fn is_empty(&self) -> bool {
+        self.references.is_empty()
+    }
+}
+
 impl FlowMaker<'_, '_> {
+    /// The footnotes referenced in the cells of the table at top-level block `body`
+    /// (its first paragraph `block`), in section `section`; its section's separators
+    /// measured where it has any.
+    pub(super) fn cell_notes(&mut self, block: usize, body: usize, section: usize) -> Arc<CellNotes> {
+        let mut out = CellNotes::default();
+        let count = self.paragraphs_in(body);
+        for k in 0..count {
+            let Some(paragraph) = self.paragraphs.get(block + k) else {
+                continue;
+            };
+            let found = crate::notes::flowed::references(paragraph);
+            if !found.is_empty() {
+                out.references.insert(k, found);
+            }
+        }
+        let Some(geometry) = self.cx.sections.get(section).cloned().filter(|_| !out.is_empty()) else {
+            return Arc::new(out);
+        };
+        let mut cx = NoteContext {
+            document: self.cx.document,
+            faces: self.cx.faces,
+            locale: self.cx.locale,
+            measurer: &mut self.state.measurer,
+            model: self.model,
+        };
+        let ids: std::collections::BTreeSet<i64> = out.references.values().flatten().map(|(_, n)| *n).collect();
+        for id in ids {
+            if let Some(lines) = self.notes.note(&mut cx, id, (section, &geometry), None) {
+                out.lines.insert(id, lines);
+            }
+        }
+        if !self.separators.contains_key(&section) {
+            let found = self.notes.separators(&mut cx, (section, &geometry));
+            self.separators.insert(section, found);
+        }
+        Arc::new(out)
+    }
+
     /// A paragraph's footnotes by line (and its section's separators, where it has any),
     /// and an endnote's continuation line.
     pub(super) fn paragraph_notes(

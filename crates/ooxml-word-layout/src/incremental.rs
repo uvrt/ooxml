@@ -53,7 +53,10 @@ pub fn same_item(old: &FlowItem, new: &FlowItem) -> bool {
                 && a.note_forms == b.note_forms
         }
         (FlowItem::Table(a), FlowItem::Table(b)) => {
-            Arc::ptr_eq(&a.flow, &b.flow) && a.section == b.section && a.section_start == b.section_start
+            Arc::ptr_eq(&a.flow, &b.flow)
+                && a.section == b.section
+                && a.section_start == b.section_start
+                && a.notes == b.notes
         }
         (FlowItem::Stop(a), FlowItem::Stop(b)) => a.section == b.section && a.reason == b.reason,
         _ => false,

@@ -34,6 +34,20 @@ impl Fitted<'_> {
     }
 }
 
+/// A line of no height: a table cell's line is fitted by where it ends.
+fn no_height() -> LineHeight {
+    LineHeight {
+        pitch: Px::ZERO,
+        text_above: Px::ZERO,
+        text_below: Px::ZERO,
+        natural: Px::ZERO,
+        rule: crate::vertical::LineRule::Exact,
+        line: 0,
+        mixed: false,
+        object_drop: None,
+    }
+}
+
 /// How the column's notes stand.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Kind {
@@ -46,6 +60,7 @@ enum Kind {
 }
 
 /// The foot of a page or column as its stack fills.
+#[derive(Debug, Clone)]
 pub(super) struct Foot {
     kind: Kind,
     mode15: bool,
@@ -111,7 +126,43 @@ impl Foot {
     /// The room the foot needs below the line `fitted`, its new notes `new` included.
     pub fn need<'n>(&self, new: impl Iterator<Item = &'n NoteLines>, fitted: &Fitted<'_>) -> Px {
         let new: Vec<&NoteLines> = new.collect();
-        let below = self.below(&new);
+        self.need_of(&new, fitted)
+    }
+
+    /// The room the notes at the foot take, with the separator and the lines carried.
+    pub fn taken(&self) -> Px {
+        self.taken
+    }
+
+    /// The room the foot needs below a table cell's line ending at `end` (above the
+    /// page's text end `bottom`), its new notes `new` included (`_table_notes`).
+    pub fn need_below_cell(&self, new: &[&NoteLines], end: Px, bottom: Px) -> Px {
+        let height = no_height();
+        let fitted = Fitted {
+            y: end,
+            height: &height,
+            border: Px::ZERO,
+            after: Px::ZERO,
+            bottom,
+        };
+        self.need_of(new, &fitted)
+    }
+
+    /// A table cell's line ending at `end` placed: its new notes `new` at the foot.
+    pub fn place_below_cell(&mut self, new: &[&NoteLines], end: Px, bottom: Px) {
+        let height = no_height();
+        let fitted = Fitted {
+            y: end,
+            height: &height,
+            border: Px::ZERO,
+            after: Px::ZERO,
+            bottom,
+        };
+        self.place_of(new, &fitted);
+    }
+
+    fn need_of(&self, new: &[&NoteLines], fitted: &Fitted<'_>) -> Px {
+        let below = self.below(new);
         let mut need = match (new.first(), new.last(), self.kind) {
             (Some(_), _, Kind::Pooled) | (None, _, _) => below,
             (Some(first), _, Kind::Column) if !self.partial() => below + note_minimum(first),
@@ -130,10 +181,14 @@ impl Foot {
     /// 15 in a column, each in turn) with as many lines as then fit.
     pub fn place<'n>(&mut self, new: impl Iterator<Item = &'n NoteLines>, fitted: &Fitted<'_>) {
         let new: Vec<&NoteLines> = new.collect();
+        self.place_of(&new, fitted);
+    }
+
+    fn place_of(&mut self, new: &[&NoteLines], fitted: &Fitted<'_>) {
         if new.is_empty() {
             return;
         }
-        let mut below = self.below(&new);
+        let mut below = self.below(new);
         match self.kind {
             Kind::Pooled => self.notes.extend(new.iter().map(|n| PlacedNote {
                 lines: NoteLines::clone(n),

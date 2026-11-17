@@ -45,9 +45,6 @@ pub fn table_cut(table: &Value) -> Option<&'static str> {
                 _ => {
                     let more = entry.get(4);
                     let flag = |k: &str| more.and_then(|m| m.get(k));
-                    if flag("notes").and_then(Value::as_bool).unwrap_or(false) {
-                        return Some("notes, drawings or an approximation: a note's reference in a cell");
-                    }
                     if flag("anchors").and_then(Value::as_i64).unwrap_or(0) > 0 {
                         return Some("notes, drawings or an approximation: a floating drawing in a cell");
                     }

@@ -11,7 +11,9 @@ use super::cells::{CellFlow, Content, RowFlow};
 use super::place::{place_table, MergeDown};
 use crate::paragraph::MeasuredParagraph;
 use crate::px::Px;
-use crate::table::{CellLine, FloatingTable, PlacedRow, StackedBlock, TableFlow, TablePage, TableRequest, Unsupported};
+use crate::table::{
+    CellLine, FloatingTable, PlacedRow, StackedBlock, StackedEnd, TableFlow, TablePage, TableRequest, Unsupported,
+};
 use ooxml_base::Q;
 use ooxml_word_model::value::Text;
 use std::sync::Arc;
@@ -245,6 +247,32 @@ impl TableFlow for MeasuredTable {
 
     fn paragraph(&self, block: usize) -> Option<Arc<MeasuredParagraph>> {
         self.measures.get(block).cloned().flatten()
+    }
+
+    fn line_ends(&self, placed: &PlacedRow) -> Vec<StackedEnd> {
+        let Some(row) = self.rows.get(placed.row) else {
+            return Vec::new();
+        };
+        let edge = self.edge_below(placed.row);
+        let mut out = Vec::new();
+        for (c, cell) in row.cells.iter().enumerate() {
+            let top = placed.top + placed.top_border + cell.margin_top;
+            let at = |p: &[u32]| p.get(c).map_or(0, |v| usize::try_from(*v).unwrap_or(0));
+            let start = at(&placed.start);
+            for k in start..at(&placed.end) {
+                let paragraph = cell.stack.get(k).and_then(|line| {
+                    let entry = cell.entries.get(line.entry)?;
+                    matches!(entry.content, Content::Paragraph(_)).then_some((entry.block, line.number))
+                });
+                out.push(StackedEnd {
+                    end: top + cell.slice_height(start, k + 1) + cell.margin_bottom + edge,
+                    cell: c,
+                    line: k,
+                    paragraph,
+                });
+            }
+        }
+        out
     }
 
     fn as_any(&self) -> &dyn std::any::Any {

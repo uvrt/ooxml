@@ -16,6 +16,7 @@
 //! [`crate::stories::StoryHeights`]).
 
 mod beside;
+mod cell_notes;
 mod columns;
 mod floats;
 mod keeps;

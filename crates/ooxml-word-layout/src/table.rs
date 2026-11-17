@@ -140,6 +140,22 @@ pub struct CellLine {
 /// that draws nothing or is not a paragraph's (a nested table's).
 pub type StackedBlock = Option<usize>;
 
+/// Where a stacked line of a placed row ends -- with its cell's bottom margin and the edge
+/// below the row -- and what it is: what a footnote referenced on it is fitted against
+/// (`_table_notes`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StackedEnd {
+    /// Where it ends.
+    pub end: Px,
+    /// Its cell in the row.
+    pub cell: usize,
+    /// Its place in the cell's stack.
+    pub line: usize,
+    /// Its paragraph (as [`CellLine::block`]) and its line in it, where it is a
+    /// paragraph's.
+    pub paragraph: Option<(usize, usize)>,
+}
+
 /// Why a table cannot be laid out.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("table not laid out: {0}")]
@@ -246,6 +262,11 @@ pub trait TableFlow: Debug + Send + Sync {
     /// Where it is positioned, where it floats (`None`: it is laid out in the flow).
     fn floating(&self) -> Option<&FloatingTable> {
         None
+    }
+    /// Each stacked line `row`, placed on a page, holds there, cell by cell.
+    fn line_ends(&self, row: &PlacedRow) -> Vec<StackedEnd> {
+        let _ = row;
+        Vec::new()
     }
     /// Whether, laid out in a room `width` twips wide, it keeps within it (`table_fits`):
     /// in mode 15 its right border's outer edge, below mode 15 its last cell's text.

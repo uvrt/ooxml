@@ -686,7 +686,7 @@ impl PageContext<'_> {
             line,
             start,
             bottom,
-            frame,
+            ..
         } = *at;
         let previous_section = stack.previous.and_then(|k| self.items.get(k)).map(FlowItem::section);
         if !stack.first_on_page
@@ -709,9 +709,10 @@ impl PageContext<'_> {
         } else {
             Vec::new()
         };
-        let mut request = TableRequest {
+        let request = TableRequest {
             y: stack.y,
-            bottom,
+            // Above the notes already at the page's foot.
+            bottom: bottom - stack.foot.taken(),
             row: line,
             part,
             first_on_page: stack.first_on_page,
@@ -719,6 +720,42 @@ impl PageContext<'_> {
             split_kept: false,
             stop: None,
         };
+        let placed = self.place_table_page(t, at, stack, request)?;
+        record_rows(stack, index, &placed);
+        let laid = placed.page;
+        for row in laid.rows.iter().filter(|r| !r.header) {
+            stack.foot.mark(Position {
+                item: index,
+                line: row.row,
+                part: row.part(),
+            });
+        }
+        if let Some((next_row, next_part)) = laid.next.clone() {
+            return Ok(self.table_page_end(&laid, at, next_row, next_part));
+        }
+        stack.y = laid.end;
+        stack.first_on_page = false;
+        stack.previous = Some(index);
+        Ok(Step::Next)
+    }
+
+    /// A table's part of the page from `request`: beside the drawings on the page or in
+    /// its column where it goes there, its cells' footnotes at the page's foot, a row that
+    /// keeps with the next split where keeping it would leave the page empty.
+    fn place_table_page(
+        &self,
+        t: &TableItem,
+        at: &At<'_>,
+        stack: &mut Stack<'_>,
+        mut request: TableRequest,
+    ) -> Result<super::beside::Placed, Stopped> {
+        let At {
+            index,
+            line,
+            start,
+            bottom,
+            frame,
+        } = *at;
         let stopped = |why: crate::table::Unsupported| Stopped {
             item: index,
             line,
@@ -737,27 +774,25 @@ impl PageContext<'_> {
                 .map_err(stopped)?,
             None => None,
         };
-        let mut placed = self.place_beside(t, beside.as_ref(), &request).map_err(stopped)?;
-        if self.kept_row_breaks(t, &placed.page, index, start, frame) {
-            request.split_kept = true;
+        let noted = frame.is_none_or(|f| !f.multi);
+        let mut placed;
+        loop {
             placed = self.place_beside(t, beside.as_ref(), &request).map_err(stopped)?;
+            let mut foot = stack.foot.clone();
+            if noted {
+                // Footnotes referenced in its cells: each line holding one fits as a body
+                // line does, its notes under it at the page's foot.
+                (placed, foot) = self
+                    .table_notes(t, placed, &request, beside.as_ref(), &stack.foot, bottom)
+                    .map_err(stopped)?;
+            }
+            if request.split_kept || !self.kept_row_breaks(t, &placed.page, index, start, frame) {
+                stack.foot = foot;
+                break;
+            }
+            request.split_kept = true;
         }
-        record_rows(stack, index, &placed);
-        let laid = placed.page;
-        for row in laid.rows.iter().filter(|r| !r.header) {
-            stack.foot.mark(Position {
-                item: index,
-                line: row.row,
-                part: row.part(),
-            });
-        }
-        if let Some((next_row, next_part)) = laid.next.clone() {
-            return Ok(self.table_page_end(&laid, at, next_row, next_part));
-        }
-        stack.y = laid.end;
-        stack.first_on_page = false;
-        stack.previous = Some(index);
-        Ok(Step::Next)
+        Ok(placed)
     }
 
     /// Where a page ends inside a table: before a row the keeps send on, or inside a row

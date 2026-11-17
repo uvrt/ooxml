@@ -108,6 +108,8 @@ pub struct TableItem {
     pub section_start: bool,
     /// Its rows, as the table layout placed them.
     pub flow: Arc<dyn TableFlow>,
+    /// The footnotes referenced in its cells.
+    pub notes: Arc<CellNotes>,
 }
 
 /// Where the layout stops: what it cannot lay out.
@@ -385,8 +387,8 @@ mod notes;
 mod source;
 pub use again::OldFlow;
 pub use drop::DropCap;
-pub use notes::NoteForms;
 use notes::ParaNotes;
+pub use notes::{CellNotes, NoteForms};
 
 /// Whether a side of a resolved paragraph is autospaced (`autospaced`).
 fn autospaced(document: &WordDocument, pp: &Props, side: &str) -> bool {
@@ -564,6 +566,7 @@ impl<'a, 'm> FlowMaker<'a, 'm> {
                 section,
                 section_start,
                 flow,
+                notes: self.cell_notes(block, body, section),
             })),
             Err(why) => FlowItem::Stop(Arc::new(StopItem {
                 block,
