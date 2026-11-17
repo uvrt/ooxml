@@ -533,6 +533,14 @@ All are under 0.1 % of the edit budgets.
 - `definitions`, `render_results`, `system_prompt`, roles and views stay in Python.
 - The clock becomes a `Clock` port in Rust.
 
+**As built (lane P0d, `crates/ooxml-session`, `crates/ooxml-tools-word`, `crates/ooxml-python-session`).**
+- `Session` holds documents by `DocId` (`d1`, never given twice), each an `ooxml-store` `Store<PackageDoc>` over its OPC package: `open(bytes, kind, name)`, `save`, `close` (the session lets go at once; a reader's snapshot stays valid until dropped), `snapshot`, and `update(doc, parts)`, the bridge's way in (section 13): a version's touched parts as bytes, XML parsed on a snapshot, committed as one step through the store (put, remove, and undo's exact restore of a part: `PartChange`).
+- `call(name, arguments, context)`: the arguments taken as meant (`ToolSpec::accept`), the document found by the spec's first document argument, the kind rules applied, the handler run on the head snapshot; never panics, never fails: refusals carry their way out (an unknown tool, a document not open, a kind the tool does not serve yet).
+- The `Registry` makes each `ToolSpec` once and maps tools to the kinds they serve; `ReadHandler<T>` makes a reading tool of a `#[derive(ToolArgs)]` struct and a function of a version. `ooxml-tools-word` holds `describe` over package parts.
+- `CallContext {caller, cancel, deadline}`: a call stops at a safe point (dispatch, each part `describe` reads, each part an update parses) when its `CancelToken` is set, the session's own `Cancel` is, or the deadline read from the session's `Clock` has passed, with `timeout` and no change.
+- One native module: `crates/python`'s `ooxml_core` registers `Session`, `CallContext`, `CancelToken` and `tool_specs(kind)` from `ooxml-python-session` beside the prototype's functions. That crate is this design's `ooxml-python`; the prototype's package holds the name until it is retired, when it becomes the module itself. Every method copies its Python values in, then releases the lock (`py.detach`); a panic in `call` is an `internal` reply.
+- Python's side for docx-agent is `docx_agent.rust.session.RustTools`: `Tool`s from the exported specs and `RustResult`s from the replies, rendered by the unchanged adapters. Nothing uses it by default.
+
 **Library API.**
 - `docx_agent.Document`, `pptx_agent` and `xlsx_agent` become handles. Methods that take and return plain values keep their signatures.
 - APIs that expose lxml (`.element`, `package.tree()`, `History`) warn for two releases and are then removed, each with a CHANGELOG note naming the replacement.
