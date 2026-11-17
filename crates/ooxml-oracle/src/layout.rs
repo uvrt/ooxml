@@ -206,14 +206,21 @@ fn para_fields(p: &ParaItem, last: &MeasuredParagraph) -> Vec<(&'static str, Val
 
 /// The first flow item the comparison stops before: docx2svg's first that is not a
 /// paragraph or table it laid out (a stand-in box, an obstacle, a table the layout does
-/// not lay out yet: [`table_cut`]), and why. A paragraph docx2svg lays out by a rule it did
-/// not measure (its approximations) is compared too: the Rust layout lays it out by the
-/// same rule.
-fn cutoff(flow: &[Value]) -> (usize, Option<String>) {
+/// not lay out yet: [`table_cut`]; a table with floating drawings in its cells only where
+/// the Rust layout stops at it, `ours` being its items), and why. A paragraph docx2svg lays
+/// out by a rule it did not measure (its approximations) is compared too: the Rust layout
+/// lays it out by the same rule.
+fn cutoff(flow: &[Value], ours: &[FlowItem]) -> (usize, Option<String>) {
     for (k, item) in flow.iter().enumerate() {
         let kind = item.get("kind").and_then(Value::as_str).unwrap_or_default();
         if kind == "table" {
             match item.get("table").and_then(table_cut) {
+                Some(why)
+                    if why.ends_with("a floating drawing in a cell")
+                        && !matches!(ours.get(k), Some(FlowItem::Stop(_))) =>
+                {
+                    continue
+                }
                 Some(why) => return (k, Some(why.to_owned())),
                 None => continue,
             }
@@ -711,7 +718,7 @@ pub fn run_document(records: &LayoutRecords, outcome: &mut Outcome) -> Result<()
     let laid = engine.lay_out(&mut model, &document);
     outcome.layout_time += started.elapsed();
     let flow = at(theirs, "flow").as_array().cloned().unwrap_or_default();
-    let (cut, why) = cutoff(&flow);
+    let (cut, why) = cutoff(&flow, &laid.flow.items);
     let (cut, why) = match model_cut(&laid.document, &laid, cut < flow.len()) {
         Some((k, reason)) if k < cut => (k, Some(reason.to_owned())),
         _ => (cut, why),

@@ -18,6 +18,7 @@ members = [
     "crates/ooxml-colour",
     "crates/ooxml-drawingml",
     "crates/ooxml-numfmt",
+    "crates/ooxml-style-names",
     "crates/ooxml-chart",
     "crates/ooxml-tools-derive",
     "crates/ooxml-tools",
@@ -69,6 +70,7 @@ ooxml-metafile = { path = "crates/ooxml-metafile" }
 ooxml-render = { path = "crates/ooxml-render" }
 ooxml-raster = { path = "crates/ooxml-raster" }
 ooxml-numfmt = { path = "crates/ooxml-numfmt" }
+ooxml-style-names = { path = "crates/ooxml-style-names" }
 ooxml-chart = { path = "crates/ooxml-chart" }
 ooxml-tools-derive = { path = "crates/ooxml-tools-derive" }
 ooxml-tools = { path = "crates/ooxml-tools" }

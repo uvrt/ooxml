@@ -10,7 +10,7 @@
 //! - what the text engine is given for a paragraph ([`input`]), and a paragraph measured
 //!   ([`paragraph`]);
 //! - sections, columns and page edges ([`sections`]); headers' and footers' heights
-//!   ([`stories`]);
+//!   ([`stories`]), and per page where a `STYLEREF` changes them ([`page_stories`]);
 //! - the body's flow ([`flow`]) and its pagination ([`paginate`]); its page-number
 //!   fields settled against its pages ([`fields`]);
 //! - tables: the extension point the paginator lays them out through ([`table`]) and
@@ -41,11 +41,13 @@ pub mod heights;
 pub mod incremental;
 pub mod input;
 pub mod notes;
+pub mod page_stories;
 pub mod paginate;
 pub mod paint;
 pub mod paragraph;
 pub mod px;
 pub mod rebreak;
+pub mod rooms;
 pub mod sections;
 pub mod stories;
 pub mod table;

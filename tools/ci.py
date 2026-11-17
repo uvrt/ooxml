@@ -195,7 +195,7 @@ WORD_MODEL_CRATES = ("ooxml-oracle", "ooxml-base", "ooxml-xml", "ooxml-zip", "oo
                      "ooxml-fonts", "ooxml-text", "ooxml-word-model", "ooxml-colour", "ooxml-schema",
                      "ooxml-drawingml", "ooxml-scene", "ooxml-metafile", "ooxml-word-layout", "ooxml-numfmt",
                      "ooxml-chart", "ooxml-render", "ooxml-tools", "ooxml-tools-derive", "ooxml-tools-word",
-                     "ooxml-raster")
+                     "ooxml-raster", "ooxml-style-names")
 
 
 def _crates(names: tuple[str, ...]) -> tuple[str, ...]:

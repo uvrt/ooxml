@@ -48,3 +48,5 @@ Considered and not taken:
   rope, ooxml-opc's part map and ooxml-store's per-key write stamps
   (`crates/ooxml-store/src/stamps.rs`) are in-house (a measurement of the rope against
   `imbl::Vector` is in ADR-003).
+| `ooxml-style-names` (workspace crate, no dependencies of its own) | | ooxml-word-layout | `STYLEREF`'s style names found as Word finds them (stored names, then the built-in names of the document's language, then English's), from the table ooxml-common measured (`stylenames.json`). |
+| `serde_json` (as above, dev-dependency only) | | ooxml-style-names | Its test compares its table with ooxml-common's `stylenames.json`, its one source. |

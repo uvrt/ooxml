@@ -108,7 +108,7 @@ impl DocumentLayout {
     pub fn laid_page(&self, page: usize) -> Option<&LaidPage> {
         let pages = &self.pagination.pages;
         let k = pages.partition_point(|p| p.page < page);
-        pages.get(k).filter(|p| p.page == page)
+        pages.get(k).filter(|p| p.page == page).map(|p| &**p)
     }
 
     /// Page `page`'s geometry (0-based, blank pages counted); `None` past the last.

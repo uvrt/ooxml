@@ -12,6 +12,7 @@
 
 use super::floats::{Floats, Tops};
 use super::scan::Frame;
+use super::PageStory;
 use super::{note_rest, LaidPage, NoteRest, PageContext, Position, Stopped, Why};
 use crate::flow::{FlowItem, ParaItem};
 use crate::px::Px;
@@ -22,7 +23,7 @@ use ooxml_base::Q;
 /// page before could not hold.
 struct PageStart<'s> {
     start: &'s Position,
-    story: StoryKind,
+    story: PageStory,
     carry: &'s NoteRest,
 }
 
@@ -50,7 +51,7 @@ struct Region {
 #[derive(Clone)]
 struct RegionStart<'s> {
     start: &'s Position,
-    story: StoryKind,
+    story: PageStory,
     top: Px,
     previous: Option<usize>,
     first_on_page: bool,
@@ -95,7 +96,7 @@ impl PageContext<'_> {
     pub(super) fn lay_columns_page(
         &self,
         start: &Position,
-        story: StoryKind,
+        story: PageStory,
         carry: &NoteRest,
         page_index: usize,
     ) -> Result<LaidPage, (LaidPage, Stopped)> {
@@ -309,6 +310,7 @@ impl PageContext<'_> {
         let props = &self.sections.get(section)?.props;
         let sections = crate::sections::Sections::new(&[crate::notes::flowed::note_section(props, items.len())], false);
         let none = std::collections::BTreeMap::new();
+        let no_pages = super::PageStories::new();
         let no_notes = crate::flow::NoteItems::new();
         let no_widths = crate::flow::NotesAt::new();
         let cx = PageContext {
@@ -317,17 +319,22 @@ impl PageContext<'_> {
             mode15: self.mode15,
             hyphen_at_page_end: self.hyphen_at_page_end,
             stories: &crate::stories::NoStories,
+            page_stories: &no_pages,
             separators: &none,
             note_items: &no_notes,
             notes_at: &no_widths,
             wraps: false,
             breaker: self.breaker,
+            rooms: None,
             lines: std::cell::RefCell::default(),
         };
         let start = Position::default();
         let from = RegionStart {
             start: &start,
-            story: StoryKind::Default,
+            story: PageStory {
+                kind: StoryKind::Default,
+                page: 0,
+            },
             top: Px::ZERO,
             previous: None,
             first_on_page: true,
