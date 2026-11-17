@@ -374,18 +374,19 @@ def test_copy_row_leaves_bookmarks_and_comments_on_the_row_copied(toolbox):
     assert body.count("lamp_row") <= 1
 
 
-def test_copy_row_of_a_row_merged_down_is_refused_with_the_calls_that_work(toolbox):
+def test_copy_row_of_a_row_merged_down_joins_the_merge(toolbox):
+    # Refused until round 59 (R136): now the copy joins the merge it lands in
+    # (tests/test_merged_rows_r59.py has the cases measured in Word).
     session, document = _open(toolbox, _shelf(ROWS))
     table = document.tables()[0].id
     _edit(toolbox, session, table=table, action="merge", first={"row": 1, "col": 0}, last={"row": 2, "col": 0})
-    refused = toolbox.dispatch(session, "word_edit_table", {"doc": "d1", "table": table, "action": "copy_row",
-                                                            "index": 2})
-    assert not refused.ok
-    error = refused.to_json()
-    assert "merged down" in json.dumps(error)
-    calls = refused.error.details["calls"]
-    assert [c["arguments"]["action"] for c in calls] == ["insert_row", "set_cells"]
-    assert toolbox.dispatch(session, calls[0]["tool"], calls[0]["arguments"]).ok
+    copied = toolbox.dispatch(session, "word_edit_table", {"doc": "d1", "table": table, "action": "copy_row",
+                                                           "index": 1})
+    assert copied.ok, copied.to_json()
+    rows = session.entry("d1").document._resolve(table)[1].element.findall(_W + "tr")
+    merges = [None if (m := row.find(f"{_W}tc/{_W}tcPr/{_W}vMerge")) is None else (m.get(_W + "val") or "continue")
+              for row in rows]
+    assert merges[1:4] == ["restart", "continue", "continue"]
 
 
 # -- R128: a table off its grid settled by naming only its changes -----------------------------
