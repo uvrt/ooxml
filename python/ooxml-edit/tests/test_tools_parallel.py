@@ -98,6 +98,35 @@ def test_warm_starts_the_workers_ahead_of_use(gate, monkeypatch):
         assert sorted(pool.pids()) == pids and gate.order().count("warm in") == 2
 
 
+def test_warm_waits_for_a_worker_that_is_started_but_not_idle(monkeypatch):
+    """A worker that has started is still counted until it is idle: a ``warm(wait=True)``
+    after a background ``warm()`` returns only when every worker is ready."""
+    held = threading.Event()
+    entered = threading.Semaphore(0)
+    with WorkerPool(2) as pool:
+        deliver = pool._deliver
+
+        def slow(worker):                   # between "started" and "idle"
+            entered.release()
+            assert held.wait(60)
+            return deliver(worker)
+
+        monkeypatch.setattr(pool, "_deliver", slow)
+        waiter = threading.Thread(target=pool.warm, kwargs={"wait": True}, daemon=True)
+        try:
+            pool.warm()
+            assert entered.acquire(timeout=60) and entered.acquire(timeout=60)
+            assert pool.pids() == [] and pool.starting == 2
+            waiter.start()
+            waiter.join(0.3)
+            assert waiter.is_alive()        # both are started, neither is ready
+        finally:
+            held.set()
+        waiter.join(60)
+        assert not waiter.is_alive()
+        assert len(pool.pids()) == 2 and pool.starting == 0
+
+
 @pytest.mark.parametrize("warm_up", [tools_toys.failing_warm_up, tools_toys.raise_tool_error])
 def test_a_warm_up_that_fails_leaves_the_worker_serving(warm_up, caplog):
     with WorkerPool(1, warm_up=[warm_up]) as pool:

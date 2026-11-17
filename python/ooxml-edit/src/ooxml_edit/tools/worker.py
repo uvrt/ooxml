@@ -792,9 +792,9 @@ class _Pool:
                 self._condition.notify_all()
             return
         with self._condition:
-            self._starting -= 1
             self._read[id(worker)] = self._noted       # nothing to let go of yet
-        self._release(worker)
+        # Still counted as starting: until it is idle (or gone) a ``warm(wait=True)`` waits.
+        self._release(worker, starting=True)
 
     def _warm_tasks(self, run: Callable[[Callable[[], Any]], Any]) -> None:
         """Run each warm-up task with ``run`` (the worker's own way); a failure is logged."""
@@ -881,13 +881,22 @@ class _Pool:
             self._notes = [note for note in self._notes if note[0] > low]
         return True
 
-    def _release(self, worker: Any) -> None:
+    def _release(self, worker: Any, *, starting: bool = False) -> None:
+        """``worker`` comes back (from a task, a note, or its warm-up): its notes run, then it
+        is idle.  ``starting``: it was counted in :attr:`starting`; that ends where it is idle,
+        or gone."""
         while True:
             if not self._closed and not self._deliver(worker):
+                if starting:
+                    with self._condition:
+                        self._starting -= 1
+                        self._condition.notify_all()
                 return
             with self._condition:
                 self._rendering.discard(id(worker))
                 if self._closed:
+                    if starting:
+                        self._starting -= 1
                     self._count -= 1
                     self._forget(worker)
                     self._unhold(worker)
@@ -897,6 +906,8 @@ class _Pool:
                     # (told another, or busy) after its notes were read: run it too, now.
                     continue
                 self._idle.append(worker)
+                if starting:
+                    self._starting -= 1
                 self._condition.notify_all()
                 return
         worker.stop()
