@@ -7,16 +7,23 @@
 //! A story's list items are counted from scratch in it; its tables are placed by the
 //! table layout as a page places them.
 //!
-//! Must not: draw a story, or lay out a floating drawing text wraps around in one
-//! (docx2svg stands an estimate in for its paragraph): a story holding one is reported in
-//! [`StoryTable::unsupported`].
+//! A paragraph holding a floating drawing text wraps around is stacked as docx2svg's
+//! estimated stand-in for it (`placeholder_item`); a story holding one is reported in
+//! [`StoryTable::unsupported`], since Word lays its text out beside the drawing.
+//!
+//! Must not: draw a story.
 
-use crate::flow::{FlowContext, FlowItem, FlowMaker, FlowState, Labels};
+use crate::flow::{FlowContext, FlowItem, FlowMaker, FlowState, Labels, ParaItem};
+use crate::heights::LineHeight;
+use crate::paragraph::MeasuredParagraph;
 use crate::px::Px;
 use crate::sections::{Sections, StoryKind};
+use crate::vertical::LineRule;
 use crate::vertical::{keeps_space_before_at_page_top, page_top_gap, paragraph_gap};
 use crate::{faces::Faces, table::TableLayout};
 use ooxml_base::Locale;
+use ooxml_base::Q;
+use ooxml_word_model::model::Paragraph;
 use ooxml_word_model::model::{Block, Section, SectionProps};
 use ooxml_word_model::value::{Text, Value};
 use ooxml_word_model::{Model, WordDocument};
@@ -225,7 +232,102 @@ pub fn story_height(
         roles: &[],
     };
     let flow = FlowMaker::new(&fcx, model, state).build();
-    stack_height(&flow.items, crate::input::rules(document).mode15())
+    let width = sections.get(0).map_or(0, |s| s.column_width(0));
+    let items: Vec<FlowItem> = flow
+        .items
+        .into_iter()
+        .map(|item| match (&item, &item.para().and_then(|p| blocks.get(p.body))) {
+            (FlowItem::Para(p), Some(Block::Paragraph(paragraph))) if wraps_text(paragraph) => {
+                FlowItem::Para(Arc::new(stand_in(document, model, paragraph, p, width)))
+            }
+            _ => item,
+        })
+        .collect();
+    stack_height(&items, crate::input::rules(document).mode15())
+}
+
+/// Whether a story paragraph holds a floating drawing text wraps around: docx2svg lays
+/// it out as an estimated stand-in ([`stand_in`]).
+fn wraps_text(paragraph: &Paragraph) -> bool {
+    paragraph
+        .runs
+        .iter()
+        .any(|r| r.anchors.iter().any(crate::floating::moves_text))
+}
+
+/// A story paragraph holding a floating drawing text wraps around as docx2svg stacks it
+/// (`placeholder_item`, `_estimated_lines`): its text at its first text run's size, a
+/// line 1.17 em tall per line of half-em characters wrapped at the column's width, and a
+/// line as tall as each inline drawing whose extent it states; its own space before and
+/// after, no borders, no style.
+fn stand_in(
+    document: &WordDocument,
+    model: &mut Model,
+    paragraph: &Paragraph,
+    item: &ParaItem,
+    width: i64,
+) -> ParaItem {
+    let resolved = model.resolve_paragraph(document, paragraph);
+    let first = paragraph.runs.iter().position(|r| !r.text.is_empty());
+    let half_points = first
+        .and_then(|k| resolved.runs.get(k))
+        .and_then(|props| props.get("sz").and_then(Value::int))
+        .filter(|sz| *sz != 0)
+        .unwrap_or(24);
+    let em = Q::new(i128::from(half_points), 2) * Q::new(300, 72);
+    let chars: usize = paragraph.runs.iter().map(|r| r.text.chars().count()).sum();
+    let column = Px::twips(width.max(1)).value().max(em);
+    let count = if chars == 0 {
+        1
+    } else {
+        let need = Q::from_integer(i128::try_from(chars).unwrap_or(i128::MAX)) * em * Q::new(1, 2) / column;
+        usize::try_from(need.ceil().to_integer()).unwrap_or(1).max(1)
+    };
+    let mut pitches = vec![em * Q::new(117, 100); count];
+    for run in paragraph.runs.iter() {
+        for (_, kind) in run.breaks.iter() {
+            if let Some(rest) = kind.strip_prefix("drawing:") {
+                let cy: i64 = rest.split(':').nth(1).and_then(|v| v.parse().ok()).unwrap_or(0);
+                pitches.push(Q::new(i128::from(cy), 12700) * Q::new(300, 72));
+            }
+        }
+    }
+    let heights = pitches
+        .into_iter()
+        .map(|h| LineHeight {
+            pitch: Px::from(h),
+            text_above: Px::from(h),
+            text_below: Px::ZERO,
+            natural: Px::from(h),
+            rule: LineRule::Exact,
+            line: 0,
+            mixed: false,
+            object_drop: None,
+        })
+        .collect();
+    let measured = MeasuredParagraph {
+        heights,
+        page_breaks: Vec::new(),
+        column_breaks: Vec::new(),
+        undrawn: Vec::new(),
+        auto_hyphen_ends: Vec::new(),
+        ..(*item.measured).clone()
+    };
+    let spacing = |key: &str| resolved.paragraph.get(key).and_then(Value::int).unwrap_or(0);
+    ParaItem {
+        measured: Arc::new(measured),
+        before: spacing("spacing.before"),
+        after: spacing("spacing.after"),
+        contextual: false,
+        style: None,
+        border: Px::ZERO,
+        top_border: Px::ZERO,
+        keep_next: false,
+        keep_lines: false,
+        page_break_before: false,
+        widow: Some(false),
+        ..item.clone()
+    }
 }
 
 impl StoryTable {
