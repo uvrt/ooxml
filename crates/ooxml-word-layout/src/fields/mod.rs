@@ -9,10 +9,14 @@
 //! `SEQ` and `REF`, which do not depend on the pages, are computed once before the passes
 //! (`references`).
 //!
+//! What a field update writes into the file -- the page a field's paragraph is first drawn
+//! on, not the page of its run's line -- is [`update`]'s.
+//!
 //! Must not: compute `STYLEREF` (not ported yet), or draw a field.
 
 mod format;
 mod references;
+pub mod update;
 
 pub use format::{argument, field_text, format_value, number_text, switches, Uncomputable};
 pub use references::{cross_references, Computed};
@@ -182,6 +186,13 @@ impl<'a> Pages<'a> {
         }
         i64::try_from(pages.len()).ok()
     }
+}
+
+/// `NUMPAGES` and section `section`'s `SECTIONPAGES` of a layout, `None` where unknown
+/// (`_page_count`, `_section_pages`): what a header's or footer's fields show.
+pub fn page_counts(layout: &DocumentLayout, section: usize) -> (Option<i64>, Option<i64>) {
+    let pages = Pages::new(layout);
+    (pages.page_count(), pages.section_pages(section))
 }
 
 /// Bookmark name -> `(paragraph, run)` of its start, the first of a name winning.

@@ -9,8 +9,9 @@ use ooxml_drawingml::drawable::{
     ArrowEnd, BlipEffects, BodyProperties, Bullet, CellBorders, Colour, CustomPath, Effects, Element, Fill, Geometry,
     Glow, GradientFill, GradientStop, Group, Hyperlink, Image, ImageTile, InnerShadow, Insets, Meta, OuterShadow,
     Outline, Paragraph, ParagraphProperties, RunProperties, Shape, Table, TableCell, TableRow, TextBody, TextOutline,
-    TextRun, Transform,
+    TextRect, TextRun, Transform,
 };
+use ooxml_drawingml::source::{SpecCommand, SpecPath};
 use ooxml_drawingml::text::{Spacing, TabStop};
 use serde_json::Value as J;
 
@@ -119,7 +120,9 @@ fn tile(v: &J) -> ImageTile {
     }
 }
 
-fn fill(v: &J) -> Option<Fill> {
+/// A frozen fill (`SolidFill`, `GradientFill`, ...) as a drawable fill; `None` for `NoFill`'s
+/// absence or a kind not read here.
+pub fn fill(v: &J) -> Option<Fill> {
     Some(match class(v) {
         "SolidFill" => Fill::Solid(colour(obj(v, "color")?)),
         "NoFill" => Fill::None,
@@ -168,7 +171,8 @@ fn arrow(v: &J) -> ArrowEnd {
     }
 }
 
-fn outline(v: &J) -> Outline {
+/// A frozen `Outline` as a drawable outline.
+pub fn outline(v: &J) -> Outline {
     Outline {
         width: f(v, "width", 9525.0),
         fill: ofill(v, "fill"),
@@ -189,7 +193,8 @@ fn ooutline(v: &J, key: &str) -> Option<Outline> {
     obj(v, key).map(outline)
 }
 
-fn effects(v: &J) -> Effects {
+/// A frozen `EffectList` as drawable effects.
+pub fn effects(v: &J) -> Effects {
     Effects {
         outer_shadow: obj(v, "outer_shadow").map(|o| OuterShadow {
             blur_radius: f(o, "blur_radius", 0.0),
@@ -402,6 +407,94 @@ fn table(v: &J) -> Table {
     }
 }
 
+/// A frozen tuple's (or list's) items.
+pub fn tuple(v: &J) -> &[J] {
+    v.get("()").or(Some(v)).and_then(J::as_array).map_or(&[], Vec::as_slice)
+}
+
+/// A formula or a name as written; a number as the formula `val n`.
+pub fn text(v: &J) -> String {
+    match v {
+        J::String(s) => s.clone(),
+        J::Number(n) => format!("val {n}"),
+        _ => String::new(),
+    }
+}
+
+/// `(name, formula)` pairs, from a frozen dict or a tuple of pairs.
+pub fn pairs(v: &J) -> Vec<(String, String)> {
+    let items = v
+        .get("{}")
+        .and_then(J::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_else(|| tuple(v));
+    items
+        .iter()
+        .filter_map(|pair| {
+            let pair = tuple(pair);
+            Some((pair.first()?.as_str()?.to_owned(), text(pair.get(1)?)))
+        })
+        .collect()
+}
+
+/// A spec's paths: `(fill, stroke, (w, h) or None, commands)` each.
+pub fn spec_paths(v: &J) -> Vec<SpecPath> {
+    tuple(v)
+        .iter()
+        .map(|p| {
+            let p = tuple(p);
+            let at = |i: usize| p.get(i).unwrap_or(&J::Null);
+            let space = tuple(at(2));
+            SpecPath {
+                fill: at(0).as_str().unwrap_or("norm").to_owned(),
+                stroke: at(1).as_bool().unwrap_or(true),
+                space: match space {
+                    [w, h] => Some((w.as_f64().unwrap_or(0.0), h.as_f64().unwrap_or(0.0))),
+                    _ => None,
+                },
+                commands: tuple(at(3))
+                    .iter()
+                    .filter_map(|c| {
+                        let c = tuple(c);
+                        Some(SpecCommand {
+                            letter: c.first()?.as_str()?.chars().next()?,
+                            operands: c.iter().skip(1).map(text).collect(),
+                        })
+                    })
+                    .collect(),
+            }
+        })
+        .collect()
+}
+
+/// A geometry in the preset table's form: `(adjustments, guides, paths)`.
+pub type Spec = (Vec<(String, String)>, Vec<(String, String)>, Vec<SpecPath>);
+
+/// A frozen spec.
+pub fn spec(v: &J) -> Spec {
+    let parts = tuple(v);
+    let at = |i: usize| parts.get(i).unwrap_or(&J::Null);
+    (pairs(at(0)), pairs(at(1)), spec_paths(at(2)))
+}
+
+/// A frozen `ShapeElement.text_rect`, `(("custom", spec), (l, t, r, b))`, as a drawable
+/// shape's text rectangle.
+pub fn text_rect(v: &J) -> Option<TextRect> {
+    let [geometry, rect] = tuple(v) else { return None };
+    let [kind, found] = tuple(geometry) else { return None };
+    if kind.as_str() != Some("custom") {
+        return None;
+    }
+    let (adjustments, guides, _) = spec(found);
+    let names: Vec<String> = tuple(rect).iter().map(text).collect();
+    let [l, t, r, b] = names.as_slice() else { return None };
+    Some(TextRect {
+        adjustments,
+        guides,
+        rect: [l.clone(), t.clone(), r.clone(), b.clone()],
+    })
+}
+
 /// One frozen scene element as a drawable element (`None` for a kind not read here).
 pub fn element(v: &J) -> Option<Element> {
     Some(match class(v) {
@@ -412,7 +505,7 @@ pub fn element(v: &J) -> Option<Element> {
             outline: ooutline(v, "outline"),
             text: obj(v, "text_body").map(text_body),
             text_transform: obj(v, "text_transform").map(|t| transform(Some(t))),
-            text_rect: None,
+            text_rect: obj(v, "text_rect").and_then(text_rect),
             effects: obj(v, "effects").map(effects),
             meta: meta(v),
         })),

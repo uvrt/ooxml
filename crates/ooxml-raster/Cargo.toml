@@ -1,0 +1,19 @@
+[package]
+name = "ooxml-raster"
+version = "0.1.0"
+description = "The scene's PNG adapter: the typed writer's SVG drawn by resvg in process, with a font database built once and shared, as resvg-py draws it"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+resvg.workspace = true
+usvg.workspace = true
+fontdb.workspace = true
+tiny-skia.workspace = true
+thiserror.workspace = true
+ooxml-fonts.workspace = true
+
+[lints]
+workspace = true

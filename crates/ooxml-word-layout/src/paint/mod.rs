@@ -1,0 +1,559 @@
+//! Owns: a page's paint (docs/architecture/README.md, section 8: geometry, then paint):
+//! what docx2svg's page walk puts on a page -- every line's glyph runs at their pen
+//! positions ([`Span`], `layout.Span`), the rectangles the text needs (decorations,
+//! paragraph rules, table borders and shading: [`Rule`]), and where the drawings go
+//! ([`Drawn`]: inline pictures and drawings, by their extents, for a painter of drawings
+//! to fill) -- and the page as SVG through `ooxml-scene`'s exact display list ([`svg`]),
+//! byte for byte what docx2svg writes.
+//!
+//! The drawings are the seam with the painters of DrawingML, charts and SmartArt: a
+//! [`Drawn`] says what is drawn where, by its part and relationship; it is written as
+//! docx2svg writes a picture it cannot carry until a painter fills it.
+//!
+//! Must not: place lines (the geometry has), measure (the text engine has), or read a
+//! drawing's or picture's bytes.
+
+mod decorate;
+pub mod drawings;
+mod paragraphs;
+mod positions;
+mod spans;
+pub mod svg;
+mod tables;
+
+pub use positions::{line_positions, Positions, Setting, TabSpan};
+
+use crate::engine::DocumentLayout;
+use crate::faces::Faces;
+use crate::flow::{body_paragraphs, FlowItem};
+use crate::geometry::stories::PageParts;
+use crate::geometry::{DrawnLine, LineSource, PageGeometry};
+use crate::paginate::LaidPage;
+use crate::paragraph::MeasuredParagraph;
+use crate::px::Px;
+use crate::table::PlacedRow;
+use ooxml_word_model::model::{Block, Paragraph};
+use ooxml_word_model::value::Text;
+use ooxml_word_model::{Model, WordDocument};
+use std::sync::Arc;
+
+/// What a span of glyphs is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SpanKind {
+    /// A run's text.
+    Text,
+    /// A list label's.
+    Label,
+    /// The hyphen a soft hyphen draws at a line's end.
+    Hyphen,
+    /// A tab's leader.
+    Leader,
+    /// The space an underlined tab is underlined under.
+    Tab,
+}
+
+impl SpanKind {
+    /// Its name as the SVG says it (`data-docx-kind`).
+    pub fn name(self) -> &'static str {
+        match self {
+            SpanKind::Text => "text",
+            SpanKind::Label => "label",
+            SpanKind::Hyphen => "hyphen",
+            SpanKind::Leader => "leader",
+            SpanKind::Tab => "tab",
+        }
+    }
+}
+
+/// Consecutive glyphs of one run, in one format, on one line (`layout.Span`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Span {
+    /// The run's path (the paragraph's for a label).
+    pub path: String,
+    /// Its characters.
+    pub chars: Vec<char>,
+    /// Each glyph's pen x, px from the page's left edge.
+    pub xs: Vec<Px>,
+    /// The baseline it is drawn on.
+    pub y: i64,
+    /// The pen after its last glyph.
+    pub end: Px,
+    /// Its face.
+    pub face: Text,
+    /// Bold.
+    pub bold: bool,
+    /// Italic.
+    pub italic: bool,
+    /// The size it is drawn at, half points.
+    pub half_points: i64,
+    /// Its colour (`RRGGBB`), `None` automatic.
+    pub color: Option<String>,
+    /// `w:u`'s value, where underlined.
+    pub underline: Option<String>,
+    /// `w:strike`.
+    pub strike: bool,
+    /// `w:dstrike`.
+    pub double_strike: bool,
+    /// The highlight's colour.
+    pub highlight: Option<&'static str>,
+    /// The run's shading fill.
+    pub shading: Option<String>,
+    /// What it is.
+    pub kind: SpanKind,
+    /// The line's baseline.
+    pub line_baseline: i64,
+}
+
+/// A filled rectangle the text needs (`layout.Rule`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Rule {
+    /// What it is: `underline`, `strike`, `highlight`, `shading`, `paragraph-border`,
+    /// `paragraph-shading`, `table-border`, `cell-shading`, `separator`.
+    pub kind: &'static str,
+    /// The path of what it is drawn for.
+    pub path: String,
+    /// Its left edge, px.
+    pub x: Px,
+    /// Its top.
+    pub y: Px,
+    /// Its width.
+    pub width: Px,
+    /// Its height.
+    pub height: Px,
+    /// Its colour, `None` automatic (black).
+    pub color: Option<String>,
+}
+
+/// A drawing a page draws, by its extent: what a painter of pictures, DrawingML, charts
+/// or SmartArt fills.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Drawn {
+    /// Its path (`.../w:r[2]` of an inline one).
+    pub path: String,
+    /// The relationship of its picture part, where it is a picture.
+    pub relationship: Option<Text>,
+    /// The part the relationship is the part's own (a header's), `None` the document's.
+    pub part: Option<Text>,
+    /// Its left edge, px.
+    pub x: Px,
+    /// Its top.
+    pub y: Px,
+    /// Its width.
+    pub width: Px,
+    /// Its height.
+    pub height: Px,
+    /// Its picture's `a:srcRect` crop (left, top, right, bottom fractions), where cropped.
+    pub crop: Option<[ooxml_base::Q; 4]>,
+}
+
+/// One line drawn, with its spans.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PaintedLine {
+    /// Its paragraph's path.
+    pub path: Text,
+    /// Its paragraph's `w14:paraId`.
+    pub paragraph_id: Option<Text>,
+    /// Its number in the paragraph.
+    pub number: usize,
+    /// Its baseline.
+    pub baseline: i64,
+    /// Its spans.
+    pub spans: Vec<Span>,
+    /// A header's or footer's line: its kind and part.
+    pub story: Option<(&'static str, Text)>,
+}
+
+/// What a page paints, in the order docx2svg's walk adds it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PagePaint {
+    /// The page's geometry.
+    pub geometry: PageGeometry,
+    /// Its lines.
+    pub lines: Vec<PaintedLine>,
+    /// Its rules.
+    pub rules: Vec<Rule>,
+    /// Its inline pictures.
+    pub pictures: Vec<Drawn>,
+    /// Its drawings, for their painters: inline shapes, groups, charts and diagrams, and
+    /// floating drawings, in the order met.
+    pub drawings: Vec<drawings::DrawingSlot>,
+    /// What the page holds that this paint does not draw yet, by reason: the page's SVG is
+    /// not complete where any is listed.
+    pub unpainted: Vec<String>,
+}
+
+pub use ooxml_fonts::DrawingName;
+
+/// Where the paint reads how faces are named: the port to the machine's fonts.
+pub trait FaceNames: Send + Sync {
+    /// How the SVG names `family` in `bold` and `italic`; `None` where the document's name
+    /// and style already reach the face.
+    fn drawing_name(&self, family: &str, bold: bool, italic: bool) -> Option<DrawingName>;
+}
+
+/// Every face named as the document names it.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct DocumentNames;
+
+impl FaceNames for DocumentNames {
+    fn drawing_name(&self, _family: &str, _bold: bool, _italic: bool) -> Option<DrawingName> {
+        None
+    }
+}
+
+/// What glyph outlines are scaled to (`GLYPH_SIZES`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum GlyphSize {
+    /// The size rounded to whole device px, as Word draws its ink.
+    #[default]
+    Device,
+    /// The size itself.
+    Exact,
+}
+
+/// What painting reads beyond the layout: the faces and how they are named, the glyph
+/// size, and the decimal separator a decimal tab lines up.
+pub struct PaintContext<'a> {
+    /// The faces (metrics and decorations).
+    pub faces: &'a dyn Faces,
+    /// How faces are named in the SVG.
+    pub names: &'a dyn FaceNames,
+    /// The glyph size.
+    pub glyph_size: GlyphSize,
+    /// The decimal separator.
+    pub decimal: char,
+}
+
+/// Lines to paint and what they are drawn from: the body's flow on a laid page, or a
+/// header's or footer's flow.
+struct LineSet<'a> {
+    /// The flow the lines' sources index.
+    items: &'a [FlowItem],
+    /// Its top-level blocks.
+    blocks: &'a [Block],
+    /// Its paragraphs, cells included.
+    paragraphs: Vec<Arc<Paragraph>>,
+    /// The page that laid the body's lines out (its paragraphs broken again there).
+    laid: Option<&'a LaidPage>,
+    /// The lines.
+    lines: &'a [DrawnLine],
+    /// Its tables' rows: the flow item and the row.
+    rows: Vec<(usize, &'a PlacedRow)>,
+    /// A story's kind and part.
+    story: Option<(&'static str, Text)>,
+    /// The page's frame, where the set is the body's (its floating drawings placed).
+    frame: Option<&'a crate::geometry::PageFrame>,
+    /// The layout.
+    layout: &'a DocumentLayout,
+}
+
+/// A body line's floating drawings, placed (`_anchors`).
+fn floats(
+    set: &LineSet<'_>,
+    (laid, frame, item): (&LaidPage, &crate::geometry::PageFrame, usize),
+    (paragraph, resolved, measured): (&Paragraph, &ooxml_word_model::ResolvedParagraph, &MeasuredParagraph),
+    line: &DrawnLine,
+    out: &mut spans::PageOut,
+) {
+    let anchors = match laid.broken.get(&item) {
+        Some(again) => again.anchors.as_slice(),
+        None => set
+            .items
+            .get(item)
+            .and_then(FlowItem::para)
+            .map_or(&[][..], |p| p.anchors.as_slice()),
+    };
+    let job = drawings::FloatJob {
+        layout: set.layout,
+        frame,
+        laid,
+        paragraph,
+        resolved,
+        measured,
+        anchors,
+        item,
+        line,
+    };
+    let (slots, missed) = drawings::line_floats(&job, &mut out.drawn);
+    out.drawings.extend(slots);
+    out.unpainted.extend(
+        missed
+            .into_iter()
+            .map(|p| format!("a floating drawing positioned against a frame not modelled ({p})")),
+    );
+}
+
+/// The paragraph a drawn line is of, and its measure on the page.
+fn paragraph_of(set: &LineSet<'_>, line: &DrawnLine) -> Option<(Arc<Paragraph>, Arc<MeasuredParagraph>)> {
+    match line.source {
+        LineSource::Flow { item } => {
+            let p = set.items.get(item)?.para()?;
+            let measured = match set.laid.and_then(|laid| laid.broken.get(&item)) {
+                Some(again) => Arc::clone(&again.measured),
+                None => Arc::clone(&p.measured),
+            };
+            Some((Arc::clone(set.paragraphs.get(line.block?)?), measured))
+        }
+        LineSource::Cell { item, block } => {
+            let Some(FlowItem::Table(t)) = set.items.get(item) else {
+                return None;
+            };
+            Some((Arc::clone(set.paragraphs.get(line.block?)?), t.flow.paragraph(block)?))
+        }
+        LineSource::DropCap { item } => {
+            let drop = set.items.get(item)?.para()?.drop_cap.clone()?;
+            match set.blocks.get(drop.body) {
+                Some(Block::Paragraph(p)) => Some((Arc::clone(p), Arc::clone(&drop.measured))),
+                _ => None,
+            }
+        }
+        LineSource::Opening { .. } => None,
+    }
+}
+
+/// What painting a set of lines writes to.
+struct PaintOut<'o> {
+    out: &'o mut spans::PageOut,
+    lines: &'o mut Vec<PaintedLine>,
+}
+
+/// A paragraph's borders and shading on the page, after its last line there
+/// (`_paragraph_rules`); line `last` of the set is its last there.
+fn paragraph_rules(
+    set: &LineSet<'_>,
+    model: &mut Model,
+    document: &WordDocument,
+    (last, item, width): (usize, usize, Px),
+    out: &mut spans::PageOut,
+) {
+    let Some(p) = set.items.get(item).and_then(FlowItem::para) else {
+        return;
+    };
+    let mine: Vec<&DrawnLine> = set
+        .lines
+        .get(..=last)
+        .unwrap_or_default()
+        .iter()
+        .rev()
+        .take_while(|l| l.source == LineSource::Flow { item })
+        .collect();
+    let (Some(first), Some(end)) = (mine.last(), mine.first()) else {
+        return;
+    };
+    let mut resolve = |k: Option<usize>| match k.and_then(|k| set.blocks.get(k)) {
+        Some(Block::Paragraph(q)) => Some(model.resolve_paragraph(document, q).paragraph),
+        _ => None,
+    };
+    let Some(pp) = resolve(Some(p.body)) else { return };
+    let previous = resolve(p.body.checked_sub(1));
+    let following = resolve(Some(p.body + 1));
+    let (before_same, after_same) = crate::borders::box_neighbours(&pp, previous.as_deref(), following.as_deref());
+    let starts_here = first.number == 0;
+    let ends_here = end.number + 1 == p.count();
+    let (left, right) = paragraphs::text_edges(&pp, (first.left, first.left + width));
+    let path = set
+        .paragraphs
+        .get(p.block)
+        .map(|q| q.path.to_string())
+        .unwrap_or_default();
+    let bx = paragraphs::ParagraphBox {
+        pp: &pp,
+        path: &path,
+        left,
+        right,
+        band: (first.band.0, end.band.1),
+        y_gap: first.top - p.top_border,
+        y_after: end.top + end.pitch + if ends_here { p.border } else { Px::ZERO },
+        top_side: starts_here && !before_same,
+        between_above: starts_here && before_same,
+        bottom_side: ends_here && !after_same,
+    };
+    let (borders, shaded) = paragraphs::paragraph_rects(&bx);
+    if let Some(s) = shaded {
+        out.rules.insert(0, s);
+    }
+    out.rules.extend(borders);
+}
+
+/// A set's tables' borders and shading, row by row (a row's nested tables' first).
+fn table_rules(set: &LineSet<'_>, out: &mut spans::PageOut) {
+    let mut rules = tables::TableRules::default();
+    let mut k = 0;
+    while let Some(&(item, _)) = set.rows.get(k) {
+        let run: Vec<&PlacedRow> = set
+            .rows
+            .get(k..)
+            .unwrap_or_default()
+            .iter()
+            .take_while(|(i, _)| *i == item)
+            .map(|(_, r)| *r)
+            .collect();
+        k += run.len();
+        let Some(FlowItem::Table(t)) = set.items.get(item) else {
+            continue;
+        };
+        let Some(table) = t.flow.as_any().downcast_ref::<crate::tables::MeasuredTable>() else {
+            out.unpainted.push("a table of another layout".into());
+            continue;
+        };
+        rows_rules(table, &run, &mut rules);
+    }
+    for s in rules.shading {
+        out.rules.insert(0, s);
+    }
+    out.rules.extend(rules.borders);
+}
+
+/// A table's rows on a page, in order, each after its nested tables' (`_table_drawn`).
+fn rows_rules(table: &crate::tables::MeasuredTable, rows: &[&PlacedRow], out: &mut tables::TableRules) {
+    for (k, piece) in rows.iter().enumerate() {
+        for (nested, top) in tables::nested_tables(table, piece) {
+            let placed = tables::whole_rows(nested, top);
+            let refs: Vec<&PlacedRow> = placed.iter().collect();
+            rows_rules(nested, &refs, out);
+        }
+        let bottom = piece.top + piece.top_border + piece.height;
+        let parted = rows.get(k + 1).is_some_and(|next| next.top != bottom);
+        let last = k + 1 == rows.len() || parted || piece.row + 1 == table.rows.len();
+        tables::row_rules(table, piece, bottom, last, out);
+    }
+}
+
+/// Paint a set of lines: each line's spans, each paragraph's rules after its last line,
+/// the tables' rules after the lines.
+fn paint_set(
+    set: &LineSet<'_>,
+    model: &mut Model,
+    document: &WordDocument,
+    (cx, width): (&PaintContext<'_>, &dyn Fn(Option<usize>) -> Px),
+    to: PaintOut<'_>,
+) {
+    let pictures_from = to.out.pictures.len();
+    for (k, line) in set.lines.iter().enumerate() {
+        let Some((paragraph, measured)) = paragraph_of(set, line) else {
+            to.out.unpainted.push(format!("{:?}", line.source));
+            continue;
+        };
+        let resolved = model.resolve_paragraph(document, &paragraph);
+        let job = spans::LineJob {
+            document,
+            paragraph: &paragraph,
+            resolved: &resolved,
+            measured: &measured,
+            line,
+        };
+        let from = to.out.drawings.len();
+        if let Some(mut painted) = spans::paint_line(cx, &job, to.out) {
+            painted.story = set.story.clone();
+            to.lines.push(painted);
+        }
+        if let (Some(laid), LineSource::Flow { item }, Some(frame)) = (set.laid, line.source, set.frame) {
+            floats(
+                set,
+                (laid, frame, item),
+                (&paragraph, &resolved, &measured),
+                line,
+                to.out,
+            );
+        }
+        for slot in to.out.drawings.get_mut(from..).unwrap_or_default() {
+            slot.story = set.story.clone();
+        }
+        if let LineSource::Flow { item } = line.source {
+            let next_same = set
+                .lines
+                .get(k + 1)
+                .is_some_and(|n| n.source == LineSource::Flow { item });
+            if !next_same {
+                paragraph_rules(set, model, document, (k, item, width(line.column)), to.out);
+            }
+        }
+    }
+    table_rules(set, to.out);
+    if let Some((_, part)) = &set.story {
+        // A header's or footer's picture is related from the story's own part.
+        for picture in to.out.pictures.get_mut(pictures_from..).unwrap_or_default() {
+            picture.part = Some(part.clone());
+        }
+    }
+}
+
+/// Page `page`'s paint (0-based, blank pages counted): its body's lines, then its header's
+/// and footer's, then its footnotes (`parts`, from [`crate::WordLayout::page_parts`]),
+/// their paragraphs resolved in `model`.
+pub fn paint_page(
+    layout: &DocumentLayout,
+    model: &mut Model,
+    page: usize,
+    parts: &PageParts,
+    cx: &PaintContext<'_>,
+) -> Option<PagePaint> {
+    let geometry = layout.page_geometry(page)?;
+    let document: &WordDocument = &layout.document;
+    let laid = layout.laid_page(page);
+    let mut out = spans::PageOut::default();
+    let mut lines = Vec::new();
+    let frame = geometry.frame;
+    let width = |column: Option<usize>| match column {
+        Some(c) => layout
+            .sections
+            .get(frame.section)
+            .map_or(Px::ZERO, |s| Px::twips(s.column_width(c))),
+        None => frame.right - frame.left,
+    };
+    let body = LineSet {
+        items: &layout.flow.items,
+        blocks: &document.body,
+        paragraphs: body_paragraphs(&document.body).0,
+        laid,
+        lines: &geometry.lines,
+        rows: laid
+            .map(|l| l.rows.iter().map(|r| (r.item, &r.row)).collect())
+            .unwrap_or_default(),
+        story: None,
+        frame: Some(&frame),
+        layout,
+    };
+    paint_set(
+        &body,
+        model,
+        document,
+        (cx, &width),
+        PaintOut {
+            out: &mut out,
+            lines: &mut lines,
+        },
+    );
+    out.unpainted.extend(parts.unpainted.iter().cloned());
+    for story in parts.stories.iter().chain(&parts.footnotes) {
+        let set = LineSet {
+            items: &story.flow.items,
+            blocks: &story.blocks,
+            paragraphs: body_paragraphs(&story.blocks).0,
+            laid: None,
+            lines: &story.walked.lines,
+            rows: story.walked.rows.iter().map(|(i, r)| (*i, r)).collect(),
+            story: (story.kind != "footnotes").then(|| (story.kind, story.part.clone())),
+            frame: None,
+            layout,
+        };
+        paint_set(
+            &set,
+            model,
+            document,
+            (cx, &width),
+            PaintOut {
+                out: &mut out,
+                lines: &mut lines,
+            },
+        );
+    }
+    Some(PagePaint {
+        geometry,
+        lines,
+        rules: out.rules,
+        pictures: out.pictures,
+        drawings: out.drawings,
+        unpainted: out.unpainted,
+    })
+}

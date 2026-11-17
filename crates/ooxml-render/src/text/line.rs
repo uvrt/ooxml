@@ -13,6 +13,7 @@ use crate::rules::SyntheticBold;
 use crate::units::emu_to_px;
 use ooxml_drawingml::drawable::{Colour, RunProperties};
 use ooxml_drawingml::text::TabStop;
+use ooxml_fonts::symbols::{symbol_face, translate, FALLBACK_FAMILIES};
 use ooxml_fonts::{font_family_value, office_metrics_for};
 use ooxml_scene::markup::{Attr, Element, Op, Sep, Tag, Value};
 
@@ -250,25 +251,52 @@ fn decorations(p: &RunProperties, styles: &mut Vec<Attr>) {
     }
 }
 
+/// The symbol face `family` names where the drawing has no copy of it
+/// ([`Painter::mapped_symbol_faces`]), else `None`.
+pub fn mapped_symbol_face(family: Option<&str>, painter: &Painter<'_>) -> Option<&'static str> {
+    if painter.mapped_symbol_faces.is_empty() {
+        return None;
+    }
+    let face = symbol_face(family?)?;
+    painter.mapped_symbol_faces.contains(face).then_some(face)
+}
+
+/// The text a span's width is measured from: its own, except a symbol face drawn as
+/// Unicode, whose one span is laid out at the face's advances for the codes it was
+/// written in.
+fn measured<'a>(segment: &'a Segment<'_>, text: &'a str, painter: &Painter<'_>) -> &'a str {
+    if mapped_symbol_face(segment.properties.font_family.as_deref(), painter).is_some() {
+        &segment.text
+    } else {
+        text
+    }
+}
+
 fn spans(segment: &Segment<'_>, scale: f64, painter: &Painter<'_>, default: f64) -> Vec<Span> {
     let p = segment.properties;
     let jpan = painter.jpan_fallback_font.as_deref();
-    let chains: Vec<(Option<Vec<Option<&str>>>, String)> = if needs_script_split(p) {
-        split_by_script(&segment.text)
-            .into_iter()
-            .map(|(text, ea)| {
-                let mut chain = if ea {
-                    vec![p.font_family_ea.as_deref(), jpan, p.font_family.as_deref()]
-                } else {
-                    vec![p.font_family.as_deref(), p.font_family_ea.as_deref()]
-                };
-                chain.push(p.font_family_cs.as_deref());
-                (Some(chain), text)
-            })
-            .collect()
-    } else {
-        vec![(None, segment.text.clone())]
-    };
+    let chains: Vec<(Option<Vec<Option<&str>>>, String)> =
+        if let Some(face) = mapped_symbol_face(p.font_family.as_deref(), painter) {
+            // A symbol face the drawing has no copy of: the characters it stands for, in faces
+            // that have them (the layout measured the face's own advances).
+            let fallbacks = FALLBACK_FAMILIES.iter().map(|f| Some(*f)).collect();
+            vec![(Some(fallbacks), translate(face, &segment.text).0)]
+        } else if needs_script_split(p) {
+            split_by_script(&segment.text)
+                .into_iter()
+                .map(|(text, ea)| {
+                    let mut chain = if ea {
+                        vec![p.font_family_ea.as_deref(), jpan, p.font_family.as_deref()]
+                    } else {
+                        vec![p.font_family.as_deref(), p.font_family_ea.as_deref()]
+                    };
+                    chain.push(p.font_family_cs.as_deref());
+                    (Some(chain), text)
+                })
+                .collect()
+        } else {
+            vec![(None, segment.text.clone())]
+        };
     let own = [
         p.font_family.as_deref(),
         p.font_family_ea.as_deref(),
@@ -456,7 +484,15 @@ pub fn render_line(
         line.x
     } else {
         let total: f64 = all()
-            .map(|(s, span)| text_width(&span.text, s.properties, line.default_size, line.scale, painter))
+            .map(|(s, span)| {
+                text_width(
+                    measured(s, &span.text, painter),
+                    s.properties,
+                    line.default_size,
+                    line.scale,
+                    painter,
+                )
+            })
             .sum();
         match line.anchor {
             "middle" => line.x - total / 2.0,
@@ -523,7 +559,8 @@ fn chunked(
         };
         let mut content = Vec::new();
         for span in spans {
-            let width = text_width(&span.text, segment.properties, line.default_size, line.scale, painter);
+            let text = measured(segment, &span.text, painter);
+            let width = text_width(text, segment.properties, line.default_size, line.scale, painter);
             if span.oblique && chunk_anchor == "start" {
                 obliques.push(Oblique {
                     x: cursor,

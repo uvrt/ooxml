@@ -52,7 +52,7 @@ const HAND_DRAWN: [&str; 32] = [
 ];
 
 /// Misspellings real files carry, and the preset they mean.
-fn alias(name: &str) -> &str {
+pub(crate) fn alias(name: &str) -> &str {
     if name == "bendUpArrow" {
         "bentUpArrow"
     } else {
@@ -364,7 +364,7 @@ fn spec_geometry(spec: &Preset, w: f64, h: f64, adjust: &[(String, f64)]) -> Ele
     let variables = evaluate_guides(&[&adjustments, &spec.guides], w, h, true);
     let mut rendered: Vec<Element> = Vec::new();
     for p in &spec.paths {
-        let data = spec_path_data(&p.commands, &variables, path_scale(p, w, h), (0.0, 0.0));
+        let data = spec_commands(&p.commands, &variables, path_scale(p, w, h), (0.0, 0.0));
         if data.is_empty() {
             continue;
         }
@@ -400,7 +400,7 @@ fn path_scale(p: &SpecPath, w: f64, h: f64) -> (f64, f64) {
 
 /// A specification path's commands evaluated, scaled and offset, as path data
 /// (`_spec_path_data`): `arcTo` converted from the pen's position.
-pub fn spec_path_data(
+pub fn spec_commands(
     commands: &[SpecCommand],
     variables: &Variables,
     scale: (f64, f64),
@@ -487,7 +487,7 @@ fn custom_path(p: &CustomPath, w: f64, h: f64, scale_paths: bool) -> Element {
 }
 
 /// The tokens of SVG path data: command letters and numbers.
-fn tokens(data: &str) -> Vec<&str> {
+pub(crate) fn tokens(data: &str) -> Vec<&str> {
     let bytes = data.as_bytes();
     let mut out = Vec::new();
     let mut i = 0;
@@ -590,6 +590,9 @@ pub fn scaled_path_data(data: &str, sx: f64, sy: f64) -> Vec<Command> {
 pub enum TextGeometry<'a> {
     /// A preset by name, with the shape's adjustments.
     Preset(&'a str, &'a [(String, f64)]),
+    /// A preset by name, with the shape's adjustments as `a:avLst` writes them (formulas,
+    /// `val 25000`).
+    PresetWritten(&'a str, &'a [(String, String)]),
     /// A custom geometry's own rectangle.
     Custom(&'a TextRect),
 }
@@ -598,21 +601,32 @@ pub enum TextGeometry<'a> {
 /// `width` by `height` at the origin; the whole box where nothing says otherwise.
 pub fn text_rect(geometry: Option<TextGeometry<'_>>, width: f64, height: f64) -> (f64, f64, f64, f64) {
     let whole = (0.0, 0.0, width, height);
+    let preset_rect = |name: &str, stated: &dyn Fn(&str) -> Option<String>| {
+        let spec = preset(alias(name))?;
+        let adjustments: Vec<(String, String)> = spec
+            .adjustments
+            .iter()
+            .map(|(key, default)| (key.clone(), stated(key).unwrap_or_else(|| format!("val {default}"))))
+            .collect();
+        Some((
+            &spec.text_rect,
+            evaluate_guides(&[&adjustments, &spec.guides], width, height, true),
+        ))
+    };
     let (names, variables) = match geometry {
         Some(TextGeometry::Preset(name, adjust)) => {
-            let Some(spec) = preset(alias(name)) else { return whole };
-            let adjustments: Vec<(String, String)> = spec
-                .adjustments
-                .iter()
-                .map(|(key, default)| {
-                    let v = adjust.iter().find(|(k, _)| k == key).map_or(*default, |(_, v)| *v);
-                    (key.clone(), format!("val {v}"))
-                })
-                .collect();
-            (
-                &spec.text_rect,
-                evaluate_guides(&[&adjustments, &spec.guides], width, height, true),
-            )
+            let stated = |key: &str| adjust.iter().find(|(k, _)| k == key).map(|(_, v)| format!("val {v}"));
+            let Some(found) = preset_rect(name, &stated) else {
+                return whole;
+            };
+            found
+        }
+        Some(TextGeometry::PresetWritten(name, adjust)) => {
+            let stated = |key: &str| adjust.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone());
+            let Some(found) = preset_rect(name, &stated) else {
+                return whole;
+            };
+            found
         }
         Some(TextGeometry::Custom(rect)) => (
             &rect.rect,

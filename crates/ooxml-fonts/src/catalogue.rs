@@ -124,6 +124,14 @@ impl Catalogue {
         lookup(&self.index, family, bold, italic)
     }
 
+    /// Every face the index holds, each once, in no order.
+    pub fn faces(&self) -> Vec<FaceLoc> {
+        let mut out: Vec<FaceLoc> = self.index.values().copied().collect();
+        out.sort_unstable();
+        out.dedup();
+        out
+    }
+
     /// The path of an indexed file.
     pub fn file(&self, file: usize) -> Option<&str> {
         self.files.get(file).map(String::as_str)

@@ -17,6 +17,12 @@
   lays Symbol and Wingdings out with, recorded from Word's copies -- per family a
   ``metrics`` line (``docx2svg.vertical.FaceMetrics``' eight integers), a ``decorations``
   line (nine) and an ``advances`` line (code point and advance pairs, hexadecimal).
+* ``symbol-maps.tsv``: ``ooxml_common.text.symbol_maps.MAPS`` and
+  ``ooxml_common.text.symbol_fonts``' ``SYMBOL_FACES`` and ``PREFERRED`` -- what each code
+  of a Microsoft symbol face stands for in Unicode: per face a ``face`` line (the face's
+  key without spaces or case, and its table's name), a ``map`` line (code and code point
+  pairs, hexadecimal) and, where it has drawing preferences, a ``preferred`` line (code and
+  the text drawn, as code points joined by ``+``).
 
 Run from the repository root with ``python/ooxml-common/src`` importable::
 
@@ -30,6 +36,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from ooxml_common.text import recorded_symbol_faces as recorded
+from ooxml_common.text import symbol_fonts
+from ooxml_common.text.symbol_maps import MAPS
 from ooxml_common.text.fontmap import SUBSTITUTIONS
 from ooxml_common.text.metrics import METRICS
 
@@ -49,6 +57,20 @@ def main() -> None:
         lines.append("\t".join(["advances", family, pairs]))
     (HERE / "recorded-faces.tsv").write_text(HEADER + "\n".join(lines) + "\n", encoding="utf-8")
     (HERE / "office-faces.tsv").write_text(HEADER + "\n".join(office_faces()) + "\n", encoding="utf-8")
+    (HERE / "symbol-maps.tsv").write_text(HEADER + "\n".join(symbol_maps()) + "\n", encoding="utf-8")
+
+
+def symbol_maps() -> list[str]:
+    lines = []
+    for key, table in symbol_fonts.SYMBOL_FACES.items():
+        lines.append(f"face\t{key}\t{table}")
+    for table in sorted(MAPS):
+        lines.append(f"map\t{table}\t" + " ".join(f"{code:x}:{point:x}" for code, point in sorted(MAPS[table].items())))
+        preferred = symbol_fonts.PREFERRED.get(table)
+        if preferred:
+            lines.append(f"preferred\t{table}\t" + " ".join(
+                f"{code:x}:" + "+".join(f"{ord(ch):x}" for ch in text) for code, text in sorted(preferred.items())))
+    return lines
 
 
 def _advances(widths: dict) -> str:

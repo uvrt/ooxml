@@ -1298,6 +1298,147 @@
       "vert": "mongolianVert"
      }
     }
+   },
+   {
+    "@": "ShapeElement",
+    "transform": {
+     "@": "Transform",
+     "offset_x": 6400800.0,
+     "offset_y": 2286000.0,
+     "extent_width": 2377440.0,
+     "extent_height": 1097280.0
+    },
+    "geometry": {
+     "@": "CustomGeometry",
+     "paths": [
+      {
+       "@": "CustomGeometryPath",
+       "width": 2377440,
+       "height": 1097280,
+       "commands": "M 0 0 L 2377440 0 L 2377440 1097280 L 0 1097280 Z"
+      }
+     ]
+    },
+    "fill": {
+     "@": "SolidFill",
+     "color": {
+      "@": "ResolvedColor",
+      "hex": "#DEEBF7"
+     }
+    },
+    "text_body": {
+     "@": "TextBody",
+     "paragraphs": [
+      {
+       "@": "Paragraph",
+       "runs": [
+        {
+         "@": "TextRun",
+         "text": "laid out in the geometry's own text rectangle",
+         "properties": {
+          "@": "RunProperties",
+          "font_size": 10,
+          "font_family": "Carlito"
+         }
+        }
+       ]
+      }
+     ]
+    },
+    "text_rect": {
+     "()": [
+      {
+       "()": [
+        "custom",
+        {
+         "()": [
+          {
+           "()": []
+          },
+          {
+           "()": [
+            {
+             "()": [
+              "inset",
+              "*/ w 1 5"
+             ]
+            },
+            {
+             "()": [
+              "far",
+              "+- r 0 inset"
+             ]
+            },
+            {
+             "()": [
+              "low",
+              "*/ h 2 3"
+             ]
+            }
+           ]
+          },
+          {
+           "()": [
+            {
+             "()": [
+              "norm",
+              true,
+              null,
+              {
+               "()": [
+                {
+                 "()": [
+                  "M",
+                  "l",
+                  "t"
+                 ]
+                },
+                {
+                 "()": [
+                  "L",
+                  "r",
+                  "t"
+                 ]
+                },
+                {
+                 "()": [
+                  "L",
+                  "r",
+                  "b"
+                 ]
+                },
+                {
+                 "()": [
+                  "L",
+                  "l",
+                  "b"
+                 ]
+                },
+                {
+                 "()": [
+                  "Z"
+                 ]
+                }
+               ]
+              }
+             ]
+            }
+           ]
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "()": [
+        "inset",
+        "t",
+        "far",
+        "low"
+       ]
+      }
+     ]
+    }
    }
   ]
  },

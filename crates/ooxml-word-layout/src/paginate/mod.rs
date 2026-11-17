@@ -113,6 +113,9 @@ pub struct PlacedLine {
     /// Where its paragraph's box starts (above its space before, past the space after of
     /// the paragraph before).
     pub paragraph_top: Px,
+    /// What of its paragraph's space before and top border is in its line box: on its
+    /// paragraph's first line, the part of the gap above it that is its own; else zero.
+    pub space_before: Px,
     /// The text column it is in, in a section of several columns.
     pub column: Option<usize>,
     /// That column's offset from the text area's left edge, twips.
@@ -124,6 +127,8 @@ pub struct PlacedLine {
 pub struct PlacedTableRow {
     /// The flow item.
     pub item: usize,
+    /// The text column it is in, in a section of several columns.
+    pub column: Option<usize>,
     /// The row as placed.
     pub row: PlacedRow,
 }

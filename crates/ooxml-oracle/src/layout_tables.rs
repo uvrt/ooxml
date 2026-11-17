@@ -2,17 +2,15 @@
 //! the comparison stops before ([`table_cut`]: what the floats' and notes' lane lays out,
 //! and what docx2svg draws as a stand-in box), each table compared as measured
 //! ([`table_record`] against [`normalised`]: its grid, rows' edges, heights and keeps, every cell's blocks with
-//! their lines, pitches and spacing, its approximation), and the lines a page's table rows
-//! draw ([`table_lines`]), compared with the page's other lines in drawing order.
+//! their lines, pitches and spacing, its approximation). The lines a page's table rows
+//! draw are the layout's facts (`ooxml_word_layout::facts`).
 //!
 //! Must not: change what is compared to make it pass.
 
 use ooxml_base::Q;
 use ooxml_word_layout::flow::FlowItem;
-use ooxml_word_layout::paginate::LaidPage;
 use ooxml_word_layout::px::Px;
 use ooxml_word_layout::tables::{Content, MeasuredTable};
-use ooxml_word_layout::DocumentLayout;
 use serde_json::{json, Value};
 
 /// Why the comparison stops at a table docx2svg laid out: what lane L3c or docx2svg's
@@ -179,42 +177,4 @@ pub fn first_difference(path: &str, mine: &Value, theirs: &Value) -> Option<Stri
 pub fn measured(item: &FlowItem) -> Option<&MeasuredTable> {
     let FlowItem::Table(t) = item else { return None };
     t.flow.as_any().downcast_ref::<MeasuredTable>()
-}
-
-/// A page's height in whole px, as docx2svg's page has it: `round(pt * 300 / 72)`, a half
-/// to the even px.
-pub fn page_height_px(height_twips: i64) -> Px {
-    let exact = Q::new(i128::from(height_twips) * 5, 24);
-    let floor = exact.floor();
-    let rest = exact - floor;
-    let half = Q::new(1, 2);
-    let whole = if rest > half || (rest == half && (floor.to_integer() % 2 != 0)) {
-        floor.to_integer() + 1
-    } else {
-        floor.to_integer()
-    };
-    Px::from(Q::from_integer(whole))
-}
-
-/// The lines a page's table rows draw, by flow item and in drawing order: each as its
-/// paragraph's block (the body's, cells included), its line, top and pitch.
-pub fn table_lines(layout: &DocumentLayout, page: &LaidPage) -> Vec<(usize, usize, usize, Px, Px)> {
-    let height = layout
-        .pagination
-        .info
-        .get(page.page)
-        .and_then(|i| layout.sections.get(i.section))
-        .map_or(Px::int(i64::MAX / 4), |s| page_height_px(s.props.page_size.height));
-    let mut out = Vec::new();
-    for placed in &page.rows {
-        let Some(FlowItem::Table(t)) = layout.flow.items.get(placed.item) else {
-            continue;
-        };
-        for line in t.flow.lines(&placed.row) {
-            if line.drawn && line.top < height {
-                out.push((placed.item, t.block + line.block, line.line, line.top, line.pitch));
-            }
-        }
-    }
-    out
 }
