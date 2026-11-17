@@ -134,6 +134,17 @@ pub struct CellLine {
     pub pitch: Px,
     /// Whether it draws anything (a line of nothing but spaces before the last does not).
     pub drawn: bool,
+    /// What of its paragraph's space before and top border is in its line box (first
+    /// line only).
+    pub space_before: Px,
+    /// What of its paragraph's space after and bottom border is in its line box (last
+    /// line only).
+    pub space_after: Px,
+    /// Its cell's text start, px from the page's left edge.
+    pub left: Px,
+    /// Its cell's fill is dark enough that Word draws automatic text white
+    /// (`automatic_text_on_cell`).
+    pub white_text: bool,
 }
 
 /// One stacked line of a cell, by its paragraph (as [`CellLine::block`]); `None` for one

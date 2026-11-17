@@ -733,6 +733,7 @@ dependencies = [
  "ooxml-derive",
  "ooxml-fonts",
  "ooxml-opc",
+ "ooxml-scene",
  "ooxml-style-names",
  "ooxml-text",
  "ooxml-word-model",

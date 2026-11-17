@@ -14,8 +14,13 @@
 
 mod support;
 
+use ooxml_word_layout::facts::LayoutFacts;
 use ooxml_word_layout::flow::FlowItem;
 use ooxml_word_layout::incremental::same_item;
+use ooxml_word_layout::paint::svg::{page_svg, NoDrawings, NoPictures, SvgContext};
+use ooxml_word_layout::paint::{paint_page, DocumentNames, GlyphSize, PaintContext};
+use ooxml_word_layout::{DocumentLayout, WordLayout};
+use ooxml_word_model::Model;
 use support::{anchor, engine, field, model, notes_part, open, open_with, para, run, sect, Part};
 
 /// xorshift64*: the tests' own generator, seeded.
@@ -438,6 +443,40 @@ fn same_passes(relaid: &ooxml_word_layout::DocumentLayout, whole: &ooxml_word_la
     }
 }
 
+/// Page `page` of `laid` as SVG, its header, footer and footnotes laid out by `engine`.
+fn page_svg_of(engine: &mut WordLayout, model: &mut Model, laid: &DocumentLayout, page: usize) -> Option<String> {
+    let names = DocumentNames;
+    let faces = support::Mono;
+    let cx = PaintContext {
+        faces: &faces,
+        names: &names,
+        glyph_size: GlyphSize::Device,
+        decimal: '.',
+    };
+    let svg = SvgContext {
+        drawings: &NoDrawings,
+        names: &names,
+        pictures: &NoPictures,
+        glyph_size: GlyphSize::Device,
+    };
+    let parts = engine.page_parts(model, laid, page);
+    paint_page(laid, model, page, &parts, &cx).map(|p| page_svg(&p, &svg))
+}
+
+/// The relayout's facts and every page's SVG equal the full layout's.
+fn outputs_equal(
+    at: &str,
+    (kept, kept_model, relaid): (&mut WordLayout, &mut Model, &DocumentLayout),
+    (fresh, fresh_model, whole): (&mut WordLayout, &mut Model, &DocumentLayout),
+) {
+    assert!(LayoutFacts::of(relaid) == LayoutFacts::of(whole), "{at}: facts differ");
+    for page in 0..whole.page_count() {
+        let ours = page_svg_of(kept, kept_model, relaid, page);
+        let theirs = page_svg_of(fresh, fresh_model, whole, page);
+        assert!(ours == theirs, "{at}: page {page}'s SVG differs");
+    }
+}
+
 fn check(seed: u64, versions: usize) -> Seen {
     let mut seen = Seen::default();
     let mut rng = Rng(seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1);
@@ -459,45 +498,18 @@ fn check(seed: u64, versions: usize) -> Seen {
         let relaid = kept.relayout(&mut kept_model, &document, &previous);
         let mut fresh_model = model();
         let fresh_document = open_with(&mut fresh_model, &body, settings, &parts);
-        let whole = engine().lay_out(&mut fresh_model, &fresh_document);
+        let mut fresh = engine();
+        let whole = fresh.lay_out(&mut fresh_model, &fresh_document);
         assert!(
             whole.pagination.stopped.is_none(),
             "seed {seed} version {version}: stopped {:?}",
             whole.pagination.stopped
         );
         same_passes(&relaid, &whole, &format!("seed {seed} version {version}"));
-        if relaid.pagination != whole.pagination {
-            let (a, b) = (&relaid.pagination, &whole.pagination);
-            let k = a.pages.iter().zip(&b.pages).position(|(x, y)| x != y);
-            let brief = |p: Option<&ooxml_word_layout::paginate::LaidPage>| {
-                p.map(|p| {
-                    (
-                        p.page,
-                        p.number_before,
-                        p.start.clone(),
-                        p.end.clone(),
-                        p.reach.clone(),
-                        p.lines.len(),
-                    )
-                })
-            };
-            panic!(
-                "seed {seed} version {version}: pages differ at {k:?} of {}/{}: {:?} vs {:?}; info {} vs {}; stats {:?}; stopped {:?} vs {:?}",
-                a.pages.len(),
-                b.pages.len(),
-                brief(k.and_then(|k| a.pages.get(k)).map(|p| &**p)),
-                brief(k.and_then(|k| b.pages.get(k)).map(|p| &**p)),
-                a.info.len(),
-                b.info.len(),
-                relaid.relaid,
-                a.stopped,
-                b.stopped
-            );
-        }
-        same_flow(
-            &relaid.flow.items,
-            &whole.flow.items,
-            &format!("seed {seed} version {version}"),
+        assert!(
+            relaid.pagination == whole.pagination,
+            "seed {seed} version {version}: pages differ; stats {:?}",
+            relaid.relaid
         );
         assert_eq!(
             relaid.fields, whole.fields,
@@ -507,6 +519,12 @@ fn check(seed: u64, versions: usize) -> Seen {
             (relaid.passes, relaid.settled),
             (whole.passes, whole.settled),
             "seed {seed} version {version}"
+        );
+        let at = format!("seed {seed} version {version}");
+        outputs_equal(
+            &at,
+            (&mut kept, &mut kept_model, &relaid),
+            (&mut fresh, &mut fresh_model, &whole),
         );
         let pages = &relaid.pagination.pages;
         seen.notes += pages.iter().filter(|p| !p.notes.is_empty()).count();

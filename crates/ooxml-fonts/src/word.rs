@@ -11,7 +11,7 @@
 use crate::catalogue::{lookup, Catalogue, FaceLoc, Folder, EPOCH_KEY};
 use crate::embedded::{embed_style, embedded_face, EmbeddedPart};
 use crate::recorded::{recorded_face, RecordedFace};
-use crate::sfnt::{Face, FaceMetrics};
+use crate::sfnt::{Decorations, Face, FaceMetrics};
 use crate::store::FontStore;
 use crate::substitutes::{
     default_substitutes, face_class, generic_fallbacks, FaceClass, FontTable, SubstitutionKind, GENERIC_FALLBACKS,
@@ -115,6 +115,14 @@ impl LayoutFace {
         match self {
             LayoutFace::Sfnt(face) => face.metrics().ok(),
             LayoutFace::Recorded(face) => Some(face.metrics),
+        }
+    }
+
+    /// The decorations' geometry (underline, strikeout); a recorded face has none.
+    pub fn decorations(&self) -> Option<Decorations> {
+        match self {
+            LayoutFace::Sfnt(face) => face.decorations().ok(),
+            LayoutFace::Recorded(_) => None,
         }
     }
 }
@@ -462,6 +470,13 @@ impl WordFonts {
     /// The line and script metrics of `family`'s face, if it resolves to one.
     pub fn metrics(&self, family: &str, bold: bool, italic: bool) -> Option<FaceMetrics> {
         self.resolve(family, bold, italic).face.and_then(|face| face.metrics())
+    }
+
+    /// The decorations' geometry of `family`'s face, if it resolves to one that has it.
+    pub fn decorations(&self, family: &str, bold: bool, italic: bool) -> Option<Decorations> {
+        self.resolve(family, bold, italic)
+            .face
+            .and_then(|face| face.decorations())
     }
 
     /// The faces of a class Word falls back to, for a report.

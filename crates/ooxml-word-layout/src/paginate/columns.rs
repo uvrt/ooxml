@@ -14,7 +14,7 @@ use super::floats::{Floats, Tops};
 use super::scan::Frame;
 use super::PageStory;
 use super::{note_rest, LaidPage, NoteRest, PageContext, Position, Stopped, Why};
-use crate::flow::FlowItem;
+use crate::flow::{FlowItem, ParaItem};
 use crate::px::Px;
 use crate::sections::StoryKind;
 use ooxml_base::Q;
@@ -228,7 +228,7 @@ impl PageContext<'_> {
             .items
             .get(start.item)
             .and_then(FlowItem::para)
-            .and_then(|p| p.continuation)
+            .and_then(ParaItem::continuation_pitch)
         {
             // A page the endnotes go on to: the continuation separator's line first.
             page.opens = Some(super::OpeningLine { top: y, pitch });

@@ -423,6 +423,7 @@ impl Laying<'_, '_, '_, '_> {
             _ => Merge::None,
         };
         Ok(CellFlow {
+            resolved: Arc::new(cell.clone()),
             column: cell.column,
             border_top: side_twips(cell, 0),
             border_bottom: side_twips(cell, 2),

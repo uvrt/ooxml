@@ -69,9 +69,9 @@ pub struct ParaItem {
     pub notes: Vec<(usize, NoteLines)>,
     /// What of the endnotes placed in the flow it is.
     pub role: Option<NoteRole>,
-    /// An endnote's paragraph: the pitch of the continuation separator's line a page it
+    /// An endnote's paragraph: the height of the continuation separator's line a page it
     /// starts opens with.
-    pub continuation: Option<Px>,
+    pub continuation: Option<crate::heights::LineHeight>,
     /// Its floating drawings that take no room in their line: those text does not wrap
     /// around, and those it wraps top and bottom of or beside (`anchors_of`).
     pub anchors: Vec<AnchorRef>,
@@ -87,6 +87,11 @@ impl ParaItem {
     /// How many lines it has.
     pub fn count(&self) -> usize {
         self.measured.heights.len()
+    }
+
+    /// The pitch of the continuation separator's line a page it starts opens with.
+    pub fn continuation_pitch(&self) -> Option<Px> {
+        self.continuation.map(|h| h.pitch)
     }
 
     /// The footnotes referenced on line `line`.
@@ -152,6 +157,15 @@ impl FlowItem {
             FlowItem::Para(p) => p.block,
             FlowItem::Table(t) => t.block,
             FlowItem::Stop(s) => s.block,
+        }
+    }
+
+    /// Its index in the body's top-level blocks.
+    pub fn body(&self) -> usize {
+        match self {
+            FlowItem::Para(p) => p.body,
+            FlowItem::Table(t) => t.body,
+            FlowItem::Stop(s) => s.body,
         }
     }
 

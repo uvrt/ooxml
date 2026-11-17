@@ -236,7 +236,7 @@ impl Breaker<'_> {
             resolved: &source.resolved,
             columns: source.columns,
         };
-        let derived = derive(&cx, &of, measured).ok()?;
+        let derived = derive(&cx, &of, measured, Arc::clone(&current.measured().geometry)).ok()?;
         let line_of = line_of_sources(&derived.measured.pieces, &derived.measured.lines);
         let count = derived.measured.lines.len();
         let mut notes: Vec<(usize, NoteLines)> = source

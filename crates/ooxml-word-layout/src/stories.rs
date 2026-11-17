@@ -95,7 +95,7 @@ pub fn story_references(sections: &[Section]) -> Vec<(BTreeMap<Text, Text>, BTre
 }
 
 /// A story's one section: the page's size and margins, one text column.
-fn story_section(props: &SectionProps, paragraphs: usize) -> Section {
+pub(crate) fn story_section(props: &SectionProps, paragraphs: usize) -> Section {
     let mut one = props.clone();
     one.column_count = 1;
     one.columns = Arc::from(Vec::new());
@@ -217,6 +217,31 @@ pub fn story_height(
     blocks: &[Block],
     props: &SectionProps,
 ) -> Px {
+    let flow = story_flow(cx, model, state, blocks, props);
+    let m = &props.margins;
+    let width = props.page_size.width - m.left - m.right - m.gutter;
+    let items: Vec<FlowItem> = flow
+        .items
+        .into_iter()
+        .map(|item| match (&item, &item.para().and_then(|p| blocks.get(p.body))) {
+            (FlowItem::Para(p), Some(Block::Paragraph(paragraph))) if wraps_text(paragraph) => {
+                FlowItem::Para(Arc::new(stand_in(cx.document, model, paragraph, p, width)))
+            }
+            _ => item,
+        })
+        .collect();
+    stack_height(&items, crate::input::rules(cx.document).mode15())
+}
+
+/// A header's or footer's flow: its blocks laid out as the body of one section of one
+/// column with the page's size and margins (`story_height`'s).
+pub fn story_flow(
+    cx: &StoryContext<'_>,
+    model: &mut Model,
+    state: &mut FlowState,
+    blocks: &[Block],
+    props: &SectionProps,
+) -> crate::flow::Flow {
     let document = cx.document;
     let paragraphs = blocks.iter().filter(|b| matches!(b, Block::Paragraph(_))).count();
     let sections = Sections::new(&[story_section(props, paragraphs)], false);
@@ -231,19 +256,7 @@ pub fn story_height(
         tables: cx.tables,
         roles: &[],
     };
-    let flow = FlowMaker::new(&fcx, model, state).build();
-    let width = sections.get(0).map_or(0, |s| s.column_width(0));
-    let items: Vec<FlowItem> = flow
-        .items
-        .into_iter()
-        .map(|item| match (&item, &item.para().and_then(|p| blocks.get(p.body))) {
-            (FlowItem::Para(p), Some(Block::Paragraph(paragraph))) if wraps_text(paragraph) => {
-                FlowItem::Para(Arc::new(stand_in(document, model, paragraph, p, width)))
-            }
-            _ => item,
-        })
-        .collect();
-    stack_height(&items, crate::input::rules(document).mode15())
+    FlowMaker::new(&fcx, model, state).build()
 }
 
 /// Whether a story paragraph holds a floating drawing text wraps around: docx2svg lays

@@ -12,11 +12,15 @@
 //! `STYLEREF` is computed in the body once before the passes, and in headers and footers
 //! per page (`styleref`).
 //!
+//! What a field update writes into the file -- the page a field's paragraph is first drawn
+//! on, not the page of its run's line -- is [`update`]'s.
+//!
 //! Must not: draw a field.
 
 mod format;
 mod references;
 pub mod styleref;
+pub mod update;
 
 pub use format::{argument, field_text, format_value, number_text, switches, Uncomputable};
 pub use references::{cross_references, Computed};
@@ -267,6 +271,14 @@ pub(crate) fn occurrence_pages(
             pages.page_of(o.block, offset).into_iter().collect()
         })
         .collect()
+}
+
+/// `NUMPAGES` and section `section`'s `SECTIONPAGES` of a layout, `None` where unknown
+/// (`_page_count`, `_section_pages`): what a header's or footer's fields show.
+pub fn page_counts(layout: &DocumentLayout, section: usize) -> (Option<i64>, Option<i64>) {
+    // Neither count reads a paragraph's lines.
+    let pages = Pages::new(layout, Some(&BTreeSet::new()));
+    (pages.page_count(), pages.section_pages(section))
 }
 
 /// Bookmark name -> `(paragraph, run)` of its start, the first of a name winning.

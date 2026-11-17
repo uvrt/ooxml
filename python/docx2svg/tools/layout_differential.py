@@ -9,7 +9,9 @@ its pagination (every page's start and :class:`docx2svg.paginate.PageInfo`, and 
 footnotes at its foot: how many lines of a note the page before could not hold, and of
 each note how many of its lines are on the page), every body line the layout drew (its
 paragraph's path, its number, its top, pitch and baseline, its column), and apart from
-them the footnotes' lines drawn at its foot.  Nothing of docx2svg changes:
+them the footnotes' lines drawn at its foot; and of each page its frame (its size in px,
+its text column's edges and its text area's top and bottom) and the body blocks it draws
+something of (``Page.blocks``).  Nothing of docx2svg changes:
 ``paginate.flow``, ``paginate.paginate`` and ``linebreak.break_paragraph`` are wrapped for
 the run of this tool only.
 
@@ -22,7 +24,9 @@ Usage::
     python tools/layout_differential.py OUT.jsonl.gz DOCX_OR_FOLDER...
 
 Each line of the output is a JSON object: ``{"document": ...}``, then ``{"fonts": ...}``
-(as ``text_differential.py`` writes it) and ``{"layout": ...}``, or ``{"refused": ...}``.
+(as ``text_differential.py`` writes it) and ``{"layout": ...}``, or ``{"refused": ...}``;
+with ``--svg`` also ``{"svg": [...]}``, every page as ``convert_docx_to_svg`` writes it
+(``cargo run -p ooxml-oracle --bin svg-diff -- <records>``).
 Lengths are exact, ``"n"`` or ``"n/d"`` px.
 """
 
@@ -39,7 +43,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "src"))
 sys.path.insert(0, str(HERE))
 
-from docx2svg import convert_docx_to_layout, linebreak, paginate  # noqa: E402
+from docx2svg import convert_docx_to_layout, convert_docx_to_svg, linebreak, paginate  # noqa: E402
 from docx2svg import fields as fields_module  # noqa: E402
 from docx2svg.fonts import font_table_classes  # noqa: E402
 from text_differential import documents, embedded_fonts, location, number  # noqa: E402
@@ -154,6 +158,68 @@ class Capture:
         return result
 
 
+def update_records(document, layout) -> tuple[list, list]:
+    """What docx-agent's ``word_fields`` update writes, read from this layout as it reads
+    it (``edit.fields._page_field``, ``_page_text``): each body page-number field's result
+    on the page its paragraph is first drawn on -- ``[path, run, keyword, text or None]``,
+    a ``PAGEREF`` through its bookmark's paragraph -- and every body paragraph's
+    ``PAGEREF x \\h`` (a table of contents entry's page), ``[path, text]``."""
+    first: dict[str, object] = {}
+    for page in layout.pages:
+        for line in page.lines:
+            if line.story is None:
+                first.setdefault(line.path, page)
+    stopped = any(page.stop is not None for page in layout.pages)
+
+    def fmt(info):
+        value = document.sections[info.section].page_number_format if info is not None else None
+        return None if value == "decimal" else value
+
+    def page_text(instruction, path):
+        page = first.get(path)
+        if page is None:
+            return None
+        info = page.info
+        number_ = info.number if info is not None else page.number + 1
+        try:
+            return fields_module.field_text(instruction.replace("PAGEREF", "PAGE", 1), "PAGE", page=number_,
+                                            pages=None, section_pages=None, section_format=fmt(info))
+        except fields_module.Uncomputable:
+            return None
+
+    paragraphs = fields_module.body_paragraphs(document.body)
+    marks = fields_module.bookmarks(paragraphs)
+    updates = []
+    for paragraph in paragraphs:
+        for k, run in enumerate(paragraph.runs):
+            if run.field is None or run.field.keyword not in ("PAGE", "NUMPAGES", "SECTIONPAGES", "PAGEREF"):
+                continue
+            keyword, instruction = run.field.keyword, run.field.instruction
+            text = None
+            if keyword == "PAGEREF":
+                name = fields_module._argument(instruction)
+                target = marks.get(name) if name else None
+                if target is not None:
+                    text = page_text(instruction, paragraphs[target[0][0]].path)
+            elif paragraph.path in first:
+                page = first[paragraph.path]
+                info = page.info
+                section_pages = None
+                if info is not None and not stopped:
+                    section_pages = sum(1 for p in layout.pages if p.info is not None
+                                        and p.info.section == info.section and not p.info.blank)
+                try:
+                    text = fields_module.field_text(instruction, keyword,
+                                                    page=info.number if info else page.number + 1,
+                                                    pages=None if stopped else len(layout.pages),
+                                                    section_pages=section_pages, section_format=fmt(info))
+                except fields_module.Uncomputable:
+                    text = None
+            updates.append([paragraph.path, k, keyword, text])
+    references = [[paragraph.path, page_text(" PAGEREF x \\h ", paragraph.path)] for paragraph in paragraphs]
+    return updates, references
+
+
 def layout_record(capture: Capture, layout) -> dict:
     document, items, result = capture.last
     paragraphs = {block: item for item, block in paginate._blocks_of_body(document)
@@ -170,16 +236,21 @@ def layout_record(capture: Capture, layout) -> dict:
             "note_lines": [[line.path, line.number, number(line.top), number(line.pitch), line.baseline, line.column]
                            for line in body if line.path.startswith(FOOTNOTE_PATHS)],
             "stop": None if page.stop is None else page.stop.reason,
+            "frame": [page.width_px, page.height_px] + [number(v) for v in page.column],
+            "blocks": page.blocks,
         })
     fields = [[block, k, run.text]
               for block, paragraph in enumerate(fields_module.body_paragraphs(document.body))
               for k, run in enumerate(paragraph.runs)
               if run.field is not None and run.field.keyword in ("PAGE", "NUMPAGES", "SECTIONPAGES", "PAGEREF")]
+    updates, references = update_records(document, layout)
     notes = [[page, len(carried), carried[0].note if carried else None,
                [[lines[0].note if lines else None, taken, len(lines)] for lines, taken in placed]]
              for page, (carried, placed) in sorted(result.notes.items())]
     return {
         "fields": fields,
+        "updates": updates,
+        "references": references,
         "notes": notes,
         "flow": [item_record(item, paragraphs, breaks) for item in items],
         "starts": [position(p) for p in result.starts],
@@ -191,7 +262,7 @@ def layout_record(capture: Capture, layout) -> dict:
     }
 
 
-def record_document(path: Path, write, timings: list) -> None:
+def record_document(path: Path, write, timings: list, svg: bool = False) -> None:
     package = path.read_bytes()
     capture = Capture()
     originals = (paginate.flow, paginate.paginate, linebreak.break_paragraph)
@@ -217,6 +288,9 @@ def record_document(path: Path, write, timings: list) -> None:
         }})
     if layout is not None and capture.last is not None:
         write({"layout": layout_record(capture, layout)})
+        if svg:
+            # Every page as convert_docx_to_svg writes it (laid out again, deterministic).
+            write({"svg": convert_docx_to_svg(package)})
     timings.append([str(path), round(time.perf_counter() - started, 3)])
 
 
@@ -224,6 +298,7 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("out")
     parser.add_argument("paths", nargs="+")
+    parser.add_argument("--svg", action="store_true", help="also record every page's SVG (for svg-diff)")
     args = parser.parse_args(argv)
     timings: list = []
     opener = gzip.open if args.out.endswith(".gz") else open
@@ -232,7 +307,7 @@ def main(argv=None) -> int:
             out.write(json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n")
 
         for path in documents(args.paths):
-            record_document(path, write, timings)
+            record_document(path, write, timings, svg=args.svg)
             print(f"{path}", file=sys.stderr)
     print(json.dumps(timings), file=sys.stderr)
     return 0

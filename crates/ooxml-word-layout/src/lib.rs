@@ -20,8 +20,11 @@
 //! - relayout from the version before ([`incremental`]), and the engine that keeps
 //!   measures between versions ([`engine`]).
 //!
-//! Must not: edit a document, draw (SVG and paint are lane L3d's), read XML, or hold
-//! global state. Nothing here relies on an interpreter lock: the engine is owned by one
+//! - a page's geometry: its frame and its lines on whole device pixels ([`geometry`]); the
+//!   layout facts a check reads ([`facts`]); the page numbers a field update writes
+//!   ([`fields::update`]); a page's paint and its SVG ([`paint`]) (lane L3d).
+//!
+//! Must not: edit a document, read XML or a part's bytes, or hold global state. Nothing here relies on an interpreter lock: the engine is owned by one
 //! task at a time and its values are `Send + Sync`.
 #![forbid(unsafe_code)]
 
@@ -29,15 +32,18 @@ pub mod borders;
 pub mod engine;
 mod error;
 pub mod faces;
+pub mod facts;
 pub mod fields;
 pub mod floating;
 pub mod flow;
+pub mod geometry;
 pub mod heights;
 pub mod incremental;
 pub mod input;
 pub mod notes;
 pub mod page_stories;
 pub mod paginate;
+pub mod paint;
 pub mod paragraph;
 pub mod px;
 pub mod rebreak;

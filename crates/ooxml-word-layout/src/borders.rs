@@ -2,6 +2,8 @@
 //! given the paragraphs beside it -- one border box with a neighbour whose borders and
 //! indents match (docx2svg's `vertical.paragraph_borders_px`, `border_box`, `side_px`).
 //!
+//! Whether a paragraph's neighbours share its box is [`box_neighbours`].
+//!
 //! Must not: draw a border, or decide where a paragraph goes.
 
 use crate::px::Px;
@@ -13,14 +15,14 @@ fn int(props: &Props, key: &str) -> i64 {
 }
 const BORDER_SIDES: [&str; 6] = ["top", "left", "bottom", "right", "between", "bar"];
 
-fn border_of<'a>(pp: &'a Props, side: &str) -> Option<&'a ooxml_word_model::value::Border> {
+pub(crate) fn border_of<'a>(pp: &'a Props, side: &str) -> Option<&'a ooxml_word_model::value::Border> {
     match pp.get(format!("pBdr.{side}").as_str()) {
         Some(Value::Border(b)) => Some(b),
         _ => None,
     }
 }
 
-fn drawn(border: Option<&ooxml_word_model::value::Border>) -> bool {
+pub(crate) fn drawn(border: Option<&ooxml_word_model::value::Border>) -> bool {
     border.is_some_and(|b| !matches!(b.style.as_deref(), None | Some("nil" | "none")))
 }
 
@@ -45,6 +47,20 @@ fn border_box(pp: &Props) -> (Vec<Option<&ooxml_word_model::value::Border>>, i64
         BORDER_SIDES.iter().map(|s| border_of(pp, s)).collect(),
         int(pp, "ind.left"),
         int(pp, "ind.right"),
+    )
+}
+
+/// Whether the paragraphs before and after one (`None`: none, or not a paragraph) share
+/// its border box: it draws a border, and theirs and its indents are the same
+/// (`_details`' `box_neighbours`).
+pub fn box_neighbours(pp: &Props, previous: Option<&Props>, following: Option<&Props>) -> (bool, bool) {
+    let own = border_box(pp);
+    if !own.0.iter().any(|b| drawn(*b)) {
+        return (false, false);
+    }
+    (
+        previous.is_some_and(|p| border_box(p) == own),
+        following.is_some_and(|f| border_box(f) == own),
     )
 }
 
