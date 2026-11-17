@@ -5,6 +5,49 @@ docx-agent has not been released to PyPI. Each version that reaches `main` is ta
 snapshot commit; the development history before it is summarised here.
 [`ROADMAP.md`](ROADMAP.md) has the detail of every phase.
 
+## 0.1.129 -- unreleased
+
+Round 59 (R134): no whole layout in the calling process for `word_inspect`'s layout and
+the other paths that still fetched one; each table cell's fill and drawn text colour.
+
+- **Answered where the layout is held.** A check's worker task (`check_bytes`) takes two
+  more requests: `where` (lists of ids: each block's placements, the joined paragraphs'
+  fallback included, `layout.placements_of`) and `extents` (`{name: ids}`: each group's
+  `DocumentLayout.extent`). `layout.held_answers` asks them of the worker of the toolbox
+  that laid the document out, the ids followed through the document's aliases first; a
+  document no toolbox's worker lays out (or one on an in-process runner) keeps the
+  in-process path. Moved there: `word_inspect` with `layout` (all blocks placed in one
+  request, each block's keys in their old order), `word_format_table` `keep_together`'s
+  taller-than-a-page warning, `word_format` `keep_together`'s span measured before the
+  change (no longer `cached_layout(fetch=True)`), a change's reflow (`checks`: the worker's
+  `LayoutSummary`), and -- in a batch, holding the document -- `check`, `save`'s coverage,
+  `describe`'s page count, `render`'s range pages and `check` numbers' pages
+  (`tools._base.held_facts`). `check_facts` with an `unlocked` that lets nothing go
+  (`layout.holding`, a batch's `Call.unlocked`) never waits for another's layout in
+  progress (round 34's rule). Answers are the same as laid out here: tests compare each
+  path through a worker, with nothing converted in this process, against a toolbox
+  without workers. Measured on `tools/tracked_report.py`'s made-up 340-page report through
+  two workers, after a check (before -> after): `word_inspect` of one table with `layout`
+  23.2 s -> 1.7 s, caller RSS +1,208 MB -> +44 MB, tracemalloc kept 197 MB (132.6 MB in
+  `layout.py`, 3.0M objects; 55.6 MB of fractions) -> 8.6 MB (13 `layout.py` objects);
+  `word_format_table` `keep_together` 90.3 s -> 54.6 s, +606 MB -> +311 MB (the change's own:
+  no layout objects left, 0.2 MB in `layout.py` against 133 MB); a span's `keep_together`
+  36.6 s -> 14.0 s; `word_inspect` again after those edits 29.5 s -> 9.5 s, +485 MB -> -32 MB.
+  The caller ends at 653 MB against 2,301 MB. Every answer is the same (digests of each
+  call's data, colours aside). Still laid out in the caller: `word_fields` update and a page
+  cross-reference's work ahead (they read whole pages), `upgrade_to_modern` (the Python
+  API's `before`/`after`).
+- **`word_inspect` gives each table cell `fill` and `text_color`.** `fill`: the fill
+  docx2svg draws (`docx2svg.table.resolve_table`: the style's regions under the look, the
+  style's own shading, direct shading, theme colours with tint or shade), `RRGGBB` or
+  `null`. `text_color`: each run's colour as drawn, automatic text white on a fill whose
+  Rec. 601 luma is below 60 (round 58's measured rule, docx2svg's `automatic_text_on_cell`)
+  where neither the paragraph nor the run has a background, else black; runs of several
+  colours give `"mixed"` and `text_colors`; a cell with no text the colour new text there
+  gets. Every cell of the round-58 regions document is as docx2svg draws it (331 cells),
+  and theme tints, shades, direct fills and mixed runs too. word_inspect's description
+  +13 tokens to every definition, none to the core; no parameter.
+
 ## 0.1.127 -- unreleased
 
 Round 58 follow-up (R133): the live view, and what is let go of when a document closes.

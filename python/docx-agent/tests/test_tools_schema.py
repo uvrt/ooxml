@@ -309,10 +309,14 @@ from docx_agent.tools import FORMAT, GROUPS, TOOLS, WORD_TOOLS  # noqa: E402
 #: the core (3,192).  The guard rises to 16,186.  word_styles is not strict (deferred, in
 #: word_style); word_insert_markdown is strict, its description only: the strict set is
 #: unchanged (6 tools, 24 optional parameters).
+#: Round 59, R134: word_inspect's description names each table cell's fill and drawn text
+#: colour (always given, no parameter): +13 to every definition (16,186 -> 16,199), none to the
+#: core (3,192).  The guard rises to 16,199.  The strict set is unchanged (6 tools, 24
+#: optional parameters).
 CHARS_PER_TOKEN = 3.5
 COUNTED_PER_ESTIMATED = 1.48
 CORE_COUNTED_BUDGET = 6500
-ALL_GUARD = 16186
+ALL_GUARD = 16199
 
 
 @pytest.fixture(scope="module")

@@ -270,6 +270,20 @@ def state_bytes(call: Any) -> bytes | None:
     return kept[1] if isinstance(kept[1], (bytes, bytearray)) else None
 
 
+def held_facts(call: Any, request: dict, *, unlocked: Any = None, timed: Any = None) -> Any:
+    """:func:`docx_agent.layout.check_facts` of the call's document, ``(facts, summary)``,
+    made in the worker holding its layouts -- with the call's lock let go where it may (a
+    read outside a batch, as before), and (round 59, R134) holding it -- a batch's read,
+    which never waits for another's layout in progress -- where a toolbox's workers hold
+    them (:func:`~docx_agent.layout.runner_of`).  ``None``: lay it out here, as before (a
+    batch's read of a document no worker lays out; a converter that cannot)."""
+    from ..layout import check_facts, runner_of
+
+    if not call.may_unlock and runner_of(call.document) is None:
+        return None
+    return check_facts(call.document, unlocked if unlocked is not None else call.unlocked, request, timed=timed)
+
+
 def cached_layout(document: Any, *, fetch: bool = True) -> Any:
     """The layout of the document's current state if it was laid out already, else ``None``.
     Round 38: laid out in the worker that made a check's facts, it is fetched from there
@@ -507,10 +521,19 @@ def _reflow(document: Any, before: Any, out: dict[str, Any]) -> None:
     if isinstance(engine, Engine):
         engine.arm()
     try:
-        # By summaries (round 38), ids followed through the document's aliases now.
-        after = document.layout()
-        now = summary_for(document, after.key if after.key is not None else layout_key(
-            document.to_bytes(), layout_options(document, {})), after)
+        # By summaries (round 38), ids followed through the document's aliases now.  Round 59
+        # (R134): the summary of the layout made in the worker holding the document's layouts,
+        # where it has one (check_facts' bare request, the lock held: no wait for another's
+        # layout in progress) -- the layout itself never comes here for it.
+        from ..layout import BARE_REQUEST, check_facts, holding, runner_of
+
+        made = check_facts(document, holding, dict(BARE_REQUEST)) if runner_of(document) is not None else None
+        if made is not None:
+            now = made[1]
+        else:
+            after = document.layout()
+            now = summary_for(document, after.key if after.key is not None else layout_key(
+                document.to_bytes(), layout_options(document, {})), after)
         out["reflow"] = reflow_json(now.compare(before, canon_of(document)))
     except ToolError as error:
         out["reflow"] = f"{error.code}: {error.message}"

@@ -10,7 +10,7 @@ from typing import Any
 from ooxml_edit.tools import Result, ToolError, boolean, page_text, string
 
 from ..markdown.read import _TYPED_NUMBER
-from ._base import resolve, short, tool_names, word_tool
+from ._base import held_facts, resolve, short, tool_names, word_tool
 
 DOC = string("Document id.")
 _AUTHOR = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}author"
@@ -50,12 +50,12 @@ def _pages(call: Any) -> Any:
     facts, the call's lock let go while it lays out) -- the layout never comes here for a
     number: a long document's whole layout read into this process for each version kept
     hundreds of megabytes per version here.  Laid out here only where the document has no
-    such worker (a converter of the old protocol, a layout kept as its pickle) or the call
-    holds the document (inside a batch)."""
-    from ..layout import BARE_REQUEST, check_facts
+    such worker (a converter of the old protocol, a layout kept as its pickle) -- in a batch
+    too since round 59 (:func:`~._base.held_facts`)."""
+    from ..layout import BARE_REQUEST
 
     try:
-        made = check_facts(call.document, call.unlocked, dict(BARE_REQUEST)) if call.may_unlock else None
+        made = held_facts(call, dict(BARE_REQUEST))
         if made is not None:
             reflow = made[0]["reflow"]
             return reflow["pages"] if reflow["complete"] else f"at least {reflow['pages']} (layout stopped)"
@@ -242,18 +242,43 @@ def word_read(call: Any, doc: str, range: str | None = None, view: str = "final"
     return result
 
 
-@word_tool("word_inspect", "Exact formatting of blocks: style, runs, effective font, size, spacing, indents, list, revisions; with layout, where each is placed.",
+@word_tool("word_inspect", "Exact formatting of blocks: style, runs, effective font, size, spacing, indents, list, revisions; each table cell's fill and drawn text colour; with layout, where each is placed.",
            {"doc": DOC,
             "target": string("A block, cell t:X/c1,1, span p:A..t:B (p:A.. to the end) or section."),
             "layout": boolean("Also each block's page, top and bottom. Default false.",
                               optional=True)},
            refs=('target',), group="word_text")
 def word_inspect(call: Any, doc: str, target: str, layout: bool = False) -> Result:
-    state = call.document.state(resolve(call, target), layout=layout)
+    from ..state import state as state_of
+
+    state = state_of(call.document, resolve(call, target), layout=layout, placed=_placed_by_worker(call))
     data = {key: tool_names(state[key], "effective") for key in ("cell", "styles", "blocks", "notes", "comments",
                                                                   "revisions")
             if state.get(key)}
     return Result(summary=f"Inspected {target}", data=data)
+
+
+def _placed_by_worker(call: Any) -> Any:
+    """``word_inspect``'s placements (:func:`docx_agent.state.state`'s ``placed``) read in
+    the worker holding the document's layout (round 59, R134:
+    :func:`docx_agent.layout.held_answers`, the call's lock let go while it lays out where
+    it may): the first ``layout`` of a 340-page document's table brought the whole layout
+    here, hundreds of megabytes kept after the call.  ``None`` from it where the document
+    has no such worker: placed from its layout here, as before."""
+    from ..layout import held_answers
+
+    def placed(asked: list) -> Any:
+        found = held_answers(call.document, {"where": asked}, call.unlocked)
+        if found is None:
+            return None
+        reflow = found["reflow"]
+        stopped = reflow.get("stopped")
+        return found["where"], {"page_count": reflow["pages"],
+                                "pages_known": reflow["pages"] if reflow["complete"] else None,
+                                "stopped": None if stopped is None else {
+                                    "page": stopped["page"], "reason": stopped["reason"], "at": stopped["at"]}}
+
+    return placed
 
 
 TOOLS = [word_read, word_inspect]

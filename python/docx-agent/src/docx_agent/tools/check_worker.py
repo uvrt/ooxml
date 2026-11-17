@@ -20,7 +20,8 @@ import time
 from typing import Any
 
 
-from ..layout import LayoutSummary, _in_body, _put_held, held_layout, made_facts, opened_layout
+from ..layout import (LayoutSummary, _in_body, _put_held, extents_of, held_layout, made_facts, opened_layout,
+                      placements_of)
 
 
 def check_bytes(data: bytes, options: dict, state: tuple, request: dict) -> dict:
@@ -36,7 +37,10 @@ def check_bytes(data: bytes, options: dict, state: tuple, request: dict) -> dict
       with ``keeps`` (round 40), each range's keep tried (:mod:`.keep_trials`);
     * ``layout`` (asked): the layout facts of ``pages`` -- the ranges' pages among them
       when ranges are given -- with ``min_size`` and ``styles``;
-    * ``pages_of`` (round 57, R124: ids): ``{id: [pages]}`` for those drawn.
+    * ``pages_of`` (round 57, R124: ids): ``{id: [pages]}`` for those drawn;
+    * ``where`` (round 59, R134: lists of ids): each list's placements
+      (:func:`~docx_agent.layout.placements_of`), and ``extents`` (``{name: ids}``): each
+      group's :meth:`~docx_agent.layout.DocumentLayout.extent`.
 
     Plus how the layout was found or made (:func:`docx_agent.layout.made_facts`), and
     (round 47, R82) ``worker``: the seconds this task spent laying out (``layout``) and
@@ -100,6 +104,13 @@ def _facts(held: Any, data: bytes, options: dict, request: dict) -> dict:
         # first page -- read here, so the layout never goes to the caller for them.
         out["pages_of"] = {identifier: pages for identifier in request["pages_of"]
                            for pages in [layout.pages_of(identifier)] if pages}
+    if request.get("where") is not None:
+        # Round 59 (R134): where blocks are placed (word_inspect's layout, a table kept
+        # together), read here: the layout never goes to the caller for them.
+        out["where"] = placements_of(layout, request["where"])
+    if request.get("extents") is not None:
+        # Round 59 (R134): how much of each page blocks take (a span kept together).
+        out["extents"] = extents_of(layout, request["extents"])
     if request.get("layout"):
         out["layout"] = layout_facts(layout, pages=scoped_pages, min_size=request.get("min_size"),
                                      styles=request.get("styles"), scope=scope)
