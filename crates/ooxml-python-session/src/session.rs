@@ -140,6 +140,10 @@ impl PyVersion {
     }
 }
 
+/// What `Session.call` answers: the reply's JSON text, its images, and what only the
+/// application reads (JSON text).
+type Reply = (String, Vec<Py<PyBytes>>, String);
+
 /// Python's placer of blocks (`placer(asked_json) -> answers_json | None`), called with the
 /// interpreter lock taken back.
 struct PyPlacer(Py<PyAny>);
@@ -215,7 +219,7 @@ impl PySession {
         limit: Option<usize>,
         at: Option<Vec<PyRef<'_, PyVersion>>>,
         placer: Option<Py<PyAny>>,
-    ) -> (String, Vec<Py<PyBytes>>, String) {
+    ) -> Reply {
         let mut context = context_of(context.as_deref());
         context.at = at.iter().flatten().map(|v| v.inner.clone()).collect();
         context.placer = placer.map(|p| Arc::new(PyPlacer(p)) as Arc<dyn Placer>);
@@ -358,8 +362,11 @@ impl PySession {
     }
 }
 
+/// Parts by name: bytes to put, or `None` to remove.
+type Parts = Vec<(String, Option<Arc<[u8]>>)>;
+
 /// `parts` (name -> bytes, or `None` to remove) copied in, the interpreter lock held.
-fn copy_parts(parts: &Bound<'_, PyDict>) -> PyResult<Vec<(String, Option<Arc<[u8]>>)>> {
+fn copy_parts(parts: &Bound<'_, PyDict>) -> PyResult<Parts> {
     let mut copied = Vec::with_capacity(parts.len());
     for (name, data) in parts.iter() {
         let name: String = name.extract()?;
