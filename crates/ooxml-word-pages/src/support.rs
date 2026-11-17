@@ -46,6 +46,9 @@ pub const NO_PAGES: &str = "no pages";
 pub const LAYOUT_STOPPED: &str = "layout stopped";
 /// A header or footer it cannot measure.
 pub const STORY_UNSUPPORTED: &str = "header or footer not measured";
+/// A table in a document of several text columns: its borders in a later column are the
+/// paint's from L3f.
+pub const TABLE_IN_COLUMNS: &str = "table in columns";
 /// A section of unequal columns: the paint places its re-broken lines from L3f.
 pub const UNEQUAL_COLUMNS: &str = "unequal columns";
 /// Line numbers (`w:lnNumType`): drawn by the paint only from L3f.
@@ -79,6 +82,7 @@ pub const REASONS: &[&str] = &[
     NO_PAGES,
     LAYOUT_STOPPED,
     STORY_UNSUPPORTED,
+    TABLE_IN_COLUMNS,
     UNEQUAL_COLUMNS,
     LINE_NUMBERS,
     COLUMN_SEPARATOR,
@@ -112,7 +116,7 @@ pub fn unsupported(document: &WordDocument) -> Option<Fallback> {
         if props.line_numbering.is_some() {
             return Some(fallback(LINE_NUMBERS, "w:lnNumType"));
         }
-        if props.column_separator && props.column_count > 1 {
+        if props.column_separator {
             return Some(fallback(COLUMN_SEPARATOR, "w:cols"));
         }
         if props.column_count > 1
@@ -202,6 +206,10 @@ impl Scan {
     fn table(&mut self, table: &Table) {
         if table.properties.contains_key("tblpPr") {
             self.found = Some(fallback(FLOATING_TABLE, &table.path));
+            return;
+        }
+        if self.multi_column {
+            self.found = Some(fallback(TABLE_IN_COLUMNS, &table.path));
             return;
         }
         for row in table.rows.iter() {
