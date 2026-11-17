@@ -192,7 +192,7 @@ fn para_fields(p: &ParaItem, last: &MeasuredParagraph) -> Vec<(&'static str, Val
 
 /// The first flow item the comparison stops before: docx2svg's first that is not a
 /// paragraph it laid out (a table, stand-in box or obstacle), and why. A paragraph
-/// docx2svg lays out by a rule no probe measured (its approximations) is compared too:
+/// docx2svg lays out by a rule it did not measure (its approximations) is compared too:
 /// the Rust layout lays it out by the same rule.
 fn cutoff(flow: &[Value]) -> (usize, Option<String>) {
     for (k, item) in flow.iter().enumerate() {
