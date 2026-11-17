@@ -11,6 +11,12 @@ status is 1 when there is any.
     python crates/ooxml-oracle/python/chart_diff.py --rust target/release/chart-model a.pptx b.xml
     python crates/ooxml-oracle/python/chart_diff.py --rust ... --tree DIR   # every package and chart XML below DIR
     python crates/ooxml-oracle/python/chart_diff.py --rust ... --layout --tree DIR   # each chart laid out
+    python crates/ooxml-oracle/python/chart_diff.py --freeze crates/ooxml-oracle/tests/data/chart-layout.json.gz
+
+``--freeze`` writes ooxml-common's layout of the repository's charts (the golden fixtures
+under their rules, the committed packages' chart parts under both) with the cases, for
+``cargo test``'s ``tests/chart_layout.rs`` to compare the Rust layout with where Python is
+not installed. Regenerate it whenever ooxml-common's chart layout changes on purpose.
 
 With ``--layout`` each chart is laid out as ooxml-common's golden harness lays it out
 (``tests/goldens.py``'s ``chart_element``: its consumer, its style), under PowerPoint's rules
@@ -221,9 +227,28 @@ def compare_layouts(binary: str, files: list[Path], out_json: str | None,
     return 1 if total else 0
 
 
+def freeze(out: Path) -> int:
+    """The repository's layout cases and ooxml-common's answers, gzipped JSON."""
+    import gzip
+
+    root = dd.ROOT
+    files = chart_files(root / "python" / "ooxml-common" / "tests" / "fixtures")
+    files += [p for p in chart_files(root / "python") if p.suffix != ".xml"]
+    records = []
+    for case in layout_cases(files):
+        answer = python_layout(case)
+        relative = dict(case, file=str(Path(case["file"]).resolve().relative_to(root)))
+        records.append({"case": relative, "python": answer})
+    data = json.dumps(records, separators=(",", ":"), sort_keys=True).encode()
+    out.write_bytes(gzip.compress(data, 9, mtime=0))
+    print(f"{len(records)} case(s) frozen in {out}")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("--rust", required=True, help="the chart-model binary")
+    parser.add_argument("--rust", help="the chart-model binary")
+    parser.add_argument("--freeze", help="write the repository's layout cases and Python's answers here")
     parser.add_argument("--tree", action="append", default=[], help="every package and chart XML below this folder")
     parser.add_argument("--json", help="write the per-file counts here")
     parser.add_argument("--layout", action="store_true", help="lay each chart out and compare the drawing")
@@ -231,6 +256,10 @@ def main() -> int:
     parser.add_argument("--variants", action="store_true", help="with --layout: each style variant as well")
     parser.add_argument("files", nargs="*")
     args = parser.parse_args()
+    if args.freeze:
+        return freeze(Path(args.freeze))
+    if not args.rust:
+        parser.error("--rust is required")
     files = [Path(f) for f in args.files]
     for folder in args.tree:
         files += chart_files(Path(folder))
