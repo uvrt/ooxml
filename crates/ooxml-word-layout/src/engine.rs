@@ -12,6 +12,7 @@ use crate::incremental::{changes, repaginate, RelayoutStats};
 use crate::notes::{footnotes_by_page, with_endnotes, with_footnotes, FootnotePages, NoteRole};
 use crate::page_stories::{page_stories, PageStoryJob, StoryMemo};
 use crate::paginate::{HyphenMove, PageContext, PageStories, Pagination, Paginator, Resume};
+use crate::rooms::{RoomSource, Rooms};
 use crate::sections::Sections;
 use crate::stories::{StoryContext, StoryTable};
 use crate::table::TableLayout;
@@ -110,6 +111,7 @@ impl DocumentLayout {
                 faces,
                 locale,
             },
+            rooms: None,
             lines: std::cell::RefCell::default(),
         }
     }
@@ -253,16 +255,31 @@ impl WordLayout {
             relaid: Vec::new(),
         };
         // Pages laid out with other stories' heights are laid out again whole.
-        match old.filter(|(_, _, stories)| *stories == frame.page_stories) {
-            Some((old_flow, old_pages, _)) => {
-                let found = changes(&old_flow.items, &layout.flow.items);
-                let cx = layout.page_context(self.faces.as_ref(), &self.locale);
+        let old = old.filter(|(_, _, stories)| *stories == frame.page_stories);
+        let found = old.map(|(old_flow, _, _)| changes(&old_flow.items, &layout.flow.items));
+        let source = RoomSource {
+            document: &layout.document,
+            items: &layout.flow.items,
+            sections: &layout.sections,
+            labels: frame.labels,
+            tables: self.tables.as_ref(),
+            faces: self.faces.as_ref(),
+            locale: &self.locale,
+        };
+        let rooms = Rooms::new(source, model, &mut self.body.measurer);
+        let mut cx = layout.page_context(self.faces.as_ref(), &self.locale);
+        cx.rooms = Some(&rooms);
+        let (pages, stats) = match (old, found) {
+            (Some((_, old_pages, _)), Some(found)) => {
                 let (pages, stats) = repaginate(&cx, old_pages, &found);
-                layout.pagination = pages;
-                layout.relaid.push(stats);
+                (pages, Some(stats))
             }
-            None => layout.pagination = paginate_all(&layout, self.faces.as_ref(), &self.locale),
-        }
+            _ => (Paginator::new(&cx).run(None, &mut |_: &Resume| false).0, None),
+        };
+        drop(cx);
+        drop(rooms);
+        layout.pagination = pages;
+        layout.relaid.extend(stats);
         layout
     }
 

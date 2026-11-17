@@ -49,6 +49,7 @@ impl WordTables {
             frame: Frame {
                 page_left: Q::from_integer(i128::from(margins.left + margins.gutter)),
                 column_width: Q::from_integer(i128::from(job.section.column_width(0))),
+                page_width: Q::from_integer(i128::from(job.section.props.page_size.width)),
             },
             previous_style: job.previous.and_then(|p| effective_style(cx.document, p)),
             labels: job.labels,

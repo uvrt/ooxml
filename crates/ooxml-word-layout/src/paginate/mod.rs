@@ -15,6 +15,7 @@
 //! places a table's rows), or lay out headers and footers (their heights come through
 //! [`crate::stories::StoryHeights`]).
 
+mod beside;
 mod columns;
 mod floats;
 mod keeps;
@@ -126,6 +127,16 @@ pub struct PlacedTableRow {
     pub item: usize,
     /// The row as placed.
     pub row: PlacedRow,
+    /// The room it was laid out in, where not its column: beside drawings, or in a column
+    /// right of its section's first. Its lines are that layout's.
+    pub room: Option<crate::table::TableRoom>,
+}
+
+impl PlacedTableRow {
+    /// The table as this row was laid out: in its room, else the flow item's.
+    pub fn flow<'t>(&'t self, item: &'t crate::flow::TableItem) -> &'t std::sync::Arc<dyn crate::table::TableFlow> {
+        self.room.as_ref().map_or(&item.flow, |r| &r.flow)
+    }
 }
 
 /// Why a page or column ended.
@@ -305,6 +316,8 @@ pub struct PageContext<'a> {
     pub notes_at: &'a crate::flow::NotesAt,
     /// What breaking a paragraph again needs.
     pub breaker: Breaker<'a>,
+    /// What lays a table out again in another room (none: a table goes into none).
+    pub rooms: Option<&'a dyn crate::table::TableRooms>,
     /// The paragraphs broken again so far: the paginator's state, which every layout of a
     /// page reads and breaks again (`Para.set_lines`), carried from page to page.
     pub lines: RefCell<LineStore>,
@@ -503,10 +516,54 @@ impl PageContext<'_> {
         carry: &NoteRest,
         page: usize,
     ) -> Result<LaidPage, (LaidPage, Stopped)> {
-        if self.sections.any_multi_column() {
+        let laid = if self.sections.any_multi_column() {
             self.lay_columns_page(start, story, carry, page)
         } else {
             self.lay_one_column_page(start, story, carry, page)
+        };
+        match laid {
+            Ok(mut page) => {
+                self.place_floating_tables(&mut page);
+                Ok(page)
+            }
+            Err((mut page, stopped)) => {
+                self.place_floating_tables(&mut page);
+                Err((page, stopped))
+            }
+        }
+    }
+
+    /// The rows of the page's floating tables, each placed whole where it is positioned
+    /// (its wrap's top), among the page's rows in flow order.
+    fn place_floating_tables(&self, page: &mut LaidPage) {
+        for wrap in &page.wraps {
+            let Some(index) = wrap.table else { continue };
+            let at = Position::at(index, 0);
+            let Some(FlowItem::Table(t)) = self.items.get(index) else {
+                continue;
+            };
+            if at < page.start || at >= page.end {
+                continue;
+            }
+            let y = Px::from(wrap.y);
+            let request = crate::table::TableRequest {
+                y,
+                bottom: y + Px::int(10_000_000),
+                row: 0,
+                part: Vec::new(),
+                first_on_page: false,
+                mode15: self.mode15,
+                split_kept: false,
+                stop: None,
+            };
+            let Ok(laid) = t.flow.place(&request) else { continue };
+            let k = page.rows.partition_point(|r| r.item < index);
+            let rows = laid.rows.into_iter().map(|row| PlacedTableRow {
+                item: index,
+                row,
+                room: None,
+            });
+            page.rows.splice(k..k, rows);
         }
     }
 

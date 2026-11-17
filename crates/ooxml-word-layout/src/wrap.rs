@@ -61,6 +61,8 @@ pub struct Wrap {
     pub text_shift: Option<Q>,
     /// A drop cap's frame: the flow item that carries it.
     pub drop_cap: Option<usize>,
+    /// A floating table: its flow item.
+    pub table: Option<usize>,
 }
 
 /// The least and greatest x of the region `points` encloses between heights `y0` and
@@ -141,11 +143,15 @@ pub struct Column {
 
 /// One free span of the column: from `left` to `right` px from the margin's exact edge,
 /// and the drawing whose side `left` is (`None`: the column's start).
-type Free<'w> = (Q, Q, Option<&'w Wrap>);
+pub(crate) type Free<'w> = (Q, Q, Option<&'w Wrap>);
 
 /// What `wraps` leave of the column from `y0` down to `y1`, left to right, and whether
 /// the band is beside any (`free_spans`).
-fn free_spans<'w>(wraps: &'w [Wrap], band: (Q, Q, Option<Q>), column: &Column) -> (Vec<Free<'w>>, Vec<&'w Wrap>) {
+pub(crate) fn free_spans<'w>(
+    wraps: &'w [Wrap],
+    band: (Q, Q, Option<Q>),
+    column: &Column,
+) -> (Vec<Free<'w>>, Vec<&'w Wrap>) {
     let (y0, y1, text) = band;
     let mut beside: Vec<&Wrap> = Vec::new();
     let mut spans: Vec<(Q, Q, &Wrap)> = Vec::new();

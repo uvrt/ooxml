@@ -124,6 +124,8 @@ pub(super) struct Stack<'o> {
     wraps: &'o [crate::wrap::Wrap],
     /// The lines it placed, for the drawings anchored on them.
     tops: &'o mut Tops,
+    /// A floating table stands between the next paragraph and the one before it.
+    floated: bool,
 }
 
 /// A step of the stack: go on with the next item, or end the scan.
@@ -298,6 +300,7 @@ impl PageContext<'_> {
             bands: across(floats.bands, frame.as_deref(), self),
             wraps: floats.wraps,
             tops,
+            floated: false,
         };
         let (mut index, mut line) = (start.item, start.line);
         let end = loop {
@@ -330,6 +333,7 @@ impl PageContext<'_> {
                         reason: s.reason.clone(),
                     })
                 }
+                FlowItem::Table(t) if t.flow.floating().is_some() => self.scan_floating(t, &at, &mut stack),
                 FlowItem::Table(t) => self.scan_table(t, &at, &mut stack)?,
                 FlowItem::Para(p) => self.scan_para(p, &at, &mut stack),
             };
@@ -341,8 +345,47 @@ impl PageContext<'_> {
                 Step::Done(end) => break end,
             }
         };
+        let end = self.floating_with_next(end, start);
         finish(stack, &end, frame);
         Ok(end)
+    }
+
+    /// A page ending just past floating tables ends before them: a floating table goes to
+    /// the page of the paragraph it is positioned against.
+    fn floating_with_next(&self, mut end: ScanEnd, start: &Position) -> ScanEnd {
+        while end.end.line == 0 && end.end.part.is_empty() && end.end.item > start.item + 1 {
+            let before = end.end.item - 1;
+            match self.items.get(before) {
+                Some(FlowItem::Table(t)) if t.flow.floating().is_some() => end.end = Position::at(before, 0),
+                _ => break,
+            }
+        }
+        end
+    }
+
+    /// A floating table takes no room in the stack: it is positioned against the
+    /// paragraph after it (the top of that paragraph: where the one before ends after its
+    /// space after), and the lines beside it go around it (`page_wraps`).
+    fn scan_floating(&self, t: &TableItem, at: &At<'_>, stack: &mut Stack<'_>) -> Step {
+        let index = at.index;
+        let previous = stack.previous.and_then(|k| self.items.get(k));
+        if !stack.first_on_page
+            && previous.is_some_and(|p| p.section() != t.section)
+            && self.sections.new_page(t.section)
+        {
+            let at = Position::at(index, 0);
+            return done(at.clone(), true, Why::Page, at);
+        }
+        let mut paragraph_top = stack.y;
+        if let (false, Some(FlowItem::Para(p))) = (stack.first_on_page, previous) {
+            paragraph_top += Px::twips(p.after);
+        }
+        stack.foot.mark(Position::at(index, 0));
+        stack
+            .tops
+            .record(top_of(at.frame, index, 0, (paragraph_top, Px::ZERO, paragraph_top)));
+        stack.floated = true;
+        Step::Next
     }
 
     /// In a column, an item of another section: a section that starts a page ends the
@@ -382,7 +425,13 @@ impl PageContext<'_> {
                 let same = p.style == previous.style;
                 let own_before = if p.contextual && same { 0 } else { p.before };
                 let prev_after = if previous.contextual && same { 0 } else { previous.after };
-                (paragraph_gap(prev_after, own_before).0, stack.y + Px::twips(prev_after))
+                let gap = if stack.floated {
+                    // A floating table between them: the two do not collapse.
+                    Px::twips(prev_after) + Px::twips(own_before)
+                } else {
+                    paragraph_gap(prev_after, own_before).0
+                };
+                (gap, stack.y + Px::twips(prev_after))
             }
             _ => (Px::twips(p.before), stack.y),
         }
@@ -445,6 +494,7 @@ impl PageContext<'_> {
         }
         stack.y += p.border;
         stack.previous = Some(at.index);
+        stack.floated = false;
         Step::Next
     }
 
@@ -662,18 +712,33 @@ impl PageContext<'_> {
             first_on_page: stack.first_on_page,
             mode15: self.mode15,
             split_kept: false,
+            stop: None,
         };
         let stopped = |why: crate::table::Unsupported| Stopped {
             item: index,
             line,
             reason: why.0,
         };
-        let mut laid = t.flow.place(&request).map_err(stopped)?;
-        if self.kept_row_breaks(t, &laid, index, start, frame) {
+        let beside = match frame.filter(|f| f.offset != 0) {
+            // In a column right of the first: the table laid out in that column.
+            Some(f) => Some(super::beside::Beside {
+                row: 0,
+                room: self.room(index, f.offset, f.width),
+                drop: None,
+            }),
+            // Beside the drawings text wraps around on this page.
+            None if line == 0 && request.part.is_empty() && !stack.wraps.is_empty() => self
+                .table_beside(t, index, stack.y, stack.wraps, stack.first_on_page)
+                .map_err(stopped)?,
+            None => None,
+        };
+        let mut placed = self.place_beside(t, beside.as_ref(), &request).map_err(stopped)?;
+        if self.kept_row_breaks(t, &placed.page, index, start, frame) {
             request.split_kept = true;
-            laid = t.flow.place(&request).map_err(stopped)?;
+            placed = self.place_beside(t, beside.as_ref(), &request).map_err(stopped)?;
         }
-        record_rows(stack, index, &laid);
+        record_rows(stack, index, &placed);
+        let laid = placed.page;
         for row in laid.rows.iter().filter(|r| !r.header) {
             stack.foot.mark(Position {
                 item: index,
@@ -828,8 +893,8 @@ fn finish(stack: Stack<'_>, end: &ScanEnd, frame: Option<&mut Frame>) {
 }
 
 /// A table's rows as placed on the page: each recorded, and where the stack ends after it.
-fn record_rows(stack: &mut Stack<'_>, index: usize, laid: &crate::table::TablePage) {
-    for row in &laid.rows {
+fn record_rows(stack: &mut Stack<'_>, index: usize, placed: &super::beside::Placed) {
+    for (k, row) in placed.page.rows.iter().enumerate() {
         if !row.header {
             let position = Position {
                 item: index,
@@ -841,6 +906,7 @@ fn record_rows(stack: &mut Stack<'_>, index: usize, laid: &crate::table::TablePa
         stack.out.rows.push(PlacedTableRow {
             item: index,
             row: row.clone(),
+            room: placed.room.clone().filter(|_| k >= placed.from),
         });
     }
 }

@@ -325,6 +325,7 @@ impl PageContext<'_> {
             notes_at: &no_widths,
             wraps: false,
             breaker: self.breaker,
+            rooms: None,
             lines: std::cell::RefCell::default(),
         };
         let start = Position::default();

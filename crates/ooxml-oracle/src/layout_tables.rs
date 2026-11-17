@@ -15,12 +15,10 @@ use ooxml_word_layout::tables::{Content, MeasuredTable};
 use ooxml_word_layout::DocumentLayout;
 use serde_json::{json, Value};
 
-/// Why the comparison stops at a table docx2svg laid out: what lane L3c or docx2svg's
-/// stand-in boxes lay out of it, if anything.
+/// Why the comparison stops at a table docx2svg laid out: what docx2svg's stand-in boxes
+/// lay out of it, or a floating table nested in one of its cells, if anything. A floating
+/// table of the body is compared: its rows where it is positioned, the lines beside it.
 pub fn table_cut(table: &Value) -> Option<&'static str> {
-    if table.get("floating").and_then(Value::as_bool).unwrap_or(false) {
-        return Some("a floating table");
-    }
     let unmodelled = table.get("unmodelled").and_then(Value::as_array);
     if unmodelled.is_some_and(|u| !u.is_empty()) {
         return Some("a table holding a stand-in box or an unmodelled drawing");
@@ -32,7 +30,15 @@ pub fn table_cut(table: &Value) -> Option<&'static str> {
             match entry.get(1).and_then(Value::as_str) {
                 Some("box") => return Some("a table holding a stand-in box"),
                 Some("table") => {
-                    if let Some(why) = entry.get(4).and_then(table_cut) {
+                    let nested = entry.get(4);
+                    if nested
+                        .and_then(|t| t.get("floating"))
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false)
+                    {
+                        return Some("a floating table nested in a cell");
+                    }
+                    if let Some(why) = nested.and_then(table_cut) {
                         return Some(why);
                     }
                 }
@@ -210,7 +216,7 @@ pub fn table_lines(layout: &DocumentLayout, page: &LaidPage) -> Vec<(usize, usiz
         let Some(FlowItem::Table(t)) = layout.flow.items.get(placed.item) else {
             continue;
         };
-        for line in t.flow.lines(&placed.row) {
+        for line in placed.flow(t).lines(&placed.row) {
             if line.drawn && line.top < height {
                 out.push((placed.item, t.block + line.block, line.line, line.top, line.pitch));
             }

@@ -10,7 +10,7 @@
 
 use super::cells::{cell_stack, row_height, Align, CellBlock, CellFlow, Content, Merge, RowFlow, RowHeight};
 use super::content::{cell_extent, column_minimums, paragraph_minimum};
-use super::floating::{floats, Standing};
+use super::floating::{floats, Floating, Standing, UNBORDERED_EDGE};
 use super::grid::{cell_box, cell_width, grid_lines, left_offset, line_at, right_offset, CellBox, TableSpec};
 use super::measured::{Approximated, MeasuredTable};
 use super::place::MergeDown;
@@ -19,10 +19,11 @@ use crate::flow::{is_empty, paragraph_borders};
 use crate::input::geometry;
 use crate::paragraph::{measure_paragraph, MeasureContext, MeasuredParagraph, ParagraphJob, Unmeasured};
 use crate::px::Px;
+use crate::table::FloatingTable;
 use crate::table::{TableContext, Unsupported};
 use ooxml_base::Q;
 use ooxml_word_model::model::{Block, Paragraph, Table};
-use ooxml_word_model::resolve::{border_twips, ResolvedCell, ResolvedRow};
+use ooxml_word_model::resolve::{border_twips, drawn, ResolvedCell, ResolvedRow, ResolvedTable};
 use ooxml_word_model::styles::StyleKind;
 use ooxml_word_model::value::{key, Props, Text, Value};
 use ooxml_word_model::WordDocument;
@@ -37,6 +38,9 @@ pub struct Frame {
     pub page_left: Q,
     /// The column's width.
     pub column_width: Q,
+    /// The page's width (a floating table positioned against the page is laid out across
+    /// it).
+    pub page_width: Q,
 }
 
 /// One table to lay out.
@@ -109,6 +113,11 @@ pub fn table_paragraphs(table: &Table) -> usize {
 struct Laying<'i, 'x, 'a, 'm> {
     cx: &'x mut TableContext<'a, 'm>,
     input: &'i TableInput<'i>,
+    /// Where it is laid out across: the input's, or the page for a floating table
+    /// positioned against it.
+    frame: Frame,
+    /// Where it is positioned, if it floats.
+    floating: Option<Floating>,
     carry_on: bool,
     spec: TableSpec,
     approximated: Vec<Approximated>,
@@ -128,6 +137,8 @@ pub fn lay_table(
     let default_style = default_style(cx.document);
     let mut laying = Laying {
         spec: TableSpec::new(resolved, input.nested, mode15),
+        frame: input.frame,
+        floating: None,
         cx,
         input,
         carry_on,
@@ -153,12 +164,33 @@ impl Laying<'_, '_, '_, '_> {
         self.input.table.path.clone()
     }
 
-    /// Whether it floats: a floating table is the floats' lane's; one positioned as no
-    /// measurement covers is laid out in the flow with `carry_on`.
+    /// Whether it floats: a floating table is laid out in its frame as a table with its
+    /// indent, or its alignment, is in the column (`floating_of`); one nested in a cell is
+    /// not measured; one positioned as no measurement covers is laid out in the flow with
+    /// `carry_on`.
     fn standing(&mut self) -> Result<(), Unsupported> {
-        match floats(&self.input.table.properties, &self.spec.properties) {
+        match floats(&self.input.table.properties, &self.spec.properties, self.spec.mode15) {
             Ok(Standing::InFlow) => Ok(()),
-            Ok(Standing::Floating) => Err(unsupported("a floating table (laid out by the floats' lane)")),
+            Ok(Standing::Floating(_)) if self.input.nested => {
+                Err(unsupported("a floating table nested in a cell (not measured)"))
+            }
+            Ok(Standing::Floating(floating)) => {
+                if floating.page {
+                    self.frame = Frame {
+                        page_left: Q::from_integer(0),
+                        column_width: self.frame.page_width,
+                        page_width: self.frame.page_width,
+                    };
+                }
+                let indent = floating.x - i64::from(floating.x > 0);
+                let props = &mut self.spec.properties;
+                props.insert(std::borrow::Cow::Borrowed("tblInd"), Value::Width(indent, key("dxa")));
+                let jc = floating.x_spec.as_deref().unwrap_or("left");
+                props.insert(std::borrow::Cow::Borrowed("jc"), Value::Str(key(jc)));
+                self.spec.indent_stated = true;
+                self.floating = Some(floating);
+                Ok(())
+            }
             Err(why) if self.carry_on => {
                 let path = self.table_path();
                 self.approximate(
@@ -224,7 +256,7 @@ impl Laying<'_, '_, '_, '_> {
 
     /// The widths settled and the grid lines, twips from the column's left edge.
     fn widths(&mut self) -> Result<Vec<Q>, Unsupported> {
-        let frame = self.input.frame;
+        let frame = self.frame;
         let first_dxa =
             self.spec.rows().first().is_some_and(|r| {
                 !r.cells.is_empty() && r.cells.iter().all(|c| matches!(cell_width(c), Some((_, "dxa"))))
@@ -318,7 +350,7 @@ impl Laying<'_, '_, '_, '_> {
             rows,
             bottom_border,
             grid: lines,
-            page_left: self.input.frame.page_left,
+            page_left: self.frame.page_left,
             mode15: self.spec.mode15,
             header_rows,
             keeps,
@@ -326,13 +358,19 @@ impl Laying<'_, '_, '_, '_> {
             approximation: None,
             approximated: std::mem::take(&mut self.approximated),
             measures: Vec::new(),
+            floating: None,
+            fit_right: Q::default(),
         };
+        table.fit_right = fit_right(&table, &resolved);
+        if let Some(position) = self.floating.take() {
+            table.floating = Some(floating_box(position, &table, &resolved));
+        }
         table.measures = measures_of(&table);
         Ok(table)
     }
 
     fn cell(&mut self, cell: &ResolvedCell, lines: &[Q], items: &[(usize, Block)]) -> Result<CellFlow, Unsupported> {
-        let frame = self.input.frame;
+        let frame = self.frame;
         let cell_box = cell_box(&self.spec, frame.page_left, lines, cell);
         let document = self.cx.document;
         let resolved: Vec<Option<Arc<Props>>> = items
@@ -413,7 +451,7 @@ impl Laying<'_, '_, '_, '_> {
         offset: usize,
         previous_style: Option<Text>,
     ) -> Result<CellBlock, Unsupported> {
-        let page_left = self.input.frame.page_left;
+        let page_left = self.frame.page_left;
         let text_left = page_left + line_at(lines, cell.column) + int(left_offset(cell));
         let text_right = page_left + line_at(lines, cell.column + cell.span) - int(right_offset(cell));
         let count = table_paragraphs(table);
@@ -423,6 +461,7 @@ impl Laying<'_, '_, '_, '_> {
             frame: Frame {
                 page_left: text_left,
                 column_width: text_right - text_left,
+                page_width: self.frame.page_width,
             },
             previous_style,
             labels,
@@ -726,6 +765,44 @@ fn measures_of(table: &MeasuredTable) -> Vec<Option<Arc<MeasuredParagraph>>> {
         }
     }
     out
+}
+
+/// How far right of its column's left edge a table reaches as a room measures it
+/// (`table_fits`).
+fn fit_right(table: &MeasuredTable, resolved: &ResolvedTable) -> Q {
+    let right = table.grid.last().copied().unwrap_or_default();
+    let Some(last) = resolved.rows.first().and_then(|r| r.cells.last()) else {
+        return right;
+    };
+    if table.mode15 {
+        right + int(super::grid::outer_part(last.right_edge.0.as_ref()))
+    } else {
+        right - int(super::grid::right_offset(last))
+    }
+}
+
+/// A floating table as text goes beside it (`table_wrap`'s box, `floating_edges`): its
+/// outer grid lines in exact px from the page's left edge, and its outer borders' outer
+/// halves past them, or `UNBORDERED_EDGE` twips where there is none.
+fn floating_box(position: Floating, table: &MeasuredTable, resolved: &ResolvedTable) -> FloatingTable {
+    let px = Q::new(300, 1440);
+    let line = |q: Option<&Q>| (table.page_left + q.copied().unwrap_or_default()) * px;
+    let edge = |border: Option<&ooxml_word_model::value::Border>| {
+        if drawn(border) {
+            Q::new(i128::from(border_twips(border)), 2)
+        } else {
+            int(UNBORDERED_EDGE)
+        }
+    };
+    let cells = resolved.rows.first().map(|r| r.cells.as_slice()).unwrap_or_default();
+    let left = cells.first().map_or_else(Q::default, |c| edge(c.left_edge.0.as_ref()));
+    let right = cells.last().map_or_else(Q::default, |c| edge(c.right_edge.0.as_ref()));
+    FloatingTable {
+        position,
+        first: line(table.grid.first()),
+        last: line(table.grid.last()),
+        edges: (left, right),
+    }
 }
 
 /// Twips of a border side of a resolved cell.

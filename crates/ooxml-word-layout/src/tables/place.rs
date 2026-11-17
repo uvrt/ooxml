@@ -553,6 +553,10 @@ impl<'t> Placer<'t> {
     }
 
     fn step(&mut self, row: usize, part: Vec<usize>) -> Step {
+        if self.request.stop.is_some_and(|stop| row >= stop) {
+            let y = self.y;
+            return Step::Done(self.finish_here(y, Some((row, Vec::new()))));
+        }
         let Some(current) = self.table.rows.get(row) else {
             let end = self.y + self.table.bottom_border;
             return Step::Done(self.finish_here(end, None));

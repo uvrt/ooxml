@@ -11,7 +11,7 @@ use super::cells::{CellFlow, Content, RowFlow};
 use super::place::{place_table, MergeDown};
 use crate::paragraph::MeasuredParagraph;
 use crate::px::Px;
-use crate::table::{CellLine, PlacedRow, StackedBlock, TableFlow, TablePage, TableRequest, Unsupported};
+use crate::table::{CellLine, FloatingTable, PlacedRow, StackedBlock, TableFlow, TablePage, TableRequest, Unsupported};
 use ooxml_base::Q;
 use ooxml_word_model::value::Text;
 use std::sync::Arc;
@@ -58,6 +58,12 @@ pub struct MeasuredTable {
     /// Its paragraphs' measures by block (nested tables' included); `None` for a block
     /// that is not a paragraph of it.
     pub measures: Vec<Option<Arc<MeasuredParagraph>>>,
+    /// Where it is positioned, where it floats.
+    pub floating: Option<FloatingTable>,
+    /// How far right of its column's left edge it reaches as a room measures it, twips
+    /// (`table_fits`: its last grid line with its right border's outer part in mode 15,
+    /// less its last cell's right offset below).
+    pub fit_right: Q,
 }
 
 impl MeasuredTable {
@@ -145,6 +151,7 @@ impl MeasuredTable {
                 first_on_page: false,
                 mode15: self.mode15,
                 split_kept: false,
+                stop: None,
             },
         );
         for piece in &laid.rows {
@@ -164,6 +171,7 @@ impl MeasuredTable {
                 first_on_page: false,
                 mode15: self.mode15,
                 split_kept: false,
+                stop: None,
             },
         )
         .end
@@ -171,6 +179,14 @@ impl MeasuredTable {
 }
 
 impl TableFlow for MeasuredTable {
+    fn floating(&self) -> Option<&FloatingTable> {
+        self.floating.as_ref()
+    }
+
+    fn fits(&self, width: Q) -> bool {
+        self.fit_right <= width
+    }
+
     fn rows(&self) -> usize {
         self.rows.len()
     }

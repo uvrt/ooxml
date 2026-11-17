@@ -156,6 +156,7 @@ pub fn stack_height(items: &[FlowItem], mode15: bool) -> Px {
                     first_on_page: first,
                     mode15,
                     split_kept: false,
+                    stop: None,
                 };
                 match t.flow.place(&request) {
                     Ok(laid) => y = laid.end,

@@ -41,6 +41,7 @@ pub mod paginate;
 pub mod paragraph;
 pub mod px;
 pub mod rebreak;
+pub mod rooms;
 pub mod sections;
 pub mod stories;
 pub mod table;
