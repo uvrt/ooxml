@@ -28,6 +28,7 @@ members = [
     "crates/ooxml-scene",
     "crates/ooxml-metafile",
     "crates/ooxml-render",
+    "crates/ooxml-raster",
     "xtask",
 ]
 # cargo-fuzz's layout: its own workspace, built with `cargo fuzz` (nightly).
@@ -67,6 +68,7 @@ ooxml-drawingml = { path = "crates/ooxml-drawingml" }
 ooxml-scene = { path = "crates/ooxml-scene" }
 ooxml-metafile = { path = "crates/ooxml-metafile" }
 ooxml-render = { path = "crates/ooxml-render" }
+ooxml-raster = { path = "crates/ooxml-raster" }
 ooxml-numfmt = { path = "crates/ooxml-numfmt" }
 ooxml-style-names = { path = "crates/ooxml-style-names" }
 ooxml-chart = { path = "crates/ooxml-chart" }
@@ -77,6 +79,13 @@ ooxml-store = { path = "crates/ooxml-store" }
 ooxml-session = { path = "crates/ooxml-session" }
 ooxml-python-session = { path = "crates/ooxml-python-session" }
 read-fonts = { version = "0.47", default-features = false, features = ["std"] }
+# The versions resvg-py 0.5.0 links (its Cargo.lock), exactly, so a PNG drawn here is the
+# PNG Python draws (decision 7; DEPENDENCIES.md).  resvg-py's features less `svgz` (an SVG
+# reaches the rasteriser as text, never gzipped).
+resvg = { version = "=0.48.1", default-features = false, features = ["text", "system-fonts", "memmap-fonts", "raster-images"] }
+usvg = { version = "=0.48.1", default-features = false, features = ["text", "system-fonts", "memmap-fonts"] }
+fontdb = { version = "=0.24.0", default-features = false, features = ["std", "fs", "memmap", "fontconfig"] }
+tiny-skia = { version = "=0.12.0", default-features = false, features = ["std", "simd", "png-format"] }
 
 # The architecture's standards (docs/architecture/README.md, section 2), for every crate that
 # says `[lints] workspace = true` -- the new crates; the prototype crates (core, word, python)

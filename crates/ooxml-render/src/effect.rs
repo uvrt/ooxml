@@ -1,12 +1,12 @@
 //! Owns: a shape's effects (soft edge, glow, outer and inner shadow) and a picture's colour
 //! effects (`a:clrChange`, grey scale, luminance, bi-level, duotone, blur, alpha) as SVG
 //! filters (ooxml-common's `drawingml.effect`), with the filter region an element's drawn
-//! bounds need.
+//! bounds need -- at the painter's dpi.
 //!
 //! Must not: draw the element the filter goes on.
 
 use crate::context::Painter;
-use crate::units::emu_to_px;
+use crate::units::emu_to_px_at;
 use ooxml_drawingml::drawable::{BlipEffects, Effects};
 use ooxml_scene::drawing_num as num;
 use ooxml_scene::markup::{Attr, Element, Tag, Value};
@@ -40,9 +40,9 @@ fn merge(result: &str, first: &str, second: &str) -> Element {
     ])
 }
 
-fn shadow_offset(blur_radius: f64, distance: f64, direction: f64) -> (f64, f64, f64) {
-    let std_dev = emu_to_px(blur_radius) / 2.0;
-    let distance = emu_to_px(distance);
+fn shadow_offset(blur_radius: f64, distance: f64, direction: f64, dpi: f64) -> (f64, f64, f64) {
+    let std_dev = emu_to_px_at(blur_radius, dpi) / 2.0;
+    let distance = emu_to_px_at(distance, dpi);
     let radians = direction.to_radians();
     (
         std_dev,
@@ -51,10 +51,10 @@ fn shadow_offset(blur_radius: f64, distance: f64, direction: f64) -> (f64, f64, 
     )
 }
 
-fn glow_and_soft_edge(effects: &Effects, primitives: &mut Vec<Element>) -> &'static str {
+fn glow_and_soft_edge(effects: &Effects, primitives: &mut Vec<Element>, dpi: f64) -> &'static str {
     let mut last = "SourceGraphic";
     if let Some(radius) = effects.soft_edge {
-        let r = num(emu_to_px(radius));
+        let r = num(emu_to_px_at(radius, dpi));
         primitives.push(el(
             Tag::FeGaussianBlur,
             &[("in", "SourceAlpha"), ("stdDeviation", &r), ("result", "softEdgeMask")],
@@ -71,7 +71,7 @@ fn glow_and_soft_edge(effects: &Effects, primitives: &mut Vec<Element>) -> &'sta
         last = "softEdgeResult";
     }
     if let Some(glow) = &effects.glow {
-        let r = num(emu_to_px(glow.radius));
+        let r = num(emu_to_px_at(glow.radius, dpi));
         if last != "SourceGraphic" {
             primitives.push(el(
                 Tag::FeColorMatrix,
@@ -115,9 +115,9 @@ fn glow_and_soft_edge(effects: &Effects, primitives: &mut Vec<Element>) -> &'sta
     last
 }
 
-fn shadows(effects: &Effects, mut last: &'static str, primitives: &mut Vec<Element>) {
+fn shadows(effects: &Effects, mut last: &'static str, primitives: &mut Vec<Element>, dpi: f64) {
     if let Some(s) = &effects.outer_shadow {
-        let (std_dev, dx, dy) = shadow_offset(s.blur_radius, s.distance, s.direction);
+        let (std_dev, dx, dy) = shadow_offset(s.blur_radius, s.distance, s.direction, dpi);
         primitives.push(el(
             Tag::FeGaussianBlur,
             &[
@@ -155,12 +155,12 @@ fn shadows(effects: &Effects, mut last: &'static str, primitives: &mut Vec<Eleme
         primitives.push(merge("outerShadowMerge", "shadowFinal", last));
         last = "outerShadowMerge";
     }
-    inner_shadow(effects, last, primitives);
+    inner_shadow(effects, last, primitives, dpi);
 }
 
-fn inner_shadow(effects: &Effects, last: &'static str, primitives: &mut Vec<Element>) {
+fn inner_shadow(effects: &Effects, last: &'static str, primitives: &mut Vec<Element>, dpi: f64) {
     if let Some(s) = &effects.inner_shadow {
-        let (std_dev, dx, dy) = shadow_offset(s.blur_radius, s.distance, s.direction);
+        let (std_dev, dx, dy) = shadow_offset(s.blur_radius, s.distance, s.direction, dpi);
         primitives.push(
             Element::open(Tag::FeComponentTransfer)
                 .word("in", "SourceAlpha")
@@ -226,8 +226,8 @@ pub fn render_effects(
 ) -> Option<Attr> {
     let effects = effects?;
     let mut primitives = Vec::new();
-    let last = glow_and_soft_edge(effects, &mut primitives);
-    shadows(effects, last, &mut primitives);
+    let last = glow_and_soft_edge(effects, &mut primitives, painter.dpi);
+    shadows(effects, last, &mut primitives, painter.dpi);
     if primitives.is_empty() {
         return None;
     }
@@ -242,7 +242,7 @@ pub fn render_effects(
                 .word("height", "200%");
         }
         Some(b) => {
-            let (x, y, w, h) = effect_region(effects, b);
+            let (x, y, w, h) = effect_region(effects, b, painter.dpi);
             filter = filter
                 .word("filterUnits", "userSpaceOnUse")
                 .num("x", x)
@@ -258,14 +258,14 @@ pub fn render_effects(
     })
 }
 
-/// The filter region of `effects` over an element drawing within `bounds`.
-pub fn effect_region(effects: &Effects, bounds: (f64, f64, f64, f64)) -> (f64, f64, f64, f64) {
+/// The filter region of `effects` over an element drawing within `bounds`, at `dpi`.
+pub fn effect_region(effects: &Effects, bounds: (f64, f64, f64, f64), dpi: f64) -> (f64, f64, f64, f64) {
     let mut side = 0.0_f64;
     for radius in [effects.soft_edge, effects.glow.as_ref().map(|g| g.radius)]
         .into_iter()
         .flatten()
     {
-        side = side.max(BLUR_REACH * emu_to_px(radius));
+        side = side.max(BLUR_REACH * emu_to_px_at(radius, dpi));
     }
     let outer = effects
         .outer_shadow
@@ -276,7 +276,7 @@ pub fn effect_region(effects: &Effects, bounds: (f64, f64, f64, f64)) -> (f64, f
         .as_ref()
         .map(|s| (s.blur_radius, s.distance, s.direction, true));
     for (blur, distance, direction, is_inner) in [outer, inner].into_iter().flatten() {
-        let (std_dev, dx, dy) = shadow_offset(blur, distance, direction);
+        let (std_dev, dx, dy) = shadow_offset(blur, distance, direction, dpi);
         let mut reach = BLUR_REACH * std_dev;
         if is_inner {
             reach *= INNER_REACH / BLUR_REACH;
@@ -466,7 +466,7 @@ pub fn render_blip_effects(effects: Option<&BlipEffects>, painter: &mut Painter<
     if let Some((radius, _)) = effects.blur {
         primitives.push(el(
             Tag::FeGaussianBlur,
-            &[("stdDeviation", &num(emu_to_px(radius) / 2.0))],
+            &[("stdDeviation", &num(emu_to_px_at(radius, painter.dpi) / 2.0))],
         ));
     }
     if let Some(alpha) = effects.alpha.filter(|a| *a < 1.0) {

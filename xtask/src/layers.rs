@@ -53,6 +53,8 @@ pub const MAP: &[(&str, Place)] = &[
     ("ooxml-chart", Place::Layer(2, 1)),
     // The DrawingML painter: drawables (a chart's, a slide's, a document's) onto the scene.
     ("ooxml-render", Place::Layer(2, 1)),
+    // The scene's PNG adapter: the typed writer's SVG drawn by resvg (decision 11).
+    ("ooxml-raster", Place::Layer(2, 1)),
     // ooxml-word in the design; the prototype holds that package name (lane L2)
     ("ooxml-word-model", Place::Layer(3, 0)),
     ("ooxml-word-layout", Place::Layer(3, 1)),
