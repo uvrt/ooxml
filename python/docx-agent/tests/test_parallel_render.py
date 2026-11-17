@@ -144,6 +144,7 @@ def test_a_layout_handed_back_draws_the_same_pages_without_laying_out_again(monk
             == (first["facts"]["count"], first["facts"]["coverage"], first["raster"]))
 
 
+@pytest.mark.usefixtures("python_layout")      # lane L4b: a Rust layout is made by the caller
 def test_the_next_call_on_the_same_version_hands_its_worker_the_layout():
     data = _pages(4)
     runner = _Recording()

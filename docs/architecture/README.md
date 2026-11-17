@@ -403,6 +403,7 @@ trait Command: Send {
 - A session `MemoryBudget` with per-document accounting.
 - LRU eviction of derived data and page paint, which can always be recomputed.
 - Versions are retained only by history depth and by readers' `Arc`s.
+- As built (lane L4b): `ooxml_session::MemoryBudget` gives each document an account within one limit for what can be made again (page paint, the layouts a host keeps for readers), and counts beside it, never refused, what the versions in use hold (the model's and layout's memos). Memos are swept once a version is laid out: an entry not used since the last sweep that no version holds goes, so they stay at the newest version's working set. A version's own cost (`LaidVersion::weight`) is what it alone holds: its containers, and the measures, pages and blocks no other version or memo holds.
 
 **Deadlines.**
 - Cooperative cancellation: `Cancel` is checked in every loop over blocks, pages and records, giving `timeout` results that change nothing.

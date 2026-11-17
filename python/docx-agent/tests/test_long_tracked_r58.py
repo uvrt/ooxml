@@ -276,12 +276,22 @@ def test_closing_a_document_lets_go_of_what_was_kept_for_it(report):
         assert set(described.memory) >= {"document"}        # the application's figure
         assert "memory" not in described.to_json()["data"]
         lineage = layout_module.lineage(document)
-        assert any(held.lineage == lineage for held in layout_module._HELD.values())
+        assert _held_here(lineage)
         document.layout()
         assert document._layouts
         session.close(doc)
         assert not document._layouts and document._layout_kept is None
-        assert not any(held.lineage == lineage for held in layout_module._HELD.values())
+        assert not _held_here(lineage)
+
+
+def _held_here(lineage: str) -> bool:
+    """Whether this process holds a layout of ``lineage``: docx2svg's Python layout by token,
+    or (lane L4b) the document's Rust engine."""
+    from docx_agent import pages
+
+    with pages._LOCK:
+        engines = any(key[0] == lineage for key in pages._ENGINES)
+    return engines or any(held.lineage == lineage for held in layout_module._HELD.values())
 
 
 def test_clear_caches_lets_go_of_every_document(report):
@@ -290,7 +300,9 @@ def test_clear_caches_lets_go_of_every_document(report):
         session = box.session()
         doc = session.open(report, "report.docx")
         box.dispatch(session, "describe", {"doc": doc})
-    assert layout_module._HELD
+        lineage = layout_module.lineage(session.entry(doc).document)
+    assert _held_here(lineage)
     layout_module.clear_caches()
+    assert not _held_here(lineage)
     assert not layout_module._HELD and not layout_module._RECENT and not blocks_module._BODIES
     assert document.layout().pages_known        # made again when next asked
