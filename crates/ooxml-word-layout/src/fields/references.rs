@@ -203,7 +203,9 @@ fn letters(instruction: &str) -> Vec<char> {
     out
 }
 
-fn apply_case(text: &str, instruction: &str) -> String {
+/// `text` with the instruction's case switches (`\* Upper`, `Lower`, `FirstCap`, `Caps`)
+/// applied (`apply_case`).
+pub(crate) fn apply_case(text: &str, instruction: &str) -> String {
     let mut text = text.to_owned();
     for (kind, argument) in switches(instruction) {
         if kind != '*' {

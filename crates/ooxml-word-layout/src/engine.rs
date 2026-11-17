@@ -5,11 +5,13 @@
 //! Must not: hold more than one document's state, or anything global; edit; draw.
 
 use crate::faces::Faces;
+use crate::fields::styleref::{style_references, StyleSearch};
 use crate::fields::{cross_references, field_values, page_fields, substitute, Computed, FieldValues, Substitutions};
 use crate::flow::{Flow, FlowContext, FlowMaker, FlowState, Labels};
 use crate::incremental::{changes, repaginate, RelayoutStats};
 use crate::notes::{footnotes_by_page, with_endnotes, with_footnotes, FootnotePages, NoteRole};
-use crate::paginate::{HyphenMove, PageContext, Pagination, Paginator, Resume};
+use crate::page_stories::{page_stories, PageStoryJob, StoryMemo};
+use crate::paginate::{HyphenMove, PageContext, PageStories, Pagination, Paginator, Resume};
 use crate::sections::Sections;
 use crate::stories::{StoryContext, StoryTable};
 use crate::table::TableLayout;
@@ -28,6 +30,9 @@ pub struct DocumentLayout {
     pub sections: Sections,
     /// The headers' and footers' heights.
     pub stories: StoryTable,
+    /// The pages whose header or footer a `STYLEREF` gives heights of their own, as this
+    /// pass was laid out with them.
+    pub page_stories: PageStories,
     /// The pages.
     pub pagination: Pagination,
     /// The document is in compatibility mode 15 or later.
@@ -62,14 +67,21 @@ pub struct PassRecord {
     pub flow: Flow,
     /// Its pages.
     pub pagination: Pagination,
+    /// The pages whose header or footer had heights of their own.
+    pub page_stories: PageStories,
 }
 
 impl DocumentLayout {
     /// Pass `k`'s flow and pages (the last pass is the layout's own).
     pub fn pass(&self, k: usize) -> Option<(&Flow, &Pagination)> {
+        self.laid_pass(k).map(|(flow, pages, _)| (flow, pages))
+    }
+
+    /// Pass `k`'s flow, pages and pages with stories of their own heights.
+    fn laid_pass(&self, k: usize) -> Option<(&Flow, &Pagination, &PageStories)> {
         match self.earlier.get(k) {
-            Some(p) => Some((&p.flow, &p.pagination)),
-            None if k == self.earlier.len() => Some((&self.flow, &self.pagination)),
+            Some(p) => Some((&p.flow, &p.pagination, &p.page_stories)),
+            None if k == self.earlier.len() => Some((&self.flow, &self.pagination, &self.page_stories)),
             None => None,
         }
     }
@@ -88,6 +100,7 @@ impl DocumentLayout {
             mode15: self.mode15,
             hyphen_at_page_end: self.hyphen_at_page_end,
             stories: &self.stories,
+            page_stories: &self.page_stories,
             separators: &self.flow.separators,
             note_items: &self.flow.note_items,
             notes_at: &self.flow.notes_at,
@@ -129,6 +142,7 @@ pub struct WordLayout {
     body: FlowState,
     stories: FlowState,
     substitutions: Substitutions,
+    style_values: Substitutions,
     computed: Computed,
 }
 
@@ -149,6 +163,7 @@ impl WordLayout {
             body: FlowState::new(Measurer::new(Arc::clone(budget), key)),
             stories: FlowState::new(Measurer::new(Arc::clone(budget), key)),
             substitutions: Substitutions::default(),
+            style_values: Substitutions::default(),
             computed: Computed::default(),
         }
     }
@@ -167,6 +182,25 @@ impl WordLayout {
             tables: self.tables.as_ref(),
         };
         StoryTable::compute(&cx, model, &mut self.stories)
+    }
+
+    /// The pages of one pass whose header or footer a `STYLEREF` gives heights of their
+    /// own.
+    fn page_stories(
+        &mut self,
+        model: &mut Model,
+        layout: &DocumentLayout,
+        roles: &[Option<NoteRole>],
+        memo: &mut StoryMemo,
+    ) -> PageStories {
+        let cx = StoryContext {
+            document: &layout.document,
+            faces: self.faces.as_ref(),
+            locale: &self.locale,
+            tables: self.tables.as_ref(),
+        };
+        let job = PageStoryJob { cx: &cx, roles };
+        page_stories(&job, model, &mut self.stories, layout, memo)
     }
 
     /// A version's body flow in its sections, with its paragraphs' list labels (document
@@ -198,13 +232,14 @@ impl WordLayout {
         model: &mut Model,
         version: WordDocument,
         frame: &PassFrame<'_>,
-        old: Option<(&Flow, &Pagination)>,
+        old: Option<(&Flow, &Pagination, &PageStories)>,
     ) -> DocumentLayout {
         let flow = self.flow(model, &version, frame);
         let mut layout = DocumentLayout {
             flow,
             sections: frame.sections.clone(),
             stories: frame.stories.clone(),
+            page_stories: frame.page_stories.clone(),
             pagination: Pagination::default(),
             mode15: crate::input::rules(&version).mode15(),
             hyphen_at_page_end: hyphen_at_page_end(&version),
@@ -217,8 +252,9 @@ impl WordLayout {
             earlier: Vec::new(),
             relaid: Vec::new(),
         };
-        match old {
-            Some((old_flow, old_pages)) => {
+        // Pages laid out with other stories' heights are laid out again whole.
+        match old.filter(|(_, _, stories)| *stories == frame.page_stories) {
+            Some((old_flow, old_pages, _)) => {
                 let found = changes(&old_flow.items, &layout.flow.items);
                 let cx = layout.page_context(self.faces.as_ref(), &self.locale);
                 let (pages, stats) = repaginate(&cx, old_pages, &found);
@@ -259,6 +295,12 @@ impl WordLayout {
         // on the pages, computed once (`_Placer._prepare`).
         let placed = with_endnotes(document);
         let prepared = cross_references(&placed.document, &mut self.computed);
+        // STYLEREF in the body: the text of its style before it in the document, else
+        // after it -- the document's order, not its pages; computed once, as SEQ is.
+        let in_flow = |body: usize| placed.roles.get(body).is_some_and(Option::is_some);
+        let mut search = StyleSearch::new(&prepared, &self.locale, &in_flow);
+        let prepared = style_references(&prepared, &mut search, &mut self.style_values);
+        drop(search);
         let document = &prepared;
         let sections = Sections::of(document);
         let stories = self.story_heights(model, document);
@@ -270,24 +312,30 @@ impl WordLayout {
         // runs as numbered.
         let keys = page_fields(&version);
         let labels = document.body_labels();
-        let frame = PassFrame {
-            sections: &sections,
-            stories: &stories,
-            labels: &labels,
-            roles: &placed.roles,
-        };
+        let mut overrides = PageStories::new();
+        let mut story_memo = StoryMemo::default();
         let mut values = FieldValues::new();
         let mut pages: Option<FootnotePages> = None;
         let mut earlier = Vec::new();
         let mut versions: Vec<WordDocument> = Vec::new();
         let mut relaid = Vec::new();
         loop {
-            let old = previous.and_then(|p| p.pass(earlier.len()));
+            let frame = PassFrame {
+                sections: &sections,
+                stories: &stories,
+                page_stories: &overrides,
+                labels: &labels,
+                roles: &placed.roles,
+            };
+            let old = previous.and_then(|p| p.laid_pass(earlier.len()));
             let mut layout = self.pass(model, version, &frame, old);
             relaid.append(&mut layout.relaid);
             let found = field_values(&layout.document, &layout, &keys);
             let found_pages = by_page.then(|| crate::notes::footnote_pages(&layout));
-            let settled = found == values && found_pages == pages;
+            // A header's or footer's STYLEREF whose text on a page makes it taller or
+            // shorter moves the page's body.
+            let heights = self.page_stories(model, &layout, &placed.roles, &mut story_memo);
+            let settled = found == values && found_pages == pages && heights == overrides;
             if settled || earlier.len() + 1 == FIELD_PASSES {
                 layout.fields = values;
                 layout.footnote_pages = pages;
@@ -305,9 +353,11 @@ impl WordLayout {
             earlier.push(PassRecord {
                 flow: layout.flow,
                 pagination: layout.pagination,
+                page_stories: layout.page_stories,
             });
             values = found;
             pages = found_pages;
+            overrides = heights;
             let numbered = with_footnotes(document, pages.as_ref());
             version = substitute(&numbered, &values, &mut self.substitutions);
         }
@@ -322,6 +372,8 @@ pub struct PassFrame<'f> {
     pub sections: &'f Sections,
     /// The headers' and footers' heights.
     pub stories: &'f StoryTable,
+    /// The pages whose header or footer has heights of its own.
+    pub page_stories: &'f PageStories,
     /// The list labels, document order (cells included).
     pub labels: &'f [Option<String>],
     /// Per top-level block, what of the endnotes placed it is.

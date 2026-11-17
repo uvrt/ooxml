@@ -265,6 +265,20 @@ impl Pagination {
     }
 }
 
+/// The header and footer a page shows: their kind, and the page (0-based, blank pages
+/// counted), whose own heights [`PageContext::page_stories`] may hold.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PageStory {
+    /// The kind.
+    pub kind: StoryKind,
+    /// The page.
+    pub page: usize,
+}
+
+/// Page (0-based, blank pages counted) -> its `(header, footer)` heights, where a
+/// `STYLEREF` in them makes them differ from their story's (`Flow.page_stories`).
+pub type PageStories = BTreeMap<usize, (Px, Px)>;
+
 /// What laying out a page reads: the flow, the sections, the compatibility rules and the
 /// stories' heights.
 pub struct PageContext<'a> {
@@ -278,6 +292,8 @@ pub struct PageContext<'a> {
     pub hyphen_at_page_end: HyphenMove,
     /// The headers' and footers' heights.
     pub stories: &'a dyn StoryHeights,
+    /// The pages whose header or footer has heights of its own.
+    pub page_stories: &'a PageStories,
     /// Per section, its footnote separator's and continuation separator's heights.
     pub separators: &'a BTreeMap<usize, (Px, Px)>,
     /// In mode 15, the footnotes of sections of several columns as flows of their own.
@@ -392,7 +408,8 @@ impl<'a> Paginator<'a> {
             let number_before = number;
             let info = self.page_info(&position, &mut page, &mut number, &mut out.info);
             out.info.push(info);
-            let laid = cx.lay_page(&position, info.story, &carry, page);
+            let story = PageStory { kind: info.story, page };
+            let laid = cx.lay_page(&position, story, &carry, page);
             let mut laid = match laid.map_err(|(mut laid, stopped)| {
                 laid.lines_before = lines_before.clone();
                 (laid, stopped)
@@ -482,7 +499,7 @@ impl PageContext<'_> {
     fn lay_page(
         &self,
         start: &Position,
-        story: StoryKind,
+        story: PageStory,
         carry: &NoteRest,
         page: usize,
     ) -> Result<LaidPage, (LaidPage, Stopped)> {
@@ -499,8 +516,11 @@ impl PageContext<'_> {
     }
 
     /// Where the page's text starts and ends.
-    fn edges(&self, section: usize, story: StoryKind) -> (Px, Px) {
-        let (header, footer) = self.stories.heights(section, story);
+    fn edges(&self, section: usize, story: PageStory) -> (Px, Px) {
+        let (header, footer) = match self.page_stories.get(&story.page) {
+            Some(own) => *own,
+            None => self.stories.heights(section, story.kind),
+        };
         self.sections
             .get(section)
             .map_or((Px::ZERO, Px::ZERO), |s| s.edges(header, footer))

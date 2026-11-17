@@ -13,6 +13,7 @@ ooxml-derive.workspace = true
 ooxml-fonts.workspace = true
 ooxml-text.workspace = true
 ooxml-word-model.workspace = true
+ooxml-style-names.workspace = true
 num-integer.workspace = true
 thiserror.workspace = true
 

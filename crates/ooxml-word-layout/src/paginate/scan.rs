@@ -10,12 +10,13 @@
 
 use super::floats::{clear_of_bands, Band, Floats, Top, Tops};
 use super::notes::{Fitted, Foot};
-use super::{LaidPage, NoteRest, PageContext, PlacedLine, PlacedNote, PlacedTableRow, Position, Stopped, Why};
+use super::{
+    LaidPage, NoteRest, PageContext, PageStory, PlacedLine, PlacedNote, PlacedTableRow, Position, Stopped, Why,
+};
 use crate::flow::{FlowItem, ParaItem, TableItem};
 use crate::notes::NoteLines;
 use crate::px::Px;
 use crate::rebreak::Lines;
-use crate::sections::StoryKind;
 use crate::table::TableRequest;
 use crate::vertical::{keeps_space_before_at_page_top, page_top_gap, paragraph_gap};
 
@@ -159,7 +160,7 @@ impl PageContext<'_> {
     pub(super) fn lay_one_column_page(
         &self,
         start: &Position,
-        story: StoryKind,
+        story: PageStory,
         carry: &NoteRest,
         page_index: usize,
     ) -> Result<LaidPage, (LaidPage, Stopped)> {
@@ -224,7 +225,7 @@ impl PageContext<'_> {
     fn stacked_bands(
         &self,
         start: &Position,
-        story: StoryKind,
+        story: PageStory,
         carry: &NoteRest,
         page_index: usize,
         bands: Vec<Band>,
@@ -257,7 +258,7 @@ impl PageContext<'_> {
     pub(super) fn scan(
         &self,
         start: &Position,
-        story: StoryKind,
+        story: PageStory,
         frame: Option<&mut Frame>,
         out: &mut LaidPage,
         floats: Floats<'_>,

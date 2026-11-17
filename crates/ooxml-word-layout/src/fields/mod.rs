@@ -9,10 +9,14 @@
 //! `SEQ` and `REF`, which do not depend on the pages, are computed once before the passes
 //! (`references`).
 //!
-//! Must not: compute `STYLEREF` (not ported yet), or draw a field.
+//! `STYLEREF` is computed in the body once before the passes, and in headers and footers
+//! per page (`styleref`).
+//!
+//! Must not: draw a field.
 
 mod format;
 mod references;
+pub mod styleref;
 
 pub use format::{argument, field_text, format_value, number_text, switches, Uncomputable};
 pub use references::{cross_references, Computed};
@@ -61,8 +65,17 @@ struct Pages<'a> {
 /// Each table cell paragraph's first page: the page its part of its row is on, for each
 /// line it draws (`paginate.drawn_pages`).
 fn cell_pages(layout: &DocumentLayout) -> HashMap<usize, usize> {
-    let items = &layout.flow.items;
     let mut out = HashMap::new();
+    for_cell_lines(layout, &mut |block, page| {
+        out.entry(block).or_insert(page);
+    });
+    out
+}
+
+/// Every drawn line of a table cell's paragraph, as its block (the body's, cells
+/// included) and the page its part of its row is on, in page order.
+fn for_cell_lines(layout: &DocumentLayout, each: &mut dyn FnMut(usize, usize)) {
+    let items = &layout.flow.items;
     for page in &layout.pagination.pages {
         let (start, end) = (&page.start, &page.end);
         for index in start.item..(end.item + 1).min(items.len()) {
@@ -86,13 +99,12 @@ fn cell_pages(layout: &DocumentLayout) -> HashMap<usize, usize> {
                         (false, _) => stack.len(),
                     };
                     for block in stack.get(lo..hi).unwrap_or_default().iter().flatten() {
-                        out.entry(t.block + block).or_insert(page.page);
+                        each(t.block + block, page.page);
                     }
                 }
             }
         }
     }
-    out
 }
 
 impl<'a> Pages<'a> {
@@ -182,6 +194,54 @@ impl<'a> Pages<'a> {
         }
         i64::try_from(pages.len()).ok()
     }
+}
+
+/// Body paragraph (document order, cells included) -> the pages (0-based, blank pages
+/// counted) its drawn lines are on (`paginate.drawn_pages`): a paragraph's lines that draw
+/// nothing left out; a table cell's paragraphs on the page their part of the row is on.
+pub(crate) fn drawn_pages(layout: &DocumentLayout) -> HashMap<usize, BTreeSet<usize>> {
+    let items = &layout.flow.items;
+    let mut out: HashMap<usize, BTreeSet<usize>> = HashMap::new();
+    for page in &layout.pagination.pages {
+        for line in &page.lines {
+            let Some(FlowItem::Para(p)) = items.get(line.item) else {
+                continue;
+            };
+            let undrawn = match page.broken.get(&line.item) {
+                Some(again) => again.measured.undrawn.contains(&line.line),
+                None => p.measured.undrawn.contains(&line.line),
+            };
+            if !undrawn {
+                out.entry(p.block).or_default().insert(page.page);
+            }
+        }
+    }
+    for_cell_lines(layout, &mut |block, page| {
+        out.entry(block).or_default().insert(page);
+    });
+    out
+}
+
+/// The pages (0-based, blank pages counted) each `STYLEREF` occurrence is drawn on
+/// (`_occurrence_pages`): a paragraph's, every page a line of it is on; a character
+/// style's run, its first character's page.
+pub(crate) fn occurrence_pages(
+    layout: &DocumentLayout,
+    drawn: &HashMap<usize, BTreeSet<usize>>,
+    occurrences: &[styleref::Occurrence],
+) -> Vec<BTreeSet<usize>> {
+    let mut pages: Option<Pages<'_>> = None;
+    occurrences
+        .iter()
+        .map(|o| {
+            if o.offset == 0 {
+                return drawn.get(&o.block).cloned().unwrap_or_default();
+            }
+            let pages = pages.get_or_insert_with(|| Pages::new(layout));
+            let offset = i64::try_from(o.offset).unwrap_or(i64::MAX);
+            pages.page_of(o.block, offset).into_iter().collect()
+        })
+        .collect()
 }
 
 /// Bookmark name -> `(paragraph, run)` of its start, the first of a name winning.
