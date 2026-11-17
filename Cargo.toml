@@ -9,6 +9,8 @@ members = [
     "crates/ooxml-opc",
     "crates/ooxml-store",
     "crates/ooxml-derive",
+    "crates/ooxml-fonts",
+    "crates/ooxml-text",
     "crates/ooxml-word-model",
     "crates/ooxml-oracle",
     "xtask",
@@ -40,7 +42,10 @@ ooxml-xml = { path = "crates/ooxml-xml" }
 ooxml-zip = { path = "crates/ooxml-zip" }
 ooxml-opc = { path = "crates/ooxml-opc" }
 ooxml-derive = { path = "crates/ooxml-derive" }
+ooxml-fonts = { path = "crates/ooxml-fonts" }
+ooxml-text = { path = "crates/ooxml-text" }
 ooxml-word-model = { path = "crates/ooxml-word-model" }
+read-fonts = { version = "0.47", default-features = false, features = ["std"] }
 
 # The architecture's standards (docs/architecture/README.md, section 2), for every crate that
 # says `[lints] workspace = true` -- the new crates; the prototype crates (core, word, python)

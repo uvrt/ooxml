@@ -1,7 +1,7 @@
 [package]
 name = "ooxml-oracle"
 version = "0.1.0"
-description = "Test support: the differential harness's Rust side (the Word model as JSON) and its benchmark"
+description = "Test support: differential harnesses against the Python packages (the text engine's, the Word model's), the adapters they run the core through, and the Word model's benchmark"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -10,9 +10,13 @@ publish.workspace = true
 [dependencies]
 ooxml-base.workspace = true
 ooxml-opc.workspace = true
+ooxml-fonts.workspace = true
+ooxml-text.workspace = true
+ooxml-zip.workspace = true
 ooxml-derive.workspace = true
 ooxml-word-model.workspace = true
 serde_json.workspace = true
+flate2.workspace = true
 
 [lints]
 workspace = true

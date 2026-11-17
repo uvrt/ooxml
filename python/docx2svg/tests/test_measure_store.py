@@ -205,3 +205,12 @@ def test_a_store_can_be_bounded_by_entries():
     assert len(store) == len(store.get(b"d")) == 4
     store.clear()
     assert len(store) == 0
+
+
+def test_a_lineage_forgotten_takes_its_measurements_with_it():
+    store = MeasureStore(lineages=4)
+    store.put(b"a", {1: "one", 2: "two"})
+    store.put(b"b", {3: "three"})
+    store.forget(b"a")
+    store.forget(b"never kept")
+    assert store.get(b"a") == {} and store.get(b"b") == {3: "three"} and len(store) == 1

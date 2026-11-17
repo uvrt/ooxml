@@ -215,6 +215,22 @@ def keep_value(key: str, value: object, seconds: float = 0.0, gate: str | None =
 
 
 @worker_task
+def forget_value(key: str, gate: str | None = None) -> None:
+    """Drop what :func:`keep_value` kept under ``key`` here (a note to every worker, round
+    58); with ``gate``, note ``forget`` there first (tests/gates.py)."""
+    if gate:
+        import gates
+        gates.Gate(gate).note("forget")
+    _KEPT.pop(key, None)
+
+
+@worker_task
+def failing_note() -> None:
+    """A note that fails: logged, and the worker serves on."""
+    raise ValueError("a note that fails")
+
+
+@worker_task
 def at_gate(gate: str, name: str, hold: bool = True) -> int:
     """In a worker: note ``<name> runs`` at a gate (tests/gates.py), holding there as
     ``name`` until it opens when ``hold``; the worker's pid."""

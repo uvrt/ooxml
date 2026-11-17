@@ -5,6 +5,42 @@ docx-agent has not been released to PyPI. Each version that reaches `main` is ta
 snapshot commit; the development history before it is summarised here.
 [`ROADMAP.md`](ROADMAP.md) has the detail of every phase.
 
+## 0.1.127 -- unreleased
+
+Round 58 follow-up (R133): the live view, and what is let go of when a document closes.
+Measured on `tools/tracked_report.py`'s made-up 340-page report.
+
+- **The live view lays out where the document's layouts are** (`docx_agent.liveview`). `view`
+  and `page_svg` run as tasks (`view_bytes`, `page_bytes`) in the worker of the toolbox that
+  laid the document out (`layout.remember_runner`, the pool's affinity, as `check`'s facts
+  do); the versions a view was given are kept there with the document's newest layout (each
+  laid out again from it where the worker no longer has it). This process keeps per token
+  the version's bytes and pages, never a layout. On the report through two workers, a check,
+  then three views each with its changed pages drawn: the caller's RSS 211, 266, 276 MB
+  (edits between views), against 1,240, 1,527, 1,664 MB before; the caller's CPU per view
+  0.01-0.1 s against 14-41 s; tracemalloc peak in the caller per view and its pages 1.4-2.1
+  MB. Blocks, sizes, changed pages and every page's SVG are byte for byte as before (the
+  same run on both code versions, three versions), and a test compares them, through a
+  worker, with the version laid out here (`render_svg`, `blocks_on`, docx2svg's
+  `changed_pages`). A document no toolbox laid out is laid out in this process, by the same
+  tasks.
+- **A closed document's layouts leave the workers at once.** `Session.close` (the format's
+  `closed`, `layout.release_document`) tells every worker of the runners that laid it out
+  to drop them (`layout.drop_lineage` through ooxml-edit's `broadcast`): the idle ones at
+  once, the busy ones as their task ends. A collected document's note is queued (a finalizer
+  takes no lock) and runs as the workers come back. Dropping a lineage drops what its layouts
+  measured too (docx2svg's `MeasureStore.forget`), collects and hands the allocator's free
+  pages back (`layout.release_free_memory`: macOS `malloc_zone_pressure_relief`, glibc
+  `malloc_trim`). In one process laying the report out (a worker's tasks): 50 MB, 778 MB
+  laid out and viewed, 283 MB after the drop; what stays is the allocators' (131 pymalloc
+  arenas with 30 MB of blocks in them, 104 MB held by malloc with 29 MB in use), not the
+  document's (tracemalloc: 16.5 MB left, the font index).
+- `Engine.of(runner, timeout, document)` makes a layout engine of a pool and remembers it
+  for the document; `Engine.task` runs any layout task there. `layout.opened_layout` (was
+  `check_worker._opened`).
+- `tools/tracked_report_bench.py --views` (a live view per committed version) and `--close`
+  (the workers' memory after the document is closed).
+
 ## 0.1.126 -- unreleased
 
 Round 58 (R132, R133): a long report with many tracked changes and comments, several writers

@@ -3,6 +3,7 @@ each call waits, works and holds the document, and how the process's memory grow
 
     python tools/tracked_report_bench.py out.json [--minutes 30] [--writers 12] [--reviewers 2]
         [--doc report.docx] [--workers 2] [--think 0.5] [--edits N] [--stop-mb 4096]
+        [--views] [--view-pages 3] [--close]
 
 The document is ``tools/tracked_report.py``'s made-up report (made here unless ``--doc``
 names one), opened with tracking on.  Each writer edits its own chapters, one call at a time,
@@ -14,6 +15,11 @@ with a pause of up to ``2 * think`` seconds between calls, in turn:
 
 Each reviewer alternates a whole-document ``describe`` and a ``check`` of one chapter.  The
 run ends after ``--minutes`` or ``--edits`` changing calls, whichever comes first.
+
+``--views``: an application's live view beside them (:mod:`docx_agent.liveview`): for each
+version committed, ``view`` since the last token and ``page_svg`` of up to ``--view-pages``
+of the pages it changed.  ``--close``: the document closed at the end, and the workers'
+memory sampled every 0.1 s for 3 s after (``after_close``).
 
 Per call: ``wall`` (the dispatch), ``cpu`` (this thread's), and the document lock's ``wait``
 (seconds spent taking it) and ``hold`` (seconds it was held) as measured here around
@@ -184,6 +190,9 @@ def main() -> None:
     ap.add_argument("--sample", type=float, default=10.0)
     ap.add_argument("--stop-mb", type=float, default=4096.0)
     ap.add_argument("--seed", type=int, default=1)
+    ap.add_argument("--views", action="store_true", help="a live view call per committed version")
+    ap.add_argument("--view-pages", type=int, default=3)
+    ap.add_argument("--close", action="store_true", help="close the document at the end; sample the workers")
     args = ap.parse_args()
 
     from ooxml_edit.tools import Toolbox
@@ -264,7 +273,7 @@ def main() -> None:
                 # Memory by version: what a run's growth is measured by.
                 memory = sample(t0)
                 with lock:
-                    out["by_edit"].append({"edits": count, **memory})
+                    out["by_edit"].append({"edits": count, "version": entry.version, **memory})
 
         def done() -> bool:
             return stop.is_set() or time.perf_counter() > deadline
@@ -334,9 +343,34 @@ def main() -> None:
                         calls.append({"who": f"r{k}", "kind": "read", "ok": False, "error": repr(error)[:300]})
                 turn += 1
 
+        def viewer() -> None:
+            from docx_agent.liveview import page_svg, view
+
+            token, seen = None, None
+            while not done():
+                if entry.version == seen:
+                    stop.wait(0.2)
+                    continue
+                c, w = time.thread_time(), time.perf_counter()
+                try:
+                    shown = view(session, doc, since=token)
+                    for number in shown.changed[:args.view_pages]:
+                        page_svg(session, doc, number, shown.token)
+                    token, seen = shown.token, shown.version
+                    row = {"who": "v", "kind": "view", "at": round(w - t0, 2),
+                           "wall": round(time.perf_counter() - w, 3), "cpu": round(time.thread_time() - c, 3),
+                           "wait": 0.0, "hold": 0.0, "ok": True, "version": shown.version,
+                           "pages": shown.page_count, "changed": len(shown.changed)}
+                except Exception as error:  # noqa: BLE001
+                    seen = entry.version
+                    row = {"who": "v", "kind": "view", "ok": False, "error": repr(error)[:300]}
+                with lock:
+                    calls.append(row)
+
         c0 = time.process_time()
         threads = ([threading.Thread(target=writer, args=(w,)) for w in range(args.writers)]
-                   + [threading.Thread(target=reviewer, args=(k,)) for k in range(args.reviewers)])
+                   + [threading.Thread(target=reviewer, args=(k,)) for k in range(args.reviewers)]
+                   + ([threading.Thread(target=viewer)] if args.views else []))
         for t in threads:
             t.start()
         for t in threads:
@@ -347,6 +381,15 @@ def main() -> None:
         time.sleep(0.1)
         out["final"] = {"rss_mb": _memory(pid).get("rss"), "pss_mb": _memory(pid).get("pss"),
                         "workers_rss_mb": round(sum(_memory(k).get("rss") or 0 for k in _children(pid)), 1)}
+        if args.close:
+            closed = time.perf_counter()
+            session.close(doc)
+            after: list = []
+            while time.perf_counter() - closed < 3.0:
+                after.append({"t": round(time.perf_counter() - closed, 2), "rss_mb": _memory(pid).get("rss"),
+                              "workers_rss_mb": [_memory(k).get("rss") for k in _children(pid)]})
+                time.sleep(0.1)
+            out["after_close"] = after
 
     kinds: dict[str, list] = {}
     for row in calls:

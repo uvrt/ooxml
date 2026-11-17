@@ -5,6 +5,11 @@ docx2svg has not been released to PyPI. Each version that reaches `main` is tagg
 snapshot commit; the development history before it is summarised here.
 [`ROADMAP.md`](ROADMAP.md) records every measurement in detail.
 
+## 0.13.1 -- unreleased
+
+- `MeasureStore.forget(lineage)`: drop what one lineage measured -- docx-agent's layout workers
+  let go of a closed document's measurements with it (round 58).
+
 ## 0.13.0 -- unreleased
 
 - **A table style's regions drawn as Word draws them** (round 58, measured in Word 16.106 for

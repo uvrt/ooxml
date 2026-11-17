@@ -1329,6 +1329,11 @@ doc.render_svg(pages=diff.changed)     # or render_png; ids on every paragraph g
   `relayout.drawing`, pages equal in the layout not drawn to tell), one page of a token's
   version as SVG, pictures by name, outlines in one glyph set. `view` lets the document's
   lock go to wait for a layout in progress (round 34's rule), `page_svg` takes none.
+  Round 58 (Q2, 0.1.127): both run where the document's layouts are held -- the worker
+  of the toolbox that laid it out (`view_bytes`, `page_bytes`), the versions a view was
+  given kept there with the lineage's newest layout -- and this process keeps per token only
+  the version's bytes and pages; a closed document's layouts leave the workers at once
+  (ooxml-edit's `broadcast`, `layout.drop_lineage`).
 - **Round 36 (R29, R30, R34):** keeps measured in Word (made-up probe): a lead-in kept
   with the next goes with the table's first row; a table on one page kept together and
   with the next goes whole with the line after; a last row kept alone takes only itself;
