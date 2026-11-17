@@ -7,7 +7,7 @@
 //! pure function of a version to what it names, or to a refusal carrying the ids that
 //! would do.
 //!
-//! Owns: the syntax ([`syntax`]), the resolution ([`resolve`]) and [`AddressError`], the
+//! Owns: the syntax ([`syntax`]), the resolution ([`mod@resolve`]) and [`AddressError`], the
 //! refusal every tool taking an address gives in the same words.
 //!
 //! Must not: change the document, read Markdown records, or follow renamed ids (the Rust

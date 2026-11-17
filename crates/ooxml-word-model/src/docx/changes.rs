@@ -3,7 +3,7 @@
 //! one time, a move's two ends, the marks between paragraphs, a table's structure edits
 //! each on its own, a grid change with its table's change. Each group lists its records.
 //!
-//! Elements are found by their place in their part ([`Arena`], every element of a part in
+//! Elements are found by their place in their part (an arena: every element of a part in
 //! document order with its parent), as lxml's walk finds them: `mc:Fallback` content
 //! included, as docx-agent's `iter` includes it.
 //!

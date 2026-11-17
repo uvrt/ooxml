@@ -289,19 +289,19 @@ fn walk(element: &Element, path: &mut Vec<u32>, tables: &mut Vec<Path>, out: &mu
         } else {
             None
         };
-        let here: Path = path.clone().into_boxed_slice();
         if let Some(kind) = kind {
+            let here: Path = path.clone().into_boxed_slice();
             out.push(Found {
                 element: Arc::clone(child),
                 path: here.clone(),
                 kind,
                 owner: if kind == Kind::Tr { tables.last().cloned() } else { None },
             });
+            if kind == Kind::Tbl {
+                tables.push(here);
+            }
         }
         let table = kind == Some(Kind::Tbl);
-        if table {
-            tables.push(here);
-        }
         walk(child, path, tables, out);
         if table {
             tables.pop();

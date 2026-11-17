@@ -3,7 +3,7 @@
 //! (`p:A@5`, `p:A@4:11`, `p:A@3..p:B@8`), a cell or row below a table (`t:X/c1,2`,
 //! `t:X/r1`), and the refusals of a malformed one, worded as docx-agent words them.
 //!
-//! Must not: look at a document; whether an address names anything is [`super::resolve`]'s.
+//! Must not: look at a document; whether an address names anything is [`mod@super::resolve`]'s.
 
 use super::AddressError;
 use ooxml_base::pyfmt::repr_str;
