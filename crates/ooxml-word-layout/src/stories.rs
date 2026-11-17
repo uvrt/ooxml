@@ -8,7 +8,7 @@
 //! text wraps around, tables until L3b, list labels the model does not count in a
 //! story): a story holding any of them is reported in [`StoryTable::unsupported`].
 
-use crate::flow::{FlowBuilder, FlowContext, FlowItem, FlowState, Labels};
+use crate::flow::{FlowContext, FlowItem, FlowMaker, FlowState, Labels};
 use crate::px::Px;
 use crate::sections::{Sections, StoryKind};
 use crate::vertical::{keeps_space_before_at_page_top, page_top_gap, paragraph_gap};
@@ -214,7 +214,7 @@ impl StoryTable {
                     tables: cx.tables,
                     note_runs: &note_runs,
                 };
-                let flow = FlowBuilder::new(&fcx, model, state).build();
+                let flow = FlowMaker::new(&fcx, model, state).build();
                 let found = stack_height(&flow.items, mode15);
                 memo.insert(key, found);
                 found

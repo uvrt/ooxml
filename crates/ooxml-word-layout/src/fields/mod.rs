@@ -282,7 +282,7 @@ type Substituted = (Arc<Paragraph>, Vec<(usize, String)>, Arc<Paragraph>);
 
 /// Paragraphs with their fields' values in, kept between versions: the same paragraph
 /// (the model shares an unchanged one's `Arc`) with the same values is the same
-/// substituted paragraph, so its measure is kept by identity too. Each entry holds its
+/// substituted paragraph, so its measure is kept by its `Arc` too. Each entry holds its
 /// original, so an address names one paragraph for as long as it is kept.
 #[derive(Debug, Default)]
 pub struct Substitutions {

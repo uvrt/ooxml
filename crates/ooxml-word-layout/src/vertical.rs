@@ -175,7 +175,7 @@ struct ItemExtent {
 }
 
 /// One line's extent over its text items and its label's (`line_extent`): the largest
-/// ascent and the largest descent, maxed separately; a label by its ascent only.
+/// ascent and the largest descent, taken separately; a label by its ascent only.
 pub fn line_extent(text: &[HeightItem], label: &[HeightItem], faces: &dyn Faces) -> Option<Extent> {
     let mut extents: Vec<ItemExtent> = Vec::new();
     let tagged = text.iter().map(|i| (i, false)).chain(label.iter().map(|i| (i, true)));

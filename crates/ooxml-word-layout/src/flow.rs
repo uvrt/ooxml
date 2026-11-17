@@ -5,7 +5,7 @@
 //! measured it ([`TableItem`]); and where the layout must stop ([`StopItem`]) --
 //! docx2svg's `paginate.flow` for what L3a lays out.
 //!
-//! Measures are kept per block by identity ([`MeasureCache`]: the model shares an
+//! Measures are kept per block by `Arc` ([`MeasureCache`]: the model shares an
 //! unchanged block's `Arc` between versions) and by content (the text engine's
 //! [`Measurer`]), so a version that changed one block measures one block.
 //!
@@ -164,7 +164,7 @@ struct Kept {
     measured: Result<Arc<MeasuredParagraph>, Unmeasured>,
 }
 
-/// Measures kept per block by identity: the model shares an unchanged block's `Arc`
+/// Measures kept per block by `Arc`: the model shares an unchanged block's `Arc`
 /// between versions, and each entry holds its block, so an address names one block for
 /// as long as it is kept. Valid for one set of parts (styles, numbering, settings, theme)
 /// and faces: [`MeasureCache::clear`] when they change.
@@ -273,7 +273,7 @@ pub struct FlowContext<'a> {
     pub note_runs: &'a HashMap<usize, Vec<bool>>,
 }
 
-/// What the flow builder keeps between versions: the measures by block and by content.
+/// What the flow maker keeps between versions: the measures by block and by content.
 pub struct FlowState {
     /// Measures by block.
     pub cache: MeasureCache,
@@ -404,7 +404,7 @@ impl FlowState {
 }
 
 /// Builds one version's flow.
-pub struct FlowBuilder<'a, 'm> {
+pub struct FlowMaker<'a, 'm> {
     cx: &'a FlowContext<'a>,
     model: &'m mut Model,
     state: &'m mut FlowState,
@@ -413,11 +413,11 @@ pub struct FlowBuilder<'a, 'm> {
     resolved: HashMap<usize, Arc<Props>>,
 }
 
-impl<'a, 'm> FlowBuilder<'a, 'm> {
+impl<'a, 'm> FlowMaker<'a, 'm> {
     /// A builder of `cx.document`'s flow.
-    pub fn new(cx: &'a FlowContext<'a>, model: &'m mut Model, state: &'m mut FlowState) -> FlowBuilder<'a, 'm> {
+    pub fn new(cx: &'a FlowContext<'a>, model: &'m mut Model, state: &'m mut FlowState) -> FlowMaker<'a, 'm> {
         let (paragraphs, firsts) = body_paragraphs(cx.blocks);
-        FlowBuilder {
+        FlowMaker {
             cx,
             model,
             state,
@@ -512,7 +512,7 @@ impl<'a, 'm> FlowBuilder<'a, 'm> {
         next.saturating_sub(first)
     }
 
-    /// A table's flow, kept by identity while its section, the paragraph before it and
+    /// A table's flow, kept by its `Arc` while its section, the paragraph before it and
     /// its cells' labels are the same.
     fn table_flow(
         &mut self,

@@ -3,7 +3,7 @@
 //! (`python/docx2svg/tools/layout_differential.py`) box by box: the flow's paragraphs
 //! (lines broken, each line's height, spacing, borders, keeps), the pages' starts and
 //! numbers, and every body line's place (top and pitch). What L3a does not lay out yet
-//! (tables, placeholders, obstacles) cuts the comparison off at the first such item.
+//! (tables, stand-in boxes, obstacles) cuts the comparison off at the first such item.
 //!
 //! Must not: change what is compared to make it pass.
 
@@ -54,7 +54,7 @@ pub struct Outcome {
     pub documents: usize,
     /// Documents compared to their end (nothing cut off).
     pub whole: usize,
-    /// Documents cut off at a table, placeholder or obstacle, and why.
+    /// Documents cut off at a table, stand-in box or obstacle, and why.
     pub cut: Vec<(String, String)>,
     /// Flow paragraphs compared.
     pub paragraphs: usize,
@@ -188,7 +188,7 @@ fn para_fields(p: &ParaItem) -> Vec<(&'static str, Value)> {
 }
 
 /// The first flow item the comparison stops before: docx2svg's first that is not a
-/// paragraph it laid out (a table, placeholder, obstacle, or a paragraph laid out by an
+/// paragraph it laid out (a table, stand-in box, obstacle, or a paragraph laid out by an
 /// approximate rule, beside notes, drawings or a drop cap), and why.
 fn cutoff(flow: &[Value]) -> (usize, Option<String>) {
     for (k, item) in flow.iter().enumerate() {

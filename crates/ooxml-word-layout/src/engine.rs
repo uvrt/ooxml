@@ -6,7 +6,7 @@
 
 use crate::faces::Faces;
 use crate::fields::{cross_references, field_values, page_fields, substitute, Computed, FieldValues, Substitutions};
-use crate::flow::{Flow, FlowBuilder, FlowContext, FlowState, Labels};
+use crate::flow::{Flow, FlowContext, FlowMaker, FlowState, Labels};
 use crate::incremental::{diff, repaginate, RelayoutStats};
 use crate::paginate::{HyphenMove, PageContext, Pagination, Paginator, Resume};
 use crate::sections::Sections;
@@ -173,7 +173,7 @@ impl WordLayout {
             tables: self.tables.as_ref(),
             note_runs,
         };
-        FlowBuilder::new(&cx, model, &mut self.body).build()
+        FlowMaker::new(&cx, model, &mut self.body).build()
     }
 
     /// One pass: the flow of `version` and its pages, laid out again from `old` (the same

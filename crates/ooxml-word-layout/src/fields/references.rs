@@ -377,7 +377,7 @@ fn reference_runs(paragraphs: &[Arc<Paragraph>], run: &Run, marks: &Marks) -> Re
 }
 
 /// Paragraphs with their `SEQ` and `REF` fields computed, kept between versions: the same
-/// paragraph computed alike is the same `Arc`, so its measure is kept by identity.
+/// paragraph computed alike is the same `Arc`, so its measure is kept by its `Arc`.
 #[derive(Debug, Default)]
 pub struct Computed {
     kept: HashMap<usize, (Arc<Paragraph>, Arc<Paragraph>)>,
