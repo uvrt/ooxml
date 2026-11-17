@@ -423,9 +423,14 @@ fn a_read_says_what_it_does_not_give_as_docx_agent_does() {
     let doc = format!(
         r#"<w:document {W} xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><w:body><w:p><w:r><w:t>a</w:t></w:r></w:p>{chart}</w:body></w:document>"#
     );
-    s.update(&d, vec![put("word/document.xml", &doc)], &CallContext::default()).unwrap();
+    s.update(&d, vec![put("word/document.xml", &doc)], &CallContext::default())
+        .unwrap();
     let read = s.call("word_read", json!({"doc": "d1"}), &CallContext::default());
     assert_eq!(read.unported(), ["chart or SmartArt summary"]);
-    let first = s.call("word_read", json!({"doc": "d1", "range": "p@body/0"}), &CallContext::default());
+    let first = s.call(
+        "word_read",
+        json!({"doc": "d1", "range": "p@body/0"}),
+        &CallContext::default(),
+    );
     assert!(first.unported().is_empty());
 }

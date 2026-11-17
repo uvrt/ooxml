@@ -117,11 +117,7 @@ pub fn word_read(args: &WordRead, version: &Version<'_>, cancel: &dyn Cancel) ->
 fn unported(docx: &ooxml_word_model::docx::Docx, markdown: &str, view: ViewName) -> Vec<String> {
     let shared = ooxml_word_model::markdown::read::Shared::of(docx);
     let mut out = Vec::new();
-    if shared
-        .graphics()
-        .iter()
-        .any(|id| markdown.contains(&format!(" {id} ")))
-    {
+    if shared.graphics().iter().any(|id| markdown.contains(&format!(" {id} "))) {
         out.push(crate::GRAPHICS.to_owned());
     }
     if view == ViewName::Final && shared.cell_ends() {
