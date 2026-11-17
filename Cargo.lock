@@ -769,10 +769,17 @@ name = "ooxml-word-pages"
 version = "0.1.0"
 dependencies = [
  "ooxml-base",
+ "ooxml-chart",
+ "ooxml-colour",
  "ooxml-derive",
+ "ooxml-drawingml",
  "ooxml-fonts",
  "ooxml-metafile",
+ "ooxml-numfmt",
  "ooxml-opc",
+ "ooxml-render",
+ "ooxml-scene",
+ "ooxml-schema",
  "ooxml-word-layout",
  "ooxml-word-model",
  "ooxml-xml",

@@ -14,8 +14,9 @@ reasons: ``ooxml_word_pages::support``), or options it does not take (a measurer
 caller's own, ``text="outlines"``), is not laid out here: :meth:`Engine.lay_out` answers
 ``None`` and counts the reason (:func:`fallbacks`), and the caller lays it out with
 docx2svg's Python layout, frozen as that fallback until phase P4 deletes it.  A page whose
-SVG the Rust paint does not draw as docx2svg does (a drawing for the painters of phase P3,
-line numbers...) is the same: :meth:`RustLayout.page_svg` answers ``None`` for it, counted.
+SVG the Rust paint does not draw as docx2svg does (what a page's paint lists as not drawn)
+is the same: :meth:`RustLayout.page_svg` answers ``None`` for it, counted.  Pictures, shapes,
+groups and charts -- floating or inline -- are painted in Rust (lane L4c).
 
 Its ``warnings``, ``approximations``, ``coverage`` and ``relaid_cause`` are docx2svg's, in
 docx2svg's order: the layout's own computed in Rust (``ooxml_word_pages::warnings``), the
@@ -29,7 +30,7 @@ import threading
 from collections import Counter, OrderedDict
 from fractions import Fraction
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Sequence
+from typing import TYPE_CHECKING, Any, Sequence
 
 if TYPE_CHECKING:
     from .coverage import Coverage
@@ -282,11 +283,10 @@ class RustLayout:
                 self._painted.popitem(last=False)
         return made
 
-    def page_svg(self, index: int, *, painter: Callable | None = None, width: int | None = None,
-                 height: int | None = None) -> str | None:
-        """Page ``index`` (0-based) as SVG, byte for byte docx2svg's; ``None`` (counted) where
-        the Rust paint does not draw it as docx2svg does yet."""
-        svg, missing = self.laid.svg(index, painter)
+    def page_svg(self, index: int, *, width: int | None = None, height: int | None = None) -> str | None:
+        """Page ``index`` (0-based) as SVG, byte for byte docx2svg's, its drawings painted in
+        Rust; ``None`` (counted) where the Rust paint does not draw it as docx2svg does yet."""
+        svg, missing = self.laid.svg(index)
         if missing:
             for reason in dict.fromkeys(missing):
                 count_fallback(reason)

@@ -34,9 +34,10 @@ pub const TEXT_BESIDE_DRAWING: &str = "text beside a drawing";
 /// A drawing holding a text box: its lines are its painter's (until P3), so neither its
 /// facts nor its paint are the layout's.
 pub const TEXT_BOX: &str = "text box";
-/// A floating drawing, or an inline one that is not a picture: what docx2svg says of it
-/// (`drawing-*` warnings) is its painter's, which runs with the paint (phase P3).
-pub const DRAWING: &str = "drawing";
+/// SmartArt (`dgm:relIds`): its cached drawing is not painted in Rust yet.
+pub const SMARTART: &str = "SmartArt";
+/// A VML shape or text path (a watermark): not painted in Rust yet.
+pub const VML_SHAPE: &str = "VML shape";
 /// A `STYLEREF` field.
 pub const STYLEREF: &str = "STYLEREF field";
 /// Footnotes referenced in a section of several columns.
@@ -79,7 +80,8 @@ pub const REASONS: &[&str] = &[
     DRAWING_IN_CELL,
     TEXT_BESIDE_DRAWING,
     TEXT_BOX,
-    DRAWING,
+    SMARTART,
+    VML_SHAPE,
     STYLEREF,
     FOOTNOTES_IN_COLUMNS,
     FOOTNOTES_BENEATH_TEXT,
@@ -189,6 +191,16 @@ fn text_box(graphic: &Graphic) -> bool {
     !graphic.text.is_empty() || graphic.children.iter().any(|g| text_box(g))
 }
 
+/// What in a drawing (or a member of its group) the painter does not paint yet.
+fn not_painted(graphic: &Graphic) -> Option<&'static str> {
+    match &*graphic.kind {
+        "diagram" => Some(SMARTART),
+        "textpath" => Some(VML_SHAPE),
+        "shape" if graphic.source.is_none() => Some(VML_SHAPE),
+        _ => graphic.children.iter().find_map(|g| not_painted(g)),
+    }
+}
+
 struct Scan {
     multi_column: bool,
     found: Option<Fallback>,
@@ -266,12 +278,17 @@ impl Scan {
                 self.found = Some(fallback(TEXT_BOX, &paragraph.path));
                 return;
             }
-            let graphic = run
-                .drawings
+            let unpainted = run
+                .anchors
                 .iter()
-                .any(|d| matches!(d, InlineObject::Graphic(g) if &*g.kind != "picture"));
-            if !in_cell && (graphic || !run.anchors.is_empty()) {
-                self.found = Some(fallback(DRAWING, &paragraph.path));
+                .filter_map(|a| a.graphic.as_deref())
+                .chain(run.drawings.iter().filter_map(|d| match d {
+                    InlineObject::Graphic(g) => Some(&**g),
+                    _ => None,
+                }))
+                .find_map(not_painted);
+            if let Some(reason) = unpainted {
+                self.found = Some(fallback(reason, &paragraph.path));
                 return;
             }
             if in_cell {

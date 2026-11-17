@@ -4,6 +4,7 @@
     python tools/tracked_report.py out.docx [--chapters 44] [--seed 1]
     python tools/tracked_report.py out.docx --accepted     # the same text, no revisions or comments
     python tools/tracked_report.py out.docx --fields       # with a table of contents and page references
+    python tools/tracked_report.py out.docx --figures      # with charts, pictures and shapes
 
 Each chapter: a level-1 heading, six sections (a level-2 heading, six body paragraphs of about
 80 words, a table of ten rows by four columns), then an "End of chapter" paragraph.  Every
@@ -14,7 +15,10 @@ a comment on one paragraph of each section.  With ``--accepted`` the same words 
 revision accepted and no comments.  With ``--fields``: a table of contents (a ``TOC`` field, its
 result not yet made) after the title, a bookmark on each chapter's heading, and in each
 chapter's end paragraph a ``PAGEREF`` to the next chapter's heading -- the fields a
-``word_fields`` update lays the document out for.  Words, authors and dates are made up; the output is the
+``word_fields`` update lays the document out for.  With ``--figures``: in each chapter a bar
+chart (its own chart part) after the second section's table, a picture after the fourth's, and
+a coloured rectangle floating behind the chapter's heading, each with a caption where it is
+inline -- the drawings a page's painter draws.  Words, authors and dates are made up; the output is the
 same for the same arguments.  About 340 pages at the default 44 chapters (A4, Calibri 11).
 """
 
@@ -30,7 +34,10 @@ W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 W14 = "http://schemas.microsoft.com/office/word/2010/wordml"
 MC = "http://schemas.openxmlformats.org/markup-compatibility/2006"
-NS = f'xmlns:w="{W}" xmlns:r="{R}" xmlns:w14="{W14}" xmlns:mc="{MC}" mc:Ignorable="w14"'
+WP = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+A = "http://schemas.openxmlformats.org/drawingml/2006/main"
+NS = (f'xmlns:w="{W}" xmlns:r="{R}" xmlns:w14="{W14}" xmlns:mc="{MC}" xmlns:wp="{WP}" xmlns:a="{A}" '
+      'mc:Ignorable="w14"')
 DECL = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n'
 REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/"
 WML = "application/vnd.openxmlformats-officedocument.wordprocessingml"
@@ -89,6 +96,8 @@ class Report:
         self.comments: list[str] = []
         self.counts = {"insertions": 0, "deletions": 0, "formatting": 0, "rows": 0, "comments": 0,
                        "paragraphs": 0, "tables": 0}
+        #: With figures: each figure's part name, its relationship, content type and bytes.
+        self.figures: list[tuple[str, str, str, bytes]] = []
 
     # -- runs carrying revisions --------------------------------------------------------------
     def _tracked_runs(self, text_words: int, props: str = "", rate: float = 1.0) -> str:
@@ -209,7 +218,12 @@ class Report:
             rows.append(f"<w:tr>{trpr}{''.join(cells)}</w:tr>")
         return f"<w:tbl>{tblpr}<w:tblGrid>{grid}</w:tblGrid>{''.join(rows)}</w:tbl>"
 
-    def body(self, chapters: int, fields: bool = False) -> str:
+    def _figure(self, part: str, kind: str, data: bytes) -> str:
+        rid = f"rIdF{len(self.figures) + 1}"
+        self.figures.append((part, rid, kind, data))
+        return rid
+
+    def body(self, chapters: int, fields: bool = False, figures: bool = False) -> str:
         rng = self.rng
         out: list[str] = [self._paragraph(_run("A made-up report"), "Title")]
         if fields:
@@ -219,6 +233,8 @@ class Report:
             if fields:
                 heading = (f'<w:bookmarkStart w:id="{9000 + ch}" w:name="chapter{ch + 1}"/>{heading}'
                            f'<w:bookmarkEnd w:id="{9000 + ch}"/>')
+            if figures:
+                heading += _shape_run(3 * ch + 1, rng.choice(("DEEAF6", "E2EFDA", "FFF2CC")))
             out.append(self._paragraph(heading, "Heading1"))
             for s in range(SECTIONS):
                 out.append(self._paragraph(_run(f"Section {ch + 1}.{s + 1} {_words(rng, 3).title()}"), "Heading2"))
@@ -229,11 +245,132 @@ class Report:
                     out.append(self._paragraph(inner, changed=rng.random() < 0.05))
                 out.append(self._paragraph(_run(f"Table {ch + 1}.{s + 1} {_words(rng, 3)}"), "Caption"))
                 out.append(self._table(ch, s))
+                if figures and s == 1:
+                    title = f"Figure {ch + 1}.1 {_words(rng, 2).title()}"
+                    rid = self._figure(f"word/charts/chart{ch + 1}.xml", CHART_TYPE,
+                                       _chart_part(rng, title).encode())
+                    out.append(self._paragraph(_chart_run(rid, 3 * ch + 2)))
+                    out.append(self._paragraph(_run(title), "Caption"))
+                if figures and s == 3:
+                    rgb = (rng.randint(40, 160), rng.randint(60, 160), rng.randint(90, 200))
+                    rid = self._figure(f"word/media/image{ch + 1}.png", "image/png", _png(90, 60, rgb))
+                    out.append(self._paragraph(_picture_run(rid, 3 * ch + 3)))
+                    out.append(self._paragraph(_run(f"Figure {ch + 1}.2 {_words(rng, 2).title()}"), "Caption"))
             end = _run(f"End of chapter {ch + 1}.")
             if fields and ch + 1 < chapters:
                 end += _run(" The next chapter starts on page ") + _field(f" PAGEREF chapter{ch + 2} \\h ", "1") + _run(".")
             out.append(self._paragraph(end))
         return "".join(out)
+
+
+#: A figure's extent, EMU (6 in by 3 in for a chart, 3 in by 2 in for a picture).
+CHART_EXTENT = (5486400, 2743200)
+PICTURE_EXTENT = (2743200, 1828800)
+CHART_TYPE = "application/vnd.openxmlformats-officedocument.drawingml.chart+xml"
+WPS = "http://schemas.microsoft.com/office/word/2010/wordprocessingShape"
+
+
+def _png(width: int, height: int, rgb: tuple[int, int, int]) -> bytes:
+    """A small PNG of one colour, a lighter band across its middle."""
+    import struct
+    import zlib
+
+    rows = []
+    for y in range(height):
+        shade = rgb if abs(y - height // 2) > height // 6 else tuple(min(255, c + 80) for c in rgb)
+        rows.append(b"\x00" + bytes(shade) * width)
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+
+    header = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", zlib.compress(b"".join(rows)))
+            + chunk(b"IEND", b""))
+
+
+def _chart_part(rng: random.Random, title: str) -> str:
+    """A clustered bar chart of three series over four categories, its values cached."""
+    C = "http://schemas.openxmlformats.org/drawingml/2006/chart"
+    cats = ["North", "South", "East", "West"]
+
+    def series(k: int) -> str:
+        values = "".join(f'<c:pt idx="{i}"><c:v>{rng.randint(10, 90)}</c:v></c:pt>' for i in range(len(cats)))
+        names = "".join(f'<c:pt idx="{i}"><c:v>{c}</c:v></c:pt>' for i, c in enumerate(cats))
+        return (f'<c:ser><c:idx val="{k}"/><c:order val="{k}"/><c:tx><c:v>Series {k + 1}</c:v></c:tx>'
+                f'<c:cat><c:strLit><c:ptCount val="{len(cats)}"/>{names}</c:strLit></c:cat>'
+                f'<c:val><c:numLit><c:formatCode>General</c:formatCode><c:ptCount val="{len(cats)}"/>{values}'
+                '</c:numLit></c:val></c:ser>')
+
+    return (f'{DECL}<c:chartSpace xmlns:c="{C}" xmlns:a="{A}" xmlns:r="{R}"><c:chart>'
+            f'<c:title><c:tx><c:rich><a:bodyPr/><a:p><a:r><a:t>{escape(title)}</a:t></a:r></a:p></c:rich></c:tx>'
+            '<c:overlay val="0"/></c:title><c:autoTitleDeleted val="0"/><c:plotArea><c:layout/>'
+            '<c:barChart><c:barDir val="col"/><c:grouping val="clustered"/><c:varyColors val="0"/>'
+            + "".join(series(k) for k in range(3))
+            + '<c:gapWidth val="150"/><c:axId val="1"/><c:axId val="2"/></c:barChart>'
+            '<c:catAx><c:axId val="1"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/>'
+            '<c:axPos val="b"/><c:crossAx val="2"/></c:catAx>'
+            '<c:valAx><c:axId val="2"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/>'
+            '<c:axPos val="l"/><c:majorGridlines/><c:crossAx val="1"/></c:valAx></c:plotArea>'
+            '<c:legend><c:legendPos val="r"/><c:overlay val="0"/></c:legend><c:plotVisOnly val="1"/></c:chart>'
+            '</c:chartSpace>')
+
+
+def _theme() -> str:
+    """A theme with Office's colours and faces, which the charts' series and text take."""
+    colours = (("dk1", "000000"), ("lt1", "FFFFFF"), ("dk2", "0E2841"), ("lt2", "E8E8E8"), ("accent1", "156082"),
+               ("accent2", "E97132"), ("accent3", "196B24"), ("accent4", "0F9ED5"), ("accent5", "A02B93"),
+               ("accent6", "4EA72E"), ("hlink", "467886"), ("folHlink", "96607D"))
+    scheme = "".join(f'<a:{k}><a:srgbClr val="{v}"/></a:{k}>' for k, v in colours)
+    fonts = ('<a:majorFont><a:latin typeface="Calibri Light"/><a:ea typeface=""/><a:cs typeface=""/></a:majorFont>'
+             '<a:minorFont><a:latin typeface="Calibri"/><a:ea typeface=""/><a:cs typeface=""/></a:minorFont>')
+    fill = '<a:solidFill><a:schemeClr val="phClr"/></a:solidFill>'
+    line = '<a:ln w="6350"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln>'
+    return (f'{DECL}<a:theme xmlns:a="{A}" name="Office Theme"><a:themeElements>'
+            f'<a:clrScheme name="Office">{scheme}</a:clrScheme><a:fontScheme name="Office">{fonts}</a:fontScheme>'
+            f'<a:fmtScheme name="Office"><a:fillStyleLst>{fill * 3}</a:fillStyleLst><a:lnStyleLst>{line * 3}'
+            '</a:lnStyleLst><a:effectStyleLst>' + '<a:effectStyle><a:effectLst/></a:effectStyle>' * 3
+            + f'</a:effectStyleLst><a:bgFillStyleLst>{fill * 3}</a:bgFillStyleLst></a:fmtScheme>'
+            '</a:themeElements></a:theme>')
+
+
+def _inline(rid: str, extent: tuple[int, int], number: int, graphic: str) -> str:
+    cx, cy = extent
+    return (f'<w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="{cx}" cy="{cy}"/>'
+            f'<wp:effectExtent l="0" t="0" r="0" b="0"/><wp:docPr id="{number}" name="Figure {number}"/>'
+            f'<a:graphic>{graphic}</a:graphic></wp:inline></w:drawing></w:r>')
+
+
+def _chart_run(rid: str, number: int) -> str:
+    C = "http://schemas.openxmlformats.org/drawingml/2006/chart"
+    return _inline(rid, CHART_EXTENT, number, f'<a:graphicData uri="{C}"><c:chart xmlns:c="{C}" r:id="{rid}"/>'
+                   '</a:graphicData>')
+
+
+def _picture_run(rid: str, number: int) -> str:
+    PIC = "http://schemas.openxmlformats.org/drawingml/2006/picture"
+    cx, cy = PICTURE_EXTENT
+    return _inline(rid, PICTURE_EXTENT, number, (
+        f'<a:graphicData uri="{PIC}"><pic:pic xmlns:pic="{PIC}"><pic:nvPicPr><pic:cNvPr id="{number}" '
+        f'name="picture{number}.png"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="{rid}"/>'
+        '<a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/>'
+        f'<a:ext cx="{cx}" cy="{cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr>'
+        '</pic:pic></a:graphicData>'))
+
+
+def _shape_run(number: int, colour: str) -> str:
+    """A rounded rectangle floating behind its paragraph, filled and outlined, no text."""
+    cx, cy = 5486400, 457200
+    return (f'<w:r><w:drawing><wp:anchor distT="0" distB="0" distL="114300" distR="114300" simplePos="0" '
+            f'relativeHeight="{251658240 + number}" behindDoc="1" locked="0" layoutInCell="1" allowOverlap="1">'
+            '<wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset>'
+            '</wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>-45720</wp:posOffset>'
+            f'</wp:positionV><wp:extent cx="{cx}" cy="{cy}"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:wrapNone/>'
+            f'<wp:docPr id="{number}" name="Band {number}"/><a:graphic><a:graphicData uri="{WPS}">'
+            f'<wps:wsp xmlns:wps="{WPS}"><wps:cNvSpPr/><wps:spPr><a:xfrm><a:off x="0" y="0"/>'
+            f'<a:ext cx="{cx}" cy="{cy}"/></a:xfrm><a:prstGeom prst="roundRect"><a:avLst/></a:prstGeom>'
+            f'<a:solidFill><a:srgbClr val="{colour}"/></a:solidFill><a:ln w="12700"><a:solidFill>'
+            '<a:srgbClr val="1F3864"/></a:solidFill></a:ln></wps:spPr><wps:bodyPr/></wps:wsp></a:graphicData>'
+            '</a:graphic></wp:anchor></w:drawing></w:r>')
 
 
 def _field(instruction: str, result: str) -> str:
@@ -287,10 +424,11 @@ def _styles() -> str:
         "</w:styles>")
 
 
-def build(chapters: int = 44, seed: int = 1, accepted: bool = False, fields: bool = False) -> tuple[bytes, dict]:
-    """The report's bytes, and what it holds (revisions, comments, paragraphs, tables)."""
+def build(chapters: int = 44, seed: int = 1, accepted: bool = False, fields: bool = False,
+          figures: bool = False) -> tuple[bytes, dict]:
+    """The report's bytes, and what it holds (revisions, comments, paragraphs, tables, figures)."""
     report = Report(seed, accepted)
-    body = report.body(chapters, fields)
+    body = report.body(chapters, fields, figures)
     section = ('<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" '
                'w:bottom="1440" w:left="1440" w:header="708" w:footer="708" w:gutter="0"/></w:sectPr>')
     types = {"word/document.xml": WML + ".document.main+xml", "word/styles.xml": WML + ".styles+xml",
@@ -309,11 +447,22 @@ def build(chapters: int = 44, seed: int = 1, accepted: bool = False, fields: boo
         types["word/comments.xml"] = WML + ".comments+xml"
         rels.append(("rId3", REL + "comments", "comments.xml"))
         parts["word/comments.xml"] = f"{DECL}<w:comments {NS}>{''.join(report.comments)}</w:comments>"
+    figure_parts: dict[str, bytes] = {}
+    if report.figures:
+        types["word/theme/theme1.xml"] = "application/vnd.openxmlformats-officedocument.theme+xml"
+        rels.append(("rIdT", REL + "theme", "theme/theme1.xml"))
+        figure_parts["word/theme/theme1.xml"] = _theme().encode()
+    for part, rid, kind, data in report.figures:
+        if kind != "image/png":
+            types[part] = kind
+        rels.append((rid, REL + ("chart" if kind == CHART_TYPE else "image"), part.removeprefix("word/")))
+        figure_parts[part] = data
     overrides = "".join(f'<Override PartName="/{part}" ContentType="{kind}"/>' for part, kind in types.items())
     parts["[Content_Types].xml"] = (
         f'{DECL}<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
         '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
-        f'<Default Extension="xml" ContentType="application/xml"/>{overrides}</Types>')
+        + ('<Default Extension="png" ContentType="image/png"/>' if figure_parts else "")
+        + f'<Default Extension="xml" ContentType="application/xml"/>{overrides}</Types>')
     rel_xml = "".join(f'<Relationship Id="{i}" Type="{t}" Target="{target}"/>' for i, t, target in rels)
     pkg = '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
     parts["_rels/.rels"] = (f'{DECL}{pkg}<Relationship Id="rId1" Type="{REL}officeDocument" '
@@ -325,7 +474,9 @@ def build(chapters: int = 44, seed: int = 1, accepted: bool = False, fields: boo
                      "word/styles.xml", "word/settings.xml", "word/comments.xml"):
             if name in parts:
                 archive.writestr(zipfile.ZipInfo(name, date_time=STAMP), parts[name], zipfile.ZIP_DEFLATED)
-    counts = dict(report.counts, revisions=report.ids.revision,
+        for name, data in figure_parts.items():
+            archive.writestr(zipfile.ZipInfo(name, date_time=STAMP), data, zipfile.ZIP_DEFLATED)
+    counts = dict(report.counts, revisions=report.ids.revision, figures=len(report.figures),
                   document_xml_bytes=len(parts["word/document.xml"].encode()))
     return buffer.getvalue(), counts
 
@@ -337,8 +488,9 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--accepted", action="store_true", help="every revision accepted, no comments")
     ap.add_argument("--fields", action="store_true", help="a table of contents and page references")
+    ap.add_argument("--figures", action="store_true", help="charts, pictures and shapes in each chapter")
     args = ap.parse_args()
-    data, counts = build(args.chapters, args.seed, args.accepted, args.fields)
+    data, counts = build(args.chapters, args.seed, args.accepted, args.fields, args.figures)
     with open(args.out, "wb") as handle:
         handle.write(data)
     print({"bytes": len(data), **counts})

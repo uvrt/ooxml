@@ -33,6 +33,11 @@ impl PackagePictures {
     pub fn package(&self) -> &Package {
         &self.package
     }
+
+    /// The main document part's name.
+    pub fn main_part(&self) -> &str {
+        &self.main
+    }
 }
 
 impl Pictures for PackagePictures {
