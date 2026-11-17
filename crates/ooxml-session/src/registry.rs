@@ -85,13 +85,17 @@ impl Registry {
         Self::default()
     }
 
-    /// The tools ported so far: Word's `describe`.
+    /// The tools ported so far: Word's `describe` and `word_read`.
     #[must_use]
     pub fn standard() -> Self {
         let mut registry = Self::empty();
         registry.register(Arc::new(ReadHandler::<ooxml_tools_word::Describe>::new(
             &[DocKind::Docx],
             ooxml_tools_word::describe,
+        )));
+        registry.register(Arc::new(ReadHandler::<ooxml_tools_word::WordRead>::new(
+            &[DocKind::Docx],
+            ooxml_tools_word::word_read,
         )));
         registry
     }

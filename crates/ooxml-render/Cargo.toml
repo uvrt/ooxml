@@ -1,0 +1,16 @@
+[package]
+name = "ooxml-render"
+version = "0.1.0"
+description = "The DrawingML painter: drawable elements (shapes, connectors, pictures, tables, groups, text bodies) onto the scene, under Word's or PowerPoint's drawing rules"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+ooxml-scene.workspace = true
+ooxml-drawingml.workspace = true
+ooxml-fonts.workspace = true
+
+[lints]
+workspace = true

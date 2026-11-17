@@ -380,8 +380,12 @@ dependencies = [
  "ooxml-metafile",
  "ooxml-numfmt",
  "ooxml-opc",
+ "ooxml-render",
+ "ooxml-scene",
  "ooxml-schema",
  "ooxml-text",
+ "ooxml-tools",
+ "ooxml-tools-word",
  "ooxml-word-layout",
  "ooxml-word-model",
  "ooxml-xml",
@@ -412,6 +416,15 @@ dependencies = [
  "ooxml-tools",
  "pyo3",
  "serde_json",
+]
+
+[[package]]
+name = "ooxml-render"
+version = "0.1.0"
+dependencies = [
+ "ooxml-drawingml",
+ "ooxml-fonts",
+ "ooxml-scene",
 ]
 
 [[package]]
@@ -494,6 +507,7 @@ dependencies = [
  "ooxml-base",
  "ooxml-opc",
  "ooxml-tools",
+ "ooxml-word-model",
  "ooxml-xml",
  "ooxml-zip",
  "serde_json",
@@ -532,12 +546,14 @@ dependencies = [
 name = "ooxml-word-model"
 version = "0.1.0"
 dependencies = [
+ "flate2",
  "ooxml-base",
  "ooxml-colour",
  "ooxml-derive",
  "ooxml-opc",
  "ooxml-xml",
  "ooxml-zip",
+ "serde_json",
  "thiserror",
 ]
 

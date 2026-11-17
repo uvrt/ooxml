@@ -243,35 +243,12 @@ impl Model {
                 return (cx.clone(), colours_d);
             }
         }
-        let colours = ThemeColours {
-            scheme: p.theme.as_ref().map(|t| colour_scheme(t.root())).unwrap_or_default(),
-            mapping: p
-                .settings
-                .as_ref()
-                .map(|t| colour_mapping(t.root()))
-                .unwrap_or_default(),
-            active: true,
-        };
-        let styles = p
-            .styles
-            .as_ref()
-            .map(|(_, t)| Arc::new(StyleSheet::read(t.root(), &colours)));
-        let numbering = p
-            .numbering
-            .as_ref()
-            .map(|(_, t)| Numbering::read(t.root(), styles.as_deref(), &colours));
-        let cx = Context {
-            numbering: Arc::new(numbering.unwrap_or_default()),
-            settings: Arc::new(
-                p.settings
-                    .as_ref()
-                    .map(|t| Settings::read(t.root()))
-                    .unwrap_or_default(),
-            ),
-            font_scheme: p.theme.as_ref().and_then(|t| font_scheme(t.root())).map(Arc::new),
-            colours: Arc::new(colours),
-            styles,
-        };
+        let cx = read_context(
+            p.theme.as_ref(),
+            p.settings.as_ref(),
+            p.styles.as_ref().map(|(_, t)| t),
+            p.numbering.as_ref().map(|(_, t)| t),
+        );
         self.resolver.clear();
         self.label_memo.clear();
         self.label_keys.clear();
@@ -563,5 +540,31 @@ impl Model {
     /// A table's resolved formats in `document`.
     pub fn resolve_table(&mut self, document: &WordDocument, table: &Table) -> Arc<ResolvedTable> {
         self.resolver.table(&document.context, table)
+    }
+}
+
+/// What blocks resolve against, read from the theme, settings, styles and numbering parts
+/// (each where the package has it): the one reading of them, for the model's versions and
+/// for any other reader of a version's formatting (`crate::docx`).
+#[must_use]
+pub fn read_context(
+    theme: Option<&Tree>,
+    settings: Option<&Tree>,
+    styles: Option<&Tree>,
+    numbering: Option<&Tree>,
+) -> Context {
+    let colours = ThemeColours {
+        scheme: theme.map(|t| colour_scheme(t.root())).unwrap_or_default(),
+        mapping: settings.map(|t| colour_mapping(t.root())).unwrap_or_default(),
+        active: true,
+    };
+    let styles = styles.map(|t| Arc::new(StyleSheet::read(t.root(), &colours)));
+    let numbering = numbering.map(|t| Numbering::read(t.root(), styles.as_deref(), &colours));
+    Context {
+        numbering: Arc::new(numbering.unwrap_or_default()),
+        settings: Arc::new(settings.map(|t| Settings::read(t.root())).unwrap_or_default()),
+        font_scheme: theme.and_then(|t| font_scheme(t.root())).map(Arc::new),
+        colours: Arc::new(colours),
+        styles,
     }
 }

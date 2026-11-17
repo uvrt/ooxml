@@ -12,6 +12,7 @@ ooxml-base.workspace = true
 ooxml-xml.workspace = true
 ooxml-opc.workspace = true
 ooxml-tools.workspace = true
+ooxml-word-model.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]

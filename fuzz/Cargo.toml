@@ -20,6 +20,7 @@ ooxml-colour = { path = "../crates/ooxml-colour" }
 ooxml-drawingml = { path = "../crates/ooxml-drawingml" }
 ooxml-numfmt = { path = "../crates/ooxml-numfmt" }
 ooxml-chart = { path = "../crates/ooxml-chart" }
+ooxml-render = { path = "../crates/ooxml-render" }
 
 [workspace]
 
@@ -54,6 +55,13 @@ bench = false
 [[bin]]
 name = "chart_layout"
 path = "fuzz_targets/chart_layout.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "drawing_render"
+path = "fuzz_targets/drawing_render.rs"
 test = false
 doc = false
 bench = false

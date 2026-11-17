@@ -106,6 +106,20 @@ pub struct Counters {
 }
 
 impl Counters {
+    /// Count the next item of instance `num_id` at `ilvl`: its label and running number,
+    /// both `None` where the instance has no such level or the level no `w:lvlText`.
+    pub fn item_number(&mut self, numbering: &Numbering, num_id: i64, ilvl: i64) -> (Option<String>, Option<i64>) {
+        let Some(label) = self.item(numbering, num_id, ilvl) else {
+            return (None, None);
+        };
+        let number = self
+            .counts
+            .get(&numbering.list_of(num_id))
+            .and_then(|c| c.get(&ilvl))
+            .copied();
+        (Some(label), number)
+    }
+
     /// Count the next item of instance `num_id` at `ilvl`; its label, or `None` where the
     /// instance has no such level or the level no `w:lvlText`.
     pub fn item(&mut self, numbering: &Numbering, num_id: i64, ilvl: i64) -> Option<String> {

@@ -771,6 +771,7 @@ impl<'a> Builder<'a> {
                 fill: None,
                 outline: None,
                 text: Some(body.clone()),
+                ..Shape::default()
             })));
         }
     }

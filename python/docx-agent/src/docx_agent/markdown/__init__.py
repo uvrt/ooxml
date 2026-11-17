@@ -193,7 +193,7 @@ def select(reader: Reader, range: str | None) -> list[tuple[str, list, str]]:
         part = _part_of(document, first or last)
         if first and last and _part_of(document, last) != part:
             raise AddressError(f"{range!r} spans two stories: " + SPAN_SYNTAX)
-        records = _story(reader, part)
+        records = _span(reader, part, first, last)
         a = _position(document, records, first) if first else 0
         b = _through(records, _position(document, records, last)) if last else len(records) - 1
         if b < a:
@@ -287,6 +287,33 @@ def _inside_table(document: "Document", reader: Reader, address: str) -> tuple[s
                     if cell.row == found.row and cell.column == found.column:
                         return part, list(cell.records), "cell"
     raise KeyError(f"{address!r} is not in its story in this view")
+
+
+def _span(reader: Reader, part: str, first: str | None, last: str | None) -> list:
+    """The records a span's blocks are cut from: its story's, where the reader read the story
+    already; else the span's own blocks (:meth:`Reader.span`, round 59), or the story's
+    where those cannot be read alone.  With ``DOCX_AGENT_FULL_VALIDATE``, the span read alone
+    is compared with the story's records."""
+    if "_stories" in reader.__dict__ and part in reader.__dict__["_stories"]:
+        return _story(reader, part)
+    alone = reader.span(part, first, last)
+    if alone is None:
+        return _story(reader, part)
+    from ..revalidate import full_check_on
+
+    if full_check_on():
+        document = reader.document
+        whole = Reader(document, reader.view_name, reader.map).story(part)
+        cut = [_cut(document, records, first, last) for records in (alone, whole)]
+        if cut[0] != cut[1]:
+            raise AssertionError(f"{first}..{last}: the span read alone differs from the span read in its story")
+    return alone
+
+
+def _cut(document: "Document", records: list, first: str | None, last: str | None) -> list:
+    a = _position(document, records, first) if first else 0
+    b = _through(records, _position(document, records, last)) if last else len(records) - 1
+    return records[a:b + 1]
 
 
 def _story(reader: Reader, part: str) -> list:

@@ -21,7 +21,7 @@ from typing import Any
 
 
 from ..layout import (LayoutSummary, _in_body, _put_held, extents_of, held_layout, made_facts, opened_layout,
-                      placements_of)
+                      page_infos_of, placements_of)
 
 
 def check_bytes(data: bytes, options: dict, state: tuple, request: dict) -> dict:
@@ -40,7 +40,9 @@ def check_bytes(data: bytes, options: dict, state: tuple, request: dict) -> dict
     * ``pages_of`` (round 57, R124: ids): ``{id: [pages]}`` for those drawn;
     * ``where`` (round 59, R134: lists of ids): each list's placements
       (:func:`~docx_agent.layout.placements_of`), and ``extents`` (``{name: ids}``): each
-      group's :meth:`~docx_agent.layout.DocumentLayout.extent`.
+      group's :meth:`~docx_agent.layout.DocumentLayout.extent`;
+    * ``page_infos`` (round 59, R135: ids): ``{id: page}`` of those drawn, the page each
+      starts on as a page reference reads it (:func:`~docx_agent.layout.page_infos_of`).
 
     Plus how the layout was found or made (:func:`docx_agent.layout.made_facts`), and
     (round 47, R82) ``worker``: the seconds this task spent laying out (``layout``) and
@@ -111,6 +113,9 @@ def _facts(held: Any, data: bytes, options: dict, request: dict) -> dict:
     if request.get("extents") is not None:
         # Round 59 (R134): how much of each page blocks take (a span kept together).
         out["extents"] = extents_of(layout, request["extents"])
+    if request.get("page_infos") is not None:
+        # Round 59 (R135): the page each block starts on, as a page reference to it reads it.
+        out["page_infos"] = page_infos_of(layout, request["page_infos"])
     if request.get("layout"):
         out["layout"] = layout_facts(layout, pages=scoped_pages, min_size=request.get("min_size"),
                                      styles=request.get("styles"), scope=scope)

@@ -30,9 +30,20 @@ theirs until they are replaced.
 | `ooxml-metafile`, `ooxml-scene` (workspace crates) | | ooxml-oracle (test support only) | The metafile players' differential (`metafile-diff`, `tests/metafile_cases.rs`). |
 | `thiserror` (as above) | | ooxml-numfmt | `LocaleError`, why a locale or language tag is refused (section 2.5). |
 | `ooxml-chart`, `ooxml-numfmt` (workspace crates); `serde_json`'s `float_roundtrip` feature (no new crate) | | ooxml-oracle (test support only) | The chart differential (`chart-model`, `python/chart_diff.py`, `tests/chart_layout.rs`). `float_roundtrip` makes serde_json read the frozen Python answers' numbers exactly: its default reading can be a unit in the last place off, which a byte-for-byte comparison reports. |
+| `serde_json` (as above) | | ooxml-word-model | The id state kept beside a document's bytes (`ids::state`): docx-agent's `docx-ids.1.` string is compressed JSON, written key for key as Python's `json.dumps` writes it and read back from either side. |
+| `flate2` (as above, `zlib-rs` backend) | | ooxml-word-model | The same id state's zlib compression (level 9, as docx-agent's `zlib.compress`); zlib-rs's stream may differ from C zlib's byte for byte, which neither reader minds: the decompressed JSON is the same. |
+| `ooxml-tools`, `ooxml-tools-word` (workspace crates) | | ooxml-oracle (test support only) | The Word reads' differential (`word-reads`, `python/word_reads_diff.py`): the Rust tools' replies on the fixtures and the corpus. |
+| `ooxml-scene`, `ooxml-drawingml`, `ooxml-fonts` (workspace crates; no external crate) | | ooxml-render | The DrawingML painter lowers `ooxml-drawingml`'s drawables onto `ooxml-scene`'s display list (`markup`), measuring text from `ooxml-fonts`' Office tables. |
+| `ooxml-render` (workspace crate) | | ooxml-oracle (test support only) | The painter's golden documents (`drawing-svg`, `tests/chart_goldens.rs`, `tests/scene_goldens.rs`), compared with ooxml-common's goldens byte for byte. |
+| `ooxml-render` (workspace crate) | | `fuzz/` only | The `drawing_render` target. |
 | `libfuzzer-sys` 0.4 (pulls `arbitrary`, `cc`) | MIT or Apache-2.0, NCSA | `fuzz/` only (its own workspace) | cargo-fuzz's harness for the fuzz targets section 11 asks for; never part of a shipped crate. |
 
 Considered and not taken:
+- `resvg` 0.48.1, `usvg` 0.48.1, `fontdb` 0.24.0 and `tiny-skia` 0.12.0 (approved, Q7; the
+  versions resvg-py 0.5.0 ships, read from its binary) are not linked yet: usvg 0.48's tree is
+  built only by parsing SVG (`Tree::from_str`, `from_data`, `from_xmltree`; its node
+  constructors are crate-private), which section 8 rules out for `ooxml-render`. Lane P3c's
+  hand-back has the options.
 - `imbl` (persistent collections; on the approved list as the alternative to an in-house rope) is
   MPL-2.0, which section 2.7 allows only at file level for the MTX decoder port. ooxml-xml's child
   rope, ooxml-opc's part map and ooxml-store's per-key write stamps

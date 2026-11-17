@@ -128,7 +128,7 @@ fn refusals_carry_their_way_out() {
     assert_eq!(missing["error"]["valid_options"], json!(["d1"]));
     let tool = call(&s, "descibe", json!({"doc": "d1"}));
     assert_eq!(tool["error"]["code"], json!("invalid_arguments"));
-    assert_eq!(tool["error"]["valid_options"], json!(["describe"]));
+    assert_eq!(tool["error"]["valid_options"], json!(["describe", "word_read"]));
     let extra = call(&s, "describe", json!({"doc": "d1", "x": 1}));
     assert_eq!(extra["error"]["field"], json!("x"));
     let not_json = call(&s, "describe", Value::String("{doc".into()));
