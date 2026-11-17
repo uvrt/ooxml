@@ -15,7 +15,7 @@ use ooxml_base::{Limits, Locale};
 use ooxml_derive::CacheBudget;
 use ooxml_opc::Package;
 use ooxml_word_layout::paint::svg::{page_svg, Pictures, SvgContext};
-use ooxml_word_layout::paint::{paint_page, DocumentNames, GlyphSize, PaintContext};
+use ooxml_word_layout::paint::{paint_page, FaceNames, GlyphSize, PaintContext};
 use ooxml_word_layout::tables::WordTables;
 use ooxml_word_layout::{WordGlyphs, WordLayout};
 use std::collections::BTreeMap;
@@ -62,6 +62,15 @@ impl Pictures for PackagePictures {
     }
 }
 
+/// Faces named as docx2svg names them on this machine.
+pub struct DiskNames(pub ooxml_fonts::DrawingFonts);
+
+impl FaceNames for DiskNames {
+    fn drawing_name(&self, family: &str, bold: bool, italic: bool) -> Option<ooxml_fonts::DrawingName> {
+        self.0.drawing_name(family, bold, italic)
+    }
+}
+
 /// What the SVG differential found.
 #[derive(Debug, Default)]
 pub struct SvgOutcome {
@@ -75,6 +84,8 @@ pub struct SvgOutcome {
     pub causes: BTreeMap<String, (usize, String)>,
     /// The Rust layout's and paint's own time.
     pub time: Duration,
+    /// The drawing index of the fonts folders, made once (every record names the same).
+    pub index: Option<Arc<ooxml_fonts::DrawingIndex>>,
 }
 
 impl SvgOutcome {
@@ -120,6 +131,11 @@ pub fn run_svg_document(records: &LayoutRecords, outcome: &mut SvgOutcome) -> Re
     let bytes = std::fs::read(&records.path).map_err(|e| format!("{}: {e}", records.path))?;
     let glyphs = Arc::new(WordGlyphs::new(fonts_of(fonts, Some(&bytes))?));
     let pictures = PackagePictures::new(&bytes);
+    if outcome.index.is_none() {
+        outcome.index = Some(Arc::new(crate::text::drawing_index_of(fonts)?));
+    }
+    let index = outcome.index.clone().ok_or("no drawing index")?;
+    let names = DiskNames(crate::text::drawing_fonts_of(fonts, Some(&bytes), &index)?);
     let (mut model, document) = crate::export::open(bytes)?;
     let budget: Arc<dyn CacheBudget> = Arc::new(Unlimited);
     let mut engine = WordLayout::new(
@@ -131,7 +147,6 @@ pub fn run_svg_document(records: &LayoutRecords, outcome: &mut SvgOutcome) -> Re
     );
     let started = Instant::now();
     let laid = engine.lay_out(&mut model, &document);
-    let names = DocumentNames;
     let cx = PaintContext {
         faces: &*glyphs,
         names: &names,
@@ -146,7 +161,8 @@ pub fn run_svg_document(records: &LayoutRecords, outcome: &mut SvgOutcome) -> Re
     };
     let mut ours = Vec::new();
     for page in 0..laid.page_count() {
-        ours.push(paint_page(&laid, &mut model, page, &cx).map(|p| (page_svg(&p, &svg_cx), p.unpainted)));
+        let stories = engine.page_stories(&mut model, &laid, page);
+        ours.push(paint_page(&laid, &mut model, page, &stories, &cx).map(|p| (page_svg(&p, &svg_cx), p.unpainted)));
     }
     outcome.time += started.elapsed();
     if ours.len() != theirs.len() {

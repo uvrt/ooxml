@@ -11,8 +11,9 @@
 
 pub mod linebox;
 mod lines;
+pub mod stories;
+pub mod walk;
 
-pub(crate) use lines::measured_on;
 pub use lines::{DrawnLine, LineSource};
 
 use crate::engine::DocumentLayout;

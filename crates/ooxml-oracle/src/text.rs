@@ -72,6 +72,31 @@ pub struct Outcome {
 
 /// Word's fonts as a document's fonts record (`text_differential.py`'s) found them.
 pub fn fonts_of(record: &Value, package: Option<&[u8]>) -> Result<WordFonts, String> {
+    let (folders, embedded, table, options) = font_inputs(record, package)?;
+    Ok(WordFonts::new(Arc::new(DiskFonts), &folders, &embedded, table, options))
+}
+
+/// The faces docx2svg draws with, from the same record (`drawing_name`'s), over `index`
+/// (made once for the record's folders: [`drawing_index_of`]).
+pub fn drawing_fonts_of(
+    record: &Value,
+    package: Option<&[u8]>,
+    index: &Arc<ooxml_fonts::DrawingIndex>,
+) -> Result<ooxml_fonts::DrawingFonts, String> {
+    let (_, embedded, table, options) = font_inputs(record, package)?;
+    Ok(ooxml_fonts::DrawingFonts::new(Arc::clone(index), &embedded, table, options))
+}
+
+/// The drawing index of a fonts record's folders.
+pub fn drawing_index_of(record: &Value) -> Result<ooxml_fonts::DrawingIndex, String> {
+    let (folders, ..) = font_inputs(record, None)?;
+    Ok(ooxml_fonts::DrawingIndex::new(Arc::new(DiskFonts), &folders))
+}
+
+/// What a fonts record says: the folders, the embedded faces, the font table, the options.
+type FontInputs = (Vec<Folder>, Vec<ooxml_fonts::EmbeddedPart>, FontTable, WordFontOptions);
+
+fn font_inputs(record: &Value, package: Option<&[u8]>) -> Result<FontInputs, String> {
     let mut folders = Vec::new();
     for pair in record.get("dirs").and_then(Value::as_array).into_iter().flatten() {
         let location = if pair.get(0).and_then(Value::as_str) == Some("bundle") {
@@ -115,7 +140,7 @@ pub fn fonts_of(record: &Value, package: Option<&[u8]>) -> Result<WordFonts, Str
         );
     }
     let embedded = embedded_parts(record, package)?;
-    Ok(WordFonts::new(Arc::new(DiskFonts), &folders, &embedded, table, options))
+    Ok((folders, embedded, table, options))
 }
 
 fn embedded_parts(record: &Value, package: Option<&[u8]>) -> Result<Vec<EmbeddedPart>, String> {

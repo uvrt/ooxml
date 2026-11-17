@@ -21,6 +21,7 @@ mod be;
 pub mod catalogue;
 mod cmap;
 pub mod css;
+pub mod drawing;
 pub mod embedded;
 mod error;
 mod kern;
@@ -35,6 +36,7 @@ pub mod word;
 
 pub use catalogue::{Catalogue, FaceLoc, Folder, Location, WORD_PREFER_BUNDLE};
 pub use css::{font_family_value, FontMapping};
+pub use drawing::{DrawingFonts, DrawingIndex, DrawingName};
 pub use embedded::{deobfuscate, embedded_face, EmbeddedPart};
 pub use error::FontError;
 pub use office::{office_face, office_metrics_for, OfficeFace};

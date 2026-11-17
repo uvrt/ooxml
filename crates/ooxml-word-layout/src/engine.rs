@@ -169,6 +169,31 @@ impl WordLayout {
         StoryTable::compute(&cx, model, &mut self.stories)
     }
 
+    /// The header and footer page `page` (0-based, blank pages counted) of `layout` draws,
+    /// each laid out with the page's field values and stacked where Word puts it.
+    pub fn page_stories(
+        &mut self,
+        model: &mut Model,
+        layout: &DocumentLayout,
+        page: usize,
+    ) -> Vec<crate::geometry::stories::StoryPage> {
+        let (Some(info), Some(geometry)) = (layout.pagination.info.get(page), layout.page_geometry(page)) else {
+            return Vec::new();
+        };
+        let cx = StoryContext {
+            document: &layout.document,
+            faces: self.faces.as_ref(),
+            locale: &self.locale,
+            tables: self.tables.as_ref(),
+        };
+        let mut job = crate::geometry::stories::StoryJob {
+            cx: &cx,
+            model,
+            state: &mut self.stories,
+        };
+        crate::geometry::stories::page_stories(&mut job, layout, &geometry.frame, info)
+    }
+
     /// A version's body flow in its sections, with its paragraphs' list labels (document
     /// order, cells included) and its top-level blocks' parts in the endnotes placed.
     pub fn flow(&mut self, model: &mut Model, document: &WordDocument, frame: &PassFrame<'_>) -> Flow {

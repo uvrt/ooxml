@@ -188,6 +188,13 @@ impl<'a> Pages<'a> {
     }
 }
 
+/// `NUMPAGES` and section `section`'s `SECTIONPAGES` of a layout, `None` where unknown
+/// (`_page_count`, `_section_pages`): what a header's or footer's fields show.
+pub fn page_counts(layout: &DocumentLayout, section: usize) -> (Option<i64>, Option<i64>) {
+    let pages = Pages::new(layout);
+    (pages.page_count(), pages.section_pages(section))
+}
+
 /// Bookmark name -> `(paragraph, run)` of its start, the first of a name winning.
 fn bookmarks(paragraphs: &[Arc<Paragraph>]) -> HashMap<String, (usize, usize)> {
     let mut out = HashMap::new();

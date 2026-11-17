@@ -465,6 +465,7 @@ pub(super) fn paint_line(cx: &PaintContext<'_>, job: &LineJob<'_>, out: &mut Pag
         number: job.line.number,
         baseline: job.line.baseline,
         spans,
+        story: None,
     })
 }
 

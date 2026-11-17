@@ -102,10 +102,10 @@ fn font(span: &Span, name: Option<DrawingName>) -> Vec<(&'static str, Value)> {
         out.push(("font-weight", Value::Plain(name.weight.to_string())));
     }
     if name.stretch != "normal" {
-        out.push(("font-stretch", Value::Plain(name.stretch.clone())));
+        out.push(("font-stretch", Value::Plain(name.stretch.to_owned())));
     }
     if name.style != "normal" {
-        out.push(("font-style", Value::Plain(name.style.clone())));
+        out.push(("font-style", Value::Plain(name.style.to_owned())));
     }
     out
 }
@@ -164,17 +164,26 @@ fn under_rank(kind: &str) -> Option<u8> {
 /// Lines of text, grouped by paragraph.
 fn lines(painted: &[PaintedLine], cx: &SvgContext<'_>) -> Vec<Element> {
     let mut out: Vec<Element> = Vec::new();
-    let mut current: Option<&str> = None;
+    let mut current: Option<(&str, Option<&(&'static str, ooxml_word_model::value::Text)>)> = None;
     for line in painted {
-        if current != Some(&*line.path) {
-            let mut group = Element::new("g").attr("data-docx-path", Value::Text(line.path.to_string()));
+        let key = (&*line.path, line.story.as_ref());
+        if current != Some(key) {
+            let mut group = Element::new("g")
+                .paired()
+                .attr("data-docx-path", Value::Text(line.path.to_string()));
             if let Some(id) = line.paragraph_id.as_deref().filter(|i| !i.is_empty()) {
                 group = group.attr("data-docx-id", Value::Text(id.to_owned()));
             }
+            if let Some((kind, part)) = &line.story {
+                group = group
+                    .attr("data-docx-story", Value::Plain((*kind).to_owned()))
+                    .attr("data-docx-part", Value::Text(part.to_string()));
+            }
             out.push(group);
-            current = Some(&line.path);
+            current = Some(key);
         }
         let mut g = Element::new("g")
+            .paired()
             .attr("data-docx-line", Value::Int(i64::try_from(line.number).unwrap_or(0)))
             .attr("data-docx-baseline", Value::Int(line.baseline));
         g.children = line

@@ -82,6 +82,8 @@ pub struct Element {
     pub flow: Flow,
     /// Its text content (escaped when written).
     pub text: Option<String>,
+    /// Written with a closing tag even when empty (a group that may hold nothing).
+    pub paired: bool,
 }
 
 impl Element {
@@ -93,7 +95,15 @@ impl Element {
             children: Vec::new(),
             flow: Flow::Block,
             text: None,
+            paired: false,
         }
+    }
+
+    /// Written with a closing tag even when it holds nothing.
+    #[must_use]
+    pub fn paired(mut self) -> Element {
+        self.paired = true;
+        self
     }
 
     /// With an attribute added.
@@ -207,7 +217,7 @@ fn open_tag(out: &mut String, e: &Element) {
 
 fn write_element(out: &mut String, e: &Element, flow: Flow) {
     open_tag(out, e);
-    if e.children.is_empty() && e.text.is_none() {
+    if e.children.is_empty() && e.text.is_none() && !e.paired {
         out.push_str("/>");
         return;
     }
@@ -222,7 +232,7 @@ fn write_element(out: &mut String, e: &Element, flow: Flow) {
         }
         write_element(out, child, inner);
     }
-    if inner == Flow::Block && !e.children.is_empty() {
+    if inner == Flow::Block && (!e.children.is_empty() || (e.paired && e.text.is_none())) {
         out.push('\n');
     }
     out.push_str("</");
