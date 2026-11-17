@@ -149,8 +149,17 @@ fn parity_decides(cx: &PageContext<'_>) -> bool {
             .any(|s| matches!(s.props.start_type.as_deref(), Some("oddPage" | "evenPage")))
 }
 
+/// What decides whether old pages may move to other places: a parity (blank pages, even
+/// pages' stories), or page stories of their own (headers and footers of their own heights,
+/// by their pages' places).
+#[derive(Debug, Clone, Copy)]
+struct Placed {
+    parity: bool,
+    fixed: bool,
+}
+
 /// The old page a new page starting at `state` lines up with, past the change.
-fn joins(old: &Pagination, change: Change, delta: isize, parity: bool, state: &Resume) -> Option<usize> {
+fn joins(old: &Pagination, change: Change, delta: isize, placed: Placed, state: &Resume) -> Option<usize> {
     // A page starting at a paragraph's first line reads the item before it (its space
     // after, at the page's top): that item must be past the change too.
     let reads_before = state.position.line == 0 && state.position.part.is_empty();
@@ -168,7 +177,8 @@ fn joins(old: &Pagination, change: Change, delta: isize, parity: bool, state: &R
     let page_shift = i64::try_from(state.page).unwrap_or(0) - i64::try_from(base_of(old, q)).unwrap_or(0);
     let number_shift = state.number - page.number_before;
     let odd = page_shift.rem_euclid(2) != 0 || number_shift.rem_euclid(2) != 0;
-    (!(parity && odd)).then_some(q)
+    let refused = (placed.parity && odd) || (placed.fixed && page_shift != 0);
+    (!refused).then_some(q)
 }
 
 /// The changes between two flows: where they have as many items, each run of items that
@@ -257,7 +267,11 @@ pub fn repaginate(cx: &PageContext<'_>, old: &Pagination, changes: &[Change]) ->
     let Some(first) = changes.first() else {
         return (old.clone(), RelayoutStats::default());
     };
-    let parity = parity_decides(cx);
+    let placed = Placed {
+        parity: parity_decides(cx),
+        // A page whose header or footer has heights of its own keeps them by its place.
+        fixed: !cx.page_stories.is_empty(),
+    };
     let mut p = clean_restart(old, first_reaching(old, 0, &Position::at(first.a, 0)), first.a);
     let mut out = Pagination {
         pages: old.pages.get(..p).unwrap_or_default().to_vec(),
@@ -287,7 +301,7 @@ pub fn repaginate(cx: &PageContext<'_>, old: &Pagination, changes: &[Change]) ->
         let delta = isize::try_from(change.b_new).unwrap_or(0) - isize::try_from(change.b_old).unwrap_or(0);
         let mut joined = None;
         let mut until = |state: &Resume| {
-            joined = joins(old, change, shift.items + delta, parity, state);
+            joined = joins(old, change, shift.items + delta, placed, state);
             joined.is_some()
         };
         let (fresh, stop) = Paginator::new(cx).run(resume, &mut until);

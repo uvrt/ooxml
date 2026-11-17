@@ -561,6 +561,7 @@ pub fn cross_references(document: &WordDocument, kept: &mut Computed) -> WordDoc
     let mut walk = super::Rebuild {
         next: 0,
         change: &mut change,
+        touches: None,
     };
     let body: Vec<_> = document.body.iter().map(|b| walk.block(b)).collect();
     kept.kept.retain(|k, _| used.contains(k));

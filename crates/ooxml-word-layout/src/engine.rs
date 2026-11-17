@@ -422,12 +422,7 @@ impl WordLayout {
         // The footnotes' numbers are runs of their own: the fields are found among the
         // runs as numbered.
         let keys = page_fields(&version);
-        // The list labels, counted again only from the first changed block until the
-        // lists' counts stand where they stood.
-        let labels: Arc<[Option<String>]> = match previous {
-            Some(p) => document.body_labels_from(&p.document, &p.labels).into(),
-            None => document.body_labels().into(),
-        };
+        let labels = list_labels(document, previous);
         let mut overrides = PageStories::new();
         let mut story_memo = StoryMemo::default();
         let mut values = FieldValues::new();
@@ -499,6 +494,15 @@ pub struct PassFrame<'f> {
 pub fn paginate_all(layout: &DocumentLayout, faces: &dyn Faces, locale: &Locale) -> Pagination {
     let cx = layout.page_context(faces, locale);
     Paginator::new(&cx).run(None, &mut |_: &Resume| false).0
+}
+
+/// A version's list labels: counted again only from the first block changed since
+/// `previous` until the lists' counts stand where they stood.
+fn list_labels(document: &WordDocument, previous: Option<&DocumentLayout>) -> Arc<[Option<String>]> {
+    match previous {
+        Some(p) => document.body_labels_from(&p.document, &p.labels).into(),
+        None => document.body_labels().into(),
+    }
 }
 
 /// Whether two sets of parts are alike (the same `Arc`s where the model shared them).

@@ -644,6 +644,7 @@ pub fn with_story_references(
     let mut walk = Rebuild {
         next: 0,
         change: &mut change,
+        touches: None,
     };
     let out: Arc<[Block]> = blocks.iter().map(|b| walk.block(b)).collect();
     (out, texts)

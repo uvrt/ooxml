@@ -428,6 +428,16 @@ fn same_flow(relaid: &[FlowItem], whole: &[FlowItem], at: &str) {
     }
 }
 
+/// Each pass laid out again is that pass laid out from scratch: its flow and its pages.
+fn same_passes(relaid: &ooxml_word_layout::DocumentLayout, whole: &ooxml_word_layout::DocumentLayout, at: &str) {
+    for k in 0..relaid.passes.min(whole.passes) {
+        if let (Some((fa, pa)), Some((fb, pb))) = (relaid.pass(k), whole.pass(k)) {
+            same_flow(&fa.items, &fb.items, &format!("{at} pass {k}"));
+            assert!(pa == pb, "{at} pass {k}: pages differ");
+        }
+    }
+}
+
 fn check(seed: u64, versions: usize) -> Seen {
     let mut seen = Seen::default();
     let mut rng = Rng(seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1);
@@ -455,6 +465,7 @@ fn check(seed: u64, versions: usize) -> Seen {
             "seed {seed} version {version}: stopped {:?}",
             whole.pagination.stopped
         );
+        same_passes(&relaid, &whole, &format!("seed {seed} version {version}"));
         if relaid.pagination != whole.pagination {
             let (a, b) = (&relaid.pagination, &whole.pagination);
             let k = a.pages.iter().zip(&b.pages).position(|(x, y)| x != y);

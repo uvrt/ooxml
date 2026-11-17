@@ -148,8 +148,10 @@ impl<'a> Pages<'a> {
                 (item, found.into_iter().map(|(_, page)| page).collect())
             })
             .collect();
+        // A table cell's paragraphs are looked up on the pages only where one is asked for.
+        let in_cells = blocks.is_none_or(|b| b.iter().any(|block| item_of_block(items, *block).is_none()));
         Pages {
-            cells: cell_pages(layout),
+            cells: if in_cells { cell_pages(layout) } else { HashMap::new() },
             layout,
             lines,
         }
@@ -361,6 +363,9 @@ pub(crate) type Change<'f> = &'f mut dyn FnMut(usize, &Arc<Paragraph>) -> Option
 pub(crate) struct Rebuild<'f> {
     pub(crate) next: usize,
     pub(crate) change: Change<'f>,
+    /// Whether a table holding the paragraphs of a range may change: one that cannot is
+    /// shared without its cells being walked (`None`: every table is walked).
+    pub(crate) touches: Option<&'f dyn Fn(std::ops::Range<usize>) -> bool>,
 }
 
 impl Rebuild<'_> {
@@ -372,6 +377,13 @@ impl Rebuild<'_> {
                 Block::Paragraph((self.change)(index, p).unwrap_or_else(|| Arc::clone(p)))
             }
             Block::Table(t) => {
+                if let Some(touches) = self.touches {
+                    let count = crate::tables::table_paragraphs(t);
+                    if !touches(self.next..self.next + count) {
+                        self.next += count;
+                        return Block::Table(Arc::clone(t));
+                    }
+                }
                 let rows: Vec<_> = t
                     .rows
                     .iter()
@@ -474,9 +486,11 @@ pub fn substitute(document: &WordDocument, values: &FieldValues, kept: &mut Subs
             .collect();
         (!changed.is_empty()).then(|| kept.get(paragraph, &changed))
     };
+    let touches = |range: std::ops::Range<usize>| values.range((range.start, 0)..(range.end, 0)).next().is_some();
     let mut walk = Rebuild {
         next: 0,
         change: &mut change,
+        touches: Some(&touches),
     };
     let body: Vec<Block> = document.body.iter().map(|b| walk.block(b)).collect();
     let mut out = document.clone();
