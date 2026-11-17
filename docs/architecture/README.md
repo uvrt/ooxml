@@ -179,6 +179,9 @@ L0  ooxml-base (units, exact arithmetic, ids, digests, errors, Context ports)  o
 test support: ooxml-oracle (differential harness), ooxml-testdata (made-up generators), fuzz/
 ```
 
+`ooxml-base` is the bottom of layer 0: the other L0 crates depend on it (for its limits, errors and
+digests), and no other edge inside a layer is allowed.
+
 What each crate owns, the outline of its API, and what it must not do:
 
 - **`ooxml-base`**
@@ -261,7 +264,7 @@ That is about 5k lines, down from about 19k, because the reply wording moves to 
 **The tree (ADR-003).** Every XML part is an immutable lossless tree.
 - **Green nodes** are `Arc`'d. Each holds its interned qualified name as written (plus the resolved namespace), its namespace declarations and attributes in order, and its children.
 - **Children:** text is decoded. Comments and PIs are kept. CDATA becomes text (lxml's `strip_cdata`). Undefined DTD references stay as opaque nodes.
-- **Child storage:** narrow elements keep a small inline array. Wide elements (a body of 29k blocks, a sheet's rows) keep a persistent chunked B-tree rope.
+- **Child storage:** an element's one child is held inline; up to 64 children are one shared slice; wider elements (a body of 29k blocks, a sheet's rows) keep a persistent B-tree rope of 64-child leaves and 32-chunk branches (P0a).
 - **Red cursors** give parent and position on demand.
 - **Edits are path copies.** Spike 1 at 3k pages:
 
@@ -271,13 +274,14 @@ That is about 5k lines, down from about 19k, because the reply wording moves to 
 | Insert 5 blocks | — | 128 KB and 0.6 ms |
 | 100 mixed versions held | 70 MB | 6.5 MB |
 
-- **Insert cost:** imbl's RRB vector copies more than needed on insert. The production rope will be a B-tree of 32–64-child chunks, targeting ≤ 10 KB per insert.
-- **Memory:** the naive tree is 5.7× the XML (113 MB for 20 MB). The target is ≤ 2.5×, reached by interning attribute values (most are short and repeated, like `w:val="24"`), hash-consing small identical subtrees as rowan's node cache does, and compact strings.
+- **Insert cost:** imbl's RRB vector copies more than needed on insert. The in-house rope (P0a) copies one leaf and the branches above it; at 29,183 children it takes 3.4 KB to insert five nodes (imbl: 124 KB) and 3.1 KB to replace one (imbl: 4.8 KB), and 200 splices take 0.7 ms (imbl: 23 ms).
+- **Memory:** the naive tree is 5.7× the XML (113 MB for 20 MB). The target is ≤ 2.5×, reached by interning attribute values (most are short and repeated, like `w:val="24"`), hash-consing small identical subtrees as rowan's node cache does, and compact strings. P0a reached 2.07× (41 MB for 20 MB): short strings and element heads are shared, a single child is held inline, and small identical subtrees are hash-consed, all through fixed-size direct-mapped caches while a part is parsed (sharing is best-effort; a lookup costs the same whatever the input, and no table grows with the part).
 
 **Packages.**
 - A `PackageVersion` is a persistent map from part name to a `PartVersion`.
 - A `PartVersion` is either `Raw(stored entry)` or `Tree(green root)`. A raw part is untouched: it is never parsed unless read, and it is written by raw copy, compressed bytes included.
 - Relationships and content types are typed and persistent.
+- Directory entries (names ending in `/`) are not parts: they are kept and copied raw, where `ooxml_edit` leaves them out of a save. Two entries that name one part are refused. A raw copy keeps an entry's local record byte for byte, so an unchanged package saves as it was read when its entries lie end to end (bytes between entries, which no Office writer leaves, are not kept).
 
 **The write contract (ADR-004).**
 - A touched part is written exactly as `ooxml_edit.xml.serialize` writes it today, i.e. libxml2's xmlsave:
@@ -290,7 +294,7 @@ That is about 5k lines, down from about 19k, because the reply wording moves to 
 - **Recommendation: keep this contract permanently.** Document it as an algorithm in `ooxml-xml` so that no library defines it. It keeps every golden file and saved byte as they are, and Word accepts it.
 - Keeping the original bytes of untouched elements inside touched parts would give smaller diffs but no fidelity gain. That stays a later option needing the user's approval (Q1).
 - **Zip:** the oracle compares entries (name, order, metadata, uncompressed bytes), not compressed streams; those already differ between zlib and zlib-ng today. Raw-copied entries stay byte-identical.
-- **UTF-16 parts** are decoded as libxml2 decodes them and written back as UTF-8. This is in phase 0's tests; the spike handled UTF-8 only.
+- **UTF-16 parts** are decoded as libxml2 decodes them and written back as UTF-8. This is in phase 0's tests; the spike handled UTF-8 only. US-ASCII and ISO-8859-1 are read too; other declared encodings are refused.
 
 **Typed views (ADR-005).**
 - Generated views (`w::P`, `w::Tbl`, `w::RPr` and so on) give typed getters, enums with defaults, and constructors that insert children in schema order. They replace ooxml-edit's hand-kept child-order tables and `insert_in_order`.
@@ -342,7 +346,7 @@ trait Command: Send {
 **Commit.**
 - Take the per-document commit lock.
 - Compare the read set with the write sets committed since the snapshot.
-- If they are disjoint, apply the patches to the head (their paths are re-resolved by node pointer) and publish.
+- If they are disjoint, apply the patches to the head (each rebased through the patches committed since its snapshot, which moves its path past theirs, and checked by node pointer: the nodes it removes must be the ones there) and publish.
 - Otherwise redo `prepare` on the new head; after 3 tries, run with the lock held.
 - Spike 2 measured the critical section at 3–5 µs with 24 writers.
 
@@ -556,7 +560,7 @@ All are under 0.1 % of the edit budgets.
 **Limits** are configuration, with defaults taken from ooxml-edit's limits:
 - **Zip:** entry count, total uncompressed size, ratio per entry. Nested packages count against the same budget.
 - **XML:** depth ≤ 256, plus caps on attributes, name length, text size and nodes per part.
-- **DTDs:** never expanded. An internal DTD subset stays opaque, as lxml's settings do today. External references are never fetched.
+- **DTDs:** never expanded. A document type with an external id stays opaque, and so do the entity references in text that it allows (as lxml keeps them). An internal DTD subset, and an entity reference in an attribute value, are refused: lxml writes them back in forms of libxml2's own that the core does not reproduce, and OOXML parts have none. External references are never fetched.
 - **Images:** dimensions and decoded size are checked before decoding.
 - **Metafiles:** record caps and bounds checks.
 - **Formulas:** length and token caps.
@@ -786,7 +790,7 @@ Each ADR below records its alternatives and the measurement behind it; the secti
   - (c) bytes per block, parsed again by every reader (lanes J/K);
   - (d) rowan: flat child arrays and no model for names or attributes;
   - (e) a mutable DOM with an undo log: versions are not values.
-  - Decision: (b), with a B-tree rope, interned values and hash-consing.
+  - Decision: (b), with a B-tree rope, interned values and hash-consing. The rope is in-house: measured against imbl's Vector in P0a (section 4), and imbl is MPL-2.0.
 - **ADR-004: libxml2's form for touched parts, raw bytes for untouched ones.**
   - Alternatives: keep element bytes inside touched parts; write Word's own form.
   - Measured: 620 of 620 parts equal. Decided: permanent (Q1).
