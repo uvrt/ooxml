@@ -147,10 +147,16 @@ pub fn run(args: &[String]) -> Result<(), String> {
     timed(&mut out, "describe_ms", rounds, || describe(&d, &v1, &Never).map(drop));
     let start = Instant::now();
     word_read(&page, &v1, &Never).map_err(|e| e.message().to_owned())?;
-    out.insert("word_read_page_first_ms".into(), json!(start.elapsed().as_secs_f64() * 1000.0));
+    out.insert(
+        "word_read_page_first_ms".into(),
+        json!(start.elapsed().as_secs_f64() * 1000.0),
+    );
     let start = Instant::now();
     word_read(&span, &v1, &Never).map_err(|e| e.message().to_owned())?;
-    out.insert("word_read_span_first_ms".into(), json!(start.elapsed().as_secs_f64() * 1000.0));
+    out.insert(
+        "word_read_span_first_ms".into(),
+        json!(start.elapsed().as_secs_f64() * 1000.0),
+    );
     timed(&mut out, "word_read_page_ms", rounds, || {
         word_read(&page, &v1, &Never).map(drop)
     });
