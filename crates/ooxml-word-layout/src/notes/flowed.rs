@@ -8,6 +8,7 @@
 
 use super::lines::{heights, note_lines, NoteContext, NoteLines, NoteWidth};
 use super::numbering::{separator, NotesPart};
+use crate::heights::LineHeight;
 use crate::paragraph::{measure_paragraph, MeasureContext, ParagraphJob, Unmeasured};
 use crate::px::Px;
 use crate::sections::SectionGeometry;
@@ -82,7 +83,7 @@ pub struct Unlaid(pub i64);
 pub struct NoteMaker {
     notes: HashMap<(i64, usize, Option<i64>), Option<NoteLines>>,
     separators: HashMap<usize, (Px, Px)>,
-    continuations: HashMap<usize, Option<Px>>,
+    continuations: HashMap<usize, Option<LineHeight>>,
 }
 
 impl NoteMaker {
@@ -168,7 +169,11 @@ impl NoteMaker {
     /// The endnotes' continuation separator's line in section `section`: what a page the
     /// endnotes go on to holds above them (`continuation_line`); `None` where it cannot be
     /// measured.
-    pub fn continuation(&mut self, cx: &mut NoteContext<'_, '_>, section: (usize, &SectionGeometry)) -> Option<Px> {
+    pub fn continuation(
+        &mut self,
+        cx: &mut NoteContext<'_, '_>,
+        section: (usize, &SectionGeometry),
+    ) -> Option<LineHeight> {
         if let Some(found) = self.continuations.get(&section.0) {
             return *found;
         }
@@ -178,7 +183,7 @@ impl NoteMaker {
     }
 }
 
-fn continuation_line(cx: &mut NoteContext<'_, '_>, section: &SectionGeometry) -> Result<Px, Unmeasured> {
+fn continuation_line(cx: &mut NoteContext<'_, '_>, section: &SectionGeometry) -> Result<LineHeight, Unmeasured> {
     let blocks = separator(cx.document, "continuationSeparator", NotesPart::Endnotes);
     let Some(Block::Paragraph(paragraph)) = blocks.iter().find(|b| matches!(b, Block::Paragraph(_))) else {
         return Err(Unmeasured::Text("no continuation separator".into()));
@@ -198,9 +203,5 @@ fn continuation_line(cx: &mut NoteContext<'_, '_>, section: &SectionGeometry) ->
         label: None,
     };
     let measured = measure_paragraph(&mcx, cx.measurer, &job)?;
-    measured
-        .heights
-        .first()
-        .map(|h| h.pitch)
-        .ok_or(Unmeasured::NoFaceMetrics)
+    measured.heights.first().copied().ok_or(Unmeasured::NoFaceMetrics)
 }

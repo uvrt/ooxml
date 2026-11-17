@@ -9,10 +9,14 @@
 //! `SEQ` and `REF`, which do not depend on the pages, are computed once before the passes
 //! (`references`).
 //!
+//! What a field update writes into the file -- the page a field's paragraph is first drawn
+//! on, not the page of its run's line -- is [`update`]'s.
+//!
 //! Must not: compute `STYLEREF` (not ported yet), or draw a field.
 
 mod format;
 mod references;
+pub mod update;
 
 pub use format::{argument, field_text, format_value, number_text, switches, Uncomputable};
 pub use references::{cross_references, Computed};

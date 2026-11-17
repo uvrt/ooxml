@@ -5,7 +5,7 @@
 
 use ooxml_base::{Digest, DigestKey, Limits, Locale};
 use ooxml_derive::CacheBudget;
-use ooxml_fonts::FaceMetrics;
+use ooxml_fonts::{Decorations, FaceMetrics};
 use ooxml_opc::Package;
 use ooxml_text::{Advance, FaceKey, Glyphs, ScriptMetrics};
 use ooxml_word_layout::tables::WordTables;
@@ -63,6 +63,9 @@ impl Faces for Mono {
             superscript_offset: None,
             subscript_offset: None,
         })
+    }
+    fn decorations(&self, _: &FaceKey) -> Option<Decorations> {
+        None
     }
 }
 

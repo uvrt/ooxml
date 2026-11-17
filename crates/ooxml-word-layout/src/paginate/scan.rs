@@ -132,13 +132,15 @@ enum Step {
 }
 
 /// A line placed in `frame` (none: a page of one column).
-fn placed(frame: Option<&Frame>, item: usize, line: usize, top: Px, pitch: Px, paragraph_top: Px) -> PlacedLine {
+fn placed(frame: Option<&Frame>, item: usize, line: usize, top: Px, pitch: Px, boxed: (Px, Px)) -> PlacedLine {
+    let (paragraph_top, space_before) = boxed;
     PlacedLine {
         item,
         line,
         top,
         pitch,
         paragraph_top,
+        space_before,
         column: frame.filter(|f| f.multi).map(|f| f.column),
         offset: frame.filter(|f| f.multi).map_or(0, |f| f.offset),
     }
@@ -274,7 +276,9 @@ impl PageContext<'_> {
         let foot = Foot::new(self, first_section, frame.as_deref(), carry);
         let mut top = top;
         let opens_endnotes = match self.items.get(start.item) {
-            Some(FlowItem::Para(p)) => p.continuation.filter(|_| frame.as_deref().is_none_or(|f| f.page_top)),
+            Some(FlowItem::Para(p)) => p
+                .continuation_pitch()
+                .filter(|_| frame.as_deref().is_none_or(|f| f.page_top)),
             _ => None,
         };
         if let Some(pitch) = opens_endnotes {
@@ -368,22 +372,25 @@ impl PageContext<'_> {
         })
     }
 
-    /// The gap above a paragraph's first line, and where its box starts.
-    fn first_line_gap(&self, p: &ParaItem, index: usize, stack: &Stack<'_>) -> (Px, Px) {
+    /// The gap above a paragraph's first line, where its box starts, and what of the gap
+    /// is in its first line's box (its top border added).
+    fn first_line_gap(&self, p: &ParaItem, index: usize, stack: &Stack<'_>) -> (Px, Px, Px) {
         if stack.first_on_page {
             let keeps = keeps_space_before_at_page_top(p.section_start, p.page_break_before, self.mode15);
             let above = index.checked_sub(1).and_then(|k| self.items.get(k));
             let previous_after = above.and_then(FlowItem::para).map_or(0, |a| a.after);
-            return (page_top_gap(p.before, keeps, previous_after).0, stack.y);
+            let (gap, boxed) = page_top_gap(p.before, keeps, previous_after);
+            return (gap, stack.y, boxed + p.top_border);
         }
         match stack.previous.and_then(|k| self.items.get(k)) {
             Some(FlowItem::Para(previous)) => {
                 let same = p.style == previous.style;
                 let own_before = if p.contextual && same { 0 } else { p.before };
                 let prev_after = if previous.contextual && same { 0 } else { previous.after };
-                (paragraph_gap(prev_after, own_before).0, stack.y + Px::twips(prev_after))
+                let (gap, boxed) = paragraph_gap(prev_after, own_before);
+                (gap, stack.y + Px::twips(prev_after), boxed + p.top_border)
             }
-            _ => (Px::twips(p.before), stack.y),
+            _ => (Px::twips(p.before), stack.y, Px::twips(p.before) + p.top_border),
         }
     }
 
@@ -405,8 +412,8 @@ impl PageContext<'_> {
             // On this page, and taking no room: the stack goes on as if it were not there.
             // It is drawn where it stands, past its space before (the page walk's).
             let pitch = self.lines_of(index, p).heights().first().map_or(Px::ZERO, |h| h.pitch);
-            let (gap, box_top) = self.first_line_gap(p, index, stack);
-            let line = placed(frame, index, 0, stack.y + gap + p.top_border, pitch, box_top);
+            let (gap, box_top, boxed) = self.first_line_gap(p, index, stack);
+            let line = placed(frame, index, 0, stack.y + gap + p.top_border, pitch, (box_top, boxed));
             stack.out.lines.push(line);
             stack.foot.mark(Position::at(index, 0));
             let y = stack.y;
@@ -421,6 +428,7 @@ impl PageContext<'_> {
             return step;
         }
         let mut paragraph_top = stack.y;
+        let mut space_before = Px::ZERO;
         if let Some(source) = &p.source {
             // Lines an earlier layout of this page broke beside a drawing are broken again
             // in the whole column.
@@ -430,14 +438,16 @@ impl PageContext<'_> {
         let mut number = at.line;
         while number < self.lines_of(at.index, p).count() {
             if number == 0 {
-                let (gap, box_top) = self.first_line_gap(p, at.index, stack);
+                let (gap, box_top, boxed) = self.first_line_gap(p, at.index, stack);
                 paragraph_top = box_top;
+                space_before = boxed;
                 stack.y += gap + p.top_border;
                 if stack.first_top.is_none() {
                     stack.first_top = Some(stack.y - p.top_border);
                 }
             }
-            if let Some(step) = self.place_line(p, at, stack, number, paragraph_top) {
+            let boxed = if number == 0 { space_before } else { Px::ZERO };
+            if let Some(step) = self.place_line(p, at, stack, number, (paragraph_top, boxed)) {
                 return step;
             }
             number += 1;
@@ -455,8 +465,9 @@ impl PageContext<'_> {
         at: &At<'_>,
         stack: &mut Stack<'_>,
         number: usize,
-        paragraph_top: Px,
+        boxed: (Px, Px),
     ) -> Option<Step> {
+        let paragraph_top = boxed.0;
         let (index, start, frame) = (at.index, at.start, at.frame);
         if let (Some(source), Some(f)) = (&p.source, frame.filter(|f| f.multi)) {
             // One of unequal columns: the line is as wide as its column.
@@ -521,7 +532,7 @@ impl PageContext<'_> {
         stack
             .out
             .lines
-            .push(placed(frame, index, number, stack.y, height.pitch, paragraph_top));
+            .push(placed(frame, index, number, stack.y, height.pitch, boxed));
         stack.y += height.pitch;
         let end_y = stack.y + if last { p.border } else { Px::ZERO };
         stack.stack_ends.push((Position::at(index, number), end_y));
@@ -672,7 +683,7 @@ impl PageContext<'_> {
             request.split_kept = true;
             laid = t.flow.place(&request).map_err(stopped)?;
         }
-        record_rows(stack, index, &laid);
+        record_rows(stack, index, &laid, frame.filter(|f| f.multi).map(|f| f.column));
         for row in laid.rows.iter().filter(|r| !r.header) {
             stack.foot.mark(Position {
                 item: index,
@@ -827,7 +838,7 @@ fn finish(stack: Stack<'_>, end: &ScanEnd, frame: Option<&mut Frame>) {
 }
 
 /// A table's rows as placed on the page: each recorded, and where the stack ends after it.
-fn record_rows(stack: &mut Stack<'_>, index: usize, laid: &crate::table::TablePage) {
+fn record_rows(stack: &mut Stack<'_>, index: usize, laid: &crate::table::TablePage, column: Option<usize>) {
     for row in &laid.rows {
         if !row.header {
             let position = Position {
@@ -839,6 +850,7 @@ fn record_rows(stack: &mut Stack<'_>, index: usize, laid: &crate::table::TablePa
         }
         stack.out.rows.push(PlacedTableRow {
             item: index,
+            column,
             row: row.clone(),
         });
     }

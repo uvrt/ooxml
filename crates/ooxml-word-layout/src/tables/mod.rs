@@ -26,8 +26,9 @@ mod widths;
 
 pub use build::{effective_style, table_paragraphs, Frame};
 pub use cells::{Align, CellBlock, CellFlow, Content, Merge, RowFlow, RowHeight, StackedLine};
-pub use grid::CellBox;
+pub use grid::{inner_part, line_at as grid_line, CellBox};
 pub use measured::{Approximated, MeasuredTable};
+pub use place::place_table;
 pub use place::MergeDown;
 
 use crate::table::{TableContext, TableFlow, TableJob, TableLayout, Unsupported};

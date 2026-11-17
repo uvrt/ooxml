@@ -127,6 +127,9 @@ impl MeasuredTable {
                         top,
                         pitch: placed.pitch,
                         drawn: !entry.undrawn(placed.number),
+                        space_before: placed.box_before,
+                        space_after: placed.box_after,
+                        left: cell.cell_box.text_left,
                     }),
                 }
             }

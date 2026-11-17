@@ -34,6 +34,9 @@ pub enum Unmeasured {
 pub struct MeasuredParagraph {
     /// The text engine's pieces and lines.
     pub measured: Arc<Measured>,
+    /// Where its lines start and end and its tab stops: the geometry they were broken at
+    /// (a line broken again in another column carries its own).
+    pub geometry: Arc<Geometry>,
     /// Each line's height.
     pub heights: Vec<LineHeight>,
     /// Lines a page break ends (a column break too, in a one-column section).
@@ -148,7 +151,7 @@ pub fn measure_paragraph(
         resolved: job.resolved,
         columns: job.columns,
     };
-    derive(cx, &lines, measured)
+    derive(cx, &lines, measured, Arc::new(job.geometry.clone()))
 }
 
 /// A paragraph whose lines are given: what each line's height and breaks are read from.
@@ -168,6 +171,7 @@ pub fn derive(
     cx: &MeasureContext<'_>,
     of: &LinesOf<'_>,
     measured: Arc<Measured>,
+    geometry: Arc<Geometry>,
 ) -> Result<MeasuredParagraph, Unmeasured> {
     let (heights, undrawn) = line_heights(cx, of, &measured)?;
     let (pieces, lines) = (&measured.pieces, &measured.lines);
@@ -199,6 +203,7 @@ pub fn derive(
         undrawn,
         auto_hyphen_ends,
         measured,
+        geometry,
     })
 }
 

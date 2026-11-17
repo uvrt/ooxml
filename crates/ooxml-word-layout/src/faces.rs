@@ -8,7 +8,7 @@
 //! itself.
 
 use ooxml_base::Digest;
-use ooxml_fonts::{FaceMetrics, Grade, WordFonts};
+use ooxml_fonts::{Decorations, FaceMetrics, Grade, WordFonts};
 use ooxml_text::{Advance, FaceKey, Glyphs, ScriptMetrics};
 use std::collections::BTreeMap;
 use std::sync::{Mutex, PoisonError};
@@ -18,6 +18,9 @@ use std::sync::{Mutex, PoisonError};
 pub trait Faces: Glyphs + Send + Sync {
     /// The face's vertical metrics, or `None` where the face is unknown.
     fn metrics(&self, face: &FaceKey) -> Option<FaceMetrics>;
+    /// Where the face draws its underline and strikeout, or `None` where it is unknown or
+    /// says nothing of them.
+    fn decorations(&self, face: &FaceKey) -> Option<Decorations>;
 }
 
 /// What the layout's faces were found as: per family its first grade; every glyph taken
@@ -109,5 +112,9 @@ impl Faces for WordGlyphs {
     fn metrics(&self, face: &FaceKey) -> Option<FaceMetrics> {
         self.note(face);
         self.fonts.metrics(&face.family, face.bold, face.italic)
+    }
+
+    fn decorations(&self, face: &FaceKey) -> Option<Decorations> {
+        self.fonts.decorations(&face.family, face.bold, face.italic)
     }
 }
