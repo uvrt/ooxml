@@ -74,4 +74,3 @@ pub fn paragraph_borders(pp: &Props, previous: Option<&Props>, following: Option
     };
     (above, below)
 }
-

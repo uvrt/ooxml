@@ -23,17 +23,17 @@
 //! task at a time and its values are `Send + Sync`.
 #![forbid(unsafe_code)]
 
+pub mod borders;
 pub mod engine;
 mod error;
-pub mod borders;
 pub mod faces;
 pub mod fields;
 pub mod floating;
 pub mod flow;
 pub mod heights;
 pub mod incremental;
-pub mod notes;
 pub mod input;
+pub mod notes;
 pub mod paginate;
 pub mod paragraph;
 pub mod px;

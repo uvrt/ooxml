@@ -203,7 +203,11 @@ fn half_down(x: Q) -> Q {
 
 /// The segments a line from `y0` down to `y1` has beside `wraps`, left to right, and the
 /// drawings it is beside; `None` where it is beside none (the whole column is its).
-pub fn segments<'w>(wraps: &'w [Wrap], band: (Q, Q, Option<Q>), column: &Column) -> (Option<Vec<Segment>>, Vec<&'w Wrap>) {
+pub fn segments<'w>(
+    wraps: &'w [Wrap],
+    band: (Q, Q, Option<Q>),
+    column: &Column,
+) -> (Option<Vec<Segment>>, Vec<&'w Wrap>) {
     let (free, beside) = free_spans(wraps, band, column);
     if beside.is_empty() {
         return (None, beside);
@@ -294,8 +298,13 @@ fn fits_in(items: &[Piece], line: &Line, geometry: &Geometry, first: bool) -> bo
         return true;
     }
     let x = if first { geometry.first_start } else { geometry.start };
-    let Some(piece) = items.get(line.start) else { return true };
-    if matches!(piece.kind, PieceKind::Space | PieceKind::Break | PieceKind::Tab | PieceKind::SoftHyphen) {
+    let Some(piece) = items.get(line.start) else {
+        return true;
+    };
+    if matches!(
+        piece.kind,
+        PieceKind::Space | PieceKind::Break | PieceKind::Tab | PieceKind::SoftHyphen
+    ) {
         return true;
     }
     x + piece.width <= geometry.right

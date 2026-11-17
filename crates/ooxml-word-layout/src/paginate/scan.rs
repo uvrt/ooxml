@@ -9,12 +9,12 @@
 //! than one column (`columns` does).
 
 use super::floats::{clear_of_bands, Band, Floats, Top, Tops};
-use super::notes::{Foot, Fitted};
+use super::notes::{Fitted, Foot};
 use super::{LaidPage, NoteRest, PageContext, PlacedLine, PlacedNote, PlacedTableRow, Position, Stopped, Why};
 use crate::flow::{FlowItem, ParaItem, TableItem};
 use crate::notes::NoteLines;
-use crate::rebreak::Lines;
 use crate::px::Px;
+use crate::rebreak::Lines;
 use crate::sections::StoryKind;
 use crate::table::TableRequest;
 use crate::vertical::{keeps_space_before_at_page_top, page_top_gap, paragraph_gap};
@@ -184,11 +184,21 @@ impl PageContext<'_> {
         if bands.len() > 1 && first.is_ok() {
             bands = self.stacked_bands(start, story, carry, page_index, bands);
         }
-        let wraps = if self.wraps { self.page_wraps(&tops, page_index) } else { Vec::new() };
+        let wraps = if self.wraps {
+            self.page_wraps(&tops, page_index)
+        } else {
+            Vec::new()
+        };
         if bands.is_empty() && wraps.is_empty() {
             return first;
         }
-        let again = laid(Floats { bands: &bands, wraps: &wraps }, &mut Tops::default());
+        let again = laid(
+            Floats {
+                bands: &bands,
+                wraps: &wraps,
+            },
+            &mut Tops::default(),
+        );
         let mut page = match (first, again) {
             (Err((_, stopped)), Ok(page) | Err((page, _))) => return Err((with_floats(page, bands, wraps), stopped)),
             (Ok(_), Err((page, stopped))) => return Err((with_floats(page, bands, wraps), stopped)),
@@ -214,7 +224,10 @@ impl PageContext<'_> {
         for band in bands.iter().skip(1) {
             let mut found = Tops::default();
             let mut scratch = LaidPage::empty(start, std::sync::Arc::clone(carry));
-            let floats = Floats { bands: &fixed, wraps: &[] };
+            let floats = Floats {
+                bands: &fixed,
+                wraps: &[],
+            };
             if self.scan(start, story, None, &mut scratch, floats, &mut found).is_err() {
                 break;
             }
@@ -244,7 +257,9 @@ impl PageContext<'_> {
             Some(f) => (f.top, f.bottom),
             None => self.edges(first_section, story),
         };
-        let carry = frame.as_deref().map_or_else(|| std::sync::Arc::clone(&out.carried), |f| f.carried.clone());
+        let carry = frame
+            .as_deref()
+            .map_or_else(|| std::sync::Arc::clone(&out.carried), |f| f.carried.clone());
         let foot = Foot::new(self, first_section, frame.as_deref(), carry);
         let mut top = top;
         let opens_endnotes = match self.items.get(start.item) {
@@ -445,7 +460,11 @@ impl PageContext<'_> {
         if !stack.bands.is_empty() {
             // Below mode 15 a paragraph's last line reaches down to the end of its space
             // after; in mode 15 to the end of its pitch.
-            let after = if last && !self.mode15 { Px::twips(p.after) } else { Px::ZERO };
+            let after = if last && !self.mode15 {
+                Px::twips(p.after)
+            } else {
+                Px::ZERO
+            };
             stack.y = clear_of_bands(stack.y, height.pitch + after, &stack.bands);
         }
         if let (false, Some(source)) = (stack.wraps.is_empty(), &p.source) {
@@ -485,7 +504,9 @@ impl PageContext<'_> {
         }
         stack.foot.place(new_notes.iter(), &fitted);
         stack.foot.mark(Position::at(index, number));
-        stack.tops.record(top_of(frame, index, number, (stack.y, height.pitch, paragraph_top)));
+        stack
+            .tops
+            .record(top_of(frame, index, number, (stack.y, height.pitch, paragraph_top)));
         stack
             .out
             .lines
@@ -509,7 +530,14 @@ impl PageContext<'_> {
     }
 
     /// Line `number` broken beside the drawings it reaches into, and where its top is.
-    fn beside(&self, p: &ParaItem, at: &At<'_>, stack: &Stack<'_>, source: &crate::rebreak::ParaSource, number: usize) -> Px {
+    fn beside(
+        &self,
+        p: &ParaItem,
+        at: &At<'_>,
+        stack: &Stack<'_>,
+        source: &crate::rebreak::ParaSource,
+        number: usize,
+    ) -> Px {
         let current = self.lines_of(at.index, p);
         let column = at.frame.filter(|f| f.multi).map(|f| (f.offset, f.width));
         let Some(section) = self.sections.get(p.section) else {
@@ -557,25 +585,34 @@ impl PageContext<'_> {
 
     /// The space between the item before and a table (`table_gap_px`).
     fn table_gap(&self, previous: Option<usize>, t: &TableItem) -> Px {
-        match previous.and_then(|k| self.items.get(k)) {
-            Some(FlowItem::Table(before)) => {
-                if t.flow.rows() == 0 {
-                    Px::ZERO
-                } else {
-                    -before.flow.bottom_border().min(t.flow.top_border())
-                }
-            }
-            Some(FlowItem::Para(before)) => {
-                if before.contextual && t.flow.first_style().is_some() && t.flow.first_style() == before.style {
-                    Px::ZERO
-                } else {
-                    Px::twips(before.after)
-                }
-            }
-            _ => Px::ZERO,
-        }
+        table_gap(previous.and_then(|k| self.items.get(k)), t)
     }
+}
 
+/// The space between `previous` and a table after it (`table_gap_px`): the paragraph's
+/// space after, whole, unless contextual against the table's first paragraph's style;
+/// between two tables, one edge.
+pub(crate) fn table_gap(previous: Option<&FlowItem>, t: &TableItem) -> Px {
+    match previous {
+        Some(FlowItem::Table(before)) => {
+            if t.flow.rows() == 0 {
+                Px::ZERO
+            } else {
+                -before.flow.bottom_border().min(t.flow.top_border())
+            }
+        }
+        Some(FlowItem::Para(before)) => {
+            if before.contextual && t.flow.first_style().is_some() && t.flow.first_style() == before.style {
+                Px::ZERO
+            } else {
+                Px::twips(before.after)
+            }
+        }
+        _ => Px::ZERO,
+    }
+}
+
+impl PageContext<'_> {
     fn scan_table(&self, t: &TableItem, at: &At<'_>, stack: &mut Stack<'_>) -> Result<Step, Stopped> {
         let At {
             index,
@@ -771,7 +808,9 @@ fn finish(stack: Stack<'_>, end: &ScanEnd, frame: Option<&mut Frame>) {
             .map_or(f.top, |(_, y)| *y);
     } else {
         // What of its last footnote the page cannot hold goes on to the next (`_carried`).
-        stack.out.carry_out = notes.last().map_or_else(|| std::sync::Arc::from(Vec::new()), |n| n.rest().into());
+        stack.out.carry_out = notes
+            .last()
+            .map_or_else(|| std::sync::Arc::from(Vec::new()), |n| n.rest().into());
         stack.out.notes = notes;
     }
 }

@@ -164,7 +164,11 @@ pub fn vertical(anchor: &Anchor, frames: &Frames) -> Option<Q> {
         "bottomMargin" => Some(bottom_margin),
         "insideMargin" => Some(if odd { top_margin } else { bottom_margin }),
         // Below mode 15 the outside margin is the inside one.
-        "outsideMargin" => Some(if odd == frames.mode15 { bottom_margin } else { top_margin }),
+        "outsideMargin" => Some(if odd == frames.mode15 {
+            bottom_margin
+        } else {
+            top_margin
+        }),
         _ => None,
     };
     let size = (b.cy, b.top, b.bottom);

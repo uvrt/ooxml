@@ -11,8 +11,8 @@ pub mod numbering;
 
 pub use lines::{note_minimum, note_prefix, note_spacing, NoteLine, NoteLines};
 pub use numbering::{
-    footnote_numbers, footnote_references, footnotes_by_page, separator, with_endnotes, with_footnotes,
-    FootnotePages, FootnoteReference, NotesPart, Placed,
+    footnote_numbers, footnote_references, footnotes_by_page, separator, with_endnotes, with_footnotes, FootnotePages,
+    FootnoteReference, NotesPart, Placed,
 };
 
 /// What of the notes a block placed in the flow is.

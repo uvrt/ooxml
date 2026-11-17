@@ -121,7 +121,11 @@ impl Lines<'_> {
             Lines::Flow(p) => &p.notes,
             Lines::Again(r) => &r.notes,
         };
-        notes.iter().filter(|(l, _)| *l == line).map(|(_, n)| NoteLines::clone(n)).collect()
+        notes
+            .iter()
+            .filter(|(l, _)| *l == line)
+            .map(|(_, n)| NoteLines::clone(n))
+            .collect()
     }
 
     /// The floating drawings and their lines.
@@ -164,7 +168,14 @@ impl Breaker<'_> {
     /// The lines the paragraph's rest from piece `start` breaks into -- in a column
     /// `width` twips wide where given (one of unequal columns), each carrying that
     /// column's geometry (`ParaSource.rest`).
-    pub fn rest(&self, source: &ParaSource, pieces: &[ooxml_text::Piece], start: usize, first: bool, width: Option<i64>) -> Vec<(Line, LineExtra)> {
+    pub fn rest(
+        &self,
+        source: &ParaSource,
+        pieces: &[ooxml_text::Piece],
+        start: usize,
+        first: bool,
+        width: Option<i64>,
+    ) -> Vec<(Line, LineExtra)> {
         match (width, &source.section) {
             (Some(width), Some(_)) => {
                 let geometry = Arc::new(crate::input::geometry(self.document, &source.resolved.paragraph, width));
@@ -175,7 +186,13 @@ impl Breaker<'_> {
                             width,
                             geometry: Arc::clone(&geometry),
                         });
-                        (line, LineExtra { column, ..LineExtra::default() })
+                        (
+                            line,
+                            LineExtra {
+                                column,
+                                ..LineExtra::default()
+                            },
+                        )
                     })
                     .collect()
             }
@@ -305,7 +322,13 @@ impl Breaker<'_> {
     }
 
     /// One line's height on its own, the paragraph's first where `first`.
-    pub fn height(&self, source: &ParaSource, pieces: &[ooxml_text::Piece], line: &Line, first: bool) -> Option<LineHeight> {
+    pub fn height(
+        &self,
+        source: &ParaSource,
+        pieces: &[ooxml_text::Piece],
+        line: &Line,
+        first: bool,
+    ) -> Option<LineHeight> {
         let cx = MeasureContext {
             document: self.document,
             faces: self.faces,
@@ -323,7 +346,13 @@ impl Breaker<'_> {
     /// with the lines after it as the paragraph's, and where its top is -- lower than `y`
     /// where no segment at `y` took text and it went down to the foot of the drawings it
     /// is beside (`fit_beside`).
-    pub fn fit_beside(&self, source: &ParaSource, current: &Lines<'_>, beside: &Beside<'_>, y: Q) -> (Q, Option<Rebroken>) {
+    pub fn fit_beside(
+        &self,
+        source: &ParaSource,
+        current: &Lines<'_>,
+        beside: &Beside<'_>,
+        y: Q,
+    ) -> (Q, Option<Rebroken>) {
         let number = beside.number;
         let lines = Breaker::current(current);
         let pieces = &current.measured().measured.pieces;
@@ -334,10 +363,64 @@ impl Breaker<'_> {
         let start = old.start;
         let first = number == 0;
         let plain = if start >= n {
-            Line { start: n, end: n, forced: false, emergency: false, hyphenated: false }
+            Line {
+                start: n,
+                end: n,
+                forced: false,
+                emergency: false,
+                hyphenated: false,
+            }
         } else {
             let hyphens = u32::from(start > 0 && pieces.get(start - 1).is_some_and(|p| p.auto));
             ooxml_text::break_line(pieces, start, &source.geometry, first, hyphens)
+        };
+        let Some((y, moved, mut found_line)) = self.line_beside(source, pieces, (start, first), plain, beside, y)
+        else {
+            return (y, None);
+        };
+        found_line.1.drop = moved;
+        let (line, extra) = found_line;
+        if !extra.wrapped()
+            && !old_extra.wrapped()
+            && (old.start, old.end) == (line.start, line.end)
+            && current.plain_from() <= number
+        {
+            return (y, None);
+        }
+        let ends_newline = line.forced && pieces.last().is_some_and(|p| p.ch == '\n');
+        let tail = if line.end < n || ends_newline {
+            self.rest(source, pieces, line.end, false, None)
+        } else {
+            Vec::new()
+        };
+        let plain_from = if extra.wrapped() { number + 1 } else { number };
+        let mut out: Vec<(Line, LineExtra)> = lines.get(..number).unwrap_or_default().to_vec();
+        out.push((line, extra));
+        out.extend(tail);
+        (y, self.set_lines(source, current, out, plain_from))
+    }
+
+    /// Where line `at.0` (the paragraph's first where `at.1`) goes beside the drawings:
+    /// its top, how far it went down, and the line broken across the segments (`plain`
+    /// where it is beside none); `None` where its height cannot be measured.
+    fn line_beside(
+        &self,
+        source: &ParaSource,
+        pieces: &[ooxml_text::Piece],
+        at: (usize, bool),
+        plain: Line,
+        beside: &Beside<'_>,
+        y: Q,
+    ) -> Option<(Q, Option<Q>, (Line, LineExtra))> {
+        let (start, first) = at;
+        let wrapped = |line: Line, parts: Vec<SegmentLine>| {
+            (
+                line,
+                LineExtra {
+                    segments: parts,
+                    ..LineExtra::default()
+                },
+            )
         };
         let reach = |h: &LineHeight| -> Q {
             if beside.column.mode15 {
@@ -349,14 +432,12 @@ impl Breaker<'_> {
         let (mut y, mut moved) = (y, None);
         let mut found_line: (Line, LineExtra) = (plain, LineExtra::default());
         for _ in 0..64 {
-            let Some(height) = self.height(source, pieces, &plain, first) else {
-                return (y, None);
-            };
+            let height = self.height(source, pieces, &plain, first)?;
             let text = y + (height.pitch - height.multiple_extra()).value();
             let (segs, by) = segments(beside.wraps, (y, y + reach(&height), Some(text)), &beside.column);
             let Some(segs) = segs else { break };
             if let Some((line, parts)) = break_across(pieces, start, &segs, &source.geometry, first) {
-                found_line = (line, LineExtra { segments: parts, ..LineExtra::default() });
+                found_line = wrapped(line, parts);
                 let again = self.height(source, pieces, &line, first);
                 if let Some(again) = again.filter(|a| a.pitch != height.pitch) {
                     // The line's own height, not the whole column's, says what it is beside.
@@ -366,7 +447,7 @@ impl Breaker<'_> {
                         None => found_line = (plain, LineExtra::default()),
                         Some(others) if others != segs => {
                             if let Some((line, parts)) = break_across(pieces, start, &others, &source.geometry, first) {
-                                found_line = (line, LineExtra { segments: parts, ..LineExtra::default() });
+                                found_line = wrapped(line, parts);
                             }
                         }
                         Some(_) => {}
@@ -383,22 +464,7 @@ impl Breaker<'_> {
                 _ => break,
             }
         }
-        found_line.1.drop = moved;
-        let (line, extra) = found_line;
-        if !extra.wrapped() && !old_extra.wrapped() && (old.start, old.end) == (line.start, line.end) && current.plain_from() <= number {
-            return (y, None);
-        }
-        let ends_newline = line.forced && pieces.last().is_some_and(|p| p.ch == '\n');
-        let tail = if line.end < n || ends_newline {
-            self.rest(source, pieces, line.end, false, None)
-        } else {
-            Vec::new()
-        };
-        let plain_from = if extra.wrapped() { number + 1 } else { number };
-        let mut out: Vec<(Line, LineExtra)> = lines.get(..number).unwrap_or_default().to_vec();
-        out.push((line, extra));
-        out.extend(tail);
-        (y, self.set_lines(source, current, out, plain_from))
+        Some((y, moved, found_line))
     }
 }
 

@@ -244,7 +244,11 @@ impl PageContext<'_> {
             }
             let lines = self.lines_of(top.item, item);
             for anchored in lines.anchors().iter().filter(|a| a.line == top.line) {
-                let side = anchored.anchor.wrap.as_deref().is_some_and(|w| crate::floating::SIDE_WRAPS.contains(&w));
+                let side = anchored
+                    .anchor
+                    .wrap
+                    .as_deref()
+                    .is_some_and(|w| crate::floating::SIDE_WRAPS.contains(&w));
                 if side {
                     if let Some(wrap) = self.side_wrap(item, top, page, &anchored.anchor) {
                         out.push(wrap);
@@ -282,14 +286,27 @@ impl PageContext<'_> {
     }
 
     /// One drawing text wraps beside, positioned on its page.
-    fn side_wrap(&self, item: &ParaItem, top: &Top, page: usize, anchor: &ooxml_word_model::model::Anchor) -> Option<Wrap> {
+    fn side_wrap(
+        &self,
+        item: &ParaItem,
+        top: &Top,
+        page: usize,
+        anchor: &ooxml_word_model::model::Anchor,
+    ) -> Option<Wrap> {
         let mut frames = self.frames(item, top, page, Px::ZERO)?;
         let in_column = anchor.h.relative.as_deref().is_none_or(|r| r == "column");
         if !self.mode15 && anchor.simple.is_none() && in_column && anchor.h.offset.is_none() {
             if let Some(source) = &item.source {
                 // Below mode 15 a drawing aligned in the column is aligned between the
                 // paragraph's indents.
-                let indent = |key: &str| source.resolved.paragraph.get(key).and_then(ooxml_word_model::value::Value::int).unwrap_or(0);
+                let indent = |key: &str| {
+                    source
+                        .resolved
+                        .paragraph
+                        .get(key)
+                        .and_then(ooxml_word_model::value::Value::int)
+                        .unwrap_or(0)
+                };
                 frames.left += indent("ind.left");
                 frames.right += indent("ind.right");
             }
@@ -305,16 +322,20 @@ impl PageContext<'_> {
         let [el, et, er, eb] = anchor.effect.map(twips);
         let [mut dt, mut db, dl, dr] = anchor.distance.map(|d| twips(d) * twip_px());
         let tight = matches!(anchor.wrap.as_deref(), Some("wrapTight" | "wrapThrough"));
-        let polygon: Option<Vec<(Q, Q)>> = anchor.polygon.as_ref().filter(|p| tight && !p.is_empty()).map(|points| {
-            points
-                .iter()
-                .map(|(a, b)| {
-                    let px = (x + Q::from_integer(i128::from(cx) * i128::from(*a) / 21600)) * twip_px();
-                    let py = (y + Q::from_integer(i128::from(cy) * i128::from(*b) / 21600)) * twip_px();
-                    (px, py)
-                })
-                .collect()
-        });
+        let polygon: Option<Vec<(Q, Q)>> = anchor
+            .polygon
+            .as_ref()
+            .filter(|p| tight && !p.is_empty())
+            .map(|points| {
+                points
+                    .iter()
+                    .map(|(a, b)| {
+                        let px = (x + Q::from_integer(i128::from(cx) * i128::from(*a) / 21600)) * twip_px();
+                        let py = (y + Q::from_integer(i128::from(cy) * i128::from(*b) / 21600)) * twip_px();
+                        (px, py)
+                    })
+                    .collect()
+            });
         if polygon.is_some() && !self.mode15 {
             // Below mode 15 a wrap polygon keeps text off its own height only.
             dt = Q::from_integer(0);
@@ -325,7 +346,10 @@ impl PageContext<'_> {
                 points.iter().map(|p| p.1).min()? - dt,
                 points.iter().map(|p| p.1).max()? + db,
             ),
-            None => ((y - et) * twip_px() - dt, (y + Q::from_integer(i128::from(cy)) + eb) * twip_px() + db),
+            None => (
+                (y - et) * twip_px() - dt,
+                (y + Q::from_integer(i128::from(cy)) + eb) * twip_px() + db,
+            ),
         };
         Some(Wrap {
             top: top_px,

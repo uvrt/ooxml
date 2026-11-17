@@ -169,7 +169,6 @@ impl FlowItem {
     }
 }
 
-
 /// The body's flow.
 #[derive(Debug, Clone, Default)]
 pub struct Flow {
@@ -593,11 +592,7 @@ impl<'a, 'm> FlowMaker<'a, 'm> {
         let Some(geometry) = geometry else {
             return Err(Unmeasured::Text("no section".into()));
         };
-        if let Some(found) = self
-            .state
-            .cache
-            .get(paragraph, &geometry.props, label.as_deref())
-        {
+        if let Some(found) = self.state.cache.get(paragraph, &geometry.props, label.as_deref()) {
             return found;
         }
         let resolved = self.model.resolve_paragraph(document, paragraph);
@@ -672,9 +667,7 @@ impl<'a, 'm> FlowMaker<'a, 'm> {
     ) -> FlowItem {
         let measured = match self.measured(paragraph, body, section) {
             Ok(m) => m,
-            Err(why) => {
-                return stop(block, body, section, format!("{why:?}"))
-            }
+            Err(why) => return stop(block, body, section, format!("{why:?}")),
         };
         let Some(pp) = self.props_of_block(block) else {
             return stop(block, body, section, "unresolved");
@@ -687,9 +680,7 @@ impl<'a, 'm> FlowMaker<'a, 'm> {
         }
         let ParaNotes { notes, continuation } = match self.paragraph_notes(paragraph, &measured, section, role) {
             Ok(found) => found,
-            Err(note) => {
-                return stop(block, body, section, format!("footnote {} cannot be laid out", note.0))
-            }
+            Err(note) => return stop(block, body, section, format!("footnote {} cannot be laid out", note.0)),
         };
         let previous = self.neighbour_props(body, -1);
         let following = self.neighbour_props(body, 1);
@@ -723,5 +714,4 @@ impl<'a, 'm> FlowMaker<'a, 'm> {
             drop_cap: self.pending_drop.take(),
         }))
     }
-
 }

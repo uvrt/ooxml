@@ -198,5 +198,9 @@ fn continuation_line(cx: &mut NoteContext<'_, '_>, section: &SectionGeometry) ->
         label: None,
     };
     let measured = measure_paragraph(&mcx, cx.measurer, &job)?;
-    measured.heights.first().map(|h| h.pitch).ok_or(Unmeasured::NoFaceMetrics)
+    measured
+        .heights
+        .first()
+        .map(|h| h.pitch)
+        .ok_or(Unmeasured::NoFaceMetrics)
 }

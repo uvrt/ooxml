@@ -390,7 +390,11 @@ pub fn with_endnotes(document: &WordDocument) -> Placed {
         out.push(block);
         roles.push(None);
         let last_of_section = sections.get(k + 1).is_none_or(|next| next != section);
-        if let Some(at) = groups.iter().position(|(t, _)| t == section).filter(|_| last_of_section) {
+        if let Some(at) = groups
+            .iter()
+            .position(|(t, _)| t == section)
+            .filter(|_| last_of_section)
+        {
             let (_, group) = groups.remove(at);
             for (b, role) in group {
                 out.push(b);
@@ -552,7 +556,10 @@ pub fn footnote_numbers(document: &WordDocument, pages: Option<&FootnotePages>) 
         index += 1;
         let in_section = by_section.entry(reference.section).or_insert(0);
         *in_section += 1;
-        let numbering = document.sections.get(reference.section).map(|s| &s.properties.footnotes);
+        let numbering = document
+            .sections
+            .get(reference.section)
+            .map(|s| &s.properties.footnotes);
         let restart = numbering.and_then(|n| n.restart.as_deref()).unwrap_or("continuous");
         let start = numbering.and_then(|n| n.start).unwrap_or(1);
         let place = match restart {

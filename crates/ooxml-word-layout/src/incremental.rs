@@ -324,7 +324,12 @@ pub fn repaginate(cx: &PageContext<'_>, old: &Pagination, changes: &[Change]) ->
 /// The page a relayout restarts at, at or before `p`: one whose state holds no paragraph
 /// broken again at or past the change at item `a` (the old flow's lines of it).
 fn clean_restart(old: &Pagination, mut p: usize, a: usize) -> usize {
-    while p > 0 && old.pages.get(p).is_some_and(|page| page.lines_before.range(a..).next().is_some()) {
+    while p > 0
+        && old
+            .pages
+            .get(p)
+            .is_some_and(|page| page.lines_before.range(a..).next().is_some())
+    {
         p -= 1;
     }
     p

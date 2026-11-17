@@ -20,16 +20,17 @@ mod floats;
 mod keeps;
 mod notes;
 mod scan;
+pub(crate) use scan::table_gap;
 
 use crate::flow::{FlowItem, ParaItem};
-use crate::rebreak::{Breaker, Lines, Rebroken};
-use std::cell::RefCell;
 use crate::notes::{NoteLine, NoteLines};
 use crate::px::Px;
+use crate::rebreak::{Breaker, Lines, Rebroken};
 use crate::sections::{Sections, StoryKind};
 use crate::stories::StoryHeights;
 use crate::table::PlacedRow;
 pub use floats::{Band, DrawingKey};
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 

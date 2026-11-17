@@ -164,7 +164,11 @@ pub struct LinesOf<'a> {
 /// What follows from a paragraph's pieces and lines: each line's height, the lines a
 /// page or column break ends, the lines that draw nothing, the lines ending in an
 /// automatic hyphen (`ParaSource.derive`).
-pub fn derive(cx: &MeasureContext<'_>, of: &LinesOf<'_>, measured: Arc<Measured>) -> Result<MeasuredParagraph, Unmeasured> {
+pub fn derive(
+    cx: &MeasureContext<'_>,
+    of: &LinesOf<'_>,
+    measured: Arc<Measured>,
+) -> Result<MeasuredParagraph, Unmeasured> {
     let (heights, undrawn) = line_heights(cx, of, &measured)?;
     let (pieces, lines) = (&measured.pieces, &measured.lines);
     let last_char = |l: &ooxml_text::Line| l.end.checked_sub(1).and_then(|k| pieces.get(k)).map_or('\0', |p| p.ch);
@@ -283,7 +287,11 @@ fn line_heights(
     let mut heights = Vec::with_capacity(lines.len());
     for (number, (line, share)) in lines.iter().zip(&shares).enumerate() {
         let on_line = pieces.get(line.start..line.end).unwrap_or_default();
-        heights.push(maker.height(share, on_line, number == 0).ok_or(Unmeasured::NoFaceMetrics)?);
+        heights.push(
+            maker
+                .height(share, on_line, number == 0)
+                .ok_or(Unmeasured::NoFaceMetrics)?,
+        );
     }
     let undrawn = shares
         .iter()
@@ -296,7 +304,13 @@ fn line_heights(
 
 /// One line's height on its own: the characters of its pieces (no tab, break or
 /// object), the paragraph's first line where `first` (`ParaSource.height`).
-pub fn line_height(cx: &MeasureContext<'_>, of: &LinesOf<'_>, pieces: &[ooxml_text::Piece], line: &ooxml_text::Line, first: bool) -> Option<LineHeight> {
+pub fn line_height(
+    cx: &MeasureContext<'_>,
+    of: &LinesOf<'_>,
+    pieces: &[ooxml_text::Piece],
+    line: &ooxml_text::Line,
+    first: bool,
+) -> Option<LineHeight> {
     let mut by_source: std::collections::HashMap<i64, (usize, char)> = std::collections::HashMap::new();
     let mut index = 0i64;
     for (k, hidden, text) in runs_of(of) {

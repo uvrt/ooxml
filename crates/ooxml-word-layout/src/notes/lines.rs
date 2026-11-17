@@ -176,7 +176,9 @@ fn split_allowed(lines: &[NoteLine], k: usize) -> bool {
 /// The least of a note that must go on its reference's page: its first lines up to the
 /// first place widow control lets it split, all of it if nowhere (`note_minimum`).
 pub fn note_minimum(lines: &[NoteLine]) -> Px {
-    let k = (1..=lines.len()).find(|k| split_allowed(lines, *k)).unwrap_or(lines.len());
+    let k = (1..=lines.len())
+        .find(|k| split_allowed(lines, *k))
+        .unwrap_or(lines.len());
     heights(lines.get(..k).unwrap_or_default())
 }
 

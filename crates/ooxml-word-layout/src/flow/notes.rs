@@ -44,7 +44,9 @@ impl FlowMaker<'_, '_> {
             model: self.model,
         };
         let lines = (measured.measured.pieces.as_slice(), measured.measured.lines.as_slice());
-        let notes = self.notes.notes_by_line(&mut cx, paragraph, lines, (section, &geometry))?;
+        let notes = self
+            .notes
+            .notes_by_line(&mut cx, paragraph, lines, (section, &geometry))?;
         if !notes.is_empty() && !self.separators.contains_key(&section) {
             let found = self.notes.separators(&mut cx, (section, &geometry));
             self.separators.insert(section, found);
@@ -90,7 +92,10 @@ impl FlowMaker<'_, '_> {
             return;
         };
         let paragraphs = blocks.iter().filter(|b| matches!(b, Block::Paragraph(_))).count();
-        let sections = Sections::new(&[crate::notes::flowed::note_section(&geometry.props, paragraphs)], false);
+        let sections = Sections::new(
+            &[crate::notes::flowed::note_section(&geometry.props, paragraphs)],
+            false,
+        );
         let cx = FlowContext {
             document: self.cx.document,
             blocks: &blocks,
