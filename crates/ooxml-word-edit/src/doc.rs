@@ -49,6 +49,9 @@ pub enum Change {
         patch: Patch,
         /// The keys it writes.
         keys: Arc<[Key]>,
+        /// Ids drawn from the ledger where the change is applied, written into the
+        /// inserted element (the ledger merged at commit: a draw is not a conflict).
+        draws: Arc<[Draw]>,
     },
     /// An element's head changed in place in a part's tree.
     Head {
@@ -76,6 +79,41 @@ pub enum Change {
     },
     /// Ids added to the ledger (never taken back: an id given is never given again).
     Ids(IdsChange),
+}
+
+/// An id drawn from a seed's sequence when a splice is applied, into an attribute of the
+/// element it inserts: the value is the one the version it is applied to gives next, so a
+/// commit rebased past others draws what a serial run would.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Draw {
+    /// The seed.
+    pub seed: Arc<str>,
+    /// The element's place below the inserted element (empty: that element).
+    pub at: Vec<u32>,
+    /// The attribute the value goes into.
+    pub attribute: ooxml_xml::Name,
+}
+
+/// `element` with `name` set to `value` on the element at `at` below it.
+fn set_below(
+    element: &Arc<ooxml_xml::Element>,
+    at: &[u32],
+    name: &ooxml_xml::Name,
+    value: &str,
+) -> Option<Arc<ooxml_xml::Element>> {
+    let Some((&k, rest)) = at.split_first() else {
+        let head = crate::stamping::with_attribute(element.head(), name, value);
+        return Some(Arc::new(ooxml_xml::Element::from_head(
+            Arc::new(head),
+            element.children().clone(),
+        )));
+    };
+    let child = element.children().get(k as usize)?.as_element()?;
+    let edited = set_below(child, rest, name, value)?;
+    let children = element
+        .children()
+        .splice(k as usize..k as usize + 1, vec![ooxml_xml::Node::Element(edited)])?;
+    Some(Arc::new(element.with_children(children)))
 }
 
 /// Why a change could not be applied.
@@ -199,6 +237,38 @@ impl WordDoc {
         }
     }
 
+    /// `patch` with `draws` made from this version's ledger: the values written into the one
+    /// element it inserts, and the change that adds them to the ledger.
+    fn drawn(&self, patch: &Patch, draws: &[Draw]) -> Result<(Patch, IdsChange), ModelError> {
+        let stale = || {
+            ModelError::Patch(PatchError::Stale {
+                parent: patch.parent().0.clone(),
+                start: patch.start(),
+            })
+        };
+        let [ooxml_xml::Node::Element(inserted)] = patch.inserted() else {
+            return Err(stale());
+        };
+        let mut element = Arc::clone(inserted);
+        let mut ids = self.ids.clone();
+        let mut added = IdsChange::default();
+        for draw in draws {
+            let (values, change) = ids.draw(&draw.seed, 1, &self.shared.sequences);
+            ids.apply(&change);
+            added.values.extend(change.values);
+            added.cursors.extend(change.cursors);
+            let value = values.first().ok_or_else(stale)?;
+            element = set_below(&element, &draw.at, &draw.attribute, value).ok_or_else(stale)?;
+        }
+        let patch = Patch::splice(
+            patch.parent().clone(),
+            patch.start(),
+            patch.removed().to_vec(),
+            vec![ooxml_xml::Node::Element(element)],
+        );
+        Ok((patch, added))
+    }
+
     fn with_tree(
         &self,
         part: &str,
@@ -233,6 +303,12 @@ impl DocModel for WordDoc {
 
     fn apply(&mut self, change: &Change) -> Result<(), ModelError> {
         let (package, ids) = match change {
+            Change::Splice { part, patch, draws, .. } if !draws.is_empty() => {
+                let (patch, added) = self.drawn(patch, draws)?;
+                let mut ids = self.ids.clone();
+                ids.apply(&added);
+                (self.with_tree(part, |t| patch.apply(t))?, ids)
+            }
             Change::Splice { part, patch, .. } => (self.with_tree(part, |t| patch.apply(t))?, self.ids.clone()),
             Change::Head { part, patch, .. } => (self.with_tree(part, |t| patch.apply(t))?, self.ids.clone()),
             Change::Put { part, tree } => (self.package.with_new_tree(part, tree.clone()), self.ids.clone()),
@@ -249,11 +325,25 @@ impl DocModel for WordDoc {
 
     fn inverse(&self, change: &Change) -> Result<Change, ModelError> {
         Ok(match change {
-            Change::Splice { part, patch, keys } => Change::Splice {
-                part: Arc::clone(part),
-                patch: patch.inverse(),
-                keys: Arc::clone(keys),
-            },
+            Change::Splice {
+                part,
+                patch,
+                keys,
+                draws,
+            } => {
+                // what was inserted is what the draws made of it here
+                let patch = if draws.is_empty() {
+                    patch.clone()
+                } else {
+                    self.drawn(patch, draws)?.0
+                };
+                Change::Splice {
+                    part: Arc::clone(part),
+                    patch: patch.inverse(),
+                    keys: Arc::clone(keys),
+                    draws: Arc::from([]),
+                }
+            }
             Change::Head { part, patch, keys } => Change::Head {
                 part: Arc::clone(part),
                 patch: patch.inverse(),
@@ -310,15 +400,33 @@ impl DocModel for WordDoc {
             return Ok(change.clone());
         }
         Ok(match (change, past) {
-            (Change::Splice { part, patch, keys }, Change::Splice { patch: earlier, .. }) => Change::Splice {
+            (
+                Change::Splice {
+                    part,
+                    patch,
+                    keys,
+                    draws,
+                },
+                Change::Splice { patch: earlier, .. },
+            ) => Change::Splice {
                 part: Arc::clone(part),
                 patch: patch.rebase(earlier)?,
                 keys: Arc::clone(keys),
+                draws: Arc::clone(draws),
             },
-            (Change::Splice { part, patch, keys }, Change::Head { patch: earlier, .. }) => Change::Splice {
+            (
+                Change::Splice {
+                    part,
+                    patch,
+                    keys,
+                    draws,
+                },
+                Change::Head { patch: earlier, .. },
+            ) => Change::Splice {
                 part: Arc::clone(part),
                 patch: patch.rebase_head(earlier)?,
                 keys: Arc::clone(keys),
+                draws: Arc::clone(draws),
             },
             (Change::Head { part, patch, keys }, Change::Splice { patch: earlier, .. }) => Change::Head {
                 part: Arc::clone(part),

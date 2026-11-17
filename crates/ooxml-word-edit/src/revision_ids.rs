@@ -86,9 +86,12 @@ pub(crate) fn make_unique(sink: &mut EditSink<'_, '_>, part: &str, path: &[u32],
         return Ok(());
     };
     let (before, after) = (counts(old), counts(new));
+    // an id this edit gave is new (above every id the snapshot had): it repeats nothing
+    let ceiling = annotation_ceiling(sink.base())?;
+    let given = |id: &str| id.trim().parse::<i64>().is_ok_and(|v| v > ceiling);
     let candidates: Vec<String> = after
         .iter()
-        .filter(|(id, n)| **n > before.get(*id).copied().unwrap_or(0))
+        .filter(|(id, n)| **n > before.get(*id).copied().unwrap_or(0) && (**n > 1 || !given(id)))
         .map(|(id, _)| id.clone())
         .collect();
     if candidates.is_empty() {

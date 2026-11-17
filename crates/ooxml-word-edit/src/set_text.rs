@@ -8,11 +8,11 @@
 //! Must not: write but through the sink, or read outside what it records reading: the
 //! paragraph's own block, the ledger seeds it draws from, the annotation ids when tracked.
 
-use crate::doc::{Key, WordDoc};
+use crate::doc::{Draw, Key, WordDoc};
 use crate::names::{W14, W16DU};
 use crate::policy::RevisionPolicy;
 use crate::sink::EditSink;
-use crate::stamping::{new_text_id, stamp_document, w14_prefix};
+use crate::stamping::{stamp_document, w14_prefix};
 use crate::text::{paragraph_text, write::check_text};
 use crate::work::{scope_above, Work};
 use crate::{EditError, Result};
@@ -116,6 +116,14 @@ fn cell_paragraph(docx: &Docx, target: &str) -> Result<Found> {
     })
 }
 
+/// Whether a paragraph holds an element whose `w:id` is an annotation id.
+fn paragraph_has_annotations(paragraph: &ooxml_xml::Element) -> bool {
+    paragraph.child_elements().any(|c| {
+        (c.name().namespace() == Some(crate::names::W) && c.attribute(Some(crate::names::W), "id").is_some())
+            || paragraph_has_annotations(c)
+    })
+}
+
 /// The key a block is read and written under: its durable id.
 fn block_key(part: &str, id: &str) -> Key {
     Key::Block {
@@ -164,15 +172,22 @@ impl Command<WordDoc> for SetText {
                 "releasing the relationships of content a tracked edit removed outright (phase P2b)".to_owned(),
             ));
         }
+        // a paragraph stamped before gets a new text id, drawn where the change is applied
+        let mut draws = Vec::new();
         if found.state == IdState::Ok {
-            let text_id = new_text_id(&mut sink, &found.part)?;
             let prefix = w14_prefix(tree.root(), &found.path);
-            let name = Arc::new(QName::new(Some(&prefix), "textId", Some(W14)));
-            let root = work.root();
-            work.set(root, name, &text_id);
+            draws.push(Draw {
+                seed: Arc::from(format!("{}\0text", found.part)),
+                at: Vec::new(),
+                attribute: Arc::new(QName::new(Some(&prefix), "textId", Some(W14))),
+            });
         }
         let new = work.build().ok_or_else(|| EditError::Path(found.part.clone()))?;
-        sink.replace(&found.part, &found.path, new, vec![block_key(&found.part, &id)])?;
+        let mut keys = vec![block_key(&found.part, &id)];
+        if paragraph_has_annotations(&found.element) || paragraph_has_annotations(&new) {
+            keys.push(Key::Annotations); // the ids in use, which tracked edits number from
+        }
+        sink.replace_drawing(&found.part, &found.path, new, keys, draws)?;
         // the part's root declares what the paragraph now uses (docx-agent: the revisions'
         // `w16du`, then the text id's `w14`), once the paragraph is in place
         if wrote.dated {

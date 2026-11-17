@@ -29,6 +29,9 @@ const REL_NUMBERING: &str = "http://schemas.openxmlformats.org/officeDocument/20
 pub(crate) struct PartFacts {
     /// The blocks' facts, in order (a whole non-story part is one block).
     pub(crate) blocks: Vec<Arc<ElementFacts>>,
+    /// The blocks themselves, in the same order: a later version's blocks that are the
+    /// same allocations take their facts from here, without a lookup.
+    pub(crate) elements: Vec<Arc<Element>>,
     /// The root's own facts (its head, its and its body's child order).
     pub(crate) rest: ElementFacts,
     /// The root (for the rules that read a small part whole).
@@ -455,13 +458,10 @@ fn styles(out: &mut Vec<Problem>, inputs: &Inputs<'_>) {
 
 /// Drawing numbers repeated across stories.
 fn drawings(out: &mut Vec<Problem>, inputs: &Inputs<'_>) {
-    let mut counts: Vec<(&str, usize)> = Vec::new();
+    let mut counts: HashMap<&str, usize> = HashMap::new();
     for (_, part) in inputs.story_facts() {
         for id in part.all().flat_map(|f| f.docpr_ids.iter()) {
-            match counts.iter_mut().find(|(k, _)| k == id) {
-                Some(found) => found.1 += 1,
-                None => counts.push((id, 1)),
-            }
+            *counts.entry(id).or_insert(0) += 1;
         }
     }
     for (id, count) in counts {
@@ -473,7 +473,7 @@ fn drawings(out: &mut Vec<Problem>, inputs: &Inputs<'_>) {
 
 /// Revision records: an author each, ids unique across stories; moves paired.
 fn tracking(out: &mut Vec<Problem>, inputs: &Inputs<'_>) {
-    let mut ids: Vec<(&str, usize)> = Vec::new();
+    let mut ids: HashMap<&str, usize> = HashMap::new();
     for (name, part) in inputs.story_facts() {
         let mut starts: [BTreeMap<&str, &str>; 2] = [BTreeMap::new(), BTreeMap::new()];
         let mut ends: [BTreeSet<&str>; 2] = [BTreeSet::new(), BTreeSet::new()];
@@ -483,10 +483,7 @@ fn tracking(out: &mut Vec<Problem>, inputs: &Inputs<'_>) {
                     out.push(problem("revision-without-author", name, *kind));
                 }
                 if let Some(id) = id {
-                    match ids.iter_mut().find(|(k, _)| k == id) {
-                        Some(found) => found.1 += 1,
-                        None => ids.push((id, 1)),
-                    }
+                    *ids.entry(id).or_insert(0) += 1;
                 }
             }
             for mark in &f.moves {

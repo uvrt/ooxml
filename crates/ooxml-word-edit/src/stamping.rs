@@ -240,16 +240,6 @@ pub(crate) fn with_attribute(head: &Head, name: &Name, value: &str) -> Head {
     }
 }
 
-/// Give the paragraph (whose text changed) a new `w14:textId`, as Word does: the textId
-/// versions the text.
-///
-/// # Errors
-/// When the ids cannot be drawn.
-pub(crate) fn new_text_id(sink: &mut EditSink<'_, '_>, part: &str) -> Result<String> {
-    let ids = sink.draw(&format!("{part}\0text"), 1)?;
-    Ok(ids.into_iter().next().unwrap_or_default())
-}
-
 /// The prefix the paragraph at `path` of `root` writes `w14` attributes with.
 pub(crate) fn w14_prefix(root: &Element, path: &[u32]) -> String {
     prefix_at(root, path, W14, "w14")

@@ -8,7 +8,7 @@
 //! Must not: be bypassed (no edit touches a tree any other way), commit (the store does),
 //! or decide what an edit means.
 
-use crate::doc::{Change, Key, WordDoc};
+use crate::doc::{Change, Draw, Key, WordDoc};
 use crate::names::{MC, W14, WP14};
 use crate::policy::{RevisionPolicy, Stamp};
 use crate::text::write;
@@ -121,6 +121,22 @@ impl<'t, 's> EditSink<'t, 's> {
     /// # Errors
     /// When the part has no element there.
     pub fn replace(&mut self, part: &str, path: &[u32], new: Arc<Element>, keys: Vec<Key>) -> Result<()> {
+        self.replace_drawing(part, path, new, keys, Vec::new())
+    }
+
+    /// [`EditSink::replace`], with ids drawn from the ledger into the new element where
+    /// the change is applied ([`Draw`]): drawing is then no conflict between transactions.
+    ///
+    /// # Errors
+    /// When the part has no element there.
+    pub fn replace_drawing(
+        &mut self,
+        part: &str,
+        path: &[u32],
+        new: Arc<Element>,
+        keys: Vec<Key>,
+        draws: Vec<Draw>,
+    ) -> Result<()> {
         let tree = self
             .tx
             .doc()
@@ -146,6 +162,7 @@ impl<'t, 's> EditSink<'t, 's> {
             part: Arc::from(part),
             patch,
             keys: keys.into(),
+            draws: draws.into(),
         })
     }
 

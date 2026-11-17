@@ -275,3 +275,17 @@ fn each_version_reads_as_a_fresh_reading_does() {
         }
     }
 }
+
+/// The lane's end gate: sixty seeds of eight writers (run with `--ignored`, in release).
+#[test]
+#[ignore = "the end gate's long run: cargo test --release -- --ignored"]
+fn sixty_seeds_of_eight_writers() {
+    let (mut conflicts, mut exclusive) = (0, 0);
+    for seed in 100..160u64 {
+        let (c, e) = run(seed, 8, 6);
+        conflicts += c;
+        exclusive += e;
+    }
+    println!("60 seeds, 8 writers x 6 edits: {conflicts} conflicts, {exclusive} exclusive runs");
+    assert!(conflicts > 0);
+}

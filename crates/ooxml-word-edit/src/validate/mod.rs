@@ -112,6 +112,8 @@ pub struct Facts {
     orders: Orders,
     blocks: Mutex<Memo<usize, Held<ElementFacts>>>,
     parts: Mutex<Memo<(usize, String), Held<PartFacts>>>,
+    /// Each part's latest facts read: the next version's are made from them.
+    latest: Mutex<std::collections::HashMap<String, Arc<PartFacts>>>,
 }
 
 impl fmt::Debug for Facts {
@@ -137,6 +139,7 @@ impl Facts {
             orders: Orders::load(),
             blocks: Mutex::new(Memo::new(Arc::clone(&budget))),
             parts: Mutex::new(Memo::new(budget)),
+            latest: Mutex::new(std::collections::HashMap::new()),
         }
     }
 
@@ -166,7 +169,17 @@ impl Facts {
         if let Some(held) = held.filter(|h| Arc::ptr_eq(&h.element, root)) {
             return held.facts;
         }
-        let facts = Arc::new(self.read_part(root, kind));
+        let previous = self
+            .latest
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(name)
+            .cloned();
+        let facts = Arc::new(self.read_part(root, kind, previous.as_deref()));
+        self.latest
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(name.to_owned(), Arc::clone(&facts));
         let held = Held {
             element: Arc::clone(root),
             facts: Arc::clone(&facts),
@@ -178,22 +191,28 @@ impl Facts {
         facts
     }
 
-    fn read_part(&self, root: &Arc<Element>, kind: Kind) -> PartFacts {
+    fn read_part(&self, root: &Arc<Element>, kind: Kind, previous: Option<&PartFacts>) -> PartFacts {
         let body = (kind == Kind::Main).then(|| root.find(Some(W), "body")).flatten();
         let holder: Option<&Arc<Element>> = match kind {
             Kind::Main => body,
             Kind::Story => Some(root),
             Kind::Other => None,
         };
-        let blocks = match holder {
-            Some(holder) => holder
-                .children()
-                .iter()
-                .filter_map(Node::as_element)
-                .map(|block| self.element(block))
-                .collect(),
-            None => vec![self.element(root)],
+        let elements: Vec<Arc<Element>> = match holder {
+            Some(holder) => holder.children().iter().filter_map(Node::as_element).cloned().collect(),
+            None => vec![Arc::clone(root)],
         };
+        // a block at the same place as in the previous reading, the same allocation, has
+        // its facts; only the others are looked up (or read)
+        let blocks = elements
+            .iter()
+            .enumerate()
+            .map(|(k, block)| {
+                previous
+                    .and_then(|p| p.elements.get(k).filter(|e| Arc::ptr_eq(e, block)).and(p.blocks.get(k)))
+                    .map_or_else(|| self.element(block), Arc::clone)
+            })
+            .collect();
         let rest = match kind {
             Kind::Other => ElementFacts::default(),
             Kind::Story => ElementFacts::of_rest(root, None, &self.orders),
@@ -201,6 +220,7 @@ impl Facts {
         };
         PartFacts {
             blocks,
+            elements,
             rest,
             root: Arc::clone(root),
             body: (kind == Kind::Main).then(|| body_problem(root)).flatten(),
