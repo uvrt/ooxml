@@ -33,13 +33,14 @@ impl PageContext<'_> {
                 target = Position::at(index, number);
             }
             Some(FlowItem::Para(p)) if number > 0 => {
+                let lines = self.lines_of(index, p);
                 if p.keep_lines && first == 0 {
                     target = Position::at(index, 0);
                 } else if p.widow.unwrap_or(true) {
-                    let mut end = p.count();
+                    let mut end = lines.count();
                     if self.mode15 {
-                        end = p
-                            .measured
+                        end = lines
+                            .measured()
                             .page_breaks
                             .iter()
                             .filter(|&&k| k >= number)
@@ -62,7 +63,8 @@ impl PageContext<'_> {
             let previous = target.item - 1;
             match self.items.get(previous) {
                 Some(FlowItem::Para(p)) if p.keep_next => {
-                    let line = if self.mode15 { p.count().saturating_sub(1) } else { 0 };
+                    let count = self.lines_of(previous, p).count();
+                    let line = if self.mode15 { count.saturating_sub(1) } else { 0 };
                     return self.keeps(start, Position::at(previous, line));
                 }
                 Some(FlowItem::Table(t)) if t.flow.rows() > 0 && t.flow.keeps_with_next(t.flow.rows() - 1) => {

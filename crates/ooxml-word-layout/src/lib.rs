@@ -37,6 +37,7 @@ pub mod input;
 pub mod paginate;
 pub mod paragraph;
 pub mod px;
+pub mod rebreak;
 pub mod sections;
 pub mod stories;
 pub mod table;

@@ -12,6 +12,8 @@ use super::floats::{clear_of_bands, Band, Floats, Top, Tops};
 use super::notes::{Foot, Fitted};
 use super::{LaidPage, NoteRest, PageContext, PlacedLine, PlacedNote, PlacedTableRow, Position, Stopped, Why};
 use crate::flow::{FlowItem, ParaItem, TableItem};
+use crate::notes::NoteLines;
+use crate::rebreak::Lines;
 use crate::px::Px;
 use crate::sections::StoryKind;
 use crate::table::TableRequest;
@@ -371,7 +373,7 @@ impl PageContext<'_> {
         if p.section_mark && !stack.first_on_page && !(self.mode15 && previous_is_table) {
             // On this page, and taking no room: the stack goes on as if it were not there.
             // It is drawn where it stands, past its space before (the page walk's).
-            let pitch = p.measured.heights.first().map_or(Px::ZERO, |h| h.pitch);
+            let pitch = self.lines_of(index, p).heights().first().map_or(Px::ZERO, |h| h.pitch);
             let (gap, box_top) = self.first_line_gap(p, index, stack);
             let line = placed(frame, index, 0, stack.y + gap + p.top_border, pitch, box_top);
             stack.out.lines.push(line);
@@ -388,7 +390,14 @@ impl PageContext<'_> {
             return step;
         }
         let mut paragraph_top = stack.y;
-        for number in at.line..p.count() {
+        if let Some(source) = &p.source {
+            // Lines an earlier layout of this page broke beside a drawing are broken again
+            // in the whole column.
+            let current = self.lines_of(at.index, p);
+            self.broken(at.index, self.breaker.plain(source, &current, at.line));
+        }
+        let mut number = at.line;
+        while number < self.lines_of(at.index, p).count() {
             if number == 0 {
                 let (gap, box_top) = self.first_line_gap(p, at.index, stack);
                 paragraph_top = box_top;
@@ -400,6 +409,7 @@ impl PageContext<'_> {
             if let Some(step) = self.place_line(p, at, stack, number, paragraph_top) {
                 return step;
             }
+            number += 1;
         }
         stack.y += p.border;
         stack.previous = Some(at.index);
@@ -417,8 +427,14 @@ impl PageContext<'_> {
         paragraph_top: Px,
     ) -> Option<Step> {
         let (index, start, frame) = (at.index, at.start, at.frame);
-        let height = p.measured.heights.get(number)?;
-        let count = p.count();
+        if let (Some(source), Some(f)) = (&p.source, frame.filter(|f| f.multi)) {
+            // One of unequal columns: the line is as wide as its column.
+            let current = self.lines_of(index, p);
+            self.broken(index, self.breaker.fit_width(source, &current, number, f.width));
+        }
+        let lines = self.lines_of(index, p);
+        let height = lines.heights().get(number)?;
+        let count = lines.count();
         let last = number + 1 == count;
         if !stack.bands.is_empty() {
             // Below mode 15 a paragraph's last line reaches down to the end of its space
@@ -435,22 +451,24 @@ impl PageContext<'_> {
             after,
             bottom: at.bottom,
         };
-        let need = stack.foot.need(p.notes_on(number), &fitted);
-        if !stack.first_on_page && !p.section_mark && stack.y + height.fit() + border > at.bottom - need {
-            let mut overflow = Position::at(index, number);
-            if frame.is_none()
-                && number > 0
-                && p.measured.auto_hyphen_ends.contains(&(number - 1))
-                && Position::at(index, number - 1) > *start
-                && self.hyphen_at_page_end != super::HyphenMove::Nothing
-            {
-                overflow = Position::at(index, number - 1);
+        let mut new_notes = lines.notes_on(number);
+        if let Some(f) = frame.filter(|f| f.multi && !f.pooled) {
+            // In one of unequal columns, a note broken in the column's width.
+            for note in &mut new_notes {
+                let id = note.first().and_then(|l| l.note);
+                if let Some(found) = id.and_then(|id| self.notes_at.get(&(id, p.section, f.width))) {
+                    *note = NoteLines::clone(found);
+                }
             }
+        }
+        let need = stack.foot.need(new_notes.iter(), &fitted);
+        if !stack.first_on_page && !p.section_mark && stack.y + height.fit() + border > at.bottom - need {
+            let overflow = self.hyphen_overflow(p, at, &lines, number);
             let empty_ok = frame.is_some_and(|f| !f.first_on_page);
             let end = self.break_before(start, overflow.clone(), empty_ok);
             return Some(done(end, false, Why::Full, overflow));
         }
-        stack.foot.place(p.notes_on(number), &fitted);
+        stack.foot.place(new_notes.iter(), &fitted);
         stack.foot.mark(Position::at(index, number));
         stack.tops.record(top_of(frame, index, number, (stack.y, height.pitch, paragraph_top)));
         stack
@@ -466,13 +484,41 @@ impl PageContext<'_> {
         } else {
             Position::at(index + 1, 0)
         };
-        if p.measured.page_breaks.contains(&number) {
+        if lines.measured().page_breaks.contains(&number) {
             return Some(done(next, true, Why::Page, Position::at(index, number)));
         }
-        if p.measured.column_breaks.contains(&number) {
+        if lines.measured().column_breaks.contains(&number) {
             return Some(done(next, true, Why::Column, Position::at(index, number)));
         }
         None
+    }
+
+    /// Where a page ends whose line `number` does not fit, past an automatic hyphen ending
+    /// the line before: in mode 15 that line goes too -- or, where Word moves only the
+    /// word, the line keeps its text before the word and the next starts with it.
+    fn hyphen_overflow(&self, p: &ParaItem, at: &At<'_>, lines: &Lines<'_>, number: usize) -> Position {
+        let (index, start) = (at.index, at.start);
+        let at_hyphen = at.frame.is_none()
+            && number > 0
+            && lines.measured().auto_hyphen_ends.contains(&(number - 1))
+            && Position::at(index, number - 1) > *start;
+        if !at_hyphen {
+            return Position::at(index, number);
+        }
+        let moved = match (&p.source, self.hyphen_at_page_end) {
+            (Some(source), super::HyphenMove::Word) if source.section.is_none() => {
+                let found = self.breaker.move_hyphenated_word(source, lines, number - 1);
+                let moved = found.is_some();
+                self.broken(index, found);
+                moved
+            }
+            _ => false,
+        };
+        match self.hyphen_at_page_end {
+            super::HyphenMove::Nothing => Position::at(index, number),
+            _ if moved => Position::at(index, number),
+            _ => Position::at(index, number - 1),
+        }
     }
 
     /// The space between the item before and a table (`table_gap_px`).

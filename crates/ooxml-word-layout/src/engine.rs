@@ -79,8 +79,9 @@ impl DocumentLayout {
 pub const FIELD_PASSES: usize = 4;
 
 impl DocumentLayout {
-    /// The context its pages were laid out in.
-    pub fn page_context(&self) -> PageContext<'_> {
+    /// The context its pages are laid out in, paragraphs broken again with `breaker`'s
+    /// faces.
+    pub fn page_context<'s>(&'s self, faces: &'s dyn Faces, locale: &'s Locale) -> PageContext<'s> {
         PageContext {
             items: &self.flow.items,
             sections: &self.sections,
@@ -89,6 +90,13 @@ impl DocumentLayout {
             stories: &self.stories,
             separators: &self.flow.separators,
             note_items: &self.flow.note_items,
+            notes_at: &self.flow.notes_at,
+            breaker: crate::rebreak::Breaker {
+                document: &self.document,
+                faces,
+                locale,
+            },
+            lines: std::cell::RefCell::default(),
         }
     }
 }
@@ -211,11 +219,12 @@ impl WordLayout {
         match old {
             Some((old_flow, old_pages)) => {
                 let found = changes(&old_flow.items, &layout.flow.items);
-                let (pages, stats) = repaginate(&layout.page_context(), old_pages, &found);
+                let cx = layout.page_context(self.faces.as_ref(), &self.locale);
+                let (pages, stats) = repaginate(&cx, old_pages, &found);
                 layout.pagination = pages;
                 layout.relaid.push(stats);
             }
-            None => layout.pagination = paginate_all(&layout),
+            None => layout.pagination = paginate_all(&layout, self.faces.as_ref(), &self.locale),
         }
         layout
     }
@@ -319,7 +328,7 @@ pub struct PassFrame<'f> {
 }
 
 /// Every page of a laid-out flow, from the start.
-pub fn paginate_all(layout: &DocumentLayout) -> Pagination {
-    let cx = layout.page_context();
+pub fn paginate_all(layout: &DocumentLayout, faces: &dyn Faces, locale: &Locale) -> Pagination {
+    let cx = layout.page_context(faces, locale);
     Paginator::new(&cx).run(None, &mut |_: &Resume| false).0
 }

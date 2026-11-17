@@ -21,7 +21,9 @@ mod keeps;
 mod notes;
 mod scan;
 
-use crate::flow::FlowItem;
+use crate::flow::{FlowItem, ParaItem};
+use crate::rebreak::{Breaker, Lines, Rebroken};
+use std::cell::RefCell;
 use crate::notes::{NoteLine, NoteLines};
 use crate::px::Px;
 use crate::sections::{Sections, StoryKind};
@@ -174,6 +176,11 @@ pub struct LaidPage {
     pub opens: Option<OpeningLine>,
     /// The bands its drawings text wraps top and bottom of keep its lines off.
     pub bands: Vec<Band>,
+    /// The paragraphs broken again before it, from its first item on: what laying it out
+    /// again starts from.
+    pub lines_before: LineStore,
+    /// Its paragraphs broken again, as it placed them.
+    pub broken: LineStore,
 }
 
 /// A line a page opens with that is no line of the flow: the endnotes' continuation
@@ -204,6 +211,8 @@ impl LaidPage {
             continued: None,
             opens: None,
             bands: Vec::new(),
+            lines_before: LineStore::new(),
+            broken: LineStore::new(),
         }
     }
 }
@@ -269,6 +278,33 @@ pub struct PageContext<'a> {
     pub separators: &'a BTreeMap<usize, (Px, Px)>,
     /// In mode 15, the footnotes of sections of several columns as flows of their own.
     pub note_items: &'a crate::flow::NoteItems,
+    /// Below mode 15, footnotes broken in the widths of unequal columns.
+    pub notes_at: &'a crate::flow::NotesAt,
+    /// What breaking a paragraph again needs.
+    pub breaker: Breaker<'a>,
+    /// The paragraphs broken again so far: the paginator's state, which every layout of a
+    /// page reads and breaks again (`Para.set_lines`), carried from page to page.
+    pub lines: RefCell<LineStore>,
+}
+
+/// Flow index -> a paragraph's lines as the paginator last broke them again.
+pub type LineStore = BTreeMap<usize, Arc<Rebroken>>;
+
+impl PageContext<'_> {
+    /// Item `index`'s lines as the paginator reads them now.
+    pub(crate) fn lines_of<'s>(&self, index: usize, p: &'s ParaItem) -> Lines<'s> {
+        match self.lines.borrow().get(&index) {
+            Some(found) => Lines::Again(Arc::clone(found)),
+            None => Lines::Flow(p),
+        }
+    }
+
+    /// Item `index` broken again as `found` says, where it is.
+    pub(crate) fn broken(&self, index: usize, found: Option<Rebroken>) {
+        if let Some(found) = found {
+            self.lines.borrow_mut().insert(index, Arc::new(found));
+        }
+    }
 }
 
 /// What Word does with a page whose last line would end in an automatic hyphen
@@ -294,6 +330,8 @@ pub struct Resume {
     pub number: i64,
     /// The lines of a note the page before could not hold.
     pub carry: NoteRest,
+    /// The paragraphs broken again before it, from its first item on.
+    pub lines: LineStore,
 }
 
 /// Lays pages out from a start until the end, a stop, or until a caller says the rest is
@@ -319,19 +357,26 @@ impl<'a> Paginator<'a> {
             mut page,
             mut number,
             mut carry,
+            lines,
         } = resume.unwrap_or(Resume {
             position: Position::default(),
             page: 0,
             number: 0,
             carry: Arc::from(Vec::new()),
+            lines: LineStore::new(),
         });
+        cx.lines.replace(lines);
         let mut first = true;
         while position.item < cx.items.len() {
+            // What is broken again before the page's first item is never read again.
+            cx.lines.borrow_mut().retain(|k, _| *k >= position.item);
+            let lines_before = cx.lines.borrow().clone();
             let state = Resume {
                 position: position.clone(),
                 page,
                 number,
                 carry: Arc::clone(&carry),
+                lines: lines_before.clone(),
             };
             if !first && until(&state) {
                 return (out, Some(state));
@@ -341,7 +386,10 @@ impl<'a> Paginator<'a> {
             let info = self.page_info(&position, &mut page, &mut number, &mut out.info);
             out.info.push(info);
             let laid = cx.lay_page(&position, info.story, &carry, page);
-            let mut laid = match laid {
+            let mut laid = match laid.map_err(|(mut laid, stopped)| {
+                laid.lines_before = lines_before.clone();
+                (laid, stopped)
+            }) {
                 Ok(laid) => laid,
                 Err((mut laid, stopped)) => {
                     laid.page = page;
@@ -353,6 +401,13 @@ impl<'a> Paginator<'a> {
             };
             laid.page = page;
             laid.number_before = number_before;
+            laid.lines_before = lines_before;
+            laid.broken = cx
+                .lines
+                .borrow()
+                .range(laid.start.item..=laid.end.item)
+                .map(|(k, v)| (*k, Arc::clone(v)))
+                .collect();
             position = laid.end.clone();
             carry = Arc::clone(&laid.carry_out);
             page += 1;

@@ -53,9 +53,28 @@ impl FlowMaker<'_, '_> {
             Some(NoteRole::Endnote) => self.notes.continuation(&mut cx, (section, &geometry)),
             _ => None,
         };
-        if crate::input::rules(self.cx.document).mode15() && geometry.multi_column() {
-            for note in crate::notes::flowed::references(paragraph).into_iter().map(|(_, n)| n) {
+        let mode15 = crate::input::rules(self.cx.document).mode15();
+        let referenced = crate::notes::flowed::references(paragraph).into_iter().map(|(_, n)| n);
+        if mode15 && geometry.multi_column() {
+            for note in referenced {
                 self.note_flow(note, section, &geometry);
+            }
+        } else if geometry.unequal_columns() {
+            // A column's foot holds a note broken in its own width.
+            let widths: std::collections::BTreeSet<i64> = geometry.column_boxes().iter().map(|b| b.width).collect();
+            for note in referenced {
+                for width in &widths {
+                    let mut cx = NoteContext {
+                        document: self.cx.document,
+                        faces: self.cx.faces,
+                        locale: self.cx.locale,
+                        measurer: &mut self.state.measurer,
+                        model: &mut *self.model,
+                    };
+                    if let Some(lines) = self.notes.note(&mut cx, note, (section, &geometry), Some(*width)) {
+                        self.notes_at.insert((note, section, *width), lines);
+                    }
+                }
             }
         }
         Ok(ParaNotes { notes, continuation })

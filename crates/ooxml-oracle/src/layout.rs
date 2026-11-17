@@ -14,6 +14,7 @@ use crate::text::fonts_of;
 use ooxml_base::Locale;
 use ooxml_derive::CacheBudget;
 use ooxml_word_layout::flow::{FlowItem, ParaItem};
+use ooxml_word_layout::paragraph::MeasuredParagraph;
 use ooxml_word_layout::paginate::Position;
 use ooxml_word_layout::table::NoTables;
 use ooxml_word_layout::{DocumentLayout, WordGlyphs, WordLayout};
@@ -145,9 +146,9 @@ fn int(v: Option<&Value>) -> i64 {
 }
 
 /// The paragraph's lines and heights as docx2svg's record writes them.
-fn para_fields(p: &ParaItem) -> Vec<(&'static str, Value)> {
+fn para_fields(p: &ParaItem, last: &MeasuredParagraph) -> Vec<(&'static str, Value)> {
     let m = &p.measured;
-    let heights: Vec<Value> = m
+    let heights: Vec<Value> = last
         .heights
         .iter()
         .map(|h| {
@@ -171,9 +172,9 @@ fn para_fields(p: &ParaItem) -> Vec<(&'static str, Value)> {
         ("section", serde_json::json!(p.section)),
         ("lines", Value::Array(lines)),
         ("heights", Value::Array(heights)),
-        ("page_breaks", serde_json::json!(m.page_breaks)),
-        ("column_breaks", serde_json::json!(m.column_breaks)),
-        ("undrawn", serde_json::json!(m.undrawn)),
+        ("page_breaks", serde_json::json!(last.page_breaks)),
+        ("column_breaks", serde_json::json!(last.column_breaks)),
+        ("undrawn", serde_json::json!(last.undrawn)),
         ("before", serde_json::json!(p.before)),
         ("after", serde_json::json!(p.after)),
         ("contextual", serde_json::json!(p.contextual)),
@@ -296,7 +297,8 @@ fn compare_flow(ours: &DocumentLayout, theirs: &[Value], cut: usize, diffs: &mut
                 format!("{} vs {}", p.block, text(at(item, "block"))),
             );
         }
-        for (name, value) in para_fields(p) {
+        let last = last_lines(ours, k).unwrap_or(&p.measured);
+        for (name, value) in para_fields(p, last) {
             let expected = item.get(name).cloned().unwrap_or(Value::Null);
             if value != expected {
                 diffs.push(place.clone(), name, format!("{value} vs {expected}"));
@@ -358,12 +360,27 @@ fn item_paths(document: &WordDocument, layout: &DocumentLayout) -> Vec<Option<St
 }
 
 /// Whether a line draws nothing (the layout places it and draws no line for it).
-fn undrawn(ours: &DocumentLayout, item: usize, line: usize) -> bool {
-    ours.flow
-        .items
-        .get(item)
-        .and_then(FlowItem::para)
-        .is_some_and(|p| p.measured.undrawn.contains(&line))
+fn undrawn(page: &ooxml_word_layout::paginate::LaidPage, ours: &DocumentLayout, item: usize, line: usize) -> bool {
+    match page.broken.get(&item) {
+        Some(again) => again.measured.undrawn.contains(&line),
+        None => ours
+            .flow
+            .items
+            .get(item)
+            .and_then(FlowItem::para)
+            .is_some_and(|p| p.measured.undrawn.contains(&line)),
+    }
+}
+
+/// A paragraph's lines as the last page that broke them again left them (docx2svg
+/// records a paragraph as its pagination left it); `None` where none did.
+fn last_lines(ours: &DocumentLayout, item: usize) -> Option<&MeasuredParagraph> {
+    ours.pagination
+        .pages
+        .iter()
+        .rev()
+        .find_map(|page| page.broken.get(&item))
+        .map(|again| &*again.measured)
 }
 
 fn position(v: &Value) -> Position {
@@ -413,7 +430,7 @@ fn our_lines(
         .chain(
             page.lines
                 .iter()
-                .filter(|l| l.item < cut && !undrawn(ours, l.item, l.line))
+                .filter(|l| l.item < cut && !undrawn(page, ours, l.item, l.line))
                 .map(|l| {
                     let path = paths.get(l.item).cloned().flatten().unwrap_or_default();
                     (path, l.line, l.top.to_string(), l.pitch.to_string())

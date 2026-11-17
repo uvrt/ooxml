@@ -75,6 +75,8 @@ pub struct ParaItem {
     /// Its floating drawings that take no room in their line: those text does not wrap
     /// around, and those it wraps top and bottom of or beside (`anchors_of`).
     pub anchors: Vec<AnchorRef>,
+    /// What its lines are broken from, where the paginator may break them again.
+    pub source: Option<Arc<crate::rebreak::ParaSource>>,
 }
 
 impl ParaItem {
@@ -177,7 +179,13 @@ pub struct Flow {
     /// In mode 15, per footnote referenced in a section of several columns, its paragraphs
     /// as a flow in that section's columns: what the page's note area is laid out from.
     pub note_items: NoteItems,
+    /// Below mode 15, per footnote referenced in a section of unequal columns, its lines
+    /// broken in each of the section's column widths: what a column's foot holds of it.
+    pub notes_at: NotesAt,
 }
+
+/// `(note, section, width)` -> the note's lines broken in a column that wide.
+pub type NotesAt = std::collections::BTreeMap<(i64, usize, i64), NoteLines>;
 
 /// `(note, section)` -> the note's paragraphs as a flow in the section's columns.
 pub type NoteItems = std::collections::BTreeMap<(i64, usize), Arc<[FlowItem]>>;
@@ -359,6 +367,7 @@ fn is_empty(paragraph: &Paragraph) -> bool {
 pub use crate::borders::paragraph_borders;
 
 mod notes;
+mod source;
 use notes::ParaNotes;
 
 /// Whether a side of a resolved paragraph is autospaced (`autospaced`).
@@ -398,6 +407,9 @@ pub struct FlowMaker<'a, 'm> {
     notes: NoteMaker,
     separators: std::collections::BTreeMap<usize, (Px, Px)>,
     note_items: NoteItems,
+    notes_at: NotesAt,
+    /// The body has drawings text wraps beside or floating tables.
+    wraps: bool,
 }
 
 impl<'a, 'm> FlowMaker<'a, 'm> {
@@ -414,6 +426,8 @@ impl<'a, 'm> FlowMaker<'a, 'm> {
             notes: NoteMaker::default(),
             separators: std::collections::BTreeMap::new(),
             note_items: NoteItems::new(),
+            notes_at: NotesAt::new(),
+            wraps: source::wraps(cx.blocks),
         }
     }
 
@@ -459,6 +473,7 @@ impl<'a, 'm> FlowMaker<'a, 'm> {
             items,
             separators: self.separators,
             note_items: self.note_items,
+            notes_at: self.notes_at,
         }
     }
 
@@ -603,12 +618,8 @@ impl<'a, 'm> FlowMaker<'a, 'm> {
         }
     }
 
-    /// What of a paragraph this layout does not lay out: a drop cap's frame and a section
-    /// of unequal columns (a paragraph broken again for each column's width).
-    fn not_laid_out(&mut self, block: usize, section: usize) -> Option<&'static str> {
-        if self.cx.sections.get(section).is_some_and(|s| s.unequal_columns()) {
-            return Some("a section of unequal columns");
-        }
+    /// What of a paragraph this layout does not lay out: a drop cap's frame.
+    fn not_laid_out(&mut self, block: usize, _section: usize) -> Option<&'static str> {
         let pp = self.props_of_block(block)?;
         let drop_cap = match pp.get("framePr") {
             Some(Value::Attrs(attrs)) => attrs
@@ -660,13 +671,6 @@ impl<'a, 'm> FlowMaker<'a, 'm> {
                 return stop(block, body, section, format!("{why:?}"))
             }
         };
-        if !measured.auto_hyphen_ends.is_empty()
-            && crate::engine::hyphen_at_page_end(self.cx.document) == crate::paginate::HyphenMove::Word
-        {
-            // Word moves only the hyphenated word to the next page: the paragraph is broken
-            // again from it, which this layout does not do.
-            return stop(block, body, section, "a hyphenated word Word moves to the next page");
-        }
         let Some(pp) = self.props_of_block(block) else {
             return stop(block, body, section, "unresolved");
         };
@@ -688,6 +692,7 @@ impl<'a, 'm> FlowMaker<'a, 'm> {
         let section_mark =
             self.cx.sections.ends_section(top_level) && is_empty(paragraph) && measured.heights.len() == 1;
         let anchors = anchors_of(paragraph, &measured);
+        let source = self.para_source(paragraph, &measured, section);
         FlowItem::Para(Arc::new(ParaItem {
             block,
             body,
@@ -709,6 +714,7 @@ impl<'a, 'm> FlowMaker<'a, 'm> {
             role,
             continuation,
             anchors,
+            source,
         }))
     }
 

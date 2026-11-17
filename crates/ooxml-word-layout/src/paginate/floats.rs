@@ -161,7 +161,8 @@ impl PageContext<'_> {
             let Some(FlowItem::Para(item)) = self.items.get(top.item) else {
                 continue;
             };
-            for anchored in item.anchors.iter().filter(|a| a.line == top.line) {
+            let lines = self.lines_of(top.item, item);
+            for anchored in lines.anchors().iter().filter(|a| a.line == top.line) {
                 let anchor = &anchored.anchor;
                 if anchor.wrap.as_deref() != Some("wrapTopAndBottom") {
                     continue;

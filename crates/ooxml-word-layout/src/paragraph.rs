@@ -143,7 +143,29 @@ pub fn measure_paragraph(
     let measured = measurer
         .measure(cx.faces, &input, job.geometry, job.columns, cx.locale)
         .map_err(|e| Unmeasured::Text(e.to_string()))?;
-    let (heights, undrawn) = line_heights(cx, job, &measured)?;
+    let lines = LinesOf {
+        paragraph: job.paragraph,
+        resolved: job.resolved,
+        columns: job.columns,
+    };
+    derive(cx, &lines, measured)
+}
+
+/// A paragraph whose lines are given: what each line's height and breaks are read from.
+pub struct LinesOf<'a> {
+    /// The paragraph.
+    pub paragraph: &'a Paragraph,
+    /// Its resolved formats.
+    pub resolved: &'a ResolvedParagraph,
+    /// Its section has several columns (a column break ends a column, not a page).
+    pub columns: bool,
+}
+
+/// What follows from a paragraph's pieces and lines: each line's height, the lines a
+/// page or column break ends, the lines that draw nothing, the lines ending in an
+/// automatic hyphen (`ParaSource.derive`).
+pub fn derive(cx: &MeasureContext<'_>, of: &LinesOf<'_>, measured: Arc<Measured>) -> Result<MeasuredParagraph, Unmeasured> {
+    let (heights, undrawn) = line_heights(cx, of, &measured)?;
     let (pieces, lines) = (&measured.pieces, &measured.lines);
     let last_char = |l: &ooxml_text::Line| l.end.checked_sub(1).and_then(|k| pieces.get(k)).map_or('\0', |p| p.ch);
     let forced_by = |c: char| -> Vec<usize> {
@@ -155,8 +177,8 @@ pub fn measure_paragraph(
             .collect()
     };
     let mut page_breaks = forced_by('\u{c}');
-    let column_breaks = if job.columns { forced_by('\u{b}') } else { Vec::new() };
-    if !job.columns {
+    let column_breaks = if of.columns { forced_by('\u{b}') } else { Vec::new() };
+    if !of.columns {
         page_breaks.extend(forced_by('\u{b}'));
         page_breaks.sort_unstable();
     }
@@ -179,17 +201,17 @@ pub fn measure_paragraph(
 /// Each line's height, and the lines that draw nothing.
 fn line_heights(
     cx: &MeasureContext<'_>,
-    job: &ParagraphJob<'_>,
+    of: &LinesOf<'_>,
     measured: &Measured,
 ) -> Result<(Vec<LineHeight>, Vec<usize>), Unmeasured> {
-    let (document, resolved) = (cx.document, job.resolved);
+    let (document, resolved) = (cx.document, of.resolved);
     let pp = &resolved.paragraph;
     let rule = LineRule::parse(pp.get("spacing.lineRule").and_then(Value::str));
     let line = pp.get("spacing.line").and_then(Value::int).unwrap_or(240);
     let mut rules = HeightRules::new(cx.faces, rule, line, crate::input::rules(document).mode15());
     let mark = height_item(RunFormatter::new(document, &resolved.mark).format(' '));
     let label = label_items(document, resolved);
-    let runs: Vec<(usize, bool, &str)> = job
+    let runs: Vec<(usize, bool, &str)> = of
         .paragraph
         .runs
         .iter()

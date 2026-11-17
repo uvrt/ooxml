@@ -253,6 +253,7 @@ impl PageContext<'_> {
         let sections = crate::sections::Sections::new(&[crate::notes::flowed::note_section(props, items.len())], false);
         let none = std::collections::BTreeMap::new();
         let no_notes = crate::flow::NoteItems::new();
+        let no_widths = crate::flow::NotesAt::new();
         let cx = PageContext {
             items: &items,
             sections: &sections,
@@ -261,6 +262,9 @@ impl PageContext<'_> {
             stories: &crate::stories::NoStories,
             separators: &none,
             note_items: &no_notes,
+            notes_at: &no_widths,
+            breaker: self.breaker,
+            lines: std::cell::RefCell::default(),
         };
         let start = Position::default();
         let from = RegionStart {
