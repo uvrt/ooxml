@@ -2,10 +2,11 @@ name: ooxml-core wheels
 
 # The wheels of ooxml-core (the Rust core's Python module), built by maturin; called by
 # rust.yml and release.yml.  Per target: one abi3 wheel for every GIL build of CPython from
-# 3.10 (crates/python's feature abi3), and one wheel for the free-threaded 3.15t.  `full`:
-# Linux x86_64 and aarch64 (manylinux), macOS x86_64 and arm64, Windows x86_64; otherwise
-# (a pull request) Linux x86_64 and macOS x86_64 only.  A wheel built for the runner's own
-# machine is installed and imported before it is uploaded.
+# 3.10 (crates/python's feature abi3), and one wheel for the free-threaded 3.15t.  The
+# production runs are Linux only, so `full` (main and releases) builds Linux x86_64 and
+# aarch64 (manylinux), and a pull request Linux x86_64 only; macOS and Windows install from
+# the sdist (a Rust toolchain builds it).  Each wheel is installed and imported before it is
+# uploaded.
 
 on:
   workflow_call:
@@ -21,7 +22,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJSON(inputs.full && '[{"target":"linux-x86_64","os":"ubuntu-latest","rust":"x86_64","native":true},{"target":"linux-aarch64","os":"ubuntu-24.04-arm","rust":"aarch64","native":true},{"target":"macos-x86_64","os":"macos-latest","rust":"x86_64-apple-darwin","native":false},{"target":"macos-arm64","os":"macos-latest","rust":"aarch64-apple-darwin","native":true},{"target":"windows-x86_64","os":"windows-latest","rust":"x86_64-pc-windows-msvc","native":true}]' || '[{"target":"linux-x86_64","os":"ubuntu-latest","rust":"x86_64","native":true},{"target":"macos-x86_64","os":"macos-latest","rust":"x86_64-apple-darwin","native":false}]') }}
+        include: ${{ fromJSON(inputs.full && '[{"target":"linux-x86_64","os":"ubuntu-latest","rust":"x86_64","native":true},{"target":"linux-aarch64","os":"ubuntu-24.04-arm","rust":"aarch64","native":true}]' || '[{"target":"linux-x86_64","os":"ubuntu-latest","rust":"x86_64","native":true}]') }}
     steps:
       - uses: actions/checkout@v4
 
