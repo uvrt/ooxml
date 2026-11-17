@@ -1,0 +1,176 @@
+//! Owns: what the layout model reads of one top-level table ([`TableFacts`]), as
+//! docx-agent's `effective.table_model` asks docx2svg for a table alone: each of its
+//! paragraphs' cell (table style and regions) and each cell's resolved properties (its
+//! shading as drawn); and the layout model's structural path of an element of the table
+//! ([`model_path`]), by which the two are matched.
+//!
+//! Must not: read anything outside its table, or keep anything between versions.
+
+use super::formatting::{Cell, Formatting};
+use crate::ids::W;
+use crate::model::{Block, Story, Table};
+use crate::read::{Fields, Reader};
+use crate::resolve::resolve_table;
+use crate::value::{text, Props, Text};
+use ooxml_xml::{Element, Node};
+use std::collections::HashMap;
+use std::sync::Arc;
+
+/// The prefix the table's own path is given; every path below it starts with it.
+const ROOT: &str = "T";
+
+/// What the layout model reads of one top-level table.
+#[derive(Debug, Default)]
+pub struct TableFacts {
+    /// Each paragraph's cell, by its model path.
+    paragraphs: HashMap<Text, Cell>,
+    /// Each cell's resolved properties, by its model path.
+    cells: HashMap<Text, Props>,
+}
+
+impl TableFacts {
+    /// The facts of the `w:tbl` `table`.
+    #[must_use]
+    pub fn read(formatting: &Formatting, table: &Element) -> TableFacts {
+        let context = formatting.context();
+        let reader = Reader::new(&context.colours);
+        let mut fields = Fields::new(true, true);
+        let blocks = reader.table_blocks(table, &text(ROOT), &mut fields);
+        let mut out = TableFacts::default();
+        out.blocks(formatting, &blocks);
+        out
+    }
+
+    fn blocks(&mut self, formatting: &Formatting, blocks: &[Block]) {
+        for block in blocks {
+            match block {
+                Block::Paragraph(p) => {
+                    if let Some(style) = &p.table_style_id {
+                        self.paragraphs.insert(
+                            p.path.clone(),
+                            Cell {
+                                style: style.clone(),
+                                conditions: Arc::clone(&p.table_conditions),
+                            },
+                        );
+                    }
+                }
+                Block::Table(t) => self.table(formatting, t),
+            }
+        }
+    }
+
+    fn table(&mut self, formatting: &Formatting, table: &Table) {
+        let resolved = resolve_table(&formatting.sources(), table);
+        for row in resolved.rows {
+            for cell in row.cells {
+                self.cells.insert(cell.path, cell.properties);
+            }
+        }
+        for row in table.rows.iter() {
+            for story in row.iter() {
+                self.story(formatting, story);
+            }
+        }
+    }
+
+    fn story(&mut self, formatting: &Formatting, story: &Story) {
+        self.blocks(formatting, story);
+    }
+
+    /// The cell of the paragraph whose model path is `path`.
+    #[must_use]
+    pub fn cell(&self, path: &str) -> Option<&Cell> {
+        self.paragraphs.get(path)
+    }
+
+    /// The resolved properties of the cell whose model path is `path`.
+    #[must_use]
+    pub fn cell_properties(&self, path: &str) -> Option<&Props> {
+        self.cells.get(path)
+    }
+}
+
+/// The layout model's path of the element at `below` under the `w:tbl` `table`: each step
+/// `w:<name>[k]`, `k` counting siblings of that name from 1 -- rows among a table's rows and
+/// cells among a row's cells wherever wrappers (content controls, custom XML) hold them.
+#[must_use]
+pub fn model_path(table: &Arc<Element>, below: &[u32]) -> Option<String> {
+    let mut out = String::from(ROOT);
+    let mut node = Arc::clone(table);
+    let mut steps = below.iter().peekable();
+    while let Some(k) = steps.next() {
+        let parent_name = node.name().local().to_owned();
+        let child = node.children().get(*k as usize)?.as_element()?.clone();
+        let name = child.name().local().to_owned();
+        let level = match parent_name.as_str() {
+            "tbl" => Some("tr"),
+            "tr" => Some("tc"),
+            _ => None,
+        };
+        if let Some(level) = level.filter(|l| name != *l) {
+            // A wrapper at row or cell level: the row or cell inside it, counted among all.
+            let mut path = vec![*k];
+            let mut inner = Arc::clone(&child);
+            while inner.name().local() != level {
+                let step = *steps.next()?;
+                path.push(step);
+                inner = inner.children().get(step as usize)?.as_element()?.clone();
+            }
+            let index = level_index(&node, level, &path)?;
+            out.push_str(&format!("/w:{level}[{}]", index + 1));
+            node = inner;
+            continue;
+        }
+        if let Some(level) = level {
+            let index = level_index(&node, level, &[*k])?;
+            out.push_str(&format!("/w:{level}[{}]", index + 1));
+        } else {
+            let count = node
+                .children()
+                .iter()
+                .take(*k as usize)
+                .filter(|n| matches!(n, Node::Element(e) if e.name().local() == name))
+                .count();
+            out.push_str(&format!("/w:{name}[{}]", count + 1));
+        }
+        node = child;
+    }
+    Some(out)
+}
+
+/// The place among `parent`'s rows or cells (`level`), wrappers looked into, of the one at
+/// `path` below it.
+fn level_index(parent: &Element, level: &str, path: &[u32]) -> Option<usize> {
+    let mut found = Vec::new();
+    level_paths(parent, level, &mut Vec::new(), &mut found);
+    found.iter().position(|p| p.as_slice() == path)
+}
+
+fn level_paths(parent: &Element, level: &str, path: &mut Vec<u32>, out: &mut Vec<Vec<u32>>) {
+    for (k, node) in parent.children().iter().enumerate() {
+        let Node::Element(e) = node else { continue };
+        path.push(u32::try_from(k).unwrap_or(u32::MAX));
+        let local = e.name().local();
+        if e.name().namespace() == Some(W) {
+            if local == level {
+                out.push(path.clone());
+            } else if local == "sdt" {
+                if let Some(j) = e
+                    .children()
+                    .iter()
+                    .position(|n| matches!(n, Node::Element(c) if c.name().is(Some(W), "sdtContent")))
+                {
+                    path.push(u32::try_from(j).unwrap_or(u32::MAX));
+                    if let Some(content) = e.children().get(j).and_then(Node::as_element) {
+                        level_paths(content, level, path, out);
+                    }
+                    path.pop();
+                }
+            } else if local == "customXml" {
+                level_paths(e, level, path, out);
+            }
+        }
+        path.pop();
+    }
+}

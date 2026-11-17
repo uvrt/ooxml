@@ -8,11 +8,16 @@
 //! from the layout model's (docx2svg's): names are matched with their namespaces, as lxml
 //! matches them, and elements under `mc:Fallback` are not what Word shows.
 //!
-//! Must not: edit, lay out, or keep anything between versions (a [`Docx`] is one version's
-//! reading, made for a call).
+//! Must not: edit or lay out. A [`Docx`] is one version's reading, shared by the calls on
+//! that version; the next version's reuses the story parts whose trees did not change
+//! ([`Docx::open_after`]), and [`Versions`] keeps the latest versions' readings for a
+//! document.
 
+pub mod cells;
+pub mod changes;
 pub mod comments;
 pub mod controls;
+mod derived;
 pub mod drawings;
 pub mod fields;
 pub mod formatting;
@@ -22,7 +27,11 @@ pub mod revisions;
 pub mod sections;
 pub mod tables;
 pub mod text;
+mod versions;
 mod walk;
+
+pub use derived::Derived;
+pub use versions::Versions;
 
 pub use walk::{at_path, live_paths, Found};
 
@@ -64,11 +73,13 @@ pub struct Docx {
     pub main: String,
     /// The main part, then every story part (headers, footers, notes, comments) the
     /// package has, in relationship order.
-    pub parts: Vec<StoryPart>,
+    pub parts: Vec<Arc<StoryPart>>,
     /// The styles part's `w:style` elements by id, where there is a styles part.
     styles: HashMap<String, Arc<Element>>,
     /// The styles in document order.
     style_order: Vec<Arc<Element>>,
+    /// What is read from this version once, for every call on it.
+    derived: Derived,
 }
 
 impl Docx {
@@ -77,15 +88,31 @@ impl Docx {
     /// # Errors
     /// [`WordError`] when the package has no main part or a part is not XML.
     pub fn open(package: &Package) -> Result<Docx, WordError> {
+        Docx::open_after(package, None)
+    }
+
+    /// Read `package`, taking from `before` (an earlier version's reading of the same
+    /// document) every story part whose tree is the very same: its ids are not found again.
+    ///
+    /// # Errors
+    /// As [`Docx::open`].
+    pub fn open_after(package: &Package, before: Option<&Docx>) -> Result<Docx, WordError> {
         let main = main_part(package)?.ok_or_else(|| WordError::NoMainPart(String::new()))?;
         let mut names = vec![main.clone()];
         names.extend(story_parts(package, &main)?);
         let mut parts = Vec::with_capacity(names.len());
         for part in names {
             let Some(tree) = package.tree(&part)? else { continue };
+            let kept = before
+                .and_then(|b| b.parts.iter().find(|p| p.part == part))
+                .filter(|p| Arc::ptr_eq(p.tree.root(), tree.root()) && p.story == story_name(&main, &part));
+            if let Some(kept) = kept {
+                parts.push(Arc::clone(kept));
+                continue;
+            }
             let story = story_name(&main, &part);
             let ids = PartIds::new(&story, tree.root());
-            parts.push(StoryPart { part, story, tree, ids });
+            parts.push(Arc::new(StoryPart { part, story, tree, ids }));
         }
         let (styles, style_order) = read_styles(package, &main)?;
         Ok(Docx {
@@ -94,25 +121,32 @@ impl Docx {
             parts,
             styles,
             style_order,
+            derived: Derived::default(),
         })
+    }
+
+    /// What is read from this version once and kept with it.
+    #[must_use]
+    pub fn memo(&self) -> &Derived {
+        &self.derived
     }
 
     /// The main part's story.
     #[must_use]
     pub fn body(&self) -> Option<&StoryPart> {
-        self.parts.iter().find(|p| p.part == self.main)
+        self.parts.iter().map(|p| &**p).find(|p| p.part == self.main)
     }
 
     /// The story part named `part`.
     #[must_use]
     pub fn part(&self, part: &str) -> Option<&StoryPart> {
-        self.parts.iter().find(|p| p.part == part)
+        self.parts.iter().map(|p| &**p).find(|p| p.part == part)
     }
 
     /// The story part of the story `name`.
     #[must_use]
     pub fn story(&self, name: &str) -> Option<&StoryPart> {
-        self.parts.iter().find(|p| p.story == name)
+        self.parts.iter().map(|p| &**p).find(|p| p.story == name)
     }
 
     /// The `w:style` with id `id`.

@@ -25,7 +25,7 @@ pub fn project(docx: &Docx, range: Option<&str>, view: ViewName, stories: Storie
     for selected in select(&mut reader, range)? {
         match selected {
             Selected::Notes(part) => labels.extend(notes.iter().filter(|n| n.0 == part).map(|n| n.1.clone())),
-            Selected::Records { story, records } => {
+            Selected::Records { story, records, .. } => {
                 if let Some(story) = story {
                     blocks.push(Block::Comment(format!("story: {story}")));
                 }
@@ -477,7 +477,7 @@ fn counts_on(reader: &Reader<'_>, previous: Option<i64>, record: &ParagraphRecor
     if !found.from_style {
         return false;
     }
-    let lists = &reader.lists;
+    let lists = &reader.shared.lists;
     lists.canonical(lists.abstract_of(previous)) == lists.canonical(found.abstract_id)
 }
 
@@ -547,7 +547,8 @@ fn gfm(reader: &Reader<'_>, t: &TableRecord) -> Option<Table> {
                 for record in line.get(column).map_or(&[][..], |c| &c.records[..]) {
                     if let Record::Paragraph(p) = record {
                         if let Some(last) = p.elements.last() {
-                            let a = reader.formatting.alignment(&last.element, Some(&t.table_style));
+                            let cell = reader.cell_of(&p.part, last, &t.table_style);
+                            let a = reader.shared.formatting.alignment(&last.element, cell.as_ref());
                             if !found.contains(&a) {
                                 found.push(a);
                             }

@@ -18,9 +18,10 @@ pub mod stylemap;
 
 use crate::docx::Docx;
 pub use select::RangeError;
+use std::sync::Arc;
 
 /// The view of the revisions a read shows.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ViewName {
     /// Changes accepted.
     Final,
@@ -31,7 +32,7 @@ pub enum ViewName {
 }
 
 /// Which stories a read covers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Stories {
     /// The body.
     Body,
@@ -39,11 +40,19 @@ pub enum Stories {
     All,
 }
 
-/// The document (or `range` of it) as Markdown.
+/// The document (or `range` of it) as Markdown, kept with the version for the calls after.
 ///
 /// # Errors
 /// A [`RangeError`] when `range` names nothing or is malformed.
-pub fn to_markdown(docx: &Docx, range: Option<&str>, view: ViewName, stories: Stories) -> Result<String, RangeError> {
-    let blocks = read::project(docx, range, view, stories)?;
-    Ok(render::render(&blocks))
+pub fn to_markdown(
+    docx: &Docx,
+    range: Option<&str>,
+    view: ViewName,
+    stories: Stories,
+) -> Result<Arc<String>, RangeError> {
+    let key = (range.map(str::to_owned), view, stories);
+    docx.memo().markdown(key, || {
+        let blocks = read::project(docx, range, view, stories)?;
+        Ok(render::render(&blocks))
+    })
 }

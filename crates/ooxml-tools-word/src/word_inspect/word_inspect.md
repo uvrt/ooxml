@@ -1,0 +1,1 @@
+Exact formatting of blocks: style, runs, effective font, size, spacing, indents, list, revisions; each table cell's fill and drawn text colour; with layout, where each is placed.

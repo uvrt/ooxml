@@ -9,8 +9,8 @@
 use crate::session::Opened;
 use crate::DocKind;
 use ooxml_base::Cancel;
-use ooxml_opc::Package;
 use ooxml_tools::{Done, ToolArgs, ToolError, ToolSpec};
+use ooxml_tools_word::Version;
 use serde_json::{Map, Value};
 use std::marker::PhantomData;
 use std::sync::Arc;
@@ -31,9 +31,9 @@ pub trait Tool: Send + Sync {
     fn run(&self, arguments: Map<String, Value>, doc: &Opened, cancel: &dyn Cancel) -> Result<Done<Value>, ToolError>;
 }
 
-/// A reading tool's handler: the typed arguments, the package at the version read, the
-/// document's name, the call's cancellation.
-pub type ReadFn<T> = fn(&T, &Package, &str, &dyn Cancel) -> Result<Done<Value>, ToolError>;
+/// A reading tool's handler: the typed arguments, the version read (its package, name,
+/// number and the document's kept readings), the call's cancellation.
+pub type ReadFn<T> = fn(&T, &Version<'_>, &dyn Cancel) -> Result<Done<Value>, ToolError>;
 
 /// A reading tool: its arguments' struct `T` and its handler.
 pub struct ReadHandler<T> {
@@ -68,14 +68,25 @@ impl<T: ToolArgs> Tool for ReadHandler<T> {
     fn run(&self, arguments: Map<String, Value>, doc: &Opened, cancel: &dyn Cancel) -> Result<Done<Value>, ToolError> {
         let args = T::from_arg(&Value::Object(arguments), "")
             .map_err(|e| ToolError::internal(e.to_string(), &format!("{}:arguments", self.spec.name)))?;
-        (self.run)(&args, doc.package(), doc.name(), cancel)
+        (self.run)(&args, &doc.version_of(), cancel)
     }
 }
 
 /// The tools a session dispatches, in registration order.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct Registry {
     tools: Vec<Arc<dyn Tool>>,
+    /// `read_batch`'s definition: the session runs it over the others.
+    batch: ToolSpec,
+}
+
+impl Default for Registry {
+    fn default() -> Self {
+        Self {
+            tools: Vec::new(),
+            batch: crate::ReadBatch::spec(),
+        }
+    }
 }
 
 impl Registry {
@@ -85,7 +96,7 @@ impl Registry {
         Self::default()
     }
 
-    /// The tools ported so far: Word's `describe` and `word_read`.
+    /// The tools ported so far: Word's `describe`, `word_read`, `word_inspect` and `find_text`, and `read_batch` over them.
     #[must_use]
     pub fn standard() -> Self {
         let mut registry = Self::empty();
@@ -97,6 +108,14 @@ impl Registry {
             &[DocKind::Docx],
             ooxml_tools_word::word_read,
         )));
+        registry.register(Arc::new(ReadHandler::<ooxml_tools_word::WordInspect>::new(
+            &[DocKind::Docx],
+            ooxml_tools_word::word_inspect,
+        )));
+        registry.register(Arc::new(ReadHandler::<ooxml_tools_word::FindText>::new(
+            &[DocKind::Docx],
+            ooxml_tools_word::find_text,
+        )));
         registry
     }
 
@@ -104,6 +123,12 @@ impl Registry {
     /// runs the one that serves its document's kind).
     pub fn register(&mut self, tool: Arc<dyn Tool>) {
         self.tools.push(tool);
+    }
+
+    /// `read_batch`'s definition.
+    #[must_use]
+    pub fn batch_spec(&self) -> &ToolSpec {
+        &self.batch
     }
 
     /// The first tool registered as `name` (tools of one name share the definition).
@@ -124,6 +149,9 @@ impl Registry {
     #[must_use]
     pub fn names(&self) -> Vec<String> {
         let mut names: Vec<String> = self.tools.iter().map(|t| t.spec().name.clone()).collect();
+        if !self.tools.is_empty() {
+            names.push(self.batch.name.clone());
+        }
         names.sort();
         names.dedup();
         names
@@ -134,10 +162,15 @@ impl Registry {
     #[must_use]
     pub fn export(&self, kind: DocKind) -> Vec<Value> {
         let served = [kind.as_str()];
-        self.tools
+        let mut out: Vec<Value> = self
+            .tools
             .iter()
             .filter(|t| t.kinds().contains(&kind))
             .map(|t| t.spec().export(Some(&served)))
-            .collect()
+            .collect();
+        if !out.is_empty() {
+            out.push(self.batch.export(Some(&served)));
+        }
+        out
     }
 }

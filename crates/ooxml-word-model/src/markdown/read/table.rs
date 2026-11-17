@@ -179,6 +179,8 @@ impl Reader<'_> {
             rows: grid.rows,
             header_rows: grid.header_rows,
             table_style: style,
+            part: part.to_owned(),
+            path: table.path.clone(),
         };
         (vec![Record::Table(Box::new(record))], grid.placed)
     }
@@ -229,6 +231,7 @@ impl Reader<'_> {
                     row_span: 1,
                     column_span: span,
                     records,
+                    path: tc.path.clone(),
                 });
             }
             column += span;
@@ -267,7 +270,7 @@ struct Grid {
 }
 
 /// A table's `w:tblStyle` (`""` where it names none).
-pub(super) fn table_style(table: &Element) -> String {
+pub fn table_style(table: &Element) -> String {
     find_path(table, &["tblPr", "tblStyle"])
         .and_then(|s| s.attribute(Some(W), "val"))
         .unwrap_or("")

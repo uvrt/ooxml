@@ -2,7 +2,9 @@
 //! row's cells (inside row-level content controls and custom XML too) placed by
 //! `w:gridBefore` and `w:gridSpan`, a vertically merged cell answering at each position it
 //! covers with its origin; the grid's column count (`w:tblGrid`); the rows accepting the
-//! tracked changes keeps; and a cell's text.
+//! tracked changes keeps, and the columns (`accepted_columns`, Word's Accept All: a
+//! deleted cell whose content is kept widens the cell before it, a grid column only removed
+//! cells cover goes); and a cell's text.
 //!
 //! Must not: change a table or resolve its formatting.
 
@@ -109,6 +111,51 @@ impl<'a> TableGrid<'a> {
         })
     }
 
+    /// How many grid columns accepting the tracked changes keeps (docx-agent's
+    /// `accepted_columns`).
+    #[must_use]
+    pub fn accepted_columns(&self) -> usize {
+        let count = self.column_count();
+        let mut covered: HashMap<usize, bool> = HashMap::new();
+        for row in &self.rows {
+            let deleted_row = find_path(row, &["trPr", "del"]).is_some();
+            let cells = placed_cells(row);
+            let shown: Vec<&(Arc<Element>, usize, usize)> = cells.iter().filter(|c| !cell_deleted(&c.0)).collect();
+            let elements: Vec<&Element> = shown.iter().map(|c| &*c.0).collect();
+            let (groups, gone) = crate::read::cell_ends(&elements);
+            let taken: Vec<*const Element> = groups
+                .iter()
+                .flat_map(|g| g.iter().skip(1))
+                .filter_map(|n| shown.get(*n).map(|c| Arc::as_ptr(&c.0)))
+                .collect();
+            let lost: Vec<*const Element> = gone
+                .iter()
+                .filter_map(|n| shown.get(*n).map(|c| Arc::as_ptr(&c.0)))
+                .filter(|p| !taken.contains(p))
+                .collect();
+            let mut before = false;
+            for (cell, start, span) in &cells {
+                let me = Arc::as_ptr(cell);
+                let mut deleted = cell_deleted(cell);
+                if deleted && before && content_kept(cell) {
+                    deleted = false;
+                } else if taken.contains(&me) || lost.contains(&me) {
+                    deleted = true;
+                } else if !deleted {
+                    before = true;
+                }
+                if deleted_row {
+                    continue;
+                }
+                for column in *start..start + span {
+                    let was = covered.get(&column).copied().unwrap_or(true);
+                    covered.insert(column, was && deleted);
+                }
+            }
+        }
+        (0..count).filter(|c| !covered.get(c).copied().unwrap_or(false)).count()
+    }
+
     /// How many rows accepting the tracked changes keeps: every row not deleted as one.
     #[must_use]
     pub fn accepted_rows(&self) -> usize {
@@ -134,4 +181,75 @@ impl<'a> TableGrid<'a> {
             .collect();
         Some(paragraphs.join("\n"))
     }
+}
+
+/// A row's cells (row-level wrappers seen through) with the grid column each starts at and
+/// its span.
+fn placed_cells(row: &Element) -> Vec<(Arc<Element>, usize, usize)> {
+    let mut column = usize::try_from(int_val(find_path(row, &["trPr", "gridBefore"]), 0)).unwrap_or(0);
+    let mut out = Vec::new();
+    for (cell, _) in cells_of(row, &[]) {
+        let span = usize::try_from(int_val(find_path(&cell, &["tcPr", "gridSpan"]), 1).max(1)).unwrap_or(1);
+        out.push((cell, column, span));
+        column += span;
+    }
+    out
+}
+
+fn cell_deleted(cell: &Element) -> bool {
+    find_path(cell, &["tcPr", "cellDel"]).is_some()
+}
+
+/// Run content a reader sees (docx-agent's `review._SHOWN`).
+const SHOWN: [&str; 10] = [
+    "t",
+    "tab",
+    "br",
+    "cr",
+    "drawing",
+    "pict",
+    "object",
+    "sym",
+    "noBreakHyphen",
+    "ptab",
+];
+
+/// Whether a deleted cell keeps anything (docx-agent's `_content_kept`): content outside
+/// deletions and moves away, or a paragraph mark of its own not deleted.
+fn content_kept(cell: &Element) -> bool {
+    fn shown(node: &Element, deleted: bool) -> bool {
+        node.child_elements().any(|e| {
+            let gone = deleted || e.name().is(Some(W), "del") || e.name().is(Some(W), "moveFrom");
+            let visible = e.name().namespace() == Some(W)
+                && SHOWN.contains(&e.name().local())
+                && !(e.name().local() == "t" && crate::docx::text::leading_text(e).is_empty());
+            (visible && !gone) || shown(e, gone)
+        })
+    }
+    fn marks(node: &Element, own: bool) -> bool {
+        node.child_elements().any(|e| {
+            if e.name().is(Some(W), "tc") {
+                return false;
+            }
+            if own && e.name().is(Some(W), "p") {
+                let mark = find_path(e, &["pPr", "rPr"]);
+                let record = mark.and_then(|m| {
+                    m.child_elements().find(|c| {
+                        ["ins", "del", "moveFrom", "moveTo"]
+                            .iter()
+                            .any(|t| c.name().is(Some(W), t))
+                    })
+                });
+                let deleted = mark.is_some_and(|m| {
+                    m.child_elements()
+                        .any(|c| c.name().is(Some(W), "del") || c.name().is(Some(W), "moveFrom"))
+                });
+                if record.is_none() || !deleted {
+                    return true;
+                }
+            }
+            marks(e, own)
+        })
+    }
+    shown(cell, false) || marks(cell, true)
 }

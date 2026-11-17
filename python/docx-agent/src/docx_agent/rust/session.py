@@ -9,11 +9,14 @@ lock let go (:meth:`RustTools.dispatch`).  The tools' definitions come from Rust
 :class:`RustResult`, so the provider adapters (:mod:`ooxml_edit.tools.adapters`) render both
 unchanged for Claude and OpenAI.
 
-The Rust session serves ``describe`` and ``word_read`` so far (phase P1): ``describe`` with
-every field of today's but ``pages``, ``problems`` and ``revisions.changes``
-(``RUST_DESCRIBED``; ``tests/test_rust_describe.py`` holds them equal to today's on every
-fixture), ``word_read`` equal to today's on every fixture but drawings' chart and SmartArt
-summaries (``tests/test_rust_word_read.py``).  Nothing in docx-agent uses this module unless
+The Rust session serves the reading tools so far (phase P1): ``describe`` with every field of
+today's but ``pages`` and ``problems`` (``RUST_DESCRIBED``; ``tests/test_rust_describe.py``
+holds them equal to today's on every fixture), ``word_read``, ``word_inspect`` (without
+``layout``), ``find_text`` (a regular expression only where it is plain text) and
+``read_batch`` over them, equal to today's on every fixture but drawings' chart and SmartArt
+summaries (``tests/test_rust_word_read.py``, ``tests/test_rust_reads.py``).  A version read
+once is kept for the calls after it, and a new version (:meth:`RustTools.update`) reads only
+the story parts that changed.  Nothing in docx-agent uses this module unless
 an application does: the toolbox's own tools are unchanged.
 """
 from __future__ import annotations

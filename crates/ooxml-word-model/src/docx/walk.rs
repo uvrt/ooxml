@@ -49,7 +49,7 @@ fn walk(element: &Element, path: &mut Vec<u32>, wanted: &dyn Fn(&Element) -> boo
 pub fn at_path<'a>(root: &'a Arc<Element>, path: &[u32]) -> Option<&'a Arc<Element>> {
     let mut node = root;
     for k in path {
-        node = node.children().iter().nth(*k as usize)?.as_element()?;
+        node = node.children().get(*k as usize)?.as_element()?;
     }
     Some(node)
 }
