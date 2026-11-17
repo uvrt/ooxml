@@ -71,6 +71,11 @@ pub enum Change {
         /// Its tree.
         tree: Tree,
     },
+    /// A part removed (a relationships part left empty, a part nothing uses any more).
+    Remove {
+        /// The part.
+        part: Arc<str>,
+    },
     /// Parts as another version of the package has them, or absent there (what undo puts
     /// back).
     Restore {
@@ -374,7 +379,8 @@ impl Change {
         match self {
             Change::Splice { part, .. }
             | Change::Head { part, .. }
-            | Change::Put { part, .. } => Some(part),
+            | Change::Put { part, .. }
+            | Change::Remove { part } => Some(part),
             Change::Restore { .. } | Change::Ids(_) | Change::People { .. } => None,
         }
     }
@@ -396,6 +402,7 @@ impl DocModel for WordDoc {
             Change::Splice { part, patch, .. } => (self.with_tree(part, |t| patch.apply(t))?, self.ids.clone()),
             Change::Head { part, patch, .. } => (self.with_tree(part, |t| patch.apply(t))?, self.ids.clone()),
             Change::Put { part, tree } => (self.package.with_new_tree(part, tree.clone()), self.ids.clone()),
+            Change::Remove { part } => (self.package.without(part)?, self.ids.clone()),
             Change::Restore { parts, from } => {
                 let mut package = self.package.clone();
                 for part in parts.iter() {
@@ -440,7 +447,7 @@ impl DocModel for WordDoc {
                 patch: patch.inverse(),
                 keys: Arc::clone(keys),
             },
-            Change::Put { part, .. } => Change::Restore {
+            Change::Put { part, .. } | Change::Remove { part } => Change::Restore {
                 parts: Arc::from([Arc::clone(part)]),
                 from: self.package.clone(),
             },
@@ -486,7 +493,7 @@ impl DocModel for WordDoc {
                     into.insert(key.clone());
                 }
             }
-            Change::Put { part, .. } => into.insert(Key::Part(Arc::from(normalize(part)))),
+            Change::Put { part, .. } | Change::Remove { part } => into.insert(Key::Part(Arc::from(normalize(part)))),
             Change::Restore { parts, .. } => {
                 for part in parts.iter() {
                     into.insert(Key::Part(Arc::from(normalize(part))));

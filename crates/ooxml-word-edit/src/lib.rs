@@ -30,6 +30,7 @@ mod namespaces;
 mod people;
 mod policy;
 mod pool;
+mod release;
 mod revision_ids;
 mod set_text;
 mod sink;

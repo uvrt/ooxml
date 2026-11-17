@@ -120,6 +120,32 @@ impl<'t, 's> EditSink<'t, 's> {
         Ok(annotation_ceiling(self.tx.doc())? + 1)
     }
 
+    /// Drop `part`'s relationships `ids` where nothing in the part uses them any more, and
+    /// the parts only they led to (ooxml-edit's `release` and `reap`): what an edit that
+    /// removed content outright (a tracked removal of one's own insertion) leaves unused.
+    /// The part is read whole (any attribute may hold an id).
+    ///
+    /// # Errors
+    /// When a part is not XML.
+    pub fn release(&mut self, part: &str, ids: &[String]) -> Result<()> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+        self.tx.read(Key::Part(Arc::from(part)));
+        let released = crate::release::release(self.doc().package(), part, ids)?;
+        for name in &released.changed {
+            if let Some(tree) = released.package.tree(name)? {
+                self.put(name, tree)?;
+            }
+        }
+        for name in &released.removed {
+            if self.doc().package().has_part(name) {
+                self.write(Change::Remove { part: Arc::from(name.as_str()) })?;
+            }
+        }
+        Ok(())
+    }
+
     /// Keep the people part where the change is applied: `add` listed, then `tidy` dropped
     /// if nothing of theirs is left ([`Change::People`]).
     ///

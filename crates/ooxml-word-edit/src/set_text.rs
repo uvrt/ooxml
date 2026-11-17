@@ -167,11 +167,6 @@ impl Command<WordDoc> for SetText {
         let element = at_path(tree.root(), &found.path).ok_or_else(|| EditError::Path(found.part.clone()))?;
         work = Work::of(element, scope_above(tree.root(), &found.path));
         let wrote = sink.set_paragraph_text(&mut work, &self.text)?;
-        if !wrote.released.is_empty() {
-            return Err(EditError::Unsupported(
-                "releasing the relationships of content a tracked edit removed outright (phase P2b)".to_owned(),
-            ));
-        }
         // a paragraph stamped before gets a new text id, drawn where the change is applied
         let mut draws = Vec::new();
         if found.state == IdState::Ok {
@@ -204,6 +199,7 @@ impl Command<WordDoc> for SetText {
         if let RevisionPolicy::Tracked(tracking) = &self.policy {
             let gave = wrote.annotations.is_some_and(|(first, next)| next > first);
             sink.people(gave.then_some(tracking.author.as_str()), Some(&tracking.author))?;
+            sink.release(&found.part, &wrote.released)?;
         }
         Ok(TextEdited {
             id,

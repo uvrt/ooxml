@@ -122,85 +122,16 @@ pub(crate) fn without_person(package: &Package, main: &str, author: &str) -> Res
     drop_part(&package, main, &part)
 }
 
-/// The people part dropped: its relationship from the main part released, then the part
-/// reaped with its content type when nothing else relates to it.
+/// The people part dropped (`_drop_comment_part`): its relationship from the main part
+/// released, and the part reaped with it.
 fn drop_part(package: &Package, main: &str, part: &str) -> Result<Package, ModelError> {
-    let rels = rels_for(main);
-    let Some(tree) = package.tree(&rels)? else {
-        return Ok(package.clone());
-    };
     let found = package
         .relationships(main)?
         .iter()
         .find(|r| r.target_part.as_deref() == Some(part))
         .map(|r| r.id.clone());
     let Some(id) = found else { return Ok(package.clone()) };
-    let mut work = Work::of(tree.root(), Vec::new());
-    let root = work.root();
-    let node = work
-        .children(root)
-        .iter()
-        .copied()
-        .find(|c| work.is(*c, RELS, "Relationship") && work.get(*c, None, "Id") == Some(id.as_str()));
-    let Some(node) = node else { return Ok(package.clone()) };
-    remove_keeping_layout(&mut work, node);
-    let root = work.build().ok_or_else(|| ModelError::NoPart(rels.clone()))?;
-    let mut package = package.with_tree(&rels, tree.with_root(root))?;
-    let names = package.part_names();
-    let owners = std::iter::once("").chain(names.iter().map(String::as_str).filter(|p| !p.ends_with(".rels")));
-    let mut referenced = false;
-    for owner in owners {
-        if let Ok(rels) = package.relationships(owner) {
-            referenced |= rels.iter().any(|x| x.target_part.as_deref() == Some(part));
-        }
-    }
-    if !referenced {
-        package = remove_override(&package.without(part)?, part)?;
-    }
-    Ok(package)
-}
-
-/// ooxml-edit's `_remove_keeping_layout`: a last child hands its tail (the closing
-/// indentation) to the one before; the node goes with its tail.
-fn remove_keeping_layout(work: &mut Work, node: Id) {
-    if work.next(node).is_none() {
-        if let Some(previous) = work.previous(node) {
-            let tail = work.tail(node).to_owned();
-            work.set_tail(previous, &tail);
-        }
-    }
-    work.set_tail(node, "");
-    work.remove(node);
-}
-
-/// The content types without `part`'s `Override`.
-fn remove_override(package: &Package, part: &str) -> Result<Package, ModelError> {
-    let Some(tree) = package.tree(CONTENT_TYPES_PART)? else {
-        return Ok(package.clone());
-    };
-    let mut work = Work::of(tree.root(), Vec::new());
-    let root = work.root();
-    let nodes: Vec<Id> = work
-        .children(root)
-        .iter()
-        .copied()
-        .filter(|c| {
-            work.is(*c, TYPES, "Override")
-                && work
-                    .get(*c, None, "PartName")
-                    .is_some_and(|p| ooxml_opc::name::normalize(p) == part)
-        })
-        .collect();
-    if nodes.is_empty() {
-        return Ok(package.clone());
-    }
-    for node in nodes {
-        remove_keeping_layout(&mut work, node);
-    }
-    let root = work
-        .build()
-        .ok_or_else(|| ModelError::NoPart(CONTENT_TYPES_PART.to_owned()))?;
-    Ok(package.with_tree(CONTENT_TYPES_PART, tree.with_root(root))?)
+    Ok(crate::release::release(package, main, &[id])?.package)
 }
 
 /// `<w15:people xmlns:w15=... xmlns:mc=... mc:Ignorable="w15"/>`, as docx-agent makes it.
