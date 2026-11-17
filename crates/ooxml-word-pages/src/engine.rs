@@ -470,12 +470,7 @@ impl PageEngine {
     /// Page `page` of `version` as a reader sees it.
     pub fn page(&mut self, version: &LaidVersion, page: usize) -> Option<PageView> {
         let paint = self.paint(version, page)?;
-        let blocks = version
-            .facts()
-            .pages
-            .get(page)
-            .map(|p| p.blocks.clone())
-            .unwrap_or_default();
+        let blocks = version.page_facts(page).map(|p| p.blocks.clone()).unwrap_or_default();
         Some(PageView {
             page,
             info: paint.geometry.info,

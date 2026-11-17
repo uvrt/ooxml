@@ -5,7 +5,8 @@
 //! ([`PageFacts::blocks`], docx2svg's `Page.blocks`); where a paragraph or table is drawn,
 //! page by page and column by column ([`LayoutFacts::placements`], `where`); the pages a
 //! block is on ([`LayoutFacts::pages_of`]); and each top-level block's keeps as the
-//! paginator read them ([`BlockKeeps`]).
+//! paginator read them ([`BlockKeeps`]). One page's facts are made on their own
+//! ([`PageFacts::of`]), once per layout ([`DocumentLayout::page_facts`]).
 //!
 //! Paths are docx2svg's: a paragraph's `w:body/w:p[3]`, a cell's
 //! `w:body/w:tbl[1]/w:tr[2]/w:tc[1]/w:p[1]`. Mapping them to a tool's ids is the caller's.
@@ -133,19 +134,34 @@ pub fn block_keys(path: &str) -> Vec<String> {
 }
 
 /// The paths of what a drawn line can be of: the body's paragraphs (cells included), its
-/// top-level blocks, and the endnotes' continuation separator.
-struct LinePaths<'a> {
+/// top-level blocks, and the endnotes' continuation separator (made once per layout).
+#[derive(Debug, Clone)]
+pub(crate) struct LinePaths {
     paragraphs: Vec<Text>,
-    body: &'a [Block],
     opening: Option<Text>,
 }
 
-impl LinePaths<'_> {
-    fn of(&self, line: &DrawnLine) -> Option<Text> {
+impl LinePaths {
+    /// The paths of `layout`'s lines.
+    pub(crate) fn of(layout: &DocumentLayout) -> LinePaths {
+        let (paragraphs, _) = body_paragraphs(&layout.document.body);
+        let opening = separator(&layout.document, "continuationSeparator", NotesPart::Endnotes)
+            .iter()
+            .find_map(|b| match b {
+                Block::Paragraph(p) => Some(p.path.clone()),
+                Block::Table(_) => None,
+            });
+        LinePaths {
+            paragraphs: paragraphs.iter().map(|p| p.path.clone()).collect(),
+            opening,
+        }
+    }
+
+    fn path(&self, line: &DrawnLine, body: &[Block]) -> Option<Text> {
         match (line.source, line.block, line.body) {
             (LineSource::Opening { .. }, ..) => self.opening.clone(),
             (_, Some(block), _) => self.paragraphs.get(block).cloned(),
-            (_, None, Some(body)) => match self.body.get(body) {
+            (_, None, Some(index)) => match body.get(index) {
                 Some(Block::Paragraph(p)) => Some(p.path.clone()),
                 _ => None,
             },
@@ -154,8 +170,8 @@ impl LinePaths<'_> {
     }
 }
 
-fn line_fact(line: &DrawnLine, paths: &LinePaths<'_>) -> Option<LineFact> {
-    let path = paths.of(line)?;
+fn line_fact(line: &DrawnLine, paths: &LinePaths, body: &[Block]) -> Option<LineFact> {
+    let path = paths.path(line, body)?;
     Some(LineFact {
         source: line.source,
         path,
@@ -167,44 +183,41 @@ fn line_fact(line: &DrawnLine, paths: &LinePaths<'_>) -> Option<LineFact> {
     })
 }
 
-impl LayoutFacts {
-    /// The facts of `layout`.
-    pub fn of(layout: &DocumentLayout) -> LayoutFacts {
+impl PageFacts {
+    /// Page `page`'s facts (0-based, blank pages counted); `None` past the last.
+    pub fn of(layout: &DocumentLayout, page: usize) -> Option<PageFacts> {
+        let geometry = layout.page_geometry(page)?;
+        let paths = layout.line_paths();
         let body = &layout.document.body;
-        let (paragraphs, _) = body_paragraphs(body);
-        let opening = separator(&layout.document, "continuationSeparator", NotesPart::Endnotes)
+        let lines: Vec<LineFact> = geometry
+            .lines
             .iter()
-            .find_map(|b| match b {
-                Block::Paragraph(p) => Some(p.path.clone()),
-                Block::Table(_) => None,
-            });
-        let paths = LinePaths {
-            paragraphs: paragraphs.iter().map(|p| p.path.clone()).collect(),
-            body,
-            opening,
-        };
-        let mut pages = Vec::new();
-        for k in 0..layout.page_count() {
-            let Some(geometry) = layout.page_geometry(k) else {
-                continue;
-            };
-            let lines: Vec<LineFact> = geometry.lines.iter().filter_map(|l| line_fact(l, &paths)).collect();
-            let mut blocks: Vec<Text> = Vec::new();
-            for line in &lines {
-                for key in block_keys(&line.path) {
-                    if !blocks.iter().any(|b| **b == *key) {
-                        blocks.push(Text::from(key.as_str()));
-                    }
+            .filter_map(|l| line_fact(l, paths, body))
+            .collect();
+        let mut blocks: Vec<Text> = Vec::new();
+        for line in &lines {
+            for key in block_keys(&line.path) {
+                if !blocks.iter().any(|b| **b == *key) {
+                    blocks.push(Text::from(key.as_str()));
                 }
             }
-            pages.push(PageFacts {
-                page: k,
-                info: geometry.info,
-                frame: geometry.frame,
-                lines,
-                blocks,
-            });
         }
+        Some(PageFacts {
+            page,
+            info: geometry.info,
+            frame: geometry.frame,
+            lines,
+            blocks,
+        })
+    }
+}
+
+impl LayoutFacts {
+    /// The facts of `layout`, every page's.
+    pub fn of(layout: &DocumentLayout) -> LayoutFacts {
+        let pages = (0..layout.page_count())
+            .filter_map(|k| PageFacts::of(layout, k))
+            .collect();
         let stopped = layout
             .pagination
             .stopped

@@ -1,8 +1,9 @@
 //! `layout-bench <file.docx> <fonts.json> [--rounds N] [--check]`: lay a document out
 //! whole, then a version with one body paragraph's text changed (`bench::edited`) laid
 //! out again from it, and report wall and CPU-free timings (best of N), the pages, the
-//! passes and what the relayout laid out again, as one JSON line. `--check` also lays the
-//! edited version out whole in a fresh engine and model and compares the pages.
+//! passes and what the relayout laid out again, and the time one page's facts take on
+//! their own and every page's, as one JSON line. `--check` also lays the edited version
+//! out whole in a fresh engine and model and compares the pages.
 //!
 //! Must not: be used by any library; it is a measurement instrument.
 
@@ -49,6 +50,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
     let xml = package.read(main).map_err(|e| e.to_string())?.ok_or("no main part")?;
     let next = package.with_bytes(main, Arc::from(edited(&xml).ok_or("nothing to edit")?));
     let (mut full_best, mut relayout_best, mut open_best) = (f64::MAX, f64::MAX, f64::MAX);
+    let (mut page_facts_best, mut facts_best) = (f64::MAX, f64::MAX);
     let mut report = json!({});
     for _ in 0..rounds.max(1) {
         let mut model = Model::new(Arc::new(Unlimited), KEY);
@@ -63,6 +65,13 @@ pub fn run(args: &[String]) -> Result<(), String> {
         let started = Instant::now();
         let again = layout.relayout(&mut model, &edited_version, &whole);
         relayout_best = relayout_best.min(started.elapsed().as_secs_f64());
+        // One page's facts on their own (the middle page, made once), then every page's.
+        let started = Instant::now();
+        let _ = again.page_facts(again.page_count() / 2);
+        page_facts_best = page_facts_best.min(started.elapsed().as_secs_f64());
+        let started = Instant::now();
+        let _ = ooxml_word_layout::facts::LayoutFacts::of(&again);
+        facts_best = facts_best.min(started.elapsed().as_secs_f64());
         let equal = if check {
             let mut fresh_model = Model::new(Arc::new(Unlimited), KEY);
             let fresh = fresh_model.open(&next).map_err(|e| e.to_string())?;
@@ -93,7 +102,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
     }
     let line = json!({
         "file": path, "rounds": rounds, "open_s": open_best, "full_layout_s": full_best,
-        "relayout_s": relayout_best, "layout": report,
+        "relayout_s": relayout_best, "page_facts_s": page_facts_best, "facts_s": facts_best, "layout": report,
     });
     println!("{line}");
     Ok(())

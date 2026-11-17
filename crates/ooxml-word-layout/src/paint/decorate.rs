@@ -2,15 +2,19 @@
 //! (docx2svg's `decoration_rects`, measured there): highlight and run shading across the
 //! line's text rows; single, words, double, thick, dotted and dash underlines from the
 //! face's `post` table; single and double strikethrough from its `OS/2` table -- and a note
-//! separator's line (`_separator`).
+//! separator's line (`_separator`); a line's decorations (`_decorate`), and its automatic
+//! text drawn white on a dark cell.
 //!
 //! Must not: decide what a span is or where its line is.
 
-use super::{Rule, Span};
+use super::spans::PageOut;
+use super::{PaintContext, Rule, Span};
 use crate::px::Px;
 use ooxml_base::Q;
 use ooxml_fonts::Decorations;
+use ooxml_text::FaceKey;
 use ooxml_word_model::resolve::CharacterFormat;
+use std::sync::Arc;
 
 /// The pattern of a dotted and a dashed underline: px on, and the period.
 const DASHES: [(&str, i64, i64); 2] = [("dotted", 6, 12), ("dash", 16, 24)];
@@ -190,7 +194,7 @@ fn underline(out: &mut Vec<Rule>, span: &Span, style: &str, (x0, x1): (i64, i64)
 pub(super) fn separator_rule(
     decorations: Option<&Decorations>,
     format: &CharacterFormat,
-    (x, end): (Px, Option<Px>),
+    (x, end, clip): (Px, Option<Px>, Option<Px>),
     baseline: i64,
 ) -> Option<(Px, Px, Px, Px)> {
     let d = decorations?;
@@ -199,6 +203,43 @@ pub(super) fn separator_rule(
     let thick = round(Q::from_integer(i128::from(size)) * scale).max(1);
     let top = baseline - round(Q::from_integer(i128::from(position)) * scale);
     let x0 = x.round_half_up();
-    let x1 = end.unwrap_or(x + Px::points(Q::from_integer(144))).round_half_up();
+    let x1 = match (end, clip) {
+        (Some(end), _) => end.round_half_up(),
+        // Below mode 15, in a column narrower than the line, cut at its right edge.
+        (None, Some(clip)) => (x + Px::points(Q::from_integer(144)))
+            .round_half_up()
+            .min(clip.round_half_up()),
+        (None, None) => (x + Px::points(Q::from_integer(144))).round_half_up(),
+    };
     Some((whole(x0), whole(top), whole(x1 - x0), whole(thick)))
+}
+
+/// Automatic text on a dark cell fill drawn white, where the paragraph has no background:
+/// the spans with no colour, highlight or shading of their own.
+pub(super) fn white_text(spans: &mut [Span]) {
+    for span in spans
+        .iter_mut()
+        .filter(|s| s.color.is_none() && s.highlight.is_none() && s.shading.is_none())
+    {
+        span.color = Some("FFFFFF".to_owned());
+    }
+}
+
+/// The decorations of a line's spans (`_decorate`).
+pub(super) fn decorate(cx: &PaintContext<'_>, spans: &[Span], band: (i64, i64), out: &mut PageOut) {
+    let drawn: Vec<&Span> = spans.iter().filter(|s| !s.chars.is_empty()).collect();
+    for (k, span) in drawn.iter().enumerate() {
+        let key = FaceKey {
+            family: Arc::clone(&span.face),
+            bold: span.bold,
+            italic: span.italic,
+        };
+        let decorations = cx.faces.decorations(&key);
+        out.rules.extend(decoration_rects(
+            span,
+            decorations.as_ref(),
+            k + 1 == drawn.len(),
+            Some(band),
+        ));
+    }
 }

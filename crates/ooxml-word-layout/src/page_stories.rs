@@ -7,7 +7,9 @@
 //! Must not: draw a story, or lay out the body.
 
 use crate::engine::DocumentLayout;
-use crate::fields::styleref::{has_style_reference, story_reference, with_story_references, Occurrence, StyleSearch};
+use crate::fields::styleref::{
+    has_style_reference, story_reference, with_story_references, Occurrence, StoryText, StyleSearch,
+};
 use crate::fields::{drawn_pages, occurrence_pages};
 use crate::flow::FlowState;
 use crate::notes::NoteRole;
@@ -44,6 +46,72 @@ pub fn any_story_reference(stories: &std::collections::BTreeMap<Text, Arc<[Block
     stories.values().any(|blocks| has_style_reference(blocks))
 }
 
+/// Per page (0-based, blank pages counted) and story (its relationship id), the texts
+/// its `STYLEREF`s show on that page, in the order [`with_story_references`] meets them:
+/// only of the stories a page shows that hold one (`story_references_on`).
+pub type StoryTexts = HashMap<(usize, Text), Vec<StoryText>>;
+
+/// The texts every header's and footer's `STYLEREF` shows on each page of `layout`
+/// (`_story_reference`); `roles` says which top-level blocks are endnotes placed in the
+/// flow (those are not searched). Empty where no story holds a `STYLEREF`.
+pub fn story_texts(layout: &DocumentLayout, locale: &ooxml_base::Locale, roles: &[Option<NoteRole>]) -> StoryTexts {
+    let mut out = StoryTexts::new();
+    let document = &layout.document;
+    if !any_story_reference(&document.stories) {
+        return out;
+    }
+    let references = story_references(&document.sections);
+    let placed = |body: usize| roles.get(body).is_some_and(Option::is_some);
+    let mut search = StyleSearch::new(document, locale, &placed);
+    let drawn = drawn_pages(layout);
+    let mut found_pages: HashMap<usize, Arc<[BTreeSet<usize>]>> = HashMap::new();
+    let mut pages_of = |occurrences: &[Occurrence]| -> Arc<[BTreeSet<usize>]> {
+        let key = occurrences.as_ptr() as usize;
+        Arc::clone(
+            found_pages
+                .entry(key)
+                .or_insert_with(|| occurrence_pages(layout, &drawn, occurrences).into()),
+        )
+    };
+    for (page, info) in layout.pagination.info.iter().enumerate() {
+        if info.blank {
+            continue;
+        }
+        let Some((headers, footers)) = references.get(info.section) else {
+            continue;
+        };
+        for kinds in [headers, footers] {
+            let Some(id) = kinds.get(info.story.name()) else {
+                continue;
+            };
+            let Some(blocks) = document
+                .stories
+                .get(id)
+                .filter(|b| !b.is_empty() && has_style_reference(b))
+            else {
+                continue;
+            };
+            let mut text_of = |run: &ooxml_word_model::model::Run| {
+                let instruction = run.field.as_ref().map(|f| f.instruction.clone())?;
+                story_reference(&mut search, &instruction, page, &mut pages_of)
+            };
+            let (_, texts) = with_story_references(blocks, &mut text_of);
+            out.insert((page, id.clone()), texts);
+        }
+    }
+    out
+}
+
+/// `blocks` (story `id`'s) with its `STYLEREF`s showing what they show on `page`, as
+/// `texts` has them; the blocks themselves where it has none.
+pub fn story_on_page(blocks: &Arc<[Block]>, texts: &StoryTexts, page: usize, id: &Text) -> Arc<[Block]> {
+    let Some(found) = texts.get(&(page, id.clone())) else {
+        return Arc::clone(blocks);
+    };
+    let mut next = found.iter().map(|(_, text)| text.clone());
+    with_story_references(blocks, &mut |_| next.next().flatten()).0
+}
+
 /// The pages of `layout` (one pass) whose header or footer heights, with their
 /// `STYLEREF`s computed for the page, differ from their story's: each with its own
 /// `(header, footer)`. Empty where no story holds a `STYLEREF`.
@@ -56,22 +124,11 @@ pub fn page_stories(
 ) -> PageStories {
     let mut out = PageStories::new();
     let document = &layout.document;
-    if !any_story_reference(&document.stories) {
+    let texts = story_texts(layout, job.cx.locale, job.roles);
+    if texts.is_empty() {
         return out;
     }
     let references = story_references(&document.sections);
-    let placed = |body: usize| job.roles.get(body).is_some_and(Option::is_some);
-    let mut search = StyleSearch::new(document, job.cx.locale, &placed);
-    let drawn = drawn_pages(layout);
-    let mut found_pages: HashMap<usize, Arc<[BTreeSet<usize>]>> = HashMap::new();
-    let mut pages_of = |occurrences: &[Occurrence]| -> Arc<[BTreeSet<usize>]> {
-        let key = occurrences.as_ptr() as usize;
-        Arc::clone(
-            found_pages
-                .entry(key)
-                .or_insert_with(|| occurrence_pages(layout, &drawn, occurrences).into()),
-        )
-    };
     for (page, info) in layout.pagination.info.iter().enumerate() {
         if info.blank {
             continue;
@@ -88,25 +145,17 @@ pub fn page_stories(
             let Some(id) = kinds.get(info.story.name()) else {
                 continue;
             };
-            let Some(blocks) = document
-                .stories
-                .get(id)
-                .filter(|b| !b.is_empty() && has_style_reference(b))
-            else {
+            let (Some(blocks), Some(given)) = (document.stories.get(id), texts.get(&(page, id.clone()))) else {
                 continue;
             };
-            let mut text_of = |run: &ooxml_word_model::model::Run| {
-                let instruction = run.field.as_ref().map(|f| f.instruction.clone())?;
-                story_reference(&mut search, &instruction, page, &mut pages_of)
-            };
-            let (substituted, texts) = with_story_references(blocks, &mut text_of);
+            let substituted = story_on_page(blocks, &texts, page, id);
             let m = &props.margins;
             let key = (
                 id.clone(),
                 props.page_size.width,
                 props.page_size.height,
                 [m.top, m.right, m.bottom, m.left, m.header, m.footer, m.gutter],
-                texts,
+                given.clone(),
             );
             let height = match memo.heights.get(&key) {
                 Some(h) => *h,

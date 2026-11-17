@@ -646,13 +646,14 @@ fn compare_note_lines(
         }
         let mine: Vec<LineBox> = parts
             .footnotes
-            .map(|notes| {
+            .iter()
+            .flat_map(|notes| {
                 let (paragraphs, _) = ooxml_word_layout::flow::body_paragraphs(&notes.blocks);
                 notes
                     .walked
                     .lines
                     .iter()
-                    .map(|l| {
+                    .map(move |l| {
                         let path = l.block.and_then(|b| paragraphs.get(b)).map(|p| p.path.to_string());
                         (
                             path.unwrap_or_default(),
@@ -663,9 +664,9 @@ fn compare_note_lines(
                             l.column,
                         )
                     })
-                    .collect()
+                    .collect::<Vec<_>>()
             })
-            .unwrap_or_default();
+            .collect();
         outcome.note_lines += mine.len();
         if mine != expected {
             let first = mine.iter().zip(&expected).position(|(a, b)| a != b);

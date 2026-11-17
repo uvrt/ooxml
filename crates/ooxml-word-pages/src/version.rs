@@ -8,7 +8,7 @@
 //! made: a version is shared by every reader holding it.
 
 use crate::pictures::PackagePictures;
-use ooxml_word_layout::facts::LayoutFacts;
+use ooxml_word_layout::facts::{LayoutFacts, PageFacts};
 use ooxml_word_layout::geometry::PageFrame;
 use ooxml_word_layout::paginate::PageInfo;
 use ooxml_word_layout::paint::drawings::DrawingSlot;
@@ -55,6 +55,15 @@ impl LaidVersion {
     /// What a check reads of it: made once, when first asked for.
     pub fn facts(&self) -> &LayoutFacts {
         self.facts.get_or_init(|| LayoutFacts::of(&self.layout))
+    }
+
+    /// Page `page`'s facts (0-based, blank pages counted), on their own: the whole
+    /// layout's where made already, else that page's alone, made once.
+    pub fn page_facts(&self, page: usize) -> Option<&PageFacts> {
+        match self.facts.get() {
+            Some(all) => all.pages.get(page),
+            None => self.layout.page_facts(page),
+        }
     }
 
     /// Whether its facts were made already.

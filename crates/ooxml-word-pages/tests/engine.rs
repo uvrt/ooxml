@@ -1,8 +1,9 @@
 //! The page engine over made-up packages: a version read again from its bytes keeps the
 //! parts whose stored bytes did not change and is laid out from the version before; a
 //! version given as its touched parts is the version given whole; a document the layout
-//! does not lay out yet is a fallback with its reason; a floating shape is painted in Rust
-//! and said of as docx2svg says it. The faces are the open ones the repository ships.
+//! does not lay out yet is a fallback with its reason; columns with a line between them,
+//! line numbers and a drop cap are laid out and painted in Rust; a floating shape is
+//! painted in Rust and said of as docx2svg says it. The faces are the open ones the repository ships.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use ooxml_derive::CacheBudget;
@@ -153,6 +154,24 @@ fn a_floating_table_falls_back_with_its_reason() {
     let fallback = engine().lay_out_bytes(Arc::from(package(&body))).unwrap().unwrap_err();
     assert_eq!(fallback.reason, support::FLOATING_TABLE);
     assert!(support::REASONS.contains(&fallback.reason));
+}
+
+#[test]
+fn columns_line_numbers_and_a_drop_cap_are_laid_out_and_painted_in_rust() {
+    let body = format!(
+        r#"<w:p><w:pPr><w:framePr w:dropCap="drop" w:lines="3" w:wrap="around" w:vAnchor="text" w:hAnchor="text"/></w:pPr><w:r><w:t>D</w:t></w:r></w:p>{}<w:sectPr><w:lnNumType w:countBy="5"/><w:cols w:num="2" w:space="720" w:sep="1"/></w:sectPr>"#,
+        paragraphs(60, None)
+    );
+    let mut kept = engine();
+    let version = kept.lay_out_bytes(Arc::from(package(&body))).unwrap().unwrap();
+    for k in 0..version.page_count() {
+        let page = kept.page(&version, k).unwrap();
+        assert!(page.unpainted.is_empty(), "page {k}: {:?}", page.unpainted);
+        assert!(page.rules.iter().any(|r| r.kind == "column-separator"), "page {k}");
+    }
+    // A section of several columns is not numbered: docx2svg says so.
+    let said = version.said();
+    assert!(said.warnings.iter().any(|w| w.code == "line-numbers-not-drawn"), "{said:?}");
 }
 
 #[test]

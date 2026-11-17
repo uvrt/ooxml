@@ -15,18 +15,21 @@
 
 mod decorate;
 pub mod drawings;
+mod line_numbers;
 mod paragraphs;
 mod positions;
+mod separators;
 mod spans;
 pub mod svg;
 mod tables;
 
+pub use line_numbers::{LineNumber, LineNumbers};
 pub use positions::{line_positions, Positions, Setting, TabSpan};
 
 use crate::engine::DocumentLayout;
 use crate::faces::Faces;
 use crate::flow::{body_paragraphs, FlowItem};
-use crate::geometry::stories::PageParts;
+use crate::geometry::stories::{PageParts, StoryPage};
 use crate::geometry::{DrawnLine, LineSource, PageGeometry};
 use crate::paginate::LaidPage;
 use crate::paragraph::MeasuredParagraph;
@@ -50,6 +53,8 @@ pub enum SpanKind {
     Leader,
     /// The space an underlined tab is underlined under.
     Tab,
+    /// A line's number (`w:lnNumType`).
+    LineNumber,
 }
 
 impl SpanKind {
@@ -61,6 +66,7 @@ impl SpanKind {
             SpanKind::Hyphen => "hyphen",
             SpanKind::Leader => "leader",
             SpanKind::Tab => "tab",
+            SpanKind::LineNumber => "line-number",
         }
     }
 }
@@ -250,14 +256,18 @@ struct LineSet<'a> {
     paragraphs: Vec<Arc<Paragraph>>,
     /// The page that laid the body's lines out (its paragraphs broken again there).
     laid: Option<&'a LaidPage>,
+    /// Its paragraphs broken again where they were placed (the page's, or a note area's).
+    broken: Option<&'a crate::paginate::LineStore>,
     /// The lines.
     lines: &'a [DrawnLine],
-    /// Its tables' rows: the flow item and the row.
-    rows: Vec<(usize, &'a PlacedRow)>,
+    /// Its tables' rows: the flow item, the row, and the room it was laid out in.
+    rows: Vec<(usize, &'a PlacedRow, Option<&'a crate::table::TableRoom>)>,
     /// A story's kind and part.
     story: Option<(&'static str, Text)>,
     /// The page's frame, where the set is the body's (its floating drawings placed).
     frame: Option<&'a crate::geometry::PageFrame>,
+    /// The right edge a note separator's line is cut at.
+    clip: Option<Px>,
     /// The layout.
     layout: &'a DocumentLayout,
 }
@@ -299,7 +309,7 @@ fn paragraph_of(set: &LineSet<'_>, line: &DrawnLine) -> Option<(Arc<Paragraph>, 
     match line.source {
         LineSource::Flow { item } => {
             let p = set.items.get(item)?.para()?;
-            let measured = match set.laid.and_then(|laid| laid.broken.get(&item)) {
+            let measured = match set.broken.and_then(|broken| broken.get(&item)) {
                 Some(again) => Arc::clone(&again.measured),
                 None => Arc::clone(&p.measured),
             };
@@ -386,24 +396,27 @@ fn paragraph_rules(
     out.rules.extend(borders);
 }
 
-/// A set's tables' borders and shading, row by row (a row's nested tables' first).
+/// A set's tables' borders and shading, row by row (a row's nested tables' first): each
+/// run of rows as the table was laid out for them -- in their room, where they were laid
+/// out in one (beside drawings, in a column right of the first), else the table's own.
 fn table_rules(set: &LineSet<'_>, out: &mut spans::PageOut) {
     let mut rules = tables::TableRules::default();
     let mut k = 0;
-    while let Some(&(item, _)) = set.rows.get(k) {
+    while let Some(&(item, _, room)) = set.rows.get(k) {
         let run: Vec<&PlacedRow> = set
             .rows
             .get(k..)
             .unwrap_or_default()
             .iter()
-            .take_while(|(i, _)| *i == item)
-            .map(|(_, r)| *r)
+            .take_while(|(i, _, r)| *i == item && *r == room)
+            .map(|(_, r, _)| *r)
             .collect();
         k += run.len();
         let Some(FlowItem::Table(t)) = set.items.get(item) else {
             continue;
         };
-        let Some(table) = t.flow.as_any().downcast_ref::<crate::tables::MeasuredTable>() else {
+        let flow = room.map_or(&t.flow, |r| &r.flow);
+        let Some(table) = flow.as_any().downcast_ref::<crate::tables::MeasuredTable>() else {
             out.unpainted.push("a table of another layout".into());
             continue;
         };
@@ -441,17 +454,27 @@ fn paint_set(
 ) {
     let pictures_from = to.out.pictures.len();
     for (k, line) in set.lines.iter().enumerate() {
+        if let LineSource::Opening { .. } = line.source {
+            // Painted with the page's opening (`PageParts::opening`), before the body.
+            continue;
+        }
         let Some((paragraph, measured)) = paragraph_of(set, line) else {
             to.out.unpainted.push(format!("{:?}", line.source));
             continue;
         };
         let resolved = model.resolve_paragraph(document, &paragraph);
+        let extra = match (set.broken, line.source) {
+            (Some(broken), LineSource::Flow { item }) => broken.get(&item).and_then(|r| r.extra.get(line.number)),
+            _ => None,
+        };
         let job = spans::LineJob {
             document,
             paragraph: &paragraph,
             resolved: &resolved,
             measured: &measured,
             line,
+            extra,
+            clip: set.clip,
         };
         let from = to.out.drawings.len();
         if let Some(mut painted) = spans::paint_line(cx, &job, to.out) {
@@ -489,6 +512,43 @@ fn paint_set(
     }
 }
 
+/// The numbers of page `page`'s lines put before their spans (`_line_numbers`), the text
+/// column starting at `left`.
+fn number_lines(
+    layout: &DocumentLayout,
+    model: &mut Model,
+    (page, left): (usize, Px),
+    cx: &PaintContext<'_>,
+    lines: &mut [PaintedLine],
+) {
+    let numbers = layout.line_numbers(model);
+    for number in numbers.on(page) {
+        let line = lines.iter_mut().find(|l| {
+            l.story.is_none() && l.path == number.path && l.number == number.line && l.baseline == number.baseline
+        });
+        if let (Some(line), Some(span)) = (line, line_numbers::number_span(cx, layout, model, number, left)) {
+            line.spans.insert(0, span);
+        }
+    }
+}
+
+/// The lines of a header, a footer, a page's footnotes or its opening line, to paint.
+fn story_set<'a>(layout: &'a DocumentLayout, story: &'a StoryPage) -> LineSet<'a> {
+    LineSet {
+        items: &story.flow.items,
+        blocks: &story.blocks,
+        paragraphs: body_paragraphs(&story.blocks).0,
+        laid: None,
+        broken: Some(&story.broken),
+        lines: &story.walked.lines,
+        rows: story.walked.rows.iter().map(|(i, r)| (*i, r, None)).collect(),
+        story: matches!(story.kind, "header" | "footer").then(|| (story.kind, story.part.clone())),
+        frame: None,
+        clip: story.clip,
+        layout,
+    }
+}
+
 /// Page `page`'s paint (0-based, blank pages counted): its body's lines, then its header's
 /// and footer's, then its footnotes (`parts`, from [`crate::WordLayout::page_parts`]),
 /// their paragraphs resolved in `model`.
@@ -512,17 +572,31 @@ pub fn paint_page(
             .map_or(Px::ZERO, |s| Px::twips(s.column_width(c))),
         None => frame.right - frame.left,
     };
+    if let Some(opening) = &parts.opening {
+        paint_set(
+            &story_set(layout, opening),
+            model,
+            document,
+            (cx, &width),
+            PaintOut {
+                out: &mut out,
+                lines: &mut lines,
+            },
+        );
+    }
     let body = LineSet {
         items: &layout.flow.items,
         blocks: &document.body,
         paragraphs: body_paragraphs(&document.body).0,
         laid,
+        broken: laid.map(|l| &l.broken),
         lines: &geometry.lines,
         rows: laid
-            .map(|l| l.rows.iter().map(|r| (r.item, &r.row)).collect())
+            .map(|l| l.rows.iter().map(|r| (r.item, &r.row, r.room.as_ref())).collect())
             .unwrap_or_default(),
         story: None,
         frame: Some(&frame),
+        clip: None,
         layout,
     };
     paint_set(
@@ -535,21 +609,14 @@ pub fn paint_page(
             lines: &mut lines,
         },
     );
+    if let Some(laid) = laid {
+        out.rules.extend(separators::column_separators(layout, laid));
+    }
+    number_lines(layout, model, (page, frame.left), cx, &mut lines);
     out.unpainted.extend(parts.unpainted.iter().cloned());
     for story in parts.stories.iter().chain(&parts.footnotes) {
-        let set = LineSet {
-            items: &story.flow.items,
-            blocks: &story.blocks,
-            paragraphs: body_paragraphs(&story.blocks).0,
-            laid: None,
-            lines: &story.walked.lines,
-            rows: story.walked.rows.iter().map(|(i, r)| (*i, r)).collect(),
-            story: (story.kind != "footnotes").then(|| (story.kind, story.part.clone())),
-            frame: None,
-            layout,
-        };
         paint_set(
-            &set,
+            &story_set(layout, story),
             model,
             document,
             (cx, &width),

@@ -5,7 +5,8 @@
 //! the sections' vertical alignment and the fields Word computes again, then page by page
 //! what its body draws (tables laid out by approximate rules or off their grid, rows past
 //! the page's foot, distributed paragraphs, inline drawings with no picture, floating
-//! drawings that may not overlap) and its header's and footer's fields.
+//! drawings that may not overlap), its header's and footer's fields and a shared page's
+//! notes stacked across it; last, line numbers in sections of several columns.
 //!
 //! A warning is recorded once (`Layout.warn`'s rule: the same code, message and page); an
 //! approximation is a warning too (`layout-approximate:<reason>`).
@@ -157,8 +158,44 @@ pub fn said(model: &mut Model, layout: &DocumentLayout, drawings: &mut dyn PageD
             }
         }
         pages.stories(layout, page, &mut out);
+        shared_page_notes(layout, page, &mut out);
     }
+    line_numbers(document, &mut out);
     out
+}
+
+/// A section of several text columns that numbers its lines: not drawn there
+/// (`_line_numbers`, not measured).
+fn line_numbers(document: &WordDocument, out: &mut Said) {
+    for section in document.sections.iter() {
+        let props = &section.properties;
+        if props.line_numbering.is_some() && props.column_count > 1 {
+            out.warn(
+                "line-numbers-not-drawn",
+                "a section of several text columns numbers its lines (w:lnNumType), which is not drawn there (not \
+                 measured)",
+                None,
+            );
+        }
+    }
+}
+
+/// A one-column section's footnotes on a page it shares with a section of several
+/// columns whose notes are drawn too: stacked at the page's foot across the text area, by
+/// a rule not measured (`_footnotes`).
+fn shared_page_notes(layout: &DocumentLayout, page: usize, out: &mut Said) {
+    let Some(laid) = layout.laid_page(page) else { return };
+    let noted = |c: &&ooxml_word_layout::paginate::PageColumn| !c.notes.is_empty() || !c.carried.is_empty();
+    let columns_noted = laid.columns.iter().filter(noted).any(|c| c.multi);
+    for _ in laid.columns.iter().filter(noted).filter(|c| !c.multi && columns_noted) {
+        out.approximate(
+            "notes",
+            "footnotes of a one-column section on a page it shares with a section of several columns whose notes are \
+             drawn too: stacked at the page's foot across the text area (not measured)",
+            Some(page + 1),
+            None,
+        );
+    }
 }
 
 /// The body's page-number fields that cannot be computed (`_computed_fields`).
