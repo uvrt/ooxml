@@ -2,7 +2,7 @@
 //! the measured constants ([`consts`]), chart text measurement ([`text`]), number writing
 //! ([`numbers`]), value axis scales ([`scale`]), the 3-D scene ([`three_d`]), path data
 //! ([`paths`]), what the layout reads off the chart's text and axes ([`sources`]), the data
-//! it reports ([`data`]), and the builder that does the laying out ([`builder`]).
+//! it reports ([`data`]), and the builder that does the laying out (its entry point, [`lay_out`]).
 //!
 //! Must not: write SVG (a scene renderer draws the elements), or resolve a theme.
 

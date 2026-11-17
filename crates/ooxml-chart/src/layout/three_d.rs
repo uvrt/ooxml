@@ -1,6 +1,6 @@
 //! Owns: a 3-D chart's scene as `chart/layout.py` models it -- the camera that applies
-//! ([`three_d_camera`]), the scene's shape and depth, its front face inside the plot region
-//! with the depth as a fixed offset ([`three_d_scene`]), Lambert shading of a face, and the
+//! ([`camera`]), the scene's shape and depth, its front face inside the plot region
+//! with the depth as a fixed offset ([`scene`]), Lambert shading of a face, and the
 //! geometry a surface's faces are cut and lit with.
 //!
 //! Must not: draw (the builder does), or model a perspective scene (it is not measured).

@@ -2,10 +2,10 @@
 //! ooxml-common's `chart/read.py`: every fact the layout needs and none invented. Elements are
 //! found by local name through `ooxml_schema::c`'s views; DrawingML inside a chart (`c:spPr`,
 //! `c:txPr`, `c:rich`) through `ooxml_drawingml::read`. The data caches are read in
-//! [`cache`].
+//! `cache`.
 //!
 //! Three rules the Python states and this keeps: a chart boolean present without `val` is
-//! **true** ([`flag`]); categories come from any of four cache spellings; the cache is read,
+//! **true** (`flag`); categories come from any of four cache spellings; the cache is read,
 //! never the formula.
 //!
 //! Must not: resolve a colour or font, lay anything out, or read the embedded workbook.
