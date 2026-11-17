@@ -8,6 +8,9 @@ change cost what they read, not the whole document.
   kept blocks (:func:`docx_agent.edit.effective._kept_blocks`): the blocks a change left as
   they were are not parsed again.
 - ``describe`` finds the comments' records once, not three times per comment.
+- A page cross-reference reads its page in the worker holding the document's layouts
+  (:func:`docx_agent.layout.page_infos_of`): a batch of them brought the whole layout to
+  this process once per reference.
 
 Made-up documents only."""
 
@@ -21,6 +24,7 @@ import pytest
 from ooxml_edit.tools import Toolbox
 
 from docx_agent import Document
+from docx_agent import layout as layout_module
 from docx_agent.markdown import project, render
 from docx_agent.markdown.read import Reader
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
@@ -137,3 +141,40 @@ def test_describe_finds_the_comments_records_once(monkeypatch):
         assert result.ok
         assert result.data["comments"] == expected
         assert len(calls) <= 3, len(calls)          # was three per comment, and one more
+
+
+def _references(box, doc: str, document: Document) -> list[dict]:
+    chapters = _chapters(document)
+    ops = [{"tool": "word_links", "arguments": {"doc": doc, "action": "add_bookmark", "target": head,
+                                                "bookmark": f"chapter{k + 1}"}} for k, (head, _) in enumerate(chapters)]
+    ops += [{"tool": "word_fields", "arguments": {"doc": doc, "action": "insert_cross_reference", "at": f"{end}@0",
+                                                  "kind": "page", "bookmark": f"chapter{k + 2}"}}
+            for k, (_, end) in enumerate(chapters[:-1])]
+    return ops
+
+
+def _pages_referred(workers: int, monkeypatch=None) -> list:
+    with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, workers=workers) as box:
+        session = box.session(clock=_clock)
+        data = Document.open(made())
+        for paragraph in data.paragraphs():
+            if paragraph.text.startswith("Chapter "):
+                paragraph.format(page_break_before=True)
+        doc = session.open(data.to_bytes(), "report.docx")
+        document = session.entry(doc).document
+        assert box.dispatch(session, "check", {"doc": doc, "include": ["reflow"]}).ok     # its layout held
+        if monkeypatch is not None:
+            def refused(*args, **kwargs):
+                raise AssertionError("a whole layout was made in the calling process")
+
+            monkeypatch.setattr(layout_module, "convert", refused)
+        result = box.dispatch(session, "batch", {"ops": _references(box, doc, document)})
+        assert result.ok, result.to_json()
+        return [(f.instruction.strip(), f.result) for f in document.fields() if f.keyword == "PAGEREF"]
+
+
+def test_a_batchs_page_references_read_their_pages_in_the_worker_as_here(monkeypatch):
+    here = _pages_referred(0)
+    worker = _pages_referred(1, monkeypatch)
+    assert worker == here
+    assert [result for _, result in here] == ["3", "4", "5", "6"]

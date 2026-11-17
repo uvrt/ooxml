@@ -311,7 +311,7 @@ def main() -> None:
                     help="table: the table edits alone; full: every kind of writer call (see above)")
     ap.add_argument("--window", type=float, default=0.2,
                     help="the share of the changing calls compared at the start and the end")
-    ap.add_argument("--profile", help="a directory: cProfile each call there, one file per call")
+    ap.add_argument("--profile", help="a directory: cProfile calls there, one file per call (one call at a time)")
     ap.add_argument("--add-fields", action="store_true", help="--mix full: add the fields through the tools first")
     args = ap.parse_args()
     if args.reviewers is None:
@@ -382,11 +382,15 @@ def main() -> None:
         out["chapters"] = len(chapters)
         deadline = time.perf_counter() + args.minutes * 60
 
+        profiling = threading.Lock()
+
         def call(view, who: str, kind: str, tool: str, arguments: dict) -> None:
             timed.take()
             edits_at = edits[0]
             profile = None
-            if args.profile:
+            if args.profile and profiling.acquire(blocking=False):
+                # One call at a time: a profile is the process's (sys.monitoring, Python 3.12),
+                # so it holds every thread's work done meanwhile.
                 import cProfile
 
                 profile = cProfile.Profile()
@@ -396,6 +400,7 @@ def main() -> None:
             took = time.perf_counter() - w
             if profile is not None:
                 profile.disable()
+                profiling.release()
                 Path(args.profile).mkdir(parents=True, exist_ok=True)
                 profile.dump_stats(Path(args.profile) / f"{edits_at:04d}-{who}-{kind}.prof")
             wait, hold = timed.take()
