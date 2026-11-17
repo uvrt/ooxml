@@ -108,7 +108,8 @@ PACKAGES: dict[str, dict] = {
         # A pull request leaves out the tests marked long; main, nightly and manual runs
         # take them.
         "pr_pytest": ["-m", "not long"],
-        "ft_pytest": [],
+        # Parallel as on the GIL leg (serial, it was the slowest free-threaded leg).
+        "ft_pytest": ["-n", "auto"],
         "check_version": "tools/check_version.py",
         "mypy": True,
         "mypy_siblings": ["ooxml-common"],
@@ -171,8 +172,11 @@ PACKAGES: dict[str, dict] = {
                      "docx-agent"],
         "extras": "test",
         "min_python": "3.11",
-        "pytest": [],
-        "ft_pytest": [],
+        # pytest-xdist for CI only, as pptx-agent: the suite builds ooxml-core and runs
+        # serially otherwise, the slowest leg after docx-agent was split.
+        "pip_extra": ["pytest-xdist>=3"],
+        "pytest": ["-n", "auto"],
+        "ft_pytest": ["-n", "auto"],
         "compile": ["src", "tests"],
         "check_version": "tools/check_version.py",
         "mypy": True,

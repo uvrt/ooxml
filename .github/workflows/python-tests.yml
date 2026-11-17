@@ -39,6 +39,9 @@ jobs:
           # 3.15.0 is out (2026-10-09) but setup-python's version list may still offer only
           # its release candidates; this takes a final release whenever there is one.
           allow-prereleases: true
+          # The third-party wheels pip downloads, kept between runs.
+          cache: pip
+          cache-dependency-path: python/*/pyproject.toml
 
       # pip builds ooxml-core with maturin into the workspace's target/: its dependencies
       # come from the Rust build cache, saved by runs on main only (a pull request's
