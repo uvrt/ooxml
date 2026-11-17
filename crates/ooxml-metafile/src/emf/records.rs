@@ -178,7 +178,7 @@ impl Reader<'_> {
             41 => self.angle_arc(rec),
             42..=44 => self.box_shape(kind, rec),
             45..=47 | 55 => self.arc(kind, rec),
-            49 | 99 | 122 => self.placeholder(rec),
+            49 | 99 | 122 => self.slot_only(rec),
             59..=64 | 66 | 68 => self.path_op(kind),
             67 => self.select_clip_path(rec),
             70 => self.comment(rec),

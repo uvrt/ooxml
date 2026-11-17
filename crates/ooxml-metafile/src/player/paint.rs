@@ -320,13 +320,13 @@ impl Player<'_> {
         };
         let transform = transform_of(&m);
         let mut key = String::new();
-        let probe = path_node(
+        let shape = path_node(
             PathData::default(),
             transform,
             Some(Fill::of(Paint::None)),
             stroke.clone(),
         );
-        write_node(&mut key, &probe, "");
+        write_node(&mut key, &shape, "");
         let figure = Figure {
             start: (x0, y0),
             segments: vec![Segment::Line(x1, y1)],

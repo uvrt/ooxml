@@ -238,7 +238,7 @@ impl Reader<'_> {
         }
         let name = format!("META_{}", name(function));
         if matches!(function, 0x00F7 | 0x01F9 | 0x06FF) {
-            self.add(Object::Placeholder);
+            self.add(Object::Slot);
             return Ok(());
         }
         match self.handle(function, Bytes(params)) {

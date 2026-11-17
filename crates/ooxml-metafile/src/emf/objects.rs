@@ -25,10 +25,10 @@ impl Reader<'_> {
         Ok(true)
     }
 
-    pub(super) fn placeholder(&mut self, rec: Bytes<'_>) -> Played {
+    pub(super) fn slot_only(&mut self, rec: Bytes<'_>) -> Played {
         let index = rec.u32(8)?;
         rec.u32(0)?;
-        self.p.create(index, Object::Placeholder);
+        self.p.create(index, Object::Slot);
         Ok(true)
     }
 

@@ -159,7 +159,7 @@ pub enum Object {
     Brush(Brush),
     Font(Font),
     /// A palette, colour space, region or pattern the player keeps a slot for.
-    Placeholder,
+    Slot,
 }
 
 /// A stock object (`GetStockObject`'s number, without the high bit).
