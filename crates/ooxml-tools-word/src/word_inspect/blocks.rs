@@ -9,7 +9,9 @@ use ooxml_word_model::docx::cells::model_path;
 use ooxml_word_model::docx::formatting::{Cell, EffectiveParagraph, EffectiveRun};
 use ooxml_word_model::docx::Docx;
 use ooxml_word_model::ids::W;
-use ooxml_word_model::markdown::read::{CellRecord, Kind, ParagraphRecord, Reader, Record, RunRecord, TableRecord};
+use ooxml_word_model::markdown::read::{
+    CellRecord, Kind, ParagraphRecord, Placed, Reader, Record, RunRecord, TableRecord,
+};
 use ooxml_word_model::value::{Props, Value as PropValue};
 use ooxml_xml::{Children, Element, Node};
 use serde_json::{json, Map, Value};
@@ -184,12 +186,13 @@ impl<'d> Writer<'d> {
         };
         let cell = cell.and_then(|style| reader.cell_of(&record.part, last, style));
         let formatting = reader.shared().formatting();
-        let base = formatting.run(&last.element, None, 'a', cell.as_ref());
-        let para = formatting.paragraph(&last.element, cell.as_ref());
+        let owner = properties_owner(reader, record, last);
+        let base = formatting.run(&owner, None, 'a', cell.as_ref());
+        let para = formatting.paragraph(&owner, cell.as_ref());
         out.insert("effective".into(), effective(&base, &para));
         let runs: Vec<Value> = record.detail.runs.iter().map(|r| self.run(r, &base)).collect();
         out.insert("runs".into(), Value::Array(runs));
-        let written = new_text(reader, &last.element, &base, cell.as_ref());
+        let written = new_text(reader, &owner, &base, cell.as_ref());
         if !written.is_empty() {
             out.insert("new_text".into(), Value::Object(written));
         }
@@ -397,6 +400,46 @@ impl<'d> Writer<'d> {
         }
         out
     }
+}
+
+/// The paragraph whose properties a record's formatting reads: its last element, but for a
+/// paragraph of a story (not a cell's: Accept All joins those across cell ends) whose mark the
+/// final view deletes with nothing after it to join, which has no properties of its own there (the layout model's
+/// `following_properties`: the story's next paragraph's, none at its end).
+fn properties_owner(reader: &Reader<'_>, record: &ParagraphRecord, last: &Placed) -> Arc<Element> {
+    let removed = ooxml_word_model::docx::find_path(&last.element, &["pPr", "rPr"]).is_some_and(|mark| {
+        mark.child_elements()
+            .any(|c| c.name().is(Some(W), "del") || c.name().is(Some(W), "moveFrom"))
+    });
+    let at_end = || {
+        let Some(part) = reader.docx.part(&record.part) else {
+            return false;
+        };
+        let Some((k, parent)) = last.path.split_last() else {
+            return false;
+        };
+        let Some(container) = ooxml_word_model::docx::at_path(part.root(), parent) else {
+            return false;
+        };
+        !container
+            .children()
+            .iter()
+            .skip(*k as usize + 1)
+            .any(|n| matches!(n, Node::Element(e) if ["p", "tbl", "sdt"].iter().any(|t| e.name().is(Some(W), t))))
+    };
+    // A block of the body (`w:document/w:body/w:p`) or of a header's or footer's root.
+    let story_level = last.path.len() <= 2;
+    if !(removed && story_level && at_end()) {
+        return Arc::clone(&last.element);
+    }
+    let kept: Vec<Node> = last
+        .element
+        .children()
+        .iter()
+        .filter(|n| !matches!(n, Node::Element(e) if e.name().is(Some(W), "pPr")))
+        .cloned()
+        .collect();
+    Arc::new(last.element.with_children(Children::from_vec(kept)))
 }
 
 /// A paragraph's formatting and its runs' baseline, as `effective` shows them.

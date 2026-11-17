@@ -168,38 +168,65 @@ pub fn run(args: &[String]) -> Result<(), String> {
     });
     let (copied, bridged) = edited(&package, &main)?;
     for (name, edited) in [("path_copy", &copied), ("bridge", &bridged)] {
-        let mut best = (f64::MAX, f64::MAX, f64::MAX);
-        for _ in 0..rounds {
-            let versions = Versions::new();
-            let v1 = Version {
-                name: "a.docx",
-                package: &package,
-                number: 1,
-                versions: &versions,
-            };
-            describe(&d, &v1, &Never).map_err(|e| e.message().to_owned())?;
-            let v2 = Version {
-                name: "a.docx",
-                package: edited,
-                number: 2,
-                versions: &versions,
-            };
-            let start = Instant::now();
-            describe(&d, &v2, &Never).map_err(|e| e.message().to_owned())?;
-            let first = start.elapsed().as_secs_f64() * 1000.0;
-            let start = Instant::now();
-            word_read(&span, &v2, &Never).map_err(|e| e.message().to_owned())?;
-            let read = start.elapsed().as_secs_f64() * 1000.0;
-            // Another span of the same version: its lookups read already.
-            let start = Instant::now();
-            word_read(&other, &v2, &Never).map_err(|e| e.message().to_owned())?;
-            let again = start.elapsed().as_secs_f64() * 1000.0;
-            best = (best.0.min(first), best.1.min(read), best.2.min(again));
-        }
-        out.insert(format!("{name}_describe_ms"), json!(best.0));
-        out.insert(format!("{name}_word_read_span_first_ms"), json!(best.1));
-        out.insert(format!("{name}_word_read_other_span_ms"), json!(best.2));
+        let reads = Reads {
+            d: &d,
+            span: &span,
+            other: &other,
+        };
+        after_edit(&mut out, name, &package, edited, &reads, rounds)?;
     }
     println!("{}", Value::Object(out));
+    Ok(())
+}
+
+/// The calls timed on a new version.
+struct Reads<'a> {
+    d: &'a Describe,
+    span: &'a WordRead,
+    other: &'a WordRead,
+}
+
+/// `describe` and two span reads on the version `edited` after version 1 was read, best of
+/// `rounds`, under `name`.
+fn after_edit(
+    out: &mut Map<String, Value>,
+    name: &str,
+    package: &Package,
+    edited: &Package,
+    reads: &Reads<'_>,
+    rounds: usize,
+) -> Result<(), String> {
+    let (d, span, other) = (reads.d, reads.span, reads.other);
+    let mut best = (f64::MAX, f64::MAX, f64::MAX);
+    for _ in 0..rounds {
+        let versions = Versions::new();
+        let v1 = Version {
+            name: "a.docx",
+            package,
+            number: 1,
+            versions: &versions,
+        };
+        describe(d, &v1, &Never).map_err(|e| e.message().to_owned())?;
+        let v2 = Version {
+            name: "a.docx",
+            package: edited,
+            number: 2,
+            versions: &versions,
+        };
+        let start = Instant::now();
+        describe(d, &v2, &Never).map_err(|e| e.message().to_owned())?;
+        let first = start.elapsed().as_secs_f64() * 1000.0;
+        let start = Instant::now();
+        word_read(span, &v2, &Never).map_err(|e| e.message().to_owned())?;
+        let read = start.elapsed().as_secs_f64() * 1000.0;
+        // Another span of the same version: its lookups read already.
+        let start = Instant::now();
+        word_read(other, &v2, &Never).map_err(|e| e.message().to_owned())?;
+        let again = start.elapsed().as_secs_f64() * 1000.0;
+        best = (best.0.min(first), best.1.min(read), best.2.min(again));
+    }
+    out.insert(format!("{name}_describe_ms"), json!(best.0));
+    out.insert(format!("{name}_word_read_span_first_ms"), json!(best.1));
+    out.insert(format!("{name}_word_read_other_span_ms"), json!(best.2));
     Ok(())
 }
