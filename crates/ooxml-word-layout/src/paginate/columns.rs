@@ -102,11 +102,30 @@ impl PageContext<'_> {
         let page = PageStart { start, story, carry };
         let (first, room) = self.lay_noted(&page);
         let bands = self.page_bands(&first.tops, page_index);
-        let wraps = if self.wraps { self.page_wraps(&first.tops, page_index) } else { Vec::new() };
+        let mut wraps = if self.wraps { self.page_wraps(&first.tops, page_index) } else { Vec::new() };
         let laid = if bands.is_empty() && wraps.is_empty() {
             first
         } else {
-            let mut again = self.lay_regions(&page, room, Floats { bands: &bands, wraps: &wraps });
+            let mut again;
+            let mut attempt = 0;
+            loop {
+                again = self.lay_regions(&page, room, Floats { bands: &bands, wraps: &wraps });
+                if again.stopped.is_some() {
+                    break;
+                }
+                // A drop cap in a column is positioned where the text above it ends with
+                // the drop caps above it in place: again until they hold.
+                let found = if self.wraps { self.page_wraps(&again.tops, page_index) } else { Vec::new() };
+                let in_columns = found
+                    .iter()
+                    .any(|w| w.drop_cap.is_some_and(|item| again.tops.iter().any(|t| t.item == item && t.column.is_some())));
+                let edges = |ws: &[crate::wrap::Wrap]| ws.iter().map(|w| (w.top, w.bottom, w.left, w.right)).collect::<Vec<_>>();
+                attempt += 1;
+                if !in_columns || edges(&found) == edges(&wraps) || attempt == 4 {
+                    break;
+                }
+                wraps = found;
+            }
             again.page.bands = bands;
             again.page.wraps = wraps;
             again.stopped = first.stopped.or(again.stopped);

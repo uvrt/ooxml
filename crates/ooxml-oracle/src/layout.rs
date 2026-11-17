@@ -192,7 +192,7 @@ fn para_fields(p: &ParaItem, last: &MeasuredParagraph) -> Vec<(&'static str, Val
 
 /// The first flow item the comparison stops before: docx2svg's first that is not a
 /// paragraph it laid out (a table, stand-in box, obstacle, or a paragraph laid out by an
-/// approximate rule, or beside a drop cap), and why.
+/// approximate rule), and why.
 fn cutoff(flow: &[Value]) -> (usize, Option<String>) {
     for (k, item) in flow.iter().enumerate() {
         let kind = item.get("kind").and_then(Value::as_str).unwrap_or_default();
@@ -203,9 +203,8 @@ fn cutoff(flow: &[Value]) -> (usize, Option<String>) {
             .get("approximations")
             .and_then(Value::as_array)
             .is_some_and(|a| !a.is_empty());
-        let flagged = item.get("drop_cap").and_then(Value::as_bool).unwrap_or(false);
-        if approximated || flagged {
-            return (k, Some("drawings or an approximation".into()));
+        if approximated {
+            return (k, Some("an approximation".into()));
         }
     }
     (flow.len(), None)
@@ -427,16 +426,41 @@ fn our_lines(
     });
     opening
         .into_iter()
-        .chain(
-            page.lines
-                .iter()
-                .filter(|l| l.item < cut && !undrawn(page, ours, l.item, l.line))
-                .map(|l| {
-                    let path = paths.get(l.item).cloned().flatten().unwrap_or_default();
-                    (path, l.line, l.top.to_string(), l.pitch.to_string())
-                }),
-        )
+        .chain(page.lines.iter().filter(|l| l.item < cut).flat_map(|l| {
+            let path = paths.get(l.item).cloned().flatten().unwrap_or_default();
+            let mut out = drop_cap_lines(ours, l);
+            if !undrawn(page, ours, l.item, l.line) {
+                out.push((path, l.line, l.top.to_string(), l.pitch.to_string()));
+            }
+            out
+        }))
         .collect()
+}
+
+/// A drop cap's lines, drawn with the first line of the paragraph it drops into: from
+/// that paragraph's top past the drop cap's space before, one under the other.
+fn drop_cap_lines(ours: &DocumentLayout, line: &ooxml_word_layout::paginate::PlacedLine) -> Vec<LineBox> {
+    let Some(drop) = ours
+        .flow
+        .items
+        .get(line.item)
+        .and_then(FlowItem::para)
+        .and_then(|p| p.drop_cap.as_ref())
+        .filter(|_| line.line == 0)
+    else {
+        return Vec::new();
+    };
+    let path = match ours.document.body.get(drop.body) {
+        Some(Block::Paragraph(p)) => p.path.to_string(),
+        _ => String::new(),
+    };
+    let mut y = line.paragraph_top + ooxml_word_layout::Px::twips(drop.before);
+    let mut out = Vec::new();
+    for (number, height) in drop.measured.heights.iter().enumerate() {
+        out.push((path.clone(), number, y.to_string(), height.pitch.to_string()));
+        y += height.pitch;
+    }
+    out
 }
 
 /// docx2svg's drawn body lines of a page: a line of a paragraph before the cut; on a page
@@ -593,7 +617,7 @@ pub fn run_document(records: &LayoutRecords, outcome: &mut Outcome) -> Result<()
     compare_fields(&laid, theirs, cut, &mut diffs, outcome);
     compare_notes(&laid, theirs, cut, &mut diffs);
     compare_flow(&laid, &flow, cut, &mut diffs, outcome);
-    let page_level = why.as_deref().is_some_and(|w| w.starts_with("drawings"));
+    let page_level = why.as_deref().is_some_and(|w| w.starts_with("an approximation"));
     compare_pages(&laid.document, &laid, theirs, (cut, page_level), &mut diffs, outcome);
     outcome.differences.extend(found);
     Ok(())

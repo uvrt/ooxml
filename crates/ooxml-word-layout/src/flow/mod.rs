@@ -77,6 +77,8 @@ pub struct ParaItem {
     pub anchors: Vec<AnchorRef>,
     /// What its lines are broken from, where the paginator may break them again.
     pub source: Option<Arc<crate::rebreak::ParaSource>>,
+    /// The drop cap that drops into it.
+    pub drop_cap: Option<Arc<DropCap>>,
 }
 
 impl ParaItem {
@@ -368,8 +370,10 @@ fn is_empty(paragraph: &Paragraph) -> bool {
 
 pub use crate::borders::paragraph_borders;
 
+mod drop;
 mod notes;
 mod source;
+pub use drop::DropCap;
 use notes::ParaNotes;
 
 /// Whether a side of a resolved paragraph is autospaced (`autospaced`).
@@ -410,8 +414,10 @@ pub struct FlowMaker<'a, 'm> {
     separators: std::collections::BTreeMap<usize, (Px, Px)>,
     note_items: NoteItems,
     notes_at: NotesAt,
-    /// The body has drawings text wraps beside or floating tables.
+    /// The body has drawings text wraps beside or floating tables, or drop caps.
     wraps: bool,
+    /// The drop cap the next paragraph carries.
+    pending_drop: Option<Arc<DropCap>>,
 }
 
 impl<'a, 'm> FlowMaker<'a, 'm> {
@@ -430,6 +436,7 @@ impl<'a, 'm> FlowMaker<'a, 'm> {
             note_items: NoteItems::new(),
             notes_at: NotesAt::new(),
             wraps: source::wraps(cx.blocks),
+            pending_drop: None,
         }
     }
 
@@ -454,6 +461,8 @@ impl<'a, 'm> FlowMaker<'a, 'm> {
         let mut items = Vec::with_capacity(body.len());
         let mut top_level = 0;
         let mut seen = vec![false; self.cx.sections.list.len().max(1)];
+        let drops = self.drop_caps();
+        self.wraps = self.wraps || !drops.is_empty();
         for (index, block) in body.iter().enumerate() {
             let first = self.firsts.get(index).copied().unwrap_or(0);
             let section = self.cx.sections.section_of(top_level);
@@ -464,6 +473,14 @@ impl<'a, 'm> FlowMaker<'a, 'm> {
             let item = match block {
                 Block::Table(t) => self.table_item(t, index, first, section, section_start),
                 Block::Paragraph(p) => {
+                    if drops.contains(&index) {
+                        // A drop cap: not in the stack; the paragraph after it carries it.
+                        self.pending_drop = self.drop_cap(p, index, section).map(Arc::new);
+                        if self.pending_drop.is_some() {
+                            top_level += 1;
+                            continue;
+                        }
+                    }
                     let item = self.paragraph_item(p, index, first, top_level, section, section_start);
                     top_level += 1;
                     item
@@ -621,18 +638,6 @@ impl<'a, 'm> FlowMaker<'a, 'm> {
         }
     }
 
-    /// What of a paragraph this layout does not lay out: a drop cap's frame.
-    fn not_laid_out(&mut self, block: usize, _section: usize) -> Option<&'static str> {
-        let pp = self.props_of_block(block)?;
-        let drop_cap = match pp.get("framePr") {
-            Some(Value::Attrs(attrs)) => attrs
-                .iter()
-                .any(|(k, v)| &**k == "dropCap" && matches!(&**v, "drop" | "margin")),
-            _ => false,
-        };
-        drop_cap.then_some("a drop cap")
-    }
-
     fn spacing(&mut self, pp: &Props, block: usize) -> (i64, i64) {
         let document = self.cx.document;
         let mut before = int(pp, "spacing.before");
@@ -665,9 +670,6 @@ impl<'a, 'm> FlowMaker<'a, 'm> {
         section: usize,
         section_start: bool,
     ) -> FlowItem {
-        if let Some(why) = self.not_laid_out(block, section) {
-            return stop(block, body, section, why);
-        }
         let measured = match self.measured(paragraph, body, section) {
             Ok(m) => m,
             Err(why) => {
@@ -718,6 +720,7 @@ impl<'a, 'm> FlowMaker<'a, 'm> {
             continuation,
             anchors,
             source,
+            drop_cap: self.pending_drop.take(),
         }))
     }
 

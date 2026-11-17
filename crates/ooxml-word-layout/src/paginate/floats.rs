@@ -237,6 +237,11 @@ impl PageContext<'_> {
             let Some(FlowItem::Para(item)) = self.items.get(top.item) else {
                 continue;
             };
+            if let Some(drop) = item.drop_cap.as_ref().filter(|d| top.line == 0 && d.beside()) {
+                if let Some(wrap) = self.drop_cap_wrap(item, top, drop) {
+                    out.push(wrap);
+                }
+            }
             let lines = self.lines_of(top.item, item);
             for anchored in lines.anchors().iter().filter(|a| a.line == top.line) {
                 let side = anchored.anchor.wrap.as_deref().is_some_and(|w| crate::floating::SIDE_WRAPS.contains(&w));
@@ -248,6 +253,32 @@ impl PageContext<'_> {
             }
         }
         out
+    }
+
+    /// A drop cap's frame as text wraps beside it: from its paragraph's top down its
+    /// height, from the column's exact edge to where the text beside it starts.
+    fn drop_cap_wrap(&self, item: &ParaItem, top: &Top, drop: &crate::flow::DropCap) -> Option<Wrap> {
+        let section = self.sections.get(item.section)?;
+        let column = wrap_column(section, self.mode15, top.column);
+        let (start, shift) = drop.text_start(column.start, column.exact, column.mode15);
+        let paragraph_top = top.paragraph_top.value();
+        let zero = Q::from_integer(0);
+        Some(Wrap {
+            top: paragraph_top,
+            bottom: paragraph_top + drop.height().value(),
+            left: column.exact,
+            right: column.exact + start - column.start,
+            dist_left: zero,
+            dist_right: zero,
+            side: "bothSides".to_owned(),
+            y: paragraph_top,
+            polygon: None,
+            dist_top: zero,
+            dist_bottom: zero,
+            half_up: false,
+            text_shift: Some(shift),
+            drop_cap: Some(top.item),
+        })
     }
 
     /// One drawing text wraps beside, positioned on its page.
@@ -310,6 +341,7 @@ impl PageContext<'_> {
             dist_bottom: db,
             half_up: false,
             text_shift: None,
+            drop_cap: None,
         })
     }
 }

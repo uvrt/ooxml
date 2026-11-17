@@ -59,6 +59,8 @@ pub struct Wrap {
     /// How far the text right of it moves from its edge, where it is not the drawings'
     /// rounding (a drop cap's frame).
     pub text_shift: Option<Q>,
+    /// A drop cap's frame: the flow item that carries it.
+    pub drop_cap: Option<usize>,
 }
 
 /// The least and greatest x of the region `points` encloses between heights `y0` and
