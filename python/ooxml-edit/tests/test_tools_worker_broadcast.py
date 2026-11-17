@@ -56,6 +56,43 @@ def test_a_busy_worker_runs_the_note_when_its_task_ends(make, gate):
         assert gate.order() == ["busy in", "forget", "told", "busy out", "forget"]
 
 
+@pytest.mark.parametrize("make", [pytest.param(lambda: WorkerPool(1), id="processes"),
+                                  pytest.param(lambda: SubprocessPool(1), id="subprocesses")])
+def test_a_note_not_waited_for_returns_at_once_and_runs_before_the_next_task(make, gate):
+    """Round 59: ``wait=False`` tells the idle workers in the background; the call returns
+    while the note is still held at the gate, and the next task waits for it."""
+    with make() as pool:
+        first, _ = pool.run(tools_toys.keep_value, "a", 1, timeout=60, affinity="a")
+        pool.broadcast(tools_toys.at_gate, gate.path, "note", wait=False)
+        gate.note("told")                                  # returned: the note is not done
+        gate.wait_entered("note")
+        task = threading.Thread(target=lambda: pool.run(tools_toys.at_gate, gate.path, "task", False,
+                                                        timeout=60), daemon=True)
+        task.start()
+        gate.open()
+        task.join(60)
+        assert not task.is_alive()
+        order = gate.order()
+        assert sorted(order[:2]) == ["note in", "told"] and order[2:] == ["note out", "task runs"]
+        assert pool.run(tools_toys.keep_value, "a", 2, timeout=60, affinity="a") == (first, 1)
+        assert pool.pids() == [first]                      # the same worker served on
+
+
+@pytest.mark.parametrize("make", [pytest.param(lambda: WorkerPool(1), id="processes"),
+                                  pytest.param(lambda: SubprocessPool(1), id="subprocesses")])
+def test_a_note_given_while_a_worker_is_told_another_runs_before_it_is_idle(make, gate):
+    """Round 59: a second note broadcast while the worker runs the first (out of the idle
+    list) runs before it takes a task -- it had been left for the task after."""
+    with make() as pool:
+        first, _ = pool.run(tools_toys.keep_value, "a", 1, timeout=60, affinity="a")
+        pool.broadcast(tools_toys.at_gate, gate.path, "note", wait=False)
+        gate.wait_entered("note")
+        pool.broadcast(tools_toys.forget_value, "a", gate.path, wait=False)
+        gate.open()
+        assert pool.run(tools_toys.keep_value, "a", 2, timeout=60, affinity="a") == (first, None)
+        assert gate.order() == ["note in", "note out", "forget"]
+
+
 @pytest.mark.parametrize("make", POOLS)
 def test_a_note_for_later_runs_as_the_workers_come_back(make):
     with make() as pool:
@@ -93,6 +130,9 @@ def test_runners_of_one_process_run_the_note_here(runner):
     with runner() as pool:
         pool.broadcast(seen.append, "now")
         assert seen == ["now"]
+        pool.broadcast(seen.append, "not waited for", wait=False)   # this process's own work
+        assert seen == ["now", "not waited for"]
+        seen.remove("not waited for")
         pool.broadcast(seen.append, "later", later=True)
         assert seen == ["now"]
         pool.run(len, "x", timeout=60)

@@ -143,6 +143,37 @@ def test_closing_the_document_lets_the_worker_go_of_its_layouts(made):
         assert lineage not in _held(box, document)        # at once: the worker was idle
 
 
+def test_a_workers_drop_forgets_the_ids_read():
+    """Round 59 (Q4): the memo of ids read (every document's) goes with a drop, so the
+    strings it kept do not hold Python's arenas after the document is closed."""
+    from docx_agent.edit.ids import valid_long_hex
+
+    valid_long_hex("1A2B3C4D")
+    assert valid_long_hex.cache_info().currsize
+    layout_module.drop_lineage("no such lineage")
+    assert valid_long_hex.cache_info().currsize == 0
+
+
+def test_closing_does_not_wait_for_the_workers():
+    """Round 59: the close tells the workers without waiting for them (ooxml-edit's
+    ``broadcast(..., wait=False)``: none takes a task before it has dropped the layouts, as
+    the test above holds); a collected document's note stays queued (``later``)."""
+    told: list = []
+
+    class Runner:                          # a pool of workers of its own, as seen from here
+        def broadcast(self, fn, *args, later=False, wait=True):
+            told.append((fn, args, later, wait))
+
+    runner = Runner()
+    document = Document.new()
+    layout_module.remember_runner(document, runner)
+    lineage = layout_module.lineage(document)
+    layout_module.release_document(document)
+    assert told == [(layout_module.drop_lineage, (lineage,), False, False)]
+    layout_module._collected(lineage, document._layout_runners)
+    assert told[-1] == (layout_module.drop_lineage, (lineage,), True, True)
+
+
 def test_a_collected_documents_layouts_go_when_the_worker_comes_back(made):
     with _toolbox() as box:
         session = box.session()

@@ -121,6 +121,29 @@ def test_a_group_member_is_addressed_by_its_group_and_its_own_id():
         document.chart("d:5/6")
 
 
+def test_describe_lists_a_chart_in_a_group_with_its_alt_text():
+    """Round 59: a group member answers ``alt_text`` as a drawing does (its ``cNvPr/@descr``),
+    so ``describe`` lists a chart held in a group; it failed with an AttributeError before."""
+    from ooxml_edit.tools import Toolbox
+
+    from docx_agent.tools import FORMAT, GROUPS, TOOLS
+
+    document = Document.open(CHARTS / "chart-places.docx")
+    assert document.get("d:5/7").alt_text is None
+    WPG = "{http://schemas.microsoft.com/office/word/2010/wordprocessingGroup}"
+    member = next(e for e in document.package.tree("word/document.xml").iter(WPG + "cNvPr") if e.get("id") == "7")
+    member.set("descr", "Members by year, paired")
+    document.package.mark_dirty("word/document.xml")
+    assert document.get("d:5/7").alt_text == "Members by year, paired"
+    with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, workers=0) as box:
+        session = box.session()
+        doc = session.open(document.to_bytes(), "places.docx")
+        result = box.dispatch(session, "describe", {"doc": doc})
+    assert result.ok, result.to_json()
+    drawings = {d["id"]: d for d in result.data["drawings"]}
+    assert drawings["d:5/7"] == {"id": "d:5/7", "kind": "chart", "alt_text": "Members by year, paired"}
+
+
 def test_a_chart_in_a_nested_group_is_addressed_down_the_groups():
     from lxml import etree
 

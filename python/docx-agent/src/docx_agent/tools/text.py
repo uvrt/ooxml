@@ -604,8 +604,10 @@ _INSERT_MARKDOWN = {"doc": DOC,
                     "at": AT,
                     "style_map": STYLE_MAP,
                     # Round 42, R47: list items like given paragraphs (edit/like.py); round 58,
-                    # R129: a table whose frame new tables take (edit/frames.py).
-                    "like": array(string(), "Paragraphs list items look like, by level; a table: tables take its frame.",
+                    # R129: a table whose frame new tables take (edit/frames.py); round 59, R136: its
+                    # merges down, as the Markdown's empty cells say.
+                    "like": array(string(), "Paragraphs list items look like, by level; a table: its frame, empty cells "
+                                  "joining merges.",
                                   or_single=True, optional=True),
                     "key": string("Retry key: a repeat with the same key makes nothing new.", optional=True),
                     "ref": BLOCKS_REF}
