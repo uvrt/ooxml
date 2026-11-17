@@ -4,15 +4,17 @@
 //! `drawingml.elements.render_element` element for element.
 //!
 //! Owns: the painting pass ([`context`]), the rules as data ([`rules`]), the text measure
-//! port and its table measure ([`measure`]), geometry ([`geometry`]), fills and outlines
-//! ([`fill`]), effects ([`effect`]), text bodies ([`text`]), shapes, connectors, pictures
-//! and tables ([`shape`]), and elements and groups ([`element`]).
+//! port and its table measure ([`measure`]), geometry ([`geometry`]) and as path data
+//! ([`paths`]), fills and outlines ([`fill`]), Word's drawn arrowheads ([`arrowhead`]),
+//! effects ([`effect`]), text bodies ([`text`]), shapes, connectors, pictures and tables
+//! ([`shape`]), and elements and groups ([`element`]).
 //!
 //! Must not: parse SVG, read a part, resolve a colour or a style (the model crates do), or
 //! hold state between passes. Every value is `Send + Sync`; nothing depends on an
 //! interpreter lock.
 #![forbid(unsafe_code)]
 
+pub mod arrowhead;
 pub mod context;
 pub mod effect;
 pub mod element;
@@ -20,6 +22,7 @@ pub mod fill;
 pub mod geometry;
 pub mod image;
 pub mod measure;
+pub mod paths;
 pub mod rules;
 pub mod shape;
 pub mod text;

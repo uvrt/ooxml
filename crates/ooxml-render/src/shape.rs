@@ -170,8 +170,8 @@ pub fn render_shape(shape: &Shape, painter: &mut Painter<'_>) -> Element {
         }
     }
     let (w, h) = (emu_to_px(transform.extent_width), emu_to_px(transform.extent_height));
-    let mut styles = fill_attrs(shape.fill.as_ref(), painter, Some((0.0, 0.0, w, h)));
-    styles.extend(outline_attrs(shape.outline.as_ref(), painter, None));
+    let mut styles = fill_attrs(shape.fill.as_ref(), painter, Some((0.0, 0.0, w, h)), None);
+    styles.extend(outline_attrs(shape.outline.as_ref(), painter, None, None));
     let bounds = if has_text(shape.text.as_ref()) || turned(&transform, painter) {
         None
     } else {
@@ -200,7 +200,7 @@ pub fn render_shape(shape: &Shape, painter: &mut Painter<'_>) -> Element {
 pub fn render_connector(connector: &Connector, painter: &mut Painter<'_>) -> Element {
     let t = &connector.transform;
     let (w, h) = (emu_to_px(t.extent_width), emu_to_px(t.extent_height));
-    let mut styles = outline_attrs(connector.outline.as_ref(), painter, None);
+    let mut styles = outline_attrs(connector.outline.as_ref(), painter, None, None);
     let filter = render_effects(connector.effects.as_ref(), painter, None);
     styles.push(Attr {
         name: "fill",
@@ -297,7 +297,16 @@ pub fn render_image(image: &Image, painter: &mut Painter<'_>) -> Element {
         );
     } else if let Some(tile) = image.tile.as_ref().and_then(|tile| {
         let id = painter.new_id("imgtile");
-        tile_pattern(&id, &href, &image.data, tile, Some((0.0, 0.0, w, h)), blip.as_slice()).map(|p| (id, p))
+        tile_pattern(
+            &id,
+            &href,
+            &image.data,
+            tile,
+            Some((0.0, 0.0, w, h)),
+            blip.as_slice(),
+            painter.dpi,
+        )
+        .map(|p| (id, p))
     }) {
         let (id, pattern) = tile;
         painter.add_def(pattern);
@@ -322,7 +331,7 @@ pub fn render_image(image: &Image, painter: &mut Painter<'_>) -> Element {
             name: "fill",
             value: Value::Word("none".into()),
         }];
-        styles.extend(outline_attrs(Some(outline), painter, None));
+        styles.extend(outline_attrs(Some(outline), painter, None, None));
         let geometry = image.geometry.clone().unwrap_or_default();
         inner.push(styled(render_geometry(&geometry, w, h, scale_paths(painter)), styles));
     }
@@ -395,7 +404,7 @@ fn borders(b: &CellBorders, cell: (f64, f64, f64, f64), painter: &mut Painter<'_
             .num("y1", y1)
             .num("x2", x2)
             .num("y2", y2);
-        line.attrs.extend(outline_attrs(Some(outline), painter, None));
+        line.attrs.extend(outline_attrs(Some(outline), painter, None, None));
         out.push(line);
     }
     out
@@ -427,7 +436,7 @@ pub fn render_table(table: &Table, painter: &mut Painter<'_>) -> Element {
             .num("width", w)
             .num("height", h);
         r.attrs
-            .extend(fill_attrs(Some(background), painter, Some((0.0, 0.0, w, h))));
+            .extend(fill_attrs(Some(background), painter, Some((0.0, 0.0, w, h)), None));
         g.push(r);
     }
     let mut lines = Vec::new();
@@ -476,7 +485,7 @@ fn cell_contents(
             .num("y", y)
             .num("width", w)
             .num("height", h);
-        rect.attrs.extend(fill_attrs(Some(fill), painter, Some(cell_box)));
+        rect.attrs.extend(fill_attrs(Some(fill), painter, Some(cell_box), None));
         target.push(rect);
     } else if marked {
         target.push(

@@ -25,6 +25,8 @@ ooxml-xml.workspace = true
 ooxml-metafile.workspace = true
 ooxml-render.workspace = true
 ooxml-scene.workspace = true
+ooxml-raster.workspace = true
+tiny-skia.workspace = true
 serde_json = { workspace = true, features = ["float_roundtrip"] }
 flate2.workspace = true
 

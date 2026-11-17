@@ -10,6 +10,7 @@ use crate::measure::{TableMeasurer, TextMeasurer};
 use crate::rules::DrawingRules;
 use ooxml_fonts::FontMapping;
 use ooxml_scene::markup::Element;
+use std::collections::BTreeSet;
 
 /// One painting pass.
 pub struct Painter<'m> {
@@ -19,8 +20,15 @@ pub struct Painter<'m> {
     pub font_mapping: FontMapping,
     /// The last-resort East Asian face.
     pub jpan_fallback_font: Option<String>,
+    /// The symbol faces ([`ooxml_fonts::symbols::symbol_face`] names) the drawing has no
+    /// copy of: their text is drawn as the Unicode it stands for, in faces that have it,
+    /// at the face's own advances.
+    pub mapped_symbol_faces: BTreeSet<String>,
     /// The drawing rules.
     pub rules: DrawingRules,
+    /// Pixels an inch of the user space fills, outlines and effects are drawn in: 96
+    /// (PowerPoint's and a chart's), or 300 where docx2svg draws on Word's device grid.
+    pub dpi: f64,
     /// Draw a hyperlink as an `a` element around what it covers.
     pub hyperlinks: bool,
     /// Mark what an editor addresses (`data-pptx-*` attributes) and leave positions out.
@@ -42,7 +50,9 @@ impl<'m> Painter<'m> {
             measurer,
             font_mapping: FontMapping::office_default(),
             jpan_fallback_font: None,
+            mapped_symbol_faces: BTreeSet::new(),
             rules,
+            dpi: crate::units::DPI,
             hyperlinks: true,
             edit_marks: false,
             defs: Vec::new(),
@@ -57,6 +67,12 @@ impl<'m> Painter<'m> {
     pub fn new_id(&mut self, prefix: &str) -> String {
         self.next_id += 1;
         format!("{prefix}-{}{}", self.id_scope, self.next_id)
+    }
+
+    /// Continue the numbering of a document whose resources have taken `count` ids already
+    /// (a page that holds what other painters drew before this pass).
+    pub fn resume_ids(&mut self, count: u32) {
+        self.next_id = count;
     }
 
     /// Mint the ids that follow as `{prefix}-{scope}{n}`, counting from 1 again.

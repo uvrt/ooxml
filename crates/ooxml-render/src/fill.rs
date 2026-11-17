@@ -1,20 +1,51 @@
 //! Owns: a fill's and an outline's paint as attributes, and the resources they reference
 //! (ooxml-common's `drawingml.fill`): solid colours, gradients (over the box as pptx2svg
-//! draws them, or Word's measured geometry), picture fills and tiles, pattern fills of the
-//! measured 8 pt cell, dashes, and connector arrowheads as markers.
+//! draws them, or Word's measured geometry, held to the page through the element's
+//! [`ShapeFrame`]), picture fills and tiles, pattern fills of the measured 8 pt cell
+//! (laid from the page's corner where the rules say so), dashes, and connector arrowheads as
+//! markers -- all at the painter's dpi.
 //!
 //! Must not: draw the shape the paint goes on, or resolve a colour.
 
 use crate::context::Painter;
 use crate::image::{base64_decode, cell_rectangles, natural_size_pt, PATTERN_CELL_BITS, PATTERN_CELL_PT};
-use crate::measure::PX_PER_PT;
-use crate::rules::{Dashes, Gradients};
-use crate::units::emu_to_px;
+use crate::rules::{Dashes, Gradients, PatternPhase};
+use crate::units::{emu_to_px_at, px_per_pt};
 use ooxml_drawingml::drawable::{ArrowEnd, Colour, Fill, GradientFill, GradientStop, ImageTile, Outline};
 use ooxml_scene::markup::{Attr, Element, Op, Sep, Tag, Value};
 
 /// A rectangle, px: `x, y, width, height`.
 pub type Box4 = (f64, f64, f64, f64);
+
+/// How the element a fill is referenced from is placed on its page, for the rules that
+/// measured a fill against the page rather than the shape (ooxml-common's `ShapeFrame`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ShapeFrame {
+    /// Its rotation, degrees: a gradient with `rotWithShape="0"` keeps its angle to the page.
+    pub rotation: f64,
+    /// Flipped across the vertical axis.
+    pub flip_h: bool,
+    /// Flipped across the horizontal axis.
+    pub flip_v: bool,
+    /// From the page's coordinates into the element's user space: a pattern anchored to
+    /// the page is laid in the page's.
+    pub page_transform: Option<Vec<Op>>,
+    /// Whether the shape's outline is its box: a `shape` path gradient draws rings of the
+    /// outline, rectangles on a rectangle and ellipses on an ellipse (measured).
+    pub rectangular: bool,
+}
+
+impl Default for ShapeFrame {
+    fn default() -> ShapeFrame {
+        ShapeFrame {
+            rotation: 0.0,
+            flip_h: false,
+            flip_v: false,
+            page_transform: None,
+            rectangular: true,
+        }
+    }
+}
 
 fn attr(name: &'static str, value: Value) -> Attr {
     Attr { name, value }
@@ -29,8 +60,14 @@ pub fn opacity(name: &'static str, colour: &Colour) -> Option<Attr> {
     (colour.alpha < 1.0).then(|| attr(name, Value::Num(colour.alpha)))
 }
 
-/// `fill="..."` (and `fill-opacity`) for a fill over `bounds`.
-pub fn fill_attrs(fill: Option<&Fill>, painter: &mut Painter<'_>, bounds: Option<Box4>) -> Vec<Attr> {
+/// `fill="..."` (and `fill-opacity`) for a fill over `bounds`, on an element placed on its
+/// page by `frame` where the caller knows it.
+pub fn fill_attrs(
+    fill: Option<&Fill>,
+    painter: &mut Painter<'_>,
+    bounds: Option<Box4>,
+    frame: Option<&ShapeFrame>,
+) -> Vec<Attr> {
     match fill {
         None | Some(Fill::None) => vec![word("fill", "none")],
         Some(Fill::Solid(c)) => {
@@ -40,7 +77,7 @@ pub fn fill_attrs(fill: Option<&Fill>, painter: &mut Painter<'_>, bounds: Option
         }
         Some(Fill::Gradient(g)) => {
             let id = match (painter.rules.gradients, bounds) {
-                (Gradients::Office, Some(b)) => office_gradient(g, painter, b),
+                (Gradients::Office, Some(b)) => office_gradient(g, painter, b, frame),
                 _ => box_gradient(g, painter),
             };
             vec![attr("fill", Value::Url(id))]
@@ -53,7 +90,10 @@ pub fn fill_attrs(fill: Option<&Fill>, painter: &mut Painter<'_>, bounds: Option
             preset,
             foreground,
             background,
-        }) => pattern_fill(preset, foreground, background, painter),
+        }) => {
+            let page = frame.filter(|_| painter.rules.pattern_phase == PatternPhase::Page);
+            pattern_fill(preset, foreground, background, painter, page)
+        }
     }
 }
 
@@ -144,10 +184,13 @@ fn office_stops(stops: &[GradientStop]) -> Vec<(f64, Colour)> {
         .collect()
 }
 
-fn office_gradient(g: &GradientFill, painter: &mut Painter<'_>, bounds: Box4) -> String {
+fn office_gradient(g: &GradientFill, painter: &mut Painter<'_>, bounds: Box4, frame: Option<&ShapeFrame>) -> String {
     let stops = office_stops(&g.stops);
     let (x, y, width, height) = bounds;
     let path = (g.gradient_type == "radial").then(|| g.path.clone().unwrap_or_else(|| "circle".into()));
+    if path.as_deref() == Some("shape") && frame.is_some_and(|f| !f.rectangular) {
+        return shape_rings(g, &stops, painter);
+    }
     if matches!(path.as_deref(), Some("rect" | "shape")) {
         return rectangular_gradient(g, &stops, painter, bounds);
     }
@@ -174,7 +217,7 @@ fn office_gradient(g: &GradientFill, painter: &mut Painter<'_>, bounds: Box4) ->
         );
         return id;
     }
-    let radians = g.angle.to_radians();
+    let radians = page_angle(g, frame).to_radians();
     let (dx, dy) = if g.scaled == Some(true) {
         (height * radians.cos(), width * radians.sin())
     } else {
@@ -194,6 +237,41 @@ fn office_gradient(g: &GradientFill, painter: &mut Painter<'_>, bounds: Box4) ->
             .num("x2", cx + dx * half)
             .num("y2", cy + dy * half)
             .holding(markup),
+    );
+    id
+}
+
+/// A gradient's angle in the element's user space: its own, or, held to the page
+/// (`rotWithShape="0"`), with the element's rotation undone and then its flips (the element
+/// rotates after flipping, so its inverse flips after unrotating).
+fn page_angle(g: &GradientFill, frame: Option<&ShapeFrame>) -> f64 {
+    let mut angle = g.angle;
+    if let (Some(false), Some(frame)) = (g.rotate_with_shape, frame) {
+        angle -= frame.rotation;
+        if frame.flip_h {
+            angle = 180.0 - angle;
+        }
+        if frame.flip_v {
+            angle = -angle;
+        }
+    }
+    angle
+}
+
+/// A `shape` path gradient on an outline that is not its box: rings of the box's
+/// inscribed ellipses (measured on an ellipse), a radial gradient over the box.
+fn shape_rings(g: &GradientFill, stops: &[(f64, Colour)], painter: &mut Painter<'_>) -> String {
+    let id = painter.new_id("grad");
+    let [left, top, right, bottom] = g.focus.unwrap_or([0.5; 4]);
+    painter.add_def(
+        Element::open(Tag::RadialGradient)
+            .word("id", &id)
+            .word("cx", "0.5")
+            .word("cy", "0.5")
+            .word("r", "0.5")
+            .num("fx", (left + 1.0 - right) / 2.0)
+            .num("fy", (top + 1.0 - bottom) / 2.0)
+            .holding(stops.iter().map(|(p, c)| stop(*p, c)).collect()),
     );
     id
 }
@@ -288,7 +366,7 @@ fn image_fill(
     let id = painter.new_id("imgfill");
     let href = format!("data:{mime};base64,{data}");
     if let Some(tile) = tile {
-        if let Some(def) = tile_pattern(&id, &href, data, tile, bounds, &[]) {
+        if let Some(def) = tile_pattern(&id, &href, data, tile, bounds, &[], painter.dpi) {
             painter.add_def(def);
             return id;
         }
@@ -309,7 +387,8 @@ fn image_fill(
 }
 
 /// One `pattern` for `a:tile`: the picture's own size scaled, placed by the alignment,
-/// mirrored copies in a doubled cell for a flip; `None` where the picture's size is unknown.
+/// mirrored copies in a doubled cell for a flip, at `dpi`; `None` where the picture's size
+/// is unknown.
 pub fn tile_pattern(
     id: &str,
     href: &str,
@@ -317,10 +396,11 @@ pub fn tile_pattern(
     tile: &ImageTile,
     bounds: Option<Box4>,
     image_attrs: &[Attr],
+    dpi: f64,
 ) -> Option<Element> {
     let natural = natural_size_pt(&base64_decode(data)?)?;
-    let width = natural.0 * PX_PER_PT * tile.sx;
-    let height = natural.1 * PX_PER_PT * tile.sy;
+    let width = natural.0 * px_per_pt(dpi) * tile.sx;
+    let height = natural.1 * px_per_pt(dpi) * tile.sy;
     if width <= 0.0 || height <= 0.0 {
         return None;
     }
@@ -331,8 +411,8 @@ pub fn tile_pattern(
         _ => (false, false),
     };
     let (mut x, mut y) = tile_origin(&tile.align, bounds, width, height);
-    x += emu_to_px(tile.tx);
-    y += emu_to_px(tile.ty);
+    x += emu_to_px_at(tile.tx, dpi);
+    y += emu_to_px_at(tile.ty, dpi);
     let mut copies = vec![(0.0, 0.0, 1.0, 1.0)];
     if mirror_x {
         copies.push((2.0 * width, 0.0, -1.0, 1.0));
@@ -393,16 +473,21 @@ fn tile_origin(align: &str, bounds: Option<Box4>, width: f64, height: f64) -> (f
     (x, y)
 }
 
-fn pattern_fill(preset: &str, fg: &Colour, bg: &Colour, painter: &mut Painter<'_>) -> Vec<Attr> {
+fn pattern_fill(
+    preset: &str,
+    fg: &Colour,
+    bg: &Colour,
+    painter: &mut Painter<'_>,
+    page: Option<&ShapeFrame>,
+) -> Vec<Attr> {
     let Some(rects) = cell_rectangles(preset) else {
         let mut out = vec![word("fill", &fg.hex)];
         out.extend(opacity("fill-opacity", fg));
         return out;
     };
-    // Anchored to the shape under either rule: anchoring to the page (Word's) needs
-    // the element's place on its page, which `render_element` is not given (ooxml-common's
-    // `ShapeFrame`); a page painter supplies it.
-    let cell = PATTERN_CELL_PT * PX_PER_PT;
+    // Anchored to the shape, or (Word's) laid in the page's coordinates, carried into the
+    // element's by its frame's page transform where the painter knows it.
+    let cell = PATTERN_CELL_PT * px_per_pt(painter.dpi);
     let unit = cell / f64::from(PATTERN_CELL_BITS);
     let id = painter.new_id("patt");
     let mut background = Element::empty(Tag::Rect)
@@ -421,14 +506,18 @@ fn pattern_fill(preset: &str, fg: &Colour, bg: &Colour, painter: &mut Painter<'_
         r.attrs.extend(opacity("fill-opacity", fg));
         children.push(r);
     }
-    painter.add_def(
-        Element::open(Tag::Pattern)
-            .word("id", &id)
-            .word("patternUnits", "userSpaceOnUse")
-            .num("width", cell)
-            .num("height", cell)
-            .holding(children),
-    );
+    let mut pattern = Element::open(Tag::Pattern)
+        .word("id", &id)
+        .word("patternUnits", "userSpaceOnUse")
+        .num("width", cell)
+        .num("height", cell);
+    if let Some(ops) = page
+        .and_then(|f| f.page_transform.as_ref())
+        .filter(|ops| !ops.is_empty())
+    {
+        pattern.set("patternTransform", Value::Transform(ops.clone()));
+    }
+    painter.add_def(pattern.holding(children));
     vec![attr("fill", Value::Url(id))]
 }
 
@@ -467,12 +556,18 @@ fn dash_lengths(outline: &Outline, width: f64, dashes: Dashes) -> Option<Vec<f64
     Some(lengths.collect())
 }
 
-/// `stroke`, `stroke-width`, dashes, cap and join for an outline over `bounds`.
-pub fn outline_attrs(outline: Option<&Outline>, painter: &mut Painter<'_>, bounds: Option<Box4>) -> Vec<Attr> {
+/// `stroke`, `stroke-width`, dashes, cap and join for an outline over `bounds`, on an
+/// element placed on its page by `frame` where the caller knows it.
+pub fn outline_attrs(
+    outline: Option<&Outline>,
+    painter: &mut Painter<'_>,
+    bounds: Option<Box4>,
+    frame: Option<&ShapeFrame>,
+) -> Vec<Attr> {
     let Some(outline) = outline else {
         return vec![word("stroke", "none")];
     };
-    let width = emu_to_px(outline.width);
+    let width = emu_to_px_at(outline.width, painter.dpi);
     let mut out = vec![attr("stroke-width", Value::Num(width))];
     match &outline.fill {
         None => out.push(word("stroke", "none")),
@@ -484,7 +579,7 @@ pub fn outline_attrs(outline: Option<&Outline>, painter: &mut Painter<'_>, bound
             let id = match (painter.rules.gradients, bounds) {
                 (Gradients::Office, Some(b)) => {
                     let half = width / 2.0;
-                    office_gradient(g, painter, (b.0 - half, b.1 - half, b.2 + width, b.3 + width))
+                    office_gradient(g, painter, (b.0 - half, b.1 - half, b.2 + width, b.3 + width), frame)
                 }
                 _ => box_gradient(g, painter),
             };
