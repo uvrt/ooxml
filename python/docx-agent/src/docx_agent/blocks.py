@@ -715,6 +715,15 @@ def read_body(data: bytes | None) -> _Body | None:
     return found
 
 
+def forget_bodies() -> None:
+    """Drop the bodies read (:data:`_BODIES`), when a document is closed (round 58, Q3):
+    they are kept by their bytes, not by document, so a closed document's would stay until
+    other reads pushed them out -- up to 64 MB of part bytes and their blocks' spans and ids.
+    Another open document's are read again when next asked (from its bytes)."""
+    with _BODIES_LOCK:
+        _BODIES.clear()
+
+
 def _read_body(data: bytes) -> _Body | None:
     from .tools import touched as _touched
 

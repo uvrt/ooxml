@@ -7,6 +7,7 @@ from __future__ import annotations
 import dataclasses
 
 import synthetic
+from ooxml_edit import opc
 import tools_toys
 from ooxml_edit.tools import Toolbox
 from ooxml_edit.tools.memory import process_memory
@@ -65,3 +66,28 @@ def test_closing_a_document_tells_its_format():
 def test_the_process_memory_is_a_figure_in_megabytes():
     found = process_memory()
     assert all(isinstance(value, float) and value > 0 for value in found.values())
+
+
+def test_closing_a_document_empties_its_entry_and_gives_the_memory_back(monkeypatch):
+    """Q3: the entry's undo history, read copy, bytes and caches go on close; then the
+    memory is given back (a collection, the allocator's free pages), the entry let go."""
+    from ooxml_edit.tools import memory, session as session_module
+
+    reclaimed = []
+    monkeypatch.setattr(session_module, "reclaim", lambda: reclaimed.append(True))
+    with Toolbox(tools_toys.TOOLS, formats=tools_toys.FORMATS, groups=tools_toys.GROUPS, workers=0) as box:
+        session = box.session()
+        doc = session.open(synthetic.outer_package(), "a.docx")
+        for k in range(2):
+            assert box.dispatch(session, "toy_word_insert", {"doc": doc, "text": f"item {k}", "at": "end"}).ok
+        entry = session.entry(doc)
+        entry.snapshot()
+        entry.check_cache.put("key", "found")
+        assert entry.history.can_undo() and entry._snapshot is not None
+        opc._JOINED.append((opc.Pieces((b"<a>", b"</a>")), b"<a></a>"))   # kept by bytes, any document's
+        session.close(doc)
+        assert reclaimed == [True] and not opc._JOINED
+        assert not entry.history.can_undo() and entry.committed is None and entry._snapshot is None
+        assert not len(entry.check_cache) and not entry.changes_kept
+        assert entry.log                                  # the transcript's records stay
+    memory.reclaim()                                      # runs anywhere: nothing to ask is no error

@@ -13,8 +13,11 @@
 //! It holds no global mutable state (the hyphenation tables are parsed once from data
 //! compiled in) and relies on no interpreter lock.
 //!
-//! Not here yet: DrawingML's rule set (GPOS kerning, grid rounding, PowerPoint's breaks):
-//! it comes with the slides phase (P3/P5), as a second rule set of the same loop.
+//! Also owns DrawingML's table measure ([`table`]): a string's width from a face's measured
+//! advance table and kern pairs, read through its own port ([`MeasuredFace`]).
+//!
+//! Not here yet: DrawingML's line breaking (grid rounding, PowerPoint's breaks): it comes
+//! with the slides phase (P3/P5), as a second rule set of the same loop.
 #![forbid(unsafe_code)]
 
 mod auto;
@@ -26,6 +29,7 @@ pub mod hyphenate;
 pub mod input;
 pub mod measure;
 pub mod pieces;
+pub mod table;
 pub mod units;
 
 pub use breaks::{break_from, break_line, break_pieces, Line};
@@ -38,4 +42,5 @@ pub use input::{
 };
 pub use measure::{measure, pieces, MeasureKey, Measured, Measurer};
 pub use pieces::{Piece, PieceKind};
+pub use table::{measure_width, MeasuredFace};
 pub use units::{twips, twips_to_units, Units};

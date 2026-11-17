@@ -18,8 +18,9 @@ run ends after ``--minutes`` or ``--edits`` changing calls, whichever comes firs
 
 ``--views``: an application's live view beside them (:mod:`docx_agent.liveview`): for each
 version committed, ``view`` since the last token and ``page_svg`` of up to ``--view-pages``
-of the pages it changed.  ``--close``: the document closed at the end, and the workers'
-memory sampled every 0.1 s for 3 s after (``after_close``).
+of the pages it changed.  ``--close``: the document closed at the end (the bench's own references to it dropped
+first), and this process's and the workers' memory sampled every 0.1 s for 3 s after
+(``after_close``); ``before_open`` is this process's before the document was opened.
 
 Per call: ``wall`` (the dispatch), ``cpu`` (this thread's), and the document lock's ``wait``
 (seconds spent taking it) and ``hold`` (seconds it was held) as measured here around
@@ -235,6 +236,7 @@ def main() -> None:
         session = box.session(clock=CLOCK)
         t0 = time.perf_counter()
         threading.Thread(target=sampler, args=(t0,), daemon=True).start()
+        out["before_open"] = sample(t0)
         doc = session.open(data, "report.docx")
         entry = session.entry(doc)
         timed = TimedLock(entry.lock)
@@ -382,8 +384,13 @@ def main() -> None:
         out["final"] = {"rss_mb": _memory(pid).get("rss"), "pss_mb": _memory(pid).get("pss"),
                         "workers_rss_mb": round(sum(_memory(k).get("rss") or 0 for k in _children(pid)), 1)}
         if args.close:
-            closed = time.perf_counter()
+            # The bench's own references go first (what an application that closes a
+            # document holds of it: its id), so what is left is what the library keeps.
+            entry = timed = None
+            began = time.perf_counter()
             session.close(doc)
+            closed = time.perf_counter()
+            out["close_s"] = round(closed - began, 2)
             after: list = []
             while time.perf_counter() - closed < 3.0:
                 after.append({"t": round(time.perf_counter() - closed, 2), "rss_mb": _memory(pid).get("rss"),

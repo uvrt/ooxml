@@ -1,0 +1,13 @@
+[package]
+name = "ooxml-scene"
+version = "0.1.0"
+description = "The display list charts and metafiles lower to (paths, text, images, groups, clips, paint servers) and its typed SVG writer"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true
