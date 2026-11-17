@@ -4,6 +4,14 @@ Versions are those in `pyproject.toml`; none is published to PyPI yet. Each vers
 reaches `main` is tagged `v<version>` on the commit that brought it, from 0.62.0; the
 earlier ones were never tagged.
 
+## 0.124.1 -- unreleased
+
+- **`warm(wait=True)` means every worker is ready.** A worker that had started was no longer
+  counted as starting while its notes were delivered, before it was idle, so a
+  `warm(wait=True)` after a background `warm()` could return one worker short (a flaky
+  `test_warm_starts_the_workers_ahead_of_use`). A warming worker now stays counted until it
+  is idle, or stopped.
+
 ## 0.124.0 -- unreleased
 
 - **A note not waited for** (round 59, for docx-agent's close): `broadcast(fn, *args,
