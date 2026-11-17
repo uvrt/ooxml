@@ -493,6 +493,13 @@ struct SetText {
 - intent rules declared once (`empty_is_absent`, `single_as_list`, `map_as_pairs`, value and argument aliases with a note, kind-neutral fields), replacing today's hidden keywords and the acceptance code scattered across call sites;
 - the schema of the result.
 
+**As built (lane P0c, `crates/ooxml-tools`, `crates/ooxml-tools-derive`).**
+- A field's type gives its schema node (`String`, `i64`, `f64`, `bool`, `Option<T>` optional or, as an item, `orNull`, `Vec<T>`, `IntOrStr<MIN>` for `orInteger`, `NumOrStr` for `orNumber`, a free-form `Map`, a nested `#[derive(ToolArgs)]` struct, a `#[derive(ArgEnum)]` enum); its doc comment is its description.
+- `#[arg(...)]` declares bounds (`minimum`, `maximum`, `min_length`, `max_length`, `min_items`, `max_items`, `format`), the intent rules (`empty_is_absent`, `single_as_list`, `map_as_pairs`, `value_alias(a, b)`, `alias = "..."`, `default = ...` on a required field, `kinds(...)`, `kind_neutral(...)`, `kind_value(...)`, `kind_description(...)`) and what its strings hold (`refs`, `datasets`, `sources`, `facts`); the paths today's `Tool` lists (`items[].target`) follow from the structure.
+- `#[tool(name, description = include_str!("tool.md"), group, mutates, strict, batchable, read_batchable, retry_key, role, priority, route, documents(...), exactly_one(...))]`.
+- Address types (`Address`, `DocId`, `StyleName` above) come with the format tool crates; until then an address is a `String`.
+- A refusal from the contract carries `valid_options` where there is a closed set, and otherwise a `try_call`: the same call with a value at the field that would pass, `fill` naming the fields whose value only shows the kind wanted. Today's Python sends no way out for a missing, mistyped or out-of-range argument; that difference is the rule-2 change, and the only one in the replies.
+
 **Descriptions** are Markdown files. A test counts characters and estimated tokens per tool and per group against budgets; the main session's online count stays the authority.
 
 **Results.**
