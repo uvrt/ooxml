@@ -154,10 +154,8 @@ def _assert_equal(today: dict, result) -> None:
 
 @pytest.mark.parametrize("path", FIXTURES, ids=lambda p: str(p.relative_to(HERE / "fixtures")))
 def test_describe_in_rust_equals_todays_on_the_fixtures(toolbox, path):
+    # Round 59: every fixture now, the chart in a group of chart-places.docx among them.
     today, rust = _both(toolbox, path.read_bytes(), path.name)
-    if not today["ok"]:
-        # today's describe fails on this one; nothing to compare yet
-        pytest.xfail(f"today's describe fails: {today['error']['message']}")
     _assert_equal(today, rust)
 
 

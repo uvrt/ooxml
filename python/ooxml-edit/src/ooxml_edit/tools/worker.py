@@ -86,7 +86,11 @@ let go of, and is not told).  A note that fails is logged; a worker that does no
 one within :data:`TELL_TIMEOUT` is stopped.  ``later=True`` only queues the note, without
 taking a lock -- what a finalizer, run wherever the garbage collector runs, may do -- and
 the workers run it as they come back from their next task, or at the next ``broadcast``.
-In-process runners run it in the caller's thread.
+``wait=False`` (round 59) tells the idle workers in background threads, one each, and
+returns at once: they are out of the idle list until they have run it, so no task takes one
+before -- a task after the call finds every worker told, as with the default, without the
+caller waiting for the note itself (a closed document's: the collection of its layouts in
+the worker).  In-process runners run it in the caller's thread.
 
 **Three runners** (and a fourth, below).
 
@@ -808,11 +812,13 @@ class _Pool:
 
     # -- notes to every worker (round 58) ----------------------------------------------------
 
-    def broadcast(self, fn: Callable[..., Any], *args: Any, later: bool = False) -> None:
+    def broadcast(self, fn: Callable[..., Any], *args: Any, later: bool = False, wait: bool = True) -> None:
         """``fn(*args)`` once in every worker the pool has: the idle ones now, in this
         thread; the busy ones as their task ends, before they take another (the module's
         notes).  ``later``: only queued, without a lock (safe from a finalizer): run as the
-        workers come back from their next task, or at the next ``broadcast``."""
+        workers come back from their next task, or at the next ``broadcast``.  ``wait=False``
+        (round 59): the idle ones told in background threads, the call returning at once;
+        each takes no task before it has run the note."""
         if later:
             self._later.append((fn, args))
             return
@@ -825,6 +831,11 @@ class _Pool:
             self._notes.append((self._noted, fn, args))
             # Taken out while they are told (the pool's size holds: none is started meanwhile).
             idle, self._idle = self._idle, []
+        if not wait:
+            for worker in idle:
+                threading.Thread(target=self._release, args=(worker,), daemon=True,
+                                 name="ooxml-edit-tools-tell").start()
+            return
         for worker in idle:
             self._release(worker)
 
@@ -871,19 +882,29 @@ class _Pool:
         return True
 
     def _release(self, worker: Any) -> None:
-        if not self._closed and not self._deliver(worker):
-            return
-        with self._condition:
-            self._rendering.discard(id(worker))
-            if self._closed:
-                self._count -= 1
-                self._forget(worker)
-                self._unhold(worker)
-            else:
+        while True:
+            if not self._closed and not self._deliver(worker):
+                return
+            with self._condition:
+                self._rendering.discard(id(worker))
+                if self._closed:
+                    self._count -= 1
+                    self._forget(worker)
+                    self._unhold(worker)
+                    break
+                if self._owed(worker):
+                    # Round 59: a note broadcast while this worker was out of the idle list
+                    # (told another, or busy) after its notes were read: run it too, now.
+                    continue
                 self._idle.append(worker)
                 self._condition.notify_all()
                 return
         worker.stop()
+
+    def _owed(self, worker: Any) -> bool:
+        """Whether ``worker`` has notes it has not run (condition held)."""
+        seen = self._read.get(id(worker), self._noted)
+        return bool(self._notes) and self._notes[-1][0] > seen
 
     def _discard(self, worker: Any) -> None:
         with self._condition:
@@ -1431,11 +1452,11 @@ class SubprocessPool(_Pool):
             raise _Gone(f"no answer within {TELL_TIMEOUT:g} s")
         _outcome(reply)
 
-    def broadcast(self, fn: Callable[..., Any], *args: Any, later: bool = False) -> None:
+    def broadcast(self, fn: Callable[..., Any], *args: Any, later: bool = False, wait: bool = True) -> None:
         """:meth:`_Pool.broadcast`; the unregistered tasks' in-process runner too."""
-        super().broadcast(fn, *args, later=later)
+        super().broadcast(fn, *args, later=later, wait=wait)
         if self._inline is not None:
-            self._inline.broadcast(fn, *args, later=later)
+            self._inline.broadcast(fn, *args, later=later, wait=wait)
 
     def close(self) -> None:
         if self._inline is not None:
@@ -1480,9 +1501,10 @@ class _Threads:
         return ToolError("timeout", f"no worker was free within {wait:g} s",
                          details={"timeout": wait, "in_process": True})
 
-    def broadcast(self, fn: Callable[..., Any], *args: Any, later: bool = False) -> None:
+    def broadcast(self, fn: Callable[..., Any], *args: Any, later: bool = False, wait: bool = True) -> None:
         """``fn(*args)`` once in this process (the module's notes): now, in this thread, or --
-        ``later`` -- before the next task."""
+        ``later`` -- before the next task.  ``wait`` changes nothing here: the note is this
+        process's own work, and the next task would wait for it anyway."""
         self._later.append((fn, args))
         if not later:
             self._tell_all()
@@ -1969,13 +1991,13 @@ class WorkerPool(_Pool):
     def _tell(self, worker: Any, fn: Callable[..., Any], args: tuple) -> None:
         worker.tell(fn, args)
 
-    def broadcast(self, fn: Callable[..., Any], *args: Any, later: bool = False) -> None:
+    def broadcast(self, fn: Callable[..., Any], *args: Any, later: bool = False, wait: bool = True) -> None:
         """:meth:`_Pool.broadcast`: to this pool's workers and to those of the runner it fell
         back to, if any."""
-        super().broadcast(fn, *args, later=later)
+        super().broadcast(fn, *args, later=later, wait=wait)
         for other in (self._inline, self._subprocesses):
             if other is not None:
-                other.broadcast(fn, *args, later=later)
+                other.broadcast(fn, *args, later=later, wait=wait)
 
     @property
     def affinity_counts(self) -> dict[str, int]:

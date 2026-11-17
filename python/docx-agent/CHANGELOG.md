@@ -5,7 +5,7 @@ docx-agent has not been released to PyPI. Each version that reaches `main` is ta
 snapshot commit; the development history before it is summarised here.
 [`ROADMAP.md`](ROADMAP.md) has the detail of every phase.
 
-## 0.1.134 -- unreleased
+## 0.1.135 -- unreleased
 
 Round 59 (R135): many writers on one long tracked document. Measured on macOS (Python 3.12)
 with `tools/tracked_report_bench.py --mix full`: 11 writers on the made-up 340-page report,
@@ -48,6 +48,35 @@ Python's garbage collector collecting what they made. Reads now cost what they r
   the median and slowest of the first and last `--window` of the changing calls; this
   process's CPU, the garbage collector's time (`gc.callbacks`), the sizes of what the session
   keeps per document, worker memory; `--profile` (one call at a time), `--add-fields`.
+
+## 0.1.134 -- unreleased
+
+Round 59 (Q4): what the workers keep after a document closes, the close's wait for them,
+and two bugs. Measured on macOS on `tools/tracked_report.py`'s made-up 340-page report, 12
+writers, 2 readers and a live view, 150 changing calls, 2 workers.
+
+- **The close does not wait for the workers.** `release_document` tells them to drop the
+  document's layouts with ooxml-edit 0.124.0's `broadcast(..., wait=False)`: the close
+  returns while they collect, and none takes a task before it has dropped them. `Session.close`
+  took 6.6 s, now 1.4 s.
+- **What a worker keeps after the close is the allocators' free space, not the document's.**
+  Measured item by item in the worker: no layout, lineage, measurement, body, document or
+  layout object of it is left, and Python's objects are back to the count the warm worker
+  had. The worker that held the layouts (warm: 70 MB resident, 58 MB physical footprint) was
+  at 1,515 MB after the run and 909 MB after the close; of that, 593 MB is pages the C
+  allocator gave back that macOS counts as resident until it needs them (`footprint`:
+  reclaimable), and the footprint is 319 MB -- 280 MB of it Python's 1 MB arenas (287
+  arenas holding 33 MB of objects; 33 arenas, 31 MB warm), kept while any object in them
+  lives.
+- A worker's drop (`layout.drop_lineage`) and `layout.clear_caches` forget the ids read
+  (`edit.ids.valid_long_hex`'s memo, up to 65,536 strings of every document read): they
+  kept arenas of the closed document's after the close.
+- `check` with `scale` and `pages` raised a TypeError (`scales` asked for the layout without
+  the ids whose pages it needs): the values are read first, then their pages asked for at
+  once.
+- `describe` failed on a document with a chart in a group (`'Member' object has no attribute
+  'alt_text'`): a group member answers `alt_text` from its `cNvPr`, as a drawing does from
+  `wp:docPr`. The Rust `describe` test compares every fixture now (none expected to fail).
 
 ## 0.1.133 -- unreleased
 
