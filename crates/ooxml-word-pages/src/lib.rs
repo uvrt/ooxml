@@ -27,11 +27,11 @@
 
 mod disk;
 pub mod drawings;
-pub mod png;
 mod engine;
 mod error;
 mod fonts;
 mod pictures;
+pub mod png;
 pub mod support;
 mod version;
 pub mod warnings;

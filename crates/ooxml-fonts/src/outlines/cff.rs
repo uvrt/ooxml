@@ -353,7 +353,12 @@ impl Type2<'_, '_> {
         if matches!(b0, 26 | 27) {
             let mut first = if args.len() % 4 == 1 { args.pop_front()? } else { 0.0 };
             while args.len() >= 4 {
-                let (a, b, c, d) = (args.pop_front()?, args.pop_front()?, args.pop_front()?, args.pop_front()?);
+                let (a, b, c, d) = (
+                    args.pop_front()?,
+                    args.pop_front()?,
+                    args.pop_front()?,
+                    args.pop_front()?,
+                );
                 if b0 == 26 {
                     self.curve([first, a, b, c, 0.0, d]);
                 } else {
@@ -365,7 +370,12 @@ impl Type2<'_, '_> {
         }
         let mut horizontal = b0 == 31;
         while args.len() >= 4 {
-            let (a, b, c, d) = (args.pop_front()?, args.pop_front()?, args.pop_front()?, args.pop_front()?);
+            let (a, b, c, d) = (
+                args.pop_front()?,
+                args.pop_front()?,
+                args.pop_front()?,
+                args.pop_front()?,
+            );
             let last = if args.len() == 1 { args.pop_front()? } else { 0.0 };
             if horizontal {
                 self.curve([a, 0.0, b, c, last, d]);
@@ -379,7 +389,11 @@ impl Type2<'_, '_> {
 
     /// `callsubr`, `callgsubr`.
     fn call(&mut self, b0: u8, depth: usize) -> Option<Step> {
-        let subrs = if b0 == 10 { &self.cff.subrs } else { &self.cff.global_subrs };
+        let subrs = if b0 == 10 {
+            &self.cff.subrs
+        } else {
+            &self.cff.global_subrs
+        };
         #[allow(clippy::cast_possible_truncation)]
         let index = self.stack.pop()?.trunc() as i64 + bias(subrs.len());
         let length = i64::try_from(subrs.len()).ok()?;

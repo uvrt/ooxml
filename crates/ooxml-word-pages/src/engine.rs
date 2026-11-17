@@ -664,12 +664,7 @@ struct DrawingWarnings<'a> {
 }
 
 impl crate::warnings::PageDrawings for DrawingWarnings<'_> {
-    fn said(
-        &mut self,
-        model: &mut Model,
-        laid: &ooxml_word_layout::DocumentLayout,
-        page: usize,
-    ) -> Vec<DrawingSaid> {
+    fn said(&mut self, model: &mut Model, laid: &ooxml_word_layout::DocumentLayout, page: usize) -> Vec<DrawingSaid> {
         let Some(drawings) = self.drawings else {
             return Vec::new();
         };
@@ -695,7 +690,9 @@ impl crate::warnings::PageDrawings for DrawingWarnings<'_> {
         for path in &paint.unplaced {
             out.push(warning(
                 "drawing-position-unknown",
-                format!("a floating drawing ({path}) is positioned against a frame that is not modelled: it is not drawn"),
+                format!(
+                    "a floating drawing ({path}) is positioned against a frame that is not modelled: it is not drawn"
+                ),
             ));
         }
         let mut defs = ooxml_word_layout::paint::svg::PageDefs::default();
@@ -709,7 +706,10 @@ impl crate::warnings::PageDrawings for DrawingWarnings<'_> {
                 ));
             }
             let painted = drawings.paint(slot, &mut defs);
-            let key = (slot.story.as_ref().map(|(_, part)| part.to_string()), slot.path.to_string());
+            let key = (
+                slot.story.as_ref().map(|(_, part)| part.to_string()),
+                slot.path.to_string(),
+            );
             if painted.approximated && !self.text_paths.contains(&key) {
                 self.text_paths.push(key);
                 out.push(DrawingSaid::Approximation(Approximation {

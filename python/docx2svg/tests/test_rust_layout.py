@@ -128,3 +128,51 @@ def test_measurers_of_the_callers_own_fall_back_counted():
     before = rust.fallbacks().get("outlined text", 0)
     assert rust.Engine(docx2svg.ConvertOptions()).lay_out(FIXTURES[0].read_bytes(), options) is None
     assert rust.fallbacks()["outlined text"] == before + 1
+
+
+def _pixels(png: bytes) -> tuple:
+    """An 8-bit RGBA PNG's size and pixels (resvg's and tiny-skia's encoders write no other)."""
+    import struct
+    import zlib
+
+    at, chunks = 8, {}
+    while at < len(png):
+        size, = struct.unpack(">I", png[at:at + 4])
+        kind = png[at + 4:at + 8]
+        chunks[kind] = chunks.get(kind, b"") + png[at + 8:at + 8 + size]
+        at += 12 + size
+    width, height, depth, colour = struct.unpack(">IIBB", chunks[b"IHDR"][:10])
+    assert (depth, colour) == (8, 6)
+    raw, stride, out, previous = zlib.decompress(chunks[b"IDAT"]), width * 4, bytearray(), bytearray(width * 4)
+    for row in range(height):
+        kind, line = raw[row * (stride + 1)], bytearray(raw[row * (stride + 1) + 1:(row + 1) * (stride + 1)])
+        for i in range(stride):
+            a = line[i - 4] if i >= 4 else 0
+            b = previous[i]
+            c = previous[i - 4] if i >= 4 else 0
+            if kind == 1:
+                line[i] = (line[i] + a) & 255
+            elif kind == 2:
+                line[i] = (line[i] + b) & 255
+            elif kind == 3:
+                line[i] = (line[i] + (a + b) // 2) & 255
+            elif kind == 4:
+                p = a + b - c
+                pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
+                line[i] = (line[i] + (a if pa <= pb and pa <= pc else b if pb <= pc else c)) & 255
+        out += line
+        previous = line
+    return (width, height), bytes(out)
+
+
+@pytest.mark.parametrize("name", ["watermark", "vml-shapes"])
+def test_a_page_drawn_in_rust_is_png_as_resvg_py_draws_it(name: str):
+    pytest.importorskip("resvg_py")
+    from docx2svg.png import svg_to_png
+
+    data, _ = _made()[name]
+    options = docx2svg.ConvertOptions()
+    ours = rust.Engine(options).lay_out(data, options)
+    page = ours.pages[0]
+    svg = ours.page_svg(0, width=page.width_px // 4, height=page.height_px // 4)
+    assert _pixels(rust.page_png(svg)) == _pixels(svg_to_png(svg))

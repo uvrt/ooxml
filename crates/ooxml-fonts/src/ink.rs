@@ -97,12 +97,9 @@ impl Face {
             };
             found = Some(match (found, moved) {
                 (None, m) => m,
-                (Some(InkBox::Units(a)), InkBox::Units(m)) => InkBox::Units([
-                    a[0].min(m[0]),
-                    a[1].min(m[1]),
-                    a[2].max(m[2]),
-                    a[3].max(m[3]),
-                ]),
+                (Some(InkBox::Units(a)), InkBox::Units(m)) => {
+                    InkBox::Units([a[0].min(m[0]), a[1].min(m[1]), a[2].max(m[2]), a[3].max(m[3])])
+                }
                 (Some(a), m) => {
                     let (a, m) = (floats(a), floats(m));
                     let lo = |x: f64, y: f64| if y < x { y } else { x };

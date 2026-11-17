@@ -282,10 +282,10 @@ impl Reading<'_, '_> {
             Node::Group(g) => {
                 let children = g.children.iter().filter_map(|c| self.element(c)).collect();
                 let own = transform(g.xfrm.as_ref());
-                let inner = g.child_xfrm.as_ref().map_or_else(
-                    || own,
-                    |c| Transform::of(c.x, c.y, c.width, c.height),
-                );
+                let inner = g
+                    .child_xfrm
+                    .as_ref()
+                    .map_or_else(|| own, |c| Transform::of(c.x, c.y, c.width, c.height));
                 // The group's effects are read (and said) as docx2svg reads them; a group
                 // draws none.
                 let _ = self.job.colours.effects(g.effects.as_ref(), None, self.said);
@@ -333,7 +333,11 @@ impl Reading<'_, '_> {
         };
         let outline = colours.outline(s.outline.as_ref(), style.and_then(|st| st.line.as_ref()), self.said);
         let effects = colours.effects(s.effects.as_ref(), style.and_then(|st| st.effect.as_ref()), self.said);
-        let text = self.text_body(s.text.as_ref(), style.and_then(|st| st.font.as_ref()), font_ref.as_deref());
+        let text = self.text_body(
+            s.text.as_ref(),
+            style.and_then(|st| st.font.as_ref()),
+            font_ref.as_deref(),
+        );
         Drawable::Shape(Box::new(Shape {
             transform: transform(s.xfrm.as_ref()),
             geometry: geometry(s.geometry.as_ref()),
@@ -363,10 +367,10 @@ impl Reading<'_, '_> {
         font_ref: Option<&str>,
     ) -> Option<TextBody> {
         let body = body.filter(|b| b.paragraphs.iter().any(|p| p.runs.iter().any(|r| !r.text.is_empty())))?;
-        let theme: Option<&ThemeFonts> = self
-            .job
-            .fonts
-            .map(|f| if font_ref == Some("major") { &f.major } else { &f.minor });
+        let theme: Option<&ThemeFonts> =
+            self.job
+                .fonts
+                .map(|f| if font_ref == Some("major") { &f.major } else { &f.minor });
         let faces = Faces {
             latin: theme.map(|t| t.latin.to_string()).filter(|f| !f.is_empty()),
             east_asian: theme.map(|t| t.east_asian.to_string()).filter(|f| !f.is_empty()),
@@ -451,7 +455,9 @@ impl Reading<'_, '_> {
         drawable::RunProperties {
             font_size: Some(props.size.filter(|s| *s != 0.0).unwrap_or(DEFAULT_TEXT_PT)),
             font_family: self.face(props.latin.as_deref()).or_else(|| faces.latin.clone()),
-            font_family_ea: self.face(props.east_asian.as_deref()).or_else(|| faces.east_asian.clone()),
+            font_family_ea: self
+                .face(props.east_asian.as_deref())
+                .or_else(|| faces.east_asian.clone()),
             font_family_cs: self.face(props.complex_script.as_deref()),
             bold: props.bold == Some(true),
             italic: props.italic == Some(true),

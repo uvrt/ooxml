@@ -132,7 +132,9 @@ pub fn paint(object: &Element) -> Option<Paint> {
             ..Outline::default()
         }
     } else {
-        let stated = attr(shape, "strokeweight").filter(|w| !w.is_empty()).unwrap_or("0.75pt");
+        let stated = attr(shape, "strokeweight")
+            .filter(|w| !w.is_empty())
+            .unwrap_or("0.75pt");
         let weight = length_emu(Some(stated)).filter(|w| *w != 0).unwrap_or(9525);
         let named = attr(shape, "strokecolor")
             .filter(|c| !c.is_empty())
@@ -229,8 +231,13 @@ impl TextPath {
     /// Its outlines in its face (`text_path_outlines`): only where its shape type fits it to
     /// the box.
     pub fn ink(&self, inks: Option<&dyn Inks>) -> Option<TextInk> {
-        inks.filter(|_| self.fit == Some(true))?
-            .ink(&self.face, self.bold, self.italic, &self.string, TEXT_PATH_OBLIQUE)
+        inks.filter(|_| self.fit == Some(true))?.ink(
+            &self.face,
+            self.bold,
+            self.italic,
+            &self.string,
+            TEXT_PATH_OBLIQUE,
+        )
     }
 
     /// The face its text is drawn in, for a rasteriser: `(face, bold, italic)`, italic only
@@ -258,7 +265,10 @@ impl TextPath {
             let style = if self.italic { " font-style=\"italic\"" } else { "" };
             let em = height * Q::new(5, 6);
             if let Some(stroke) = &self.stroke {
-                paint.push_str(&format!(" stroke=\"#{stroke}\" stroke-width=\"{}\"", num(to_f64(height) / 200.0)));
+                paint.push_str(&format!(
+                    " stroke=\"#{stroke}\" stroke-width=\"{}\"",
+                    num(to_f64(height) / 200.0)
+                ));
             }
             let baseline = y + em * Q::new(4, 5) + (height - em) / Q::from_integer(2);
             return format!(
@@ -290,7 +300,11 @@ impl TextPath {
         }
         let skew = -ink.slant * sx.float();
         let pens: Vec<String> = ink.pens.iter().map(ToString::to_string).collect();
-        let pens = if pens.is_empty() { "0".to_owned() } else { pens.join(" ") };
+        let pens = if pens.is_empty() {
+            "0".to_owned()
+        } else {
+            pens.join(" ")
+        };
         format!(
             "<text x=\"{pens}\" y=\"0\" transform=\"matrix({} 0 {} {} {} {})\" font-family={family} font-size=\"{}\" \
              style=\"font-kerning:none;font-variant-ligatures:none\"{weight}{style} {paint}>{}</text>",

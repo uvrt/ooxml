@@ -295,7 +295,11 @@ impl Face {
     /// `GPOS`'s `kern` pair adjustments, read once (`None`: none read).
     pub(crate) fn gpos_kerning(&self) -> Option<&crate::gpos::PairKerning> {
         self.gpos
-            .get_or_init(|| self.table(b"GPOS").and_then(crate::gpos::PairKerning::new).map(Arc::new))
+            .get_or_init(|| {
+                self.table(b"GPOS")
+                    .and_then(crate::gpos::PairKerning::new)
+                    .map(Arc::new)
+            })
             .as_deref()
     }
 

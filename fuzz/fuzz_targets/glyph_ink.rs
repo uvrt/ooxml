@@ -8,7 +8,9 @@ use ooxml_fonts::Face;
 use std::sync::Arc;
 
 fuzz_target!(|data: &[u8]| {
-    let Ok(face) = Face::new(Arc::from(data), 0, "fuzz") else { return };
+    let Ok(face) = Face::new(Arc::from(data), 0, "fuzz") else {
+        return;
+    };
     for slant in [0.0, 0.34] {
         let _ = face.ink("AVATAR Tyre", slant);
     }

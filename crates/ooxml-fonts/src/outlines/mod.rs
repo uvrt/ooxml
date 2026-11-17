@@ -101,9 +101,8 @@ impl Bounds {
                 if 0.0 < t && t < 1.0 {
                     let m = 1.0 - t;
                     let w = [m.powf(3.0), 3.0 * t * m * m, 3.0 * t * t * m, t.powf(3.0)];
-                    let along = |k: usize| {
-                        0.0 + w[0] * at(&a, k) + w[1] * at(&b, k) + w[2] * at(&c, k) + w[3] * at(&d, k)
-                    };
+                    let along =
+                        |k: usize| 0.0 + w[0] * at(&a, k) + w[1] * at(&b, k) + w[2] * at(&c, k) + w[3] * at(&d, k);
                     self.slanted(along(0), along(1));
                 }
             }

@@ -154,7 +154,9 @@ pub fn text_queries(svg: &str) -> Vec<(String, BTreeSet<TextQuery>)> {
         let Some(end) = after.find('>') else { break };
         let tag = after.get(..end).unwrap_or("");
         let attributes = tag_attributes(tag);
-        let Some(value) = attributes.get("font-family") else { continue };
+        let Some(value) = attributes.get("font-family") else {
+            continue;
+        };
         let families = family_names(value);
         if families.is_empty() {
             continue;
@@ -194,9 +196,14 @@ fn tag_attributes(tag: &str) -> BTreeMap<&'static str, String> {
         let mut from = 0;
         while let Some(found) = tag.get(from..).and_then(|t| t.find(&needle)) {
             let start = from + found;
-            let preceded = tag.get(..start).and_then(|t| t.chars().last()).is_some_and(char::is_whitespace);
+            let preceded = tag
+                .get(..start)
+                .and_then(|t| t.chars().last())
+                .is_some_and(char::is_whitespace);
             let value_at = start + needle.len();
-            let Some(close) = tag.get(value_at..).and_then(|t| t.find('"')) else { break };
+            let Some(close) = tag.get(value_at..).and_then(|t| t.find('"')) else {
+                break;
+            };
             if preceded {
                 out.insert(name, tag.get(value_at..value_at + close).unwrap_or("").to_owned());
             }
@@ -279,9 +286,10 @@ impl FacePool {
         }
         let holds = |values: &[&str], withheld: &BTreeSet<String>| {
             values.iter().all(|v| {
-                needs.iter().filter(|(n, _)| n == v).all(|(_, wants)| {
-                    wants.iter().all(|(q, face, _)| same(self.drawn(q, withheld), *face))
-                })
+                needs
+                    .iter()
+                    .filter(|(n, _)| n == v)
+                    .all(|(_, wants)| wants.iter().all(|(q, face, _)| same(self.drawn(q, withheld), *face)))
             })
         };
         let mut passes: Vec<(Vec<&str>, BTreeSet<String>)> = vec![(Vec::new(), BTreeSet::new())];
@@ -330,11 +338,7 @@ fn same(a: Option<&PoolFace>, b: Option<&PoolFace>) -> bool {
 fn matches<'p>(members: &[&'p PoolFace], query: &TextQuery) -> Vec<&'p PoolFace> {
     let css: Vec<CssFace> = members.iter().map(|f| f.css.clone()).collect();
     let found = css_match(&css, query.stretch, &query.style, query.weight);
-    members
-        .iter()
-        .copied()
-        .filter(|f| found.contains(&f.css))
-        .collect()
+    members.iter().copied().filter(|f| found.contains(&f.css)).collect()
 }
 
 fn first_match<'p>(members: &[&'p PoolFace], query: &TextQuery) -> Option<&'p PoolFace> {
@@ -355,7 +359,11 @@ mod tests {
         let weights: Vec<u16> = queries.iter().map(|q| q.weight).collect();
         assert_eq!(weights.len(), 2);
         assert!(weights.contains(&700) && weights.contains(&300));
-        let calibri = found[1].1.iter().next().map(|q| (q.families.clone(), q.stretch, q.style.clone()));
+        let calibri = found[1]
+            .1
+            .iter()
+            .next()
+            .map(|q| (q.families.clone(), q.stretch, q.style.clone()));
         assert_eq!(calibri, Some((vec!["Calibri".to_owned()], 3, "italic".to_owned())));
     }
 }

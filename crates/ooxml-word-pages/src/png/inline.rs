@@ -131,7 +131,10 @@ fn attributes(text: &str) -> Vec<(String, String)> {
             continue;
         };
         let name = text.get(name_at..value_from).unwrap_or("").to_owned();
-        let value = text.get(value_from + 2..value_from + 2 + close).unwrap_or("").to_owned();
+        let value = text
+            .get(value_from + 2..value_from + 2 + close)
+            .unwrap_or("")
+            .to_owned();
         match out.iter_mut().find(|(n, _)| *n == name) {
             Some(pair) => pair.1 = value,
             None => out.push((name, value)),
@@ -207,7 +210,9 @@ fn contains(hay: &[u8], needle: &[u8]) -> bool {
 
 /// `bytes.rstrip()`: ASCII whitespace off the end.
 fn trim_end(data: &[u8]) -> &[u8] {
-    let keep = data.iter().rposition(|b| !matches!(b, b' ' | b'\t' | b'\n' | b'\r' | 0x0b | 0x0c));
+    let keep = data
+        .iter()
+        .rposition(|b| !matches!(b, b' ' | b'\t' | b'\n' | b'\r' | 0x0b | 0x0c));
     data.get(..keep.map_or(0, |k| k + 1)).unwrap_or_default()
 }
 
@@ -219,7 +224,10 @@ mod tests {
         const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
         let mut out = String::new();
         for chunk in text.as_bytes().chunks(3) {
-            let n = chunk.iter().enumerate().fold(0u32, |n, (i, b)| n | u32::from(*b) << (16 - 8 * i));
+            let n = chunk
+                .iter()
+                .enumerate()
+                .fold(0u32, |n, (i, b)| n | u32::from(*b) << (16 - 8 * i));
             for k in 0..4 {
                 if k <= chunk.len() {
                     out.push(char::from(ALPHABET[(n >> (18 - 6 * k) & 63) as usize]));
@@ -233,7 +241,9 @@ mod tests {
 
     #[test]
     fn a_metafile_picture_goes_inline_and_another_stays() {
-        let drawn = encode(r#"<svg xmlns="http://www.w3.org/2000/svg" data-ooxml-metafile="emf" viewBox="0 0 10 5"><text>A</text></svg>"#);
+        let drawn = encode(
+            r#"<svg xmlns="http://www.w3.org/2000/svg" data-ooxml-metafile="emf" viewBox="0 0 10 5"><text>A</text></svg>"#,
+        );
         let other = encode(r#"<svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>"#);
         let svg = format!(
             r#"<svg><image data-docx-path="p" x="1" y="2" width="3" height="4" preserveAspectRatio="none" href="data:image/svg+xml;base64,{drawn}"/><image href="data:image/svg+xml;base64,{other}"/></svg>"#

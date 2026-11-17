@@ -284,7 +284,9 @@ fn floats(
     };
     let (anchors, paragraph_top, bands, page) = match set.laid {
         Some(laid) => (
-            laid.broken.get(&item).map_or_else(own, |again| again.anchors.as_slice()),
+            laid.broken
+                .get(&item)
+                .map_or_else(own, |again| again.anchors.as_slice()),
             laid.lines
                 .iter()
                 .find(|l| l.item == item && l.line == line.number)
@@ -485,13 +487,7 @@ fn paint_set(
             to.lines.push(painted);
         }
         if let (LineSource::Flow { item }, Some(frame)) = (line.source, set.frame) {
-            floats(
-                set,
-                (frame, item),
-                (&paragraph, &resolved, &measured),
-                line,
-                to.out,
-            );
+            floats(set, (frame, item), (&paragraph, &resolved, &measured), line, to.out);
         }
         for slot in to.out.drawings.get_mut(from..).unwrap_or_default() {
             slot.story = set.story.clone();
