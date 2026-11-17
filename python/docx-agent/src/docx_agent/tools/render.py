@@ -19,6 +19,7 @@ from typing import Any
 from ooxml_edit.tools import render, worker_task
 from ooxml_edit.tools.render import Layout, RendererBase, View
 
+from .. import pages
 from ..layout import (_MEASURES, _RECENT, _RECENT_LOCK, _light, _remember,  # noqa: F401
                       _put_held, _taken, dumps, held_layout, held_state, made_facts)
 
@@ -120,8 +121,20 @@ class PageRenderer(RendererBase):
         from ooxml_edit.tools import content_key
 
         count = len(layout.pages)
-        svgs = docx2svg.page_svgs(layout, data, options, device_size=True, fonts=fonts)
         numbers = [page for page in items if 1 <= page <= count]
+        if pages.is_rust(layout):
+            # Lane L4: drawn in Rust (each page it does not draw as docx2svg does, by docx2svg),
+            # at the device size; rasterised with the files docx2svg finds the faces in.
+            from ..layout import svgs_of
+
+            sized = {"width": options.width, "height": options.height}
+            svgs = [svgs_of(layout, data, None, {"font_dirs": options.font_dirs, "locale": options.locale}, [n],
+                            sized if options.width or options.height else
+                            {"width": layout.pages[n - 1].width_px, "height": layout.pages[n - 1].height_px})[0]
+                    for n in numbers]
+            fonts = docx2svg._fonts(data, options)
+        else:
+            svgs = docx2svg.page_svgs(layout, data, options, device_size=True, fonts=fonts)
         faces = docx2svg.drawn_faces(layout)
         files: list = []
         embedded: list = []

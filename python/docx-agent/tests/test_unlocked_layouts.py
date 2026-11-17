@@ -24,7 +24,11 @@ from docx_agent.tools.shared import BATCH_CHECK
 
 from gates import Gate
 
-pytestmark = pytest.mark.any_faces
+# Lane L4: what these tests read -- layouts handed between versions and workers, held by
+# token, waited for in flight -- is docx2svg's Python layout's, the fallback where the Rust
+# layout (docx_agent.pages) does not lay a version out; tests/test_rust_layout.py holds the
+# Rust layout to the same answers.
+pytestmark = [pytest.mark.any_faces, pytest.mark.usefixtures("python_layout")]
 
 
 def report(chapters: int = 3) -> bytes:

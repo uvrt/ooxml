@@ -269,3 +269,14 @@ def _relayouts_end_with_their_test():
     from docx_agent.tools.owner import wait_for_relayouts
 
     wait_for_relayouts(timeout=120)
+
+
+@pytest.fixture
+def python_layout(monkeypatch):
+    """docx2svg's Python layout for every layout the test makes (lane L4): the frozen
+    fallback the Rust layout (``docx_agent.pages``) stands in for, whose own mechanisms --
+    layouts handed between versions and processes, held by token, pickled -- a test of
+    them reads."""
+    from docx_agent import pages
+
+    monkeypatch.setattr(pages, "available", lambda: False)

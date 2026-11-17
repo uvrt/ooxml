@@ -324,7 +324,14 @@ impl Model {
             let key = element_key(self.key, colours_d, node, &fields, (name != "p").then_some(&*here));
             if let Some(Kept(kept)) = self.elements.get(&key) {
                 fields.cached.extend(kept.cached.iter().cloned());
-                out.extend(kept.blocks.iter().map(|b| moved(b, &here)));
+                if name == "p" {
+                    // A paragraph is kept by its content wherever it stands: it takes its new
+                    // place. Any other element is kept at its own place (its key holds it),
+                    // and the paragraphs in it keep their paths below it.
+                    out.extend(kept.blocks.iter().map(|b| moved(b, &here)));
+                } else {
+                    out.extend(kept.blocks.iter().cloned());
+                }
                 continue;
             }
             read += 1;

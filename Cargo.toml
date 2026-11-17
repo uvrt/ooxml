@@ -30,6 +30,7 @@ members = [
     "crates/ooxml-metafile",
     "crates/ooxml-render",
     "crates/ooxml-raster",
+    "crates/ooxml-word-pages",
     "xtask",
 ]
 # cargo-fuzz's layout: its own workspace, built with `cargo fuzz` (nightly).
@@ -71,6 +72,7 @@ ooxml-scene = { path = "crates/ooxml-scene" }
 ooxml-metafile = { path = "crates/ooxml-metafile" }
 ooxml-render = { path = "crates/ooxml-render" }
 ooxml-raster = { path = "crates/ooxml-raster" }
+ooxml-word-pages = { path = "crates/ooxml-word-pages" }
 ooxml-numfmt = { path = "crates/ooxml-numfmt" }
 ooxml-style-names = { path = "crates/ooxml-style-names" }
 ooxml-chart = { path = "crates/ooxml-chart" }

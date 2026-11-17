@@ -5,6 +5,41 @@ docx-agent has not been released to PyPI. Each version that reaches `main` is ta
 snapshot commit; the development history before it is summarised here.
 [`ROADMAP.md`](ROADMAP.md) has the detail of every phase.
 
+## 0.1.136 -- unreleased
+
+Phase PL, lane L4: the Word layout in Rust. Every layout docx-agent makes of a version -- a
+check's facts, `describe`'s pages, `render`'s SVG and PNG, a fields update's page numbers
+and page cross-references, the live view -- is first asked of the document's Rust engine
+(`docx_agent.pages`, over `ooxml_core.WordPages`): one per document in each process that
+lays it out, laying each version out from the one before with the interpreter lock let go,
+and holding it in Rust. Nothing of the layout is a Python object but the pages a reader
+reads (a few kept painted), nothing is pickled, and no worker holds a Python layout for it.
+Answers are docx2svg's: the same pages, signatures, facts and SVG (`tests/test_rust_layout.py`).
+
+- **Where the Rust layout does not lay a version out as docx2svg does yet** (a floating
+  table, text beside a drawing, a drawing in a table cell -- one text wraps around there
+  under a reason of its own --, a text box, a frame or drop cap, STYLEREF, footnotes in
+  columns or beneath the text, endnotes continued, line numbers, column separators,
+  unequal columns, a table in a document of columns, a floating drawing or an inline one
+  that is not a picture -- what its painter says is phase P3's; `ooxml_word_pages::support`), docx2svg's Python layout lays it
+  out as before -- frozen as that fallback -- and the reason is counted
+  (`docx_agent.pages.fallbacks()`, `layout_fallbacks{reason}`). A page whose drawings wait
+  for their painters (phase P3) is drawn by docx2svg, counted the same way.
+- The layout's warnings (`reflow.layout_warnings`: `table-grid-mismatch`,
+  `field-not-computed:*`, `field-cached:*`, `vertical-alignment-not-drawn`...), its
+  approximations, the faces' substitutions and glyph fallbacks, and the render's `relaid`
+  cause are docx2svg's, in its order, computed in Rust (`ooxml_word_pages::warnings`).
+- A check reads only the pages its facts need: the index of where blocks are drawn comes
+  from the Rust layout's body lines, a page is painted when its spans are read, and the
+  summary a reflow compares is digested in Rust.
+- The tests of the Python layout's own mechanisms (layouts handed between versions and
+  workers, held by token) pin it with the `python_layout` fixture.
+
+- With `DOCX_AGENT_FULL_VALIDATE` (the test runs), the story a span read alone is compared
+  with is read once per `Reader`, not once per span: the corpus round trip in every fixture,
+  reading each of its 500-odd insertions back through one reader, took 2-4 minutes per
+  fixture on CI, now about 15 s.
+
 ## 0.1.135 -- unreleased
 
 Round 59 (R135): many writers on one long tracked document. Measured on macOS (Python 3.12)

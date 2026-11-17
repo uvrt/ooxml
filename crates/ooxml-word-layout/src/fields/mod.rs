@@ -23,7 +23,7 @@ pub mod styleref;
 pub mod update;
 
 pub use format::{argument, field_text, format_value, number_text, switches, Uncomputable};
-pub use references::{cross_references, Computed};
+pub use references::{cross_reference_problems, cross_references, Computed};
 
 use crate::engine::DocumentLayout;
 use crate::flow::{body_paragraphs, FlowItem};

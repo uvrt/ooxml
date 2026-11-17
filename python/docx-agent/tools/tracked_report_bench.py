@@ -594,8 +594,12 @@ def main() -> None:
     out["process_cpu_pct"] = round(100 * out["process_cpu_s"] / out["elapsed_s"], 1) if out["elapsed_s"] else None
     changing = sum(1 for r in calls if "wall" in r and r["kind"] not in ("describe", "check", "read_batch", "view"))
     out["cpu_per_edit_s"] = round(out["process_cpu_s"] / changing, 2) if changing else None
+    # Lane L4: the layouts made in Python instead of Rust here, by reason (this process's).
+    from docx_agent import pages
+
+    out["layout_fallbacks"] = pages.fallbacks()
     Path(args.out).write_text(json.dumps(out, indent=1))
-    print(json.dumps({"by_kind": out["by_kind"], "windows": out["windows"], "memory": out["memory"],
+    print(json.dumps({"layout_fallbacks": out["layout_fallbacks"], "by_kind": out["by_kind"], "windows": out["windows"], "memory": out["memory"],
                       "elapsed_s": out["elapsed_s"], "process_cpu_s": out["process_cpu_s"],
                       "process_cpu_pct": out["process_cpu_pct"], "cpu_per_edit_s": out["cpu_per_edit_s"],
                       "gc": out["gc"], "failed": out["failed"],

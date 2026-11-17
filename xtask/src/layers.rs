@@ -58,6 +58,7 @@ pub const MAP: &[(&str, Place)] = &[
     // ooxml-word in the design; the prototype holds that package name (lane L2)
     ("ooxml-word-model", Place::Layer(3, 0)),
     ("ooxml-word-layout", Place::Layer(3, 1)),
+    ("ooxml-word-pages", Place::Layer(3, 2)),
     // Word's edits: commands over the model, through the store (phase P2)
     ("ooxml-word-edit", Place::Layer(3, 1)),
     ("ooxml-tools-derive", Place::Layer(4, 0)),

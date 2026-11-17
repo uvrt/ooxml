@@ -22,44 +22,15 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-/// The main document part's pictures, read from the package.
-pub struct PackagePictures {
-    package: Package,
-    main: String,
-}
+/// The main document part's pictures, read from the package (moved to
+/// `ooxml-word-pages`, lane L4).
+pub use ooxml_word_pages::PackagePictures;
 
-const OFFICE: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument";
-
-impl PackagePictures {
-    /// The pictures of the package in `bytes`.
-    pub fn new(bytes: &[u8]) -> Option<PackagePictures> {
-        let package = Package::open(Arc::from(bytes.to_vec()), &Limits::default()).ok()?;
-        let main = package
-            .relationships("")
-            .ok()?
-            .iter()
-            .find(|r| r.rel_type == OFFICE)
-            .and_then(|r| r.target_part.clone())?;
-        Some(PackagePictures { package, main })
-    }
-}
-
-impl Pictures for PackagePictures {
-    fn picture(&self, relationship: &str, part: Option<&str>) -> Option<(String, Arc<[u8]>)> {
-        let source = part.unwrap_or(&self.main);
-        let rels = self.package.relationships(source).ok()?;
-        let target = rels.get(relationship)?.target_part.clone()?;
-        let bytes = self.package.read(&target).ok()??;
-        let mime = self.package.content_types().ok()?.of(&target)?.to_owned();
-        if matches!(mime.as_str(), "image/x-emf" | "image/emf" | "image/x-wmf" | "image/wmf") {
-            if let Some(drawing) = ooxml_metafile::draw(&bytes, &ooxml_metafile::Options::default()) {
-                if drawing.drawn > 0 {
-                    return Some(("image/svg+xml".to_owned(), Arc::from(drawing.svg())));
-                }
-            }
-        }
-        Some((mime, bytes))
-    }
+/// The pictures of the package in `bytes`.
+fn pictures_of(bytes: &[u8]) -> Option<PackagePictures> {
+    Package::open(Arc::from(bytes), &Limits::default())
+        .ok()
+        .and_then(PackagePictures::new)
 }
 
 /// Faces named as docx2svg names them on this machine.
@@ -130,7 +101,7 @@ pub fn run_svg_document(records: &LayoutRecords, outcome: &mut SvgOutcome) -> Re
     outcome.documents += 1;
     let bytes = std::fs::read(&records.path).map_err(|e| format!("{}: {e}", records.path))?;
     let glyphs = Arc::new(WordGlyphs::new(fonts_of(fonts, Some(&bytes))?));
-    let pictures = PackagePictures::new(&bytes);
+    let pictures = pictures_of(&bytes);
     if outcome.index.is_none() {
         outcome.index = Some(Arc::new(crate::text::drawing_index_of(fonts)?));
     }

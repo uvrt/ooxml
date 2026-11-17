@@ -203,6 +203,7 @@ def _failing(monkeypatch, error: BaseException) -> list:
     return calls
 
 
+@pytest.mark.usefixtures("python_layout")  # lane L4: docx2svg's Python layout's failures and relaid causes
 def test_a_failed_layout_is_layout_failed_naming_the_table_never_not_found(toolbox, monkeypatch):
     session, document = _open(toolbox, _with_extra_cells(_shelf()))
     table = document.tables()[0].id
@@ -217,6 +218,7 @@ def test_a_failed_layout_is_layout_failed_naming_the_table_never_not_found(toolb
     assert checked.data["layout"]["table_grid_mismatch"][0]["table"] == table
 
 
+@pytest.mark.usefixtures("python_layout")  # lane L4: docx2svg's Python layout's failures and relaid causes
 def test_any_failure_in_the_layout_is_layout_failed(toolbox, monkeypatch):
     session, _ = _open(toolbox, _shelf().to_bytes())
     _failing(monkeypatch, IndexError("list index out of range"))
@@ -225,6 +227,7 @@ def test_any_failure_in_the_layout_is_layout_failed(toolbox, monkeypatch):
     assert "IndexError" in rendered.error.message and rendered.error.valid_options == []
 
 
+@pytest.mark.usefixtures("python_layout")  # lane L4: docx2svg's Python layout's failures and relaid causes
 def test_a_version_that_failed_fails_again_at_once_logged_once(toolbox, monkeypatch, caplog):
     from docx_agent.liveview import view
 

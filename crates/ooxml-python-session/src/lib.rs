@@ -2,7 +2,8 @@
 //! sections 3 and 9; layer 6).
 //!
 //! Owns: the PyO3 handles -- [`PySession`] (`ooxml_core.Session`), [`PyCancelToken`]
-//! (`ooxml_core.CancelToken`) and [`PyCallContext`] (`ooxml_core.CallContext`) -- and `ooxml_core.tool_specs(kind)`; the conversion of their
+//! (`ooxml_core.CancelToken`) and [`PyCallContext`] (`ooxml_core.CallContext`) -- and `ooxml_core.tool_specs(kind)`;
+//! the Word layout's handles (`layout`: `WordFonts`, `WordPages`, `LaidPages`, lane L4); the conversion of their
 //! arguments and results (bytes copied in while the interpreter lock is held, then every
 //! Rust call made with it released, `py.detach`); the mapping of session errors to Python
 //! exceptions; a panic in a call turned into an `internal` tool error, never an abort; and
@@ -20,14 +21,17 @@
 //! crate takes it and becomes the module itself.
 
 mod adapters;
+mod layout;
 mod session;
 
 use pyo3::prelude::*;
 
+pub use layout::{LayoutFallback, PyLaidPages, PyWordFonts, PyWordPages};
 pub use session::{PyCallContext, PyCancelToken, PySession};
 
 /// Add the session API to the module `m`: `Session`, `CancelToken`, `CallContext` and
-/// `tool_specs`.
+/// `tool_specs`; and the Word layout's handles: `WordFonts`, `WordPages`, `LaidPages` and
+/// `LayoutFallback`.
 ///
 /// # Errors
 /// Python's, adding a name.
@@ -36,5 +40,9 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyCancelToken>()?;
     m.add_class::<PyCallContext>()?;
     m.add_function(wrap_pyfunction!(session::tool_specs, m)?)?;
+    m.add_class::<PyWordFonts>()?;
+    m.add_class::<PyWordPages>()?;
+    m.add_class::<PyLaidPages>()?;
+    m.add("LayoutFallback", m.py().get_type::<LayoutFallback>())?;
     Ok(())
 }
