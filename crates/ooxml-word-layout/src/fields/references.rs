@@ -571,37 +571,6 @@ pub fn cross_references(document: &WordDocument, kept: &mut Computed) -> WordDoc
     out
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn sequence_switches_read_as_word_reads_them() {
-        let (name, found) = sequence_switches(r#"SEQ \# "00" Item"#);
-        assert_eq!(name.as_deref(), Some("Item"));
-        assert_eq!(found, vec![('#', Some("00".to_owned()))]);
-        let (name, found) = sequence_switches(r"SEQ \r 7 Item \h");
-        assert_eq!(name.as_deref(), Some("Item"));
-        assert_eq!(found, vec![('r', Some("7".to_owned())), ('h', None)]);
-    }
-
-    #[test]
-    fn sequences_count() {
-        let mut counts = HashMap::new();
-        let none = HashSet::new();
-        let step = |i: &str, c: &mut HashMap<String, i64>| {
-            let (name, found) = sequence_switches(i);
-            sequence_step(i, &name.unwrap_or_default().to_uppercase(), &found, c, &none)
-        };
-        assert_eq!(step("SEQ Figure", &mut counts).ok().as_deref(), Some("1"));
-        assert_eq!(step("SEQ Figure", &mut counts).ok().as_deref(), Some("2"));
-        assert_eq!(step(r"SEQ Figure \c", &mut counts).ok().as_deref(), Some("2"));
-        assert_eq!(step(r"SEQ Figure \r 5", &mut counts).ok().as_deref(), Some("5"));
-        assert_eq!(step(r"SEQ Figure \h", &mut counts).ok().as_deref(), Some(""));
-        assert!(step("SEQ", &mut counts).is_err());
-    }
-}
-
 /// Each body field a cross reference pass leaves as Word cached it, and why, in the order
 /// docx2svg finds them (`cross_references`' problems): every `SEQ` that cannot be counted,
 /// then every `REF` that cannot be computed, paragraph by paragraph.
@@ -652,4 +621,35 @@ pub fn cross_reference_problems(document: &WordDocument) -> Vec<(&'static str, S
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sequence_switches_read_as_word_reads_them() {
+        let (name, found) = sequence_switches(r#"SEQ \# "00" Item"#);
+        assert_eq!(name.as_deref(), Some("Item"));
+        assert_eq!(found, vec![('#', Some("00".to_owned()))]);
+        let (name, found) = sequence_switches(r"SEQ \r 7 Item \h");
+        assert_eq!(name.as_deref(), Some("Item"));
+        assert_eq!(found, vec![('r', Some("7".to_owned())), ('h', None)]);
+    }
+
+    #[test]
+    fn sequences_count() {
+        let mut counts = HashMap::new();
+        let none = HashSet::new();
+        let step = |i: &str, c: &mut HashMap<String, i64>| {
+            let (name, found) = sequence_switches(i);
+            sequence_step(i, &name.unwrap_or_default().to_uppercase(), &found, c, &none)
+        };
+        assert_eq!(step("SEQ Figure", &mut counts).ok().as_deref(), Some("1"));
+        assert_eq!(step("SEQ Figure", &mut counts).ok().as_deref(), Some("2"));
+        assert_eq!(step(r"SEQ Figure \c", &mut counts).ok().as_deref(), Some("2"));
+        assert_eq!(step(r"SEQ Figure \r 5", &mut counts).ok().as_deref(), Some("5"));
+        assert_eq!(step(r"SEQ Figure \h", &mut counts).ok().as_deref(), Some(""));
+        assert!(step("SEQ", &mut counts).is_err());
+    }
 }
