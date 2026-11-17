@@ -179,8 +179,40 @@ fn a_change_of_the_styles_lays_the_version_out_whole() {
     let styled = package_styled(&body, Some(large));
     let again = kept.lay_out_bytes(Arc::from(styled.clone())).unwrap().unwrap();
     assert!(!again.relaid(), "laid out whole: {:?}", kept.stats());
+    let cause = again.relaid_cause().expect("laid out whole from a version before");
+    assert_eq!(
+        (cause.reason, cause.part.as_deref()),
+        ("styles", Some("word/styles.xml"))
+    );
     let mut fresh = engine();
     let whole = fresh.lay_out_bytes(Arc::from(styled)).unwrap().unwrap();
     assert_eq!(again.page_count(), whole.page_count());
     assert_eq!(svgs(&mut kept, &again), svgs(&mut fresh, &whole));
+}
+
+#[test]
+fn a_tables_grid_mismatch_and_a_cached_field_are_said_as_docx2svg_says_them() {
+    let row = |cells: usize| {
+        format!(
+            "<w:tr>{}</w:tr>",
+            "<w:tc><w:p><w:r><w:t>x</w:t></w:r></w:p></w:tc>".repeat(cells)
+        )
+    };
+    let body = format!(
+        r#"<w:tbl><w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/></w:tblGrid>{}{}</w:tbl>{}"#,
+        row(2),
+        row(3),
+        paragraphs(2, None)
+    );
+    let version = engine().lay_out_bytes(Arc::from(package(&body))).unwrap().unwrap();
+    let said = &version.said().warnings;
+    let grid = said
+        .iter()
+        .find(|w| w.code == "table-grid-mismatch")
+        .expect("the mismatch said");
+    assert_eq!(grid.page, Some(1));
+    assert!(grid
+        .message
+        .starts_with("w:body/w:tbl[1]: rows off its w:tblGrid of 2 column(s) (w:tr[2] reaches 3"));
+    assert!(version.relaid_cause().is_none());
 }

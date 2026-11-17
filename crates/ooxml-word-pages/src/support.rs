@@ -34,6 +34,9 @@ pub const TEXT_BESIDE_DRAWING: &str = "text beside a drawing";
 /// A drawing holding a text box: its lines are its painter's (until P3), so neither its
 /// facts nor its paint are the layout's.
 pub const TEXT_BOX: &str = "text box";
+/// A floating drawing, or an inline one that is not a picture: what docx2svg says of it
+/// (`drawing-*` warnings) is its painter's, which runs with the paint (phase P3).
+pub const DRAWING: &str = "drawing";
 /// A `STYLEREF` field.
 pub const STYLEREF: &str = "STYLEREF field";
 /// Footnotes referenced in a section of several columns.
@@ -76,6 +79,7 @@ pub const REASONS: &[&str] = &[
     DRAWING_IN_CELL,
     TEXT_BESIDE_DRAWING,
     TEXT_BOX,
+    DRAWING,
     STYLEREF,
     FOOTNOTES_IN_COLUMNS,
     FOOTNOTES_BENEATH_TEXT,
@@ -260,6 +264,14 @@ impl Scan {
                     .any(|d| matches!(d, InlineObject::Graphic(g) if text_box(g)));
             if boxed {
                 self.found = Some(fallback(TEXT_BOX, &paragraph.path));
+                return;
+            }
+            let graphic = run
+                .drawings
+                .iter()
+                .any(|d| matches!(d, InlineObject::Graphic(g) if &*g.kind != "picture"));
+            if !in_cell && (graphic || !run.anchors.is_empty()) {
+                self.found = Some(fallback(DRAWING, &paragraph.path));
                 return;
             }
             if in_cell {

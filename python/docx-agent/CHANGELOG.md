@@ -20,10 +20,15 @@ Answers are docx2svg's: the same pages, signatures, facts and SVG (`tests/test_r
   table, text beside a drawing, a drawing in a table cell -- one text wraps around there
   under a reason of its own --, a text box, a frame or drop cap, STYLEREF, footnotes in
   columns or beneath the text, endnotes continued, line numbers, column separators,
-  unequal columns, a table in a document of columns; `ooxml_word_pages::support`), docx2svg's Python layout lays it
+  unequal columns, a table in a document of columns, a floating drawing or an inline one
+  that is not a picture -- what its painter says is phase P3's; `ooxml_word_pages::support`), docx2svg's Python layout lays it
   out as before -- frozen as that fallback -- and the reason is counted
   (`docx_agent.pages.fallbacks()`, `layout_fallbacks{reason}`). A page whose drawings wait
   for their painters (phase P3) is drawn by docx2svg, counted the same way.
+- The layout's warnings (`reflow.layout_warnings`: `table-grid-mismatch`,
+  `field-not-computed:*`, `field-cached:*`, `vertical-alignment-not-drawn`...), its
+  approximations, the faces' substitutions and glyph fallbacks, and the render's `relaid`
+  cause are docx2svg's, in its order, computed in Rust (`ooxml_word_pages::warnings`).
 - A check reads only the pages its facts need: the index of where blocks are drawn comes
   from the Rust layout's body lines, a page is painted when its spans are read, and the
   summary a reflow compares is digested in Rust.

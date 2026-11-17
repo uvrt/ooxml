@@ -17,10 +17,9 @@ docx2svg's Python layout, frozen as that fallback until phase P4 deletes it.  A 
 SVG the Rust paint does not draw as docx2svg does (a drawing for the painters of phase P3,
 line numbers...) is the same: :meth:`RustLayout.page_svg` answers ``None`` for it, counted.
 
-**What differs** (the lanes that close it): the coverage's ``approximations`` (a rule no
-probe measured, which docx2svg reports and the Rust layout follows without saying so) are
-not reported, and with several substituted faces their order is by name, not the order
-the body first draws them in.
+Its ``warnings``, ``approximations``, ``coverage`` and ``relaid_cause`` are docx2svg's, in
+docx2svg's order: the layout's own computed in Rust (``ooxml_word_pages::warnings``), the
+faces' in the order first met.
 """
 
 from __future__ import annotations
@@ -189,14 +188,19 @@ class RustLayout:
     state = None
     #: The document lineage whose engine laid it out, where its caller names one.
     lineage: str | None = None
-    relaid = None
-    relaid_cause = None
+    relaid: str | None = None
+    relaid_cause: dict | None = None
     changed_pages = None
 
     def __init__(self, laid: Any, data: bytes, options) -> None:
         self.laid = laid
         self.data = data
         self.options = options
+        # Laid out whole although a version before was laid out: why (docx2svg's
+        # ``relaid`` and ``relaid_cause``, ``relayout.FALLBACKS``' words).
+        cause = laid.relaid_cause
+        self.relaid = cause["reason"] if cause else None
+        self.relaid_cause = cause
         self._lock = threading.Lock()
         self._painted: OrderedDict[int, dict] = OrderedDict()
         frames = laid.pages()
@@ -234,7 +238,9 @@ class RustLayout:
 
     @property
     def approximations(self) -> list:
-        return []
+        """docx2svg's ``(code, message, 1-based page, path)`` of each place laid out by a rule
+        no probe measured, found in Rust."""
+        return list(self.laid.approximations())
 
     @property
     def placeholders(self) -> list:
@@ -324,9 +330,12 @@ class RustLayout:
                 + f": measured with {source}, as an approximation (Word's own font fallback is not measured)"))
         from .coverage import StopInfo
 
-        approximations = [StopInfo("layout-approximate:glyph", f"{family!r} has no glyph for {char!r}: measured with "
+        approximations = [StopInfo(code, code.split(":", 1)[1], message, page, path)
+                          for code, message, page, path in self.approximations]
+        approximations += [StopInfo("layout-approximate:glyph", f"{family!r} has no glyph for {char!r}: measured with "
                                    f"{'its missing glyph' if used == '.notdef' else repr(used)}", None, None)
                           for family, char, used in glyph_fallbacks]
+        warnings += [Warning(code, message, page) for code, message, page in self.laid.warnings()]
         count = self.laid.body_blocks
         pages = len(self.pages)
         self._warnings = warnings

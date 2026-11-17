@@ -325,9 +325,12 @@ impl PyLaidPages {
                 .filter_map(|family| coverage.grades.get(family).map(|grade| grade_row(family, grade)))
                 .collect();
             let fallbacks = coverage
-                .glyph_fallbacks
+                .fallback_order
                 .iter()
-                .map(|((family, ch), used)| (family.clone(), *ch, used.clone()))
+                .filter_map(|key| {
+                    let used = coverage.glyph_fallbacks.get(key)?;
+                    Some((key.0.clone(), key.1, used.clone()))
+                })
                 .collect();
             let warnings = version
                 .layout()
@@ -338,6 +341,45 @@ impl PyLaidPages {
                 .collect();
             (grades, fallbacks, warnings)
         })
+    }
+
+    /// docx2svg's layout warnings of this version, in its order: `(code, message, 1-based
+    /// page or None)`.
+    fn warnings(&self) -> Vec<(String, String, Option<usize>)> {
+        self.version
+            .said()
+            .warnings
+            .iter()
+            .map(|w| (w.code.clone(), w.message.clone(), w.page))
+            .collect()
+    }
+
+    /// docx2svg's approximations of this version: `(code, message, 1-based page, path)`.
+    fn approximations(&self) -> Vec<(String, String, Option<usize>, Option<String>)> {
+        self.version
+            .said()
+            .approximations
+            .iter()
+            .map(|a| (a.code.clone(), a.message.clone(), a.page, a.path.clone()))
+            .collect()
+    }
+
+    /// Why it was laid out whole although a version before was laid out: a dict of
+    /// `reason` and, where known, `at`, `para_id` and `part` (docx2svg's `relaid_cause`), or
+    /// `None`.
+    #[getter]
+    fn relaid_cause<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyDict>>> {
+        let Some(cause) = self.version.relaid_cause() else {
+            return Ok(None);
+        };
+        let d = PyDict::new(py);
+        d.set_item("reason", cause.reason)?;
+        for (key, value) in [("at", &cause.at), ("para_id", &cause.para_id), ("part", &cause.part)] {
+            if let Some(value) = value {
+                d.set_item(key, value)?;
+            }
+        }
+        Ok(Some(d))
     }
 
     /// The 0-based block the layout stopped at, if it did.

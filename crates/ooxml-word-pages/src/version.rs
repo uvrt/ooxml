@@ -26,6 +26,8 @@ pub struct LaidVersion {
     pub(crate) glyphs: Arc<WordGlyphs>,
     pub(crate) names: Arc<dyn FaceNames>,
     pub(crate) relaid: bool,
+    pub(crate) relaid_cause: Option<crate::engine::RelaidCause>,
+    pub(crate) said: crate::warnings::Said,
     pub(crate) generation: u64,
 }
 
@@ -62,6 +64,16 @@ impl LaidVersion {
     /// It was laid out from the version before (not whole).
     pub fn relaid(&self) -> bool {
         self.relaid
+    }
+
+    /// Why it was laid out whole although a version before was laid out, where it was.
+    pub fn relaid_cause(&self) -> Option<&crate::engine::RelaidCause> {
+        self.relaid_cause.as_ref()
+    }
+
+    /// Its warnings and approximations, docx2svg's.
+    pub fn said(&self) -> &crate::warnings::Said {
+        &self.said
     }
 
     /// The engine generation that laid it out: a version is painted by that engine only.

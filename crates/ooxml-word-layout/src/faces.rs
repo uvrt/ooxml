@@ -33,6 +33,8 @@ pub struct Coverage {
     pub order: Vec<String>,
     /// (family, character) -> the face its advance came from.
     pub glyph_fallbacks: BTreeMap<(String, char), String>,
+    /// The `(family, character)` of [`Coverage::glyph_fallbacks`] in the order first met.
+    pub fallback_order: Vec<(String, char)>,
 }
 
 /// Word's fonts, as the layout and the text engine read them.
@@ -77,10 +79,11 @@ impl Glyphs for WordGlyphs {
         let found = self.fonts.advance(&face.family, face.bold, face.italic, ch)?;
         if let Some(fallback) = &found.fallback {
             let mut coverage = self.coverage.lock().unwrap_or_else(PoisonError::into_inner);
-            coverage
-                .glyph_fallbacks
-                .entry((face.family.to_string(), ch))
-                .or_insert_with(|| fallback.clone());
+            let key = (face.family.to_string(), ch);
+            if !coverage.glyph_fallbacks.contains_key(&key) {
+                coverage.fallback_order.push(key.clone());
+                coverage.glyph_fallbacks.insert(key, fallback.clone());
+            }
         }
         Some(Advance {
             advance: u32::from(found.advance),

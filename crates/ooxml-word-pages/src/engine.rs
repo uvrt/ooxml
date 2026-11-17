@@ -99,6 +99,8 @@ pub struct PageEngine {
     source: Option<Source>,
     generations: u64,
     stats: EngineStats,
+    /// The parts the version being laid out changed from the last one given.
+    changed: Vec<String>,
 }
 
 impl std::fmt::Debug for PageEngine {
@@ -147,6 +149,7 @@ impl PageEngine {
             source: None,
             generations: 0,
             stats: EngineStats::default(),
+            changed: Vec::new(),
         }
     }
 
@@ -167,6 +170,7 @@ impl PageEngine {
     /// The package or its Word parts do not open.
     pub fn lay_out_bytes(&mut self, bytes: Arc<[u8]>) -> Result<Result<Arc<LaidVersion>, Fallback>, PagesError> {
         let archive = Arc::new(Archive::read(bytes, &self.limits.zip).map_err(ooxml_opc::OpcError::from)?);
+        self.changed.clear();
         let package = match self.source.take() {
             Some(before) => self.next_package(&before, &archive)?,
             None => Package::open(Arc::clone(archive.bytes()), &self.limits)?,
@@ -193,6 +197,7 @@ impl PageEngine {
             )));
         };
         let mut package = source.package.clone();
+        self.changed = parts.iter().map(|(name, _)| name.clone()).collect();
         for (name, bytes) in parts {
             package = match bytes {
                 Some(bytes) => self.put(&package, name, bytes)?,
@@ -250,11 +255,13 @@ impl PageEngine {
                 continue;
             }
             self.stats.parts_read += 1;
+            self.changed.push(meta.name.clone());
             let bytes: Arc<[u8]> = archive.read_entry(entry).map_err(ooxml_opc::OpcError::from)?.into();
             package = self.put(&package, &meta.name, &bytes)?;
         }
         for name in old.keys().filter(|n| !seen.contains(*n) && !n.ends_with('/')) {
             if package.has_part(name) {
+                self.changed.push((*name).to_owned());
                 package = package.without(name)?;
             }
         }
@@ -267,10 +274,18 @@ impl PageEngine {
     /// # Errors
     /// Its Word parts do not open.
     pub fn lay_out(&mut self, package: &Package) -> Result<Result<Arc<LaidVersion>, Fallback>, PagesError> {
+        self.changed.sort();
         let fonts = self.setup.document(package);
+        let mut cause: Option<RelaidCause> = None;
         let generation = match self.generation.take() {
             Some(g) if g.fonts.epoch == fonts.epoch => g,
-            _ => self.new_generation(fonts),
+            Some(g) => {
+                if g.last.is_some() {
+                    cause = Some(self.part_cause("fonts"));
+                }
+                self.new_generation(fonts)
+            }
+            None => self.new_generation(fonts),
         };
         let generation = self.generation.insert(generation);
         let started = Instant::now();
@@ -282,6 +297,7 @@ impl PageEngine {
             // laid out whole, with fresh memos.
             generation.last = None;
             generation.layout = new_layout(&generation.fonts, &self.locale, &self.budget);
+            cause = Some(context_cause(&self.changed));
         }
         if let Some(why) = support::unsupported(&document) {
             generation.last = None;
@@ -289,12 +305,16 @@ impl PageEngine {
             return Ok(Err(why));
         }
         let started = Instant::now();
-        let laid = match generation.last.take() {
+        let previous = generation.last.take();
+        let laid = match &previous {
             Some(previous) => generation
                 .layout
                 .relayout(&mut generation.model, &document, &previous.layout),
             None => generation.layout.lay_out(&mut generation.model, &document),
         };
+        if let (Some(previous), true) = (&previous, laid.relaid.is_empty()) {
+            cause = whole_cause(&previous.layout, &laid, &self.changed);
+        }
         self.stats.layout_time += started.elapsed();
         if let Some(why) = support::stopped(&laid) {
             self.stats.fallbacks += 1;
@@ -306,7 +326,10 @@ impl PageEngine {
         } else {
             self.stats.full += 1;
         }
+        let said = crate::warnings::said(&mut generation.model, &laid);
         let version = Arc::new(LaidVersion {
+            said,
+            relaid_cause: cause,
             layout: laid,
             facts: std::sync::OnceLock::new(),
             pictures: PackagePictures::new(package.clone()),
@@ -317,6 +340,15 @@ impl PageEngine {
         });
         generation.last = Some(Arc::clone(&version));
         Ok(Ok(version))
+    }
+
+    /// Why a version was laid out whole, from the first changed part of `reason`'s kind.
+    fn part_cause(&self, reason: &'static str) -> RelaidCause {
+        RelaidCause {
+            reason,
+            part: self.changed.iter().find(|n| part_reason(n) == Some(reason)).cloned(),
+            ..RelaidCause::default()
+        }
     }
 
     fn new_generation(&mut self, fonts: DocumentFonts) -> Generation {
@@ -497,4 +529,113 @@ impl Drawings for Filled {
             .find(|(s, _)| s == slot)
             .and_then(|(_, drawn)| drawn.clone())
     }
+}
+
+/// Why a version was laid out whole although a version before was laid out
+/// (docx2svg's `Layout.relaid_cause`, in its words, `relayout.FALLBACKS`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RelaidCause {
+    /// docx2svg's reason: `styles`, `numbering`, `settings`, `theme`, `fonts`,
+    /// `sections`, `headers-footers`.
+    pub reason: &'static str,
+    /// The body element it is at (`w:body/w:p[4]`), where it is one.
+    pub at: Option<String>,
+    /// That element's first paragraph's `w14:paraId`.
+    pub para_id: Option<String>,
+    /// The part that changed, where it is a part.
+    pub part: Option<String>,
+}
+
+/// The kind of change a part's name says (`_PART_REASONS`).
+fn part_reason(name: &str) -> Option<&'static str> {
+    let story = |n: &str| {
+        let n = n
+            .strip_prefix("word/_rels/")
+            .and_then(|n| n.strip_suffix(".rels"))
+            .unwrap_or(n);
+        let n = n.strip_prefix("word/").unwrap_or(n);
+        ["header", "footer"].iter().any(|k| {
+            n.strip_prefix(k)
+                .and_then(|rest| rest.strip_suffix(".xml"))
+                .is_some_and(|digits| digits.chars().all(|c| c.is_ascii_digit()))
+        })
+    };
+    match name {
+        "word/styles.xml" | "word/stylesWithEffects.xml" => Some("styles"),
+        "word/numbering.xml" => Some("numbering"),
+        "word/settings.xml" => Some("settings"),
+        "word/fontTable.xml" => Some("fonts"),
+        "word/footnotes.xml" | "word/endnotes.xml" => Some("notes"),
+        n if n.starts_with("word/theme/") => Some("theme"),
+        n if n.starts_with("word/fonts/") => Some("fonts"),
+        n if story(n) => Some("headers-footers"),
+        _ => None,
+    }
+}
+
+/// The styles, numbering, settings or theme changed: the first such part, by name.
+fn context_cause(changed: &[String]) -> RelaidCause {
+    changed
+        .iter()
+        .find_map(|n| {
+            part_reason(n)
+                .filter(|r| matches!(*r, "styles" | "numbering" | "settings" | "theme"))
+                .map(|reason| RelaidCause {
+                    reason,
+                    part: Some(n.clone()),
+                    ..RelaidCause::default()
+                })
+        })
+        .unwrap_or(RelaidCause {
+            reason: "styles",
+            ..RelaidCause::default()
+        })
+}
+
+/// Why `laid` was laid out whole from `previous`: its sections changed, or its headers'
+/// and footers' heights.
+fn whole_cause(
+    previous: &ooxml_word_layout::DocumentLayout,
+    laid: &ooxml_word_layout::DocumentLayout,
+    changed: &[String],
+) -> Option<RelaidCause> {
+    if previous.sections != laid.sections {
+        let (old, new) = (&previous.document.sections, &laid.document.sections);
+        let k = (0..new.len().max(old.len()))
+            .find(|k| old.get(*k) != new.get(*k))
+            .unwrap_or(0);
+        let section = new.get(k).or_else(|| new.last());
+        let mut cause = RelaidCause {
+            reason: "sections",
+            ..RelaidCause::default()
+        };
+        if let Some(section) = section {
+            let top: Vec<&ooxml_word_model::model::Paragraph> = laid
+                .document
+                .body
+                .iter()
+                .filter_map(|b| match b {
+                    ooxml_word_model::model::Block::Paragraph(p) => Some(&**p),
+                    ooxml_word_model::model::Block::Table(_) => None,
+                })
+                .collect();
+            if let Some(p) = section.last_paragraph.checked_sub(1).and_then(|k| top.get(k)) {
+                let at: String = p.path.split('/').take(2).collect::<Vec<_>>().join("/");
+                cause.at = Some(at);
+                cause.para_id = p.para_id.as_deref().map(str::to_owned);
+            }
+        }
+        return Some(cause);
+    }
+    if previous.stories != laid.stories {
+        return Some(RelaidCause {
+            reason: "headers-footers",
+            part: changed
+                .iter()
+                .find(|n| part_reason(n) == Some("headers-footers"))
+                .cloned(),
+            ..RelaidCause::default()
+        });
+    }
+    None
 }

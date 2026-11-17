@@ -30,9 +30,10 @@ mod fonts;
 mod pictures;
 pub mod support;
 mod version;
+pub mod warnings;
 
 pub use disk::DiskFonts;
-pub use engine::{EngineOptions, EngineStats, PageDigests, PageEngine};
+pub use engine::{EngineOptions, EngineStats, PageDigests, PageEngine, RelaidCause};
 pub use error::{Fallback, PagesError};
 pub use fonts::{embedded_parts, font_table, DocumentFonts, FontSetup};
 pub use pictures::PackagePictures;
