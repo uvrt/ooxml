@@ -224,7 +224,7 @@ def test_the_render_cache_is_keyed_by_the_locale(chart_bytes):
         first = box.dispatch(session, "render", {"doc": "d1", "pages": [1], "width": 320})
         session.entry("d1").document.locale = DUTCH
         second = box.dispatch(session, "render", {"doc": "d1", "pages": [1], "width": 320})
-    assert first.images[0].data != second.images[0].data
+    assert first.images[0].data != second.images[0].data, (first.data, second.data)
 
 
 def test_a_subprocess_worker_gets_the_locale_from_its_arguments(chart_bytes):
