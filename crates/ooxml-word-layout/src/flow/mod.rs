@@ -79,6 +79,8 @@ pub struct ParaItem {
     pub source: Option<Arc<crate::rebreak::ParaSource>>,
     /// The drop cap that drops into it.
     pub drop_cap: Option<Arc<DropCap>>,
+    /// What a page lays its footnotes out from beyond their lines.
+    pub note_forms: NoteForms,
 }
 
 impl ParaItem {
@@ -373,6 +375,7 @@ mod drop;
 mod notes;
 mod source;
 pub use drop::DropCap;
+pub use notes::NoteForms;
 use notes::ParaNotes;
 
 /// Whether a side of a resolved paragraph is autospaced (`autospaced`).
@@ -691,7 +694,11 @@ impl<'a, 'm> FlowMaker<'a, 'm> {
             // The endnotes' separator keeps no space before in mode 15.
             before = 0;
         }
-        let ParaNotes { notes, continuation } = match self.paragraph_notes(paragraph, &measured, section, role) {
+        let ParaNotes {
+            notes,
+            continuation,
+            forms,
+        } = match self.paragraph_notes(paragraph, &measured, section, role) {
             Ok(found) => found,
             Err(note) => return stop(block, body, section, format!("footnote {} cannot be laid out", note.0)),
         };
@@ -725,6 +732,7 @@ impl<'a, 'm> FlowMaker<'a, 'm> {
             anchors,
             source,
             drop_cap: self.pending_drop.take(),
+            note_forms: forms,
         }))
     }
 }

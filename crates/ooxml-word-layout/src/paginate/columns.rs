@@ -148,6 +148,7 @@ impl PageContext<'_> {
             }
             again.page.bands = bands;
             again.page.wraps = wraps;
+            again.page.reach = again.page.reach.clone().max(first.page.reach.clone());
             again.stopped = first.stopped.or(again.stopped);
             again
         };
@@ -157,18 +158,25 @@ impl PageContext<'_> {
         }
     }
 
-    /// The page's regions with the room of its note area found (`_lay_noted`).
+    /// The page's regions with the room of its note area found (`_lay_noted`); the page
+    /// reaches as far as any of its layouts read.
     fn lay_noted(&self, page: &PageStart<'_>) -> (Regions, Px) {
+        let mut reach = page.start.clone();
+        let reached = |mut laid: Regions, reach: &Position| {
+            laid.page.reach = laid.page.reach.clone().max(reach.clone());
+            laid
+        };
         let mut room = Px::ZERO;
         let mut seen: Vec<Px> = Vec::new();
         loop {
             let laid = self.lay_regions(page, room, Floats::default());
+            reach = reach.max(laid.page.reach.clone());
             if laid.stopped.is_some() {
-                return (laid, room);
+                return (reached(laid, &reach), room);
             }
             let pooled: Vec<&Frame> = laid.frames.iter().filter(|f| f.pooled).collect();
             let Some(first) = pooled.first() else {
-                return (laid, room);
+                return (reached(laid, &reach), room);
             };
             let ids: Vec<i64> = pooled
                 .iter()
@@ -185,12 +193,15 @@ impl PageContext<'_> {
                 need = Px::ZERO;
             }
             if need == room {
-                return (laid, room);
+                return (reached(laid, &reach), room);
             }
             seen.push(room);
             if seen.contains(&need) || seen.len() > 8 {
                 let larger = seen.iter().copied().fold(need, Px::max);
-                return (self.lay_regions(page, larger, Floats::default()), larger);
+                return (
+                    reached(self.lay_regions(page, larger, Floats::default()), &reach),
+                    larger,
+                );
             }
             room = need;
         }

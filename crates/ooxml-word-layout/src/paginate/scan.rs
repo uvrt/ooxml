@@ -181,8 +181,11 @@ impl PageContext<'_> {
         let mut tops = Tops::default();
         let first = laid(Floats::default(), &mut tops);
         let mut bands = self.page_bands(&tops, page_index);
+        let mut stacked_reach = start.clone();
         if bands.len() > 1 && first.is_ok() {
-            bands = self.stacked_bands(start, story, carry, page_index, bands);
+            let (stacked, reach) = self.stacked_bands(start, story, carry, page_index, bands);
+            bands = stacked;
+            stacked_reach = reach;
         }
         let wraps = if self.wraps {
             self.page_wraps(&tops, page_index)
@@ -192,6 +195,9 @@ impl PageContext<'_> {
         if bands.is_empty() && wraps.is_empty() {
             return first;
         }
+        let first_reach = match &first {
+            Ok(page) | Err((page, _)) => page.reach.clone(),
+        };
         let again = laid(
             Floats {
                 bands: &bands,
@@ -206,12 +212,15 @@ impl PageContext<'_> {
         };
         page.bands = bands;
         page.wraps = wraps;
+        // The page reaches as far as its layout without its drawings read.
+        page.reach = page.reach.clone().max(first_reach).max(stacked_reach);
         Ok(page)
     }
 
     /// The page's bands, each drawing positioned from the page laid out with the bands of
     /// the drawings before it (`_stacked_bands`): one whose anchor the bands before it
-    /// push off the page goes with its paragraph, and so do those after it.
+    /// push off the page goes with its paragraph, and so do those after it; and how far
+    /// those layouts read.
     fn stacked_bands(
         &self,
         start: &Position,
@@ -219,7 +228,8 @@ impl PageContext<'_> {
         carry: &NoteRest,
         page_index: usize,
         bands: Vec<Band>,
-    ) -> Vec<Band> {
+    ) -> (Vec<Band>, Position) {
+        let mut reach = start.clone();
         let mut fixed: Vec<Band> = bands.iter().take(1).copied().collect();
         for band in bands.iter().skip(1) {
             let mut found = Tops::default();
@@ -228,8 +238,9 @@ impl PageContext<'_> {
                 bands: &fixed,
                 wraps: &[],
             };
-            if self.scan(start, story, None, &mut scratch, floats, &mut found).is_err() {
-                break;
+            match self.scan(start, story, None, &mut scratch, floats, &mut found) {
+                Ok(end) => reach = reach.max(end.reach),
+                Err(_) => break,
             }
             let again = self.page_bands(&found, page_index);
             match again.into_iter().find(|b| b.key == band.key) {
@@ -237,7 +248,7 @@ impl PageContext<'_> {
                 None => break,
             }
         }
-        fixed
+        (fixed, reach)
     }
 
     /// Stack one page or column from `start` (`_scan`); its lines, rows and footnotes go

@@ -5,7 +5,7 @@
 //!
 //! Must not: measure a paragraph's own lines, or place anything.
 
-use super::{FlowContext, FlowMaker, Labels};
+use super::{FlowContext, FlowItem, FlowMaker, Labels};
 use crate::notes::lines::NoteContext;
 use crate::notes::{NoteLines, NoteRole};
 use crate::paragraph::MeasuredParagraph;
@@ -18,7 +18,34 @@ use std::sync::Arc;
 pub(super) struct ParaNotes {
     pub(super) notes: Vec<(usize, NoteLines)>,
     pub(super) continuation: Option<Px>,
+    pub(super) forms: NoteForms,
 }
+
+/// What a page lays a paragraph's footnotes out from beyond their lines: in mode 15 under
+/// several columns each note's paragraphs as a flow of their own, below it in unequal
+/// columns each note's lines in each column width. Part of the paragraph as the flow
+/// holds it, so that a relayout sees a change to any of them.
+#[derive(Debug, Clone, Default)]
+pub struct NoteForms {
+    /// The notes' flows.
+    pub flows: Vec<Arc<[FlowItem]>>,
+    /// The notes' lines in the columns' widths.
+    pub widths: Vec<NoteLines>,
+}
+
+impl PartialEq for NoteForms {
+    fn eq(&self, other: &NoteForms) -> bool {
+        let same_flow = |a: &Arc<[FlowItem]>, b: &Arc<[FlowItem]>| {
+            Arc::ptr_eq(a, b)
+                || (a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| crate::incremental::same_item(x, y)))
+        };
+        self.widths == other.widths
+            && self.flows.len() == other.flows.len()
+            && self.flows.iter().zip(&other.flows).all(|(a, b)| same_flow(a, b))
+    }
+}
+
+impl Eq for NoteForms {}
 
 impl FlowMaker<'_, '_> {
     /// A paragraph's footnotes by line (and its section's separators, where it has any),
@@ -34,6 +61,7 @@ impl FlowMaker<'_, '_> {
             return Ok(ParaNotes {
                 notes: Vec::new(),
                 continuation: None,
+                forms: NoteForms::default(),
             });
         };
         let mut cx = NoteContext {
@@ -57,9 +85,13 @@ impl FlowMaker<'_, '_> {
         };
         let mode15 = crate::input::rules(self.cx.document).mode15();
         let referenced = crate::notes::flowed::references(paragraph).into_iter().map(|(_, n)| n);
+        let mut forms = NoteForms::default();
         if mode15 && geometry.multi_column() {
             for note in referenced {
                 self.note_flow(note, section, &geometry);
+                if let Some(flow) = self.note_items.get(&(note, section)) {
+                    forms.flows.push(Arc::clone(flow));
+                }
             }
         } else if geometry.unequal_columns() {
             // A column's foot holds a note broken in its own width.
@@ -74,12 +106,17 @@ impl FlowMaker<'_, '_> {
                         model: &mut *self.model,
                     };
                     if let Some(lines) = self.notes.note(&mut cx, note, (section, &geometry), Some(*width)) {
+                        forms.widths.push(NoteLines::clone(&lines));
                         self.notes_at.insert((note, section, *width), lines);
                     }
                 }
             }
         }
-        Ok(ParaNotes { notes, continuation })
+        Ok(ParaNotes {
+            notes,
+            continuation,
+            forms,
+        })
     }
 
     /// Footnote `note`'s paragraphs as a flow in section `section`'s columns (a section of
