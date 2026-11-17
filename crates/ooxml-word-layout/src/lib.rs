@@ -28,6 +28,7 @@ mod error;
 pub mod borders;
 pub mod faces;
 pub mod fields;
+pub mod floating;
 pub mod flow;
 pub mod heights;
 pub mod incremental;

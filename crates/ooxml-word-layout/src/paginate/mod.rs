@@ -16,6 +16,7 @@
 //! [`crate::stories::StoryHeights`]).
 
 mod columns;
+mod floats;
 mod keeps;
 mod notes;
 mod scan;
@@ -26,6 +27,7 @@ use crate::px::Px;
 use crate::sections::{Sections, StoryKind};
 use crate::stories::StoryHeights;
 use crate::table::PlacedRow;
+pub use floats::{Band, DrawingKey};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -170,6 +172,8 @@ pub struct LaidPage {
     /// A page the endnotes go on to: the continuation separator's line at its top, above
     /// its first line.
     pub opens: Option<OpeningLine>,
+    /// The bands its drawings text wraps top and bottom of keep its lines off.
+    pub bands: Vec<Band>,
 }
 
 /// A line a page opens with that is no line of the flow: the endnotes' continuation
@@ -199,6 +203,7 @@ impl LaidPage {
             carry_out: Arc::from(Vec::new()),
             continued: None,
             opens: None,
+            bands: Vec::new(),
         }
     }
 }
@@ -335,7 +340,7 @@ impl<'a> Paginator<'a> {
             let number_before = number;
             let info = self.page_info(&position, &mut page, &mut number, &mut out.info);
             out.info.push(info);
-            let laid = cx.lay_page(&position, info.story, &carry);
+            let laid = cx.lay_page(&position, info.story, &carry, page);
             let mut laid = match laid {
                 Ok(laid) => laid,
                 Err((mut laid, stopped)) => {
@@ -412,11 +417,17 @@ impl<'a> Paginator<'a> {
 impl PageContext<'_> {
     /// One page from `start`: laid out, or laid out up to where the layout stops.
     #[allow(clippy::result_large_err)]
-    fn lay_page(&self, start: &Position, story: StoryKind, carry: &NoteRest) -> Result<LaidPage, (LaidPage, Stopped)> {
+    fn lay_page(
+        &self,
+        start: &Position,
+        story: StoryKind,
+        carry: &NoteRest,
+        page: usize,
+    ) -> Result<LaidPage, (LaidPage, Stopped)> {
         if self.sections.any_multi_column() {
-            self.lay_columns_page(start, story, carry)
+            self.lay_columns_page(start, story, carry, page)
         } else {
-            self.lay_one_column_page(start, story, carry)
+            self.lay_one_column_page(start, story, carry, page)
         }
     }
 

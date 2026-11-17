@@ -10,6 +10,7 @@
 //!
 //! Must not: stack a column (`scan` does) or decide keeps (`keeps` does).
 
+use super::floats::{Floats, Tops};
 use super::scan::Frame;
 use super::{note_rest, LaidPage, NoteRest, PageContext, Position, Stopped, Why};
 use crate::flow::FlowItem;
@@ -17,11 +18,32 @@ use crate::px::Px;
 use crate::sections::StoryKind;
 use ooxml_base::Q;
 
+/// Where a page starts: its first line, the story kind it shows, the lines of notes the
+/// page before could not hold.
+struct PageStart<'s> {
+    start: &'s Position,
+    story: StoryKind,
+    carry: &'s NoteRest,
+}
+
+/// A page's regions as laid out: the page, its columns, the lines they placed, and where
+/// the layout stopped, if it did.
+struct Regions {
+    page: LaidPage,
+    frames: Vec<Frame>,
+    tops: Tops,
+    stopped: Option<Stopped>,
+}
+
 /// A region's columns as filled, with the lines and rows they placed.
 #[derive(Clone)]
 struct Region {
     frames: Vec<Frame>,
     page: LaidPage,
+    /// The lines its columns placed.
+    tops: Tops,
+    /// Where the layout stopped in it, if it did.
+    stopped: Option<Stopped>,
 }
 
 /// Where a region is filled from.
@@ -37,6 +59,8 @@ struct RegionStart<'s> {
     page_top: bool,
     /// The lines of notes the page before could not hold (the page's first region only).
     carry: NoteRest,
+    /// What its lines keep off.
+    floats: Floats<'s>,
 }
 
 /// A page's notes: a page whose notes stand at its foot lists them (a page of several
@@ -65,20 +89,45 @@ impl PageContext<'_> {
     /// One page of a document with a section of several columns, as its regions; in mode
     /// 15 its columns end above the room its note area takes, laid out again until that
     /// room holds (`_lay_columns_page`, `_lay_noted`): should it not settle, the larger.
+    /// Laid out once without its drawings' bands, which are positioned from that layout,
+    /// and again with them.
     #[allow(clippy::result_large_err)]
     pub(super) fn lay_columns_page(
         &self,
         start: &Position,
         story: StoryKind,
         carry: &NoteRest,
+        page_index: usize,
     ) -> Result<LaidPage, (LaidPage, Stopped)> {
+        let page = PageStart { start, story, carry };
+        let (first, room) = self.lay_noted(&page);
+        let bands = self.page_bands(&first.tops, page_index);
+        let laid = if bands.is_empty() {
+            first
+        } else {
+            let mut again = self.lay_regions(&page, room, Floats { bands: &bands });
+            again.page.bands = bands;
+            again.stopped = first.stopped.or(again.stopped);
+            again
+        };
+        match laid.stopped {
+            Some(stopped) => Err((laid.page, stopped)),
+            None => Ok(laid.page),
+        }
+    }
+
+    /// The page's regions with the room of its note area found (`_lay_noted`).
+    fn lay_noted(&self, page: &PageStart<'_>) -> (Regions, Px) {
         let mut room = Px::ZERO;
         let mut seen: Vec<Px> = Vec::new();
         loop {
-            let (page, frames) = self.lay_regions(start, story, carry, room)?;
-            let pooled: Vec<&Frame> = frames.iter().filter(|f| f.pooled).collect();
+            let laid = self.lay_regions(page, room, Floats::default());
+            if laid.stopped.is_some() {
+                return (laid, room);
+            }
+            let pooled: Vec<&Frame> = laid.frames.iter().filter(|f| f.pooled).collect();
             let Some(first) = pooled.first() else {
-                return Ok(page);
+                return (laid, room);
             };
             let ids: Vec<i64> = pooled
                 .iter()
@@ -95,40 +144,38 @@ impl PageContext<'_> {
                 need = Px::ZERO;
             }
             if need == room {
-                return Ok(page);
+                return (laid, room);
             }
             seen.push(room);
             if seen.contains(&need) || seen.len() > 8 {
                 let larger = seen.iter().copied().fold(need, Px::max);
-                return self.lay_regions(start, story, carry, larger).map(|(page, _)| page);
+                return (self.lay_regions(page, larger, Floats::default()), larger);
             }
             room = need;
         }
     }
 
-    /// The page's regions, its columns ending `note_room` above its foot; and its frames.
-    #[allow(clippy::result_large_err)]
-    fn lay_regions(
-        &self,
-        start: &Position,
-        story: StoryKind,
-        carry: &NoteRest,
-        note_room: Px,
-    ) -> Result<(LaidPage, Vec<Frame>), (LaidPage, Stopped)> {
-        let mut page = LaidPage::empty(start, std::sync::Arc::clone(carry));
+    /// The page's regions, its columns ending `note_room` above its foot, their lines
+    /// keeping off `floats`.
+    fn lay_regions(&self, at: &PageStart<'_>, note_room: Px, floats: Floats<'_>) -> Regions {
+        let (start, story, carry) = (at.start, at.story, at.carry);
+        let mut out = Regions {
+            page: LaidPage::empty(start, std::sync::Arc::clone(carry)),
+            frames: Vec::new(),
+            tops: Tops::default(),
+            stopped: None,
+        };
+        let page = &mut out.page;
         let first_section = self.items.get(start.item).map_or(0, FlowItem::section);
         let (top, bottom) = self.edges(first_section, story);
         let bottom = bottom - note_room;
         let mut position = start.clone();
         let mut y = top;
-        if let Some(FlowItem::Para(p)) = self.items.get(start.item) {
+        if let Some(pitch) = self.items.get(start.item).and_then(FlowItem::para).and_then(|p| p.continuation) {
             // A page the endnotes go on to: the continuation separator's line first.
-            if let Some(pitch) = p.continuation {
-                page.opens = Some(super::OpeningLine { top: y, pitch });
-                y += pitch;
-            }
+            page.opens = Some(super::OpeningLine { top: y, pitch });
+            y += pitch;
         }
-        let mut frames: Vec<Frame> = Vec::new();
         let mut previous = None;
         let mut first_on_page = true;
         loop {
@@ -140,34 +187,26 @@ impl PageContext<'_> {
                 previous,
                 first_on_page,
                 section,
-                page_top: frames.is_empty() && first_on_page,
-                carry: if frames.is_empty() {
+                page_top: out.frames.is_empty() && first_on_page,
+                carry: if out.frames.is_empty() {
                     std::sync::Arc::clone(carry)
                 } else {
                     std::sync::Arc::from(Vec::new())
                 },
+                floats,
             };
-            let region = self.fill(&from, bottom).and_then(|region| {
-                let last = region.frames.last();
-                if last.is_some_and(|f| f.multi && f.why == Why::Region) {
-                    self.balance(&from, bottom, region)
-                } else {
-                    Ok(region)
-                }
-            });
-            let region = match region {
-                Ok(region) => region,
-                Err((region, stopped)) => {
-                    page.lines.extend(region.page.lines);
-                    page.rows.extend(region.page.rows);
-                    return Err((page, stopped));
-                }
-            };
+            let region = self.region(&from, bottom);
             page.lines.extend(region.page.lines);
             page.rows.extend(region.page.rows);
-            page.reach = page.reach.max(region.page.reach);
+            out.tops.extend(region.tops);
+            if region.stopped.is_some() {
+                out.frames.extend(region.frames);
+                out.stopped = region.stopped;
+                return out;
+            }
+            page.reach = page.reach.clone().max(region.page.reach);
             let Some(last) = region.frames.last().cloned() else {
-                return Ok((page, frames));
+                return out;
             };
             first_on_page = first_on_page && region.frames.iter().all(|f| f.end == f.start);
             let foot = if last.multi {
@@ -175,13 +214,13 @@ impl PageContext<'_> {
             } else {
                 (last.y, last.last)
             };
-            frames.extend(region.frames);
+            out.frames.extend(region.frames);
             if last.why != Why::Region {
                 page.end = last.end.clone();
                 page.reach = page.reach.clone().max(last.end.clone());
                 page.forced = matches!(last.why, Why::Page | Why::Column);
-                page_notes(&mut page, &frames);
-                return Ok((page, frames));
+                page_notes(page, &out.frames);
+                return out;
             }
             position = last.end.clone();
             (y, previous) = foot;
@@ -233,10 +272,12 @@ impl PageContext<'_> {
             section: 0,
             page_top: true,
             carry: std::sync::Arc::from(Vec::new()),
+            floats: Floats::default(),
         };
         let holds = |height: Px| -> Option<Region> {
-            let region = cx.fill(&from, height).ok()?;
-            region.frames.last().is_some_and(|f| f.end.item >= items.len()).then_some(region)
+            let region = cx.fill(&from, height);
+            let ended = region.frames.last().is_some_and(|f| f.end.item >= items.len());
+            (region.stopped.is_none() && ended).then_some(region)
         };
         let (mut lo, mut hi) = (Px::ZERO, Px::int(100_000));
         holds(hi)?;
@@ -256,18 +297,17 @@ impl PageContext<'_> {
     /// One region from its start: its section's columns filled in turn, each from the
     /// region's top down to `bottom`, until the region, the page or the flow ends.
     #[allow(clippy::result_large_err)]
-    fn fill(&self, from: &RegionStart<'_>, bottom: Px) -> Result<Region, (Region, Stopped)> {
-        let Some(geometry) = self.sections.get(from.section) else {
-            return Ok(Region {
-                frames: Vec::new(),
-                page: scratch(from.start),
-            });
-        };
-        let multi = geometry.multi_column();
+    fn fill(&self, from: &RegionStart<'_>, bottom: Px) -> Region {
         let mut region = Region {
             frames: Vec::new(),
             page: scratch(from.start),
+            tops: Tops::default(),
+            stopped: None,
         };
+        let Some(geometry) = self.sections.get(from.section) else {
+            return region;
+        };
+        let multi = geometry.multi_column();
         let mut position = from.start.clone();
         let mut region_top = from.top;
         for (column, b) in geometry.column_boxes().into_iter().enumerate() {
@@ -288,7 +328,14 @@ impl PageContext<'_> {
             frame.offset = b.offset;
             frame.width = b.width;
             frame.region_top = region_top;
-            let scanned = self.scan(&position, from.story, Some(&mut frame), &mut region.page);
+            let scanned = self.scan(
+                &position,
+                from.story,
+                Some(&mut frame),
+                &mut region.page,
+                from.floats,
+                &mut region.tops,
+            );
             match scanned {
                 Ok(end) => {
                     region.page.reach = region.page.reach.clone().max(end.reach);
@@ -297,7 +344,8 @@ impl PageContext<'_> {
                 Err(stopped) => {
                     frame.end = Position::at(stopped.item, stopped.line);
                     region.frames.push(frame);
-                    return Err((region, stopped));
+                    region.stopped = Some(stopped);
+                    return region;
                 }
             }
             if column == 0 && !from.first_on_page {
@@ -312,41 +360,54 @@ impl PageContext<'_> {
                 break;
             }
         }
-        Ok(region)
+        region
+    }
+
+    /// One region, balanced where its section ends on the page and a continuous one
+    /// follows.
+    fn region(&self, from: &RegionStart<'_>, bottom: Px) -> Region {
+        let region = self.fill(from, bottom);
+        let last = region.frames.last();
+        if region.stopped.is_none() && last.is_some_and(|f| f.multi && f.why == Why::Region) {
+            self.balance(from, bottom, region)
+        } else {
+            region
+        }
     }
 
     /// The region laid out again with its columns balanced: the least height at which its
     /// columns, each filled in turn under the keeps, hold it all (`_balance`).
     #[allow(clippy::result_large_err)]
-    fn balance(&self, from: &RegionStart<'_>, bottom: Px, laid: Region) -> Result<Region, (Region, Stopped)> {
+    fn balance(&self, from: &RegionStart<'_>, bottom: Px, laid: Region) -> Region {
         let region_top = laid.frames.first().map_or(from.top, |f| f.region_top);
         let mut lo = Px::ZERO;
         let mut hi = bottom - region_top;
         let step = Px::from(Q::new(1, 65536));
         while hi - lo > step {
             let mid = (lo + hi) / Q::from_integer(2);
-            match self.fill(from, region_top + mid) {
-                Err(_) => lo = mid,
-                Ok(region) => {
-                    let holds = region.frames.last().is_some_and(|f| f.why == Why::Region)
-                        && region
-                            .frames
-                            .iter()
-                            .filter(|f| f.why == Why::Full)
-                            .all(|f| f.end > f.start);
-                    if holds {
-                        hi = mid;
-                    } else {
-                        lo = mid;
-                    }
-                }
+            let region = self.fill(from, region_top + mid);
+            let holds = region.stopped.is_none()
+                && region.frames.last().is_some_and(|f| f.why == Why::Region)
+                && region
+                    .frames
+                    .iter()
+                    .filter(|f| f.why == Why::Full)
+                    .all(|f| f.end > f.start);
+            if holds {
+                hi = mid;
+            } else {
+                lo = mid;
             }
         }
-        let region = self.fill(from, region_top + hi)?;
-        if region.frames.last().is_some_and(|f| f.why != Why::Region) {
-            return self.fill(from, bottom);
+        let mut region = self.fill(from, region_top + hi);
+        if region.stopped.is_none() && region.frames.last().is_some_and(|f| f.why != Why::Region) {
+            region = self.fill(from, bottom);
         }
-        Ok(region)
+        // The lines its first filling placed are positioned against too.
+        let mut tops = laid.tops;
+        tops.extend(std::mem::take(&mut region.tops));
+        region.tops = tops;
+        region
     }
 
     /// The space after of the last paragraph that ends in `frame` -- a paragraph holding

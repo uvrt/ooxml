@@ -202,7 +202,7 @@ fn cutoff(flow: &[Value]) -> (usize, Option<String>) {
             .get("approximations")
             .and_then(Value::as_array)
             .is_some_and(|a| !a.is_empty());
-        let flagged = item.get("drop_cap").and_then(Value::as_bool).unwrap_or(false) || int(item.get("anchors")) > 0;
+        let flagged = item.get("drop_cap").and_then(Value::as_bool).unwrap_or(false) || (int(item.get("anchors")) > 0 && std::env::var("L3C_ANCHORS").is_err());
         if approximated || flagged {
             return (k, Some("drawings or an approximation".into()));
         }

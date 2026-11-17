@@ -46,6 +46,7 @@ pub fn same_item(old: &FlowItem, new: &FlowItem) -> bool {
                 && a.notes == b.notes
                 && a.role == b.role
                 && a.continuation == b.continuation
+                && a.anchors == b.anchors
         }
         (FlowItem::Table(a), FlowItem::Table(b)) => {
             Arc::ptr_eq(&a.flow, &b.flow) && a.section == b.section && a.section_start == b.section_start

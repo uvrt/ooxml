@@ -12,9 +12,9 @@
 //! Must not: place anything on a page, or lay tables out (a [`TableLayout`] does).
 
 use crate::faces::Faces;
+pub use crate::floating::{anchors_of, moves_text, AnchorRef, SIDE_WRAPS};
 use crate::input::section_geometry;
 use crate::notes::flowed::NoteMaker;
-use crate::notes::lines::NoteContext;
 use crate::notes::{NoteLines, NoteRole};
 use crate::paragraph::{measure_paragraph, MeasureContext, MeasuredParagraph, ParagraphJob, Unmeasured};
 use crate::px::Px;
@@ -72,6 +72,9 @@ pub struct ParaItem {
     /// An endnote's paragraph: the pitch of the continuation separator's line a page it
     /// starts opens with.
     pub continuation: Option<Px>,
+    /// Its floating drawings that take no room in their line: those text does not wrap
+    /// around, and those it wraps top and bottom of or beside (`anchors_of`).
+    pub anchors: Vec<AnchorRef>,
 }
 
 impl ParaItem {
@@ -162,11 +165,6 @@ impl FlowItem {
     }
 }
 
-/// A paragraph's footnotes by line, and an endnote's continuation line.
-struct ParaNotes {
-    notes: Vec<(usize, NoteLines)>,
-    continuation: Option<Px>,
-}
 
 /// The body's flow.
 #[derive(Debug, Clone, Default)]
@@ -360,6 +358,9 @@ fn is_empty(paragraph: &Paragraph) -> bool {
 
 pub use crate::borders::paragraph_borders;
 
+mod notes;
+use notes::ParaNotes;
+
 /// Whether a side of a resolved paragraph is autospaced (`autospaced`).
 fn autospaced(document: &WordDocument, pp: &Props, side: &str) -> bool {
     flag(pp, &format!("spacing.{side}Autospacing"))
@@ -374,6 +375,16 @@ impl FlowState {
             measurer,
         }
     }
+}
+
+/// Where the layout stops at block `block` (top-level `body`, in `section`), and why.
+fn stop(block: usize, body: usize, section: usize, reason: impl Into<String>) -> FlowItem {
+    FlowItem::Stop(Arc::new(StopItem {
+        block,
+        body,
+        section,
+        reason: reason.into(),
+    }))
 }
 
 /// Builds one version's flow.
@@ -641,22 +652,12 @@ impl<'a, 'm> FlowMaker<'a, 'm> {
         section_start: bool,
     ) -> FlowItem {
         if let Some(why) = self.not_laid_out(block, section) {
-            return FlowItem::Stop(Arc::new(StopItem {
-                block,
-                body,
-                section,
-                reason: why.into(),
-            }));
+            return stop(block, body, section, why);
         }
         let measured = match self.measured(paragraph, body, section) {
             Ok(m) => m,
             Err(why) => {
-                return FlowItem::Stop(Arc::new(StopItem {
-                    block,
-                    body,
-                    section,
-                    reason: format!("{why:?}"),
-                }))
+                return stop(block, body, section, format!("{why:?}"))
             }
         };
         if !measured.auto_hyphen_ends.is_empty()
@@ -664,20 +665,10 @@ impl<'a, 'm> FlowMaker<'a, 'm> {
         {
             // Word moves only the hyphenated word to the next page: the paragraph is broken
             // again from it, which this layout does not do.
-            return FlowItem::Stop(Arc::new(StopItem {
-                block,
-                body,
-                section,
-                reason: "a hyphenated word Word moves to the next page".into(),
-            }));
+            return stop(block, body, section, "a hyphenated word Word moves to the next page");
         }
         let Some(pp) = self.props_of_block(block) else {
-            return FlowItem::Stop(Arc::new(StopItem {
-                block,
-                body,
-                section,
-                reason: "unresolved".into(),
-            }));
+            return stop(block, body, section, "unresolved");
         };
         let (mut before, after) = self.spacing(&pp, block);
         let role = self.cx.roles.get(body).copied().flatten();
@@ -688,12 +679,7 @@ impl<'a, 'm> FlowMaker<'a, 'm> {
         let ParaNotes { notes, continuation } = match self.paragraph_notes(paragraph, &measured, section, role) {
             Ok(found) => found,
             Err(note) => {
-                return FlowItem::Stop(Arc::new(StopItem {
-                    block,
-                    body,
-                    section,
-                    reason: format!("footnote {} cannot be laid out", note.0),
-                }))
+                return stop(block, body, section, format!("footnote {} cannot be laid out", note.0))
             }
         };
         let previous = self.neighbour_props(body, -1);
@@ -701,6 +687,7 @@ impl<'a, 'm> FlowMaker<'a, 'm> {
         let (top_border, border) = paragraph_borders(&pp, previous.as_deref(), following.as_deref());
         let section_mark =
             self.cx.sections.ends_section(top_level) && is_empty(paragraph) && measured.heights.len() == 1;
+        let anchors = anchors_of(paragraph, &measured);
         FlowItem::Para(Arc::new(ParaItem {
             block,
             body,
@@ -721,71 +708,8 @@ impl<'a, 'm> FlowMaker<'a, 'm> {
             notes,
             role,
             continuation,
+            anchors,
         }))
     }
 
-    /// A paragraph's footnotes by line (and its section's separators, where it has any),
-    /// and an endnote's continuation line.
-    fn paragraph_notes(
-        &mut self,
-        paragraph: &Paragraph,
-        measured: &MeasuredParagraph,
-        section: usize,
-        role: Option<NoteRole>,
-    ) -> Result<ParaNotes, crate::notes::flowed::Unlaid> {
-        let Some(geometry) = self.cx.sections.get(section).cloned() else {
-            return Ok(ParaNotes {
-                notes: Vec::new(),
-                continuation: None,
-            });
-        };
-        let mut cx = NoteContext {
-            document: self.cx.document,
-            faces: self.cx.faces,
-            locale: self.cx.locale,
-            measurer: &mut self.state.measurer,
-            model: self.model,
-        };
-        let lines = (measured.measured.pieces.as_slice(), measured.measured.lines.as_slice());
-        let notes = self.notes.notes_by_line(&mut cx, paragraph, lines, (section, &geometry))?;
-        if !notes.is_empty() && !self.separators.contains_key(&section) {
-            let found = self.notes.separators(&mut cx, (section, &geometry));
-            self.separators.insert(section, found);
-        }
-        let continuation = match role {
-            Some(NoteRole::Endnote) => self.notes.continuation(&mut cx, (section, &geometry)),
-            _ => None,
-        };
-        if crate::input::rules(self.cx.document).mode15() && geometry.multi_column() {
-            for note in crate::notes::flowed::references(paragraph).into_iter().map(|(_, n)| n) {
-                self.note_flow(note, section, &geometry);
-            }
-        }
-        Ok(ParaNotes { notes, continuation })
-    }
-
-    /// Footnote `note`'s paragraphs as a flow in section `section`'s columns (a section of
-    /// one section, no stories), kept for the flow (`note_area`'s `flow(story)`).
-    fn note_flow(&mut self, note: i64, section: usize, geometry: &crate::sections::SectionGeometry) {
-        if self.note_items.contains_key(&(note, section)) {
-            return;
-        }
-        let Some(blocks) = self.cx.document.footnotes.notes.get(&note).cloned() else {
-            return;
-        };
-        let paragraphs = blocks.iter().filter(|b| matches!(b, Block::Paragraph(_))).count();
-        let sections = Sections::new(&[crate::notes::flowed::note_section(&geometry.props, paragraphs)], false);
-        let cx = FlowContext {
-            document: self.cx.document,
-            blocks: &blocks,
-            sections: &sections,
-            labels: Labels::None,
-            faces: self.cx.faces,
-            locale: self.cx.locale,
-            tables: self.cx.tables,
-            roles: &[],
-        };
-        let flow = FlowMaker::new(&cx, &mut *self.model, &mut *self.state).build();
-        self.note_items.insert((note, section), Arc::from(flow.items));
-    }
 }

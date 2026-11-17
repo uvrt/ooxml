@@ -8,6 +8,7 @@
 //! Must not: decide where a page ends past an overflow (`keeps` does), or lay out more
 //! than one column (`columns` does).
 
+use super::floats::{clear_of_bands, Band, Floats, Top, Tops};
 use super::notes::{Foot, Fitted};
 use super::{LaidPage, NoteRest, PageContext, PlacedLine, PlacedNote, PlacedTableRow, Position, Stopped, Why};
 use crate::flow::{FlowItem, ParaItem, TableItem};
@@ -114,6 +115,10 @@ pub(super) struct Stack<'o> {
     rows_from: usize,
     /// The page's (or column's) foot: its notes as placed.
     pub(super) foot: Foot,
+    /// The bands its lines keep off.
+    bands: Vec<Band>,
+    /// The lines it placed, for the drawings anchored on them.
+    tops: &'o mut Tops,
 }
 
 /// A step of the stack: go on with the next item, or end the scan.
@@ -152,17 +157,68 @@ impl PageContext<'_> {
         start: &Position,
         story: StoryKind,
         carry: &NoteRest,
+        page_index: usize,
     ) -> Result<LaidPage, (LaidPage, Stopped)> {
-        let mut page = LaidPage::empty(start, std::sync::Arc::clone(carry));
-        match self.scan(start, story, None, &mut page) {
-            Ok(end) => {
-                page.end = end.end;
-                page.reach = end.reach;
-                page.forced = end.forced;
-                Ok(page)
+        let laid = |floats: Floats<'_>, tops: &mut Tops| {
+            let mut page = LaidPage::empty(start, std::sync::Arc::clone(carry));
+            let scanned = self.scan(start, story, None, &mut page, floats, tops);
+            match scanned {
+                Ok(end) => {
+                    page.end = end.end;
+                    page.reach = end.reach;
+                    page.forced = end.forced;
+                    Ok(page)
+                }
+                Err(stopped) => Err((page, stopped)),
             }
-            Err(stopped) => Err((page, stopped)),
+        };
+        // Laid out once without the bands of its drawings, which are positioned from that
+        // layout, and again with them.
+        let mut tops = Tops::default();
+        let first = laid(Floats::default(), &mut tops);
+        let mut bands = self.page_bands(&tops, page_index);
+        if bands.len() > 1 && first.is_ok() {
+            bands = self.stacked_bands(start, story, carry, page_index, bands);
         }
+        if bands.is_empty() {
+            return first;
+        }
+        let again = laid(Floats { bands: &bands }, &mut Tops::default());
+        let mut page = match (first, again) {
+            (Err((_, stopped)), Ok(page) | Err((page, _))) => return Err((with_bands(page, bands), stopped)),
+            (Ok(_), Err((page, stopped))) => return Err((with_bands(page, bands), stopped)),
+            (Ok(_), Ok(page)) => page,
+        };
+        page.bands = bands;
+        Ok(page)
+    }
+
+    /// The page's bands, each drawing positioned from the page laid out with the bands of
+    /// the drawings before it (`_stacked_bands`): one whose anchor the bands before it
+    /// push off the page goes with its paragraph, and so do those after it.
+    fn stacked_bands(
+        &self,
+        start: &Position,
+        story: StoryKind,
+        carry: &NoteRest,
+        page_index: usize,
+        bands: Vec<Band>,
+    ) -> Vec<Band> {
+        let mut fixed: Vec<Band> = bands.iter().take(1).copied().collect();
+        for band in bands.iter().skip(1) {
+            let mut found = Tops::default();
+            let mut scratch = LaidPage::empty(start, std::sync::Arc::clone(carry));
+            let floats = Floats { bands: &fixed };
+            if self.scan(start, story, None, &mut scratch, floats, &mut found).is_err() {
+                break;
+            }
+            let again = self.page_bands(&found, page_index);
+            match again.into_iter().find(|b| b.key == band.key) {
+                Some(placed) => fixed.push(placed),
+                None => break,
+            }
+        }
+        fixed
     }
 
     /// Stack one page or column from `start` (`_scan`); its lines, rows and footnotes go
@@ -174,6 +230,8 @@ impl PageContext<'_> {
         story: StoryKind,
         frame: Option<&mut Frame>,
         out: &mut LaidPage,
+        floats: Floats<'_>,
+        tops: &mut Tops,
     ) -> Result<ScanEnd, Stopped> {
         let first_section = self.items.get(start.item).map_or(0, FlowItem::section);
         let (top, bottom) = match frame.as_deref() {
@@ -204,6 +262,8 @@ impl PageContext<'_> {
             rows_from: out.rows.len(),
             out,
             foot,
+            bands: across(floats.bands, frame.as_deref(), self),
+            tops,
         };
         let (mut index, mut line) = (start.item, start.line);
         let end = loop {
@@ -316,6 +376,8 @@ impl PageContext<'_> {
             let line = placed(frame, index, 0, stack.y + gap + p.top_border, pitch, box_top);
             stack.out.lines.push(line);
             stack.foot.mark(Position::at(index, 0));
+            let y = stack.y;
+            stack.tops.record(top_of(frame, index, 0, (y, pitch, y)));
             return Some(Step::Next);
         }
         None
@@ -358,6 +420,12 @@ impl PageContext<'_> {
         let height = p.measured.heights.get(number)?;
         let count = p.count();
         let last = number + 1 == count;
+        if !stack.bands.is_empty() {
+            // Below mode 15 a paragraph's last line reaches down to the end of its space
+            // after; in mode 15 to the end of its pitch.
+            let after = if last && !self.mode15 { Px::twips(p.after) } else { Px::ZERO };
+            stack.y = clear_of_bands(stack.y, height.pitch + after, &stack.bands);
+        }
         let border = if last || !self.mode15 { p.border } else { Px::ZERO };
         let after = if last { Px::twips(p.after) } else { Px::ZERO };
         let fitted = Fitted {
@@ -384,6 +452,7 @@ impl PageContext<'_> {
         }
         stack.foot.place(p.notes_on(number), &fitted);
         stack.foot.mark(Position::at(index, number));
+        stack.tops.record(top_of(frame, index, number, (stack.y, height.pitch, paragraph_top)));
         stack
             .out
             .lines
@@ -538,6 +607,43 @@ impl PageContext<'_> {
         }
         t.flow.keeps_with_next(*row) && self.keeps(start, Position::at(index, *row)) <= *start
     }
+}
+
+/// The bands of `bands` a column's lines keep off: in a column of several, those of
+/// drawings across it.
+fn across(bands: &[Band], frame: Option<&Frame>, cx: &PageContext<'_>) -> Vec<Band> {
+    let Some(f) = frame.filter(|f| f.multi && !bands.is_empty()) else {
+        return bands.to_vec();
+    };
+    let left = cx.sections.get(f.section).map_or(Px::ZERO, |s| {
+        let m = &s.props.margins;
+        Px::from(ooxml_base::Q::new(i128::from(m.left + m.gutter + f.offset) * 300, 1440))
+    });
+    let right = left + Px::from(ooxml_base::Q::new(i128::from(f.width) * 300, 1440));
+    bands
+        .iter()
+        .filter(|b| b.span.is_none_or(|(l, r)| l < right && r > left))
+        .copied()
+        .collect()
+}
+
+/// A line placed at `(top, pitch, paragraph top)`, as a drawing anchored on it is
+/// positioned against it.
+fn top_of(frame: Option<&Frame>, item: usize, line: usize, at: (Px, Px, Px)) -> Top {
+    Top {
+        item,
+        line,
+        top: at.0,
+        pitch: at.1,
+        paragraph_top: at.2,
+        column: frame.filter(|f| f.multi).map(|f| (f.offset, f.width)),
+    }
+}
+
+/// `page` with the bands its lines kept off.
+fn with_bands(mut page: LaidPage, bands: Vec<Band>) -> LaidPage {
+    page.bands = bands;
+    page
 }
 
 /// A scan's end: what the page holds ends where the next starts (lines and rows the keeps
