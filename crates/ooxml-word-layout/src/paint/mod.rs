@@ -428,6 +428,7 @@ fn paint_set(
     (cx, width): (&PaintContext<'_>, &dyn Fn(Option<usize>) -> Px),
     to: PaintOut<'_>,
 ) {
+    let pictures_from = to.out.pictures.len();
     for (k, line) in set.lines.iter().enumerate() {
         let Some((paragraph, measured)) = paragraph_of(set, line) else {
             to.out.unpainted.push(format!("{:?}", line.source));
@@ -469,6 +470,12 @@ fn paint_set(
         }
     }
     table_rules(set, to.out);
+    if let Some((_, part)) = &set.story {
+        // A header's or footer's picture is related from the story's own part.
+        for picture in to.out.pictures.get_mut(pictures_from..).unwrap_or_default() {
+            picture.part = Some(part.clone());
+        }
+    }
 }
 
 /// Page `page`'s paint (0-based, blank pages counted): its body's lines, then its header's

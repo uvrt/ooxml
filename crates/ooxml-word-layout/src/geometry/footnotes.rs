@@ -119,7 +119,7 @@ pub fn page_footnotes(
 ) -> Result<Option<StoryPage>, &'static str> {
     let document = job.cx.document;
     let section = layout.sections.get(frame.section).ok_or("no section")?;
-    if section.multi_column() && column_notes(layout, laid) {
+    if layout.sections.any_multi_column() && column_notes(layout, laid) {
         // A page of columns keeps its notes at its columns' feet.
         return Err("footnotes in columns");
     }
