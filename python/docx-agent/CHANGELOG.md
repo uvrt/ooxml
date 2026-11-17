@@ -5,6 +5,42 @@ docx-agent has not been released to PyPI. Each version that reaches `main` is ta
 snapshot commit; the development history before it is summarised here.
 [`ROADMAP.md`](ROADMAP.md) has the detail of every phase.
 
+## 0.1.130 -- unreleased
+
+Round 58 follow-up (Q3): what the calling process gives back when a document closes.
+Measured on macOS on `tools/tracked_report.py`'s made-up 340-page report, 12 writers, 2
+readers and a live view (`tools/tracked_report_bench.py`, 150 changing calls).
+
+- **A document is collected again.** The Rust owner's finalizer (`rust.check`, round 58) was
+  `weakref.finalize(document, owner.close)`: the bound method held the owner, its mirror, the
+  read copy the mirror was made from and, through that copy, the document -- so the finalizer
+  never ran and the document, its undo history, its read copies and the mirror stayed for as
+  long as the process ran, closed or not (and one more owner's mirror and copy each time an
+  owner was made again). The finalizer now holds the owner's key alone (`_close_owner`);
+  closing the owner takes it back. Before: the calling process (74-92 MB before the document
+  was opened) at 1,330 MB at the end and 1,329 MB after `Session.close`; after: 1,193 MB at
+  the end, 959 MB after the close. What stays is the allocators' free space, not the
+  document's: the C allocator's bytes in use fall from 575 MB to 30 MB (13 MB before the
+  document was opened) and Python's objects to the count they had once it was opened, but
+  Python's own allocator keeps its 1 MB arenas while any object in them lives (388 arenas
+  holding 35 MB): 414 MB of physical footprint against 41 MB before opening (macOS `vmmap`).
+  The close takes 2.6-6.9 s, most of it the workers' (`layout.drop_lineage`, 1.2-6.0 s) and
+  0.8-1.6 s the collection here.
+- **Closing a document lets go of the rest** (with ooxml-edit 0.123.0's `Session.close`: the
+  entry's history, read copy, bytes and caches, the joined bytes of its parts' states, then a
+  collection and `malloc_trim`/`malloc_zone_pressure_relief`): also the bodies read of its
+  versions (`blocks.forget_bodies`; kept by their bytes, every document's, up to 64 MB: 88 MB
+  of the C allocator's memory at 60 edits). `layout.release_free_memory` is ooxml-edit's
+  `tools.memory.release_free_memory`.
+- A document's layout state is published whole (`layout._keeper` sets the lock last): a
+  thread that found the lock while another was still setting the rest up met a document
+  without `_layout_runners` or `_layout_failures` (seen once in `test_liveview`'s views,
+  checks and edits together).
+- `tools/tracked_report_bench.py`: `before_open` (this process before the document was
+  opened), `close_s`, and with `--close` its own references to the document dropped first and
+  the three seconds sampled after the close returns.
+- README: "Memory on Linux" (`MALLOC_ARENA_MAX=2`).
+
 ## 0.1.129 -- unreleased
 
 Round 59 (R134): no whole layout in the calling process for `word_inspect`'s layout and
