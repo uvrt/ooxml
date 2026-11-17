@@ -4,9 +4,11 @@
 //! the batch's deadline stops, listed with the call that asks for it (tool rule 4); an op
 //! that fails answered with its error while the others run.
 //!
-//! Must not: run a changing tool (the session serves reading tools only so far), or hold a
-//! document between ops: each op reads the head version as a call alone does.
+//! Must not: run a changing tool (the session serves reading tools only so far). Every op
+//! reads a document at the version the batch's first op on it read, as today's batch holds
+//! its documents for all its ops; nothing is held after the batch.
 
+use crate::session::Pinned;
 use crate::{CallContext, Session};
 use ooxml_tools::{compact, Done, Failure, Outcome, ToolArgs, ToolError, ToolResult, MAX_RESULT_CHARS};
 use serde_json::{json, Map, Value};
@@ -116,6 +118,7 @@ impl Session {
         let mut answers: Vec<(Map<String, Value>, usize, bool)> = Vec::new();
         let mut left: Vec<(usize, Left)> = Vec::new();
         let mut used = MARGIN;
+        let mut pinned = Pinned::new();
         for (index, op) in ops.iter().enumerate() {
             if clock.monotonic().saturating_sub(started) > BATCH_TIMEOUT {
                 left.push((index, Left::Deadline));
@@ -123,7 +126,7 @@ impl Session {
             }
             let given = op.get("tool").and_then(Value::as_str).unwrap_or("");
             let arguments = op.get("arguments").cloned().unwrap_or_else(|| json!({}));
-            let result = self.call_one(given, arguments, context, READ_BATCH);
+            let result = self.call_one(given, arguments, context, READ_BATCH, Some(&mut pinned));
             let paged = self
                 .registry()
                 .named(given)

@@ -90,6 +90,17 @@ impl Opened {
     }
 }
 
+/// The versions a batch reads, by document.
+pub(crate) type Pinned = BTreeMap<DocId, Opened>;
+
+/// What one call gathers as it runs: the document version it read, its warnings, and the
+/// versions its batch reads.
+pub(crate) struct CallState<'p> {
+    opened: Option<Opened>,
+    warnings: Vec<String>,
+    pinned: Option<&'p mut Pinned>,
+}
+
 /// A copy of a session's counters (section 10).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct SessionStats {
@@ -271,7 +282,7 @@ impl Session {
         if name == READ_BATCH {
             return self.call_batch(arguments, context);
         }
-        self.call_one(name, arguments, context, "")
+        self.call_one(name, arguments, context, "", None)
     }
 
     /// `read_batch`: its arguments taken as meant and validated, then its ops run.
@@ -299,23 +310,30 @@ impl Session {
     }
 
     /// One call; `within` names the batch it runs in (`""`: none), whose refusals name it and
-    /// whose op's argument errors are fielded under `arguments`.
+    /// whose op's argument errors are fielded under `arguments`; `pinned`, the versions the
+    /// batch reads (each document at the version its first op read, as today's batch holds
+    /// its documents for all its ops).
     pub(crate) fn call_one(
         &self,
         name: &str,
         arguments: Value,
         context: &CallContext,
         within: &str,
+        pinned: Option<&mut Pinned>,
     ) -> ToolResult<Value> {
         self.counts.calls.fetch_add(1, Ordering::Relaxed);
         let cancel = CallCancel::new(context, &*self.context.cancel, &*self.context.clock);
-        let mut opened = None;
-        let mut warnings = Vec::new();
-        let outcome = if within.is_empty() {
-            self.dispatch(name, arguments, &cancel, &mut opened, &mut warnings)
-        } else {
-            self.dispatch_within(name, arguments, &cancel, &mut opened, &mut warnings, within)
+        let mut state = CallState {
+            opened: None,
+            warnings: Vec::new(),
+            pinned,
         };
+        let outcome = if within.is_empty() {
+            self.dispatch(name, arguments, &cancel, &mut state)
+        } else {
+            self.dispatch_within(name, arguments, &cancel, &mut state, within)
+        };
+        let CallState { opened, warnings, .. } = state;
         let mut result = match outcome {
             Ok(done) => ToolResult::done(done),
             Err(error) => {
@@ -340,20 +358,21 @@ impl Session {
         name: &str,
         arguments: Value,
         cancel: &dyn Cancel,
-        opened: &mut Option<Opened>,
-        warnings: &mut Vec<String>,
+        state: &mut CallState<'_>,
     ) -> Result<ooxml_tools::Done<Value>, ToolError> {
         cancel.check().map_err(|e| SessionError::from(e).to_tool_error())?;
         let spec = self.spec_named(name)?;
         let Accepted { mut arguments, notes } = spec.accept(arguments)?;
-        warnings.extend(notes);
-        let doc = self.document_of(spec, &arguments)?;
+        state.warnings.extend(notes);
+        let doc = self.document_of(spec, &arguments, state.pinned.as_deref_mut())?;
         let tool = self
             .registry
             .get(name, doc.kind)
             .ok_or_else(|| self.not_served(name, doc.kind))?;
-        warnings.extend(spec.ignored_for(Some(doc.kind.as_str()), &mut arguments));
-        let doc = opened.insert(doc);
+        state
+            .warnings
+            .extend(spec.ignored_for(Some(doc.kind.as_str()), &mut arguments));
+        let doc = state.opened.insert(doc);
         tool.run(arguments, doc, cancel)
     }
 
@@ -364,8 +383,7 @@ impl Session {
         name: &str,
         arguments: Value,
         cancel: &dyn Cancel,
-        opened: &mut Option<Opened>,
-        warnings: &mut Vec<String>,
+        state: &mut CallState<'_>,
         within: &str,
     ) -> Result<ooxml_tools::Done<Value>, ToolError> {
         let runs = self.registry.named(name).map(|t| t.spec().flags);
@@ -383,14 +401,13 @@ impl Session {
                 .map(|_| ooxml_tools::Done::new(""))
                 .map_err(|e| e.at("tool"));
         }
-        self.dispatch(name, arguments, cancel, opened, warnings)
-            .map_err(|error| {
-                let field = error.field().map(|f| format!("arguments.{f}"));
-                match field {
-                    Some(field) if error.code().as_str() == "invalid_arguments" => error.at(field),
-                    _ => error,
-                }
-            })
+        self.dispatch(name, arguments, cancel, state).map_err(|error| {
+            let field = error.field().map(|f| format!("arguments.{f}"));
+            match field {
+                Some(field) if error.code().as_str() == "invalid_arguments" => error.at(field),
+                _ => error,
+            }
+        })
     }
 
     /// The definition of `name` (the first registered: tools of one name share it).
@@ -405,8 +422,14 @@ impl Session {
         Err(ToolError::refusal(Refusal::InvalidArguments, message, way_out))
     }
 
-    /// The document a call names (its first document argument), at its head.
-    fn document_of(&self, spec: &ToolSpec, arguments: &Map<String, Value>) -> Result<Opened, ToolError> {
+    /// The document a call names (its first document argument): at the version `pinned`
+    /// holds for it, else at its head (then pinned there).
+    fn document_of(
+        &self,
+        spec: &ToolSpec,
+        arguments: &Map<String, Value>,
+        pinned: Option<&mut Pinned>,
+    ) -> Result<Opened, ToolError> {
         let given = spec
             .documents
             .iter()
@@ -418,7 +441,15 @@ impl Session {
             ));
         };
         let id = DocId::parse(given).ok_or_else(|| self.not_open(given).to_tool_error())?;
-        self.snapshot(&id).map_err(|e| e.to_tool_error())
+        let Some(pinned) = pinned else {
+            return self.snapshot(&id).map_err(|e| e.to_tool_error());
+        };
+        if let Some(found) = pinned.get(&id) {
+            return Ok(found.clone());
+        }
+        let found = self.snapshot(&id).map_err(|e| e.to_tool_error())?;
+        pinned.insert(id, found.clone());
+        Ok(found)
     }
 
     fn not_served(&self, name: &str, kind: DocKind) -> ToolError {
