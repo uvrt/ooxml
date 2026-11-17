@@ -214,6 +214,22 @@ mod tests {
     }
 
     #[test]
+    fn a_font_set_and_a_raster_cross_threads() {
+        fn shared<T: Send + Sync>() {}
+        shared::<FontSet>();
+        shared::<Raster>();
+        shared::<RasterOptions>();
+        let fonts = FontSet::empty();
+        let drawn = std::thread::scope(|scope| {
+            let workers: Vec<_> = (0..2)
+                .map(|_| scope.spawn(|| rasterise(SQUARE, &fonts, &RasterOptions::default()).unwrap()))
+                .collect();
+            workers.into_iter().map(|w| w.join().unwrap()).collect::<Vec<_>>()
+        });
+        assert_eq!(drawn[0].premultiplied(), drawn[1].premultiplied());
+    }
+
+    #[test]
     fn what_cannot_be_drawn_is_an_error() {
         let fonts = FontSet::empty();
         assert!(matches!(
