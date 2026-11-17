@@ -45,8 +45,7 @@ fn is_block(e: &Element) -> bool {
     e.name().namespace() == Some(W) && BLOCKS.contains(&e.name().local())
 }
 
-/// A block's content without the ids stamping writes (and without namespace
-/// declarations), as a hash: equal for blocks docx-agent's digests find equal.
+/// A block's content without the ids stamping writes, as a hash: equal for blocks docx-agent's digests find equal.
 pub(crate) fn stampless(element: &Element) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     hash_element(element, &mut hasher);
@@ -56,6 +55,11 @@ pub(crate) fn stampless(element: &Element) -> u64 {
 fn hash_element(element: &Element, h: &mut impl Hasher) {
     element.name().namespace().hash(h);
     element.name().local().hash(h);
+    // declarations are part of the bytes docx-agent digests
+    for d in element.namespaces() {
+        d.prefix.hash(h);
+        d.uri.hash(h);
+    }
     for attribute in element.attributes() {
         let n = &attribute.name;
         let stamp = (n.namespace() == Some(W14) && (n.local() == "paraId" || n.local() == "textId"))

@@ -197,7 +197,7 @@ impl Command<WordDoc> for SetText {
             sink.ensure_w14(&found.part, false, &[])?;
         }
         crate::textbox::sync(&mut sink)?;
-        crate::revision_ids::make_unique(&mut sink, &found.part, &found.path, &found.element)?;
+        crate::revision_ids::make_unique(&mut sink)?;
         Ok(TextEdited {
             id,
             changed: true,

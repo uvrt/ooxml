@@ -39,7 +39,7 @@ fn holders(element: &Arc<Element>, path: &mut Vec<u32>, out: &mut Vec<(Vec<u32>,
 /// The top-level blocks of a story part (the main part's body's children, another
 /// part's root's) that are not the snapshot's: each one's path and the snapshot's block
 /// at that place.
-fn changed_blocks(old: &Arc<Element>, new: &Arc<Element>) -> Vec<(Vec<u32>, Option<Arc<Element>>)> {
+pub(crate) fn changed_blocks(old: &Arc<Element>, new: &Arc<Element>) -> Vec<(Vec<u32>, Option<Arc<Element>>)> {
     let holder = |root: &Arc<Element>| -> (Vec<u32>, Arc<Element>) {
         root.children()
             .iter()

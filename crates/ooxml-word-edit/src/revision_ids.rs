@@ -55,6 +55,12 @@ fn counts(element: &Element) -> HashMap<String, usize> {
     out
 }
 
+fn add(into: &mut HashMap<String, usize>, more: HashMap<String, usize>) {
+    for (id, n) in more {
+        *into.entry(id).or_insert(0) += n;
+    }
+}
+
 /// Every revision record with one of `wanted`'s ids in `root`, in document order, with its
 /// path (child indexes from the root).
 fn occurrences(root: &Element, wanted: &[String], path: &mut Vec<u32>, out: &mut Vec<(Vec<u32>, Arc<Element>)>) {
@@ -78,14 +84,27 @@ fn occurrences(root: &Element, wanted: &[String], path: &mut Vec<u32>, out: &mut
 ///
 /// # Errors
 /// When a part is not XML.
-pub(crate) fn make_unique(sink: &mut EditSink<'_, '_>, part: &str, path: &[u32], old: &Element) -> Result<()> {
-    let Some(tree) = sink.doc().tree(part)? else {
-        return Ok(());
-    };
-    let Some(new) = at_path(tree.root(), path) else {
-        return Ok(());
-    };
-    let (before, after) = (counts(old), counts(new));
+pub(crate) fn make_unique(sink: &mut EditSink<'_, '_>) -> Result<()> {
+    // the ids in the blocks the edit replaced (its paragraph's, text boxes it synced),
+    // before and after
+    let (mut before, mut after) = (HashMap::new(), HashMap::new());
+    let stories: Vec<String> = sink.base().docx()?.parts.iter().map(|p| p.part.clone()).collect();
+    for part in &stories {
+        let (Some(old), Some(new)) = (sink.base().tree(part)?, sink.doc().tree(part)?) else {
+            continue;
+        };
+        if old.ptr_eq(&new) {
+            continue;
+        }
+        for (path, was) in crate::textbox::changed_blocks(old.root(), new.root()) {
+            if let Some(was) = was {
+                add(&mut before, counts(&was));
+            }
+            if let Some(now) = at_path(new.root(), &path) {
+                add(&mut after, counts(now));
+            }
+        }
+    }
     // an id this edit gave is new (above every id the snapshot had): it repeats nothing
     let ceiling = annotation_ceiling(sink.base())?;
     let given = |id: &str| id.trim().parse::<i64>().is_ok_and(|v| v > ceiling);

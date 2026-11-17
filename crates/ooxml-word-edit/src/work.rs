@@ -525,6 +525,54 @@ impl Work {
     /// A detached copy of `id` and everything below it, its tail included (lxml's
     /// `copy.deepcopy`). A copy of a subtree that did not change shares its green nodes.
     pub(crate) fn deep_copy(&mut self, id: Id) -> Id {
+        let copy = self.copy_subtree(id);
+        // lxml's copy is a document of its own: a namespace its names use that nothing in
+        // it declares is declared on the copy (where it is inserted, a declaration its new
+        // place has already goes)
+        let mut declared: Vec<Atom> = Vec::new();
+        let mut used: Vec<(Option<String>, Atom)> = Vec::new();
+        for node in self.descendants(copy) {
+            if let Some(Kind::Element {
+                name,
+                namespaces,
+                attributes,
+                ..
+            }) = self.slot(node).map(|s| &s.kind)
+            {
+                declared.extend(namespaces.iter().map(|d| Atom::clone(&d.uri)));
+                for n in std::iter::once(name).chain(attributes.iter().map(|a| &a.name)) {
+                    if let Some(uri) = n.namespace().filter(|u| *u != crate::names::XML) {
+                        let prefix = n.prefix().map(str::to_owned);
+                        if !used.iter().any(|(p, u)| *p == prefix && &**u == uri) {
+                            used.push((prefix, Atom::from(uri)));
+                        }
+                    }
+                }
+            }
+        }
+        let missing: Vec<NamespaceDecl> = used
+            .into_iter()
+            .filter(|(_, uri)| !declared.contains(uri))
+            .map(|(prefix, uri)| NamespaceDecl {
+                prefix: prefix.map(|p| Atom::from(p.as_str())),
+                uri,
+            })
+            .collect();
+        if !missing.is_empty() {
+            if let Some(Kind::Element { namespaces, .. }) = self.slots.get_mut(copy).map(|s| &mut s.kind) {
+                for d in missing {
+                    if !namespaces.iter().any(|n| n.prefix == d.prefix) {
+                        namespaces.push(d);
+                    }
+                }
+            }
+            self.touch(copy);
+        }
+        copy
+    }
+
+    /// A detached copy of `id` and everything below it, its tail included.
+    fn copy_subtree(&mut self, id: Id) -> Id {
         let Some(slot) = self.slot(id).cloned() else { return id };
         let copy = self.push(slot.kind.clone(), if slot.changed { None } else { slot.origin.clone() });
         if let Some(s) = self.slots.get_mut(copy) {
@@ -532,7 +580,7 @@ impl Work {
             s.changed = slot.changed;
         }
         for child in slot.children {
-            let c = self.deep_copy(child);
+            let c = self.copy_subtree(child);
             if let Some(s) = self.slots.get_mut(c) {
                 s.parent = Some(copy);
             }
