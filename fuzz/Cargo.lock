@@ -175,10 +175,39 @@ dependencies = [
 ]
 
 [[package]]
+name = "ooxml-chart"
+version = "0.1.0"
+dependencies = [
+ "ooxml-colour",
+ "ooxml-drawingml",
+ "ooxml-fonts",
+ "ooxml-numfmt",
+ "ooxml-schema",
+ "ooxml-text",
+ "ooxml-xml",
+]
+
+[[package]]
+name = "ooxml-colour"
+version = "0.1.0"
+dependencies = [
+ "thiserror",
+]
+
+[[package]]
 name = "ooxml-derive"
 version = "0.1.0"
 dependencies = [
  "thiserror",
+]
+
+[[package]]
+name = "ooxml-drawingml"
+version = "0.1.0"
+dependencies = [
+ "ooxml-colour",
+ "ooxml-schema",
+ "ooxml-xml",
 ]
 
 [[package]]
@@ -196,7 +225,11 @@ version = "0.0.0"
 dependencies = [
  "libfuzzer-sys",
  "ooxml-base",
+ "ooxml-chart",
+ "ooxml-colour",
+ "ooxml-drawingml",
  "ooxml-metafile",
+ "ooxml-numfmt",
  "ooxml-opc",
  "ooxml-xml",
  "ooxml-zip",
@@ -215,6 +248,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "ooxml-numfmt"
+version = "0.1.0"
+dependencies = [
+ "thiserror",
+]
+
+[[package]]
 name = "ooxml-opc"
 version = "0.1.0"
 dependencies = [
@@ -227,6 +267,13 @@ dependencies = [
 [[package]]
 name = "ooxml-scene"
 version = "0.1.0"
+
+[[package]]
+name = "ooxml-schema"
+version = "0.1.0"
+dependencies = [
+ "ooxml-xml",
+]
 
 [[package]]
 name = "ooxml-text"

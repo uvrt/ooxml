@@ -3,16 +3,31 @@
 //! rules, the committed packages' chart parts under PowerPoint's and Word's -- with its
 //! elements, chart data and notes; `python/chart_diff.py --freeze` writes it) is laid out
 //! in Rust and must equal Python's, field by field, numbers as numbers.
+//!
+//! The answers were frozen on macOS. Pies and radars go through `sin` and `cos`, which the C
+//! library computes: Python and Rust on one machine call the same one and agree to the bit
+//! (the live differential, `python/chart_diff.py --layout`), but glibc's and Apple's differ
+//! in the last place for some arguments. So the comparison is exact where the answers were
+//! frozen and within a few units in the last place elsewhere.
 
 use flate2::read::GzDecoder;
 use serde_json::Value;
 use std::io::Read;
 
+/// Whether two numbers agree: exactly on the platform the answers were frozen on, else
+/// within 16 units in the last place (another C library's `sin` and `cos`).
+fn same(a: f64, b: f64) -> bool {
+    if a == b || cfg!(target_os = "macos") {
+        return a == b;
+    }
+    (a - b).abs() <= 16.0 * f64::EPSILON * a.abs().max(b.abs())
+}
+
 /// Where `a` and `b` differ (the first few), as JSON paths; numbers compare by value.
 fn diff(a: &Value, b: &Value, path: &str, out: &mut Vec<String>) {
     match (a, b) {
         (Value::Number(x), Value::Number(y)) => {
-            if x.as_f64() != y.as_f64() {
+            if !same(x.as_f64().unwrap_or(f64::NAN), y.as_f64().unwrap_or(f64::NAN)) {
                 out.push(format!("{path}: python {x} rust {y}"));
             }
         }
