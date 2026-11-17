@@ -5,7 +5,8 @@
 //! Owns: those rules, read from a version of an OPC package; relationships read as Python
 //! keys them (a dictionary by id: the first place of an id, its last relationship).
 //!
-//! Must not: change a package, cache across versions, or know a tool's reply.
+//! Must not: change a package, cache across versions, or know a tool's reply. (It moved here
+//! from `ooxml-tools-word` in phase P1: the ids, the addresses and the reads use it.)
 
 use ooxml_opc::{OpcError, Package, Relationship};
 use ooxml_xml::{Element, Node};
@@ -74,6 +75,17 @@ pub fn main_part(package: &Package) -> Result<Option<String>, OpcError> {
     Ok(package
         .has_part("word/document.xml")
         .then(|| "word/document.xml".to_owned()))
+}
+
+/// The main part and every story part: the parts ids are read from (docx-agent's
+/// `Document._parts`).
+pub fn parts(package: &Package) -> Result<Vec<String>, OpcError> {
+    let Some(main) = main_part(package)? else {
+        return Ok(Vec::new());
+    };
+    let mut out = vec![main.clone()];
+    out.extend(story_parts(package, &main)?);
+    Ok(out)
 }
 
 /// Every part related to `main` that holds a story, in relationship order by type:
