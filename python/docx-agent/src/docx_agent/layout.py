@@ -2555,8 +2555,10 @@ def check_facts(document: "Document", unlocked: Any, request: dict, *,
     failed = _kept_failure(document, cache_key(data, options))
     if failed is not None:
         raise failed                          # round 53: this version failed already
-    with unlocked():
-        state = kept_layout(document, data, options)
+    with unlocked() as let_go:
+        # Round 59 (R134): a caller holding the document's lock (``unlocked`` yields
+        # ``False``: a batch's op, a change) never waits for another's layout in progress.
+        state = kept_layout(document, data, options, may_wait=let_go is not False)
         started = time.perf_counter()
         try:
             result = converter.check(data, dict(options), state, {**request, "summary": summary is None})
@@ -2582,6 +2584,48 @@ def check_facts(document: "Document", unlocked: Any, request: dict, *,
         _keep_facts(document, (key, repr(sorted(also.items()))),
                     {name: value for name, value in result.items() if name not in extra}, data, options)
     return copy.deepcopy(result), summary
+
+
+@contextmanager
+def holding() -> Any:
+    """An ``unlocked`` for :func:`check_facts` that lets nothing go: the caller holds the
+    document's lock, so its task never waits for a layout in progress (round 34's rule)."""
+    yield False
+
+
+def held_answers(document: "Document", request: dict, unlocked: Any = None) -> "dict | None":
+    """Round 59 (R134): what ``request`` asks of the document's layout (:func:`check_facts`'
+    keys besides :data:`BARE_REQUEST`'s: ``where``, ``extents``), answered in the worker of
+    the toolbox holding its layouts, so the layout never comes to this process for them --
+    ``unlocked`` (``Call.unlocked``; default :func:`holding`) let go while it lays out where
+    it may.  ``None`` where the document has no such worker (no toolbox laid it out, or one
+    whose runner runs here: :func:`runner_of`) or its converter cannot ask one: the caller
+    reads :meth:`~docx_agent.Document.layout` here, as before."""
+    if runner_of(document) is None:
+        return None
+    made = check_facts(document, unlocked if unlocked is not None else holding, {**BARE_REQUEST, **request})
+    return made[0] if made is not None else None
+
+
+def placements_of(layout: "DocumentLayout", asked: "list[list[str]]") -> list:
+    """Per entry of ``asked`` -- an id and the ids to try after it, in order, while nothing
+    is drawn of those before (a paragraph the view joins others into: docx2svg draws the
+    joined lines under the first one's id) -- :meth:`DocumentLayout.where` of the first id
+    drawn, else of the last tried (its :class:`Unknown`)."""
+    out = []
+    for identifiers in asked:
+        found = layout.where(identifiers[0])
+        for other in identifiers[1:]:
+            if found:
+                break
+            found = layout.where(other)
+        out.append(found)
+    return out
+
+
+def extents_of(layout: "DocumentLayout", groups: dict) -> dict:
+    """``{name: layout.extent(ids)}`` for each ``name: ids`` of ``groups``."""
+    return {name: layout.extent(ids) for name, ids in groups.items()}
 
 
 def lay_out_unlocked(document: "Document", unlocked, current) -> DocumentLayout:
