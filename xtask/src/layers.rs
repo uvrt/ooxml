@@ -43,6 +43,8 @@ pub const MAP: &[(&str, Place)] = &[
     ("ooxml-schema", Place::Layer(1, 0)),
     ("ooxml-colour", Place::Layer(1, 0)),
     ("ooxml-drawingml", Place::Layer(2, 0)),
+    // charts lower to DrawingML's drawable elements (section 8), so they rank above it
+    ("ooxml-chart", Place::Layer(2, 1)),
     // ooxml-word in the design; the prototype holds that package name (lane L2)
     ("ooxml-word-model", Place::Layer(3, 0)),
     ("ooxml-tools-derive", Place::Layer(4, 0)),

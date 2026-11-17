@@ -282,6 +282,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ooxml-chart"
+version = "0.1.0"
+dependencies = [
+ "ooxml-colour",
+ "ooxml-drawingml",
+ "ooxml-schema",
+ "ooxml-xml",
+]
+
+[[package]]
 name = "ooxml-colour"
 version = "0.1.0"
 dependencies = [
@@ -340,6 +350,7 @@ version = "0.1.0"
 dependencies = [
  "flate2",
  "ooxml-base",
+ "ooxml-chart",
  "ooxml-colour",
  "ooxml-derive",
  "ooxml-drawingml",
