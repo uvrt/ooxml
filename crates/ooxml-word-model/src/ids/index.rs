@@ -91,6 +91,10 @@ pub struct PartIds {
     by_path: HashMap<Path, Entry>,
 }
 
+/// A row as its table's ids read it: its raw paraId, how often that value came before, its
+/// place.
+type RowFound<'a> = (Option<&'a str>, usize, &'a Path);
+
 /// A live `w:p`, `w:tr` or `w:tbl` as the walk meets it.
 struct Found {
     element: Arc<Element>,
@@ -159,7 +163,7 @@ impl PartIds {
         let prefix = self.prefix();
         let tables: Vec<&Found> = found.iter().filter(|f| f.kind == Kind::Tbl).collect();
         // Each table's rows, in document order, gathered in one pass.
-        let mut rows_of: HashMap<&Path, Vec<(Option<&str>, usize, &Path)>> = HashMap::new();
+        let mut rows_of: HashMap<&Path, Vec<RowFound<'_>>> = HashMap::new();
         for ((f, raw), repeat) in found.iter().zip(raws).zip(repeats) {
             if let (Kind::Tr, Some(owner)) = (f.kind, f.owner.as_ref()) {
                 rows_of.entry(owner).or_default().push((*raw, *repeat, &f.path));

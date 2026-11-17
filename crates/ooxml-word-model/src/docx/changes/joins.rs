@@ -432,8 +432,8 @@ impl Grouping<'_> {
             .arena
             .subtree(cell)
             .into_iter()
-            .filter(|p| self.arena.is(*p, "p") && self.nearest_is(*p, "tc", cell))
-            .last();
+            .rev()
+            .find(|p| self.arena.is(*p, "p") && self.nearest_is(*p, "tc", cell));
         let mark = last.and_then(|p| self.mark_record(p));
         let new_mark = mark.filter(|m| self.key.contains_key(m) && self.sign(*m) == Some("ins"));
         if !deletions.is_empty() && (content.iter().any(|e| self.sign(*e) == Some("del")) || new_mark.is_some()) {
@@ -600,7 +600,7 @@ impl Grouping<'_> {
             if mine.is_empty() {
                 continue;
             }
-            let table_level = mine.iter().copied().filter(|e| self.arena.is(*e, "tblPrChange")).last();
+            let table_level = mine.iter().copied().rev().find(|e| self.arena.is(*e, "tblPrChange"));
             let other = mine.iter().copied().find(|e| self.property(*e));
             let latest = mine.iter().copied().fold(None::<usize>, |best, e| match best {
                 Some(b) if self.arena.attr(b, "date").unwrap_or("") >= self.arena.attr(e, "date").unwrap_or("") => {

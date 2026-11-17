@@ -117,6 +117,14 @@ fn describe_through_the_session() {
 }
 
 #[test]
+fn read_batch_is_defined_as_today() {
+    use ooxml_tools::ToolArgs;
+    let golden = include_str!("../../ooxml-tools-word/tests/golden/read_batch.json");
+    let export = ooxml_session::ReadBatch::spec().export(Some(&["docx"]));
+    assert_eq!(format!("{export}\n"), golden);
+}
+
+#[test]
 fn read_batch_answers_each_op_as_alone() {
     let s = session();
     s.open(Arc::from(docx()), DocKind::Docx, "a.docx").unwrap();

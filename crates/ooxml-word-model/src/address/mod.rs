@@ -13,6 +13,7 @@
 //! Must not: change the document, read Markdown records, or follow renamed ids (the Rust
 //! session keeps no aliases until it owns the document, phase P2).
 
+mod marks;
 pub mod resolve;
 pub mod syntax;
 

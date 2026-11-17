@@ -6,7 +6,7 @@
 //! Must not: read records itself (the Markdown reader makes them), or lay out.
 
 use ooxml_word_model::docx::cells::model_path;
-use ooxml_word_model::docx::formatting::{Cell, EffectiveRun};
+use ooxml_word_model::docx::formatting::{Cell, EffectiveParagraph, EffectiveRun};
 use ooxml_word_model::docx::Docx;
 use ooxml_word_model::ids::W;
 use ooxml_word_model::markdown::read::{CellRecord, Kind, ParagraphRecord, Reader, Record, RunRecord, TableRecord};
@@ -186,19 +186,7 @@ impl<'d> Writer<'d> {
         let formatting = reader.shared().formatting();
         let base = formatting.run(&last.element, None, 'a', cell.as_ref());
         let para = formatting.paragraph(&last.element, cell.as_ref());
-        out.insert(
-            "effective".into(),
-            json!({
-                "font": base.font, "sz": float(base.size), "color": base.color, "b": base.bold, "i": base.italic,
-                "alignment": para.alignment,
-                "indent": {"left": float(para.indent_left), "right": float(para.indent_right),
-                           "first_line": float(para.first_line), "hanging": float(para.hanging)},
-                "spacing": {"before": float(para.space_before), "after": float(para.space_after),
-                            "line": para.line_spacing.map(float), "rule": para.line_rule},
-                "keep_with_next": para.keep_with_next, "keep_lines": para.keep_together,
-                "page_break_before": para.page_break_before, "outline_level": para.outline_level,
-            }),
-        );
+        out.insert("effective".into(), effective(&base, &para));
         let runs: Vec<Value> = record.detail.runs.iter().map(|r| self.run(r, &base)).collect();
         out.insert("runs".into(), Value::Array(runs));
         let written = new_text(reader, &last.element, &base, cell.as_ref());
@@ -409,6 +397,20 @@ impl<'d> Writer<'d> {
         }
         out
     }
+}
+
+/// A paragraph's formatting and its runs' baseline, as `effective` shows them.
+fn effective(base: &EffectiveRun, para: &EffectiveParagraph) -> Value {
+    json!({
+        "font": base.font, "sz": float(base.size), "color": base.color, "b": base.bold, "i": base.italic,
+        "alignment": para.alignment,
+        "indent": {"left": float(para.indent_left), "right": float(para.indent_right),
+                   "first_line": float(para.first_line), "hanging": float(para.hanging)},
+        "spacing": {"before": float(para.space_before), "after": float(para.space_after),
+                    "line": para.line_spacing.map(float), "rule": para.line_rule},
+        "keep_with_next": para.keep_with_next, "keep_lines": para.keep_together,
+        "page_break_before": para.page_break_before, "outline_level": para.outline_level,
+    })
 }
 
 /// The layout model's resolved properties of a cell (none for one in a text box).

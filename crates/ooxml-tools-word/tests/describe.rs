@@ -145,7 +145,7 @@ fn describes_what_the_parts_say() {
             "sections": [],
             "styles_in_use": [],
             "comments": {"threads": 2, "open": 1, "by_author": {"Ann": 1, "Bob": 1, "null": 1}},
-            "revisions": {"records": 0, "by_author": {}},
+            "revisions": {"records": 0, "changes": 0, "by_author": {}},
             "fields": {},
             "tables": [],
             "drawings": [],

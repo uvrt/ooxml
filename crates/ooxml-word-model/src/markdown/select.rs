@@ -147,8 +147,11 @@ fn part_of<'d>(reader: &Reader<'d>, id: &str) -> Result<&'d StoryPart, RangeErro
     Ok(address::resolve(docx, id)?.0)
 }
 
+/// A block's place in its part, or a control's id.
+type Place = (Option<Box<[u32]>>, Option<String>);
+
 /// Where a block id's element is in its part; for a control, its id (its markers carry it).
-fn place(reader: &Reader<'_>, part: &StoryPart, id: &str) -> Result<(Option<Box<[u32]>>, Option<String>), RangeError> {
+fn place(reader: &Reader<'_>, part: &StoryPart, id: &str) -> Result<Place, RangeError> {
     if id.starts_with("cc") {
         return Ok((None, Some(id.to_owned())));
     }
