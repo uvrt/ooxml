@@ -4,7 +4,7 @@
 //! by paragraph with their live-view ids (`data-docx-path`, `data-docx-id`,
 //! `data-docx-line`, `data-docx-baseline`), each span a `<text>` with one x per glyph, the
 //! rules drawn over text, and the pictures -- each from the [`Pictures`] port, or a
-//! placeholder of its extent where the port has none.
+//! stand-in box of its extent where the port has none.
 //!
 //! Must not: lay out or paint anything (the paint has), or read a picture part.
 
@@ -23,7 +23,7 @@ pub trait Pictures {
     fn picture(&self, relationship: &str, part: Option<&str>) -> Option<(String, Arc<[u8]>)>;
 }
 
-/// No pictures: each is drawn as a placeholder of its extent.
+/// No pictures: each is drawn as a stand-in box of its extent.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct NoPictures;
 
@@ -220,8 +220,8 @@ fn lines(painted: &[PaintedLine], cx: &SvgContext<'_>) -> Vec<Element> {
     out
 }
 
-/// A placeholder of a drawing's extent.
-fn placeholder(d: &Drawn, what: &str) -> Element {
+/// A stand-in box of a drawing's extent.
+fn stand_in(d: &Drawn, what: &str) -> Element {
     Element::new("g")
         .inline()
         .attr("data-docx-unsupported", Value::Plain(what.into()))
@@ -241,7 +241,7 @@ fn placeholder(d: &Drawn, what: &str) -> Element {
 
 const IMAGE_TYPES: [&str; 4] = ["image/png", "image/jpeg", "image/gif", "image/svg+xml"];
 
-/// A picture in its box, or a placeholder of the box where it cannot be carried.
+/// A picture in its box, or a stand-in box where it cannot be carried.
 fn picture(d: &Drawn, cx: &SvgContext<'_>) -> Element {
     let found = d
         .relationship
@@ -254,7 +254,7 @@ fn picture(d: &Drawn, cx: &SvgContext<'_>) -> Element {
         } else {
             "drawing"
         };
-        return placeholder(d, what);
+        return stand_in(d, what);
     };
     Element::new("image")
         .attr("data-docx-path", Value::Text(d.path.clone()))
