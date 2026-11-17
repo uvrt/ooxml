@@ -1,6 +1,7 @@
 //! The random multi-writer oracle (design section 5, "enforced by the random multi-writer
-//! oracle"): writers on threads run `set_text` -- tracked and untracked, on paragraphs
-//! picked at random -- through one document's store; replayed serially in commit order on
+//! oracle"): writers on threads run the common edits -- `set_text`, `insert_text`,
+//! `delete_text` and `replace`, tracked and untracked, on paragraphs picked at random --
+//! through one document's store; replayed serially in commit order on
 //! the document as opened, every version is the same, byte for byte, as the concurrent run
 //! made it, ids included. Conflicts are counted: two writers drawing text ids from one
 //! part's sequence are ordered by their commits.
@@ -11,7 +12,10 @@ use ooxml_base::Limits;
 use ooxml_derive::CacheBudget;
 use ooxml_opc::Package;
 use ooxml_store::{Caller, Clock, Seq, Snapshot, StoreConfig};
-use ooxml_word_edit::{Editor, RevisionPolicy, SetText, Tracking, WordDoc};
+use ooxml_store::{Command, Txn};
+use ooxml_word_edit::{
+    DeleteText, EditError, Editor, InsertText, Keep, ReplaceText, RevisionPolicy, SetText, Tracking, WordDoc,
+};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -72,21 +76,81 @@ const WORDS: &[&str] = &[
     "alpha", "beta", "gamma", "delta", "epsilon", "report", "Quarter", "\t", "and",
 ];
 
+/// One of the common edits.
+#[derive(Debug, Clone)]
+enum Edit {
+    Set(SetText),
+    Insert(InsertText),
+    Delete(DeleteText),
+    Replace(ReplaceText),
+}
+
+impl Command<WordDoc> for Edit {
+    type Out = bool;
+    type Error = EditError;
+
+    fn validate(&self, doc: &WordDoc) -> Result<(), EditError> {
+        match self {
+            Edit::Set(c) => c.validate(doc),
+            Edit::Insert(c) => c.validate(doc),
+            Edit::Delete(c) => c.validate(doc),
+            Edit::Replace(c) => c.validate(doc),
+        }
+    }
+
+    fn prepare(&self, tx: &mut Txn<'_, WordDoc>) -> Result<bool, EditError> {
+        Ok(match self {
+            Edit::Set(c) => c.prepare(tx)?.changed,
+            Edit::Insert(c) => c.prepare(tx).map(|_| true)?,
+            Edit::Delete(c) => c.prepare(tx).map(|_| true)?,
+            Edit::Replace(c) => c.prepare(tx).map(|_| true)?,
+        })
+    }
+}
+
 fn command(rng: &mut Rng, targets: &[String], writer: u64) -> SetText {
     let target = targets[rng.below(targets.len())].clone();
     let words: Vec<&str> = (0..1 + rng.below(6)).map(|_| WORDS[rng.below(WORDS.len())]).collect();
-    let policy = if rng.below(2) == 0 {
+    SetText {
+        target,
+        text: words.join(" "),
+        policy: policy(rng, writer),
+    }
+}
+
+fn policy(rng: &mut Rng, writer: u64) -> RevisionPolicy {
+    if rng.below(2) == 0 {
         RevisionPolicy::Untracked
     } else {
         RevisionPolicy::Tracked(Tracking {
             author: format!("Writer {writer}"),
             date: "2026-11-17T10:00:00Z".to_owned(),
         })
-    };
-    SetText {
-        target,
-        text: words.join(" "),
-        policy,
+    }
+}
+
+/// A random common edit (positions within the first characters, so they stay in range).
+fn edit(rng: &mut Rng, targets: &[String], writer: u64) -> Edit {
+    let target = targets[rng.below(targets.len())].clone();
+    match rng.below(8) {
+        0..=3 => Edit::Set(command(rng, targets, writer)),
+        4 | 5 => Edit::Insert(InsertText {
+            at: format!("{target}@{}", rng.below(3)),
+            text: format!("{} ", WORDS[rng.below(WORDS.len())]),
+            policy: policy(rng, writer),
+        }),
+        6 => Edit::Delete(DeleteText {
+            range: format!("{target}@0:{}", 1 + rng.below(2)),
+            policy: policy(rng, writer),
+        }),
+        _ => Edit::Replace(ReplaceText {
+            find: WORDS[rng.below(6)].to_owned(),
+            with: "omega".to_owned(),
+            case: rng.below(2) == 0,
+            count: Some(1),
+            keep: Keep::First,
+            policy: policy(rng, writer),
+        }),
     }
 }
 
@@ -109,7 +173,7 @@ fn run(seed: u64, writers: u64, per_writer: usize) -> (u64, u64) {
     let body = docx.body().unwrap();
     let mut targets: Vec<String> = body.ids.paragraphs().iter().map(|p| p.id.clone()).collect();
     targets.truncate(40);
-    let mut records: Vec<(Seq, SetText, Snapshot<WordDoc>)> = Vec::new();
+    let mut records: Vec<(Seq, Edit, Snapshot<WordDoc>)> = Vec::new();
     std::thread::scope(|scope| {
         let handles: Vec<_> = (0..writers)
             .map(|w| {
@@ -119,8 +183,9 @@ fn run(seed: u64, writers: u64, per_writer: usize) -> (u64, u64) {
                     let caller = Caller::named(&format!("writer {w}"));
                     (0..per_writer)
                         .filter_map(|_| {
-                            let command = command(&mut rng, targets, w);
-                            let done = shared.run(&caller, &command).unwrap();
+                            let command = edit(&mut rng, targets, w);
+                            // a refusal (a range a concurrent edit shortened) changes nothing
+                            let done = shared.run(&caller, &command).ok()?;
                             done.changed.then(|| (done.version.seq(), command, done.version))
                         })
                         .collect::<Vec<_>>()
@@ -152,12 +217,12 @@ fn run(seed: u64, writers: u64, per_writer: usize) -> (u64, u64) {
 }
 
 #[test]
-fn concurrent_set_texts_equal_their_serial_order() {
+fn concurrent_edits_equal_their_serial_order() {
     let mut conflicts = 0;
     for seed in [11u64, 12] {
         conflicts += run(seed, 4, 6).0;
     }
-    assert!(conflicts > 0, "six writers on one part's text ids should conflict");
+    assert!(conflicts > 0, "writers stamping one document should conflict");
 }
 
 #[test]
