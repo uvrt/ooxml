@@ -1,0 +1,19 @@
+[package]
+name = "ooxml-tools-derive"
+version = "0.1.0"
+description = "#[derive(ToolArgs)] and #[derive(ArgEnum)]: a tool's schema, validation and typed arguments from one Rust struct"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = { version = "2", features = ["full"] }
+quote = "1"
+proc-macro2 = "1"
+
+[lints]
+workspace = true

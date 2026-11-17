@@ -582,5 +582,7 @@ fn ooxml_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<body::Starts>()?;
     m.add_function(wrap_pyfunction!(body::write_plan, m)?)?;
     m.add_function(wrap_pyfunction!(body::write_assemble, m)?)?;
+    // Lane P0d: the session API of the architecture's ooxml-python, beside the prototype's.
+    ooxml_python_session::register(m)?;
     Ok(())
 }

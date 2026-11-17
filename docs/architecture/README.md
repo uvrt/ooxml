@@ -493,6 +493,13 @@ struct SetText {
 - intent rules declared once (`empty_is_absent`, `single_as_list`, `map_as_pairs`, value and argument aliases with a note, kind-neutral fields), replacing today's hidden keywords and the acceptance code scattered across call sites;
 - the schema of the result.
 
+**As built (lane P0c, `crates/ooxml-tools`, `crates/ooxml-tools-derive`).**
+- A field's type gives its schema node (`String`, `i64`, `f64`, `bool`, `Option<T>` optional or, as an item, `orNull`, `Vec<T>`, `IntOrStr<MIN>` for `orInteger`, `NumOrStr` for `orNumber`, a free-form `Map`, a nested `#[derive(ToolArgs)]` struct, a `#[derive(ArgEnum)]` enum); its doc comment is its description.
+- `#[arg(...)]` declares bounds (`minimum`, `maximum`, `min_length`, `max_length`, `min_items`, `max_items`, `format`), the intent rules (`empty_is_absent`, `single_as_list`, `map_as_pairs`, `value_alias(a, b)`, `alias = "..."`, `default = ...` on a required field, `kinds(...)`, `kind_neutral(...)`, `kind_value(...)`, `kind_description(...)`) and what its strings hold (`refs`, `datasets`, `sources`, `facts`); the paths today's `Tool` lists (`items[].target`) follow from the structure.
+- `#[tool(name, description = include_str!("tool.md"), group, mutates, strict, batchable, read_batchable, retry_key, role, priority, route, documents(...), exactly_one(...))]`.
+- Address types (`Address`, `DocId`, `StyleName` above) come with the format tool crates; until then an address is a `String`.
+- A refusal from the contract carries `valid_options` where there is a closed set, and otherwise a `try_call`: the same call with a value at the field that would pass, `fill` naming the fields whose value only shows the kind wanted. Today's Python sends no way out for a missing, mistyped or out-of-range argument; that difference is the rule-2 change, and the only one in the replies.
+
 **Descriptions** are Markdown files. A test counts characters and estimated tokens per tool and per group against budgets; the main session's online count stays the authority.
 
 **Results.**
@@ -525,6 +532,14 @@ All are under 0.1 % of the edit budgets.
 - The adapters (kept in Python, as briefed) read the specs exported by `ooxml_core.tool_specs(kind)`.
 - `definitions`, `render_results`, `system_prompt`, roles and views stay in Python.
 - The clock becomes a `Clock` port in Rust.
+
+**As built (lane P0d, `crates/ooxml-session`, `crates/ooxml-tools-word`, `crates/ooxml-python-session`).**
+- `Session` holds documents by `DocId` (`d1`, never given twice), each an `ooxml-store` `Store<PackageDoc>` over its OPC package: `open(bytes, kind, name)`, `save`, `close` (the session lets go at once; a reader's snapshot stays valid until dropped), `snapshot`, and `update(doc, parts)`, the bridge's way in (section 13): a version's touched parts as bytes, XML parsed on a snapshot, committed as one step through the store (put, remove, and undo's exact restore of a part: `PartChange`).
+- `call(name, arguments, context)`: the arguments taken as meant (`ToolSpec::accept`), the document found by the spec's first document argument, the kind rules applied, the handler run on the head snapshot; never panics, never fails: refusals carry their way out (an unknown tool, a document not open, a kind the tool does not serve yet).
+- The `Registry` makes each `ToolSpec` once and maps tools to the kinds they serve; `ReadHandler<T>` makes a reading tool of a `#[derive(ToolArgs)]` struct and a function of a version. `ooxml-tools-word` holds `describe` over package parts.
+- `CallContext {caller, cancel, deadline}`: a call stops at a safe point (dispatch, each part `describe` reads, each part an update parses) when its `CancelToken` is set, the session's own `Cancel` is, or the deadline read from the session's `Clock` has passed, with `timeout` and no change.
+- One native module: `crates/python`'s `ooxml_core` registers `Session`, `CallContext`, `CancelToken` and `tool_specs(kind)` from `ooxml-python-session` beside the prototype's functions. That crate is this design's `ooxml-python`; the prototype's package holds the name until it is retired, when it becomes the module itself. Every method copies its Python values in, then releases the lock (`py.detach`); a panic in `call` is an `internal` reply.
+- Python's side for docx-agent is `docx_agent.rust.session.RustTools`: `Tool`s from the exported specs and `RustResult`s from the replies, rendered by the unchanged adapters. Nothing uses it by default.
 
 **Library API.**
 - `docx_agent.Document`, `pptx_agent` and `xlsx_agent` become handles. Methods that take and return plain values keep their signatures.

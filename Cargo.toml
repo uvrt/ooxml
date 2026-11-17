@@ -16,6 +16,11 @@ members = [
     "crates/ooxml-schema",
     "crates/ooxml-colour",
     "crates/ooxml-drawingml",
+    "crates/ooxml-tools-derive",
+    "crates/ooxml-tools",
+    "crates/ooxml-tools-word",
+    "crates/ooxml-session",
+    "crates/ooxml-python-session",
     "xtask",
 ]
 # cargo-fuzz's layout: its own workspace, built with `cargo fuzz` (nightly).
@@ -51,6 +56,12 @@ ooxml-word-model = { path = "crates/ooxml-word-model" }
 ooxml-schema = { path = "crates/ooxml-schema" }
 ooxml-colour = { path = "crates/ooxml-colour" }
 ooxml-drawingml = { path = "crates/ooxml-drawingml" }
+ooxml-tools-derive = { path = "crates/ooxml-tools-derive" }
+ooxml-tools = { path = "crates/ooxml-tools" }
+ooxml-tools-word = { path = "crates/ooxml-tools-word" }
+ooxml-store = { path = "crates/ooxml-store" }
+ooxml-session = { path = "crates/ooxml-session" }
+ooxml-python-session = { path = "crates/ooxml-python-session" }
 read-fonts = { version = "0.47", default-features = false, features = ["std"] }
 
 # The architecture's standards (docs/architecture/README.md, section 2), for every crate that

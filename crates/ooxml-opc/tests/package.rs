@@ -188,3 +188,38 @@ fn refuses_two_entries_for_one_part() {
         Err(OpcError::DuplicatePart(_))
     ));
 }
+
+#[test]
+fn a_restored_part_is_exactly_as_it_was() {
+    let bytes = made_up();
+    let first = open(&bytes);
+    let doc = first.tree("word/document.xml").unwrap().unwrap();
+    let changed = first
+        .with_bytes("word/document.xml", Arc::from(&b"<x/>"[..]))
+        .with_new_tree("word/extra.xml", doc.clone())
+        .without("word/media/a.png")
+        .unwrap();
+    assert!(!changed
+        .part("word/document.xml")
+        .unwrap()
+        .same(first.part("word/document.xml").unwrap()));
+    assert!(changed.part("word/extra.xml").unwrap().same(&PartVersion::Tree(doc)));
+    let mut back = changed.clone();
+    for name in ["word/document.xml", "word/extra.xml", "word/media/a.png"] {
+        back = back.restored(name, &first).unwrap();
+    }
+    assert_eq!(back.part_names(), first.part_names());
+    for name in first.part_names() {
+        assert!(back.part(&name).unwrap().same(first.part(&name).unwrap()), "{name}");
+    }
+    // the raw entries come back raw: an unchanged package saves as it was read
+    assert_eq!(back.save().unwrap(), bytes);
+    // and forward again
+    let again = back.restored("word/extra.xml", &changed).unwrap();
+    assert!(again.has_part("word/extra.xml"));
+    let other = open(&made_up());
+    assert!(matches!(
+        back.restored("word/document.xml", &other),
+        Err(OpcError::OtherPackage(_))
+    ));
+}

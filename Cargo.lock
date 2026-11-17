@@ -355,13 +355,26 @@ dependencies = [
 
 [[package]]
 name = "ooxml-python"
-version = "0.8.1"
+version = "0.9.0"
 dependencies = [
  "foldhash",
  "ooxml-core",
+ "ooxml-python-session",
  "ooxml-word",
  "pyo3",
  "rayon",
+ "serde_json",
+]
+
+[[package]]
+name = "ooxml-python-session"
+version = "0.1.0"
+dependencies = [
+ "ooxml-base",
+ "ooxml-session",
+ "ooxml-store",
+ "ooxml-tools",
+ "pyo3",
  "serde_json",
 ]
 
@@ -370,6 +383,21 @@ name = "ooxml-schema"
 version = "0.1.0"
 dependencies = [
  "ooxml-xml",
+]
+
+[[package]]
+name = "ooxml-session"
+version = "0.1.0"
+dependencies = [
+ "ooxml-base",
+ "ooxml-opc",
+ "ooxml-store",
+ "ooxml-tools",
+ "ooxml-tools-word",
+ "ooxml-xml",
+ "ooxml-zip",
+ "serde_json",
+ "thiserror",
 ]
 
 [[package]]
@@ -392,6 +420,36 @@ dependencies = [
  "ooxml-base",
  "ooxml-derive",
  "thiserror",
+]
+
+[[package]]
+name = "ooxml-tools"
+version = "0.1.0"
+dependencies = [
+ "ooxml-tools-derive",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "ooxml-tools-derive"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "ooxml-tools-word"
+version = "0.1.0"
+dependencies = [
+ "ooxml-base",
+ "ooxml-opc",
+ "ooxml-tools",
+ "ooxml-xml",
+ "ooxml-zip",
+ "serde_json",
 ]
 
 [[package]]
@@ -865,6 +923,9 @@ dependencies = [
 [[package]]
 name = "xtask"
 version = "0.1.0"
+dependencies = [
+ "serde_json",
+]
 
 [[package]]
 name = "yoke"
