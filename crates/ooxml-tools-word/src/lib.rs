@@ -11,8 +11,10 @@
 #![forbid(unsafe_code)]
 
 mod describe;
+mod word_read;
 
 pub use describe::{describe, Describe, DESCRIBED, NOT_DESCRIBED};
+pub use word_read::{word_read, Story, View, WordRead};
 
 /// The document kind these tools serve.
 pub const KIND: &str = "docx";

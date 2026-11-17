@@ -30,6 +30,7 @@ pub mod layout;
 pub mod layout_bench;
 pub mod layout_tables;
 pub mod metafile;
+pub mod reads;
 pub mod records;
 pub mod replay;
 pub mod text;

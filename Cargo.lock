@@ -382,6 +382,8 @@ dependencies = [
  "ooxml-opc",
  "ooxml-schema",
  "ooxml-text",
+ "ooxml-tools",
+ "ooxml-tools-word",
  "ooxml-word-layout",
  "ooxml-word-model",
  "ooxml-xml",

@@ -1,108 +1,24 @@
-//! `describe`: the document at a glance (today's `word_describe`), over package parts.
+//! Owns: the fields of `describe` that a version's package parts give without the Word
+//! model: the compatibility mode, the core properties, comments, notes and content
+//! controls, each as docx-agent counts it.
 //!
-//! Owns: the tool's definition (one schema for every kind, as the shared `describe` has)
-//! and the fields of its data that the parts give without the Word model: the name, the
-//! compatibility mode, the core properties, comments, notes and content controls, each as
-//! docx-agent counts it, keyed and ordered as its reply is.
-//!
-//! Must not: lay out (pages), resolve styles (headings, styles in use), give ids from the
-//! id ledger (headings, tables, drawings, tagged controls), or read the session's state
-//! (tracking, the problems a document opened with): those fields are [`NOT_DESCRIBED`]
-//! until the model and the session have them.
+//! Must not: resolve styles or name blocks (the Word model's reading does).
 
-use ooxml_base::{BaseError, Cancel};
-use ooxml_opc::{OpcError, Package};
-use ooxml_tools::{Done, Failure, ToolArgs, ToolError};
+use super::{cancelled, opc, python_int, DEFAULT_COMPATIBILITY_MODE, PROPERTIES};
+use ooxml_base::Cancel;
+use ooxml_opc::Package;
+use ooxml_tools::ToolError;
 use ooxml_word_model::parts::{
-    descendants, leading_text, live_elements, main_part, related, related_parts, story_parts, REL_COMMENTS,
-    REL_COMMENTS_EXTENDED, REL_COMMENTS_IDS, REL_CORE, REL_SETTINGS, W, W14, W15, W16CID,
+    descendants, leading_text, live_elements, related, related_parts, REL_COMMENTS, REL_COMMENTS_EXTENDED,
+    REL_COMMENTS_IDS, REL_CORE, REL_SETTINGS, W, W14, W15, W16CID,
 };
 use ooxml_xml::{Element, Tree};
 use serde_json::{Map, Value};
 
-/// `describe`'s arguments.
-#[derive(ToolArgs, Debug, Clone, PartialEq, Eq)]
-#[tool(name = "describe", description = include_str!("describe.md"))]
-pub struct Describe {
-    /// Document id.
-    pub doc: String,
-}
-
-/// The keys of today's data that this handler gives, in their order there.
-pub const DESCRIBED: &[&str] = &[
-    "name",
-    "compatibility_mode",
-    "properties",
-    "comments",
-    "notes",
-    "controls",
-];
-
-/// The keys of today's data that it does not give yet, and why (the hand-back's list).
-pub const NOT_DESCRIBED: &[(&str, &str)] = &[
-    ("pages", "the Word layout (phase PL, step L4)"),
-    ("tracking", "the session's tracking state (phase P2)"),
-    ("headings", "the styles cascade and the id ledger (phase P1)"),
-    ("headings_note", "with headings"),
-    ("sections", "the Word model's sections (phase P1)"),
-    ("styles_in_use", "the styles cascade (phase P1)"),
-    ("revisions", "tracked changes grouped as changes (phase P1)"),
-    ("fields", "fields threaded through runs (phase P1)"),
-    ("tables", "the id ledger and accepted sizes (phase P1)"),
-    ("drawings", "the id ledger (phase P1)"),
-    ("tagged", "the id ledger (phase P1)"),
-    ("problems", "validation on open (phase P2)"),
-];
-
-/// The compatibility mode of a document whose settings name none: Word 2007's.
-const DEFAULT_COMPATIBILITY_MODE: i64 = 12;
-
-/// The core properties `describe` shows, in the order docx-agent reads them.
-const PROPERTIES: [(&str, &str, &str); 3] = [
-    ("title", DC, "title"),
-    ("subject", DC, "subject"),
-    ("author", DC, "creator"),
-];
-const DC: &str = "http://purl.org/dc/elements/1.1/";
-
-/// `describe` of a Word document `name` at one version of its package. Cancellation is
-/// checked once per part read.
-///
-/// # Errors
-/// `timeout` when `cancel` asks to stop; `internal` when a part it reads is not XML or the
-/// package has no main part.
-pub fn describe(
-    _args: &Describe,
-    package: &Package,
-    name: &str,
-    cancel: &dyn Cancel,
-) -> Result<Done<Value>, ToolError> {
-    let reader = Reader { package, cancel };
-    let main = main_part(package)
-        .map_err(opc)?
-        .ok_or_else(|| ToolError::internal("not a Word package: no main document part", "describe:main"))?;
-    let mut data = Map::new();
-    data.insert("name".into(), Value::from(name));
-    data.insert(
-        "compatibility_mode".into(),
-        Value::from(reader.compatibility_mode(&main)?),
-    );
-    data.insert("properties".into(), Value::Object(reader.properties()?));
-    data.insert("comments".into(), reader.comments(&main)?);
-    let mut parts = vec![main.clone()];
-    parts.extend(story_parts(package, &main).map_err(opc)?);
-    let (notes, controls) = reader.notes_and_controls(&parts)?;
-    data.insert("notes".into(), Value::Object(notes));
-    data.insert("controls".into(), Value::from(controls));
-    let mut done = Done::new(format!("Described {name}"));
-    done.data = Some(Value::Object(data));
-    Ok(done)
-}
-
 /// One version's parts, read with cancellation checked per part.
-struct Reader<'a> {
-    package: &'a Package,
-    cancel: &'a dyn Cancel,
+pub(super) struct Reader<'a> {
+    pub(super) package: &'a Package,
+    pub(super) cancel: &'a dyn Cancel,
 }
 
 impl Reader<'_> {
@@ -112,7 +28,7 @@ impl Reader<'_> {
     }
 
     /// `w:compatSetting w:name="compatibilityMode"` in the settings' `w:compat`, or 12.
-    fn compatibility_mode(&self, main: &str) -> Result<i64, ToolError> {
+    pub(super) fn compatibility_mode(&self, main: &str) -> Result<i64, ToolError> {
         let Some(part) = related(self.package, main, REL_SETTINGS).map_err(opc)? else {
             return Ok(DEFAULT_COMPATIBILITY_MODE);
         };
@@ -132,7 +48,7 @@ impl Reader<'_> {
     }
 
     /// The title, subject and author the core properties set.
-    fn properties(&self) -> Result<Map<String, Value>, ToolError> {
+    pub(super) fn properties(&self) -> Result<Map<String, Value>, ToolError> {
         let mut out = Map::new();
         let rels = ooxml_word_model::parts::relationships(self.package, "").map_err(opc)?;
         let part = rels
@@ -155,7 +71,7 @@ impl Reader<'_> {
     }
 
     /// Threads, open threads and comments by author, as `word_describe` counts them.
-    fn comments(&self, main: &str) -> Result<Value, ToolError> {
+    pub(super) fn comments(&self, main: &str) -> Result<Value, ToolError> {
         let records = self.comment_records(main)?;
         // A comment is found by its id: two records of one id read as the first.
         let first = |id: &str| records.iter().find(|r| r.id == id);
@@ -267,7 +183,7 @@ impl Reader<'_> {
 
     /// Footnotes and endnotes by kind (separators left out), and the content controls of
     /// every story, as `word_describe` counts them.
-    fn notes_and_controls(&self, parts: &[String]) -> Result<(Map<String, Value>, u64), ToolError> {
+    pub(super) fn notes_and_controls(&self, parts: &[String]) -> Result<(Map<String, Value>, u64), ToolError> {
         let mut notes: Vec<(&str, u64)> = Vec::new();
         let mut controls = 0_u64;
         for part in parts {
@@ -317,44 +233,4 @@ fn comment_last_para(comment: &Element) -> String {
 
 fn lookup<'a, T>(pairs: &'a [(String, T)], key: &str) -> Option<&'a T> {
     pairs.iter().find(|(k, _)| k == key).map(|(_, v)| v)
-}
-
-/// A whole number as Python's `int(text)` reads the forms Word writes (spaces around, a
-/// sign); `None` where it raises.
-fn python_int(text: &str) -> Option<i64> {
-    let text = text.trim();
-    let digits = text.strip_prefix(['+', '-']).unwrap_or(text);
-    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
-        return None;
-    }
-    text.parse().ok()
-}
-
-fn opc(error: OpcError) -> ToolError {
-    ToolError::internal(error.to_string(), "describe:package")
-}
-
-fn cancelled(error: BaseError) -> ToolError {
-    match error {
-        BaseError::Cancelled => ToolError::failure(
-            Failure::Timeout,
-            "describe stopped before it finished (the call was cancelled or ran past its deadline); nothing changed",
-        ),
-        other => ToolError::internal(other.to_string(), "describe:cancel"),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::python_int;
-
-    #[test]
-    fn whole_numbers_read_as_python_reads_them() {
-        assert_eq!(python_int(" 15 "), Some(15));
-        assert_eq!(python_int("+14"), Some(14));
-        assert_eq!(python_int("-1"), Some(-1));
-        assert_eq!(python_int(""), None);
-        assert_eq!(python_int("15.0"), None);
-        assert_eq!(python_int("x"), None);
-    }
 }

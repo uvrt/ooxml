@@ -13,7 +13,8 @@
 //! - list labels counted as Word counts them, kept incrementally ([`labels`]);
 //! - opening versions of one document, reusing what is unchanged ([`Model`],
 //!   [`WordDocument`]);
-//! - stable addressing: block ids, the id ledger and its `docx-ids.1.` state ([`ids`]).
+//! - stable addressing: block ids, the id ledger and its `docx-ids.1.` state ([`ids`]);
+//! - a version as docx-agent's reading tools read it ([`docx`], [`parts`]).
 //!
 //! Must not: lay out pages or compute fields' values (`ooxml-word-layout`, L3), edit, or
 //! read another library's internals. Nothing here depends on an interpreter lock: every
@@ -26,10 +27,12 @@
 
 mod digest;
 pub mod document;
+pub mod docx;
 mod error;
 pub mod ids;
 mod imagemeta;
 pub mod labels;
+pub mod markdown;
 pub mod model;
 pub mod numbering;
 mod open;
@@ -47,4 +50,4 @@ pub mod xmlread;
 
 pub use document::{Context, Notes, ResolvedParagraph, WordDocument};
 pub use error::WordError;
-pub use open::{Model, OpenStats};
+pub use open::{read_context, Model, OpenStats};
