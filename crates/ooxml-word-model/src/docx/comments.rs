@@ -29,11 +29,10 @@ pub struct Comment {
     pub text: String,
 }
 
-fn by_para(
-    docx: &Docx,
-    rel_type: &str,
-    namespace: &str,
-) -> HashMap<String, (Option<String>, Option<String>, Option<String>)> {
+/// A `commentsIds` or `commentsEx` entry: its `durableId`, `paraIdParent` and `done`.
+type Entry = (Option<String>, Option<String>, Option<String>);
+
+fn by_para(docx: &Docx, rel_type: &str, namespace: &str) -> HashMap<String, Entry> {
     let mut out = HashMap::new();
     let Ok(Some(part)) = related(&docx.package, &docx.main, rel_type) else {
         return out;

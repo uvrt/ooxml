@@ -121,7 +121,7 @@ impl Reader<'_> {
         (out, placed)
     }
 
-    fn table_blocks(&mut self, part: &str, table: &Placed, mut prefix: Option<Vec<Placed>>) -> (Vec<Record>, bool) {
+    fn table_blocks(&mut self, part: &str, table: &Placed, prefix: Option<Vec<Placed>>) -> (Vec<Record>, bool) {
         let Some(story) = self.docx.part(part) else {
             return (Vec::new(), false);
         };
@@ -135,13 +135,15 @@ impl Reader<'_> {
             Some(found) => crate::docx::style_name(found).map(str::to_owned),
             None => Some(style.clone()),
         };
-        let mut columns = find_path(&table.element, &["tblGrid"]).map_or(0, |g| {
+        let columns = find_path(&table.element, &["tblGrid"]).map_or(0, |g| {
             g.child_elements().filter(|c| c.name().is(Some(W), "gridCol")).count()
         });
-        let mut origins: HashMap<usize, (usize, usize)> = HashMap::new();
-        let mut rows: Vec<Vec<CellRecord>> = Vec::new();
-        let mut hidden: Vec<HashSet<usize>> = Vec::new();
-        let (mut header_rows, mut counting_header, mut placed_any) = (0, true, false);
+        let mut grid = Grid {
+            columns,
+            prefix,
+            counting_header: true,
+            ..Grid::default()
+        };
         for (r, (row_path, _)) in entry.rows.iter().enumerate() {
             let Some(row) = crate::docx::at_path(&root, row_path) else {
                 continue;
@@ -150,84 +152,21 @@ impl Reader<'_> {
                 element: Arc::clone(row),
                 path: row_path.clone(),
             };
-            let properties = row.element.find(Some(W), "trPr");
-            let has = |local: &str| properties.is_some_and(|p| p.find(Some(W), local).is_some());
-            if (self.view == View::Current && has("del")) || (self.view == View::Original && has("ins")) {
-                continue;
-            }
-            let header = properties
-                .and_then(|p| p.find(Some(W), "tblHeader"))
-                .is_some_and(|h| !matches!(h.attribute(Some(W), "val"), Some("0" | "false" | "off")));
-            if counting_header && header {
-                header_rows += 1;
-            } else {
-                counting_header = false;
-            }
-            let mut line: Vec<CellRecord> = Vec::new();
-            let mut gone_here = HashSet::new();
-            let mut column = usize::try_from(int_val(find_path(&row.element, &["trPr", "gridBefore"]), 0)).unwrap_or(0);
-            let all = cells(&row);
-            for tc in &all {
-                let span =
-                    usize::try_from(int_val(find_path(&tc.element, &["tcPr", "gridSpan"]), 1).max(1)).unwrap_or(1);
-                if self.cell_hidden(&tc.element) {
-                    gone_here.extend(column..column + span);
-                    column += span;
-                    continue;
-                }
-                let merge = find_path(&tc.element, &["tcPr", "vMerge"]);
-                let mut continues =
-                    merge.is_some_and(|m| matches!(m.attribute(Some(W), "val"), None | Some("continue")));
-                if self.view == View::Current {
-                    if let Some(tracked) = find_path(&tc.element, &["tcPr", "cellMerge"]) {
-                        continues = tracked.attribute(Some(W), "vMerge") == Some("cont");
-                    }
-                }
-                if let (true, Some(origin)) = (continues, origins.get(&column).copied()) {
-                    if let Some(cell) = rows.get_mut(origin.0).and_then(|l| l.get_mut(origin.1)) {
-                        cell.row_span += 1;
-                    }
-                } else {
-                    let first = if rows.is_empty() && line.is_empty() {
-                        prefix.take()
-                    } else {
-                        None
-                    };
-                    let (records, placed) = self.cell_records(part, tc, first, &style);
-                    placed_any |= placed;
-                    for c in column..column + span {
-                        origins.insert(c, (rows.len(), line.len()));
-                    }
-                    line.push(CellRecord {
-                        id: format!("{}/c{r},{column}", entry.id),
-                        row: r,
-                        column,
-                        row_span: 1,
-                        column_span: span,
-                        records,
-                    });
-                }
-                column += span;
-            }
-            let after = usize::try_from(int_val(find_path(&row.element, &["trPr", "gridAfter"]), 0)).unwrap_or(0);
-            columns = columns.max(column + after);
-            if !line.is_empty() || all.is_empty() {
-                rows.push(line);
-                hidden.push(gone_here);
-            }
+            self.table_row(part, &entry.id, &style, &mut grid, r, &row);
         }
-        if rows.is_empty() {
-            return (Vec::new(), placed_any);
+        if grid.rows.is_empty() {
+            return (Vec::new(), grid.placed);
         }
-        let dropped: HashSet<usize> = hidden.iter().flatten().copied().collect();
-        let mut width = columns;
+        let dropped: HashSet<usize> = grid.hidden.iter().flatten().copied().collect();
+        let mut width = grid.columns;
         if !dropped.is_empty() {
-            let shown: HashSet<usize> = rows
+            let shown: HashSet<usize> = grid
+                .rows
                 .iter()
                 .flatten()
                 .flat_map(|c| c.column..c.column + c.column_span)
                 .collect();
-            width -= (0..columns)
+            width -= (0..grid.columns)
                 .filter(|c| !shown.contains(c) && dropped.contains(c))
                 .count();
         }
@@ -237,12 +176,94 @@ impl Reader<'_> {
             element: Arc::clone(&table.element),
             style_name,
             columns: width,
-            rows,
-            header_rows,
+            rows: grid.rows,
+            header_rows: grid.header_rows,
             table_style: style,
         };
-        (vec![Record::Table(Box::new(record))], placed_any)
+        (vec![Record::Table(Box::new(record))], grid.placed)
     }
+
+    /// One row of a table in the view, into `grid`.
+    fn table_row(&mut self, part: &str, table_id: &str, style: &str, grid: &mut Grid, r: usize, row: &Placed) {
+        let properties = row.element.find(Some(W), "trPr");
+        let has = |local: &str| properties.is_some_and(|p| p.find(Some(W), local).is_some());
+        if (self.view == View::Current && has("del")) || (self.view == View::Original && has("ins")) {
+            return;
+        }
+        let header = properties
+            .and_then(|p| p.find(Some(W), "tblHeader"))
+            .is_some_and(|h| !matches!(h.attribute(Some(W), "val"), Some("0" | "false" | "off")));
+        if grid.counting_header && header {
+            grid.header_rows += 1;
+        } else {
+            grid.counting_header = false;
+        }
+        let mut line: Vec<CellRecord> = Vec::new();
+        let mut gone_here = HashSet::new();
+        let mut column = usize::try_from(int_val(find_path(&row.element, &["trPr", "gridBefore"]), 0)).unwrap_or(0);
+        let all = cells(row);
+        for tc in &all {
+            let span = usize::try_from(int_val(find_path(&tc.element, &["tcPr", "gridSpan"]), 1).max(1)).unwrap_or(1);
+            if self.cell_hidden(&tc.element) {
+                gone_here.extend(column..column + span);
+            } else if let (true, Some(origin)) = (self.continues(&tc.element), grid.origins.get(&column).copied()) {
+                if let Some(cell) = grid.rows.get_mut(origin.0).and_then(|l| l.get_mut(origin.1)) {
+                    cell.row_span += 1;
+                }
+            } else {
+                let first = if grid.rows.is_empty() && line.is_empty() {
+                    grid.prefix.take()
+                } else {
+                    None
+                };
+                let (records, placed) = self.cell_records(part, tc, first, style);
+                grid.placed |= placed;
+                for c in column..column + span {
+                    grid.origins.insert(c, (grid.rows.len(), line.len()));
+                }
+                let id = format!("{table_id}/c{r},{column}");
+                line.push(CellRecord {
+                    id,
+                    row: r,
+                    column,
+                    row_span: 1,
+                    column_span: span,
+                    records,
+                });
+            }
+            column += span;
+        }
+        let after = usize::try_from(int_val(find_path(&row.element, &["trPr", "gridAfter"]), 0)).unwrap_or(0);
+        grid.columns = grid.columns.max(column + after);
+        if !line.is_empty() || all.is_empty() {
+            grid.rows.push(line);
+            grid.hidden.push(gone_here);
+        }
+    }
+
+    /// Whether a cell continues a vertical merge (a pending tracked one as accepting leaves it).
+    fn continues(&self, tc: &Element) -> bool {
+        if self.view == View::Current {
+            if let Some(tracked) = find_path(tc, &["tcPr", "cellMerge"]) {
+                return tracked.attribute(Some(W), "vMerge") == Some("cont");
+            }
+        }
+        find_path(tc, &["tcPr", "vMerge"])
+            .is_some_and(|m| matches!(m.attribute(Some(W), "val"), None | Some("continue")))
+    }
+}
+
+/// A table's rows as they are read.
+#[derive(Default)]
+struct Grid {
+    columns: usize,
+    origins: HashMap<usize, (usize, usize)>,
+    rows: Vec<Vec<CellRecord>>,
+    hidden: Vec<HashSet<usize>>,
+    header_rows: usize,
+    counting_header: bool,
+    placed: bool,
+    prefix: Option<Vec<Placed>>,
 }
 
 /// A table's `w:tblStyle` (`""` where it names none).

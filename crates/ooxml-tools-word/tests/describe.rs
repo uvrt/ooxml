@@ -143,7 +143,11 @@ fn describes_what_the_parts_say() {
         })
     );
     let keys: Vec<&str> = data.as_object().unwrap().keys().map(String::as_str).collect();
-    let listed: Vec<&str> = DESCRIBED.iter().copied().filter(|k| !["tagged", "headings_note"].contains(k)).collect();
+    let listed: Vec<&str> = DESCRIBED
+        .iter()
+        .copied()
+        .filter(|k| !["tagged", "headings_note"].contains(k))
+        .collect();
     assert_eq!(keys, listed);
 }
 

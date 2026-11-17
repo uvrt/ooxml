@@ -14,6 +14,9 @@ use ooxml_xml::Element;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+/// A cell element with its place in its part.
+type Placed = (Arc<Element>, Box<[u32]>);
+
 /// A table's grid.
 pub struct TableGrid<'a> {
     part: &'a StoryPart,
@@ -22,7 +25,7 @@ pub struct TableGrid<'a> {
     /// Per row, per grid position: the origin `(row, column)` of the cell there.
     grid: Vec<Vec<Option<(usize, usize)>>>,
     /// The cell element at each origin, with its place.
-    cells: HashMap<(usize, usize), (Arc<Element>, Box<[u32]>)>,
+    cells: HashMap<(usize, usize), Placed>,
 }
 
 fn int_val(node: Option<&Element>, default: i64) -> i64 {

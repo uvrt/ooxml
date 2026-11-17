@@ -77,8 +77,11 @@ pub(super) fn written(inline: &[Inline], line_start: bool, table: bool) -> (Stri
         outer: 0,
         delimiters: Vec::new(),
     };
-    let mut at_start = line_start;
-    let mut after_note = false;
+    let mut state = State {
+        at_start: line_start,
+        after_note: false,
+        table,
+    };
     for (k, item) in items.iter().enumerate() {
         let item_href = href_of(item).map(str::to_owned);
         if item_href != w.href {
@@ -87,75 +90,84 @@ pub(super) fn written(inline: &[Inline], line_start: bool, table: bool) -> (Stri
                 open_link(&mut w, &items, k, target);
             }
         }
-        if let Inline::Text { text, marks, .. } = item {
-            let wanted = marks_of(item);
-            w.close_to(&wanted);
-            let mut opening: Vec<Mark> = wanted.iter().copied().filter(|m| !w.open.contains(m)).collect();
-            opening.sort_by_key(|m| std::cmp::Reverse(lasts(&items, k, *m)));
-            for m in opening {
-                w.delimit(m, true);
-                w.open.push(m);
-            }
-            if marks.contains(&Mark::Code) {
-                w.out.push(code(text));
-            } else {
-                let mut escaped = escape(text, table, after_note);
-                if at_start {
-                    escaped = escape_line_start(&escaped);
-                }
-                w.out.push(escaped);
-            }
-            at_start = at_start && text.trim().is_empty();
-            after_note = false;
-            continue;
+        match item {
+            Inline::Text { text, marks, .. } => w.text(&items, k, text, marks, &mut state),
+            other => w.other(&items, k, other, &mut state),
         }
-        if w.href.is_none() {
-            w.close_all();
+    }
+    w.close_link();
+    w.close_all();
+    (w.out.concat(), w.delimiters)
+}
+
+/// Where a block's writing stands.
+struct State {
+    at_start: bool,
+    after_note: bool,
+    table: bool,
+}
+
+impl Writer {
+    fn text(&mut self, items: &[Inline], k: usize, text: &str, marks: &Marks, state: &mut State) {
+        let wanted: Marks = marks.iter().copied().filter(|m| *m != Mark::Code).collect();
+        self.close_to(&wanted);
+        let mut opening: Vec<Mark> = wanted.iter().copied().filter(|m| !self.open.contains(m)).collect();
+        opening.sort_by_key(|m| std::cmp::Reverse(lasts(items, k, *m)));
+        for m in opening {
+            self.delimit(m, true);
+            self.open.push(m);
+        }
+        if marks.contains(&Mark::Code) {
+            self.out.push(code(text));
         } else {
-            w.close_to(&Marks::new());
+            let mut escaped = escape(text, state.table, state.after_note);
+            if state.at_start {
+                escaped = escape_line_start(&escaped);
+            }
+            self.out.push(escaped);
+        }
+        state.at_start = state.at_start && text.trim().is_empty();
+        state.after_note = false;
+    }
+
+    fn other(&mut self, items: &[Inline], k: usize, item: &Inline, state: &mut State) {
+        if self.href.is_none() {
+            self.close_all();
+        } else {
+            self.close_to(&Marks::new());
         }
         match item {
             Inline::Html(text) | Inline::Critic(text) => {
-                w.out.push(text.clone());
-                at_start = false;
+                self.out.push(text.clone());
+                state.at_start = false;
             }
             Inline::Break => {
-                w.close_link();
-                w.close_all();
-                if ends_block(&items, k) {
-                    w.out.push("<br>".to_owned());
-                    at_start = false;
-                } else {
-                    w.out.push("\\\n".to_owned());
-                    at_start = true;
-                }
+                self.close_link();
+                self.close_all();
+                let last = ends_block(items, k);
+                self.out.push(if last { "<br>" } else { "\\\n" }.to_owned());
+                state.at_start = !last;
             }
             Inline::Image { alt, src, title, .. } => {
                 let title = title
                     .as_deref()
                     .filter(|t| !t.is_empty())
                     .map(|t| format!(" \"{}\"", title_text(t)));
-                w.out.push(format!(
-                    "![{}]({}{})",
-                    escape(alt, table, false),
-                    destination(src),
-                    title.unwrap_or_default()
-                ));
-                at_start = false;
+                let alt = escape(alt, state.table, false);
+                self.out
+                    .push(format!("![{alt}]({}{})", destination(src), title.unwrap_or_default()));
+                state.at_start = false;
             }
             Inline::NoteRef(label) => {
-                w.out.push(format!("[^{label}]"));
-                at_start = false;
-                after_note = true;
-                continue;
+                self.out.push(format!("[^{label}]"));
+                state.at_start = false;
+                state.after_note = true;
+                return;
             }
             Inline::Text { .. } => {}
         }
-        after_note = false;
+        state.after_note = false;
     }
-    w.close_link();
-    w.close_all();
-    (w.out.concat(), w.delimiters)
 }
 
 fn open_link(w: &mut Writer, items: &[Inline], k: usize, target: String) {
@@ -244,8 +256,10 @@ pub(super) fn spaced(inline: &[Inline]) -> Vec<Inline> {
             out.push(piece(text, shared));
             continue;
         }
-        let lead = &text[..text.len() - text.trim_start_matches([' ', '\t']).len()];
-        let trail = &text[text.trim_end_matches([' ', '\t']).len()..];
+        let lead = text
+            .get(..text.len() - text.trim_start_matches([' ', '\t']).len())
+            .unwrap_or("");
+        let trail = text.get(text.trim_end_matches([' ', '\t']).len()..).unwrap_or("");
         if !lead.is_empty() {
             out.push(piece(lead, marks.intersection(&before).copied().collect()));
         }
@@ -275,7 +289,7 @@ fn entity_at(rest: &str) -> bool {
         return false;
     };
     let Some(end) = body.find(';') else { return false };
-    let name = &body[..end];
+    let Some(name) = body.get(..end) else { return false };
     if let Some(num) = name.strip_prefix('#') {
         if let Some(hex) = num.strip_prefix(['x', 'X']) {
             return (1..=6).contains(&hex.len()) && hex.bytes().all(|b| b.is_ascii_hexdigit());
@@ -291,13 +305,17 @@ fn entity_at(rest: &str) -> bool {
 fn escape(text: &str, table: bool, after_note: bool) -> String {
     let mut out = String::with_capacity(text.len());
     for (k, (at, c)) in text.char_indices().enumerate() {
-        let rest = &text[at..];
+        let rest = text.get(at..).unwrap_or("");
         if ALWAYS.contains(&c) || (table && c == '|') {
             out.push('\\');
             out.push(c);
         } else if c == '&' && entity_at(rest) {
             out.push_str("\\&");
-        } else if c == '{' && CRITIC_OPEN.iter().any(|o| rest[1..].starts_with(o)) {
+        } else if c == '{'
+            && CRITIC_OPEN
+                .iter()
+                .any(|o| rest.get(1..).is_some_and(|r| r.starts_with(o)))
+        {
             out.push_str("\\{");
         } else if c == ':' && k == 0 && after_note {
             out.push_str("\\:");
@@ -317,9 +335,10 @@ fn escape_line_start(text: &str) -> String {
     }
     let digits = stripped.bytes().take_while(u8::is_ascii_digit).count();
     if (1..=9).contains(&digits) {
-        if let Some(rest) = stripped[digits..].strip_prefix(['.', ')']) {
-            let mark = &stripped[digits..=digits];
-            return format!("{}\\{mark}{rest}", &stripped[..digits]);
+        let (number, after) = stripped.split_at_checked(digits).unwrap_or((stripped, ""));
+        if let Some(rest) = after.strip_prefix(['.', ')']) {
+            let mark = after.get(..1).unwrap_or("");
+            return format!("{number}\\{mark}{rest}");
         }
     }
     stripped.to_owned()
@@ -338,26 +357,27 @@ fn title_text(title: &str) -> String {
 }
 
 fn edge_spaces(text: &str) -> String {
-    let trimmed = |c: char| TRIMMED.contains(&c) || c == ' ' || c == '\t';
+    let trimmed = |c: &char| TRIMMED.contains(c) || *c == ' ' || *c == '\t';
+    let reference = |c: &char| {
+        if TRIMMED.contains(c) {
+            format!("&#x{:X};", u32::from(*c))
+        } else {
+            c.to_string()
+        }
+    };
     text.split('\n')
         .map(|line| {
             let chars: Vec<char> = line.chars().collect();
-            let start = chars.iter().take_while(|c| trimmed(**c)).count();
-            let end = chars.len() - chars[start..].iter().rev().take_while(|c| trimmed(**c)).count();
-            let edges = chars[..start].iter().chain(&chars[end..]);
-            if !edges.clone().any(|c| TRIMMED.contains(c)) {
+            let start = chars.iter().take_while(|c| trimmed(c)).count();
+            let (lead, rest) = chars.split_at(start);
+            let tail = rest.iter().rev().take_while(|c| trimmed(c)).count();
+            let (middle, trail) = rest.split_at(rest.len() - tail);
+            if !lead.iter().chain(trail).any(|c| TRIMMED.contains(c)) {
                 return line.to_owned();
             }
-            let reference = |c: &char| {
-                if TRIMMED.contains(c) {
-                    format!("&#x{:X};", u32::from(*c))
-                } else {
-                    c.to_string()
-                }
-            };
-            let lead: String = chars[..start].iter().map(reference).collect();
-            let middle: String = chars[start..end].iter().collect();
-            let trail: String = chars[end..].iter().map(reference).collect();
+            let lead: String = lead.iter().map(reference).collect();
+            let middle: String = middle.iter().collect();
+            let trail: String = trail.iter().map(reference).collect();
             format!("{lead}{middle}{trail}")
         })
         .collect::<Vec<_>>()

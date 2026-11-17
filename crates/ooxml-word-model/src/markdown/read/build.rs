@@ -421,11 +421,7 @@ fn lists(reader: &mut Reader<'_>, records: &[ParagraphRecord], before: &[Block])
         let mut record = record.clone();
         let mut item = paragraph_blocks(reader, &mut record, true);
         item.extend(after(std::slice::from_ref(&record)));
-        if let Some(list) = stack
-            .last()
-            .and_then(|s| Some(s.1.clone()))
-            .and_then(|p| list_at(&mut out, &p))
-        {
+        if let Some(list) = stack.last().map(|s| s.1.clone()).and_then(|p| list_at(&mut out, &p)) {
             list.items.push(item);
         }
     }
@@ -528,7 +524,7 @@ fn gfm(reader: &Reader<'_>, t: &TableRecord) -> Option<Table> {
                     if !matches!(p.kind, Kind::Paragraph | Kind::Quote | Kind::Code)
                         || !p.text_boxes.is_empty()
                         || p.section.is_some()
-                        || p.inline.iter().any(|i| *i == Inline::Break)
+                        || p.inline.contains(&Inline::Break)
                     {
                         return None;
                     }

@@ -194,8 +194,11 @@ fn expand_heading(reader: &Reader<'_>, range: &str) -> Result<String, RangeError
     }
 }
 
+/// A span's two ends, `None` for an open one.
+type Ends<'a> = (Option<&'a str>, Option<&'a str>);
+
 /// The two ends of a span of blocks, or `None` when `range` is not one.
-fn span_ends(range: &str) -> Result<Option<(Option<&str>, Option<&str>)>, RangeError> {
+fn span_ends(range: &str) -> Result<Option<Ends<'_>>, RangeError> {
     if !range.contains("..") {
         return Ok(None);
     }

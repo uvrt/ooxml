@@ -11,9 +11,12 @@
 
 mod build;
 mod inline;
+mod lookups;
 mod table;
 
 pub use build::{build, project};
+pub use lookups::note_elements;
+use lookups::{anchors, notes_of};
 
 use crate::docx::controls::{control_kind, controls};
 use crate::docx::drawings::{all_drawings, pictures};
@@ -759,67 +762,6 @@ fn tidy(inline: Vec<Inline>) -> Vec<Inline> {
                 out.swap(j - 1, j);
                 j -= 1;
             }
-        }
-    }
-    out
-}
-
-/// The notes by `(fn|en, w:id)`.
-fn notes_of(docx: &Docx) -> HashMap<(String, String), String> {
-    let mut out = HashMap::new();
-    for (part, identifier, _) in note_elements(docx) {
-        let _ = part;
-        if let Some((prefix, id)) = identifier.split_once(':') {
-            out.insert((prefix.to_owned(), id.to_owned()), identifier.clone());
-        }
-    }
-    out
-}
-
-/// Every footnote and endnote (separators aside): its part, id (`fn:1`) and element.
-#[must_use]
-pub fn note_elements(docx: &Docx) -> Vec<(String, String, Placed)> {
-    let mut out = Vec::new();
-    for part in &docx.parts {
-        let root = part.root();
-        let prefix = if root.name().is(Some(W), "footnotes") {
-            "fn"
-        } else if root.name().is(Some(W), "endnotes") {
-            "en"
-        } else {
-            continue;
-        };
-        for (k, node) in root.children().iter().enumerate() {
-            let Node::Element(note) = node else { continue };
-            let is_note = note.name().is(Some(W), "footnote") || note.name().is(Some(W), "endnote");
-            if is_note && matches!(note.attribute(Some(W), "type"), None | Some("normal")) {
-                let id = note.attribute(Some(W), "id").unwrap_or("None");
-                out.push((
-                    part.part.clone(),
-                    format!("{prefix}:{id}"),
-                    Placed {
-                        element: Arc::clone(note),
-                        path: vec![index(k)].into_boxed_slice(),
-                    },
-                ));
-            }
-        }
-    }
-    out
-}
-
-/// Bookmark names an internal hyperlink points at.
-fn anchors(docx: &Docx) -> HashSet<String> {
-    let mut out = HashSet::new();
-    for part in &docx.parts {
-        let mut stack = vec![Arc::clone(part.root())];
-        while let Some(e) = stack.pop() {
-            if e.name().is(Some(W), "hyperlink") {
-                if let Some(a) = e.attribute(Some(W), "anchor").filter(|a| !a.is_empty()) {
-                    out.insert(a.to_owned());
-                }
-            }
-            stack.extend(e.child_elements().cloned());
         }
     }
     out

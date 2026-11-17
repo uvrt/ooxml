@@ -30,6 +30,9 @@ theirs until they are replaced.
 | `ooxml-metafile`, `ooxml-scene` (workspace crates) | | ooxml-oracle (test support only) | The metafile players' differential (`metafile-diff`, `tests/metafile_cases.rs`). |
 | `thiserror` (as above) | | ooxml-numfmt | `LocaleError`, why a locale or language tag is refused (section 2.5). |
 | `ooxml-chart`, `ooxml-numfmt` (workspace crates); `serde_json`'s `float_roundtrip` feature (no new crate) | | ooxml-oracle (test support only) | The chart differential (`chart-model`, `python/chart_diff.py`, `tests/chart_layout.rs`). `float_roundtrip` makes serde_json read the frozen Python answers' numbers exactly: its default reading can be a unit in the last place off, which a byte-for-byte comparison reports. |
+| `serde_json` (as above) | | ooxml-word-model | The id state kept beside a document's bytes (`ids::state`): docx-agent's `docx-ids.1.` string is compressed JSON, written key for key as Python's `json.dumps` writes it and read back from either side. |
+| `flate2` (as above, `zlib-rs` backend) | | ooxml-word-model | The same id state's zlib compression (level 9, as docx-agent's `zlib.compress`); zlib-rs's stream may differ from C zlib's byte for byte, which neither reader minds: the decompressed JSON is the same. |
+| `ooxml-tools`, `ooxml-tools-word` (workspace crates) | | ooxml-oracle (test support only) | The Word reads' differential (`word-reads`, `python/word_reads_diff.py`): the Rust tools' replies on the fixtures and the corpus. |
 | `libfuzzer-sys` 0.4 (pulls `arbitrary`, `cc`) | MIT or Apache-2.0, NCSA | `fuzz/` only (its own workspace) | cargo-fuzz's harness for the fuzz targets section 11 asks for; never part of a shipped crate. |
 
 Considered and not taken:

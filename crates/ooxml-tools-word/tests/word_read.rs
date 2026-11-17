@@ -62,7 +62,13 @@ fn heading(id: &str, text: &str) -> String {
 }
 
 fn args(range: Option<&str>) -> WordRead {
-    WordRead { doc: "d1".into(), range: range.map(str::to_owned), view: None, stories: None, cursor: None }
+    WordRead {
+        doc: "d1".into(),
+        range: range.map(str::to_owned),
+        view: None,
+        stories: None,
+        cursor: None,
+    }
 }
 
 fn sample() -> Package {
@@ -108,7 +114,9 @@ fn a_range_naming_nothing_is_refused_with_the_way_out() {
     let json = error.to_json();
     assert_eq!(json["code"], "not_found");
     assert_eq!(json["field"], "range");
-    assert!(json["valid_options"].as_array().is_some_and(|o| o.iter().any(|v| v == "p:00000001")));
+    assert!(json["valid_options"]
+        .as_array()
+        .is_some_and(|o| o.iter().any(|v| v == "p:00000001")));
     assert_eq!(json["try_call"]["arguments"]["doc"], "d1");
 }
 
@@ -123,7 +131,9 @@ fn a_range_with_every_story_is_refused_with_the_call_that_works() {
 
 #[test]
 fn a_long_document_is_paged_at_line_ends() {
-    let body: String = (0..3000).map(|k| p(&format!("{:08X}", k + 1), "A line of text that repeats.")).collect();
+    let body: String = (0..3000)
+        .map(|k| p(&format!("{:08X}", k + 1), "A line of text that repeats."))
+        .collect();
     let pkg = package(&body);
     let mut a = args(None);
     let first = word_read(&a, &pkg, "a.docx", &Never).unwrap();
@@ -136,7 +146,10 @@ fn a_long_document_is_paged_at_line_ends() {
     assert!(second.data.unwrap().as_str().unwrap().starts_with("<!-- p:"));
     a.cursor = Some("x1".into());
     let json = word_read(&a, &pkg, "a.docx", &Never).unwrap_err().to_json();
-    assert_eq!((json["code"].as_str(), json["field"].as_str()), (Some("invalid_arguments"), Some("cursor")));
+    assert_eq!(
+        (json["code"].as_str(), json["field"].as_str()),
+        (Some("invalid_arguments"), Some("cursor"))
+    );
 }
 
 #[test]
@@ -152,5 +165,9 @@ fn the_definition_is_the_golden_export() {
     assert!(WordRead::problems().is_empty(), "{:?}", WordRead::problems());
     let golden = include_str!("golden/word_read.json");
     let export = WordRead::spec().export(Some(&[KIND]));
-    assert_eq!(format!("{export}\n"), golden, "run `cargo run -p ooxml-tools-word --example export_specs`");
+    assert_eq!(
+        format!("{export}\n"),
+        golden,
+        "run `cargo run -p ooxml-tools-word --example export_specs`"
+    );
 }
