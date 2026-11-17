@@ -25,7 +25,7 @@ from docx_agent import layout as layout_module
 from docx_agent import liveview
 from docx_agent.liveview import UnknownToken, embed_images, page_svg, view
 
-from gates import Arrivals, Gate, Watched
+from gates import Arrivals, Gate
 
 pytestmark = pytest.mark.any_faces
 
@@ -324,25 +324,22 @@ def _all_finish(jobs: list) -> list:
 
 
 def test_a_view_waits_for_a_checks_layout_with_the_lock_let_go(made, monkeypatch):
-    """A lone check lays the version out (stalled); views asked meanwhile wait for that one
-    layout, the document's lock let go -- one layout in all."""
-    waiting = Arrivals()
-    wait = layout_module._Flight.wait
+    """A lone check lays the version out (held until the views asked); views asked meanwhile
+    wait for that one layout where the layouts are held (round 58: the view's task runs
+    where the toolbox's runner holds them, here in this process), the document's lock let
+    go -- one layout in all, one token."""
+    asked = Arrivals()
+    task = liveview.view_bytes
 
-    def counted(flight):
-        waiting.arrive()
-        return wait(flight)
+    def counted(*args):
+        asked.arrive()
+        return task(*args)
 
-    monkeypatch.setattr(layout_module._Flight, "wait", counted)
-    # The first view waits for the check's layout where the layouts are held (the others
-    # for that view's): as long as it takes here, not the few seconds it waits at most.
-    held = Watched()
-    monkeypatch.setattr(layout_module, "_HELD_LOCK", held)
+    monkeypatch.setattr(liveview, "view_bytes", counted)
     monkeypatch.setattr(layout_module, "_HELD_WAIT", 60.0)
     reached: list = []
-    # The check's layout is held until the three views wait for it.
-    calls, started = _counted(monkeypatch, hold=lambda: reached.append(
-        waiting.until(2) and held.until_waiting(1)))
+    # The check's layout is held until the three views asked for theirs.
+    calls, started = _counted(monkeypatch, hold=lambda: reached.append(asked.until(3)))
     with _toolbox() as box:
         session = box.session()
         d1 = session.open(made, "report.docx")
@@ -358,7 +355,7 @@ def test_a_view_waits_for_a_checks_layout_with_the_lock_let_go(made, monkeypatch
         views = _all_finish([lambda: view(session, d1)] * 3)
         first.join(DEADLINE)
         assert not first.is_alive()
-    assert reached == [True] and waiting.count == 2
+    assert reached == [True] and asked.count == 3
     assert len(calls) == 1
     assert len({v.token for v in views}) == 1
 

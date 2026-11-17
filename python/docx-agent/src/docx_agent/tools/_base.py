@@ -30,7 +30,7 @@ from ooxml_edit.tools import Result, ToolError, page_list, tool as _tool, valida
 from ooxml_edit.tools.worker import takes_affinity, takes_lane
 
 from ..layout import (adopt, affinity, canon_of, known_summary, layout_key, summary_for, cache_key, convert_bytes, held_state, lay_out_bytes,
-                      lay_out_unlocked, layout_options, twin, twin_of)
+                      lay_out_unlocked, layout_options, remember_runner, twin, twin_of)
 
 #: A Word document of this many pages or fewer gets its reflow in every edit's checks.
 REFLOW_PAGES = 20
@@ -69,6 +69,18 @@ class Engine:
         #: Whether a layout task past its deadline is finished and kept, not stopped (round 58).
         self.overrun = overrun
 
+    @classmethod
+    def of(cls, runner: Any, timeout: float, document: Any = None) -> "Engine":
+        """An engine running its tasks on ``runner`` (a toolbox's worker pool): keyed where
+        the pool takes affinity, finishing a layout past its deadline where it takes lanes.
+        Round 58 (Q2): ``document``'s layouts are then held by the runner's workers
+        (:func:`docx_agent.layout.remember_runner`: a live view asks there, and they are
+        told when it is closed)."""
+        if document is not None:
+            remember_runner(document, runner)
+        return cls(runner.run, timeout, keyed=takes_affinity(runner), document=document,
+                   overrun=takes_lane(runner))
+
     def arm(self, timeout: float | None = None) -> "Engine":
         if timeout is not None:
             self.timeout = timeout
@@ -89,7 +101,13 @@ class Engine:
         38, :func:`docx_agent.tools.check_worker.check_bytes`), under the deadline."""
         from .check_worker import check_bytes
 
-        return self._run(check_bytes, data, options, state, request, timeout=self._remaining(),
+        return self.task(check_bytes, data, options, state, request)
+
+    def task(self, fn: Callable[..., Any], data: bytes, options: dict, state: Any, *args: Any) -> Any:
+        """``fn(data, options, state, *args)`` -- a registered task that takes the layout
+        ``state`` names (:func:`docx_agent.layout.held_layout`; the live view's, round 58) --
+        in the worker holding the document's layouts, under the deadline."""
+        return self._run(fn, data, options, state, *args, timeout=self._remaining(),
                          **self.keys(state), **self._overrun())
 
     def _overrun(self) -> dict:
@@ -122,8 +140,7 @@ def engage(call: Any) -> None:
     pool = call.toolbox.pool
     for entry in call.entries.values():
         if entry.kind == "docx":
-            entry.document.converter = Engine(pool.run, timeout, keyed=takes_affinity(pool),
-                                              document=entry.document, overrun=takes_lane(pool))
+            entry.document.converter = Engine.of(pool, timeout, entry.document)
 
 
 def release(entries: Iterable[Any]) -> None:

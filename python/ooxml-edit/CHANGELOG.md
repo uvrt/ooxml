@@ -4,6 +4,17 @@ Versions are those in `pyproject.toml`; none is published to PyPI yet. Each vers
 reaches `main` is tagged `v<version>` on the commit that brought it, from 0.62.0; the
 earlier ones were never tagged.
 
+## 0.122.0 -- unreleased
+
+- **A note to every worker** (round 58, for docx-agent's live view): `broadcast(fn, *args)`
+  on every runner runs `fn(*args)` once in each worker the pool has -- the idle ones at
+  once, in the caller's thread; the busy ones as their task ends, before they take another.
+  `later=True` only queues it, without a lock (what a finalizer may do), and the workers run
+  it as they come back from their next task. A note that fails is logged; a worker that does
+  not answer one within `TELL_TIMEOUT` (30 s) is stopped. A `SubprocessPool` refuses a note
+  that is not a registered task; `InProcess` and `ThreadRunner` run it in this process.
+  docx-agent tells the workers to drop a closed document's layouts with it.
+
 ## 0.121.0 -- unreleased
 
 - **`Result.timing`: where a call's time went** (round 58), for the application, never in

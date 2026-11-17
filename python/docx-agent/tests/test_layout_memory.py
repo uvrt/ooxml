@@ -73,3 +73,44 @@ def test_the_budget_comes_from_the_environment(monkeypatch):
         monkeypatch.setenv("DOCX_AGENT_LAYOUT_MEMORY", value)
         assert L._memory_budget() == 256 * 2 ** 20
     assert L._MEASURES.entries == L.LAYOUT_MEMORY // 2 // L.MEASURE_COST
+
+
+def test_a_live_views_versions_cost_only_the_pages_they_do_not_share():
+    """Round 58 (Q2): the versions a live view was given are kept with the newest layout; a
+    layout made from another keeps the pages an edit did not reach, the very objects, so
+    each version costs the pages that are its own."""
+    pages = [object() for _ in range(10)]
+    newest = (SimpleNamespace(pages=pages), None, [])
+    older = (SimpleNamespace(pages=pages[:8] + [object(), object()]), None, [])  # two laid out again
+    oldest = (SimpleNamespace(pages=pages[:9] + [older[0].pages[9]]), None, [])  # one more of its own
+    held = L._Held(newest, {"views": {"a": SimpleNamespace(laid=oldest), "b": SimpleNamespace(laid=older),
+                                      "c": SimpleNamespace(laid=newest)}})
+    assert L.held_cost(held) == 12 * L.PAGE_COST
+    assert L.held_cost(L._Held(newest)) == 10 * L.PAGE_COST
+
+
+def test_forgetting_a_lineage_drops_what_its_layouts_measured(monkeypatch):
+    """Round 58 (Q2): a closed document's measurements leave the process with its layouts,
+    a live view's versions' among them; another document's stay."""
+    from docx2svg.relayout import MeasureStore
+
+    monkeypatch.setattr(L, "_HELD", type(L._HELD)())
+    monkeypatch.setattr(L, "_HELD_TAKEN", {})
+    monkeypatch.setattr(L, "_MEASURES", MeasureStore(lineages=8))
+
+    def laid(measured: bytes) -> tuple:
+        return (SimpleNamespace(pages=[object()], state=SimpleNamespace(lineage=measured)), None, [])
+
+    for measured in (b"mine", b"my view", b"other"):
+        L._MEASURES.put(measured, {measured: 1})
+    held = L._Held(laid(b"mine"), {"views": {"t": SimpleNamespace(laid=laid(b"my view"))}})
+    with L._HELD_LOCK:
+        L._HELD_TAKEN["doc"] = 1
+    L._put_held(("v1",), held, "doc")
+    with L._HELD_LOCK:
+        L._HELD_TAKEN["other doc"] = 1
+    L._put_held(("w1",), L._Held(laid(b"other")), "other doc")
+    L.forget_lineage("doc")
+    assert [t for t in L._HELD] == [("w1",)]
+    assert L._MEASURES.get(b"mine") == {} and L._MEASURES.get(b"my view") == {}
+    assert L._MEASURES.get(b"other") == {b"other": 1}
