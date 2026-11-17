@@ -31,8 +31,10 @@ A Cargo workspace at the root, its crates under `crates/`:
 
 `cargo test --workspace` runs the Rust tests; `python/ooxml-core/tests` compares the Rust
 layout with docx2svg's on made-up documents (`cargo build --release -p ooxml-word`, `pip
-install ./python/ooxml-core`, then `pytest` there). Wheels: one abi3 wheel per platform for
-CPython 3.10 and later, and one for the free-threaded 3.15t.
+install ./python/ooxml-core`, then `pytest` there). Wheels, for Linux x86_64 and aarch64 only (production
+runs Linux): one abi3 wheel per platform for CPython 3.10 and later, and one for the
+free-threaded 3.15t. On macOS and Windows, pip builds ooxml-core from its sdist, which
+needs a Rust toolchain.
 
 ## Installing
 
