@@ -75,7 +75,11 @@ impl TableFlow for FixedRows {
             });
             y += h;
         }
-        Ok(TablePage { end: y, next: None, rows })
+        Ok(TablePage {
+            end: y,
+            next: None,
+            rows,
+        })
     }
 }
 
@@ -118,8 +122,8 @@ pub fn run(args: &[String]) -> Result<(), String> {
         .and_then(|n| n.parse().ok())
         .unwrap_or(3);
     let check = args.iter().any(|a| a == "--check");
-    let fonts: Value = serde_json::from_slice(&std::fs::read(fonts_path).map_err(|e| e.to_string())?)
-        .map_err(|e| e.to_string())?;
+    let fonts: Value =
+        serde_json::from_slice(&std::fs::read(fonts_path).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
     let bytes: Arc<[u8]> = Arc::from(std::fs::read(path).map_err(|e| format!("{path}: {e}"))?);
     let package = Package::open(Arc::clone(&bytes), &Limits::default()).map_err(|e| e.to_string())?;
     let main = "word/document.xml";

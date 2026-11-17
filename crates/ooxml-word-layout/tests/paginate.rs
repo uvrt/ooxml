@@ -62,7 +62,10 @@ fn keep_next_goes_with_a_kept_paragraph() {
 #[test]
 fn a_page_break_ends_the_page() {
     let body = [
-        para("", &format!(r#"{}<w:r><w:br w:type="page"/></w:r>{}"#, run("a"), run("b"))),
+        para(
+            "",
+            &format!(r#"{}<w:r><w:br w:type="page"/></w:r>{}"#, run("a"), run("b")),
+        ),
         sect("nextPage", 1),
     ]
     .concat();
