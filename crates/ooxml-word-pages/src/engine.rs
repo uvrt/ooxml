@@ -336,7 +336,7 @@ impl PageEngine {
                 glyph_size: self.glyph_size,
                 decimal: self.decimal,
             };
-            crate::warnings::said(&mut generation.model, &laid, &mut painter)
+            crate::warnings::said(&mut generation.model, &laid, &mut painter, &self.locale)
         };
         let version = Arc::new(LaidVersion {
             drawings,

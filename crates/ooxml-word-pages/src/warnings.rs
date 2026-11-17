@@ -13,6 +13,8 @@
 //!
 //! Must not: lay out or paint, or say anything docx2svg does not.
 
+use ooxml_base::Locale;
+use ooxml_word_layout::fields::styleref::{body_style_texts, StyleSearch};
 use ooxml_word_layout::fields::update::PageNumbers;
 use ooxml_word_layout::fields::{cross_reference_problems, field_text, page_counts, Uncomputable};
 use ooxml_word_layout::flow::{body_paragraphs, FlowItem};
@@ -117,7 +119,7 @@ fn blocks_hold_drawing(blocks: &[Block]) -> bool {
 
 /// What `layout` says, its paragraphs and tables resolved in `model`; `drawings` paints
 /// the pages that hold drawings for what their painters say.
-pub fn said(model: &mut Model, layout: &DocumentLayout, drawings: &mut dyn PageDrawings) -> Said {
+pub fn said(model: &mut Model, layout: &DocumentLayout, drawings: &mut dyn PageDrawings, locale: &Locale) -> Said {
     let mut out = Said::default();
     let document = &layout.document;
     for (keyword, why) in cross_reference_problems(document) {
@@ -127,6 +129,7 @@ pub fn said(model: &mut Model, layout: &DocumentLayout, drawings: &mut dyn PageD
             None,
         );
     }
+    body_style_references(layout, locale, &mut out);
     body_fields(layout, &mut out);
     if !layout.settled {
         out.warn(
@@ -157,11 +160,27 @@ pub fn said(model: &mut Model, layout: &DocumentLayout, drawings: &mut dyn PageD
                 out.warn(w.code, w.message, w.page);
             }
         }
-        pages.stories(layout, page, &mut out);
+        pages.stories(layout, (page, locale), &mut out);
         shared_page_notes(layout, page, &mut out);
     }
     line_numbers(document, &mut out);
     out
+}
+
+/// The body's `STYLEREF`s that keep Word's cached result (`_style_references`).
+fn body_style_references(layout: &DocumentLayout, locale: &Locale, out: &mut Said) {
+    let document = &layout.document;
+    let placed = |body: usize| layout.roles.get(body).is_some_and(Option::is_some);
+    let mut search = StyleSearch::new(document, locale, &placed);
+    for (_, text) in body_style_texts(&mut search) {
+        if let Err(Uncomputable(why)) = text {
+            out.warn(
+                "field-not-computed:STYLEREF",
+                format!("a STYLEREF field in the body is drawn as Word cached it ({why})"),
+                None,
+            );
+        }
+    }
 }
 
 /// A section of several text columns that numbers its lines: not drawn there
@@ -499,7 +518,7 @@ impl PageWalk {
     }
 
     /// Page `page`'s header's and footer's fields that cannot be computed (`_draw_story`).
-    fn stories(&mut self, layout: &DocumentLayout, page: usize, out: &mut Said) {
+    fn stories(&mut self, layout: &DocumentLayout, (page, locale): (usize, &Locale), out: &mut Said) {
         let Some(info) = layout.pagination.info.get(page) else {
             return;
         };
@@ -524,14 +543,20 @@ impl PageWalk {
             };
             let part = document.story_parts.get(id).cloned().unwrap_or_else(|| id.clone());
             let (paragraphs, _) = body_paragraphs(blocks);
-            for paragraph in &paragraphs {
-                for run in paragraph.runs.iter() {
-                    let Some(field) = run.field.as_ref().filter(|f| &*f.keyword != "STYLEREF") else {
+            let texts = layout.story_texts(locale).get(&(page, id.clone()));
+            for (p, paragraph) in paragraphs.iter().enumerate() {
+                for (k, run) in paragraph.runs.iter().enumerate() {
+                    let Some(field) = run.field.as_ref() else {
                         continue;
                     };
-                    if let Err(Uncomputable(why)) =
+                    let text = if &*field.keyword == "STYLEREF" {
+                        texts
+                            .and_then(|t| t.iter().find(|(at, _)| *at == (p, k)))
+                            .map_or(Ok(String::new()), |(_, text)| text.clone())
+                    } else {
                         field_text(&field.instruction, &field.keyword, info.number, counts, format)
-                    {
+                    };
+                    if let Err(Uncomputable(why)) = text {
                         out.warn(
                             format!("field-not-computed:{}", field.keyword),
                             format!("a {} field in {part} is drawn as Word cached it ({why})", field.keyword),

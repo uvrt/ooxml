@@ -22,6 +22,7 @@ mod floating;
 mod grid;
 mod measured;
 mod place;
+mod rows;
 mod widths;
 
 pub use build::{effective_style, table_paragraphs, Frame};

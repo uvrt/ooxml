@@ -171,7 +171,10 @@ fn columns_line_numbers_and_a_drop_cap_are_laid_out_and_painted_in_rust() {
     }
     // A section of several columns is not numbered: docx2svg says so.
     let said = version.said();
-    assert!(said.warnings.iter().any(|w| w.code == "line-numbers-not-drawn"), "{said:?}");
+    assert!(
+        said.warnings.iter().any(|w| w.code == "line-numbers-not-drawn"),
+        "{said:?}"
+    );
 }
 
 #[test]

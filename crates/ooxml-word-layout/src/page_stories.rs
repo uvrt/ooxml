@@ -24,7 +24,7 @@ use std::sync::Arc;
 
 /// A story laid out with its `STYLEREF` texts: its relationship id, the page's size and
 /// margins, and the texts.
-type HeightKey = (Text, i64, i64, [i64; 7], Vec<((usize, usize), Option<String>)>);
+type HeightKey = (Text, i64, i64, [i64; 7], Vec<StoryText>);
 
 /// The stories' heights per text, kept across a version's passes.
 #[derive(Debug, Default)]
@@ -92,7 +92,7 @@ pub fn story_texts(layout: &DocumentLayout, locale: &ooxml_base::Locale, roles: 
                 continue;
             };
             let mut text_of = |run: &ooxml_word_model::model::Run| {
-                let instruction = run.field.as_ref().map(|f| f.instruction.clone())?;
+                let instruction = run.field.as_ref().map(|f| f.instruction.clone()).unwrap_or_default();
                 story_reference(&mut search, &instruction, page, &mut pages_of)
             };
             let (_, texts) = with_story_references(blocks, &mut text_of);
@@ -109,7 +109,11 @@ pub fn story_on_page(blocks: &Arc<[Block]>, texts: &StoryTexts, page: usize, id:
         return Arc::clone(blocks);
     };
     let mut next = found.iter().map(|(_, text)| text.clone());
-    with_story_references(blocks, &mut |_| next.next().flatten()).0
+    let mut text_of = |_: &ooxml_word_model::model::Run| {
+        next.next()
+            .unwrap_or_else(|| Err(crate::fields::Uncomputable(String::new())))
+    };
+    with_story_references(blocks, &mut text_of).0
 }
 
 /// The pages of `layout` (one pass) whose header or footer heights, with their
