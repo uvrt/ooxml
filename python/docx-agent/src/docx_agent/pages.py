@@ -115,6 +115,18 @@ def lay_out(data: bytes, options: dict, lineage: str, *, make: bool = True) -> A
     return made
 
 
+def known(data: bytes, options: dict, lineage: str) -> Any:
+    """The Rust layout of ``data`` where the engine of ``lineage`` laid it out last (the
+    layout owner's flight, an earlier call), else ``None``: nothing is laid out, nothing
+    counted."""
+    if not available():
+        return None
+    import docx2svg
+
+    engine = _engine(lineage, docx2svg.ConvertOptions(**options), make=False)
+    return engine.known(data) if engine is not None else None
+
+
 def forget(lineage: str) -> None:
     """Let go of the engines of ``lineage``: the document is closed or collected."""
     with _LOCK:

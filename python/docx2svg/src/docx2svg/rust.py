@@ -202,6 +202,15 @@ class Engine:
             self._last = (digest, made)
         return made
 
+    def known(self, data: bytes) -> "RustLayout | None":
+        """The layout of ``data`` where it is the last version this engine laid out, else
+        ``None``: nothing is laid out."""
+        digest = hashlib.sha256(data).digest()
+        with self._lock:
+            if self._last is not None and self._last[0] == digest:
+                return self._last[1]
+        return None
+
     def forget(self) -> None:
         """Let go of the last version and the memos."""
         with self._lock:

@@ -2785,10 +2785,14 @@ def _facts_here(document: "Document", unlocked: Any, request: dict, data: bytes,
         return None
     history = getattr(document, "history", None)
     seen = history.version if history is not None else None
-    with unlocked():
-        began = time.perf_counter()
-        rust = _pages.lay_out(data, options, lineage(document))
-        laid = time.perf_counter() - began
+    began = time.perf_counter()
+    # Laid out already by the document's owner (lane O) or an earlier call: read as it is,
+    # the lock kept; else laid out with the lock let go.
+    rust = _pages.known(data, options, lineage(document))
+    if rust is None:
+        with unlocked():
+            rust = _pages.lay_out(data, options, lineage(document))
+    laid = time.perf_counter() - began
     if rust is None:
         return None
     try:
