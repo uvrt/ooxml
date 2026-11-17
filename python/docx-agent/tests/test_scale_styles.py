@@ -162,6 +162,20 @@ def test_check_with_scale_alone_is_only_its_fact_and_range_scopes_it(toolbox):
     assert "validate" in both.data and both.data["scale"]["none"]
 
 
+def test_check_with_scale_and_pages_scopes_by_page(toolbox):
+    """Round 59: ``pages`` with a scale read the values' pages in one layout request (the
+    values' paragraphs asked for at once); it raised a TypeError before."""
+    session = _session(toolbox)
+    table, three, _ = _ids(session)
+    given = scale(f"{table}/col1", three)
+    found = ok(call(toolbox, session, "check", doc="d1", pages=[1], scale=given)).data["scale"]
+    assert found["checked"] == 3 and [e["target"] for e in found["none"]] == [f"{table}/c1,1", f"{table}/c2,1",
+                                                                               three]
+    assert {e["page"] for e in found["none"]} == {1}
+    beyond = ok(call(toolbox, session, "check", doc="d1", pages=[2], scale=given)).data["scale"]
+    assert beyond["checked"] == 0
+
+
 def test_direct_colour_is_taken_off_a_styled_value(toolbox):
     session = _session(toolbox)
     _, three, _ = _ids(session)

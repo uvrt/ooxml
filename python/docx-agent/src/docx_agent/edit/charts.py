@@ -127,6 +127,13 @@ class Member:
         return properties.get("name") if properties is not None else None
 
     @property
+    def alt_text(self) -> str | None:
+        """The member's alternative text (its ``cNvPr/@descr``, as a drawing's is its
+        ``wp:docPr/@descr``), or ``None``."""
+        properties = _member_properties(self._locate()[1])
+        return properties.get("descr") if properties is not None else None
+
+    @property
     def chart(self) -> "Chart":
         """The chart this member holds: :meth:`Document.chart`."""
         return self.document.chart(self.id)
