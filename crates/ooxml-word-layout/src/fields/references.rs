@@ -571,6 +571,58 @@ pub fn cross_references(document: &WordDocument, kept: &mut Computed) -> WordDoc
     out
 }
 
+/// Each body field a cross reference pass leaves as Word cached it, and why, in the order
+/// docx2svg finds them (`cross_references`' problems): every `SEQ` that cannot be counted,
+/// then every `REF` that cannot be computed, paragraph by paragraph.
+pub fn cross_reference_problems(document: &WordDocument) -> Vec<(&'static str, String)> {
+    let (paragraphs, _) = body_paragraphs(&document.body);
+    if !has_cross_references(&paragraphs) {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    let sequences = sequence_values(&paragraphs);
+    let mut counted: Vec<Arc<Paragraph>> = paragraphs.clone();
+    for ((block, k), value) in sequences {
+        match value {
+            Err(Uncomputable(why)) => out.push(("SEQ", why)),
+            Ok(text) => {
+                if let Some(p) = counted.get_mut(block) {
+                    let runs: Vec<Run> = p
+                        .runs
+                        .iter()
+                        .enumerate()
+                        .map(|(r, run)| {
+                            if r == k {
+                                Run {
+                                    text: Arc::from(text.as_str()),
+                                    ..run.clone()
+                                }
+                            } else {
+                                run.clone()
+                            }
+                        })
+                        .collect();
+                    *p = Arc::new(Paragraph {
+                        runs: runs.into(),
+                        ..(**p).clone()
+                    });
+                }
+            }
+        }
+    }
+    let marks = marks(&counted);
+    for paragraph in &counted {
+        for run in paragraph.runs.iter() {
+            if run.field.as_ref().is_some_and(|f| &*f.keyword == "REF") {
+                if let Err(Uncomputable(why)) = reference_runs(&counted, run, &marks) {
+                    out.push(("REF", why));
+                }
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

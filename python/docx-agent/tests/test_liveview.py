@@ -323,6 +323,7 @@ def _all_finish(jobs: list) -> list:
     return out
 
 
+@pytest.mark.usefixtures("python_layout")  # lane L4: the Python layout's flights
 def test_a_view_waits_for_a_checks_layout_with_the_lock_let_go(made, monkeypatch):
     """A lone check lays the version out (held until the views asked); views asked meanwhile
     wait for that one layout where the layouts are held (round 58: the view's task runs
@@ -360,6 +361,7 @@ def test_a_view_waits_for_a_checks_layout_with_the_lock_let_go(made, monkeypatch
     assert len({v.token for v in views}) == 1
 
 
+@pytest.mark.usefixtures("python_layout")  # lane L4: the Python layout's flights
 def test_a_view_by_a_thread_holding_the_lock_lays_out_on_its_own(made, monkeypatch):
     """The application's thread holds the document's lock: its view never waits for the
     check's layout in progress (whose owner takes that lock back) -- it lays out alone."""

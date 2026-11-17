@@ -64,6 +64,7 @@ fn line(kind: &'static str, b: &Border, path: &str, x: (i64, i64), y: i64) -> Ru
         width: Px::int(x.1 - x.0),
         height: Px::int(width_px(b)),
         color: Some(colour(b.color.as_deref()).unwrap_or_else(|| "000000".to_owned())),
+        style: b.style.as_deref().map(str::to_owned),
     }
 }
 
@@ -141,6 +142,7 @@ pub(super) fn paragraph_rects(p: &ParagraphBox<'_>) -> (Vec<Rule>, Option<Rule>)
         width: Px::int(inner_right.unwrap_or(text_right + OUTSET) - inner_left.unwrap_or(text_left - OUTSET)),
         height: Px::int(box_bottom - box_top),
         color: Some(fill),
+        style: None,
     });
     (out, shaded)
 }
@@ -165,6 +167,7 @@ fn side_rules(
                 width: Px::int(w),
                 height: Px::int(bottom - top),
                 color: Some(colour(b.color.as_deref()).unwrap_or_else(|| "000000".to_owned())),
+                style: b.style.as_deref().map(str::to_owned),
             });
         }
     }

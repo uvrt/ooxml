@@ -83,6 +83,7 @@ from docx2svg.relayout import MeasureStore
 from ooxml_edit.tools.results import ToolError
 from ooxml_edit.tools.worker import InProcess, ThreadRunner
 
+from . import pages as _pages
 from .edit.effective import PathFinder
 from .edit import ids as _ids
 from .edit.ids import ParagraphEntry, TableEntry
@@ -280,6 +281,8 @@ class DocumentLayout:
 
     def __init__(self, document: "Document", layout, warnings: list) -> None:
         self._document = document
+        #: docx2svg's layout it reads.
+        self._raw = layout
         self.pages = layout.pages
         #: docx2svg's :class:`docx2svg.Warning`\\ s: everything not laid out faithfully.
         self.warnings = list(warnings)
@@ -287,22 +290,24 @@ class DocumentLayout:
         self.unmapped: list[str] = []
         #: The :func:`layout_key` it is of, where :func:`convert` made it (round 38).
         self.key: tuple | None = None
-        #: Per page: [(id or None, line)].
-        self._lines: list[list[tuple[str | None, object]]] = []
         resolved: dict[tuple[str, str], str | None] = {}
-        # Every line's path resolved in this one state: each table's rows listed once.
-        paths = PathFinder()
-        for page in self.pages:
-            lines = []
-            for line in page.text_lines():
-                key = (_part_of(document, line.path, line.part), line.path)
-                if key not in resolved:
-                    resolved[key] = _paragraph_id(document, *key, paths)
-                    if resolved[key] is None:
-                        self.unmapped.append(line.path)
-                lines.append((resolved[key], line))
-            self._lines.append(lines)
         self._paths = resolved
+        #: Laid out in Rust (lane L4, :mod:`docx_agent.pages`): its pages are painted when
+        #: read, and the index of where blocks are drawn is read from its body's lines.
+        self._rust = hasattr(layout, "body_lines")
+        if self._rust:
+            #: Per page: [(id or None, line)], every story's -- for a Rust layout made per page
+            #: as it is read (:class:`_PageLines`).
+            self._lines: Any = _PageLines(self)
+            #: Per page: [(id or None, line)] of the body's lines only, without their spans.
+            self._bodies = self._map_bodies(layout.body_lines(), layout)
+        else:
+            #: Per page: [(id or None, line)].
+            self._lines = []
+            # Every line's path resolved in this one state: each table's rows listed once.
+            paths = PathFinder()
+            for page in self.pages:
+                self._lines.append(self._mapped(page.text_lines(), paths))
         self.stopped: Stop | None = None
         for page in self.pages:
             if page.stop is not None:
@@ -325,6 +330,35 @@ class DocumentLayout:
         API's ids."""
         return coverage_facts(self.coverage, at=self.stopped.at if self.stopped else None,
                               ids=self._placeholder_ids)
+
+    def _mapped(self, lines, paths: "PathFinder | None" = None) -> list:
+        """``[(id or None, line)]`` of ``lines``, each line's path resolved once per layout."""
+        document, resolved, out = self._document, self._paths, []
+        for line in lines:
+            key = (_part_of(document, line.path, line.part), line.path)
+            if key not in resolved:
+                resolved[key] = _paragraph_id(document, *key, paths)
+                if resolved[key] is None:
+                    self.unmapped.append(line.path)
+            out.append((resolved[key], line))
+        return out
+
+    def _map_bodies(self, pages: list, raw: Any) -> list:
+        """The body's lines of each page of a Rust layout (``(path, number, top, pitch,
+        baseline, column)``) as lines without spans, mapped to ids."""
+        paths = PathFinder()
+        out = []
+        for index, page in enumerate(pages):
+            lines = [_BodyLine(path, number, top, pitch, baseline, column, index, raw)
+                     for path, number, top, pitch, baseline, column in page if _story_kind(path) == "body"]
+            out.append(self._mapped(lines, paths))
+        return out
+
+    def _body(self, index: int) -> list:
+        """``[(id or None, line)]`` of the body's lines of page ``index`` (0-based)."""
+        if self._rust:
+            return self._bodies[index]
+        return [(key, line) for key, line in self._lines[index] if _in_body(line)]
 
     # -- what is known -----------------------------------------------------------------------
 
@@ -382,7 +416,8 @@ class DocumentLayout:
             return kept[2]
         out: dict[str, list[tuple[int, int, Any]]] = {}
         canon: dict[str, str] = {}
-        for number, lines in enumerate(self._lines):
+        pages = self._bodies if self._rust else self._lines
+        for number, lines in enumerate(pages):
             for place, (key, line) in enumerate(lines):
                 if key is None:
                     continue
@@ -390,6 +425,8 @@ class DocumentLayout:
                 if name is None:
                     name = canon[key] = self._canon(key)
                 out.setdefault(name, []).append((number, place, line))
+        if self._rust:
+            out = _StoriesOnDemand(out, self)
         self.__dict__["_drawn_by"] = (aliases, dict(aliases), out)
         return out
 
@@ -409,8 +446,8 @@ class DocumentLayout:
             {n for n in pages if 1 <= n <= len(self.pages)})
         out = []
         for number in numbers:
-            mine = [line for key, line in self._lines[number - 1]
-                    if key is not None and _in_body(line) and self._canon(key) in wanted]
+            mine = [line for key, line in self._body(number - 1)
+                    if key is not None and self._canon(key) in wanted]
             if not mine:
                 continue
             top = min(line.top for line in mine)
@@ -701,7 +738,7 @@ class DocumentLayout:
                       unknown=unknown, why=why)
 
     def _page_ids(self, index: int) -> list[str]:
-        return [self._canon(key) for key, line in self._lines[index] if key is not None and _in_body(line)]
+        return [self._canon(key) for key, line in self._body(index) if key is not None]
 
     def _first_pages(self) -> dict[str, int]:
         out: dict[str, int] = {}
@@ -709,6 +746,71 @@ class DocumentLayout:
             for key in self._page_ids(index):
                 out.setdefault(key, index + 1)
         return out
+
+
+class _BodyLine:
+    """A body line of a Rust layout (``LaidPages.body_lines``): what an index of where blocks
+    are drawn reads -- docx2svg's ``Line`` -- its ``spans`` painted when first read (its
+    page painted then)."""
+
+    __slots__ = ("path", "number", "top", "pitch", "baseline", "column", "_page", "_raw")
+    story = None
+    part = None
+
+    def __init__(self, path: str, number: int, top: Fraction, pitch: Fraction, baseline: int,
+                 column: "int | None", page: int, raw: Any) -> None:
+        self.path, self.number, self.top, self.pitch = path, number, top, pitch
+        self.baseline, self.column, self._page, self._raw = baseline, column, page, raw
+
+    @property
+    def spans(self) -> list:
+        for line in self._raw.pages[self._page].lines:
+            if line.story is None and line.path == self.path and line.number == self.number:
+                return line.spans
+        return []
+
+
+class _PageLines:
+    """Per page of a Rust layout, ``[(id or None, line)]`` of every line it draws, made as
+    the page is read (its paint kept by the layout among the last few read)."""
+
+    def __init__(self, layout: DocumentLayout) -> None:
+        self._layout = layout
+
+    def __len__(self) -> int:
+        return len(self._layout.pages)
+
+    def __getitem__(self, index: int) -> list:
+        page = self._layout.pages[index]
+        return self._layout._mapped(page.text_lines())
+
+    def __iter__(self):
+        for index in range(len(self)):
+            yield self[index]
+
+
+class _StoriesOnDemand(dict):
+    """Where a Rust layout draws each block (:meth:`DocumentLayout._drawn`): its body's lines
+    at once; a header's, footer's or note's paragraph -- not among them -- found by painting
+    every page once, when first asked for."""
+
+    def __init__(self, body: dict, layout: DocumentLayout) -> None:
+        super().__init__(body)
+        self._layout = layout
+        self._stories: dict | None = None
+
+    def get(self, key, default=None):
+        if key in self:
+            return self[key]
+        if self._stories is None:
+            stories: dict = {}
+            layout = self._layout
+            for number, lines in enumerate(layout._lines):
+                for place, (identifier, line) in enumerate(lines):
+                    if identifier is not None and not _in_body(line):
+                        stories.setdefault(layout._canon(identifier), []).append((number, place, line))
+            self._stories = stories
+        return self._stories.get(key, default)
 
 
 #: A whole fraction as ``repr`` writes it, ``Fraction(300, 1)``: read as the integer it
@@ -767,6 +869,17 @@ class LayoutSummary:
             drawn[id(item)] = (item, value)
             return value
 
+        if layout._rust:
+            # Lane L4: digested in Rust, every page painted there and none read into Python.
+            document = layout._document
+            for rest, lines in layout._raw.laid.digests():
+                self.rest.append(rest)
+                self.lines.append(tuple(
+                    (layout.id_for_path(_part_of(document, path, part), path), path,
+                     story is None and _story_kind(path) == "body", digest)
+                    for path, story, part, digest in lines))
+            self._drawn = None
+            return
         for index, page in enumerate(layout.pages):
             self.rest.append(digest_of(page, _page_digest))
             self.lines.append(tuple((key, line.path, _in_body(line), digest_of(line, _line_digest))
@@ -1203,7 +1316,13 @@ MEASURE_COST = 96 * 2 ** 10
 
 
 def layout_cost(layout: Any) -> int:
-    """What keeping ``layout`` costs, in bytes: :data:`PAGE_COST` a page (one at least)."""
+    """What keeping ``layout`` costs, in bytes: :data:`PAGE_COST` a page (one at least); a
+    layout held in Rust (lane L4) what it holds there, and the pages it keeps painted for
+    its readers."""
+    if _pages.is_rust(layout):
+        from docx2svg.rust import PAINTED_PAGES
+
+        return layout.weight + min(PAINTED_PAGES, len(layout.pages)) * PAGE_COST // 4
     return max(1, len(getattr(layout, "pages", None) or ())) * PAGE_COST
 
 
@@ -1422,16 +1541,23 @@ def held_layout(data: bytes, options: dict, state: tuple, *, changed_pages: bool
         assert found is not None
         return found, how, 0.0
     try:
-        previous = found.laid[0] if found is not None else None
-        convert_options = docx2svg.ConvertOptions(**options)
         began = time.perf_counter()
-        layout, _, fonts = docx2svg.lay_out_docx(data, convert_options, previous=previous,
-                                                 measures=_MEASURES, changed_pages=changed_pages)
+        # Lane L4: in Rust where it lays the version out (docx_agent.pages), from the lineage's
+        # last version there; else docx2svg's Python layout, from the one found.
+        rust = _pages.lay_out(data, options, lineage)
+        if rust is not None:
+            laid = (rust, None, list(rust.warnings))
+        else:
+            previous = found.laid[0] if found is not None and not _pages.is_rust(found.laid[0]) else None
+            convert_options = docx2svg.ConvertOptions(**options)
+            layout, _, fonts = docx2svg.lay_out_docx(data, convert_options, previous=previous,
+                                                     measures=_MEASURES, changed_pages=changed_pages)
+            laid = (layout, fonts, list(convert_options.warnings))
         seconds = time.perf_counter() - began
     except BaseException:
         _let_go_held(lineage)
         raise
-    made = _Held((layout, fonts, list(convert_options.warnings)))
+    made = _Held(laid)
     if found is not None and found.extra.get("views"):
         # Round 58 (Q2): a live view's versions go on with the lineage's newest layout.
         made.extra["views"] = found.extra["views"]
@@ -1459,7 +1585,7 @@ def opened_layout(held: _Held, data: bytes, options: dict) -> DocumentLayout:
         owner.locale = options.get("locale")
         layout, _, warnings = held.laid
         parsed = getattr(docx2svg, "parsed_document", None)
-        if parsed is not None:
+        if parsed is not None and not _pages.is_rust(layout):
             # Round 41: the facts read docx2svg's parse of these bytes that the layout was made
             # from, not a second parse of them (docx2svg 0.11.10).
             from .edit.effective import seed_model
@@ -1500,6 +1626,16 @@ def lay_out_bytes(data: bytes, options: dict, state: Any = None) -> tuple:
         held, how, seconds = held_layout(data, options, state)
         try:
             layout, fonts, warnings = held.laid
+            if _pages.is_rust(layout):
+                # Lane L4: a layout held in Rust stays where it is; a caller in another process
+                # that asks for the layout itself (it laid the version out in Python) gets
+                # docx2svg's, counted.
+                from docx2svg.rust import count_fallback
+
+                count_fallback("handed to another process")
+                convert_options = docx2svg.ConvertOptions(**options)
+                layout, _, fonts = docx2svg.lay_out_docx(data, convert_options, keep=False)
+                warnings = list(convert_options.warnings)
             blob = dumps((_light(layout), fonts, warnings))
         except BaseException:
             _let_go_held(state[3])
@@ -1821,6 +1957,7 @@ def forget_lineage(lineage: str) -> None:
     a task has taken out now: run when the document is closed or collected, so a process
     that served many documents -- a pooled worker, an application's own -- keeps none of a
     document that is gone."""
+    _pages.forget(lineage)
     with _HELD_LOCK:
         dropped = [_HELD.pop(t) for t, held in list(_HELD.items()) if held.lineage == lineage]
     # What their flows measured (docx2svg's own lineages: one per unbroken run of layouts,
@@ -1973,6 +2110,7 @@ def clear_caches() -> None:
     with _HELD_LOCK:
         _HELD.clear()
     _MEASURES.clear()
+    _pages.clear()
     blocks.forget_bodies()
     with layout_facts._RAGGED_LOCK:
         layout_facts._RAGGED.clear()
@@ -2177,10 +2315,24 @@ def _lay_out(document: "Document", data: bytes, options: dict, converter: Any = 
     warnings)``), whole with every page's SVG.  The layout is this caller's own copy (the
     pickle read): the one kept for the next version is never one a caller holds.
     ``converter``: the document's when its bytes were taken; ``may_wait``: the caller let
-    the document's lock go (round 38, :func:`kept_layout`)."""
+    the document's lock go (round 38, :func:`kept_layout`).  Lane L4: laid out in Rust in this
+    process (:mod:`docx_agent.pages`) wherever the Rust layout lays the version out, the
+    converter not asked: nothing is laid out in Python or pickled."""
     if converter is not None and not hasattr(converter, "lay_out"):
         raw, svgs, warnings = converter(data, dict(options))
         return raw, None, warnings, list(svgs)
+    # Lane L4: laid out in Rust here, from the document's last version, where the Rust layout
+    # lays it out as docx2svg does (docx_agent.pages); else as before.
+    # The call's deadline (a tool layer's engine, ``Limits.layout_timeout``) holds for a
+    # layout in Rust too: past it, the call is a timeout and changes nothing.
+    remaining = getattr(converter, "_remaining", None)
+    if remaining is not None:
+        remaining()
+    rust = _pages.lay_out(data, options, lineage(document))
+    if rust is not None:
+        if remaining is not None:
+            remaining()
+        return rust, None, list(rust.warnings), None
     state = kept_layout(document, data, options, may_wait=may_wait)
     if isinstance(state, bytes):
         blob = state                         # laid out already (a render of this state)
@@ -2699,15 +2851,55 @@ def render_svg(document: "Document", pages: list[int] | None = None, **options) 
         missing = [n for n in selected if n not in conversion.tagged and n not in conversion.svgs]
         if missing:
             # Drawn from the layout as docx2svg's convert_docx draws them (page_svgs), only the
-            # pages asked for.
-            drawing = docx2svg.ConvertOptions(**{**conversion.options, "pages": missing})
-            for number, svg in zip(missing, docx2svg.page_svgs(conversion.raw, conversion.data, drawing,
-                                                               fonts=conversion.fonts)):
+            # pages asked for: in Rust where it draws them (lane L4), else by docx2svg.
+            for number, svg in zip(missing, _page_svgs(conversion, missing)):
                 conversion.svgs[number] = svg
         for number in selected:
             if number not in conversion.tagged:
                 conversion.tagged[number] = _tag(document, conversion.layout, conversion.svgs.pop(number))
             out.append(conversion.tagged[number])
+    return out
+
+
+def _page_svgs(conversion: _Conversion, numbers: list[int]) -> list[str]:
+    """Pages ``numbers`` (1-based) of a conversion as SVG (:func:`svgs_of`), docx2svg's
+    Python layout of a Rust one's bytes made once for the conversion where it is needed."""
+    return svgs_of(conversion.raw, conversion.data, conversion.fonts, conversion.options, numbers,
+                   kept=conversion.__dict__)
+
+
+def svgs_of(raw: Any, data: bytes, fonts: Any, options: dict, numbers: list[int], drawing: dict | None = None,
+            *, kept: dict | None = None) -> list[str]:
+    """Pages ``numbers`` (1-based) of the layout ``raw`` of ``data`` as SVG, byte for byte
+    docx2svg's ``page_svgs`` with ``options`` and the drawing options ``drawing`` (``text``,
+    ``glyphs``...): of a Rust layout (lane L4) drawn in Rust, each page it does not draw as
+    docx2svg does (counted) -- or every page, for drawing options it does not take --
+    drawn from docx2svg's Python layout of the same bytes (kept in ``kept`` under
+    ``"python"`` for the next call)."""
+    drawing = drawing or {}
+    convert = docx2svg.ConvertOptions(**{**options, **drawing, "pages": numbers})
+    if not _pages.is_rust(raw):
+        out = docx2svg.page_svgs(raw, data, convert, fonts=fonts)
+        drawing.update({"warnings": convert.warnings, "glyphs": convert.glyphs})
+        return out
+    from docx2svg import rust
+
+    plain = rust.unsupported_options(convert) is None
+    if not plain:
+        rust.count_fallback(rust.unsupported_options(convert))
+    out: list = [raw.page_svg(number - 1, width=convert.width, height=convert.height) if plain else None
+                 for number in numbers]
+    left = [number for number, svg in zip(numbers, out) if svg is None]
+    if left:
+        kept = kept if kept is not None else {}
+        python = kept.get("python")
+        if python is None:
+            layout_options = docx2svg.ConvertOptions(**{k: v for k, v in options.items() if k != "pages"})
+            python = kept["python"] = docx2svg.lay_out_docx(data, layout_options, keep=False)
+        convert = docx2svg.ConvertOptions(**{**options, **drawing, "pages": left})
+        drawn = dict(zip(left, docx2svg.page_svgs(python[0], data, convert, fonts=python[2])))
+        drawing.update({"warnings": convert.warnings, "glyphs": convert.glyphs})
+        out = [drawn[number] if svg is None else svg for number, svg in zip(numbers, out)]
     return out
 
 
