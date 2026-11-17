@@ -4,6 +4,17 @@ Versions are those in `pyproject.toml`; none is published to PyPI yet. Each vers
 reaches `main` is tagged `v<version>` on the commit that brought it, from 0.62.0; the
 earlier ones were never tagged.
 
+## 0.124.0 -- unreleased
+
+- **A note not waited for** (round 59, for docx-agent's close): `broadcast(fn, *args,
+  wait=False)` tells the idle workers in background threads, one each, and returns at once.
+  They are out of the idle list until they have run it, so a task after the call still finds
+  every worker told, as with the default. In-process runners take the argument and run the
+  note here, as before.
+- A note broadcast while a worker was out of the idle list -- running another note, or a
+  task whose notes it had already read -- is run before the worker is idle again. It was
+  left for the end of the worker's next task.
+
 ## 0.123.0 -- unreleased
 
 - **Closing a document gives its memory back** (round 58, Q3). `Session.close` empties what
