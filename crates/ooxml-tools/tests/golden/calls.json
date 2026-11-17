@@ -1,0 +1,933 @@
+[
+ {
+  "tool": "word_format",
+  "kind": null,
+  "arguments": {
+   "doc": "d1",
+   "targets": "p:A",
+   "top": 12,
+   "bold": true
+  },
+  "outcome": {
+   "arguments": {
+    "doc": "d1",
+    "targets": [
+     "p:A"
+    ],
+    "bold": true,
+    "space_before": 12
+   },
+   "notes": [
+    "top read as space_before"
+   ]
+  }
+ },
+ {
+  "tool": "word_format",
+  "kind": null,
+  "arguments": {
+   "doc": "d1",
+   "targets": [
+    "p:A"
+   ],
+   "top": 1,
+   "space_before": 2
+  },
+  "outcome": {
+   "error": {
+    "code": "invalid_arguments",
+    "message": "top and space_before say the same here; give space_before only",
+    "field": "top",
+    "valid_options": [
+     "space_before"
+    ]
+   }
+  }
+ },
+ {
+  "tool": "word_format",
+  "kind": null,
+  "arguments": {
+   "doc": "d1",
+   "find": {
+    "text": "x",
+    "range": "p:A"
+   }
+  },
+  "outcome": {
+   "arguments": {
+    "doc": "d1",
+    "find": [
+     {
+      "text": "x",
+      "within": "p:A"
+     }
+    ]
+   },
+   "notes": [
+    "find.range read as within"
+   ]
+  }
+ },
+ {
+  "tool": "word_format",
+  "kind": null,
+  "arguments": {
+   "doc": "d1",
+   "find": [
+    {
+     "text": "x",
+     "range": "p:A"
+    },
+    {
+     "text": "y"
+    }
+   ]
+  },
+  "outcome": {
+   "arguments": {
+    "doc": "d1",
+    "find": [
+     {
+      "text": "x",
+      "within": "p:A"
+     },
+     {
+      "text": "y"
+     }
+    ]
+   },
+   "notes": [
+    "find[0].range read as within"
+   ]
+  }
+ },
+ {
+  "tool": "word_format",
+  "kind": null,
+  "arguments": {
+   "doc": "d1",
+   "size": 2000
+  },
+  "outcome": {
+   "error": {
+    "code": "invalid_arguments",
+    "message": "size is 2000; at most 1638",
+    "field": "size",
+    "valid_options": []
+   }
+  }
+ },
+ {
+  "tool": "word_format",
+  "kind": null,
+  "arguments": {
+   "doc": "d1",
+   "size": "12"
+  },
+  "outcome": {
+   "error": {
+    "code": "invalid_arguments",
+    "message": "size must be a number",
+    "field": "size",
+    "valid_options": []
+   }
+  }
+ },
+ {
+  "tool": "word_format",
+  "kind": null,
+  "arguments": {
+   "doc": "d1",
+   "alignment": "centre"
+  },
+  "outcome": {
+   "error": {
+    "code": "invalid_arguments",
+    "message": "alignment is 'centre'; not one of the allowed values; did you mean 'center'?",
+    "field": "alignment",
+    "valid_options": [
+     "left",
+     "center",
+     "right",
+     "justify"
+    ]
+   }
+  }
+ },
+ {
+  "tool": "word_format",
+  "kind": null,
+  "arguments": {
+   "doc": "d1",
+   "targets": [
+    "p:A"
+   ],
+   "bolld": true
+  },
+  "outcome": {
+   "error": {
+    "code": "invalid_arguments",
+    "message": "unknown argument 'bolld'; did you mean 'bold'?",
+    "field": "bolld",
+    "valid_options": [
+     "alignment",
+     "bold",
+     "character_style",
+     "clear",
+     "clear_direct",
+     "color",
+     "doc",
+     "find",
+     "font",
+     "highlight",
+     "indent_first",
+     "indent_left",
+     "indent_right",
+     "italic",
+     "keep_lines",
+     "keep_together",
+     "keep_with_next",
+     "like",
+     "line_spacing",
+     "page_break_before",
+     "paragraph_style",
+     "size",
+     "space_after",
+     "space_before",
+     "strike",
+     "targets",
+     "underline"
+    ]
+   }
+  }
+ },
+ {
+  "tool": "word_format",
+  "kind": null,
+  "arguments": {
+   "doc": "d1",
+   "find": [
+    {
+     "text": "x",
+     "bold": true
+    }
+   ]
+  },
+  "outcome": {
+   "error": {
+    "code": "invalid_arguments",
+    "message": "unknown argument 'find[0].bold'; bold belongs one level up, at the top level, not in find[0]",
+    "field": "find[0].bold",
+    "valid_options": [
+     "expect",
+     "occurrence",
+     "text",
+     "within"
+    ]
+   }
+  }
+ },
+ {
+  "tool": "word_format",
+  "kind": null,
+  "arguments": {
+   "doc": "d1",
+   "text": "x"
+  },
+  "outcome": {
+   "error": {
+    "code": "invalid_arguments",
+    "message": "unknown argument 'text'; text belongs one level down: find[].text",
+    "field": "text",
+    "valid_options": [
+     "alignment",
+     "bold",
+     "character_style",
+     "clear",
+     "clear_direct",
+     "color",
+     "doc",
+     "find",
+     "font",
+     "highlight",
+     "indent_first",
+     "indent_left",
+     "indent_right",
+     "italic",
+     "keep_lines",
+     "keep_together",
+     "keep_with_next",
+     "like",
+     "line_spacing",
+     "page_break_before",
+     "paragraph_style",
+     "size",
+     "space_after",
+     "space_before",
+     "strike",
+     "targets",
+     "underline"
+    ]
+   }
+  }
+ },
+ {
+  "tool": "word_format",
+  "kind": null,
+  "arguments": {
+   "doc": "d1",
+   "find": [
+    {
+     "text": "x",
+     "occurrence": 2.0
+    }
+   ]
+  },
+  "outcome": {
+   "arguments": {
+    "doc": "d1",
+    "find": [
+     {
+      "text": "x",
+      "occurrence": 2
+     }
+    ]
+   },
+   "notes": []
+  }
+ },
+ {
+  "tool": "word_format",
+  "kind": null,
+  "arguments": {
+   "doc": "d1",
+   "find": [
+    {
+     "text": "x",
+     "occurrence": 1.5
+    }
+   ]
+  },
+  "outcome": {
+   "error": {
+    "code": "invalid_arguments",
+    "message": "find[0].occurrence must be a whole number",
+    "field": "find[0].occurrence",
+    "valid_options": []
+   }
+  }
+ },
+ {
+  "tool": "word_format",
+  "kind": null,
+  "arguments": {
+   "doc": "d1",
+   "clear": [
+    "bold",
+    "colour"
+   ]
+  },
+  "outcome": {
+   "error": {
+    "code": "invalid_arguments",
+    "message": "clear[1] is 'colour'; not one of the allowed values; did you mean 'color'?",
+    "field": "clear[1]",
+    "valid_options": [
+     "bold",
+     "italic",
+     "underline",
+     "strike",
+     "size",
+     "font",
+     "color",
+     "highlight",
+     "alignment",
+     "space_before",
+     "space_after",
+     "line_spacing",
+     "indent_left",
+     "indent_right",
+     "indent_first",
+     "keep_with_next",
+     "keep_lines",
+     "page_break_before"
+    ]
+   }
+  }
+ },
+ {
+  "tool": "word_format",
+  "kind": null,
+  "arguments": {
+   "doc": "d1",
+   "targets": "[\"p:A\", \"p:B\"]"
+  },
+  "outcome": {
+   "arguments": {
+    "doc": "d1",
+    "targets": [
+     "p:A",
+     "p:B"
+    ]
+   },
+   "notes": []
+  }
+ },
+ {
+  "tool": "word_format",
+  "kind": null,
+  "arguments": "{\"doc\": \"d1\", \"bold\": true}",
+  "outcome": {
+   "arguments": {
+    "doc": "d1",
+    "bold": true
+   },
+   "notes": []
+  }
+ },
+ {
+  "tool": "word_format",
+  "kind": null,
+  "arguments": {
+   "targets": [
+    "p:A"
+   ]
+  },
+  "outcome": {
+   "error": {
+    "code": "invalid_arguments",
+    "message": "'doc' is required",
+    "field": "doc",
+    "valid_options": []
+   }
+  }
+ },
+ {
+  "tool": "word_format",
+  "kind": null,
+  "arguments": {
+   "doc": "d1",
+   "bold": null,
+   "italic": true
+  },
+  "outcome": {
+   "arguments": {
+    "doc": "d1",
+    "italic": true
+   },
+   "notes": []
+  }
+ },
+ {
+  "tool": "word_format",
+  "kind": null,
+  "arguments": {
+   "doc": "d1",
+   "line_spacing": 0.01
+  },
+  "outcome": {
+   "error": {
+    "code": "invalid_arguments",
+    "message": "line_spacing is 0.01; at least 0.06",
+    "field": "line_spacing",
+    "valid_options": []
+   }
+  }
+ },
+ {
+  "tool": "word_format",
+  "kind": null,
+  "arguments": {
+   "doc": "d1",
+   "indent_left": -2000
+  },
+  "outcome": {
+   "error": {
+    "code": "invalid_arguments",
+    "message": "indent_left is -2000; at least -1584",
+    "field": "indent_left",
+    "valid_options": []
+   }
+  }
+ },
+ {
+  "tool": "word_format",
+  "kind": null,
+  "arguments": {
+   "doc": "d1",
+   "indent_first": -12.5,
+   "size": 10.5,
+   "space_after": 0
+  },
+  "outcome": {
+   "arguments": {
+    "doc": "d1",
+    "size": 10.5,
+    "space_after": 0,
+    "indent_first": -12.5
+   },
+   "notes": []
+  }
+ },
+ {
+  "tool": "word_format",
+  "kind": null,
+  "arguments": {
+   "doc": "d1",
+   "find": "x"
+  },
+  "outcome": {
+   "error": {
+    "code": "invalid_arguments",
+    "message": "find must be an array",
+    "field": "find",
+    "valid_options": []
+   }
+  }
+ },
+ {
+  "tool": "word_format",
+  "kind": null,
+  "arguments": {
+   "doc": "d1",
+   "bold": "yes"
+  },
+  "outcome": {
+   "error": {
+    "code": "invalid_arguments",
+    "message": "bold must be true or false",
+    "field": "bold",
+    "valid_options": []
+   }
+  }
+ },
+ {
+  "tool": "word_format",
+  "kind": null,
+  "arguments": {
+   "doc": "d1",
+   "find": [
+    {
+     "text": "x",
+     "expect": "every"
+    }
+   ]
+  },
+  "outcome": {
+   "error": {
+    "code": "invalid_arguments",
+    "message": "find[0].expect is 'every'; not one of the allowed values",
+    "field": "find[0].expect",
+    "valid_options": [
+     "one",
+     "all"
+    ]
+   }
+  }
+ },
+ {
+  "tool": "word_format",
+  "kind": null,
+  "arguments": {
+   "doc": "d1",
+   "targets": 3
+  },
+  "outcome": {
+   "error": {
+    "code": "invalid_arguments",
+    "message": "targets must be an array",
+    "field": "targets",
+    "valid_options": []
+   }
+  }
+ },
+ {
+  "tool": "word_format",
+  "kind": null,
+  "arguments": {
+   "doc": "d1",
+   "find": [
+    7
+   ]
+  },
+  "outcome": {
+   "error": {
+    "code": "invalid_arguments",
+    "message": "find[0] must be an object",
+    "field": "find[0]",
+    "valid_options": []
+   }
+  }
+ },
+ {
+  "tool": "replace_text",
+  "kind": null,
+  "arguments": {
+   "doc": "d1",
+   "find": "a",
+   "replace": "b"
+  },
+  "outcome": {
+   "arguments": {
+    "doc": "d1",
+    "find": "a",
+    "replace": "b",
+    "expect": "one"
+   },
+   "notes": [
+    "expect not given: read as 'one'"
+   ]
+  }
+ },
+ {
+  "tool": "replace_text",
+  "kind": "docx",
+  "arguments": {
+   "doc": "d1",
+   "find": "a",
+   "replace": "b",
+   "expect": "all",
+   "slides": []
+  },
+  "outcome": {
+   "arguments": {
+    "doc": "d1",
+    "find": "a",
+    "replace": "b",
+    "expect": "all"
+   },
+   "notes": [
+    "slides ignored: it applies to pptx, not to this docx document"
+   ]
+  }
+ },
+ {
+  "tool": "replace_text",
+  "kind": "docx",
+  "arguments": {
+   "doc": "d1",
+   "find": "a",
+   "replace": "b",
+   "expect": "all",
+   "slides": [
+    2
+   ]
+  },
+  "outcome": {
+   "arguments": {
+    "doc": "d1",
+    "find": "a",
+    "replace": "b",
+    "expect": "all",
+    "slides": [
+     2
+    ]
+   },
+   "notes": []
+  }
+ },
+ {
+  "tool": "replace_text",
+  "kind": "docx",
+  "arguments": {
+   "doc": "d1",
+   "find": "a",
+   "replace": "b",
+   "expect": "one",
+   "stories": "layouts"
+  },
+  "outcome": {
+   "arguments": {
+    "doc": "d1",
+    "find": "a",
+    "replace": "b",
+    "expect": "one",
+    "stories": "layouts"
+   },
+   "notes": []
+  }
+ },
+ {
+  "tool": "replace_text",
+  "kind": "pptx",
+  "arguments": {
+   "doc": "d1",
+   "find": "a",
+   "replace": "b",
+   "expect": "one",
+   "range": "",
+   "regex": false
+  },
+  "outcome": {
+   "arguments": {
+    "doc": "d1",
+    "find": "a",
+    "replace": "b",
+    "expect": "one",
+    "regex": false
+   },
+   "notes": [
+    "range ignored: it applies to docx, not to this pptx document"
+   ]
+  }
+ },
+ {
+  "tool": "replace_text",
+  "kind": null,
+  "arguments": {
+   "doc": "d1",
+   "find": "a",
+   "replace": "b",
+   "expect": "one",
+   "slides": [
+    0
+   ]
+  },
+  "outcome": {
+   "error": {
+    "code": "invalid_arguments",
+    "message": "slides[0] is 0; at least 1",
+    "field": "slides[0]",
+    "valid_options": []
+   }
+  }
+ },
+ {
+  "tool": "replace_text",
+  "kind": null,
+  "arguments": {
+   "doc": "d1",
+   "find": "a",
+   "replace": "b",
+   "expect": "one",
+   "slides": [
+    "s:256",
+    3,
+    4.0
+   ]
+  },
+  "outcome": {
+   "arguments": {
+    "doc": "d1",
+    "find": "a",
+    "replace": "b",
+    "expect": "one",
+    "slides": [
+     "s:256",
+     3,
+     4
+    ]
+   },
+   "notes": []
+  }
+ },
+ {
+  "tool": "replace_text",
+  "kind": null,
+  "arguments": {
+   "doc": "d1",
+   "find": "a",
+   "replace": "b",
+   "expect": null
+  },
+  "outcome": {
+   "arguments": {
+    "doc": "d1",
+    "find": "a",
+    "replace": "b",
+    "expect": "one"
+   },
+   "notes": [
+    "expect not given: read as 'one'"
+   ]
+  }
+ },
+ {
+  "tool": "replace_text",
+  "kind": null,
+  "arguments": {
+   "doc": "d1",
+   "find": "a",
+   "replace": "b",
+   "expect": "ALL"
+  },
+  "outcome": {
+   "error": {
+    "code": "invalid_arguments",
+    "message": "expect is 'ALL'; not one of the allowed values; did you mean 'all'?",
+    "field": "expect",
+    "valid_options": [
+     "one",
+     "all"
+    ]
+   }
+  }
+ },
+ {
+  "tool": "replace_text",
+  "kind": null,
+  "arguments": {
+   "doc": "d1",
+   "find": "a",
+   "replace": "b",
+   "expect": "one",
+   "slides": [
+    true
+   ]
+  },
+  "outcome": {
+   "error": {
+    "code": "invalid_arguments",
+    "message": "slides[0] must be a whole number or a string",
+    "field": "slides[0]",
+    "valid_options": []
+   }
+  }
+ },
+ {
+  "tool": "word_set_text",
+  "kind": null,
+  "arguments": {
+   "doc": "d1",
+   "items": [
+    {
+     "target": "p:A"
+    }
+   ]
+  },
+  "outcome": {
+   "error": {
+    "code": "invalid_arguments",
+    "message": "'items[0].text' is required",
+    "field": "items[0].text",
+    "valid_options": []
+   }
+  }
+ },
+ {
+  "tool": "word_set_text",
+  "kind": null,
+  "arguments": {
+   "doc": "d1",
+   "items": "[{\"target\": \"p:A\", \"text\": \"a\\vb\"}]"
+  },
+  "outcome": {
+   "arguments": {
+    "doc": "d1",
+    "items": [
+     {
+      "target": "p:A",
+      "text": "a\u000bb"
+     }
+    ]
+   },
+   "notes": []
+  }
+ },
+ {
+  "tool": "word_set_text",
+  "kind": null,
+  "arguments": "",
+  "outcome": {
+   "error": {
+    "code": "invalid_arguments",
+    "message": "'doc' is required",
+    "field": "doc",
+    "valid_options": []
+   }
+  }
+ },
+ {
+  "tool": "word_set_text",
+  "kind": null,
+  "arguments": null,
+  "outcome": {
+   "error": {
+    "code": "invalid_arguments",
+    "message": "'doc' is required",
+    "field": "doc",
+    "valid_options": []
+   }
+  }
+ },
+ {
+  "tool": "word_set_text",
+  "kind": null,
+  "arguments": [
+   "d1"
+  ],
+  "outcome": {
+   "error": {
+    "code": "invalid_arguments",
+    "message": "the arguments must be a JSON object",
+    "field": null,
+    "valid_options": []
+   }
+  }
+ },
+ {
+  "tool": "word_set_text",
+  "kind": null,
+  "arguments": {
+   "doc": "d1",
+   "target": 5
+  },
+  "outcome": {
+   "error": {
+    "code": "invalid_arguments",
+    "message": "target must be a string",
+    "field": "target",
+    "valid_options": []
+   }
+  }
+ },
+ {
+  "tool": "word_set_text",
+  "kind": null,
+  "arguments": {
+   "doc": "d1",
+   "target": "p:A",
+   "text": "x",
+   "items": {
+    "target": "p:B",
+    "text": "y"
+   }
+  },
+  "outcome": {
+   "error": {
+    "code": "invalid_arguments",
+    "message": "items must be an array",
+    "field": "items",
+    "valid_options": []
+   }
+  }
+ },
+ {
+  "tool": "word_set_text",
+  "kind": null,
+  "arguments": {
+   "doc": "d1",
+   "items": [
+    {
+     "target": "p:A",
+     "text": "x",
+     "paragraph_style": "Heading 1",
+     "style": "x"
+    }
+   ]
+  },
+  "outcome": {
+   "error": {
+    "code": "invalid_arguments",
+    "message": "unknown argument 'items[0].style'",
+    "field": "items[0].style",
+    "valid_options": [
+     "paragraph_style",
+     "target",
+     "text"
+    ]
+   }
+  }
+ }
+]
