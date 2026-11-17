@@ -20,7 +20,7 @@ use crate::table::{TableFlow, TableLayout};
 use crate::vertical::{autospace_kept, border_px};
 use ooxml_base::Locale;
 use ooxml_text::Measurer;
-use ooxml_word_model::model::{Block, Paragraph, SectionProps};
+use ooxml_word_model::model::{Block, Paragraph, SectionProps, Table};
 use ooxml_word_model::value::{Props, Text, Value};
 use ooxml_word_model::{Model, WordDocument};
 use std::collections::HashMap;
@@ -171,12 +171,25 @@ struct Kept {
 #[derive(Debug, Default)]
 pub struct MeasureCache {
     blocks: HashMap<usize, Kept>,
+    tables: HashMap<usize, KeptTable>,
+}
+
+/// A table's flow and what it was measured from beyond the table: its section, the
+/// paragraph before it and its cells' list labels.
+#[derive(Debug, Clone)]
+struct KeptTable {
+    table: Arc<Table>,
+    section: Arc<SectionProps>,
+    previous: Option<Arc<Paragraph>>,
+    labels: Vec<Option<String>>,
+    flow: Arc<dyn TableFlow>,
 }
 
 impl MeasureCache {
     /// Forget everything.
     pub fn clear(&mut self) {
         self.blocks.clear();
+        self.tables.clear();
     }
 
     /// How many blocks are kept.
@@ -204,28 +217,40 @@ impl MeasureCache {
         same.then(|| kept.measured.clone())
     }
 
-    /// Keep only the top-level paragraphs of `blocks` (a new version's body): the rest
-    /// are dropped.
-    pub fn retain_blocks(&mut self, blocks: &[Block]) {
-        let live: std::collections::HashSet<usize> = blocks
+    /// Keep only the top-level paragraphs of `bodies` (a new version's, each pass's):
+    /// the rest are dropped.
+    pub fn retain_blocks(&mut self, bodies: &[&[Block]]) {
+        let live: std::collections::HashSet<usize> = bodies
             .iter()
-            .filter_map(|b| match b {
-                Block::Paragraph(p) => Some(Arc::as_ptr(p) as usize),
-                Block::Table(_) => None,
+            .flat_map(|body| body.iter())
+            .map(|b| match b {
+                Block::Paragraph(p) => Arc::as_ptr(p) as usize,
+                Block::Table(t) => Arc::as_ptr(t) as usize,
             })
             .collect();
         self.blocks.retain(|k, _| live.contains(k));
+        self.tables.retain(|k, _| live.contains(k));
     }
 }
 
 /// Where a flow's list labels come from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Labels {
-    /// The body's, counted by the model.
-    Body,
+pub enum Labels<'a> {
+    /// Each paragraph's, in document order (cells included): the body's, as the model
+    /// counts them ([`WordDocument::body_labels`]).
+    Given(&'a [Option<String>]),
     /// None (a header's or footer's story, whose numbered paragraphs the model does not
     /// count).
     None,
+}
+
+impl Labels<'_> {
+    fn of(&self, block: usize) -> Option<String> {
+        match self {
+            Labels::Given(all) => all.get(block).cloned().flatten(),
+            Labels::None => None,
+        }
+    }
 }
 
 /// What building a flow needs.
@@ -237,7 +262,7 @@ pub struct FlowContext<'a> {
     /// Its sections.
     pub sections: &'a Sections,
     /// Its list labels.
-    pub labels: Labels,
+    pub labels: Labels<'a>,
     /// The faces.
     pub faces: &'a dyn Faces,
     /// The locale measures are keyed under.
@@ -456,13 +481,13 @@ impl<'a, 'm> FlowBuilder<'a, 'm> {
             _ => None,
         };
         let geometry = self.cx.sections.get(section).cloned();
+        let first = self.firsts.get(body).copied().unwrap_or(0);
+        let labels: Vec<Option<String>> = (first..first + self.paragraphs_in(body))
+            .map(|block| self.cx.labels.of(block))
+            .collect();
         let flowed = geometry
             .ok_or_else(|| crate::table::Unsupported("no section".into()))
-            .and_then(|g| {
-                self.cx
-                    .tables
-                    .flow_table(self.cx.document, table, &g, previous.as_deref())
-            });
+            .and_then(|g| self.table_flow(table, &g, previous, labels));
         match flowed {
             Ok(flow) => FlowItem::Table(Arc::new(TableItem {
                 block,
@@ -480,6 +505,53 @@ impl<'a, 'm> FlowBuilder<'a, 'm> {
         }
     }
 
+    /// How many paragraphs top-level block `body` holds (a table's cells').
+    fn paragraphs_in(&self, body: usize) -> usize {
+        let first = self.firsts.get(body).copied().unwrap_or(0);
+        let next = self.firsts.get(body + 1).copied().unwrap_or(self.paragraphs.len());
+        next.saturating_sub(first)
+    }
+
+    /// A table's flow, kept by identity while its section, the paragraph before it and
+    /// its cells' labels are the same.
+    fn table_flow(
+        &mut self,
+        table: &Arc<Table>,
+        geometry: &crate::sections::SectionGeometry,
+        previous: Option<Arc<Paragraph>>,
+        labels: Vec<Option<String>>,
+    ) -> Result<Arc<dyn TableFlow>, crate::table::Unsupported> {
+        let key = Arc::as_ptr(table) as usize;
+        if let Some(kept) = self.state.cache.tables.get(&key) {
+            let same = Arc::ptr_eq(&kept.table, table)
+                && *kept.section == *geometry.props
+                && match (&kept.previous, &previous) {
+                    (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+                    (None, None) => true,
+                    _ => false,
+                }
+                && kept.labels == labels;
+            if same {
+                return Ok(Arc::clone(&kept.flow));
+            }
+        }
+        let flow = self
+            .cx
+            .tables
+            .flow_table(self.cx.document, table, geometry, previous.as_deref(), &labels)?;
+        self.state.cache.tables.insert(
+            key,
+            KeptTable {
+                table: Arc::clone(table),
+                section: Arc::clone(&geometry.props),
+                previous,
+                labels,
+                flow: Arc::clone(&flow),
+            },
+        );
+        Ok(flow)
+    }
+
     fn measured(
         &mut self,
         paragraph: &Arc<Paragraph>,
@@ -487,10 +559,7 @@ impl<'a, 'm> FlowBuilder<'a, 'm> {
         section: usize,
     ) -> Result<Arc<MeasuredParagraph>, Unmeasured> {
         let document = self.cx.document;
-        let label = match self.cx.labels {
-            Labels::Body => document.label(body, 0),
-            Labels::None => None,
-        };
+        let label = self.cx.labels.of(self.firsts.get(body).copied().unwrap_or(0));
         let notes = self.cx.note_runs.get(&body).cloned().unwrap_or_default();
         let geometry = self.cx.sections.get(section).cloned();
         let Some(geometry) = geometry else {

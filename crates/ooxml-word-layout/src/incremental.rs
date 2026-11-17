@@ -23,13 +23,13 @@ pub struct Change {
     pub b_new: usize,
 }
 
-/// Whether two items lay out alike wherever they stand: the same lines (shared measure)
-/// and the same spacing, borders, keeps and section facts. Their places in the body
+/// Whether two items lay out alike wherever they stand: the same lines (a shared measure,
+/// or an equal one where the model read the block again) and the same spacing, borders, keeps and section facts. Their places in the body
 /// (block indices) may differ.
 pub fn same_item(old: &FlowItem, new: &FlowItem) -> bool {
     match (old, new) {
         (FlowItem::Para(a), FlowItem::Para(b)) => {
-            Arc::ptr_eq(&a.measured, &b.measured)
+            (Arc::ptr_eq(&a.measured, &b.measured) || a.measured == b.measured)
                 && a.section == b.section
                 && a.before == b.before
                 && a.after == b.after
@@ -81,6 +81,8 @@ pub fn diff(old: &[FlowItem], new: &[FlowItem]) -> Change {
 /// What a relayout did.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct RelayoutStats {
+    /// The change laid out again.
+    pub change: Option<Change>,
     /// The first laid page laid out again.
     pub restart: usize,
     /// Pages laid out again.
@@ -208,6 +210,7 @@ pub fn repaginate(cx: &PageContext<'_>, old: &Pagination, change: Change) -> (Pa
     (
         out,
         RelayoutStats {
+            change: Some(change),
             restart: p,
             laid,
             joined,

@@ -6,12 +6,16 @@
 //! ([`substitute`]). The engine lays the body out again with the values found until they
 //! are the ones it was laid out with.
 //!
-//! Must not: compute `REF`, `SEQ` or `STYLEREF` (they do not depend on the pages: see the
-//! hand-back of lane L3a), or draw a field.
+//! `SEQ` and `REF`, which do not depend on the pages, are computed once before the passes
+//! (`references`).
+//!
+//! Must not: compute `STYLEREF` (not ported yet), or draw a field.
 
 mod format;
+mod references;
 
 pub use format::{argument, field_text, format_value, number_text, switches, Uncomputable};
+pub use references::{cross_references, Computed};
 
 use crate::engine::DocumentLayout;
 use crate::flow::{body_paragraphs, FlowItem};
@@ -220,24 +224,24 @@ pub fn field_values(document: &WordDocument, layout: &DocumentLayout, keys: &[Fi
 
 /// A walk over the body's paragraphs in document order (cells included), rebuilding
 /// the ones a function changes and sharing every other block.
-struct Rebuild<'f> {
-    next: usize,
-    change: &'f dyn Fn(usize, &Paragraph) -> Option<Paragraph>,
+/// What a [`Rebuild`] asks of each paragraph (its index, the paragraph): its replacement,
+/// if it has one.
+pub(crate) type Change<'f> = &'f mut dyn FnMut(usize, &Arc<Paragraph>) -> Option<Arc<Paragraph>>;
+
+pub(crate) struct Rebuild<'f> {
+    pub(crate) next: usize,
+    pub(crate) change: Change<'f>,
 }
 
 impl Rebuild<'_> {
-    fn block(&mut self, block: &Block) -> Block {
+    pub(crate) fn block(&mut self, block: &Block) -> Block {
         match block {
             Block::Paragraph(p) => {
                 let index = self.next;
                 self.next += 1;
-                match (self.change)(index, p) {
-                    Some(changed) => Block::Paragraph(Arc::new(changed)),
-                    None => Block::Paragraph(Arc::clone(p)),
-                }
+                Block::Paragraph((self.change)(index, p).unwrap_or_else(|| Arc::clone(p)))
             }
             Block::Table(t) => {
-                let before = self.next;
                 let rows: Vec<_> = t
                     .rows
                     .iter()
@@ -252,7 +256,7 @@ impl Rebuild<'_> {
                         .zip(b.iter())
                         .all(|(x, y)| x.iter().zip(y.iter()).all(|(p, q)| same_block(p, q)))
                 });
-                if same || before == self.next {
+                if same {
                     Block::Table(Arc::clone(t))
                 } else {
                     Block::Table(Arc::new(Table {
@@ -273,34 +277,76 @@ fn same_block(a: &Block, b: &Block) -> bool {
     }
 }
 
-/// The document with its body's page-number fields' runs holding `values`
-/// (`substitute_document`): every other block shared with `document`.
-pub fn substitute(document: &WordDocument, values: &FieldValues) -> WordDocument {
-    let change = |index: usize, paragraph: &Paragraph| -> Option<Paragraph> {
-        let mut changed = false;
+/// A paragraph with its fields' values in: the original, the values, the result.
+type Substituted = (Arc<Paragraph>, Vec<(usize, String)>, Arc<Paragraph>);
+
+/// Paragraphs with their fields' values in, kept between versions: the same paragraph
+/// (the model shares an unchanged one's `Arc`) with the same values is the same
+/// substituted paragraph, so its measure is kept by identity too. Each entry holds its
+/// original, so an address names one paragraph for as long as it is kept.
+#[derive(Debug, Default)]
+pub struct Substitutions {
+    kept: HashMap<usize, Substituted>,
+    used: std::collections::HashSet<usize>,
+}
+
+impl Substitutions {
+    /// Forget the paragraphs no substitution since the last call used.
+    pub fn retain_used(&mut self) {
+        let used = std::mem::take(&mut self.used);
+        self.kept.retain(|k, _| used.contains(k));
+    }
+
+    fn get(&mut self, paragraph: &Arc<Paragraph>, values: &[(usize, String)]) -> Arc<Paragraph> {
+        let key = Arc::as_ptr(paragraph) as usize;
+        self.used.insert(key);
+        if let Some((original, kept_values, substituted)) = self.kept.get(&key) {
+            if Arc::ptr_eq(original, paragraph) && kept_values.as_slice() == values {
+                return Arc::clone(substituted);
+            }
+        }
         let runs: Vec<Run> = paragraph
             .runs
             .iter()
             .enumerate()
-            .map(|(k, run)| match values.get(&(index, k)) {
-                Some(text) if run.field.is_some() && **text != *run.text => {
-                    changed = true;
-                    Run {
-                        text: Arc::from(text.as_str()),
-                        ..run.clone()
-                    }
-                }
-                _ => run.clone(),
+            .map(|(k, run)| match values.iter().find(|(r, _)| *r == k) {
+                Some((_, text)) => Run {
+                    text: Arc::from(text.as_str()),
+                    ..run.clone()
+                },
+                None => run.clone(),
             })
             .collect();
-        changed.then(|| Paragraph {
+        let substituted = Arc::new(Paragraph {
             runs: runs.into(),
-            ..paragraph.clone()
-        })
+            ..(**paragraph).clone()
+        });
+        self.kept
+            .insert(key, (Arc::clone(paragraph), values.to_vec(), Arc::clone(&substituted)));
+        substituted
+    }
+}
+
+/// The document with its body's page-number fields' runs holding `values`
+/// (`substitute_document`): every other block shared with `document`, and a paragraph
+/// substituted alike before taken from `kept`.
+pub fn substitute(document: &WordDocument, values: &FieldValues, kept: &mut Substitutions) -> WordDocument {
+    let mut change = |index: usize, paragraph: &Arc<Paragraph>| -> Option<Arc<Paragraph>> {
+        let changed: Vec<(usize, String)> = values
+            .range((index, 0)..(index + 1, 0))
+            .filter(|((_, k), text)| {
+                paragraph
+                    .runs
+                    .get(*k)
+                    .is_some_and(|run| run.field.is_some() && **text != *run.text)
+            })
+            .map(|((_, k), text)| (*k, text.clone()))
+            .collect();
+        (!changed.is_empty()).then(|| kept.get(paragraph, &changed))
     };
     let mut walk = Rebuild {
         next: 0,
-        change: &change,
+        change: &mut change,
     };
     let body: Vec<Block> = document.body.iter().map(|b| walk.block(b)).collect();
     let mut out = document.clone();

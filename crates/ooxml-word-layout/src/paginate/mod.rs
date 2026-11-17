@@ -3,7 +3,7 @@
 //! each laid page with its lines' and rows' places ([`LaidPage`], [`PlacedLine`]), and the
 //! loop over pages -- page numbers, blank pages before odd and even sections, story kinds
 //! -- from the flow's start or from a page's checkpoint until a caller says the rest is
-//! known ([`paginate`]). One page is laid out by `scan` (one column) or `columns` (a
+//! known ([`Paginator`]). One page is laid out by `scan` (one column) or `columns` (a
 //! document with a section of several columns); where it ends when a line does not fit
 //! is `keeps`'.
 //!

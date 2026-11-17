@@ -386,7 +386,6 @@ name = "ooxml-word-layout"
 version = "0.1.0"
 dependencies = [
  "num-integer",
- "num-traits",
  "ooxml-base",
  "ooxml-derive",
  "ooxml-fonts",

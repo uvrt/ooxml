@@ -14,7 +14,6 @@ ooxml-fonts.workspace = true
 ooxml-text.workspace = true
 ooxml-word-model.workspace = true
 num-integer.workspace = true
-num-traits.workspace = true
 thiserror.workspace = true
 
 [lints]

@@ -1,7 +1,7 @@
 //! Relayout equals full layout (docs/architecture/README.md, section 8): made-up documents
 //! of paragraphs of every length -- keeps, page breaks, widow control off, spacing, exact
-//! lines, section breaks of every kind and of several columns, `PAGE`, `NUMPAGES` and
-//! `PAGEREF` fields with their bookmarks -- edited one block at a time (text, a keep, a
+//! lines, section breaks of every kind and of several columns, `PAGE`, `NUMPAGES`,
+//! `PAGEREF`, `SEQ` and `REF` fields with their bookmarks -- edited one block at a time (text, a keep, a
 //! paragraph inserted or deleted), each version laid out again from the one before and
 //! laid out whole in a fresh engine and model: the pages, their numbers and the fields'
 //! values are equal. Fixed seeds here; `many_seeds` (ignored) runs many.
@@ -51,10 +51,12 @@ fn spec(rng: &mut Rng, k: usize) -> Spec {
         let kind = kinds[usize::try_from(rng.below(4)).unwrap()];
         (kind, u32::try_from(1 + rng.below(3)).unwrap())
     });
-    let field = match rng.below(12) {
+    let field = match rng.below(14) {
         0 => Some("PAGE".to_owned()),
         1 => Some("NUMPAGES".to_owned()),
         2 => Some(format!("PAGEREF b{} \\h", rng.below(40))),
+        3 => Some("SEQ Figure".to_owned()),
+        4 => Some(format!("REF b{} \\h", rng.below(40))),
         _ => None,
     };
     Spec {
@@ -105,6 +107,9 @@ fn xml(specs: &[Spec]) -> String {
             content.push_str(&format!(r#"<w:bookmarkStart w:id="{k}" w:name="{name}"/>"#));
         }
         content.push_str(&run(&words.join(" ")));
+        if s.bookmark.is_some() {
+            content.push_str(&format!(r#"<w:bookmarkEnd w:id="{k}"/>"#));
+        }
         if s.page_break {
             content.push_str(r#"<w:r><w:br w:type="page"/></w:r>"#);
         }

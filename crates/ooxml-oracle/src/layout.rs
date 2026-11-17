@@ -379,10 +379,13 @@ fn compare_pages(
     document: &WordDocument,
     ours: &DocumentLayout,
     theirs: &Value,
-    cut: usize,
+    cut: (usize, bool),
     diffs: &mut Diffs<'_>,
     outcome: &mut Outcome,
 ) {
+    // A note, a drawing or an approximation at the cut can move any line of its page
+    // (a note area, a band above its anchor): that page's lines are not compared.
+    let (cut, whole_page_only) = cut;
     let starts: Vec<Position> = at(theirs, "starts")
         .as_array()
         .into_iter()
@@ -429,6 +432,9 @@ fn compare_pages(
         }
         let Some(drawn) = laid_pages.get(k) else { continue };
         let whole_page = starts.get(k + 1).map_or(cut == flow_len, |next| next.item < cut);
+        if whole_page_only && !whole_page {
+            continue;
+        }
         let mine = our_lines(ours, page, &paths, cut);
         let theirs_lines = their_lines(drawn, &item_of, cut, whole_page);
         outcome.placed += mine.len();
@@ -484,13 +490,14 @@ pub fn run_document(records: &LayoutRecords, outcome: &mut Outcome) -> Result<()
     outcome.layout_time += started.elapsed();
     let flow = at(theirs, "flow").as_array().cloned().unwrap_or_default();
     let (cut, why) = cutoff(&flow);
-    match why {
+    match &why {
         Some(why) => outcome.cut.push((records.path.clone(), format!("item {cut}: {why}"))),
         None => outcome.whole += 1,
     }
     compare_fields(&laid, theirs, cut, &mut diffs, outcome);
     compare_flow(&laid, &flow, cut, &mut diffs, outcome);
-    compare_pages(&document, &laid, theirs, cut, &mut diffs, outcome);
+    let page_level = why.as_deref().is_some_and(|w| w.starts_with("notes"));
+    compare_pages(&document, &laid, theirs, (cut, page_level), &mut diffs, outcome);
     outcome.differences.extend(found);
     Ok(())
 }

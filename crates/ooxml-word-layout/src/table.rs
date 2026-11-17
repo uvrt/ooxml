@@ -94,13 +94,14 @@ pub trait TableFlow: Debug + Send + Sync {
 /// Lays top-level tables out.
 pub trait TableLayout: Send + Sync {
     /// The table measured for the page stack in `section`; `previous` the paragraph before
-    /// it, if one is.
+    /// it, if one is; `labels` its cells' paragraphs' list labels, in document order.
     fn flow_table(
         &self,
         document: &WordDocument,
         table: &Table,
         section: &SectionGeometry,
         previous: Option<&Paragraph>,
+        labels: &[Option<String>],
     ) -> Result<Arc<dyn TableFlow>, Unsupported>;
 }
 
@@ -115,6 +116,7 @@ impl TableLayout for NoTables {
         _table: &Table,
         _section: &SectionGeometry,
         _previous: Option<&Paragraph>,
+        _labels: &[Option<String>],
     ) -> Result<Arc<dyn TableFlow>, Unsupported> {
         Err(Unsupported("no table layout is configured".into()))
     }

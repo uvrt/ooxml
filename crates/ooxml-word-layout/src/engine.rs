@@ -5,7 +5,7 @@
 //! Must not: hold more than one document's state, or anything global; edit; draw.
 
 use crate::faces::Faces;
-use crate::fields::{field_values, page_fields, substitute, FieldValues};
+use crate::fields::{cross_references, field_values, page_fields, substitute, Computed, FieldValues, Substitutions};
 use crate::flow::{Flow, FlowBuilder, FlowContext, FlowState, Labels};
 use crate::incremental::{diff, repaginate, RelayoutStats};
 use crate::paginate::{HyphenMove, PageContext, Pagination, Paginator, Resume};
@@ -111,6 +111,8 @@ pub struct WordLayout {
     locale: Locale,
     body: FlowState,
     stories: FlowState,
+    substitutions: Substitutions,
+    computed: Computed,
 }
 
 impl WordLayout {
@@ -129,6 +131,8 @@ impl WordLayout {
             locale,
             body: FlowState::new(Measurer::new(Arc::clone(budget), key)),
             stories: FlowState::new(Measurer::new(Arc::clone(budget), key)),
+            substitutions: Substitutions::default(),
+            computed: Computed::default(),
         }
     }
 
@@ -148,28 +152,28 @@ impl WordLayout {
         StoryTable::compute(&cx, model, &mut self.stories)
     }
 
-    /// A version's body flow; `note_runs`: per top-level block, the runs that draw a
+    /// A version's body flow in its sections, with its paragraphs' list labels (document
+    /// order, cells included); `note_runs`: per top-level block, the runs that draw a
     /// note's number.
     pub fn flow(
         &mut self,
         model: &mut Model,
         document: &WordDocument,
-        sections: &Sections,
+        frame: (&Sections, &[Option<String>]),
         note_runs: &HashMap<usize, Vec<bool>>,
     ) -> Flow {
+        let (sections, labels) = frame;
         let cx = FlowContext {
             document,
             blocks: &document.body,
             sections,
-            labels: Labels::Body,
+            labels: Labels::Given(labels),
             faces: self.faces.as_ref(),
             locale: &self.locale,
             tables: self.tables.as_ref(),
             note_runs,
         };
-        let flow = FlowBuilder::new(&cx, model, &mut self.body).build();
-        self.body.cache.retain_blocks(&document.body);
-        flow
+        FlowBuilder::new(&cx, model, &mut self.body).build()
     }
 
     /// One pass: the flow of `version` and its pages, laid out again from `old` (the same
@@ -178,11 +182,11 @@ impl WordLayout {
         &mut self,
         model: &mut Model,
         version: WordDocument,
-        frame: (&Sections, &StoryTable),
+        frame: (&Sections, &StoryTable, &[Option<String>]),
         old: Option<(&Flow, &Pagination)>,
     ) -> DocumentLayout {
-        let (sections, stories) = frame;
-        let flow = self.flow(model, &version, sections, &HashMap::new());
+        let (sections, stories, labels) = frame;
+        let flow = self.flow(model, &version, (sections, labels), &HashMap::new());
         let mut layout = DocumentLayout {
             flow,
             sections: sections.clone(),
@@ -234,18 +238,23 @@ impl WordLayout {
         document: &WordDocument,
         previous: Option<&DocumentLayout>,
     ) -> DocumentLayout {
+        // SEQ and REF do not depend on the pages: computed once (`_Placer._prepare`).
+        let prepared = cross_references(document, &mut self.computed);
+        let document = &prepared;
         let sections = Sections::of(document);
         let stories = self.story_heights(model, document);
         // A change to the sections or the stories' heights moves every page.
         let previous = previous.filter(|p| p.sections == sections && p.stories == stories);
         let keys = page_fields(document);
+        let labels = document.body_labels();
         let mut values = FieldValues::new();
         let mut version = document.clone();
         let mut earlier = Vec::new();
+        let mut versions: Vec<WordDocument> = Vec::new();
         let mut relaid = Vec::new();
         loop {
             let old = previous.and_then(|p| p.pass(earlier.len()));
-            let mut layout = self.pass(model, version, (&sections, &stories), old);
+            let mut layout = self.pass(model, version, (&sections, &stories, &labels), old);
             relaid.append(&mut layout.relaid);
             let found = field_values(&layout.document, &layout, &keys);
             let settled = found == values;
@@ -253,16 +262,21 @@ impl WordLayout {
                 layout.fields = values;
                 layout.passes = earlier.len() + 1;
                 layout.settled = settled;
-                layout.earlier = earlier;
                 layout.relaid = relaid;
+                let mut bodies: Vec<&[ooxml_word_model::model::Block]> = vec![&document.body, &layout.document.body];
+                bodies.extend(versions.iter().map(|v| &*v.body));
+                self.body.cache.retain_blocks(&bodies);
+                self.substitutions.retain_used();
+                layout.earlier = earlier;
                 return layout;
             }
+            versions.push(layout.document.clone());
             earlier.push(PassRecord {
                 flow: layout.flow,
                 pagination: layout.pagination,
             });
             values = found;
-            version = substitute(document, &values);
+            version = substitute(document, &values, &mut self.substitutions);
         }
     }
 }
