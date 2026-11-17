@@ -74,14 +74,16 @@ fn changed_blocks(old: &Arc<Element>, new: &Arc<Element>) -> Vec<(Vec<u32>, Opti
 /// # Errors
 /// When a part is not XML.
 pub(crate) fn sync(sink: &mut EditSink<'_, '_>) -> Result<()> {
-    let docx = sink.docx()?;
-    for story in &docx.parts {
-        let part = story.part.as_str();
-        let Some(old) = sink.base().tree(part)? else { continue };
-        if old.ptr_eq(&story.tree) {
+    // the story parts are the snapshot's (an edit of text adds or removes none); their
+    // trees, the working version's
+    let stories: Vec<String> = sink.base().docx()?.parts.iter().map(|p| p.part.clone()).collect();
+    for part in &stories {
+        let part = part.as_str();
+        let (Some(old), Some(new)) = (sink.base().tree(part)?, sink.doc().tree(part)?) else { continue };
+        if old.ptr_eq(&new) {
             continue;
         }
-        for (block, before) in changed_blocks(old.root(), story.root()) {
+        for (block, before) in changed_blocks(old.root(), new.root()) {
             sync_block(sink, part, &block, before.as_ref())?;
         }
     }

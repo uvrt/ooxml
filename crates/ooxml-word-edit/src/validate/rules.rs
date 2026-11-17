@@ -133,17 +133,12 @@ pub(crate) fn problems(inputs: &Inputs<'_>) -> Vec<Problem> {
 fn word_part(out: &mut Vec<Problem>, name: &str, facts: &PartFacts) {
     locals(out, name, facts.all().flat_map(|f| f.order.iter()));
     locals(out, name, facts.all().flat_map(|f| f.paraid.iter()));
-    let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
-    let mut first_seen: Vec<&str> = Vec::new();
+    let mut counts: HashMap<&str, usize> = HashMap::with_capacity(facts.blocks.len() * 2);
     for raw in facts.all().flat_map(|f| f.para_ids.iter()) {
-        let count = counts.entry(raw).or_insert(0);
-        if *count == 0 {
-            first_seen.push(raw);
-        }
-        *count += 1;
+        *counts.entry(raw).or_insert(0) += 1;
     }
-    for raw in first_seen {
-        if counts.get(raw).is_some_and(|n| *n > 1) {
+    for (raw, count) in counts {
+        if count > 1 {
             out.push(problem("paraid-repeated", name, raw));
         }
     }

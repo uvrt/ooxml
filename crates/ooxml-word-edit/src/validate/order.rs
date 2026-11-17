@@ -55,6 +55,17 @@ impl Orders {
         }
     }
 
+    /// An element's rank in `ranks`: by its name as written when its prefix is the listed
+    /// one (no string made), else by the listed name.
+    pub(crate) fn rank(&self, ranks: &HashMap<String, usize>, element: &Element) -> Option<usize> {
+        let name = element.name();
+        let listed = name.namespace().and_then(|ns| self.prefixes.get(ns)).map(String::as_str);
+        if listed.is_some() && listed == name.prefix() {
+            return ranks.get(name.qualified()).copied();
+        }
+        ranks.get(self.prefixed(element).as_str()).copied()
+    }
+
     /// The ranks of `parent`'s children, when the table has a sequence for it.
     pub(crate) fn ranks(&self, parent: &str) -> Option<&HashMap<String, usize>> {
         self.ranks.get(parent)

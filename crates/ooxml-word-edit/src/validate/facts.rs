@@ -345,10 +345,9 @@ fn order_of(element: &Element, orders: &Orders, out: &mut Vec<Local>) {
     let mut last = 0usize;
     let mut first = true;
     for child in element.child_elements() {
-        let name = orders.prefixed(child);
-        let rank = ranks.get(name.as_str()).copied().unwrap_or(unknown);
+        let rank = orders.rank(ranks, child).unwrap_or(unknown);
         if !first && rank < last {
-            out.push(("child-order", format!("{name} in {parent}")));
+            out.push(("child-order", format!("{} in {parent}", orders.prefixed(child))));
             return;
         }
         first = false;

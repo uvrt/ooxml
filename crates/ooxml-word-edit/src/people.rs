@@ -26,8 +26,7 @@ const MC: &str = crate::names::MC;
 /// # Errors
 /// When a part is not XML.
 pub(crate) fn ensure_person(sink: &mut EditSink<'_, '_>, author: &str) -> Result<()> {
-    let docx = sink.docx()?;
-    let main = docx.main.clone();
+    let main = sink.base().docx()?.main.clone();
     let package = sink.doc().package().clone();
     let found = package
         .relationships(&main)?
