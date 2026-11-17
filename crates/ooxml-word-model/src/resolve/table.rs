@@ -11,7 +11,7 @@
 use super::cascade::{banded, Sources};
 use crate::model::Table;
 use crate::styles::{Style, StyleKind};
-use crate::value::{key, Border, Props, Text, Value};
+use crate::value::{joined, key, Border, Props, Text, Value};
 use std::sync::Arc;
 
 /// The cell margin Word uses on a left or right side nothing declares, twips (measured).
@@ -130,7 +130,7 @@ fn region_borders(props: &Props, outer: [bool; 4]) -> Props {
         };
         let from = format!("tcBorders.{}", if on_edge { side } else { inside });
         if let Some(v) = props.get(from.as_str()) {
-            out.insert(key(&format!("tcBorders.{side}")), v.clone());
+            out.insert(joined("tcBorders", side), v.clone());
         }
     }
     out

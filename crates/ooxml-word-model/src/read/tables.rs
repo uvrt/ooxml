@@ -13,7 +13,7 @@ use super::paragraph::mark_removed;
 use super::Reader;
 use crate::model::{Block, Look, Paragraph, Table};
 use crate::props::table_properties;
-use crate::value::{text, Props, Text, Value};
+use crate::value::{text, Key, Props, Text, Value};
 use crate::w;
 use crate::xmlread::{attr, attr_on, child, elements, local, text as element_text};
 use ooxml_xml::Element;
@@ -95,11 +95,11 @@ fn absorb(previous: &mut Props, deleted: &Props) {
             .max(1)
     };
     let total = span(previous) + span(deleted);
-    previous.insert(text("gridSpan"), Value::Int(total));
+    previous.insert(Key::Borrowed("gridSpan"), Value::Int(total));
     if let (Some(Value::Width(mine, mk)), Some(Value::Width(theirs, tk))) = (previous.get("tcW"), deleted.get("tcW")) {
         if &**mk == "dxa" && &**tk == "dxa" {
             let sum = Value::Width(mine + theirs, text("dxa"));
-            previous.insert(text("tcW"), sum);
+            previous.insert(Key::Borrowed("tcW"), sum);
         }
     }
 }
@@ -112,10 +112,10 @@ fn accepted_cell_properties(reader: &Reader<'_>, cell: &Element) -> Props {
         .and_then(w::CellMerge::v_merge)
     {
         Some("rest") => {
-            out.insert(text("vMerge"), Value::Str(text("restart")));
+            out.insert(Key::Borrowed("vMerge"), Value::Str(text("restart")));
         }
         Some("cont") => {
-            out.insert(text("vMerge"), Value::Str(text("continue")));
+            out.insert(Key::Borrowed("vMerge"), Value::Str(text("continue")));
         }
         _ => {}
     }

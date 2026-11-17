@@ -7,7 +7,7 @@
 //! callers, not properties.
 
 use crate::theme::ThemeColours;
-use crate::value::{key, text, Border, FontRef, Props, Shading, TabStop, Text, Value};
+use crate::value::{joined, known, text, Border, FontRef, Key, Props, Shading, TabStop, Text, Value};
 use crate::xmlread::{attr, attr_int, attr_on, child, elements, is_on, local};
 use ooxml_xml::Element;
 use std::sync::Arc;
@@ -50,11 +50,11 @@ const PARA_BOOLS: &[&str] = &[
     "autoSpaceDE",
     "autoSpaceDN",
 ];
-const SLOTS: [(&str, &str); 4] = [
-    ("ascii", "asciiTheme"),
-    ("hAnsi", "hAnsiTheme"),
-    ("eastAsia", "eastAsiaTheme"),
-    ("cs", "cstheme"),
+const SLOTS: [(&str, &str, &str); 4] = [
+    ("ascii", "asciiTheme", "rFonts.ascii"),
+    ("hAnsi", "hAnsiTheme", "rFonts.hAnsi"),
+    ("eastAsia", "eastAsiaTheme", "rFonts.eastAsia"),
+    ("cs", "cstheme", "rFonts.cs"),
 ];
 
 /// Whether `name` is a toggle property.
@@ -109,12 +109,12 @@ fn attributes(element: &Element) -> Value {
 }
 
 fn read_fonts(node: &Element, out: &mut Props) {
-    for (slot, theme) in SLOTS {
+    for (slot, theme, name) in SLOTS {
         let face = attr(node, slot);
         let theme = attr(node, theme);
         if face.is_some() || theme.is_some() {
             out.insert(
-                key(&format!("rFonts.{slot}")),
+                Key::Borrowed(name),
                 Value::Font(FontRef {
                     face: face.map(text),
                     theme: theme.map(text),
@@ -123,7 +123,7 @@ fn read_fonts(node: &Element, out: &mut Props) {
         }
     }
     if let Some(hint) = attr(node, "hint") {
-        out.insert(key("rFonts.hint"), Value::Str(text(hint)));
+        out.insert(Key::Borrowed("rFonts.hint"), Value::Str(text(hint)));
     }
 }
 
@@ -132,24 +132,28 @@ fn read_run_child(node: &Element, colours: &ThemeColours, out: &mut Props) {
     match name {
         "rFonts" => read_fonts(node, out),
         "lang" => {
-            for k in ["val", "eastAsia", "bidi"] {
+            for (k, name) in [
+                ("val", "lang.val"),
+                ("eastAsia", "lang.eastAsia"),
+                ("bidi", "lang.bidi"),
+            ] {
                 if let Some(v) = attr(node, k) {
-                    out.insert(key(&format!("lang.{k}")), Value::Str(text(v)));
+                    out.insert(Key::Borrowed(name), Value::Str(text(v)));
                 }
             }
         }
         "bdr" => {
-            out.insert(key(name), Value::RunBorder(border(node, false)));
+            out.insert(known(name), Value::RunBorder(border(node, false)));
         }
         "shd" => {
-            out.insert(key(name), shading(node, colours));
+            out.insert(known(name), shading(node, colours));
         }
         _ if is_toggle(name) || RUN_BOOLS.contains(&name) => {
-            out.insert(key(name), Value::Bool(attr_on(node, "val")));
+            out.insert(known(name), Value::Bool(attr_on(node, "val")));
         }
         _ if RUN_INTS.contains(&name) => {
             if let Some(n) = attr_int(node, "val") {
-                out.insert(key(name), Value::Int(n));
+                out.insert(known(name), Value::Int(n));
             }
         }
         _ if RUN_STRINGS.contains(&name) => {
@@ -159,11 +163,11 @@ fn read_run_child(node: &Element, colours: &ThemeColours, out: &mut Props) {
                 attr(node, "val").map(text)
             };
             if let Some(v) = value {
-                out.insert(key(name), Value::Str(v));
+                out.insert(known(name), Value::Str(v));
             }
         }
         "textFill" | "textOutline" => {
-            out.insert(key(name), Value::TextEffect(text(name)));
+            out.insert(known(name), Value::TextEffect(text(name)));
         }
         _ => {}
     }
@@ -193,30 +197,39 @@ fn tab_stops(node: &Element) -> Value {
 }
 
 fn read_spacing(node: &Element, out: &mut Props) {
-    for k in ["before", "after", "line", "beforeLines", "afterLines"] {
+    for (k, name) in [
+        ("before", "spacing.before"),
+        ("after", "spacing.after"),
+        ("line", "spacing.line"),
+        ("beforeLines", "spacing.beforeLines"),
+        ("afterLines", "spacing.afterLines"),
+    ] {
         if let Some(v) = attr_int(node, k) {
-            out.insert(key(&format!("spacing.{k}")), Value::Int(v));
+            out.insert(Key::Borrowed(name), Value::Int(v));
         }
     }
     if let Some(rule) = attr(node, "lineRule") {
-        out.insert(key("spacing.lineRule"), Value::Str(text(rule)));
+        out.insert(Key::Borrowed("spacing.lineRule"), Value::Str(text(rule)));
     }
-    for k in ["beforeAutospacing", "afterAutospacing"] {
+    for (k, name) in [
+        ("beforeAutospacing", "spacing.beforeAutospacing"),
+        ("afterAutospacing", "spacing.afterAutospacing"),
+    ] {
         if let Some(v) = attr(node, k) {
-            out.insert(key(&format!("spacing.{k}")), Value::Bool(is_on(v)));
+            out.insert(Key::Borrowed(name), Value::Bool(is_on(v)));
         }
     }
 }
 
 fn read_indent(node: &Element, out: &mut Props) {
-    for (k, aliases) in [
-        ("left", &["left", "start"][..]),
-        ("right", &["right", "end"][..]),
-        ("firstLine", &["firstLine"][..]),
-        ("hanging", &["hanging"][..]),
+    for (name, aliases) in [
+        ("ind.left", &["left", "start"][..]),
+        ("ind.right", &["right", "end"][..]),
+        ("ind.firstLine", &["firstLine"][..]),
+        ("ind.hanging", &["hanging"][..]),
     ] {
         if let Some(v) = aliases.iter().find_map(|a| attr_int(node, a)) {
-            out.insert(key(&format!("ind.{k}")), Value::Int(v));
+            out.insert(Key::Borrowed(name), Value::Int(v));
         }
     }
 }
@@ -228,38 +241,38 @@ fn read_paragraph_child(node: &Element, colours: &ThemeColours, out: &mut Props)
         "ind" => read_indent(node, out),
         "numPr" => {
             if let Some(n) = child(node, "numId").and_then(|e| attr_int(e, "val")) {
-                out.insert(key("numPr.numId"), Value::Int(n));
+                out.insert(Key::Borrowed("numPr.numId"), Value::Int(n));
             }
             if let Some(n) = child(node, "ilvl").and_then(|e| attr_int(e, "val")) {
-                out.insert(key("numPr.ilvl"), Value::Int(n));
+                out.insert(Key::Borrowed("numPr.ilvl"), Value::Int(n));
             }
         }
         "tabs" => {
-            out.insert(key("tabs"), tab_stops(node));
+            out.insert(Key::Borrowed("tabs"), tab_stops(node));
         }
         "framePr" => {
-            out.insert(key("framePr"), attributes(node));
+            out.insert(Key::Borrowed("framePr"), attributes(node));
         }
         "pBdr" => {
             for side in elements(node) {
-                out.insert(key(&format!("pBdr.{}", local(side))), Value::Border(border(side, true)));
+                out.insert(joined("pBdr", local(side)), Value::Border(border(side, true)));
             }
         }
         "shd" => {
-            out.insert(key(name), shading(node, colours));
+            out.insert(known(name), shading(node, colours));
         }
         "jc" | "textAlignment" => {
             if let Some(v) = attr(node, "val") {
-                out.insert(key(name), Value::Str(text(v)));
+                out.insert(known(name), Value::Str(text(v)));
             }
         }
         "outlineLvl" => {
             if let Some(v) = attr_int(node, "val") {
-                out.insert(key(name), Value::Int(v));
+                out.insert(known(name), Value::Int(v));
             }
         }
         _ if PARA_BOOLS.contains(&name) => {
-            out.insert(key(name), Value::Bool(attr_on(node, "val")));
+            out.insert(known(name), Value::Bool(attr_on(node, "val")));
         }
         _ => {}
     }
@@ -342,55 +355,55 @@ fn read_table_child(node: &Element, colours: &ThemeColours, out: &mut Props) {
     let name = local(node);
     match name {
         _ if TABLE_WIDTHS.contains(&name) => {
-            out.insert(key(name), width(node));
+            out.insert(known(name), width(node));
         }
         "tblCellMar" | "tcMar" => {
             for side in elements(node) {
-                out.insert(key(&format!("{name}.{}", side_name(local(side)))), width(side));
+                out.insert(joined(name, side_name(local(side))), width(side));
             }
         }
         "tblBorders" | "tcBorders" => {
             for side in elements(node) {
-                out.insert(
-                    key(&format!("{name}.{}", side_name(local(side)))),
-                    Value::Border(border(side, true)),
-                );
+                out.insert(joined(name, side_name(local(side))), Value::Border(border(side, true)));
             }
         }
         "tblLayout" => {
             out.insert(
-                key(name),
+                known(name),
                 Value::Str(text(attr(node, "type").filter(|t| !t.is_empty()).unwrap_or("autofit"))),
             );
         }
         "trHeight" => {
             let rule = attr(node, "hRule").filter(|r| !r.is_empty()).unwrap_or("atLeast");
-            out.insert(key(name), Value::Height(attr_int(node, "val").unwrap_or(0), text(rule)));
+            out.insert(
+                known(name),
+                Value::Height(attr_int(node, "val").unwrap_or(0), text(rule)),
+            );
         }
         "vMerge" => {
             out.insert(
-                key(name),
+                known(name),
                 Value::Str(text(attr(node, "val").filter(|v| !v.is_empty()).unwrap_or("continue"))),
             );
         }
         "shd" => {
-            out.insert(key(name), shading(node, colours));
+            out.insert(known(name), shading(node, colours));
         }
         "tblpPr" => {
-            out.insert(key(name), attributes(node));
+            out.insert(known(name), attributes(node));
         }
         _ if TABLE_STRINGS.contains(&name) => {
             if let Some(v) = attr(node, "val") {
-                out.insert(key(name), Value::Str(text(v)));
+                out.insert(known(name), Value::Str(text(v)));
             }
         }
         _ if TABLE_INTS.contains(&name) => {
             if let Some(v) = attr_int(node, "val") {
-                out.insert(key(name), Value::Int(v));
+                out.insert(known(name), Value::Int(v));
             }
         }
         _ if TABLE_BOOLS.contains(&name) => {
-            out.insert(key(name), Value::Bool(attr_on(node, "val")));
+            out.insert(known(name), Value::Bool(attr_on(node, "val")));
         }
         _ => {}
     }

@@ -8,7 +8,7 @@
 use super::cascade::{flatten, merge, Part, Sources, LEGACY_DEFAULT_SIZE, LEGACY_UNSET_DEFAULT};
 use crate::props::is_toggle;
 use crate::styles::StyleKind;
-use crate::value::{key, Props, Text, Value};
+use crate::value::{Key, Props, Text, Value};
 use std::collections::BTreeSet;
 
 /// What a run's resolution reads of the run and its paragraph.
@@ -43,7 +43,7 @@ fn toc_link_layer(level: &Props) -> Props {
     let capitals: Vec<&Value> = ["caps", "smallCaps"].iter().filter_map(|k| level.get(*k)).collect();
     if !capitals.is_empty() {
         let on = capitals.iter().any(|v| v.truthy());
-        out.insert(key("caps"), Value::Bool(on));
+        out.insert(Key::Borrowed("caps"), Value::Bool(on));
     }
     out
 }
@@ -134,7 +134,7 @@ pub fn resolve_run(src: &Sources<'_>, input: &RunInput<'_>) -> Props {
         merge(&mut layer, &non_toggles(level));
     }
     merge(&mut layer, &non_toggles(input.direct));
-    let declared: BTreeSet<&Text> = defaults
+    let declared: BTreeSet<&Key> = defaults
         .keys()
         .chain(input.direct.keys())
         .chain(levels.iter().flat_map(|l| l.keys()))

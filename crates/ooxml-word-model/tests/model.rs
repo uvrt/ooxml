@@ -240,3 +240,11 @@ fn a_table_style_region_formats_the_cells_in_it() {
     let r = m.resolve_paragraph(&d, &first);
     assert_eq!(r.runs[0].get("b"), Some(&Value::Bool(true)));
 }
+
+#[test]
+fn the_model_and_its_versions_cross_threads() {
+    fn shared<T: Send + Sync>() {}
+    fn owned<T: Send>() {}
+    shared::<ooxml_word_model::WordDocument>();
+    owned::<ooxml_word_model::Model>();
+}

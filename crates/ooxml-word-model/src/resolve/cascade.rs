@@ -14,7 +14,7 @@ use crate::numbering::{Level, Numbering};
 
 use crate::settings::Settings;
 use crate::styles::{Style, StyleKind, StyleSheet};
-use crate::value::{key, Props, TabStop, Value};
+use crate::value::{key, Key, Props, TabStop, Value};
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
@@ -296,22 +296,22 @@ pub fn resolve_paragraph(src: &Sources<'_>, input: &ParagraphInput<'_>) -> Props
     }
     merge(&mut layer, input.direct);
     if state.single {
-        layer.insert(key("numPr.ilvl"), Value::Int(0));
+        layer.insert(Key::Borrowed("numPr.ilvl"), Value::Int(0));
     }
     if state.missing {
-        layer.insert(key("ind.firstLine"), Value::Int(0));
-        layer.insert(key("ind.hanging"), Value::Int(0));
+        layer.insert(Key::Borrowed("ind.firstLine"), Value::Int(0));
+        layer.insert(Key::Borrowed("ind.hanging"), Value::Int(0));
     }
     if state.unnumbered {
-        layer.insert(key("numPr.numId"), Value::Int(0));
+        layer.insert(Key::Borrowed("numPr.numId"), Value::Int(0));
     }
     if !src.settings.option("doNotUseHTMLParagraphAutoSpacing") {
-        for side in ["before", "after"] {
-            if layer
-                .get(format!("spacing.{side}Autospacing").as_str())
-                .is_some_and(Value::truthy)
-            {
-                layer.insert(key(&format!("spacing.{side}")), Value::Int(AUTOSPACING_TWIPS));
+        for (flag, side) in [
+            ("spacing.beforeAutospacing", "spacing.before"),
+            ("spacing.afterAutospacing", "spacing.after"),
+        ] {
+            if layer.get(flag).is_some_and(Value::truthy) {
+                layer.insert(Key::Borrowed(side), Value::Int(AUTOSPACING_TWIPS));
             }
         }
     }

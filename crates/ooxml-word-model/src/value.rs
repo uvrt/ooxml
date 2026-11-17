@@ -5,6 +5,7 @@
 //!
 //! Must not: merge levels (`crate::resolve` does), or read XML (`crate::props` does).
 
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -119,12 +120,115 @@ impl Value {
     }
 }
 
-/// A level's declared properties by flat key.
-pub type Props = BTreeMap<Text, Value>;
+/// A property's flat key (`ind.left`): borrowed for the vocabulary's own names, owned for
+/// the few made from what a document states (a border side's local name).
+pub type Key = Cow<'static, str>;
 
-/// A key as shared text.
+/// A level's declared properties by flat key.
+pub type Props = BTreeMap<Key, Value>;
+
+/// Shared text from a string (a style id, a path).
 pub fn key(name: &str) -> Text {
     Text::from(name)
+}
+
+/// The property names the vocabulary has, so that a key read from an element's local name
+/// borrows the vocabulary's spelling rather than allocating its own.
+const NAMES: &[&str] = &[
+    "b",
+    "bCs",
+    "i",
+    "iCs",
+    "caps",
+    "smallCaps",
+    "strike",
+    "dstrike",
+    "outline",
+    "shadow",
+    "emboss",
+    "imprint",
+    "vanish",
+    "webHidden",
+    "specVanish",
+    "noProof",
+    "snapToGrid",
+    "rtl",
+    "cs",
+    "oMath",
+    "sz",
+    "szCs",
+    "kern",
+    "spacing",
+    "w",
+    "position",
+    "color",
+    "u",
+    "vertAlign",
+    "highlight",
+    "effect",
+    "em",
+    "bdr",
+    "shd",
+    "textFill",
+    "textOutline",
+    "keepNext",
+    "keepLines",
+    "pageBreakBefore",
+    "widowControl",
+    "contextualSpacing",
+    "bidi",
+    "suppressAutoHyphens",
+    "mirrorIndents",
+    "suppressLineNumbers",
+    "adjustRightInd",
+    "wordWrap",
+    "kinsoku",
+    "overflowPunct",
+    "autoSpaceDE",
+    "autoSpaceDN",
+    "jc",
+    "textAlignment",
+    "outlineLvl",
+    "tabs",
+    "framePr",
+    "tblW",
+    "tblInd",
+    "tblCellSpacing",
+    "tcW",
+    "wBefore",
+    "wAfter",
+    "vAlign",
+    "textDirection",
+    "hMerge",
+    "gridSpan",
+    "gridBefore",
+    "gridAfter",
+    "tblStyleRowBandSize",
+    "tblStyleColBandSize",
+    "cantSplit",
+    "tblHeader",
+    "noWrap",
+    "hidden",
+    "bidiVisual",
+    "tcFitText",
+    "hideMark",
+    "tblLayout",
+    "trHeight",
+    "vMerge",
+    "tblpPr",
+];
+
+/// The key for a property named `name`: the vocabulary's spelling where it has one.
+pub fn known(name: &str) -> Key {
+    NAMES
+        .iter()
+        .find(|n| **n == name)
+        .map_or_else(|| Cow::Owned(name.to_owned()), |n| Cow::Borrowed(*n))
+}
+
+/// A key made from parts (`pBdr.top`).
+pub fn joined(prefix: &str, name: &str) -> Key {
+    Cow::Owned(format!("{prefix}.{name}"))
 }
 
 /// Shared text from a string.
