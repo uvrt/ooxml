@@ -602,7 +602,7 @@ pub(crate) fn table_gap(previous: Option<&FlowItem>, t: &TableItem) -> Px {
             }
         }
         Some(FlowItem::Para(before)) => {
-            if before.contextual && t.flow.first_style().is_some() && t.flow.first_style() == before.style {
+            if before.contextual && t.flow.opens_with_style(before.style.as_deref()) {
                 Px::ZERO
             } else {
                 Px::twips(before.after)
@@ -666,7 +666,7 @@ impl PageContext<'_> {
             stack.foot.mark(Position {
                 item: index,
                 line: row.row,
-                part: row.part.clone(),
+                part: row.part(),
             });
         }
         if let Some((next_row, next_part)) = laid.next.clone() {
@@ -785,7 +785,7 @@ fn finish(stack: Stack<'_>, end: &ScanEnd, frame: Option<&mut Frame>) {
             let at = Position {
                 item: r.item,
                 line: r.row.row,
-                part: r.row.part.clone(),
+                part: r.row.part(),
             };
             r.row.header || at < end.end
         })
@@ -822,9 +822,9 @@ fn record_rows(stack: &mut Stack<'_>, index: usize, laid: &crate::table::TablePa
             let position = Position {
                 item: index,
                 line: row.row,
-                part: row.part.clone(),
+                part: row.part(),
             };
-            stack.stack_ends.push((position, row.top + row.height));
+            stack.stack_ends.push((position, row.bottom()));
         }
         stack.out.rows.push(PlacedTableRow {
             item: index,

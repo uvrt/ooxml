@@ -19,7 +19,7 @@ use crate::notes::{NoteLines, NoteRole};
 use crate::paragraph::{measure_paragraph, MeasureContext, MeasuredParagraph, ParagraphJob, Unmeasured};
 use crate::px::Px;
 use crate::sections::Sections;
-use crate::table::{TableFlow, TableLayout};
+use crate::table::{TableContext, TableFlow, TableJob, TableLayout, Unsupported};
 use crate::vertical::autospace_kept;
 use ooxml_base::Locale;
 use ooxml_text::Measurer;
@@ -360,7 +360,7 @@ pub fn body_paragraphs(body: &[Block]) -> (Vec<Arc<Paragraph>>, Vec<usize>) {
 }
 
 /// Whether a paragraph holds nothing but its mark (no text, tab, break or drawing).
-fn is_empty(paragraph: &Paragraph) -> bool {
+pub(crate) fn is_empty(paragraph: &Paragraph) -> bool {
     !paragraph
         .runs
         .iter()
@@ -513,9 +513,12 @@ impl<'a, 'm> FlowMaker<'a, 'm> {
         let labels: Vec<Option<String>> = (first..first + self.paragraphs_in(body))
             .map(|block| self.cx.labels.of(block))
             .collect();
-        let flowed = geometry
-            .ok_or_else(|| crate::table::Unsupported("no section".into()))
-            .and_then(|g| self.table_flow(table, &g, previous, labels));
+        let flowed = match geometry {
+            None => Err(Unsupported("no section".into())),
+            // Its columns' widths differ: laid out again in each (lane L3c).
+            Some(g) if g.unequal_columns() => Err(Unsupported("a section of unequal columns".into())),
+            Some(g) => self.table_flow(table, &g, previous, labels),
+        };
         match flowed {
             Ok(flow) => FlowItem::Table(Arc::new(TableItem {
                 block,
@@ -548,7 +551,7 @@ impl<'a, 'm> FlowMaker<'a, 'm> {
         geometry: &crate::sections::SectionGeometry,
         previous: Option<Arc<Paragraph>>,
         labels: Vec<Option<String>>,
-    ) -> Result<Arc<dyn TableFlow>, crate::table::Unsupported> {
+    ) -> Result<Arc<dyn TableFlow>, Unsupported> {
         let key = Arc::as_ptr(table) as usize;
         if let Some(kept) = self.state.cache.tables.get(&key) {
             let same = Arc::ptr_eq(&kept.table, table)
@@ -563,10 +566,20 @@ impl<'a, 'm> FlowMaker<'a, 'm> {
                 return Ok(Arc::clone(&kept.flow));
             }
         }
-        let flow = self
-            .cx
-            .tables
-            .flow_table(self.cx.document, table, geometry, previous.as_deref(), &labels)?;
+        let mut cx = TableContext {
+            document: self.cx.document,
+            model: &mut *self.model,
+            measurer: &mut self.state.measurer,
+            faces: self.cx.faces,
+            locale: self.cx.locale,
+        };
+        let job = TableJob {
+            table,
+            section: geometry,
+            previous: previous.as_deref(),
+            labels: &labels,
+        };
+        let flow = self.cx.tables.flow_table(&mut cx, &job)?;
         self.state.cache.tables.insert(
             key,
             KeptTable {

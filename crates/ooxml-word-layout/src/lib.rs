@@ -13,8 +13,10 @@
 //!   ([`stories`]);
 //! - the body's flow ([`flow`]) and its pagination ([`paginate`]); its page-number
 //!   fields settled against its pages ([`fields`]);
-//! - the extension points of what later lanes lay out: tables ([`table`], lane L3b),
-//!   stories' contents, notes and floating drawings (lane L3c);
+//! - tables: the extension point the paginator lays them out through ([`table`]) and
+//!   Word's tables laid out ([`tables`], lane L3b);
+//! - the extension points of what later lanes lay out: stories' contents, notes and
+//!   floating drawings (lane L3c);
 //! - relayout from the version before ([`incremental`]), and the engine that keeps
 //!   measures between versions ([`engine`]).
 //!
@@ -41,6 +43,7 @@ pub mod rebreak;
 pub mod sections;
 pub mod stories;
 pub mod table;
+pub mod tables;
 pub mod vertical;
 pub mod wrap;
 

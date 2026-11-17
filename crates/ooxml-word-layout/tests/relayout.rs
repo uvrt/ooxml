@@ -1,10 +1,13 @@
 //! Relayout equals full layout (docs/architecture/README.md, section 8): made-up documents
 //! of paragraphs of every length -- keeps, page breaks, widow control off, spacing, exact
 //! lines, section breaks of every kind and of several columns, `PAGE`, `NUMPAGES`,
-//! `PAGEREF`, `SEQ` and `REF` fields with their bookmarks, footnote and endnote references,
-//! floating drawings text wraps beside or top and bottom of, a header of changing height --
-//! edited one block at a time (text, a keep, a note, a drawing, a paragraph inserted or
-//! deleted, the header), each version laid out again from the one before and
+//! `PAGEREF`, `SEQ` and `REF` fields with their bookmarks, tables (rows split across
+//! pages, header rows, rows that may not split or keep with the next, cells merged across
+//! and down, fixed and autofit widths, a field in a cell), footnote and endnote
+//! references, floating drawings text wraps beside or top and bottom of, a header of
+//! changing height -- edited one block at a time (text, a keep, a cell's text, a header
+//! row, a note, a drawing, a paragraph or table inserted or deleted, the header), each
+//! version laid out again from the one before and
 //! laid out whole in a fresh engine and model: the pages, their numbers and the fields'
 //! values are equal. Fixed seeds here; `many_seeds` (ignored) runs many.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
@@ -31,8 +34,114 @@ impl Rng {
     }
 }
 
+/// A made-up table: its rows of cells' word counts, and what its rows and cells state.
+#[derive(Clone, Debug)]
+struct Tbl {
+    columns: usize,
+    rows: Vec<Vec<u64>>,
+    headers: usize,
+    cant_split: Vec<bool>,
+    keep: Vec<bool>,
+    /// A cell of the first column merged down over this row and the next.
+    merge_down: Option<usize>,
+    /// A row whose first two cells are one.
+    span: Option<usize>,
+    autofit: bool,
+    exact: Option<usize>,
+}
+
+fn tbl(rng: &mut Rng) -> Tbl {
+    let columns = 1 + usize::try_from(rng.below(3)).unwrap();
+    let count = 1 + usize::try_from(rng.below(9)).unwrap();
+    let rows: Vec<Vec<u64>> = (0..count)
+        .map(|_| {
+            (0..columns)
+                .map(|_| if rng.chance(10) { 0 } else { rng.below(40) })
+                .collect()
+        })
+        .collect();
+    let pick = |rng: &mut Rng| usize::try_from(rng.below(u64::try_from(count).unwrap())).unwrap();
+    Tbl {
+        columns,
+        headers: if rng.chance(30) { 1 + pick(rng).min(1) } else { 0 },
+        cant_split: (0..count).map(|_| rng.chance(15)).collect(),
+        keep: (0..count).map(|_| rng.chance(10)).collect(),
+        merge_down: (count > 1 && rng.chance(30)).then(|| pick(rng).min(count - 2)),
+        span: (columns > 1 && rng.chance(30)).then(|| pick(rng)),
+        autofit: rng.chance(40),
+        exact: rng.chance(10).then(|| pick(rng)),
+        rows,
+    }
+}
+
+fn tbl_xml(t: &Tbl, k: usize, field: Option<&str>) -> String {
+    let width = 2160 / t.columns;
+    let layout = if t.autofit {
+        ""
+    } else {
+        r#"<w:tblLayout w:type="fixed"/>"#
+    };
+    let mut out = format!(
+        r#"<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/><w:tblBorders><w:top w:val="single" w:sz="4"/><w:insideH w:val="single" w:sz="8"/><w:bottom w:val="single" w:sz="4"/></w:tblBorders>{layout}<w:tblCellMar><w:top w:w="20" w:type="dxa"/><w:left w:w="60" w:type="dxa"/><w:bottom w:w="20" w:type="dxa"/><w:right w:w="60" w:type="dxa"/></w:tblCellMar></w:tblPr><w:tblGrid>{}</w:tblGrid>"#,
+        format!(r#"<w:gridCol w:w="{width}"/>"#).repeat(t.columns)
+    );
+    for (r, row) in t.rows.iter().enumerate() {
+        let mut trpr = String::new();
+        if r < t.headers {
+            trpr.push_str("<w:tblHeader/>");
+        }
+        if t.cant_split[r] {
+            trpr.push_str("<w:cantSplit/>");
+        }
+        if t.exact == Some(r) {
+            trpr.push_str(r#"<w:trHeight w:val="400" w:hRule="exact"/>"#);
+        }
+        out.push_str(&format!("<w:tr><w:trPr>{trpr}</w:trPr>"));
+        let spanned = t.span == Some(r);
+        let mut c = 0;
+        while c < t.columns {
+            let span = if spanned && c == 0 { 2 } else { 1 };
+            let mut tcpr = format!(r#"<w:tcW w:w="{}" w:type="dxa"/>"#, width * span);
+            if span > 1 {
+                tcpr.push_str(r#"<w:gridSpan w:val="2"/>"#);
+            }
+            let merge = match t.merge_down {
+                Some(m) if c == 0 && !spanned && m == r => Some("restart"),
+                Some(m) if c == 0 && !spanned && m + 1 == r && t.span != Some(m) => Some("continue"),
+                _ => None,
+            };
+            if let Some(kind) = merge {
+                tcpr.push_str(&format!(r#"<w:vMerge w:val="{kind}"/>"#));
+            }
+            let words: Vec<String> = (0..row[c]).map(|w| format!("c{}x{}", k, w % 5)).collect();
+            let ppr = if t.keep[r] && c == 0 { "<w:keepNext/>" } else { "" };
+            let mut content = String::new();
+            if r == 0 && c == 0 {
+                content.push_str(&format!(r#"<w:bookmarkStart w:id="{k}" w:name="b{k}"/>"#));
+            }
+            content.push_str(&run(&words.join(" ")));
+            if r == 0 && c == 0 {
+                content.push_str(&format!(r#"<w:bookmarkEnd w:id="{k}"/>"#));
+                if let Some(instruction) = field {
+                    content.push_str(&field_xml(instruction));
+                }
+            }
+            out.push_str(&format!("<w:tc><w:tcPr>{tcpr}</w:tcPr>{}</w:tc>", para(ppr, &content)));
+            c += span;
+        }
+        out.push_str("</w:tr>");
+    }
+    out.push_str("</w:tbl>");
+    out
+}
+
+fn field_xml(instruction: &str) -> String {
+    format!("{}{}", run(" p"), field(instruction, "1"))
+}
+
 #[derive(Clone, Debug)]
 struct Spec {
+    table: Option<Tbl>,
     words: u64,
     keep_next: bool,
     keep_lines: bool,
@@ -65,6 +174,7 @@ fn spec(rng: &mut Rng, k: usize) -> Spec {
         _ => None,
     };
     Spec {
+        table: rng.chance(12).then(|| tbl(rng)),
         words: if rng.chance(15) { 0 } else { 1 + rng.below(60) },
         keep_next: rng.chance(10),
         keep_lines: rng.chance(5),
@@ -139,6 +249,10 @@ impl Extra {
 fn xml(specs: &[Spec]) -> String {
     let mut body = String::new();
     for (k, s) in specs.iter().enumerate() {
+        if let Some(t) = &s.table {
+            body.push_str(&tbl_xml(t, k, s.field.as_deref()));
+            continue;
+        }
         let mut ppr = String::new();
         for (on, tag) in [
             (s.keep_next, "<w:keepNext/>"),
@@ -184,8 +298,7 @@ fn xml(specs: &[Spec]) -> String {
             content.push_str(&format!(r#"<w:r><w:endnoteReference w:id="{id}"/></w:r>"#));
         }
         if let Some(instruction) = &s.field {
-            content.push_str(&run(" p"));
-            content.push_str(&field(instruction, "1"));
+            content.push_str(&field_xml(instruction));
         }
         body.push_str(&para(&ppr, &content));
     }
@@ -198,12 +311,24 @@ fn xml(specs: &[Spec]) -> String {
 
 fn edit(rng: &mut Rng, specs: &mut Vec<Spec>, extra: &mut Extra) {
     let k = usize::try_from(rng.below(u64::try_from(specs.len()).unwrap())).unwrap();
-    match rng.below(9) {
-        5 => specs[k].footnote = (specs[k].footnote.is_none()).then(|| 1 + rng.below(8)),
-        6 => specs[k].drawing = drawing(rng),
-        7 => specs[k].endnote = (specs[k].endnote.is_none()).then(|| 1 + rng.below(4)),
-        8 if rng.chance(30) => extra.header = 1 + rng.below(30),
+    match rng.below(11) {
+        7 => specs[k].footnote = (specs[k].footnote.is_none()).then(|| 1 + rng.below(8)),
+        8 => specs[k].drawing = drawing(rng),
+        9 => specs[k].endnote = (specs[k].endnote.is_none()).then(|| 1 + rng.below(4)),
+        10 if rng.chance(30) => extra.header = 1 + rng.below(30),
         0 => specs[k].words = 1 + rng.below(80),
+        5 => match &mut specs[k].table {
+            Some(t) => {
+                let r = usize::try_from(rng.below(u64::try_from(t.rows.len()).unwrap())).unwrap();
+                let c = usize::try_from(rng.below(u64::try_from(t.columns).unwrap())).unwrap();
+                t.rows[r][c] = rng.below(60);
+            }
+            None => specs[k].table = Some(tbl(rng)),
+        },
+        6 => match &mut specs[k].table {
+            Some(t) => t.headers = if t.headers == 0 { 1 } else { 0 },
+            None => specs[k].keep_lines = !specs[k].keep_lines,
+        },
         1 => specs[k].keep_next = !specs[k].keep_next,
         2 => {
             let fresh = spec(rng, specs.len() + k);
@@ -248,6 +373,11 @@ fn check(seed: u64, versions: usize) -> Seen {
         let mut fresh_model = model();
         let fresh_document = open_with(&mut fresh_model, &body, settings, &parts);
         let whole = engine().lay_out(&mut fresh_model, &fresh_document);
+        assert!(
+            whole.pagination.stopped.is_none(),
+            "seed {seed} version {version}: stopped {:?}",
+            whole.pagination.stopped
+        );
         if relaid.pagination != whole.pagination {
             let (a, b) = (&relaid.pagination, &whole.pagination);
             let k = a.pages.iter().zip(&b.pages).position(|(x, y)| x != y);
@@ -330,6 +460,7 @@ fn an_edit_late_in_the_body_lays_out_few_pages() {
             s.footnote = None;
             s.endnote = None;
             s.drawing = None;
+            s.table = None;
             s
         })
         .collect();
