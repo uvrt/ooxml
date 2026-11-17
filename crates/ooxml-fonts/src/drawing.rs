@@ -278,7 +278,8 @@ impl DrawingFonts {
         };
         let mut pool = vec![own.clone()];
         pool.extend(
-            self.index.pool_of(&first.to_lowercase())
+            self.index
+                .pool_of(&first.to_lowercase())
                 .into_iter()
                 .filter(|o| (o.source.as_str(), o.offset) != (own.source.as_str(), own.offset)),
         );
