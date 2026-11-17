@@ -431,6 +431,13 @@ impl PageEngine {
     /// last page, or where `version` is not of this engine's generation. Kept for the
     /// next reader while the paint budget has room.
     pub fn paint(&mut self, version: &LaidVersion, page: usize) -> Option<Arc<PagePaint>> {
+        self.painted_page(version, page, true)
+    }
+
+    /// Page `page` of `version` painted, taken from the pages kept painted where it is one;
+    /// kept for the next reader where `keep` (a reader's page), not where it is painted to
+    /// be read once (a scan of every page: [`PageEngine::page_digests`]).
+    fn painted_page(&mut self, version: &LaidVersion, page: usize, keep: bool) -> Option<Arc<PagePaint>> {
         let key = (version.serial, page);
         if let Some(Painted(found)) = self.painted.get(&key) {
             self.stats.paint_hits += 1;
@@ -448,7 +455,9 @@ impl PageEngine {
         };
         let paint = Arc::new(paint_page(&version.layout, &mut generation.model, page, &parts, &cx)?);
         self.stats.pages_painted += 1;
-        self.painted.insert(key, Painted(Arc::clone(&paint)));
+        if keep {
+            self.painted.insert(key, Painted(Arc::clone(&paint)));
+        }
         Some(paint)
     }
 
@@ -456,7 +465,7 @@ impl PageEngine {
     /// rules, pictures and drawings), and each line by its paragraph's path and story --
     /// what tells two versions' pages apart without a reader reading them.
     pub fn page_digests(&mut self, version: &LaidVersion, page: usize) -> Option<PageDigests> {
-        let paint = self.paint(version, page)?;
+        let paint = self.painted_page(version, page, false)?;
         let digest = |value: &dyn std::fmt::Debug| ooxml_base::Digest::of(KEY, format!("{value:?}").as_bytes());
         // What docx-agent's summary digests (`_page_digest`, `_line_digest`): what is drawn
         // and where, never the paths it is drawn for (an edit before a page moves them).

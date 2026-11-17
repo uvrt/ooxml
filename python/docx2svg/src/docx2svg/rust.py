@@ -17,6 +17,12 @@ docx2svg's Python layout, frozen as that fallback until phase P4 deletes it.  A 
 SVG the Rust paint does not draw as docx2svg does (a drawing for the painters of phase P3,
 line numbers...) is the same: :meth:`RustLayout.page_svg` answers ``None`` for it, counted.
 
+**Memory** (lane L4b).  Every engine counts in the process's ``ooxml_core.MemoryBudget``
+(:func:`memory_budget`): its memos as held (swept once a version is laid out, so they stay at
+what the newest version needs), its pages' paint within the limit, kept in Rust, the least
+recently used let go first; a host reserves the layouts it keeps from the same budget.  A
+:class:`RustLayout`'s ``weight`` is what its version alone holds in Rust now.
+
 Its ``warnings``, ``approximations``, ``coverage`` and ``relaid_cause`` are docx2svg's, in
 docx2svg's order: the layout's own computed in Rust (``ooxml_word_pages::warnings``), the
 faces' in the order first met.

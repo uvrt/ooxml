@@ -2093,6 +2093,7 @@ def release_document(document: "Document") -> None:
             account = getattr(document, "_layout_account", None)
             if account is not None:
                 account.release(account.used)
+            document.__dict__.pop("_facts_layout", None)
             document._layout_kept = None
             document._layout_summaries.clear()
             document._check_facts.clear()
@@ -2448,7 +2449,7 @@ def twin(data: bytes, like: dict) -> "Document":
 _SHARED_LAYOUT = ("_layout_lock", "_layout_flights", "_layout_kept", "_layout_count",
                   "_layout_tickets", "_layout_lineage", "_layout_fresh", "_layout_summaries",
                   "_check_facts", "_layout_failures", "_layouts", "_layout_stats", "_tool_seen_layout",
-                  "_layout_owner", "_layout_runners", "_layout_account",
+                  "_layout_owner", "_layout_runners", "_layout_account", "_facts_layout",
                   # Lane F: the document's Rust owner and what its checks saw (docx_agent.rust).
                   "_rust_doc", "_rust_refused", "_rust_seen",
                   # The tools' caches keyed by content or by version, set whole (a tuple) or
@@ -2776,8 +2777,8 @@ def _facts_here(document: "Document", unlocked: Any, request: dict, data: bytes,
     this process where the Rust layout lays it out (the document's engine,
     :func:`docx_agent.pages.lay_out`, the lock let go while it does): the layout mapped to
     ids on ``document`` where it has not changed meanwhile, else on a copy opened from
-    ``data`` (:func:`convert`'s rule), kept as the document's conversion of those bytes, and
-    the facts read from it as a worker reads them
+    ``data`` (:func:`convert`'s rule) -- for these facts alone, not kept: mapped, it holds
+    the copy it was mapped on -- and the facts read from it as a worker reads them
     (:func:`docx_agent.tools.check_worker.facts_of`).  ``None`` where the Rust layout falls
     back: the caller asks the worker holding the document's Python layouts."""
     if not _pages.available():
@@ -2795,18 +2796,26 @@ def _facts_here(document: "Document", unlocked: Any, request: dict, data: bytes,
         key = cache_key(data, options)
         with _keeper(document):
             conversion = document._layouts.get(key)
-            if conversion is None or not _pages.is_rust(conversion.raw):
-                same = history is not None and history.version == seen
-                owner = document if same else type(document).open(data)
-                mapped = DocumentLayout(owner, rust, list(rust.warnings))
-                mapped.key = layout_key(data, options)
-                conversion = keep(document, key, _Conversion(mapped, rust, data, None, options))
+            mapped = getattr(document, "_facts_layout", None)
+        if conversion is not None and _pages.is_rust(conversion.raw):
+            layout = conversion.layout
+        elif mapped is not None and mapped[0] == key and mapped[1]._raw is rust:
+            layout = mapped[1]
+        else:
+            # Mapped for the checks of this version, the last one only (the checks served
+            # read the newest): a layout mapped to ids holds the document it was mapped on
+            # (a read copy of the version, a whole document), so it is not kept with the
+            # document's conversions; the engine keeps the Rust layout.
+            same = history is not None and history.version == seen
+            layout = DocumentLayout(document if same else type(document).open(data), rust, list(rust.warnings))
+            layout.key = layout_key(data, options)
+            with _keeper(document):
+                document._facts_layout = (key, layout)
         from .tools.check_worker import facts_of
 
-        layout = conversion.layout
-        result = facts_of(layout, conversion.raw, data, options, request, lambda: LayoutSummary(layout))
-        result.update({"made": "rust", "seconds": round(laid, 3), "relaid": conversion.raw.relaid,
-                       "relaid_cause": conversion.raw.relaid_cause})
+        result = facts_of(layout, rust, data, options, request, lambda: LayoutSummary(layout))
+        result.update({"made": "rust", "seconds": round(laid, 3), "relaid": rust.relaid,
+                       "relaid_cause": rust.relaid_cause})
     except _PASSED_ON:
         raise
     except Exception as error:
