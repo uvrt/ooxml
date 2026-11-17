@@ -119,6 +119,15 @@ def unsupported_options(options) -> str | None:
 # -- the engine ------------------------------------------------------------------------------
 
 
+def _engine_key(options) -> tuple:
+    """What an engine is made for: the fonts, the decimal separator, the glyph size, and the
+    locale's language (a chart's numbers are written in it: a document holding a chart in
+    another locale than en-US is laid out by docx2svg's Python layout, counted)."""
+    locale = options.locale
+    return (_fonts_key(options), locale.decimal_separator if locale else ".", options.glyph_size,
+            locale.language if locale else "en-US")
+
+
 class Engine:
     """One document's layouts in Rust (``ooxml_core.WordPages``), each version laid out
     from the one before; safe to share between threads (the Rust engine locks itself)."""
@@ -126,18 +135,18 @@ class Engine:
     def __init__(self, options) -> None:
         ooxml_core = _core()
 
-        self.key = (_fonts_key(options), options.locale.decimal_separator if options.locale else ".",
-                    options.glyph_size)
-        self._pages = ooxml_core.WordPages(word_fonts(options), decimal=self.key[1], glyph_size=options.glyph_size)
+        self.key = _engine_key(options)
+        self._pages = ooxml_core.WordPages(word_fonts(options), locale=self.key[3], decimal=self.key[1],
+                                           glyph_size=options.glyph_size)
         self._lock = threading.Lock()
         #: The last version asked for, by the digest of its bytes, and its layout (``None``: a
         #: fallback): asked again, the same answer.
         self._last: tuple | None = None
 
     def fits(self, options) -> bool:
-        """Whether this engine lays out with ``options`` (the same fonts, decimal, glyphs)."""
-        return self.key == (_fonts_key(options), options.locale.decimal_separator if options.locale else ".",
-                            options.glyph_size)
+        """Whether this engine lays out with ``options`` (the same fonts, decimal, glyphs and
+        locale)."""
+        return self.key == _engine_key(options)
 
     def lay_out(self, data: bytes, options) -> "RustLayout | None":
         """``data`` laid out in Rust, or ``None`` (counted) where docx2svg's Python layout
