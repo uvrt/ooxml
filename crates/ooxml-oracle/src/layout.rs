@@ -11,10 +11,11 @@
 //! Must not: change what is compared to make it pass.
 
 use crate::export::{Unlimited, KEY};
-use crate::layout_tables::{first_difference, measured, normalised, table_cut, table_lines, table_record};
+use crate::layout_tables::{first_difference, measured, normalised, table_cut, table_record};
 use crate::text::fonts_of;
 use ooxml_base::Locale;
 use ooxml_derive::CacheBudget;
+use ooxml_word_layout::facts::{LayoutFacts, PageFacts};
 use ooxml_word_layout::flow::{FlowItem, ParaItem};
 use ooxml_word_layout::paginate::Position;
 use ooxml_word_layout::paragraph::MeasuredParagraph;
@@ -38,6 +39,8 @@ pub struct LayoutRecords {
     pub layout: Option<Value>,
     /// Why docx2svg refused it.
     pub refused: Option<String>,
+    /// Every page's SVG as docx2svg wrote it, where recorded.
+    pub svg: Option<Vec<String>>,
 }
 
 /// A difference.
@@ -74,6 +77,10 @@ pub struct Outcome {
     pub placed: usize,
     /// Page-number fields compared.
     pub fields: usize,
+    /// Field update results compared (fields and every paragraph's page reference).
+    pub updates: usize,
+    /// Footnote lines compared.
+    pub note_lines: usize,
     /// Every difference.
     pub differences: Vec<Difference>,
     /// The Rust layout's own time.
@@ -110,6 +117,8 @@ pub fn read_layout_records(
             doc.layout = Some(l.clone());
         } else if let Some(r) = value.get("refused").and_then(Value::as_str) {
             doc.refused = Some(r.to_owned());
+        } else if let Some(pages) = value.get("svg").and_then(Value::as_array) {
+            doc.svg = Some(pages.iter().filter_map(|p| p.as_str().map(str::to_owned)).collect());
         }
     }
     if let Some(done) = current.take() {
@@ -418,26 +427,6 @@ fn item_paths(document: &WordDocument, layout: &DocumentLayout) -> HashMap<Strin
     out
 }
 
-/// Each body paragraph's path, by block (cells included).
-fn block_paths(document: &WordDocument) -> Vec<String> {
-    let (paragraphs, _) = ooxml_word_layout::flow::body_paragraphs(&document.body);
-    paragraphs.iter().map(|p| p.path.to_string()).collect()
-}
-
-/// Whether a line draws nothing (the layout places it and draws no line for it), as the
-/// page broke its paragraph.
-fn undrawn(page: &ooxml_word_layout::paginate::LaidPage, ours: &DocumentLayout, item: usize, line: usize) -> bool {
-    match page.broken.get(&item) {
-        Some(again) => again.measured.undrawn.contains(&line),
-        None => ours
-            .flow
-            .items
-            .get(item)
-            .and_then(FlowItem::para)
-            .is_some_and(|p| p.measured.undrawn.contains(&line)),
-    }
-}
-
 /// A paragraph's lines as the last page that broke them again left them (docx2svg
 /// records a paragraph as its pagination left it); `None` where none did.
 fn last_lines(ours: &DocumentLayout, item: usize) -> Option<&MeasuredParagraph> {
@@ -447,47 +436,6 @@ fn last_lines(ours: &DocumentLayout, item: usize) -> Option<&MeasuredParagraph> 
         .rev()
         .find_map(|page| page.broken.get(&item))
         .map(|again| &*again.measured)
-}
-
-/// A drop cap's lines, drawn with the first line of the paragraph it drops into: from
-/// that paragraph's top past the drop cap's space before, one under the other.
-fn drop_cap_lines(ours: &DocumentLayout, line: &ooxml_word_layout::paginate::PlacedLine) -> Vec<LineBox> {
-    let Some(drop) = ours
-        .flow
-        .items
-        .get(line.item)
-        .and_then(FlowItem::para)
-        .and_then(|p| p.drop_cap.as_ref())
-        .filter(|_| line.line == 0)
-    else {
-        return Vec::new();
-    };
-    let path = match ours.document.body.get(drop.body) {
-        Some(Block::Paragraph(p)) => p.path.to_string(),
-        _ => String::new(),
-    };
-    let mut y = line.paragraph_top + ooxml_word_layout::Px::twips(drop.before);
-    let mut out = Vec::new();
-    for (number, height) in drop.measured.heights.iter().enumerate() {
-        out.push((path.clone(), number, y.to_string(), height.pitch.to_string()));
-        y += height.pitch;
-    }
-    out
-}
-
-/// The line a page the endnotes go on to opens with: the continuation separator's.
-fn opening_line(ours: &DocumentLayout, page: &ooxml_word_layout::paginate::LaidPage) -> Option<LineBox> {
-    let line = page.opens?;
-    let separator = ooxml_word_layout::notes::separator(
-        &ours.document,
-        "continuationSeparator",
-        ooxml_word_layout::notes::NotesPart::Endnotes,
-    );
-    let path = separator.iter().find_map(|b| match b {
-        Block::Paragraph(p) => Some(p.path.to_string()),
-        Block::Table(_) => None,
-    })?;
-    Some((path, 0, line.top.to_string(), line.pitch.to_string()))
 }
 
 fn position(v: &Value) -> Position {
@@ -506,41 +454,26 @@ fn position(v: &Value) -> Position {
     }
 }
 
-/// A placed line as compared: its paragraph's path, its number, its top and pitch.
-type LineBox = (String, usize, String, String);
+/// A placed line as compared: its paragraph's path, its number, its top, pitch, baseline
+/// and text column.
+type LineBox = (String, usize, String, String, i64, Option<usize>);
 
-/// The page's drawn lines of items before the cut, paragraphs' and tables' rows', in
-/// drawing order (item by item).
-fn our_lines(
-    ours: &DocumentLayout,
-    page: &ooxml_word_layout::paginate::LaidPage,
-    paths: &[String],
-    cut: usize,
-) -> Vec<LineBox> {
-    let path = |block: usize| paths.get(block).cloned().unwrap_or_default();
-    let mut lines: Vec<(usize, LineBox)> = page
+/// The facts' lines of a page drawn for items before the cut.
+fn our_lines(facts: &PageFacts, cut: usize) -> Vec<LineBox> {
+    facts
         .lines
         .iter()
-        .filter(|l| l.item < cut)
-        .flat_map(|l| {
-            let mut out: Vec<(usize, LineBox)> = drop_cap_lines(ours, l).into_iter().map(|b| (l.item, b)).collect();
-            if !undrawn(page, ours, l.item, l.line) {
-                let block = ours.flow.items.get(l.item).map_or(usize::MAX, FlowItem::block);
-                out.push((l.item, (path(block), l.line, l.top.to_string(), l.pitch.to_string())));
-            }
-            out
+        .filter(|l| l.source.item() < cut)
+        .map(|l| {
+            (
+                l.path.to_string(),
+                l.number,
+                l.top.to_string(),
+                l.pitch.to_string(),
+                l.baseline,
+                l.column,
+            )
         })
-        .collect();
-    lines.extend(
-        table_lines(ours, page)
-            .into_iter()
-            .filter(|(item, ..)| *item < cut)
-            .map(|(item, block, line, top, pitch)| (item, (path(block), line, top.to_string(), pitch.to_string()))),
-    );
-    lines.sort_by_key(|(item, _)| *item);
-    opening_line(ours, page)
-        .into_iter()
-        .chain(lines.into_iter().map(|(_, line)| line))
         .collect()
 }
 
@@ -562,6 +495,8 @@ fn their_lines(drawn: &Value, item_of: &HashMap<&str, usize>, cut: usize, whole_
                 usize::try_from(int(l.get(1))).unwrap_or(0),
                 text(at(l, 2)),
                 text(at(l, 3)),
+                int(l.get(4)),
+                l.get(5).and_then(Value::as_u64).and_then(|c| usize::try_from(c).ok()),
             )
         })
         .collect()
@@ -570,6 +505,7 @@ fn their_lines(drawn: &Value, item_of: &HashMap<&str, usize>, cut: usize, whole_
 fn compare_pages(
     document: &WordDocument,
     ours: &DocumentLayout,
+    facts: &LayoutFacts,
     theirs: &Value,
     cut: usize,
     diffs: &mut Diffs<'_>,
@@ -582,7 +518,6 @@ fn compare_pages(
         .map(position)
         .collect();
     let pages = &ours.pagination.pages;
-    let paths = block_paths(document);
     let owned = item_paths(document, ours);
     let item_of: HashMap<&str, usize> = owned.iter().map(|(p, k)| (p.as_str(), *k)).collect();
     let flow_len = at(theirs, "flow").as_array().map_or(0, Vec::len);
@@ -618,7 +553,14 @@ fn compare_pages(
         }
         let Some(drawn) = laid_pages.get(k) else { continue };
         let whole_page = starts.get(k + 1).map_or(cut == flow_len, |next| next.item < cut);
-        let mine = our_lines(ours, page, &paths, cut);
+        let Some(page_facts) = facts.pages.get(page.page) else {
+            continue;
+        };
+        compare_frame(page_facts, drawn, &place, diffs);
+        if whole_page {
+            compare_blocks(page_facts, drawn, &place, diffs);
+        }
+        let mine = our_lines(page_facts, cut);
         let theirs_lines = their_lines(drawn, &item_of, cut, whole_page);
         outcome.placed += mine.len();
         if mine != theirs_lines {
@@ -628,6 +570,103 @@ fn compare_pages(
                 None => format!("{} lines vs {}", mine.len(), theirs_lines.len()),
             };
             diffs.push(place, "placed lines", detail);
+        }
+    }
+}
+
+/// A page's size and text area against docx2svg's (`frame`: width and height in px, the
+/// column's left and right edges, the text area's top and bottom), where recorded.
+fn compare_frame(facts: &PageFacts, drawn: &Value, place: &str, diffs: &mut Diffs<'_>) {
+    let Some(theirs) = drawn.get("frame") else { return };
+    let f = &facts.frame;
+    let mine = json!([
+        f.width_px,
+        f.height_px,
+        f.left.to_string(),
+        f.right.to_string(),
+        f.top.to_string(),
+        f.bottom.to_string()
+    ]);
+    if &mine != theirs {
+        diffs.push(place.to_owned(), "page frame", format!("{mine} vs {theirs}"));
+    }
+}
+
+/// The body blocks a page draws something of against docx2svg's `Page.blocks`, where
+/// recorded.
+fn compare_blocks(facts: &PageFacts, drawn: &Value, place: &str, diffs: &mut Diffs<'_>) {
+    let Some(theirs) = drawn.get("blocks") else { return };
+    let mine: Vec<&str> = facts.blocks.iter().map(|b| &**b).collect();
+    if json!(mine) != *theirs {
+        diffs.push(place.to_owned(), "page blocks", format!("{mine:?} vs {theirs}"));
+    }
+}
+
+/// The footnotes' lines at each page's foot (their paragraph's path, number, top, pitch,
+/// baseline, column) against docx2svg's `note_lines`; a page whose notes the Rust paint
+/// does not draw is skipped and counted as a difference of its own.
+fn compare_note_lines(
+    engine: &mut WordLayout,
+    model: &mut ooxml_word_model::Model,
+    laid: &DocumentLayout,
+    theirs: &Value,
+    diffs: &mut Diffs<'_>,
+    outcome: &mut Outcome,
+) {
+    let pages = at(theirs, "pages").as_array().cloned().unwrap_or_default();
+    for (k, page) in pages.iter().enumerate() {
+        let expected: Vec<LineBox> = at(page, "note_lines")
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|l| {
+                (
+                    text(at(l, 0)),
+                    usize::try_from(int(l.get(1))).unwrap_or(0),
+                    text(at(l, 2)),
+                    text(at(l, 3)),
+                    int(l.get(4)),
+                    l.get(5).and_then(Value::as_u64).and_then(|c| usize::try_from(c).ok()),
+                )
+            })
+            .collect();
+        let parts = engine.page_parts(model, laid, k);
+        if let Some(why) = parts.unpainted.first() {
+            if !expected.is_empty() {
+                diffs.push(format!("page {k}"), "note lines not drawn", why.clone());
+            }
+            continue;
+        }
+        let mine: Vec<LineBox> = parts
+            .footnotes
+            .map(|notes| {
+                let (paragraphs, _) = ooxml_word_layout::flow::body_paragraphs(&notes.blocks);
+                notes
+                    .walked
+                    .lines
+                    .iter()
+                    .map(|l| {
+                        let path = l.block.and_then(|b| paragraphs.get(b)).map(|p| p.path.to_string());
+                        (
+                            path.unwrap_or_default(),
+                            l.number,
+                            l.top.to_string(),
+                            l.pitch.to_string(),
+                            l.baseline,
+                            l.column,
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        outcome.note_lines += mine.len();
+        if mine != expected {
+            let first = mine.iter().zip(&expected).position(|(a, b)| a != b);
+            let detail = match first {
+                Some(j) => format!("line {j}: {:?} vs {:?}", mine.get(j), expected.get(j)),
+                None => format!("{} lines vs {}", mine.len(), expected.len()),
+            };
+            diffs.push(format!("page {k}"), "note lines", detail);
         }
     }
 }
@@ -684,7 +723,16 @@ pub fn run_document(records: &LayoutRecords, outcome: &mut Outcome) -> Result<()
     compare_fields(&laid, theirs, cut, &mut diffs, outcome);
     compare_notes(&laid, theirs, cut, &mut diffs);
     compare_flow(&laid, &flow, cut, &mut diffs, outcome);
-    compare_pages(&laid.document, &laid, theirs, cut, &mut diffs, outcome);
+    let facts = LayoutFacts::of(&laid);
+    compare_pages(&laid.document, &laid, &facts, theirs, cut, &mut diffs, outcome);
+    if why.is_none() {
+        compare_note_lines(&mut engine, &mut model, &laid, theirs, &mut diffs, outcome);
+        let updates = crate::layout_updates::compare_updates(&laid, &facts, theirs);
+        outcome.updates += updates.compared;
+        for (place, detail) in updates.differences {
+            diffs.push(place, "field update", detail);
+        }
+    }
     outcome.differences.extend(found);
     Ok(())
 }

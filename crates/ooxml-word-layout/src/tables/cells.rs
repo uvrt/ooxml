@@ -12,6 +12,7 @@ use super::measured::MeasuredTable;
 use crate::paragraph::MeasuredParagraph;
 use crate::px::Px;
 use crate::vertical::paragraph_gap;
+use ooxml_word_model::resolve::ResolvedCell;
 use ooxml_word_model::value::Text;
 use std::sync::Arc;
 
@@ -185,6 +186,9 @@ pub enum Align {
 /// One cell, measured.
 #[derive(Debug, Clone)]
 pub struct CellFlow {
+    /// The cell as resolved: its path, properties and borders settled with its
+    /// neighbours' (what its borders and shading are drawn from).
+    pub resolved: Arc<ResolvedCell>,
     /// Its grid column.
     pub column: i64,
     /// Its own top border's width, twips (before its neighbours' are settled).

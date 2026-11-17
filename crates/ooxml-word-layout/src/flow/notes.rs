@@ -9,7 +9,6 @@ use super::{FlowContext, FlowItem, FlowMaker, Labels};
 use crate::notes::lines::NoteContext;
 use crate::notes::{NoteLines, NoteRole};
 use crate::paragraph::MeasuredParagraph;
-use crate::px::Px;
 use crate::sections::Sections;
 use ooxml_word_model::model::{Block, Paragraph};
 use std::sync::Arc;
@@ -17,7 +16,7 @@ use std::sync::Arc;
 /// A paragraph's footnotes by line, and an endnote's continuation line.
 pub(super) struct ParaNotes {
     pub(super) notes: Vec<(usize, NoteLines)>,
-    pub(super) continuation: Option<Px>,
+    pub(super) continuation: Option<crate::heights::LineHeight>,
     pub(super) forms: NoteForms,
 }
 

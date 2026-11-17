@@ -169,6 +169,43 @@ impl WordLayout {
         StoryTable::compute(&cx, model, &mut self.stories)
     }
 
+    /// What page `page` (0-based, blank pages counted) of `layout` draws beyond its body:
+    /// its header and footer, each laid out with the page's field values and stacked where
+    /// Word puts it, and its footnotes at its foot.
+    pub fn page_parts(
+        &mut self,
+        model: &mut Model,
+        layout: &DocumentLayout,
+        page: usize,
+    ) -> crate::geometry::stories::PageParts {
+        let mut out = crate::geometry::stories::PageParts::default();
+        let (Some(info), Some(geometry)) = (layout.pagination.info.get(page), layout.page_geometry(page)) else {
+            return out;
+        };
+        let cx = StoryContext {
+            document: &layout.document,
+            faces: self.faces.as_ref(),
+            locale: &self.locale,
+            tables: self.tables.as_ref(),
+        };
+        let mut job = crate::geometry::stories::StoryJob {
+            cx: &cx,
+            model,
+            state: &mut self.stories,
+        };
+        out.stories = crate::geometry::stories::page_stories(&mut job, layout, &geometry.frame, info);
+        if let Some(laid) = layout.laid_page(page) {
+            match crate::geometry::footnotes::page_footnotes(&mut job, layout, &geometry.frame, laid) {
+                Ok(found) => out.footnotes = found,
+                Err(why) => out.unpainted.push(why.to_owned()),
+            }
+            if laid.continued.is_some() {
+                out.unpainted.push("a note going on to a page of its own".to_owned());
+            }
+        }
+        out
+    }
+
     /// A version's body flow in its sections, with its paragraphs' list labels (document
     /// order, cells included) and its top-level blocks' parts in the endnotes placed.
     pub fn flow(&mut self, model: &mut Model, document: &WordDocument, frame: &PassFrame<'_>) -> Flow {

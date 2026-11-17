@@ -30,6 +30,33 @@ pub struct Approximated {
 /// How far below a nested table's top its placement may reach: a page that never ends.
 const FAR: i64 = 10_000_000;
 
+/// Automatic text on a cell's fill darker than this Rec. 601 luma (0-255, times 1,000) is
+/// drawn white (`AUTOMATIC_WHITE_BELOW_CELL`, measured).
+const WHITE_BELOW: i64 = 60_000;
+
+/// Whether a cell's shading is a fill dark enough that Word draws automatic text white.
+fn white_text(props: &ooxml_word_model::value::Props) -> bool {
+    let Some(ooxml_word_model::value::Value::Shading(s)) = props.get("shd") else {
+        return false;
+    };
+    if s.kind.as_deref() == Some("nil") {
+        return false;
+    }
+    let Some(fill) = s
+        .fill
+        .as_deref()
+        .filter(|f| f.len() == 6 && f.chars().all(|c| c.is_ascii_hexdigit()))
+    else {
+        return false;
+    };
+    let channel = |k: usize| {
+        fill.get(k..k + 2)
+            .and_then(|h| i64::from_str_radix(h, 16).ok())
+            .unwrap_or(0)
+    };
+    299 * channel(0) + 587 * channel(2) + 114 * channel(4) < WHITE_BELOW
+}
+
 /// A table measured for the page stack.
 #[derive(Debug, Clone)]
 pub struct MeasuredTable {
@@ -127,6 +154,10 @@ impl MeasuredTable {
                         top,
                         pitch: placed.pitch,
                         drawn: !entry.undrawn(placed.number),
+                        space_before: placed.box_before,
+                        space_after: placed.box_after,
+                        left: cell.cell_box.text_left,
+                        white_text: white_text(&cell.resolved.properties),
                     }),
                 }
             }
