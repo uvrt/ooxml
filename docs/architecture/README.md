@@ -223,10 +223,10 @@ What each crate owns, the outline of its API, and what it must not do:
 - **`ooxml-metafile`**
   - Owns: players for EMF, EMF+ and WMF that produce a scene, with Windows as the reference; DIB.
 - **`ooxml-scene`**
-  - Owns: the display list (paths, glyph runs, images, groups, clips, live-view ids).
+  - Owns: the display list (paths, glyph runs, images, groups, clips, live-view ids). Two forms (lane P3c): the metafile players' typed nodes, and the DrawingML painter's `markup` -- elements in SVG's vocabulary with typed attribute values kept in their producer's order, because ooxml-common's string-built SVG fixes that order and the goldens are byte for byte.
 - **`ooxml-render`**
-  - Owns: a typed SVG writer with stable ids and exact numbers; PNG via resvg and tiny-skia in process; outline text.
-  - Must not: re-parse SVG.
+  - Owns: the DrawingML painter -- drawables (a chart's, a slide's, a document's) lowered onto the scene under Word's or PowerPoint's drawing rules as data, text measured through `ooxml-fonts` (lane P3c; `ooxml-drawingml` and `ooxml-scene` share a layer, so the lowering sits above both) -- and the scene's adapters: a typed SVG writer with stable ids and exact numbers; PNG via resvg and tiny-skia in process; outline text.
+  - Must not: re-parse SVG. (Open, lane P3c: usvg 0.48, the version resvg-py ships, builds its tree only by parsing SVG; see DEPENDENCIES.md.)
 - **`ooxml-word`**
   - Owns: generated `w:` views; the styles cascade; numbering and labels; fields; sections; one address resolver; the id ledger; the tracked-change policy; validation rules; Markdown in and out; the edit commands.
   - Must not: lay out pages.

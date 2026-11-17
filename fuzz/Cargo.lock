@@ -231,6 +231,7 @@ dependencies = [
  "ooxml-metafile",
  "ooxml-numfmt",
  "ooxml-opc",
+ "ooxml-render",
  "ooxml-xml",
  "ooxml-zip",
 ]
@@ -262,6 +263,15 @@ dependencies = [
  "ooxml-xml",
  "ooxml-zip",
  "thiserror",
+]
+
+[[package]]
+name = "ooxml-render"
+version = "0.1.0"
+dependencies = [
+ "ooxml-drawingml",
+ "ooxml-fonts",
+ "ooxml-scene",
 ]
 
 [[package]]

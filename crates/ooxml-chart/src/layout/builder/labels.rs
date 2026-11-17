@@ -164,6 +164,7 @@ impl<'a> Builder<'a> {
                 fill: None,
                 outline: None,
                 text: Some(body),
+                ..Shape::default()
             })));
         }
     }

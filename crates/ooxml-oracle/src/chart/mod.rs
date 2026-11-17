@@ -5,6 +5,7 @@
 //!
 //! Must not: be used by any library; it is a test instrument.
 
+pub mod drawn;
 pub mod laid;
 pub mod model;
 
