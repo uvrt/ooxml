@@ -325,6 +325,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "ooxml-metafile"
+version = "0.1.0"
+dependencies = [
+ "flate2",
+ "ooxml-base",
+ "ooxml-fonts",
+ "ooxml-scene",
+ "ooxml-text",
+ "thiserror",
+]
+
+[[package]]
 name = "ooxml-opc"
 version = "0.1.0"
 dependencies = [
@@ -344,6 +356,7 @@ dependencies = [
  "ooxml-derive",
  "ooxml-drawingml",
  "ooxml-fonts",
+ "ooxml-metafile",
  "ooxml-opc",
  "ooxml-schema",
  "ooxml-text",
@@ -378,6 +391,10 @@ dependencies = [
  "pyo3",
  "serde_json",
 ]
+
+[[package]]
+name = "ooxml-scene"
+version = "0.1.0"
 
 [[package]]
 name = "ooxml-schema"

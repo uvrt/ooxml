@@ -15,6 +15,7 @@ ooxml-base = { path = "../crates/ooxml-base" }
 ooxml-xml = { path = "../crates/ooxml-xml" }
 ooxml-zip = { path = "../crates/ooxml-zip" }
 ooxml-opc = { path = "../crates/ooxml-opc" }
+ooxml-metafile = { path = "../crates/ooxml-metafile" }
 
 [workspace]
 
@@ -35,6 +36,13 @@ bench = false
 [[bin]]
 name = "opc_open"
 path = "fuzz_targets/opc_open.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "metafile_draw"
+path = "fuzz_targets/metafile_draw.rs"
 test = false
 doc = false
 bench = false
