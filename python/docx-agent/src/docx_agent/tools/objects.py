@@ -2009,7 +2009,7 @@ def _later_taller(call: Any, table: str, *, before: str | None) -> None:
     in its place: before ``before`` (the warning said after it), else last."""
     def say(result: Result) -> None:
         engage(call)                        # the layout engine, with its deadline afresh
-        taller = _taller_than_page(call.document, table)
+        taller = _taller_than_page(call.document, table, call.unlocked)
         if taller is not None:
             at = result.warnings.index(before) if before in result.warnings else len(result.warnings)
             result.warnings.insert(at, taller)
@@ -2017,16 +2017,21 @@ def _later_taller(call: Any, table: str, *, before: str | None) -> None:
     call.defer(say)
 
 
-def _taller_than_page(document: Any, table: str) -> str | None:
+def _taller_than_page(document: Any, table: str, unlocked: Any = None) -> str | None:
     """The warning for a table kept together that is taller than a page, or ``None``.
     Decided from the document's layout after the edit (the one ``check`` and ``render``
     read, :meth:`~docx_agent.Document.layout`): a table kept together goes to the next page
     whole where it fits on one, so one still drawn on more than one page is taller than the
     page's text height (header rows drawn again count with it).  Where the document cannot
     be laid out, or the layout stops before the table, that is not known, and the warning
-    says so instead."""
+    says so instead.  Round 59 (R134): the table's placements read in the worker holding
+    the layout (:func:`docx_agent.layout.held_answers`; ``unlocked``, the call's), where the
+    document has one: the layout never comes here for them."""
+    from ..layout import held_answers
+
     try:
-        placements = document.layout().where(table)
+        found = held_answers(document, {"where": [[table]]}, unlocked)
+        placements = found["where"][0] if found is not None else document.layout().where(table)
     except Exception:  # noqa: BLE001 -- no layout: said, not guessed
         placements = None
     if isinstance(placements, list) and placements and not any(p.story == "body" for p in placements):

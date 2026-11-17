@@ -157,22 +157,25 @@ def test_a_mixed_batch_gives_the_results_it_gave_before(box, monkeypatch):
 
 
 def test_keep_together_lays_the_document_out_once_per_batch(box, monkeypatch):
-    from docx_agent.tools import _base
-
     data = report()
     session = box.session(clock=CLOCK)
     doc = session.open(data, "report.docx")
     tables = [t.id for t in session.entry(doc).document.tables()]
     ops = [{"tool": "word_format_table", "arguments": {"doc": doc, "table": t, "scope": "table",
                                                        "keep_together": True}} for t in tables * 2]
+    from docx_agent import layout as layout_module
+
     laid = []
-    run = _base.Engine.lay_out
+    noted = layout_module.note_made
 
-    def counting(self, data, options, state=None):
-        laid.append(1)
-        return run(self, data, options, state)
+    def counting(document, facts):
+        if isinstance(facts, dict) and facts.get("made") not in (None, "same"):
+            laid.append(facts["made"])
+        return noted(document, facts)
 
-    monkeypatch.setattr(_base.Engine, "lay_out", counting)
+    # Round 59 (R134): each table's placements are read in the worker holding the layout
+    # (a task per table), the document laid out there once.
+    monkeypatch.setattr(layout_module, "note_made", counting)
     result = box.dispatch(session, "batch", {"ops": ops})
     assert result.ok and sum("taller than a page" in w for w in result.warnings) == 2
     assert len(laid) == 1                          # after the last op; each op's own would be six

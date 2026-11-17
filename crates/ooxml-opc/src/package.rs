@@ -26,6 +26,20 @@ pub enum PartVersion {
     Bytes(Arc<[u8]>),
 }
 
+impl PartVersion {
+    /// Whether `self` and `other` are the same content by identity: the same archive entry
+    /// (and its shared tree), the same tree allocation, or the same bytes allocation. What
+    /// a store asks to decide that two versions agree on a part without reading it.
+    pub fn same(&self, other: &PartVersion) -> bool {
+        match (self, other) {
+            (PartVersion::Raw(a), PartVersion::Raw(b)) => a.index == b.index && Arc::ptr_eq(&a.tree, &b.tree),
+            (PartVersion::Tree(a), PartVersion::Tree(b)) => a.ptr_eq(b),
+            (PartVersion::Bytes(a), PartVersion::Bytes(b)) => Arc::ptr_eq(a, b),
+            _ => false,
+        }
+    }
+}
+
 /// An untouched part: its entry, and its tree once something read it.
 #[derive(Debug, Clone)]
 pub struct RawPart {
@@ -147,24 +161,53 @@ impl Package {
     /// A version with the part `name` as `bytes`; a new part goes at the end of the
     /// archive.
     pub fn with_bytes(&self, name: &str, bytes: Arc<[u8]>) -> Package {
+        self.put(name, PartVersion::Bytes(bytes))
+    }
+
+    /// A version with the part `name` as the tree `tree`; a new part goes at the end of
+    /// the archive.
+    pub fn with_new_tree(&self, name: &str, tree: Tree) -> Package {
+        self.put(name, PartVersion::Tree(tree))
+    }
+
+    /// `content` in the slot of `name`: an existing part keeps its place and entry, a new
+    /// one goes at the end.
+    fn put(&self, name: &str, content: PartVersion) -> Package {
         let key = normalize(name);
         let mut next = self.clone();
         let slot = match self.slots.get(&key) {
-            Some(s) => Slot {
-                content: PartVersion::Bytes(bytes),
-                ..s.clone()
-            },
+            Some(s) => Slot { content, ..s.clone() },
             None => {
                 next.next_order += 1;
                 Slot {
                     order: self.next_order,
                     entry: None,
-                    content: PartVersion::Bytes(bytes),
+                    content,
                 }
             }
         };
         next.slots = next.slots.insert(&key, slot).0;
         next
+    }
+
+    /// A version whose part `name` is as it is in `from`, an earlier or later version of
+    /// this package (opened from the same archive): its content, its place and its entry,
+    /// or no part where `from` has none. What undo puts back, exactly.
+    pub fn restored(&self, name: &str, from: &Package) -> Result<Package, OpcError> {
+        if !Arc::ptr_eq(&self.archive, &from.archive) {
+            return Err(OpcError::OtherPackage(normalize(name)));
+        }
+        let key = normalize(name);
+        let mut next = self.clone();
+        next.next_order = self.next_order.max(from.next_order);
+        next.slots = match from.slots.get(&key) {
+            Some(slot) => next.slots.insert(&key, slot.clone()).0,
+            None => match next.slots.remove(&key) {
+                Some((slots, _)) => slots,
+                None => return Ok(next),
+            },
+        };
+        Ok(next)
     }
 
     /// A version without the part `name`.

@@ -1,0 +1,47 @@
+# cargo-deny's checks of the Rust workspace (rust.yml, `cargo-deny`): licences, duplicate
+# versions, crate sources and advisories.  The licences allowed are DEPENDENCIES.md's; a new
+# dependency is asked for there first.  fuzz/ is its own workspace and not checked here
+# (libfuzzer-sys, NCSA, never ships).
+
+[graph]
+# Every platform's dependencies: Windows' too, which is where loom's duplicates come from.
+all-features = true
+
+[licenses]
+# DEPENDENCIES.md: MIT, Apache-2.0, Zlib, BSD, Unicode.  MPL is refused (section 2.7 of
+# docs/architecture/README.md allows it only at file level, for the MTX decoder port).
+allow = [
+    "MIT",
+    "Apache-2.0",
+    # Apache-2.0 with an extra permission (target-lexicon, through pyo3's build).
+    "Apache-2.0 WITH LLVM-exception",
+    "Zlib",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "Unicode-3.0",
+]
+confidence-threshold = 0.9
+# BSD is allowed by DEPENDENCIES.md's policy though no dependency uses it yet.
+unused-allowed-license = "allow"
+
+[bans]
+# A second major version is a warning, not a failure ...
+multiple-versions = "warn"
+wildcards = "deny"
+# The workspace's own crates name each other by path (none is published).
+allow-wildcard-paths = true
+# ... and loom's are allowed outright: they come only with RUSTFLAGS="--cfg loom" on
+# Windows (DEPENDENCIES.md, loom's row), never in a shipped build.
+skip = [
+    { crate = "syn@2", reason = "loom only: generator's windows-core macros (DEPENDENCIES.md)" },
+    { crate = "windows-link@0.100", reason = "loom only: generator's windows-core (DEPENDENCIES.md)" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+
+[advisories]
+# Unmaintained and yanked crates are reported, not refused; vulnerabilities fail.
+unmaintained = "workspace"
+yanked = "warn"

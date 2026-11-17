@@ -4,7 +4,8 @@
 //! ([`parse`]) with libxml2's reading rules and limits; the writer ([`Tree::write`]) in
 //! libxml2's form, the contract for every touched part; cursors that know their parents
 //! ([`Cursor`]); patches by path checked by node pointer ([`Patch`]); and the structural diff
-//! that short-circuits on shared subtrees ([`diff`]).
+//! that short-circuits on shared subtrees ([`diff`]); and what generated typed views call to
+//! read and build elements by local name ([`view`]).
 //!
 //! Must not: know any OOXML name or namespace, do I/O, or mutate a node once built.
 #![forbid(unsafe_code)]
@@ -18,6 +19,7 @@ mod node;
 mod parse;
 mod patch;
 mod rope;
+pub mod view;
 mod write;
 
 pub use cursor::{ChildCursors, Cursor};

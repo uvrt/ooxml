@@ -12,6 +12,7 @@ ooxml-base.workspace = true
 ooxml-xml.workspace = true
 ooxml-opc.workspace = true
 ooxml-derive.workspace = true
+ooxml-colour.workspace = true
 thiserror.workspace = true
 
 [lints]

@@ -15,26 +15,62 @@
 //! - `view <Type> <local or *> | <doc>`: a view of the element with that local name (`*`:
 //!   any element, read by what it holds);
 //! - inside a view, indented: `child <fn> <View> <local>` (the first such child),
-//!   `children <fn> <View> <local>` (all of them, in order), `attr <fn> <kind> <local>`
-//!   with kind `str`, `int`, `onoff` (absent is on) or `flag` (`Some(value is not 0, false,
-//!   off)`), `nsattr <fn> <prefix> <local>`, and `text <fn>` (the element's text).
+//!   `children <fn> <View> <local>` (all of them, in order), `all <fn> <View>` (every child
+//!   element, in order), `attr <fn> <kind> <local>` with kind `str`, `num` (a finite number,
+//!   as Python's `float()` reads it), `int`, `onoff` (absent is on) or `flag` (`Some(value is
+//!   not 0, false, off)`), `nsattr <fn> <prefix> <local>`, `text <fn>` (the element's text
+//!   before its first child) and `alltext <fn>` (every text node below it);
+//! - a view may name its namespace, `view <Type> <local> <prefix> | <doc>`, which gives it a
+//!   constructor of the empty element (`create`); and inside a view, `order <step> <step>...`
+//!   is the schema's child sequence (a step lists a choice's names as `a/b`), which gives it
+//!   `insert`: the element with a child added where the sequence puts it.
+//!
+//! Each target names the module its getters call (`reader`): a crate's own (`crate::xmlread`,
+//! the Word model's reading rules) or `ooxml_xml::view`.
 
 use std::fmt::Write as _;
 use std::path::Path;
 
-/// One generated file: its description and its output.
+/// One generated file: its description, its output, and the reading module it calls.
 pub struct Target {
     /// The description, relative to the workspace root.
     pub description: &'static str,
     /// The generated module, relative to the workspace root.
     pub output: &'static str,
+    /// The `use` line that brings the reading module in as `xmlread`.
+    pub reader: &'static str,
 }
 
+const SHARED: &str = "use ooxml_xml::view as xmlread;";
+
 /// Every description in the workspace.
-pub const TARGETS: &[Target] = &[Target {
-    description: "crates/ooxml-word-model/schema/w.views",
-    output: "crates/ooxml-word-model/src/w.rs",
-}];
+pub const TARGETS: &[Target] = &[
+    Target {
+        description: "crates/ooxml-word-model/schema/w.views",
+        output: "crates/ooxml-word-model/src/w.rs",
+        reader: "use crate::xmlread;",
+    },
+    Target {
+        description: "crates/ooxml-schema/schema/rels.views",
+        output: "crates/ooxml-schema/src/rels.rs",
+        reader: SHARED,
+    },
+    Target {
+        description: "crates/ooxml-schema/schema/mc.views",
+        output: "crates/ooxml-schema/src/mc.rs",
+        reader: SHARED,
+    },
+    Target {
+        description: "crates/ooxml-schema/schema/a.views",
+        output: "crates/ooxml-schema/src/a.rs",
+        reader: SHARED,
+    },
+    Target {
+        description: "crates/ooxml-schema/schema/c.views",
+        output: "crates/ooxml-schema/src/c.rs",
+        reader: SHARED,
+    },
+];
 
 #[derive(Debug)]
 enum Item {
@@ -47,6 +83,10 @@ enum Item {
         name: String,
         view: String,
         local: String,
+    },
+    All {
+        name: String,
+        view: String,
     },
     Attr {
         name: String,
@@ -61,14 +101,19 @@ enum Item {
     Text {
         name: String,
     },
+    AllText {
+        name: String,
+    },
 }
 
 #[derive(Debug)]
 struct View {
     name: String,
     local: String,
+    prefix: Option<String>,
     doc: String,
     items: Vec<Item>,
+    order: Vec<Vec<String>>,
 }
 
 struct Description {
@@ -98,9 +143,13 @@ fn parse_item(fields: &[&str], line_no: usize) -> Result<Item, String> {
             view: s(2)?,
             local: s(3)?,
         }),
+        Some("all") => Ok(Item::All {
+            name: s(1)?,
+            view: s(2)?,
+        }),
         Some("attr") => {
             let kind = s(2)?;
-            if !["str", "int", "onoff", "flag"].contains(&kind.as_str()) {
+            if !["str", "num", "int", "onoff", "flag"].contains(&kind.as_str()) {
                 return Err(format!("line {line_no}: unknown attribute kind {kind}"));
             }
             Ok(Item::Attr {
@@ -115,6 +164,7 @@ fn parse_item(fields: &[&str], line_no: usize) -> Result<Item, String> {
             local: s(3)?,
         }),
         Some("text") => Ok(Item::Text { name: s(1)? }),
+        Some("alltext") => Ok(Item::AllText { name: s(1)? }),
         other => Err(format!("line {line_no}: unknown item {other:?}")),
     }
 }
@@ -144,20 +194,27 @@ fn parse(source: &str) -> Result<Description, String> {
                     out.views.push(View {
                         name: head.get(1).ok_or("view: name")?.to_string(),
                         local: head.get(2).ok_or("view: local name")?.to_string(),
+                        prefix: head.get(3).map(|p| (*p).to_string()),
                         doc: doc.trim().to_string(),
                         items: Vec::new(),
+                        order: Vec::new(),
                     });
                 }
                 other => return Err(format!("line {}: unknown statement {other:?}", k + 1)),
             }
             continue;
         }
-        let item = parse_item(&fields, k + 1)?;
-        out.views
+        let view = out
+            .views
             .last_mut()
-            .ok_or(format!("line {}: an item outside a view", k + 1))?
-            .items
-            .push(item);
+            .ok_or(format!("line {}: an item outside a view", k + 1))?;
+        if fields.first() == Some(&"order") {
+            let steps = fields.iter().skip(1);
+            view.order
+                .extend(steps.map(|step| step.split('/').map(String::from).collect()));
+        } else {
+            view.items.push(parse_item(&fields, k + 1)?);
+        }
     }
     check(&out)?;
     Ok(out)
@@ -167,7 +224,10 @@ fn check(description: &Description) -> Result<(), String> {
     let known: Vec<&str> = description.views.iter().map(|v| v.name.as_str()).collect();
     for view in &description.views {
         for item in &view.items {
-            if let Item::Child { view: target, .. } | Item::Children { view: target, .. } = item {
+            if let Item::Child { view: target, .. }
+            | Item::Children { view: target, .. }
+            | Item::All { view: target, .. } = item
+            {
                 if !known.contains(&target.as_str()) {
                     return Err(format!("{}: unknown view {target}", view.name));
                 }
@@ -176,6 +236,14 @@ fn check(description: &Description) -> Result<(), String> {
                 if !description.namespaces.iter().any(|(p, _)| p == prefix) {
                     return Err(format!("{}: unknown namespace prefix {prefix}", view.name));
                 }
+            }
+        }
+        if let Some(prefix) = &view.prefix {
+            if !description.namespaces.iter().any(|(p, _)| p == prefix) || view.local == "*" {
+                return Err(format!(
+                    "{}: a constructor needs a declared prefix and a name",
+                    view.name
+                ));
             }
         }
     }
@@ -198,9 +266,15 @@ fn emit_item(out: &mut String, item: &Item) {
             "    /// Every `{local}` child, in order.\n    pub fn {name}(self) -> impl Iterator<Item = {view}<'a>> {{\n        \
              xmlread::children(self.0, \"{local}\").map({view}::new)\n    }}"
         ),
+        Item::All { name, view } => writeln!(
+            out,
+            "    /// Every child element, in order.\n    pub fn {name}(self) -> impl Iterator<Item = {view}<'a>> {{\n        \
+             xmlread::elements(self.0).map({view}::new)\n    }}"
+        ),
         Item::Attr { name, kind, local } => {
             let (ty, call) = match kind.as_str() {
                 "str" => ("Option<&'a str>", "xmlread::attr"),
+                "num" => ("Option<f64>", "xmlread::attr_num"),
                 "int" => ("Option<i64>", "xmlread::attr_int"),
                 "onoff" => ("bool", "xmlread::attr_on"),
                 _ => ("Option<bool>", "xmlread::attr_flag"),
@@ -220,6 +294,11 @@ fn emit_item(out: &mut String, item: &Item) {
             out,
             "    /// The element's text (before its first child element).\n    pub fn {name}(self) -> String {{\n        \
              xmlread::text(self.0)\n    }}"
+        ),
+        Item::AllText { name } => writeln!(
+            out,
+            "    /// Every text node below the element, in order.\n    pub fn {name}(self) -> String {{\n        \
+             self.0.text_content()\n    }}"
         ),
     };
 }
@@ -250,18 +329,68 @@ fn emit_view(out: &mut String, view: &View) {
         out.push('\n');
         emit_item(out, item);
     }
+    emit_constructors(out, view);
     out.push_str("}\n");
 }
 
-fn generate(description: &Description, source_path: &str) -> String {
+/// A view in a known namespace: its qualified name and the empty element; with an `order`
+/// (in any namespace), the schema's child sequence and `insert`.
+fn emit_constructors(out: &mut String, view: &View) {
+    if let Some(prefix) = &view.prefix {
+        emit_create(out, &view.local, prefix);
+    }
+    emit_order(out, view);
+}
+
+fn emit_create(out: &mut String, local: &str, prefix: &str) {
+    let ns = constant(prefix);
+    let _ = writeln!(
+        out,
+        "\n    /// The element this view reads, as written: `{prefix}:{local}`.\n    \
+         pub const QUALIFIED: &'static str = \"{prefix}:{local}\";\n\n    \
+         /// A new, empty `{prefix}:{local}`.\n    pub fn create() -> Element {{\n        \
+         Element::new(Arc::new(QName::new(Some(\"{prefix}\"), \"{local}\", Some({ns}))), Vec::new(), Vec::new(), Vec::new())\n    }}"
+    );
+}
+
+fn emit_order(out: &mut String, view: &View) {
+    if view.order.is_empty() {
+        return;
+    }
+    let steps: Vec<String> = view
+        .order
+        .iter()
+        .map(|step| {
+            format!(
+                "&[{}]",
+                step.iter().map(|n| format!("\"{n}\"")).collect::<Vec<_>>().join(", ")
+            )
+        })
+        .collect();
+    let _ = writeln!(
+        out,
+        "\n    /// The schema's sequence of children, by local name (a step lists a choice).\n    \
+         pub const ORDER: &'static [&'static [&'static str]] = &[{}];\n\n    \
+         /// The element with `child` added where [`Self::ORDER`] puts it.\n    \
+         pub fn insert(self, child: Element) -> Element {{\n        \
+         xmlread::insert_ordered(self.0, Self::ORDER, child)\n    }}",
+        steps.join(", ")
+    );
+}
+
+fn generate(description: &Description, target: &Target) -> String {
+    let (source_path, reader) = (target.description, target.reader);
     let mut out = format!(
         "// @generated by `cargo xtask codegen` from {source_path}; do not edit by hand.\n\
          //! Typed views of the elements the model reads (design ADR-005), generated from\n\
          //! `{source_path}`: each a copy of a borrowed element with getters for the children\n\
          //! and attributes asked for, found by local name as `xmlread` reads them.\n\
          //!\n//! Must not: hold logic; a reader that needs more adds it to the description.\n\
-         #![allow(clippy::all)]\n\nuse crate::xmlread;\nuse ooxml_xml::Element;\n"
+         #![allow(clippy::all)]\n\n{reader}\nuse ooxml_xml::Element;\n"
     );
+    if description.views.iter().any(|v| v.prefix.is_some()) {
+        out.push_str("use ooxml_xml::QName;\nuse std::sync::Arc;\n");
+    }
     for (prefix, uri) in &description.namespaces {
         let _ = writeln!(
             out,
@@ -281,7 +410,7 @@ pub fn run(root: &Path, check: bool) -> Result<Vec<String>, String> {
     let mut differ = Vec::new();
     for target in TARGETS {
         let source = std::fs::read_to_string(root.join(target.description)).map_err(|e| e.to_string())?;
-        let generated = generate(&parse(&source)?, target.description);
+        let generated = generate(&parse(&source)?, target);
         let path = root.join(target.output);
         let current = std::fs::read_to_string(&path).unwrap_or_default();
         if current != generated {
