@@ -42,3 +42,14 @@ fn main() -> ExitCode {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    /// The checked-in generated files are what their descriptions give (`cargo test`
+    /// runs this in CI, as `cargo xtask codegen --check` would).
+    #[test]
+    fn generated_views_match_their_descriptions() {
+        let differ = super::codegen::run(&super::root(), true).unwrap();
+        assert!(differ.is_empty(), "run `cargo xtask codegen`: {differ:?} differ");
+    }
+}
