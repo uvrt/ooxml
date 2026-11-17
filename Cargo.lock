@@ -384,6 +384,8 @@ dependencies = [
  "ooxml-scene",
  "ooxml-schema",
  "ooxml-text",
+ "ooxml-tools",
+ "ooxml-tools-word",
  "ooxml-word-layout",
  "ooxml-word-model",
  "ooxml-xml",
@@ -393,7 +395,7 @@ dependencies = [
 
 [[package]]
 name = "ooxml-python"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "foldhash",
  "ooxml-core",
@@ -498,6 +500,7 @@ dependencies = [
  "ooxml-base",
  "ooxml-opc",
  "ooxml-tools",
+ "ooxml-word-model",
  "ooxml-xml",
  "ooxml-zip",
  "serde_json",
@@ -536,12 +539,14 @@ dependencies = [
 name = "ooxml-word-model"
 version = "0.1.0"
 dependencies = [
+ "flate2",
  "ooxml-base",
  "ooxml-colour",
  "ooxml-derive",
  "ooxml-opc",
  "ooxml-xml",
  "ooxml-zip",
+ "serde_json",
  "thiserror",
 ]
 
