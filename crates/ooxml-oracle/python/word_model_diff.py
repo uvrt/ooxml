@@ -31,7 +31,7 @@ for package in ("docx2svg", "ooxml-common"):
     if str(source) not in sys.path:
         sys.path.insert(0, str(source))
 
-from docx2svg.linebreak import ListCounters  # noqa: E402
+from docx2svg.linebreak import ListCounters, text_box_labels  # noqa: E402
 from docx2svg.model import Graphic, Paragraph, Table, TabStop  # noqa: E402
 from docx2svg.parse.document import _section, parse_package  # noqa: E402
 from docx2svg.parse.properties import FontRef  # noqa: E402
@@ -209,6 +209,25 @@ def resolved(document) -> tuple[list, list, list]:
     return paragraphs, tables, labels
 
 
+def story_labels(document, items) -> list:
+    """A story's labels, one counter for the story, its paragraphs in document order."""
+    counters, out = ListCounters(), []
+
+    def walk(block) -> None:
+        if isinstance(block, Table):
+            for row in block.rows:
+                for cell in row:
+                    for inner in cell:
+                        walk(inner)
+            return
+        pp = resolve_paragraph(document, block)
+        out.append(counters.label(document, block, pp) if pp.get("numPr.numId") else None)
+
+    for block in items:
+        walk(block)
+    return out
+
+
 def level(lv) -> dict:
     return {
         "level": lv.level, "format": lv.format, "text": lv.text, "paragraph": props(lv.paragraph), "run": props(lv.run),
@@ -267,6 +286,8 @@ def python_model(data: bytes) -> dict:
         "stories": {k: blocks(v) for k, v in d.stories.items()}, "story_parts": dict(d.story_parts),
         "cached_fields": list(d.cached_fields), "warnings": list(d.warnings),
         "labels": labels, "resolved_paragraphs": paragraphs, "resolved_tables": tables,
+        "story_labels": {k: story_labels(d, v) for k, v in d.stories.items()},
+        "text_box_labels": dict(text_box_labels(d)),
     }
 
 

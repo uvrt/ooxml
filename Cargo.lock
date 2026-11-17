@@ -333,6 +333,7 @@ dependencies = [
  "ooxml-derive",
  "ooxml-opc",
  "ooxml-xml",
+ "ooxml-zip",
  "thiserror",
 ]
 

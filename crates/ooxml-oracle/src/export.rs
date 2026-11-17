@@ -290,6 +290,18 @@ pub fn document_json(model: &mut Model, d: &WordDocument) -> J {
     };
     out.insert("body".into(), blocks(&d.body));
     out.insert("labels".into(), json!(d.body_labels()));
+    let stories: Map<String, J> = d
+        .stories
+        .iter()
+        .map(|(k, v)| (k.to_string(), json!(model.story_labels(d, v))))
+        .collect();
+    out.insert("story_labels".into(), J::Object(stories));
+    let boxes: Map<String, J> = model
+        .text_box_labels(d)
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), json!(v)))
+        .collect();
+    out.insert("text_box_labels".into(), J::Object(boxes));
     out.insert("resolved_paragraphs".into(), paragraphs);
     out.insert("resolved_tables".into(), tables);
     J::Object(out)

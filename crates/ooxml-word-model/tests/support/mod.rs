@@ -1,0 +1,123 @@
+//! Made-up Word packages for the model's tests: a body, and optionally styles, numbering and
+//! settings, written as a package in memory.
+#![allow(dead_code, clippy::unwrap_used, clippy::expect_used)]
+
+use ooxml_base::{DigestKey, Limits};
+use ooxml_derive::CacheBudget;
+use ooxml_opc::Package;
+use ooxml_word_model::{Model, WordDocument};
+use ooxml_zip::{Method, NewEntry, Writer};
+use std::sync::Arc;
+
+/// The WordprocessingML namespace declaration every made-up part uses.
+pub const W: &str = r#"xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships""#;
+
+/// A budget without a limit.
+pub struct Unlimited;
+
+impl CacheBudget for Unlimited {
+    fn reserve(&self, _bytes: usize) -> bool {
+        true
+    }
+    fn release(&self, _bytes: usize) {}
+    fn used(&self) -> usize {
+        0
+    }
+}
+
+/// The parts of a made-up document.
+#[derive(Default, Clone)]
+pub struct Parts {
+    /// `w:body`'s content.
+    pub body: String,
+    /// `w:styles`' content, if any.
+    pub styles: Option<String>,
+    /// `w:numbering`'s content, if any.
+    pub numbering: Option<String>,
+    /// `w:settings`' content, if any.
+    pub settings: Option<String>,
+}
+
+fn rel(id: &str, kind: &str, target: &str) -> String {
+    format!(
+        r#"<Relationship Id="{id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/{kind}" Target="{target}"/>"#
+    )
+}
+
+/// The package's bytes.
+pub fn package_bytes(parts: &Parts) -> Vec<u8> {
+    let mut w = Writer::new();
+    let entry = |name: &str| NewEntry {
+        name: name.into(),
+        method: Method::Deflated,
+        dos_time: 0x6000,
+        dos_date: 0x5a21,
+        external_attr: 0,
+        create_system: 0,
+    };
+    let mut rels = String::new();
+    let mut files: Vec<(String, String)> = vec![(
+        "word/document.xml".into(),
+        format!(
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document {W}><w:body>{}</w:body></w:document>"#,
+            parts.body
+        ),
+    )];
+    for (k, (part, kind, root)) in [
+        (&parts.styles, "styles", "styles"),
+        (&parts.numbering, "numbering", "numbering"),
+        (&parts.settings, "settings", "settings"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        if let Some(content) = part {
+            rels.push_str(&rel(&format!("rId{}", k + 1), kind, &format!("{kind}.xml")));
+            files.push((
+                format!("word/{kind}.xml"),
+                format!(r#"<w:{root} {W}>{content}</w:{root}>"#),
+            ));
+        }
+    }
+    files.push((
+        "word/_rels/document.xml.rels".into(),
+        format!(r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">{rels}</Relationships>"#),
+    ));
+    files.push((
+        "_rels/.rels".into(),
+        format!(
+            r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">{}</Relationships>"#,
+            rel("rId1", "officeDocument", "word/document.xml")
+        ),
+    ));
+    files.push((
+        "[Content_Types].xml".into(),
+        r#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>"#.into(),
+    ));
+    for (name, data) in files {
+        w.add(&entry(&name), data.as_bytes()).unwrap();
+    }
+    w.finish(b"").unwrap()
+}
+
+/// The package.
+pub fn package(parts: &Parts) -> Package {
+    Package::open(Arc::from(package_bytes(parts)), &Limits::default()).unwrap()
+}
+
+/// A fresh model.
+pub fn model() -> Model {
+    Model::new(Arc::new(Unlimited), DigestKey::new(1, 2))
+}
+
+/// The document opened in a fresh model.
+pub fn open(parts: &Parts) -> (Model, WordDocument) {
+    let mut m = model();
+    let d = m.open(&package(parts)).unwrap();
+    (m, d)
+}
+
+/// A paragraph with one run of `text`, and `ppr` / `rpr` as its properties.
+pub fn p(ppr: &str, rpr: &str, text: &str) -> String {
+    format!(r#"<w:p><w:pPr>{ppr}</w:pPr><w:r><w:rPr>{rpr}</w:rPr><w:t xml:space="preserve">{text}</w:t></w:r></w:p>"#)
+}

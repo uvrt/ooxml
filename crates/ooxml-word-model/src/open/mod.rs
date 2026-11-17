@@ -10,9 +10,9 @@
 //! `Model` (the document's derived engine, design section 6).
 
 use crate::digest;
-use crate::document::{item_of, Context, Notes, ResolvedParagraph, WordDocument};
+use crate::document::{Context, Notes, ResolvedParagraph, WordDocument};
 use crate::error::WordError;
-use crate::labels::{item_lists, top_level, BlockItems};
+use crate::labels::BlockItems;
 use crate::model::{Block, Paragraph, Story, Table};
 use crate::numbering::{Numbering, PictureBullet};
 use crate::read::{sections, BodyElement, Fields, Reader, Steps};
@@ -28,6 +28,8 @@ use ooxml_opc::{Package, Relationships};
 use ooxml_xml::{Element, Tree};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
+
+mod labels;
 
 const OFFICE: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 const MARKERS: &[&str] = &[
@@ -312,57 +314,6 @@ fn moved(block: &Block, here: &Text) -> Block {
     }
 }
 
-/// The key of a block's list items: what decides each paragraph's resolved `numPr`.
-fn label_key(key: DigestKey, block: &Block) -> Digest {
-    fn feed(d: &mut Digester, block: &Block) {
-        match block {
-            Block::Paragraph(p) => {
-                d.update(b"p");
-                let props = p.properties.as_deref();
-                d.field(props.and_then(|x| x.style_id.as_deref()).unwrap_or("\u{0}").as_bytes());
-                d.field(p.table_style_id.as_deref().unwrap_or("\u{0}").as_bytes());
-                for c in p.table_conditions.iter() {
-                    d.field(c.as_bytes());
-                }
-                d.update(b"|");
-                for name in ["numPr.numId", "numPr.ilvl"] {
-                    match props
-                        .and_then(|x| x.declared.get(name))
-                        .and_then(crate::value::Value::int)
-                    {
-                        Some(n) => d.field(&n.to_le_bytes()),
-                        None => d.field(b""),
-                    }
-                }
-            }
-            Block::Table(t) => {
-                d.update(b"t");
-                for row in t.rows.iter() {
-                    for cell in row.iter() {
-                        d.update(b"c");
-                        cell.iter().for_each(|b| feed(d, b));
-                    }
-                }
-                d.update(b"/");
-            }
-        }
-    }
-    let mut d = Digester::new(key);
-    feed(&mut d, block);
-    d.finish()
-}
-
-fn paragraphs_of<'a>(block: &'a Block, out: &mut Vec<&'a Arc<Paragraph>>) {
-    match block {
-        Block::Paragraph(p) => out.push(p),
-        Block::Table(t) => {
-            for cell in t.rows.iter().flat_map(|r| r.iter()) {
-                cell.iter().for_each(|b| paragraphs_of(b, out));
-            }
-        }
-    }
-}
-
 impl Model {
     fn body(
         &mut self,
@@ -491,73 +442,6 @@ fn read_notes(reader: &Reader<'_>, root: &Element, kind: &str) -> Notes {
 }
 
 impl Model {
-    fn block_items(&mut self, cx: &Context, top: i64, block: &Block) -> BlockItems {
-        let mut paragraphs = Vec::new();
-        paragraphs_of(block, &mut paragraphs);
-        let items = paragraphs
-            .into_iter()
-            .map(|p| {
-                let item = item_of(&self.resolver.paragraph_props(cx, p));
-                (item, item.and_then(|i| item_lists(&cx.numbering, i, top)))
-            })
-            .collect();
-        BlockItems::new(items)
-    }
-
-    fn items_of(&mut self, cx: &Context, top: i64, key: Digest, block: &Block) -> BlockItems {
-        if let Some(found) = self.label_memo.get(&key) {
-            return found;
-        }
-        let made = self.block_items(cx, top, block);
-        self.label_memo.insert(key, made.clone());
-        made
-    }
-
-    /// Bring the body's labels up to date: the blocks between the unchanged ones at either
-    /// end are taken out and the new ones put in.
-    fn update_labels(&mut self, cx: &Context, body: &[Block]) {
-        let keys: Vec<Digest> = body.iter().map(|b| label_key(self.key, b)).collect();
-        let old = std::mem::take(&mut self.label_keys);
-        let prefix = old.iter().zip(&keys).take_while(|(a, b)| a == b).count();
-        let rest = old.len().min(keys.len()) - prefix;
-        let suffix = old
-            .iter()
-            .rev()
-            .zip(keys.iter().rev())
-            .take(rest)
-            .take_while(|(a, b)| a == b)
-            .count();
-        let (removed, added) = (old.len() - prefix - suffix, keys.len() - prefix - suffix);
-        let top = top_level(&cx.numbering);
-        let mut edits = 0;
-        if old.is_empty() {
-            let mut made = Vec::with_capacity(body.len());
-            for (block, key) in body.iter().zip(&keys) {
-                made.push(self.items_of(cx, top, *key, block));
-            }
-            self.labels = made.into_iter().collect();
-            self.stats.label_blocks = body.len();
-            self.stats.label_edits = body.len();
-            self.label_keys = keys;
-            return;
-        }
-        for _ in 0..removed {
-            if self.labels.remove(prefix).is_ok() {
-                edits += 1;
-            }
-        }
-        for (k, block) in body.iter().enumerate().skip(prefix).take(added) {
-            let key = keys.get(k).copied().unwrap_or_default();
-            let items = self.items_of(cx, top, key, block);
-            if self.labels.insert(k, items).is_ok() {
-                edits += 1;
-            }
-        }
-        self.stats.label_blocks = added;
-        self.stats.label_edits = edits;
-        self.label_keys = keys;
-    }
-
     fn picture_bullets(
         &self,
         package: &Package,
