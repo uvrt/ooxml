@@ -374,7 +374,7 @@ impl PyLaidPages {
     /// number, baseline, top, pitch, paragraph_id, band, story, part, column, spans)`, a
     /// span `(path, chars, xs, y, end, face, bold, italic, half_points, color, underline,
     /// strike, double_strike, highlight, shading, kind, line_baseline, vertical_align)`),
-    /// `rules` (`(kind, path, x, y, width, height, color)`), `pictures` (`(path,
+    /// `rules` (`(kind, path, x, y, width, height, color, style)`), `pictures` (`(path,
     /// relationship, x, y, width, height, part, crop)`), `drawings` (slots, as a painter
     /// is given them), `blocks` and `unpainted`.
     fn page<'py>(&self, py: Python<'py>, page: usize) -> PyResult<Bound<'py, PyDict>> {
@@ -579,7 +579,7 @@ fn line_tuple<'py>(py: Python<'py>, l: &PaintedLine) -> PyResult<Bound<'py, PyTu
     PyTuple::new(py, items)
 }
 
-fn rule_tuple(r: &Rule) -> (&'static str, &str, Exact, Exact, Exact, Exact, Option<&str>) {
+fn rule_tuple(r: &Rule) -> RuleRow<'_> {
     (
         r.kind,
         r.path.as_str(),
@@ -588,8 +588,21 @@ fn rule_tuple(r: &Rule) -> (&'static str, &str, Exact, Exact, Exact, Exact, Opti
         exact(r.width),
         exact(r.height),
         r.color.as_deref(),
+        r.style.as_deref(),
     )
 }
+
+/// A rule's row (see `LaidPages.page`).
+type RuleRow<'a> = (
+    &'static str,
+    &'a str,
+    Exact,
+    Exact,
+    Exact,
+    Exact,
+    Option<&'a str>,
+    Option<&'a str>,
+);
 
 type CropRow = Option<[Exact; 4]>;
 

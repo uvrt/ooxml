@@ -124,6 +124,8 @@ pub struct Rule {
     pub height: Px,
     /// Its colour, `None` automatic (black).
     pub color: Option<String>,
+    /// A border's or underline's style (`single`, `double`, `dotted`...; `Rule.style`).
+    pub style: Option<String>,
 }
 
 /// A drawing a page draws, by its extent: what a painter of pictures, DrawingML, charts

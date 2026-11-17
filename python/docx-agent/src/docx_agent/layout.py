@@ -1626,6 +1626,16 @@ def lay_out_bytes(data: bytes, options: dict, state: Any = None) -> tuple:
         held, how, seconds = held_layout(data, options, state)
         try:
             layout, fonts, warnings = held.laid
+            if _pages.is_rust(layout):
+                # Lane L4: a layout held in Rust stays where it is; a caller in another process
+                # that asks for the layout itself (it laid the version out in Python) gets
+                # docx2svg's, counted.
+                from docx2svg.rust import count_fallback
+
+                count_fallback("handed to another process")
+                convert_options = docx2svg.ConvertOptions(**options)
+                layout, _, fonts = docx2svg.lay_out_docx(data, convert_options, keep=False)
+                warnings = list(convert_options.warnings)
             blob = dumps((_light(layout), fonts, warnings))
         except BaseException:
             _let_go_held(state[3])

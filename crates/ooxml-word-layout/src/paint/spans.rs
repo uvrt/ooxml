@@ -665,6 +665,7 @@ impl LinePainter<'_, '_> {
                 width,
                 height,
                 color: colour(props.get("color").and_then(Value::str)),
+                style: None,
             }),
             None => self.out.unpainted.push("a note separator".into()),
         }

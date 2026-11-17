@@ -5,6 +5,15 @@ ooxml-core is the Rust core of the ooxml packages (`crates/`), as the Python mod
 
 ## 0.10.0 -- unreleased
 
+- **The Word layout in Rust (phase PL, lane L4).** `WordFonts` (a machine's fonts, scanned
+  once), `WordPages` (one document's page engine: each version laid out from the one
+  before, given as its package's bytes -- only the parts whose stored bytes changed read
+  again -- or as its touched parts, `update`) and `LaidPages` (one version: its pages'
+  frames, its body's lines and blocks, keeps, page-number fields, coverage, each page's
+  view and SVG, and digests of what every page paints), over the new crate
+  `ooxml-word-pages`; `LayoutFallback` for a version it does not lay out as docx2svg does
+  yet, with its reason. The interpreter lock is let go for every layout and paint.
+
 - **Word reads in Rust (phase P1, lane P1a).** The session's `describe` gives every field of
   docx-agent's but `pages`, `problems` and `revisions.changes` (headings, sections, styles in
   use, revisions, fields, tables, drawings and named content controls added), and it serves

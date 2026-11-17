@@ -7,6 +7,15 @@ snapshot commit; the development history before it is summarised here.
 
 ## 0.13.1 -- unreleased
 
+- **`docx2svg.rust`** (lane L4): the layout in Rust (`ooxml_core.WordPages`), read as
+  docx2svg's `Layout` -- `pages` whose frame, `info` and `blocks` are there at once and
+  whose lines, spans, rules, pictures and floats are painted in Rust when first read --
+  with each page's SVG drawn in Rust, byte for byte `page_svgs`'. `Engine` lays the
+  versions of one document out, each from the one before; a version or option it does not
+  take is `None`, counted by reason (`fallbacks()`). Held in Rust, a `RustLayout` is never
+  pickled. `tests/test_rust_layout.py` holds it to the Python layout on every fixture.
+
+
 - `MeasureStore.forget(lineage)`: drop what one lineage measured -- docx-agent's layout workers
   let go of a closed document's measurements with it (round 58).
 

@@ -32,7 +32,7 @@ def _page(page) -> tuple:
     return ((page.number, page.width_px, page.height_px, page.width_pt, page.height_pt, tuple(page.column)),
             page.info, list(page.blocks),
             [(_line(line), [_span(s) for s in line.spans]) for line in page.lines],
-            [(r.kind, r.path, r.x, r.y, r.width, r.height, r.color) for r in page.rules],
+            [(r.kind, r.path, r.x, r.y, r.width, r.height, r.color, r.style) for r in page.rules],
             [(p.path, p.relationship, p.x, p.y, p.width, p.height, p.part) for p in page.pictures],
             [(f.path, f.x, f.y, f.width, f.height, f.behind, f.story) for f in page.floats])
 

@@ -120,7 +120,8 @@ class Engine:
                     options.glyph_size)
         self._pages = ooxml_core.WordPages(word_fonts(options), decimal=self.key[1], glyph_size=options.glyph_size)
         self._lock = threading.Lock()
-        #: The last version laid out, by the digest of its bytes: asked again, the same.
+        #: The last version asked for, by the digest of its bytes, and its layout (``None``: a
+        #: fallback): asked again, the same answer.
         self._last: tuple | None = None
 
     def fits(self, options) -> bool:
@@ -140,11 +141,13 @@ class Engine:
         digest = hashlib.sha256(data).digest()
         with self._lock:
             if self._last is not None and self._last[0] == digest:
-                return self._last[1]
+                return self._last[1]          # (a fallback is counted once per version)
         try:
             laid = self._pages.lay_out(data)
         except ooxml_core.LayoutFallback as fallback:
             count_fallback(fallback.args[0])
+            with self._lock:
+                self._last = (digest, None)
             return None
         made = RustLayout(laid, data, options)
         with self._lock:
@@ -403,7 +406,8 @@ def _paint(view: dict) -> dict:
                                    double_strike=double_strike, highlight=highlight, shading=shading, kind=kind,
                                    line_baseline=line_baseline, vertical_align=vertical_align))
         lines.append(line)
-    rules = [Rule(kind, path, _q(x), _q(y), _q(w), _q(h), color) for kind, path, x, y, w, h, color in view["rules"]]
+    rules = [Rule(kind, path, _q(x), _q(y), _q(w), _q(h), color, style)
+             for kind, path, x, y, w, h, color, style in view["rules"]]
     pictures = [Picture(path, relationship, _q(x), _q(y), _q(w), _q(h), part=part,
                         crop=tuple(_q(c) for c in crop) if crop is not None else None)
                 for path, relationship, x, y, w, h, part, crop in view["pictures"]]

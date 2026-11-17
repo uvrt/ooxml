@@ -367,7 +367,7 @@ impl PageEngine {
         let rules: Vec<_> = paint
             .rules
             .iter()
-            .map(|r| (r.kind, r.x, r.y, r.width, r.height, &r.color))
+            .map(|r| (r.kind, r.x, r.y, r.width, r.height, &r.color, &r.style))
             .collect();
         let pictures: Vec<_> = paint
             .pictures

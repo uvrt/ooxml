@@ -71,6 +71,15 @@ fn rule(kind: &'static str, span: &Span, at: (i64, i64), size: (i64, i64)) -> Ru
         width: whole(size.0),
         height: whole(size.1),
         color: span.color.clone(),
+        style: None,
+    }
+}
+
+/// A rule of `style` (an underline's or a strike's).
+fn styled(rule: Rule, style: &str) -> Rule {
+    Rule {
+        style: Some(style.to_owned()),
+        ..rule
     }
 }
 
@@ -123,10 +132,16 @@ pub(super) fn decoration_rects(
         let thick = round(Q::from_integer(i128::from(size)) * scale).max(1);
         let top = span.y - round(Q::from_integer(i128::from(position)) * scale);
         if span.double_strike {
-            out.push(rule("strike", span, (x0, top - thick), (x1 - x0, thick)));
-            out.push(rule("strike", span, (x0, top + thick), (x1 - x0, thick)));
+            out.push(styled(
+                rule("strike", span, (x0, top - thick), (x1 - x0, thick)),
+                "double",
+            ));
+            out.push(styled(
+                rule("strike", span, (x0, top + thick), (x1 - x0, thick)),
+                "double",
+            ));
         } else {
-            out.push(rule("strike", span, (x0, top), (x1 - x0, thick)));
+            out.push(styled(rule("strike", span, (x0, top), (x1 - x0, thick)), "single"));
         }
     }
     out
@@ -138,7 +153,7 @@ fn underline(out: &mut Vec<Rule>, span: &Span, style: &str, (x0, x1): (i64, i64)
     if style == "words" {
         for (a, b) in words(span) {
             let (a, b) = (a.round_half_up(), b.round_half_up());
-            out.push(rule("underline", span, (a, top), (b - a, thick)));
+            out.push(styled(rule("underline", span, (a, top), (b - a, thick)), style));
         }
     } else if matches!(style, "double" | "thick" | "wavyDouble") || style.ends_with("Heavy") {
         let first_offset = i64::try_from((position / Q::from_integer(2)).ceil().to_integer()).unwrap_or(0);
@@ -146,20 +161,26 @@ fn underline(out: &mut Vec<Rule>, span: &Span, style: &str, (x0, x1): (i64, i64)
         let height = (round(position + exact_thick / Q::from_integer(2)) - first_offset).max(5);
         if matches!(style, "double" | "wavyDouble") {
             let half = (thick + 1) / 2;
-            out.push(rule("underline", span, (x0, first), (x1 - x0, half)));
-            out.push(rule("underline", span, (x0, first + height), (x1 - x0, half)));
+            out.push(styled(rule("underline", span, (x0, first), (x1 - x0, half)), style));
+            out.push(styled(
+                rule("underline", span, (x0, first + height), (x1 - x0, half)),
+                style,
+            ));
         } else {
-            out.push(rule("underline", span, (x0, first), (x1 - x0, height)));
+            out.push(styled(rule("underline", span, (x0, first), (x1 - x0, height)), style));
         }
     } else if let Some((_, on, period)) = DASHES.iter().find(|(name, ..)| *name == style) {
         let mut start = x0;
         while start < x1 {
             let end = (start + on).min(x1);
-            out.push(rule("underline", span, (start, top), (end - start, thick)));
+            out.push(styled(
+                rule("underline", span, (start, top), (end - start, thick)),
+                style,
+            ));
             start += period;
         }
     } else {
-        out.push(rule("underline", span, (x0, top), (x1 - x0, thick)));
+        out.push(styled(rule("underline", span, (x0, top), (x1 - x0, thick)), style));
     }
 }
 

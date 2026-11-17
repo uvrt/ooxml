@@ -135,6 +135,7 @@ fn band(out: &mut Vec<Rule>, path: &str, b: &Border, (x0, x1): (i64, i64), (y0, 
             width: Px::int(x.1 - x.0),
             height: Px::int(y.1 - y.0),
             color: Some(colour.clone()),
+            style: b.style.as_deref().map(str::to_owned),
         });
     };
     if b.style.as_deref() == Some("double") {
@@ -351,6 +352,7 @@ fn cell_shading(
         width: Px::int(x.1 - x.0),
         height: Px::int(y.1 - y.0),
         color: Some(fill.clone()),
+        style: None,
     };
     out.shading.push(rule((x0, x1), (y0, span_bottom)));
     if let Some(w) = winner.filter(|w| drawn(Some(w))) {
