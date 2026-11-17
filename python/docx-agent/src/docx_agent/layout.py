@@ -1786,7 +1786,6 @@ def _keeper(document: "Document") -> threading.Lock:
             lock = getattr(document, "_layout_lock", None)
             if lock is None:
                 lock = threading.Lock()
-                document._layout_lock = lock
                 document._layout_flights = {}
                 document._layout_kept = None
                 document._layout_count = 0
@@ -1804,6 +1803,9 @@ def _keeper(document: "Document") -> threading.Lock:
                 # the workers of the runners that laid it out hold (:func:`remember_runner`).
                 document._layout_runners = []
                 weakref.finalize(document, _collected, document._layout_lineage, document._layout_runners)
+                # Q3: the lock last -- another thread that finds it (outside the keepers'
+                # lock) finds everything above too.
+                document._layout_lock = lock
     return lock
 
 
