@@ -1,0 +1,1 @@
+The general setter: styles, run and paragraph formatting on each target. A range formats its characters; a paragraph or span its paragraphs.

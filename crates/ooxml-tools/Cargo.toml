@@ -1,0 +1,16 @@
+[package]
+name = "ooxml-tools"
+version = "0.1.0"
+description = "The tool contract: tool specs, the strict-subset schema, intent rules, validation, results and refusals"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+ooxml-tools-derive.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true
