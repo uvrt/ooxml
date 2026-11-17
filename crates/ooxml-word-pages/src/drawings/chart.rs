@@ -405,7 +405,7 @@ pub fn draw(
     };
     let laid = lay_out(&input);
     said.extend(resolver.said.take());
-    builder_said(&laid, said);
+    layout_said(&laid, said);
     let frame = Transform::of(0.0, 0.0, width_emu, height_emu);
     let group = Drawable::Group(Box::new(Group {
         transform: frame,
@@ -417,7 +417,7 @@ pub fn draw(
 }
 
 /// What the layout says it did not draw as Word does.
-fn builder_said(laid: &ooxml_chart::layout::Laid, said: &mut Said) {
+fn layout_said(laid: &ooxml_chart::layout::Laid, said: &mut Said) {
     if !laid.flattened_three_d.is_empty() {
         said.push(format!("chart-3d-flattened:{}", laid.flattened_three_d.join(",")));
     }
