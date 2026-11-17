@@ -323,7 +323,7 @@ def merges_beside(rows: list[Element], at: int) -> list[tuple[int, int, int, str
             first = at - 1
             while first > 0 and merge_at(first, key) == "continue":
                 first -= 1
-            if first < at - 1 or merge_at(first, key) == "restart":
+            if first < at - 1:          # a merge over one row is a cell of its own
                 out.append((start, first, at - 1, "below"))
         elif merge_at(at + 1, key) == "restart" and merge_at(at + 2, key) == "continue":
             last = at + 2
