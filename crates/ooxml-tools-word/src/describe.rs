@@ -10,13 +10,13 @@
 //! (tracking, the problems a document opened with): those fields are [`NOT_DESCRIBED`]
 //! until the model and the session have them.
 
-use crate::package::{
-    descendants, leading_text, live_elements, main_part, related, related_parts, story_parts, REL_COMMENTS,
-    REL_COMMENTS_EXTENDED, REL_COMMENTS_IDS, REL_CORE, REL_SETTINGS, W, W14, W15, W16CID,
-};
 use ooxml_base::{BaseError, Cancel};
 use ooxml_opc::{OpcError, Package};
 use ooxml_tools::{Done, Failure, ToolArgs, ToolError};
+use ooxml_word_model::parts::{
+    descendants, leading_text, live_elements, main_part, related, related_parts, story_parts, REL_COMMENTS,
+    REL_COMMENTS_EXTENDED, REL_COMMENTS_IDS, REL_CORE, REL_SETTINGS, W, W14, W15, W16CID,
+};
 use ooxml_xml::{Element, Tree};
 use serde_json::{Map, Value};
 
@@ -134,7 +134,7 @@ impl Reader<'_> {
     /// The title, subject and author the core properties set.
     fn properties(&self) -> Result<Map<String, Value>, ToolError> {
         let mut out = Map::new();
-        let rels = crate::package::relationships(self.package, "").map_err(opc)?;
+        let rels = ooxml_word_model::parts::relationships(self.package, "").map_err(opc)?;
         let part = rels
             .into_iter()
             .filter(|r| r.rel_type == REL_CORE)

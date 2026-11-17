@@ -12,7 +12,8 @@
 //!   ([`resolve`]);
 //! - list labels counted as Word counts them, kept incrementally ([`labels`]);
 //! - opening versions of one document, reusing what is unchanged ([`Model`],
-//!   [`WordDocument`]).
+//!   [`WordDocument`]);
+//! - stable addressing: block ids, the id ledger and its `docx-ids.1.` state ([`ids`]).
 //!
 //! Must not: lay out pages or compute fields' values (`ooxml-word-layout`, L3), edit, or
 //! read another library's internals. Nothing here depends on an interpreter lock: every
@@ -26,11 +27,13 @@
 mod digest;
 pub mod document;
 mod error;
+pub mod ids;
 mod imagemeta;
 pub mod labels;
 pub mod model;
 pub mod numbering;
 mod open;
+pub mod parts;
 pub mod props;
 pub mod read;
 pub mod resolve;
