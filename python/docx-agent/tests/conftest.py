@@ -256,6 +256,9 @@ def _skip_where_faces_are_absent(request, monkeypatch):
     monkeypatch.setattr(docx2svg, "lay_out_docx", checked_lay_out)
     monkeypatch.setattr(agent_layout, "convert", checked_convert)
     monkeypatch.setattr(agent_shared, "check_facts", checked_facts)
+    # Round 59 (R134): word_inspect's placements, keeps, a change's reflow and a batch's reads
+    # ask the layout module's own (held_answers, held_facts) -- read what came back there too.
+    monkeypatch.setattr(agent_layout, "check_facts", checked_facts)
 
 
 @pytest.fixture(autouse=True)
