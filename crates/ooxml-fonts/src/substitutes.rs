@@ -1,5 +1,5 @@
 //! Owns: which face an absent face is laid out with, and how good that substitute is --
-//! Word's measured metric compatible pairs ([`WORD_SUBSTITUTES`]), the Office substitution
+//! Word's pairs measured to the same metrics ([`WORD_SUBSTITUTES`]), the Office substitution
 //! table shared with PowerPoint (`data/substitutions.tsv`, ooxml-common's
 //! `fontmap.SUBSTITUTIONS`), the generic class of a face and the faces of each class
 //! ([`GENERIC_FALLBACKS`]); docx2svg's `default_substitutes`, `face_class` and ooxml-common's
@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 
 /// Word's face (lowercased) -> the open face laid out and drawn in its place where Word's
-/// is neither installed nor embedded: the pairs measured metric compatible (docx2svg's
+/// is neither installed nor embedded: the pairs measured to the same metrics (docx2svg's
 /// `fonts.SUBSTITUTES`).
 pub const WORD_SUBSTITUTES: [(&str, &str); 4] = [
     ("calibri", "Carlito"),
@@ -81,8 +81,8 @@ pub struct OfficeSubstitution {
     pub office: String,
     /// The family it is measured and drawn with.
     pub substitute: String,
-    /// Whether the two were measured metric compatible.
-    pub metric_compatible: bool,
+    /// Whether the two were measured to the same advances and line metrics.
+    pub same_metrics: bool,
 }
 
 struct Table {
@@ -101,7 +101,7 @@ fn table() -> &'static Table {
                 Some(OfficeSubstitution {
                     office: fields.next()?.to_owned(),
                     substitute: fields.next()?.to_owned(),
-                    metric_compatible: fields.next()? == "1",
+                    same_metrics: fields.next()? == "1",
                 })
             })
             .collect();

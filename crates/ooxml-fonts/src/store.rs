@@ -8,7 +8,7 @@
 use crate::FontError;
 use std::sync::Arc;
 
-/// What a file's identity is checked by: its modification time and size. A file whose
+/// How a file is known to be unchanged: its modification time and size. A file whose
 /// stamp changed is read again; the fonts epoch ([`crate::WordFonts::epoch`]) covers them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct FileStamp {

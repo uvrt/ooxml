@@ -53,8 +53,8 @@ pub struct Substitution {
     pub family: String,
     /// The family laid out in its place.
     pub substitute: String,
-    /// Whether the two were measured metric compatible.
-    pub metric_compatible: bool,
+    /// Whether the two were measured to the same advances and line metrics.
+    pub same_metrics: bool,
     /// How the substitute was chosen.
     pub kind: SubstitutionKind,
     /// For a generic substitute, the class it was chosen by.
@@ -234,7 +234,7 @@ impl WordFonts {
         self.epoch
     }
 
-    fn caches(&self) -> std::sync::MutexGuard<'_, Caches> {
+    fn caches(&self) -> impl std::ops::DerefMut<Target = Caches> + '_ {
         self.caches.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
@@ -336,7 +336,7 @@ impl WordFonts {
                     Substitution {
                         family: family.to_owned(),
                         substitute: current,
-                        metric_compatible: compatible,
+                        same_metrics: compatible,
                         kind: SubstitutionKind::Named,
                         class: None,
                     },
@@ -367,7 +367,7 @@ impl WordFonts {
                     Substitution {
                         family: family.to_owned(),
                         substitute: used,
-                        metric_compatible: false,
+                        same_metrics: false,
                         kind,
                         class,
                     },

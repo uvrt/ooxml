@@ -125,12 +125,12 @@ fn word_finds_styles_substitutes_and_reports_them() {
     );
     // Calibri is not there: Carlito, its measured compatible substitute, is.
     match fonts.resolve("Calibri", false, false).grade {
-        Grade::Substituted(s) => assert!(s.metric_compatible && s.substitute == "Carlito"),
+        Grade::Substituted(s) => assert!(s.same_metrics && s.substitute == "Carlito"),
         other => panic!("{other:?}"),
     }
     // Aptos has no named substitute: the default one, approximate.
     match fonts.resolve("Aptos", false, false).grade {
-        Grade::Substituted(s) => assert!(!s.metric_compatible && s.substitute == "Carlito"),
+        Grade::Substituted(s) => assert!(!s.same_metrics && s.substitute == "Carlito"),
         other => panic!("{other:?}"),
     }
     assert_eq!(fonts.resolve("Symbol", false, false).grade, Grade::Recorded);

@@ -212,6 +212,7 @@ What each crate owns, the outline of its API, and what it must not do:
 - **`ooxml-text`**
   - Owns: shaping, break opportunities, one break loop with Word-compatibility and DrawingML rule sets, hyphenation.
   - Must not: know about paragraphs or styles.
+  - Reads faces through its own port (`Glyphs`: an advance, a kern pair, script metrics, the fonts epoch), so neither L1 crate depends on the other; the layout (L2+) adapts `ooxml-fonts` to it (lane L1).
 - **`ooxml-colour`, `ooxml-numfmt`, `ooxml-markdown`**
   - Own: theme colours and transforms; number formats, dates and locales; the Markdown dialect with ids.
 - **`ooxml-drawingml`**

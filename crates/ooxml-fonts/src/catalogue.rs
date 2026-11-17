@@ -21,7 +21,7 @@ pub const WORD_PREFER_BUNDLE: [&str; 1] = ["symbol"];
 const FONT_SUFFIXES: [&str; 3] = [".ttf", ".otf", ".ttc"];
 
 /// The key the fonts epoch is digested under: the epoch names fonts the machine has, not
-/// content an author controls.
+/// content an author writes.
 pub(crate) const EPOCH_KEY: DigestKey = DigestKey::new(0x6f6f_786d_6c2d_666f, 0x6e74_7365_706f_6368);
 
 /// What kind of folder a font folder is: only Word's bundle is treated apart.

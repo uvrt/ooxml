@@ -3,7 +3,7 @@
 
 * ``substitutions.tsv``: ``ooxml_common.text.fontmap.SUBSTITUTIONS``, in its order --
   the Office face, the face it is measured and drawn with, whether that one was measured
-  metric compatible (one row a line, tab separated).
+  to the same advances and line metrics (one row a line, tab separated).
 * ``recorded-faces.tsv``: ``ooxml_common.text.recorded_symbol_faces``, the integers Word
   lays Symbol and Wingdings out with, recorded from Word's copies -- per family a
   ``metrics`` line (``docx2svg.vertical.FaceMetrics``' eight integers), a ``decorations``
