@@ -416,7 +416,7 @@ pub fn reference_text(
     Ok(super::references::apply_case(&text, instruction))
 }
 
-/// What finding a `STYLEREF`'s text reads of a document: its paragraphs, the paragraphs
+/// What looking up a `STYLEREF`'s text reads of a document: its paragraphs, the paragraphs
 /// not searched, its styles, the conversion's language and the one style names are read
 /// in; each style's occurrences found once.
 pub struct StyleSearch<'d> {

@@ -8,7 +8,7 @@
 //! table layout as a page places them.
 //!
 //! A paragraph holding a floating drawing text wraps around is stacked as docx2svg's
-//! estimated stand-in for it (`placeholder_item`); a story holding one is reported in
+//! estimated stand-in for it; a story holding one is reported in
 //! [`StoryTable::unsupported`], since Word lays its text out beside the drawing.
 //!
 //! Must not: draw a story.
@@ -256,7 +256,7 @@ fn wraps_text(paragraph: &Paragraph) -> bool {
 }
 
 /// A story paragraph holding a floating drawing text wraps around as docx2svg stacks it
-/// (`placeholder_item`, `_estimated_lines`): its text at its first text run's size, a
+/// (`_estimated_lines`): its text at its first text run's size, a
 /// line 1.17 em tall per line of half-em characters wrapped at the column's width, and a
 /// line as tall as each inline drawing whose extent it states; its own space before and
 /// after, no borders, no style.

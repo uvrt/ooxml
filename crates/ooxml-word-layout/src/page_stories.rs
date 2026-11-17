@@ -30,7 +30,7 @@ pub struct StoryMemo {
     heights: HashMap<HeightKey, Px>,
 }
 
-/// What finding a pass's page stories reads beyond its layout.
+/// What a pass's page stories are worked out from beyond its layout.
 pub struct PageStoryJob<'a> {
     /// How stories are laid out.
     pub cx: &'a StoryContext<'a>,
