@@ -35,6 +35,11 @@ Answers are docx2svg's: the same pages, signatures, facts and SVG (`tests/test_r
 - The tests of the Python layout's own mechanisms (layouts handed between versions and
   workers, held by token) pin it with the `python_layout` fixture.
 
+- With `DOCX_AGENT_FULL_VALIDATE` (the test runs), the story a span read alone is compared
+  with is read once per `Reader`, not once per span: the corpus round trip in every fixture,
+  reading each of its 500-odd insertions back through one reader, took 2-4 minutes per
+  fixture on CI, now about 15 s.
+
 ## 0.1.135 -- unreleased
 
 Round 59 (R135): many writers on one long tracked document. Measured on macOS (Python 3.12)
