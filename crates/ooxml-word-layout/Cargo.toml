@@ -1,0 +1,25 @@
+[package]
+name = "ooxml-word-layout"
+version = "0.1.0"
+description = "Word's layout: paragraphs measured into lines with heights, pagination with sections and columns, field passes, incremental relayout and layout facts"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+ooxml-base.workspace = true
+ooxml-derive.workspace = true
+ooxml-fonts.workspace = true
+ooxml-text.workspace = true
+ooxml-word-model.workspace = true
+num-integer.workspace = true
+num-traits.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+ooxml-opc.workspace = true
+ooxml-zip.workspace = true

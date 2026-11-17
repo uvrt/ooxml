@@ -328,6 +328,7 @@ dependencies = [
  "ooxml-fonts",
  "ooxml-opc",
  "ooxml-text",
+ "ooxml-word-layout",
  "ooxml-word-model",
  "ooxml-zip",
  "serde_json",
@@ -378,6 +379,22 @@ dependencies = [
  "rayon",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "ooxml-word-layout"
+version = "0.1.0"
+dependencies = [
+ "num-integer",
+ "num-traits",
+ "ooxml-base",
+ "ooxml-derive",
+ "ooxml-fonts",
+ "ooxml-opc",
+ "ooxml-text",
+ "ooxml-word-model",
+ "ooxml-zip",
+ "thiserror",
 ]
 
 [[package]]
