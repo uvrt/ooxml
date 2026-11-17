@@ -247,6 +247,28 @@ fn picture(href: &str, x: f64, y: f64, w: f64, h: f64, blip: Option<&Attr>) -> E
     e
 }
 
+/// A tiled picture as a rectangle filled with its tile pattern, the pattern declared;
+/// `None` where the picture is not tiled or its size is unknown.
+fn tiled(
+    image: &Image,
+    href: &str,
+    (w, h): (f64, f64),
+    blip: Option<&Attr>,
+    painter: &mut Painter<'_>,
+) -> Option<Element> {
+    let tile = image.tile.as_ref()?;
+    let id = painter.new_id("imgtile");
+    let blip: Vec<Attr> = blip.cloned().into_iter().collect();
+    let pattern = tile_pattern(&id, href, &image.data, tile, Some((0.0, 0.0, w, h)), &blip, painter.dpi)?;
+    painter.add_def(pattern);
+    Some(
+        Element::empty(Tag::Rect)
+            .num("width", w)
+            .num("height", h)
+            .with("fill", Value::Url(id)),
+    )
+}
+
 /// A picture.
 pub fn render_image(image: &Image, painter: &mut Painter<'_>) -> Element {
     let t = &image.transform;
@@ -295,27 +317,8 @@ pub fn render_image(image: &Image, painter: &mut Painter<'_>) -> Element {
                     blip.as_ref(),
                 )]),
         );
-    } else if let Some(tile) = image.tile.as_ref().and_then(|tile| {
-        let id = painter.new_id("imgtile");
-        tile_pattern(
-            &id,
-            &href,
-            &image.data,
-            tile,
-            Some((0.0, 0.0, w, h)),
-            blip.as_slice(),
-            painter.dpi,
-        )
-        .map(|p| (id, p))
-    }) {
-        let (id, pattern) = tile;
-        painter.add_def(pattern);
-        inner.push(
-            Element::empty(Tag::Rect)
-                .num("width", w)
-                .num("height", h)
-                .with("fill", Value::Url(id)),
-        );
+    } else if let Some(fill) = tiled(image, &href, (w, h), blip.as_ref(), painter) {
+        inner.push(fill);
     } else {
         let (mut left, mut top, mut dw, mut dh) = (0.0, 0.0, w, h);
         if let Some(s) = image.stretch.filter(|s| s.any()) {
