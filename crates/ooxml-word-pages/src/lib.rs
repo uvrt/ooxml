@@ -27,6 +27,7 @@
 
 mod disk;
 pub mod drawings;
+pub mod png;
 mod engine;
 mod error;
 mod fonts;

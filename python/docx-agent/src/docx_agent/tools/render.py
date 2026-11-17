@@ -166,7 +166,8 @@ class PageRenderer(RendererBase):
                                          [(name, content_key(blob)) for name, blob in embedded],
                                          system)
         return ([View(page, svg) for page, svg in zip(numbers, svgs)], fingerprint,
-                {"files": files, "embedded": embedded, "dirs": dirs, "skip": skip, "sans": sans})
+                {"files": files, "embedded": embedded, "dirs": dirs, "skip": skip, "sans": sans,
+                 "rust": pages.is_rust(layout)})
 
     def key_text(self, svg: str) -> str:
         return _DOCX_DATA.sub("", svg)
@@ -176,13 +177,11 @@ class PageRenderer(RendererBase):
         written to a temporary folder for as long as it takes)."""
         import tempfile
 
-        from docx2svg.png import svg_to_png
-
         with tempfile.TemporaryDirectory(prefix="docx2svg-embedded-") as directory:
             files = _written(raster, directory)
-            return [(svg_to_png(view.svg, backend="auto", font_dirs=raster["dirs"],
-                                font_files=files, skip_system_fonts=raster["skip"],
-                                sans_serif_family=raster["sans"]), None)
+            draw = _drawer(raster)
+            return [(draw(view.svg, font_dirs=raster["dirs"], font_files=files, skip_system_fonts=raster["skip"],
+                          sans_serif_family=raster["sans"]), None)
                     for view in views]
 
     def rasterise_fast(self, views: "list[View]", raster: Any) -> "list[tuple[bytes, Any]]":
@@ -196,9 +195,10 @@ class PageRenderer(RendererBase):
         glyph edges.  A page the outlining fails on is drawn exactly."""
         import tempfile
 
-        from docx2svg.png import outline_svg, svg_to_png
+        from docx2svg.png import outline_svg
 
         out = []
+        draw = _drawer(raster)
         with tempfile.TemporaryDirectory(prefix="docx2svg-embedded-") as directory:
             files = _written(raster, directory)
             arguments = {"font_dirs": raster["dirs"], "font_files": files,
@@ -208,7 +208,7 @@ class PageRenderer(RendererBase):
                     svg = outline_svg(view.svg, **arguments).svg
                 except Exception:  # noqa: BLE001 -- drawn exactly instead
                     svg = view.svg
-                out.append((svg_to_png(svg, backend="auto", **arguments), None))
+                out.append((draw(svg, **arguments), None))
         return out
 
     def rasterise_tiles(self, svg: str, font_dirs: "list[str] | None") -> bytes:
@@ -239,6 +239,18 @@ class PageRenderer(RendererBase):
 
         svg_to_png('<svg xmlns="http://www.w3.org/2000/svg" width="64" height="16">'
                    '<text x="0" y="12" font-family="sans-serif" font-size="10">Aa</text></svg>')
+
+
+def _drawer(raster: Any):
+    """What draws a page's SVG as PNG: in Rust (``docx2svg.rust.page_png``, the same pixels as
+    resvg-py's) for a layout made in Rust, else docx2svg's ``svg_to_png`` (resvg-py)."""
+    if raster.get("rust"):
+        from docx2svg.rust import page_png
+
+        return page_png
+    from docx2svg.png import svg_to_png
+
+    return lambda svg, **arguments: svg_to_png(svg, backend="auto", **arguments)
 
 
 def _written(raster: Any, directory: str) -> list:

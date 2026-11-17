@@ -479,3 +479,39 @@ def svgs(layout: RustLayout, options) -> "list[str] | None":
 
 __all__: Sequence[str] = ("Engine", "RustLayout", "RustPage", "available", "count_fallback", "fallbacks",
                           "svgs", "unsupported_options", "word_fonts")
+
+
+# -- a page's PNG ----------------------------------------------------------------------------
+
+#: The faces pages are drawn with (``ooxml_core.PageRaster``), read once, by what they were
+#: read from: the files and folders handed over (with each file's modification time and
+#: size: a font changed is read again), the system's fonts or not, the ``sans-serif`` face.
+_RASTERS: OrderedDict = OrderedDict()
+_RASTERS_LIMIT = 8
+_RASTERS_LOCK = threading.Lock()
+
+
+def page_png(svg: str, *, font_dirs: Sequence[str] | None = None, font_files: Sequence[str] | None = None,
+             skip_system_fonts: bool = False, sans_serif_family: str | None = None, width: int | None = None,
+             height: int | None = None, scale: float | None = None, background: str | None = None) -> bytes:
+    """``svg`` (a page the Rust layout drew) as PNG, drawn in Rust as :func:`docx2svg.png.svg_to_png`
+    draws it with resvg-py -- the same faces, a metafile's picture inline, the drawing plan's
+    faces -- pixel for pixel.  ``font_dirs`` left out reads ``OOXML_FONT_DIRS``."""
+    from ooxml_common.fonts.office import user_font_dirs
+    from ooxml_common.fonts.rasterdb import file_stamps
+
+    files = [str(path) for path in font_files or ()]
+    dirs = [str(path) for path in user_font_dirs(font_dirs)]
+    key = (tuple(file_stamps(files, dirs)), tuple(files), tuple(dirs), bool(skip_system_fonts), sans_serif_family)
+    with _RASTERS_LOCK:
+        raster = _RASTERS.get(key)
+        if raster is not None:
+            _RASTERS.move_to_end(key)
+    if raster is None:
+        raster = _core().PageRaster(files, dirs, skip_system_fonts=bool(skip_system_fonts),
+                                    sans_serif_family=sans_serif_family)
+        with _RASTERS_LOCK:
+            raster = _RASTERS.setdefault(key, raster)
+            while len(_RASTERS) > _RASTERS_LIMIT:
+                _RASTERS.popitem(last=False)
+    return raster.png(svg, width=width, height=height, scale=scale, background=background)

@@ -24,6 +24,7 @@ ooxml-render.workspace = true
 ooxml-scene.workspace = true
 ooxml-schema.workspace = true
 ooxml-numfmt.workspace = true
+ooxml-raster.workspace = true
 thiserror.workspace = true
 
 [lints]

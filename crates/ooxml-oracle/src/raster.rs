@@ -151,6 +151,7 @@ pub fn replay(call: &Call, system: &FontSet) -> Result<Replayed, String> {
     let options = RasterOptions {
         fit: call.fit,
         background: call.background,
+        withheld: None,
     };
     let raster = rasterise(&call.svg, &fonts, &options).map_err(|e| e.to_string())?;
     let png = raster.png().map_err(|e| e.to_string())?;

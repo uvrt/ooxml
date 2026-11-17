@@ -92,6 +92,8 @@ pub struct RasterOptions {
     pub fit: Fit,
     /// Painted behind the drawing; transparent where `None`.
     pub background: Option<Rgba>,
+    /// The texts whose faces are chosen with some files left out.
+    pub withheld: Option<crate::Withheld>,
 }
 
 impl Default for RasterOptions {
@@ -99,6 +101,7 @@ impl Default for RasterOptions {
         RasterOptions {
             fit: Fit::Original,
             background: None,
+            withheld: None,
         }
     }
 }
@@ -134,7 +137,13 @@ impl Raster {
     }
 }
 
-fn usvg_options(fonts: &FontSet, fit: Fit) -> Result<usvg::Options<'static>, RasterError> {
+fn usvg_options(fonts: &FontSet, options: &RasterOptions) -> Result<usvg::Options<'static>, RasterError> {
+    let fit = options.fit;
+    let database = fonts.database();
+    let font_resolver = options
+        .withheld
+        .as_ref()
+        .map_or_else(usvg::FontResolver::default, |w| w.resolver(&database));
     Ok(usvg::Options {
         resources_dir: None,
         dpi: 0.0,
@@ -146,8 +155,8 @@ fn usvg_options(fonts: &FontSet, fit: Fit) -> Result<usvg::Options<'static>, Ras
         image_rendering: ImageRendering::OptimizeQuality,
         default_size: fit.default_size()?,
         image_href_resolver: usvg::ImageHrefResolver::default(),
-        font_resolver: usvg::FontResolver::default(),
-        fontdb: fonts.database(),
+        font_resolver,
+        fontdb: database,
         style_sheet: Some(String::new()),
     })
 }
@@ -164,7 +173,7 @@ pub fn rasterise(svg: &str, fonts: &FontSet, options: &RasterOptions) -> Result<
     };
     let document =
         roxmltree::Document::parse_with_options(svg.trim(), parsing).map_err(|e| RasterError::Xml(e.to_string()))?;
-    let tree = usvg::Tree::from_xmltree(&document, &usvg_options(fonts, options.fit)?)
+    let tree = usvg::Tree::from_xmltree(&document, &usvg_options(fonts, options)?)
         .map_err(|e| RasterError::Svg(e.to_string()))?;
     let size = tree.size().to_int_size();
     let drawn = options.fit.size(size).ok_or(RasterError::Size("cannot scale"))?;
@@ -201,6 +210,7 @@ mod tests {
     fn a_fit_scales_and_a_background_fills() {
         let options = RasterOptions {
             fit: Fit::Width(8),
+            withheld: None,
             background: Some(Rgba {
                 red: 0,
                 green: 0,
@@ -243,6 +253,7 @@ mod tests {
         let zero = RasterOptions {
             fit: Fit::Zoom(0.0),
             background: None,
+            withheld: None,
         };
         assert!(matches!(rasterise(SQUARE, &fonts, &zero), Err(RasterError::Size(_))));
     }

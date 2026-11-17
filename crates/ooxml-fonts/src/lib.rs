@@ -31,6 +31,7 @@ mod kern;
 pub mod names;
 pub mod office;
 pub mod outlines;
+pub mod plan;
 pub mod recorded;
 pub mod scan;
 pub mod sfnt;
