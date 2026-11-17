@@ -58,6 +58,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
             package,
             number: 1,
             versions,
+            placer: None,
         };
         let reply = if tool == "read_batch" {
             batch(&arguments, file, name)

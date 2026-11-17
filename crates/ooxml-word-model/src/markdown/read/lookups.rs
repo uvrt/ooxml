@@ -47,6 +47,11 @@ pub struct Shared {
     pub(super) comments: HashMap<String, Comment>,
     /// What the layout model reads of each top-level table read so far, by part and place.
     tables: Mutex<HashMap<Key, Arc<TableFacts>>>,
+    /// The drawings whose one-line summary is a chart's or a SmartArt diagram's (one, or a
+    /// group holding one): docx-agent writes one, the core does not yet (phase P3).
+    graphics: Vec<String>,
+    /// Whether a table cell's end is one Accept All takes away ([`PartFacts::cell_ends`]).
+    cell_ends: bool,
 }
 
 impl std::fmt::Debug for Shared {
@@ -56,10 +61,17 @@ impl std::fmt::Debug for Shared {
 }
 
 impl Shared {
+    /// The lookups of `docx`'s version, read once and kept with it.
+    #[must_use]
+    pub fn of(docx: &Docx) -> Arc<Shared> {
+        docx.memo().reading(|| Shared::read(docx))
+    }
+
     /// The lookups of `docx`.
     #[must_use]
     pub fn read(docx: &Docx) -> Shared {
         let key = |part: &str, path: &[u32]| (part.to_owned(), Box::<[u32]>::from(path));
+        let drawings = all_drawings(docx);
         Shared {
             formatting: Formatting::read(docx),
             lists: Lists::read(docx),
@@ -75,10 +87,12 @@ impl Shared {
                 .into_iter()
                 .map(|d| (key(&d.part, &d.path), d.id))
                 .collect(),
-            drawings: all_drawings(docx)
+            graphics: drawings.iter().filter(|d| summarised(d)).map(|d| d.id.clone()).collect(),
+            drawings: drawings
                 .into_iter()
                 .map(|d| (key(&d.part, &d.path), d.id))
                 .collect(),
+            cell_ends: docx.parts.iter().any(|p| p.facts().cell_ends()),
             notes: notes_of(docx),
             anchors: anchors(docx),
             comments: comments(docx)
@@ -107,6 +121,33 @@ impl Shared {
     #[must_use]
     pub fn formatting(&self) -> &Formatting {
         &self.formatting
+    }
+
+    /// The drawings whose summary docx-agent writes from the chart model (a chart, a
+    /// SmartArt diagram, a group holding one), which the core does not read yet (phase P3).
+    #[must_use]
+    pub fn graphics(&self) -> &[String] {
+        &self.graphics
+    }
+
+    /// Whether a table cell's end is one Accept All takes away: docx-agent's final view joins
+    /// the next cell's text in, the core's does not yet.
+    #[must_use]
+    pub fn cell_ends(&self) -> bool {
+        self.cell_ends
+    }
+}
+
+/// Whether docx-agent writes `drawing`'s summary from the chart model: a chart, a diagram,
+/// or a group with one among its members.
+fn summarised(drawing: &crate::docx::drawings::Drawing) -> bool {
+    use crate::docx::drawings::{group_members, member_kind};
+    match drawing.kind {
+        "chart" | "diagram" => true,
+        "group" => group_members(&drawing.element, &drawing.id, false)
+            .iter()
+            .any(|(_, member)| matches!(member_kind(member), "chart" | "diagram")),
+        _ => false,
     }
 }
 
@@ -156,17 +197,8 @@ pub fn note_elements(docx: &Docx) -> Vec<(String, String, Placed)> {
 
 /// Bookmark names an internal hyperlink points at.
 pub(super) fn anchors(docx: &Docx) -> HashSet<String> {
-    let mut out = HashSet::new();
-    for part in &docx.parts {
-        let mut stack = vec![Arc::clone(part.root())];
-        while let Some(e) = stack.pop() {
-            if e.name().is(Some(W), "hyperlink") {
-                if let Some(a) = e.attribute(Some(W), "anchor").filter(|a| !a.is_empty()) {
-                    out.insert(a.to_owned());
-                }
-            }
-            stack.extend(e.child_elements().cloned());
-        }
-    }
-    out
+    docx.parts
+        .iter()
+        .flat_map(|part| part.facts().anchors().map(str::to_owned).collect::<Vec<_>>())
+        .collect()
 }

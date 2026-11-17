@@ -306,3 +306,99 @@ fn parallel_writers_equal_a_serial_count() {
     }
     assert_eq!(s.store_stats(&d).unwrap().commits, threads * each);
 }
+
+#[test]
+fn a_call_reads_the_version_its_context_names() {
+    let s = session();
+    let d = s.open(Arc::from(docx()), DocKind::Docx, "a.docx").unwrap();
+    let context = CallContext::default();
+    let two = format!("<w:document {W}><w:body><w:sdt/><w:sdt/></w:body></w:document>");
+    let (updated, first) = s.commit(&d, vec![put("word/document.xml", &two)], &context).unwrap();
+    assert_eq!((updated.version, first.version()), (1, 1));
+    let three = format!("<w:document {W}><w:body><w:sdt/><w:sdt/><w:sdt/></w:body></w:document>");
+    s.update(&d, vec![put("word/document.xml", &three)], &context).unwrap();
+    let at = CallContext {
+        at: vec![first.clone()],
+        ..CallContext::default()
+    };
+    let read = Value::Object(s.call("describe", json!({"doc": "d1"}), &at).to_json());
+    assert_eq!((read["version"].clone(), read["data"]["controls"].clone()), (json!(1), json!(2)));
+    assert_eq!(call(&s, "describe", json!({"doc": "d1"}))["data"]["controls"], json!(3));
+    let batch = json!({"ops": [{"tool": "describe", "arguments": {"doc": "d1"}}]});
+    let read = Value::Object(s.call("read_batch", batch, &at).to_json());
+    assert_eq!(read["data"]["ops"][0]["data"]["controls"], json!(2));
+    // nothing to commit: the version it ran on, held
+    let (same, held) = s.commit(&d, Vec::new(), &context).unwrap();
+    assert_eq!((same.changed, held.version()), (false, 2));
+}
+
+struct OnePage;
+impl ooxml_tools_word::Placer for OnePage {
+    fn place(&self, asked: &[Vec<String>]) -> Option<Vec<serde_json::Map<String, Value>>> {
+        Some(
+            asked
+                .iter()
+                .map(|_| json!({"placements": [{"page": 1}]}).as_object().cloned().unwrap())
+                .collect(),
+        )
+    }
+}
+
+#[test]
+fn inspect_with_layout_asks_the_context_s_placer() {
+    let s = session();
+    let doc = format!(
+        r#"<w:document {W} xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml"><w:body><w:p w14:paraId="00000001"><w:r><w:t>a</w:t></w:r></w:p></w:body></w:document>"#
+    );
+    let d = s.open(Arc::from(docx()), DocKind::Docx, "a.docx").unwrap();
+    s.update(&d, vec![put("word/document.xml", &doc)], &CallContext::default()).unwrap();
+    let arguments = json!({"doc": "d1", "target": "body", "layout": true});
+    let refused = call(&s, "word_inspect", arguments.clone());
+    assert_eq!(refused["error"]["code"], json!("refused"));
+    let placed = CallContext {
+        placer: Some(Arc::new(OnePage)),
+        ..CallContext::default()
+    };
+    let read = Value::Object(s.call("word_inspect", arguments, &placed).to_json());
+    let block = &read["data"]["blocks"][0];
+    assert_eq!(block["placements"], json!([{"page": 1}]));
+    let keys: Vec<&String> = block.as_object().unwrap().keys().collect();
+    assert_eq!(keys.last().map(|k| k.as_str()), Some("placements"));
+}
+
+#[test]
+fn a_part_parsed_again_shares_what_did_not_change() {
+    let s = session();
+    let d = s.open(Arc::from(docx()), DocKind::Docx, "a.docx").unwrap();
+    let context = CallContext::default();
+    let body = |middle: &str| {
+        format!("<w:document {W}><w:body><w:p><w:r><w:t>one</w:t></w:r></w:p>{middle}<w:p><w:r><w:t>three</w:t></w:r></w:p></w:body></w:document>")
+    };
+    let (_, first) = s
+        .commit(&d, vec![put("word/document.xml", &body("<w:p><w:r><w:t>two</w:t></w:r></w:p>"))], &context)
+        .unwrap();
+    let (_, second) = s
+        .commit(&d, vec![put("word/document.xml", &body("<w:p><w:r><w:t>2</w:t></w:r></w:p>"))], &context)
+        .unwrap();
+    let blocks = |o: &ooxml_session::Opened| -> Vec<Arc<ooxml_xml::Element>> {
+        let tree = o.package().tree("word/document.xml").unwrap().unwrap();
+        let body = tree.root().child_elements().next().cloned().unwrap();
+        body.child_elements().cloned().collect()
+    };
+    let (a, b) = (blocks(&first), blocks(&second));
+    assert!(Arc::ptr_eq(&a[0], &b[0]) && Arc::ptr_eq(&a[2], &b[2]));
+    assert!(!Arc::ptr_eq(&a[1], &b[1]));
+    assert_eq!(b[1].text_content(), "2");
+    let read = Value::Object(
+        s.call(
+            "word_read",
+            json!({"doc": "d1"}),
+            &CallContext {
+                at: vec![second],
+                ..CallContext::default()
+            },
+        )
+        .to_json(),
+    );
+    assert!(read["data"].as_str().unwrap().contains("\n2\n"));
+}

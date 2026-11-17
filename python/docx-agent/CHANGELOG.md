@@ -5,6 +5,35 @@ docx-agent has not been released to PyPI. Each version that reaches `main` is ta
 snapshot commit; the development history before it is summarised here.
 [`ROADMAP.md`](ROADMAP.md) has the detail of every phase.
 
+## 0.1.139 -- unreleased
+
+Phase P1, lane P1c: the reading tools answered by the Rust session by default. `describe`,
+`word_read`, `word_inspect` (its `layout` too), `find_text` and, through them, `read_batch`'s
+ops read the version their read copy is of in the process's Rust session
+(`docx_agent.rust.reads`), with the interpreter lock let go: a read no longer waits for the
+writers' Python edits. The answers are today's (`tests/test_rust_reads_on.py`).
+
+- **Each version handed over as what changed.** The first read of a document opens it in the
+  session from its version's bytes; each later version is handed over as the parts whose
+  bytes differ (a part as read is told by its compressed bytes' digest, an edited one by its
+  bytes'), and Rust parses only those, sharing every unchanged block with the version before.
+  The latest four versions are kept for the reads of them.
+- **What Python holds stays Python's**: `describe`'s `name`, `pages` (the layout's, as
+  before), `tracking`, `problems` and `memory`; `word_inspect`'s placements, asked of the
+  document's layout as before (`state.placement_keys`).
+- **Where Rust's answer is not the same yet, the Python path answers**, counted by tool and
+  reason (`docx_agent.rust.reads.fallbacks()`, `read_fallbacks{tool,reason}`;
+  `served()` counts the others): no session; a call on the document itself rather than a
+  committed version (a batch's reads of its own changes); limits other than the defaults;
+  an address naming an id this session renamed or deleted; a regular expression whose
+  meaning Rust could read otherwise (one that can match nothing, the flags `x`, `a`, `L`,
+  `u`, octal escapes, `\N{...}`, conditionals); a chart's or SmartArt diagram's summary
+  (phase P3); a final view where Accept All takes a cell's end away. A refusal Rust answers
+  is raised as Python raises it.
+- `docx_agent.rust.reads.use_session(session)` answers the reads in an application's own
+  `ooxml_core.Session` (`None`: by the Python path).
+- `RustTools.dispatch` reads `ooxml_core.Session.call`'s new third item.
+
 ## 0.1.136 -- unreleased
 
 Phase PL, lane L4: the Word layout in Rust. Every layout docx-agent makes of a version -- a

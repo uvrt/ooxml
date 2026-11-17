@@ -82,7 +82,7 @@ impl<'a> Reader<'a> {
             view,
             view_name,
             map: StyleMap::default(),
-            shared: docx.memo().reading(|| Shared::read(docx)),
+            shared: Shared::of(docx),
             counters: HashMap::new(),
             outline: HashMap::new(),
             into: HashMap::new(),

@@ -27,9 +27,9 @@ mod session;
 use pyo3::prelude::*;
 
 pub use layout::{LayoutFallback, PyLaidPages, PyWordFonts, PyWordPages};
-pub use session::{PyCallContext, PyCancelToken, PySession};
+pub use session::{PyCallContext, PyCancelToken, PySession, PyVersion};
 
-/// Add the session API to the module `m`: `Session`, `CancelToken`, `CallContext` and
+/// Add the session API to the module `m`: `Session`, `CancelToken`, `CallContext`, `Version` and
 /// `tool_specs`; and the Word layout's handles: `WordFonts`, `WordPages`, `LaidPages` and
 /// `LayoutFallback`.
 ///
@@ -39,6 +39,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PySession>()?;
     m.add_class::<PyCancelToken>()?;
     m.add_class::<PyCallContext>()?;
+    m.add_class::<PyVersion>()?;
     m.add_function(wrap_pyfunction!(session::tool_specs, m)?)?;
     m.add_class::<PyWordFonts>()?;
     m.add_class::<PyWordPages>()?;

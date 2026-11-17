@@ -140,6 +140,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
         package: &package,
         number: 1,
         versions: &versions,
+        placer: None,
     };
     let start = Instant::now();
     describe(&d, &v1, &Never).map_err(|e| e.message().to_owned())?;
@@ -205,6 +206,7 @@ fn after_edit(
             package,
             number: 1,
             versions: &versions,
+            placer: None,
         };
         describe(d, &v1, &Never).map_err(|e| e.message().to_owned())?;
         let v2 = Version {
@@ -212,6 +214,7 @@ fn after_edit(
             package: edited,
             number: 2,
             versions: &versions,
+            placer: None,
         };
         let start = Instant::now();
         describe(d, &v2, &Never).map_err(|e| e.message().to_owned())?;

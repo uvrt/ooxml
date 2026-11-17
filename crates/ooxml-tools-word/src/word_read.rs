@@ -92,6 +92,7 @@ pub fn word_read(args: &WordRead, version: &Version<'_>, cancel: &dyn Cancel) ->
         .transpose()
         .map_err(|e| range_refusal(e, &args.doc))?;
     let markdown = to_markdown(&docx, range.as_deref(), view, stories).map_err(|e| range_refusal(e, &args.doc))?;
+    let unported = unported(&docx, &markdown, view);
     cancel.check().map_err(cancelled)?;
     let first_page = try_call(json!({"doc": args.doc}));
     let (text, next) = page_text(&markdown, args.cursor.as_deref(), PAGE.max(2000), first_page)?;
@@ -105,7 +106,27 @@ pub fn word_read(args: &WordRead, version: &Version<'_>, cancel: &dyn Cancel) ->
     done.data = Some(Value::from(text));
     done.next_cursor = next;
     done.total = Some(markdown.chars().count() as u64);
+    done.unported = unported;
     Ok(done)
+}
+
+/// What of `markdown`, read in `view`, docx-agent writes otherwise: a chart's or SmartArt
+/// diagram's summary in its drawing's comment (the chart model, phase P3); a cell's end
+/// that Accept All takes away, in the final view.
+fn unported(docx: &ooxml_word_model::docx::Docx, markdown: &str, view: ViewName) -> Vec<String> {
+    let shared = ooxml_word_model::markdown::read::Shared::of(docx);
+    let mut out = Vec::new();
+    if shared
+        .graphics()
+        .iter()
+        .any(|id| markdown.contains(&format!("<!-- {id} ")))
+    {
+        out.push(crate::GRAPHICS.to_owned());
+    }
+    if view == ViewName::Final && shared.cell_ends() {
+        out.push(crate::CELL_ENDS.to_owned());
+    }
+    out
 }
 
 /// `word_read` called with `arguments`.

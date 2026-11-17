@@ -1,11 +1,12 @@
 //! Owns: [`Version`], one version of a Word document as a reading tool is handed it: its
 //! name, its package, its number and the document's kept readings, from which the
 //! version's [`Docx`] is taken (read once per version; a new version reads only what
-//! changed).
+//! changed); and where the call may ask where its blocks are laid out ([`Placer`]).
 //!
 //! Must not: hold documents or sessions (`ooxml-session` does, and makes a `Version` per
 //! call).
 
+use crate::placements::Placer;
 use ooxml_opc::Package;
 use ooxml_tools::ToolError;
 use ooxml_word_model::docx::{Docx, Versions};
@@ -22,6 +23,9 @@ pub struct Version<'a> {
     pub number: u64,
     /// The document's kept readings.
     pub versions: &'a Versions,
+    /// Where the call may ask where blocks are laid out (`None`: nowhere; a tool that needs
+    /// it refuses with the call that works without).
+    pub placer: Option<&'a dyn Placer>,
 }
 
 impl Version<'_> {

@@ -19,6 +19,7 @@ pub mod comments;
 pub mod controls;
 mod derived;
 pub mod drawings;
+pub mod facts;
 pub mod fields;
 pub mod formatting;
 pub mod numbering;
@@ -41,10 +42,12 @@ use crate::WordError;
 use ooxml_opc::Package;
 use ooxml_xml::{Element, Tree};
 use std::collections::HashMap;
-use std::sync::Arc;
+use facts::PartFacts;
+use std::sync::{Arc, OnceLock};
 
-/// One story part: its tree and its block ids.
-#[derive(Debug, Clone)]
+/// One story part: its tree, its block ids, and what the document-wide lookups read of it
+/// (read once, when first asked).
+#[derive(Debug)]
 pub struct StoryPart {
     /// The part's name.
     pub part: String,
@@ -54,13 +57,38 @@ pub struct StoryPart {
     pub tree: Tree,
     /// Its paragraphs', tables' and rows' ids.
     pub ids: PartIds,
+    facts: OnceLock<Arc<PartFacts>>,
+    /// The facts of the part's version before, where they were read: the blocks this one
+    /// shares with it are taken from them.
+    earlier: Option<Arc<PartFacts>>,
 }
 
 impl StoryPart {
+    /// The part `part` of the story `story`, whose tree is `tree`; `earlier`, the same
+    /// part in a version before.
+    #[must_use]
+    pub fn new(part: String, story: String, tree: Tree, earlier: Option<&StoryPart>) -> StoryPart {
+        let ids = PartIds::new(&story, tree.root());
+        StoryPart {
+            part,
+            story,
+            tree,
+            ids,
+            facts: OnceLock::new(),
+            earlier: earlier.and_then(|e| e.facts.get().cloned()),
+        }
+    }
+
     /// The part's root element.
     #[must_use]
     pub fn root(&self) -> &Arc<Element> {
         self.tree.root()
+    }
+
+    /// What the document-wide lookups read of the part ([`PartFacts`]), read once.
+    pub fn facts(&self) -> &Arc<PartFacts> {
+        self.facts
+            .get_or_init(|| Arc::new(PartFacts::read(self.root(), self.earlier.as_deref())))
     }
 }
 
@@ -111,8 +139,8 @@ impl Docx {
                 continue;
             }
             let story = story_name(&main, &part);
-            let ids = PartIds::new(&story, tree.root());
-            parts.push(Arc::new(StoryPart { part, story, tree, ids }));
+            let earlier = before.and_then(|b| b.parts.iter().find(|p| p.part == part));
+            parts.push(Arc::new(StoryPart::new(part, story, tree, earlier.map(|e| &**e))));
         }
         let (styles, style_order) = read_styles(package, &main)?;
         Ok(Docx {

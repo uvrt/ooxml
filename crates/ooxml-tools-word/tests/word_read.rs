@@ -93,6 +93,7 @@ fn read(args: &WordRead) -> String {
             package: &sample(),
             number: 1,
             versions: &Versions::new(),
+            placer: None,
         },
         &Never,
     )
@@ -129,6 +130,7 @@ fn a_range_naming_nothing_is_refused_with_the_way_out() {
             package: &sample(),
             number: 1,
             versions: &Versions::new(),
+            placer: None,
         },
         &Never,
     )
@@ -153,6 +155,7 @@ fn a_range_with_every_story_is_refused_with_the_call_that_works() {
             package: &sample(),
             number: 1,
             versions: &Versions::new(),
+            placer: None,
         },
         &Never,
     )
@@ -176,6 +179,7 @@ fn a_long_document_is_paged_at_line_ends() {
             package: &pkg,
             number: 1,
             versions: &Versions::new(),
+            placer: None,
         },
         &Never,
     )
@@ -192,6 +196,7 @@ fn a_long_document_is_paged_at_line_ends() {
             package: &pkg,
             number: 1,
             versions: &Versions::new(),
+            placer: None,
         },
         &Never,
     )
@@ -205,6 +210,7 @@ fn a_long_document_is_paged_at_line_ends() {
             package: &pkg,
             number: 1,
             versions: &Versions::new(),
+            placer: None,
         },
         &Never,
     )
@@ -227,6 +233,7 @@ fn views_name_the_summary() {
             package: &sample(),
             number: 1,
             versions: &Versions::new(),
+            placer: None,
         },
         &Never,
     )

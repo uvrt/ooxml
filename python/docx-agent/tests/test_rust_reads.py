@@ -32,7 +32,15 @@ FIXTURES = sorted((HERE / "fixtures").rglob("*.docx"))
 
 @pytest.fixture(scope="module")
 def toolbox():
-    return Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS)
+    """Today's tools, every read answered by the Python path (lane P1c: the toolbox's reads
+    are the Rust session's by default; this compares the two)."""
+    from docx_agent.rust import reads
+
+    before = reads.use_session(None)
+    try:
+        yield Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS)
+    finally:
+        reads.use_session(before)
 
 
 @pytest.mark.parametrize("name", ["word_inspect", "find_text", "read_batch"])

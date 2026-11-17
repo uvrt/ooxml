@@ -74,7 +74,7 @@ from __future__ import annotations
 
 import base64
 import copy
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from lxml import etree
 
@@ -145,6 +145,17 @@ def state(document: "Document", range: str | None = None, *, view: str = "final"
     return out
 
 
+def placement_keys(where: Any) -> dict:
+    """What a block's dict says of where it is placed (:func:`~docx_agent.layout.
+    placements_of`'s answer for it): ``placements``, each page and column it is drawn in,
+    or ``unknown``, why and the page it comes after."""
+    if where:
+        return {"placements": [{"page": p.page, "top": round(p.top, 2), "bottom": round(p.bottom, 2),
+                                "lines": p.lines, "story": p.story, "column": p.column} for p in where]}
+    return {"unknown": {"reason": getattr(where, "reason", "not-drawn"),
+                        "after_page": getattr(where, "after_page", None)}}
+
+
 def _cell(document: "Document", address: str) -> dict:
     """What a state of one cell says of the cell itself: its id, table, place and spans, and
     the properties it states (:meth:`~docx_agent.Document.cell_properties`)."""
@@ -189,12 +200,7 @@ class _Writer:
         else:
             answers, info = found
         for (out, _), where in zip(self._to_place, answers):
-            if where:
-                value = {"placements": [{"page": p.page, "top": round(p.top, 2), "bottom": round(p.bottom, 2),
-                                         "lines": p.lines, "story": p.story, "column": p.column} for p in where]}
-            else:
-                value = {"unknown": {"reason": getattr(where, "reason", "not-drawn"),
-                                     "after_page": getattr(where, "after_page", None)}}
+            value = placement_keys(where)
             # In the block's dict where _place kept the key, the keys after it after it.
             items = list(out.items())
             out.clear()

@@ -5,6 +5,21 @@ ooxml-core is the Rust core of the ooxml packages (`crates/`), as the Python mod
 
 ## 0.10.0 -- unreleased
 
+- **docx-agent's reads served by Rust (phase P1, lane P1c).** `Session.commit(doc, parts)` hands
+  a version's touched parts over as `update` does and returns the version it made, held
+  (`ooxml_core.Version`: `doc`, `number`); `Session.head(doc)` holds the head. A call given
+  `at=[version]` reads that version whatever was committed since, and `placer` answers
+  `word_inspect`'s `layout` (called with the blocks asked, it answers where each is placed).
+  `Session.call` now returns a third item: what only the application reads, as JSON text
+  (`unported`: what of the answer is not yet given as the Python tool gives it).
+- A part handed over is diffed with its tree in the version before and shares every subtree
+  that did not change; a story part's lookups (controls, revision records, drawings, link
+  anchors) are found in one walk and kept per block, so a new version reads only what changed.
+- `find_text`'s `regex` takes Python's regular expressions (`fancy-regex`): matched as
+  `re.finditer` matches them where the meaning is certainly the same, refused with why
+  (and the call that finds the text as written) where it could differ or the pattern can
+  match nothing.
+
 - **The Word layout in Rust (phase PL, lane L4).** `WordFonts` (a machine's fonts, scanned
   once), `WordPages` (one document's page engine: each version laid out from the one
   before, given as its package's bytes -- only the parts whose stored bytes changed read
