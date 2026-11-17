@@ -5,6 +5,20 @@ ooxml-core is the Rust core of the ooxml packages (`crates/`), as the Python mod
 
 ## 0.10.0 -- unreleased
 
+- **SmartArt, VML shapes and text paths painted in Rust; charts in any locale (lane L4d).**
+  `ooxml_word_pages::drawings` draws a SmartArt diagram's cached drawing (`dsp:drawing`,
+  found from its data model as ooxml-common's `diagram_drawing_part` finds it, its shapes
+  resolved through the document's theme, colour map and font scheme as docx2svg's
+  `diagram.py` resolves them), a VML rectangle, rounded rectangle, oval or text box as the
+  DrawingML preset it is, and a VML text path (a watermark) stretched to its box by its
+  face's outlines at its kerned pens, as docx2svg's `drawing.text_path_markup`; the
+  fallbacks `SmartArt`, `VML shape` and `chart in another locale` are gone. `WordPages`
+  takes the number locale a chart's numbers and dates are written in (`thousands`,
+  `date_order`, `list_separator` beside `decimal` and `locale`). A page view's drawing
+  slots say the faces their text is drawn in (`faces`). `ooxml-fonts` reads glyph outlines'
+  exact boxes (TrueType `glyf`, CFF Type 2) and `GPOS` pair kerning (`Face::ink`,
+  `Face::pair_kern`), as docx2svg's `outlines.py`.
+
 - **Drawings painted in Rust (phase PL/P3, lane L4c).** `ooxml_word_pages::drawings` paints a
   page's pictures, shapes, groups and charts as docx2svg does (through `ooxml-render` and
   `ooxml-chart`, with Word's colours, theme style references and chart rules) and says what

@@ -32,6 +32,8 @@ from fractions import Fraction
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Sequence
 
+from ooxml_common.locales import EN_US
+
 if TYPE_CHECKING:
     from .coverage import Coverage
 
@@ -121,11 +123,11 @@ def unsupported_options(options) -> str | None:
 
 def _engine_key(options) -> tuple:
     """What an engine is made for: the fonts, the decimal separator, the glyph size, and the
-    locale's language (a chart's numbers are written in it: a document holding a chart in
-    another locale than en-US is laid out by docx2svg's Python layout, counted)."""
-    locale = options.locale
-    return (_fonts_key(options), locale.decimal_separator if locale else ".", options.glyph_size,
-            locale.language if locale else "en-US")
+    locale's language, thousands separator, date order and list separator (a chart's
+    numbers and dates are written in them)."""
+    locale = options.locale or EN_US
+    return (_fonts_key(options), locale.decimal_separator, options.glyph_size, locale.language,
+            locale.thousands_separator, locale.date_order, locale.list_separator)
 
 
 class Engine:
@@ -136,8 +138,10 @@ class Engine:
         ooxml_core = _core()
 
         self.key = _engine_key(options)
-        self._pages = ooxml_core.WordPages(word_fonts(options), locale=self.key[3], decimal=self.key[1],
-                                           glyph_size=options.glyph_size)
+        _, decimal, _, language, thousands, date_order, list_separator = self.key
+        self._pages = ooxml_core.WordPages(word_fonts(options), locale=language, decimal=decimal,
+                                           glyph_size=options.glyph_size, thousands=thousands,
+                                           date_order=date_order, list_separator=list_separator)
         self._lock = threading.Lock()
         #: The last version asked for, by the digest of its bytes, and its layout (``None``: a
         #: fallback): asked again, the same answer.
@@ -428,6 +432,7 @@ class RustPage:
 
 def _paint(view: dict) -> dict:
     """A page's paint as docx2svg's ``Line``, ``Span``, ``Rule``, ``Picture`` and ``Float``."""
+    from .drawing import Primitive
     from .layout import Float, Line, Picture, Rule, Span
 
     lines = []
@@ -446,11 +451,15 @@ def _paint(view: dict) -> dict:
     pictures = [Picture(path, relationship, _q(x), _q(y), _q(w), _q(h), part=part,
                         crop=tuple(_q(c) for c in crop) if crop is not None else None)
                 for path, relationship, x, y, w, h, part, crop in view["pictures"]]
-    floats = [Float(slot["path"], _q(slot["x"]), _q(slot["y"]), _q(slot["width"]), _q(slot["height"]),
-                    slot["behind"], tuple(slot["order"]),
-                    story=slot["story"][0] if slot["story"] else None,
-                    part=slot["story"][1] if slot["story"] else None)
-              for slot in view["drawings"]]
+    floats = []
+    for slot in view["drawings"]:
+        placed = Float(slot["path"], _q(slot["x"]), _q(slot["y"]), _q(slot["width"]), _q(slot["height"]),
+                       slot["behind"], tuple(slot["order"]),
+                       story=slot["story"][0] if slot["story"] else None,
+                       part=slot["story"][1] if slot["story"] else None)
+        # What its text is drawn in (a text path's), for the rasteriser's faces (``drawn_faces``).
+        placed.primitives = [Primitive("markup", slot["path"], face=tuple(face)) for face in slot["faces"]]
+        floats.append(placed)
     return {"lines": lines, "rules": rules, "pictures": pictures, "floats": floats}
 
 

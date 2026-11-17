@@ -3,10 +3,12 @@
 //! floating drawing ([`Anchor`]: its CSS `width`/`height`, `mso-position-*`, `margin-*`,
 //! `z-index`, `w10:wrap`); anything else a character of its line (`drawing:cx:cy:0:0:0:0`);
 //! what it shows is a picture, a preset shape (with a text box's blocks and insets), a text
-//! path, or something else.
+//! path, or something else. A preset shape or a text path keeps the run's object it was
+//! read from (`Graphic.source`) for its painter, which reads its paint ([`vml_shape`],
+//! [`style_of`], [`length_emu`], [`preset_of`]).
 //!
-//! Must not: read how a shape is painted (fill, stroke, a text path's font and colour: the
-//! DrawingML model's, phase P3).
+//! Must not: read how a shape is painted (fill, stroke, a text path's font and colour: its
+//! painter's).
 
 use super::fields::Fields;
 use super::Reader;
@@ -42,7 +44,7 @@ pub(crate) enum Vml {
 }
 
 /// A VML `style`'s declarations by lower-cased property.
-fn style_of(element: &Element) -> BTreeMap<String, String> {
+pub fn style_of(element: &Element) -> BTreeMap<String, String> {
     let mut out = BTreeMap::new();
     for declaration in attr(element, "style").unwrap_or("").split(';') {
         let (name, value) = declaration.split_once(':').unwrap_or((declaration, ""));
@@ -69,7 +71,7 @@ fn emu_per(unit: &str) -> Option<f64> {
 }
 
 /// A CSS length in EMU (`412.4pt`, `1in`, `0`; a bare number is px).
-fn length_emu(value: Option<&str>) -> Option<i64> {
+pub fn length_emu(value: Option<&str>) -> Option<i64> {
     let v = value?.to_lowercase();
     let v = v.trim();
     let split = v.find(|c: char| c.is_ascii_alphabetic()).unwrap_or(v.len());
@@ -101,8 +103,10 @@ fn rotation(style: &BTreeMap<String, String>) -> i64 {
     }
 }
 
-/// The first VML element the object draws, and its path from the object.
-fn vml_shape(node: &Element) -> Option<(&Element, String)> {
+/// The first VML element a run's object (`w:pict`, `w:object`, or an
+/// `mc:AlternateContent` whose `mc:Fallback` holds one) draws -- `v:shape`, `v:rect`, ...;
+/// a `v:shapetype` only defines one -- and its path from the object (`v:shape[1]`).
+pub fn vml_shape(node: &Element) -> Option<(&Element, String)> {
     match local(node) {
         "AlternateContent" => {
             let fallback = child(node, "Fallback")?;
@@ -126,7 +130,9 @@ fn vml_shape(node: &Element) -> Option<(&Element, String)> {
     }
 }
 
-fn preset_of(shape: &Element) -> Option<&'static str> {
+/// The DrawingML preset a VML shape draws as (`v:rect`, `v:roundrect`, `v:oval`, or the
+/// shape type Word writes for one), `None` for another.
+pub fn preset_of(shape: &Element) -> Option<&'static str> {
     match local(shape) {
         "rect" => return Some("rect"),
         "roundrect" => return Some("roundRect"),
@@ -174,7 +180,7 @@ impl Reader<'_> {
         }
     }
 
-    fn vml_graphic(&self, shape: &Element, path: &str, fields: &mut Fields) -> Graphic {
+    fn vml_graphic(&self, (holder, shape): (&Element, &Element), path: &str, fields: &mut Fields) -> Graphic {
         let style = style_of(shape);
         let flip = style.get("flip").map_or("", String::as_str);
         let base = Graphic {
@@ -182,6 +188,7 @@ impl Reader<'_> {
             flip_h: flip.contains('x'),
             flip_v: flip.contains('y'),
             path: text(path),
+            source: Some(holder.clone()),
             ..Graphic::default()
         };
         if let Some(image) = child(shape, "imagedata") {
@@ -193,6 +200,7 @@ impl Reader<'_> {
                 return Graphic {
                     kind: text("picture"),
                     relationship: Some(text(id)),
+                    source: None,
                     ..base
                 };
             }
@@ -222,7 +230,7 @@ impl Reader<'_> {
         let style = style_of(shape);
         let width = length_emu(style.get("width").map(String::as_str)).filter(|w| *w > 0)?;
         let height = length_emu(style.get("height").map(String::as_str)).filter(|h| *h > 0)?;
-        let graphic = self.vml_graphic(shape, &path, fields);
+        let graphic = self.vml_graphic((node, shape), &path, fields);
         if style.get("position").map(String::as_str) != Some("absolute") {
             let shown = match &*graphic.kind {
                 "picture" => graphic

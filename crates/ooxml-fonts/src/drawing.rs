@@ -255,6 +255,16 @@ impl DrawingFonts {
         DrawingFonts { fonts, index }
     }
 
+    /// The face Word draws `family` in a style with (docx2svg's `drawing_face`): its bundle's
+    /// copy first, then the installed ones, the document's embedded face, its substitute;
+    /// `None` where no file holds it (a symbol face's recorded integers).
+    pub fn drawing_face(&self, family: &str, bold: bool, italic: bool) -> Option<Arc<Face>> {
+        match self.fonts.resolve(family, bold, italic).face? {
+            LayoutFace::Sfnt(face) => Some(face),
+            LayoutFace::Recorded(_) => None,
+        }
+    }
+
     /// How a drawing names `family` in a style; `None` where the document's name and style
     /// already reach the face Word draws, or no face is found.
     pub fn drawing_name(&self, family: &str, bold: bool, italic: bool) -> Option<DrawingName> {

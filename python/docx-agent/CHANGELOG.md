@@ -5,6 +5,12 @@ docx-agent has not been released to PyPI. Each version that reaches `main` is ta
 snapshot commit; the development history before it is summarised here.
 [`ROADMAP.md`](ROADMAP.md) has the detail of every phase.
 
+## 0.1.138 -- unreleased
+
+Phase PL/P3, lane L4d: SmartArt, VML shapes and VML text paths (a watermark) are painted in
+Rust, and a document holding a chart is laid out in Rust in any locale; the fallbacks
+`SmartArt`, `VML shape` and `chart in another locale` are gone. Answers are docx2svg's.
+
 ## 0.1.137 -- unreleased
 
 Phase PL/P3, lane L4c: a document's drawings painted in Rust. A version holding floating or

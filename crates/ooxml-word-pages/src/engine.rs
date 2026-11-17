@@ -18,6 +18,7 @@ use crate::fonts::{DocumentFonts, FontSetup};
 use crate::pictures::PackagePictures;
 use crate::support;
 use crate::version::{LaidVersion, PageView};
+use crate::warnings::{Approximation, DrawingSaid, LayoutWarning};
 use ooxml_base::{DigestKey, Limits, Locale};
 use ooxml_derive::CacheBudget;
 use ooxml_opc::Package;
@@ -91,6 +92,7 @@ struct Source {
 pub struct PageEngine {
     setup: Arc<FontSetup>,
     locale: Locale,
+    numbers: ooxml_numfmt::Locale,
     decimal: char,
     glyph_size: GlyphSize,
     budget: Arc<dyn CacheBudget>,
@@ -116,6 +118,9 @@ impl std::fmt::Debug for PageEngine {
 pub struct EngineOptions {
     /// The locale (hyphenation, the layout's language rules).
     pub locale: Locale,
+    /// How a chart's numbers and dates are written: the caller's locale's separators, date
+    /// order and language (docx2svg's `ConvertOptions.locale`), en-US unless given.
+    pub numbers: ooxml_numfmt::Locale,
     /// The decimal separator a decimal tab lines up.
     pub decimal: char,
     /// What glyph outlines are scaled to in the SVG.
@@ -128,6 +133,7 @@ impl Default for EngineOptions {
     fn default() -> EngineOptions {
         EngineOptions {
             locale: Locale::default(),
+            numbers: ooxml_numfmt::Locale::default(),
             decimal: '.',
             glyph_size: GlyphSize::Device,
             limits: Limits::default(),
@@ -141,6 +147,7 @@ impl PageEngine {
         PageEngine {
             setup,
             locale: options.locale,
+            numbers: options.numbers,
             decimal: options.decimal,
             glyph_size: options.glyph_size,
             budget,
@@ -299,7 +306,7 @@ impl PageEngine {
             generation.layout = new_layout(&generation.fonts, &self.locale, &self.budget);
             cause = Some(context_cause(&self.changed));
         }
-        if let Some(why) = unsupported(&document, &self.locale) {
+        if let Some(why) = support::unsupported(&document) {
             generation.last = None;
             self.stats.fallbacks += 1;
             return Ok(Err(why));
@@ -327,7 +334,10 @@ impl PageEngine {
             self.stats.full += 1;
         }
         let pictures = PackagePictures::new(package.clone());
-        let drawings = pictures.clone().map(|p| WordDrawings::new(&document, p));
+        let drawings = pictures.clone().map(|p| {
+            let inks: Arc<dyn crate::drawings::vml::Inks> = Arc::clone(&generation.fonts.inks);
+            WordDrawings::new(&document, p, self.numbers.clone(), Some(inks))
+        });
         let said = {
             let mut painter = DrawingWarnings {
                 layout: &mut generation.layout,
@@ -335,6 +345,7 @@ impl PageEngine {
                 drawings: drawings.as_ref(),
                 glyph_size: self.glyph_size,
                 decimal: self.decimal,
+                text_paths: Vec::new(),
             };
             crate::warnings::said(&mut generation.model, &laid, &mut painter)
         };
@@ -483,6 +494,11 @@ impl PageEngine {
             lines: paint.lines,
             rules: paint.rules,
             pictures: paint.pictures,
+            drawing_faces: paint
+                .drawings
+                .iter()
+                .map(|slot| version.drawings.as_ref().map(|d| d.faces(slot)).unwrap_or_default())
+                .collect(),
             drawings: paint.drawings,
             blocks,
             unpainted: paint.unpainted,
@@ -642,6 +658,9 @@ struct DrawingWarnings<'a> {
     drawings: Option<&'a WordDrawings>,
     glyph_size: GlyphSize,
     decimal: char,
+    /// The text paths said to be approximated, by part and path: once each, on the first
+    /// page that draws them.
+    text_paths: Vec<(Option<String>, String)>,
 }
 
 impl crate::warnings::PageDrawings for DrawingWarnings<'_> {
@@ -650,7 +669,7 @@ impl crate::warnings::PageDrawings for DrawingWarnings<'_> {
         model: &mut Model,
         laid: &ooxml_word_layout::DocumentLayout,
         page: usize,
-    ) -> Vec<crate::warnings::LayoutWarning> {
+    ) -> Vec<DrawingSaid> {
         let Some(drawings) = self.drawings else {
             return Vec::new();
         };
@@ -665,49 +684,50 @@ impl crate::warnings::PageDrawings for DrawingWarnings<'_> {
             return Vec::new();
         };
         let number = Some(page + 1);
+        let warning = |code: &str, message: String| {
+            DrawingSaid::Warning(LayoutWarning {
+                code: code.to_owned(),
+                message,
+                page: number,
+            })
+        };
         let mut out = Vec::new();
         for path in &paint.unplaced {
-            out.push(crate::warnings::LayoutWarning {
-                code: "drawing-position-unknown".into(),
-                message: format!(
-                    "a floating drawing ({path}) is positioned against a frame that is not modelled: it is not drawn"
-                ),
-                page: number,
-            });
+            out.push(warning(
+                "drawing-position-unknown",
+                format!("a floating drawing ({path}) is positioned against a frame that is not modelled: it is not drawn"),
+            ));
         }
         let mut defs = ooxml_word_layout::paint::svg::PageDefs::default();
         for slot in &paint.drawings {
             if slot.no_overlap {
-                out.push(crate::warnings::LayoutWarning {
-                    code: "drawing-overlap-not-modelled".into(),
-                    message: "a floating drawing that may not overlap another (allowOverlap=\"0\") is drawn where it \
-                              is positioned; Word moves it clear of the drawings before it"
+                out.push(warning(
+                    "drawing-overlap-not-modelled",
+                    "a floating drawing that may not overlap another (allowOverlap=\"0\") is drawn where it is \
+                     positioned; Word moves it clear of the drawings before it"
                         .into(),
-                    page: number,
-                });
+                ));
             }
-            for (code, message) in drawings.paint(slot, &mut defs).warnings {
-                out.push(crate::warnings::LayoutWarning {
-                    code,
-                    message,
+            let painted = drawings.paint(slot, &mut defs);
+            let key = (slot.story.as_ref().map(|(_, part)| part.to_string()), slot.path.to_string());
+            if painted.approximated && !self.text_paths.contains(&key) {
+                self.text_paths.push(key);
+                out.push(DrawingSaid::Approximation(Approximation {
+                    code: "layout-approximate:text-path".into(),
+                    message: format!(
+                        "a VML text path ({}: a watermark's text) is drawn stretched to its box, in its face, \
+                         colour, opacity and rotation, here and on every page after it that shows it; the glyphs' \
+                         size and place in the box are not measured",
+                        slot.path
+                    ),
                     page: number,
-                });
+                    path: Some(slot.path.to_string()),
+                }));
+            }
+            for (code, message) in painted.warnings {
+                out.push(warning(&code, message));
             }
         }
         out
     }
-}
-
-/// Why `document` cannot be laid out by the engine as docx2svg lays it out: what the layout
-/// does not take yet, or a chart in a locale other than en-US.
-fn unsupported(document: &ooxml_word_model::WordDocument, locale: &Locale) -> Option<Fallback> {
-    support::unsupported(document).or_else(|| {
-        (locale.tag() != "en-US")
-            .then(|| support::first_chart(document))
-            .flatten()
-            .map(|at| Fallback {
-                reason: support::CHART_LOCALE,
-                at,
-            })
-    })
 }

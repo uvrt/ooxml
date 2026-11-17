@@ -256,32 +256,58 @@ struct LineSet<'a> {
     rows: Vec<(usize, &'a PlacedRow)>,
     /// A story's kind and part.
     story: Option<(&'static str, Text)>,
-    /// The page's frame, where the set is the body's (its floating drawings placed).
+    /// The page's frame, where the set's floating drawings are placed (the body's, a
+    /// header's or a footer's; not the footnotes').
     frame: Option<&'a crate::geometry::PageFrame>,
+    /// The page (0-based).
+    page: usize,
+    /// A walked story's paragraphs' tops for their drawings (`Walked::paragraph_tops`).
+    paragraph_tops: &'a [(usize, Px)],
     /// The layout.
     layout: &'a DocumentLayout,
 }
 
-/// A body line's floating drawings, placed (`_anchors`).
+/// A line's floating drawings, placed (`_anchors`): a body line's on its laid page, a
+/// header's or footer's where its walk put its paragraph.
 fn floats(
     set: &LineSet<'_>,
-    (laid, frame, item): (&LaidPage, &crate::geometry::PageFrame, usize),
+    (frame, item): (&crate::geometry::PageFrame, usize),
     (paragraph, resolved, measured): (&Paragraph, &ooxml_word_model::ResolvedParagraph, &MeasuredParagraph),
     line: &DrawnLine,
     out: &mut spans::PageOut,
 ) {
-    let anchors = match laid.broken.get(&item) {
-        Some(again) => again.anchors.as_slice(),
-        None => set
-            .items
+    let own = || {
+        set.items
             .get(item)
             .and_then(FlowItem::para)
-            .map_or(&[][..], |p| p.anchors.as_slice()),
+            .map_or(&[][..], |p| p.anchors.as_slice())
     };
+    let (anchors, paragraph_top, bands, page) = match set.laid {
+        Some(laid) => (
+            laid.broken.get(&item).map_or_else(own, |again| again.anchors.as_slice()),
+            laid.lines
+                .iter()
+                .find(|l| l.item == item && l.line == line.number)
+                .map(|l| l.paragraph_top),
+            laid.bands.as_slice(),
+            laid.page,
+        ),
+        None => (
+            own(),
+            set.paragraph_tops.iter().find(|(i, _)| *i == item).map(|(_, top)| *top),
+            &[][..],
+            set.page,
+        ),
+    };
+    if anchors.is_empty() {
+        return;
+    }
     let job = drawings::FloatJob {
         layout: set.layout,
         frame,
-        laid,
+        page,
+        paragraph_top,
+        bands,
         paragraph,
         resolved,
         measured,
@@ -458,10 +484,10 @@ fn paint_set(
             painted.story = set.story.clone();
             to.lines.push(painted);
         }
-        if let (Some(laid), LineSource::Flow { item }, Some(frame)) = (set.laid, line.source, set.frame) {
+        if let (LineSource::Flow { item }, Some(frame)) = (line.source, set.frame) {
             floats(
                 set,
-                (laid, frame, item),
+                (frame, item),
                 (&paragraph, &resolved, &measured),
                 line,
                 to.out,
@@ -523,6 +549,8 @@ pub fn paint_page(
             .unwrap_or_default(),
         story: None,
         frame: Some(&frame),
+        page,
+        paragraph_tops: &[],
         layout,
     };
     paint_set(
@@ -545,7 +573,9 @@ pub fn paint_page(
             lines: &story.walked.lines,
             rows: story.walked.rows.iter().map(|(i, r)| (*i, r)).collect(),
             story: (story.kind != "footnotes").then(|| (story.kind, story.part.clone())),
-            frame: None,
+            frame: (story.kind != "footnotes").then_some(&frame),
+            page,
+            paragraph_tops: &story.walked.paragraph_tops,
             layout,
         };
         paint_set(

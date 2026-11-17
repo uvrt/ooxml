@@ -18,6 +18,11 @@ snapshot commit; the development history before it is summarised here.
   pictures, shapes, groups and charts, floating or inline, with what `drawing.draw` and
   `chart.py` say of them -- so a document holding them is laid out in Rust too.
   `RustLayout.page_svg` takes no painter any more.
+- Lane L4d: SmartArt, VML shapes and VML text paths (watermarks) are painted in Rust too,
+  and a document with a chart is laid out in Rust in any locale: `Engine` is made for the
+  options' whole `Locale` (separators, date order, list separator and language). A
+  `RustLayout` float's `primitives` carry the face a text path is drawn in, for
+  `drawn_faces`.
 
 ## 0.13.1 -- unreleased
 

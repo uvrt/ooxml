@@ -115,6 +115,7 @@ pub struct Face {
     cmap: OnceLock<CharMap>,
     advances: OnceLock<Vec<u16>>,
     kern: OnceLock<KernPairs>,
+    gpos: OnceLock<Option<Arc<crate::gpos::PairKerning>>>,
 }
 
 impl std::fmt::Debug for Face {
@@ -150,6 +151,7 @@ impl Face {
             cmap: OnceLock::new(),
             advances: OnceLock::new(),
             kern: OnceLock::new(),
+            gpos: OnceLock::new(),
         };
         face.units_per_em =
             u16_at(face.required(b"head")?, 18).ok_or_else(|| FontError::malformed(&face.source, "head too short"))?;
@@ -288,6 +290,13 @@ impl Face {
     /// The advance of `ch` in font units, or `None` where the face lacks it.
     pub fn advance(&self, ch: char) -> Option<u16> {
         self.glyph(ch).and_then(|glyph| self.glyph_advance(glyph))
+    }
+
+    /// `GPOS`'s `kern` pair adjustments, read once (`None`: none read).
+    pub(crate) fn gpos_kerning(&self) -> Option<&crate::gpos::PairKerning> {
+        self.gpos
+            .get_or_init(|| self.table(b"GPOS").and_then(crate::gpos::PairKerning::new).map(Arc::new))
+            .as_deref()
     }
 
     /// The legacy `kern` table's adjustment between two characters, font units (0 where

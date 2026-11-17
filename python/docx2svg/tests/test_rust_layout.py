@@ -58,6 +58,53 @@ def test_the_rust_layout_is_docx2svgs(path: Path):
     assert ours.coverage.missing_fonts == theirs.coverage.missing_fonts
 
 
+def _made() -> dict:
+    """Made-up documents of what lane L4d paints in Rust: SmartArt, VML shapes and text paths
+    (watermarks), and charts in another locale than en-US."""
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
+    import make_chart_probe
+    import make_smartart_probe
+    import test_carry_on as made
+    from ooxml_common.locales import Locale
+
+    vml = 'xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office"'
+    body = "".join(made._p(f"Paragraph {k} of the body, some words on a line.") for k in range(6))
+    shapes = (f'<w:p><w:r><w:pict {vml}><v:rect style="position:absolute;margin-left:20pt;margin-top:10pt;'
+              'width:120pt;height:60pt;z-index:2" fillcolor="#4472C4" strokecolor="red" strokeweight="2pt"/>'
+              f'</w:pict></w:r><w:r><w:pict {vml}><v:oval style="width:60pt;height:20pt" fillcolor="#ccc" '
+              'stroked="f"><v:fill opacity="32768f"/></v:oval></w:pict></w:r></w:p>')
+    italic = made.FITTED_WATERMARK.replace("font-size:1pt", "font-size:1pt;font-style:italic;font-weight:bold")
+    nl = Locale(decimal_separator=",", thousands_separator=".", date_order="dmy", language="nl-NL",
+                list_separator=";")
+    return {
+        "watermark": (made._docx(body, final=made._sect("rIdH1"),
+                                 headers={"rIdH1": f'<w:hdr {made.NS}>{made.WATERMARK}</w:hdr>'}), None),
+        "fitted-italic": (made._docx(body + italic), None),
+        "vml-shapes": (made._docx(shapes + body), None),
+        "smartart": (make_smartart_probe.build("15"), None),
+        "charts-nl": (make_chart_probe.build("15"), nl),
+    }
+
+
+@pytest.mark.parametrize("name", ["watermark", "fitted-italic", "vml-shapes", "smartart", "charts-nl"])
+def test_smartart_vml_and_charts_in_a_locale_are_laid_out_and_drawn_as_docx2svg(name: str):
+    data, locale = _made()[name]
+    options = docx2svg.ConvertOptions(locale=locale) if locale else docx2svg.ConvertOptions()
+    ours = rust.Engine(options).lay_out(data, options)
+    assert ours is not None, rust.fallbacks()
+    theirs_options = docx2svg.ConvertOptions(locale=locale) if locale else docx2svg.ConvertOptions()
+    theirs, _, fonts = docx2svg.lay_out_docx(data, theirs_options, keep=False)
+    svgs = docx2svg.page_svgs(theirs, data, theirs_options, fonts=fonts)
+    assert [_page(page) for page in ours.pages] == [_page(page) for page in theirs.pages]
+    assert [ours.page_svg(index) for index in range(len(svgs))] == svgs
+    assert [(w.code, w.message, w.page) for w in ours.warnings] == [
+        (w.code, w.message, w.page) for w in theirs_options.warnings]
+    assert list(ours.approximations) == list(theirs.approximations)
+    assert docx2svg.drawn_faces(ours) == docx2svg.drawn_faces(theirs)
+
+
 def test_a_version_laid_out_again_is_the_same_layout():
     data = FIXTURES[0].read_bytes()
     options = docx2svg.ConvertOptions()

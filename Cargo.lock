@@ -601,6 +601,7 @@ dependencies = [
  "ooxml-base",
  "ooxml-derive",
  "ooxml-fonts",
+ "ooxml-numfmt",
  "ooxml-session",
  "ooxml-store",
  "ooxml-tools",

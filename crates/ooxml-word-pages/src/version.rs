@@ -131,6 +131,8 @@ pub struct PageView {
     pub pictures: Vec<Drawn>,
     /// Its drawings, for their painters.
     pub drawings: Vec<DrawingSlot>,
+    /// Per drawing, the faces its text is drawn in (a text path's): `(face, bold, italic)`.
+    pub drawing_faces: Vec<Vec<(String, bool, bool)>>,
     /// The body blocks it draws something of (`Page.blocks`).
     pub blocks: Vec<Text>,
     /// What its paint does not draw yet, by reason.

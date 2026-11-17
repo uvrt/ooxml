@@ -87,11 +87,21 @@ const RECOMPUTED_BY_WORD: &[&str] = &["DATE", "TIME", "REF", "PAGEREF", "SEQ", "
 /// The fields whose text depends on the pages (`PAGE_FIELDS`).
 const PAGE_FIELDS: &[&str] = &["PAGE", "NUMPAGES", "SECTIONPAGES", "PAGEREF"];
 
+/// One thing a page's drawings say: a warning, or an approximation (a text path drawn
+/// stretched by its advances), in the order said.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DrawingSaid {
+    /// A warning.
+    Warning(LayoutWarning),
+    /// An approximation: its reason (`text-path`), message, page and element.
+    Approximation(Approximation),
+}
+
 /// What a page's drawings say as they are painted: its floating drawings' positions not
 /// modelled, and what their painters could not draw faithfully, in the order placed.
 pub trait PageDrawings {
-    /// The warnings of page `page`'s drawings.
-    fn said(&mut self, model: &mut Model, layout: &DocumentLayout, page: usize) -> Vec<LayoutWarning>;
+    /// What page `page`'s drawings say.
+    fn said(&mut self, model: &mut Model, layout: &DocumentLayout, page: usize) -> Vec<DrawingSaid>;
 }
 
 /// Whether a paragraph holds a drawing a painter draws: a floating one, or an inline one
@@ -152,8 +162,14 @@ pub fn said(model: &mut Model, layout: &DocumentLayout, drawings: &mut dyn PageD
         pages.drawn = everywhere;
         pages.body(model, layout, page, &mut out);
         if pages.drawn {
-            for w in drawings.said(model, layout, page) {
-                out.warn(w.code, w.message, w.page);
+            for said in drawings.said(model, layout, page) {
+                match said {
+                    DrawingSaid::Warning(w) => out.warn(w.code, w.message, w.page),
+                    DrawingSaid::Approximation(a) => {
+                        let reason = a.code.strip_prefix("layout-approximate:").unwrap_or(&a.code);
+                        out.approximate(reason, &a.message, a.page, a.path.as_deref());
+                    }
+                }
             }
         }
         pages.stories(layout, page, &mut out);
