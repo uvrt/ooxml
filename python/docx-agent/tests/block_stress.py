@@ -506,6 +506,11 @@ def run(seed: int, threads: int, calls: int, chapters: int = 4, mode: str = "alw
                                    "end": end, "block": result.block, "note": newer_note(result)})
                 time.sleep(0)
 
+        # The faces the document is laid out in are checked once, here, before the threads
+        # start: a test that needs Office's faces is skipped in this thread (the suite's
+        # autouse check), never inside a worker thread, where the skip would end the thread
+        # and lose its calls.
+        session.entry(doc).document.layout()
         workers = [threading.Thread(target=worker, args=(k,)) for k in range(threads)]
         for thread in workers:
             thread.start()

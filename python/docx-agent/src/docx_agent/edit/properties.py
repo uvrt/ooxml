@@ -349,9 +349,7 @@ def layout_statistics(document: "Document") -> dict:
     layout = conversion.layout
     if layout.pages_known is None:
         return {}
-    from ..layout import _in_body
-
-    lines = sum(1 for page in layout.pages for line in page.text_lines() if _in_body(line))
+    lines = sum(len(layout._body(index)) for index in range(layout.page_count))
     return {"pages": layout.pages_known, "lines": lines}
 
 

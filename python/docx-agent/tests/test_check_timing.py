@@ -109,6 +109,7 @@ def test_a_check_answered_from_what_the_version_had_lays_nothing_out(made):
         assert "layout" not in again and "worker_wait" not in again and "facts" in again
 
 
+@pytest.mark.usefixtures("python_layout")  # lane L4: stretches docx2svg's Python layout
 def test_the_wait_for_the_worker_is_apart_from_the_layout(made, monkeypatch):
     """Time before the worker's task starts -- a queue, another layout of the document in
     progress there -- is ``worker_wait``, not ``layout``; the layout's own time is ``layout``,

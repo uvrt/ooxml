@@ -22,7 +22,11 @@ from gates import Arrivals, Gate
 
 # What each test compares holds with whatever faces the layout finds: run where Office's
 # faces are absent too (CI), laid out with the stand-ins docx2svg picks.
-pytestmark = pytest.mark.any_faces
+# Lane L4: what these tests read -- layouts handed between versions and workers, held by
+# token, waited for in flight -- is docx2svg's Python layout's, the fallback where the Rust
+# layout (docx_agent.pages) does not lay a version out; tests/test_rust_layout.py holds the
+# Rust layout to the same answers.
+pytestmark = [pytest.mark.any_faces, pytest.mark.usefixtures("python_layout")]
 
 WORDS = ("lantern meadow river stone harbour quiet orchard copper valley signal morning ledger window "
          "garden timber bridge market evening canvas thread pebble summit").split()

@@ -1,0 +1,25 @@
+[package]
+name = "ooxml-word-pages"
+version = "0.1.0"
+description = "A Word document's pages held in Rust, one layout per version: laid out again from the version before, with its facts, its pages' paint and SVG on demand, and the fonts and pictures it reads from the machine and the package"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+ooxml-base.workspace = true
+ooxml-derive.workspace = true
+ooxml-opc.workspace = true
+ooxml-xml.workspace = true
+ooxml-zip.workspace = true
+ooxml-fonts.workspace = true
+ooxml-metafile.workspace = true
+ooxml-word-model.workspace = true
+ooxml-word-layout.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]

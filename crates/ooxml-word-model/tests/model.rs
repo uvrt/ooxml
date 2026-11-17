@@ -204,6 +204,31 @@ fn a_reopened_version_reads_only_the_changed_block_and_equals_a_fresh_open() {
 }
 
 #[test]
+fn a_content_controls_paragraphs_keep_their_paths_when_it_is_taken_as_it_was() {
+    let body = format!(
+        "{}<w:sdt><w:sdtContent>{}</w:sdtContent></w:sdt>{}",
+        p("", "", "before"),
+        p("", "", "inside"),
+        p("", "", "after")
+    );
+    let parts = Parts {
+        body,
+        ..Parts::default()
+    };
+    let mut m = model();
+    m.open(&package(&parts)).unwrap();
+    let mut changed = parts.clone();
+    changed.body = changed.body.replacen(">before<", ">edited<", 1);
+    let reopened = m.open(&package(&changed)).unwrap();
+    assert_eq!(m.stats().elements_read, 1);
+    let Block::Paragraph(inside) = &reopened.body[1] else {
+        panic!("not a paragraph")
+    };
+    assert_eq!(&*inside.path, "w:body/w:sdt[1]/w:sdtContent[1]/w:p[1]");
+    assert_eq!(reopened.body, open(&changed).1.body);
+}
+
+#[test]
 fn a_table_style_region_formats_the_cells_in_it() {
     let styles = r#"<w:style w:type="table" w:styleId="T"><w:tblPr><w:tblStyleRowBandSize w:val="1"/></w:tblPr>
 <w:tblStylePr w:type="firstRow"><w:rPr><w:b/></w:rPr></w:tblStylePr>

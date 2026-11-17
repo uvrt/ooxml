@@ -20,7 +20,7 @@ import time
 from typing import Any
 
 
-from ..layout import (LayoutSummary, _in_body, _put_held, extents_of, held_layout, made_facts, opened_layout,
+from ..layout import (LayoutSummary, _put_held, extents_of, held_layout, made_facts, opened_layout,
                       page_infos_of, placements_of)
 
 
@@ -79,7 +79,7 @@ def _facts(held: Any, data: bytes, options: dict, request: dict) -> dict:
         "reflow": reflow,
         "warnings": [short(str(w), 160) for w in layout.warnings[:10]] if layout.warnings else None,
         "stats": ({"pages": layout.pages_known,
-                   "lines": sum(1 for page in layout.pages for line in page.text_lines() if _in_body(line))}
+                   "lines": sum(len(layout._body(index)) for index in range(layout.page_count))}
                   if layout.pages_known is not None else {})}
     if request.get("summary"):
         summary = held.extra.get("summary")
