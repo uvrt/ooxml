@@ -25,7 +25,7 @@ from docx_agent.rust import reads
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
 
 HERE = Path(__file__).resolve().parent
-FIXTURES = sorted((HERE / "fixtures").glob("*/*.docx"))
+FIXTURES = sorted((HERE / "fixtures").rglob("*.docx"))
 
 
 @pytest.fixture(scope="module")
@@ -80,7 +80,7 @@ def _calls(session, doc: str) -> list[tuple[str, dict]]:
     return calls
 
 
-@pytest.mark.parametrize("path", FIXTURES, ids=lambda p: f"{p.parent.name}/{p.stem}")
+@pytest.mark.parametrize("path", FIXTURES, ids=lambda p: str(p.relative_to(HERE / "fixtures")))
 def test_the_reads_answer_as_the_python_path_does(toolbox, rust_session, path):
     session = toolbox.session()
     doc = session.open(path.read_bytes(), name=path.name)

@@ -111,7 +111,8 @@ pub fn word_read(args: &WordRead, version: &Version<'_>, cancel: &dyn Cancel) ->
 }
 
 /// What of `markdown`, read in `view`, docx-agent writes otherwise: a chart's or SmartArt
-/// diagram's summary in its drawing's comment (the chart model, phase P3); a cell's end
+/// diagram's summary in its drawing's comment (the drawing named in a block's comment,
+/// `<!-- p:X d:1 chart ... -->`, or its own) (the chart model, phase P3); a cell's end
 /// that Accept All takes away, in the final view.
 fn unported(docx: &ooxml_word_model::docx::Docx, markdown: &str, view: ViewName) -> Vec<String> {
     let shared = ooxml_word_model::markdown::read::Shared::of(docx);
@@ -119,7 +120,7 @@ fn unported(docx: &ooxml_word_model::docx::Docx, markdown: &str, view: ViewName)
     if shared
         .graphics()
         .iter()
-        .any(|id| markdown.contains(&format!("<!-- {id} ")))
+        .any(|id| markdown.contains(&format!(" {id} ")))
     {
         out.push(crate::GRAPHICS.to_owned());
     }
