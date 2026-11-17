@@ -9,7 +9,7 @@
 //! paragraph's own block, the ledger seeds it draws from, the annotation ids when tracked.
 
 use crate::doc::{Key, WordDoc};
-use crate::names::W14;
+use crate::names::{W14, W16DU};
 use crate::policy::RevisionPolicy;
 use crate::sink::EditSink;
 use crate::stamping::{new_text_id, stamp_document, w14_prefix};
@@ -158,7 +158,7 @@ impl Command<WordDoc> for SetText {
             .ok_or_else(|| EditError::NoPart(found.part.clone()))?;
         let element = at_path(tree.root(), &found.path).ok_or_else(|| EditError::Path(found.part.clone()))?;
         work = Work::of(element, scope_above(tree.root(), &found.path));
-        let wrote = sink.set_paragraph_text(&found.part, &mut work, &self.text)?;
+        let wrote = sink.set_paragraph_text(&mut work, &self.text)?;
         if !wrote.released.is_empty() {
             return Err(EditError::Unsupported(
                 "releasing the relationships of content a tracked edit removed outright (phase P2b)".to_owned(),
@@ -170,10 +170,17 @@ impl Command<WordDoc> for SetText {
             let name = Arc::new(QName::new(Some(&prefix), "textId", Some(W14)));
             let root = work.root();
             work.set(root, name, &text_id);
-            sink.ensure_w14(&found.part, false, &[])?;
         }
         let new = work.build().ok_or_else(|| EditError::Path(found.part.clone()))?;
         sink.replace(&found.part, &found.path, new, vec![block_key(&found.part, &id)])?;
+        // the part's root declares what the paragraph now uses (docx-agent: the revisions'
+        // `w16du`, then the text id's `w14`), once the paragraph is in place
+        if wrote.dated {
+            sink.ensure_w14(&found.part, false, &[("w16du", W16DU)])?;
+        }
+        if found.state == IdState::Ok {
+            sink.ensure_w14(&found.part, false, &[])?;
+        }
         crate::textbox::sync(&mut sink)?;
         crate::revision_ids::make_unique(&mut sink, &found.part, &found.path, &found.element)?;
         Ok(TextEdited {

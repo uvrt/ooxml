@@ -40,7 +40,7 @@ fn command(k: usize, targets: &[String], writer: usize) -> SetText {
         .get((k * 7919 + writer * 104_729) % targets.len().max(1))
         .cloned()
         .unwrap_or_default();
-    let policy = if k % 2 == 0 {
+    let policy = if k.is_multiple_of(2) {
         RevisionPolicy::Untracked
     } else {
         RevisionPolicy::Tracked(Tracking {
@@ -53,6 +53,46 @@ fn command(k: usize, targets: &[String], writer: usize) -> SetText {
         text: format!("Edit {k} by writer {writer}: the quarterly figures, restated."),
         policy,
     }
+}
+
+/// Whether a paragraph holds a field (a complex or a simple one).
+fn has_field(element: &ooxml_xml::Element) -> bool {
+    element
+        .child_elements()
+        .any(|c| matches!(c.name().local(), "fldChar" | "fldSimple" | "instrText") || has_field(c))
+}
+
+/// `writers` threads each making `edits` edits at once: each edit's whole time, the
+/// store's conflicts, exclusive runs and rebases.
+fn many(editor: &Editor, targets: &[String], writers: usize, edits: usize) -> serde_json::Value {
+    let before = editor.store().stats();
+    let latencies = std::sync::Mutex::new(Vec::new());
+    let wall = Instant::now();
+    std::thread::scope(|scope| {
+        for w in 0..writers {
+            let (editor, targets, latencies) = (&editor, &targets, &latencies);
+            scope.spawn(move || {
+                let caller = Caller::named(&format!("writer {w}"));
+                for k in 0..edits {
+                    let at = Instant::now();
+                    if editor.run(&caller, &command(k + 100, targets, w)).is_ok() {
+                        if let Ok(mut l) = latencies.lock() {
+                            l.push(ms(at.elapsed()));
+                        }
+                    }
+                }
+            });
+        }
+    });
+    let wall = wall.elapsed();
+    let after = editor.store().stats();
+    let latencies = latencies.into_inner().unwrap_or_default();
+    json!({"threads": writers, "edits": writers * edits, "wall_ms": ms(wall),
+           "latency": summary(latencies),
+           "conflicts": after.conflicts - before.conflicts,
+           "exclusive": after.exclusive - before.exclusive,
+           "rebased": after.rebased - before.rebased,
+           "held_max_ms": ms(after.held_max)})
 }
 
 /// Run the benchmark.
@@ -77,9 +117,17 @@ pub fn run(args: &[String]) -> Result<(), String> {
     .map_err(|e| e.to_string())?;
     let opened = started.elapsed();
     let docx = editor.store().snapshot().doc().docx().map_err(|e| e.to_string())?;
+    // paragraphs of plain text: a field's result cannot be rewritten whole (refused)
     let targets: Vec<String> = docx
         .body()
-        .map(|b| b.ids.paragraphs.iter().map(|p| p.id.clone()).collect())
+        .map(|b| {
+            b.ids
+                .paragraphs
+                .iter()
+                .filter(|p| p.path.len() == 2 && !has_field(&p.element))
+                .map(|p| p.id.clone())
+                .collect()
+        })
         .unwrap_or_default();
     // the first edit stamps whatever lacks an id
     let first = Instant::now();
@@ -98,28 +146,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
         touched.push(ms(done.timing.touched));
         validation.push(ms(done.timing.validation));
     }
-    let before = editor.store().stats();
-    let latencies = std::sync::Mutex::new(Vec::new());
-    let wall = Instant::now();
-    std::thread::scope(|scope| {
-        for w in 0..writers {
-            let (editor, targets, latencies) = (&editor, &targets, &latencies);
-            scope.spawn(move || {
-                let caller = Caller::named(&format!("writer {w}"));
-                for k in 0..edits {
-                    let at = Instant::now();
-                    if editor.run(&caller, &command(k + 100, targets, w)).is_ok() {
-                        if let Ok(mut l) = latencies.lock() {
-                            l.push(ms(at.elapsed()));
-                        }
-                    }
-                }
-            });
-        }
-    });
-    let wall = wall.elapsed();
-    let after = editor.store().stats();
-    let latencies = latencies.into_inner().unwrap_or_default();
+    let writers_json = many(&editor, &targets, writers, edits);
     let out = json!({
         "file": file,
         "paragraphs": targets.len(),
@@ -127,12 +154,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
         "first_edit_ms": ms(first),
         "one_writer": {"whole": summary(whole), "prepare_commit": summary(commit),
                        "touched": summary(touched), "validation": summary(validation)},
-        "writers": {"threads": writers, "edits": writers * edits, "wall_ms": ms(wall),
-                    "latency": summary(latencies),
-                    "conflicts": after.conflicts - before.conflicts,
-                    "exclusive": after.exclusive - before.exclusive,
-                    "rebased": after.rebased - before.rebased,
-                    "held_max_ms": ms(after.held_max)},
+        "writers": writers_json,
     });
     println!("{out}");
     Ok(())

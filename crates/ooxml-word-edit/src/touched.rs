@@ -201,15 +201,44 @@ impl Levels<'_> {
     }
 }
 
-/// The ids of the body's blocks as docx-agent names them: a paragraph's or table's id, a
-/// content control's `cc:` id, else `b@body/<n>`.
-fn block_ids(docx: &Docx, body: &Body) -> Vec<String> {
-    let Some(story) = docx.body() else { return Vec::new() };
-    let root = story.root();
-    let mut sdts: HashMap<usize, String> = HashMap::new();
+/// The ids of the body's blocks as docx-agent names them -- a paragraph's or table's id,
+/// a content control's `cc:` id, else `b@body/<n>` -- read for the blocks asked for only.
+struct BlockIds<'a> {
+    docx: &'a Docx,
+    body: &'a Body,
+    /// Content controls' ids by element, read on the first control asked for.
+    sdts: Option<HashMap<usize, String>>,
+}
+
+impl<'a> BlockIds<'a> {
+    fn new(docx: &'a Docx, body: &'a Body) -> Self {
+        BlockIds { docx, body, sdts: None }
+    }
+
+    fn of(&mut self, k: usize) -> String {
+        let (Some(story), Some(block), Some(place)) =
+            (self.docx.body(), self.body.blocks.get(k), self.body.places.get(k))
+        else {
+            return format!("b@body/{k}");
+        };
+        if let Some(id) = story.ids.at(&[self.body.at, *place]).and_then(|e| story.ids.id_of(e)) {
+            return id.to_owned();
+        }
+        let sdts = self.sdts.get_or_insert_with(|| control_ids(story.root()));
+        sdts.get(&(Arc::as_ptr(block) as usize))
+            .cloned()
+            .unwrap_or_else(|| format!("b@body/{k}"))
+    }
+}
+
+/// `cc:<id>` (`#k` for a repeat) or `cc@body/<n>` of every live content control.
+fn control_ids(root: &Element) -> HashMap<usize, String> {
+    let mut out = HashMap::new();
     let mut seen: HashMap<String, usize> = HashMap::new();
-    let found = live_paths(root, &[], &|e| e.name().is(Some(W), "sdt"));
-    for (number, sdt) in found.iter().enumerate() {
+    for (number, sdt) in live_paths(root, &[], &|e| e.name().is(Some(W), "sdt"))
+        .iter()
+        .enumerate()
+    {
         let raw = sdt
             .element
             .find(Some(W), "sdtPr")
@@ -229,17 +258,7 @@ fn block_ids(docx: &Docx, body: &Body) -> Vec<String> {
                 id
             }
         };
-        sdts.insert(Arc::as_ptr(&sdt.element) as usize, id);
-    }
-    let mut out = Vec::with_capacity(body.blocks.len());
-    for (k, (block, place)) in body.blocks.iter().zip(&body.places).enumerate() {
-        let id = story
-            .ids
-            .at(&[body.at, *place])
-            .and_then(|e| story.ids.id_of(e).map(str::to_owned))
-            .or_else(|| sdts.get(&(Arc::as_ptr(block) as usize)).cloned())
-            .unwrap_or_else(|| format!("b@body/{k}"));
-        out.push(id);
+        out.insert(Arc::as_ptr(&sdt.element) as usize, id);
     }
     out
 }
@@ -286,10 +305,25 @@ fn body_sections(before: &WordDoc, after: &WordDoc, docx: &Docx) -> Result<Optio
     let (Some(old), Some(new)) = (body_of(old_tree.root()), body_of(new_tree.root())) else {
         return Ok(None);
     };
+    let changed = changed_blocks(after, &old, &new);
+    let mut out = if changed.is_empty() {
+        Vec::new()
+    } else {
+        sections(docx, &new, &changed)
+    };
+    let same_rest = old.gaps.len() == new.gaps.len() && old.gaps.iter().zip(&new.gaps).all(|(x, y)| x == y);
+    if !same_rest || out.is_empty() {
+        out.push(None);
+    }
+    Ok(Some(out))
+}
+
+/// The places of the new body's blocks the change replaced: those that are not the old
+/// version's (by pointer, before and after the stretch that changed), compared within
+/// that stretch by content without stamps; a removal counts at the block before it.
+fn changed_blocks(after: &WordDoc, old: &Body, new: &Body) -> BTreeSet<usize> {
     let facts = &after.shared().facts;
     let digest = |b: &Arc<Element>| facts.element(b).stampless;
-    // blocks the change did not replace are the same allocation: compared by pointer, the
-    // rest by their content without stamps
     let prefix = old
         .blocks
         .iter()
@@ -313,7 +347,7 @@ fn body_sections(before: &WordDoc, after: &WordDoc, docx: &Docx) -> Result<Optio
             .collect()
     };
     let (a, b) = (middle(&old_rest), middle(&new_rest));
-    let mut changed: BTreeSet<usize> = BTreeSet::new();
+    let mut changed = BTreeSet::new();
     for op in opcodes(&a, &b) {
         if op.tag == Tag::Equal {
             continue;
@@ -321,49 +355,42 @@ fn body_sections(before: &WordDoc, after: &WordDoc, docx: &Docx) -> Result<Optio
         if op.j2 > op.j1 {
             changed.extend(prefix + op.j1..prefix + op.j2);
         } else if !new.blocks.is_empty() {
-            let j = (prefix + op.j1).saturating_sub(1).min(new.blocks.len() - 1);
-            changed.insert(j);
+            changed.insert((prefix + op.j1).saturating_sub(1).min(new.blocks.len() - 1));
         }
     }
+    changed
+}
+
+/// The heading sections holding the `changed` blocks: from the heading at or before each
+/// to the next heading of its level or above. Levels are read walking out from the
+/// changed blocks only.
+fn sections(docx: &Docx, new: &Body, changed: &BTreeSet<usize>) -> Vec<Option<Section>> {
+    let mut levels = Levels {
+        docx,
+        map: StyleMap::default(),
+        memo: HashMap::new(),
+    };
+    let mut level = |k: usize| new.blocks.get(k).and_then(|b| levels.of(b));
+    let mut starts = BTreeSet::new();
+    for &j in changed {
+        let mut k = Some(j);
+        while let Some(at) = k.filter(|at| level(*at).is_none()) {
+            k = at.checked_sub(1);
+        }
+        starts.insert(k.unwrap_or(0));
+    }
+    let mut ids = BlockIds::new(docx, new);
     let mut out = Vec::new();
-    if !changed.is_empty() {
-        let mut levels = Levels {
-            docx,
-            map: StyleMap::default(),
-            memo: HashMap::new(),
-        };
-        let level: Vec<Option<i64>> = new.blocks.iter().map(|b| levels.of(b)).collect();
-        let ids = block_ids(docx, &new);
-        let mut starts = BTreeSet::new();
-        for j in changed {
-            let mut k = Some(j);
-            while let Some(at) = k.filter(|at| level.get(*at).copied().flatten().is_none()) {
-                k = at.checked_sub(1);
-            }
-            starts.insert(k.unwrap_or(0));
-        }
-        for start in starts {
-            let own = level.get(start).copied().flatten();
-            let end = (start + 1..level.len())
-                .find(|k| {
-                    level
-                        .get(*k)
-                        .copied()
-                        .flatten()
-                        .is_some_and(|l| own.is_none_or(|o| l <= o))
-                })
-                .unwrap_or(level.len());
-            let id = |k: usize| ids.get(k).cloned().unwrap_or_default();
-            out.push(Some(Section {
-                heading: own.map(|_| id(start)),
-                level: own.unwrap_or(0),
-                blocks: [id(start), id(end.saturating_sub(1))],
-            }));
-        }
+    for start in starts {
+        let own = level(start);
+        let end = (start + 1..new.blocks.len())
+            .find(|k| level(*k).is_some_and(|l| own.is_none_or(|o| l <= o)))
+            .unwrap_or(new.blocks.len());
+        out.push(Some(Section {
+            heading: own.map(|_| ids.of(start)),
+            level: own.unwrap_or(0),
+            blocks: [ids.of(start), ids.of(end.saturating_sub(1))],
+        }));
     }
-    let same_rest = old.gaps.len() == new.gaps.len() && old.gaps.iter().zip(&new.gaps).all(|(x, y)| x == y);
-    if !same_rest || out.is_empty() {
-        out.push(None);
-    }
-    Ok(Some(out))
+    out
 }

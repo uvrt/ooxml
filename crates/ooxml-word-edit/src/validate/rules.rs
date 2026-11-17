@@ -174,31 +174,32 @@ fn word_part(out: &mut Vec<Problem>, name: &str, facts: &PartFacts) {
 
 /// Bookmarks, comment ranges and references, note references.
 fn ranges(out: &mut Vec<Problem>, inputs: &Inputs<'_>) {
+    bookmarks(out, inputs);
+    marks(out, inputs);
+}
+
+/// Bookmarks: starts and ends paired, names valid and not repeated (in any case).
+fn bookmarks(out: &mut Vec<Problem>, inputs: &Inputs<'_>) {
     let main = inputs.main;
     let mut starts: HashMap<&str, i64> = HashMap::new();
     let mut ends: HashMap<&str, i64> = HashMap::new();
-    let mut names: Vec<(&str, usize)> = Vec::new();
-    let (mut c_starts, mut c_ends, mut c_refs) = (BTreeSet::new(), BTreeSet::new(), BTreeSet::new());
-    let (mut f_refs, mut e_refs) = (BTreeSet::new(), BTreeSet::new());
+    let mut names: HashMap<&str, usize> = HashMap::new();
+    let mut order: Vec<&str> = Vec::new();
     for (_, part) in inputs.story_facts() {
         for f in part.all() {
             for id in &f.bookmark_starts {
                 *starts.entry(id).or_insert(0) += 1;
             }
-            for name in &f.bookmark_names {
-                match names.iter_mut().find(|(n, _)| n == name) {
-                    Some(found) => found.1 += 1,
-                    None => names.push((name, 1)),
-                }
-            }
             for id in &f.bookmark_ends {
                 *ends.entry(id).or_insert(0) += 1;
             }
-            c_starts.extend(f.comment_starts.iter().cloned());
-            c_ends.extend(f.comment_ends.iter().cloned());
-            c_refs.extend(f.comment_refs.iter().cloned());
-            f_refs.extend(f.footnote_refs.iter().cloned());
-            e_refs.extend(f.endnote_refs.iter().cloned());
+            for name in &f.bookmark_names {
+                let count = names.entry(name).or_insert(0);
+                if *count == 0 {
+                    order.push(name);
+                }
+                *count += 1;
+            }
         }
     }
     let marks: BTreeSet<&str> = starts.keys().chain(ends.keys()).copied().collect();
@@ -207,20 +208,33 @@ fn ranges(out: &mut Vec<Problem>, inputs: &Inputs<'_>) {
             out.push(problem("bookmark-unpaired", main, mark));
         }
     }
-    let mut folded: Vec<(String, usize)> = Vec::new();
-    for (name, count) in &names {
-        let key = ooxml_word_model::docx::casefold(name);
-        match folded.iter_mut().find(|(k, _)| *k == key) {
-            Some(found) => found.1 += count,
-            None => folded.push((key, *count)),
-        }
+    let mut folded: HashMap<String, usize> = HashMap::new();
+    for name in order {
+        let count = names.get(name).copied().unwrap_or(0);
+        *folded.entry(ooxml_word_model::docx::casefold(name)).or_insert(0) += count;
         if !bookmark_name_ok(name) {
-            out.push(problem("bookmark-name-invalid", main, *name));
+            out.push(problem("bookmark-name-invalid", main, name));
         }
     }
     for (name, count) in folded {
         if count > 1 {
             out.push(problem("bookmark-name-repeated", main, name));
+        }
+    }
+}
+
+/// Comment ranges paired; comment and note references to what exists.
+fn marks(out: &mut Vec<Problem>, inputs: &Inputs<'_>) {
+    let main = inputs.main;
+    let (mut c_starts, mut c_ends, mut c_refs) = (BTreeSet::new(), BTreeSet::new(), BTreeSet::new());
+    let (mut f_refs, mut e_refs) = (BTreeSet::new(), BTreeSet::new());
+    for (_, part) in inputs.story_facts() {
+        for f in part.all() {
+            c_starts.extend(f.comment_starts.iter().cloned());
+            c_ends.extend(f.comment_ends.iter().cloned());
+            c_refs.extend(f.comment_refs.iter().cloned());
+            f_refs.extend(f.footnote_refs.iter().cloned());
+            e_refs.extend(f.endnote_refs.iter().cloned());
         }
     }
     for mark in c_starts.symmetric_difference(&c_ends) {
@@ -237,27 +251,32 @@ fn ranges(out: &mut Vec<Problem>, inputs: &Inputs<'_>) {
         }
         found
     };
-    let comments = notes_in("comments", |f| &f.comments);
-    for mark in c_refs.difference(&comments) {
-        out.push(problem(
+    let checks: [(&str, &Ids, Ids); 3] = [
+        (
             "comment-reference-without-comment",
-            main,
-            py_str(mark.as_deref()),
-        ));
-    }
-    let footnotes = notes_in("footnotes", |f| &f.footnotes);
-    for mark in f_refs.difference(&footnotes) {
-        out.push(problem(
+            &c_refs,
+            notes_in("comments", |f| &f.comments),
+        ),
+        (
             "footnote-reference-without-note",
-            main,
-            py_str(mark.as_deref()),
-        ));
-    }
-    let endnotes = notes_in("endnotes", |f| &f.endnotes);
-    for mark in e_refs.difference(&endnotes) {
-        out.push(problem("endnote-reference-without-note", main, py_str(mark.as_deref())));
+            &f_refs,
+            notes_in("footnotes", |f| &f.footnotes),
+        ),
+        (
+            "endnote-reference-without-note",
+            &e_refs,
+            notes_in("endnotes", |f| &f.endnotes),
+        ),
+    ];
+    for (code, references, targets) in checks {
+        for mark in references.difference(&targets) {
+            out.push(problem(code, main, py_str(mark.as_deref())));
+        }
     }
 }
+
+/// Ids of marks (`None`: a mark without one).
+type Ids = BTreeSet<Option<String>>;
 
 /// Python's `str()` of an optional string.
 fn py_str(value: Option<&str>) -> String {
@@ -530,28 +549,7 @@ fn comment_parts(out: &mut Vec<Problem>, inputs: &Inputs<'_>) {
         last_ids.push(last_paragraph_id(comment));
     }
     if let Some(extended) = root_of(REL_COMMENTS_EXTENDED) {
-        // a dict by paraId: the last entry of a key is the one kept
-        let mut entries: HashMap<String, Arc<Element>> = HashMap::new();
-        for n in extended
-            .child_elements()
-            .filter(|e| e.name().is(Some(W15), "commentEx"))
-        {
-            entries.insert(
-                n.attribute(Some(W15), "paraId").unwrap_or("").to_uppercase(),
-                Arc::clone(n),
-            );
-        }
-        for para in last_ids.iter().filter(|p| !p.is_empty()) {
-            if !entries.contains_key(para) {
-                out.push(problem("comment-without-extended-entry", main, para.clone()));
-            }
-        }
-        for node in entries.values() {
-            let parent = node.attribute(Some(W15), "paraIdParent").unwrap_or("").to_uppercase();
-            if !parent.is_empty() && !entries.contains_key(&parent) {
-                out.push(problem("comment-parent-unknown", main, parent));
-            }
-        }
+        extended_entries(out, main, &extended, &last_ids);
     }
     let mut durable: Vec<(String, usize)> = Vec::new();
     let ids_root = root_of(REL_COMMENTS_IDS);
@@ -591,6 +589,32 @@ fn comment_parts(out: &mut Vec<Problem>, inputs: &Inputs<'_>) {
             if !durable.iter().any(|(k, _)| *k == raw) {
                 out.push(problem("comment-extensible-unknown", main, raw));
             }
+        }
+    }
+}
+
+/// `commentsExtended`: an entry for each comment's last paragraph, parents that exist.
+fn extended_entries(out: &mut Vec<Problem>, main: &str, extended: &Element, last_ids: &[String]) {
+    // a dict by paraId: the last entry of a key is the one kept
+    let mut entries: HashMap<String, Arc<Element>> = HashMap::new();
+    for n in extended
+        .child_elements()
+        .filter(|e| e.name().is(Some(W15), "commentEx"))
+    {
+        entries.insert(
+            n.attribute(Some(W15), "paraId").unwrap_or("").to_uppercase(),
+            Arc::clone(n),
+        );
+    }
+    for para in last_ids.iter().filter(|p| !p.is_empty()) {
+        if !entries.contains_key(para) {
+            out.push(problem("comment-without-extended-entry", main, para.clone()));
+        }
+    }
+    for node in entries.values() {
+        let parent = node.attribute(Some(W15), "paraIdParent").unwrap_or("").to_uppercase();
+        if !parent.is_empty() && !entries.contains_key(&parent) {
+            out.push(problem("comment-parent-unknown", main, parent));
         }
     }
 }

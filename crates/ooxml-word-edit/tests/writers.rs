@@ -16,6 +16,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+/// A table's id and its rows' places and ids.
+type TableRows = (String, Vec<(Vec<u32>, String)>);
+
 struct Monotonic(Instant);
 
 impl Clock for Monotonic {
@@ -155,4 +158,120 @@ fn concurrent_set_texts_equal_their_serial_order() {
         conflicts += run(seed, 4, 6).0;
     }
     assert!(conflicts > 0, "six writers on one part's text ids should conflict");
+}
+
+#[test]
+fn memoised_problems_equal_the_full_check_version_by_version() {
+    let bytes = fixture("generated/charts/chart-places.docx");
+    let editor = editor(&bytes);
+    let docx = editor.store().snapshot().doc().docx().unwrap();
+    let targets: Vec<String> = docx
+        .parts
+        .iter()
+        .flat_map(|p| p.ids.paragraphs.iter().map(|q| q.id.clone()))
+        .collect();
+    let mut rng = Rng(7);
+    for k in 0..6 {
+        let done = editor
+            .run(&Caller::anonymous(), &command(&mut rng, &targets, k))
+            .unwrap();
+        let doc = done.version.doc();
+        assert_eq!(
+            ooxml_word_edit::validate::problems(doc).unwrap(),
+            ooxml_word_edit::validate::full_problems(doc).unwrap()
+        );
+    }
+}
+
+#[test]
+fn a_batch_is_one_step_and_an_atomic_batch_refuses_whole() {
+    let bytes = fixture("samplelib/sample-simple.docx");
+    let (batched, single) = (editor(&bytes), editor(&bytes));
+    let docx = batched.store().snapshot().doc().docx().unwrap();
+    let ids: Vec<String> = docx
+        .body()
+        .unwrap()
+        .ids
+        .paragraphs
+        .iter()
+        .map(|p| p.id.clone())
+        .take(3)
+        .collect();
+    let ops: Vec<SetText> = ids
+        .iter()
+        .map(|id| SetText {
+            target: id.clone(),
+            text: format!("Text of {id}"),
+            policy: RevisionPolicy::Untracked,
+        })
+        .collect();
+    let done = batched
+        .run(&Caller::anonymous(), &ooxml_store::Batch::new(ops.clone()))
+        .unwrap();
+    assert_eq!(done.version.seq(), Seq(1), "one version for the batch");
+    assert!(done.out.iter().all(Result::is_ok));
+    let mut last = None;
+    for op in &ops {
+        last = Some(single.run(&Caller::anonymous(), op).unwrap().version);
+    }
+    assert_eq!(written(done.version.doc()), written(last.unwrap().doc()));
+    // an atomic batch with an op that refuses changes nothing
+    let mut bad = ops.clone();
+    bad.push(SetText {
+        target: "p:7FFFFFFE".to_owned(),
+        text: "x".to_owned(),
+        policy: RevisionPolicy::Untracked,
+    });
+    assert!(batched
+        .run(&Caller::anonymous(), &ooxml_store::Batch::atomic(bad.clone()))
+        .is_err());
+    assert_eq!(batched.store().snapshot().seq(), Seq(1));
+    // not atomic: the refused op is reported, the others commit
+    let done = batched
+        .run(&Caller::anonymous(), &ooxml_store::Batch::new(bad))
+        .unwrap();
+    assert!(done.out.last().unwrap().is_err());
+}
+
+#[test]
+fn each_version_reads_as_a_fresh_reading_does() {
+    let bytes = fixture("generated/charts/chart-places.docx");
+    let editor = editor(&bytes);
+    let docx = editor.store().snapshot().doc().docx().unwrap();
+    let targets: Vec<String> = docx
+        .parts
+        .iter()
+        .flat_map(|p| p.ids.paragraphs.iter().map(|q| q.id.clone()))
+        .collect();
+    let mut rng = Rng(5);
+    for k in 0..5 {
+        let done = editor
+            .run(&Caller::anonymous(), &command(&mut rng, &targets, k))
+            .unwrap();
+        let kept = done.version.doc().docx().unwrap();
+        let fresh = ooxml_word_model::docx::Docx::open(done.version.doc().package()).unwrap();
+        for (a, b) in kept.parts.iter().zip(&fresh.parts) {
+            let ids = |p: &ooxml_word_model::docx::StoryPart| -> Vec<(String, Vec<u32>)> {
+                p.ids
+                    .paragraphs
+                    .iter()
+                    .map(|q| (q.id.clone(), q.path.to_vec()))
+                    .collect()
+            };
+            assert_eq!(ids(a), ids(b));
+            let rows = |p: &ooxml_word_model::docx::StoryPart| -> Vec<TableRows> {
+                p.ids
+                    .tables
+                    .iter()
+                    .map(|t| {
+                        (
+                            t.id.clone(),
+                            t.rows.iter().map(|(x, y)| (x.to_vec(), y.clone())).collect(),
+                        )
+                    })
+                    .collect()
+            };
+            assert_eq!(rows(a), rows(b));
+        }
+    }
 }

@@ -9,7 +9,7 @@
 //! or decide what an edit means.
 
 use crate::doc::{Change, Key, WordDoc};
-use crate::names::{MC, W14, W16DU, WP14};
+use crate::names::{MC, W14, WP14};
 use crate::policy::{RevisionPolicy, Stamp};
 use crate::text::write;
 use crate::track;
@@ -28,6 +28,9 @@ pub struct TextWrite {
     pub changed: bool,
     /// Relationship ids of what the edit removed outright (to release).
     pub released: Vec<String>,
+    /// Whether a revision record carries `w16du:dateUtc`: the part's root is to declare it
+    /// ([`EditSink::ensure_w14`] with `w16du`, once the paragraph is in place).
+    pub dated: bool,
 }
 
 /// The sink a command writes through, over one transaction.
@@ -179,9 +182,15 @@ impl<'t, 's> EditSink<'t, 's> {
             return Ok(());
         };
         let root = tree.root();
-        let Some(head) = ensured_head(root, drawings, extra) else {
+        let Some((head, declared)) = ensured_head(root, drawings, extra) else {
             return Ok(());
         };
+        if declared {
+            // lxml declares them with a cleanup of the whole part: declarations below that
+            // repeat one in scope go
+            let new = Arc::new(Element::from_head(Arc::new(head), root.children().clone()));
+            return self.put(part, tree.with_root(crate::namespaces::cleaned(&new)));
+        }
         let patch = HeadPatch::new(NodePath::root(), Arc::clone(root.head()), Arc::new(head));
         self.write(Change::Head {
             part: Arc::from(part),
@@ -197,12 +206,13 @@ impl<'t, 's> EditSink<'t, 's> {
     ///
     /// # Errors
     /// [`EditError::Text`] or [`EditError::Span`] for text the paragraph cannot take.
-    pub(crate) fn set_paragraph_text(&mut self, part: &str, work: &mut Work, text: &str) -> Result<TextWrite> {
+    pub(crate) fn set_paragraph_text(&mut self, work: &mut Work, text: &str) -> Result<TextWrite> {
         let paragraph = work.root();
         match self.policy.clone() {
             RevisionPolicy::Untracked => Ok(TextWrite {
                 changed: write::set_text(work, paragraph, text)?,
                 released: Vec::new(),
+                dated: false,
             }),
             RevisionPolicy::Tracked(tracking) => {
                 write::check_text(text)?;
@@ -214,12 +224,10 @@ impl<'t, 's> EditSink<'t, 's> {
                     self.tx.read(Key::Annotations);
                     crate::people::ensure_person(self, stamp.author())?;
                 }
-                if stamp.dated {
-                    self.ensure_w14(part, false, &[("w16du", W16DU)])?;
-                }
                 Ok(TextWrite {
                     changed: work.changed(),
                     released,
+                    dated: stamp.dated,
                 })
             }
         }
@@ -229,7 +237,7 @@ impl<'t, 's> EditSink<'t, 's> {
 /// `root`'s head with `w14` (`wp14`, `extra`) declared and listed as ignorable; `None` when
 /// it has them already. New declarations go after the root's own, `mc` last when it is
 /// added; the prefixes are added to the end of `mc:Ignorable`.
-pub(crate) fn ensured_head(root: &Element, drawings: bool, extra: &[(&str, &str)]) -> Option<Head> {
+pub(crate) fn ensured_head(root: &Element, drawings: bool, extra: &[(&str, &str)]) -> Option<(Head, bool)> {
     let mut wanted: Vec<(&str, &str)> = vec![("w14", W14)];
     if drawings {
         wanted.push(("wp14", WP14));
@@ -290,9 +298,13 @@ pub(crate) fn ensured_head(root: &Element, drawings: bool, extra: &[(&str, &str)
         }
         changed = true;
     }
-    changed.then(|| Head {
-        name: root.name().clone(),
-        namespaces: namespaces.into(),
-        attributes: attributes.into(),
+    let declared_new = namespaces.len() != root.namespaces().len();
+    changed.then(|| {
+        let head = Head {
+            name: root.name().clone(),
+            namespaces: namespaces.into(),
+            attributes: attributes.into(),
+        };
+        (head, declared_new)
     })
 }

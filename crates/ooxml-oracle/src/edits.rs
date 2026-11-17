@@ -14,6 +14,7 @@ use ooxml_derive::CacheBudget;
 use ooxml_opc::Package;
 use ooxml_store::{Caller, Clock, StoreConfig};
 use ooxml_word_edit::touched::Touched;
+use ooxml_word_edit::validate::problems;
 use ooxml_word_edit::{Edited, Editor, RevisionPolicy, SetText, TextEdited, Tracking, WordDoc};
 use serde_json::{json, Map, Value};
 use std::sync::Arc;
@@ -152,6 +153,8 @@ fn report(opened: &Package, done: &Edited<TextEdited>) -> Value {
         "touched": done.touched.iter().map(touched_json).collect::<Vec<_>>(),
         "validation": {"new": done.validation.new, "fixed": done.validation.fixed,
                        "baseline": done.validation.baseline},
+        "problems": problems(doc).map(|p| p.iter().map(ToString::to_string).collect::<Vec<_>>())
+            .unwrap_or_default(),
         "next": next,
     })
 }

@@ -26,6 +26,7 @@ mod editor;
 mod error;
 mod inline;
 mod names;
+mod namespaces;
 mod people;
 mod policy;
 mod pool;

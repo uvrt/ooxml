@@ -141,6 +141,7 @@ def python_case(data: bytes, case: dict, baseline: list) -> dict:
         "touched": touched,
         "touched_as_written": as_written,
         "validation": validation,
+        "problems": [str(p) for p in problems],
         "next": next_ids,
     }
 
