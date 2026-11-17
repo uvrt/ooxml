@@ -1837,8 +1837,14 @@ def drop_lineage(lineage: str) -> None:
     """In a worker (round 58, Q2): :func:`forget_lineage`, and the memory it freed handed
     back to the system at once -- the cycles a layout's objects make collected, and the
     allocator's free pages released (:func:`release_free_memory`) -- so the worker's
-    resident memory falls back when the document is closed, not when it next allocates."""
+    resident memory falls back when the document is closed, not when it next allocates.
+    Round 59 (Q4): the ids read (``edit.ids.valid_long_hex``'s memo, of every document the
+    worker read) go too -- strings made over the document's life, scattered over Python's
+    arenas, which they kept after the close (the cache holds up to 65,536)."""
     forget_lineage(lineage)
+    from .edit.ids import valid_long_hex
+
+    valid_long_hex.cache_clear()
     import gc
 
     gc.collect()
@@ -1896,16 +1902,17 @@ def runs_here(runner: Any) -> bool:
     return isinstance(runner, (InProcess, ThreadRunner)) or bool(getattr(runner, "in_process", False))
 
 
-def _tell_runners(runners: list, lineage: str, *, later: bool) -> None:
+def _tell_runners(runners: list, lineage: str, *, later: bool, wait: bool = True) -> None:
     """Every runner of ``runners`` (weak references) with workers of their own told to drop
-    ``lineage`` (:func:`drop_lineage`); one running in this process forgot it already."""
+    ``lineage`` (:func:`drop_lineage`); one running in this process forgot it already.
+    ``wait=False`` (round 59): not waited for (ooxml-edit 0.124's ``broadcast``)."""
     for ref in list(runners):
         runner = ref()
         broadcast = getattr(runner, "broadcast", None)
         if runner is None or broadcast is None or runs_here(runner):
             continue
         try:
-            broadcast(drop_lineage, lineage, later=later)
+            broadcast(drop_lineage, lineage, later=later, wait=wait)
         except Exception as error:  # noqa: BLE001 -- a pool closed or broken: its workers are gone
             logger.debug("the workers were not told to drop a closed document's layouts: %s", error)
 
@@ -1925,7 +1932,8 @@ def release_document(document: "Document") -> None:
     forget_bodies`: kept by their bytes, every document's).  The document stays usable: whatever it needs
     again is made again.  The workers of the runners that laid it out
     (:func:`remember_runner`) are told to drop its layouts too (:func:`drop_lineage`): the
-    idle ones at once, the busy ones as their task ends."""
+    idle ones at once, the busy ones as their task ends -- not waited for (round 59): the
+    close returns while they collect, and none takes a task before it has dropped them."""
     lock = getattr(document, "_layout_lock", None)
     if lock is not None:
         with lock:
@@ -1936,8 +1944,9 @@ def release_document(document: "Document") -> None:
             document.__dict__.pop("_view_tokens", None)
         forget_lineage(document._layout_lineage)
         # Round 58 (Q2): the workers that hold its layouts let them go now, not when other
-        # documents need the room (the idle at once, the busy as their task ends).
-        _tell_runners(document._layout_runners, document._layout_lineage, later=False)
+        # documents need the room (the idle at once, the busy as their task ends).  Round 59:
+        # not waited for -- the drop's collection took 1.2-6.0 s of a 340-page report's close.
+        _tell_runners(document._layout_runners, document._layout_lineage, later=False, wait=False)
     rust = document.__dict__.pop("_rust_doc", None)
     if rust is not None:
         rust.close()
@@ -1955,8 +1964,10 @@ def clear_caches() -> None:
     runs, or a worker it reuses; nothing is wrong after it, only made again when next
     needed.  A document's own (its kept layouts) go with :func:`release_document`."""
     from . import blocks, layout_facts
+    from .edit.ids import valid_long_hex
     from .tools import keep_trials
 
+    valid_long_hex.cache_clear()
     with _RECENT_LOCK:
         _RECENT.clear()
     with _HELD_LOCK:
