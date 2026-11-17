@@ -325,18 +325,7 @@ impl PageContext<'_> {
                 bottom,
                 frame: frame.as_deref(),
             };
-            let step = match item {
-                FlowItem::Stop(s) => {
-                    return Err(Stopped {
-                        item: index,
-                        line: 0,
-                        reason: s.reason.clone(),
-                    })
-                }
-                FlowItem::Table(t) if t.flow.floating().is_some() => self.scan_floating(t, &at, &mut stack),
-                FlowItem::Table(t) => self.scan_table(t, &at, &mut stack)?,
-                FlowItem::Para(p) => self.scan_para(p, &at, &mut stack),
-            };
+            let step = self.scan_item(item, &at, &mut stack)?;
             match step {
                 Step::Next => {
                     index += 1;
@@ -348,6 +337,22 @@ impl PageContext<'_> {
         let end = self.floating_with_next(end, start);
         finish(stack, &end, frame);
         Ok(end)
+    }
+
+    /// One item stacked.
+    fn scan_item(&self, item: &FlowItem, at: &At<'_>, stack: &mut Stack<'_>) -> Result<Step, Stopped> {
+        Ok(match item {
+            FlowItem::Stop(s) => {
+                return Err(Stopped {
+                    item: at.index,
+                    line: 0,
+                    reason: s.reason.clone(),
+                })
+            }
+            FlowItem::Table(t) if t.flow.floating().is_some() => self.scan_floating(t, at, stack),
+            FlowItem::Table(t) => self.scan_table(t, at, stack)?,
+            FlowItem::Para(p) => self.scan_para(p, at, stack),
+        })
     }
 
     /// A page ending just past floating tables ends before them: a floating table goes to

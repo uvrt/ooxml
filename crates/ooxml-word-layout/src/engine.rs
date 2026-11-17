@@ -7,7 +7,7 @@
 use crate::faces::Faces;
 use crate::fields::styleref::{style_references, StyleSearch};
 use crate::fields::{cross_references, field_values, page_fields, substitute, Computed, FieldValues, Substitutions};
-use crate::flow::{Flow, FlowContext, FlowMaker, FlowState, Labels};
+use crate::flow::{Flow, FlowContext, FlowMaker, FlowState, Labels, OldFlow};
 use crate::incremental::{changes, repaginate, RelayoutStats};
 use crate::notes::{footnotes_by_page, with_endnotes, with_footnotes, FootnotePages, NoteRole};
 use crate::page_stories::{page_stories, PageStoryJob, StoryMemo};
@@ -19,6 +19,7 @@ use crate::table::TableLayout;
 use ooxml_base::{DigestKey, Locale};
 use ooxml_derive::CacheBudget;
 use ooxml_text::Measurer;
+use ooxml_word_model::model::Block;
 use ooxml_word_model::{Model, WordDocument};
 use std::sync::Arc;
 
@@ -47,6 +48,8 @@ pub struct DocumentLayout {
     /// Per top-level block of [`DocumentLayout::document`], what of the endnotes placed
     /// in the flow it is.
     pub roles: Arc<[Option<NoteRole>]>,
+    /// Its body's paragraphs' list labels, document order (cells included).
+    pub labels: Arc<[Option<String>]>,
     /// Where footnotes restart on each page: the page each note's reference was on in the
     /// pass before, which numbered them.
     pub footnote_pages: Option<FootnotePages>,
@@ -70,21 +73,44 @@ pub struct PassRecord {
     pub pagination: Pagination,
     /// The pages whose header or footer had heights of their own.
     pub page_stories: PageStories,
+    /// The body it was made from.
+    pub body: Arc<[Block]>,
+}
+
+/// One pass of a layout of the version before, as a relayout reads it.
+#[derive(Debug, Clone, Copy)]
+struct OldPass<'o> {
+    flow: &'o Flow,
+    pagination: &'o Pagination,
+    page_stories: &'o PageStories,
+    body: &'o [Block],
+    labels: &'o [Option<String>],
+    roles: &'o [Option<NoteRole>],
+    footnotes: &'o ooxml_word_model::Notes,
 }
 
 impl DocumentLayout {
     /// Pass `k`'s flow and pages (the last pass is the layout's own).
     pub fn pass(&self, k: usize) -> Option<(&Flow, &Pagination)> {
-        self.laid_pass(k).map(|(flow, pages, _)| (flow, pages))
+        self.laid_pass(k).map(|p| (p.flow, p.pagination))
     }
 
-    /// Pass `k`'s flow, pages and pages with stories of their own heights.
-    fn laid_pass(&self, k: usize) -> Option<(&Flow, &Pagination, &PageStories)> {
-        match self.earlier.get(k) {
-            Some(p) => Some((&p.flow, &p.pagination, &p.page_stories)),
-            None if k == self.earlier.len() => Some((&self.flow, &self.pagination, &self.page_stories)),
-            None => None,
-        }
+    /// Pass `k` as a relayout of the next version reads it.
+    fn laid_pass(&self, k: usize) -> Option<OldPass<'_>> {
+        let (flow, pagination, page_stories, body) = match self.earlier.get(k) {
+            Some(p) => (&p.flow, &p.pagination, &p.page_stories, &*p.body),
+            None if k == self.earlier.len() => (&self.flow, &self.pagination, &self.page_stories, &*self.document.body),
+            None => return None,
+        };
+        Some(OldPass {
+            flow,
+            pagination,
+            page_stories,
+            body,
+            labels: &self.labels,
+            roles: &self.roles,
+            footnotes: &self.document.footnotes,
+        })
     }
 }
 
@@ -146,6 +172,8 @@ pub struct WordLayout {
     substitutions: Substitutions,
     style_values: Substitutions,
     computed: Computed,
+    /// The parts the kept measures were made against.
+    context: Option<ooxml_word_model::Context>,
 }
 
 impl WordLayout {
@@ -167,6 +195,7 @@ impl WordLayout {
             substitutions: Substitutions::default(),
             style_values: Substitutions::default(),
             computed: Computed::default(),
+            context: None,
         }
     }
 
@@ -227,6 +256,34 @@ impl WordLayout {
         FlowMaker::new(&cx, model, &mut self.body).build()
     }
 
+    /// A version's flow made again from the same pass of the version before, and the
+    /// changes between the two (`None`: it is built whole).
+    fn flow_again(
+        &mut self,
+        model: &mut Model,
+        document: &WordDocument,
+        frame: &PassFrame<'_>,
+        old: &OldPass<'_>,
+    ) -> Option<(Flow, Vec<crate::incremental::Change>)> {
+        let cx = FlowContext {
+            document,
+            blocks: &document.body,
+            sections: frame.sections,
+            labels: Labels::Given(frame.labels),
+            faces: self.faces.as_ref(),
+            locale: &self.locale,
+            tables: self.tables.as_ref(),
+            roles: frame.roles,
+        };
+        let old = OldFlow {
+            flow: old.flow,
+            body: old.body,
+            labels: old.labels,
+            roles: old.roles,
+        };
+        FlowMaker::new(&cx, model, &mut self.body).again(&old)
+    }
+
     /// One pass: the flow of `version` and its pages, laid out again from `old` (the same
     /// pass of a layout of the version before) where given.
     fn pass(
@@ -234,9 +291,18 @@ impl WordLayout {
         model: &mut Model,
         version: WordDocument,
         frame: &PassFrame<'_>,
-        old: Option<(&Flow, &Pagination, &PageStories)>,
+        old: Option<OldPass<'_>>,
     ) -> DocumentLayout {
-        let flow = self.flow(model, &version, frame);
+        // Pages laid out with other stories' heights are laid out again whole.
+        let old = old.filter(|o| o.page_stories == frame.page_stories);
+        // A footnote's text changed: the paragraphs referencing it are laid out again.
+        let again = old
+            .filter(|o| *o.footnotes == version.footnotes)
+            .and_then(|o| self.flow_again(model, &version, frame, &o));
+        let (flow, found) = match again {
+            Some((flow, found)) => (flow, Some(found)),
+            None => (self.flow(model, &version, frame), None),
+        };
         let mut layout = DocumentLayout {
             flow,
             sections: frame.sections.clone(),
@@ -248,15 +314,18 @@ impl WordLayout {
             document: version,
             fields: FieldValues::new(),
             roles: Arc::from(frame.roles),
+            labels: Arc::from(frame.labels),
             footnote_pages: None,
             passes: 0,
             settled: false,
             earlier: Vec::new(),
             relaid: Vec::new(),
         };
-        // Pages laid out with other stories' heights are laid out again whole.
-        let old = old.filter(|(_, _, stories)| *stories == frame.page_stories);
-        let found = old.map(|(old_flow, _, _)| changes(&old_flow.items, &layout.flow.items));
+        let found = match (old, found) {
+            (Some(_), Some(found)) => Some(found),
+            (Some(o), None) => Some(changes(&o.flow.items, &layout.flow.items)),
+            (None, _) => None,
+        };
         let source = RoomSource {
             document: &layout.document,
             items: &layout.flow.items,
@@ -270,8 +339,8 @@ impl WordLayout {
         let mut cx = layout.page_context(self.faces.as_ref(), &self.locale);
         cx.rooms = Some(&rooms);
         let (pages, stats) = match (old, found) {
-            (Some((_, old_pages, _)), Some(found)) => {
-                let (pages, stats) = repaginate(&cx, old_pages, &found);
+            (Some(o), Some(found)) => {
+                let (pages, stats) = repaginate(&cx, o.pagination, &found);
                 (pages, Some(stats))
             }
             _ => (Paginator::new(&cx).run(None, &mut |_: &Resume| false).0, None),
@@ -308,6 +377,18 @@ impl WordLayout {
         document: &WordDocument,
         previous: Option<&DocumentLayout>,
     ) -> DocumentLayout {
+        // Measures are kept against one set of parts (styles, numbering, settings, theme):
+        // another set measures every block again.
+        let same_parts = self
+            .context
+            .as_ref()
+            .is_some_and(|c| same_context(c, &document.context));
+        if !same_parts {
+            self.body.cache.clear();
+            self.stories.cache.clear();
+            self.context = Some(document.context.clone());
+        }
+        let previous = previous.filter(|_| same_parts);
         // The endnotes numbered and placed in the flow; SEQ and REF, which do not depend
         // on the pages, computed once (`_Placer._prepare`).
         let placed = with_endnotes(document);
@@ -322,7 +403,7 @@ impl WordLayout {
         let sections = Sections::of(document);
         let stories = self.story_heights(model, document);
         // A change to the sections or the stories' heights moves every page.
-        let previous = previous.filter(|p| p.sections == sections && p.stories == stories);
+        let previous = previous.filter(|p| same_page_sections(&p.sections, &sections) && p.stories == stories);
         let by_page = footnotes_by_page(document);
         let mut version = with_footnotes(document, None);
         // The footnotes' numbers are runs of their own: the fields are found among the
@@ -371,6 +452,7 @@ impl WordLayout {
                 flow: layout.flow,
                 pagination: layout.pagination,
                 page_stories: layout.page_stories,
+                body: Arc::clone(&layout.document.body),
             });
             values = found;
             pages = found_pages;
@@ -401,4 +483,52 @@ pub struct PassFrame<'f> {
 pub fn paginate_all(layout: &DocumentLayout, faces: &dyn Faces, locale: &Locale) -> Pagination {
     let cx = layout.page_context(faces, locale);
     Paginator::new(&cx).run(None, &mut |_: &Resume| false).0
+}
+
+/// Whether two sets of parts are the same parts (each shared between the versions).
+fn same_context(a: &ooxml_word_model::Context, b: &ooxml_word_model::Context) -> bool {
+    fn same<T>(x: Option<&Arc<T>>, y: Option<&Arc<T>>) -> bool {
+        match (x, y) {
+            (Some(x), Some(y)) => Arc::ptr_eq(x, y),
+            (None, None) => true,
+            _ => false,
+        }
+    }
+    same(a.styles.as_ref(), b.styles.as_ref())
+        && Arc::ptr_eq(&a.numbering, &b.numbering)
+        && Arc::ptr_eq(&a.settings, &b.settings)
+        && same(a.font_scheme.as_ref(), b.font_scheme.as_ref())
+        && Arc::ptr_eq(&a.colours, &b.colours)
+}
+
+/// Whether two versions' sections lay pages out alike: as many, with the same
+/// properties, each one's paragraphs where they were or -- from some section on -- moved
+/// by the paragraphs added or removed before it.
+pub fn same_page_sections(old: &Sections, new: &Sections) -> bool {
+    if old.even_and_odd != new.even_and_odd || old.list.len() != new.list.len() {
+        return false;
+    }
+    let delta = |a: usize, b: usize| isize::try_from(b).unwrap_or(0) - isize::try_from(a).unwrap_or(0);
+    let total = old
+        .list
+        .last()
+        .zip(new.list.last())
+        .map_or(0, |(a, b)| delta(a.last_paragraph, b.last_paragraph));
+    let mut moved = false;
+    for (a, b) in old.list.iter().zip(&new.list) {
+        if !(Arc::ptr_eq(&a.props, &b.props) || a.props == b.props) {
+            return false;
+        }
+        for d in [
+            delta(a.first_paragraph, b.first_paragraph),
+            delta(a.last_paragraph, b.last_paragraph),
+        ] {
+            if d == total && d != 0 {
+                moved = true;
+            } else if d != 0 || moved {
+                return false;
+            }
+        }
+    }
+    true
 }
