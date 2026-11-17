@@ -182,6 +182,8 @@ pub struct Flow {
     /// Below mode 15, per footnote referenced in a section of unequal columns, its lines
     /// broken in each of the section's column widths: what a column's foot holds of it.
     pub notes_at: NotesAt,
+    /// The body has drawings text wraps beside or floating tables.
+    pub wraps: bool,
 }
 
 /// `(note, section, width)` -> the note's lines broken in a column that wide.
@@ -474,6 +476,7 @@ impl<'a, 'm> FlowMaker<'a, 'm> {
             separators: self.separators,
             note_items: self.note_items,
             notes_at: self.notes_at,
+            wraps: self.wraps,
         }
     }
 

@@ -91,6 +91,7 @@ impl DocumentLayout {
             separators: &self.flow.separators,
             note_items: &self.flow.note_items,
             notes_at: &self.flow.notes_at,
+            wraps: self.flow.wraps,
             breaker: crate::rebreak::Breaker {
                 document: &self.document,
                 faces,

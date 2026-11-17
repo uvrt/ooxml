@@ -176,6 +176,8 @@ pub struct LaidPage {
     pub opens: Option<OpeningLine>,
     /// The bands its drawings text wraps top and bottom of keep its lines off.
     pub bands: Vec<Band>,
+    /// The drawings its lines go beside.
+    pub wraps: Vec<crate::wrap::Wrap>,
     /// The paragraphs broken again before it, from its first item on: what laying it out
     /// again starts from.
     pub lines_before: LineStore,
@@ -211,6 +213,7 @@ impl LaidPage {
             continued: None,
             opens: None,
             bands: Vec::new(),
+            wraps: Vec::new(),
             lines_before: LineStore::new(),
             broken: LineStore::new(),
         }
@@ -278,6 +281,9 @@ pub struct PageContext<'a> {
     pub separators: &'a BTreeMap<usize, (Px, Px)>,
     /// In mode 15, the footnotes of sections of several columns as flows of their own.
     pub note_items: &'a crate::flow::NoteItems,
+    /// The body has drawings text wraps beside or floating tables: each page's are found
+    /// and its lines broken beside them.
+    pub wraps: bool,
     /// Below mode 15, footnotes broken in the widths of unequal columns.
     pub notes_at: &'a crate::flow::NotesAt,
     /// What breaking a paragraph again needs.

@@ -102,11 +102,13 @@ impl PageContext<'_> {
         let page = PageStart { start, story, carry };
         let (first, room) = self.lay_noted(&page);
         let bands = self.page_bands(&first.tops, page_index);
-        let laid = if bands.is_empty() {
+        let wraps = if self.wraps { self.page_wraps(&first.tops, page_index) } else { Vec::new() };
+        let laid = if bands.is_empty() && wraps.is_empty() {
             first
         } else {
-            let mut again = self.lay_regions(&page, room, Floats { bands: &bands });
+            let mut again = self.lay_regions(&page, room, Floats { bands: &bands, wraps: &wraps });
             again.page.bands = bands;
+            again.page.wraps = wraps;
             again.stopped = first.stopped.or(again.stopped);
             again
         };
@@ -263,6 +265,7 @@ impl PageContext<'_> {
             separators: &none,
             note_items: &no_notes,
             notes_at: &no_widths,
+            wraps: false,
             breaker: self.breaker,
             lines: std::cell::RefCell::default(),
         };

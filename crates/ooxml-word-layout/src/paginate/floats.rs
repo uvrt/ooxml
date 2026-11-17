@@ -10,6 +10,8 @@ use super::PageContext;
 use crate::floating::{emu_twips, vertical, Frames};
 use crate::flow::{FlowItem, ParaItem};
 use crate::px::Px;
+use crate::sections::SectionGeometry;
+use crate::wrap::{Column, Wrap};
 use ooxml_base::Q;
 
 /// Device px per twip, exactly (a drawing's place is not rounded to the layout unit).
@@ -110,10 +112,38 @@ impl Tops {
     }
 }
 
-/// What the lines of one layout of a page keep off: the bands of its drawings.
+/// What the lines of one layout of a page keep off: the bands of its drawings, and the
+/// drawings text wraps beside.
 #[derive(Debug, Clone, Copy, Default)]
 pub(super) struct Floats<'f> {
     pub bands: &'f [Band],
+    pub wraps: &'f [Wrap],
+}
+
+/// The text column of a section's page as `crate::wrap` measures from it; one of several
+/// `offset` twips from the text area's left and `width` wide, its start rounded as the
+/// layout rounds a column's (`wrap_column`).
+pub(super) fn wrap_column(section: &SectionGeometry, mode15: bool, column: Option<(i64, i64)>) -> Column {
+    let m = &section.props.margins;
+    let (offset, width) = column.unwrap_or((0, section.column_width(0)));
+    let total = m.left + m.gutter + offset;
+    let exact = Q::new(i128::from(total) * 300, 1440);
+    let half_up = |x: Q| (x + Q::new(1, 2)).floor();
+    let total_units = ooxml_text::twips(total);
+    let (n, d) = total_units.parts();
+    let start = if offset != 0 && mode15 {
+        half_up(Q::new(n, d) * Px::layout_unit())
+    } else {
+        half_up(exact)
+    };
+    let (wn, wd) = ooxml_text::twips(width).parts();
+    Column {
+        exact,
+        start,
+        width: Q::new(wn, wd),
+        mode15,
+        width_px: Q::new(i128::from(width) * 300, 1440),
+    }
 }
 
 impl PageContext<'_> {
@@ -197,5 +227,89 @@ impl PageContext<'_> {
             }
         }
         out
+    }
+
+    /// The drawings text wraps beside anchored on the lines `tops` placed, each
+    /// positioned on page `page` from the page laid out without them (`page_wraps`).
+    pub(super) fn page_wraps(&self, tops: &Tops, page: usize) -> Vec<Wrap> {
+        let mut out = Vec::new();
+        for top in tops.iter() {
+            let Some(FlowItem::Para(item)) = self.items.get(top.item) else {
+                continue;
+            };
+            let lines = self.lines_of(top.item, item);
+            for anchored in lines.anchors().iter().filter(|a| a.line == top.line) {
+                let side = anchored.anchor.wrap.as_deref().is_some_and(|w| crate::floating::SIDE_WRAPS.contains(&w));
+                if side {
+                    if let Some(wrap) = self.side_wrap(item, top, page, &anchored.anchor) {
+                        out.push(wrap);
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// One drawing text wraps beside, positioned on its page.
+    fn side_wrap(&self, item: &ParaItem, top: &Top, page: usize, anchor: &ooxml_word_model::model::Anchor) -> Option<Wrap> {
+        let mut frames = self.frames(item, top, page, Px::ZERO)?;
+        let in_column = anchor.h.relative.as_deref().is_none_or(|r| r == "column");
+        if !self.mode15 && anchor.simple.is_none() && in_column && anchor.h.offset.is_none() {
+            if let Some(source) = &item.source {
+                // Below mode 15 a drawing aligned in the column is aligned between the
+                // paragraph's indents.
+                let indent = |key: &str| source.resolved.paragraph.get(key).and_then(ooxml_word_model::value::Value::int).unwrap_or(0);
+                frames.left += indent("ind.left");
+                frames.right += indent("ind.right");
+            }
+        }
+        let mut x = crate::floating::horizontal(anchor, &frames)?;
+        let y = vertical(anchor, &frames)?;
+        if !self.mode15 {
+            // ... and on a whole twip, the nearest.
+            x = (x + Q::new(1, 2)).floor();
+        }
+        let twips = |v: i64| Q::from_integer(i128::from(emu_twips(v)));
+        let (cx, cy) = (emu_twips(anchor.extent.0), emu_twips(anchor.extent.1));
+        let [el, et, er, eb] = anchor.effect.map(twips);
+        let [mut dt, mut db, dl, dr] = anchor.distance.map(|d| twips(d) * twip_px());
+        let tight = matches!(anchor.wrap.as_deref(), Some("wrapTight" | "wrapThrough"));
+        let polygon: Option<Vec<(Q, Q)>> = anchor.polygon.as_ref().filter(|p| tight && !p.is_empty()).map(|points| {
+            points
+                .iter()
+                .map(|(a, b)| {
+                    let px = (x + Q::from_integer(i128::from(cx) * i128::from(*a) / 21600)) * twip_px();
+                    let py = (y + Q::from_integer(i128::from(cy) * i128::from(*b) / 21600)) * twip_px();
+                    (px, py)
+                })
+                .collect()
+        });
+        if polygon.is_some() && !self.mode15 {
+            // Below mode 15 a wrap polygon keeps text off its own height only.
+            dt = Q::from_integer(0);
+            db = Q::from_integer(0);
+        }
+        let (top_px, bottom_px) = match &polygon {
+            Some(points) => (
+                points.iter().map(|p| p.1).min()? - dt,
+                points.iter().map(|p| p.1).max()? + db,
+            ),
+            None => ((y - et) * twip_px() - dt, (y + Q::from_integer(i128::from(cy)) + eb) * twip_px() + db),
+        };
+        Some(Wrap {
+            top: top_px,
+            bottom: bottom_px,
+            left: (x - el) * twip_px(),
+            right: (x + Q::from_integer(i128::from(cx)) + er) * twip_px(),
+            dist_left: dl,
+            dist_right: dr,
+            side: anchor.wrap_text.as_deref().unwrap_or("bothSides").to_owned(),
+            y: y * twip_px(),
+            polygon,
+            dist_top: dt,
+            dist_bottom: db,
+            half_up: false,
+            text_shift: None,
+        })
     }
 }

@@ -42,6 +42,7 @@ pub mod sections;
 pub mod stories;
 pub mod table;
 pub mod vertical;
+pub mod wrap;
 
 pub use engine::{DocumentLayout, WordLayout};
 pub use error::LayoutError;

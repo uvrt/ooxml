@@ -119,6 +119,8 @@ pub(super) struct Stack<'o> {
     pub(super) foot: Foot,
     /// The bands its lines keep off.
     bands: Vec<Band>,
+    /// The drawings its lines go beside.
+    wraps: &'o [crate::wrap::Wrap],
     /// The lines it placed, for the drawings anchored on them.
     tops: &'o mut Tops,
 }
@@ -182,16 +184,18 @@ impl PageContext<'_> {
         if bands.len() > 1 && first.is_ok() {
             bands = self.stacked_bands(start, story, carry, page_index, bands);
         }
-        if bands.is_empty() {
+        let wraps = if self.wraps { self.page_wraps(&tops, page_index) } else { Vec::new() };
+        if bands.is_empty() && wraps.is_empty() {
             return first;
         }
-        let again = laid(Floats { bands: &bands }, &mut Tops::default());
+        let again = laid(Floats { bands: &bands, wraps: &wraps }, &mut Tops::default());
         let mut page = match (first, again) {
-            (Err((_, stopped)), Ok(page) | Err((page, _))) => return Err((with_bands(page, bands), stopped)),
-            (Ok(_), Err((page, stopped))) => return Err((with_bands(page, bands), stopped)),
+            (Err((_, stopped)), Ok(page) | Err((page, _))) => return Err((with_floats(page, bands, wraps), stopped)),
+            (Ok(_), Err((page, stopped))) => return Err((with_floats(page, bands, wraps), stopped)),
             (Ok(_), Ok(page)) => page,
         };
         page.bands = bands;
+        page.wraps = wraps;
         Ok(page)
     }
 
@@ -210,7 +214,7 @@ impl PageContext<'_> {
         for band in bands.iter().skip(1) {
             let mut found = Tops::default();
             let mut scratch = LaidPage::empty(start, std::sync::Arc::clone(carry));
-            let floats = Floats { bands: &fixed };
+            let floats = Floats { bands: &fixed, wraps: &[] };
             if self.scan(start, story, None, &mut scratch, floats, &mut found).is_err() {
                 break;
             }
@@ -265,6 +269,7 @@ impl PageContext<'_> {
             out,
             foot,
             bands: across(floats.bands, frame.as_deref(), self),
+            wraps: floats.wraps,
             tops,
         };
         let (mut index, mut line) = (start.item, start.line);
@@ -433,7 +438,8 @@ impl PageContext<'_> {
             self.broken(index, self.breaker.fit_width(source, &current, number, f.width));
         }
         let lines = self.lines_of(index, p);
-        let height = lines.heights().get(number)?;
+        let height = *lines.heights().get(number)?;
+        let height = &height;
         let count = lines.count();
         let last = number + 1 == count;
         if !stack.bands.is_empty() {
@@ -442,6 +448,15 @@ impl PageContext<'_> {
             let after = if last && !self.mode15 { Px::twips(p.after) } else { Px::ZERO };
             stack.y = clear_of_bands(stack.y, height.pitch + after, &stack.bands);
         }
+        if let (false, Some(source)) = (stack.wraps.is_empty(), &p.source) {
+            stack.y = self.beside(p, at, stack, source, number);
+        }
+        // The line as broken beside the drawings.
+        let lines = self.lines_of(index, p);
+        let height = *lines.heights().get(number)?;
+        let height = &height;
+        let count = lines.count();
+        let last = number + 1 == count;
         let border = if last || !self.mode15 { p.border } else { Px::ZERO };
         let after = if last { Px::twips(p.after) } else { Px::ZERO };
         let fitted = Fitted {
@@ -491,6 +506,25 @@ impl PageContext<'_> {
             return Some(done(next, true, Why::Column, Position::at(index, number)));
         }
         None
+    }
+
+    /// Line `number` broken beside the drawings it reaches into, and where its top is.
+    fn beside(&self, p: &ParaItem, at: &At<'_>, stack: &Stack<'_>, source: &crate::rebreak::ParaSource, number: usize) -> Px {
+        let current = self.lines_of(at.index, p);
+        let column = at.frame.filter(|f| f.multi).map(|f| (f.offset, f.width));
+        let Some(section) = self.sections.get(p.section) else {
+            return stack.y;
+        };
+        let beside = crate::rebreak::Beside {
+            number,
+            last: number + 1 == current.count(),
+            after: Px::twips(p.after).value(),
+            wraps: stack.wraps,
+            column: super::floats::wrap_column(section, self.mode15, column),
+        };
+        let (y, found) = self.breaker.fit_beside(source, &current, &beside, stack.y.value());
+        self.broken(at.index, found);
+        Px::from(y)
     }
 
     /// Where a page ends whose line `number` does not fit, past an automatic hyphen ending
@@ -686,9 +720,10 @@ fn top_of(frame: Option<&Frame>, item: usize, line: usize, at: (Px, Px, Px)) -> 
     }
 }
 
-/// `page` with the bands its lines kept off.
-fn with_bands(mut page: LaidPage, bands: Vec<Band>) -> LaidPage {
+/// `page` with the bands and wraps its lines kept off.
+fn with_floats(mut page: LaidPage, bands: Vec<Band>, wraps: Vec<crate::wrap::Wrap>) -> LaidPage {
     page.bands = bands;
+    page.wraps = wraps;
     page
 }
 
