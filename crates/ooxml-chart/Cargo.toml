@@ -13,6 +13,7 @@ ooxml-schema.workspace = true
 ooxml-colour.workspace = true
 ooxml-drawingml.workspace = true
 ooxml-fonts.workspace = true
+ooxml-text.workspace = true
 ooxml-numfmt.workspace = true
 
 [lints]

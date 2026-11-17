@@ -15,12 +15,14 @@ ooxml-text.workspace = true
 ooxml-zip.workspace = true
 ooxml-derive.workspace = true
 ooxml-word-model.workspace = true
+ooxml-word-layout.workspace = true
 ooxml-colour.workspace = true
 ooxml-drawingml.workspace = true
 ooxml-chart.workspace = true
 ooxml-numfmt.workspace = true
 ooxml-schema.workspace = true
 ooxml-xml.workspace = true
+ooxml-metafile.workspace = true
 serde_json.workspace = true
 flate2.workspace = true
 

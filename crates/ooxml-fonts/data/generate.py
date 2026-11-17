@@ -2,14 +2,15 @@
 """Write ooxml-fonts' data tables from the Python packages that hold them (one source).
 
 * ``substitutions.tsv``: ``ooxml_common.text.fontmap.SUBSTITUTIONS``, in its order --
-  the Office face, the face it is measured and drawn with, whether that one was measured
-  to the same advances and line metrics, the advance table it is measured with
-  (``advances.tsv``), and whether it draws East Asian text (one row a line, tab
-  separated).
-* ``advances.tsv``: ``ooxml_common.text.metrics.METRICS``, the upright advance tables
-  PowerPoint's text and charts are measured with -- per table its name, units per em,
-  ascender, descender, default and East Asian widths, the Office face's line gap (``-``
-  where unmeasured) and its advances (code point and advance pairs, hexadecimal).
+  the Office face, the face it is drawn with, whether that one was measured to the same
+  advances and line metrics, the measured table it is measured with, and whether it draws
+  East Asian text (one row a line, tab separated).
+* ``office-faces.tsv``: ``ooxml_common.text.metrics.METRICS``, the measured tables
+  PowerPoint's text is measured with -- per table a ``face`` line (units per em, ascender,
+  descender, line gap or ``-``, default and East Asian widths upright and bold, whether
+  the face is variable), its advances upright and bold (code point and advance pairs,
+  hexadecimal), and its OpenType kern classes (``KernTable``: each left and right class's
+  code points, then the class matrix's ``left:right:adjustment`` cells), upright and bold.
 * ``recorded-faces.tsv``: ``ooxml_common.text.recorded_symbol_faces``, the integers Word
   lays Symbol and Wingdings out with, recorded from Word's copies -- per family a
   ``metrics`` line (``docx2svg.vertical.FaceMetrics``' eight integers), a ``decorations``
@@ -38,13 +39,6 @@ def main() -> None:
     rows = [f"{row.office}\t{row.substitute}\t{int(row.metric_compatible)}\t{row.metrics}\t{int(row.east_asian)}"
             for row in SUBSTITUTIONS.values()]
     (HERE / "substitutions.tsv").write_text(HEADER + "\n".join(rows) + "\n", encoding="utf-8")
-    tables = []
-    for name, table in METRICS.items():
-        gap = "-" if table.line_gap is None else str(table.line_gap)
-        pairs = " ".join(f"{ord(char):x}:{advance}" for char, advance in sorted(table.widths.items()))
-        tables.append("\t".join([name, str(table.units_per_em), str(table.ascender), str(table.descender),
-                                 str(table.default_width), str(table.cjk_width), gap, pairs]))
-    (HERE / "advances.tsv").write_text(HEADER + "\n".join(tables) + "\n", encoding="utf-8")
     lines = []
     for family in sorted(recorded.METRICS):
         lines.append("\t".join(["metrics", family, *(str(v) for v in recorded.METRICS[family])]))
@@ -52,6 +46,44 @@ def main() -> None:
         pairs = " ".join(f"{code:x}:{advance}" for code, advance in sorted(recorded.ADVANCES[family].items()))
         lines.append("\t".join(["advances", family, pairs]))
     (HERE / "recorded-faces.tsv").write_text(HEADER + "\n".join(lines) + "\n", encoding="utf-8")
+    (HERE / "office-faces.tsv").write_text(HEADER + "\n".join(office_faces()) + "\n", encoding="utf-8")
+
+
+def _advances(widths: dict) -> str:
+    return " ".join(f"{ord(char):x}:{advance}" for char, advance in sorted(widths.items(), key=lambda i: ord(i[0])))
+
+
+def _classes(groups) -> list[str]:
+    return [",".join(f"{ord(char):x}" for char in group) for group in groups]
+
+
+def _cells(matrix: dict) -> str:
+    return " ".join(f"{left}:{right}:{value}" for left, row in sorted(matrix.items())
+                    for right, value in sorted(row.items()))
+
+
+def office_faces() -> list[str]:
+    lines = []
+    for name, m in METRICS.items():
+        gap = "-" if m.line_gap is None else str(m.line_gap)
+        lines.append("\t".join(["face", name, str(m.units_per_em), str(m.ascender), str(m.descender), gap,
+                                str(m.default_width), str(m.cjk_width), str(m.bold_default_width),
+                                str(m.bold_cjk_width), str(int(m.variable))]))
+        lines.append("\t".join(["widths", name, _advances(m.widths)]))
+        lines.append("\t".join(["bold-widths", name, _advances(m.bold_widths)]))
+        table = m.kerning
+        if table is None:
+            continue
+        if not hasattr(table, "matrix"):
+            raise SystemExit(f"{name}: kern pairs that are not a class matrix")
+        for prefix, left, right, matrix in (("", table.left, table.right, table.matrix),
+                                            ("bold-", table.bold_left, table.bold_right, table.bold_matrix)):
+            if not left:
+                continue
+            lines.append("\t".join([prefix + "kern-left", name, *_classes(left)]))
+            lines.append("\t".join([prefix + "kern-right", name, *_classes(right)]))
+            lines.append("\t".join([prefix + "kern-cells", name, _cells(matrix)]))
+    return lines
 
 
 if __name__ == "__main__":

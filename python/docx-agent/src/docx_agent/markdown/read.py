@@ -148,6 +148,8 @@ class CellRecord:
     row_span: int
     column_span: int
     records: list
+    #: The cell's ``w:tc`` (round 59: its fill and text colour, :mod:`docx_agent.state`).
+    element: Element | None = None
 
 
 @dataclass
@@ -668,7 +670,7 @@ class Reader:
                         # table, before the row (measured: Word's Accept All).
                         moved.append((len(rows), records[:-1]))
                         records = records[-1:]
-                    cell = CellRecord(f"{entry.id}/c{r},{column}", r, column, 1, span, records)
+                    cell = CellRecord(f"{entry.id}/c{r},{column}", r, column, 1, span, records, tc)
                     for c in range(column, column + span):
                         origins[c] = cell
                     line.append(cell)

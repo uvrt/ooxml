@@ -11,7 +11,13 @@ use super::consts::{
     LABEL_INK_CENTRE_EM, WRAPPED_LABEL_MAX_LINES,
 };
 use ooxml_drawingml::drawable::Colour;
-use ooxml_fonts::advances::{is_cjk, metrics_for};
+use ooxml_fonts::office::{office_metrics_for, OfficeFace};
+use ooxml_text::table::is_cjk;
+
+/// The measured table a family is measured with (`fontmap.metrics_for`).
+fn metrics_for(family: Option<&str>) -> Option<&'static OfficeFace> {
+    family.and_then(office_metrics_for)
+}
 
 /// Whether `c` is white space to Python's `str.split()` and `str.strip()`.
 pub fn py_space(c: char) -> bool {
@@ -141,7 +147,7 @@ pub fn text_width(text: &str, family: Option<&str>, size: f64, family_ea: Option
             total += 0.5 * size;
             continue;
         };
-        let width = table.width(c).unwrap_or(if east_asian {
+        let width = table.advance(c, false).unwrap_or(if east_asian {
             table.cjk_width
         } else {
             table.default_width

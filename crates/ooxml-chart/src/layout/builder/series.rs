@@ -20,7 +20,12 @@ use crate::pymath;
 use ooxml_drawingml::drawable::{Colour, Fill, Outline};
 use ooxml_drawingml::source;
 use ooxml_drawingml::text::TextBody;
-use ooxml_fonts::advances::covers_east_asian;
+use ooxml_fonts::substitutes::substitution_for;
+
+/// Whether a family can draw East Asian text (its substitution row says so).
+fn covers_east_asian(family: &str) -> bool {
+    substitution_for(family).is_some_and(|row| row.east_asian)
+}
 
 /// The face East Asian text is drawn in, from a cascade of names (`east_asian_family`).
 fn east_asian_family(candidates: &[Option<&str>]) -> Option<String> {

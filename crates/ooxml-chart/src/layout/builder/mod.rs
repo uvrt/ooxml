@@ -1,8 +1,9 @@
 //! Owns: the chart builder -- one chart part laid out in its frame and lowered to drawable
 //! elements, `chart/layout.py`'s `ChartBuilder` -- split by concern: the series and fonts it
-//! reads ([`series`]), the frame's bands, title and plot rectangle ([`frame`]), pies,
-//! of-pies and radars ([`polar`]), cartesian, scatter and bubble charts ([`cartesian`]), marks,
-//! gridlines and axes ([`marks`]), the 3-D scene ([`scene`]), labels ([`labels`]), the legend
+//! reads ([`series`]), the frame's bands, title and plot rectangle ([`frame`]), pies and
+//! of-pies ([`polar`]), radars ([`radar`]), cartesian charts ([`cartesian`]), scatter and bubble
+//! charts ([`scatter`]), marks, gridlines and axes ([`marks`]), the 3-D scene ([`scene`]),
+//! labels ([`labels`]), the legend
 //! ([`legend`]) and the primitives every part draws with ([`primitives`]).
 //!
 //! A combination chart draws each of its plots as a *group*: the same builder with that
@@ -19,6 +20,8 @@ mod legend;
 mod marks;
 mod polar;
 mod primitives;
+mod radar;
+mod scatter;
 mod scene;
 mod series;
 

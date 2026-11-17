@@ -83,10 +83,18 @@ pub struct OfficeSubstitution {
     pub substitute: String,
     /// Whether the two were measured to the same advances and line metrics.
     pub same_metrics: bool,
-    /// The advance table it is measured with (`crate::advances`).
+    /// The measured table it is measured with ([`crate::office::office_face`]): the
+    /// substitute's own, or the nearest one where no clone exists.
     pub metrics: String,
     /// Whether it draws East Asian text.
     pub east_asian: bool,
+}
+
+impl OfficeSubstitution {
+    /// Whether the face drawn is the very face asked for.
+    pub fn exact(&self) -> bool {
+        self.office == self.substitute
+    }
 }
 
 struct Table {

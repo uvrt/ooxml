@@ -325,6 +325,14 @@ def _layout(call: Any, ids: list[str], required: bool) -> Any:
             if made is not None:
                 return _PagesOf(made[0].get("pages_of") or {})
             return lay_out_unlocked(document, call.unlocked, lambda: entry.version == version)
+        # Round 59 (R134): in a batch, holding the document, the pages are read in the worker
+        # holding its layouts where it has one (held_facts); else laid out here.
+        from ._base import held_facts
+
+        made = held_facts(call, {"pages": None, "ranges": None, "layout": False, "min_size": None,
+                                 "styles": None, "keeps": None, "pages_of": sorted(set(ids))})
+        if made is not None:
+            return _PagesOf(made[0].get("pages_of") or {})
         return document.layout()
     except ToolError as error:
         if required:
