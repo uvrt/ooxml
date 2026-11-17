@@ -5,6 +5,50 @@ docx-agent has not been released to PyPI. Each version that reaches `main` is ta
 snapshot commit; the development history before it is summarised here.
 [`ROADMAP.md`](ROADMAP.md) has the detail of every phase.
 
+## 0.1.135 -- unreleased
+
+Round 59 (R135): many writers on one long tracked document. Measured on macOS (Python 3.12)
+with `tools/tracked_report_bench.py --mix full`: 11 writers on the made-up 340-page report,
+80 changing calls, a check of the writer's chapter after each change and a read every few
+turns, before (v2026.11.17) and after. The calls themselves do not grow over a run: the
+same kind of call early and late runs the same code at the same cost when nothing runs
+beside it (profiled). They slow down because they queue for the document's lock behind
+other writers' changes, and each change holds it longer while other threads' work takes
+the interpreter lock: reads that worked through the whole document after every change, and
+Python's garbage collector collecting what they made. Reads now cost what they read.
+
+- **`word_read` of a span reads the span.** A chapter's read read the whole body after
+  every change (each paragraph's effective formatting included), then cut the chapter out:
+  13 s of the calling process's CPU per read on the 340-page report. Now only the span's
+  blocks are read, and of the blocks before it only the list items are counted, when the span
+  numbers one (`markdown.read.Reader.span`, as a table read alone already was); with
+  `DOCX_AGENT_FULL_VALIDATE` every span read so is compared with the story's. Identical
+  output in the three views; 1.6 s → 0.24 s per read on an 85-page report.
+- **A read copy parses with its document's kept blocks.** The read copy of each committed
+  version, and each draft, parsed the document's effective formatting whole (7.4 s at 340
+  pages); it now takes the blocks its version shares with those parsed before
+  (`edit.effective._kept_blocks`: docx2svg's `KeptBlocks`, kept by bytes and context). A
+  chapter's read at 340 pages, after a change: 13 s → 1 s.
+- **`describe` finds the comments' records once**, not three times per comment (4.7 s of a
+  340-page describe, more with each comment).
+- **Page references read their page in the worker** holding the document's layouts
+  (`layout.page_infos_of`, the check worker's `page_infos`) where the Rust owner cannot
+  serve: a batch of page references brought the whole layout to the calling process once
+  per reference (a batch of 5 on 85 pages: 11 s of its CPU → 2 s, the same results). The work
+  ahead of one page reference lays out in that worker with the lock let go.
+- The 11-writer run, after the fields were set up: 677 s → 463 s for the 80 changes; the
+  calling process's CPU 606 s → 396 s; the garbage collector 205 s → 55 s over the whole
+  run (gen 2: 159 s → 36 s); `read_batch` 13 s → 2 s of its CPU per call, `describe` 11.6 s
+  → 9.1 s. The last fifth's median against the first fifth's: `word_format` 6.2× → 3.9×,
+  `word_edit_table` 2.2× both, `batch` 2.0× → 2.6× (two calls), `check` 1.0× → 0.5×.
+- `tools/tracked_report.py --fields`: a table of contents, a bookmark on each chapter's
+  heading and a page reference to it. `tools/tracked_report_bench.py --mix full`: every kind
+  of writer call (`word_edit_table`, `word_format`, `batch`, `word_insert_text`, an occasional
+  `word_fields` update, `describe`, `read_batch`), a check after each change; per call kind
+  the median and slowest of the first and last `--window` of the changing calls; this
+  process's CPU, the garbage collector's time (`gc.callbacks`), the sizes of what the session
+  keeps per document, worker memory; `--profile` (one call at a time), `--add-fields`.
+
 ## 0.1.134 -- unreleased
 
 Round 59 (Q4): what the workers keep after a document closes, the close's wait for them,

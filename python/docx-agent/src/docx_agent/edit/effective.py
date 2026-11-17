@@ -449,19 +449,24 @@ def _table_style(element: Element) -> str | None:
 
 def _kept_blocks(document: "Document") -> "list | None":
     """The document's own :class:`docx2svg.KeptBlocks`, the lock its parses take (one at a
-    time) and its last segments (:func:`_segments`); ``None`` for a read copy (of one version) and with the edit path per change
-    off (``DOCX_AGENT_INCREMENTAL=0``)."""
-    if document.__dict__.get("_live") is not None:
-        return None
+    time) and its last segments (:func:`_segments`); ``None`` with the edit path per change
+    off (``DOCX_AGENT_INCREMENTAL=0``).
+
+    A read copy of one version, or a draft (round 59, R135), parses with its document's: the
+    blocks are kept by their bytes and context, and the segments by their bytes, so a block
+    the copy's version shares with the versions parsed before is taken as it was.  Before,
+    a copy parsed its whole document each time: with many writers, nearly every read of a
+    long document is of a version no read has seen, and each paid for the whole body."""
+    owner = document.__dict__.get("_live") or document
     from ..revalidate import enabled
 
     if not enabled():
         return None
-    found = document.__dict__.get("_effective_kept")
+    found = owner.__dict__.get("_effective_kept")
     if found is None:
         from docx2svg.parse.document import KeptBlocks
 
-        found = document.__dict__.setdefault("_effective_kept", [KeptBlocks(), threading.Lock(), {}])
+        found = owner.__dict__.setdefault("_effective_kept", [KeptBlocks(), threading.Lock(), {}])
     return found
 
 
