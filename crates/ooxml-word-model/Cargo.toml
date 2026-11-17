@@ -1,0 +1,21 @@
+[package]
+name = "ooxml-word-model"
+version = "0.1.0"
+description = "Word's read-side model for layout: generated w: views, the styles cascade, numbering and list labels, fields threading, sections, the final view of tracked changes"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+ooxml-base.workspace = true
+ooxml-xml.workspace = true
+ooxml-opc.workspace = true
+ooxml-derive.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+ooxml-zip.workspace = true
