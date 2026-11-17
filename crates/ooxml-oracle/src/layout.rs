@@ -79,6 +79,8 @@ pub struct Outcome {
     pub fields: usize,
     /// Field update results compared (fields and every paragraph's page reference).
     pub updates: usize,
+    /// Footnote lines compared.
+    pub note_lines: usize,
     /// Every difference.
     pub differences: Vec<Difference>,
     /// The Rust layout's own time.
@@ -600,6 +602,75 @@ fn compare_blocks(facts: &PageFacts, drawn: &Value, place: &str, diffs: &mut Dif
     }
 }
 
+/// The footnotes' lines at each page's foot (their paragraph's path, number, top, pitch,
+/// baseline, column) against docx2svg's `note_lines`; a page whose notes the Rust paint
+/// does not draw is skipped and counted as a difference of its own.
+fn compare_note_lines(
+    engine: &mut WordLayout,
+    model: &mut ooxml_word_model::Model,
+    laid: &DocumentLayout,
+    theirs: &Value,
+    diffs: &mut Diffs<'_>,
+    outcome: &mut Outcome,
+) {
+    let pages = at(theirs, "pages").as_array().cloned().unwrap_or_default();
+    for (k, page) in pages.iter().enumerate() {
+        let expected: Vec<LineBox> = at(page, "note_lines")
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|l| {
+                (
+                    text(at(l, 0)),
+                    usize::try_from(int(l.get(1))).unwrap_or(0),
+                    text(at(l, 2)),
+                    text(at(l, 3)),
+                    int(l.get(4)),
+                    l.get(5).and_then(Value::as_u64).and_then(|c| usize::try_from(c).ok()),
+                )
+            })
+            .collect();
+        let parts = engine.page_parts(model, laid, k);
+        if let Some(why) = parts.unpainted.first() {
+            if !expected.is_empty() {
+                diffs.push(format!("page {k}"), "note lines not drawn", why.clone());
+            }
+            continue;
+        }
+        let mine: Vec<LineBox> = parts
+            .footnotes
+            .map(|notes| {
+                let (paragraphs, _) = ooxml_word_layout::flow::body_paragraphs(&notes.blocks);
+                notes
+                    .walked
+                    .lines
+                    .iter()
+                    .map(|l| {
+                        let path = l.block.and_then(|b| paragraphs.get(b)).map(|p| p.path.to_string());
+                        (
+                            path.unwrap_or_default(),
+                            l.number,
+                            l.top.to_string(),
+                            l.pitch.to_string(),
+                            l.baseline,
+                            l.column,
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        outcome.note_lines += mine.len();
+        if mine != expected {
+            let first = mine.iter().zip(&expected).position(|(a, b)| a != b);
+            let detail = match first {
+                Some(j) => format!("line {j}: {:?} vs {:?}", mine.get(j), expected.get(j)),
+                None => format!("{} lines vs {}", mine.len(), expected.len()),
+            };
+            diffs.push(format!("page {k}"), "note lines", detail);
+        }
+    }
+}
+
 /// Lay one document out and compare it with its records.
 pub fn run_document(records: &LayoutRecords, outcome: &mut Outcome) -> Result<(), String> {
     outcome.documents += 1;
@@ -655,6 +726,7 @@ pub fn run_document(records: &LayoutRecords, outcome: &mut Outcome) -> Result<()
     let facts = LayoutFacts::of(&laid);
     compare_pages(&laid.document, &laid, &facts, theirs, cut, &mut diffs, outcome);
     if why.is_none() {
+        compare_note_lines(&mut engine, &mut model, &laid, theirs, &mut diffs, outcome);
         let updates = crate::layout_updates::compare_updates(&laid, &facts, theirs);
         outcome.updates += updates.compared;
         for (place, detail) in updates.differences {

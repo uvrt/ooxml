@@ -25,7 +25,7 @@ pub use positions::{line_positions, Positions, Setting, TabSpan};
 use crate::engine::DocumentLayout;
 use crate::faces::Faces;
 use crate::flow::{body_paragraphs, FlowItem};
-use crate::geometry::stories::StoryPage;
+use crate::geometry::stories::PageParts;
 use crate::geometry::{DrawnLine, LineSource, PageGeometry};
 use crate::paginate::LaidPage;
 use crate::paragraph::MeasuredParagraph;
@@ -415,13 +415,13 @@ fn paint_set(
 }
 
 /// Page `page`'s paint (0-based, blank pages counted): its body's lines, then its header's
-/// and footer's (`stories`, from [`crate::WordLayout::page_stories`]), their paragraphs
-/// resolved in `model`.
+/// and footer's, then its footnotes (`parts`, from [`crate::WordLayout::page_parts`]),
+/// their paragraphs resolved in `model`.
 pub fn paint_page(
     layout: &DocumentLayout,
     model: &mut Model,
     page: usize,
-    stories: &[StoryPage],
+    parts: &PageParts,
     cx: &PaintContext<'_>,
 ) -> Option<PagePaint> {
     let geometry = layout.page_geometry(page)?;
@@ -458,7 +458,8 @@ pub fn paint_page(
             lines: &mut lines,
         },
     );
-    for story in stories {
+    out.unpainted.extend(parts.unpainted.iter().cloned());
+    for story in parts.stories.iter().chain(&parts.footnotes) {
         let set = LineSet {
             items: &story.flow.items,
             blocks: &story.blocks,
@@ -466,7 +467,7 @@ pub fn paint_page(
             laid: None,
             lines: &story.walked.lines,
             rows: story.walked.rows.iter().map(|(i, r)| (*i, r)).collect(),
-            story: Some((story.kind, story.part.clone())),
+            story: (story.kind != "footnotes").then(|| (story.kind, story.part.clone())),
         };
         paint_set(
             &set,

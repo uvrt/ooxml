@@ -58,11 +58,21 @@ fn gap_above(item: &crate::flow::ParaItem, previous: Option<&FlowItem>, first: b
 
 /// Walk `items` whole from `from.top`.
 pub fn walk(items: &[FlowItem], from: &WalkFrom) -> Walked {
+    walk_between(items, from, (0, 0), (items.len(), 0))
+}
+
+/// Walk `items` from line `start.1` of item `start.0` up to (not including) line `end.1`
+/// of item `end.0`, from `from.top` (`_walk` between two positions).
+pub fn walk_between(items: &[FlowItem], from: &WalkFrom, start: (usize, usize), end: (usize, usize)) -> Walked {
     let mut out = Walked::default();
     let mut y = from.top;
     let mut previous: Option<&FlowItem> = None;
     let mut first = true;
-    for (index, item) in items.iter().enumerate() {
+    for (index, item) in items.iter().enumerate().skip(start.0) {
+        let from_line = if index == start.0 { start.1 } else { 0 };
+        if (index, from_line) >= end {
+            break;
+        }
         let p = match item {
             FlowItem::Para(p) => p,
             FlowItem::Table(t) => {
@@ -87,48 +97,71 @@ pub fn walk(items: &[FlowItem], from: &WalkFrom) -> Walked {
             }
             FlowItem::Stop(_) => break,
         };
-        let count = p.measured.heights.len();
-        let mut space_before = Px::ZERO;
-        for (number, height) in p.measured.heights.iter().enumerate() {
-            if number == 0 {
-                let (gap, boxed) = gap_above(p, previous, first, from.mode15);
-                y += gap + p.top_border;
-                space_before = boxed + p.top_border;
-            }
-            let last = number + 1 == count;
-            let mut space_after = Px::ZERO;
-            if last {
-                let same_next = items
-                    .get(index + 1)
-                    .and_then(FlowItem::para)
-                    .is_some_and(|next| next.style == p.style);
-                let own_after = if p.contextual && same_next { 0 } else { p.after };
-                space_after = p.border + Px::twips(own_after);
-                if let (Some(bottom), true) = (from.bottom, index + 1 == items.len()) {
-                    space_after = space_after.max(bottom - (y + height.pitch));
-                }
-            }
-            let b = LineBox::new(*height, if number == 0 { space_before } else { Px::ZERO }, space_after);
-            if !p.measured.undrawn.contains(&number) {
-                out.lines.push(DrawnLine {
-                    source: LineSource::Flow { item: index },
-                    block: Some(p.block),
-                    body: Some(p.body),
-                    number,
-                    top: y,
-                    pitch: height.pitch,
-                    baseline: baseline_in_box(y - b.space_before, &b),
-                    band: text_band(y - b.space_before, &b),
-                    column: None,
-                    left: from.left,
-                });
-            }
-            y += height.pitch;
-            first = false;
-        }
-        y += p.border;
+        y = walk_paragraph(
+            &mut out,
+            (items, index, p),
+            from,
+            (from_line, end),
+            (y, previous, &mut first),
+        );
         previous = Some(item);
     }
     out.end = y;
     out
+}
+
+/// One paragraph's lines from `from_line` up to `end`; where the stack is after them.
+fn walk_paragraph(
+    out: &mut Walked,
+    (items, index, p): (&[FlowItem], usize, &crate::flow::ParaItem),
+    from: &WalkFrom,
+    (from_line, end): (usize, (usize, usize)),
+    (mut y, previous, first): (Px, Option<&FlowItem>, &mut bool),
+) -> Px {
+    let count = p.measured.heights.len();
+    let mut space_before = Px::ZERO;
+    for (number, height) in p.measured.heights.iter().enumerate().skip(from_line) {
+        if (index, number) >= end {
+            return y;
+        }
+        if number == 0 {
+            let (gap, boxed) = gap_above(p, previous, *first, from.mode15);
+            y += gap + p.top_border;
+            space_before = boxed + p.top_border;
+        }
+        let last = number + 1 == count;
+        let mut space_after = Px::ZERO;
+        if last {
+            let same_next = items
+                .get(index + 1)
+                .and_then(FlowItem::para)
+                .is_some_and(|next| next.style == p.style);
+            let own_after = if p.contextual && same_next { 0 } else { p.after };
+            space_after = p.border + Px::twips(own_after);
+            if let (Some(bottom), true) = (from.bottom, index + 1 == items.len()) {
+                space_after = space_after.max(bottom - (y + height.pitch));
+            }
+        }
+        let b = LineBox::new(*height, if number == 0 { space_before } else { Px::ZERO }, space_after);
+        if !p.measured.undrawn.contains(&number) {
+            out.lines.push(DrawnLine {
+                source: LineSource::Flow { item: index },
+                block: Some(p.block),
+                body: Some(p.body),
+                number,
+                top: y,
+                pitch: height.pitch,
+                baseline: baseline_in_box(y - b.space_before, &b),
+                band: text_band(y - b.space_before, &b),
+                column: None,
+                left: from.left,
+            });
+        }
+        y += height.pitch;
+        *first = false;
+    }
+    if (index, count) <= end {
+        y += p.border;
+    }
+    y
 }

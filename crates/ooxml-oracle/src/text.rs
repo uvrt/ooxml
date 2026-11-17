@@ -84,7 +84,12 @@ pub fn drawing_fonts_of(
     index: &Arc<ooxml_fonts::DrawingIndex>,
 ) -> Result<ooxml_fonts::DrawingFonts, String> {
     let (_, embedded, table, options) = font_inputs(record, package)?;
-    Ok(ooxml_fonts::DrawingFonts::new(Arc::clone(index), &embedded, table, options))
+    Ok(ooxml_fonts::DrawingFonts::new(
+        Arc::clone(index),
+        &embedded,
+        table,
+        options,
+    ))
 }
 
 /// The drawing index of a fonts record's folders.

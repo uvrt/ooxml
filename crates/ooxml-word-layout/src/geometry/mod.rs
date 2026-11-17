@@ -9,6 +9,7 @@
 //! Must not: decide where a page breaks or where a line is (the paginator has), draw (the
 //! paint is [`crate::paint`]'s), or hold anything between calls.
 
+pub mod footnotes;
 pub mod linebox;
 mod lines;
 pub mod stories;

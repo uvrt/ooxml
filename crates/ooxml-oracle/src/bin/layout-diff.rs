@@ -46,6 +46,7 @@ fn main() {
         "placed_lines": outcome.placed,
         "fields": outcome.fields,
         "updates": outcome.updates,
+        "note_lines": outcome.note_lines,
         "differences": outcome.differences.len(),
         "causes": causes,
         "layout_seconds": outcome.layout_time.as_secs_f64(),

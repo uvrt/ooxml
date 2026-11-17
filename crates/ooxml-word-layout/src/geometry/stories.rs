@@ -19,7 +19,19 @@ use ooxml_word_model::value::Text;
 use ooxml_word_model::Model;
 use std::sync::Arc;
 
-/// A header or footer as a page draws it.
+/// What a page draws beyond its body: its header and footer, its footnotes, and what of
+/// them is not drawn here, by reason.
+#[derive(Debug, Clone, Default)]
+pub struct PageParts {
+    /// The header and footer.
+    pub stories: Vec<StoryPage>,
+    /// The footnotes at its foot.
+    pub footnotes: Option<StoryPage>,
+    /// What is not drawn.
+    pub unpainted: Vec<String>,
+}
+
+/// A header or footer (or a page's footnotes) as a page draws it.
 #[derive(Debug, Clone)]
 pub struct StoryPage {
     /// `header` or `footer`.

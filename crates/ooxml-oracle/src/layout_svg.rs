@@ -161,8 +161,8 @@ pub fn run_svg_document(records: &LayoutRecords, outcome: &mut SvgOutcome) -> Re
     };
     let mut ours = Vec::new();
     for page in 0..laid.page_count() {
-        let stories = engine.page_stories(&mut model, &laid, page);
-        ours.push(paint_page(&laid, &mut model, page, &stories, &cx).map(|p| (page_svg(&p, &svg_cx), p.unpainted)));
+        let parts = engine.page_parts(&mut model, &laid, page);
+        ours.push(paint_page(&laid, &mut model, page, &parts, &cx).map(|p| (page_svg(&p, &svg_cx), p.unpainted)));
     }
     outcome.time += started.elapsed();
     if ours.len() != theirs.len() {
