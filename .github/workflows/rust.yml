@@ -6,8 +6,8 @@ name: Rust
 #   registry against docx2svg's layout on made-up documents and docx2svg's samples;
 # - `rust-check`: docx-agent's check-related tests with its Rust path on (the default) and
 #   off (DOCX_AGENT_RUST=0), the differential test comparing the two among them;
-# - `wheels` (rust-wheels.yml): on a pull request Linux x86_64 and macOS x86_64, on main,
-#   nightly and manual runs every target.
+# - `wheels` (rust-wheels.yml): on a pull request Linux x86_64, on main, nightly and manual
+#   runs Linux x86_64 and aarch64 (production is Linux only).
 # On a pull request these run when the change touches the workspace, ooxml-core, the
 # packages the differential tests compare with (tools/ci.py, RUST_PREFIXES and
 # RUST_REFERENCE), .github/ or tools/.
