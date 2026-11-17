@@ -69,25 +69,25 @@ def scale_values(call: Any, scale: _scales.Scale, scope: Mapping[str, Any]) -> l
     """``DocumentFormat.scale_values`` for a Word document (the module's notes); ``scope``:
     ``check``'s ``range`` and ``pages``."""
     document = call.document
-    held = _held(call, scope)
     styles = _style_names(document)
     labels = document.text_labels()
-    out: list[ScaleValue] = []
+    found: list[ScaleValue] = []
     for target in scale.targets:
         try:
-            found = _read_target(document, scale, target, _Reader(styles, labels))
+            found.extend(_read_target(document, scale, target, _Reader(styles, labels)))
         except ToolError as error:
-            found = [ScaleValue(target, skip=error.message)]
-        for value in found:
-            if held is not None and value.skip is None and not held(value):
-                continue
-            out.append(value)
-    return out
+            found.append(ScaleValue(target, skip=error.message))
+    held = _held(call, scope, [i for value in found if value.skip is None and value.handle
+                               for i in value.handle[2]])
+    if held is None:
+        return found
+    return [value for value in found if value.skip is not None or held(value)]
 
 
-def _held(call: Any, scope: Mapping[str, Any]) -> Any:
+def _held(call: Any, scope: Mapping[str, Any], ids: list[str]) -> Any:
     """A test of whether a value is in ``scope`` (``None``: everything is), and each value's
-    page where the layout is read (``pages``)."""
+    page where the layout is read (``pages``): the pages of ``ids``, the paragraphs of the
+    values read, asked for at once."""
     from ..scope import Scope, ranges_of
     from ._base import engage, release, resolve
     from .shared import _pages_of
@@ -102,7 +102,7 @@ def _held(call: Any, scope: Mapping[str, Any]) -> Any:
     if pages is not None:
         engage(call)
         try:
-            layout = _layout(call, required=True)
+            layout = _layout(call, sorted(set(ids)), required=True)
         finally:
             release(call.entries.values())
 
