@@ -99,6 +99,7 @@ pub fn layout(spec: &J) -> Result<J, String> {
         height: number("height_pt")?,
         rules: spec.get("rules").and_then(J::as_str).unwrap_or("powerpoint"),
         locale: locale_of(spec)?,
+        variant: spec.get("variant").and_then(J::as_str),
     };
     Ok(laid::case(&case))
 }

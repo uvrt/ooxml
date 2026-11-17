@@ -526,6 +526,27 @@ pub struct Case<'c> {
     pub rules: &'c str,
     /// The locale.
     pub locale: Locale,
+    /// A style variant (`chart_diff.py`'s `VARIANTS`), if any.
+    pub variant: Option<&'c str>,
+}
+
+/// A style with `variant` applied, and the default title it brings.
+fn varied(mut style: ChartStyle, variant: Option<&str>) -> (ChartStyle, Option<String>) {
+    let mut default_title = None;
+    match variant {
+        Some("east-asian") => style.font_family_ea = Some("MS Gothic".into()),
+        Some("office-2007") => style.office_2007 = true,
+        Some("line-colour") => {
+            style.line_colour = Some("#898989".into());
+            default_title = Some("Chart Title".into());
+        }
+        Some("small-text") => {
+            style.font_family = Some("Arial".into());
+            style.font_size = 7.0;
+        }
+        _ => {}
+    }
+    (style, default_title)
 }
 
 /// A case laid out, as `chart_diff.py` dumps the Python's: the notes, elements and data,
@@ -560,6 +581,7 @@ pub fn case(case: &Case<'_>) -> J {
         office_2007: false,
         line_colour: None,
     };
+    let (style, default_title) = varied(style, case.variant);
     let input = ChartInput {
         chart: case.chart,
         plot,
@@ -570,7 +592,7 @@ pub fn case(case: &Case<'_>) -> J {
         resolve: &golden,
         rules,
         locale: &case.locale,
-        default_title: None,
+        default_title,
     };
     let laid = lay_out(&input);
     let mut notes: Vec<String> = Vec::new();
