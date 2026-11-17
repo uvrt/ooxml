@@ -20,7 +20,7 @@ name: Rust
 # - `word-model`: the Word model against docx2svg's layout input, on the repository's
 #   documents and on those docx2svg's tools/make_*.py make;
 # - `cargo-deny`: licences, duplicate versions, sources and advisories (deny.toml);
-# - `fuzz`: fuzz/'s four targets, 5 minutes each.  Not part of `required (rust)`: a find
+# - `fuzz`: fuzz/'s five targets, 5 minutes each.  Not part of `required (rust)`: a find
 #   shows as a failed job with the crashing input uploaded, without blocking a merge.
 # Not in CI: ooxml-oracle's `text-diff` (the text engine against docx2svg's records) needs
 # Word's own fonts, so it stays a local gate (README, Development).
@@ -312,8 +312,8 @@ jobs:
       - name: Install
         run: |
           python -m pip install --upgrade pip
-          python -m pip install ./python/ooxml-common "./python/docx2svg[measure]"
-          cargo build --locked --release -p ooxml-oracle --bin word-model --bin drawingml-model
+          python -m pip install ./python/ooxml-common "./python/docx2svg[measure]" pytest
+          cargo build --locked --release -p ooxml-oracle --bin word-model --bin drawingml-model --bin chart-model
       # Each generator in its own folder, run from there: they write there by default
       # (tools/make_layout_sweep.py and make_style_document.py rewrite docx2svg's committed
       # fixtures instead, which the --tree python below reads).
@@ -339,6 +339,15 @@ jobs:
           python crates/ooxml-oracle/python/drawingml_diff.py --rust target/release/drawingml-model
           --presets --swatches 20000 --tree python
           python/ooxml-common/tests/fixtures/trees/*.xml python/ooxml-common/tests/fixtures/themes/*.xml
+      # Charts: the model and each chart laid out (both rule sets) against ooxml-common's, on
+      # every package and chart XML in the repository; Python and Rust on one machine agree to
+      # the bit.  Exits 1 on any difference.
+      - name: Chart differential
+        env:
+          PYTHONPATH: python/ooxml-common/src:python/pptx2svg/src
+        run: |
+          python crates/ooxml-oracle/python/chart_diff.py --rust target/release/chart-model --tree python
+          python crates/ooxml-oracle/python/chart_diff.py --rust target/release/chart-model --layout --tree python
       # The preset table in ooxml-drawingml equals ooxml-common's PRESETS.
       - name: Preset table is current
         env:
@@ -390,7 +399,7 @@ jobs:
         run: |
           bin=fuzz/target/x86_64-unknown-linux-gnu/release
           status=0
-          for pair in xml_roundtrip:xml zip_read:package opc_open:package metafile_draw:metafile; do
+          for pair in xml_roundtrip:xml zip_read:package opc_open:package metafile_draw:metafile chart_layout:xml; do
             target=${pair%%:*}
             mkdir -p "$RUNNER_TEMP/corpus/$target" "$RUNNER_TEMP/crashes/$target"
             "$bin/$target" "$RUNNER_TEMP/corpus/$target" "$RUNNER_TEMP/seeds/${pair##*:}" \
