@@ -90,6 +90,10 @@ pub fn walk_between(items: &[FlowItem], from: &WalkFrom, start: (usize, usize), 
                 };
                 let Ok(laid) = t.flow.place(&request) else { break };
                 y = laid.end;
+                for row in &laid.rows {
+                    out.lines
+                        .extend(super::lines::row_lines(t, (index, row), None, Px::int(i64::MAX / 4)));
+                }
                 out.rows.extend(laid.rows.into_iter().map(|r| (index, r)));
                 first = first && out.rows.is_empty();
                 previous = Some(item);

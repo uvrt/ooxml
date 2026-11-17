@@ -316,6 +316,38 @@ impl LinePainter<'_, '_> {
         self.open = true;
     }
 
+    /// A picture bullet at its label's pen (`_picture_bullet`): a square of its size
+    /// standing on the baseline, its left edge and side each on a whole px, moved by the
+    /// level's `w:position` twice and a script's raise once.
+    fn picture_bullet(&mut self, piece: &Piece, x: Px) {
+        let props = self.label_props();
+        let level = list_level(self.job.document, &self.job.resolved.paragraph);
+        let bullet = level
+            .and_then(|l| l.picture_bullet)
+            .and_then(|id| self.job.document.picture_bullets.get(&id));
+        let format = RunFormatter::new(self.job.document, &props).format(' ').clone();
+        let mut bottom = self.job.line.baseline - 2 * offset_px(format.position);
+        if let Some(align) = vertical(&format) {
+            let key = FaceKey {
+                family: Arc::clone(&format.face),
+                bold: format.bold,
+                italic: format.italic,
+            };
+            bottom -= script(self.cx, &key, format.half_points, align).1;
+        }
+        let side = px_at(Px::ZERO, piece.width).round_half_up();
+        self.out.pictures.push(Drawn {
+            path: format!("{}/label", self.job.paragraph.path),
+            relationship: bullet.and_then(|b| b.relationship.clone()),
+            part: bullet.and_then(|b| b.part.clone()),
+            x: Px::int(x.round_half_up()),
+            y: Px::int(bottom - side),
+            width: Px::int(side),
+            height: Px::int(side),
+            crop: None,
+        });
+    }
+
     /// An inline picture or drawing, by its extent, standing on the baseline.
     fn object(&mut self, piece: &Piece, x: Px, counts: &mut std::collections::HashMap<usize, usize>) {
         let k = usize::try_from(piece.run).unwrap_or(usize::MAX);
@@ -387,11 +419,17 @@ impl LinePainter<'_, '_> {
     }
 }
 
-/// A picture's extent in device px from its EMU (`picture_size`): each side rounded half up
-/// to the layout unit.
+/// The size Word draws an inline picture of extent `cx` x `cy` EMU, device px
+/// (`picture_size`): the extent scaled, both ways alike, to fit the extent truncated to
+/// whole twips.
 pub(super) fn picture_size(cx: i64, cy: i64) -> (Px, Px) {
-    let side = |e: i64| Px::points(Q::new(i128::from(e), 12_700)).quantise();
-    (side(cx), side(cy))
+    let emu = |e: i64| Px::points(Q::new(i128::from(e), 12_700));
+    if cx <= 0 || cy <= 0 {
+        return (emu(cx), emu(cy));
+    }
+    let truncated = |e: i64| Q::new(i128::from(e.div_euclid(635) * 635), i128::from(e));
+    let scale = truncated(cx).min(truncated(cy));
+    (emu(cx) * scale, emu(cy) * scale)
 }
 
 /// Automatic text on a dark cell fill drawn white, where the paragraph has no background:
@@ -484,7 +522,7 @@ pub(super) fn paint_line(cx: &PaintContext<'_>, job: &LineJob<'_>, out: &mut Pag
         }
         if piece.source < 0 && piece.ch == PICTURE_BULLET {
             painter.open = false;
-            painter.out.unpainted.push("a picture bullet".into());
+            painter.picture_bullet(piece, x);
             continue;
         }
         painter.glyph(piece, x);

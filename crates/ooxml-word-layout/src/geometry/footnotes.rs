@@ -85,6 +85,30 @@ fn stacked(items: &[FlowItem], walks: &[Walk], from: WalkFrom) -> Walked {
     out
 }
 
+/// Whether a page of columns has notes: a line referencing one, or a note going on.
+fn column_notes(layout: &DocumentLayout, laid: &LaidPage) -> bool {
+    !laid.carried.is_empty()
+        || laid.lines.iter().any(|l| {
+            layout
+                .flow
+                .items
+                .get(l.item)
+                .and_then(FlowItem::para)
+                .is_some_and(|p| !p.notes.is_empty())
+        })
+}
+
+/// The first note's space before (`before` twips) stands over the separator, not under
+/// it: the separator's lines move down by it, rounded.
+fn lower_separator(walked: &mut Walked, separators: usize, before: i64) {
+    let shift = Px::twips(before).round_half_up();
+    for line in walked.lines.iter_mut().filter(|l| l.source.item() < separators) {
+        line.baseline += shift;
+        line.top += Px::int(shift);
+        line.band = (line.band.0 + shift, line.band.1 + shift);
+    }
+}
+
 /// The footnotes page `laid` draws at its foot, as a story stacked there; `None` where it
 /// has none, or holds them in a way this does not draw (`Err` with why).
 pub fn page_footnotes(
@@ -94,13 +118,14 @@ pub fn page_footnotes(
     laid: &LaidPage,
 ) -> Result<Option<StoryPage>, &'static str> {
     let document = job.cx.document;
+    let section = layout.sections.get(frame.section).ok_or("no section")?;
+    if section.multi_column() && column_notes(layout, laid) {
+        // A page of columns keeps its notes at its columns' feet.
+        return Err("footnotes in columns");
+    }
     let parts = parts(laid);
     if parts.is_empty() {
         return Ok(None);
-    }
-    let section = layout.sections.get(frame.section).ok_or("no section")?;
-    if section.multi_column() {
-        return Err("footnotes in columns");
     }
     if section.props.footnotes.position.as_deref() == Some("beneathText") {
         return Err("footnotes beneath the text");
@@ -158,13 +183,7 @@ pub fn page_footnotes(
         _ => 0,
     };
     if before != 0 {
-        // The first note's space before stands over the separator, not under it.
-        let shift = Px::twips(before).round_half_up();
-        for line in walked.lines.iter_mut().filter(|l| l.source.item() < separators) {
-            line.baseline += shift;
-            line.top += Px::int(shift);
-            line.band = (line.band.0 + shift, line.band.1 + shift);
-        }
+        lower_separator(&mut walked, separators, before);
     }
     Ok(Some(StoryPage {
         kind: "footnotes",

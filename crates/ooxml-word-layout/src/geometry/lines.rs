@@ -255,38 +255,49 @@ fn table_lines(layout: &DocumentLayout, laid: &LaidPage, frame: &PageFrame) -> V
         let Some(FlowItem::Table(t)) = layout.flow.items.get(placed.item) else {
             continue;
         };
-        for line in t.flow.lines(&placed.row) {
-            if !line.drawn || line.top >= height {
-                continue;
-            }
-            let Some(h) = t
-                .flow
-                .paragraph(line.block)
-                .and_then(|m| m.heights.get(line.line).copied())
-            else {
-                continue;
-            };
-            let b = LineBox::new(h, line.space_before, line.space_after);
-            out.push((
-                placed.item,
-                DrawnLine {
-                    source: LineSource::Cell {
-                        item: placed.item,
-                        block: line.block,
-                    },
-                    block: Some(t.block + line.block),
-                    body: Some(t.body),
-                    number: line.line,
-                    top: line.top,
-                    pitch: line.pitch,
-                    baseline: baseline_in_box(line.top - b.space_before, &b),
-                    band: text_band(line.top - b.space_before, &b),
-                    column: placed.column,
-                    left: line.left,
-                    white_text: line.white_text,
-                },
-            ));
+        let lines = row_lines(t, (placed.item, &placed.row), placed.column, height);
+        out.extend(lines.into_iter().map(|l| (placed.item, l)));
+    }
+    out
+}
+
+/// The lines a placed row of table item `item` draws, on whole device px; a line that
+/// starts below `height` (the page's edge) is not drawn (`_table_drawn`).
+pub(crate) fn row_lines(
+    t: &crate::flow::TableItem,
+    (item, row): (usize, &crate::table::PlacedRow),
+    column: Option<usize>,
+    height: Px,
+) -> Vec<DrawnLine> {
+    let mut out = Vec::new();
+    for line in t.flow.lines(row) {
+        if !line.drawn || line.top >= height {
+            continue;
         }
+        let Some(h) = t
+            .flow
+            .paragraph(line.block)
+            .and_then(|m| m.heights.get(line.line).copied())
+        else {
+            continue;
+        };
+        let b = LineBox::new(h, line.space_before, line.space_after);
+        out.push(DrawnLine {
+            source: LineSource::Cell {
+                item,
+                block: line.block,
+            },
+            block: Some(t.block + line.block),
+            body: Some(t.body),
+            number: line.line,
+            top: line.top,
+            pitch: line.pitch,
+            baseline: baseline_in_box(line.top - b.space_before, &b),
+            band: text_band(line.top - b.space_before, &b),
+            column,
+            left: line.left,
+            white_text: line.white_text,
+        });
     }
     out
 }
