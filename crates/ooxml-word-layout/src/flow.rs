@@ -176,7 +176,13 @@ pub struct Flow {
     /// Per section whose paragraphs reference footnotes, the heights of its footnote
     /// separator and continuation separator.
     pub separators: std::collections::BTreeMap<usize, (Px, Px)>,
+    /// In mode 15, per footnote referenced in a section of several columns, its paragraphs
+    /// as a flow in that section's columns: what the page's note area is laid out from.
+    pub note_items: NoteItems,
 }
+
+/// `(note, section)` -> the note's paragraphs as a flow in the section's columns.
+pub type NoteItems = std::collections::BTreeMap<(i64, usize), Arc<[FlowItem]>>;
 
 impl Flow {
     /// Section `section`'s footnote separator's and continuation separator's heights.
@@ -380,6 +386,7 @@ pub struct FlowMaker<'a, 'm> {
     resolved: HashMap<usize, Arc<Props>>,
     notes: NoteMaker,
     separators: std::collections::BTreeMap<usize, (Px, Px)>,
+    note_items: NoteItems,
 }
 
 impl<'a, 'm> FlowMaker<'a, 'm> {
@@ -395,6 +402,7 @@ impl<'a, 'm> FlowMaker<'a, 'm> {
             resolved: HashMap::new(),
             notes: NoteMaker::default(),
             separators: std::collections::BTreeMap::new(),
+            note_items: NoteItems::new(),
         }
     }
 
@@ -439,6 +447,7 @@ impl<'a, 'm> FlowMaker<'a, 'm> {
         Flow {
             items,
             separators: self.separators,
+            note_items: self.note_items,
         }
     }
 
@@ -747,6 +756,36 @@ impl<'a, 'm> FlowMaker<'a, 'm> {
             Some(NoteRole::Endnote) => self.notes.continuation(&mut cx, (section, &geometry)),
             _ => None,
         };
+        if crate::input::rules(self.cx.document).mode15() && geometry.multi_column() {
+            for note in crate::notes::flowed::references(paragraph).into_iter().map(|(_, n)| n) {
+                self.note_flow(note, section, &geometry);
+            }
+        }
         Ok(ParaNotes { notes, continuation })
+    }
+
+    /// Footnote `note`'s paragraphs as a flow in section `section`'s columns (a section of
+    /// one section, no stories), kept for the flow (`note_area`'s `flow(story)`).
+    fn note_flow(&mut self, note: i64, section: usize, geometry: &crate::sections::SectionGeometry) {
+        if self.note_items.contains_key(&(note, section)) {
+            return;
+        }
+        let Some(blocks) = self.cx.document.footnotes.notes.get(&note).cloned() else {
+            return;
+        };
+        let paragraphs = blocks.iter().filter(|b| matches!(b, Block::Paragraph(_))).count();
+        let sections = Sections::new(&[crate::notes::flowed::note_section(&geometry.props, paragraphs)], false);
+        let cx = FlowContext {
+            document: self.cx.document,
+            blocks: &blocks,
+            sections: &sections,
+            labels: Labels::None,
+            faces: self.cx.faces,
+            locale: self.cx.locale,
+            tables: self.cx.tables,
+            roles: &[],
+        };
+        let flow = FlowMaker::new(&cx, &mut *self.model, &mut *self.state).build();
+        self.note_items.insert((note, section), Arc::from(flow.items));
     }
 }

@@ -262,6 +262,8 @@ pub struct PageContext<'a> {
     pub stories: &'a dyn StoryHeights,
     /// Per section, its footnote separator's and continuation separator's heights.
     pub separators: &'a BTreeMap<usize, (Px, Px)>,
+    /// In mode 15, the footnotes of sections of several columns as flows of their own.
+    pub note_items: &'a crate::flow::NoteItems,
 }
 
 /// What Word does with a page whose last line would end in an automatic hyphen

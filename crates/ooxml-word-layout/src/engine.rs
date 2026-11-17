@@ -88,6 +88,7 @@ impl DocumentLayout {
             hyphen_at_page_end: self.hyphen_at_page_end,
             stories: &self.stories,
             separators: &self.flow.separators,
+            note_items: &self.flow.note_items,
         }
     }
 }

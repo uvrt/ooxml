@@ -12,7 +12,7 @@ use crate::paragraph::{measure_paragraph, MeasureContext, ParagraphJob, Unmeasur
 use crate::px::Px;
 use crate::sections::SectionGeometry;
 use ooxml_text::{Line, Piece, PieceKind};
-use ooxml_word_model::model::{Block, Paragraph};
+use ooxml_word_model::model::{Block, Paragraph, Section, SectionProps};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -56,6 +56,21 @@ pub fn line_at(line_of: &HashMap<i64, usize>, source: i64, lines: usize) -> usiz
         .or_else(|| line_of.get(&(source - 1)))
         .copied()
         .unwrap_or(lines.saturating_sub(1))
+}
+
+/// A section's page and columns as a story of one section: what a page's note area is
+/// laid out in (`note_area`'s section: no stories, no title page, no start type).
+pub fn note_section(props: &SectionProps, paragraphs: usize) -> Section {
+    let mut one = props.clone();
+    one.start_type = None;
+    one.headers = Arc::from(Vec::new());
+    one.footers = Arc::from(Vec::new());
+    one.title_page = false;
+    Section {
+        properties: Arc::new(one),
+        first_paragraph: 0,
+        last_paragraph: paragraphs,
+    }
 }
 
 /// A note that cannot be laid out.
