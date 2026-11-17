@@ -191,20 +191,14 @@ fn para_fields(p: &ParaItem, last: &MeasuredParagraph) -> Vec<(&'static str, Val
 }
 
 /// The first flow item the comparison stops before: docx2svg's first that is not a
-/// paragraph it laid out (a table, stand-in box, obstacle, or a paragraph laid out by an
-/// approximate rule), and why.
+/// paragraph it laid out (a table, stand-in box or obstacle), and why. A paragraph
+/// docx2svg lays out by a rule no probe measured (its approximations) is compared too:
+/// the Rust layout lays it out by the same rule.
 fn cutoff(flow: &[Value]) -> (usize, Option<String>) {
     for (k, item) in flow.iter().enumerate() {
         let kind = item.get("kind").and_then(Value::as_str).unwrap_or_default();
         if kind != "para" {
             return (k, Some(kind.to_owned()));
-        }
-        let approximated = item
-            .get("approximations")
-            .and_then(Value::as_array)
-            .is_some_and(|a| !a.is_empty());
-        if approximated {
-            return (k, Some("an approximation".into()));
         }
     }
     (flow.len(), None)
@@ -617,8 +611,7 @@ pub fn run_document(records: &LayoutRecords, outcome: &mut Outcome) -> Result<()
     compare_fields(&laid, theirs, cut, &mut diffs, outcome);
     compare_notes(&laid, theirs, cut, &mut diffs);
     compare_flow(&laid, &flow, cut, &mut diffs, outcome);
-    let page_level = why.as_deref().is_some_and(|w| w.starts_with("an approximation"));
-    compare_pages(&laid.document, &laid, theirs, (cut, page_level), &mut diffs, outcome);
+    compare_pages(&laid.document, &laid, theirs, (cut, false), &mut diffs, outcome);
     outcome.differences.extend(found);
     Ok(())
 }
