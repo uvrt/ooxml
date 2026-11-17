@@ -5,6 +5,70 @@ docx-agent has not been released to PyPI. Each version that reaches `main` is ta
 snapshot commit; the development history before it is summarised here.
 [`ROADMAP.md`](ROADMAP.md) has the detail of every phase.
 
+## 0.1.134 -- unreleased
+
+Round 59 (Q4): what the workers keep after a document closes, the close's wait for them,
+and two bugs. Measured on macOS on `tools/tracked_report.py`'s made-up 340-page report, 12
+writers, 2 readers and a live view, 150 changing calls, 2 workers.
+
+- **The close does not wait for the workers.** `release_document` tells them to drop the
+  document's layouts with ooxml-edit 0.124.0's `broadcast(..., wait=False)`: the close
+  returns while they collect, and none takes a task before it has dropped them. `Session.close`
+  took 6.6 s, now 1.4 s.
+- **What a worker keeps after the close is the allocators' free space, not the document's.**
+  Measured item by item in the worker: no layout, lineage, measurement, body, document or
+  layout object of it is left, and Python's objects are back to the count the warm worker
+  had. The worker that held the layouts (warm: 70 MB resident, 58 MB physical footprint) was
+  at 1,515 MB after the run and 909 MB after the close; of that, 593 MB is pages the C
+  allocator gave back that macOS counts as resident until it needs them (`footprint`:
+  reclaimable), and the footprint is 319 MB -- 280 MB of it Python's 1 MB arenas (287
+  arenas holding 33 MB of objects; 33 arenas, 31 MB warm), kept while any object in them
+  lives.
+- A worker's drop (`layout.drop_lineage`) and `layout.clear_caches` forget the ids read
+  (`edit.ids.valid_long_hex`'s memo, up to 65,536 strings of every document read): they
+  kept arenas of the closed document's after the close.
+- `check` with `scale` and `pages` raised a TypeError (`scales` asked for the layout without
+  the ids whose pages it needs): the values are read first, then their pages asked for at
+  once.
+- `describe` failed on a document with a chart in a group (`'Member' object has no attribute
+  'alt_text'`): a group member answers `alt_text` from its `cNvPr`, as a drawing does from
+  `wp:docPr`. The Rust `describe` test compares every fixture now (none expected to fail).
+
+## 0.1.133 -- unreleased
+
+Round 59 (R136): rows in tables with cells merged down. A row copied in such a table, or a
+table made `like` one, was refused ("a copy would cut the merge"); writers then took
+another route at minutes per call.
+
+- **Where Word puts a row beside a merge down, measured** (`tools/merged_rows_probe.py`,
+  `tests/observations/merged-rows-word.json`, Word 16.106 for Mac): Insert Rows inside a
+  merge (below its first row, above or below a middle row, above its last) gives a row whose
+  cell there continues the merge (`w:vMerge` without `restart`, an empty paragraph); above
+  the merge's first row and below its last row (also at the table's end) the new row has a
+  cell of its own. With the insertion point in the merged cell, Insert Rows Below puts the
+  row below the merge's first row. Tracked: the row and each cell's mark inserted, no cell
+  revision records. A whole row copied and pasted carries no merge: a merge's first row's
+  cell keeps its text, a continuing row's is empty. `insert_row` already did each of these;
+  every case is now a test against what Word saved.
+- **`copy_row` copies a row with a cell merged down.** Inside the merge the copy's cell joins
+  it (continuing, empty: the merge's text stays in its first row); above the first row or
+  below the last it is a cell of its own with the text it had, as Word's paste gives.
+  Tracked, an insertion as before, one undo step. Its other refusals (a note reference, a
+  pending deletion, tracked cell changes) stay, with the calls that work.
+- **A row added right beside a merge says so.** `insert_row` and `copy_row` (not `grow` or
+  `sync`) name the merge a new row sits just above or below without joining, and the
+  `word_edit_table` `merge` call that joins it (rule 2).
+- **Frames keep merges** (`word_insert_markdown` `like` a table, round 58's frame copy): a
+  sample merged down in its body rows is no longer refused. The header and total rows take
+  the sample's merges; in the body, in each column the sample merges down, a cell the
+  Markdown leaves empty under another joins its merge and a cell with text starts one, so
+  the Markdown's own rows say how long each group is, more or fewer than the sample's (as rows
+  Word inserts inside a merge join it). A merge of one row is a cell of its own. The result
+  names the merges made, by column. Kept refusals, each with its way out: another column
+  count, text in a cell spanned across, text in a header or total cell merged into the one
+  above. The `like` description says it: +5 tokens to every definition (16,199 -> 16,204),
+  none to the core.
+
 ## 0.1.130 -- unreleased
 
 Round 58 follow-up (Q3): what the calling process gives back when a document closes.

@@ -51,11 +51,50 @@ def position(p) -> list:
     return [p.item, p.line, list(p.part)]
 
 
+def cell_entry(entry) -> list:
+    """One entry of a cell: ``[block, kind, lines, pitches, more]`` -- a paragraph's lines
+    (``[start, end, forced]``), pitches and spacing; a nested table's pitch and record; a
+    stand-in box's pitch."""
+    pitches = [number(h.pitch) for h in entry.heights]
+    if entry.table is not None:
+        return [entry.block, "table", None, pitches, table_record(entry.table)]
+    if entry.paragraph is None:  # neither a paragraph nor a table: a stand-in box
+        return [entry.block, "box", None, pitches, None]
+    return [entry.block, "para", [[line.start, line.end, line.forced] for line in entry.lines], pitches,
+            {"hidden": entry.hidden, "anchors": len(entry.anchors), "before": entry.before, "after": entry.after,
+             "top_border": number(entry.top_border), "border": number(entry.border),
+             "notes": any(kind.startswith(("footnoteReference:", "endnoteReference:"))
+                          for run in entry.paragraph.runs for _, kind in run.breaks)}]
+
+
+def table_record(flow) -> dict:
+    """A table's flow (:class:`docx2svg.table.TableFlow`): its grid, each row's top border,
+    height, keep and cells, its bottom border and header rows, and what of it was laid out
+    by approximate rules."""
+    from docx2svg import table as table_model
+
+    return {
+        "approximation": flow.approximation,
+        # What approximate rule laid out, other than a table's widths or a frame in a cell
+        # (which the Rust layout lays out too): a stand-in box, an unmodelled drawing.
+        "unmodelled": sorted({reason for reason, _message, _path in flow.approximated} - {"table", "frame"}),
+        "floating": flow.floating is not None or flow.nested_floating is not None,
+        "grid": [number(x) for x in flow.grid_twips],
+        "rows": [{"top_border": number(row.top_border), "height": number(row.height),
+                  "keep": table_model.keeps_with_next(row),
+                  "cells": [[cell_entry(entry) for entry in cell.paragraphs] for cell in row.cells]}
+                 for row in flow.rows],
+        "bottom_border": number(flow.bottom_border),
+        "header_rows": table_model.header_rows(flow),
+    }
+
+
 def item_record(item, paragraphs: dict, breaks: dict) -> dict:
     if isinstance(item, paginate.Obstacle):
         return {"kind": "obstacle", "block": item.block, "section": item.section}
     if isinstance(item, paginate.TableItem):
-        return {"kind": "table", "block": item.block, "section": item.section, "rows": item.count}
+        return {"kind": "table", "block": item.block, "section": item.section, "rows": item.count,
+                "section_start": item.section_start, "table": table_record(item.flow)}
     if item.placeholder is not None:  # docx2svg's own name for its stand-in box
         return {"kind": "box", "block": item.block, "section": item.section}
     paragraph = paragraphs.get(item.block)

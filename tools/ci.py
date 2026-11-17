@@ -193,7 +193,8 @@ FUZZ_CRATES = ("ooxml-base", "ooxml-xml", "ooxml-zip", "ooxml-opc")
 LOOM_CRATES = ("ooxml-store",)
 WORD_MODEL_CRATES = ("ooxml-oracle", "ooxml-base", "ooxml-xml", "ooxml-zip", "ooxml-opc", "ooxml-derive",
                      "ooxml-fonts", "ooxml-text", "ooxml-word-model", "ooxml-colour", "ooxml-schema",
-                     "ooxml-drawingml", "ooxml-scene", "ooxml-metafile", "ooxml-word-layout")
+                     "ooxml-drawingml", "ooxml-scene", "ooxml-metafile", "ooxml-word-layout", "ooxml-numfmt",
+                     "ooxml-chart")
 
 
 def _crates(names: tuple[str, ...]) -> tuple[str, ...]:

@@ -313,10 +313,13 @@ from docx_agent.tools import FORMAT, GROUPS, TOOLS, WORD_TOOLS  # noqa: E402
 #: colour (always given, no parameter): +13 to every definition (16,186 -> 16,199), none to the
 #: core (3,192).  The guard rises to 16,199.  The strict set is unchanged (6 tools, 24
 #: optional parameters).
+#: Round 59, R136: word_insert_markdown's ``like`` says a frame's empty cells join merges down
+#: (no parameter): +5 to every definition (16,199 -> 16,204), none to the core (3,192).  The
+#: guard rises to 16,204.  The strict set is unchanged (6 tools, 24 optional parameters).
 CHARS_PER_TOKEN = 3.5
 COUNTED_PER_ESTIMATED = 1.48
 CORE_COUNTED_BUDGET = 6500
-ALL_GUARD = 16199
+ALL_GUARD = 16204
 
 
 @pytest.fixture(scope="module")

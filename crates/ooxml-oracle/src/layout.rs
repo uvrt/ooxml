@@ -2,22 +2,26 @@
 //! the fonts docx2svg found, compared with docx2svg's layout records
 //! (`python/docx2svg/tools/layout_differential.py`) box by box: the flow's paragraphs
 //! (lines broken, each line's height, spacing, borders, keeps), the pages' starts and
-//! numbers, and every body line's place (top and pitch). What L3a does not lay out yet
-//! (tables, stand-in boxes, obstacles) cuts the comparison off at the first such item.
+//! numbers, and every body line's place (top and pitch), table cells' lines included; each
+//! table as measured (`layout_tables`). What L3a and L3b do not lay out (stand-in boxes,
+//! obstacles, notes, floating drawings and tables) cuts the comparison off at the first
+//! such item.
 //!
 //! Must not: change what is compared to make it pass.
 
 use crate::export::{Unlimited, KEY};
+use crate::layout_tables::{first_difference, measured, normalised, table_cut, table_lines, table_record};
 use crate::text::fonts_of;
 use ooxml_base::Locale;
 use ooxml_derive::CacheBudget;
 use ooxml_word_layout::flow::{FlowItem, ParaItem};
 use ooxml_word_layout::paginate::Position;
-use ooxml_word_layout::table::NoTables;
+use ooxml_word_layout::tables::WordTables;
 use ooxml_word_layout::{DocumentLayout, WordGlyphs, WordLayout};
 use ooxml_word_model::model::Block;
 use ooxml_word_model::WordDocument;
-use serde_json::Value;
+use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -58,6 +62,8 @@ pub struct Outcome {
     pub cut: Vec<(String, String)>,
     /// Flow paragraphs compared.
     pub paragraphs: usize,
+    /// Tables compared.
+    pub tables: usize,
     /// Lines compared (breaks and heights).
     pub lines: usize,
     /// Pages compared.
@@ -188,11 +194,18 @@ fn para_fields(p: &ParaItem) -> Vec<(&'static str, Value)> {
 }
 
 /// The first flow item the comparison stops before: docx2svg's first that is not a
-/// paragraph it laid out (a table, stand-in box, obstacle, or a paragraph laid out by an
-/// approximate rule, beside notes, drawings or a drop cap), and why.
+/// paragraph or table it laid out (a stand-in box, an obstacle, a paragraph laid out by an
+/// approximate rule, beside notes, drawings or a drop cap, a table holding what lane L3c
+/// lays out: [`table_cut`]), and why.
 fn cutoff(flow: &[Value]) -> (usize, Option<String>) {
     for (k, item) in flow.iter().enumerate() {
         let kind = item.get("kind").and_then(Value::as_str).unwrap_or_default();
+        if kind == "table" {
+            match item.get("table").and_then(table_cut) {
+                Some(why) => return (k, Some(why.to_owned())),
+                None => continue,
+            }
+        }
         if kind != "para" {
             return (k, Some(kind.to_owned()));
         }
@@ -241,6 +254,41 @@ fn model_cut(document: &WordDocument, ours: &DocumentLayout, cut: bool) -> Optio
     })
 }
 
+/// One table compared as measured; `false` where it differs (the flow after it then
+/// differs too, and is not compared).
+fn compare_table(mine: &FlowItem, item: &Value, place: &str, diffs: &mut Diffs<'_>) -> bool {
+    let Some(table) = measured(mine) else {
+        diffs.push(place.to_owned(), "table", "not laid out by the Rust tables".into());
+        return false;
+    };
+    let FlowItem::Table(t) = mine else { return false };
+    let facts = [
+        ("block", json!(t.block), item.get("block").cloned()),
+        ("section", json!(t.section), item.get("section").cloned()),
+        (
+            "section_start",
+            json!(t.section_start),
+            item.get("section_start").cloned(),
+        ),
+        ("rows", json!(t.flow.rows()), item.get("rows").cloned()),
+    ];
+    for (name, ours, theirs) in facts {
+        if Some(&ours) != theirs.as_ref() {
+            diffs.push(place.to_owned(), name, format!("{ours} vs {theirs:?}"));
+            return false;
+        }
+    }
+    let first = int(item.get("block"));
+    let theirs = normalised(at(item, "table"), first);
+    match first_difference("table", &table_record(table, 0), &theirs) {
+        Some(found) => {
+            diffs.push(place.to_owned(), "table", found);
+            false
+        }
+        None => true,
+    }
+}
+
 fn compare_flow(ours: &DocumentLayout, theirs: &[Value], cut: usize, diffs: &mut Diffs<'_>, outcome: &mut Outcome) {
     if cut == theirs.len() && ours.flow.items.len() != theirs.len() {
         diffs.push(
@@ -251,14 +299,27 @@ fn compare_flow(ours: &DocumentLayout, theirs: &[Value], cut: usize, diffs: &mut
     }
     for (k, (mine, item)) in ours.flow.items.iter().zip(theirs).enumerate().take(cut) {
         let place = format!("item {k} (block {})", int(item.get("block")));
+        let theirs_kind = item.get("kind").and_then(Value::as_str).unwrap_or_default();
         let p = match mine {
-            FlowItem::Para(p) => p,
+            FlowItem::Para(p) if theirs_kind == "para" => p,
+            FlowItem::Table(_) if theirs_kind == "table" => {
+                if !compare_table(mine, item, &place, diffs) {
+                    return;
+                }
+                outcome.tables += 1;
+                continue;
+            }
             FlowItem::Stop(s) => {
                 diffs.push(place, "stopped in Rust only", s.reason.clone());
                 return;
             }
-            FlowItem::Table(_) => {
-                diffs.push(place, "kind", "table vs para".into());
+            FlowItem::Para(_) | FlowItem::Table(_) => {
+                let ours = if matches!(mine, FlowItem::Table(_)) {
+                    "table"
+                } else {
+                    "para"
+                };
+                diffs.push(place, "kind", format!("{ours} vs {theirs_kind}"));
                 return;
             }
         };
@@ -316,20 +377,32 @@ fn compare_fields(ours: &DocumentLayout, theirs: &Value, cut: usize, diffs: &mut
     }
 }
 
-/// Top-level paragraph paths by flow item.
-fn item_paths(document: &WordDocument, layout: &DocumentLayout) -> Vec<Option<String>> {
-    layout
-        .flow
-        .items
-        .iter()
-        .map(|item| match item {
-            FlowItem::Para(p) => match document.body.get(p.body) {
-                Some(Block::Paragraph(para)) => Some(para.path.to_string()),
-                _ => None,
+/// Every body paragraph's path (cells included) and the flow item it is drawn by.
+fn item_paths(document: &WordDocument, layout: &DocumentLayout) -> HashMap<String, usize> {
+    let (paragraphs, _) = ooxml_word_layout::flow::body_paragraphs(&document.body);
+    let mut out = HashMap::new();
+    for (k, item) in layout.flow.items.iter().enumerate() {
+        let blocks = match item {
+            FlowItem::Para(p) => p.block..p.block + 1,
+            FlowItem::Table(t) => match document.body.get(t.body) {
+                Some(Block::Table(table)) => t.block..t.block + ooxml_word_layout::tables::table_paragraphs(table),
+                _ => continue,
             },
-            _ => None,
-        })
-        .collect()
+            FlowItem::Stop(_) => continue,
+        };
+        for block in blocks {
+            if let Some(p) = paragraphs.get(block) {
+                out.insert(p.path.to_string(), k);
+            }
+        }
+    }
+    out
+}
+
+/// Each body paragraph's path, by block (cells included).
+fn block_paths(document: &WordDocument) -> Vec<String> {
+    let (paragraphs, _) = ooxml_word_layout::flow::body_paragraphs(&document.body);
+    paragraphs.iter().map(|p| p.path.to_string()).collect()
 }
 
 /// Whether a line draws nothing (the layout places it and draws no line for it).
@@ -360,32 +433,38 @@ fn position(v: &Value) -> Position {
 /// A placed line as compared: its paragraph's path, its number, its top and pitch.
 type LineBox = (String, usize, String, String);
 
-/// The page's drawn lines of items before the cut.
+/// The page's drawn lines of items before the cut, paragraphs' and tables' rows', in
+/// drawing order (item by item).
 fn our_lines(
     ours: &DocumentLayout,
     page: &ooxml_word_layout::paginate::LaidPage,
-    paths: &[Option<String>],
+    paths: &[String],
     cut: usize,
 ) -> Vec<LineBox> {
-    page.lines
+    let path = |block: usize| paths.get(block).cloned().unwrap_or_default();
+    let mut lines: Vec<(usize, LineBox)> = page
+        .lines
         .iter()
         .filter(|l| l.item < cut && !undrawn(ours, l.item, l.line))
         .map(|l| {
-            let path = paths.get(l.item).cloned().flatten().unwrap_or_default();
-            (path, l.line, l.top.to_string(), l.pitch.to_string())
+            let block = ours.flow.items.get(l.item).map_or(usize::MAX, FlowItem::block);
+            (l.item, (path(block), l.line, l.top.to_string(), l.pitch.to_string()))
         })
-        .collect()
+        .collect();
+    lines.extend(
+        table_lines(ours, page)
+            .into_iter()
+            .filter(|(item, ..)| *item < cut)
+            .map(|(item, block, line, top, pitch)| (item, (path(block), line, top.to_string(), pitch.to_string()))),
+    );
+    lines.sort_by_key(|(item, _)| *item);
+    lines.into_iter().map(|(_, line)| line).collect()
 }
 
 /// docx2svg's drawn body lines of a page: a line of a paragraph before the cut; on a page
 /// wholly before it, every line (one of a paragraph the Rust flow does not know is a
 /// difference).
-fn their_lines(
-    drawn: &Value,
-    item_of: &std::collections::HashMap<&str, usize>,
-    cut: usize,
-    whole_page: bool,
-) -> Vec<LineBox> {
+fn their_lines(drawn: &Value, item_of: &HashMap<&str, usize>, cut: usize, whole_page: bool) -> Vec<LineBox> {
     at(drawn, "lines")
         .as_array()
         .into_iter()
@@ -423,12 +502,9 @@ fn compare_pages(
         .map(position)
         .collect();
     let pages = &ours.pagination.pages;
-    let paths = item_paths(document, ours);
-    let item_of: std::collections::HashMap<&str, usize> = paths
-        .iter()
-        .enumerate()
-        .filter_map(|(k, p)| Some((p.as_deref()?, k)))
-        .collect();
+    let paths = block_paths(document);
+    let owned = item_paths(document, ours);
+    let item_of: HashMap<&str, usize> = owned.iter().map(|(p, k)| (p.as_str(), *k)).collect();
     let flow_len = at(theirs, "flow").as_array().map_or(0, Vec::len);
     let laid_pages: Vec<&Value> = at(theirs, "pages")
         .as_array()
@@ -510,7 +586,7 @@ pub fn run_document(records: &LayoutRecords, outcome: &mut Outcome) -> Result<()
     let budget: Arc<dyn CacheBudget> = Arc::new(Unlimited);
     let mut engine = WordLayout::new(
         Arc::new(WordGlyphs::new(fonts)),
-        Arc::new(NoTables),
+        Arc::new(WordTables),
         Locale::default(),
         &budget,
         KEY,

@@ -191,6 +191,13 @@ content beside it (`side`), tracked as an insertion while tracking is on; `word_
 `new_text` says what text written over a paragraph would look like where that is not its
 `effective` formatting.
 
+Rows beside cells merged down (round 59): a row `insert_row` or `copy_row` adds inside a
+merge down joins it -- its cell there continues the merge, empty -- and one above the
+merge's first row or below its last is outside it, as Word's Insert Rows and paste put it
+(measured); the result then names the `merge` call that joins it. A table `like` in
+`word_insert_markdown` merged down in its body rows gives merges where the Markdown leaves
+a cell of such a column empty under another.
+
 A column at once (round 48): a `cells` entry with `rows` in place of `row` writes its column's
 cells over those rows with the entry's one `text` or one value (`from`, or a reference in the
 text, read once): `{col: 2, rows: "*", text: "Yes"}`. `rows` is `*` (every row below the
