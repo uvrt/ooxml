@@ -50,8 +50,17 @@ repository resolve from the index, and third-party dependencies (lxml, ...) from
 pip install --extra-index-url https://uvrt.github.io/ooxml/simple/ docx-agent
 ```
 
-`pip install --upgrade` with the same option moves to the newest release. These package
-names are not on PyPI; pip looks in both places and takes the highest version it finds.
+`pip install --upgrade` with the same option moves to the newest release.
+
+**Prefer uv where you can.** These package names are not on PyPI. With `--extra-index-url`,
+pip looks in both places and takes the highest version it finds. So if someone registered
+one of these names on PyPI with a higher version, pip would install theirs (dependency
+confusion). uv takes a package from the first index that has it, and an index given with
+`--index` comes before PyPI. Our packages then always come from this index:
+
+```
+uv pip install --index https://uvrt.github.io/ooxml/simple/ docx-agent
+```
 
 A given release (to pin): point pip at that release's page and pin the version with `==`
 so pip takes the release's file:
