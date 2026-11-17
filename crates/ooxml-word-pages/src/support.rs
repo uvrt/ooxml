@@ -22,7 +22,10 @@ use ooxml_word_model::WordDocument;
 
 /// A floating table (`w:tblpPr`).
 pub const FLOATING_TABLE: &str = "floating table";
-/// A floating drawing, or a drawing that is not a picture, in a table cell.
+/// A floating drawing that text wraps around, in a table cell (docx2svg's `wrap_cell`):
+/// the layout does not lay its cell out yet.
+pub const WRAP_IN_CELL: &str = "drawing text wraps around in a table cell";
+/// Another floating drawing, or a drawing that is not a picture, in a table cell.
 pub const DRAWING_IN_CELL: &str = "drawing in a table cell";
 /// A drawing text wraps beside (`wrapSquare`, `wrapTight`, `wrapThrough`): the lines'
 /// segments beside it are the paint's from L3f.
@@ -60,6 +63,7 @@ pub const UNPAINTED: &str = "not painted";
 /// Every reason, for a counter's labels.
 pub const REASONS: &[&str] = &[
     FLOATING_TABLE,
+    WRAP_IN_CELL,
     DRAWING_IN_CELL,
     TEXT_BESIDE_DRAWING,
     TEXT_BOX,
@@ -208,7 +212,8 @@ impl Scan {
                 .iter()
                 .any(|a| a.wrap.as_deref().is_some_and(|w| SIDE_WRAPS.contains(&w)))
             {
-                self.found = Some(fallback(TEXT_BESIDE_DRAWING, &paragraph.path));
+                let reason = if in_cell { WRAP_IN_CELL } else { TEXT_BESIDE_DRAWING };
+                self.found = Some(fallback(reason, &paragraph.path));
                 return;
             }
             if run

@@ -234,6 +234,10 @@ impl PageContext<'_> {
     pub(super) fn page_wraps(&self, tops: &Tops, page: usize) -> Vec<Wrap> {
         let mut out = Vec::new();
         for top in tops.iter() {
+            if let Some(FlowItem::Table(t)) = self.items.get(top.item) {
+                out.extend(self.table_wrap(t, top));
+                continue;
+            }
             let Some(FlowItem::Para(item)) = self.items.get(top.item) else {
                 continue;
             };
@@ -259,6 +263,38 @@ impl PageContext<'_> {
         out
     }
 
+    /// A floating table as text wraps beside it on its page (`table_wrap`), positioned
+    /// against the top of the paragraph after it (`top.paragraph_top`): its box -- its
+    /// outer grid lines and its edges past them, from its top to below its bottom border --
+    /// widened by `topFromText` and `bottomFromText` and, across, by `leftFromText` and
+    /// `rightFromText`, each at least 10 twips; text goes beside it on both sides.
+    fn table_wrap(&self, t: &crate::flow::TableItem, top: &Top) -> Option<Wrap> {
+        let floating = t.flow.floating()?;
+        let section = self.sections.get(t.section)?;
+        let height = table_height(t, self.mode15);
+        let f = &floating.position;
+        let y = f.top(&section.props, top.paragraph_top, height);
+        let least = crate::table::MIN_FROM_TEXT;
+        let zero = Q::from_integer(0);
+        Some(Wrap {
+            top: (y - Px::twips(f.top)).value(),
+            bottom: (y + height + Px::twips(f.bottom)).value(),
+            left: floating.first - floating.edges.0 * twip_px(),
+            right: floating.last + floating.edges.1 * twip_px(),
+            dist_left: Q::from_integer(i128::from(f.left.max(least))) * twip_px(),
+            dist_right: Q::from_integer(i128::from(f.right.max(least))) * twip_px(),
+            side: "bothSides".to_owned(),
+            y: y.value(),
+            polygon: None,
+            dist_top: zero,
+            dist_bottom: zero,
+            half_up: true,
+            text_shift: None,
+            drop_cap: None,
+            table: Some(top.item),
+        })
+    }
+
     /// A drop cap's frame as text wraps beside it: from its paragraph's top down its
     /// height, from the column's exact edge to where the text beside it starts.
     fn drop_cap_wrap(&self, item: &ParaItem, top: &Top, drop: &crate::flow::DropCap) -> Option<Wrap> {
@@ -282,6 +318,7 @@ impl PageContext<'_> {
             half_up: false,
             text_shift: Some(shift),
             drop_cap: Some(top.item),
+            table: None,
         })
     }
 
@@ -366,6 +403,23 @@ impl PageContext<'_> {
             half_up: false,
             text_shift: None,
             drop_cap: None,
+            table: None,
         })
     }
+}
+
+/// A table's height placed whole from 0, borders included (a floating table's).
+pub(super) fn table_height(t: &crate::flow::TableItem, mode15: bool) -> Px {
+    let far = Px::int(10_000_000);
+    let request = crate::table::TableRequest {
+        y: Px::ZERO,
+        bottom: far,
+        row: 0,
+        part: Vec::new(),
+        first_on_page: false,
+        mode15,
+        split_kept: false,
+        stop: None,
+    };
+    t.flow.place(&request).map_or(Px::ZERO, |laid| laid.end)
 }

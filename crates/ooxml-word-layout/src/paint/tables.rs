@@ -418,6 +418,7 @@ pub(super) fn whole_rows(table: &MeasuredTable, top: Px) -> Vec<PlacedRow> {
             first_on_page: false,
             mode15: table.mode15,
             split_kept: false,
+            stop: None,
         },
     )
     .rows

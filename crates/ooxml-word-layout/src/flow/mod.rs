@@ -113,6 +113,8 @@ pub struct TableItem {
     pub section_start: bool,
     /// Its rows, as the table layout placed them.
     pub flow: Arc<dyn TableFlow>,
+    /// The footnotes referenced in its cells.
+    pub notes: Arc<CellNotes>,
 }
 
 /// Where the layout stops: what it cannot lay out.
@@ -305,6 +307,14 @@ pub enum Labels<'a> {
 }
 
 impl Labels<'_> {
+    /// Paragraph `block`'s label, where it has one.
+    fn get(&self, block: usize) -> Option<&str> {
+        match self {
+            Labels::Given(all) => all.get(block).and_then(Option::as_deref),
+            Labels::None => None,
+        }
+    }
+
     fn of(&self, block: usize) -> Option<String> {
         match self {
             Labels::Given(all) => all.get(block).cloned().flatten(),
@@ -385,12 +395,14 @@ pub(crate) fn is_empty(paragraph: &Paragraph) -> bool {
 
 pub use crate::borders::paragraph_borders;
 
+mod again;
 mod drop;
 mod notes;
 mod source;
+pub use again::OldFlow;
 pub use drop::DropCap;
-pub use notes::NoteForms;
 use notes::ParaNotes;
+pub use notes::{CellNotes, NoteForms};
 
 /// Whether a side of a resolved paragraph is autospaced (`autospaced`).
 fn autospaced(document: &WordDocument, pp: &Props, side: &str) -> bool {
@@ -473,13 +485,46 @@ impl<'a, 'm> FlowMaker<'a, 'm> {
 
     /// The flow.
     pub fn build(mut self) -> Flow {
-        let body = self.cx.blocks;
-        let mut items = Vec::with_capacity(body.len());
-        let mut top_level = 0;
-        let mut seen = vec![false; self.cx.sections.list.len().max(1)];
-        let drops = self.drop_caps();
+        let all = 0..self.cx.blocks.len();
+        let drops = self.drop_caps(all.clone());
         self.wraps = self.wraps || !drops.is_empty();
-        for (index, block) in body.iter().enumerate() {
+        let items = self.items_in(all, &drops);
+        Flow {
+            items,
+            separators: self.separators,
+            note_items: self.note_items,
+            notes_at: self.notes_at,
+            wraps: self.wraps,
+        }
+    }
+
+    /// How many top-level paragraphs stand before top-level block `body`.
+    fn top_level_before(&self, body: usize) -> usize {
+        self.cx
+            .blocks
+            .get(..body)
+            .unwrap_or_default()
+            .iter()
+            .filter(|b| matches!(b, Block::Paragraph(_)))
+            .count()
+    }
+
+    /// The items of top-level blocks `range` (`drops`: the drop caps among them), the
+    /// blocks before it laid out already.
+    fn items_in(&mut self, range: std::ops::Range<usize>, drops: &[usize]) -> Vec<FlowItem> {
+        let body = self.cx.blocks;
+        let mut items = Vec::with_capacity(range.len());
+        let mut top_level = self.top_level_before(range.start);
+        let mut seen = vec![false; self.cx.sections.list.len().max(1)];
+        if let Some(previous) = range.start.checked_sub(1).and_then(|k| body.get(k)) {
+            // Every section up to the block before's has started.
+            let before = top_level - usize::from(matches!(previous, Block::Paragraph(_)));
+            let last = self.cx.sections.section_of(before);
+            for s in seen.iter_mut().take(last + 1) {
+                *s = true;
+            }
+        }
+        for (index, block) in body.iter().enumerate().take(range.end).skip(range.start) {
             let first = self.firsts.get(index).copied().unwrap_or(0);
             let section = self.cx.sections.section_of(top_level);
             let section_start = !seen.get(section).copied().unwrap_or(true);
@@ -504,13 +549,7 @@ impl<'a, 'm> FlowMaker<'a, 'm> {
             };
             items.push(item);
         }
-        Flow {
-            items,
-            separators: self.separators,
-            note_items: self.note_items,
-            notes_at: self.notes_at,
-            wraps: self.wraps,
-        }
+        items
     }
 
     fn table_item(
@@ -532,8 +571,6 @@ impl<'a, 'm> FlowMaker<'a, 'm> {
             .collect();
         let flowed = match geometry {
             None => Err(Unsupported("no section".into())),
-            // Its columns' widths differ: laid out again in each (lane L3c).
-            Some(g) if g.unequal_columns() => Err(Unsupported("a section of unequal columns".into())),
             Some(g) => self.table_flow(table, &g, previous, labels),
         };
         match flowed {
@@ -543,6 +580,7 @@ impl<'a, 'm> FlowMaker<'a, 'm> {
                 section,
                 section_start,
                 flow,
+                notes: self.cell_notes(block, body, section),
             })),
             Err(why) => FlowItem::Stop(Arc::new(StopItem {
                 block,

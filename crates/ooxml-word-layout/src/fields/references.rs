@@ -11,7 +11,7 @@
 
 use super::format::{argument, number_text, switches, Uncomputable};
 use crate::flow::body_paragraphs;
-use ooxml_word_model::model::{Paragraph, Run, RunProps};
+use ooxml_word_model::model::{Block, Paragraph, Run, RunProps};
 use ooxml_word_model::WordDocument;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
@@ -203,7 +203,9 @@ fn letters(instruction: &str) -> Vec<char> {
     out
 }
 
-fn apply_case(text: &str, instruction: &str) -> String {
+/// `text` with the instruction's case switches (`\* Upper`, `Lower`, `FirstCap`, `Caps`)
+/// applied (`apply_case`).
+pub(crate) fn apply_case(text: &str, instruction: &str) -> String {
     let mut text = text.to_owned();
     for (kind, argument) in switches(instruction) {
         if kind != '*' {
@@ -381,6 +383,61 @@ fn reference_runs(paragraphs: &[Arc<Paragraph>], run: &Run, marks: &Marks) -> Re
 #[derive(Debug, Default)]
 pub struct Computed {
     kept: HashMap<usize, (Arc<Paragraph>, Arc<Paragraph>)>,
+    /// The body last computed and its result.
+    last: Option<Computation>,
+}
+
+/// A body and the body with its `SEQ` and `REF` fields computed.
+type Computation = (Arc<[Block]>, Arc<[Block]>);
+
+/// Whether a block holds no `SEQ` or `REF` field and no bookmark: changing it changes no
+/// other block's fields, and none of its own.
+fn plain(block: &Block) -> bool {
+    match block {
+        Block::Paragraph(p) => {
+            p.bookmarks.is_empty()
+                && !p
+                    .runs
+                    .iter()
+                    .any(|r| r.field.as_ref().is_some_and(|f| matches!(&*f.keyword, "SEQ" | "REF")))
+        }
+        Block::Table(t) => t.rows.iter().flat_map(|r| r.iter()).flat_map(|c| c.iter()).all(plain),
+    }
+}
+
+impl Computed {
+    /// The result for `body` from the last one, where only blocks without `SEQ`, `REF`
+    /// or bookmarks changed (in the old body and the new): those blocks are their own
+    /// result, every other one is the last result's.
+    fn again(&self, body: &Arc<[Block]>) -> Option<Arc<[Block]>> {
+        let (input, output) = self.last.as_ref()?;
+        if Arc::ptr_eq(input, body) {
+            return Some(Arc::clone(output));
+        }
+        if input.len() != output.len() {
+            return None;
+        }
+        let changes = crate::incremental::block_changes(input, body);
+        let all_plain = changes.iter().all(|c| {
+            let old = input.get(c.a..c.b_old).unwrap_or_default();
+            let new = body.get(c.a..c.b_new).unwrap_or_default();
+            old.iter().chain(new).all(plain)
+        });
+        if !all_plain {
+            return None;
+        }
+        let mut out: Vec<Block> = Vec::with_capacity(body.len());
+        let (mut old_at, mut shift) = (0usize, 0isize);
+        for c in &changes {
+            let old_a = c.a.saturating_add_signed(-shift);
+            out.extend(output.get(old_at..old_a).unwrap_or_default().iter().cloned());
+            out.extend(body.get(c.a..c.b_new).unwrap_or_default().iter().cloned());
+            old_at = c.b_old;
+            shift += isize::try_from(c.b_new).unwrap_or(0) - isize::try_from(c.b_old).unwrap_or(0);
+        }
+        out.extend(output.get(old_at..).unwrap_or_default().iter().cloned());
+        (out.len() == body.len()).then(|| out.into())
+    }
 }
 
 impl Computed {
@@ -446,9 +503,16 @@ fn expanded(paragraph: &Paragraph, counted: &[Arc<Paragraph>], marks: &Marks) ->
 /// the runs Word draws for them (`cross_references`); a field that cannot be computed is
 /// left as Word cached it. Paragraphs computed alike before are taken from `kept`.
 pub fn cross_references(document: &WordDocument, kept: &mut Computed) -> WordDocument {
+    if let Some(body) = kept.again(&document.body) {
+        kept.last = Some((Arc::clone(&document.body), Arc::clone(&body)));
+        let mut out = document.clone();
+        out.body = body;
+        return out;
+    }
     let (paragraphs, _) = body_paragraphs(&document.body);
     if !has_cross_references(&paragraphs) {
         kept.kept.clear();
+        kept.last = Some((Arc::clone(&document.body), Arc::clone(&document.body)));
         return document.clone();
     }
     let sequences = sequence_values(&paragraphs);
@@ -497,11 +561,13 @@ pub fn cross_references(document: &WordDocument, kept: &mut Computed) -> WordDoc
     let mut walk = super::Rebuild {
         next: 0,
         change: &mut change,
+        touches: None,
     };
     let body: Vec<_> = document.body.iter().map(|b| walk.block(b)).collect();
     kept.kept.retain(|k, _| used.contains(k));
     let mut out = document.clone();
     out.body = body.into();
+    kept.last = Some((Arc::clone(&document.body), Arc::clone(&out.body)));
     out
 }
 

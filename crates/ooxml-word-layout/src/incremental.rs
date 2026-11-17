@@ -9,6 +9,7 @@
 
 use crate::flow::FlowItem;
 use crate::paginate::{LaidPage, LineStore, PageContext, Pagination, Paginator, Position, Resume};
+use ooxml_word_model::model::Block;
 use std::sync::Arc;
 
 /// Items `[a, b_old)` of the old flow are `[a, b_new)` of the new one; the rest are the
@@ -52,7 +53,10 @@ pub fn same_item(old: &FlowItem, new: &FlowItem) -> bool {
                 && a.note_forms == b.note_forms
         }
         (FlowItem::Table(a), FlowItem::Table(b)) => {
-            Arc::ptr_eq(&a.flow, &b.flow) && a.section == b.section && a.section_start == b.section_start
+            Arc::ptr_eq(&a.flow, &b.flow)
+                && a.section == b.section
+                && a.section_start == b.section_start
+                && a.notes == b.notes
         }
         (FlowItem::Stop(a), FlowItem::Stop(b)) => a.section == b.section && a.reason == b.reason,
         _ => false,
@@ -145,8 +149,17 @@ fn parity_decides(cx: &PageContext<'_>) -> bool {
             .any(|s| matches!(s.props.start_type.as_deref(), Some("oddPage" | "evenPage")))
 }
 
+/// What decides whether old pages may move to other places: a parity (blank pages, even
+/// pages' stories), or page stories of their own (headers and footers of their own heights,
+/// by their pages' places).
+#[derive(Debug, Clone, Copy)]
+struct Placed {
+    parity: bool,
+    fixed: bool,
+}
+
 /// The old page a new page starting at `state` lines up with, past the change.
-fn joins(old: &Pagination, change: Change, delta: isize, parity: bool, state: &Resume) -> Option<usize> {
+fn joins(old: &Pagination, change: Change, delta: isize, placed: Placed, state: &Resume) -> Option<usize> {
     // A page starting at a paragraph's first line reads the item before it (its space
     // after, at the page's top): that item must be past the change too.
     let reads_before = state.position.line == 0 && state.position.part.is_empty();
@@ -164,7 +177,8 @@ fn joins(old: &Pagination, change: Change, delta: isize, parity: bool, state: &R
     let page_shift = i64::try_from(state.page).unwrap_or(0) - i64::try_from(base_of(old, q)).unwrap_or(0);
     let number_shift = state.number - page.number_before;
     let odd = page_shift.rem_euclid(2) != 0 || number_shift.rem_euclid(2) != 0;
-    (!(parity && odd)).then_some(q)
+    let refused = (placed.parity && odd) || (placed.fixed && page_shift != 0);
+    (!refused).then_some(q)
 }
 
 /// The changes between two flows: where they have as many items, each run of items that
@@ -220,13 +234,15 @@ fn first_reaching(old: &Pagination, from: usize, target: &Position) -> usize {
 /// Old laid pages `from..to` (and their blank pages' info) moved by `shift`.
 fn copy_moved(out: &mut Pagination, old: &Pagination, from: usize, to: usize, shift: Shift) {
     let to = to.min(old.pages.len());
-    out.pages.extend(
-        old.pages
-            .get(from..to)
-            .unwrap_or_default()
-            .iter()
-            .map(|page| moved(page, shift.items, shift.pages, shift.numbers)),
-    );
+    out.pages
+        .extend(old.pages.get(from..to).unwrap_or_default().iter().map(|page| {
+            if shift.items == 0 && shift.pages == 0 && shift.numbers == 0 {
+                // A page that stays where it was is the old one.
+                Arc::clone(page)
+            } else {
+                Arc::new(moved(page, shift.items, shift.pages, shift.numbers))
+            }
+        }));
     let info_to = if to < old.pages.len() {
         base_of(old, to)
     } else {
@@ -253,7 +269,11 @@ pub fn repaginate(cx: &PageContext<'_>, old: &Pagination, changes: &[Change]) ->
     let Some(first) = changes.first() else {
         return (old.clone(), RelayoutStats::default());
     };
-    let parity = parity_decides(cx);
+    let placed = Placed {
+        parity: parity_decides(cx),
+        // A page whose header or footer has heights of its own keeps them by its place.
+        fixed: !cx.page_stories.is_empty(),
+    };
     let mut p = clean_restart(old, first_reaching(old, 0, &Position::at(first.a, 0)), first.a);
     let mut out = Pagination {
         pages: old.pages.get(..p).unwrap_or_default().to_vec(),
@@ -283,7 +303,7 @@ pub fn repaginate(cx: &PageContext<'_>, old: &Pagination, changes: &[Change]) ->
         let delta = isize::try_from(change.b_new).unwrap_or(0) - isize::try_from(change.b_old).unwrap_or(0);
         let mut joined = None;
         let mut until = |state: &Resume| {
-            joined = joins(old, change, shift.items + delta, parity, state);
+            joined = joins(old, change, shift.items + delta, placed, state);
             joined.is_some()
         };
         let (fresh, stop) = Paginator::new(cx).run(resume, &mut until);
@@ -346,4 +366,53 @@ fn shifted(lines: &LineStore, by: isize) -> LineStore {
 
 fn shift_position(p: &Position, by: isize) -> Position {
     shift(p, by)
+}
+
+fn same_block(x: &Block, y: &Block) -> bool {
+    match (x, y) {
+        (Block::Paragraph(p), Block::Paragraph(q)) => Arc::ptr_eq(p, q),
+        (Block::Table(t), Block::Table(u)) => Arc::ptr_eq(t, u),
+        _ => false,
+    }
+}
+
+/// The top-level blocks of two versions' bodies that differ by `Arc` (the model shares an
+/// unchanged block's): where both have as many, each run of them in place; otherwise one
+/// change between the common prefix and suffix. `a` and `b_new` index the new body, `b_old`
+/// the old one.
+pub fn block_changes(old: &[Block], new: &[Block]) -> Vec<Change> {
+    if old.len() == new.len() {
+        let mut out: Vec<Change> = Vec::new();
+        for (k, (x, y)) in old.iter().zip(new).enumerate() {
+            if same_block(x, y) {
+                continue;
+            }
+            match out.last_mut() {
+                Some(c) if c.b_new == k => {
+                    c.b_old = k + 1;
+                    c.b_new = k + 1;
+                }
+                _ => out.push(Change {
+                    a: k,
+                    b_old: k + 1,
+                    b_new: k + 1,
+                }),
+            }
+        }
+        return out;
+    }
+    let prefix = old.iter().zip(new).take_while(|(x, y)| same_block(x, y)).count();
+    let room = old.len().min(new.len()) - prefix;
+    let suffix = old
+        .iter()
+        .rev()
+        .zip(new.iter().rev())
+        .take(room)
+        .take_while(|(x, y)| same_block(x, y))
+        .count();
+    vec![Change {
+        a: prefix,
+        b_old: old.len() - suffix,
+        b_new: new.len() - suffix,
+    }]
 }

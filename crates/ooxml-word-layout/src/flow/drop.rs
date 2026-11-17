@@ -89,11 +89,11 @@ fn frame_attr<'p>(pp: &'p Props, name: &str) -> Option<&'p str> {
 impl FlowMaker<'_, '_> {
     /// The top-level paragraphs that are drop caps the flow lays out: each followed by a
     /// paragraph.
-    pub(super) fn drop_caps(&mut self) -> Vec<usize> {
+    pub(super) fn drop_caps(&mut self, range: std::ops::Range<usize>) -> Vec<usize> {
         let body = self.cx.blocks;
         let mut out = Vec::new();
-        for (k, pair) in body.windows(2).enumerate() {
-            if let [Block::Paragraph(_), Block::Paragraph(_)] = pair {
+        for k in range {
+            if let (Some(Block::Paragraph(_)), Some(Block::Paragraph(_))) = (body.get(k), body.get(k + 1)) {
                 let block = self.firsts.get(k).copied().unwrap_or(0);
                 if self.props_of_block(block).is_some_and(|pp| is_drop_cap(&pp)) {
                     out.push(k);
