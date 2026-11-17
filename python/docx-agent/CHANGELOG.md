@@ -35,6 +35,13 @@ Measured on `tools/tracked_report.py`'s made-up 340-page report.
   laid out and viewed, 283 MB after the drop; what stays is the allocators' (131 pymalloc
   arenas with 30 MB of blocks in them, 104 MB held by malloc with 29 MB in use), not the
   document's (tracemalloc: 16.5 MB left, the font index).
+- **`docx_agent.rust.session.RustTools`** (lane P0d): Word documents in an
+  `ooxml_core.Session`, tools defined in Rust (`tool_specs`) as `Tool`s and their replies as
+  `RustResult`s, rendered by the unchanged provider adapters. Its `describe` gives the name,
+  compatibility mode, core properties, comments, notes and content controls, equal to
+  today's on every fixture (`tests/test_rust_describe.py`). Nothing uses it by default.
+  Found on the way: today's `describe` fails on `tests/fixtures/generated/charts/chart-places.docx`
+  (`'Member' object has no attribute 'alt_text'`); left as it is, and marked in the test.
 - `Engine.of(runner, timeout, document)` makes a layout engine of a pool and remembers it
   for the document; `Engine.task` runs any layout task there. `layout.opened_layout` (was
   `check_worker._opened`).

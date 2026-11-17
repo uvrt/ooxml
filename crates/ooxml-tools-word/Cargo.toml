@@ -1,0 +1,21 @@
+[package]
+name = "ooxml-tools-word"
+version = "0.1.0"
+description = "Word's tools as handlers over a version of a package (describe, so far)"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+ooxml-base.workspace = true
+ooxml-xml.workspace = true
+ooxml-opc.workspace = true
+ooxml-tools.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+ooxml-zip.workspace = true
+
+[lints]
+workspace = true

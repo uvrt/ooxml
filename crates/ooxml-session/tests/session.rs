@@ -1,0 +1,266 @@
+//! A session end to end on made-up packages: open, describe through dispatch, the
+//! bridge's updates (snapshots unchanged by later commits, parallel writers equal to a
+//! serial count), save, close, refusals with their way out, cancellation and deadlines.
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
+
+use ooxml_base::context::{FaceData, FaceRequest, Timestamp};
+use ooxml_base::{BaseError, CacheBudget, Cancel, Clock, Context, FontSource, Limits, Locale, PartStore};
+use ooxml_session::{CallContext, Caller, CancelToken, DocKind, Session, SessionConfig, SessionError};
+use ooxml_zip::{Method, NewEntry, Writer};
+use serde_json::{json, Value};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
+
+struct NoFonts;
+impl FontSource for NoFonts {
+    fn face(&self, _: &FaceRequest) -> Result<Option<FaceData>, BaseError> {
+        Ok(None)
+    }
+}
+struct NoParts;
+impl PartStore for NoParts {
+    fn load(&self, _: &str) -> Result<Option<Arc<[u8]>>, BaseError> {
+        Ok(None)
+    }
+    fn store(&self, _: &str, _: Arc<[u8]>) -> Result<(), BaseError> {
+        Ok(())
+    }
+}
+struct Unlimited;
+impl CacheBudget for Unlimited {
+    fn reserve(&self, _: usize) -> bool {
+        true
+    }
+    fn release(&self, _: usize) {}
+    fn used(&self) -> usize {
+        0
+    }
+}
+struct Never;
+impl Cancel for Never {
+    fn is_cancelled(&self) -> bool {
+        false
+    }
+}
+/// A clock that moves one second each time it is read.
+#[derive(Default)]
+struct Ticking(AtomicU64);
+impl Clock for Ticking {
+    fn now(&self) -> Timestamp {
+        Timestamp::default()
+    }
+    fn monotonic(&self) -> Duration {
+        Duration::from_secs(self.0.fetch_add(1, Ordering::SeqCst))
+    }
+}
+
+fn session() -> Session {
+    let context = Context {
+        fonts: Arc::new(NoFonts),
+        parts: Arc::new(NoParts),
+        clock: Arc::new(Ticking::default()),
+        budget: Arc::new(Unlimited),
+        cancel: Arc::new(Never),
+        limits: Limits::default(),
+        locale: Locale::default(),
+    };
+    Session::new(SessionConfig::default(), context)
+}
+
+const W: &str = r#"xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main""#;
+
+fn docx() -> Vec<u8> {
+    let rels = r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+    let doc = format!("<w:document {W}><w:body><w:sdt/></w:body></w:document>");
+    let mut w = Writer::new();
+    for (name, data) in [("_rels/.rels", rels.to_owned()), ("word/document.xml", doc)] {
+        let entry = NewEntry {
+            name: name.into(),
+            method: Method::Deflated,
+            dos_time: 0,
+            dos_date: 33,
+            external_attr: 0,
+            create_system: 3,
+        };
+        w.add(&entry, data.as_bytes()).unwrap();
+    }
+    w.finish(b"").unwrap()
+}
+
+fn call(session: &Session, name: &str, arguments: Value) -> Value {
+    let result = session.call(name, arguments, &CallContext::default());
+    Value::Object(result.to_json())
+}
+
+fn put(part: &str, xml: &str) -> (String, Option<Arc<[u8]>>) {
+    (part.to_owned(), Some(Arc::from(xml.as_bytes())))
+}
+
+#[test]
+fn describe_through_the_session() {
+    let s = session();
+    let d = s.open(Arc::from(docx()), DocKind::Docx, "a.docx").unwrap();
+    assert_eq!(d.to_string(), "d1");
+    let reply = call(&s, "describe", json!({"doc": "d1"}));
+    assert_eq!(reply["ok"], json!(true));
+    assert_eq!(
+        (reply["doc"].clone(), reply["version"].clone()),
+        (json!("d1"), json!(0))
+    );
+    assert_eq!(reply["summary"], json!("Described a.docx"));
+    assert_eq!(reply["data"]["controls"], json!(1));
+    // arguments as JSON text, as providers send them
+    let text = call(&s, "describe", Value::String(r#"{"doc":"d1"}"#.into()));
+    assert_eq!(text, reply);
+    assert_eq!(s.stats().calls, 2);
+}
+
+#[test]
+fn refusals_carry_their_way_out() {
+    let s = session();
+    let none = call(&s, "describe", json!({"doc": "d1"}));
+    assert_eq!(none["error"]["code"], json!("not_found"));
+    assert_eq!(none["error"]["try_call"]["tool"], json!("open_document"));
+    s.open(Arc::from(docx()), DocKind::Docx, "a.docx").unwrap();
+    let missing = call(&s, "describe", json!({"doc": "d7"}));
+    assert_eq!(missing["error"]["message"], json!("no open document 'd7'"));
+    assert_eq!(missing["error"]["valid_options"], json!(["d1"]));
+    let tool = call(&s, "descibe", json!({"doc": "d1"}));
+    assert_eq!(tool["error"]["code"], json!("invalid_arguments"));
+    assert_eq!(tool["error"]["valid_options"], json!(["describe"]));
+    let extra = call(&s, "describe", json!({"doc": "d1", "x": 1}));
+    assert_eq!(extra["error"]["field"], json!("x"));
+    let not_json = call(&s, "describe", Value::String("{doc".into()));
+    assert_eq!(not_json["error"]["code"], json!("invalid_arguments"));
+    // a kind no tool of that name serves: refused, naming the documents it serves
+    s.open(Arc::from(docx()), DocKind::Pptx, "deck.pptx").unwrap();
+    let deck = call(&s, "describe", json!({"doc": "d2"}));
+    assert_eq!(deck["error"]["code"], json!("refused"));
+    assert_eq!(deck["error"]["valid_options"], json!(["d1"]));
+    assert_eq!(s.stats().failed, 6);
+}
+
+#[test]
+fn updates_make_versions_and_snapshots_stay() {
+    let s = session();
+    let d = s.open(Arc::from(docx()), DocKind::Docx, "a.docx").unwrap();
+    let before = s.snapshot(&d).unwrap();
+    let doc = format!("<w:document {W}><w:body><w:sdt/><w:sdt/></w:body></w:document>");
+    let context = CallContext {
+        caller: Caller::named("w1"),
+        ..CallContext::default()
+    };
+    let parts = vec![
+        put("word/document.xml", &doc),
+        ("word/media/x.bin".to_owned(), Some(Arc::from(&b"\x00\x01"[..]))),
+    ];
+    let updated = s.update(&d, parts, &context).unwrap();
+    assert_eq!((updated.version, updated.changed), (1, true));
+    assert_eq!(call(&s, "describe", json!({"doc": "d1"}))["data"]["controls"], json!(2));
+    // the snapshot taken before still reads version 0
+    assert_eq!(before.version(), 0);
+    assert_eq!(
+        before
+            .package()
+            .tree("word/document.xml")
+            .unwrap()
+            .unwrap()
+            .root()
+            .children()
+            .len(),
+        1
+    );
+    let removed = s.update(&d, vec![("word/media/x.bin".into(), None)], &context).unwrap();
+    assert_eq!(removed.version, 2);
+    // a part that does not parse changes nothing
+    let bad = s.update(&d, vec![put("word/document.xml", "<w:document")], &context);
+    assert!(matches!(bad, Err(SessionError::Package(_))));
+    let gone = s.update(&d, vec![("word/media/x.bin".into(), None)], &context);
+    assert!(matches!(gone, Err(SessionError::Package(_))));
+    assert_eq!(s.snapshot(&d).unwrap().version(), 2);
+    let saved = s.save(&d).unwrap();
+    let again = s.open(Arc::from(saved), DocKind::Docx, "b.docx").unwrap();
+    assert_eq!(
+        call(&s, "describe", json!({"doc": again.to_string()}))["data"]["controls"],
+        json!(2)
+    );
+    assert_eq!(s.store_stats(&d).unwrap().commits, 2);
+}
+
+#[test]
+fn an_unchanged_document_saves_as_it_was_read() {
+    let s = session();
+    let bytes = docx();
+    let d = s.open(Arc::from(bytes.clone()), DocKind::Docx, "a.docx").unwrap();
+    call(&s, "describe", json!({"doc": "d1"}));
+    assert_eq!(s.save(&d).unwrap(), bytes);
+    s.close(&d).unwrap();
+    assert!(matches!(s.close(&d), Err(SessionError::NotOpen { .. })));
+    assert_eq!(s.stats().open, 0);
+    // ids are never given twice
+    assert_eq!(
+        s.open(Arc::from(bytes), DocKind::Docx, "a.docx").unwrap().to_string(),
+        "d2"
+    );
+}
+
+#[test]
+fn a_cancelled_or_late_call_stops_with_timeout() {
+    let s = session();
+    let d = s.open(Arc::from(docx()), DocKind::Docx, "a.docx").unwrap();
+    let token = Arc::new(CancelToken::new());
+    token.cancel();
+    let cancelled = CallContext {
+        cancel: Some(token),
+        ..CallContext::default()
+    };
+    let reply = Value::Object(s.call("describe", json!({"doc": "d1"}), &cancelled).to_json());
+    assert_eq!(reply["error"]["code"], json!("timeout"));
+    // the ticking clock passes a one-second deadline at the first check
+    let late = CallContext {
+        deadline: Some(Duration::from_millis(500)),
+        ..CallContext::default()
+    };
+    let reply = Value::Object(s.call("describe", json!({"doc": "d1"}), &late).to_json());
+    assert_eq!(reply["error"]["code"], json!("timeout"));
+    let update = s.update(&d, vec![put("word/x.xml", "<x/>")], &late);
+    assert!(matches!(update, Err(SessionError::Base(BaseError::Cancelled))));
+    assert_eq!(s.snapshot(&d).unwrap().version(), 0);
+    assert_eq!(s.stats().cancelled, 3);
+}
+
+#[test]
+fn parallel_writers_equal_a_serial_count() {
+    let s = Arc::new(session());
+    let d = s.open(Arc::from(docx()), DocKind::Docx, "a.docx").unwrap();
+    let threads = 8;
+    let each = 25;
+    std::thread::scope(|scope| {
+        for t in 0..threads {
+            let (s, d) = (Arc::clone(&s), d.clone());
+            scope.spawn(move || {
+                let context = CallContext {
+                    caller: Caller::named(&format!("w{t}")),
+                    ..CallContext::default()
+                };
+                for k in 0..each {
+                    // every writer its own part, and one part they all write
+                    let own = put(&format!("word/w{t}.xml"), &format!("<n v=\"{k}\"/>"));
+                    let shared = put("word/shared.xml", &format!("<n t=\"{t}\" v=\"{k}\"/>"));
+                    let parts = if k % 5 == 0 { vec![own, shared] } else { vec![own] };
+                    assert!(s.update(&d, parts, &context).unwrap().changed);
+                    let reply = s.call("describe", json!({"doc": "d1"}), &CallContext::default());
+                    assert!(!reply.is_error());
+                }
+            });
+        }
+    });
+    let head = s.snapshot(&d).unwrap();
+    assert_eq!(head.version(), threads * each);
+    for t in 0..threads {
+        let tree = head.package().tree(&format!("word/w{t}.xml")).unwrap().unwrap();
+        assert_eq!(tree.root().attribute(None, "v"), Some("24"));
+    }
+    assert_eq!(s.store_stats(&d).unwrap().commits, threads * each);
+}

@@ -25,6 +25,9 @@ pub enum OpcError {
     /// A part of that name exists already.
     #[error("part {0:?} exists already")]
     PartExists(String),
+    /// A part asked to be restored from a package opened from another archive.
+    #[error("part {0:?}: restored from a package opened from another archive")]
+    OtherPackage(String),
     /// Two entries name one part (OPC part names are unique; equivalent names are refused).
     #[error("two entries name the part {0:?}")]
     DuplicatePart(String),

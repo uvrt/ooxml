@@ -15,6 +15,9 @@ members = [
     "crates/ooxml-oracle",
     "crates/ooxml-tools-derive",
     "crates/ooxml-tools",
+    "crates/ooxml-tools-word",
+    "crates/ooxml-session",
+    "crates/ooxml-python-session",
     "crates/ooxml-scene",
     "crates/ooxml-metafile",
     "xtask",
@@ -52,6 +55,11 @@ ooxml-word-model = { path = "crates/ooxml-word-model" }
 ooxml-scene = { path = "crates/ooxml-scene" }
 ooxml-metafile = { path = "crates/ooxml-metafile" }
 ooxml-tools-derive = { path = "crates/ooxml-tools-derive" }
+ooxml-tools = { path = "crates/ooxml-tools" }
+ooxml-tools-word = { path = "crates/ooxml-tools-word" }
+ooxml-store = { path = "crates/ooxml-store" }
+ooxml-session = { path = "crates/ooxml-session" }
+ooxml-python-session = { path = "crates/ooxml-python-session" }
 read-fonts = { version = "0.47", default-features = false, features = ["std"] }
 
 # The architecture's standards (docs/architecture/README.md, section 2), for every crate that

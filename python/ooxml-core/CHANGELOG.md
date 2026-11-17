@@ -3,6 +3,24 @@
 ooxml-core is the Rust core of the ooxml packages (`crates/`), as the Python module
 `ooxml_core`. Its version is the `crates/python` crate's.
 
+## 0.9.0 -- unreleased
+
+- **`ooxml_core.Session`**: the architecture's Rust session (lane P0d), beside the
+  prototype's functions in the same module. `open(data, kind=, name=)` gives a document id
+  (`d1`); `call(name, arguments_json, context=, limit=)` runs a tool on the document's head
+  snapshot and returns `(reply_json, images)` -- refusals are replies, with their way out;
+  `update(doc, {part: bytes or None}, context=)` commits a version's touched parts as one
+  step, `(version, changed, attempts)`; `save`, `close`, `version`, `documents`,
+  `tool_specs(kind)`, `stats`, `store_stats`, `shutdown`. Every method releases the
+  interpreter lock for its Rust work; any number of threads may share a session, on a GIL
+  or a free-threaded build. The one tool so far is `describe` over package parts (its
+  name, compatibility mode, core properties, comments, notes and content controls).
+- **`ooxml_core.CallContext(caller=, cancel=, deadline=)`** and **`ooxml_core.CancelToken`**:
+  who calls, and how a call is stopped: at its next safe point, with `timeout`, changing
+  nothing.
+- **`ooxml_core.tool_specs(kind)`**: the tools' definitions as JSON, for the Python
+  adapters.
+
 ## 0.8.1 -- unreleased
 
 - The Word parse says a table cell's conditional formats as docx2svg 0.13.0 does (round 58,
