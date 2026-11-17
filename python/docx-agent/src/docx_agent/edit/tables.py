@@ -236,9 +236,8 @@ _WP_DOC_PR = "{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDr
 
 
 def _uncopyable(row: Element) -> str | None:
-    """Why :meth:`TableOps.copy_row` refuses ``row``, or ``None``."""
-    if any(_vmerge(cell) is not None for cell, _, _ in _cells(row)):
-        return "has a cell merged down (a copy would cut the merge)"
+    """Why :meth:`TableOps.copy_row` refuses ``row``, or ``None``.  A cell merged down is
+    no reason (round 59, R136: :func:`_join_merges`)."""
     if any(True for _ in row.iter(_W + "footnoteReference", _W + "endnoteReference")):
         return "holds a footnote or endnote reference (a note is not copied with a row)"
     properties = row.find(_W + "trPr")
@@ -272,6 +271,81 @@ def _row_copy(row: Element) -> tuple[Element, list[str]]:
         else:
             remove(node)
     return new, dropped
+
+
+def _join_merges(row: Element, after: Element | None) -> None:
+    """Round 59 (R136): a copied ``row``'s cells merged down, settled where the copy lands --
+    ``after`` the row below it (``None`` at the table's end).  Where ``after`` continues the
+    merge over the same grid columns, the copy is inside the merge and its cell joins it:
+    ``w:vMerge`` continuing, one empty paragraph (the merge's text stays in its first row)
+    -- as Word's Insert Rows gives a row inside a merge (measured,
+    ``tools/merged_rows_probe.py``, ``tests/observations/merged-rows-word.json``).  Elsewhere
+    (above a merge's first row, below its last) the cell is its own, with the text it had --
+    as a row Word pastes there is (measured: no merge, a merge's first row's text kept, a
+    continuing row's cell empty)."""
+    below = {(start, span): cell for cell, start, span in _cells(after)} if after is not None else {}
+    for cell, start, span in _cells(row):
+        properties = cell.find(_W + "tcPr")
+        merge = properties.find(_W + "vMerge") if properties is not None else None
+        if merge is None:
+            continue
+        other = below.get((start, span))
+        if other is None or _vmerge(other) != "continue":
+            remove(merge)
+            continue
+        merge.attrib.pop(_W + "val", None)
+        paragraph = _new_row_paragraph(cell)
+        for child in list(cell):
+            if isinstance(child.tag, str) and child.tag != _W + "tcPr":
+                remove(child)
+        cell.append(paragraph)
+
+
+def merges_beside(rows: list[Element], at: int) -> list[tuple[int, int, int, str]]:
+    """Round 59 (R136): the merges down that the row ``rows[at]`` (its own cells not merged
+    there) sits right beside without joining: ``(grid column, merge's first row, its last
+    row, "below" | "above")`` -- the row just below a merge's last row, or just above its
+    first.  Word's Insert Rows puts a row there outside the merge (measured); the call that
+    joins it is a merge of the column from the merge's first row to the row's (or the row's
+    to the merge's last)."""
+    def merge_at(k: int, key: tuple[int, int]) -> str | None:
+        if not 0 <= k < len(rows):
+            return None
+        cell = {(start, span): c for c, start, span in _cells(rows[k])}.get(key)
+        return _vmerge(cell) if cell is not None else None
+
+    out = []
+    for cell, start, span in _cells(rows[at]):
+        if _vmerge(cell) is not None:
+            continue
+        key = (start, span)
+        if merge_at(at - 1, key) in ("restart", "continue") and merge_at(at + 1, key) != "continue":
+            first = at - 1
+            while first > 0 and merge_at(first, key) == "continue":
+                first -= 1
+            if first < at - 1 or merge_at(first, key) == "restart":
+                out.append((start, first, at - 1, "below"))
+        elif merge_at(at + 1, key) == "restart" and merge_at(at + 2, key) == "continue":
+            last = at + 2
+            while merge_at(last + 1, key) == "continue":
+                last += 1
+            out.append((start, at + 1, last, "above"))
+    return out
+
+
+def merges_note(rows: list[Element], at: int) -> str | None:
+    """What :func:`merges_beside` finds, said with the merge call that joins the row
+    (rule 2), or ``None``."""
+    found = merges_beside(rows, at)
+    if not found:
+        return None
+    column, first, last, side = found[0]
+    corners = (first, at) if side == "below" else (at, last)
+    columns = ", ".join(str(c) for c, *_ in found)
+    return (f"row {at} is {side} the merge down column {columns} (rows {first}-{last}), not in it: Word's Insert "
+            f"Rows puts a row there outside the merge; a row added inside it (index {first}-{last - 1} after, or "
+            f"{first + 1}-{last} before) joins it.  To join this one: word_edit_table merge "
+            f"first {{row: {corners[0]}, col: {column}}} last {{row: {corners[1]}, col: {column}}}")
 
 
 def _new_row_paragraph(cell: Element) -> Element:
@@ -542,7 +616,10 @@ class TableOps:
             rows = [row for row, _ in entry.rows]
             new_id, note = self._put_row_like(part, rows[index], neighbour, below, tracking,
                                               entry.element if plain else None)
-        return EditResult(new_id, created=[new_id], renamed=renames, warnings=[note] if note else [])
+            at = index + 1 if below else index
+            beside = merges_note(own_table_rows(entry.element), at)
+        warnings = [w for w in (note, beside) if w]
+        return EditResult(new_id, created=[new_id], renamed=renames, warnings=warnings)
 
     def copy_row(self: "Document", table: str, index: int | None = None, *, below: bool = True) -> "EditResult":
         """Round 58 (R126): a copy of row ``index`` (0-based; the last by default) with its
@@ -553,9 +630,12 @@ class TableOps:
         the copy is an insertion: the row's, every paragraph mark's and run's, as Word's
         tracked paste writes it.
 
-        Refused (``EditError``, saying what to do instead) for a row with a cell merged
-        down (a copy would cut the merge), a footnote or endnote reference, a pending
-        deletion of the row or tracked cell changes."""
+        Round 59 (R136): a cell merged down joins its merge where the copy lands inside it
+        (an empty continuing cell, as Word's Insert Rows there gives) and is its own cell,
+        with its text, above the merge's first row or below its last (:func:`_join_merges`).
+
+        Refused (``EditError``, saying what to do instead) for a row with a footnote or
+        endnote reference, a pending deletion of the row or tracked cell changes."""
         from .document import EditError, EditResult
 
         part, entry = self._table_entry(table)
@@ -574,6 +654,9 @@ class TableOps:
             source = [row for row, _ in entry.rows][index]
             known = self._known_ids()
             row, dropped = _row_copy(source)
+            own = own_table_rows(entry.element)
+            at = own.index(source)
+            _join_merges(row, (own[at + 1] if at + 1 < len(own) else None) if below else source)
             if any(True for _ in row.iter(_WP_DOC_PR, _W + "sdtPr")):
                 from .importing import Importer
 
@@ -607,6 +690,10 @@ class TableOps:
         story = self._story_of(part)
         new_id = ("" if story == "body" else f"{story}/") + f"tr:{row.get(_ids.PARA_ID)}"
         warnings = [f"left on row {index}, not copied: {', '.join(dropped)}"] if dropped else []
+        own = own_table_rows(entry.element)
+        beside = merges_note(own, own.index(row))
+        if beside:
+            warnings.append(beside)
         return EditResult(new_id, created=[new_id], renamed=renames, warnings=warnings)
 
     def _put_row_like(self: "Document", part: str, reference: Element, neighbour: Element | None,
