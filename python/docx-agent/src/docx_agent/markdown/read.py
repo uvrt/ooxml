@@ -467,6 +467,64 @@ class Reader:
             return None
         return records
 
+    def span(self, part: str, first: str | None, last: str | None) -> list | None:
+        """Round 59 (R135): the records :meth:`story` gives the blocks from the one holding
+        ``first`` through the one holding ``last`` (``None``: the story's start, its end) --
+        and maybe a few around them, in the blocks they are read with (a table with the
+        paragraph it joins), which the caller cuts as it cuts the story's -- without reading
+        the story's other blocks: of those before, only the list items are counted, when the
+        span first numbers one (as :meth:`block` reads a table); those after are not read.  A
+        writer's read of one chapter of a long document read the whole body after every
+        change.  ``None`` where that cannot be said the same way (a notes or comments part, an
+        id not in a block of the story's own, a paragraph the view joins into a table):
+        :meth:`story` then."""
+        root = self.document.package.tree(part)
+        if root is None or root.tag in (_W + "footnotes", _W + "endnotes", _W + "comments"):
+            return None
+        container = root.find(_W + "body") if root.tag == _W + "document" else root
+        groups = self._groups(self._items(container, part))
+        at = 0 if first is None else self._group_of(groups, container, first)
+        to = len(groups) - 1 if last is None else self._group_of(groups, container, last)
+        if at is None or to is None or to < at:
+            return None
+        if groups[to][0] == "begin":
+            # A control read through its end (select's _through): its end marker's group.
+            to = next((k for k in range(to + 1, len(groups))
+                       if groups[k][0] == "end" and groups[k][1][0] == groups[to][1][0]), to)
+        before = self._counters.pop(part, None)
+        self._deferred = (part, groups[:at])
+        try:
+            return self._records(groups[at:to + 1], part)
+        finally:
+            self._deferred = None
+            self._counters.pop(part, None)
+            if before is not None:
+                self._counters[part] = before
+
+    def _group_of(self, groups: list, container: Element, identifier: str) -> int | None:
+        """The index of the group (:meth:`_groups`) holding the block ``identifier`` names --
+        a content control's start marker, a paragraph's group, the top-level table holding
+        a cell, row or paragraph -- or ``None``."""
+        if identifier.startswith("cc"):
+            return next((k for k, (kind, value) in enumerate(groups) if kind == "begin" and value[0] == identifier),
+                        None)
+        try:
+            element = self.document._resolve(identifier)[1].element
+        except (KeyError, ValueError):
+            return None
+        where: dict[int, int] = {}
+        for k, (kind, value) in enumerate(groups):
+            if kind == "p":
+                where.update((id(p), k) for p in value)
+            elif kind == "tbl":
+                where[id(value)] = k
+        node, found = element, None
+        while node is not None and node is not container:
+            if id(node) in where:
+                found = where[id(node)]          # the outermost wins: a cell's table's table
+            node = node.getparent()
+        return found if node is container else None
+
     def _count_before(self, part: str, groups: list) -> None:
         """The list items of ``groups`` (the blocks before a table :meth:`block` reads)
         counted, no record made."""

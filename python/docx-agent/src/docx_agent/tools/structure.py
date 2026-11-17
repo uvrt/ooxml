@@ -11,7 +11,7 @@ from ooxml_edit.tools import REVIEW, Result, ToolError, array, number, obj, stri
 
 from ..edit.sections import STARTS
 from . import positions
-from ._base import (Timing, ahead_seconds, ahead_timed, lay_out_ahead, need, update_fields_ahead, one_of, outcome,
+from ._base import (Timing, ahead_seconds, ahead_timed, engage, lay_out_ahead, need, update_fields_ahead, one_of, outcome,
                     remember, resolve, short, word_tool)
 from .text import AT, BLOCKS_REF, find_range, name_blocks, named, text_range
 
@@ -275,7 +275,19 @@ def _fields_ahead(call: Any, doc: str, action: str, kind: str | None = None,
         from ..rust import fields as rust_fields
 
         if not rust_fields.ahead(call):     # 0.1.117: its page read from the Rust owner
-            lay_out_ahead(call)
+            from ..layout import BARE_REQUEST, check_facts, runner_of
+
+            if call.entry is not None and call.may_unlock and runner_of(call.document) is not None:
+                # Round 59 (R135): laid out in the worker holding the document's layouts, the
+                # lock let go; the reference's page is read there (Document.page_label), and
+                # the layout never comes here.
+                engage(call)
+                try:
+                    check_facts(call.document, call.unlocked, dict(BARE_REQUEST))
+                except Exception:  # noqa: BLE001 -- the handler meets it again and says so
+                    pass
+            else:
+                lay_out_ahead(call)
 
 
 @word_tool("word_fields", "Fields: list; insert a TOC, caption, cross-reference, date or other field; update all results (TOC, page numbers, REF, SEQ) after changes.",
