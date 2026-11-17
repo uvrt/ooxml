@@ -36,6 +36,9 @@ pub const TEXT_BESIDE_DRAWING: &str = "text beside a drawing";
 pub const TEXT_BOX: &str = "text box";
 /// SmartArt (`dgm:relIds`): its cached drawing is not painted in Rust yet.
 pub const SMARTART: &str = "SmartArt";
+/// A chart in a document laid out in a locale other than en-US: the chart's numbers are
+/// written in en-US's in Rust until the locales' table is ported.
+pub const CHART_LOCALE: &str = "chart in another locale";
 /// A VML shape or text path (a watermark): not painted in Rust yet.
 pub const VML_SHAPE: &str = "VML shape";
 /// A `STYLEREF` field.
@@ -81,6 +84,7 @@ pub const REASONS: &[&str] = &[
     TEXT_BESIDE_DRAWING,
     TEXT_BOX,
     SMARTART,
+    CHART_LOCALE,
     VML_SHAPE,
     STYLEREF,
     FOOTNOTES_IN_COLUMNS,
@@ -303,4 +307,36 @@ impl Scan {
             }
         }
     }
+}
+
+/// The first chart in a document's body, headers, footers or notes, by its paragraph's path.
+pub fn first_chart(document: &WordDocument) -> Option<String> {
+    fn graphic(g: &Graphic) -> bool {
+        &*g.kind == "chart" || g.children.iter().any(|c| graphic(c))
+    }
+    fn blocks(list: &[Block]) -> Option<String> {
+        list.iter().find_map(|b| match b {
+            Block::Paragraph(p) => p
+                .runs
+                .iter()
+                .any(|r| {
+                    r.anchors.iter().filter_map(|a| a.graphic.as_deref()).any(graphic)
+                        || r.drawings
+                            .iter()
+                            .any(|d| matches!(d, InlineObject::Graphic(g) if graphic(g)))
+                })
+                .then(|| p.path.to_string()),
+            Block::Table(t) => t.rows.iter().flat_map(|row| row.iter()).find_map(|cell| blocks(cell)),
+        })
+    }
+    blocks(&document.body)
+        .or_else(|| document.stories.values().find_map(|b| blocks(b)))
+        .or_else(|| {
+            document
+                .footnotes
+                .notes
+                .values()
+                .chain(document.endnotes.notes.values())
+                .find_map(|b| blocks(b))
+        })
 }

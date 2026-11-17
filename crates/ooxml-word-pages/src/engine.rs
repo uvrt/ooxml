@@ -299,7 +299,7 @@ impl PageEngine {
             generation.layout = new_layout(&generation.fonts, &self.locale, &self.budget);
             cause = Some(context_cause(&self.changed));
         }
-        if let Some(why) = support::unsupported(&document) {
+        if let Some(why) = unsupported(&document, &self.locale) {
             generation.last = None;
             self.stats.fallbacks += 1;
             return Ok(Err(why));
@@ -696,4 +696,18 @@ impl crate::warnings::PageDrawings for DrawingWarnings<'_> {
         }
         out
     }
+}
+
+/// Why `document` cannot be laid out by the engine as docx2svg lays it out: what the layout
+/// does not take yet, or a chart in a locale other than en-US.
+fn unsupported(document: &ooxml_word_model::WordDocument, locale: &Locale) -> Option<Fallback> {
+    support::unsupported(document).or_else(|| {
+        (locale.tag() != "en-US")
+            .then(|| support::first_chart(document))
+            .flatten()
+            .map(|at| Fallback {
+                reason: support::CHART_LOCALE,
+                at,
+            })
+    })
 }
