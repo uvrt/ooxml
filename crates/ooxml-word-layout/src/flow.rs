@@ -679,6 +679,18 @@ impl<'a, 'm> FlowBuilder<'a, 'm> {
                 }))
             }
         };
+        if !measured.auto_hyphen_ends.is_empty()
+            && crate::engine::hyphen_at_page_end(self.cx.document) == crate::paginate::HyphenMove::Word
+        {
+            // Word moves only the hyphenated word to the next page: the paragraph is broken
+            // again from it, which this layout does not do.
+            return FlowItem::Stop(Arc::new(StopItem {
+                block,
+                body,
+                section,
+                reason: "a hyphenated word Word moves to the next page".into(),
+            }));
+        }
         let Some(pp) = self.props_of_block(block) else {
             return FlowItem::Stop(Arc::new(StopItem {
                 block,
