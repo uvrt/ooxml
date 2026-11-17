@@ -2,7 +2,9 @@
 //! and random edits (a fixed-seed generator, so the test needs no dependency).
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
 
-use ooxml_xml::{diff, parse, Cursor, Element, Limits, Node, NodePath, Patch, PatchError, QName, Tree};
+use ooxml_xml::{
+    diff, parse, Attribute, Cursor, Element, Head, HeadPatch, Limits, Node, NodePath, Patch, PatchError, QName, Tree,
+};
 use std::sync::Arc;
 
 struct Rng(u64);
@@ -165,4 +167,51 @@ fn cursors_know_their_way_back() {
     let root_patch = root.replace(element("s", vec![])).unwrap();
     assert_eq!(root_patch.apply(&tree).unwrap().root().name().local(), "s");
     assert!(matches!(root_patch.rebase(&root_patch), Err(PatchError::Conflict(_))));
+}
+
+/// A head patch giving the element at `at` one more attribute.
+fn random_head_patch(at: &Cursor, serial: &mut usize) -> HeadPatch {
+    *serial += 1;
+    let element = at.element().unwrap();
+    let old = Arc::clone(element.head());
+    let mut attributes = old.attributes.to_vec();
+    attributes.push(Attribute {
+        name: Arc::new(QName::new(None, &format!("a{serial}"), None)),
+        value: "v".into(),
+    });
+    let new = Arc::new(Head {
+        name: old.name.clone(),
+        namespaces: old.namespaces.clone(),
+        attributes: attributes.into(),
+    });
+    HeadPatch::new(at.path(), old, new)
+}
+
+#[test]
+fn head_patches_apply_invert_and_commute_with_splices() {
+    let mut rng = Rng(0x0DDB_1A5E_5BAD_5EED);
+    let mut serial = 4_000_000;
+    let (mut both, mut conflicts) = (0, 0);
+    for _ in 0..600 {
+        let tree = random_tree(&mut rng);
+        let at = random_element(&mut rng, &tree);
+        let h = random_head_patch(&at, &mut serial);
+        let edited = h.apply(&tree).unwrap();
+        assert_eq!(h.inverse().apply(&edited).unwrap(), tree);
+        assert!(matches!(h.apply(&edited), Err(PatchError::Stale { .. })));
+        let s = random_patch(&mut rng, &tree, &mut serial);
+        match (h.rebase(&s), s.rebase_head(&h)) {
+            (Ok(h2), Ok(s2)) => {
+                let sh = h2.apply(&s.apply(&tree).unwrap()).unwrap();
+                let hs = s2.apply(&h.apply(&tree).unwrap()).unwrap();
+                assert_eq!(sh, hs);
+                both += 1;
+            }
+            (Err(PatchError::Conflict(_)), Err(PatchError::Conflict(_))) => conflicts += 1,
+            other => panic!("rebase is not symmetric: {other:?}"),
+        }
+        let other = random_head_patch(&random_element(&mut rng, &tree), &mut serial);
+        assert_eq!(other.rebase_head(&h).is_err(), other.path() == h.path());
+    }
+    assert!(both > 300 && conflicts > 0, "{both} rebased, {conflicts} conflicts");
 }

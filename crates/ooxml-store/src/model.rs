@@ -33,4 +33,15 @@ pub trait DocModel: Clone + Send + Sync + 'static {
     /// Add the keys `change` writes to `into` ([`KeySet::insert_everything`] when its extent
     /// is not known).
     fn written(change: &Self::Change, into: &mut KeySet<Self::Key>);
+
+    /// `change`, made on a version `past` had not been applied to, moved to apply after
+    /// `past` (design section 5: a commit's patches rebased through those committed since
+    /// its snapshot). Called only when the two transactions' keys are disjoint; an error
+    /// means the two touch the same content after all, and the commit is prepared again.
+    /// The default keeps the change as it is, right for changes addressed by key rather
+    /// than by position.
+    fn rebase(change: &Self::Change, past: &Self::Change) -> Result<Self::Change, Self::Error> {
+        let _ = past;
+        Ok(change.clone())
+    }
 }
