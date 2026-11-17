@@ -14,6 +14,7 @@
 //! drawing's or picture's bytes.
 
 mod decorate;
+pub mod drawings;
 mod paragraphs;
 mod positions;
 mod spans;
@@ -171,8 +172,11 @@ pub struct PagePaint {
     pub lines: Vec<PaintedLine>,
     /// Its rules.
     pub rules: Vec<Rule>,
-    /// Its inline pictures and drawings.
+    /// Its inline pictures.
     pub pictures: Vec<Drawn>,
+    /// Its drawings, for their painters: inline shapes, groups, charts and diagrams, and
+    /// floating drawings, in the order met.
+    pub drawings: Vec<drawings::DrawingSlot>,
     /// What the page holds that this paint does not draw yet, by reason: the page's SVG is
     /// not complete where any is listed.
     pub unpainted: Vec<String>,
@@ -237,6 +241,46 @@ struct LineSet<'a> {
     rows: Vec<(usize, &'a PlacedRow)>,
     /// A story's kind and part.
     story: Option<(&'static str, Text)>,
+    /// The page's frame, where the set is the body's (its floating drawings placed).
+    frame: Option<&'a crate::geometry::PageFrame>,
+    /// The layout.
+    layout: &'a DocumentLayout,
+}
+
+/// A body line's floating drawings, placed (`_anchors`).
+fn floats(
+    set: &LineSet<'_>,
+    (laid, frame, item): (&LaidPage, &crate::geometry::PageFrame, usize),
+    (paragraph, resolved, measured): (&Paragraph, &ooxml_word_model::ResolvedParagraph, &MeasuredParagraph),
+    line: &DrawnLine,
+    out: &mut spans::PageOut,
+) {
+    let anchors = match laid.broken.get(&item) {
+        Some(again) => again.anchors.as_slice(),
+        None => set
+            .items
+            .get(item)
+            .and_then(FlowItem::para)
+            .map_or(&[][..], |p| p.anchors.as_slice()),
+    };
+    let job = drawings::FloatJob {
+        layout: set.layout,
+        frame,
+        laid,
+        paragraph,
+        resolved,
+        measured,
+        anchors,
+        item,
+        line,
+    };
+    let (slots, missed) = drawings::line_floats(&job, &mut out.drawn);
+    out.drawings.extend(slots);
+    out.unpainted.extend(
+        missed
+            .into_iter()
+            .map(|p| format!("a floating drawing positioned against a frame not modelled ({p})")),
+    );
 }
 
 /// The paragraph a drawn line is of, and its measure on the page.
@@ -397,9 +441,22 @@ fn paint_set(
             measured: &measured,
             line,
         };
+        let from = to.out.drawings.len();
         if let Some(mut painted) = spans::paint_line(cx, &job, to.out) {
             painted.story = set.story.clone();
             to.lines.push(painted);
+        }
+        if let (Some(laid), LineSource::Flow { item }, Some(frame)) = (set.laid, line.source, set.frame) {
+            floats(
+                set,
+                (laid, frame, item),
+                (&paragraph, &resolved, &measured),
+                line,
+                to.out,
+            );
+        }
+        for slot in to.out.drawings.get_mut(from..).unwrap_or_default() {
+            slot.story = set.story.clone();
         }
         if let LineSource::Flow { item } = line.source {
             let next_same = set
@@ -447,6 +504,8 @@ pub fn paint_page(
             .map(|l| l.rows.iter().map(|r| (r.item, &r.row)).collect())
             .unwrap_or_default(),
         story: None,
+        frame: Some(&frame),
+        layout,
     };
     paint_set(
         &body,
@@ -468,6 +527,8 @@ pub fn paint_page(
             lines: &story.walked.lines,
             rows: story.walked.rows.iter().map(|(i, r)| (*i, r)).collect(),
             story: (story.kind != "footnotes").then(|| (story.kind, story.part.clone())),
+            frame: None,
+            layout,
         };
         paint_set(
             &set,
@@ -485,6 +546,7 @@ pub fn paint_page(
         lines,
         rules: out.rules,
         pictures: out.pictures,
+        drawings: out.drawings,
         unpainted: out.unpainted,
     })
 }

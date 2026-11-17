@@ -99,6 +99,14 @@ impl Element {
         }
     }
 
+    /// Markup its producer wrote, written as it is (a painter's that has not moved onto
+    /// the display list yet).
+    pub fn raw(markup: String) -> Element {
+        let mut e = Element::new("");
+        e.text = Some(markup);
+        e
+    }
+
     /// Written with a closing tag even when it holds nothing.
     #[must_use]
     pub fn paired(mut self) -> Element {
@@ -216,6 +224,10 @@ fn open_tag(out: &mut String, e: &Element) {
 }
 
 fn write_element(out: &mut String, e: &Element, flow: Flow) {
+    if e.tag.is_empty() {
+        out.push_str(e.text.as_deref().unwrap_or_default());
+        return;
+    }
     open_tag(out, e);
     if e.children.is_empty() && e.text.is_none() && !e.paired {
         out.push_str("/>");

@@ -155,6 +155,7 @@ pub fn run_svg_document(records: &LayoutRecords, outcome: &mut SvgOutcome) -> Re
     };
     let none = ooxml_word_layout::paint::svg::NoPictures;
     let svg_cx = SvgContext {
+        drawings: &ooxml_word_layout::paint::svg::NoDrawings,
         names: &names,
         pictures: pictures.as_ref().map_or(&none as &dyn Pictures, |p| p as &dyn Pictures),
         glyph_size: GlyphSize::Device,
@@ -162,7 +163,14 @@ pub fn run_svg_document(records: &LayoutRecords, outcome: &mut SvgOutcome) -> Re
     let mut ours = Vec::new();
     for page in 0..laid.page_count() {
         let parts = engine.page_parts(&mut model, &laid, page);
-        ours.push(paint_page(&laid, &mut model, page, &parts, &cx).map(|p| (page_svg(&p, &svg_cx), p.unpainted)));
+        ours.push(paint_page(&laid, &mut model, page, &parts, &cx).map(|p| {
+            let mut unpainted = p.unpainted.clone();
+            if !p.drawings.is_empty() {
+                // Drawings are their painters' (the seam): none here.
+                unpainted.push("drawings for their painters".to_owned());
+            }
+            (page_svg(&p, &svg_cx), unpainted)
+        }));
     }
     outcome.time += started.elapsed();
     if ours.len() != theirs.len() {

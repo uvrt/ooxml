@@ -26,6 +26,9 @@ use std::sync::Arc;
 pub(super) struct PageOut {
     pub(super) rules: Vec<Rule>,
     pub(super) pictures: Vec<Drawn>,
+    pub(super) drawings: Vec<super::drawings::DrawingSlot>,
+    /// The drawings met so far (their paint order within a layer).
+    pub(super) drawn: usize,
     pub(super) unpainted: Vec<String>,
 }
 
@@ -346,8 +349,27 @@ impl LinePainter<'_, '_> {
         let relationship = match run.drawings.get(n) {
             Some(InlineObject::Picture(r)) => Some(Arc::clone(r)),
             Some(InlineObject::Graphic(_)) => {
-                // An inline shape, group, chart or SmartArt: a drawing's painter's.
-                self.out.unpainted.push("an inline drawing".into());
+                // An inline shape, group, chart or SmartArt: drawn as a floating drawing is,
+                // in its line's box, in front of the text, by its painter.
+                self.out.drawn += 1;
+                self.out.drawings.push(super::drawings::DrawingSlot {
+                    path: if path.is_empty() {
+                        self.job.paragraph.path.to_string()
+                    } else {
+                        path
+                    },
+                    paragraph_path: self.job.paragraph.path.to_string(),
+                    run: k,
+                    index: n,
+                    inline: true,
+                    x: x + emu(left),
+                    y: stands - emu(bottom) - depth,
+                    width,
+                    height: depth,
+                    layer: super::drawings::Layer::Front,
+                    order: (0, self.out.drawn),
+                    story: None,
+                });
                 return;
             }
             Some(InlineObject::None) | None => None,

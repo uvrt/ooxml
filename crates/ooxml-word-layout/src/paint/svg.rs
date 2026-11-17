@@ -8,6 +8,7 @@
 //!
 //! Must not: lay out or paint anything (the paint has), or read a picture part.
 
+use super::drawings::{DrawingSlot, Layer};
 use super::{DrawingName, Drawn, FaceNames, GlyphSize, PagePaint, PaintedLine, Rule, Span, SpanKind};
 use crate::px::Px;
 use ooxml_base::Q;
@@ -32,8 +33,28 @@ impl Pictures for NoPictures {
     }
 }
 
+/// Where the SVG reads a drawing's paint: the port to the painters of DrawingML, charts and
+/// SmartArt. It answers with the drawing's group's content in its box -- its primitives,
+/// its text boxes' lines -- each a line of markup, or `None` where it has no painter.
+pub trait Drawings {
+    /// The paint of the drawing in `slot`.
+    fn drawing(&self, slot: &DrawingSlot) -> Option<Vec<String>>;
+}
+
+/// No painters: no drawing is drawn.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NoDrawings;
+
+impl Drawings for NoDrawings {
+    fn drawing(&self, _slot: &DrawingSlot) -> Option<Vec<String>> {
+        None
+    }
+}
+
 /// What writing a page reads beyond its paint.
 pub struct SvgContext<'a> {
+    /// The drawings' painters.
+    pub drawings: &'a dyn Drawings,
     /// How faces are named.
     pub names: &'a dyn FaceNames,
     /// The pictures.
@@ -278,14 +299,67 @@ pub fn page_element(paint: &PagePaint, cx: &SvgContext<'_>) -> Element {
             .attr("height", Value::Int(frame.height_px))
             .attr("fill", Value::Plain("#FFFFFF".into())),
     );
+    let mut slots: Vec<&DrawingSlot> = paint.drawings.iter().collect();
+    slots.sort_by_key(|d| d.order);
+    let layer = |l: Layer, story: bool| -> Vec<&DrawingSlot> {
+        slots
+            .iter()
+            .copied()
+            .filter(|d| d.layer == l && d.story.is_some() == story)
+            .collect()
+    };
+    let (story_behind, story_front) = (layer(Layer::Behind, true), layer(Layer::Front, true));
+    let (body_behind, body_front) = (layer(Layer::Behind, false), layer(Layer::Front, false));
+    let story_lines = paint.lines.iter().any(|l| l.story.is_some());
     let mut under: Vec<&Rule> = paint.rules.iter().filter(|r| under_rank(r.kind).is_some()).collect();
     under.sort_by_key(|r| under_rank(r.kind));
+    let over = paint.rules.iter().filter(|r| under_rank(r.kind).is_none()).map(rect);
+    let pictures = paint.pictures.iter().map(|d| picture(d, cx));
+    if story_behind.is_empty() && story_front.is_empty() && !(story_lines && !body_behind.is_empty()) {
+        root.children.extend(floats(&body_behind, cx));
+        root.children.extend(under.into_iter().map(rect));
+        root.children.extend(lines(&paint.lines, cx));
+        root.children.extend(over);
+        root.children.extend(pictures);
+        root.children.extend(floats(&body_front, cx));
+        return root;
+    }
+    let (stories, body): (Vec<PaintedLine>, Vec<PaintedLine>) =
+        paint.lines.iter().cloned().partition(|l| l.story.is_some());
+    root.children.extend(floats(&story_behind, cx));
+    root.children.extend(lines(&stories, cx));
+    root.children.extend(floats(&story_front, cx));
+    root.children.extend(floats(&body_behind, cx));
     root.children.extend(under.into_iter().map(rect));
-    root.children.extend(lines(&paint.lines, cx));
-    root.children
-        .extend(paint.rules.iter().filter(|r| under_rank(r.kind).is_none()).map(rect));
-    root.children.extend(paint.pictures.iter().map(|d| picture(d, cx)));
+    root.children.extend(lines(&body, cx));
+    root.children.extend(over);
+    root.children.extend(pictures);
+    root.children.extend(floats(&body_front, cx));
     root
+}
+
+/// Drawings as groups of their painters' paint (`_float`); one with no painter is not
+/// written.
+fn floats(slots: &[&DrawingSlot], cx: &SvgContext<'_>) -> Vec<Element> {
+    let mut out = Vec::new();
+    for slot in slots {
+        let Some(paint) = cx.drawings.drawing(slot) else {
+            continue;
+        };
+        let side = if slot.layer == Layer::Behind { "behind" } else { "front" };
+        let mut g = Element::new("g")
+            .paired()
+            .attr("data-docx-path", Value::Text(slot.path.clone()))
+            .attr("data-docx-float", Value::Plain(side.to_owned()));
+        if let Some((kind, part)) = &slot.story {
+            g = g
+                .attr("data-docx-story", Value::Plain((*kind).to_owned()))
+                .attr("data-docx-part", Value::Text(part.to_string()));
+        }
+        g.children = paint.into_iter().map(Element::raw).collect();
+        out.push(g);
+    }
+    out
 }
 
 /// The page as SVG text.
