@@ -250,6 +250,7 @@ def test_render_draws_the_pages_a_range_falls_on(box, made):
 DEADLINE = 90.0
 
 
+@pytest.mark.usefixtures("python_layout")   # lane L4b: a Rust layout is laid out here, no worker task
 def test_scoped_checks_lone_and_in_a_read_batch_all_finish(made, monkeypatch):
     """Round 34's rule holds for a range: lone scoped checks lay out with the lock let go, a
     read_batch's scoped check on its own snapshot; none waits for the other."""
