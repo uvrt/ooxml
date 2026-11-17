@@ -87,6 +87,29 @@ pub(crate) struct Pen {
     pub matrix: Matrix,
 }
 
+impl Pen {
+    /// A pen of a width and unit with GDI+'s defaults: a black solid brush, flat caps,
+    /// mitred joins at a limit of 10, solid, centred, one band, no transform.
+    pub fn new(width: f64, unit: u32) -> Pen {
+        Pen {
+            width,
+            unit,
+            brush: Brush::Solid(0xFF00_0000),
+            start_cap: CAP_FLAT,
+            end_cap: CAP_FLAT,
+            join: 0,
+            miter: 10.0,
+            dash: 0,
+            dash_cap: CAP_FLAT,
+            dash_offset: 0.0,
+            dash_array: Vec::new(),
+            align: 0,
+            compound: Vec::new(),
+            matrix: Matrix::IDENTITY,
+        }
+    }
+}
+
 /// A region's node.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Region {
@@ -270,22 +293,7 @@ impl Plus<'_, '_> {
     pub(crate) fn parse_pen(&mut self, d: &mut Data<'_>) -> Result<Option<Pen>, RecordError> {
         let [_version, _kind, flags, unit] = d.u32s::<4>()?;
         let width = d.f32()?;
-        let mut pen = Pen {
-            width: width.abs(),
-            unit,
-            brush: Brush::Solid(0xFF00_0000),
-            start_cap: CAP_FLAT,
-            end_cap: CAP_FLAT,
-            join: 0,
-            miter: 10.0,
-            dash: 0,
-            dash_cap: CAP_FLAT,
-            dash_offset: 0.0,
-            dash_array: Vec::new(),
-            align: 0,
-            compound: Vec::new(),
-            matrix: Matrix::IDENTITY,
-        };
+        let mut pen = Pen::new(width.abs(), unit);
         let mut dash_set = false;
         if flags & 0x0001 != 0 {
             pen.matrix = matrix(d)?;
