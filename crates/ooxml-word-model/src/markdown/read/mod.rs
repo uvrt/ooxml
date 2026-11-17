@@ -329,7 +329,7 @@ impl<'a> Reader<'a> {
             .and_then(|s| s.attribute(Some(W), "val"))
             .map(str::to_owned);
         let mut record = ParagraphRecord {
-            id: named.map(|e| e.id.clone()).unwrap_or_default(),
+            id: named.as_ref().map(|e| e.id.clone()).unwrap_or_default(),
             part: part.to_owned(),
             story,
             elements: Vec::new(),
@@ -391,7 +391,7 @@ impl<'a> Reader<'a> {
             let prefix = element.path.get(..n)?;
             story.ids.table_at(prefix).map(|t| (t, n))
         })?;
-        let facts = self.shared.table_facts(part, table);
+        let facts = self.shared.table_facts(part, &table);
         let below = element.path.get(at..)?;
         let found = crate::docx::cells::model_path(&table.element, below).and_then(|p| facts.cell(&p).cloned());
         Some(found.unwrap_or_else(|| Cell {

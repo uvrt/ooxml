@@ -13,7 +13,7 @@ use crate::names::{W14, WP, WP14};
 use crate::sink::{ensured_head, EditSink};
 use crate::Result;
 use ooxml_word_model::docx::{live_paths, Docx, StoryPart};
-use ooxml_word_model::ids::{valid_long_hex, IdState};
+use ooxml_word_model::ids::{valid_long_hex, IdState, ParagraphId, TableId};
 use ooxml_xml::{Attribute, Element, Head, Name, Node, QName};
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -41,18 +41,25 @@ pub(crate) fn stamp_document(sink: &mut EditSink<'_, '_>, docx: &Docx) -> Result
     Ok(renames)
 }
 
-/// The rows of `story` without a durable id: each table's place and the row's.
-fn unstamped_rows(story: &StoryPart, prefix: &str) -> Vec<(usize, usize)> {
+/// The tables of `story` with a row without a durable id, each with the places of those
+/// rows.
+fn unstamped_rows(story: &StoryPart, prefix: &str) -> Vec<(TableId, Vec<usize>)> {
     let stamped = format!("{prefix}tr:");
-    let mut out = Vec::new();
-    for (t, table) in story.ids.tables.iter().enumerate() {
-        for (k, (_, id)) in table.rows.iter().enumerate() {
-            if !id.starts_with(&stamped) {
-                out.push((t, k));
-            }
-        }
-    }
-    out
+    story
+        .ids
+        .tables()
+        .iter()
+        .filter_map(|table| {
+            let rows: Vec<usize> = table
+                .rows
+                .iter()
+                .enumerate()
+                .filter(|(_, (_, id))| !id.starts_with(&stamped))
+                .map(|(k, _)| k)
+                .collect();
+            (!rows.is_empty()).then_some((table, rows))
+        })
+        .collect()
 }
 
 /// Two ids drawn from `seed` for the element at `path`, as the attributes `locals` (in
@@ -91,8 +98,13 @@ fn stamp_part(sink: &mut EditSink<'_, '_>, story: &StoryPart) -> Result<Vec<(Str
     } else {
         format!("{}/", story.story)
     };
-    let paragraphs: Vec<_> = story.ids.paragraphs.iter().filter(|p| p.state != IdState::Ok).collect();
-    let rows = unstamped_rows(story, &prefix);
+    // the index counts what lacks an id: a stamped part is not walked
+    let (paragraphs, rows): (Vec<ParagraphId>, _) = if story.ids.fully_stamped() {
+        (Vec::new(), Vec::new())
+    } else {
+        let paragraphs = story.ids.paragraphs().iter().filter(|p| p.state != IdState::Ok).collect();
+        (paragraphs, unstamped_rows(story, &prefix))
+    };
     // drawings are looked for only in a part whose memoised facts say it has one to stamp
     let drawings = if crate::validate::unstamped_drawings(sink.doc(), part)? {
         live_paths(story.root(), &[], &|e| {
@@ -116,10 +128,7 @@ fn stamp_part(sink: &mut EditSink<'_, '_>, story: &StoryPart) -> Result<Vec<(Str
         renames.push((paragraph.id.clone(), format!("{prefix}p:{para}")));
     }
     let mut table_renames = Vec::new();
-    for (t, k) in &rows {
-        let Some(table) = story.ids.tables.get(*t) else {
-            continue;
-        };
+    for (table, k) in rows.iter().flat_map(|(table, rows)| rows.iter().map(move |k| (table, k))) {
         let Some((path, row_id)) = table.rows.get(*k) else {
             continue;
         };

@@ -8,7 +8,7 @@
 //! state: caches belong to the document ([`Shared`]).
 
 use crate::pool::{Ids, IdsChange, Sequences};
-use crate::validate::Facts;
+use crate::validate::{Facts, Tally};
 use crate::EditError;
 use ooxml_derive::CacheBudget;
 use ooxml_opc::{name::normalize, OpcError, Package};
@@ -36,6 +36,8 @@ pub enum Key {
     Seq(Arc<str>),
     /// The annotation ids in use (revisions, bookmarks, comments): allocating one.
     Annotations,
+    /// Who the people part lists.
+    People,
 }
 
 /// One primitive of a change set.
@@ -69,25 +71,47 @@ pub enum Change {
         /// Its tree.
         tree: Tree,
     },
-    /// A part as another version of the package has it, or absent there (what undo puts
+    /// Parts as another version of the package has them, or absent there (what undo puts
     /// back).
     Restore {
-        /// The part.
-        part: Arc<str>,
-        /// The version to take it from.
+        /// The parts.
+        parts: Arc<[Arc<str>]>,
+        /// The version to take them from.
         from: Package,
+    },
+    /// The people part kept, where the change is applied (docx-agent's `Stamp.finish`):
+    /// `add` listed (the part made when there is none), then `tidy` dropped when nothing
+    /// of theirs is left in use (the part with it once nobody is listed). Applied at
+    /// commit, so two writers listing themselves do not conflict.
+    People {
+        /// The author to list.
+        add: Option<Arc<str>>,
+        /// The author to drop if none of their revisions or comments is left.
+        tidy: Option<Arc<str>>,
+        /// The keys it writes (the parts it may change).
+        keys: Arc<[Key]>,
     },
     /// Ids added to the ledger (never taken back: an id given is never given again).
     Ids(IdsChange),
 }
 
-/// An id drawn from a seed's sequence when a splice is applied, into an attribute of the
-/// element it inserts: the value is the one the version it is applied to gives next, so a
-/// commit rebased past others draws what a serial run would.
+/// Where a drawn value comes from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DrawFrom {
+    /// The next value of a seed's sequence the ledger lacks (paraIds, textIds).
+    Seed(Arc<str>),
+    /// An annotation id: one above the largest in use in any story, plus this offset
+    /// (the edit's revision records, numbered in the order it made them).
+    Annotation(u32),
+}
+
+/// An id drawn when a splice is applied, into an attribute of the element it inserts: the
+/// value is the one the version it is applied to gives next, so a commit rebased past
+/// others draws what a serial run would.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Draw {
-    /// The seed.
-    pub seed: Arc<str>,
+    /// Where the value comes from.
+    pub from: DrawFrom,
     /// The element's place below the inserted element (empty: that element).
     pub at: Vec<u32>,
     /// The attribute the value goes into.
@@ -128,14 +152,40 @@ pub enum ModelError {
     /// A tree change names a part the package does not have.
     #[error("no part {0}")]
     NoPart(String),
+    /// The version could not be read as a Word document.
+    #[error("{0}")]
+    Unreadable(String),
 }
 
-/// A version's reading as docx-agent reads it, made on first use from the previous
-/// version's (unchanged story parts are not read again).
+/// What a version derives once, on first use, from the latest earlier version's (its
+/// reading as docx-agent reads it, its validation tally): unchanged parts are not read
+/// again.
 #[derive(Debug)]
-enum Reading {
-    Pending(Option<Arc<Docx>>),
-    Ready(Arc<Docx>),
+enum Lazy<T> {
+    /// Not made yet: the earlier version's, to make it from.
+    Pending(Option<Arc<T>>),
+    Ready(Arc<T>),
+}
+
+impl<T> Lazy<T> {
+    /// What the next version makes its own from.
+    fn handed_on(&self) -> Option<Arc<T>> {
+        match self {
+            Lazy::Ready(made) => Some(Arc::clone(made)),
+            Lazy::Pending(before) => before.clone(),
+        }
+    }
+}
+
+/// The value of `cell`, made by `make` (given the earlier version's) on first use.
+fn derived<T, E>(cell: &Mutex<Lazy<T>>, make: impl FnOnce(Option<&T>) -> Result<T, E>) -> Result<Arc<T>, E> {
+    let mut slot = cell.lock().unwrap_or_else(PoisonError::into_inner);
+    let made = match &*slot {
+        Lazy::Ready(made) => return Ok(Arc::clone(made)),
+        Lazy::Pending(before) => Arc::new(make(before.as_deref())?),
+    };
+    *slot = Lazy::Ready(Arc::clone(&made));
+    Ok(made)
 }
 
 /// What every version of one document shares: caches that belong to the document.
@@ -152,7 +202,8 @@ pub struct Shared {
 pub struct WordDoc {
     package: Package,
     ids: Ids,
-    reading: Arc<Mutex<Reading>>,
+    reading: Arc<Mutex<Lazy<Docx>>>,
+    tally: Arc<Mutex<Lazy<Tally>>>,
     shared: Arc<Shared>,
 }
 
@@ -169,7 +220,8 @@ impl WordDoc {
         Ok(WordDoc {
             package,
             ids,
-            reading: Arc::new(Mutex::new(Reading::Ready(docx))),
+            reading: Arc::new(Mutex::new(Lazy::Ready(docx))),
+            tally: Arc::new(Mutex::new(Lazy::Pending(None))),
             shared: Arc::new(Shared {
                 sequences: Sequences::default(),
                 facts: Facts::new(budget),
@@ -206,13 +258,15 @@ impl WordDoc {
     /// # Errors
     /// [`EditError`] when a story part is not XML.
     pub fn docx(&self) -> Result<Arc<Docx>, EditError> {
-        let mut reading = self.reading.lock().unwrap_or_else(PoisonError::into_inner);
-        let docx = match &*reading {
-            Reading::Ready(docx) => return Ok(Arc::clone(docx)),
-            Reading::Pending(before) => Arc::new(Docx::open_after(&self.package, before.as_deref())?),
-        };
-        *reading = Reading::Ready(Arc::clone(&docx));
-        Ok(docx)
+        derived(&self.reading, |before| Ok(Docx::open_after(&self.package, before)?))
+    }
+
+    /// This version's validation facts, kept in place from the latest earlier version's.
+    ///
+    /// # Errors
+    /// [`EditError`] when a story part is not XML.
+    pub(crate) fn tally(&self) -> Result<Arc<Tally>, EditError> {
+        derived(&self.tally, |before| Tally::of(self, before))
     }
 
     /// A part's tree.
@@ -225,14 +279,13 @@ impl WordDoc {
 
     /// The next version: `package` and `ids`, its reading made from this one's.
     fn succeed(&self, package: Package, ids: Ids) -> WordDoc {
-        let before = match &*self.reading.lock().unwrap_or_else(PoisonError::into_inner) {
-            Reading::Ready(docx) => Some(Arc::clone(docx)),
-            Reading::Pending(before) => before.clone(),
-        };
+        let reading = self.reading.lock().unwrap_or_else(PoisonError::into_inner).handed_on();
+        let tally = self.tally.lock().unwrap_or_else(PoisonError::into_inner).handed_on();
         WordDoc {
             package,
             ids,
-            reading: Arc::new(Mutex::new(Reading::Pending(before))),
+            reading: Arc::new(Mutex::new(Lazy::Pending(reading))),
+            tally: Arc::new(Mutex::new(Lazy::Pending(tally))),
             shared: Arc::clone(&self.shared),
         }
     }
@@ -252,13 +305,29 @@ impl WordDoc {
         let mut element = Arc::clone(inserted);
         let mut ids = self.ids.clone();
         let mut added = IdsChange::default();
+        let mut annotations: Option<i64> = None;
         for draw in draws {
-            let (values, change) = ids.draw(&draw.seed, 1, &self.shared.sequences);
-            ids.apply(&change);
-            added.values.extend(change.values);
-            added.cursors.extend(change.cursors);
-            let value = values.first().ok_or_else(stale)?;
-            element = set_below(&element, &draw.at, &draw.attribute, value).ok_or_else(stale)?;
+            let value = match &draw.from {
+                DrawFrom::Seed(seed) => {
+                    let (values, change) = ids.draw(seed, 1, &self.shared.sequences);
+                    ids.apply(&change);
+                    added.values.extend(change.values);
+                    added.cursors.extend(change.cursors);
+                    values.into_iter().next().ok_or_else(stale)?
+                }
+                DrawFrom::Annotation(offset) => {
+                    let first = match annotations {
+                        Some(first) => first,
+                        None => {
+                            let ceiling = crate::validate::annotation_ceiling(self)
+                                .map_err(|e| ModelError::Unreadable(e.to_string()))?;
+                            *annotations.insert(ceiling + 1)
+                        }
+                    };
+                    (first + i64::from(*offset)).to_string()
+                }
+            };
+            element = set_below(&element, &draw.at, &draw.attribute, &value).ok_or_else(stale)?;
         }
         let patch = Patch::splice(
             patch.parent().clone(),
@@ -267,6 +336,22 @@ impl WordDoc {
             vec![ooxml_xml::Node::Element(element)],
         );
         Ok((patch, added))
+    }
+
+    /// The package with the people part kept (see [`Change::People`]).
+    fn people(&self, add: Option<&str>, tidy: Option<&str>) -> Result<Package, ModelError> {
+        let unreadable = |e: EditError| ModelError::Unreadable(e.to_string());
+        let main = self.docx().map_err(unreadable)?.main.clone();
+        let mut package = self.package.clone();
+        if let Some(author) = add {
+            package = crate::people::with_person(&package, &main, author)?;
+        }
+        if let Some(author) = tidy {
+            if !crate::validate::author_in_use(self, author).map_err(unreadable)? {
+                package = crate::people::without_person(&package, &main, author)?;
+            }
+        }
+        Ok(package)
     }
 
     fn with_tree(
@@ -289,9 +374,8 @@ impl Change {
         match self {
             Change::Splice { part, .. }
             | Change::Head { part, .. }
-            | Change::Put { part, .. }
-            | Change::Restore { part, .. } => Some(part),
-            Change::Ids(_) => None,
+            | Change::Put { part, .. } => Some(part),
+            Change::Restore { .. } | Change::Ids(_) | Change::People { .. } => None,
         }
     }
 }
@@ -312,7 +396,14 @@ impl DocModel for WordDoc {
             Change::Splice { part, patch, .. } => (self.with_tree(part, |t| patch.apply(t))?, self.ids.clone()),
             Change::Head { part, patch, .. } => (self.with_tree(part, |t| patch.apply(t))?, self.ids.clone()),
             Change::Put { part, tree } => (self.package.with_new_tree(part, tree.clone()), self.ids.clone()),
-            Change::Restore { part, from } => (self.package.restored(part, from)?, self.ids.clone()),
+            Change::Restore { parts, from } => {
+                let mut package = self.package.clone();
+                for part in parts.iter() {
+                    package = package.restored(part, from)?;
+                }
+                (package, self.ids.clone())
+            }
+            Change::People { add, tidy, .. } => (self.people(add.as_deref(), tidy.as_deref())?, self.ids.clone()),
             Change::Ids(added) => {
                 let mut ids = self.ids.clone();
                 ids.apply(added);
@@ -349,10 +440,21 @@ impl DocModel for WordDoc {
                 patch: patch.inverse(),
                 keys: Arc::clone(keys),
             },
-            Change::Put { part, .. } | Change::Restore { part, .. } => Change::Restore {
-                part: Arc::clone(part),
+            Change::Put { part, .. } => Change::Restore {
+                parts: Arc::from([Arc::clone(part)]),
                 from: self.package.clone(),
             },
+            Change::Restore { parts, .. } => Change::Restore {
+                parts: Arc::clone(parts),
+                from: self.package.clone(),
+            },
+            Change::People { .. } => {
+                let main = self.docx().map_err(|e| ModelError::Unreadable(e.to_string()))?.main.clone();
+                Change::Restore {
+                    parts: crate::people::parts_written(&self.package, &main)?.into(),
+                    from: self.package.clone(),
+                }
+            }
             // ids given are never given again: nothing to take back
             Change::Ids(_) => Change::Ids(IdsChange::default()),
         })
@@ -368,7 +470,7 @@ impl DocModel for WordDoc {
             // a block is compared through its part: conservative, never a false agreement
             Some(keys) => keys.iter().all(|key| match key {
                 Key::Block { part, .. } | Key::Part(part) | Key::Root(part) => same_part(part),
-                Key::Seq(_) | Key::Annotations => true,
+                Key::Seq(_) | Key::Annotations | Key::People => true,
             }),
             None => {
                 let names = self.package.part_names();
@@ -384,8 +486,16 @@ impl DocModel for WordDoc {
                     into.insert(key.clone());
                 }
             }
-            Change::Put { part, .. } | Change::Restore { part, .. } => {
-                into.insert(Key::Part(Arc::from(normalize(part))))
+            Change::Put { part, .. } => into.insert(Key::Part(Arc::from(normalize(part)))),
+            Change::Restore { parts, .. } => {
+                for part in parts.iter() {
+                    into.insert(Key::Part(Arc::from(normalize(part))));
+                }
+            }
+            Change::People { keys, .. } => {
+                for key in keys.iter() {
+                    into.insert(key.clone());
+                }
             }
             Change::Ids(added) => {
                 for (seed, _) in &added.cursors {

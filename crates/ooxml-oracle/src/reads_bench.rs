@@ -97,12 +97,12 @@ fn edited(package: &Package, main: &str) -> Result<(Package, Package), String> {
 /// The ids of 20 top-level blocks from the middle of the body.
 fn middle_span(docx: &Docx) -> Option<String> {
     let body = docx.body()?;
-    let top: Vec<&str> = body
+    let top: Vec<String> = body
         .ids
-        .paragraphs
+        .paragraphs()
         .iter()
         .filter(|p| p.path.len() == 2)
-        .map(|p| p.id.as_str())
+        .map(|p| p.id)
         .collect();
     let a = top.get(top.len() / 2)?;
     let b = top.get((top.len() / 2 + 19).min(top.len().saturating_sub(1)))?;

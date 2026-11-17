@@ -75,7 +75,7 @@ pub fn word_inspect(args: &WordInspect, version: &Version<'_>, cancel: &dyn Canc
             found
                 .part
                 .ids
-                .tables
+                .tables()
                 .get(found.table)
                 .map(|t| ooxml_word_model::markdown::read::table_style(&t.element))
         });

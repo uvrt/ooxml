@@ -132,6 +132,9 @@ pub(crate) struct ElementFacts {
     /// The element's content without the ids stamping writes, hashed (what `touched`
     /// compares blocks by).
     pub(crate) stampless: u64,
+    /// The authors of revision records and comments, hidden ones too (docx-agent's
+    /// `_authors_in_use`, which `_tidy_people` keeps listed).
+    pub(crate) authors: Vec<String>,
 }
 
 impl ElementFacts {
@@ -146,16 +149,22 @@ impl ElementFacts {
     }
 
     /// The facts of a part's root alone: its head, its own children's order, and `body`'s
-    /// (the main part's), with the children `blocks_of` names left out.
-    pub(crate) fn of_rest(root: &Element, body: Option<&Element>, orders: &Orders) -> ElementFacts {
+    /// (the main part's), with the children `blocks_of` names left out; the order of the
+    /// blocks' container (the body's children, a story root's) only with `container_order`
+    /// (a tally keeps that order in place).
+    pub(crate) fn of_rest(root: &Element, body: Option<&Element>, orders: &Orders, container_order: bool) -> ElementFacts {
         let mut facts = ElementFacts::default();
         head_facts(root, &[], false, &mut facts);
-        order_of(root, orders, &mut facts.order);
+        if container_order || body.is_some() {
+            order_of(root, orders, &mut facts.order);
+        }
         let mut ancestors = vec![root];
         for child in root.child_elements() {
             if body.is_some_and(|b| std::ptr::eq(b, &**child)) {
                 head_facts(child, &ancestors, false, &mut facts);
-                order_of(child, orders, &mut facts.order);
+                if container_order {
+                    order_of(child, orders, &mut facts.order);
+                }
             } else if body.is_none() {
                 // a story part's root children are its blocks
             } else {
@@ -205,6 +214,11 @@ fn head_facts(element: &Element, ancestors: &[&Element], hidden: bool, facts: &m
 }
 
 fn word_marks(element: &Element, local: &str, ancestors: &[&Element], hidden: bool, facts: &mut ElementFacts) {
+    if (RECORDS.contains(&local) || local == "tblGridChange" || local == "comment") && !local.is_empty() {
+        if let Some(author) = element.attribute(Some(W), "author") {
+            facts.authors.push(author.to_owned());
+        }
+    }
     if ANNOTATIONS.contains(&local) {
         if let Some(value) = element.attribute(Some(W), "id").and_then(python_int) {
             facts.annotation_max = Some(facts.annotation_max.map_or(value, |m| m.max(value)));
@@ -338,7 +352,7 @@ fn paraid_marks(element: &Element, facts: &mut ElementFacts) {
 }
 
 /// The child-order problem of `element`'s children, if any (one per parent).
-fn order_of(element: &Element, orders: &Orders, out: &mut Vec<Local>) {
+pub(crate) fn order_of(element: &Element, orders: &Orders, out: &mut Vec<Local>) {
     let parent = orders.prefixed(element);
     let Some(ranks) = orders.ranks(&parent) else { return };
     let unknown = ranks.len() + 1;

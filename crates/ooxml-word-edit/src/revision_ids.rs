@@ -36,7 +36,7 @@ const KINDS: &[&str] = &[
     "cellMerge",
 ];
 
-fn is_record(e: &Element) -> bool {
+pub(crate) fn is_record(e: &Element) -> bool {
     e.name().namespace() == Some(W) && KINDS.contains(&e.name().local())
 }
 

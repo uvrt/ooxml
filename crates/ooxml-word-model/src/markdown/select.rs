@@ -157,8 +157,8 @@ fn place(reader: &Reader<'_>, part: &StoryPart, id: &str) -> Result<Place, Range
     }
     let (_, entry) = address::resolve(reader.docx, id)?;
     let path = match entry {
-        Entry::Paragraph(k) => part.ids.paragraphs.get(k).map(|p| p.path.clone()),
-        Entry::Table(k) => part.ids.tables.get(k).map(|t| t.path.clone()),
+        Entry::Paragraph(k) => part.ids.paragraphs().get(k).map(|p| p.path.clone()),
+        Entry::Table(k) => part.ids.tables().get(k).map(|t| t.path.clone()),
     };
     Ok((path, None))
 }
@@ -234,7 +234,7 @@ fn position(reader: &Reader<'_>, all: &[Record], id: &str) -> Result<usize, Rang
         id.to_owned()
     } else {
         let (part, entry) = address::resolve(reader.docx, id)?;
-        part.ids.id_of(entry).unwrap_or(id).to_owned()
+        part.ids.id_of(entry).unwrap_or_else(|| id.to_owned())
     };
     all.iter()
         .position(|r| holds(r, &wanted))
@@ -277,7 +277,7 @@ fn inside_table(reader: &mut Reader<'_>, address: &str) -> Result<Option<Selecte
     else {
         return Ok(None);
     };
-    let table_id = part.ids.tables.get(table).map(|t| t.id.clone()).unwrap_or_default();
+    let table_id = part.ids.tables().get(table).map(|t| t.id.clone()).unwrap_or_default();
     let all = cut(reader, part, Some(&table_id), None, Cut::Block, &table_id)?;
     let found = find_table(&all, &table_id).cloned();
     let Some(mut table) = found else {

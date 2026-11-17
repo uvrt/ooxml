@@ -115,7 +115,7 @@ pub fn marker_range(
     if (last, last_offset) < (first, first_offset) {
         (last, last_offset) = (first, first_offset);
     }
-    let id = |k: usize| part.ids.paragraphs.get(k).map(|p| p.id.clone()).unwrap_or_default();
+    let id = |k: usize| part.ids.paragraphs().get(k).map(|p| p.id.clone()).unwrap_or_default();
     Ok(RangeText {
         start_id: id(first),
         start: first_offset,
@@ -137,7 +137,7 @@ pub fn range_text(part: &StoryPart, range: &RangeText, view: View) -> String {
         return String::new();
     };
     let texts: Vec<Vec<char>> = (a..=b)
-        .filter_map(|k| part.ids.paragraphs.get(k))
+        .filter_map(|k| part.ids.paragraphs().get(k))
         .map(|p| paragraph_text(&p.element, view).chars().collect())
         .collect();
     let piece = |t: &[char], from: usize, to: usize| -> String {
@@ -162,7 +162,7 @@ pub fn range_text(part: &StoryPart, range: &RangeText, view: View) -> String {
 /// at block level -- the start of the next paragraph (`forward`) or the end of the one
 /// before.
 fn marker_place(part: &StoryPart, marker: &[u32], forward: bool, view: View) -> Result<(usize, usize), AddressError> {
-    let paragraphs = &part.ids.paragraphs;
+    let paragraphs = part.ids.paragraphs();
     let holder = (1..marker.len())
         .rev()
         .find_map(|n| marker.get(..n).and_then(|p| part.ids.paragraph_at(p)));
@@ -176,16 +176,13 @@ fn marker_place(part: &StoryPart, marker: &[u32], forward: bool, view: View) -> 
             .map_or(0, |p| paragraph_text(&p.element, view).chars().count())
     };
     let found = if forward {
-        paragraphs
-            .iter()
-            .find(|p| &*p.path > marker)
+        part.ids
+            .paragraph_after(marker)
             .map(|p| (p.index, 0))
             .or_else(|| paragraphs.last().map(|p| (p.index, length(p.index))))
     } else {
-        paragraphs
-            .iter()
-            .rev()
-            .find(|p| &*p.path < marker)
+        part.ids
+            .paragraph_before(marker)
             .map(|p| (p.index, length(p.index)))
             .or_else(|| paragraphs.first().map(|p| (p.index, 0)))
     };

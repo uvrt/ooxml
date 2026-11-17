@@ -107,7 +107,7 @@ fn run(seed: u64, writers: u64, per_writer: usize) -> (u64, u64) {
     let shared = editor(&bytes);
     let docx = shared.store().snapshot().doc().docx().unwrap();
     let body = docx.body().unwrap();
-    let mut targets: Vec<String> = body.ids.paragraphs.iter().map(|p| p.id.clone()).collect();
+    let mut targets: Vec<String> = body.ids.paragraphs().iter().map(|p| p.id.clone()).collect();
     targets.truncate(40);
     let mut records: Vec<(Seq, SetText, Snapshot<WordDoc>)> = Vec::new();
     std::thread::scope(|scope| {
@@ -168,7 +168,7 @@ fn memoised_problems_equal_the_full_check_version_by_version() {
     let targets: Vec<String> = docx
         .parts
         .iter()
-        .flat_map(|p| p.ids.paragraphs.iter().map(|q| q.id.clone()))
+        .flat_map(|p| p.ids.paragraphs().iter().map(|q| q.id.clone()))
         .collect();
     let mut rng = Rng(7);
     for k in 0..6 {
@@ -192,7 +192,7 @@ fn a_batch_is_one_step_and_an_atomic_batch_refuses_whole() {
         .body()
         .unwrap()
         .ids
-        .paragraphs
+        .paragraphs()
         .iter()
         .map(|p| p.id.clone())
         .take(3)
@@ -241,7 +241,7 @@ fn each_version_reads_as_a_fresh_reading_does() {
     let targets: Vec<String> = docx
         .parts
         .iter()
-        .flat_map(|p| p.ids.paragraphs.iter().map(|q| q.id.clone()))
+        .flat_map(|p| p.ids.paragraphs().iter().map(|q| q.id.clone()))
         .collect();
     let mut rng = Rng(5);
     for k in 0..5 {
@@ -253,7 +253,7 @@ fn each_version_reads_as_a_fresh_reading_does() {
         for (a, b) in kept.parts.iter().zip(&fresh.parts) {
             let ids = |p: &ooxml_word_model::docx::StoryPart| -> Vec<(String, Vec<u32>)> {
                 p.ids
-                    .paragraphs
+                    .paragraphs()
                     .iter()
                     .map(|q| (q.id.clone(), q.path.to_vec()))
                     .collect()
@@ -261,7 +261,7 @@ fn each_version_reads_as_a_fresh_reading_does() {
             assert_eq!(ids(a), ids(b));
             let rows = |p: &ooxml_word_model::docx::StoryPart| -> Vec<TableRows> {
                 p.ids
-                    .tables
+                    .tables()
                     .iter()
                     .map(|t| {
                         (

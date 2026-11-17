@@ -8,7 +8,7 @@
 //! Must not: be bypassed (no edit touches a tree any other way), commit (the store does),
 //! or decide what an edit means.
 
-use crate::doc::{Change, Draw, Key, WordDoc};
+use crate::doc::{Change, Draw, DrawFrom, Key, WordDoc};
 use crate::names::{MC, W14, WP14};
 use crate::policy::{RevisionPolicy, Stamp};
 use crate::text::write;
@@ -31,6 +31,9 @@ pub struct TextWrite {
     /// Whether a revision record carries `w16du:dateUtc`: the part's root is to declare it
     /// ([`EditSink::ensure_w14`] with `w16du`, once the paragraph is in place).
     pub dated: bool,
+    /// The revision ids the edit gave, `first..next` (tracked): stand-ins, drawn again
+    /// where the change is applied ([`crate::DrawFrom::Annotation`]).
+    pub annotations: Option<(i64, i64)>,
 }
 
 /// The sink a command writes through, over one transaction.
@@ -106,14 +109,35 @@ impl<'t, 's> EditSink<'t, 's> {
         }))
     }
 
-    /// One above the largest annotation id in use in any story (read: revision ids are
-    /// allocated in commit order).
+    /// One above the largest annotation id in use in any story of the working version: the
+    /// first of the stand-in ids an edit numbers its revision records with, drawn again
+    /// where the change is applied ([`crate::DrawFrom::Annotation`]), so revision ids
+    /// are no conflict between transactions.
     ///
     /// # Errors
     /// When a story part is not XML.
     pub fn next_annotation_id(&mut self) -> Result<i64> {
-        self.tx.read(Key::Annotations);
         Ok(annotation_ceiling(self.tx.doc())? + 1)
+    }
+
+    /// Keep the people part where the change is applied: `add` listed, then `tidy` dropped
+    /// if nothing of theirs is left ([`Change::People`]).
+    ///
+    /// # Errors
+    /// When the main part's relationships are not XML.
+    pub fn people(&mut self, add: Option<&str>, tidy: Option<&str>) -> Result<()> {
+        let main = self.base().docx()?.main.clone();
+        let mut keys: Vec<Key> = crate::people::parts_written(self.doc().package(), &main)
+            .map_err(EditError::from)?
+            .into_iter()
+            .map(Key::Part)
+            .collect();
+        keys.push(Key::People);
+        self.write(Change::People {
+            add: add.map(Arc::from),
+            tidy: tidy.map(Arc::from),
+            keys: keys.into(),
+        })
     }
 
     /// Replace the element at `path` (child indexes from the root) of `part` by `new`.
@@ -230,6 +254,7 @@ impl<'t, 's> EditSink<'t, 's> {
                 changed: write::set_text(work, paragraph, text)?,
                 released: Vec::new(),
                 dated: false,
+                annotations: None,
             }),
             RevisionPolicy::Tracked(tracking) => {
                 write::check_text(text)?;
@@ -237,14 +262,11 @@ impl<'t, 's> EditSink<'t, 's> {
                 let mut stamp = Stamp::new(tracking, first);
                 let length = crate::text::atoms(work, paragraph).len();
                 let released = track::replace_span(work, paragraph, 0, length, text, &mut stamp)?;
-                if stamp.gave(first) {
-                    self.tx.read(Key::Annotations);
-                    crate::people::ensure_person(self, stamp.author())?;
-                }
                 Ok(TextWrite {
                     changed: work.changed(),
                     released,
                     dated: stamp.dated,
+                    annotations: Some((first, stamp.next())),
                 })
             }
         }
@@ -324,4 +346,40 @@ pub(crate) fn ensured_head(root: &Element, drawings: bool, extra: &[(&str, &str)
         };
         (head, declared_new)
     })
+}
+
+/// The draws that number again, where the change is applied, the revision records an
+/// edit made in `element` (`w:id` in `first..next`, its stand-ins), each by its offset
+/// from `first`; paths from `element`.
+pub(crate) fn annotation_draws(element: &Element, first: i64, next: i64) -> Vec<Draw> {
+    let mut out = Vec::new();
+    let mut stack: Vec<(&Element, Vec<u32>)> = vec![(element, Vec::new())];
+    while let Some((e, path)) = stack.pop() {
+        if e.name().namespace() == Some(crate::names::W) && crate::revision_ids::is_record(e) {
+            let value = e
+                .attribute(Some(crate::names::W), "id")
+                .and_then(|v| v.trim().parse::<i64>().ok())
+                .filter(|v| (first..next).contains(v));
+            if let Some(value) = value {
+                if let (Ok(offset), Some(attribute)) = (
+                    u32::try_from(value - first),
+                    e.attributes().iter().find(|a| a.name.is(Some(crate::names::W), "id")),
+                ) {
+                    out.push(Draw {
+                        from: DrawFrom::Annotation(offset),
+                        at: path.clone(),
+                        attribute: Arc::clone(&attribute.name),
+                    });
+                }
+            }
+        }
+        for (k, node) in e.children().iter().enumerate() {
+            if let Node::Element(child) = node {
+                let mut below = path.clone();
+                below.push(u32::try_from(k).unwrap_or(u32::MAX));
+                stack.push((child, below));
+            }
+        }
+    }
+    out
 }

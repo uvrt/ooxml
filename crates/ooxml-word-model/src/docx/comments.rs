@@ -77,12 +77,7 @@ pub fn comments(docx: &Docx) -> Vec<Comment> {
             continue;
         }
         let path = [u32::try_from(k).unwrap_or(u32::MAX)];
-        let inside: Vec<&crate::ids::ParagraphId> = part
-            .ids
-            .paragraphs
-            .iter()
-            .filter(|p| p.path.starts_with(&path))
-            .collect();
+        let inside: Vec<crate::ids::ParagraphId> = part.ids.paragraphs_within(&path);
         let last = last_para(comment);
         let id = match durable.get(&last).and_then(|d| d.0.clone()).filter(|d| !d.is_empty()) {
             Some(d) => format!("c:{d}"),

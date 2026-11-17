@@ -233,7 +233,7 @@ pub fn child_of<'a>(root: &'a Arc<Element>, local: &str) -> Option<(u32, &'a Arc
 
 fn entry_id(part: &StoryPart, path: &[u32]) -> Option<String> {
     let entry: Entry = part.ids.at(path)?;
-    part.ids.id_of(entry).map(str::to_owned)
+    part.ids.id_of(entry)
 }
 
 /// Section breaks in a block-level control or custom XML: `w:p/w:pPr/w:sectPr` below it.

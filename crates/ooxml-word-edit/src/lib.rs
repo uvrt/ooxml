@@ -41,7 +41,7 @@ mod track;
 pub mod validate;
 mod work;
 
-pub use doc::{Change, Key, ModelError, Shared, WordDoc};
+pub use doc::{Change, Draw, DrawFrom, Key, ModelError, Shared, WordDoc};
 pub use editor::{EditTiming, Edited, Editor};
 pub use error::{EditError, Result};
 pub use policy::{RevisionPolicy, Tracking};
