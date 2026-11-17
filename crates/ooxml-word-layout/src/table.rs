@@ -139,6 +139,9 @@ pub struct CellLine {
     pub space_after: Px,
     /// Its cell's text start, px from the page's left edge.
     pub left: Px,
+    /// Its cell's fill is dark enough that Word draws automatic text white
+    /// (`automatic_text_on_cell`).
+    pub white_text: bool,
 }
 
 /// One stacked line of a cell, by its paragraph (as [`CellLine::block`]); `None` for one

@@ -155,6 +155,7 @@ fn walk_paragraph(
                 band: text_band(y - b.space_before, &b),
                 column: None,
                 left: from.left,
+                white_text: false,
             });
         }
         y += height.pitch;

@@ -81,6 +81,8 @@ pub struct DrawnLine {
     pub column: Option<usize>,
     /// The left edge it starts from: its text column's, or its cell's text start.
     pub left: Px,
+    /// In a cell whose fill turns automatic text white.
+    pub white_text: bool,
 }
 
 /// A paragraph item's lines as page `laid` placed them: broken again there, or the flow's.
@@ -175,6 +177,7 @@ fn flow_line(layout: &DocumentLayout, laid: &LaidPage, placed: &PlacedLine, fram
         band: text_band(placed.top - b.space_before, &b),
         column: placed.column,
         left: line_left(layout, placed, frame),
+        white_text: false,
     })
 }
 
@@ -215,6 +218,7 @@ fn drop_cap_lines(layout: &DocumentLayout, placed: &PlacedLine, frame: &PageFram
             band: text_band(y, &b),
             column: placed.column,
             left,
+            white_text: false,
         });
         y += height.pitch;
     }
@@ -238,6 +242,7 @@ fn opening_line(layout: &DocumentLayout, laid: &LaidPage, frame: &PageFrame) -> 
         band: text_band(opening.top, &b),
         column: None,
         left: frame.left,
+        white_text: false,
     })
 }
 
@@ -278,6 +283,7 @@ fn table_lines(layout: &DocumentLayout, laid: &LaidPage, frame: &PageFrame) -> V
                     band: text_band(line.top - b.space_before, &b),
                     column: placed.column,
                     left: line.left,
+                    white_text: line.white_text,
                 },
             ));
         }

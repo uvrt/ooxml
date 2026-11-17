@@ -394,6 +394,17 @@ pub(super) fn picture_size(cx: i64, cy: i64) -> (Px, Px) {
     (side(cx), side(cy))
 }
 
+/// Automatic text on a dark cell fill drawn white, where the paragraph has no background:
+/// the spans with no colour, highlight or shading of their own.
+fn white_text(spans: &mut [Span]) {
+    for span in spans
+        .iter_mut()
+        .filter(|s| s.color.is_none() && s.highlight.is_none() && s.shading.is_none())
+    {
+        span.color = Some("FFFFFF".to_owned());
+    }
+}
+
 /// The decorations of a line's spans (`_decorate`).
 fn decorate(cx: &PaintContext<'_>, spans: &[Span], band: (i64, i64), out: &mut PageOut) {
     let drawn: Vec<&Span> = spans.iter().filter(|s| !s.chars.is_empty()).collect();
@@ -479,7 +490,10 @@ pub(super) fn paint_line(cx: &PaintContext<'_>, job: &LineJob<'_>, out: &mut Pag
         painter.glyph(piece, x);
     }
     painter.leaders(left);
-    let spans: Vec<Span> = painter.spans.into_iter().map(|(_, s)| s).collect();
+    let mut spans: Vec<Span> = painter.spans.into_iter().map(|(_, s)| s).collect();
+    if job.line.white_text && shading(pp.get("shd")).is_none() {
+        white_text(&mut spans);
+    }
     decorate(cx, &spans, job.line.band, out);
     Some(PaintedLine {
         path: job.paragraph.path.clone(),
