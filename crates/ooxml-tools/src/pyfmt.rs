@@ -2,68 +2,15 @@
 //! string (`'one'`), of a JSON value (`True`, `None`, `['a', 2]`) and of a float (`0.06`,
 //! `1e-05`, `2.0`).
 //!
-//! Owns: those formats, so that a message reads the same from the Rust core as from the
+//! Owns: those formats (a string's `repr` is `ooxml-base`'s, re-exported), so that a message reads the same from the Rust core as from the
 //! Python path it replaces (the differential compares them).
 //!
 //! Must not: be used for anything but messages. `str.isprintable` is approximated without
 //! Unicode tables: control characters, line and paragraph separators, the Unicode spaces
 //! other than U+0020 and the common format characters are escaped.
 
+pub use ooxml_base::pyfmt::repr_str;
 use serde_json::Value;
-use std::fmt::Write as _;
-
-/// Python's `repr` of a string.
-#[must_use]
-pub fn repr_str(text: &str) -> String {
-    let quote = if text.contains('\'') && !text.contains('"') {
-        '"'
-    } else {
-        '\''
-    };
-    let mut out = String::with_capacity(text.len() + 2);
-    out.push(quote);
-    for c in text.chars() {
-        match c {
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if c == quote => {
-                out.push('\\');
-                out.push(c);
-            }
-            c if printable(c) => out.push(c),
-            c => escape(c, &mut out),
-        }
-    }
-    out.push(quote);
-    out
-}
-
-fn escape(c: char, out: &mut String) {
-    let code = u32::from(c);
-    // Writing to a String cannot fail.
-    let _ = if code <= 0xff {
-        write!(out, "\\x{code:02x}")
-    } else if code <= 0xffff {
-        write!(out, "\\u{code:04x}")
-    } else {
-        write!(out, "\\U{code:08x}")
-    };
-}
-
-fn printable(c: char) -> bool {
-    if c == ' ' {
-        return true;
-    }
-    if c.is_control() {
-        return false;
-    }
-    !matches!(
-        u32::from(c),
-        0xa0 | 0xad | 0x1680 | 0x2000..=0x200f | 0x2028..=0x202f | 0x205f..=0x2064 | 0x3000 | 0xfeff
-    )
-}
 
 /// Python's `repr` of a float.
 #[must_use]

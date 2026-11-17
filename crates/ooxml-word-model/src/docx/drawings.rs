@@ -227,7 +227,7 @@ fn member_properties(node: &Element) -> Option<&Element> {
 }
 
 /// Every member of a group drawing (or a nested `wpg:grpSp` when `nested`), depth first.
-fn group_members(group: &Element, prefix: &str, nested: bool) -> Vec<(String, Arc<Element>)> {
+pub fn group_members(group: &Element, prefix: &str, nested: bool) -> Vec<(String, Arc<Element>)> {
     let holder = if nested {
         Some(group)
     } else {

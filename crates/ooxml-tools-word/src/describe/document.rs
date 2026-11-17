@@ -209,7 +209,8 @@ impl<'a> Reading<'a> {
         for r in &found {
             count(&mut authors, r.author().map(str::to_owned));
         }
-        json!({"records": found.len(), "by_author": counter_object(authors)})
+        let changes = ooxml_word_model::docx::changes::change_groups(self.docx).len();
+        json!({"records": found.len(), "changes": changes, "by_author": counter_object(authors)})
     }
 
     /// Every field's keyword, counted.
@@ -236,7 +237,7 @@ impl<'a> Reading<'a> {
                 let mut item = Map::new();
                 item.insert("id".into(), json!(t.id));
                 item.insert("rows".into(), json!(grid.accepted_rows()));
-                item.insert("columns".into(), json!(grid.column_count()));
+                item.insert("columns".into(), json!(grid.accepted_columns()));
                 let first: Vec<String> = (0..grid.column_count())
                     .map(|k| grid.cell_text(0, k).unwrap_or_default())
                     .collect();

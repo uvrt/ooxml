@@ -17,6 +17,7 @@ ooxml-derive.workspace = true
 ooxml-word-model.workspace = true
 ooxml-tools.workspace = true
 ooxml-tools-word.workspace = true
+ooxml-session.workspace = true
 ooxml-word-layout.workspace = true
 ooxml-colour.workspace = true
 ooxml-drawingml.workspace = true

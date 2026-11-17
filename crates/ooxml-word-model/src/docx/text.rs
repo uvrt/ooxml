@@ -52,23 +52,60 @@ impl View {
 /// The paragraph's text in `view`.
 #[must_use]
 pub fn paragraph_text(paragraph: &Element, view: View) -> String {
-    let mut state = Walk {
-        view,
-        fields: Vec::new(),
-        out: String::new(),
-    };
+    let mut state = Walk::new(view, None);
     container(paragraph, &mut state);
     state.out
 }
 
-struct Walk {
+/// How many characters of the paragraph's text in `view` stand before the element at
+/// `marker` (its place below the paragraph): docx-agent's `_offset_of`, where a bookmark or
+/// comment marker stands in its paragraph's text.
+#[must_use]
+pub fn offset_before(paragraph: &Element, marker: &[u32], view: View) -> usize {
+    let mut state = Walk::new(view, Some(marker));
+    container(paragraph, &mut state);
+    state.before
+}
+
+struct Walk<'m> {
     view: View,
     /// Open complex fields, innermost last: `true` once in their result.
     fields: Vec<bool>,
     out: String,
+    /// The place of the element being walked, below the paragraph.
+    path: Vec<u32>,
+    /// A marker's place, whose offset is counted in `before`.
+    marker: Option<&'m [u32]>,
+    /// Characters whose element stands before the marker in document order.
+    before: usize,
 }
 
-impl Walk {
+impl<'m> Walk<'m> {
+    fn new(view: View, marker: Option<&'m [u32]>) -> Self {
+        Walk {
+            view,
+            fields: Vec::new(),
+            out: String::new(),
+            path: Vec::new(),
+            marker,
+            before: 0,
+        }
+    }
+
+    /// Text of the element at `self.path` written: counted when it stands before the marker.
+    fn push(&mut self, text: &str) {
+        self.out.push_str(text);
+        if self.marker.is_some_and(|m| self.path.as_slice() < m) {
+            self.before += text.chars().count();
+        }
+    }
+}
+
+fn step(k: usize) -> u32 {
+    u32::try_from(k).unwrap_or(u32::MAX)
+}
+
+impl Walk<'_> {
     fn visible(&self) -> bool {
         self.fields.iter().all(|result| *result)
     }
@@ -78,8 +115,17 @@ fn is_w(element: &Element, names: &[&str]) -> bool {
     element.name().namespace() == Some(W) && names.contains(&element.name().local())
 }
 
-fn container(node: &Element, state: &mut Walk) {
-    for child in node.child_elements() {
+fn container(node: &Element, state: &mut Walk<'_>) {
+    for (k, child) in node.children().iter().enumerate() {
+        let Node::Element(child) = child else { continue };
+        state.path.push(step(k));
+        item(child, state);
+        state.path.pop();
+    }
+}
+
+fn item(child: &Element, state: &mut Walk<'_>) {
+    {
         if is_w(child, &["r"]) {
             run(child, state);
         } else if is_w(
@@ -88,21 +134,28 @@ fn container(node: &Element, state: &mut Walk) {
         ) {
             container(child, state);
         } else if is_w(child, &["sdt"]) {
-            if let Some(content) = child.find(Some(W), "sdtContent") {
+            let content = child.children().iter().enumerate().find_map(|(k, n)| match n {
+                Node::Element(e) if e.name().is(Some(W), "sdtContent") => Some((k, e)),
+                _ => None,
+            });
+            if let Some((k, content)) = content {
+                state.path.push(step(k));
                 container(content, state);
+                state.path.pop();
             }
         } else if let Some(shown) = state.view.shows(child) {
             if shown {
                 container(child, state);
             }
         } else if (child.name().is(Some(M), "oMath") || child.name().is(Some(M), "oMathPara")) && state.visible() {
-            state.out.push(OBJECT);
+            state.push("\u{fffc}");
         }
     }
 }
 
-fn run(run: &Element, state: &mut Walk) {
-    for child in run.child_elements() {
+fn run(run: &Element, state: &mut Walk<'_>) {
+    for (k, child) in run.children().iter().enumerate() {
+        let Node::Element(child) = child else { continue };
         let name = child.name();
         if name.is(Some(W), "rPr") {
             continue;
@@ -126,10 +179,12 @@ fn run(run: &Element, state: &mut Walk) {
             continue;
         }
         if let Some(c) = character(child, state.view) {
+            state.path.push(step(k));
             match c {
-                Char::One(c) => state.out.push(c),
-                Char::Text(t) => state.out.push_str(&t),
+                Char::One(c) => state.push(c.encode_utf8(&mut [0; 4])),
+                Char::Text(t) => state.push(&t),
             }
+            state.path.pop();
         }
     }
 }

@@ -11,9 +11,17 @@
 #![forbid(unsafe_code)]
 
 mod describe;
+mod find_text;
+mod paging;
+mod refusal;
+mod version;
+mod word_inspect;
 mod word_read;
 
 pub use describe::{describe, Describe, DESCRIBED, NOT_DESCRIBED};
+pub use find_text::{find_text, FindStories, FindText};
+pub use version::Version;
+pub use word_inspect::{word_inspect, WordInspect};
 pub use word_read::{word_read, Story, View, WordRead};
 
 /// The document kind these tools serve.

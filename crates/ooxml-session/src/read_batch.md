@@ -1,0 +1,1 @@
+Read many things in one call: reading calls (describe, find, check, query, render...), each answered as alone, in its own size budget. Use it for any two or more reads. Changes nothing.

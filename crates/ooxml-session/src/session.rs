@@ -4,6 +4,7 @@
 //! Must not: hold a lock while a handler runs or a package is parsed or written (the table
 //! lock is held only to find or change an entry), or implement a tool.
 
+use crate::batch::{MAX_READ_BATCH_CHARS, READ_BATCH};
 use crate::context::{CallCancel, StoreClock};
 use crate::update::{PartUpdate, Updated};
 use crate::{CallContext, DocId, DocKind, PackageDoc, Registry, SessionError};
@@ -11,6 +12,8 @@ use ooxml_base::{Cancel, Context};
 use ooxml_opc::Package;
 use ooxml_store::{Snapshot, Store, StoreConfig, StoreStats};
 use ooxml_tools::{Accepted, Refusal, ToolError, ToolResult, ToolSpec, WayOut};
+use ooxml_tools_word::Version;
+use ooxml_word_model::docx::Versions;
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -28,6 +31,9 @@ struct Document {
     kind: DocKind,
     name: String,
     store: Store<PackageDoc>,
+    /// Its readings as a Word document, kept for its latest versions (design section 7:
+    /// caches belong to a document).
+    versions: Arc<Versions>,
 }
 
 /// A document at one version, as a call reads it: it stays readable, unchanged, while
@@ -38,6 +44,7 @@ pub struct Opened {
     kind: DocKind,
     name: Arc<str>,
     version: Snapshot<PackageDoc>,
+    versions: Arc<Versions>,
 }
 
 impl Opened {
@@ -70,6 +77,17 @@ impl Opened {
     pub fn package(&self) -> &Package {
         self.version.doc().package()
     }
+
+    /// This version as a Word reading tool is handed it.
+    #[must_use]
+    pub fn version_of(&self) -> Version<'_> {
+        Version {
+            name: &self.name,
+            package: self.package(),
+            number: self.version(),
+            versions: &self.versions,
+        }
+    }
 }
 
 /// A copy of a session's counters (section 10).
@@ -98,7 +116,7 @@ struct Counts {
 /// Documents by id, their versions, and the tools that read and change them.
 pub struct Session {
     config: SessionConfig,
-    context: Context,
+    pub(crate) context: Context,
     registry: Registry,
     documents: RwLock<BTreeMap<DocId, Arc<Document>>>,
     last_id: AtomicU64,
@@ -148,6 +166,7 @@ impl Session {
             kind,
             name: name.to_owned(),
             store,
+            versions: Arc::new(Versions::new()),
         });
         self.write_table().insert(id.clone(), document);
         Ok(id)
@@ -164,6 +183,7 @@ impl Session {
             kind: document.kind,
             name: Arc::from(document.name.as_str()),
             version: document.store.snapshot(),
+            versions: Arc::clone(&document.versions),
         })
     }
 
@@ -248,11 +268,54 @@ impl Session {
     /// its head snapshot. Never panics and never fails: what went wrong is the result's
     /// error, with its way out.
     pub fn call(&self, name: &str, arguments: Value, context: &CallContext) -> ToolResult<Value> {
+        if name == READ_BATCH {
+            return self.call_batch(arguments, context);
+        }
+        self.call_one(name, arguments, context, "")
+    }
+
+    /// `read_batch`: its arguments taken as meant and validated, then its ops run.
+    fn call_batch(&self, arguments: Value, context: &CallContext) -> ToolResult<Value> {
+        self.counts.calls.fetch_add(1, Ordering::Relaxed);
+        let spec = self.registry.batch_spec();
+        let outcome = spec.accept(arguments).and_then(|Accepted { arguments, notes }| {
+            self.read_batch(&Value::Object(arguments), context)
+                .map(|done| (done, notes))
+        });
+        let mut result = match outcome {
+            Ok((done, notes)) => {
+                let mut result = ToolResult::done(done);
+                result.warnings = notes;
+                result
+            }
+            Err(error) => {
+                self.counts.failed.fetch_add(1, Ordering::Relaxed);
+                ToolResult::failed(error)
+            }
+        };
+        result.app.tool = READ_BATCH.to_owned();
+        result.app.budget = Some(MAX_READ_BATCH_CHARS);
+        result
+    }
+
+    /// One call; `within` names the batch it runs in (`""`: none), whose refusals name it and
+    /// whose op's argument errors are fielded under `arguments`.
+    pub(crate) fn call_one(
+        &self,
+        name: &str,
+        arguments: Value,
+        context: &CallContext,
+        within: &str,
+    ) -> ToolResult<Value> {
         self.counts.calls.fetch_add(1, Ordering::Relaxed);
         let cancel = CallCancel::new(context, &*self.context.cancel, &*self.context.clock);
         let mut opened = None;
         let mut warnings = Vec::new();
-        let outcome = self.dispatch(name, arguments, &cancel, &mut opened, &mut warnings);
+        let outcome = if within.is_empty() {
+            self.dispatch(name, arguments, &cancel, &mut opened, &mut warnings)
+        } else {
+            self.dispatch_within(name, arguments, &cancel, &mut opened, &mut warnings, within)
+        };
         let mut result = match outcome {
             Ok(done) => ToolResult::done(done),
             Err(error) => {
@@ -292,6 +355,42 @@ impl Session {
         warnings.extend(spec.ignored_for(Some(doc.kind.as_str()), &mut arguments));
         let doc = opened.insert(doc);
         tool.run(arguments, doc, cancel)
+    }
+
+    /// One op of a batch `within`: a tool that may run there, its argument errors fielded
+    /// under `arguments` as today's batches field them.
+    fn dispatch_within(
+        &self,
+        name: &str,
+        arguments: Value,
+        cancel: &dyn Cancel,
+        opened: &mut Option<Opened>,
+        warnings: &mut Vec<String>,
+        within: &str,
+    ) -> Result<ooxml_tools::Done<Value>, ToolError> {
+        let runs = self.registry.named(name).map(|t| t.spec().flags);
+        if name == READ_BATCH || runs.is_some_and(|f| !(f.batchable || f.read_batchable)) {
+            return Err(ToolError::refusal(
+                Refusal::InvalidArguments,
+                format!("{name} cannot run inside a {within}; call it on its own"),
+                WayOut::names([name]).ok_or_else(|| ToolError::internal("no name", "session:batch"))?,
+            )
+            .at("tool"));
+        }
+        if runs.is_none() {
+            return self
+                .spec_named(name)
+                .map(|_| ooxml_tools::Done::new(""))
+                .map_err(|e| e.at("tool"));
+        }
+        self.dispatch(name, arguments, cancel, opened, warnings)
+            .map_err(|error| {
+                let field = error.field().map(|f| format!("arguments.{f}"));
+                match field {
+                    Some(field) if error.code().as_str() == "invalid_arguments" => error.at(field),
+                    _ => error,
+                }
+            })
     }
 
     /// The definition of `name` (the first registered: tools of one name share it).

@@ -33,6 +33,7 @@ pub mod layout_tables;
 pub mod metafile;
 pub mod pixels;
 pub mod reads;
+pub mod reads_bench;
 pub mod records;
 pub mod replay;
 pub mod scene_data;

@@ -8,10 +8,11 @@
 //! calls.
 
 use crate::describe::cancelled;
+use crate::paging::page_text;
+use crate::version::Version;
 use ooxml_base::Cancel;
-use ooxml_opc::Package;
 use ooxml_tools::{ArgEnum, Done, Refusal, ToolArgs, ToolError, TryCall, WayOut};
-use ooxml_word_model::docx::Docx;
+use ooxml_word_model::address::expand_heading;
 use ooxml_word_model::markdown::{to_markdown, RangeError, Stories, ViewName};
 use serde_json::{json, Value};
 
@@ -62,12 +63,7 @@ const PAGE: usize = 24_000 - 1_500;
 /// `invalid_arguments` for a range with `stories=all` or a cursor this tool did not give;
 /// `not_found` for a range that names nothing (with the ways out); `timeout` when
 /// cancelled.
-pub fn word_read(
-    args: &WordRead,
-    package: &Package,
-    name: &str,
-    cancel: &dyn Cancel,
-) -> Result<Done<Value>, ToolError> {
+pub fn word_read(args: &WordRead, version: &Version<'_>, cancel: &dyn Cancel) -> Result<Done<Value>, ToolError> {
     let stories = match args.stories {
         Some(Story::All) => Stories::All,
         _ => Stories::Body,
@@ -87,65 +83,29 @@ pub fn word_read(
         _ => ViewName::Final,
     };
     cancel.check().map_err(cancelled)?;
-    let docx = Docx::open(package).map_err(|e| ToolError::internal(e.to_string(), "word_read:model"))?;
-    let markdown = to_markdown(&docx, args.range.as_deref(), view, stories).map_err(|e| range_refusal(e, &args.doc))?;
+    let docx = version.docx()?;
+    // A heading's range is read, and named, as the span it is (today's `resolve`).
+    let range = args
+        .range
+        .as_deref()
+        .map(|r| expand_heading(&docx, r))
+        .transpose()
+        .map_err(|e| range_refusal(e, &args.doc))?;
+    let markdown = to_markdown(&docx, range.as_deref(), view, stories).map_err(|e| range_refusal(e, &args.doc))?;
     cancel.check().map_err(cancelled)?;
-    let (text, next) = page_text(&args.doc, &markdown, args.cursor.as_deref(), PAGE.max(2000))?;
-    let shown = args.range.clone().unwrap_or_else(|| "the document".to_owned());
+    let first_page = try_call(json!({"doc": args.doc}));
+    let (text, next) = page_text(&markdown, args.cursor.as_deref(), PAGE.max(2000), first_page)?;
+    let shown = range.unwrap_or_else(|| "the document".to_owned());
     let view_name = match view {
         ViewName::Final => "final",
         ViewName::Markup => "markup",
         ViewName::Original => "original",
     };
-    let _ = name;
     let mut done = Done::new(format!("Read {shown} ({view_name})"));
     done.data = Some(Value::from(text));
     done.next_cursor = next;
     done.total = Some(markdown.chars().count() as u64);
     Ok(done)
-}
-
-/// One page of `text` from `cursor` and the next page's cursor: a page breaks at a line
-/// end in its second half where there is one.
-fn page_text(doc: &str, text: &str, cursor: Option<&str>, limit: usize) -> Result<(String, Option<String>), ToolError> {
-    let chars: Vec<char> = text.chars().collect();
-    let start = match cursor.filter(|c| !c.is_empty()) {
-        None => 0,
-        Some(c) => c
-            .strip_prefix('c')
-            .filter(|d| !d.is_empty() && d.bytes().all(|b| b.is_ascii_digit()))
-            .and_then(|d| d.parse::<usize>().ok())
-            .ok_or_else(|| bad_cursor(doc, format!("cursor {} is not one this tool gave", py_repr(c))))?,
-    };
-    if start > chars.len() {
-        return Err(bad_cursor(
-            doc,
-            format!("cursor {} is past the end", py_repr(cursor.unwrap_or(""))),
-        ));
-    }
-    let end = start + limit;
-    if end >= chars.len() {
-        return Ok((chars.get(start..).unwrap_or(&[]).iter().collect(), None));
-    }
-    let from = start + limit / 2;
-    let end = chars
-        .get(from..end)
-        .and_then(|window| window.iter().rposition(|c| *c == '\n'))
-        .map_or(end, |k| from + k + 1);
-    Ok((
-        chars.get(start..end).unwrap_or(&[]).iter().collect(),
-        Some(format!("c{end}")),
-    ))
-}
-
-/// A cursor refused: the way out is the first page.
-fn bad_cursor(doc: &str, message: String) -> ToolError {
-    ToolError::refusal(
-        Refusal::InvalidArguments,
-        message,
-        WayOut::call(try_call(json!({"doc": doc}))),
-    )
-    .at("cursor")
 }
 
 /// `word_read` called with `arguments`.
@@ -160,22 +120,7 @@ pub(crate) fn try_call(arguments: Value) -> TryCall {
     }
 }
 
-/// Python's `repr` of a short string.
-fn py_repr(text: &str) -> String {
-    format!("'{}'", text.replace('\\', "\\\\").replace('\'', "\\'"))
-}
-
 /// A range refused: the ids that would do, and the call that reads the whole document.
 fn range_refusal(error: RangeError, doc: &str) -> ToolError {
-    let code = if error.code == "not_found" {
-        Refusal::NotFound
-    } else {
-        Refusal::InvalidArguments
-    };
-    let call = try_call(json!({"doc": doc}));
-    let way_out = match WayOut::names(error.options) {
-        Some(options) => options.and_call(call),
-        None => WayOut::call(call),
-    };
-    ToolError::refusal(code, error.message, way_out).at("range")
+    crate::refusal::address_refusal(error, "range", try_call(json!({"doc": doc})))
 }

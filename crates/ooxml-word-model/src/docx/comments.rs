@@ -27,6 +27,15 @@ pub struct Comment {
     pub parent: Option<String>,
     /// Its paragraphs' text in the current view, objects left out, one space between.
     pub text: String,
+    /// What it says: its paragraphs' text in the current view joined by line ends, objects
+    /// left out, trimmed (docx-agent's `Comment.text`).
+    pub says: String,
+    /// `w:initials`.
+    pub initials: Option<String>,
+    /// `w:date`.
+    pub date: Option<String>,
+    /// Its part.
+    pub part: String,
 }
 
 /// A `commentsIds` or `commentsEx` entry: its `durableId`, `paraIdParent` and `done`.
@@ -83,6 +92,11 @@ pub fn comments(docx: &Docx) -> Vec<Comment> {
             let parent = e.1.as_deref().map(str::to_uppercase).filter(|p| !p.is_empty());
             (parent, matches!(e.2.as_deref().unwrap_or("0"), "1" | "true"))
         });
+        let says = inside
+            .iter()
+            .map(|p| paragraph_text(&p.element, View::Current))
+            .collect::<Vec<_>>()
+            .join("\n");
         let texts: Vec<String> = inside
             .iter()
             .map(|p| {
@@ -104,6 +118,10 @@ pub fn comments(docx: &Docx) -> Vec<Comment> {
                 done,
                 parent: None,
                 text: texts.join(" "),
+                says: says.replace(OBJECT, "").trim().to_owned(),
+                initials: comment.attribute(Some(W), "initials").map(str::to_owned),
+                date: comment.attribute(Some(W), "date").map(str::to_owned),
+                part: part.part.clone(),
             },
             parent_para,
         ));

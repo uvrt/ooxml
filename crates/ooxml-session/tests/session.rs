@@ -117,6 +117,37 @@ fn describe_through_the_session() {
 }
 
 #[test]
+fn read_batch_answers_each_op_as_alone() {
+    let s = session();
+    s.open(Arc::from(docx()), DocKind::Docx, "a.docx").unwrap();
+    let alone = call(&s, "describe", json!({"doc": "d1"}));
+    let reply = call(
+        &s,
+        "read_batch",
+        json!({"ops": [
+            {"tool": "describe", "arguments": {"doc": "d1"}},
+            {"tool": "word_read", "arguments": {"doc": "d1", "range": "p:0000FFFF"}},
+            {"tool": "read_batch", "arguments": {"ops": []}}
+        ]}),
+    );
+    assert_eq!(reply["ok"], json!(true));
+    let ops = reply["data"]["ops"].as_array().unwrap();
+    assert_eq!(ops.len(), 3);
+    assert_eq!(ops[0]["op"], json!(0));
+    assert_eq!(ops[0]["data"], alone["data"]);
+    assert!(ops[0].get("ok").is_none() && ops[0].get("changed").is_none());
+    assert_eq!(ops[1]["error"]["code"], json!("not_found"));
+    assert_eq!(ops[2]["error"]["field"], json!("tool"));
+    assert!(reply["summary"]
+        .as_str()
+        .unwrap()
+        .starts_with("Read 1 of 3 op(s). 2 failed: ops[1] (word_read): "));
+    // a batch with nothing in it is refused with the way out
+    let empty = call(&s, "read_batch", json!({"ops": []}));
+    assert_eq!(empty["ok"], json!(false));
+}
+
+#[test]
 fn refusals_carry_their_way_out() {
     let s = session();
     let none = call(&s, "describe", json!({"doc": "d1"}));
@@ -128,7 +159,10 @@ fn refusals_carry_their_way_out() {
     assert_eq!(missing["error"]["valid_options"], json!(["d1"]));
     let tool = call(&s, "descibe", json!({"doc": "d1"}));
     assert_eq!(tool["error"]["code"], json!("invalid_arguments"));
-    assert_eq!(tool["error"]["valid_options"], json!(["describe", "word_read"]));
+    assert_eq!(
+        tool["error"]["valid_options"],
+        json!(["describe", "find_text", "read_batch", "word_inspect", "word_read"])
+    );
     let extra = call(&s, "describe", json!({"doc": "d1", "x": 1}));
     assert_eq!(extra["error"]["field"], json!("x"));
     let not_json = call(&s, "describe", Value::String("{doc".into()));
