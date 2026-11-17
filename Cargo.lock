@@ -282,6 +282,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "ooxml-colour"
+version = "0.1.0"
+dependencies = [
+ "thiserror",
+]
+
+[[package]]
 name = "ooxml-core"
 version = "0.1.0"
 dependencies = [
@@ -297,6 +304,15 @@ name = "ooxml-derive"
 version = "0.1.0"
 dependencies = [
  "thiserror",
+]
+
+[[package]]
+name = "ooxml-drawingml"
+version = "0.1.0"
+dependencies = [
+ "ooxml-colour",
+ "ooxml-schema",
+ "ooxml-xml",
 ]
 
 [[package]]
@@ -336,12 +352,16 @@ version = "0.1.0"
 dependencies = [
  "flate2",
  "ooxml-base",
+ "ooxml-colour",
  "ooxml-derive",
+ "ooxml-drawingml",
  "ooxml-fonts",
  "ooxml-metafile",
  "ooxml-opc",
+ "ooxml-schema",
  "ooxml-text",
  "ooxml-word-model",
+ "ooxml-xml",
  "ooxml-zip",
  "serde_json",
 ]
@@ -374,6 +394,13 @@ dependencies = [
 [[package]]
 name = "ooxml-scene"
 version = "0.1.0"
+
+[[package]]
+name = "ooxml-schema"
+version = "0.1.0"
+dependencies = [
+ "ooxml-xml",
+]
 
 [[package]]
 name = "ooxml-session"
@@ -460,6 +487,7 @@ name = "ooxml-word-model"
 version = "0.1.0"
 dependencies = [
  "ooxml-base",
+ "ooxml-colour",
  "ooxml-derive",
  "ooxml-opc",
  "ooxml-xml",

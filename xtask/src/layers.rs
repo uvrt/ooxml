@@ -41,6 +41,9 @@ pub const MAP: &[(&str, Place)] = &[
     ("ooxml-opc", Place::Layer(1, 0)),
     ("ooxml-fonts", Place::Layer(1, 0)),
     ("ooxml-text", Place::Layer(1, 0)),
+    ("ooxml-schema", Place::Layer(1, 0)),
+    ("ooxml-colour", Place::Layer(1, 0)),
+    ("ooxml-drawingml", Place::Layer(2, 0)),
     // Charts and metafiles lower to a scene (design section 8): the scene under them.
     ("ooxml-scene", Place::Layer(2, 0)),
     ("ooxml-metafile", Place::Layer(2, 1)),
