@@ -17,9 +17,10 @@ reads (a few kept painted), nothing is pickled, and no worker holds a Python lay
 Answers are docx2svg's: the same pages, signatures, facts and SVG (`tests/test_rust_layout.py`).
 
 - **Where the Rust layout does not lay a version out as docx2svg does yet** (a floating
-  table, text beside a drawing, a drawing in a cell, a text box, a drop cap, STYLEREF,
-  footnotes in columns or beneath the text, endnotes continued, line numbers and column
-  separators for the SVG; `ooxml_word_pages::support`), docx2svg's Python layout lays it
+  table, text beside a drawing, a drawing in a table cell -- one text wraps around there
+  under a reason of its own --, a text box, a frame or drop cap, STYLEREF, footnotes in
+  columns or beneath the text, endnotes continued, line numbers, column separators,
+  unequal columns; `ooxml_word_pages::support`), docx2svg's Python layout lays it
   out as before -- frozen as that fallback -- and the reason is counted
   (`docx_agent.pages.fallbacks()`, `layout_fallbacks{reason}`). A page whose drawings wait
   for their painters (phase P3) is drawn by docx2svg, counted the same way.
