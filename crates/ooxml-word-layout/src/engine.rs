@@ -8,6 +8,7 @@ use crate::faces::Faces;
 use crate::fields::{cross_references, field_values, page_fields, substitute, Computed, FieldValues, Substitutions};
 use crate::flow::{Flow, FlowContext, FlowMaker, FlowState, Labels};
 use crate::incremental::{changes, repaginate, RelayoutStats};
+use crate::notes::{footnotes_by_page, with_endnotes, with_footnotes, FootnotePages, NoteRole};
 use crate::paginate::{HyphenMove, PageContext, Pagination, Paginator, Resume};
 use crate::sections::Sections;
 use crate::stories::{StoryContext, StoryTable};
@@ -16,7 +17,6 @@ use ooxml_base::{DigestKey, Locale};
 use ooxml_derive::CacheBudget;
 use ooxml_text::Measurer;
 use ooxml_word_model::{Model, WordDocument};
-use std::collections::HashMap;
 use std::sync::Arc;
 
 /// One version laid out.
@@ -38,6 +38,12 @@ pub struct DocumentLayout {
     pub document: WordDocument,
     /// The page-number fields' values it was laid out with.
     pub fields: FieldValues,
+    /// Per top-level block of [`DocumentLayout::document`], what of the endnotes placed
+    /// in the flow it is.
+    pub roles: Arc<[Option<NoteRole>]>,
+    /// Where footnotes restart on each page: the page each note's reference was on in the
+    /// pass before, which numbered them.
+    pub footnote_pages: Option<FootnotePages>,
     /// The passes laid out until the fields settled.
     pub passes: usize,
     /// Whether they settled within [`FIELD_PASSES`] (else the last pass is kept).
@@ -81,6 +87,7 @@ impl DocumentLayout {
             mode15: self.mode15,
             hyphen_at_page_end: self.hyphen_at_page_end,
             stories: &self.stories,
+            separators: &self.flow.separators,
         }
     }
 }
@@ -153,16 +160,14 @@ impl WordLayout {
     }
 
     /// A version's body flow in its sections, with its paragraphs' list labels (document
-    /// order, cells included); `note_runs`: per top-level block, the runs that draw a
-    /// note's number.
-    pub fn flow(
-        &mut self,
-        model: &mut Model,
-        document: &WordDocument,
-        frame: (&Sections, &[Option<String>]),
-        note_runs: &HashMap<usize, Vec<bool>>,
-    ) -> Flow {
-        let (sections, labels) = frame;
+    /// order, cells included) and its top-level blocks' parts in the endnotes placed.
+    pub fn flow(&mut self, model: &mut Model, document: &WordDocument, frame: &PassFrame<'_>) -> Flow {
+        let PassFrame {
+            sections,
+            labels,
+            roles,
+            ..
+        } = *frame;
         let cx = FlowContext {
             document,
             blocks: &document.body,
@@ -171,7 +176,7 @@ impl WordLayout {
             faces: self.faces.as_ref(),
             locale: &self.locale,
             tables: self.tables.as_ref(),
-            note_runs,
+            roles,
         };
         FlowMaker::new(&cx, model, &mut self.body).build()
     }
@@ -182,20 +187,21 @@ impl WordLayout {
         &mut self,
         model: &mut Model,
         version: WordDocument,
-        frame: (&Sections, &StoryTable, &[Option<String>]),
+        frame: &PassFrame<'_>,
         old: Option<(&Flow, &Pagination)>,
     ) -> DocumentLayout {
-        let (sections, stories, labels) = frame;
-        let flow = self.flow(model, &version, (sections, labels), &HashMap::new());
+        let flow = self.flow(model, &version, frame);
         let mut layout = DocumentLayout {
             flow,
-            sections: sections.clone(),
-            stories: stories.clone(),
+            sections: frame.sections.clone(),
+            stories: frame.stories.clone(),
             pagination: Pagination::default(),
             mode15: crate::input::rules(&version).mode15(),
             hyphen_at_page_end: hyphen_at_page_end(&version),
             document: version,
             fields: FieldValues::new(),
+            roles: Arc::from(frame.roles),
+            footnote_pages: None,
             passes: 0,
             settled: false,
             earlier: Vec::new(),
@@ -238,28 +244,42 @@ impl WordLayout {
         document: &WordDocument,
         previous: Option<&DocumentLayout>,
     ) -> DocumentLayout {
-        // SEQ and REF do not depend on the pages: computed once (`_Placer._prepare`).
-        let prepared = cross_references(document, &mut self.computed);
+        // The endnotes numbered and placed in the flow; SEQ and REF, which do not depend
+        // on the pages, computed once (`_Placer._prepare`).
+        let placed = with_endnotes(document);
+        let prepared = cross_references(&placed.document, &mut self.computed);
         let document = &prepared;
         let sections = Sections::of(document);
         let stories = self.story_heights(model, document);
         // A change to the sections or the stories' heights moves every page.
         let previous = previous.filter(|p| p.sections == sections && p.stories == stories);
-        let keys = page_fields(document);
+        let by_page = footnotes_by_page(document);
+        let mut version = with_footnotes(document, None);
+        // The footnotes' numbers are runs of their own: the fields are found among the
+        // runs as numbered.
+        let keys = page_fields(&version);
         let labels = document.body_labels();
+        let frame = PassFrame {
+            sections: &sections,
+            stories: &stories,
+            labels: &labels,
+            roles: &placed.roles,
+        };
         let mut values = FieldValues::new();
-        let mut version = document.clone();
+        let mut pages: Option<FootnotePages> = None;
         let mut earlier = Vec::new();
         let mut versions: Vec<WordDocument> = Vec::new();
         let mut relaid = Vec::new();
         loop {
             let old = previous.and_then(|p| p.pass(earlier.len()));
-            let mut layout = self.pass(model, version, (&sections, &stories, &labels), old);
+            let mut layout = self.pass(model, version, &frame, old);
             relaid.append(&mut layout.relaid);
             let found = field_values(&layout.document, &layout, &keys);
-            let settled = found == values;
+            let found_pages = by_page.then(|| crate::notes::footnote_pages(&layout));
+            let settled = found == values && found_pages == pages;
             if settled || earlier.len() + 1 == FIELD_PASSES {
                 layout.fields = values;
+                layout.footnote_pages = pages;
                 layout.passes = earlier.len() + 1;
                 layout.settled = settled;
                 layout.relaid = relaid;
@@ -276,9 +296,25 @@ impl WordLayout {
                 pagination: layout.pagination,
             });
             values = found;
-            version = substitute(document, &values, &mut self.substitutions);
+            pages = found_pages;
+            let numbered = with_footnotes(document, pages.as_ref());
+            version = substitute(&numbered, &values, &mut self.substitutions);
         }
     }
+}
+
+/// What every pass of a version is laid out in: its sections, its stories' heights, its
+/// paragraphs' list labels, its top-level blocks' parts in the endnotes placed.
+#[derive(Debug, Clone, Copy)]
+pub struct PassFrame<'f> {
+    /// The sections.
+    pub sections: &'f Sections,
+    /// The headers' and footers' heights.
+    pub stories: &'f StoryTable,
+    /// The list labels, document order (cells included).
+    pub labels: &'f [Option<String>],
+    /// Per top-level block, what of the endnotes placed it is.
+    pub roles: &'f [Option<NoteRole>],
 }
 
 /// Every page of a laid-out flow, from the start.

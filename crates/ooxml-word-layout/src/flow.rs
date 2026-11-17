@@ -13,11 +13,14 @@
 
 use crate::faces::Faces;
 use crate::input::section_geometry;
+use crate::notes::flowed::NoteMaker;
+use crate::notes::lines::NoteContext;
+use crate::notes::{NoteLines, NoteRole};
 use crate::paragraph::{measure_paragraph, MeasureContext, MeasuredParagraph, ParagraphJob, Unmeasured};
 use crate::px::Px;
 use crate::sections::Sections;
 use crate::table::{TableFlow, TableLayout};
-use crate::vertical::{autospace_kept, border_px};
+use crate::vertical::autospace_kept;
 use ooxml_base::Locale;
 use ooxml_text::Measurer;
 use ooxml_word_model::model::{Block, Paragraph, SectionProps, Table};
@@ -61,12 +64,25 @@ pub struct ParaItem {
     pub section_start: bool,
     /// An empty paragraph holding a section break: it takes no room of its own.
     pub section_mark: bool,
+    /// The footnotes referenced in it, each as its lines, by the line its reference is on
+    /// (in line order, each line's in the order referenced).
+    pub notes: Vec<(usize, NoteLines)>,
+    /// What of the endnotes placed in the flow it is.
+    pub role: Option<NoteRole>,
+    /// An endnote's paragraph: the pitch of the continuation separator's line a page it
+    /// starts opens with.
+    pub continuation: Option<Px>,
 }
 
 impl ParaItem {
     /// How many lines it has.
     pub fn count(&self) -> usize {
         self.measured.heights.len()
+    }
+
+    /// The footnotes referenced on line `line`.
+    pub fn notes_on(&self, line: usize) -> impl Iterator<Item = &NoteLines> {
+        self.notes.iter().filter(move |(l, _)| *l == line).map(|(_, n)| n)
     }
 }
 
@@ -146,11 +162,27 @@ impl FlowItem {
     }
 }
 
+/// A paragraph's footnotes by line, and an endnote's continuation line.
+struct ParaNotes {
+    notes: Vec<(usize, NoteLines)>,
+    continuation: Option<Px>,
+}
+
 /// The body's flow.
 #[derive(Debug, Clone, Default)]
 pub struct Flow {
     /// Its items, in order.
     pub items: Vec<FlowItem>,
+    /// Per section whose paragraphs reference footnotes, the heights of its footnote
+    /// separator and continuation separator.
+    pub separators: std::collections::BTreeMap<usize, (Px, Px)>,
+}
+
+impl Flow {
+    /// Section `section`'s footnote separator's and continuation separator's heights.
+    pub fn separators(&self, section: usize) -> (Px, Px) {
+        self.separators.get(&section).copied().unwrap_or((Px::ZERO, Px::ZERO))
+    }
 }
 
 /// What a block's measure depends on beyond its content: its section's geometry, its list
@@ -160,7 +192,6 @@ struct Kept {
     paragraph: Arc<Paragraph>,
     section: Arc<SectionProps>,
     label: Option<String>,
-    notes: Vec<bool>,
     measured: Result<Arc<MeasuredParagraph>, Unmeasured>,
 }
 
@@ -207,13 +238,11 @@ impl MeasureCache {
         paragraph: &Arc<Paragraph>,
         section: &Arc<SectionProps>,
         label: Option<&str>,
-        notes: &[bool],
     ) -> Option<Result<Arc<MeasuredParagraph>, Unmeasured>> {
         let kept = self.blocks.get(&(Arc::as_ptr(paragraph) as usize))?;
         let same = Arc::ptr_eq(&kept.paragraph, paragraph)
             && (Arc::ptr_eq(&kept.section, section) || kept.section == *section)
-            && kept.label.as_deref() == label
-            && kept.notes == notes;
+            && kept.label.as_deref() == label;
         same.then(|| kept.measured.clone())
     }
 
@@ -269,8 +298,8 @@ pub struct FlowContext<'a> {
     pub locale: &'a Locale,
     /// The table layout.
     pub tables: &'a dyn TableLayout,
-    /// Per top-level block, per run, whether a run draws a note's number (empty: none).
-    pub note_runs: &'a HashMap<usize, Vec<bool>>,
+    /// Per top-level block, what of the notes placed in the flow it is (empty: none is).
+    pub roles: &'a [Option<NoteRole>],
 }
 
 /// What the flow maker keeps between versions: the measures by block and by content.
@@ -323,69 +352,7 @@ fn is_empty(paragraph: &Paragraph) -> bool {
         .any(|r| !r.text.is_empty() || !r.breaks.is_empty() || !r.anchors.is_empty())
 }
 
-const BORDER_SIDES: [&str; 6] = ["top", "left", "bottom", "right", "between", "bar"];
-
-fn border_of<'a>(pp: &'a Props, side: &str) -> Option<&'a ooxml_word_model::value::Border> {
-    match pp.get(format!("pBdr.{side}").as_str()) {
-        Some(Value::Border(b)) => Some(b),
-        _ => None,
-    }
-}
-
-fn drawn(border: Option<&ooxml_word_model::value::Border>) -> bool {
-    border.is_some_and(|b| !matches!(b.style.as_deref(), None | Some("nil" | "none")))
-}
-
-/// The height one `w:pBdr` side takes (`side_px`): space and width, a `double` line
-/// three widths; a `w:between` border its space on both sides.
-fn side_px(border: Option<&ooxml_word_model::value::Border>, between: bool) -> Px {
-    let Some(b) = border.filter(|b| drawn(Some(b))) else {
-        return Px::ZERO;
-    };
-    let tall = if b.style.as_deref() == Some("double") { 3 } else { 1 };
-    let height = border_px(b.size * tall, b.space);
-    if between {
-        height + Px::twips(b.space * 20)
-    } else {
-        height
-    }
-}
-
-/// What decides whether two consecutive paragraphs share one border box (`border_box`).
-fn border_box(pp: &Props) -> (Vec<Option<&ooxml_word_model::value::Border>>, i64, i64) {
-    (
-        BORDER_SIDES.iter().map(|s| border_of(pp, s)).collect(),
-        int(pp, "ind.left"),
-        int(pp, "ind.right"),
-    )
-}
-
-/// `(above, below)`: the room a paragraph's borders take above its first line and below
-/// its last, given the paragraphs beside it (`paragraph_borders_px`).
-pub fn paragraph_borders(pp: &Props, previous: Option<&Props>, following: Option<&Props>) -> (Px, Px) {
-    let own = border_box(pp);
-    if !own.0.iter().any(|b| drawn(*b)) {
-        return (Px::ZERO, Px::ZERO);
-    }
-    let after_same = following.is_some_and(|f| border_box(f) == own);
-    let before_same = previous.is_some_and(|p| border_box(p) == own);
-    let between = border_of(pp, "between");
-    let upper = match between.filter(|b| drawn(Some(b))) {
-        Some(b) => Px::twips(b.space * 20),
-        None => Px::ZERO,
-    };
-    let above = if before_same {
-        side_px(between, true) - upper
-    } else {
-        side_px(border_of(pp, "top"), false)
-    };
-    let below = if after_same {
-        upper
-    } else {
-        side_px(border_of(pp, "bottom"), false)
-    };
-    (above, below)
-}
+pub use crate::borders::paragraph_borders;
 
 /// Whether a side of a resolved paragraph is autospaced (`autospaced`).
 fn autospaced(document: &WordDocument, pp: &Props, side: &str) -> bool {
@@ -411,6 +378,8 @@ pub struct FlowMaker<'a, 'm> {
     paragraphs: Vec<Arc<Paragraph>>,
     firsts: Vec<usize>,
     resolved: HashMap<usize, Arc<Props>>,
+    notes: NoteMaker,
+    separators: std::collections::BTreeMap<usize, (Px, Px)>,
 }
 
 impl<'a, 'm> FlowMaker<'a, 'm> {
@@ -424,6 +393,8 @@ impl<'a, 'm> FlowMaker<'a, 'm> {
             paragraphs,
             firsts,
             resolved: HashMap::new(),
+            notes: NoteMaker::default(),
+            separators: std::collections::BTreeMap::new(),
         }
     }
 
@@ -465,7 +436,10 @@ impl<'a, 'm> FlowMaker<'a, 'm> {
             };
             items.push(item);
         }
-        Flow { items }
+        Flow {
+            items,
+            separators: self.separators,
+        }
     }
 
     fn table_item(
@@ -560,7 +534,6 @@ impl<'a, 'm> FlowMaker<'a, 'm> {
     ) -> Result<Arc<MeasuredParagraph>, Unmeasured> {
         let document = self.cx.document;
         let label = self.cx.labels.of(self.firsts.get(body).copied().unwrap_or(0));
-        let notes = self.cx.note_runs.get(&body).cloned().unwrap_or_default();
         let geometry = self.cx.sections.get(section).cloned();
         let Some(geometry) = geometry else {
             return Err(Unmeasured::Text("no section".into()));
@@ -568,7 +541,7 @@ impl<'a, 'm> FlowMaker<'a, 'm> {
         if let Some(found) = self
             .state
             .cache
-            .get(paragraph, &geometry.props, label.as_deref(), &notes)
+            .get(paragraph, &geometry.props, label.as_deref())
         {
             return found;
         }
@@ -585,7 +558,6 @@ impl<'a, 'm> FlowMaker<'a, 'm> {
             geometry: &text_geometry,
             columns: geometry.multi_column(),
             label: label.as_deref(),
-            notes: &notes,
         };
         let measured = measure_paragraph(&mcx, &mut self.state.measurer, &job).map(Arc::new);
         self.state.cache.blocks.insert(
@@ -594,7 +566,6 @@ impl<'a, 'm> FlowMaker<'a, 'm> {
                 paragraph: Arc::clone(paragraph),
                 section: Arc::clone(&geometry.props),
                 label,
-                notes,
                 measured: measured.clone(),
             },
         );
@@ -699,7 +670,23 @@ impl<'a, 'm> FlowMaker<'a, 'm> {
                 reason: "unresolved".into(),
             }));
         };
-        let (before, after) = self.spacing(&pp, block);
+        let (mut before, after) = self.spacing(&pp, block);
+        let role = self.cx.roles.get(body).copied().flatten();
+        if role == Some(NoteRole::Separator) && crate::input::rules(self.cx.document).mode15() {
+            // The endnotes' separator keeps no space before in mode 15.
+            before = 0;
+        }
+        let ParaNotes { notes, continuation } = match self.paragraph_notes(paragraph, &measured, section, role) {
+            Ok(found) => found,
+            Err(note) => {
+                return FlowItem::Stop(Arc::new(StopItem {
+                    block,
+                    body,
+                    section,
+                    reason: format!("footnote {} cannot be laid out", note.0),
+                }))
+            }
+        };
         let previous = self.neighbour_props(body, -1);
         let following = self.neighbour_props(body, 1);
         let (top_border, border) = paragraph_borders(&pp, previous.as_deref(), following.as_deref());
@@ -722,6 +709,44 @@ impl<'a, 'm> FlowMaker<'a, 'm> {
             section_start,
             section_mark,
             measured,
+            notes,
+            role,
+            continuation,
         }))
+    }
+
+    /// A paragraph's footnotes by line (and its section's separators, where it has any),
+    /// and an endnote's continuation line.
+    fn paragraph_notes(
+        &mut self,
+        paragraph: &Paragraph,
+        measured: &MeasuredParagraph,
+        section: usize,
+        role: Option<NoteRole>,
+    ) -> Result<ParaNotes, crate::notes::flowed::Unlaid> {
+        let Some(geometry) = self.cx.sections.get(section).cloned() else {
+            return Ok(ParaNotes {
+                notes: Vec::new(),
+                continuation: None,
+            });
+        };
+        let mut cx = NoteContext {
+            document: self.cx.document,
+            faces: self.cx.faces,
+            locale: self.cx.locale,
+            measurer: &mut self.state.measurer,
+            model: self.model,
+        };
+        let lines = (measured.measured.pieces.as_slice(), measured.measured.lines.as_slice());
+        let notes = self.notes.notes_by_line(&mut cx, paragraph, lines, (section, &geometry))?;
+        if !notes.is_empty() && !self.separators.contains_key(&section) {
+            let found = self.notes.separators(&mut cx, (section, &geometry));
+            self.separators.insert(section, found);
+        }
+        let continuation = match role {
+            Some(NoteRole::Endnote) => self.notes.continuation(&mut cx, (section, &geometry)),
+            _ => None,
+        };
+        Ok(ParaNotes { notes, continuation })
     }
 }

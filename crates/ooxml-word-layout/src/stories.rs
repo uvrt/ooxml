@@ -176,7 +176,6 @@ impl StoryTable {
         let mode15 = crate::input::rules(document).mode15();
         let mut table = StoryTable::default();
         let mut memo: HashMap<HeightKey, Px> = HashMap::new();
-        let note_runs = HashMap::new();
         for (index, (headers, footers)) in story_references(&document.sections).into_iter().enumerate() {
             let Some(section) = document.sections.get(index) else {
                 continue;
@@ -212,7 +211,7 @@ impl StoryTable {
                     faces: cx.faces,
                     locale: cx.locale,
                     tables: cx.tables,
-                    note_runs: &note_runs,
+                    roles: &[],
                 };
                 let flow = FlowMaker::new(&fcx, model, state).build();
                 let found = stack_height(&flow.items, mode15);

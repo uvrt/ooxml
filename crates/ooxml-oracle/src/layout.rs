@@ -2,8 +2,10 @@
 //! the fonts docx2svg found, compared with docx2svg's layout records
 //! (`python/docx2svg/tools/layout_differential.py`) box by box: the flow's paragraphs
 //! (lines broken, each line's height, spacing, borders, keeps), the pages' starts and
-//! numbers, and every body line's place (top and pitch). What L3a does not lay out yet
-//! (tables, stand-in boxes, obstacles) cuts the comparison off at the first such item.
+//! numbers, every body line's place (top and pitch), and the footnotes at each page's
+//! foot (the lines carried from the page before, each note's lines on it). What the layout
+//! does not lay out yet (tables, stand-in boxes, obstacles) cuts the comparison off at the
+//! first such item.
 //!
 //! Must not: change what is compared to make it pass.
 
@@ -189,7 +191,7 @@ fn para_fields(p: &ParaItem) -> Vec<(&'static str, Value)> {
 
 /// The first flow item the comparison stops before: docx2svg's first that is not a
 /// paragraph it laid out (a table, stand-in box, obstacle, or a paragraph laid out by an
-/// approximate rule, beside notes, drawings or a drop cap), and why.
+/// approximate rule, beside drawings or a drop cap), and why.
 fn cutoff(flow: &[Value]) -> (usize, Option<String>) {
     for (k, item) in flow.iter().enumerate() {
         let kind = item.get("kind").and_then(Value::as_str).unwrap_or_default();
@@ -200,45 +202,68 @@ fn cutoff(flow: &[Value]) -> (usize, Option<String>) {
             .get("approximations")
             .and_then(Value::as_array)
             .is_some_and(|a| !a.is_empty());
-        let flagged = ["notes", "drop_cap"]
-            .iter()
-            .any(|f| item.get(*f).and_then(Value::as_bool).unwrap_or(false))
-            || int(item.get("anchors")) > 0;
+        let flagged = item.get("drop_cap").and_then(Value::as_bool).unwrap_or(false) || int(item.get("anchors")) > 0;
         if approximated || flagged {
-            return (k, Some("notes, drawings or an approximation".into()));
+            return (k, Some("drawings or an approximation".into()));
         }
     }
     (flow.len(), None)
 }
 
-/// The first item the model says the comparison must stop before: a paragraph drawing a
-/// note's reference (docx2svg numbers it, which L3c's notes do), and where the body is cut
-/// anyway, a paragraph holding a page-number field (its value may be a page past the cut).
+/// Where the body is cut anyway, the first item the comparison must stop before: a
+/// paragraph holding a page-number field (its value may be a page past the cut).
 fn model_cut(document: &WordDocument, ours: &DocumentLayout, cut: bool) -> Option<(usize, &'static str)> {
+    if !cut {
+        return None;
+    }
     ours.flow.items.iter().enumerate().find_map(|(k, item)| {
         let FlowItem::Para(p) = item else { return None };
         let Some(Block::Paragraph(para)) = document.body.get(p.body) else {
             return None;
         };
-        let notes = para.runs.iter().any(|r| {
-            r.breaks
-                .iter()
-                .any(|(_, m)| m.starts_with("footnoteReference:") || m.starts_with("endnoteReference:"))
+        let fields = para.runs.iter().any(|r| {
+            r.field
+                .as_ref()
+                .is_some_and(|f| ooxml_word_layout::fields::PAGE_FIELDS.contains(&&*f.keyword))
         });
-        let fields = cut
-            && para.runs.iter().any(|r| {
-                r.field
-                    .as_ref()
-                    .is_some_and(|f| ooxml_word_layout::fields::PAGE_FIELDS.contains(&&*f.keyword))
-            });
-        if notes {
-            Some((k, "notes, drawings or an approximation: a note's reference"))
-        } else if fields {
-            Some((k, "a page-number field in a body cut further on"))
-        } else {
-            None
-        }
+        fields.then_some((k, "a page-number field in a body cut further on"))
     })
+}
+
+/// The footnotes at each page's foot, as docx2svg's records write them: per page, how
+/// many lines of a note the page before could not hold and that note, and of each note
+/// its id, how many of its lines are on the page and how many it has.
+fn compare_notes(ours: &DocumentLayout, theirs: &Value, cut: usize, diffs: &mut Diffs<'_>) {
+    let Some(expected) = theirs.get("notes") else { return };
+    let flow_len = at(theirs, "flow").as_array().map_or(0, Vec::len);
+    if cut < flow_len {
+        return;
+    }
+    let mine: Vec<Value> = ours
+        .pagination
+        .notes()
+        .into_iter()
+        .map(|(page, (carried, placed))| {
+            let notes: Vec<Value> = placed
+                .iter()
+                .map(|n| serde_json::json!([n.lines.first().and_then(|l| l.note), n.taken, n.lines.len()]))
+                .collect();
+            serde_json::json!([page, carried.len(), carried.first().and_then(|l| l.note), notes])
+        })
+        .collect();
+    let expected = expected.as_array().cloned().unwrap_or_default();
+    if mine != expected {
+        let first = mine.iter().zip(&expected).position(|(a, b)| a != b);
+        let detail = match first {
+            Some(j) => format!(
+                "{} vs {}",
+                mine.get(j).map(text).unwrap_or_default(),
+                expected.get(j).map(text).unwrap_or_default()
+            ),
+            None => format!("{} pages vs {}", mine.len(), expected.len()),
+        };
+        diffs.push("notes".into(), "page notes", detail);
+    }
 }
 
 fn compare_flow(ours: &DocumentLayout, theirs: &[Value], cut: usize, diffs: &mut Diffs<'_>, outcome: &mut Outcome) {
@@ -367,13 +392,33 @@ fn our_lines(
     paths: &[Option<String>],
     cut: usize,
 ) -> Vec<LineBox> {
-    page.lines
-        .iter()
-        .filter(|l| l.item < cut && !undrawn(ours, l.item, l.line))
-        .map(|l| {
-            let path = paths.get(l.item).cloned().flatten().unwrap_or_default();
-            (path, l.line, l.top.to_string(), l.pitch.to_string())
-        })
+    // A page the endnotes go on to opens with the continuation separator's line.
+    let opening = page.opens.map(|line| {
+        let separator = ooxml_word_layout::notes::separator(
+            &ours.document,
+            "continuationSeparator",
+            ooxml_word_layout::notes::NotesPart::Endnotes,
+        );
+        let path = separator
+            .iter()
+            .find_map(|b| match b {
+                Block::Paragraph(p) => Some(p.path.to_string()),
+                Block::Table(_) => None,
+            })
+            .unwrap_or_default();
+        (path, 0, line.top.to_string(), line.pitch.to_string())
+    });
+    opening
+        .into_iter()
+        .chain(
+            page.lines
+                .iter()
+                .filter(|l| l.item < cut && !undrawn(ours, l.item, l.line))
+                .map(|l| {
+                    let path = paths.get(l.item).cloned().flatten().unwrap_or_default();
+                    (path, l.line, l.top.to_string(), l.pitch.to_string())
+                }),
+        )
         .collect()
 }
 
@@ -520,7 +565,7 @@ pub fn run_document(records: &LayoutRecords, outcome: &mut Outcome) -> Result<()
     outcome.layout_time += started.elapsed();
     let flow = at(theirs, "flow").as_array().cloned().unwrap_or_default();
     let (cut, why) = cutoff(&flow);
-    let (cut, why) = match model_cut(&document, &laid, cut < flow.len()) {
+    let (cut, why) = match model_cut(&laid.document, &laid, cut < flow.len()) {
         Some((k, reason)) if k < cut => (k, Some(reason.to_owned())),
         _ => (cut, why),
     };
@@ -529,9 +574,10 @@ pub fn run_document(records: &LayoutRecords, outcome: &mut Outcome) -> Result<()
         None => outcome.whole += 1,
     }
     compare_fields(&laid, theirs, cut, &mut diffs, outcome);
+    compare_notes(&laid, theirs, cut, &mut diffs);
     compare_flow(&laid, &flow, cut, &mut diffs, outcome);
-    let page_level = why.as_deref().is_some_and(|w| w.starts_with("notes"));
-    compare_pages(&document, &laid, theirs, (cut, page_level), &mut diffs, outcome);
+    let page_level = why.as_deref().is_some_and(|w| w.starts_with("drawings"));
+    compare_pages(&laid.document, &laid, theirs, (cut, page_level), &mut diffs, outcome);
     outcome.differences.extend(found);
     Ok(())
 }

@@ -176,6 +176,9 @@ pub struct Run {
     pub field: Option<Arc<Field>>,
     /// A table of contents' link.
     pub toc_link: bool,
+    /// It draws a note's number: a reference's or a note's own, put in by the layout's
+    /// numbering of notes (never by the reader).
+    pub note_number: bool,
 }
 
 /// A bookmark start or end in a paragraph.

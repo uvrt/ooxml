@@ -5,11 +5,13 @@
 //! height at which its columns hold it all, by bisection), and where the stack goes on
 //! under a region.
 //!
-//! Must not: stack a column (`scan` does) or decide keeps (`keeps` does). Unequal columns
-//! (a paragraph broken again for a narrower column) and notes in columns are lane L3c's.
+//! Below mode 15 each column's footnotes stand at its own foot, what one cannot hold going
+//! on at the next one's (and from the last, at the next page's).
+//!
+//! Must not: stack a column (`scan` does) or decide keeps (`keeps` does).
 
 use super::scan::Frame;
-use super::{LaidPage, PageContext, Position, Stopped, Why};
+use super::{note_rest, LaidPage, NoteRest, PageContext, Position, Stopped, Why};
 use crate::flow::FlowItem;
 use crate::px::Px;
 use crate::sections::StoryKind;
@@ -30,30 +32,58 @@ struct RegionStart<'s> {
     previous: Option<usize>,
     first_on_page: bool,
     section: usize,
+    /// Its first column is the page's first (`not done`, at the page's top).
+    page_top: bool,
+    /// The lines of notes the page before could not hold (the page's first region only).
+    carry: NoteRest,
+}
+
+/// A region's notes on its page: a page whose notes stand at its foot lists them (a page
+/// of several columns, none: they are its columns'); what the region's last column (or
+/// the page's last note) could not hold goes on to the next page.
+fn region_notes(page: &mut LaidPage, frames: &[Frame], multi_page: bool) {
+    if !multi_page {
+        page.notes.extend(frames.iter().flat_map(|f| f.notes.iter().cloned()));
+    }
+    page.carry_out = match frames.last() {
+        Some(last) if last.multi && !last.pooled => note_rest(&last.notes),
+        _ => page
+            .notes
+            .last()
+            .map_or_else(|| std::sync::Arc::from(Vec::new()), |n| n.rest().into()),
+    };
+    if multi_page {
+        page.notes.clear();
+    }
 }
 
 fn scratch(start: &Position) -> LaidPage {
-    LaidPage {
-        page: 0,
-        number_before: 0,
-        start: start.clone(),
-        end: start.clone(),
-        reach: start.clone(),
-        forced: false,
-        lines: Vec::new(),
-        rows: Vec::new(),
-    }
+    LaidPage::empty(start, std::sync::Arc::from(Vec::new()))
 }
 
 impl PageContext<'_> {
     /// One page of a document with a section of several columns, as its regions.
     #[allow(clippy::result_large_err)]
-    pub(super) fn lay_columns_page(&self, start: &Position, story: StoryKind) -> Result<LaidPage, (LaidPage, Stopped)> {
-        let mut page = scratch(start);
+    pub(super) fn lay_columns_page(
+        &self,
+        start: &Position,
+        story: StoryKind,
+        carry: &NoteRest,
+    ) -> Result<LaidPage, (LaidPage, Stopped)> {
+        let mut page = LaidPage::empty(start, std::sync::Arc::clone(carry));
         let first_section = self.items.get(start.item).map_or(0, FlowItem::section);
         let (top, bottom) = self.edges(first_section, story);
         let mut position = start.clone();
         let mut y = top;
+        if let Some(FlowItem::Para(p)) = self.items.get(start.item) {
+            // A page the endnotes go on to: the continuation separator's line first.
+            if let Some(pitch) = p.continuation {
+                page.opens = Some(super::OpeningLine { top: y, pitch });
+                y += pitch;
+            }
+        }
+        let mut frames_before = 0;
+        let mut multi_page = false;
         let mut previous = None;
         let mut first_on_page = true;
         loop {
@@ -65,6 +95,12 @@ impl PageContext<'_> {
                 previous,
                 first_on_page,
                 section,
+                page_top: frames_before == 0 && first_on_page,
+                carry: if frames_before == 0 {
+                    std::sync::Arc::clone(carry)
+                } else {
+                    std::sync::Arc::from(Vec::new())
+                },
             };
             let region = match self.fill(&from, bottom) {
                 Ok(region) => region,
@@ -89,9 +125,12 @@ impl PageContext<'_> {
             page.lines.extend(region.page.lines);
             page.rows.extend(region.page.rows);
             page.reach = page.reach.max(region.page.reach);
+            frames_before += region.frames.len();
+            multi_page = multi_page || region.frames.iter().any(|f| f.multi);
             let Some(last) = region.frames.last() else {
                 return Ok(page);
             };
+            region_notes(&mut page, &region.frames, multi_page);
             if last.why != Why::Region {
                 page.end = last.end.clone();
                 page.reach = page.reach.clone().max(last.end.clone());
@@ -128,6 +167,15 @@ impl PageContext<'_> {
         for (column, b) in geometry.column_boxes().into_iter().enumerate() {
             let top = if column == 0 { from.top } else { region_top };
             let mut frame = Frame::new(from.section, column, top, bottom, position.clone());
+            frame.page_top = from.page_top && column == 0;
+            frame.pooled = multi && self.mode15;
+            frame.carried = match region.frames.last() {
+                // Below mode 15 the notes the column before could not hold go on at this
+                // one's foot.
+                Some(before) if multi && !frame.pooled => note_rest(&before.notes),
+                Some(_) => std::sync::Arc::from(Vec::new()),
+                None => std::sync::Arc::clone(&from.carry),
+            };
             frame.first_on_page = if column == 0 { from.first_on_page } else { true };
             frame.previous = if column == 0 { from.previous } else { None };
             frame.multi = multi;

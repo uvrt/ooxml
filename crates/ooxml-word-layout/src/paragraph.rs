@@ -118,8 +118,7 @@ fn numbers_as_one(text: &str) -> String {
 }
 
 /// One paragraph to measure: the paragraph, its resolved formats, the geometry its lines
-/// break at, whether its section has several columns, its list label's text and the runs
-/// that draw a note's number.
+/// break at, whether its section has several columns and its list label's text.
 pub struct ParagraphJob<'a> {
     /// The paragraph.
     pub paragraph: &'a Paragraph,
@@ -131,8 +130,6 @@ pub struct ParagraphJob<'a> {
     pub columns: bool,
     /// Its list label's text.
     pub label: Option<&'a str>,
-    /// Per run, whether it draws a note's number.
-    pub notes: &'a [bool],
 }
 
 /// Measure a paragraph: its pieces and lines from the text engine (memoised by content in
@@ -142,7 +139,7 @@ pub fn measure_paragraph(
     measurer: &mut Measurer,
     job: &ParagraphJob<'_>,
 ) -> Result<MeasuredParagraph, Unmeasured> {
-    let input = text_paragraph(cx.document, job.paragraph, job.resolved, job.label, job.notes);
+    let input = text_paragraph(cx.document, job.paragraph, job.resolved, job.label);
     let measured = measurer
         .measure(cx.faces, &input, job.geometry, job.columns, cx.locale)
         .map_err(|e| Unmeasured::Text(e.to_string()))?;

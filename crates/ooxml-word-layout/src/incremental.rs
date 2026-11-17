@@ -43,6 +43,9 @@ pub fn same_item(old: &FlowItem, new: &FlowItem) -> bool {
                 && a.widow == b.widow
                 && a.section_start == b.section_start
                 && a.section_mark == b.section_mark
+                && a.notes == b.notes
+                && a.role == b.role
+                && a.continuation == b.continuation
         }
         (FlowItem::Table(a), FlowItem::Table(b)) => {
             Arc::ptr_eq(&a.flow, &b.flow) && a.section == b.section && a.section_start == b.section_start
@@ -121,7 +124,7 @@ fn moved(page: &LaidPage, items: isize, pages: isize, numbers: i64) -> LaidPage 
 fn base_of(old: &Pagination, q: usize) -> usize {
     q.checked_sub(1)
         .and_then(|k| old.pages.get(k))
-        .map_or(0, |b| b.page + 1)
+        .map_or(0, |b| b.page + 1 + usize::from(b.continued.is_some()))
 }
 
 /// Where a page's number or place has a parity that decides something -- blank pages
@@ -147,6 +150,10 @@ fn joins(old: &Pagination, change: Change, delta: isize, parity: bool, state: &R
     let old_position = shift(&state.position, -delta);
     let q = old.pages.binary_search_by(|page| page.start.cmp(&old_position)).ok()?;
     let page = old.pages.get(q)?;
+    if page.carried != state.carry {
+        // The page's foot opens with other lines of a note.
+        return None;
+    }
     let page_shift = i64::try_from(state.page).unwrap_or(0) - i64::try_from(base_of(old, q)).unwrap_or(0);
     let number_shift = state.number - page.number_before;
     let odd = page_shift.rem_euclid(2) != 0 || number_shift.rem_euclid(2) != 0;
@@ -262,6 +269,7 @@ pub fn repaginate(cx: &PageContext<'_>, old: &Pagination, changes: &[Change]) ->
             position: shift_position(&page.start, shift.items),
             page: base_of(old, p).saturating_add_signed(shift.pages),
             number: page.number_before + shift.numbers,
+            carry: std::sync::Arc::clone(&page.carried),
         });
         let change = changes.get(i).copied().unwrap_or(*first);
         let delta = isize::try_from(change.b_new).unwrap_or(0) - isize::try_from(change.b_old).unwrap_or(0);
