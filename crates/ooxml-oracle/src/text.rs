@@ -70,7 +70,8 @@ pub struct Outcome {
     pub documents: usize,
 }
 
-fn fonts_of(record: &Value, package: Option<&[u8]>) -> Result<WordFonts, String> {
+/// Word's fonts as a document's fonts record (`text_differential.py`'s) found them.
+pub fn fonts_of(record: &Value, package: Option<&[u8]>) -> Result<WordFonts, String> {
     let mut folders = Vec::new();
     for pair in record.get("dirs").and_then(Value::as_array).into_iter().flatten() {
         let location = if pair.get(0).and_then(Value::as_str) == Some("bundle") {

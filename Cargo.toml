@@ -12,6 +12,7 @@ members = [
     "crates/ooxml-fonts",
     "crates/ooxml-text",
     "crates/ooxml-word-model",
+    "crates/ooxml-word-layout",
     "crates/ooxml-oracle",
     "crates/ooxml-schema",
     "crates/ooxml-colour",
@@ -55,6 +56,7 @@ ooxml-derive = { path = "crates/ooxml-derive" }
 ooxml-fonts = { path = "crates/ooxml-fonts" }
 ooxml-text = { path = "crates/ooxml-text" }
 ooxml-word-model = { path = "crates/ooxml-word-model" }
+ooxml-word-layout = { path = "crates/ooxml-word-layout" }
 ooxml-schema = { path = "crates/ooxml-schema" }
 ooxml-colour = { path = "crates/ooxml-colour" }
 ooxml-drawingml = { path = "crates/ooxml-drawingml" }
