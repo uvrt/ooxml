@@ -58,6 +58,17 @@ def test_the_rust_layout_is_docx2svgs(path: Path):
     assert ours.coverage.missing_fonts == theirs.coverage.missing_fonts
 
 
+def _charts(probe) -> bytes:
+    """The chart probe's charts but those text wraps beside (laid out by docx2svg's Python
+    layout yet)."""
+    saved = probe.CASES
+    probe.CASES = tuple(case for case in saved if case.where != "square")
+    try:
+        return probe.build("15")
+    finally:
+        probe.CASES = saved
+
+
 def _made() -> dict:
     """Made-up documents of what lane L4d paints in Rust: SmartArt, VML shapes and text paths
     (watermarks), and charts in another locale than en-US."""
@@ -84,7 +95,7 @@ def _made() -> dict:
         "fitted-italic": (made._docx(body + italic), None),
         "vml-shapes": (made._docx(shapes + body), None),
         "smartart": (make_smartart_probe.build("15"), None),
-        "charts-nl": (make_chart_probe.build("15"), nl),
+        "charts-nl": (_charts(make_chart_probe), nl),
     }
 
 

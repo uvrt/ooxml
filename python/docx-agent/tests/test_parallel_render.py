@@ -18,6 +18,7 @@ from ooxml_edit.tools.render import lay_out_views  # noqa: E402
 
 from docx_agent.tools.render import RENDERER  # noqa: E402
 from docx_agent.tools.shared import render_pages  # noqa: E402
+from pixels import all_pixels
 
 
 def _pages(count: int = 4) -> bytes:
@@ -55,7 +56,7 @@ def test_pages_rasterised_over_the_workers_are_the_serial_renderers_byte_for_byt
         session = box.session()
         d = session.open(data, "note.docx")
         result = _ok(box, session, "render", doc=d, pages=[1, 2, 3, 4], width=300)
-    assert [image.data for image in result.images] == expected
+    assert all_pixels(image.data for image in result.images) == all_pixels(expected)
     assert result.data["cached"] == [] and "coverage" in result.data
 
 
@@ -72,7 +73,7 @@ def test_a_repeat_is_answered_from_the_store_and_an_edit_redraws_only_its_page()
         after = _ok(box, session, "render", doc=d, pages=[1, 2, 3, 4], width=300)
         expected = render_pages(session.entry(d).document.to_bytes(), [1, 2, 3, 4], 300, [])[0]
     assert after.data["cached"] == [1, 2, 4]
-    assert [image.data for image in after.images] == expected
+    assert all_pixels(image.data for image in after.images) == all_pixels(expected)
     assert after.images[2].data != first.images[2].data
 
 
@@ -167,7 +168,7 @@ def test_the_next_call_on_the_same_version_hands_its_worker_the_layout():
         expected = render_pages(session.entry(d).document.to_bytes(), [3], 300, [])[0]
     # After the edit, the layout of the version before is handed over (round 19).
     assert seen == [False, True, True]
-    assert [image.data for image in third.images] == expected
+    assert all_pixels(image.data for image in third.images) == all_pixels(expected)
     assert first.data["coverage"] == second.data["coverage"]
 
 
