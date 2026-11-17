@@ -18,10 +18,18 @@ repeated in their order between: a sample whose body rows alternate two looks gi
 that alternate them.  The sample as Accept All leaves it (tracked rows and property
 changes settled).
 
-What a frame cannot carry faithfully is refused, with what would work: a sample whose body
-rows are merged down (repeating them would cut the merges), with tables nested in cells,
-with content controls around rows or cells, rows off its grid, or pending tracked changes
-to its cells' structure; and text the sample's merged cells would hide.
+Merges down (round 59, R136): the header and total rows take the sample's.  In the body,
+the Markdown says where a merge runs, whatever the count of rows: in each column the
+sample merges down in its body rows, a cell left empty under another body cell (or under
+a cell merged down) joins its merge, and a cell with text starts one -- as rows Word
+inserts inside a merge join it (measured, ``tools/merged_rows_probe.py``).  A merge of one
+row is a cell of its own; a total row merged into the body joins the body cell above it.
+
+What a frame cannot carry faithfully is refused, with what would work: a sample with
+tables nested in cells, with content controls around rows or cells, rows off its grid, or
+pending tracked changes to its cells' structure; a Markdown table of another column count;
+and text the sample's merged cells would hide (a cell spanned across, a header or total
+cell merged into the one above).
 """
 
 from __future__ import annotations
@@ -134,12 +142,8 @@ class TableFrame:
         self.header = min(header, len(rows))
         self.total = 1 if look.get("last_row") and len(rows) > self.header + 1 else 0
         self.body = list(range(self.header, len(rows) - self.total))
-        merged = [r for r in self.body if any(c.merge is not None for c in self.rows[r].cells)]
-        if merged:
-            raise FrameError(f"like {table}: its body row {merged[0]} has cells merged down: repeating body rows "
-                             "would cut the merge -- use a sample whose body rows are not merged down, or copy the "
-                             "table whole (word_copy_from) and write its cells (word_edit_table set_cells)",
-                             self.shape_of(rows))
+        #: The grid places ``(column, span)`` the sample merges down in its body rows (R136).
+        self.down = {(c.column, c.span) for r in self.body for c in self.rows[r].cells if c.merge is not None}
 
     def _refuse_structure(self, element: Element) -> None:
         if any(True for node in element.iter(_W + "tbl") if node is not element):
@@ -195,12 +199,20 @@ class TableFrame:
         table = make("w:tbl")
         table.append(copy.deepcopy(self.properties))
         table.append(copy.deepcopy(self.grid))
-        for k, (values, frame) in enumerate(zip(rows, self.plan(len(rows)))):
+        plan = self.plan(len(rows))
+        heads = min(self.header, len(rows))
+        body_end = len(rows) - (1 if self.total and len(rows) > heads else 0)
+        #: Per new row, per grid place: ``[merge, has text, in the body]``, settled below.
+        merges: list[dict[tuple[int, int], list]] = []
+        cells: list[dict[tuple[int, int], Element]] = []
+        for k, (values, frame) in enumerate(zip(rows, plan)):
             row = make("w:tr")
             table.append(row)
             if frame.properties is not None and len(frame.properties):
                 row.append(copy.deepcopy(frame.properties))
             values = list(values) + [None] * (self.columns - len(values))
+            merges.append({})
+            cells.append({})
             for cell in frame.cells:
                 covered = [c for c in range(cell.column + 1, cell.column + cell.span) if _has(values[c])]
                 if covered:
@@ -208,17 +220,66 @@ class TableFrame:
                                      f"{cell.column + cell.span - 1} (merged in the sample): its text goes in column "
                                      f"{cell.column}, column(s) {', '.join(map(str, covered))} left empty",
                                      self.shape_of(), self.skeleton())
-                if cell.merge == "continue" and _has(values[cell.column]):
+                body = heads <= k < body_end
+                place, text = (cell.column, cell.span), _has(values[cell.column])
+                if cell.merge == "continue" and text and not body:
                     raise FrameError(f"like {self.sample}: row {k} column {cell.column} is merged into the cell "
                                      "above in the sample: its text goes in that cell, this one left empty",
                                      self.shape_of(), self.skeleton())
+                if body:
+                    merge = ("continue" if not text else None) if place in self.down else None
+                else:
+                    merge = cell.merge
+                merges[-1][place] = [merge, text, body]
                 element = make("w:tc")
                 row.append(element)
+                cells[-1][place] = element
                 element.append(copy.deepcopy(cell.properties))
                 paragraph = copy.deepcopy(cell.paragraph)
                 element.append(paragraph)
                 write_cell(paragraph, cell.run, values[cell.column])
+        self._settle_merges(merges, cells)
         return table
+
+    def _settle_merges(self, merges: list[dict[tuple[int, int], list]],
+                       cells: list[dict[tuple[int, int], Element]]) -> None:
+        """Round 59 (R136): each new cell's ``w:vMerge`` from ``merges`` (per row, per grid
+        place: ``[merge, has text, in the body]``).  A continuing cell joins the cell above
+        at its place where that one is merged down or is a body cell (which then starts the
+        merge), else it is a cell of its own; a merge's first cell with nothing continuing
+        under it is a cell of its own.  The merges made are noted, by column."""
+        for k, row in enumerate(merges):
+            for place, state in row.items():
+                if state[0] != "continue":
+                    continue
+                above = merges[k - 1].get(place) if k else None
+                if above is None or (above[0] is None and not above[2]):
+                    state[0] = None
+                elif above[0] is None:
+                    above[0] = "restart"
+        runs: dict[int, list[str]] = {}
+        for k, row in enumerate(merges):
+            for place, state in row.items():
+                below = merges[k + 1].get(place) if k + 1 < len(merges) else None
+                if state[0] == "restart" and (below is None or below[0] != "continue"):
+                    state[0] = None
+                properties = cells[k][place].find(_W + "tcPr")
+                for node in properties.findall(_W + "vMerge"):
+                    remove(node)
+                if state[0] is not None:
+                    node = make("w:vMerge")
+                    if state[0] == "restart":
+                        node.set(_W + "val", "restart")
+                    append_in_order(properties, node)
+                if state[0] == "restart" and state[2] and place in self.down:
+                    last = k + 1
+                    while last + 1 < len(merges) and (merges[last + 1].get(place) or [None])[0] == "continue":
+                        last += 1
+                    runs.setdefault(place[0], []).append(f"{k}-{last}")
+        for column, spans in runs.items():
+            shown = ", ".join(spans[:6]) + (f" and {len(spans) - 6} more" if len(spans) > 6 else "")
+            self.notes.append(f"like {self.sample}: column {column} merged down as in the sample, rows {shown} (an "
+                              "empty cell under another joins its merge; one with text starts one)")
 
 
 def _has(value) -> bool:

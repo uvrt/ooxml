@@ -5,6 +5,41 @@ docx-agent has not been released to PyPI. Each version that reaches `main` is ta
 snapshot commit; the development history before it is summarised here.
 [`ROADMAP.md`](ROADMAP.md) has the detail of every phase.
 
+## 0.1.133 -- unreleased
+
+Round 59 (R136): rows in tables with cells merged down. A row copied in such a table, or a
+table made `like` one, was refused ("a copy would cut the merge"); writers then took
+another route at minutes per call.
+
+- **Where Word puts a row beside a merge down, measured** (`tools/merged_rows_probe.py`,
+  `tests/observations/merged-rows-word.json`, Word 16.106 for Mac): Insert Rows inside a
+  merge (below its first row, above or below a middle row, above its last) gives a row whose
+  cell there continues the merge (`w:vMerge` without `restart`, an empty paragraph); above
+  the merge's first row and below its last row (also at the table's end) the new row has a
+  cell of its own. With the insertion point in the merged cell, Insert Rows Below puts the
+  row below the merge's first row. Tracked: the row and each cell's mark inserted, no cell
+  revision records. A whole row copied and pasted carries no merge: a merge's first row's
+  cell keeps its text, a continuing row's is empty. `insert_row` already did each of these;
+  every case is now a test against what Word saved.
+- **`copy_row` copies a row with a cell merged down.** Inside the merge the copy's cell joins
+  it (continuing, empty: the merge's text stays in its first row); above the first row or
+  below the last it is a cell of its own with the text it had, as Word's paste gives.
+  Tracked, an insertion as before, one undo step. Its other refusals (a note reference, a
+  pending deletion, tracked cell changes) stay, with the calls that work.
+- **A row added right beside a merge says so.** `insert_row` and `copy_row` (not `grow` or
+  `sync`) name the merge a new row sits just above or below without joining, and the
+  `word_edit_table` `merge` call that joins it (rule 2).
+- **Frames keep merges** (`word_insert_markdown` `like` a table, round 58's frame copy): a
+  sample merged down in its body rows is no longer refused. The header and total rows take
+  the sample's merges; in the body, in each column the sample merges down, a cell the
+  Markdown leaves empty under another joins its merge and a cell with text starts one, so
+  the Markdown's own rows say how long each group is, more or fewer than the sample's (as rows
+  Word inserts inside a merge join it). A merge of one row is a cell of its own. The result
+  names the merges made, by column. Kept refusals, each with its way out: another column
+  count, text in a cell spanned across, text in a header or total cell merged into the one
+  above. The `like` description says it: +5 tokens to every definition (16,199 -> 16,204),
+  none to the core.
+
 ## 0.1.130 -- unreleased
 
 Round 58 follow-up (Q3): what the calling process gives back when a document closes.

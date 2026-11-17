@@ -414,11 +414,11 @@ def test_frames_refuse_what_they_cannot_copy_with_the_way_out(box):
     error = refused(box, session, "word_insert_markdown", doc=d, at="end", like=[sample, sample],
                     markdown="| A | B | C | D |\n|---|---|---|---|\n")
     assert "one table" in error.message
-    # A sample merged down in its body rows: repeating them would cut the merge.
+    # A sample merged down in its body rows: refused until round 59 (R136), now its merges
+    # follow the Markdown's empty cells (tests/test_merged_rows_r59.py).
     merged, table = frame_sample()
     merged.merge_cells(table, (1, 0), (2, 0))
-    with pytest.raises(EditError, match="merged down"):
-        merged.insert_markdown("| A | B | C | D |\n|---|---|---|---|\n| 1 | 2 | 3 | 4 |\n", table_like=table)
+    merged.insert_markdown("| A | B | C | D |\n|---|---|---|---|\n| 1 | 2 | 3 | 4 |\n", table_like=table)
     # Merged across: the text goes in the merged cell's first column, the others empty.
     across, table = frame_sample()
     across.merge_cells(table, (0, 0), (0, 1))

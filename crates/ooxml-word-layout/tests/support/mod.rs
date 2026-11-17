@@ -8,7 +8,7 @@ use ooxml_derive::CacheBudget;
 use ooxml_fonts::FaceMetrics;
 use ooxml_opc::Package;
 use ooxml_text::{Advance, FaceKey, Glyphs, ScriptMetrics};
-use ooxml_word_layout::table::NoTables;
+use ooxml_word_layout::tables::WordTables;
 use ooxml_word_layout::{Faces, WordLayout};
 use ooxml_word_model::{Model, WordDocument};
 use ooxml_zip::{Method, NewEntry, Writer};
@@ -128,7 +128,7 @@ pub fn engine() -> WordLayout {
     let budget: Arc<dyn CacheBudget> = Arc::new(Unlimited);
     WordLayout::new(
         Arc::new(Mono),
-        Arc::new(NoTables),
+        Arc::new(WordTables),
         Locale::default(),
         &budget,
         DigestKey::new(3, 4),
