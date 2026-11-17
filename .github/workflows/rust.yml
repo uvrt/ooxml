@@ -312,7 +312,7 @@ jobs:
       - name: Install
         run: |
           python -m pip install --upgrade pip
-          python -m pip install ./python/ooxml-common "./python/docx2svg[measure]"
+          python -m pip install ./python/ooxml-common "./python/docx2svg[measure]" pytest
           cargo build --locked --release -p ooxml-oracle --bin word-model --bin drawingml-model --bin chart-model
       # Each generator in its own folder, run from there: they write there by default
       # (tools/make_layout_sweep.py and make_style_document.py rewrite docx2svg's committed
