@@ -19,6 +19,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 REPO = "uvrt/ooxml"
+INDEX = "https://uvrt.github.io/ooxml/simple/"  # GitHub Pages, tools/simple_index.py
 
 #: The distributions a release carries, in dependency order, by their pyproject.toml.
 DISTRIBUTIONS = [
@@ -79,6 +80,12 @@ come from this page, and the ones they need from each other resolve from it too)
 
 ```
 pip install --find-links https://github.com/{REPO}/releases/expanded_assets/{tag} docx-agent=={example}
+```
+
+The newest release, whichever it is, from the package index that lists every release:
+
+```
+pip install --extra-index-url {INDEX} docx-agent
 ```
 """
 

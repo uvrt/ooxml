@@ -39,17 +39,30 @@ CPython 3.10 and later, and one for the free-threaded 3.15t.
 Prebuilt packages are on this repository's
 [GitHub Releases](https://github.com/uvrt/ooxml/releases), not on PyPI. Each release is
 tagged with its date, `v<YYYY>.<MM>.<DD>` (`.<N>` for a second one that day), and carries
-a wheel and an sdist of every package at the version its notes list. Point pip at the
-release's page; the packages a package needs from this repository resolve from the same
-page, and third-party dependencies (lxml, ...) from PyPI:
+a wheel and an sdist of every package at the version its notes list.
+
+The newest release: point pip at the package index, one fixed address that lists every
+release's files (published to GitHub Pages by the release workflow; the links point at the
+release assets). Pip takes the newest version; the packages a package needs from this
+repository resolve from the index, and third-party dependencies (lxml, ...) from PyPI:
+
+```
+pip install --extra-index-url https://uvrt.github.io/ooxml/simple/ docx-agent
+```
+
+`pip install --upgrade` with the same option moves to the newest release. These package
+names are not on PyPI; pip looks in both places and takes the highest version it finds.
+
+A given release (to pin): point pip at that release's page and pin the version with `==`
+so pip takes the release's file:
 
 ```
 pip install --find-links https://github.com/uvrt/ooxml/releases/expanded_assets/<tag> docx-agent==<version>
 ```
 
-for example `.../expanded_assets/v2026.11.20 docx-agent==0.1.113`. Pin the version with
-`==` so pip takes the release's file. Extras work as before (`docx-agent[png]`,
-`pptx-agent[png]`, `pptx2svg[fonts]`).
+for example `.../expanded_assets/v2026.11.20 docx-agent==0.1.113`. `docx-agent==<version>`
+with the index works too, as it lists every release. Extras work as before
+(`docx-agent[png]`, `pptx-agent[png]`, `pptx2svg[fonts]`).
 
 From a checkout, install the packages you need from `python/`, dependencies first, for
 example `pip install ./python/ooxml-common ./python/ooxml-edit ./python/docx2svg -e
@@ -77,7 +90,9 @@ example `pip install ./python/ooxml-common ./python/ooxml-edit ./python/docx2svg
   wheels, when a change touches the workspace, ooxml-core or the packages it is compared
   with; gate job `required (rust)`.
 - Releases (`.github/workflows/release.yml`): pushing a date tag builds and checks every
-  distribution and creates the GitHub Release; a manual run only builds and checks.
+  distribution, creates the GitHub Release and deploys the package index of every release
+  to GitHub Pages (`tools/simple_index.py`, tests `tools/test_simple_index.py`); a manual
+  run only builds and checks, the index install included.
 
 ## History
 
