@@ -55,6 +55,53 @@ pub struct OfficeFace {
     bold_widths: HashMap<char, u32>,
     kerning: Option<KernClasses>,
     bold_kerning: Option<KernClasses>,
+    legacy_kerning: Option<KernClasses>,
+    legacy_bold_kerning: Option<KernClasses>,
+}
+
+/// One of a face's kern tables (ooxml-common's `kerning.KERNING_TABLES`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KernTable {
+    /// The OpenType `kern` feature (`GPOS`).
+    Feature,
+    /// The legacy `kern` table of the face the table stands for.
+    Legacy,
+    /// No kerning.
+    None,
+}
+
+/// Which of a face's kern pairs an application lays a line out with
+/// (ooxml-common's `kerning.KerningSource`): one table for a static face, one for a
+/// variable one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KerningSource {
+    /// The table a static face is kerned from.
+    pub static_face: KernTable,
+    /// The table a variable face is kerned from.
+    pub variable_face: KernTable,
+}
+
+impl KerningSource {
+    /// The OpenType feature for every face: the shared default.
+    pub const FEATURE: KerningSource = KerningSource {
+        static_face: KernTable::Feature,
+        variable_face: KernTable::Feature,
+    };
+    /// PowerPoint's (measured): a static face's legacy table, a variable face's feature.
+    pub const POWERPOINT: KerningSource = KerningSource {
+        static_face: KernTable::Legacy,
+        variable_face: KernTable::Feature,
+    };
+    /// Word's, where a run kerns at all: the legacy table, nothing for a variable face.
+    pub const WORD: KerningSource = KerningSource {
+        static_face: KernTable::Legacy,
+        variable_face: KernTable::None,
+    };
+    /// No kerning.
+    pub const NONE: KerningSource = KerningSource {
+        static_face: KernTable::None,
+        variable_face: KernTable::None,
+    };
 }
 
 impl OfficeFace {
@@ -86,6 +133,36 @@ impl OfficeFace {
             (_, upright) => upright.as_ref(),
         };
         table.map_or(0, |t| t.adjustment(left, right))
+    }
+
+    /// Whether `source` names a table this face has (`kern_table(source) is not None`).
+    pub fn kerns_from(&self, source: KerningSource) -> bool {
+        self.tables(source).0.is_some()
+    }
+
+    /// The adjustment between two characters from the table `source` names for this face,
+    /// font units; its bold classes when `bold` and the table has them. 0 where it names
+    /// none.
+    pub fn kern_from(&self, source: KerningSource, left: char, right: char, bold: bool) -> i32 {
+        let (upright, bold_table) = self.tables(source);
+        let table = match (bold_table, upright) {
+            (Some(b), _) if bold => Some(b),
+            (_, upright) => upright,
+        };
+        table.map_or(0, |t| t.adjustment(left, right))
+    }
+
+    fn tables(&self, source: KerningSource) -> (Option<&KernClasses>, Option<&KernClasses>) {
+        let which = if self.variable {
+            source.variable_face
+        } else {
+            source.static_face
+        };
+        match which {
+            KernTable::Feature => (self.kerning.as_ref(), self.bold_kerning.as_ref()),
+            KernTable::Legacy => (self.legacy_kerning.as_ref(), self.legacy_bold_kerning.as_ref()),
+            KernTable::None => (None, None),
+        }
     }
 }
 
@@ -156,14 +233,19 @@ fn classes(fields: &[&str]) -> HashMap<char, u32> {
 }
 
 fn read_kern(face: &mut OfficeFace, kind: &str, fields: &[&str]) {
+    let (legacy, kind) = match kind.strip_prefix("legacy-") {
+        Some(rest) => (true, rest),
+        None => (false, kind),
+    };
     let (bold, what) = match kind.strip_prefix("bold-") {
         Some(rest) => (true, rest),
         None => (false, kind),
     };
-    let table = if bold {
-        &mut face.bold_kerning
-    } else {
-        &mut face.kerning
+    let table = match (legacy, bold) {
+        (false, false) => &mut face.kerning,
+        (false, true) => &mut face.bold_kerning,
+        (true, false) => &mut face.legacy_kerning,
+        (true, true) => &mut face.legacy_bold_kerning,
     };
     let table = table.get_or_insert_with(KernClasses::default);
     match what {

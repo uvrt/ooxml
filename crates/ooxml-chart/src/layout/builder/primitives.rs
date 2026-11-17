@@ -121,6 +121,7 @@ impl<'a> Builder<'a> {
             fill,
             outline,
             text: None,
+            ..Shape::default()
         })));
     }
 
@@ -151,6 +152,7 @@ impl<'a> Builder<'a> {
             fill,
             outline,
             text: None,
+            ..Shape::default()
         })));
     }
 
@@ -199,6 +201,7 @@ impl<'a> Builder<'a> {
             },
             geometry: Geometry::preset("line"),
             outline: Some(outline.clone()),
+            ..Connector::default()
         })));
     }
 
@@ -224,6 +227,7 @@ impl<'a> Builder<'a> {
             fill,
             outline,
             text: None,
+            ..Shape::default()
         })));
     }
 
@@ -273,6 +277,7 @@ impl<'a> Builder<'a> {
             fill: None,
             outline: None,
             text: Some(body),
+            ..Shape::default()
         })));
     }
 }
