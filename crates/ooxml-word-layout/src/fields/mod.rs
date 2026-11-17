@@ -53,13 +53,23 @@ pub fn page_fields(document: &WordDocument) -> Vec<FieldKey> {
     out
 }
 
-/// Where the body's paragraphs' lines are: per flow item, the page of each line.
+/// Where the body's paragraphs' lines are: per flow item asked about, the page of each
+/// line.
 struct Pages<'a> {
     layout: &'a DocumentLayout,
-    item_of_block: HashMap<usize, usize>,
     lines: HashMap<usize, Vec<usize>>,
     /// A table cell's paragraph -> the page of its first line drawn.
     cells: HashMap<usize, usize>,
+}
+
+/// The flow item of paragraph `block` (the body's, cells included), where it is a
+/// top-level paragraph: items stand in block order.
+fn item_of_block(items: &[FlowItem], block: usize) -> Option<usize> {
+    let k = items.partition_point(|i| i.block() < block);
+    match items.get(k) {
+        Some(FlowItem::Para(p)) if p.block == block => Some(k),
+        _ => None,
+    }
 }
 
 /// Each table cell paragraph's first page: the page its part of its row is on, for each
@@ -108,16 +118,25 @@ fn for_cell_lines(layout: &DocumentLayout, each: &mut dyn FnMut(usize, usize)) {
 }
 
 impl<'a> Pages<'a> {
-    fn new(layout: &'a DocumentLayout) -> Pages<'a> {
-        let mut item_of_block = HashMap::new();
-        for (k, item) in layout.flow.items.iter().enumerate() {
-            if let FlowItem::Para(p) = item {
-                item_of_block.insert(p.block, k);
+    /// The pages of the paragraphs `blocks` (the body's, cells included; `None`: every
+    /// one).
+    fn new(layout: &'a DocumentLayout, blocks: Option<&BTreeSet<usize>>) -> Pages<'a> {
+        let items = &layout.flow.items;
+        let wanted: Option<Vec<bool>> = blocks.map(|blocks| {
+            let mut wanted = vec![false; items.len()];
+            for block in blocks {
+                if let Some(k) = item_of_block(items, *block) {
+                    if let Some(w) = wanted.get_mut(k) {
+                        *w = true;
+                    }
+                }
             }
-        }
+            wanted
+        });
+        let asked = |item: usize| wanted.as_ref().is_none_or(|w| w.get(item).copied().unwrap_or(false));
         let mut lines: HashMap<usize, Vec<(usize, usize)>> = HashMap::new();
         for page in &layout.pagination.pages {
-            for line in &page.lines {
+            for line in page.lines.iter().filter(|l| asked(l.item)) {
                 lines.entry(line.item).or_default().push((line.line, page.page));
             }
         }
@@ -132,14 +151,13 @@ impl<'a> Pages<'a> {
         Pages {
             cells: cell_pages(layout),
             layout,
-            item_of_block,
             lines,
         }
     }
 
     /// The page a body paragraph's character `offset` is drawn on (`_page_of`).
     fn page_of(&self, block: usize, offset: i64) -> Option<usize> {
-        let Some(&index) = self.item_of_block.get(&block) else {
+        let Some(index) = item_of_block(&self.layout.flow.items, block) else {
             return self.cells.get(&block).copied();
         };
         let FlowItem::Para(p) = self.layout.flow.items.get(index)? else {
@@ -237,7 +255,7 @@ pub(crate) fn occurrence_pages(
             if o.offset == 0 {
                 return drawn.get(&o.block).cloned().unwrap_or_default();
             }
-            let pages = pages.get_or_insert_with(|| Pages::new(layout));
+            let pages = pages.get_or_insert_with(|| Pages::new(layout, None));
             let offset = i64::try_from(o.offset).unwrap_or(i64::MAX);
             pages.page_of(o.block, offset).into_iter().collect()
         })
@@ -269,9 +287,17 @@ pub fn field_values(document: &WordDocument, layout: &DocumentLayout, keys: &[Fi
     if keys.is_empty() {
         return out;
     }
-    let pages = Pages::new(layout);
     let (paragraphs, _) = body_paragraphs(&document.body);
-    let mut targets: Option<HashMap<String, (usize, usize)>> = None;
+    let field_of = |(block, k): (usize, usize)| paragraphs.get(block)?.runs.get(k)?.field.clone();
+    let refers = keys
+        .iter()
+        .any(|key| field_of(*key).is_some_and(|f| &*f.keyword == "PAGEREF"));
+    let targets: HashMap<String, (usize, usize)> = if refers { bookmarks(&paragraphs) } else { HashMap::new() };
+    // Only the paragraphs holding fields, and the bookmarks PAGEREF points at, are looked up.
+    let mut asked: BTreeSet<usize> = keys.iter().map(|(block, _)| *block).collect();
+    asked.extend(targets.values().map(|(block, _)| *block));
+    let pages = Pages::new(layout, Some(&asked));
+    let mut section_pages: HashMap<usize, Option<i64>> = HashMap::new();
     let format_of = |section: usize| {
         layout
             .sections
@@ -286,7 +312,6 @@ pub fn field_values(document: &WordDocument, layout: &DocumentLayout, keys: &[Fi
             continue;
         };
         let text = if &*field.keyword == "PAGEREF" {
-            let targets = targets.get_or_insert_with(|| bookmarks(&paragraphs));
             let target = argument(&field.instruction).and_then(|name| targets.get(&name).copied());
             let info = target
                 .and_then(|(b, run)| pages.page_of(b, paragraphs.get(b).map_or(0, |p| offset_of(p, run))))
@@ -306,7 +331,10 @@ pub fn field_values(document: &WordDocument, layout: &DocumentLayout, keys: &[Fi
                 .page_of(block, offset_of(paragraph, k))
                 .and_then(|page| layout.pagination.info.get(page));
             info.and_then(|i| {
-                let counts = (pages.page_count(), pages.section_pages(i.section));
+                let in_section = *section_pages
+                    .entry(i.section)
+                    .or_insert_with(|| pages.section_pages(i.section));
+                let counts = (pages.page_count(), in_section);
                 field_text(
                     &field.instruction,
                     &field.keyword,

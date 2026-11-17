@@ -11,7 +11,7 @@
 //! pages laid out from it).
 
 use super::{source, FlowItem, FlowMaker, ParaItem, StopItem, TableItem};
-use crate::incremental::{same_item, Change};
+use crate::incremental::{block_changes, same_item, Change};
 use crate::notes::NoteRole;
 use crate::tables::table_paragraphs;
 use ooxml_word_model::model::Block;
@@ -40,14 +40,6 @@ struct Window {
     b_new: usize,
 }
 
-fn same_block(x: &Block, y: &Block) -> bool {
-    match (x, y) {
-        (Block::Paragraph(p), Block::Paragraph(q)) => Arc::ptr_eq(p, q),
-        (Block::Table(t), Block::Table(u)) => Arc::ptr_eq(t, u),
-        _ => false,
-    }
-}
-
 fn paragraphs_of(blocks: &[Block]) -> usize {
     blocks
         .iter()
@@ -56,45 +48,6 @@ fn paragraphs_of(blocks: &[Block]) -> usize {
             Block::Table(t) => table_paragraphs(t),
         })
         .sum()
-}
-
-/// The blocks that differ by `Arc`: where both bodies have as many, each run of them in
-/// place; otherwise one window between the common prefix and suffix.
-fn block_windows(old: &[Block], new: &[Block]) -> Vec<Window> {
-    if old.len() == new.len() {
-        let mut out: Vec<Window> = Vec::new();
-        for (k, (x, y)) in old.iter().zip(new).enumerate() {
-            if same_block(x, y) {
-                continue;
-            }
-            match out.last_mut() {
-                Some(w) if w.b_new == k => {
-                    w.b_old = k + 1;
-                    w.b_new = k + 1;
-                }
-                _ => out.push(Window {
-                    a: k,
-                    b_old: k + 1,
-                    b_new: k + 1,
-                }),
-            }
-        }
-        return out;
-    }
-    let prefix = old.iter().zip(new).take_while(|(x, y)| same_block(x, y)).count();
-    let room = old.len().min(new.len()) - prefix;
-    let suffix = old
-        .iter()
-        .rev()
-        .zip(new.iter().rev())
-        .take(room)
-        .take_while(|(x, y)| same_block(x, y))
-        .count();
-    vec![Window {
-        a: prefix,
-        b_old: old.len() - suffix,
-        b_new: new.len() - suffix,
-    }]
 }
 
 /// Moves an old item to its place in the new flow.
@@ -252,7 +205,14 @@ impl FlowMaker<'_, '_> {
     /// changes between the two; `None` where it must be built whole (the body's drawings
     /// that text wraps beside, or its drop caps, changed whether there are any).
     pub fn again(mut self, old: &OldFlow<'_>) -> Option<(super::Flow, Vec<Change>)> {
-        let found = block_windows(old.body, self.cx.blocks);
+        let found = block_changes(old.body, self.cx.blocks)
+            .into_iter()
+            .map(|c| Window {
+                a: c.a,
+                b_old: c.b_old,
+                b_new: c.b_new,
+            })
+            .collect();
         let windows = self.widened(old, found);
         // Each window's old items and its drop caps.
         let mut drops: Vec<Vec<usize>> = Vec::with_capacity(windows.len());

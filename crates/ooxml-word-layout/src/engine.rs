@@ -371,24 +371,25 @@ impl WordLayout {
         self.lay_out_from(model, document, Some(previous))
     }
 
-    fn lay_out_from(
-        &mut self,
-        model: &mut Model,
-        document: &WordDocument,
-        previous: Option<&DocumentLayout>,
-    ) -> DocumentLayout {
-        // Measures are kept against one set of parts (styles, numbering, settings, theme):
-        // another set measures every block again.
-        let same_parts = self
+    /// Whether the kept measures were made against `document`'s parts (styles,
+    /// numbering, settings, theme); where not, they are dropped and every block is
+    /// measured again.
+    fn keep_parts(&mut self, document: &WordDocument) -> bool {
+        let same = self
             .context
             .as_ref()
             .is_some_and(|c| same_context(c, &document.context));
-        if !same_parts {
+        if !same {
             self.body.cache.clear();
             self.stories.cache.clear();
             self.context = Some(document.context.clone());
         }
-        let previous = previous.filter(|_| same_parts);
+        same
+    }
+
+    /// What every pass of a version starts from (`_Placer._prepare`): the endnotes
+    /// numbered and placed in the flow, and the fields that do not depend on the pages.
+    fn prepare(&mut self, document: &WordDocument) -> (crate::notes::numbering::Placed, WordDocument) {
         // The endnotes numbered and placed in the flow; SEQ and REF, which do not depend
         // on the pages, computed once (`_Placer._prepare`).
         let placed = with_endnotes(document);
@@ -399,6 +400,18 @@ impl WordLayout {
         let mut search = StyleSearch::new(&prepared, &self.locale, &in_flow);
         let prepared = style_references(&prepared, &mut search, &mut self.style_values);
         drop(search);
+        (placed, prepared)
+    }
+
+    fn lay_out_from(
+        &mut self,
+        model: &mut Model,
+        document: &WordDocument,
+        previous: Option<&DocumentLayout>,
+    ) -> DocumentLayout {
+        let same_parts = self.keep_parts(document);
+        let previous = previous.filter(|_| same_parts);
+        let (placed, prepared) = self.prepare(document);
         let document = &prepared;
         let sections = Sections::of(document);
         let stories = self.story_heights(model, document);
@@ -409,13 +422,17 @@ impl WordLayout {
         // The footnotes' numbers are runs of their own: the fields are found among the
         // runs as numbered.
         let keys = page_fields(&version);
-        let labels = document.body_labels();
+        // The list labels, counted again only from the first changed block until the
+        // lists' counts stand where they stood.
+        let labels: Arc<[Option<String>]> = match previous {
+            Some(p) => document.body_labels_from(&p.document, &p.labels).into(),
+            None => document.body_labels().into(),
+        };
         let mut overrides = PageStories::new();
         let mut story_memo = StoryMemo::default();
         let mut values = FieldValues::new();
         let mut pages: Option<FootnotePages> = None;
-        let mut earlier = Vec::new();
-        let mut versions: Vec<WordDocument> = Vec::new();
+        let mut earlier: Vec<PassRecord> = Vec::new();
         let mut relaid = Vec::new();
         loop {
             let frame = PassFrame {
@@ -441,13 +458,12 @@ impl WordLayout {
                 layout.settled = settled;
                 layout.relaid = relaid;
                 let mut bodies: Vec<&[ooxml_word_model::model::Block]> = vec![&document.body, &layout.document.body];
-                bodies.extend(versions.iter().map(|v| &*v.body));
+                bodies.extend(earlier.iter().map(|r| &*r.body));
                 self.body.cache.retain_blocks(&bodies);
                 self.substitutions.retain_used();
                 layout.earlier = earlier;
                 return layout;
             }
-            versions.push(layout.document.clone());
             earlier.push(PassRecord {
                 flow: layout.flow,
                 pagination: layout.pagination,
@@ -485,20 +501,13 @@ pub fn paginate_all(layout: &DocumentLayout, faces: &dyn Faces, locale: &Locale)
     Paginator::new(&cx).run(None, &mut |_: &Resume| false).0
 }
 
-/// Whether two sets of parts are the same parts (each shared between the versions).
+/// Whether two sets of parts are alike (the same `Arc`s where the model shared them).
 fn same_context(a: &ooxml_word_model::Context, b: &ooxml_word_model::Context) -> bool {
-    fn same<T>(x: Option<&Arc<T>>, y: Option<&Arc<T>>) -> bool {
-        match (x, y) {
-            (Some(x), Some(y)) => Arc::ptr_eq(x, y),
-            (None, None) => true,
-            _ => false,
-        }
-    }
-    same(a.styles.as_ref(), b.styles.as_ref())
-        && Arc::ptr_eq(&a.numbering, &b.numbering)
-        && Arc::ptr_eq(&a.settings, &b.settings)
-        && same(a.font_scheme.as_ref(), b.font_scheme.as_ref())
-        && Arc::ptr_eq(&a.colours, &b.colours)
+    a.styles == b.styles
+        && a.numbering == b.numbering
+        && a.settings == b.settings
+        && a.font_scheme == b.font_scheme
+        && a.colours == b.colours
 }
 
 /// Whether two versions' sections lay pages out alike: as many, with the same

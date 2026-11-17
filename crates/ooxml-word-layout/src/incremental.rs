@@ -9,6 +9,7 @@
 
 use crate::flow::FlowItem;
 use crate::paginate::{LaidPage, LineStore, PageContext, Pagination, Paginator, Position, Resume};
+use ooxml_word_model::model::Block;
 use std::sync::Arc;
 
 /// Items `[a, b_old)` of the old flow are `[a, b_new)` of the new one; the rest are the
@@ -346,4 +347,53 @@ fn shifted(lines: &LineStore, by: isize) -> LineStore {
 
 fn shift_position(p: &Position, by: isize) -> Position {
     shift(p, by)
+}
+
+fn same_block(x: &Block, y: &Block) -> bool {
+    match (x, y) {
+        (Block::Paragraph(p), Block::Paragraph(q)) => Arc::ptr_eq(p, q),
+        (Block::Table(t), Block::Table(u)) => Arc::ptr_eq(t, u),
+        _ => false,
+    }
+}
+
+/// The top-level blocks of two versions' bodies that differ by `Arc` (the model shares an
+/// unchanged block's): where both have as many, each run of them in place; otherwise one
+/// change between the common prefix and suffix. `a` and `b_new` index the new body, `b_old`
+/// the old one.
+pub fn block_changes(old: &[Block], new: &[Block]) -> Vec<Change> {
+    if old.len() == new.len() {
+        let mut out: Vec<Change> = Vec::new();
+        for (k, (x, y)) in old.iter().zip(new).enumerate() {
+            if same_block(x, y) {
+                continue;
+            }
+            match out.last_mut() {
+                Some(c) if c.b_new == k => {
+                    c.b_old = k + 1;
+                    c.b_new = k + 1;
+                }
+                _ => out.push(Change {
+                    a: k,
+                    b_old: k + 1,
+                    b_new: k + 1,
+                }),
+            }
+        }
+        return out;
+    }
+    let prefix = old.iter().zip(new).take_while(|(x, y)| same_block(x, y)).count();
+    let room = old.len().min(new.len()) - prefix;
+    let suffix = old
+        .iter()
+        .rev()
+        .zip(new.iter().rev())
+        .take(room)
+        .take_while(|(x, y)| same_block(x, y))
+        .count();
+    vec![Change {
+        a: prefix,
+        b_old: old.len() - suffix,
+        b_new: new.len() - suffix,
+    }]
 }
