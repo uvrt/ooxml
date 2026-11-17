@@ -87,6 +87,13 @@ The newest release, whichever it is, from the package index that lists every rel
 ```
 pip install --extra-index-url {INDEX} docx-agent
 ```
+
+With uv, which takes these packages only from the index (they are not on PyPI, and uv
+does not let PyPI override an index given with `--index`):
+
+```
+uv pip install --index {INDEX} docx-agent
+```
 """
 
 
