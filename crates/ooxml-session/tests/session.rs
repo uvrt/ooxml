@@ -434,3 +434,79 @@ fn a_read_says_what_it_does_not_give_as_docx_agent_does() {
     );
     assert!(first.unported().is_empty());
 }
+
+/// A body of `n` numbered paragraphs (one list), the `k`th with `text`.
+fn numbered(n: usize, edited: Option<(usize, &str)>) -> String {
+    let mut body = String::new();
+    for k in 0..n {
+        let text = match edited {
+            Some((at, t)) if at == k => t.to_owned(),
+            _ => format!("item {k}"),
+        };
+        body.push_str(&format!(
+            r#"<w:p w14:paraId="{:08X}"><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr><w:r><w:t>{text}</w:t></w:r></w:p>"#,
+            k + 1
+        ));
+    }
+    format!(
+        r#"<w:document {W} xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml"><w:body>{body}</w:body></w:document>"#
+    )
+}
+
+#[test]
+fn a_window_read_counts_lists_from_its_marks_across_versions() {
+    let rels = r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/></Relationships>"#;
+    let numbering = format!(
+        r#"<w:numbering {W}><w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/></w:lvl></w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num></w:numbering>"#
+    );
+    let s = session();
+    let d = s.open(Arc::from(docx()), DocKind::Docx, "a.docx").unwrap();
+    let context = CallContext::default();
+    let first = vec![
+        put("word/_rels/document.xml.rels", rels),
+        put("word/numbering.xml", &numbering),
+        put("word/document.xml", &numbered(300, None)),
+    ];
+    let (_, v1) = s.commit(&d, first, &context).unwrap();
+    let span = |at: &ooxml_session::Opened, a: usize, b: usize| -> String {
+        let context = CallContext {
+            at: vec![at.clone()],
+            ..CallContext::default()
+        };
+        let range = format!("p:{:08X}..p:{:08X}", a + 1, b + 1);
+        let read = s.call("word_read", json!({"doc": "d1", "range": range}), &context);
+        Value::Object(read.to_json())["data"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned()
+    };
+    // marks made along the way, then read from
+    assert!(span(&v1, 250, 251).contains("251. item 250"));
+    assert!(span(&v1, 200, 200).contains("201. item 200"));
+    // an edit at 150: the marks before it kept, those after it counted again
+    let (_, v2) = s
+        .commit(
+            &d,
+            vec![put("word/document.xml", &numbered(300, Some((150, "changed"))))],
+            &context,
+        )
+        .unwrap();
+    assert!(span(&v2, 260, 260).contains("261. item 260"));
+    assert!(span(&v2, 100, 100).contains("101. item 100"));
+    assert!(span(&v2, 150, 150).contains("151. changed"));
+    // a fresh session reads the same
+    let fresh = session();
+    let d2 = fresh.open(Arc::from(docx()), DocKind::Docx, "a.docx").unwrap();
+    let all = vec![
+        put("word/_rels/document.xml.rels", rels),
+        put("word/numbering.xml", &numbering),
+        put("word/document.xml", &numbered(300, Some((150, "changed")))),
+    ];
+    fresh.update(&d2, all, &context).unwrap();
+    let whole = Value::Object(
+        fresh
+            .call("word_read", json!({"doc": "d1", "range": "p:00000105"}), &context)
+            .to_json(),
+    );
+    assert_eq!(whole["data"], json!(span(&v2, 260, 260)));
+}

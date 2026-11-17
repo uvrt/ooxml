@@ -157,7 +157,7 @@ impl Docx {
             parts,
             styles,
             style_order,
-            derived: Derived::default(),
+            derived: Derived::after(before.map(|b| &b.derived)),
         })
     }
 
