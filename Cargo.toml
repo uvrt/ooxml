@@ -3,9 +3,15 @@ members = [
     "crates/core",
     "crates/word",
     "crates/python",
+    "crates/ooxml-base",
+    "crates/ooxml-xml",
+    "crates/ooxml-zip",
+    "crates/ooxml-opc",
     "crates/ooxml-store",
     "crates/ooxml-derive",
 ]
+# cargo-fuzz's layout: its own workspace, built with `cargo fuzz` (nightly).
+exclude = ["fuzz"]
 resolver = "2"
 
 [workspace.package]
@@ -23,8 +29,12 @@ num-integer = "0.1"
 num-traits = "0.2"
 pyo3 = "0.30"
 thiserror = "2"
+flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 arc-swap = "1"
 loom = "0.7"
+ooxml-base = { path = "crates/ooxml-base" }
+ooxml-xml = { path = "crates/ooxml-xml" }
+ooxml-zip = { path = "crates/ooxml-zip" }
 
 # The architecture's standards (docs/architecture/README.md, section 2), for every crate that
 # says `[lints] workspace = true` -- the new crates; the prototype crates (core, word, python)

@@ -1,0 +1,40 @@
+# Fuzz targets (cargo-fuzz layout; design section 11): run with `cargo fuzz run <target>` on a
+# nightly toolchain. Its own workspace, so the main workspace never builds libFuzzer.
+[package]
+name = "ooxml-fuzz"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+ooxml-base = { path = "../crates/ooxml-base" }
+ooxml-xml = { path = "../crates/ooxml-xml" }
+ooxml-zip = { path = "../crates/ooxml-zip" }
+ooxml-opc = { path = "../crates/ooxml-opc" }
+
+[workspace]
+
+[[bin]]
+name = "xml_roundtrip"
+path = "fuzz_targets/xml_roundtrip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "zip_read"
+path = "fuzz_targets/zip_read.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "opc_open"
+path = "fuzz_targets/opc_open.rs"
+test = false
+doc = false
+bench = false

@@ -86,6 +86,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1c66915cc5391097de7a2b0b972e8505aa33c0df401fd3a6811dbdb32881ba48"
 
 [[package]]
+name = "flate2"
+version = "1.1.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "626d4928326b646e70f65ed36fc7cf9f206bdb68a0019ee7c6b4709da4e084c4"
+dependencies = [
+ "zlib-rs",
+]
+
+[[package]]
 name = "foldhash"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -234,6 +243,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
+name = "ooxml-base"
+version = "0.1.0"
+dependencies = [
+ "num-integer",
+ "num-rational",
+ "num-traits",
+ "thiserror",
+]
+
+[[package]]
 name = "ooxml-core"
 version = "0.1.0"
 dependencies = [
@@ -248,6 +267,16 @@ dependencies = [
 name = "ooxml-derive"
 version = "0.1.0"
 dependencies = [
+ "thiserror",
+]
+
+[[package]]
+name = "ooxml-opc"
+version = "0.1.0"
+dependencies = [
+ "ooxml-base",
+ "ooxml-xml",
+ "ooxml-zip",
  "thiserror",
 ]
 
@@ -283,6 +312,23 @@ dependencies = [
  "rayon",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "ooxml-xml"
+version = "0.1.0"
+dependencies = [
+ "ooxml-base",
+ "thiserror",
+]
+
+[[package]]
+name = "ooxml-zip"
+version = "0.1.0"
+dependencies = [
+ "flate2",
+ "ooxml-base",
+ "thiserror",
 ]
 
 [[package]]
@@ -678,6 +724,12 @@ checksum = "ae137229bcbd6cdf0f7b80a31df61766145077ddf49416a728b02cb3921ff3fc"
 dependencies = [
  "windows-link 0.2.1",
 ]
+
+[[package]]
+name = "zlib-rs"
+version = "0.6.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b268e58e7c693d7c271f93ffc4ba3b380412554231c85bf61ca7af91042a4112"
 
 [[package]]
 name = "zmij"
