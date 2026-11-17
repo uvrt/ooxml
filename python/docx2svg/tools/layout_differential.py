@@ -4,7 +4,7 @@
 Lays every document given out with docx2svg (``convert_docx_to_layout``) and records, for
 the body's last layout pass, its flow -- every top-level item, a paragraph with its lines
 (the line breaker's pieces from ``start`` to ``end``), each line's height, its spacing,
-borders, keeps and section facts; a table, a placeholder or an obstacle by its kind --
+borders, keeps and section facts; a table, a stand-in box or an obstacle by its kind --
 its pagination (every page's start and :class:`docx2svg.paginate.PageInfo`), and every
 body line the layout drew (its paragraph's path, its number, its top, pitch and
 baseline, its column).  Nothing of docx2svg changes: ``paginate.flow``,
@@ -56,8 +56,8 @@ def item_record(item, paragraphs: dict, breaks: dict) -> dict:
         return {"kind": "obstacle", "block": item.block, "section": item.section}
     if isinstance(item, paginate.TableItem):
         return {"kind": "table", "block": item.block, "section": item.section, "rows": item.count}
-    if item.placeholder is not None:
-        return {"kind": "placeholder", "block": item.block, "section": item.section}
+    if item.placeholder is not None:  # docx2svg's own name for its stand-in box
+        return {"kind": "box", "block": item.block, "section": item.section}
     paragraph = paragraphs.get(item.block)
     lines = breaks.get(id(paragraph)) if paragraph is not None else None
     return {
