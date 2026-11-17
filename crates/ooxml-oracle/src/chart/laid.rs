@@ -549,26 +549,19 @@ fn varied(mut style: ChartStyle, variant: Option<&str>) -> (ChartStyle, Option<S
     (style, default_title)
 }
 
-/// A case laid out, as `chart_diff.py` dumps the Python's: the notes, elements and data,
-/// or the notes alone where nothing is drawn.
-pub fn case(case: &Case<'_>) -> J {
+/// A case laid out (`None` where no plot is drawn).
+pub fn lay(case: &Case<'_>) -> Option<ooxml_chart::layout::Laid> {
     let rules: &ChartRules = if case.rules == "word" { &WORD } else { &POWERPOINT };
-    let context = colour_context(
-        None,
-        default_colour_map(),
-        if case.rules == "word" {
-            ooxml_colour::WORD
-        } else {
-            ooxml_colour::POWERPOINT
-        },
-    );
-    let golden = Golden { context };
-    let plots = drawable_plots(case.chart);
-    let Some(&plot) = plots.first() else {
-        let mut kinds: Vec<&str> = case.chart.plots.iter().map(|p| p.kind.as_str()).collect();
-        kinds.sort_unstable();
-        return json!({"notes": [format!("not drawn: {}", kinds.join(","))]});
+    let colours = if case.rules == "word" {
+        ooxml_colour::WORD
+    } else {
+        ooxml_colour::POWERPOINT
     };
+    let golden = Golden {
+        context: colour_context(None, default_colour_map(), colours),
+    };
+    let plots = drawable_plots(case.chart);
+    let plot = *plots.first()?;
     let tx1 = golden
         .colour(&SourceColour::scheme("tx1"))
         .unwrap_or_else(|| Colour::opaque("#000000"));
@@ -594,7 +587,17 @@ pub fn case(case: &Case<'_>) -> J {
         locale: &case.locale,
         default_title,
     };
-    let laid = lay_out(&input);
+    Some(lay_out(&input))
+}
+
+/// A case laid out, as `chart_diff.py` dumps the Python's: the notes, elements and data,
+/// or the notes alone where nothing is drawn.
+pub fn case(case: &Case<'_>) -> J {
+    let Some(laid) = lay(case) else {
+        let mut kinds: Vec<&str> = case.chart.plots.iter().map(|p| p.kind.as_str()).collect();
+        kinds.sort_unstable();
+        return json!({"notes": [format!("not drawn: {}", kinds.join(","))]});
+    };
     let mut notes: Vec<String> = Vec::new();
     if !laid.flattened_three_d.is_empty() {
         notes.push(format!("flattened: {}", laid.flattened_three_d.join(",")));

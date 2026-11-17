@@ -103,3 +103,55 @@ pub fn layout(spec: &J) -> Result<J, String> {
     };
     Ok(laid::case(&case))
 }
+
+/// The frozen cases (`tests/data/chart-layout.json.gz`) read and laid out, three passes, the
+/// best pass's wall time: the layout benchmark. Paths are read from `root` (the repository).
+/// The XML is parsed before the clock starts, as the Python benchmark parses it before its.
+///
+/// # Errors
+/// When the bundle or a case cannot be read.
+pub fn bench(root: &str) -> Result<J, String> {
+    use std::io::Read;
+    let path = format!("{root}/crates/ooxml-oracle/tests/data/chart-layout.json.gz");
+    let mut text = String::new();
+    flate2::read::GzDecoder::new(std::fs::File::open(&path).map_err(|e| format!("{path}: {e}"))?)
+        .read_to_string(&mut text)
+        .map_err(|e| e.to_string())?;
+    let records: Vec<J> = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+    let mut trees = Vec::new();
+    for record in &records {
+        let case = &record["case"];
+        let file = format!("{root}/{}", case["file"].as_str().unwrap_or(""));
+        let bytes = std::fs::read(&file).map_err(|e| format!("{file}: {e}"))?;
+        let tree = match case["part"].as_str() {
+            None => ooxml_xml::parse(&bytes, &Limits::default().xml).map_err(|e| e.to_string())?,
+            Some(part) => Package::open(Arc::from(bytes), &Limits::default())
+                .map_err(|e| e.to_string())?
+                .tree(part)
+                .map_err(|e| e.to_string())?
+                .ok_or(format!("{file}: no {part}"))?,
+        };
+        trees.push((tree, case.clone()));
+    }
+    let mut best = f64::INFINITY;
+    for _ in 0..3 {
+        let start = std::time::Instant::now();
+        for (tree, case) in &trees {
+            let Some(chart) = ooxml_chart::chart_space(tree.root()) else {
+                continue;
+            };
+            let number = |key: &str| case[key].as_f64().unwrap_or(0.0);
+            let laid = laid::Case {
+                chart: &chart,
+                width: number("width_pt"),
+                height: number("height_pt"),
+                rules: case["rules"].as_str().unwrap_or("powerpoint"),
+                locale: locale_of(case)?,
+                variant: None,
+            };
+            std::hint::black_box(laid::lay(&laid));
+        }
+        best = best.min(start.elapsed().as_secs_f64());
+    }
+    Ok(json!({"side": "rust", "cases": trees.len(), "wall_s": best}))
+}

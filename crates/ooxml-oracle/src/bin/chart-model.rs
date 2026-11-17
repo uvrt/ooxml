@@ -1,7 +1,8 @@
 //! `chart-model <file.pptx|.docx|.xlsx|.xml>...`: each file's chart parts read by
 //! `ooxml-chart`, one JSON line a file; `chart-model --layout < cases`: each case (a JSON line
 //! naming a chart and its frame) laid out, one JSON line a case (`python/chart_diff.py`
-//! compares both with ooxml-common).
+//! compares both with ooxml-common); `chart-model --bench [ROOT]`: the frozen cases laid out,
+//! timed.
 
 use std::io::Read;
 use std::process::ExitCode;
@@ -20,6 +21,9 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let result = if args.first().map(String::as_str) == Some("--layout") {
         layout()
+    } else if args.first().map(String::as_str) == Some("--bench") {
+        let root = args.get(1).cloned().unwrap_or_else(|| ".".into());
+        ooxml_oracle::chart::bench(&root).map(|record| println!("{record}"))
     } else {
         args.iter().try_for_each(|path| {
             let record = ooxml_oracle::chart::file(path)?;
