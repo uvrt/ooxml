@@ -1,0 +1,15 @@
+# The package relationships part (`_rels/*.rels`): the source of src/rels.rs
+# (`cargo xtask codegen`; the grammar is in xtask/src/codegen.rs). ooxml-opc reads the
+# relationships of a package with its own rules (the exact namespace); these views are for a
+# reader or a writer that holds the part's tree.
+
+ns pr http://schemas.openxmlformats.org/package/2006/relationships
+
+view Relationships Relationships pr | `Relationships`, a relationships part's root.
+  children items Relationship Relationship
+  order Relationship
+view Relationship Relationship pr | `Relationship`: one id, its type, its target and the target's mode.
+  attr id str Id
+  attr rel_type str Type
+  attr target str Target
+  attr target_mode str TargetMode

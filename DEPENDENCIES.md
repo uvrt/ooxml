@@ -7,7 +7,7 @@ theirs until they are replaced.
 
 | Dependency | Licence | Used by | Why |
 |---|---|---|---|
-| `thiserror` 2 | MIT or Apache-2.0 | ooxml-base, ooxml-xml, ooxml-zip, ooxml-opc, ooxml-derive, ooxml-store, ooxml-word-model | One typed error enum per crate (section 2.5). Approved (Q7). |
+| `thiserror` 2 | MIT or Apache-2.0 | ooxml-base, ooxml-xml, ooxml-zip, ooxml-opc, ooxml-derive, ooxml-store, ooxml-word-model, ooxml-colour | One typed error enum per crate (section 2.5). Approved (Q7). |
 | `num-rational`, `num-integer`, `num-traits` | MIT or Apache-2.0 | ooxml-base | Exact rationals (`Q`) for layout arithmetic, as the prototype's `units.rs` (which `ooxml_base::units` comes from) uses them; already in the workspace. |
 | `flate2` 1, `zlib-rs` backend only (pulls `zlib-rs`, Zlib) | MIT or Apache-2.0 | ooxml-zip | Raw deflate and inflate of ZIP entries, in Rust (no C zlib). Approved (Q7: "flate2 with zlib-rs"). |
 | `arc-swap` 1 | MIT or Apache-2.0 | ooxml-store | The published head version: readers load it without a lock and never wait for a writer (section 6). Approved (Q7). |
@@ -15,7 +15,7 @@ theirs until they are replaced.
 | `read-fonts` 0.47 (fontations; pulls `font-types`, `bytemuck` with `bytemuck_derive`, `yoke` with `yoke-derive`, `zerofrom` with `zerofrom-derive`, `stable_deref_trait`, `synstructure`) | MIT or Apache-2.0 (`bytemuck`: Zlib, Apache-2.0 or MIT; `yoke`, `zerofrom`: Unicode-3.0) | ooxml-fonts | The one sfnt reader (section 2.2): font collections and table directories, and the bounds-checked big-endian reads every table field is taken with. Approved (Q7, "the fontations crates"). `skrifa` is not taken: no outline or shaping is read yet. |
 | `flate2` (as above) | | ooxml-text | Reading the gzip-compressed English hyphenation word list docx2svg ships (`patterns/en-moby.txt.gz`), compiled in. |
 | `num-rational`, `num-integer`, `num-traits` (as above) | | ooxml-text | Exact widths in 1/4096 pt (`Units`): an advance at a size is a rational wherever the face's units per em does not divide it. |
-| `serde_json` 1 (with `serde`; `preserve_order` pulls `indexmap`; already in the workspace) | MIT or Apache-2.0 | ooxml-oracle (test support only) | Reading docx2svg's differential records (the text engine's), and writing the Word model as JSON for `crates/ooxml-oracle/python/word_model_diff.py` to compare with docx2svg's field by field. Accepted as test support (2026-11-17). No shipped crate depends on it. |
+| `serde_json` 1 (with `serde`; `preserve_order` pulls `indexmap`; already in the workspace) | MIT or Apache-2.0 | ooxml-oracle (test support only) | Reading docx2svg's differential records (the text engine's), and writing the Word model as JSON for `crates/ooxml-oracle/python/word_model_diff.py` to compare with docx2svg's field by field, and DrawingML's model and resolved colours for `crates/ooxml-oracle/python/drawingml_diff.py` to compare with ooxml-common's. Accepted as test support (2026-11-17). No shipped crate depends on it. |
 | `libfuzzer-sys` 0.4 (pulls `arbitrary`, `cc`) | MIT or Apache-2.0, NCSA | `fuzz/` only (its own workspace) | cargo-fuzz's harness for the fuzz targets section 11 asks for; never part of a shipped crate. |
 
 Considered and not taken:

@@ -1,0 +1,228 @@
+# Charts (`c:`): the source of src/c.rs (`cargo xtask codegen`; the grammar is in
+# xtask/src/codegen.rs). What a chart reader asks of a chart part -- the chart, its plot
+# area and plots, series and their data, each axis, the legend, titles, labels and 3-D view -- with
+# the schema's child sequences as the repository's insertion tables state them. A chart's
+# shape and text properties (`c:spPr`, `c:txPr`, `c:rich`) are DrawingML, read through
+# `crate::a`.
+#
+# Elements are found by local name, as ooxml-common reads them.
+
+ns c http://schemas.openxmlformats.org/drawingml/2006/chart
+ns r http://schemas.openxmlformats.org/officeDocument/2006/relationships
+
+view Any * | Any element, read by its children and attributes alone.
+  all elements Any
+  alltext content
+view Val * | An element whose meaning is its `val` (most of a chart's settings).
+  attr val str val
+  attr num num val
+view Formatted * | Any element of a chart part, with its shape and text properties.
+  child shape_properties Any spPr
+  child text_properties Any txPr
+
+view ChartSpace chartSpace c | `c:chartSpace`, a chart part's root.
+  child date1904 Val date1904
+  child rounded_corners Val roundedCorners
+  child colour_map_override Any clrMapOvr
+  child chart Chart chart
+  child shape_properties Any spPr
+  child text_properties Any txPr
+  child external_data ExternalData externalData
+  order date1904 lang roundedCorners AlternateContent style clrMapOvr pivotSource protection chart spPr txPr externalData printSettings userShapes extLst
+view ExternalData externalData c | `c:externalData`: the embedded workbook's relationship.
+  nsattr id r id
+  child auto_update Val autoUpdate
+view Chart chart c | `c:chart`: title, 3-D view, plot area, legend and how blanks show.
+  child title Title title
+  child auto_title_deleted Val autoTitleDeleted
+  child view_3d View3D view3D
+  child plot_area PlotArea plotArea
+  child legend Legend legend
+  child plot_visible_only Val plotVisOnly
+  child display_blanks_as Val dispBlanksAs
+  order title autoTitleDeleted pivotFmts view3D floor sideWall backWall plotArea legend plotVisOnly dispBlanksAs showDLblsOverMax extLst
+view Title title c | `c:title`: text, overlay, and shape and text properties.
+  child text Tx tx
+  child overlay Val overlay
+  child shape_properties Any spPr
+  child text_properties Any txPr
+  order tx layout overlay spPr txPr extLst
+view Tx tx c | `c:tx`: a reference, rich text or a value.
+  child reference DataReference strRef
+  child rich Any rich
+  child value Any v
+  order strRef rich v
+view View3D view3D c | `c:view3D`: rotations, depth, height and perspective.
+  child rot_x Val rotX
+  child rot_y Val rotY
+  child depth_percent Val depthPercent
+  child h_percent Val hPercent
+  child right_angle Val rAngAx
+  child perspective Val perspective
+  order rotX hPercent rotY depthPercent rAngAx perspective extLst
+view PlotArea plotArea c | `c:plotArea`: plots (one per chart kind) and each axis, in order.
+  all members Any
+  child shape_properties Any spPr
+  order layout areaChart/area3DChart/lineChart/line3DChart/stockChart/radarChart/scatterChart/pieChart/pie3DChart/doughnutChart/barChart/bar3DChart/ofPieChart/surfaceChart/surface3DChart/bubbleChart valAx/catAx/dateAx/serAx dTable spPr extLst
+view Plot * | A plot (`c:barChart`, `c:lineChart`, `c:pieChart`...): its settings, series and axis ids.
+  children series Series ser
+  children axis_ids Val axId
+  child grouping Val grouping
+  child vary_colours Val varyColors
+  child bar_direction Val barDir
+  child gap_width Val gapWidth
+  child gap_depth Val gapDepth
+  child overlap Val overlap
+  child shape Val shape
+  child hole_size Val holeSize
+  child first_slice_angle Val firstSliceAng
+  child scatter_style Val scatterStyle
+  child radar_style Val radarStyle
+  child marker Val marker
+  child data_labels DataLabels dLbls
+  child bubble_scale Val bubbleScale
+  child size_represents Val sizeRepresents
+  child show_negative_bubbles Val showNegBubbles
+  child bubble_3d Val bubble3D
+  child of_pie_type Val ofPieType
+  child split_type Val splitType
+  child split_position Val splitPos
+  child custom_split CustomSplit custSplit
+  child second_pie_size Val secondPieSize
+  child series_lines Formatted serLines
+  child hi_low_lines Formatted hiLowLines
+  child up_down_bars UpDownBars upDownBars
+  child wireframe Val wireframe
+  child band_formats BandFormats bandFmts
+view CustomSplit custSplit c | `c:custSplit`: the points an of-pie chart moves to its second plot.
+  children points Val secondPiePt
+view UpDownBars upDownBars c | `c:upDownBars`.
+  child gap_width Val gapWidth
+  child up Formatted upBars
+  child down Formatted downBars
+view BandFormats bandFmts c | `c:bandFmts` of a surface chart.
+  children formats BandFormat bandFmt
+view BandFormat bandFmt c | `c:bandFmt`.
+  child idx Val idx
+  child shape_properties Any spPr
+view Series ser c | `c:ser`: index, order, name, formatting, points and data.
+  child idx Val idx
+  child order Val order
+  child name Tx tx
+  child shape_properties Any spPr
+  child invert_if_negative Val invertIfNegative
+  child marker Marker marker
+  child explosion Val explosion
+  children data_points DataPoint dPt
+  child data_labels DataLabels dLbls
+  child categories DataSource cat
+  child x_values DataSource xVal
+  child values DataSource val
+  child y_values DataSource yVal
+  child bubble_sizes DataSource bubbleSize
+  child bubble_3d Val bubble3D
+  child shape Val shape
+  child smooth Val smooth
+  child extensions Any extLst
+  order idx order tx spPr invertIfNegative pictureOptions marker explosion dPt dLbls trendline errBars cat xVal val yVal bubbleSize bubble3D shape smooth extLst
+view DataSource * | `c:cat`, `c:val`, `c:xVal`, `c:yVal`, `c:bubbleSize`: a reference or a literal.
+  child number_reference DataReference numRef
+  child string_reference DataReference strRef
+  child multi_level_reference DataReference multiLvlStrRef
+  child number_literal DataCache numLit
+  child string_literal DataCache strLit
+  child multi_level_literal DataCache multiLvlStrLit
+view DataReference * | `c:numRef`, `c:strRef`, `c:multiLvlStrRef`: a formula and its cache.
+  child formula Any f
+  child number_cache DataCache numCache
+  child string_cache DataCache strCache
+  child multi_level_cache DataCache multiLvlStrCache
+  order f numCache/strCache/multiLvlStrCache extLst
+view DataCache * | `c:numCache`, `c:strCache`, a literal, or a level: points and their count.
+  child format_code Any formatCode
+  child point_count Val ptCount
+  children points DataPoint pt
+  children levels DataCache lvl
+  order formatCode ptCount pt/lvl extLst
+view DataPoint * | `c:pt` (a cached value) or `c:dPt` (a point's own formatting).
+  attr idx num idx
+  attr format_code str formatCode
+  child index Val idx
+  child value Any v
+  child invert_if_negative Val invertIfNegative
+  child marker Marker marker
+  child explosion Val explosion
+  child shape_properties Any spPr
+view Marker marker c | `c:marker`: symbol, size and formatting.
+  child symbol Val symbol
+  child size Val size
+  child shape_properties Any spPr
+  order symbol size spPr extLst
+view DataLabels dLbls c | `c:dLbls`: what each label shows, where, and as what format.
+  children labels DataLabel dLbl
+  child delete Val delete
+  child number_format NumberFormat numFmt
+  child shape_properties Any spPr
+  child text_properties Any txPr
+  child position Val dLblPos
+  child show_legend_key Val showLegendKey
+  child show_value Val showVal
+  child show_category_name Val showCatName
+  child show_series_name Val showSerName
+  child show_percent Val showPercent
+  child show_bubble_size Val showBubbleSize
+  child show_leader_lines Val showLeaderLines
+  order dLbl delete numFmt spPr txPr dLblPos showLegendKey showVal showCatName showSerName showPercent showBubbleSize separator showLeaderLines leaderLines extLst
+view DataLabel dLbl c | `c:dLbl`: one point's label.
+  child idx Val idx
+  child delete Val delete
+  child text Tx tx
+  child number_format NumberFormat numFmt
+  child shape_properties Any spPr
+  child text_properties Any txPr
+  child position Val dLblPos
+  order idx delete layout tx numFmt spPr txPr dLblPos showLegendKey showVal showCatName showSerName showPercent showBubbleSize separator extLst
+view NumberFormat numFmt c | `c:numFmt`: a format code, and whether it follows the source.
+  attr format_code str formatCode
+  attr source_linked str sourceLinked
+view Axis * | `c:catAx`, `c:valAx`, `c:dateAx`, `c:serAx`.
+  child id Val axId
+  child scaling Scaling scaling
+  child delete Val delete
+  child position Val axPos
+  child major_gridlines Formatted majorGridlines
+  child minor_gridlines Formatted minorGridlines
+  child title Title title
+  child number_format NumberFormat numFmt
+  child major_tick_mark Val majorTickMark
+  child minor_tick_mark Val minorTickMark
+  child tick_label_position Val tickLblPos
+  child shape_properties Any spPr
+  child text_properties Any txPr
+  child cross_axis Val crossAx
+  child crosses Val crosses
+  child crosses_at Val crossesAt
+  child cross_between Val crossBetween
+  child major_unit Val majorUnit
+  child minor_unit Val minorUnit
+  child label_align Val lblAlgn
+  child label_offset Val lblOffset
+  child tick_label_skip Val tickLblSkip
+  child tick_mark_skip Val tickMarkSkip
+view Scaling scaling c | `c:scaling`: orientation, bounds and logarithmic base.
+  child log_base Val logBase
+  child orientation Val orientation
+  child max Val max
+  child min Val min
+  order logBase orientation max min extLst
+view Legend legend c | `c:legend`: position, entries and overlay.
+  child position Val legendPos
+  children entries LegendEntry legendEntry
+  child overlay Val overlay
+  child shape_properties Any spPr
+  child text_properties Any txPr
+  order legendPos legendEntry layout overlay spPr txPr extLst
+view LegendEntry legendEntry c | `c:legendEntry`: one entry, deleted or formatted.
+  child idx Val idx
+  child delete Val delete
+  child text_properties Any txPr
