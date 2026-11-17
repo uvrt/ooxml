@@ -28,8 +28,8 @@ writers' Python edits. The answers are today's (`tests/test_rust_reads_on.py`).
   an address naming an id this session renamed or deleted; a regular expression whose
   meaning Rust could read otherwise (one that can match nothing, the flags `x`, `a`, `L`,
   `u`, octal escapes, `\N{...}`, conditionals); a chart's or SmartArt diagram's summary
-  (phase P3); a final view where Accept All takes a cell's end away. A refusal Rust answers
-  is raised as Python raises it.
+  (phase P3); a final view where Accept All takes a cell's end away; a refusal (Rust's carries
+  its own way out, today's does not).
 - `docx_agent.rust.reads.use_session(session)` answers the reads in an application's own
   `ooxml_core.Session` (`None`: by the Python path).
 - `RustTools.dispatch` reads `ooxml_core.Session.call`'s new third item.

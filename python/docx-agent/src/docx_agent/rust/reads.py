@@ -25,9 +25,9 @@ version's read copy (a batch's reads of its own changes); limits other than the 
 Rust paging uses; an address naming an id this session renamed or deleted (the ledger and
 the aliases are Python's until P2); a regular expression Rust does not match as Python does;
 and what Rust says it does not give as Python does yet (its ``unported``: a chart's or
-SmartArt diagram's summary until phase P3, Accept All's cell ends).  A refusal Rust answers
-is raised as Python raises it (the same words, P1b); its ``try_call`` is the Rust tools' own
-and is not sent, so the answer is today's.
+SmartArt diagram's summary until phase P3, Accept All's cell ends).  A refusal goes to the Python
+path too: Rust's carries its own way out (``valid_options``, ``field``, ``try_call``, tool
+rule 2), which today's does not, so the reply stays today's.
 """
 
 from __future__ import annotations
@@ -270,12 +270,10 @@ def _call(call: Any, tool: str, arguments: dict[str, Any], *, placer: "Placer | 
     envelope = json.loads(reply)
     error = envelope.get("error")
     if error is not None:
-        if error.get("field") == "regex":
-            raise _Fallback("regex")
-        # Worded as Python words it (P1b: the same refusals); its way out (try_call) is the
-        # Rust tools' own, not today's.
-        raise ToolError(error["code"], error["message"], field=error.get("field"),
-                        valid_options=error.get("valid_options"), details=error.get("details"))
+        # A refusal Rust words as Python does but with its own way out (valid_options,
+        # field, try_call: tool rule 2), which today's answer does not carry: answered by
+        # the Python path, so the reply is today's.
+        raise _Fallback("regex" if error.get("field") == "regex" else f"refusal: {error.get('code')}")
     unported = json.loads(app).get("unported") or []
     if unported:
         raise _Fallback(unported[0])
