@@ -2,7 +2,8 @@
 //! 8; layer 1).
 //!
 //! Owns: the one sfnt reader ([`Face`], on read-fonts), Office's measured face data (the
-//! recorded symbol faces, the substitution table, PowerPoint's measured tables
+//! recorded symbol faces and what a symbol face's codes stand for in Unicode ([`symbols`]),
+//! the substitution table, PowerPoint's measured tables
 //! ([`office`])), the `font-family` stack a drawing names a face with ([`css`]), Word's font
 //! lookup order and
 //! substitution grades ([`WordFonts`], [`Grade`]), embedded faces, and the fonts epoch a
@@ -31,6 +32,7 @@ pub mod scan;
 pub mod sfnt;
 pub mod store;
 pub mod substitutes;
+pub mod symbols;
 pub mod word;
 
 pub use catalogue::{Catalogue, FaceLoc, Folder, Location, WORD_PREFER_BUNDLE};

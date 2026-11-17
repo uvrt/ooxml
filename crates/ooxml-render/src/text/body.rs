@@ -5,6 +5,7 @@
 //!
 //! Must not: draw the shape the text belongs to.
 
+use super::bullet::{bullet_size_pt, bullet_span, bullet_text, picture_bullet};
 use super::line::{leading, line_highlights, render_line, Dy, Highlight, LineContext, Oblique};
 use super::metrics::{
     default_ascender_ratio, default_font_size, default_line_ratio, estimate_height, first_baseline_px, line_descent,
@@ -17,11 +18,8 @@ use crate::geometry::{text_area, TextGeometry};
 use crate::measure::PX_PER_PT;
 use crate::rules::{Autofit, BlankParagraphs, FirstBaseline};
 use crate::units::{emu_to_px, px_to_emu};
-use ooxml_drawingml::drawable::{
-    BodyProperties, Bullet, Paragraph, ParagraphProperties, RunProperties, TextBody, Transform,
-};
-use ooxml_fonts::font_family_value;
-use ooxml_scene::markup::{Attr, Element, Op, Sep, Tag, Value};
+use ooxml_drawingml::drawable::{BodyProperties, Paragraph, ParagraphProperties, RunProperties, TextBody, Transform};
+use ooxml_scene::markup::{Element, Op, Sep, Tag, Value};
 use std::collections::HashMap;
 
 /// The text box's dimensions and insets, px, turned for vertical text.
@@ -615,144 +613,6 @@ impl Flow<'_> {
         ));
         self.first_line = false;
     }
-}
-
-fn picture_bullet(props: &ParagraphProperties) -> Option<(&str, &str)> {
-    match &props.bullet {
-        Some(Bullet::Picture { data, mime }) => Some((data.as_str(), mime.as_str())),
-        _ => None,
-    }
-}
-
-fn bullet_text(props: &ParagraphProperties, counters: &mut HashMap<String, i64>) -> Option<String> {
-    match props.bullet.as_ref()? {
-        Bullet::Char(c) => Some(c.clone()),
-        Bullet::AutoNumber { scheme, start } => {
-            let key = format!("{scheme}-{}", props.level);
-            let count = counters.entry(key).or_insert(0);
-            *count += 1;
-            Some(format_auto_num(scheme, start + *count - 1))
-        }
-        Bullet::None | Bullet::Picture { .. } => None,
-    }
-}
-
-/// An automatic number as its scheme writes it.
-pub fn format_auto_num(scheme: &str, index: i64) -> String {
-    match scheme {
-        "arabicParenR" => format!("{index})"),
-        "arabicPlain" => index.to_string(),
-        "romanUcPeriod" => format!("{}.", roman(index)),
-        "romanLcPeriod" => format!("{}.", roman(index).to_lowercase()),
-        "alphaUcPeriod" => format!("{}.", alpha(index)),
-        "alphaLcPeriod" => format!("{}.", alpha(index).to_lowercase()),
-        "alphaUcParenR" => format!("{})", alpha(index)),
-        "alphaLcParenR" => format!("{})", alpha(index).to_lowercase()),
-        _ => format!("{index}."),
-    }
-}
-
-fn roman(number: i64) -> String {
-    const NUMERALS: [(i64, &str); 13] = [
-        (1000, "M"),
-        (900, "CM"),
-        (500, "D"),
-        (400, "CD"),
-        (100, "C"),
-        (90, "XC"),
-        (50, "L"),
-        (40, "XL"),
-        (10, "X"),
-        (9, "IX"),
-        (5, "V"),
-        (4, "IV"),
-        (1, "I"),
-    ];
-    let mut out = String::new();
-    let mut remaining = number;
-    for (value, symbol) in NUMERALS {
-        while remaining >= value {
-            out.push_str(symbol);
-            remaining -= value;
-        }
-    }
-    out
-}
-
-fn alpha(number: i64) -> String {
-    let mut out = Vec::new();
-    let mut remaining = number;
-    while remaining > 0 {
-        remaining -= 1;
-        out.push(char::from(b'A' + u8::try_from(remaining.rem_euclid(26)).unwrap_or(0)));
-        remaining = remaining.div_euclid(26);
-    }
-    out.iter().rev().collect()
-}
-
-fn bullet_size_pt(props: &ParagraphProperties, text_size: f64) -> f64 {
-    if let Some(points) = props.bullet_size_points {
-        return points;
-    }
-    if let Some(percent) = props.bullet_size_percent {
-        return text_size * (percent / 100_000.0);
-    }
-    text_size
-}
-
-fn bullet_span(
-    props: &ParagraphProperties,
-    text_size: f64,
-    first: &RunProperties,
-    text: &str,
-    x: f64,
-    dy: Dy,
-    painter: &Painter<'_>,
-) -> Element {
-    let mut styles: Vec<Attr> = Vec::new();
-    let size = bullet_size_pt(props, text_size);
-    if size != 0.0 {
-        styles.push(Attr {
-            name: "font-size",
-            value: Value::Num(size * PX_PER_PT),
-        });
-    }
-    let chain: Vec<&str> = [
-        props.bullet_font.as_deref(),
-        first.font_family.as_deref(),
-        first.font_family_ea.as_deref(),
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
-    if let Some(family) = font_family_value(&chain, &painter.font_mapping) {
-        styles.push(Attr {
-            name: "font-family",
-            value: Value::Text(family),
-        });
-    }
-    if let Some(c) = &props.bullet_colour {
-        styles.push(Attr {
-            name: "fill",
-            value: Value::Word(c.hex.clone()),
-        });
-        if c.alpha < 1.0 {
-            styles.push(Attr {
-                name: "fill-opacity",
-                value: Value::Num(c.alpha),
-            });
-        }
-    } else if let Some(c) = &first.colour {
-        styles.push(Attr {
-            name: "fill",
-            value: Value::Word(c.hex.clone()),
-        });
-    }
-    let mut span = Element::open(Tag::Tspan);
-    span.attrs = leading(x, Some(dy), "start");
-    span.attrs.extend(styles);
-    span.push_text(text);
-    span
 }
 
 /// `spAutoFit`'s height for a body in `transform`, EMU in the caller's space; `None` where

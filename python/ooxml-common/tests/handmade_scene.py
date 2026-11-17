@@ -133,7 +133,20 @@ def _text_shapes() -> list:
         shape(box(2.4, 5.1, 1.2, 1.0, rotation=45, flip_h=True), text(para(run("turned and flipped"))),
               preset="triangle", fill=m.SolidFill(color("#FBE5D6"))),
         *vertical,
+        _custom_text_rect(),
     ]
+
+
+def _custom_text_rect() -> m.ShapeElement:
+    """A custom geometry with its own text rectangle (``a:custGeom/a:rect``), named by its
+    guides: the text is laid out in the rectangle, not the box."""
+    spec = ((), (("inset", "*/ w 1 5"), ("far", "+- r 0 inset"), ("low", "*/ h 2 3")),
+            (("norm", True, None, (("M", "l", "t"), ("L", "r", "t"), ("L", "r", "b"), ("L", "l", "b"), ("Z",))),))
+    geometry = m.CustomGeometry(paths=[m.CustomGeometryPath(width=2377440, height=1097280,
+                                                            commands="M 0 0 L 2377440 0 L 2377440 1097280 L 0 1097280 Z")])
+    return m.ShapeElement(transform=box(7.0, 2.5, 2.6, 1.2), geometry=geometry, fill=m.SolidFill(color("#DEEBF7")),
+                          text_body=text(para(run("laid out in the geometry's own text rectangle"))),
+                          text_rect=(("custom", spec), ("inset", "t", "far", "low")))
 
 
 def _groups() -> list:

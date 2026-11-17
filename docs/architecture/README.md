@@ -170,7 +170,7 @@ L5  ooxml-session (sessions, documents, refs, datasets, blobs, outputs, schedule
 L4  ooxml-tools (contract: specs, strict-schema derive, validation, results, refusals, budgets, batch)
     ooxml-tools-word   ooxml-tools-slides   ooxml-tools-sheets   (tool handlers = commands)
 L3  ooxml-word  ooxml-word-layout   ooxml-slides  ooxml-slides-layout   ooxml-sheets
-L2  ooxml-drawingml  ooxml-chart  ooxml-metafile  ooxml-scene  ooxml-render (SVG writer, PNG via resvg)
+L2  ooxml-drawingml  ooxml-chart  ooxml-metafile  ooxml-scene  ooxml-render (SVG writer)  ooxml-raster (PNG via resvg)
 L1  ooxml-opc  ooxml-schema (generated shared views: rels, mc, a:, c:)  ooxml-text  ooxml-fonts
     ooxml-colour (theme, transforms)  ooxml-numfmt (formats, dates, locales)  ooxml-markdown
 L0  ooxml-base (units, exact arithmetic, ids, digests, errors, Context ports)  ooxml-xml (lossless tree)
@@ -225,8 +225,12 @@ What each crate owns, the outline of its API, and what it must not do:
 - **`ooxml-scene`**
   - Owns: the display list (paths, glyph runs, images, groups, clips, live-view ids). Two forms (lane P3c): the metafile players' typed nodes, and the DrawingML painter's `markup` -- elements in SVG's vocabulary with typed attribute values kept in their producer's order, because ooxml-common's string-built SVG fixes that order and the goldens are byte for byte.
 - **`ooxml-render`**
-  - Owns: the DrawingML painter -- drawables (a chart's, a slide's, a document's) lowered onto the scene under Word's or PowerPoint's drawing rules as data, text measured through `ooxml-fonts` (lane P3c; `ooxml-drawingml` and `ooxml-scene` share a layer, so the lowering sits above both) -- and the scene's adapters: a typed SVG writer with stable ids and exact numbers; PNG via resvg and tiny-skia in process; outline text.
-  - Must not: re-parse SVG. (Open, lane P3c: usvg 0.48, the version resvg-py ships, builds its tree only by parsing SVG; see DEPENDENCIES.md.)
+  - Owns: the DrawingML painter -- drawables (a chart's, a slide's, a document's) lowered onto the scene under Word's or PowerPoint's drawing rules as data, text measured through `ooxml-fonts` (lane P3c; `ooxml-drawingml` and `ooxml-scene` share a layer, so the lowering sits above both) -- and the pieces a page painter calls directly (lane P3d): fills, outlines and effects at the page's dpi, an element's place on its page (`ShapeFrame`), Word's drawn arrowheads, a geometry as path data with its ends and cuts, symbol faces drawn as Unicode; the scene's typed SVG writer with stable ids and exact numbers; outline text.
+  - Must not: re-parse SVG.
+- **`ooxml-raster`** (lane P3d; beside `ooxml-render`, layer 2)
+  - Owns: PNG -- the typed writer's SVG drawn by resvg and tiny-skia in process, with a font database built once from the files, folders and system fonts resvg-py is handed (`FontSet`) and shared by every drawing after.
+  - Must not: write or rewrite SVG; the SVG it is given is the one handed out (decision 11).
+  - Re-parses SVG in memory: the one exception to `ooxml-render`'s rule (decision 11).
 - **`ooxml-word`**
   - Owns: generated `w:` views; the styles cascade; numbering and labels; fields; sections; one address resolver; the id ledger; the tracked-change policy; validation rules; Markdown in and out; the edit commands.
   - Must not: lay out pages.
@@ -450,7 +454,7 @@ version ──► resolve (styles cascade, numbering, fields threading; memo per
             field passes until PAGE/NUMPAGES/PAGEREF/TOC settle)
         ──► geometry (per page, lazy: lines, tables, floats, notes, headers and footers)
         ──► paint (Scene display list per page, lazy, keyed by content)
-        ──► adapters: SVG (typed writer), PNG (resvg in process), live-view ids, outlines
+        ──► adapters: SVG (typed writer), PNG (resvg in process, after SVG), live-view ids, outlines
 ```
 
 - **Invariant: relayout equals full layout,** byte for byte in SVG. This is a property test (docx2svg's `test_relayout`, kept), with fixed seeds on PRs and many seeds nightly.
@@ -464,7 +468,8 @@ version ──► resolve (styles cascade, numbering, fields threading; memo per
 - **Caches are keyed by content:** measures by (block digest, resolved format, width, fonts epoch, locale), page paint by page digest. There are no pickles.
 - **Exact arithmetic:** layout uses integer rationals and fixed point, as docx2svg does. No floating point enters a pagination decision.
 - **Charts and metafiles** lower to a `Scene`, never to SVG strings. EMF/WMF rendering follows Windows.
-- **resvg, usvg and fontdb** are linked at the version resvg-py ships today, so PNGs stay the same (to be verified in P3).
+- **resvg, usvg and fontdb** are linked at the version resvg-py ships today, so PNGs stay the same (verified in lane P3d: every resvg-py call of the corpus' pages and decks drawn again pixel for pixel).
+- **SVG is an output in its own right** (the live view shows it, the tools return it): the typed writer stays first-class, byte-identical and fast on its own, `data-*` ids included. PNG is one more step after it, never a replacement, and the SVG is never trimmed for usvg's sake: what usvg needs differently is changed on the way in (decision 11).
 - **Today's `crates/word` engine** (paginate, line breaking and field passes, which matched docx2svg exactly) seeds `ooxml-word-layout`. It is refactored to named types, without tuples, `allow(too_many_arguments)` or JSON input.
 
 A detailed design of the layout engine is a later lane. These boundaries fix its inputs (resolved, measured blocks of a version) and its outputs (pages, facts, scenes).
@@ -895,3 +900,11 @@ The user's answers to §14's questions (2026-11-16):
 10. **The Word layout moves to Rust as the priority (2026-11-16).** After production's large tracked report, the
     layout (phase PL) comes right after the foundation and before the edit phases, with the fidelity gates unchanged
     (SVG byte-identical, relayout equals full).
+11. **PNG re-parses the writer's SVG in process (2026-11-17), an exception to section 8's "no SVG
+    re-parse".** usvg 0.48.1, the version resvg-py 0.5.0 ships, builds its tree only by parsing SVG:
+    its node constructors are crate-private. So `ooxml-raster` hands the typed writer's SVG to usvg
+    in memory (`roxmltree` with DTDs allowed, as resvg-py parses), and resvg draws it with a font
+    database built once and shared. The PNGs stay pixel-identical to resvg-py's, which a scene →
+    usvg tree conversion could not promise. The SVG stays the output in its own right (section 8);
+    PNG is an extra step after it. *Revisit* when a usvg release with public tree constructors is
+    the one resvg-py ships too: then the scene can go to usvg's tree directly.
