@@ -3,7 +3,7 @@
 //! arrowheads, the line cut back for them) in a group carrying its effects, a group's
 //! members in its child coordinates scaled onto its box (a member's `a:grpFill` the
 //! group's fill over the group's box), a chart or SmartArt by their painters, and a marked
-//! placeholder for what cannot be drawn -- each element turned by its own and its groups'
+//! stand-in box for what cannot be drawn -- each element turned by its own and its groups'
 //! rotations and flips; what is not drawn faithfully said as warning codes.
 //!
 //! Must not: lay out a text box's text (the caller does, from [`Drawn::text_boxes`]), or
@@ -278,8 +278,8 @@ impl Draw<'_, '_, '_> {
         self.draw(graphic, at, path, &Enclosing::default());
     }
 
-    fn placeholder(&mut self, graphic: Option<&Graphic>, at: &PxBox, path: &str) {
-        self.drawn.primitives.push(Primitive::Placeholder {
+    fn stand_in(&mut self, graphic: Option<&Graphic>, at: &PxBox, path: &str) {
+        self.drawn.primitives.push(Primitive::StandIn {
             path: path.to_owned(),
             at: *at,
             what: "drawing".into(),
@@ -320,7 +320,7 @@ impl Draw<'_, '_, '_> {
             }
         }
         let Some(g) = graphic.filter(|g| !matches!(&*g.kind, "other" | "chart" | "diagram")) else {
-            self.placeholder(graphic.map(AsRef::as_ref), at, path);
+            self.stand_in(graphic.map(AsRef::as_ref), at, path);
             return;
         };
         for name in g.unsupported.iter() {

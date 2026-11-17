@@ -1,6 +1,6 @@
 //! Owns: what a drawing paints, as docx2svg's `drawing.Primitive`s ([`Primitive`]), and
 //! their markup as `svg._float` writes it, one line each: a path with its paint, an image
-//! in its box (cropped as pptx2svg crops, turned by its transform), a placeholder of a box,
+//! in its box (cropped as pptx2svg crops, turned by its transform), a stand-in box,
 //! markup a renderer wrote whole (an arrowhead, a chart), and the groups that carry a
 //! shape's effects.
 //!
@@ -53,8 +53,8 @@ pub enum Primitive {
         /// The fractions cut off its left, top, right and bottom.
         crop: Option<[Q; 4]>,
     },
-    /// A placeholder of a box.
-    Placeholder {
+    /// A stand-in box of a box's extent.
+    StandIn {
         /// Its element's path.
         path: String,
         /// Its box.
@@ -88,7 +88,7 @@ impl Primitive {
         match self {
             Primitive::Path { path, .. }
             | Primitive::Image { path, .. }
-            | Primitive::Placeholder { path, .. }
+            | Primitive::StandIn { path, .. }
             | Primitive::Markup { path, .. }
             | Primitive::Begin { path, .. } => Some(path),
             Primitive::End => None,
@@ -122,8 +122,8 @@ fn line(element: &Element) -> String {
     text
 }
 
-/// A placeholder of a box (`_placeholder`).
-pub fn placeholder(at: &PxBox, path: &str, what: &str) -> String {
+/// A stand-in box of a box's extent (`_placeholder`).
+pub fn stand_in(at: &PxBox, path: &str, what: &str) -> String {
     let rect = Element::new("rect")
         .attr("x", n(at.x))
         .attr("y", n(at.y))
@@ -151,7 +151,7 @@ pub struct ImageSource<'a> {
     pub part: Option<&'a str>,
 }
 
-/// A picture in its box, or a placeholder (`_picture`); `None` beside the markup, or what
+/// A picture in its box, or a stand-in box (`_picture`); `None` beside the markup, or what
 /// is said of a picture that cannot be carried.
 fn image(
     (path, relationship, at): (&str, Option<&str>, &PxBox),
@@ -173,7 +173,7 @@ fn image(
         } else {
             "picture format"
         };
-        return (placeholder(at, path, what), said);
+        return (stand_in(at, path, what), said);
     };
     let href = Value::Data { mime, bytes };
     let Some([left, top, right, bottom]) = crop else {
@@ -266,7 +266,7 @@ pub fn lines(primitives: &[Primitive], source: &ImageSource<'_>) -> (Vec<String>
                 said.extend(warned);
                 text
             }
-            Primitive::Placeholder { path, at, what } => placeholder(at, path, what),
+            Primitive::StandIn { path, at, what } => stand_in(at, path, what),
         });
     }
     (out, said)

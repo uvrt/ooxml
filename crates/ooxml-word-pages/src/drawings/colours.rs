@@ -77,9 +77,9 @@ pub struct WordColours<'a> {
 pub type Said = Vec<String>;
 
 impl WordColours<'_> {
-    /// A colour choice resolved, `None` where it names nothing (warned); `placeholder` is
+    /// A colour choice resolved, `None` where it names nothing (warned); `ph_colour` is
     /// what `phClr` means.
-    pub fn resolve(&self, choice: &SourceColour, placeholder: Option<&Colour>, said: &mut Said) -> Option<Colour> {
+    pub fn resolve(&self, choice: &SourceColour, ph_colour: Option<&Colour>, said: &mut Said) -> Option<Colour> {
         let base = match choice {
             SourceColour::Srgb {
                 linear: Some(linear),
@@ -91,13 +91,13 @@ impl WordColours<'_> {
                 .clone()
                 .or_else(|| (value.chars().count() == 6).then(|| value.clone())),
             SourceColour::Scheme { slot, transforms } if slot == "phClr" => {
-                let Some(placeholder) = placeholder else {
+                let Some(reference) = ph_colour else {
                     said.push("drawing-colour-unknown:phClr".into());
                     return None;
                 };
-                let mut resolved = apply_transforms(&placeholder.hex, transforms, &WORD).ok()?;
-                if placeholder.alpha < 1.0 && !transforms.iter().any(|t| t.kind == ooxml_colour::TransformKind::Alpha) {
-                    resolved.alpha = placeholder.alpha;
+                let mut resolved = apply_transforms(&reference.hex, transforms, &WORD).ok()?;
+                if reference.alpha < 1.0 && !transforms.iter().any(|t| t.kind == ooxml_colour::TransformKind::Alpha) {
+                    resolved.alpha = reference.alpha;
                 }
                 return Some(upper(&resolved));
             }
@@ -131,13 +131,13 @@ impl WordColours<'_> {
     pub fn fill(
         &self,
         fill: &source::Fill,
-        placeholder: Option<&Colour>,
+        ph_colour: Option<&Colour>,
         group: Option<&Fill>,
         said: &mut Said,
     ) -> Option<Fill> {
         match fill {
             source::Fill::None => Some(Fill::None),
-            source::Fill::Solid(c) => self.resolve(c, placeholder, said).map(Fill::Solid),
+            source::Fill::Solid(c) => self.resolve(c, ph_colour, said).map(Fill::Solid),
             source::Fill::Gradient(g) => {
                 let stops: Vec<GradientStop> = g
                     .stops
@@ -145,7 +145,7 @@ impl WordColours<'_> {
                     .filter_map(|s| {
                         Some(GradientStop {
                             position: s.position,
-                            colour: self.resolve(&s.colour, placeholder, said)?,
+                            colour: self.resolve(&s.colour, ph_colour, said)?,
                         })
                     })
                     .collect();
@@ -169,8 +169,8 @@ impl WordColours<'_> {
                 })
             }
             source::Fill::Pattern(p) => {
-                let foreground = self.resolve(&p.foreground, placeholder, said);
-                let background = self.resolve(&p.background, placeholder, said);
+                let foreground = self.resolve(&p.foreground, ph_colour, said);
+                let background = self.resolve(&p.background, ph_colour, said);
                 Some(Fill::Pattern {
                     preset: p.preset.clone(),
                     foreground: foreground?,
@@ -198,8 +198,8 @@ impl WordColours<'_> {
             (&formats.fill_styles, reference.idx - 1)
         };
         let style = usize::try_from(index).ok().and_then(|i| styles.get(i))?;
-        let placeholder = self.reference_colour(reference, said);
-        self.fill(style, placeholder.as_ref(), None, said)
+        let ph_colour = self.reference_colour(reference, said);
+        self.fill(style, ph_colour.as_ref(), None, said)
     }
 
     fn reference_colour(&self, reference: &StyleRef, said: &mut Said) -> Option<Colour> {
@@ -220,7 +220,7 @@ impl WordColours<'_> {
         if line.is_none() && base.is_none() {
             return None;
         }
-        let placeholder = match (base, reference) {
+        let ph_colour = match (base, reference) {
             (Some(_), Some(r)) => self.reference_colour(r, said),
             _ => None,
         };
@@ -239,7 +239,7 @@ impl WordColours<'_> {
         let paint = merged
             .fill
             .as_ref()
-            .and_then(|f| self.fill(f, placeholder.as_ref(), None, said));
+            .and_then(|f| self.fill(f, ph_colour.as_ref(), None, said));
         let paint = match paint {
             None | Some(Fill::None) => return None,
             Some(p @ (Fill::Solid(_) | Fill::Gradient(_))) => p,
