@@ -62,7 +62,7 @@ pub fn side_axis_intervals(available_pt: f64, pitch_pt: f64) -> i64 {
     if !rungs.is_finite() {
         return AXIS_MAX_INTERVALS;
     }
-    (floor_int(rungs) - AXIS_END_LABEL_LINES).min(AXIS_MAX_INTERVALS).max(1)
+    (floor_int(rungs) - AXIS_END_LABEL_LINES).clamp(1, AXIS_MAX_INTERVALS)
 }
 
 /// How many intervals a radar's radial axis has room for.
@@ -74,7 +74,7 @@ pub fn radial_axis_intervals(radial_pt: f64, pitch_pt: f64) -> i64 {
     if !rungs.is_finite() {
         return AXIS_MAX_INTERVALS;
     }
-    floor_int(rungs).min(AXIS_MAX_INTERVALS).max(1)
+    floor_int(rungs).clamp(1, AXIS_MAX_INTERVALS)
 }
 
 /// How many intervals a horizontal value axis has room for.
@@ -90,7 +90,7 @@ pub fn bottom_axis_intervals(available_pt: f64, font_size_pt: f64, widest_label_
         return AXIS_MAX_INTERVALS;
     }
     let rungs = floor_int((available_pt - BOTTOM_AXIS_RESERVE_PT) / rung);
-    rungs.min(AXIS_MAX_INTERVALS).max(1)
+    rungs.clamp(1, AXIS_MAX_INTERVALS)
 }
 
 /// Python's `max(a, b)` of floats: `a` unless `b` is greater.

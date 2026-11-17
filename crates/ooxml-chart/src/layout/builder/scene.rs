@@ -19,6 +19,9 @@ use ooxml_drawingml::drawable::{Colour, Fill, Outline};
 /// A face of a slab: its sort key, polygon and normal.
 type SlabFace = (f64, Vec<Point>, Point3);
 
+/// A surface face: its polygon, band, shade and depth key.
+type SurfaceFace = (Vec<Point>, usize, f64, f64);
+
 /// `copysign(1.0, value)`.
 fn sign_of(value: f64) -> f64 {
     1.0_f64.copysign(value)
@@ -206,24 +209,53 @@ impl<'a> Builder<'a> {
     }
 
     /// A surface: its grid's triangles cut into bands, lit, painted back to front.
-    #[allow(clippy::too_many_lines)]
     pub fn draw_scene_surface(&mut self, rect: Rect, series: &[Series], categories: &[String], scale: Scale) {
-        let Some(scene) = self.group.scene else { return };
-        if series.len() < 2 || categories.len() < 2 {
+        if self.group.scene.is_none() || series.len() < 2 || categories.len() < 2 {
             return;
         }
-        let xs = self.category_positions(rect, categories.len());
+        let bands = self.value_bands(scale, None);
+        let mut faces = self.surface_faces(rect, series, categories.len(), scale, &bands);
+        faces.sort_by(|a, b| by_key(a.3, b.3));
+        let count = bands.len();
+        let wire = self.plot.wireframe == Some(true);
+        for (polygon, index, shade, _) in faces {
+            if wire {
+                let outline = self.band_outline(index, count);
+                self.polygon(&polygon, None, outline);
+                continue;
+            }
+            let fill = self.shade_factor(self.band_fill(index, count), shade, &self.band_colour(index, count));
+            let outline = match &fill {
+                Some(Fill::Solid(c)) => Some(Outline::solid(SURFACE_SEAM_WIDTH_EMU, c.clone())),
+                _ => None,
+            };
+            self.polygon(&polygon, fill, outline);
+        }
+    }
+
+    /// A surface grid's triangles cut into the value bands: each piece's polygon, band, shade
+    /// and depth key.
+    fn surface_faces(
+        &self,
+        rect: Rect,
+        series: &[Series],
+        count: usize,
+        scale: Scale,
+        bands: &[(f64, f64, String)],
+    ) -> Vec<SurfaceFace> {
+        let Some(scene) = self.group.scene else {
+            return Vec::new();
+        };
+        let xs = self.category_positions(rect, count);
         let blanks = self
             .chart
             .display_blanks_as
             .as_deref()
             .filter(|b| !b.is_empty())
             .unwrap_or("gap");
-        let bands = self.value_bands(scale, None);
         let rows = series.len();
         let depth = scene.span * scene.face.width();
         let view = self.surface_view();
-        let wire = self.plot.wireframe == Some(true);
         let value_at = |row: usize, col: usize| {
             let value = series.get(row).and_then(|s| at(&s.values, col));
             if value.is_none() && blanks == "zero" {
@@ -232,9 +264,9 @@ impl<'a> Builder<'a> {
                 value
             }
         };
-        let mut faces: Vec<(Vec<Point>, usize, f64, f64)> = Vec::new();
+        let mut faces: Vec<SurfaceFace> = Vec::new();
         for row in 0..rows - 1 {
-            for col in 0..categories.len() - 1 {
+            for col in 0..count - 1 {
                 let corners = [(row, col), (row, col + 1), (row + 1, col + 1), (row + 1, col)];
                 let values: Vec<f64> = corners.iter().filter_map(|&(r, c)| value_at(r, c)).collect();
                 if values.len() < corners.len() {
@@ -268,34 +300,19 @@ impl<'a> Builder<'a> {
                     ) / 3.0;
                     for (index, (low, high, _)) in bands.iter().enumerate() {
                         let piece = clip_to_band(&corner_points, &corner_values, *low, *high);
-                        if piece.len() < 3 {
-                            continue;
+                        if piece.len() >= 3 {
+                            faces.push((
+                                piece.iter().map(|p| scene.at(p.0, p.1, p.2)).collect(),
+                                index,
+                                shade,
+                                key,
+                            ));
                         }
-                        faces.push((
-                            piece.iter().map(|p| scene.at(p.0, p.1, p.2)).collect(),
-                            index,
-                            shade,
-                            key,
-                        ));
                     }
                 }
             }
         }
-        faces.sort_by(|a, b| by_key(a.3, b.3));
-        let count = bands.len();
-        for (polygon, index, shade, _) in faces {
-            if wire {
-                let outline = self.band_outline(index, count);
-                self.polygon(&polygon, None, outline);
-                continue;
-            }
-            let fill = self.shade_factor(self.band_fill(index, count), shade, &self.band_colour(index, count));
-            let outline = match &fill {
-                Some(Fill::Solid(c)) => Some(Outline::solid(SURFACE_SEAM_WIDTH_EMU, c.clone())),
-                _ => None,
-            };
-            self.polygon(&polygon, fill, outline);
-        }
+        faces
     }
 
     fn paint_slab(&mut self, top: &[Point], bottom: &[Point], span: (f64, f64), fill: Option<Fill>, base: &Colour) {
@@ -307,7 +324,7 @@ impl<'a> Builder<'a> {
         let mut faces: Vec<SlabFace> = Vec::new();
         let mut quad = |a: Point, b: Point, normal: Point3| {
             let facing = -normal.0 * scene.depth.0 + normal.1 * scene.depth.1;
-            if !(facing < 0.0) {
+            if facing.partial_cmp(&0.0) != Some(std::cmp::Ordering::Less) {
                 return;
             }
             faces.push((

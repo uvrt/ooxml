@@ -33,6 +33,36 @@ fn span(numbers: &[f64]) -> (f64, f64) {
     }
 }
 
+/// A cartesian chart's plots and axes: each plot drawn as a group, its series, the shared
+/// categories, the value (and secondary) and category axes with the groups on each, and
+/// their scales, fonts and tick texts.
+struct Combo<'a> {
+    groups: Vec<Group<'a>>,
+    drawn: Vec<Vec<Series>>,
+    series: Vec<Series>,
+    categories: Vec<String>,
+    axes: (Option<&'a Axis>, Option<&'a Axis>, Option<&'a Axis>),
+    primary: Vec<usize>,
+    secondary: Vec<usize>,
+    scale: Scale,
+    second_scale: Option<Scale>,
+    tick_texts: Vec<(f64, String)>,
+    second_texts: Option<Vec<(f64, String)>>,
+    value_font: ChartFont,
+    category_font: ChartFont,
+    second_font: Option<ChartFont>,
+    second_shown: bool,
+}
+
+/// A scatter's plot rectangle, axes, scales and where the axes cross.
+#[derive(Clone, Copy)]
+struct ScatterAxes<'a> {
+    rect: Rect,
+    axes: (Option<&'a Axis>, Option<&'a Axis>),
+    scales: (Scale, Scale),
+    cross: (f64, f64),
+}
+
 /// Which way a value maps to a position.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Along {
@@ -50,8 +80,42 @@ impl<'a> Builder<'a> {
     }
 
     /// A bar, line, area, stock or surface chart, or a combination of them.
-    #[allow(clippy::too_many_lines)]
     pub fn build_cartesian(&mut self) -> ChartData {
+        let mut combo = self.combo();
+        self.combo_scales(&mut combo);
+        let second = match (&combo.second_texts, &combo.second_font) {
+            (Some(t), Some(f)) if combo.second_shown => Some((t.as_slice(), f)),
+            _ => None,
+        };
+        let plot_rect = self.plot_rect(&PlotRectInput {
+            tick_texts: &combo.tick_texts,
+            categories: &combo.categories,
+            value_font: &combo.value_font,
+            category_font: &combo.category_font,
+            scale: combo.scale,
+            second,
+            flat: false,
+        });
+        let second_band = match second {
+            Some((t, f)) if !t.is_empty() => self.value_label_band(&texts(t), f) - EDGE_INSET_PT,
+            _ => 0.0,
+        };
+        for group in &mut combo.groups {
+            group.state.scene = self.group.scene;
+        }
+        self.draw_background(plot_rect, None);
+        self.draw_title();
+        self.draw_axis_titles(plot_rect);
+        self.draw_combo_back(&mut combo, plot_rect);
+        self.draw_combo_axes(&combo, plot_rect);
+        self.draw_combo_front(&mut combo, plot_rect, second_band);
+        let mut data = self.chart_data(&combo.series, None, Some(combo.scale));
+        data.bar_direction = Some(self.plot.bar_direction.clone().unwrap_or_else(|| "col".into()));
+        data
+    }
+
+    /// The plots drawn, their series, categories and axes.
+    fn combo(&mut self) -> Combo<'a> {
         let mut groups: Vec<Group<'a>> = self.drawn_plots().into_iter().map(|p| self.group_for(p)).collect();
         if self.any_line_keyed() {
             self.group.line_legend_keys = true;
@@ -68,13 +132,8 @@ impl<'a> Builder<'a> {
         let (value_axis, second_axis) = self.combo_axes().unwrap_or((self.value_axis(), None));
         let category_axis = self.category_axis();
         let attached = |b: &Self, axis: Option<&Axis>| -> Vec<usize> {
-            (0..groups.len())
-                .filter(|&i| {
-                    groups
-                        .get(i)
-                        .is_some_and(|g| same_axis(b.plot_value_axis(g.plot), axis))
-                })
-                .collect()
+            let on = |g: &Group<'a>| same_axis(b.plot_value_axis(g.plot), axis);
+            (0..groups.len()).filter(|&i| groups.get(i).is_some_and(on)).collect()
         };
         let mut primary = attached(self, value_axis);
         if primary.is_empty() {
@@ -85,83 +144,99 @@ impl<'a> Builder<'a> {
         } else {
             Vec::new()
         };
-        let scale = self.axis_scale(&mut groups, &drawn, &primary, value_axis);
-        self.group.bands_scale = Some(scale);
-        for group in &mut groups {
-            group.state.bands_scale = Some(scale);
-        }
         let value_font = self.label_font(value_axis);
         let category_font = self.label_font(category_axis);
-        let lead = primary.first().copied().unwrap_or(0);
-        let tick_texts = match groups.get_mut(lead) {
+        Combo {
+            groups,
+            drawn,
+            series,
+            categories,
+            axes: (value_axis, second_axis, category_axis),
+            primary,
+            secondary,
+            scale: Scale::new(0.0, 1.0, 1.0),
+            second_scale: None,
+            tick_texts: Vec::new(),
+            second_texts: None,
+            value_font,
+            category_font,
+            second_font: None,
+            second_shown: false,
+        }
+    }
+
+    /// The primary and secondary scales, and their tick texts.
+    fn combo_scales(&mut self, combo: &mut Combo<'a>) {
+        let (value_axis, second_axis, _) = combo.axes;
+        let scale = self.axis_scale(&mut combo.groups, &combo.drawn, &combo.primary, value_axis);
+        combo.scale = scale;
+        self.group.bands_scale = Some(scale);
+        for group in &mut combo.groups {
+            group.state.bands_scale = Some(scale);
+        }
+        let lead = combo.primary.first().copied().unwrap_or(0);
+        combo.tick_texts = match combo.groups.get_mut(lead) {
             Some(group) => self.in_group(group, |b| b.tick_texts(scale, value_axis)),
             None => self.tick_texts(scale, value_axis),
         };
-        let second_scale =
-            (!secondary.is_empty()).then(|| self.axis_scale(&mut groups, &drawn, &secondary, second_axis));
-        let second_font = (!secondary.is_empty()).then(|| self.label_font(second_axis));
-        let second_texts = match (secondary.first(), second_scale) {
-            (Some(&i), Some(s)) => groups
-                .get_mut(i)
-                .map(|g| self.in_group(g, |b| b.tick_texts(s, second_axis))),
-            _ => None,
-        };
-        let shown = !secondary.is_empty() && labels_shown(second_axis);
-        let second = match (&second_texts, &second_font) {
-            (Some(t), Some(f)) if shown => Some((t.as_slice(), f)),
-            _ => None,
-        };
-        let plot_rect = self.plot_rect(&PlotRectInput {
-            tick_texts: &tick_texts,
-            categories: &categories,
-            value_font: &value_font,
-            category_font: &category_font,
-            scale,
-            second,
-            flat: false,
-        });
-        let second_band = match second {
-            Some((t, f)) if !t.is_empty() => self.value_label_band(&texts(t), f) - EDGE_INSET_PT,
-            _ => 0.0,
-        };
-        for group in &mut groups {
-            group.state.scene = self.group.scene;
+        if combo.secondary.is_empty() {
+            return;
         }
-        self.draw_background(plot_rect, None);
-        self.draw_title();
-        self.draw_axis_titles(plot_rect);
-        if let (Some(&i), Some(s)) = (secondary.first(), second_scale) {
-            if let Some(group) = groups.get_mut(i) {
+        let second_scale = self.axis_scale(&mut combo.groups, &combo.drawn, &combo.secondary, second_axis);
+        combo.second_scale = Some(second_scale);
+        combo.second_font = Some(self.label_font(second_axis));
+        let first = combo.secondary.first().copied().unwrap_or(0);
+        combo.second_texts = combo
+            .groups
+            .get_mut(first)
+            .map(|g| self.in_group(g, |b| b.tick_texts(second_scale, second_axis)));
+        combo.second_shown = labels_shown(second_axis);
+    }
+
+    /// The scale group `index` is drawn on.
+    fn group_scale(combo: &Combo<'a>, index: usize) -> Scale {
+        if combo.secondary.contains(&index) {
+            combo.second_scale.unwrap_or(combo.scale)
+        } else {
+            combo.scale
+        }
+    }
+
+    /// The gridlines and every plot's marks.
+    fn draw_combo_back(&mut self, combo: &mut Combo<'a>, plot_rect: Rect) {
+        let (value_axis, second_axis, category_axis) = combo.axes;
+        if let (Some(&i), Some(s)) = (combo.secondary.first(), combo.second_scale) {
+            if let Some(group) = combo.groups.get_mut(i) {
                 self.in_group(group, |b| b.draw_gridlines(plot_rect, s, second_axis, false));
             }
         }
         if self.draws_a_scene() {
-            self.draw_scene_gridlines(plot_rect, scale, value_axis);
-            self.draw_scene_floor(plot_rect, scale, category_axis);
+            self.draw_scene_gridlines(plot_rect, combo.scale, value_axis);
+            self.draw_scene_floor(plot_rect, combo.scale, category_axis);
         } else {
-            self.draw_gridlines(plot_rect, scale, value_axis, true);
-            self.draw_category_gridlines(plot_rect, category_axis, categories.len());
+            self.draw_gridlines(plot_rect, combo.scale, value_axis, true);
+            self.draw_category_gridlines(plot_rect, category_axis, combo.categories.len());
         }
-        for (index, group) in groups.iter_mut().enumerate() {
-            let group_scale = if secondary.contains(&index) {
-                second_scale.unwrap_or(scale)
-            } else {
-                scale
-            };
-            let items = drawn.get(index).cloned().unwrap_or_default();
-            self.in_group(group, |b| b.draw_marks(plot_rect, &items, &categories, group_scale));
+        for index in 0..combo.groups.len() {
+            let scale = Self::group_scale(combo, index);
+            let items = combo.drawn.get(index).cloned().unwrap_or_default();
+            let categories = combo.categories.clone();
+            if let Some(group) = combo.groups.get_mut(index) {
+                self.in_group(group, |b| b.draw_marks(plot_rect, &items, &categories, scale));
+            }
         }
-        self.draw_axis_lines(plot_rect, scale, value_axis, category_axis);
-        self.draw_axis_ticks(
-            plot_rect,
-            scale,
-            (value_axis, category_axis),
-            categories.len(),
-            (&value_font, &category_font),
-        );
-        if !secondary.is_empty() {
+    }
+
+    /// The axis lines, ticks and labels, the secondary axis' too.
+    fn draw_combo_axes(&mut self, combo: &Combo<'a>, plot_rect: Rect) {
+        let (value_axis, second_axis, category_axis) = combo.axes;
+        let fonts = (&combo.value_font, &combo.category_font);
+        self.draw_axis_lines(plot_rect, combo.scale, value_axis, category_axis);
+        let count = combo.categories.len();
+        self.draw_axis_ticks(plot_rect, combo.scale, (value_axis, category_axis), count, fonts);
+        if !combo.secondary.is_empty() {
             self.draw_second_axis_line(plot_rect, second_axis);
-            if let Some(s) = second_scale.filter(|_| !self.is_three_d()) {
+            if let Some(s) = combo.second_scale.filter(|_| !self.is_three_d()) {
                 let (majors, minors) = self.value_tick_positions(plot_rect, s, second_axis, false);
                 let font = self.label_font(second_axis);
                 let run = TickRun {
@@ -174,15 +249,22 @@ impl<'a> Builder<'a> {
                 self.draw_ticks(second_axis, &font, &run);
             }
         }
+        let axes = (value_axis, category_axis);
         self.draw_labels(
             plot_rect,
-            scale,
-            &tick_texts,
-            &categories,
-            (value_axis, category_axis),
-            (&value_font, &category_font),
+            combo.scale,
+            &combo.tick_texts,
+            &combo.categories,
+            axes,
+            fonts,
         );
-        if let (true, Some(t), Some(f), Some(s)) = (shown, &second_texts, &second_font, second_scale) {
+        let second = (
+            combo.second_shown,
+            &combo.second_texts,
+            &combo.second_font,
+            combo.second_scale,
+        );
+        if let (true, Some(t), Some(f), Some(s)) = second {
             if !t.is_empty() {
                 let placed: Vec<(f64, String)> = t
                     .iter()
@@ -191,34 +273,33 @@ impl<'a> Builder<'a> {
                 self.labels_down_right(plot_rect, &placed, f);
             }
         }
-        for (index, group) in groups.iter_mut().enumerate() {
-            let group_scale = if secondary.contains(&index) {
-                second_scale.unwrap_or(scale)
-            } else {
-                scale
-            };
-            let items = drawn.get(index).cloned().unwrap_or_default();
-            self.in_group(group, |b| {
-                b.draw_data_labels(plot_rect, &items, &categories, group_scale)
-            });
+    }
+
+    /// Every plot's data labels, and the legend.
+    fn draw_combo_front(&mut self, combo: &mut Combo<'a>, plot_rect: Rect, second_band: f64) {
+        for index in 0..combo.groups.len() {
+            let scale = Self::group_scale(combo, index);
+            let items = combo.drawn.get(index).cloned().unwrap_or_default();
+            let categories = combo.categories.clone();
+            if let Some(group) = combo.groups.get_mut(index) {
+                self.in_group(group, |b| b.draw_data_labels(plot_rect, &items, &categories, scale));
+            }
         }
         let legend_rect = if self.group.scene.is_none() {
             plot_rect
         } else {
-            self.three_d_region(scale)
+            self.three_d_region(combo.scale)
         };
         if self.is_surface() {
-            let mut bands = self.band_series(scale, value_axis);
+            let mut bands = self.band_series(combo.scale, combo.axes.0);
             if matches!(self.legend_position(), Some("l" | "r")) {
                 bands.reverse();
             }
             self.draw_legend(legend_rect, &bands, false, None, second_band);
         } else {
+            let series = combo.series.clone();
             self.draw_legend(legend_rect, &series, false, None, second_band);
         }
-        let mut data = self.chart_data(&series, None, Some(scale));
-        data.bar_direction = Some(self.plot.bar_direction.clone().unwrap_or_else(|| "col".into()));
-        data
     }
 
     /// The scale an axis takes over the plots attached to it, from the first's settings.
@@ -330,97 +411,38 @@ impl<'a> Builder<'a> {
     }
 
     /// A scatter or bubble chart.
-    #[allow(clippy::too_many_lines)]
     pub fn build_scatter(&mut self) -> ChartData {
         let series = self.series();
         let (x_axis, y_axis) = self.scatter_axes();
         let x_values: Vec<Vec<Option<f64>>> = series.iter().enumerate().map(|(i, s)| self.x_values(i, s)).collect();
         let xs: Vec<f64> = x_values.iter().flatten().flatten().copied().collect();
         let ys: Vec<f64> = series.iter().flat_map(|s| s.values.iter().flatten().copied()).collect();
-        let x_font = self.label_font(x_axis);
-        let y_font = self.label_font(y_axis);
+        let fonts = (self.label_font(x_axis), self.label_font(y_axis));
         let (x_scale, y_scale) = self.scatter_scales(&xs, &ys, (x_axis, y_axis), 0.0);
-        let (mut x_scale, mut y_scale) = (x_scale.reversed_for(x_axis), y_scale.reversed_for(y_axis));
-        let mut rect = self.scatter_plot_for(x_scale, y_scale, (&x_font, &y_font));
+        let mut scales = (x_scale.reversed_for(x_axis), y_scale.reversed_for(y_axis));
+        let mut rect = self.scatter_plot_for(scales.0, scales.1, (&fonts.0, &fonts.1));
         if self.is_bubble() {
             let radius = self.largest_bubble() / 2.0;
-            let (xs2, ys2) = self.scatter_scales(&xs, &ys, (x_axis, y_axis), radius / py_max(rect.height(), 1.0));
-            (x_scale, y_scale) = (xs2.reversed_for(x_axis), ys2.reversed_for(y_axis));
-            rect = self.scatter_plot_for(x_scale, y_scale, (&x_font, &y_font));
+            let (x2, y2) = self.scatter_scales(&xs, &ys, (x_axis, y_axis), radius / py_max(rect.height(), 1.0));
+            scales = (x2.reversed_for(x_axis), y2.reversed_for(y_axis));
+            rect = self.scatter_plot_for(scales.0, scales.1, (&fonts.0, &fonts.1));
         }
-        let x_ticks = self.tick_texts(x_scale, x_axis);
-        let y_ticks = self.tick_texts(y_scale, y_axis);
-        let cross_x = self.crossing(rect.left, rect.right, y_axis, x_scale, Along::X, rect);
-        let cross_y = self.crossing(rect.bottom, rect.top, x_axis, y_scale, Along::Y, rect);
+        let cross = (
+            self.crossing(rect.left, rect.right, y_axis, scales.0, Along::X, rect),
+            self.crossing(rect.bottom, rect.top, x_axis, scales.1, Along::Y, rect),
+        );
         self.draw_background(rect, None);
         self.draw_title();
         self.draw_axis_titles(rect);
-        for (axis, axis_scale, along, crossing, across) in [
-            (y_axis, y_scale, Along::Y, cross_y, false),
-            (x_axis, x_scale, Along::X, cross_x, true),
-        ] {
-            let Some(axis) = axis else { continue };
-            self.scatter_gridlines(rect, axis, axis_scale, along, crossing, across);
-        }
-        for (index, item) in series.iter().enumerate() {
-            let xs = x_values.get(index).cloned().unwrap_or_default();
-            self.draw_scatter_series(rect, index, item, &xs, (x_scale, y_scale));
-        }
-        if let Some(axis) = y_axis.filter(|a| !a.delete) {
-            let outline = self.axis_outline(axis.outline.as_ref());
-            self.line(cross_x, rect.top, cross_x, rect.bottom, outline.as_ref());
-        }
-        if let Some(axis) = x_axis.filter(|a| !a.delete) {
-            let outline = self.axis_outline(axis.outline.as_ref());
-            self.line(rect.left, cross_y, rect.right, cross_y, outline.as_ref());
-        }
-        if let Some(axis) = y_axis {
-            let (majors, minors) = self.value_tick_positions(rect, y_scale, Some(axis), false);
-            let outward = if axis.crosses.as_deref() == Some("max") {
-                1.0
-            } else {
-                -1.0
-            };
-            let run = TickRun {
-                vertical: true,
-                at: cross_x,
-                outward,
-                majors: &majors,
-                minors: &minors,
-            };
-            self.draw_ticks(Some(axis), &y_font, &run);
-        }
-        if let Some(axis) = x_axis {
-            let (majors, minors) = self.value_tick_positions(rect, x_scale, Some(axis), true);
-            let outward = if axis.crosses.as_deref() == Some("max") {
-                -1.0
-            } else {
-                1.0
-            };
-            let run = TickRun {
-                vertical: false,
-                at: cross_y,
-                outward,
-                majors: &majors,
-                minors: &minors,
-            };
-            self.draw_ticks(Some(axis), &x_font, &run);
-        }
-        if labels_shown(y_axis) {
-            let placed: Vec<(f64, String)> = y_ticks
-                .iter()
-                .map(|(v, t)| (self.value_to_y(rect, *v, y_scale), t.clone()))
-                .collect();
-            self.labels_down_left(rect, &placed, &y_font, Some(cross_x));
-        }
-        if labels_shown(x_axis) {
-            let placed: Vec<(f64, String)> = x_ticks
-                .iter()
-                .map(|(v, t)| (self.value_to_x(rect, *v, x_scale), t.clone()))
-                .collect();
-            self.labels_along_bottom(&placed, &x_font, cross_y, None, true);
-        }
-        self.draw_scatter_labels(rect, &series, &x_values, (x_scale, y_scale));
+        let layout = ScatterAxes {
+            rect,
+            axes: (x_axis, y_axis),
+            scales,
+            cross,
+        };
+        self.draw_scatter_back(&layout, &series, &x_values);
+        self.draw_scatter_axes(&layout, (&fonts.0, &fonts.1));
+        self.draw_scatter_labels(rect, &series, &x_values, scales);
         self.draw_legend(rect, &series, false, None, 0.0);
         let categories: Vec<Vec<String>> = x_values
             .iter()
@@ -431,7 +453,88 @@ impl<'a> Builder<'a> {
                     .collect()
             })
             .collect();
-        self.chart_data(&series, Some(categories), Some(y_scale))
+        self.chart_data(&series, Some(categories), Some(scales.1))
+    }
+
+    /// A scatter's gridlines and series.
+    fn draw_scatter_back(&mut self, layout: &ScatterAxes<'a>, series: &[Series], x_values: &[Vec<Option<f64>>]) {
+        let ScatterAxes {
+            rect,
+            axes: (x_axis, y_axis),
+            scales: (x_scale, y_scale),
+            cross: (cross_x, cross_y),
+        } = *layout;
+        for (axis, axis_scale, along, crossing, across) in [
+            (y_axis, y_scale, Along::Y, cross_y, false),
+            (x_axis, x_scale, Along::X, cross_x, true),
+        ] {
+            let Some(axis) = axis else { continue };
+            self.scatter_gridlines(rect, axis, axis_scale, (along, crossing, across));
+        }
+        for (index, item) in series.iter().enumerate() {
+            let xs = x_values.get(index).cloned().unwrap_or_default();
+            self.draw_scatter_series(rect, index, item, &xs, (x_scale, y_scale));
+        }
+    }
+
+    /// A scatter's axis lines, ticks and labels.
+    fn draw_scatter_axes(&mut self, layout: &ScatterAxes<'a>, fonts: (&ChartFont, &ChartFont)) {
+        let ScatterAxes {
+            rect,
+            axes: (x_axis, y_axis),
+            scales: (x_scale, y_scale),
+            cross: (cross_x, cross_y),
+        } = *layout;
+        let (x_font, y_font) = fonts;
+        let x_ticks = self.tick_texts(x_scale, x_axis);
+        let y_ticks = self.tick_texts(y_scale, y_axis);
+        if let Some(axis) = y_axis.filter(|a| !a.delete) {
+            let outline = self.axis_outline(axis.outline.as_ref());
+            self.line(cross_x, rect.top, cross_x, rect.bottom, outline.as_ref());
+        }
+        if let Some(axis) = x_axis.filter(|a| !a.delete) {
+            let outline = self.axis_outline(axis.outline.as_ref());
+            self.line(rect.left, cross_y, rect.right, cross_y, outline.as_ref());
+        }
+        let far = |axis: &Axis| axis.crosses.as_deref() == Some("max");
+        if let Some(axis) = y_axis {
+            let (majors, minors) = self.value_tick_positions(rect, y_scale, Some(axis), false);
+            let outward = if far(axis) { 1.0 } else { -1.0 };
+            let run = TickRun {
+                vertical: true,
+                at: cross_x,
+                outward,
+                majors: &majors,
+                minors: &minors,
+            };
+            self.draw_ticks(Some(axis), y_font, &run);
+        }
+        if let Some(axis) = x_axis {
+            let (majors, minors) = self.value_tick_positions(rect, x_scale, Some(axis), true);
+            let outward = if far(axis) { -1.0 } else { 1.0 };
+            let run = TickRun {
+                vertical: false,
+                at: cross_y,
+                outward,
+                majors: &majors,
+                minors: &minors,
+            };
+            self.draw_ticks(Some(axis), x_font, &run);
+        }
+        if labels_shown(y_axis) {
+            let placed: Vec<(f64, String)> = y_ticks
+                .iter()
+                .map(|(v, t)| (self.value_to_y(rect, *v, y_scale), t.clone()))
+                .collect();
+            self.labels_down_left(rect, &placed, y_font, Some(cross_x));
+        }
+        if labels_shown(x_axis) {
+            let placed: Vec<(f64, String)> = x_ticks
+                .iter()
+                .map(|(v, t)| (self.value_to_x(rect, *v, x_scale), t.clone()))
+                .collect();
+            self.labels_along_bottom(&placed, x_font, cross_y, None, true);
+        }
     }
 
     fn scatter_scales(
@@ -536,7 +639,8 @@ impl<'a> Builder<'a> {
         Rect::new(left, top, right, bottom)
     }
 
-    fn scatter_gridlines(&mut self, rect: Rect, axis: &Axis, scale: Scale, along: Along, crossing: f64, across: bool) {
+    fn scatter_gridlines(&mut self, rect: Rect, axis: &Axis, scale: Scale, line: (Along, f64, bool)) {
+        let (along, crossing, across) = line;
         let majors: Vec<f64> = tick_values(scale)
             .into_iter()
             .map(|v| self.to_position(along, rect, v, scale))

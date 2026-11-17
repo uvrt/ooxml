@@ -150,7 +150,7 @@ impl<'a> Builder<'a> {
             let centre_x = position + ROTATED_LABEL_OFFSET_X_PT - turned_x;
             let centre_y = axis_y + rotated_label_anchor(&box_) - turned_y;
             let body = self.label_body(text, font, "r", None);
-            self.elements.push(Element::Shape(Shape {
+            self.elements.push(Element::Shape(Box::new(Shape {
                 transform: Transform {
                     rotation: ROTATED_LABEL_DEGREES,
                     ..Transform::of(
@@ -164,7 +164,7 @@ impl<'a> Builder<'a> {
                 fill: None,
                 outline: None,
                 text: Some(body),
-            }));
+            })));
         }
     }
 

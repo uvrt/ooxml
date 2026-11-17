@@ -36,6 +36,17 @@ pub(crate) fn widest<'t>(font: &ChartFont, texts: impl IntoIterator<Item = &'t s
         .unwrap_or(0.0)
 }
 
+/// A plot rectangle's edges as they are worked out: left, top and right, the legend's band
+/// at the bottom, and what the right edge was cut by.
+struct Edges {
+    left: f64,
+    top: f64,
+    right: f64,
+    legend_bottom: f64,
+    overhang_right: f64,
+    second_band: f64,
+}
+
 /// What a plot rectangle is laid out with.
 pub(crate) struct PlotRectInput<'t> {
     pub tick_texts: &'t [(f64, String)],
@@ -156,37 +167,52 @@ impl<'a> Builder<'a> {
 
     /// The plot rectangle: the frame less every band round it (and a 3-D scene's face).
     pub fn plot_rect(&mut self, input: &PlotRectInput<'_>) -> Rect {
+        let mut edges = self.plot_sides(input);
+        edges.top = self.frame.top
+            + if self.horizontal() {
+                EDGE_INSET_PT
+            } else {
+                self.top_inset(&input.value_font.box_)
+            };
+        if let Some(title) = self.title_box() {
+            edges.top += self.title_band(&title);
+        }
+        self.plot_legend_bands(input, &mut edges);
+        edges.left += self.axis_title_band("l");
+        if edges.right - edges.left < 1.0 {
+            edges.right = edges.left + 1.0;
+        }
+        let bottom = self.plot_bottom(input, &edges);
+        let region = Rect::new(edges.left, edges.top, edges.right, bottom);
+        let view = if input.flat { None } else { self.three_d_view() };
+        let Some(view) = view else {
+            return region;
+        };
+        match self.three_d_scene(region, view) {
+            Some(found) => {
+                self.group.scene = Some(found);
+                found.face
+            }
+            None => region,
+        }
+    }
+
+    /// The plot's left and right edges before the legend: the value (or category) labels'
+    /// band, the overhang of labels standing on the end ticks, a secondary axis' band.
+    fn plot_sides(&self, input: &PlotRectInput<'_>) -> Edges {
         let frame = self.frame;
-        let value_axis = self.value_axis();
-        let category_axis = self.category_axis();
-        let (show_values, show_categories) = (labels_shown(value_axis), labels_shown(category_axis));
+        let (show_values, show_categories) = (labels_shown(self.value_axis()), labels_shown(self.category_axis()));
         let horizontal = self.horizontal();
         let tick_labels = texts(input.tick_texts);
         let categories: Vec<&str> = input.categories.iter().map(String::as_str).collect();
-        let down_left = if horizontal {
-            categories.clone()
-        } else {
-            tick_labels.clone()
-        };
-        let show_left = if horizontal { show_categories } else { show_values };
-        let show_bottom = if horizontal { show_values } else { show_categories };
-        let left_font = if horizontal {
-            input.category_font
-        } else {
-            input.value_font
-        };
-        let bottom_font = if horizontal {
-            input.value_font
-        } else {
-            input.category_font
-        };
-        let labels_under_plot = show_bottom
-            && (horizontal
-                || input.scale.minimum >= 0.0
-                || category_axis.is_some_and(|a| a.tick_label_position.as_deref() == Some("low")));
         let mut left = frame.left + EDGE_INSET_PT;
-        if show_left {
-            left = frame.left + self.value_label_band(&down_left, left_font);
+        if (horizontal && show_categories) || (!horizontal && show_values) {
+            let (labels, font) = if horizontal {
+                (&categories, input.category_font)
+            } else {
+                (&tick_labels, input.value_font)
+            };
+            left = frame.left + self.value_label_band(labels, font);
         }
         let mut overhang_right = 0.0;
         if show_categories && !categories.is_empty() && !horizontal && self.points_on_ticks() {
@@ -202,59 +228,83 @@ impl<'a> Builder<'a> {
         if horizontal && show_values {
             right -= widest(input.value_font, tick_labels.iter().copied()) / 2.0;
         }
-        let mut top = frame.top
-            + if horizontal {
-                EDGE_INSET_PT
-            } else {
-                self.top_inset(&input.value_font.box_)
-            };
-        if let Some(title) = self.title_box() {
-            top += self.title_band(&title);
+        Edges {
+            left,
+            top: frame.top,
+            right,
+            legend_bottom: 0.0,
+            overhang_right,
+            second_band,
         }
-        let mut legend_bottom = 0.0;
+    }
+
+    /// The legend's band taken from the plot's edges.
+    fn plot_legend_bands(&mut self, input: &PlotRectInput<'_>, edges: &mut Edges) {
         let legend = self.legend_position();
-        if legend.is_some() && !self.legend_overlays() {
-            let legend_font = self.legend_font();
-            let band = self.legend_band_height(&legend_font, false);
-            let top_column = legend == Some("tr") && self.rules.top_right_legend == TopRightLegendRule::Column;
-            if legend == Some("b") {
-                legend_bottom = band;
-            } else if top_column {
-                let named = self.legend_names(false).iter().filter(|n| !n.is_empty()).count();
-                #[allow(clippy::cast_precision_loss)]
-                let rows = named as f64;
-                top += rows * crate::layout::builder::legend::legend_row_pitch(&legend_font.box_, 1);
-                legend_bottom = LEGEND_BAND_PAD_PT;
-            } else if matches!(legend, Some("t" | "tr")) {
-                top += band;
-            }
-            if legend == Some("r") || top_column {
-                right = frame.right
-                    - self.legend_side_width(&legend_font, false)
-                    - (second_band - EDGE_INSET_PT)
-                    - overhang_right;
-                if self.rules.side_legend == SideLegendRule::Word && horizontal && show_values {
-                    right -= widest(input.value_font, tick_labels.iter().copied()) / 2.0;
-                }
-            } else if legend == Some("l") {
-                left += self.legend_side_width(&legend_font, false) - EDGE_INSET_PT;
-            }
+        if legend.is_none() || self.legend_overlays() {
+            return;
         }
-        left += self.axis_title_band("l");
-        if right - left < 1.0 {
-            right = left + 1.0;
+        let frame = self.frame;
+        let legend_font = self.legend_font();
+        let band = self.legend_band_height(&legend_font, false);
+        let top_column = legend == Some("tr") && self.rules.top_right_legend == TopRightLegendRule::Column;
+        if legend == Some("b") {
+            edges.legend_bottom = band;
+        } else if top_column {
+            let named = self.legend_names(false).iter().filter(|n| !n.is_empty()).count();
+            #[allow(clippy::cast_precision_loss)]
+            let rows = named as f64;
+            edges.top += rows * super::legend::legend_row_pitch(&legend_font.box_, 1);
+            edges.legend_bottom = LEGEND_BAND_PAD_PT;
+        } else if matches!(legend, Some("t" | "tr")) {
+            edges.top += band;
         }
+        if legend == Some("r") || top_column {
+            edges.right = frame.right
+                - self.legend_side_width(&legend_font, false)
+                - (edges.second_band - EDGE_INSET_PT)
+                - edges.overhang_right;
+            let show_values = labels_shown(self.value_axis());
+            if self.rules.side_legend == SideLegendRule::Word && self.horizontal() && show_values {
+                edges.right -= widest(input.value_font, texts(input.tick_texts)) / 2.0;
+            }
+        } else if legend == Some("l") {
+            edges.left += self.legend_side_width(&legend_font, false) - EDGE_INSET_PT;
+        }
+    }
+
+    /// The plot's bottom: over the category (or value) labels' band, or the top inset, the
+    /// legend's band and an axis title's; a short plot's shortfall shared (Word's).
+    fn plot_bottom(&mut self, input: &PlotRectInput<'_>, edges: &Edges) -> f64 {
+        let frame = self.frame;
+        let horizontal = self.horizontal();
+        let category_axis = self.category_axis();
+        let show_bottom = if horizontal {
+            labels_shown(self.value_axis())
+        } else {
+            labels_shown(category_axis)
+        };
+        let labels_under_plot = show_bottom
+            && (horizontal
+                || input.scale.minimum >= 0.0
+                || category_axis.is_some_and(|a| a.tick_label_position.as_deref() == Some("low")));
         let mut bottom = if labels_under_plot {
             let banded: Vec<String> = if horizontal || self.points_on_ticks() {
                 Vec::new()
             } else {
                 input.categories.to_vec()
             };
-            frame.bottom - legend_bottom - self.bottom_label_band(bottom_font, &banded, right - left)
+            let font = if horizontal {
+                input.value_font
+            } else {
+                input.category_font
+            };
+            frame.bottom - edges.legend_bottom - self.bottom_label_band(font, &banded, edges.right - edges.left)
         } else {
-            frame.bottom - legend_bottom - self.top_inset(&input.value_font.box_)
+            frame.bottom - edges.legend_bottom - self.top_inset(&input.value_font.box_)
         };
         bottom -= self.axis_title_band("b");
+        let top = edges.top;
         if self.rules.short_plot && !horizontal && !self.is_three_d() {
             let shortfall = WORD_SHORT_PLOT_EM * input.value_font.size() - (bottom - top);
             if shortfall > 0.0 {
@@ -263,18 +313,7 @@ impl<'a> Builder<'a> {
         } else if bottom - top < 1.0 {
             bottom = top + 1.0;
         }
-        let region = Rect::new(left, top, right, bottom);
-        let view = if input.flat { None } else { self.three_d_view() };
-        let Some(view) = view else {
-            return region;
-        };
-        match self.three_d_scene(region, view) {
-            Some(found) => {
-                self.group.scene = Some(found);
-                found.face
-            }
-            None => region,
-        }
+        bottom
     }
 
     /// Whether category labels turn to 45 degrees: a word wider than its band.
@@ -718,7 +757,7 @@ impl<'a> Builder<'a> {
             let height = box_.line_height() * 1.5;
             let centre_x = baseline_x - (self.first_baseline(box_) - height / 2.0);
             let centre_y = rect.top + rect.height() / 2.0;
-            self.elements.push(Element::Shape(Shape {
+            self.elements.push(Element::Shape(Box::new(Shape {
                 transform: Transform {
                     rotation: -90.0,
                     ..Transform::of(
@@ -732,7 +771,7 @@ impl<'a> Builder<'a> {
                 fill: None,
                 outline: None,
                 text: Some(body.clone()),
-            }));
+            })));
         }
     }
 }

@@ -163,7 +163,6 @@ impl<'a> Builder<'a> {
     }
 
     /// The legend, drawn.
-    #[allow(clippy::too_many_lines)]
     pub fn draw_legend(
         &mut self,
         rect: Rect,
@@ -174,38 +173,7 @@ impl<'a> Builder<'a> {
     ) {
         let Some(position) = self.legend_position() else { return };
         let Some(first_item) = series.first() else { return };
-        let deleted: Vec<i64> = self
-            .chart
-            .legend
-            .as_ref()
-            .map(|l| l.deleted_entries.clone())
-            .unwrap_or_default();
-        let gone = |index: usize| i64::try_from(index).is_ok_and(|i| deleted.contains(&i));
-        let mut entries: Vec<Series> = if per_point {
-            categories
-                .unwrap_or(&[])
-                .iter()
-                .enumerate()
-                .filter(|(index, name)| !name.is_empty() && !gone(*index))
-                .map(|(index, name)| {
-                    let mut item = first_item.clone();
-                    item.name = Some(name.clone());
-                    item.fill = self.point_fill(first_item, index);
-                    item
-                })
-                .collect()
-        } else {
-            let mut kept: Vec<Series> = series
-                .iter()
-                .enumerate()
-                .filter(|(index, item)| !gone(*index) && item.name.as_ref().is_some_and(|n| !n.is_empty()))
-                .map(|(_, item)| item.clone())
-                .collect();
-            if self.legend_reversed() {
-                kept.reverse();
-            }
-            kept
-        };
+        let mut entries = self.legend_entries(series, first_item, per_point, categories);
         if entries.is_empty() {
             return;
         }
@@ -258,6 +226,48 @@ impl<'a> Builder<'a> {
             );
             y += pitch;
         }
+    }
+
+    /// The series a legend lists: each named point of the first series (per point), or each
+    /// named series, less the deleted entries, in the legend's order.
+    fn legend_entries(
+        &self,
+        series: &[Series],
+        first: &Series,
+        per_point: bool,
+        categories: Option<&[String]>,
+    ) -> Vec<Series> {
+        let deleted: Vec<i64> = self
+            .chart
+            .legend
+            .as_ref()
+            .map(|l| l.deleted_entries.clone())
+            .unwrap_or_default();
+        let gone = |index: usize| i64::try_from(index).is_ok_and(|i| deleted.contains(&i));
+        if per_point {
+            return categories
+                .unwrap_or(&[])
+                .iter()
+                .enumerate()
+                .filter(|(index, name)| !name.is_empty() && !gone(*index))
+                .map(|(index, name)| {
+                    let mut item = first.clone();
+                    item.name = Some(name.clone());
+                    item.fill = self.point_fill(first, index);
+                    item
+                })
+                .collect();
+        }
+        let mut kept: Vec<Series> = series
+            .iter()
+            .enumerate()
+            .filter(|(index, item)| !gone(*index) && item.name.as_ref().is_some_and(|n| !n.is_empty()))
+            .map(|(_, item)| item.clone())
+            .collect();
+        if self.legend_reversed() {
+            kept.reverse();
+        }
+        kept
     }
 
     fn draw_legend_band(&mut self, position: &str, entries: &mut [Series], font: &ChartFont, key: (f64, f64)) {

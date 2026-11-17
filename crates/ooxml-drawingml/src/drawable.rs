@@ -496,10 +496,10 @@ pub struct Group {
 /// A drawable element.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Element {
-    /// A shape.
-    Shape(Shape),
-    /// A connector.
-    Connector(Connector),
+    /// A shape (boxed: its text body makes it much the largest).
+    Shape(Box<Shape>),
+    /// A connector (boxed likewise).
+    Connector(Box<Connector>),
     /// A group.
     Group(Group),
 }

@@ -110,7 +110,7 @@ impl<'a> Builder<'a> {
 
     /// A shape of preset geometry over `rect`.
     pub fn rect(&mut self, rect: Rect, fill: Option<Fill>, outline: Option<Outline>, preset: &str) {
-        self.elements.push(Element::Shape(Shape {
+        self.elements.push(Element::Shape(Box::new(Shape {
             transform: Transform::of(
                 rect.left * EMU_PER_POINT,
                 rect.top * EMU_PER_POINT,
@@ -121,7 +121,7 @@ impl<'a> Builder<'a> {
             fill,
             outline,
             text: None,
-        }));
+        })));
     }
 
     /// A custom path in its own box.
@@ -136,7 +136,7 @@ impl<'a> Builder<'a> {
         let width = py_max(right - left, 1e-6);
         let height = py_max(bottom - top, 1e-6);
         let commands = commands(left, top);
-        self.elements.push(Element::Shape(Shape {
+        self.elements.push(Element::Shape(Box::new(Shape {
             transform: Transform::of(
                 left * EMU_PER_POINT,
                 top * EMU_PER_POINT,
@@ -151,7 +151,7 @@ impl<'a> Builder<'a> {
             fill,
             outline,
             text: None,
-        }));
+        })));
     }
 
     /// A line through `points` (smoothed or not), as one path.
@@ -187,7 +187,7 @@ impl<'a> Builder<'a> {
     /// outline.
     pub fn line(&mut self, x0: f64, y0: f64, x1: f64, y1: f64, outline: Option<&Outline>) {
         let Some(outline) = outline else { return };
-        self.elements.push(Element::Connector(Connector {
+        self.elements.push(Element::Connector(Box::new(Connector {
             transform: Transform {
                 flip_v: (x1 - x0) * (y1 - y0) < 0.0,
                 ..Transform::of(
@@ -199,7 +199,7 @@ impl<'a> Builder<'a> {
             },
             geometry: Geometry::preset("line"),
             outline: Some(outline.clone()),
-        }));
+        })));
     }
 
     /// A pie or doughnut slice.
@@ -209,7 +209,7 @@ impl<'a> Builder<'a> {
         let top = slice.cy - slice.outer;
         let size = slice.outer * 2.0;
         let local = translate_path(&commands, -left, -top);
-        self.elements.push(Element::Shape(Shape {
+        self.elements.push(Element::Shape(Box::new(Shape {
             transform: Transform::of(
                 left * EMU_PER_POINT,
                 top * EMU_PER_POINT,
@@ -224,7 +224,7 @@ impl<'a> Builder<'a> {
             fill,
             outline,
             text: None,
-        }));
+        })));
     }
 
     /// One run of chart text in `font`.
@@ -262,7 +262,7 @@ impl<'a> Builder<'a> {
     /// A one-line text box placed so its baseline lands at `baseline`.
     pub fn text(&mut self, body: TextBody, left: f64, width: f64, baseline: f64, box_: &FontBox) {
         let top = baseline - self.first_baseline(box_);
-        self.elements.push(Element::Shape(Shape {
+        self.elements.push(Element::Shape(Box::new(Shape {
             transform: Transform::of(
                 left * EMU_PER_POINT,
                 top * EMU_PER_POINT,
@@ -273,7 +273,7 @@ impl<'a> Builder<'a> {
             fill: None,
             outline: None,
             text: Some(body),
-        }));
+        })));
     }
 }
 
