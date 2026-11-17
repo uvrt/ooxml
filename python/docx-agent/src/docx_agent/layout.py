@@ -2603,6 +2603,15 @@ def held_answers(document: "Document", request: dict, unlocked: Any = None) -> "
     reads :meth:`~docx_agent.Document.layout` here, as before."""
     if runner_of(document) is None:
         return None
+    # The worker's copy of the bytes knows no aliases: each id asked as the document names
+    # the block now (an id an edit stamped or re-issued, followed to its end).
+    canon = canon_of(document)
+    request = dict(request)
+    if request.get("where") is not None:
+        request["where"] = [[canon(identifier) for identifier in asked] for asked in request["where"]]
+    if request.get("extents") is not None:
+        request["extents"] = {name: [canon(identifier) for identifier in ids]
+                              for name, ids in request["extents"].items()}
     made = check_facts(document, unlocked if unlocked is not None else holding, {**BARE_REQUEST, **request})
     return made[0] if made is not None else None
 

@@ -95,12 +95,13 @@ def test_a_check_after_a_render_of_the_same_version_lays_nothing_out_and_the_rev
         assert call("check", range=[_body(document)[2]]) == [("check", "same")]
         # In one call: a read_batch's render and check, a batch's edit and the check after it.
         assert call("word_set_text", **edit(3)) == [("check", "kept")]
+        # Round 59 (R134): the change's reflow read its summary in the worker (check_facts'
+        # bare request), whose facts a bare check of the same version finds kept: no trip.
         assert call("read_batch", ops=[{"tool": "render", "arguments": {"doc": doc, "pages": [1], "fast": True}},
-                                       {"tool": "check", "arguments": {"doc": doc}}]) == \
-            [("render", "same"), ("check", "same")]
+                                       {"tool": "check", "arguments": {"doc": doc}}]) == [("render", "same")]
         assert call("batch", ops=[{"tool": "word_set_text", "arguments": edit(4)},
                                   {"tool": "check", "arguments": {"doc": doc, "include": ["reflow"]}}]) == \
-            [("check", "kept"), ("check", "same")]
+            [("check", "kept")]                     # one trip: the reflow's facts kept for the check
         assert call("render", pages=[2]) == [("render", "same")]
         counts = box.pool.affinity_counts
         assert counts["elsewhere"] == 0 and box.pool.holder(key) is not None
