@@ -40,7 +40,7 @@ import weakref
 from collections import Counter, OrderedDict
 from typing import Any, Callable
 
-from ooxml_edit.tools import Result, ToolError
+from ooxml_edit.tools import Result
 
 log = logging.getLogger("docx_agent.rust")
 
