@@ -663,6 +663,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "ooxml-style-names"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "ooxml-text"
 version = "0.1.0"
 dependencies = [
@@ -730,6 +737,7 @@ dependencies = [
  "ooxml-fonts",
  "ooxml-opc",
  "ooxml-scene",
+ "ooxml-style-names",
  "ooxml-text",
  "ooxml-word-model",
  "ooxml-zip",

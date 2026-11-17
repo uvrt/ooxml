@@ -1,0 +1,16 @@
+[package]
+name = "ooxml-style-names"
+version = "0.1.0"
+description = "Word's built-in style names in the languages measured, and a field's style name found by them"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

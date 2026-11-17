@@ -255,27 +255,34 @@ fn table_lines(layout: &DocumentLayout, laid: &LaidPage, frame: &PageFrame) -> V
         let Some(FlowItem::Table(t)) = layout.flow.items.get(placed.item) else {
             continue;
         };
-        let lines = row_lines(t, (placed.item, &placed.row), placed.column, height);
+        let lines = row_lines(
+            t,
+            placed.flow(t).as_ref(),
+            (placed.item, &placed.row),
+            placed.column,
+            height,
+        );
         out.extend(lines.into_iter().map(|l| (placed.item, l)));
     }
     out
 }
 
-/// The lines a placed row of table item `item` draws, on whole device px; a line that
-/// starts below `height` (the page's edge) is not drawn (`_table_drawn`).
+/// The lines a placed row of table item `item` draws, on whole device px, as `flow` (the
+/// item's table, or the table laid out in the row's room) placed it; a line that starts
+/// below `height` (the page's edge) is not drawn (`_table_drawn`).
 pub(crate) fn row_lines(
     t: &crate::flow::TableItem,
+    flow: &dyn crate::table::TableFlow,
     (item, row): (usize, &crate::table::PlacedRow),
     column: Option<usize>,
     height: Px,
 ) -> Vec<DrawnLine> {
     let mut out = Vec::new();
-    for line in t.flow.lines(row) {
+    for line in flow.lines(row) {
         if !line.drawn || line.top >= height {
             continue;
         }
-        let Some(h) = t
-            .flow
+        let Some(h) = flow
             .paragraph(line.block)
             .and_then(|m| m.heights.get(line.line).copied())
         else {

@@ -15,6 +15,8 @@
 mod support;
 
 use ooxml_word_layout::facts::LayoutFacts;
+use ooxml_word_layout::flow::FlowItem;
+use ooxml_word_layout::incremental::same_item;
 use ooxml_word_layout::paint::svg::{page_svg, NoDrawings, NoPictures, SvgContext};
 use ooxml_word_layout::paint::{paint_page, DocumentNames, GlyphSize, PaintContext};
 use ooxml_word_layout::{DocumentLayout, WordLayout};
@@ -53,6 +55,8 @@ struct Tbl {
     span: Option<usize>,
     autofit: bool,
     exact: Option<usize>,
+    /// Floating, positioned this far below the paragraph after it (twips).
+    floating: Option<u64>,
 }
 
 fn tbl(rng: &mut Rng) -> Tbl {
@@ -75,6 +79,7 @@ fn tbl(rng: &mut Rng) -> Tbl {
         span: (columns > 1 && rng.chance(30)).then(|| pick(rng)),
         autofit: rng.chance(40),
         exact: rng.chance(10).then(|| pick(rng)),
+        floating: rng.chance(20).then(|| rng.below(300)),
         rows,
     }
 }
@@ -86,8 +91,12 @@ fn tbl_xml(t: &Tbl, k: usize, field: Option<&str>) -> String {
     } else {
         r#"<w:tblLayout w:type="fixed"/>"#
     };
+    let width = if t.floating.is_some() { width / 2 } else { width };
+    let position = t.floating.map_or(String::new(), |y| {
+        format!(r#"<w:tblpPr w:leftFromText="120" w:rightFromText="120" w:vertAnchor="text" w:tblpY="{y}"/>"#)
+    });
     let mut out = format!(
-        r#"<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/><w:tblBorders><w:top w:val="single" w:sz="4"/><w:insideH w:val="single" w:sz="8"/><w:bottom w:val="single" w:sz="4"/></w:tblBorders>{layout}<w:tblCellMar><w:top w:w="20" w:type="dxa"/><w:left w:w="60" w:type="dxa"/><w:bottom w:w="20" w:type="dxa"/><w:right w:w="60" w:type="dxa"/></w:tblCellMar></w:tblPr><w:tblGrid>{}</w:tblGrid>"#,
+        r#"<w:tbl><w:tblPr>{position}<w:tblW w:w="0" w:type="auto"/><w:tblBorders><w:top w:val="single" w:sz="4"/><w:insideH w:val="single" w:sz="8"/><w:bottom w:val="single" w:sz="4"/></w:tblBorders>{layout}<w:tblCellMar><w:top w:w="20" w:type="dxa"/><w:left w:w="60" w:type="dxa"/><w:bottom w:w="20" w:type="dxa"/><w:right w:w="60" w:type="dxa"/></w:tblCellMar></w:tblPr><w:tblGrid>{}</w:tblGrid>"#,
         format!(r#"<w:gridCol w:w="{width}"/>"#).repeat(t.columns)
     );
     for (r, row) in t.rows.iter().enumerate() {
@@ -162,6 +171,10 @@ struct Spec {
     footnote: Option<u64>,
     endnote: Option<u64>,
     drawing: Option<(&'static str, i64)>,
+    /// A list item at this level.
+    list: Option<u64>,
+    /// In the style the header's STYLEREF shows.
+    heading: bool,
 }
 
 fn spec(rng: &mut Rng, k: usize) -> Spec {
@@ -195,6 +208,8 @@ fn spec(rng: &mut Rng, k: usize) -> Spec {
         footnote: rng.chance(12).then(|| 1 + rng.below(8)),
         endnote: rng.chance(5).then(|| 1 + rng.below(4)),
         drawing: drawing(rng),
+        list: rng.chance(20).then(|| rng.below(3)),
+        heading: rng.chance(8),
     }
 }
 
@@ -245,10 +260,46 @@ impl Extra {
                 id: "rIdH",
                 kind: "header",
                 name: "header1.xml",
-                xml: format!(r#"<w:hdr {}>{}</w:hdr>"#, support::W, para("", &run(&header))),
+                xml: format!(
+                    r#"<w:hdr {}>{}</w:hdr>"#,
+                    support::W,
+                    para("", &format!("{}{}", run(&header), field("STYLEREF \"heading 1\"", "?")))
+                ),
+            },
+            Part {
+                id: "rIdN",
+                kind: "numbering",
+                name: "numbering.xml",
+                xml: numbering_part(),
+            },
+            Part {
+                id: "rIdS",
+                kind: "styles",
+                name: "styles.xml",
+                xml: format!(
+                    r#"<w:styles {}><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:rPr><w:b/></w:rPr></w:style></w:styles>"#,
+                    support::W
+                ),
             },
         ]
     }
+}
+
+/// A numbering part of one list: three levels, each `%n.` after the levels above.
+fn numbering_part() -> String {
+    let levels: String = (0..3)
+        .map(|l| {
+            let text: String = (1..=l + 1).map(|n| format!("%{n}.")).collect();
+            format!(
+                r#"<w:lvl w:ilvl="{l}"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="{text}"/><w:pPr><w:ind w:left="{}" w:hanging="300"/></w:pPr></w:lvl>"#,
+                300 * (l + 1)
+            )
+        })
+        .collect();
+    format!(
+        r#"<w:numbering {}><w:abstractNum w:abstractNumId="0">{levels}</w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num></w:numbering>"#,
+        support::W
+    )
 }
 
 fn xml(specs: &[Spec]) -> String {
@@ -278,6 +329,14 @@ fn xml(specs: &[Spec]) -> String {
             r#"<w:spacing w:before="{}" w:after="{}"{rule}/>"#,
             s.before, s.after
         ));
+        if s.heading {
+            ppr.insert_str(0, r#"<w:pStyle w:val="Heading1"/>"#);
+        }
+        if let Some(level) = s.list {
+            ppr.push_str(&format!(
+                r#"<w:numPr><w:ilvl w:val="{level}"/><w:numId w:val="1"/></w:numPr>"#
+            ));
+        }
         if let Some((kind, columns)) = s.section {
             ppr.push_str(&sect(kind, columns));
         }
@@ -321,6 +380,8 @@ fn edit(rng: &mut Rng, specs: &mut Vec<Spec>, extra: &mut Extra) {
         8 => specs[k].drawing = drawing(rng),
         9 => specs[k].endnote = (specs[k].endnote.is_none()).then(|| 1 + rng.below(4)),
         10 if rng.chance(30) => extra.header = 1 + rng.below(30),
+        10 if rng.chance(30) => specs[k].list = specs[k].list.is_none().then(|| rng.below(3)),
+        10 if rng.chance(30) => specs[k].heading = !specs[k].heading,
         0 => specs[k].words = 1 + rng.below(80),
         5 => match &mut specs[k].table {
             Some(t) => {
@@ -354,6 +415,32 @@ struct Seen {
     bands: usize,
     wraps: usize,
     endnotes: usize,
+}
+
+/// The flow made again is the flow made from scratch: item by item alike, at the same
+/// blocks and sections (tables are made by two engines, so only their kind is compared).
+fn same_flow(relaid: &[FlowItem], whole: &[FlowItem], at: &str) {
+    assert_eq!(relaid.len(), whole.len(), "{at}: flow");
+    for (k, (x, y)) in relaid.iter().zip(whole).enumerate() {
+        let alike = match (x, y) {
+            (FlowItem::Para(_), FlowItem::Para(_)) => same_item(x, y),
+            _ => std::mem::discriminant(x) == std::mem::discriminant(y),
+        };
+        assert!(
+            alike && x.block() == y.block() && x.section() == y.section(),
+            "{at}: flow item {k} differs"
+        );
+    }
+}
+
+/// Each pass laid out again is that pass laid out from scratch: its flow and its pages.
+fn same_passes(relaid: &ooxml_word_layout::DocumentLayout, whole: &ooxml_word_layout::DocumentLayout, at: &str) {
+    for k in 0..relaid.passes.min(whole.passes) {
+        if let (Some((fa, pa)), Some((fb, pb))) = (relaid.pass(k), whole.pass(k)) {
+            same_flow(&fa.items, &fb.items, &format!("{at} pass {k}"));
+            assert!(pa == pb, "{at} pass {k}: pages differ");
+        }
+    }
 }
 
 /// Page `page` of `laid` as SVG, its header, footer and footnotes laid out by `engine`.
@@ -418,34 +505,12 @@ fn check(seed: u64, versions: usize) -> Seen {
             "seed {seed} version {version}: stopped {:?}",
             whole.pagination.stopped
         );
-        if relaid.pagination != whole.pagination {
-            let (a, b) = (&relaid.pagination, &whole.pagination);
-            let k = a.pages.iter().zip(&b.pages).position(|(x, y)| x != y);
-            let brief = |p: Option<&ooxml_word_layout::paginate::LaidPage>| {
-                p.map(|p| {
-                    (
-                        p.page,
-                        p.number_before,
-                        p.start.clone(),
-                        p.end.clone(),
-                        p.reach.clone(),
-                        p.lines.len(),
-                    )
-                })
-            };
-            panic!(
-                "seed {seed} version {version}: pages differ at {k:?} of {}/{}: {:?} vs {:?}; info {} vs {}; stats {:?}; stopped {:?} vs {:?}",
-                a.pages.len(),
-                b.pages.len(),
-                brief(k.and_then(|k| a.pages.get(k))),
-                brief(k.and_then(|k| b.pages.get(k))),
-                a.info.len(),
-                b.info.len(),
-                relaid.relaid,
-                a.stopped,
-                b.stopped
-            );
-        }
+        same_passes(&relaid, &whole, &format!("seed {seed} version {version}"));
+        assert!(
+            relaid.pagination == whole.pagination,
+            "seed {seed} version {version}: pages differ; stats {:?}",
+            relaid.relaid
+        );
         assert_eq!(
             relaid.fields, whole.fields,
             "seed {seed} version {version}: fields differ"

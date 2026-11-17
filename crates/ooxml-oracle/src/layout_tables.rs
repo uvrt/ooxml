@@ -13,12 +13,10 @@ use ooxml_word_layout::px::Px;
 use ooxml_word_layout::tables::{Content, MeasuredTable};
 use serde_json::{json, Value};
 
-/// Why the comparison stops at a table docx2svg laid out: what lane L3c or docx2svg's
-/// stand-in boxes lay out of it, if anything.
+/// Why the comparison stops at a table docx2svg laid out: what docx2svg's stand-in boxes
+/// lay out of it, or a floating table nested in one of its cells, if anything. A floating
+/// table of the body is compared: its rows where it is positioned, the lines beside it.
 pub fn table_cut(table: &Value) -> Option<&'static str> {
-    if table.get("floating").and_then(Value::as_bool).unwrap_or(false) {
-        return Some("a floating table");
-    }
     let unmodelled = table.get("unmodelled").and_then(Value::as_array);
     if unmodelled.is_some_and(|u| !u.is_empty()) {
         return Some("a table holding a stand-in box or an unmodelled drawing");
@@ -30,16 +28,21 @@ pub fn table_cut(table: &Value) -> Option<&'static str> {
             match entry.get(1).and_then(Value::as_str) {
                 Some("box") => return Some("a table holding a stand-in box"),
                 Some("table") => {
-                    if let Some(why) = entry.get(4).and_then(table_cut) {
+                    let nested = entry.get(4);
+                    if nested
+                        .and_then(|t| t.get("floating"))
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false)
+                    {
+                        return Some("a floating table nested in a cell");
+                    }
+                    if let Some(why) = nested.and_then(table_cut) {
                         return Some(why);
                     }
                 }
                 _ => {
                     let more = entry.get(4);
                     let flag = |k: &str| more.and_then(|m| m.get(k));
-                    if flag("notes").and_then(Value::as_bool).unwrap_or(false) {
-                        return Some("notes, drawings or an approximation: a note's reference in a cell");
-                    }
                     if flag("anchors").and_then(Value::as_i64).unwrap_or(0) > 0 {
                         return Some("notes, drawings or an approximation: a floating drawing in a cell");
                     }

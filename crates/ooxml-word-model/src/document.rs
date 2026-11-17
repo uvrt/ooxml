@@ -124,6 +124,61 @@ impl WordDocument {
         out
     }
 
+    /// The body's list labels as [`WordDocument::body_labels`] gives them, taken from
+    /// `old_labels` (those of `old`, a version before over the same numbering) wherever
+    /// they are the same: the blocks before the first changed one, and from the first of
+    /// the unchanged blocks after it where the lists' counts stand where they stood;
+    /// counted only between.
+    pub fn body_labels_from(&self, old: &WordDocument, old_labels: &[Option<String>]) -> Vec<Option<String>> {
+        let same = |a: Option<&BlockItems>, b: Option<&BlockItems>| match (a, b) {
+            (Some(a), Some(b)) => Arc::ptr_eq(&a.items, &b.items),
+            _ => false,
+        };
+        let (n_new, n_old) = (self.labels.len(), old.labels.len());
+        let prefix = (0..n_new.min(n_old))
+            .take_while(|&k| same(self.labels.get(k), old.labels.get(k)))
+            .count();
+        let room = n_new.min(n_old) - prefix;
+        let suffix = (1..=room)
+            .take_while(|&j| same(self.labels.get(n_new - j), old.labels.get(n_old - j)))
+            .count();
+        let count = |tree: &MonoidTree<BlockItems>, from: usize, to: usize| -> usize {
+            (from..to).filter_map(|k| tree.get(k)).map(|b| b.items.len()).sum()
+        };
+        let head = count(&self.labels, 0, prefix);
+        let mut out: Vec<Option<String>> = old_labels.get(..head).map(<[_]>::to_vec).unwrap_or_default();
+        if out.len() != head {
+            return self.body_labels();
+        }
+        let Ok(mut lists) = self.labels.prefix(prefix) else {
+            return self.body_labels();
+        };
+        let tail_start = n_new - suffix;
+        for k in prefix..n_new {
+            if k == tail_start {
+                let old_k = n_old - suffix;
+                if old.labels.prefix(old_k).ok().as_ref() == Some(&lists) {
+                    let old_head = count(&old.labels, 0, old_k);
+                    if let Some(rest) = old_labels.get(old_head..) {
+                        out.extend_from_slice(rest);
+                        return out;
+                    }
+                }
+            }
+            let Some(block) = self.labels.get(k) else { break };
+            for (item, block_lists) in block.items.iter() {
+                if let Some(l) = block_lists {
+                    lists = lists.combine(l);
+                }
+                out.push(match item {
+                    Some(item) if block_lists.is_some() => label_after(&self.context.numbering, &lists, *item),
+                    _ => None,
+                });
+            }
+        }
+        out
+    }
+
     /// The label of the `k`-th paragraph (document order, cells included) of top-level
     /// block `block`, from the counts before the block (O(log n)).
     pub fn label(&self, block: usize, k: usize) -> Option<String> {
