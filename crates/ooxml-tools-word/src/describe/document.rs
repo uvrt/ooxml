@@ -85,7 +85,7 @@ fn typed_digits(text: &str) -> Option<&str> {
 }
 
 /// A decimal digit as Python's `\d` matches one: ASCII, and the other decimal digits
-/// Word documents carry (Arabic-Indic, extended Arabic-Indic, Devanagari, full width).
+/// Word documents carry (Arabic, extended Arabic, Devanagari and full-width digits).
 fn is_decimal(c: char) -> bool {
     c.is_ascii_digit()
         || matches!(c, '\u{660}'..='\u{669}' | '\u{6f0}'..='\u{6f9}' | '\u{966}'..='\u{96f}' | '\u{ff10}'..='\u{ff19}')

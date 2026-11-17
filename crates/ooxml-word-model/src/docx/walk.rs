@@ -1,6 +1,6 @@
-//! Owns: finding elements in a part as docx-agent's `live_elements` does -- by name, in
+//! Owns: locating elements in a part as docx-agent's `live_elements` does -- by name, in
 //! document order, `mc:Fallback` subtrees left out -- each with its place (a path of child
-//! indexes, as [`crate::ids::PartIds`] keys blocks), and finding an element by its place.
+//! indexes, as [`crate::ids::PartIds`] keys blocks), and locating an element by its place.
 //!
 //! Must not: know what the elements mean.
 

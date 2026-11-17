@@ -283,8 +283,8 @@ fn code(text: &str) -> String {
     }
 }
 
-/// Whether an entity reference (`&amp;`, `&#38;`, `&#x26;`) starts at `rest`.
-fn entity_at(rest: &str) -> bool {
+/// Whether a character reference (`&amp;`, `&#38;`, `&#x26;`) starts at `rest`.
+fn reference_at(rest: &str) -> bool {
     let Some(body) = rest.strip_prefix('&') else {
         return false;
     };
@@ -309,7 +309,7 @@ fn escape(text: &str, table: bool, after_note: bool) -> String {
         if ALWAYS.contains(&c) || (table && c == '|') {
             out.push('\\');
             out.push(c);
-        } else if c == '&' && entity_at(rest) {
+        } else if c == '&' && reference_at(rest) {
             out.push_str("\\&");
         } else if c == '{'
             && CRITIC_OPEN
