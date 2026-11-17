@@ -3,7 +3,17 @@
 ooxml-core is the Rust core of the ooxml packages (`crates/`), as the Python module
 `ooxml_core`. Its version is the `crates/python` crate's.
 
-## 0.9.0 -- unreleased
+## 0.10.0 -- unreleased
+
+- **Word reads in Rust (phase P1, lane P1a).** The session's `describe` gives every field of
+  docx-agent's but `pages`, `problems` and `revisions.changes` (headings, sections, styles in
+  use, revisions, fields, tables, drawings and named content controls added), and it serves
+  `word_read`: the document as Markdown with ids, in the final, markup and original views,
+  by range and with every story, its definition docx-agent's byte for byte. Both are read
+  from the Word model (`ooxml-word-model`'s `docx` and `markdown` modules), whose `ids`
+  module holds the block ids, the id ledger and the `docx-ids.1.` state as docx-agent does.
+
+## 0.9.0 -- released in v2026.11.17.1
 
 - **`ooxml_core.Session`**: the architecture's Rust session (lane P0d), beside the
   prototype's functions in the same module. `open(data, kind=, name=)` gives a document id

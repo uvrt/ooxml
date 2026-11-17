@@ -9,10 +9,12 @@ lock let go (:meth:`RustTools.dispatch`).  The tools' definitions come from Rust
 :class:`RustResult`, so the provider adapters (:mod:`ooxml_edit.tools.adapters`) render both
 unchanged for Claude and OpenAI.
 
-The Rust session serves ``describe`` so far, with the fields it can read from the package
+The Rust session serves ``describe`` and ``word_read`` so far (phase P1): ``describe`` with
+every field of today's but ``pages``, ``problems`` and ``revisions.changes``
 (``RUST_DESCRIBED``; ``tests/test_rust_describe.py`` holds them equal to today's on every
-fixture).  Nothing in docx-agent uses this module unless an application does: the toolbox's
-own ``describe`` is unchanged.
+fixture), ``word_read`` equal to today's on every fixture but drawings' chart and SmartArt
+summaries (``tests/test_rust_word_read.py``).  Nothing in docx-agent uses this module unless
+an application does: the toolbox's own tools are unchanged.
 """
 from __future__ import annotations
 
@@ -27,8 +29,11 @@ from ooxml_edit.tools.results import Result, ToolError
 
 KIND = "docx"
 
-#: The keys of ``describe``'s data the Rust session gives, in their order there.
-RUST_DESCRIBED = ("name", "compatibility_mode", "properties", "comments", "notes", "controls")
+#: The keys of ``describe``'s data the Rust session gives, in their order there (``tagged``
+#: and ``headings_note`` only where today's has them).
+RUST_DESCRIBED = ("name", "compatibility_mode", "properties", "tracking", "headings", "sections", "styles_in_use",
+                  "comments", "revisions", "fields", "tables", "drawings", "notes", "controls", "tagged",
+                  "headings_note")
 
 
 def _runs_in_rust(call: Any, **arguments: Any) -> Result:

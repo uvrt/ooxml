@@ -1,0 +1,221 @@
+//! Owns: the body's sections as docx-agent reads them (`edit/sections.py`): each ended by
+//! a paragraph's `w:sectPr` (`s:<paraId>`, `s@body/<n>` for a paragraph without one) or the
+//! body's last (`s:body`); their start, page, margins and columns as declared; and the
+//! header and footer each shows, by kind, inherited from the sections before it.
+//!
+//! Must not: change a section or lay out pages.
+
+use crate::docx::{find_path, Docx};
+use crate::ids::W;
+use crate::parts::relationships;
+use crate::xmlread::py_int;
+use ooxml_xml::{Element, Node};
+use std::sync::Arc;
+
+const R: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+
+/// The kinds of header and footer, in docx-agent's order.
+pub const KINDS: [&str; 3] = ["default", "first", "even"];
+
+/// A section.
+#[derive(Debug, Clone)]
+pub struct Section {
+    /// Its id.
+    pub id: String,
+    /// Its `w:sectPr`.
+    pub properties: Arc<Element>,
+}
+
+fn int_of(node: Option<&Element>, local: &str, default: Option<i64>) -> Option<i64> {
+    match node {
+        None => default,
+        Some(n) => n.attribute(Some(W), local).and_then(py_int).or(default),
+    }
+}
+
+/// Twips as points (`int(value) / 20`), `None` where absent or not a number.
+#[must_use]
+pub fn points(value: Option<&str>) -> Option<f64> {
+    value.and_then(py_int).map(|v| v as f64 / 20.0)
+}
+
+impl Section {
+    /// How it starts (`nextPage` where it states none).
+    #[must_use]
+    pub fn start(&self) -> String {
+        self.properties
+            .find(Some(W), "type")
+            .and_then(|t| t.attribute(Some(W), "val"))
+            .filter(|v| !v.is_empty())
+            .unwrap_or("nextPage")
+            .to_owned()
+    }
+
+    /// `portrait` or `landscape`.
+    #[must_use]
+    pub fn orientation(&self) -> &'static str {
+        let size = self.properties.find(Some(W), "pgSz");
+        if size.and_then(|s| s.attribute(Some(W), "orient")) == Some("landscape") {
+            "landscape"
+        } else {
+            "portrait"
+        }
+    }
+
+    /// The page's width and height in points, where it states a size.
+    #[must_use]
+    pub fn page(&self) -> Option<(f64, f64)> {
+        let size = self.properties.find(Some(W), "pgSz")?;
+        let get = |local| int_of(Some(size), local, Some(0)).unwrap_or(0) as f64 / 20.0;
+        Some((get("w"), get("h")))
+    }
+
+    /// A margin in points (`top`, `right`, `bottom`, `left`...).
+    #[must_use]
+    pub fn margin(&self, side: &str) -> Option<f64> {
+        points(self.properties.find(Some(W), "pgMar")?.attribute(Some(W), side))
+    }
+
+    /// The number of columns.
+    #[must_use]
+    pub fn columns(&self) -> i64 {
+        let node = self.properties.find(Some(W), "cols").map(|n| &**n);
+        let widths = node.map_or(0, |n| {
+            n.child_elements().filter(|c| c.name().is(Some(W), "col")).count()
+        });
+        if widths > 0 {
+            return i64::try_from(widths).unwrap_or(i64::MAX);
+        }
+        match int_of(node, "num", Some(1)) {
+            Some(0) | None => 1,
+            Some(n) => n,
+        }
+    }
+
+    fn own_reference(&self, which: &str, kind: &str) -> Option<&Arc<Element>> {
+        let local = if which == "header" {
+            "headerReference"
+        } else {
+            "footerReference"
+        };
+        self.properties
+            .child_elements()
+            .filter(|n| n.name().is(Some(W), local))
+            .find(|n| n.attribute(Some(W), "type").unwrap_or("default") == kind)
+    }
+}
+
+/// Every section of the body, in order.
+#[must_use]
+pub fn sections(docx: &Docx) -> Vec<Section> {
+    let Some(body) = docx.body() else { return Vec::new() };
+    let mut out = Vec::new();
+    let mut ancestors: Vec<(Arc<Element>, Box<[u32]>)> = Vec::new();
+    let mut path = Vec::new();
+    find_breaks(docx, body.root(), &mut ancestors, &mut path, &mut out);
+    if let Some(last) = body
+        .root()
+        .find(Some(W), "body")
+        .and_then(|b| b.find(Some(W), "sectPr"))
+    {
+        out.push(Section {
+            id: "s:body".to_owned(),
+            properties: Arc::clone(last),
+        });
+    }
+    out
+}
+
+fn find_breaks(
+    docx: &Docx,
+    element: &Arc<Element>,
+    ancestors: &mut Vec<(Arc<Element>, Box<[u32]>)>,
+    path: &mut Vec<u32>,
+    out: &mut Vec<Section>,
+) {
+    for (k, node) in element.children().iter().enumerate() {
+        let Node::Element(child) = node else { continue };
+        path.push(u32::try_from(k).unwrap_or(u32::MAX));
+        if child.name().is(Some(W), "sectPr") {
+            if let Some(id) = break_id(docx, element, ancestors, k) {
+                out.push(Section {
+                    id,
+                    properties: Arc::clone(child),
+                });
+            }
+        }
+        ancestors.push((Arc::clone(element), path.clone().into_boxed_slice()));
+        find_breaks(docx, child, ancestors, path, out);
+        ancestors.pop();
+        path.pop();
+    }
+}
+
+/// The section id of a `w:sectPr` in `properties`, where it ends a section: the first
+/// `w:sectPr` of a paragraph's first `w:pPr`, the paragraph a block of the body.
+fn break_id(
+    docx: &Docx,
+    properties: &Arc<Element>,
+    ancestors: &[(Arc<Element>, Box<[u32]>)],
+    sect: usize,
+) -> Option<String> {
+    if !properties.name().is(Some(W), "pPr") {
+        return None;
+    }
+    // Each ancestor is held with its child's place: the last is (paragraph, place of properties).
+    let (paragraph, properties_path) = ancestors.last()?;
+    let paragraph_path = properties_path.get(..properties_path.len().checked_sub(1)?)?;
+    let own = *properties_path.last()? as usize;
+    if !paragraph.name().is(Some(W), "p")
+        || first_index(paragraph, "pPr") != Some(own)
+        || first_index(properties, "sectPr") != Some(sect)
+    {
+        return None;
+    }
+    let containers = ancestors.get(..ancestors.len().checked_sub(1)?)?;
+    let in_body = containers.iter().rev().map(|(e, _)| e).find(|e| {
+        !(e.name().is(Some(W), "sdtContent") || e.name().is(Some(W), "sdt") || e.name().is(Some(W), "customXml"))
+    });
+    if !in_body.is_some_and(|e| e.name().is(Some(W), "body")) {
+        return None;
+    }
+    let body = docx.body()?;
+    let entry = body.ids.paragraph_at(paragraph_path)?;
+    Some(section_id(&entry.id))
+}
+
+/// The index among its parent's children of `element`'s first child `w:{local}`.
+fn first_index(element: &Element, local: &str) -> Option<usize> {
+    element
+        .children()
+        .iter()
+        .position(|n| matches!(n, Node::Element(e) if e.name().is(Some(W), local)))
+}
+
+/// A section's id from the id of the paragraph ending it.
+#[must_use]
+pub fn section_id(paragraph_id: &str) -> String {
+    match paragraph_id.strip_prefix("p@") {
+        Some(rest) => format!("s@{rest}"),
+        None => format!("s:{}", paragraph_id.rsplit("p:").next().unwrap_or(paragraph_id)),
+    }
+}
+
+/// The story section `index` of `sections` shows for `which` (`header`, `footer`) and
+/// `kind`: its own reference, else the last a section before it states.
+#[must_use]
+pub fn section_story(docx: &Docx, sections: &[Section], index: usize, which: &str, kind: &str) -> Option<String> {
+    let node = (0..=index)
+        .rev()
+        .find_map(|k| sections.get(k).and_then(|s| s.own_reference(which, kind)))?;
+    let rid = node.attribute(Some(R), "id")?;
+    let rels = relationships(&docx.package, &docx.main).ok()?;
+    let part = rels.into_iter().find(|r| r.id == rid)?.target_part?;
+    docx.part(&part).map(|p| p.story.clone())
+}
+
+/// Where a paragraph's `w:pPr/w:sectPr` is.
+#[must_use]
+pub fn ends_section(paragraph: &Element) -> bool {
+    find_path(paragraph, &["pPr", "sectPr"]).is_some()
+}

@@ -11,9 +11,11 @@
 //! ([`layout`]: docx2svg's layout records in, every difference out; tables in
 //! [`layout_tables`]) and its benchmark ([`layout_bench`]); the DrawingML differential's
 //! Rust side ([`dml`]: `python/drawingml_diff.py` compares it with ooxml-common); and the
-//! charts' ([`chart`]: `python/chart_diff.py`); and the PNG differential's ([`raster`]:
-//! `python/raster_record.py`'s calls to resvg-py drawn again by `ooxml-raster`); and the
-//! painter pieces' ([`painter`]: `python/painter_record.py`'s calls from docx2svg).
+//! charts' ([`chart`]: `python/chart_diff.py`); the Word reads' ([`ids`]: block ids and
+//! the id ledger; `python/word_reads_diff.py` compares them with docx-agent's); the PNG
+//! differential's ([`raster`]: `python/raster_record.py`'s calls to resvg-py drawn again by
+//! `ooxml-raster`); and the painter pieces' ([`painter`]: `python/painter_record.py`'s calls
+//! from docx2svg).
 //!
 //! Must not: be depended on by a shipped crate. The two adapters move to the layout and
 //! session crates (L3, L4) when those exist.
@@ -27,6 +29,7 @@ pub mod drawing;
 pub mod export;
 mod export_parts;
 pub mod glyphs;
+pub mod ids;
 pub mod layout;
 pub mod layout_bench;
 pub mod layout_tables;
@@ -34,6 +37,7 @@ pub mod metafile;
 pub mod painter;
 pub mod pixels;
 pub mod raster;
+pub mod reads;
 pub mod records;
 pub mod replay;
 pub mod scene_data;
