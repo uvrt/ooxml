@@ -20,7 +20,7 @@ use std::time::Instant;
 
 /// The main part's bytes with one character added to the text of the body paragraph
 /// nearest the middle: the one-block edit.
-fn edited(xml: &[u8]) -> Option<Vec<u8>> {
+pub(crate) fn edited(xml: &[u8]) -> Option<Vec<u8>> {
     let middle = xml.len() / 2;
     let mut from = middle;
     loop {
