@@ -1,17 +1,37 @@
 //! `chart-model <file.pptx|.docx|.xlsx|.xml>...`: each file's chart parts read by
-//! `ooxml-chart`, one JSON line a file (`python/chart_diff.py` compares them).
+//! `ooxml-chart`, one JSON line a file; `chart-model --layout < cases`: each case (a JSON line
+//! naming a chart and its frame) laid out, one JSON line a case (`python/chart_diff.py`
+//! compares both with ooxml-common).
 
+use std::io::Read;
 use std::process::ExitCode;
 
+fn layout() -> Result<(), String> {
+    let mut input = String::new();
+    std::io::stdin().read_to_string(&mut input).map_err(|e| e.to_string())?;
+    for line in input.lines().filter(|l| !l.trim().is_empty()) {
+        let spec: serde_json::Value = serde_json::from_str(line).map_err(|e| e.to_string())?;
+        println!("{}", ooxml_oracle::chart::layout(&spec)?);
+    }
+    Ok(())
+}
+
 fn main() -> ExitCode {
-    for path in std::env::args().skip(1) {
-        match ooxml_oracle::chart::file(&path) {
-            Ok(record) => println!("{record}"),
-            Err(message) => {
-                eprintln!("chart-model: {message}");
-                return ExitCode::FAILURE;
-            }
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let result = if args.first().map(String::as_str) == Some("--layout") {
+        layout()
+    } else {
+        args.iter().try_for_each(|path| {
+            let record = ooxml_oracle::chart::file(path)?;
+            println!("{record}");
+            Ok(())
+        })
+    };
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(message) => {
+            eprintln!("chart-model: {message}");
+            ExitCode::FAILURE
         }
     }
-    ExitCode::SUCCESS
 }

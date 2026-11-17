@@ -10,6 +10,13 @@ status is 1 when there is any.
 
     python crates/ooxml-oracle/python/chart_diff.py --rust target/release/chart-model a.pptx b.xml
     python crates/ooxml-oracle/python/chart_diff.py --rust ... --tree DIR   # every package and chart XML below DIR
+    python crates/ooxml-oracle/python/chart_diff.py --rust ... --layout --tree DIR   # each chart laid out
+
+With ``--layout`` each chart is laid out as ooxml-common's golden harness lays it out
+(``tests/goldens.py``'s ``chart_element``: its consumer, its style), under PowerPoint's rules
+and Word's: a golden fixture in the frame and with the locale its manifest states, a
+package's chart part in a 480 x 288 pt frame. The elements, the chart data and the notes are
+compared field by field.
 
 Python's behaviour is not changed: this only reads ooxml-common's public functions.
 """
@@ -86,16 +93,81 @@ def chart_files(folder: Path) -> list[Path]:
     return found
 
 
+LAYOUT_FRAME = (480.0, 288.0)
+
+
+def layout_cases(files: list[Path]) -> list[dict]:
+    """Each chart of ``files`` with its frame, rules and locale."""
+    manifest = {}
+    for path in files:
+        listing = path.parent.parent / "charts.json"
+        if path.suffix == ".xml" and listing.exists() and not manifest.get(str(listing)):
+            manifest[str(listing)] = json.loads(listing.read_text(encoding="utf-8"))
+    cases = []
+    for path in files:
+        if path.suffix == ".xml":
+            entry = manifest.get(str(path.parent.parent / "charts.json"), {}).get(path.stem)
+            width, height = (entry["width_pt"], entry["height_pt"]) if entry else LAYOUT_FRAME
+            for rules in (entry["rules"] if entry else ("powerpoint", "word")):
+                cases.append({"file": str(path), "part": None, "width_pt": width, "height_pt": height,
+                              "rules": rules, "locale": entry.get("locale") if entry else None})
+            continue
+        for name in python_record(path)["parts"]:
+            for rules in ("powerpoint", "word"):
+                cases.append({"file": str(path), "part": name, "width_pt": LAYOUT_FRAME[0],
+                              "height_pt": LAYOUT_FRAME[1], "rules": rules, "locale": None})
+    return cases
+
+
+def python_layout(case: dict) -> dict:
+    """A case laid out by ooxml-common, as the golden harness lays it out."""
+    sys.path.insert(0, str(dd.ROOT / "python" / "ooxml-common" / "tests"))
+    import goldens
+
+    if case["part"] is None:
+        root = ET.parse(case["file"]).getroot()
+    else:
+        with zipfile.ZipFile(case["file"]) as package:
+            root = ET.fromstring(package.read(case["part"]))
+    element, notes = goldens.chart_element(root, case["width_pt"], case["height_pt"], case["rules"], case["locale"])
+    if element is None:
+        return {"notes": notes}
+    return {"notes": notes, "elements": [dump(child) for child in element.children], "data": dump(element.chart)}
+
+
+def compare_layouts(binary: str, files: list[Path], out_json: str | None) -> int:
+    cases = layout_cases(files)
+    rust = dd.run_rust(binary, ["--layout"], "\n".join(json.dumps(c) for c in cases))
+    total, summary = 0, {}
+    for case, answer in zip(cases, rust):
+        out: list[str] = []
+        dd.diff(python_layout(case), answer, "", out)
+        label = f"{case['file']}{'' if case['part'] is None else ':' + case['part']} [{case['rules']}]"
+        summary[label] = len(out)
+        total += len(out)
+        for line in out[:12]:
+            print(f"  {line}")
+        if out:
+            print(f"{label}: {len(out)} difference(s)")
+    print(f"{len(cases)} layout case(s), {sum(1 for v in summary.values() if v)} with differences, {total} difference(s)")
+    if out_json:
+        Path(out_json).write_text(json.dumps(summary, indent=1) + "\n", encoding="utf-8")
+    return 1 if total else 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--rust", required=True, help="the chart-model binary")
     parser.add_argument("--tree", action="append", default=[], help="every package and chart XML below this folder")
     parser.add_argument("--json", help="write the per-file counts here")
+    parser.add_argument("--layout", action="store_true", help="lay each chart out and compare the drawing")
     parser.add_argument("files", nargs="*")
     args = parser.parse_args()
     files = [Path(f) for f in args.files]
     for folder in args.tree:
         files += chart_files(Path(folder))
+    if args.layout:
+        return compare_layouts(args.rust, files, args.json)
     total, charts, summary = 0, 0, {}
     for path in files:
         out: list[str] = []

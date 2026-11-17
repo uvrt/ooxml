@@ -287,6 +287,8 @@ version = "0.1.0"
 dependencies = [
  "ooxml-colour",
  "ooxml-drawingml",
+ "ooxml-fonts",
+ "ooxml-numfmt",
  "ooxml-schema",
  "ooxml-xml",
 ]
@@ -362,6 +364,7 @@ dependencies = [
  "ooxml-derive",
  "ooxml-drawingml",
  "ooxml-fonts",
+ "ooxml-numfmt",
  "ooxml-opc",
  "ooxml-schema",
  "ooxml-text",
