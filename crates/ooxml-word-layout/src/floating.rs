@@ -230,6 +230,13 @@ pub fn moves_text(anchor: &Anchor) -> bool {
 /// Every floating drawing of `paragraph` that takes no room in its line, where it is in
 /// the text and the line it is on (`anchors_of`).
 pub fn anchors_of(paragraph: &Paragraph, measured: &MeasuredParagraph) -> Vec<AnchorRef> {
+    let anchored = paragraph
+        .runs
+        .iter()
+        .any(|r| r.breaks.iter().any(|(_, mark)| mark.starts_with("anchor:")));
+    if !anchored {
+        return Vec::new();
+    }
     let m = &measured.measured;
     let line_of = crate::notes::flowed::line_of_sources(&m.pieces, &m.lines);
     let mut out = Vec::new();

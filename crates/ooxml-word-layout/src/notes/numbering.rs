@@ -362,11 +362,7 @@ fn number_endnotes(document: &WordDocument, sections: &[usize]) -> (Vec<Block>, 
 
 /// The document with its endnotes numbered and placed (`with_endnotes`).
 pub fn with_endnotes(document: &WordDocument) -> Placed {
-    let any = document
-        .body
-        .iter()
-        .any(|b| block_marks(b).iter().any(|m| m.starts_with("endnoteReference:")));
-    if !any {
+    if !document.body.iter().any(|b| has_mark(b, "endnoteReference:")) {
         return Placed::none(document);
     }
     let sections = section_numbers(document);
@@ -472,6 +468,20 @@ fn renumbered(sections: &[Section], body: &[Block], roles: &[Option<NoteRole>]) 
             last_paragraph: bounds.get(k + 1).copied().unwrap_or(paragraphs),
         })
         .collect()
+}
+
+/// Whether any paragraph of a block, cells included, holds a mark starting `prefix`.
+fn has_mark(block: &Block, prefix: &str) -> bool {
+    match block {
+        Block::Paragraph(p) => p
+            .runs
+            .iter()
+            .any(|r| r.breaks.iter().any(|(_, m)| m.starts_with(prefix))),
+        Block::Table(t) => t
+            .rows
+            .iter()
+            .any(|row| row.iter().any(|cell| cell.iter().any(|b| has_mark(b, prefix)))),
+    }
 }
 
 /// Every mark of a block's paragraphs, cells included.
@@ -590,7 +600,7 @@ pub fn footnotes_by_page(document: &WordDocument) -> bool {
 /// still holds the reference's mark (for the paginator), and every note's own mark
 /// numbered (`with_footnotes`).
 pub fn with_footnotes(document: &WordDocument, pages: Option<&FootnotePages>) -> WordDocument {
-    if footnote_references(document).is_empty() {
+    if !document.body.iter().any(|b| has_mark(b, "footnoteReference:")) {
         return document.clone();
     }
     let mut numbers = footnote_numbers(document, pages).into_iter();
