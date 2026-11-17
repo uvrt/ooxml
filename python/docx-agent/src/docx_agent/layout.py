@@ -2323,8 +2323,15 @@ def _lay_out(document: "Document", data: bytes, options: dict, converter: Any = 
         return raw, None, warnings, list(svgs)
     # Lane L4: laid out in Rust here, from the document's last version, where the Rust layout
     # lays it out as docx2svg does (docx_agent.pages); else as before.
+    # The call's deadline (a tool layer's engine, ``Limits.layout_timeout``) holds for a
+    # layout in Rust too: past it, the call is a timeout and changes nothing.
+    remaining = getattr(converter, "_remaining", None)
+    if remaining is not None:
+        remaining()
     rust = _pages.lay_out(data, options, lineage(document))
     if rust is not None:
+        if remaining is not None:
+            remaining()
         return rust, None, list(rust.warnings), None
     state = kept_layout(document, data, options, may_wait=may_wait)
     if isinstance(state, bytes):
