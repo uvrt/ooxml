@@ -1786,7 +1786,6 @@ def _keeper(document: "Document") -> threading.Lock:
             lock = getattr(document, "_layout_lock", None)
             if lock is None:
                 lock = threading.Lock()
-                document._layout_lock = lock
                 document._layout_flights = {}
                 document._layout_kept = None
                 document._layout_count = 0
@@ -1804,6 +1803,9 @@ def _keeper(document: "Document") -> threading.Lock:
                 # the workers of the runners that laid it out hold (:func:`remember_runner`).
                 document._layout_runners = []
                 weakref.finalize(document, _collected, document._layout_lineage, document._layout_runners)
+                # Q3: the lock last -- another thread that finds it (outside the keepers'
+                # lock) finds everything above too.
+                document._layout_lock = lock
     return lock
 
 
@@ -1848,24 +1850,14 @@ drop_lineage.__ooxml_edit_task__ = True  # type: ignore[attr-defined]
 
 
 def release_free_memory() -> None:
-    """Hand the C allocator's free pages back to the system: macOS's
-    ``malloc_zone_pressure_relief`` (every zone), glibc's ``malloc_trim``; elsewhere
-    nothing.  Python frees a layout's objects into the allocator, which keeps the pages for
-    later use until it is asked."""
-    import ctypes
-    import ctypes.util
-    import sys
+    """Hand the C allocator's free pages back to the system: ooxml-edit's
+    :func:`~ooxml_edit.tools.memory.release_free_memory` (macOS
+    ``malloc_zone_pressure_relief``, glibc ``malloc_trim``; elsewhere nothing).  Python
+    frees a layout's objects into the allocator, which keeps the pages for later use until
+    it is asked."""
+    from ooxml_edit.tools.memory import release_free_memory as release
 
-    try:
-        if sys.platform == "darwin":
-            libc = ctypes.CDLL(ctypes.util.find_library("c"))
-            libc.malloc_zone_pressure_relief.restype = ctypes.c_size_t
-            libc.malloc_zone_pressure_relief(None, ctypes.c_size_t(0))
-        elif sys.platform.startswith("linux"):
-            libc = ctypes.CDLL("libc.so.6")
-            libc.malloc_trim(ctypes.c_size_t(0))
-    except (OSError, AttributeError):
-        pass                                # another C library: nothing to ask
+    release()
 
 
 def remember_runner(document: "Document", runner: Any) -> None:
@@ -1928,8 +1920,9 @@ def _collected(lineage: str, runners: list) -> None:
 def release_document(document: "Document") -> None:
     """What docx-agent kept for ``document`` in this process, let go -- when it is closed
     (ooxml-edit's ``DocumentFormat.closed``; or by the application): its layouts and what
-    was read of them, its live view's tokens, the layouts held of its lineage here, and its
-    Rust owner (:mod:`docx_agent.rust`).  The document stays usable: whatever it needs
+    was read of them, its live view's tokens, the layouts held of its lineage here, its
+    Rust owner (:mod:`docx_agent.rust`) and (Q3) the bodies read (:func:`blocks.
+    forget_bodies`: kept by their bytes, every document's).  The document stays usable: whatever it needs
     again is made again.  The workers of the runners that laid it out
     (:func:`remember_runner`) are told to drop its layouts too (:func:`drop_lineage`): the
     idle ones at once, the busy ones as their task ends."""
@@ -1948,6 +1941,10 @@ def release_document(document: "Document") -> None:
     rust = document.__dict__.pop("_rust_doc", None)
     if rust is not None:
         rust.close()
+    # Q3: the bodies read of its versions (kept by their bytes, for every document).
+    from . import blocks
+
+    blocks.forget_bodies()
 
 
 def clear_caches() -> None:
@@ -1965,8 +1962,7 @@ def clear_caches() -> None:
     with _HELD_LOCK:
         _HELD.clear()
     _MEASURES.clear()
-    with blocks._BODIES_LOCK:
-        blocks._BODIES.clear()
+    blocks.forget_bodies()
     with layout_facts._RAGGED_LOCK:
         layout_facts._RAGGED.clear()
     with keep_trials._RESULTS_LOCK:
@@ -2555,8 +2551,10 @@ def check_facts(document: "Document", unlocked: Any, request: dict, *,
     failed = _kept_failure(document, cache_key(data, options))
     if failed is not None:
         raise failed                          # round 53: this version failed already
-    with unlocked():
-        state = kept_layout(document, data, options)
+    with unlocked() as let_go:
+        # Round 59 (R134): a caller holding the document's lock (``unlocked`` yields
+        # ``False``: a batch's op, a change) never waits for another's layout in progress.
+        state = kept_layout(document, data, options, may_wait=let_go is not False)
         started = time.perf_counter()
         try:
             result = converter.check(data, dict(options), state, {**request, "summary": summary is None})
@@ -2582,6 +2580,57 @@ def check_facts(document: "Document", unlocked: Any, request: dict, *,
         _keep_facts(document, (key, repr(sorted(also.items()))),
                     {name: value for name, value in result.items() if name not in extra}, data, options)
     return copy.deepcopy(result), summary
+
+
+@contextmanager
+def holding() -> Any:
+    """An ``unlocked`` for :func:`check_facts` that lets nothing go: the caller holds the
+    document's lock, so its task never waits for a layout in progress (round 34's rule)."""
+    yield False
+
+
+def held_answers(document: "Document", request: dict, unlocked: Any = None) -> "dict | None":
+    """Round 59 (R134): what ``request`` asks of the document's layout (:func:`check_facts`'
+    keys besides :data:`BARE_REQUEST`'s: ``where``, ``extents``), answered in the worker of
+    the toolbox holding its layouts, so the layout never comes to this process for them --
+    ``unlocked`` (``Call.unlocked``; default :func:`holding`) let go while it lays out where
+    it may.  ``None`` where the document has no such worker (no toolbox laid it out, or one
+    whose runner runs here: :func:`runner_of`) or its converter cannot ask one: the caller
+    reads :meth:`~docx_agent.Document.layout` here, as before."""
+    if runner_of(document) is None:
+        return None
+    # The worker's copy of the bytes knows no aliases: each id asked as the document names
+    # the block now (an id an edit stamped or re-issued, followed to its end).
+    canon = canon_of(document)
+    request = dict(request)
+    if request.get("where") is not None:
+        request["where"] = [[canon(identifier) for identifier in asked] for asked in request["where"]]
+    if request.get("extents") is not None:
+        request["extents"] = {name: [canon(identifier) for identifier in ids]
+                              for name, ids in request["extents"].items()}
+    made = check_facts(document, unlocked if unlocked is not None else holding, {**BARE_REQUEST, **request})
+    return made[0] if made is not None else None
+
+
+def placements_of(layout: "DocumentLayout", asked: "list[list[str]]") -> list:
+    """Per entry of ``asked`` -- an id and the ids to try after it, in order, while nothing
+    is drawn of those before (a paragraph the view joins others into: docx2svg draws the
+    joined lines under the first one's id) -- :meth:`DocumentLayout.where` of the first id
+    drawn, else of the last tried (its :class:`Unknown`)."""
+    out = []
+    for identifiers in asked:
+        found = layout.where(identifiers[0])
+        for other in identifiers[1:]:
+            if found:
+                break
+            found = layout.where(other)
+        out.append(found)
+    return out
+
+
+def extents_of(layout: "DocumentLayout", groups: dict) -> dict:
+    """``{name: layout.extent(ids)}`` for each ``name: ids`` of ``groups``."""
+    return {name: layout.extent(ids) for name, ids in groups.items()}
 
 
 def lay_out_unlocked(document: "Document", unlocked, current) -> DocumentLayout:

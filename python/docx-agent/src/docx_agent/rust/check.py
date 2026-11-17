@@ -134,6 +134,9 @@ class RustDoc:
         #: at it (:func:`_faces_state`), taken when the mirror was at that state (the latest
         #: few): a check of a version reads its own, never the mirror's later state.
         self.faces: OrderedDict = OrderedDict({0: _faces_state(mirror)})
+        #: Closes the owner when the document is collected (:func:`_close_owner`, the key
+        #: alone); taken back by :meth:`close`.
+        self.finalizer: Any = None
 
     def keep_faces(self) -> None:
         """What the faces are at :attr:`seq` (the mirror at that state, under the document's
@@ -143,12 +146,24 @@ class RustDoc:
             self.faces.popitem(last=False)
 
     def close(self) -> None:
-        c = core()
-        if c is not None:
-            try:
-                c.close_document(self.key)
-            except Exception:  # noqa: BLE001
-                pass
+        """The owner closed (its snapshots and layouts, in native memory, let go), and the
+        finalizer that would have closed it with the document taken back."""
+        finalizer, self.finalizer = self.finalizer, None
+        if finalizer is not None:
+            finalizer.detach()
+        _close_owner(self.key)
+
+
+def _close_owner(key: str) -> None:
+    """Close the Rust owner ``key``: what a document's finalizer runs, so it holds the key
+    alone -- never the :class:`RustDoc`, whose mirror reads a copy of the document, which
+    would keep the document alive for as long as the finalizer exists (for good)."""
+    c = core()
+    if c is not None:
+        try:
+            c.close_document(key)
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def _parts(document: Any) -> dict[str, bytes]:
@@ -293,7 +308,9 @@ def _open(call: Any, copy: Any, live: Any, found: Any) -> "RustDoc | None":
     live.__dict__["_rust_doc"] = doc
     # Round 58: the owner (its snapshots and layouts, in native memory) goes with the
     # document when it is collected -- closed, it goes at once (layout.release_document).
-    weakref.finalize(live, doc.close)
+    # Q3: the finalizer holds the owner's key alone; one that held ``doc.close`` held the
+    # mirror, its read copy and through it the document, which was then never collected.
+    doc.finalizer = weakref.finalize(live, _close_owner, key)
     # Versions committed while it was made: followed now where the document is free, as
     # each commit would have; else by the next commit (never a wait for an edit in flight).
     if live.history.version != version and entry.lock.acquire(blocking=False):

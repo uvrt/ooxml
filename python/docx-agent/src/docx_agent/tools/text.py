@@ -1016,7 +1016,7 @@ def word_format(call: Any, doc: str, targets: list[str] | None = None, paragraph
     addresses = resolve(call, list(targets or [])) + found
     # The blocks kept together, and the layout they are measured in before the change.
     kept = [] if keep_together is None else [a for a in addresses if _keeps_blocks(document, a)]
-    before = cached_layout(document) if kept and keep_together else None
+    before = _laid_before(call, kept) if kept and keep_together else None
     # Round 36, R33: a style or a cleared outline level may change a heading's level.
     from ..edit.outline import headings, moves
 
@@ -1256,14 +1256,43 @@ def _keep_blocks(document: Any, address: str, on: bool, layout: Any) -> EditResu
     return result
 
 
+def _laid_before(call: Any, kept: list[str]) -> Any:
+    """What the blocks kept together are measured in before the change, where the document's
+    current state was laid out already (:func:`cached_layout`): its layout here, or (round
+    59, R134) -- laid out in the worker holding it -- each address's extents read there
+    now, ``{address: [Extent]}`` (:func:`docx_agent.layout.held_answers`), so the layout
+    never comes here for them.  ``None``: not laid out."""
+    from ..layout import held_answers
+
+    document = call.document
+    found = cached_layout(document, fetch=False)
+    if found is not True:
+        return found
+    groups: dict[str, list[str]] = {}
+    for address in kept:
+        try:
+            groups[address] = [p.id for p in paragraphs_of(document, address)]
+        except (KeyError, ValueError, ToolError):
+            continue
+    try:
+        answered = held_answers(document, {"extents": groups}, call.unlocked)
+    except ToolError:
+        return None
+    return answered["extents"] if answered is not None else cached_layout(document)
+
+
 def _taller_than_page(document: Any, address: str, layout: Any) -> tuple[float, float] | None:
     """``(height, room)`` in points where ``layout`` draws ``address``'s paragraphs taller
-    than the body of its pages holds (:meth:`~docx_agent.layout.DocumentLayout.extent`)."""
-    try:
-        ids = [p.id for p in paragraphs_of(document, address)]
-        extents = layout.extent(ids)
-    except (KeyError, ValueError, ToolError):
-        return None
+    than the body of its pages holds (:meth:`~docx_agent.layout.DocumentLayout.extent`);
+    ``layout`` a layout, or each address's extents read before (:func:`_laid_before`)."""
+    if isinstance(layout, dict):
+        extents = layout.get(address)
+    else:
+        try:
+            ids = [p.id for p in paragraphs_of(document, address)]
+            extents = layout.extent(ids)
+        except (KeyError, ValueError, ToolError):
+            return None
     if not extents:
         return None
     height = round(sum(e.bottom - e.top for e in extents), 1)

@@ -32,7 +32,8 @@ differences live here and nowhere else:
     python tools/ci.py fuzz-seeds DIR
         rust.yml's fuzz job's seed corpora from this checkout's documents (FUZZ_SEED_SUFFIXES
         under python/): DIR/package (each package, for zip_read and opc_open) and DIR/xml
-        (each XML part, for xml_roundtrip), every distinct file once, none over 1 MiB.
+        (each XML part, for xml_roundtrip) and DIR/metafile (the metafiles in ooxml-oracle's
+        recorded case bundle, for metafile_draw), every distinct file once, none over 1 MiB.
 
 Standard library only, Python 3.10+.
 """
@@ -192,7 +193,8 @@ FUZZ_CRATES = ("ooxml-base", "ooxml-xml", "ooxml-zip", "ooxml-opc")
 LOOM_CRATES = ("ooxml-store",)
 WORD_MODEL_CRATES = ("ooxml-oracle", "ooxml-base", "ooxml-xml", "ooxml-zip", "ooxml-opc", "ooxml-derive",
                      "ooxml-fonts", "ooxml-text", "ooxml-word-model", "ooxml-colour", "ooxml-schema",
-                     "ooxml-drawingml", "ooxml-word-layout")
+                     "ooxml-drawingml", "ooxml-scene", "ooxml-metafile", "ooxml-word-layout", "ooxml-numfmt",
+                     "ooxml-chart")
 
 
 def _crates(names: tuple[str, ...]) -> tuple[str, ...]:
@@ -214,7 +216,7 @@ RUST_JOBS: dict[str, dict] = {
     "loom": {"paths": _crates(LOOM_CRATES), "events": FULL_EVENTS},
     "oracles": {"paths": ("python/ooxml-edit/", "python/ooxml-common/", *_crates(FUZZ_CRATES)),
                 "events": FULL_EVENTS},
-    "word_model": {"paths": ("xtask/", "python/docx2svg/", "python/ooxml-common/", *_crates(WORD_MODEL_CRATES)),
+    "word_model": {"paths": ("xtask/", "python/docx2svg/", "python/ooxml-common/", "python/pptx2svg/", *_crates(WORD_MODEL_CRATES)),
                    "events": FULL_EVENTS},
     "deny": {"paths": ("deny.toml", "DEPENDENCIES.md"), "suffixes": ("Cargo.toml", "Cargo.lock"),
              "events": FULL_EVENTS},
@@ -445,13 +447,14 @@ def build_check(name: str) -> None:
 FUZZ_SEED_SUFFIXES = (".docx", ".docm", ".dotx", ".dotm", ".pptx", ".pptm", ".potx", ".xlsx", ".xlsm", ".xltx")
 FUZZ_XML_SUFFIXES = (".xml", ".rels", ".vml")
 FUZZ_MAX_LEN = 1 << 20
+METAFILE_CASES = ROOT / "crates" / "ooxml-oracle" / "tests" / "data" / "metafile-cases.gz"
 
 
 def fuzz_seeds(out: Path) -> dict[str, int]:
     import hashlib
     import zipfile
 
-    counts = {"package": 0, "xml": 0}
+    counts = {"package": 0, "xml": 0, "metafile": 0}
     seen: set[str] = set()
 
     def keep(kind: str, data: bytes) -> None:
@@ -475,7 +478,36 @@ def fuzz_seeds(out: Path) -> dict[str, int]:
                         keep("xml", archive.read(info))
         except (zipfile.BadZipFile, OSError, RuntimeError, NotImplementedError):
             continue  # a deliberately damaged document: a package seed only
+    for data in metafile_cases():
+        keep("metafile", data)
     return counts
+
+
+def metafile_cases(path: Path = METAFILE_CASES) -> list[bytes]:
+    """The metafiles in ooxml-oracle's recorded case bundle (the repository has no .emf or
+    .wmf files; its tests build them): a gzip stream of length-prefixed cases, each a list
+    of length-prefixed fields, field 0 the kind and field 1 a metafile's bytes."""
+    import gzip
+
+    def fields(data: bytes) -> list[bytes]:
+        out, at = [], 0
+        while at + 4 <= len(data):
+            n = int.from_bytes(data[at:at + 4], "little")
+            out.append(data[at + 4:at + 4 + n])
+            at += 4 + n
+        return out
+
+    if not path.is_file():
+        return []
+    blob = gzip.decompress(path.read_bytes())
+    found, at = [], 0
+    while at + 4 <= len(blob):
+        n = int.from_bytes(blob[at:at + 4], "little")
+        case = fields(blob[at + 4:at + 4 + n])
+        if len(case) > 1 and case[0] == b"metafile":
+            found.append(case[1])
+        at += 4 + n
+    return found
 
 
 def main(argv: list[str] | None = None) -> int:

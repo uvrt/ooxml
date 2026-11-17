@@ -19,6 +19,6 @@ pub mod units;
 pub use context::{CacheBudget, Cancel, Clock, Context, FontSource, PartStore};
 pub use digest::{Digest, DigestKey, Digester};
 pub use error::BaseError;
-pub use limits::{Limits, XmlLimits, ZipLimits};
+pub use limits::{Limits, MetafileLimits, XmlLimits, ZipLimits};
 pub use locale::Locale;
 pub use units::{Emu, HalfPoints, Pt4096, Twips, Q};

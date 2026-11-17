@@ -282,6 +282,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "ooxml-chart"
+version = "0.1.0"
+dependencies = [
+ "ooxml-colour",
+ "ooxml-drawingml",
+ "ooxml-fonts",
+ "ooxml-numfmt",
+ "ooxml-schema",
+ "ooxml-text",
+ "ooxml-xml",
+]
+
+[[package]]
 name = "ooxml-colour"
 version = "0.1.0"
 dependencies = [
@@ -325,6 +338,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "ooxml-metafile"
+version = "0.1.0"
+dependencies = [
+ "flate2",
+ "ooxml-base",
+ "ooxml-fonts",
+ "ooxml-scene",
+ "ooxml-text",
+ "thiserror",
+]
+
+[[package]]
+name = "ooxml-numfmt"
+version = "0.1.0"
+dependencies = [
+ "thiserror",
+]
+
+[[package]]
 name = "ooxml-opc"
 version = "0.1.0"
 dependencies = [
@@ -340,10 +372,13 @@ version = "0.1.0"
 dependencies = [
  "flate2",
  "ooxml-base",
+ "ooxml-chart",
  "ooxml-colour",
  "ooxml-derive",
  "ooxml-drawingml",
  "ooxml-fonts",
+ "ooxml-metafile",
+ "ooxml-numfmt",
  "ooxml-opc",
  "ooxml-schema",
  "ooxml-text",
@@ -378,6 +413,10 @@ dependencies = [
  "pyo3",
  "serde_json",
 ]
+
+[[package]]
+name = "ooxml-scene"
+version = "0.1.0"
 
 [[package]]
 name = "ooxml-schema"

@@ -30,8 +30,8 @@ from .render import RENDERER
 from . import keep_trials
 from .keep_trials import left_out
 from .scoped import compare_copies, problems_in_scope, range_pages
-from ._base import (Timing, cached_layout, outcome, page, reflow_json, remember, resolve, short, validate_delta,
-                    wrap)
+from ._base import (Timing, cached_layout, held_facts, outcome, page, reflow_json, remember, resolve, short,
+                    validate_delta, wrap)
 
 KIND = "docx"
 PAGE_SIZES = ("A4", "Letter", "Legal", "A5", "A3")
@@ -164,10 +164,11 @@ def save_document(call: Any, doc: str, name: str, format: str, clean: bool = Fal
 def _coverage(call: Any) -> dict[str, Any]:
     """How much of the document docx2svg could lay out (``coverage_facts``): a check
     that passed on a complete layout is told from one that could not see everything.
-    Round 58: read where the layout is held (:func:`check_facts`), as ``check``'s are;
-    laid out here only where the document has no such worker, or the call holds it."""
+    Round 58: read where the layout is held (:func:`check_facts`), as ``check``'s are --
+    in a batch too since round 59 (:func:`~._base.held_facts`); laid out here only where
+    the document has no such worker."""
     try:
-        made = check_facts(call.document, call.unlocked, dict(BARE_REQUEST)) if call.may_unlock else None
+        made = held_facts(call, dict(BARE_REQUEST))
         if made is not None:
             return made[0]["reflow"]["coverage"]
         return call.document.layout().coverage_facts()
@@ -412,9 +413,8 @@ def _range_pages(call: Any, ranges: list[str], pages: list[int] | None) -> tuple
         call.read_scope = read_scope(scope, layout=True)     # what it draws (round 47)
     # Round 58: the ranges' pages read where the layout is held (check_facts, the lock let
     # go while it lays out): the layout never comes here for them.  Laid out here only where
-    # the document has no such worker, or the call holds it (in a batch).
-    made = (check_facts(document, call.unlocked, {**BARE_REQUEST, "ranges": scope.spec()})
-            if call.may_unlock else None)
+    # the document has no such worker (round 59: in a batch too, held_facts).
+    made = held_facts(call, {**BARE_REQUEST, "ranges": scope.spec()})
     if made is not None:
         facts = made[0]
         scoped = [{key: found[key] for key in ("range", "blocks", "pages")} for found in facts["range"]]
@@ -853,8 +853,16 @@ def _layout_facts(call: Any, pages: list[int] | None, seen: bool = True, *, scop
                 layout = None
         else:
             laid_out = call.in_batch and cached_layout(document, fetch=False) is None
-            with timing.part("layout"):
-                layout = document.layout()
+            # Round 59 (R134): in a batch, holding the document, the facts are still made in
+            # the worker holding its layouts where it has one (never waiting for another's
+            # layout in progress): the layout never comes here.  Else laid out here.
+            made = held_facts(call, _request(pages, scope, layout_wanted, min_size, styles, keeps),
+                              unlocked=unlocked, timed=timing.add)
+            if made is None:
+                with timing.part("layout"):
+                    layout = document.layout()
+            else:
+                layout = None
             if laid_out:
                 # Between a batch's changes (round 33, R16c): after the last one, a check
                 # runs once the batch is done and lets the document go while it lays out.

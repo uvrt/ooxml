@@ -49,7 +49,11 @@ run's effective formatting: the same as its paragraph's baseline).  Lengths are 
     paragraph ends one.
   - **table** -- ``id``, ``volatile``, ``story``, ``style``, ``columns``,
     ``header_rows``, ``rows``: lists of cells (``id``, ``row``, ``column``, ``row_span``,
-    ``column_span``, ``blocks``); a vertically merged cell appears once, in its first row.
+    ``column_span``, ``fill``, ``text_color``, ``blocks``); a vertically merged cell appears
+    once, in its first row.  Round 59: ``fill`` is the cell's fill as drawn (``RRGGBB``, or
+    ``None``: the table style's regions under the table's look, direct shading, theme colours
+    resolved) and ``text_color`` the colour its text is drawn in (automatic text white on a
+    dark fill, as Word draws it); runs of several colours: ``"mixed"`` and ``text_colors``.
   - **content_control** (block level) -- ``id``, ``kind``, ``tag``, ``alias``, ``blocks``.
 
   With ``layout=True`` each paragraph and table also has ``placements`` (``page``,
@@ -85,6 +89,9 @@ if TYPE_CHECKING:  # pragma: no cover
 SCHEMA = "docx-agent/state"
 VERSION = 1
 
+#: A block's ``placements`` before :meth:`_Writer.place` sets them (or ``unknown``).
+_PENDING = object()
+
 _W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 _R = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
 
@@ -95,8 +102,15 @@ _RUN_FIELDS = (("bold", "b"), ("italic", "i"), ("underline", "u"), ("strike", "s
 
 
 def state(document: "Document", range: str | None = None, *, view: str = "final", layout: bool = False,
-          xml: bool = False, style_map=None) -> dict:
-    """The document's state as JSON-ready data (schema ``docx-agent/state`` version 1)."""
+          xml: bool = False, style_map=None, placed=None) -> dict:
+    """The document's state as JSON-ready data (schema ``docx-agent/state`` version 1).
+
+    ``placed`` (round 59, R134), with ``layout``: who places the blocks --
+    ``placed(asked)`` gives ``(placements, info)``: per entry of ``asked`` (an id, then the
+    ids it joins) :func:`~docx_agent.layout.placements_of`'s answer, and the layout's
+    ``page_count``, ``pages_known`` and ``stopped`` -- or ``None``; a tool answers it from
+    the worker holding the layout.  Default (or ``None`` from it): the document's own
+    :meth:`~docx_agent.Document.layout`, read here."""
     reader = Reader(document, view, style_map)
     writer = _Writer(document, reader, layout=layout, xml=xml)
     blocks: list = []
@@ -127,10 +141,7 @@ def state(document: "Document", range: str | None = None, *, view: str = "final"
         out["cell"] = cell
     out["styles"] = writer.styles()
     if layout:
-        lay = writer.layout()
-        out["layout"] = {"page_count": lay.page_count, "pages_known": lay.pages_known,
-                         "stopped": None if lay.stopped is None else {
-                             "page": lay.stopped.page, "reason": lay.stopped.reason, "at": lay.stopped.at}}
+        out["layout"] = writer.place(placed)
     return out
 
 
@@ -150,18 +161,49 @@ class _Writer:
         self.reader = reader
         self.with_layout = layout
         self.with_xml = xml
-        self._layout = None
+        #: ``(block's dict, [id, ids it joins])`` for each block to place (:meth:`place`).
+        self._to_place: list[tuple[dict, list[str]]] = []
         self.note_labels: list[str] = []
         self.paragraph_ids: list[str] = []
         self.comment_places: dict[str, list[str]] = {}
         self.used_styles: set[str] = set()
         #: id(w:tbl) -> (table id, element) for every table written; the element is held.
         self.tables: dict[int, tuple] = {}
+        #: id(w:tbl) -> (element, {cell path: docx2svg's resolved cell}) (:meth:`_resolved_cell`).
+        self._cells: dict[int, tuple] = {}
 
-    def layout(self):
-        if self._layout is None:
-            self._layout = self.document.layout()
-        return self._layout
+    def place(self, placed=None) -> dict:
+        """Each block's ``placements`` (or ``unknown``), in the place :meth:`_place` kept for
+        them, all asked at once (``placed``, else the document's layout here), and the
+        layout's ``page_count``, ``pages_known`` and ``stopped``."""
+        from .layout import placements_of
+
+        asked = [identifiers for _, identifiers in self._to_place]
+        found = placed(asked) if placed is not None else None
+        if found is None:
+            lay = self.document.layout()
+            answers = placements_of(lay, asked)
+            info = {"page_count": lay.page_count, "pages_known": lay.pages_known,
+                    "stopped": None if lay.stopped is None else {
+                        "page": lay.stopped.page, "reason": lay.stopped.reason, "at": lay.stopped.at}}
+        else:
+            answers, info = found
+        for (out, _), where in zip(self._to_place, answers):
+            if where:
+                value = {"placements": [{"page": p.page, "top": round(p.top, 2), "bottom": round(p.bottom, 2),
+                                         "lines": p.lines, "story": p.story, "column": p.column} for p in where]}
+            else:
+                value = {"unknown": {"reason": getattr(where, "reason", "not-drawn"),
+                                     "after_page": getattr(where, "after_page", None)}}
+            # In the block's dict where _place kept the key, the keys after it after it.
+            items = list(out.items())
+            out.clear()
+            for key, item in items:
+                if item is _PENDING:
+                    out.update(value)
+                else:
+                    out[key] = item
+        return info
 
     # -- blocks --------------------------------------------------------------------------------
 
@@ -270,7 +312,8 @@ class _Writer:
         out.update({"story": record.story, "style": record.style_name, "columns": record.columns,
                     "header_rows": record.header_rows})
         out["rows"] = [[{"id": cell.id, "row": cell.row, "column": cell.column, "row_span": cell.row_span,
-                         "column_span": cell.column_span, "blocks": self.blocks(cell.records)} for cell in line]
+                         "column_span": cell.column_span, **self.cell_colours(cell),
+                         "blocks": self.blocks(cell.records)} for cell in line]
                        for line in record.rows]
         if self.with_layout:
             self._place(out, record.id)
@@ -278,19 +321,84 @@ class _Writer:
             out["xml"] = base64.b64encode(etree.tostring(record.element)).decode("ascii")
         return out
 
+    def cell_colours(self, cell) -> dict:
+        """Round 59: ``fill`` -- the cell's fill as docx2svg draws it, ``RRGGBB`` or ``None``:
+        its table style's regions under the table's look, the style's own shading, the
+        cell's direct shading, theme colours with their tint or shade (docx2svg's
+        :func:`~docx2svg.table.resolve_table`, measured against Word in round 58) -- and
+        ``text_color``, the colour its text is drawn in: each run's colour, an automatic one
+        drawn white on a fill darker than Word's measured threshold (Rec. 601 luma below 60,
+        :func:`docx2svg.layout.automatic_text_on_cell`) and black elsewhere.  Runs of
+        different colours: ``"mixed"``, and ``text_colors`` the distinct ones in order.  A cell
+        with no text: the colour new text there would get (its first paragraph's).  Nothing
+        for a cell docx2svg does not draw (in a text box)."""
+        from docx2svg.layout import HIGHLIGHT, _color, _shading, automatic_text_on_cell
+
+        resolved = self._resolved_cell(cell.element) if cell.element is not None else None
+        if resolved is None:
+            return {}
+        shd = resolved.properties.get("shd")
+        fill = _shading(shd)
+        automatic = automatic_text_on_cell(shd)
+
+        def drawn(run_resolved, shaded: bool) -> str:
+            colour = _color(run_resolved.get("color"))
+            if colour is not None:
+                return colour.upper()
+            if (automatic is not None and not shaded and not HIGHLIGHT.get(run_resolved.get("highlight") or "")
+                    and _shading(run_resolved.get("shd")) is None):
+                return automatic
+            return "000000"
+
+        colours: list[str] = []
+        first = None
+        for record in cell.records:
+            if not isinstance(record, ParagraphRecord):
+                continue
+            element = record.elements[-1]
+            first = first if first is not None else element
+            shaded = _shading(_effective.paragraph(self.document, element)._resolved.get("shd")) is not None
+            for run in record.runs:
+                if run.text and not run.effective.hidden:
+                    value = drawn(run.effective._resolved, shaded)
+                    if value not in colours:
+                        colours.append(value)
+        if not colours and first is not None:
+            shaded = _shading(_effective.paragraph(self.document, first)._resolved.get("shd")) is not None
+            colours.append(drawn(_effective.run(self.document, first, None, "a")._resolved, shaded))
+        out: dict = {"fill": fill.upper() if fill else None}
+        if len(colours) == 1:
+            out["text_color"] = colours[0]
+        elif colours:
+            out["text_color"] = "mixed"
+            out["text_colors"] = colours
+        return out
+
+    def _resolved_cell(self, tc):
+        """docx2svg's resolved cell (:class:`docx2svg.table.Cell`) of our ``w:tc``, or ``None``;
+        each table resolved once per state."""
+        from docx2svg.table import resolve_table
+
+        table = next(tc.iterancestors(_W + "tbl"), None)
+        if table is None:
+            return None
+        kept = self._cells.get(id(table))
+        if kept is None:
+            cells: dict = {}
+            model = _effective._model_for(self.document, table)
+            found = model.table(table)
+            if found is not None:
+                resolved = resolve_table(model.model, found)
+                cells = {cell.path: cell for row in resolved.rows for cell in row.cells}
+            kept = self._cells[id(table)] = (table, cells)
+        path = _effective._path_of(self.document, tc)
+        return kept[1].get(path[1]) if path is not None else None
+
     def _place(self, out: dict, identifier: str, joined: "list[str] | tuple" = ()) -> None:
-        where = self.layout().where(identifier)
-        for other in joined:
-            # docx2svg draws a joined paragraph's lines under the first paragraph's id.
-            if where:
-                break
-            where = self.layout().where(other)
-        if not where:
-            out["unknown"] = {"reason": getattr(where, "reason", "not-drawn"),
-                              "after_page": getattr(where, "after_page", None)}
-            return
-        out["placements"] = [{"page": p.page, "top": round(p.top, 2), "bottom": round(p.bottom, 2),
-                              "lines": p.lines, "story": p.story, "column": p.column} for p in where]
+        # Placed once every block is written (:meth:`place`): asked of the layout at once.
+        # docx2svg draws a joined paragraph's lines under the first paragraph's id.
+        out["placements"] = _PENDING
+        self._to_place.append((out, [identifier, *joined]))
 
     # -- the rest ------------------------------------------------------------------------------
 
