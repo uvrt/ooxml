@@ -311,7 +311,7 @@ impl PyLaidPages {
 
     /// The faces it was measured with that were not the ones asked for, as docx2svg's
     /// coverage reads them: `(grades, glyph_fallbacks, warnings)` -- each family's first
-    /// lookup `(family, grade, substitute, metric_compatible, kind, class)` (`grade` one of
+    /// lookup, in the order they were first looked up, `(family, grade, substitute, metric_compatible, kind, class)` (`grade` one of
     /// `installed`, `embedded`, `substituted`, `recorded`, `missing`), each `(family,
     /// character, face used)` whose advance came from another face, and the model's
     /// reading warnings (`styles-part-missing`, ...).
@@ -320,9 +320,9 @@ impl PyLaidPages {
         py.detach(|| {
             let coverage = version.glyphs().coverage();
             let grades = coverage
-                .grades
+                .order
                 .iter()
-                .map(|(family, grade)| grade_row(family, grade))
+                .filter_map(|family| coverage.grades.get(family).map(|grade| grade_row(family, grade)))
                 .collect();
             let fallbacks = coverage
                 .glyph_fallbacks

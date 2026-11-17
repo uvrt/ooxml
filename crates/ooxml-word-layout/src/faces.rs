@@ -29,6 +29,8 @@ pub trait Faces: Glyphs + Send + Sync {
 pub struct Coverage {
     /// Family -> the grade of its first lookup.
     pub grades: BTreeMap<String, Grade>,
+    /// The families in the order they were first looked up (docx2svg's record order).
+    pub order: Vec<String>,
     /// (family, character) -> the face its advance came from.
     pub glyph_fallbacks: BTreeMap<(String, char), String>,
 }
@@ -64,6 +66,7 @@ impl WordGlyphs {
         if !coverage.grades.contains_key(face.family.as_ref()) {
             let grade = self.fonts.resolve(&face.family, face.bold, face.italic).grade;
             coverage.grades.insert(face.family.to_string(), grade);
+            coverage.order.push(face.family.to_string());
         }
     }
 }

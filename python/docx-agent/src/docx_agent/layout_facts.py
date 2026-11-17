@@ -244,7 +244,7 @@ from .edit.text_language import facts as text_language_facts
 from .edit import text as _text
 from .edit.document import _cells, _find, _int
 from .edit.effective import PathFinder
-from .layout import PX_PER_PT, _block_id, _in_body, _story_kind
+from .layout import PX_PER_PT, _block_id, _story_kind
 
 if TYPE_CHECKING:  # pragma: no cover
     from .edit.document import Document

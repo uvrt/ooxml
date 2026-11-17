@@ -30,7 +30,10 @@ import threading
 from collections import Counter, OrderedDict
 from fractions import Fraction
 from pathlib import Path
-from typing import Any, Callable, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Sequence
+
+if TYPE_CHECKING:
+    from .coverage import Coverage
 
 #: Why versions and pages were not laid out or drawn in Rust, counted by reason
 #: (``layout_fallbacks{reason}``): read by :func:`fallbacks`; never in a result.
@@ -57,10 +60,17 @@ def fallbacks() -> dict[str, int]:
 def available() -> bool:
     """Whether ``ooxml_core`` has the Rust layout."""
     try:
-        import ooxml_core
+        ooxml_core = _core()
     except ImportError:
         return False
     return hasattr(ooxml_core, "WordPages")
+
+
+def _core() -> Any:
+    """``ooxml_core``, the Rust core's module: an optional dependency of docx2svg."""
+    import importlib
+
+    return importlib.import_module("ooxml_core")
 
 
 # -- fonts ---------------------------------------------------------------------------------
@@ -82,7 +92,7 @@ def _fonts_key(options) -> tuple:
 def word_fonts(options) -> Any:
     """The machine's fonts as ``options`` find them (docx2svg's ``_fonts``: Word's folders,
     then the application's), scanned once per set of folders and substitutes."""
-    import ooxml_core
+    ooxml_core = _core()
 
     key = _fonts_key(options)
     with _FONTS_LOCK:
@@ -114,7 +124,7 @@ class Engine:
     from the one before; safe to share between threads (the Rust engine locks itself)."""
 
     def __init__(self, options) -> None:
-        import ooxml_core
+        ooxml_core = _core()
 
         self.key = (_fonts_key(options), options.locale.decimal_separator if options.locale else ".",
                     options.glyph_size)
@@ -132,7 +142,7 @@ class Engine:
     def lay_out(self, data: bytes, options) -> "RustLayout | None":
         """``data`` laid out in Rust, or ``None`` (counted) where docx2svg's Python layout
         lays it out instead."""
-        import ooxml_core
+        ooxml_core = _core()
 
         why = unsupported_options(options)
         if why is not None:
@@ -192,7 +202,7 @@ class RustLayout:
         frames = laid.pages()
         self.pages = [RustPage(self, index, row) for index, row in enumerate(frames)]
         self._blocks: list | None = None
-        self._coverage = None
+        self._coverage: Coverage | None = None
         self._warnings: list | None = None
 
     def __reduce__(self):
@@ -210,10 +220,10 @@ class RustLayout:
     def warnings(self) -> list:
         if self._warnings is None:
             self._coverage_and_warnings()
-        return self._warnings
+        return self._warnings or []
 
     @property
-    def coverage(self):
+    def coverage(self) -> "Coverage | None":
         if self._coverage is None:
             self._coverage_and_warnings()
         return self._coverage
@@ -285,7 +295,8 @@ class RustLayout:
         from .fonts import RECORDED, Substitution
 
         grades, glyph_fallbacks, read_warnings = self.laid.coverage()
-        substituted, missing = [], []
+        substituted: list = []
+        missing: list[str] = []
         for family, grade, substitute, compatible, kind, face_class in grades:
             if grade == "substituted":
                 substituted.append(Substitution(family, substitute, compatible, kind, face_class))
@@ -293,6 +304,12 @@ class RustLayout:
                 substituted.append(Substitution(family, RECORDED, True))
             elif grade == "missing":
                 missing.append(family)
+        # In the order docx2svg says them (``in_layout_order``): the faces the body's lines
+        # draw first, in drawing order -- every page painted to read them, where two or more
+        # are substituted -- then the rest as first looked up.
+        from .coverage import in_layout_order
+
+        substituted = in_layout_order(self, {s.family: s for s in substituted})
         warnings = [Warning(code, _PARSER_WARNINGS.get(code, "a body element is not read")) for code in read_warnings]
         warnings += [Warning("font-substituted", s.message()) for s in substituted]
         grouped: dict = {}
