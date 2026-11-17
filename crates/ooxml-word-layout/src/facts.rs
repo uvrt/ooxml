@@ -2,9 +2,10 @@
 //! docx2svg's pages, lane L3d): every page -- blank ones included -- with what the
 //! paginator knows of it, its frame, the body's lines it draws by paragraph path (top,
 //! pitch, baseline, column) and the body blocks it draws something of
-//! ([`PageFacts::blocks`], docx2svg's `Page.blocks`); where a paragraph or table is drawn,
-//! page by page and column by column ([`LayoutFacts::placements`], `where`); the pages a
-//! block is on ([`LayoutFacts::pages_of`]); and each top-level block's keeps as the
+//! ([`PageFacts::blocks`], docx2svg's `Page.blocks`); a page's header's and footer's
+//! lines ([`story_line_facts`], laid out with the page's field values, not painted); where
+//! a paragraph or table is drawn, page by page and column by column
+//! ([`LayoutFacts::placements`], `where`); the pages a block is on ([`LayoutFacts::pages_of`]); and each top-level block's keeps as the
 //! paginator read them ([`BlockKeeps`]). One page's facts are made on their own
 //! ([`PageFacts::of`]), once per layout ([`DocumentLayout::page_facts`]).
 //!
@@ -57,6 +58,46 @@ pub struct PageFacts {
     /// The keys of the body's blocks it draws something of (`Page.blocks`): each
     /// paragraph, table, row and cell, once each, in drawing order.
     pub blocks: Vec<Text>,
+}
+
+/// A header's or footer's line a page draws, as a check reads it: its story's kind and
+/// part, and the line (its path the story's paragraph's, `w:hdr/w:p[1]`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoryLineFact {
+    /// `header` or `footer`.
+    pub kind: &'static str,
+    /// Its part (`word/header1.xml`).
+    pub part: Text,
+    /// The line.
+    pub line: LineFact,
+}
+
+/// The header's and footer's lines of a page's parts (`WordLayout::page_parts`), in
+/// drawing order: the header's, then the footer's.
+pub fn story_line_facts(parts: &crate::geometry::stories::PageParts) -> Vec<StoryLineFact> {
+    let mut out = Vec::new();
+    for story in &parts.stories {
+        let (paragraphs, _) = body_paragraphs(&story.blocks);
+        for line in &story.walked.lines {
+            let Some(path) = line.block.and_then(|b| paragraphs.get(b)).map(|p| p.path.clone()) else {
+                continue;
+            };
+            out.push(StoryLineFact {
+                kind: story.kind,
+                part: story.part.clone(),
+                line: LineFact {
+                    source: line.source,
+                    path,
+                    number: line.number,
+                    top: line.top,
+                    pitch: line.pitch,
+                    baseline: line.baseline,
+                    column: line.column,
+                },
+            });
+        }
+    }
+    out
 }
 
 /// Where a block is drawn on one page in one text column (`Placement`).
