@@ -10,19 +10,24 @@
 //! Must not: write the document or render text ([`super::render`] does).
 
 mod build;
+mod detail;
 mod inline;
 mod lookups;
+mod records;
 mod table;
+mod window;
 
 pub use build::{build, project};
-pub use lookups::note_elements;
-use lookups::{anchors, notes_of};
+pub use lookups::{note_elements, Shared};
+pub use records::{
+    CellRecord, Detail, DrawingRecord, Kind, Marker, ParagraphRecord, Placed, Record, RunRecord, TableRecord,
+};
+pub use table::table_style;
+pub use window::Groups;
 
-use crate::docx::controls::{control_kind, controls};
-use crate::docx::drawings::{all_drawings, pictures};
-use crate::docx::formatting::Formatting;
-use crate::docx::numbering::{membership, Lists, Membership};
-use crate::docx::revisions::records as revision_records;
+use crate::docx::controls::control_kind;
+use crate::docx::formatting::Cell;
+use crate::docx::numbering::{membership, Membership};
 use crate::docx::sections::section_id;
 use crate::docx::text::{paragraph_text, View};
 use crate::docx::{child_val, find_path, style_name, Docx, StoryPart};
@@ -34,145 +39,6 @@ use crate::markdown::ViewName;
 use ooxml_xml::{Element, Node};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-
-/// An element of a part with its place.
-#[derive(Debug, Clone)]
-pub struct Placed {
-    /// The element.
-    pub element: Arc<Element>,
-    /// Its place in its part.
-    pub path: Box<[u32]>,
-}
-
-/// What a paragraph is in Markdown.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Kind {
-    /// A paragraph.
-    Paragraph,
-    /// A heading.
-    Heading,
-    /// A bullet list item.
-    Bullet,
-    /// A numbered list item.
-    Ordered,
-    /// A quote.
-    Quote,
-    /// A line of code.
-    Code,
-    /// A thematic break.
-    Rule,
-}
-
-/// A paragraph as read.
-#[derive(Debug, Clone)]
-pub struct ParagraphRecord {
-    /// Its id (the last of those joined).
-    pub id: String,
-    /// Its part.
-    pub part: String,
-    /// Its story.
-    pub story: String,
-    /// The paragraphs joined into it, in order.
-    pub elements: Vec<Placed>,
-    /// Whether its id is volatile.
-    pub volatile: bool,
-    /// Its paragraph style's id.
-    pub style_id: Option<String>,
-    /// Its style's name.
-    pub style_name: Option<String>,
-    /// Its construct.
-    pub kind: Kind,
-    /// Its heading or list level.
-    pub level: i64,
-    /// Whether no rule of the style map names its style.
-    pub unknown_style: bool,
-    /// Its list.
-    pub membership: Option<Membership>,
-    /// Its list label.
-    pub label: Option<String>,
-    /// Its running number.
-    pub number: Option<i64>,
-    /// Its inline items.
-    pub inline: Vec<Inline>,
-    /// Its text in the view.
-    pub text: String,
-    /// The ids of the paragraphs joined before it.
-    pub joins: Vec<String>,
-    /// The notes it references.
-    pub notes: Vec<String>,
-    /// Its text boxes: the drawing's id, the box's content.
-    pub text_boxes: Vec<(Option<String>, Placed)>,
-    /// The section it ends: its id and type.
-    pub section: Option<(String, String)>,
-    /// Comments hoisted from the start of its line.
-    pub hoisted: Vec<String>,
-    /// What its own comment adds in the markup view.
-    pub changes: Vec<String>,
-}
-
-/// A cell as read.
-#[derive(Debug, Clone)]
-pub struct CellRecord {
-    /// Its id (`t:X/c<row>,<column>`).
-    pub id: String,
-    /// Its grid row and column.
-    pub row: usize,
-    /// Its grid column.
-    pub column: usize,
-    /// Rows it spans.
-    pub row_span: usize,
-    /// Columns it spans.
-    pub column_span: usize,
-    /// Its blocks.
-    pub records: Vec<Record>,
-}
-
-/// A table as read.
-#[derive(Debug, Clone)]
-pub struct TableRecord {
-    /// Its id.
-    pub id: String,
-    /// The `w:tbl`.
-    pub element: Arc<Element>,
-    /// Its style's name.
-    pub style_name: Option<String>,
-    /// Its columns in the view.
-    pub columns: usize,
-    /// Its visible rows.
-    pub rows: Vec<Vec<CellRecord>>,
-    /// Header rows.
-    pub header_rows: usize,
-    /// Whether its id is volatile.
-    pub volatile: bool,
-    /// Its innermost table style (`""`: none named), for its paragraphs' formatting.
-    pub table_style: String,
-}
-
-/// A content control's start or end.
-#[derive(Debug, Clone)]
-pub struct Marker {
-    /// Its id.
-    pub id: String,
-    /// Its kind.
-    pub kind: &'static str,
-    /// Whether it starts.
-    pub begin: bool,
-    /// Its tag.
-    pub tag: Option<String>,
-    /// Its title.
-    pub alias: Option<String>,
-}
-
-/// A record.
-#[derive(Debug, Clone)]
-pub enum Record {
-    /// A paragraph.
-    Paragraph(Box<ParagraphRecord>),
-    /// A table.
-    Table(Box<TableRecord>),
-    /// A content control's start or end.
-    Marker(Marker),
-}
 
 /// One item of a container.
 enum Item {
@@ -191,19 +57,15 @@ pub struct Reader<'a> {
     /// The view's name.
     pub view_name: ViewName,
     map: StyleMap,
-    formatting: Formatting,
-    lists: Lists,
+    /// What every reading of this version starts from (read once per version).
+    shared: Arc<Shared>,
     counters: HashMap<(String, bool), Counters>,
-    controls: HashMap<(String, Box<[u32]>), String>,
-    revisions: HashMap<(String, Box<[u32]>), String>,
-    pictures: HashMap<(String, Box<[u32]>), String>,
-    drawings: HashMap<(String, Box<[u32]>), String>,
-    notes: HashMap<(String, String), String>,
-    anchors: HashSet<String>,
-    comments: HashMap<String, crate::docx::comments::Comment>,
     outline: HashMap<Option<String>, Option<i64>>,
     /// Paragraphs whose marks are deleted just before a table, joined into its first cell.
     into: HashMap<(String, Box<[u32]>), Vec<Placed>>,
+    /// While a window's blocks before it are passed: their list items counted, no record
+    /// made ([`window`]).
+    counting: bool,
 }
 
 impl<'a> Reader<'a> {
@@ -215,44 +77,23 @@ impl<'a> Reader<'a> {
             ViewName::Original => View::Original,
             ViewName::Markup => View::Markup,
         };
-        let key = |part: &str, path: &[u32]| (part.to_owned(), Box::<[u32]>::from(path));
-        let controls = controls(docx)
-            .into_iter()
-            .map(|c| (key(&c.part, &c.path), c.id))
-            .collect();
-        let revisions = revision_records(docx)
-            .into_iter()
-            .map(|r| (key(&r.part, &r.path), r.id))
-            .collect();
-        let pictures = pictures(docx)
-            .into_iter()
-            .map(|d| (key(&d.part, &d.path), d.id))
-            .collect();
-        let drawings = all_drawings(docx)
-            .into_iter()
-            .map(|d| (key(&d.part, &d.path), d.id))
-            .collect();
         Reader {
             docx,
             view,
             view_name,
             map: StyleMap::default(),
-            formatting: Formatting::read(docx),
-            lists: Lists::read(docx),
+            shared: docx.memo().reading(|| Shared::read(docx)),
             counters: HashMap::new(),
-            controls,
-            revisions,
-            pictures,
-            drawings,
-            notes: notes_of(docx),
-            anchors: anchors(docx),
-            comments: crate::docx::comments::comments(docx)
-                .into_iter()
-                .filter_map(|c| c.w_id.clone().map(|w| (w, c)))
-                .collect(),
             outline: HashMap::new(),
             into: HashMap::new(),
+            counting: false,
         }
+    }
+
+    /// The document-wide lookups this reading starts from.
+    #[must_use]
+    pub fn shared(&self) -> &Shared {
+        &self.shared
     }
 
     /// The name of the paragraph style `style_id`, or of the default where it is none or
@@ -294,7 +135,7 @@ impl<'a> Reader<'a> {
     /// The label and running number of the next item of `listed` in `part` (a text box's
     /// paragraphs count apart).
     fn number(&mut self, part: &str, in_text_box: bool, listed: &Membership) -> (Option<String>, Option<i64>) {
-        let numbering = self.formatting.numbering();
+        let numbering = self.shared.formatting.numbering();
         let counters = self.counters.entry((part.to_owned(), in_text_box)).or_default();
         counters.item_number(numbering, listed.num_id, listed.level)
     }
@@ -360,6 +201,7 @@ impl<'a> Reader<'a> {
             } else if name.is(Some(W), "sdt") {
                 let marker = Marker {
                     id: self
+                        .shared
                         .controls
                         .get(&(part.to_owned(), placed.path.clone()))
                         .cloned()
@@ -472,6 +314,10 @@ impl<'a> Reader<'a> {
 
     /// A paragraph's record: `elements` are one in the view, named by the last.
     fn paragraph(&mut self, part: &str, elements: Vec<Placed>, table_style: Option<&str>) -> ParagraphRecord {
+        if self.counting {
+            self.count(part, &elements);
+            return ParagraphRecord::counted(part);
+        }
         let story_part = self.docx.part(part);
         let story = story_part.map(|p| p.story.clone()).unwrap_or_default();
         let entry = |p: &Placed| story_part.and_then(|s| s.ids.paragraph_at(&p.path));
@@ -508,9 +354,11 @@ impl<'a> Reader<'a> {
             section: None,
             hoisted: Vec::new(),
             changes: Vec::new(),
+            detail: records::Detail::default(),
         };
         for element in &elements {
-            inline::Walk::new(self, &mut record, element, table_style).walk();
+            let cell = table_style.and_then(|style| self.cell_of(part, element, style));
+            inline::Walk::new(self, &mut record, element, cell).walk();
             self.mark_revision(&mut record, element);
         }
         record.inline = tidy(std::mem::take(&mut record.inline));
@@ -533,6 +381,36 @@ impl<'a> Reader<'a> {
         }
         record.elements = elements;
         record
+    }
+
+    /// Where the paragraph `element` of `part` stands in its table, as the layout model
+    /// reads its outermost table (`style`, its innermost table's, where the model has none).
+    pub fn cell_of(&self, part: &str, element: &Placed, style: &str) -> Option<Cell> {
+        let story = self.docx.part(part)?;
+        let (table, at) = (1..element.path.len()).find_map(|n| {
+            let prefix = element.path.get(..n)?;
+            story.ids.table_at(prefix).map(|t| (t, n))
+        })?;
+        let facts = self.shared.table_facts(part, table);
+        let below = element.path.get(at..)?;
+        let found = crate::docx::cells::model_path(&table.element, below).and_then(|p| facts.cell(&p).cloned());
+        Some(found.unwrap_or_else(|| Cell {
+            style: crate::value::text(style),
+            conditions: Arc::from(Vec::new()),
+        }))
+    }
+
+    /// What reading a paragraph (`elements`, one in the view) does to the blocks after it:
+    /// its list item counted, as [`Reader::classify`] counts it.
+    fn count(&mut self, part: &str, elements: &[Placed]) {
+        let Some(last) = elements.last() else { return };
+        let viewed = self.as_viewed(&last.element);
+        let listed = membership(self.docx, &self.shared.lists, &viewed)
+            .filter(|l| l.format.as_deref().is_some_and(|f| f != "none"));
+        if let Some(listed) = listed {
+            let in_box = in_text_box(&self.docx.part(part).map(|p| Arc::clone(p.root())), &last.path);
+            let _ = self.number(part, in_box, &listed);
+        }
     }
 
     /// The paragraph whose properties the view shows: in the original view, one with the
@@ -570,11 +448,38 @@ impl<'a> Reader<'a> {
             return;
         };
         let key = |path: Vec<u32>| (record.part.clone(), path.into_boxed_slice());
+        // The records `word_inspect` lists: the first properties change, then the mark's own.
+        let base = [&element.path[..], &[k]].concat();
+        if let Some((j, _)) = child_at(&ppr, "pPrChange") {
+            let id = self.shared.revisions.get(&key([&base[..], &[j]].concat())).cloned();
+            record.detail.revisions.push(id);
+        }
+        if let Some((j, mark)) = child_at(&ppr, "rPr") {
+            for (m, node) in mark.children().iter().enumerate() {
+                let Node::Element(child) = node else { continue };
+                if ["ins", "moveTo", "del", "moveFrom"]
+                    .iter()
+                    .any(|t| child.name().is(Some(W), t))
+                {
+                    let id = self
+                        .shared
+                        .revisions
+                        .get(&key([&base[..], &[j, index(m)]].concat()))
+                        .cloned();
+                    record.detail.revisions.push(id);
+                }
+            }
+        }
         for (j, node) in ppr.children().iter().enumerate() {
             let Node::Element(child) = node else { continue };
             let path = [&element.path[..], &[k, index(j)]].concat();
             if child.name().is(Some(W), "pPrChange") && self.view == View::Markup {
-                let id = self.revisions.get(&key(path.clone())).cloned().unwrap_or_default();
+                let id = self
+                    .shared
+                    .revisions
+                    .get(&key(path.clone()))
+                    .cloned()
+                    .unwrap_or_default();
                 let author = child.attribute(Some(W), "author").unwrap_or("");
                 record
                     .changes
@@ -589,6 +494,7 @@ impl<'a> Reader<'a> {
                         continue;
                     }
                     let id = self
+                        .shared
                         .revisions
                         .get(&key([&path[..], &[index(m)]].concat()))
                         .cloned()
@@ -608,7 +514,7 @@ impl<'a> Reader<'a> {
         let name = record.style_name.clone();
         let outline = self.outline_level(record.style_id.as_deref());
         let heading = self.map.heading_level(name.as_deref(), outline);
-        let listed = membership(self.docx, &self.lists, &element.element)
+        let listed = membership(self.docx, &self.shared.lists, &element.element)
             .filter(|l| l.format.as_deref().is_some_and(|f| f != "none"));
         let rule = self.map.paragraph_rule(name.as_deref());
         let in_box = in_text_box(
@@ -690,12 +596,7 @@ pub(crate) fn child_at(element: &Element, local: &str) -> Option<(u32, Arc<Eleme
 fn in_text_box(root: &Option<Arc<Element>>, path: &[u32]) -> bool {
     let Some(mut node) = root.clone() else { return false };
     for k in path.iter().take(path.len().saturating_sub(1)) {
-        let Some(next) = node
-            .children()
-            .iter()
-            .nth(*k as usize)
-            .and_then(|n| n.as_element().cloned())
-        else {
+        let Some(next) = node.children().get(*k as usize).and_then(|n| n.as_element().cloned()) else {
             return false;
         };
         if next.name().is(Some(W), "txbxContent") {

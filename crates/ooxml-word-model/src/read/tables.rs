@@ -145,7 +145,7 @@ fn last_mark_removed(container: &Element) -> bool {
 
 /// A row's cells grouped: each group a cell kept and the cells it takes in; and the cells
 /// gone.
-fn cell_ends(cells: &[&Element]) -> (Vec<Vec<usize>>, HashSet<usize>) {
+pub(crate) fn cell_ends(cells: &[&Element]) -> (Vec<Vec<usize>>, HashSet<usize>) {
     let mut groups = Vec::new();
     let mut gone = HashSet::new();
     let mut n = 0;

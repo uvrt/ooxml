@@ -40,6 +40,7 @@ pub mod painter;
 pub mod pixels;
 pub mod raster;
 pub mod reads;
+pub mod reads_bench;
 pub mod records;
 pub mod replay;
 pub mod scene_data;

@@ -2,7 +2,7 @@
 //! other crate shares and nothing else.
 //!
 //! Owns: units and exact arithmetic ([`units`]), content digests ([`digest`]), the limits on
-//! untrusted input and the locale as values ([`limits`], [`locale`]), the ports the core is
+//! untrusted input and the locale as values ([`limits`], [`locale`]), a string as Python's `repr` writes it in messages ([`pyfmt`]), the ports the core is
 //! given its I/O through ([`context`]), and the error type for all of these ([`BaseError`]).
 //!
 //! Must not: do I/O, hold global state, or know about XML, ZIP or any OOXML format. Adapters
@@ -14,6 +14,7 @@ pub mod digest;
 mod error;
 pub mod limits;
 pub mod locale;
+pub mod pyfmt;
 pub mod units;
 
 pub use context::{CacheBudget, Cancel, Clock, Context, FontSource, PartStore};

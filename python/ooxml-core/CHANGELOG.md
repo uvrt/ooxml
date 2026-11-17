@@ -21,6 +21,14 @@ ooxml-core is the Rust core of the ooxml packages (`crates/`), as the Python mod
   by range and with every story, its definition docx-agent's byte for byte. Both are read
   from the Word model (`ooxml-word-model`'s `docx` and `markdown` modules), whose `ids`
   module holds the block ids, the id ledger and the `docx-ids.1.` state as docx-agent does.
+- **Word reads in Rust, part 2 (lane P1b).** The session serves `word_inspect` (without
+  `layout`), `find_text` (a regular expression only where it is plain text) and `read_batch`
+  (each op answered as alone, the answers within the batch's budget), and `describe` gives
+  `revisions.changes`; every address form docx-agent's tools take is read by one resolver
+  (`ooxml-word-model`'s `address`: bookmarks, content controls and text ranges added). A
+  document's readings are kept for its latest versions: a read of a version read before
+  reads nothing again, a block or span is read alone, and a new version reads only the story
+  parts that changed; formatting is resolved once per style and property set.
 
 ## 0.9.0 -- released in v2026.11.17.1
 

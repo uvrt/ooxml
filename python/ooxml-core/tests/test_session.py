@@ -70,7 +70,8 @@ def test_refusals_are_replies_and_session_errors_are_exceptions():
     missing = call(session, "describe", {"doc": "d5"})
     assert missing["error"] == {"code": "not_found", "message": "no open document 'd5'", "field": "doc",
                                 "valid_options": ["d1"]}
-    assert call(session, "nope", {})["error"]["valid_options"] == ["describe", "word_read"]
+    assert call(session, "nope", {})["error"]["valid_options"] == [
+        "describe", "find_text", "read_batch", "word_inspect", "word_read"]
     text, _ = session.call("describe", "{not json")
     assert json.loads(text)["error"]["code"] == "invalid_arguments"
     assert len(session.call("describe", json.dumps({"doc": doc}), limit=60)[0]) <= 60 + 100
@@ -106,7 +107,7 @@ def test_cancelled_and_late_calls_stop_with_timeout():
 
 def test_tool_specs_are_the_exports():
     specs = json.loads(ooxml_core.tool_specs("docx"))
-    assert [s["name"] for s in specs] == ["describe", "word_read"]
+    assert [s["name"] for s in specs] == ["describe", "word_read", "word_inspect", "find_text", "read_batch"]
     assert specs == json.loads(ooxml_core.Session().tool_specs("docx"))
     assert json.loads(ooxml_core.tool_specs("pptx")) == []
     with pytest.raises(ValueError):

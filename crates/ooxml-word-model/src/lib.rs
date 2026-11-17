@@ -25,6 +25,7 @@
 //! when the prototype is retired.
 #![forbid(unsafe_code)]
 
+pub mod address;
 mod digest;
 pub mod document;
 pub mod docx;

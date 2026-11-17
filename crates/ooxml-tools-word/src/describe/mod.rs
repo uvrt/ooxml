@@ -11,10 +11,12 @@
 mod document;
 mod package;
 
+pub(crate) use document::short;
+
+use crate::version::Version;
 use ooxml_base::{BaseError, Cancel};
-use ooxml_opc::{OpcError, Package};
+use ooxml_opc::OpcError;
 use ooxml_tools::{Done, Failure, ToolArgs, ToolError};
-use ooxml_word_model::docx::Docx;
 use ooxml_word_model::parts::{main_part, story_parts};
 use package::Reader;
 use serde_json::{Map, Value};
@@ -71,17 +73,13 @@ const DC: &str = "http://purl.org/dc/elements/1.1/";
 /// # Errors
 /// `timeout` when `cancel` asks to stop; `internal` when a part it reads is not XML or the
 /// package has no main part.
-pub fn describe(
-    _args: &Describe,
-    package: &Package,
-    name: &str,
-    cancel: &dyn Cancel,
-) -> Result<Done<Value>, ToolError> {
+pub fn describe(_args: &Describe, version: &Version<'_>, cancel: &dyn Cancel) -> Result<Done<Value>, ToolError> {
+    let (package, name) = (version.package, version.name);
     let reader = Reader { package, cancel };
     let main = main_part(package)
         .map_err(opc)?
         .ok_or_else(|| ToolError::internal("not a Word package: no main document part", "describe:main"))?;
-    let docx = Docx::open(package).map_err(|e| ToolError::internal(e.to_string(), "describe:model"))?;
+    let docx = version.docx()?;
     let read = document::Reading::new(&docx);
     let mut data = Map::new();
     data.insert("name".into(), Value::from(name));

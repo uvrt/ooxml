@@ -568,6 +568,7 @@ dependencies = [
  "ooxml-render",
  "ooxml-scene",
  "ooxml-schema",
+ "ooxml-session",
  "ooxml-text",
  "ooxml-tools",
  "ooxml-tools-word",
@@ -650,6 +651,7 @@ dependencies = [
  "ooxml-store",
  "ooxml-tools",
  "ooxml-tools-word",
+ "ooxml-word-model",
  "ooxml-xml",
  "ooxml-zip",
  "serde_json",
@@ -689,6 +691,7 @@ dependencies = [
 name = "ooxml-tools"
 version = "0.1.0"
 dependencies = [
+ "ooxml-base",
  "ooxml-tools-derive",
  "serde_json",
  "thiserror",

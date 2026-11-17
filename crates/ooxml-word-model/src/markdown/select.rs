@@ -1,67 +1,63 @@
-//! Owns: what a read's `range` selects (docx-agent's `markdown.select` over its address
-//! resolver, `edit/addresses.py`): the body (no range), a story by name, a section (`s:2`,
-//! `s:body`, `s:<paraId>`), a block (`p:`, `t:`, `p@body/7`, `header1/p:...`, a paragraph
-//! in a table names its table), a span of blocks (`p:A..t:B`, either end open), a heading's
-//! range (`h:p:A`), a table's row (`t:X/r1`, `tr:...`) or cell (`t:X/c1,2`).
+//! Owns: what a read's `range` selects (docx-agent's `markdown.select`), every form the
+//! address resolver ([`crate::address`]) reads: the body (no range), a story by name, a
+//! section, a block (a paragraph in a table names its table), a span of blocks (either end
+//! open), a heading's range, a row (its table with that row alone), a cell (its blocks), a
+//! bookmark or a text range (the blocks holding it), a content control.
 //!
-//! Not yet resolved here (refused with a way out; listed in the lane's hand-back):
-//! bookmarks (`bm:`), text ranges (`p:A@3:9`), content controls (`cc:`), renamed ids.
+//! A block, span, bookmark or text range of a body, header or footer is read alone: the
+//! blocks before it counted for their list items only, those after it not read
+//! ([`super::read::Groups`]); the records are then cut exactly as docx-agent cuts the
+//! story's.
 //!
 //! Must not: render, or change the document.
 
+use crate::address::resolve::{in_table, InTable};
+use crate::address::{self, span_ends, AddressError};
 use crate::docx::controls::controls;
-use crate::docx::outline::{body_blocks, headings};
 use crate::docx::StoryPart;
+use crate::ids::{Entry, W};
 use crate::markdown::read::{Reader, Record, TableRecord};
+use ooxml_base::pyfmt::repr_str;
 
-/// How a span is written, in every refusal of one.
-pub const SPAN_SYNTAX: &str = "a span is two block ids, <first>..<last> (p:A..t:B); p:A.. runs to the end of p:A's container (the body, a cell), ..t:B from its start";
+pub use crate::address::SPAN_SYNTAX;
 
-/// Why a range was refused: its code (`not_found`, `invalid_arguments`), message and ids
-/// that would do.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RangeError {
-    /// `not_found` or `invalid_arguments`.
-    pub code: &'static str,
-    /// What is wrong, and what to pass.
-    pub message: String,
-    /// Addresses that would do.
-    pub options: Vec<String>,
-}
-
-impl RangeError {
-    fn not_found(message: String, options: Vec<String>) -> RangeError {
-        RangeError {
-            code: "not_found",
-            message,
-            options,
-        }
-    }
-
-    fn invalid(message: String, options: Vec<String>) -> RangeError {
-        RangeError {
-            code: "invalid_arguments",
-            message,
-            options,
-        }
-    }
-}
+/// Why a range was refused (the address resolver's refusal).
+pub type RangeError = AddressError;
 
 /// What a range selects.
 pub enum Selected {
-    /// Records to write; `story` names a story read whole (other than the body).
+    /// Records to write.
     Records {
-        /// The story's name, for its `story:` comment.
+        /// The story's name, for its `story:` comment, where a story other than the body is
+        /// read whole.
         story: Option<String>,
         /// The records.
         records: Vec<Record>,
+        /// Whether they are one cell's blocks.
+        cell: bool,
     },
     /// Every note of a notes part.
     Notes(String),
 }
 
 fn records(story: Option<String>, records: Vec<Record>) -> Selected {
-    Selected::Records { story, records }
+    Selected::Records {
+        story,
+        records,
+        cell: false,
+    }
+}
+
+/// How the records of a story are cut.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Cut {
+    /// A span: from the first's record through the last's (a control's end with it).
+    Span,
+    /// From whichever of two records comes first through the other (a text range, a
+    /// bookmark).
+    Between,
+    /// One block's record (a control's through its end).
+    Block,
 }
 
 /// The records `range` selects.
@@ -74,173 +70,175 @@ pub fn select(reader: &mut Reader<'_>, range: Option<&str>) -> Result<Vec<Select
     let Some(range) = range else {
         return Ok(vec![records(None, reader.story(body))]);
     };
-    let range = expand_heading(reader, range)?;
+    let range = address::expand_heading(docx, range)?;
+    let range = range.as_str();
     if range.trim().is_empty() {
-        return Err(RangeError::invalid(
+        return Err(AddressError::invalid(
             format!("a range is empty: give a block id, a span ({SPAN_SYNTAX}), a section or a story"),
-            block_options(body),
+            Vec::new(),
         ));
     }
-    if let Some((first, last)) = span_ends(&range)? {
+    if let Some((first, last)) = span_ends(range)? {
         let anchor = first.or(last).unwrap_or_default();
         let part = part_of(reader, anchor)?;
-        if first.is_some() && last.is_some() && part_of(reader, last.unwrap_or_default())?.part != part.part {
-            return Err(RangeError::invalid(
-                format!("{range:?} spans two stories: {SPAN_SYNTAX}"),
-                Vec::new(),
-            ));
+        if let (Some(_), Some(last)) = (first, last) {
+            if part_of(reader, last)?.part != part.part {
+                return Err(AddressError::invalid(
+                    format!("{} spans two stories: {SPAN_SYNTAX}", repr_str(range)),
+                    Vec::new(),
+                ));
+            }
         }
-        let all = reader.story(part);
-        let a = match first {
-            Some(f) => position(reader, &all, f)?,
-            None => 0,
-        };
-        let b = match last {
-            Some(l) => through(&all, position(reader, &all, l)?),
-            None => all.len().saturating_sub(1),
-        };
-        if b < a {
-            return Err(RangeError::invalid(
-                format!("'{range}' ends before it starts"),
-                Vec::new(),
-            ));
+        return cut(reader, part, first, last, Cut::Span, range).map(|r| vec![records(None, r)]);
+    }
+    if address::is_text_range(range) {
+        let found = address::text_range(docx, range)?;
+        return between(reader, &found.start_id, &found.end_id);
+    }
+    if range.starts_with("bm:") || !range.contains([':', '@', '/', '#']) && docx.story(range).is_none() {
+        match address::bookmark(docx, range) {
+            Ok(found) => {
+                let found = address::bookmark_range(docx, &found)?;
+                return between(reader, &found.start_id, &found.end_id);
+            }
+            Err(error) if range.starts_with("bm:") => return Err(error),
+            Err(_) => {}
         }
-        return Ok(vec![records(None, all.into_iter().skip(a).take(b + 1 - a).collect())]);
     }
-    if range.starts_with("bm:")
-        || range.contains('@') && !range.starts_with("p@") && !range.starts_with("t@")
-        || range.starts_with("cc")
-    {
-        return Err(not_yet(&range));
-    }
-    if let Some(found) = inside_table(reader, &range)? {
+    if let Some(found) = inside_table(reader, range)? {
         return Ok(vec![found]);
     }
     if range.starts_with("s:") || range.starts_with("s@") {
-        return section(reader, body, &range).map(|r| vec![r]);
+        return section(reader, body, range).map(|r| vec![r]);
     }
     if !range.contains([':', '@', '/']) {
-        let Some(story) = docx.story(&range) else {
-            if range.contains('#') {
-                return Err(not_yet(&range));
-            }
-            let names: Vec<String> = docx.parts.iter().map(|p| p.story.clone()).collect();
-            return Err(RangeError::not_found(format!("no story '{range}'"), names));
+        let Some(story) = docx.story(range) else {
+            return Err(AddressError::not_found(
+                format!("no story {}", repr_str(range)),
+                Vec::new(),
+            ));
         };
         let root = story.root();
-        if root.name().is(Some(crate::ids::W), "footnotes") || root.name().is(Some(crate::ids::W), "endnotes") {
+        if root.name().is(Some(W), "footnotes") || root.name().is(Some(W), "endnotes") {
             return Ok(vec![Selected::Notes(story.part.clone())]);
         }
         let name = (story.part != body.part).then(|| story.story.clone());
         return Ok(vec![records(name, reader.story(story))]);
     }
-    let part = part_of(reader, &range)?;
-    let all = reader.story(part);
-    let k = position(reader, &all, &range)?;
-    let end = through(&all, k);
-    Ok(vec![records(None, all.into_iter().skip(k).take(end + 1 - k).collect())])
+    let part = part_of(reader, range)?;
+    cut(reader, part, Some(range), None, Cut::Block, range).map(|r| vec![records(None, r)])
 }
 
-fn not_yet(range: &str) -> RangeError {
-    RangeError::invalid(
-        format!("'{range}': bookmarks, text ranges and content controls are not read in the Rust core yet; read a block, span, heading, section or story"),
+/// The blocks from the one holding paragraph `first` through the one holding `last`.
+fn between(reader: &mut Reader<'_>, first: &str, last: &str) -> Result<Vec<Selected>, RangeError> {
+    let part = part_of(reader, first)?;
+    cut(reader, part, Some(first), Some(last), Cut::Between, first).map(|r| vec![records(None, r)])
+}
+
+/// The story part an id is in (docx-agent's `_part_of`).
+fn part_of<'d>(reader: &Reader<'d>, id: &str) -> Result<&'d StoryPart, RangeError> {
+    let docx = reader.docx;
+    if id.starts_with("cc") {
+        let found = controls(docx).into_iter().find(|c| c.id == id);
+        return found
+            .and_then(|c| docx.part(&c.part))
+            .ok_or_else(|| AddressError::not_found(format!("no content control {}", repr_str(id)), Vec::new()));
+    }
+    Ok(address::resolve(docx, id)?.0)
+}
+
+/// A block's place in its part, or a control's id.
+type Place = (Option<Box<[u32]>>, Option<String>);
+
+/// Where a block id's element is in its part; for a control, its id (its markers carry it).
+fn place(reader: &Reader<'_>, part: &StoryPart, id: &str) -> Result<Place, RangeError> {
+    if id.starts_with("cc") {
+        return Ok((None, Some(id.to_owned())));
+    }
+    let (_, entry) = address::resolve(reader.docx, id)?;
+    let path = match entry {
+        Entry::Paragraph(k) => part.ids.paragraphs.get(k).map(|p| p.path.clone()),
+        Entry::Table(k) => part.ids.tables.get(k).map(|t| t.path.clone()),
+    };
+    Ok((path, None))
+}
+
+/// The records `how` cuts from `part`'s story for `first` and `last` (`None`: open). A
+/// container's story is read only over the blocks the cut can reach.
+fn cut(
+    reader: &mut Reader<'_>,
+    part: &StoryPart,
+    first: Option<&str>,
+    last: Option<&str>,
+    how: Cut,
+    given: &str,
+) -> Result<Vec<Record>, RangeError> {
+    let all = match reader.groups_of(part) {
+        None => reader.story(part),
+        Some(groups) if groups.is_empty() => Vec::new(),
+        Some(groups) => {
+            let position = |reader: &Reader<'_>, id: &str| -> Result<usize, RangeError> {
+                let (path, control) = place(reader, part, id)?;
+                groups
+                    .position(path.as_deref(), control.as_deref())
+                    .ok_or_else(|| not_in_view(id))
+            };
+            let a = first.map(|f| position(reader, f)).transpose()?.unwrap_or(0);
+            let b = match (last, how) {
+                (Some(l), _) => position(reader, l)?,
+                (None, Cut::Block) => a,
+                (None, _) => groups.len() - 1,
+            };
+            let (low, high) = (a.min(b), groups.through(a.max(b)));
+            reader.read_window(groups, low..=high)
+        }
+    };
+    let (a, b) = match how {
+        Cut::Span => {
+            let a = first.map(|f| position(reader, &all, f)).transpose()?.unwrap_or(0);
+            let b = match last {
+                Some(l) => through(&all, position(reader, &all, l)?),
+                None => all.len().saturating_sub(1),
+            };
+            if b < a {
+                return Err(AddressError::refused(format!(
+                    "{} ends before it starts",
+                    repr_str(given)
+                )));
+            }
+            (a, b)
+        }
+        Cut::Between => {
+            let a = position(reader, &all, first.unwrap_or_default())?;
+            let b = position(reader, &all, last.unwrap_or_default())?;
+            (a.min(b), a.max(b))
+        }
+        Cut::Block => {
+            let k = position(reader, &all, first.unwrap_or_default())?;
+            (k, through(&all, k))
+        }
+    };
+    Ok(all.into_iter().skip(a).take(b + 1 - a).collect())
+}
+
+fn not_in_view(id: &str) -> RangeError {
+    AddressError::not_found(
+        format!("{} is not a block of its story in this view", repr_str(id)),
         Vec::new(),
     )
 }
 
-fn block_options(part: &StoryPart) -> Vec<String> {
-    part.ids.paragraphs.iter().take(10).map(|p| p.id.clone()).collect()
-}
-
-/// `h:p:A` as the span its heading owns; a span's `h:` ends likewise.
-fn expand_heading(reader: &Reader<'_>, range: &str) -> Result<String, RangeError> {
-    if !range.contains("h:") {
-        return Ok(range.to_owned());
-    }
-    let docx = reader.docx;
-    let found = headings(&body_blocks(docx, &controls(docx)));
-    let one = |end: &str, first: bool| -> Result<String, RangeError> {
-        let Some(id) = end.strip_prefix("h:") else {
-            return Ok(end.to_owned());
-        };
-        let options: Vec<String> = found.iter().take(20).map(|h| format!("h:{}", h.id)).collect();
-        let heading = found.iter().find(|h| h.id == id).ok_or_else(|| {
-            RangeError::invalid(
-                format!("{id} is not a heading: h:<heading> is the heading and every block under it"),
-                options,
-            )
-        })?;
-        Ok(if first {
-            heading.id.clone()
-        } else {
-            heading.last.clone()
-        })
-    };
-    match range.split_once("..") {
-        Some((a, b)) => {
-            let first = if a.is_empty() { String::new() } else { one(a, true)? };
-            let last = if b.is_empty() { String::new() } else { one(b, false)? };
-            Ok(format!("{first}..{last}"))
-        }
-        None => {
-            let first = one(range, true)?;
-            let last = one(range, false)?;
-            Ok(if first == last {
-                first
-            } else {
-                format!("{first}..{last}")
-            })
-        }
-    }
-}
-
-/// A span's two ends, `None` for an open one.
-type Ends<'a> = (Option<&'a str>, Option<&'a str>);
-
-/// The two ends of a span of blocks, or `None` when `range` is not one.
-fn span_ends(range: &str) -> Result<Option<Ends<'_>>, RangeError> {
-    if !range.contains("..") {
-        return Ok(None);
-    }
-    let parts: Vec<&str> = range.split("..").collect();
-    let ends = match parts.as_slice() {
-        [a, b] if !(a.is_empty() && b.is_empty()) && !a.ends_with('.') && !b.starts_with('.') => (*a, *b),
-        _ => {
-            return Err(RangeError::invalid(
-                format!("'{range}' is not a span: {SPAN_SYNTAX}"),
-                Vec::new(),
-            ))
-        }
-    };
-    if ends.0.contains('@') && !ends.0.starts_with("p@") || ends.1.contains('@') && !ends.1.starts_with("p@") {
-        return Ok(None);
-    }
-    Ok(Some((non_empty(ends.0.trim()), non_empty(ends.1.trim()))))
-}
-
-/// The story part an id is in (docx-agent's `_direct`).
-fn part_of<'d>(reader: &Reader<'d>, id: &str) -> Result<&'d StoryPart, RangeError> {
-    let docx = reader.docx;
-    let story = if let Some(rest) = id.strip_prefix("p@").or_else(|| id.strip_prefix("t@")) {
-        rest.rsplit_once('/').map_or("", |(s, _)| s)
-    } else if let Some((s, _)) = id.split_once('/') {
-        s
-    } else {
-        "body"
-    };
-    let part = docx.story(story).filter(|p| p.ids.get(id).is_some());
-    part.ok_or_else(|| {
-        let options = docx.body().map(block_options).unwrap_or_default();
-        RangeError::not_found(format!("no block '{id}'"), options)
-    })
-}
-
-/// The index of the top-level record holding `id`.
+/// The index of the top-level record holding `id` (its own id, as `_canonical` gives it).
 fn position(reader: &Reader<'_>, all: &[Record], id: &str) -> Result<usize, RangeError> {
-    let _ = reader;
+    let wanted = if id.starts_with("cc") {
+        id.to_owned()
+    } else {
+        let (part, entry) = address::resolve(reader.docx, id)?;
+        part.ids.id_of(entry).unwrap_or(id).to_owned()
+    };
     all.iter()
-        .position(|r| holds(r, id))
-        .ok_or_else(|| RangeError::not_found(format!("'{id}' is not a block of its story in this view"), Vec::new()))
+        .position(|r| holds(r, &wanted))
+        .ok_or_else(|| not_in_view(id))
 }
 
 fn holds(record: &Record, id: &str) -> bool {
@@ -270,42 +268,21 @@ fn through(all: &[Record], k: usize) -> usize {
 
 /// A row (its table with that row alone) or a cell (its blocks).
 fn inside_table(reader: &mut Reader<'_>, address: &str) -> Result<Option<Selected>, RangeError> {
-    let (table_id, row, column) = if let Some(rest) = address.strip_prefix("tr:").map(|r| format!("tr:{r}")) {
-        let Some(part) = reader
-            .docx
-            .parts
-            .iter()
-            .find(|p| p.ids.tables.iter().any(|t| t.rows.iter().any(|(_, r)| *r == rest)))
-        else {
-            return Err(RangeError::not_found(format!("no row '{address}'"), Vec::new()));
-        };
-        let table = part.ids.tables.iter().find(|t| t.rows.iter().any(|(_, r)| *r == rest));
-        let Some(table) = table else { return Ok(None) };
-        let index = table.rows.iter().position(|(_, r)| *r == rest).unwrap_or(0);
-        (table.id.clone(), index, None)
-    } else if let Some((table, inside)) = address.rsplit_once('/') {
-        if let Some(cell) = inside.strip_prefix('c') {
-            let Some((r, c)) = cell.split_once(',') else {
-                return Ok(None);
-            };
-            let (Ok(r), Ok(c)) = (r.parse::<usize>(), c.parse::<usize>()) else {
-                return Ok(None);
-            };
-            (table.to_owned(), r, Some(c))
-        } else if let Some(r) = inside.strip_prefix('r').and_then(|r| r.parse::<usize>().ok()) {
-            (table.to_owned(), r, None)
-        } else {
-            return Ok(None);
-        }
-    } else {
+    let Some(InTable {
+        part,
+        table,
+        row,
+        column,
+    }) = in_table(reader.docx, address)?
+    else {
         return Ok(None);
     };
-    let part = part_of(reader, &table_id)?;
-    let all = reader.story(part);
+    let table_id = part.ids.tables.get(table).map(|t| t.id.clone()).unwrap_or_default();
+    let all = cut(reader, part, Some(&table_id), None, Cut::Block, &table_id)?;
     let found = find_table(&all, &table_id).cloned();
     let Some(mut table) = found else {
-        return Err(RangeError::not_found(
-            format!("'{address}' is not in its story in this view"),
+        return Err(AddressError::not_found(
+            format!("{} is not in its story in this view", repr_str(address)),
             Vec::new(),
         ));
     };
@@ -313,10 +290,7 @@ fn inside_table(reader: &mut Reader<'_>, address: &str) -> Result<Option<Selecte
         None => {
             table.rows.retain(|line| line.first().is_some_and(|c| c.row == row));
             table.header_rows = 0;
-            Ok(Some(Selected::Records {
-                story: None,
-                records: vec![Record::Table(Box::new(table))],
-            }))
+            Ok(Some(records(None, vec![Record::Table(Box::new(table))])))
         }
         Some(column) => {
             let cell = table.rows.iter().flatten().find(|c| {
@@ -326,9 +300,10 @@ fn inside_table(reader: &mut Reader<'_>, address: &str) -> Result<Option<Selecte
                 Some(cell) => Ok(Some(Selected::Records {
                     story: None,
                     records: cell.records.clone(),
+                    cell: true,
                 })),
-                None => Err(RangeError::not_found(
-                    format!("no cell at ({row}, {column}) in {table_id}"),
+                None => Err(AddressError::not_found(
+                    format!("{} is not in its story in this view", repr_str(address)),
                     Vec::new(),
                 )),
             }
@@ -364,18 +339,7 @@ fn section(reader: &mut Reader<'_>, body: &StoryPart, range: &str) -> Result<Sel
     if ends.is_empty() && found.is_empty() && (range == "s:body" || range == "s:1") {
         return Ok(records(None, all));
     }
-    let wanted = match range
-        .strip_prefix("s:")
-        .and_then(|n| n.parse::<usize>().ok())
-        .filter(|n| *n >= 1 && *n < 10_000)
-    {
-        Some(n) => found.get(n - 1).map(|s| s.id.clone()),
-        None => found.iter().find(|s| s.id == range).map(|s| s.id.clone()),
-    };
-    let Some(wanted) = wanted else {
-        let options: Vec<String> = found.iter().map(|s| s.id.clone()).collect();
-        return Err(RangeError::not_found(format!("no section '{range}'"), options));
-    };
+    let wanted = address::section(reader.docx, range)?;
     if wanted == "s:body" {
         let start = ends.last().map_or(0, |k| k + 1);
         return Ok(records(None, all.into_iter().skip(start).collect()));
@@ -390,9 +354,8 @@ fn section(reader: &mut Reader<'_>, body: &StoryPart, range: &str) -> Result<Sel
             return Ok(records(None, all.into_iter().skip(start).take(k + 1 - start).collect()));
         }
     }
-    Err(RangeError::not_found(format!("no section '{range}'"), Vec::new()))
-}
-
-fn non_empty(s: &str) -> Option<&str> {
-    (!s.is_empty()).then_some(s)
+    Err(AddressError::not_found(
+        format!("no section {}", repr_str(range)),
+        Vec::new(),
+    ))
 }

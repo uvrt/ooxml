@@ -156,7 +156,7 @@ def report(expected: dict, rust: dict, ignore: tuple = ()) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("what", choices=["ids", "describe", "read"])
+    parser.add_argument("what", choices=["ids", "describe", "read", "ranges", "inspect", "find", "batch"])
     parser.add_argument("--rust", required=True, help="the word-ids or word-reads binary")
     parser.add_argument("--tree", action="append", help="every .docx below this folder")
     parser.add_argument("files", nargs="*")
