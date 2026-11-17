@@ -26,7 +26,15 @@ the other paths that still fetched one; each table cell's fill and drawn text co
   (`layout.holding`, a batch's `Call.unlocked`) never waits for another's layout in
   progress (round 34's rule). Answers are the same as laid out here: tests compare each
   path through a worker, with nothing converted in this process, against a toolbox
-  without workers. Still laid out in the caller: `word_fields` update and a page
+  without workers. Measured on `tools/tracked_report.py`'s made-up 340-page report through
+  two workers, after a check (before -> after): `word_inspect` of one table with `layout`
+  23.2 s -> 1.7 s, caller RSS +1,208 MB -> +44 MB, tracemalloc kept 197 MB (132.6 MB in
+  `layout.py`, 3.0M objects; 55.6 MB of fractions) -> 8.6 MB (13 `layout.py` objects);
+  `word_format_table` `keep_together` 90.3 s -> 54.6 s, +606 MB -> +311 MB (the change's own:
+  no layout objects left, 0.2 MB in `layout.py` against 133 MB); a span's `keep_together`
+  36.6 s -> 14.0 s; `word_inspect` again after those edits 29.5 s -> 9.5 s, +485 MB -> -32 MB.
+  The caller ends at 653 MB against 2,301 MB. Every answer is the same (digests of each
+  call's data, colours aside). Still laid out in the caller: `word_fields` update and a page
   cross-reference's work ahead (they read whole pages), `upgrade_to_modern` (the Python
   API's `before`/`after`).
 - **`word_inspect` gives each table cell `fill` and `text_color`.** `fill`: the fill
