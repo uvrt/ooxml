@@ -4,8 +4,10 @@
 //! (its bytes as the package writes them), the archive's part order, `touched`, the
 //! validation delta, and the next id each of two seeds would give.
 //!
-//! The manifest is a JSON list of `{"file": path, "cases": [{"target", "text", "tracked":
-//! {"author", "date"} or null}]}`; each case runs on the document as opened.
+//! The manifest is a JSON list of `{"file": path, "cases": [{"op", "target", "text",
+//! "tracked": {"author", "date"} or null, ...}]}` (`op`: `set_text` when absent,
+//! `insert_text`, `delete_text`, `replace` with `find`, `case`, `count`, `keep`); each case
+//! runs on the document as opened.
 //!
 //! Must not: be used by any library; it is a test instrument.
 
@@ -15,7 +17,10 @@ use ooxml_opc::Package;
 use ooxml_store::{Caller, Clock, StoreConfig};
 use ooxml_word_edit::touched::Touched;
 use ooxml_word_edit::validate::problems;
-use ooxml_word_edit::{Edited, Editor, RevisionPolicy, SetText, TextEdited, Tracking, WordDoc};
+use ooxml_word_edit::{
+    DeleteText, Edited, Editor, EditError, InsertText, Keep, RangesEdited, ReplaceText, RevisionPolicy, SetText,
+    TextEdited, Tracking, WordDoc,
+};
 use serde_json::{json, Map, Value};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -104,19 +109,48 @@ fn edit(bytes: &Arc<[u8]>, case: &Value) -> Result<Value, String> {
         Arc::new(Unlimited),
     )
     .map_err(|e| e.to_string())?;
-    let command = SetText {
-        target: case.get("target").and_then(Value::as_str).unwrap_or("").to_owned(),
-        text: case.get("text").and_then(Value::as_str).unwrap_or("").to_owned(),
-        policy: policy(case),
+    let text = |key: &str| case.get(key).and_then(Value::as_str).unwrap_or("").to_owned();
+    let caller = Caller::anonymous();
+    let done: Result<Value, EditError> = match case.get("op").and_then(Value::as_str).unwrap_or("set_text") {
+        "insert_text" => editor
+            .run(&caller, &InsertText { at: text("target"), text: text("text"), policy: policy(case) })
+            .map(|done| report(&package, &done, ranges_result(&done.out))),
+        "delete_text" => editor
+            .run(&caller, &DeleteText { range: text("target"), policy: policy(case) })
+            .map(|done| report(&package, &done, ranges_result(&done.out))),
+        "replace" => {
+            let command = ReplaceText {
+                find: text("find"),
+                with: text("text"),
+                case: case.get("case").and_then(Value::as_bool).unwrap_or(true),
+                count: case.get("count").and_then(Value::as_u64).and_then(|c| usize::try_from(c).ok()),
+                keep: if text("keep") == "characters" { Keep::Characters } else { Keep::First },
+                policy: policy(case),
+            };
+            editor.run(&caller, &command).map(|done| report(&package, &done, ranges_result(&done.out)))
+        }
+        _ => {
+            let command = SetText { target: text("target"), text: text("text"), policy: policy(case) };
+            editor.run(&caller, &command).map(|done| report(&package, &done, text_result(&done.out)))
+        }
     };
-    match editor.run(&Caller::anonymous(), &command) {
-        Ok(done) => Ok(report(&package, &done)),
-        Err(error) => Ok(json!({"refused": error.to_string()})),
-    }
+    Ok(done.unwrap_or_else(|error| json!({"refused": error.to_string()})))
+}
+
+/// A set_text's result, as the harness writes docx-agent's.
+fn text_result(out: &TextEdited) -> Value {
+    let renamed: Map<String, Value> = out.renamed.iter().map(|(old, new)| (old.clone(), json!(new))).collect();
+    json!({"id": out.id, "changed": out.changed, "renamed": renamed})
+}
+
+/// A range edit's result.
+fn ranges_result(out: &RangesEdited) -> Value {
+    let renamed: Map<String, Value> = out.renamed.iter().map(|(old, new)| (old.clone(), json!(new))).collect();
+    json!({"id": out.id, "count": out.count, "renamed": renamed})
 }
 
 /// What a case reports.
-fn report(opened: &Package, done: &Edited<TextEdited>) -> Value {
+fn report<O>(opened: &Package, done: &Edited<O>, result: Value) -> Value {
     let doc: &WordDoc = done.version.doc();
     let mut parts = Map::new();
     for name in doc.package().part_names() {
@@ -132,12 +166,6 @@ fn report(opened: &Package, done: &Edited<TextEdited>) -> Value {
             .unwrap_or_else(|| Arc::from(Vec::new()));
         parts.insert(name, json!(String::from_utf8_lossy(&bytes)));
     }
-    let renamed: Map<String, Value> = done
-        .out
-        .renamed
-        .iter()
-        .map(|(old, new)| (old.clone(), json!(new)))
-        .collect();
     let main = doc.docx().map(|d| d.main.clone()).unwrap_or_default();
     let next: Map<String, Value> = [main.clone(), format!("{main}\0text")]
         .into_iter()
@@ -147,7 +175,7 @@ fn report(opened: &Package, done: &Edited<TextEdited>) -> Value {
         })
         .collect();
     json!({
-        "result": {"id": done.out.id, "changed": done.out.changed, "renamed": renamed},
+        "result": result,
         "parts": parts,
         "order": doc.package().part_names(),
         "touched": done.touched.iter().map(touched_json).collect::<Vec<_>>(),

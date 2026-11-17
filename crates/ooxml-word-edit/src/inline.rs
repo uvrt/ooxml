@@ -2,13 +2,18 @@
 //! `edit/inline.py` has them: refusing a span that cuts a field or would delete a note
 //! reference ([`check_span`]); splitting runs at a character ([`split_before`]), around a
 //! span ([`isolate`]) or at an insertion point ([`position`]); removing what an edit
-//! emptied ([`prune`]); and the relationship ids an element spells ([`relationship_ids`]).
+//! emptied ([`prune`]); and the relationship ids an element spells ([`relationship_ids`]);
+//! and the untracked replacement of a span ([`replace_span`]) with the run it may need
+//! ([`new_run`]).
 //!
 //! Must not: write revisions, or read outside the paragraph.
 
 use crate::names::{R, W, XML};
-use crate::text::write::set_spaced_text;
-use crate::text::{atoms, runs, Atom, AtomKind};
+use crate::sink::Keep;
+use crate::text::diff::{coarse, Tag};
+use crate::text::write::{anchor, apply, run_properties_for, set_spaced_text, spell, Side};
+use crate::text::{atoms, runs, Atom, AtomKind, OBJECT};
+use std::collections::BTreeSet;
 use crate::work::{Id, Work};
 use crate::EditError;
 
@@ -195,4 +200,92 @@ pub(crate) fn position(work: &mut Work, paragraph: Id, offset: usize) -> Result<
         return Ok((parent, work.index(last).map_or(0, |i| i + 1)));
     }
     Ok((paragraph, work.children(paragraph).len()))
+}
+
+/// Replace the current view's characters `[start, end)` with `new`, untracked (docx-agent's
+/// `inline.replace_span`): with `Keep::First` the new text takes the first replaced
+/// character's formatting; with `Keep::Characters` each surviving character keeps its own
+/// (the in-place diff). Text inserted beside nothing but a field's result is a run of its
+/// own, outside the field. Returns the relationship ids of the drawings and objects it
+/// removed (to release).
+pub(crate) fn replace_span(
+    work: &mut Work,
+    paragraph: Id,
+    (start, end): (usize, usize),
+    new: &str,
+    keep: Keep,
+) -> Result<Vec<String>, EditError> {
+    let items = atoms(work, paragraph);
+    check_span(work, &items, start, end, true)?;
+    if new.contains(OBJECT) {
+        return Err(EditError::Span("new text cannot create an object (U+FFFC)".to_owned()));
+    }
+    let old: Vec<char> = items.get(start..end).unwrap_or_default().iter().map(|a| a.ch).collect();
+    let chars: Vec<char> = new.chars().collect();
+    if old == chars {
+        return Ok(Vec::new());
+    }
+    let mut deleted = BTreeSet::new();
+    let mut inserts = Vec::new();
+    if old.is_empty() {
+        let (at, side) = anchor(&items, start, end);
+        let beside_field = at
+            .and_then(|k| items.get(k))
+            .is_some_and(|a| matches!(side, Side::Before | Side::After) && !a.plain());
+        if beside_field {
+            let children = spell(work, new, None);
+            new_run(work, paragraph, start, &children)?;
+            return Ok(Vec::new());
+        }
+        inserts.push((at, side, new.to_owned()));
+    } else if keep == Keep::First {
+        deleted.extend(start..end);
+        if !new.is_empty() {
+            let (at, side) = anchor(&items, start, end);
+            inserts.push((at, side, new.to_owned()));
+        }
+    } else {
+        for op in coarse(&old, &chars) {
+            if op.tag == Tag::Equal {
+                continue;
+            }
+            deleted.extend(start + op.i1..start + op.i2);
+            if op.j2 > op.j1 {
+                let (at, side) = anchor(&items, start + op.i1, start + op.i2);
+                inserts.push((at, side, chars.get(op.j1..op.j2).unwrap_or_default().iter().collect()));
+            }
+        }
+    }
+    let mut released: Vec<String> = deleted
+        .iter()
+        .filter_map(|k| items.get(*k))
+        .filter(|a| a.kind == AtomKind::Element)
+        .flat_map(|a| relationship_ids(work, a.node))
+        .collect();
+    apply(work, paragraph, &items, &deleted, &inserts);
+    released.extend(prune(work, paragraph));
+    Ok(released)
+}
+
+/// A run holding `children`, put at `offset` with the formatting new text there takes (the
+/// character before it, else the one after, else the paragraph mark's): docx-agent's
+/// `new_run`.
+pub(crate) fn new_run(work: &mut Work, paragraph: Id, offset: usize, children: &[Id]) -> Result<Id, EditError> {
+    let items = atoms(work, paragraph);
+    let reference = offset
+        .checked_sub(1)
+        .and_then(|k| items.get(k))
+        .and_then(|a| a.run)
+        .or_else(|| items.get(offset).and_then(|a| a.run));
+    let properties = run_properties_for(work, paragraph, reference);
+    let run = work.new_element(work.element_name(paragraph, W, "r", "w"));
+    if let Some(properties) = properties {
+        work.append(run, properties);
+    }
+    for child in children {
+        work.append(run, *child);
+    }
+    let (parent, index) = position(work, paragraph, offset)?;
+    work.insert(parent, index, run);
+    Ok(run)
 }

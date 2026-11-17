@@ -50,17 +50,17 @@ pub struct TextEdited {
 }
 
 /// A paragraph found: its part, place, id and how its id stands.
-struct Found {
-    part: String,
-    path: Box<[u32]>,
-    id: String,
-    state: IdState,
-    element: Arc<ooxml_xml::Element>,
+pub(crate) struct Found {
+    pub(crate) part: String,
+    pub(crate) path: Box<[u32]>,
+    pub(crate) id: String,
+    pub(crate) state: IdState,
+    pub(crate) element: Arc<ooxml_xml::Element>,
 }
 
 /// The paragraph `target` names now: an alias followed while its target exists; a cell's
 /// first paragraph.
-fn find(doc: &WordDoc, docx: &Docx, target: &str) -> Result<Found> {
+pub(crate) fn find(doc: &WordDoc, docx: &Docx, target: &str) -> Result<Found> {
     let followed = doc.ids().follow(target);
     let block = (followed != target)
         .then(|| direct(docx, &followed))
@@ -178,8 +178,8 @@ impl Command<WordDoc> for SetText {
             });
         }
         let new = work.build().ok_or_else(|| EditError::Path(found.part.clone()))?;
-        if let Some((first, next)) = wrote.annotations {
-            draws.extend(crate::sink::annotation_draws(&new, first, next));
+        if let Some(numbered) = wrote.annotations {
+            draws.extend(crate::sink::annotation_draws(&new, numbered));
         }
         let mut keys = vec![block_key(&found.part, &id)];
         if paragraph_has_annotations(&found.element) || paragraph_has_annotations(&new) {
@@ -197,7 +197,7 @@ impl Command<WordDoc> for SetText {
         crate::textbox::sync(&mut sink)?;
         crate::revision_ids::make_unique(&mut sink)?;
         if let RevisionPolicy::Tracked(tracking) = &self.policy {
-            let gave = wrote.annotations.is_some_and(|(first, next)| next > first);
+            let gave = wrote.annotations.is_some_and(|n| n.to > n.from);
             sink.people(gave.then_some(tracking.author.as_str()), Some(&tracking.author))?;
             sink.release(&found.part, &wrote.released)?;
         }

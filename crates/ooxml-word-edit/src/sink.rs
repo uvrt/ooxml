@@ -31,21 +31,49 @@ pub struct TextWrite {
     /// Whether a revision record carries `w16du:dateUtc`: the part's root is to declare it
     /// ([`EditSink::ensure_w14`] with `w16du`, once the paragraph is in place).
     pub dated: bool,
-    /// The revision ids the edit gave, `first..next` (tracked): stand-ins, drawn again
-    /// where the change is applied ([`crate::DrawFrom::Annotation`]).
-    pub annotations: Option<(i64, i64)>,
+    /// The revision ids the write gave (tracked): stand-ins, drawn again where the change
+    /// is applied ([`crate::DrawFrom::Annotation`]).
+    pub annotations: Option<Numbered>,
+}
+
+/// Revision ids a write gave, `from..to`, of an edit numbering from `base`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Numbered {
+    /// The edit's first id.
+    pub base: i64,
+    /// The first this write gave.
+    pub from: i64,
+    /// One above the last this write gave.
+    pub to: i64,
+}
+
+/// How a replaced stretch's new text takes its formatting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Keep {
+    /// All of it the first replaced character's (docx-agent's `keep="first"`).
+    #[default]
+    First,
+    /// Each surviving character its own, new ones the character they replace
+    /// (`keep="characters"`; tracked, the changed words only are revisions).
+    Characters,
 }
 
 /// The sink a command writes through, over one transaction.
 pub struct EditSink<'t, 's> {
     tx: &'t mut Txn<'s, WordDoc>,
     policy: RevisionPolicy,
+    /// The first revision id of this edit and the next it gives, once it began numbering.
+    numbered: Option<(i64, i64)>,
 }
 
 impl<'t, 's> EditSink<'t, 's> {
     /// A sink over `tx`, writing by `policy`.
     pub fn new(tx: &'t mut Txn<'s, WordDoc>, policy: RevisionPolicy) -> Self {
-        EditSink { tx, policy }
+        EditSink {
+            tx,
+            policy,
+            numbered: None,
+        }
     }
 
     /// The working version: the snapshot with this transaction's changes so far.
@@ -72,6 +100,12 @@ impl<'t, 's> EditSink<'t, 's> {
     #[must_use]
     pub fn policy(&self) -> &RevisionPolicy {
         &self.policy
+    }
+
+    /// Record that the edit depends on the whole document (a find over every paragraph):
+    /// it commits only when nothing came between its snapshot and its commit.
+    pub fn read_everything(&mut self) {
+        self.tx.read_everything();
     }
 
     /// Record that the edit depends on `key`.
@@ -117,7 +151,65 @@ impl<'t, 's> EditSink<'t, 's> {
     /// # Errors
     /// When a story part is not XML.
     pub fn next_annotation_id(&mut self) -> Result<i64> {
-        Ok(annotation_ceiling(self.tx.doc())? + 1)
+        if let Some((_, next)) = self.numbered {
+            return Ok(next);
+        }
+        let first = annotation_ceiling(self.tx.doc())? + 1;
+        self.write(Change::Number)?;
+        self.numbered = Some((first, first));
+        Ok(first)
+    }
+
+    /// A tracked write through a [`Stamp`] numbering on from this edit's last id.
+    fn tracked(
+        &mut self,
+        tracking: crate::policy::Tracking,
+        write: impl FnOnce(&mut Stamp) -> Result<Vec<String>>,
+    ) -> Result<(Vec<String>, bool, Numbered)> {
+        let from = self.next_annotation_id()?;
+        let mut stamp = Stamp::new(tracking, from);
+        let released = write(&mut stamp)?;
+        let base = self.numbered.map_or(from, |(base, _)| base);
+        self.numbered = Some((base, stamp.next()));
+        Ok((
+            released,
+            stamp.dated,
+            Numbered {
+                base,
+                from,
+                to: stamp.next(),
+            },
+        ))
+    }
+
+    /// Replace the current view's characters `[start, end)` of the paragraph `work` holds
+    /// with `text`, by the policy (docx-agent's `inline.replace_span`, tracked
+    /// `track.replace_span`).
+    ///
+    /// # Errors
+    /// [`EditError::Text`] or [`EditError::Span`] for a span or text the paragraph cannot
+    /// take.
+    pub(crate) fn replace_span(&mut self, work: &mut Work, span: (usize, usize), text: &str, keep: Keep) -> Result<TextWrite> {
+        let paragraph = work.root();
+        write::check_text(text)?;
+        match self.policy.clone() {
+            RevisionPolicy::Untracked => Ok(TextWrite {
+                released: crate::inline::replace_span(work, paragraph, span, text, keep)?,
+                changed: work.changed(),
+                dated: false,
+                annotations: None,
+            }),
+            RevisionPolicy::Tracked(tracking) => {
+                let (released, dated, numbered) =
+                    self.tracked(tracking, |stamp| track::replace_span(work, paragraph, span, text, keep, stamp))?;
+                Ok(TextWrite {
+                    changed: work.changed(),
+                    released,
+                    dated,
+                    annotations: Some(numbered),
+                })
+            }
+        }
     }
 
     /// Drop `part`'s relationships `ids` where nothing in the part uses them any more, and
@@ -284,15 +376,15 @@ impl<'t, 's> EditSink<'t, 's> {
             }),
             RevisionPolicy::Tracked(tracking) => {
                 write::check_text(text)?;
-                let first = self.next_annotation_id()?;
-                let mut stamp = Stamp::new(tracking, first);
                 let length = crate::text::atoms(work, paragraph).len();
-                let released = track::replace_span(work, paragraph, 0, length, text, &mut stamp)?;
+                let (released, dated, numbered) = self.tracked(tracking, |stamp| {
+                    track::replace_span(work, paragraph, (0, length), text, Keep::Characters, stamp)
+                })?;
                 Ok(TextWrite {
                     changed: work.changed(),
                     released,
-                    dated: stamp.dated,
-                    annotations: Some((first, stamp.next())),
+                    dated,
+                    annotations: Some(numbered),
                 })
             }
         }
@@ -374,10 +466,10 @@ pub(crate) fn ensured_head(root: &Element, drawings: bool, extra: &[(&str, &str)
     })
 }
 
-/// The draws that number again, where the change is applied, the revision records an
-/// edit made in `element` (`w:id` in `first..next`, its stand-ins), each by its offset
-/// from `first`; paths from `element`.
-pub(crate) fn annotation_draws(element: &Element, first: i64, next: i64) -> Vec<Draw> {
+/// The draws that number again, where the change is applied, the revision records a
+/// write made in `element` (`w:id` among the stand-ins it gave), each by its offset from
+/// the edit's first id; paths from `element`.
+pub(crate) fn annotation_draws(element: &Element, numbered: Numbered) -> Vec<Draw> {
     let mut out = Vec::new();
     let mut stack: Vec<(&Element, Vec<u32>)> = vec![(element, Vec::new())];
     while let Some((e, path)) = stack.pop() {
@@ -385,10 +477,10 @@ pub(crate) fn annotation_draws(element: &Element, first: i64, next: i64) -> Vec<
             let value = e
                 .attribute(Some(crate::names::W), "id")
                 .and_then(|v| v.trim().parse::<i64>().ok())
-                .filter(|v| (first..next).contains(v));
+                .filter(|v| (numbered.from..numbered.to).contains(v));
             if let Some(value) = value {
                 if let (Ok(offset), Some(attribute)) = (
-                    u32::try_from(value - first),
+                    u32::try_from(value - numbered.base),
                     e.attributes().iter().find(|a| a.name.is(Some(crate::names::W), "id")),
                 ) {
                     out.push(Draw {

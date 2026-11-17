@@ -98,6 +98,10 @@ pub enum Change {
     },
     /// Ids added to the ledger (never taken back: an id given is never given again).
     Ids(IdsChange),
+    /// Where the edit's revision ids start: one above the largest annotation id in use in
+    /// the version it is applied to (docx-agent's `Stamp`, made as the edit begins
+    /// recording). The draws after it ([`DrawFrom::Annotation`]) count from there.
+    Number,
 }
 
 /// Where a drawn value comes from.
@@ -105,8 +109,8 @@ pub enum Change {
 pub enum DrawFrom {
     /// The next value of a seed's sequence the ledger lacks (paraIds, textIds).
     Seed(Arc<str>),
-    /// An annotation id: one above the largest in use in any story, plus this offset
-    /// (the edit's revision records, numbered in the order it made them).
+    /// An annotation id: the edit's first ([`Change::Number`]) plus this offset (its
+    /// revision records, numbered in the order it made them).
     Annotation(u32),
 }
 
@@ -310,7 +314,6 @@ impl WordDoc {
         let mut element = Arc::clone(inserted);
         let mut ids = self.ids.clone();
         let mut added = IdsChange::default();
-        let mut annotations: Option<i64> = None;
         for draw in draws {
             let value = match &draw.from {
                 DrawFrom::Seed(seed) => {
@@ -321,14 +324,7 @@ impl WordDoc {
                     values.into_iter().next().ok_or_else(stale)?
                 }
                 DrawFrom::Annotation(offset) => {
-                    let first = match annotations {
-                        Some(first) => first,
-                        None => {
-                            let ceiling = crate::validate::annotation_ceiling(self)
-                                .map_err(|e| ModelError::Unreadable(e.to_string()))?;
-                            *annotations.insert(ceiling + 1)
-                        }
-                    };
+                    let first = self.ids.annotations().ok_or_else(stale)?;
                     (first + i64::from(*offset)).to_string()
                 }
             };
@@ -381,7 +377,7 @@ impl Change {
             | Change::Head { part, .. }
             | Change::Put { part, .. }
             | Change::Remove { part } => Some(part),
-            Change::Restore { .. } | Change::Ids(_) | Change::People { .. } => None,
+            Change::Restore { .. } | Change::Ids(_) | Change::Number | Change::People { .. } => None,
         }
     }
 }
@@ -414,6 +410,13 @@ impl DocModel for WordDoc {
             Change::Ids(added) => {
                 let mut ids = self.ids.clone();
                 ids.apply(added);
+                (self.package.clone(), ids)
+            }
+            Change::Number => {
+                let ceiling = crate::validate::annotation_ceiling(self)
+                    .map_err(|e| ModelError::Unreadable(e.to_string()))?;
+                let mut ids = self.ids.clone();
+                ids.number_from(ceiling + 1);
                 (self.package.clone(), ids)
             }
         };
@@ -463,7 +466,7 @@ impl DocModel for WordDoc {
                 }
             }
             // ids given are never given again: nothing to take back
-            Change::Ids(_) => Change::Ids(IdsChange::default()),
+            Change::Ids(_) | Change::Number => Change::Ids(IdsChange::default()),
         })
     }
 
@@ -509,6 +512,7 @@ impl DocModel for WordDoc {
                     into.insert(Key::Seq(Arc::from(seed.as_str())));
                 }
             }
+            Change::Number => {}
         }
     }
 
