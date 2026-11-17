@@ -569,9 +569,11 @@ dependencies = [
  "ooxml-scene",
  "ooxml-schema",
  "ooxml-session",
+ "ooxml-store",
  "ooxml-text",
  "ooxml-tools",
  "ooxml-tools-word",
+ "ooxml-word-edit",
  "ooxml-word-layout",
  "ooxml-word-model",
  "ooxml-xml",
@@ -725,6 +727,20 @@ dependencies = [
  "rayon",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "ooxml-word-edit"
+version = "0.1.0"
+dependencies = [
+ "ooxml-base",
+ "ooxml-derive",
+ "ooxml-opc",
+ "ooxml-store",
+ "ooxml-word-model",
+ "ooxml-xml",
+ "ooxml-zip",
+ "thiserror",
 ]
 
 [[package]]

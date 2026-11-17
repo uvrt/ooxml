@@ -26,6 +26,8 @@ pub mod chart;
 pub mod disk;
 pub mod dml;
 pub mod drawing;
+pub mod edits;
+pub mod edits_bench;
 pub mod export;
 mod export_parts;
 pub mod glyphs;

@@ -3,7 +3,8 @@
 //! Owns: the green tree ([`Tree`], [`Element`], [`Node`], [`Children`]); the parser
 //! ([`parse`]) with libxml2's reading rules and limits; the writer ([`Tree::write`]) in
 //! libxml2's form, the contract for every touched part; cursors that know their parents
-//! ([`Cursor`]); patches by path checked by node pointer ([`Patch`]); and the structural diff
+//! ([`Cursor`]); patches by path checked by node pointer ([`Patch`]) and in-place head
+//! changes checked by value ([`HeadPatch`]); and the structural diff
 //! that short-circuits on shared subtrees ([`diff`]); and what generated typed views call to
 //! read and build elements by local name ([`view`]).
 //!
@@ -14,6 +15,7 @@ mod cursor;
 mod diff;
 mod encoding;
 mod error;
+mod head;
 mod name;
 mod node;
 mod parse;
@@ -25,6 +27,7 @@ mod write;
 pub use cursor::{ChildCursors, Cursor};
 pub use diff::diff;
 pub use error::{PatchError, XmlError};
+pub use head::HeadPatch;
 pub use name::{Atom, Name, QName};
 pub use node::{Attribute, Doctype, Element, ExternalId, Head, NamespaceDecl, Node, Pi, Tree};
 pub use ooxml_base::XmlLimits as Limits;
