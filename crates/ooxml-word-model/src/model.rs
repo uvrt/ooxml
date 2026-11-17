@@ -1,0 +1,395 @@
+//! Owns: the source model of a story -- paragraphs, runs, fields, bookmarks, tables, drawings'
+//! anchors and extents, sections -- as docx2svg's `docx2svg.model` holds it after its parser:
+//! what the file says, in the final view of tracked changes (Accept All), not yet resolved.
+//! Blocks are shared (`Arc`) so that a version reopened with unchanged blocks reuses them.
+//!
+//! Must not: resolve styles or numbering (`crate::resolve`), or hold anything a layout
+//! computes (lines, pages).
+
+use crate::value::{Props, Text};
+use std::sync::Arc;
+
+/// A story's (a cell's, a text box's, a note's) blocks.
+pub type Story = Arc<[Block]>;
+/// A table row's cells.
+pub type Cells = Arc<[Story]>;
+/// A cell's regions of its table style, lowest first.
+pub type Conditions = Arc<[Text]>;
+/// A row's cells' regions.
+pub type RowConditions = Arc<[Conditions]>;
+
+/// A `w:rPr` as written: its character style and declared properties.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
+pub struct RunProps {
+    /// `w:rStyle`.
+    pub style_id: Option<Text>,
+    /// Every property it declares.
+    pub declared: Props,
+}
+
+/// A `w:pPr` as written.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
+pub struct ParaProps {
+    /// `w:pStyle`.
+    pub style_id: Option<Text>,
+    /// Every property it declares (not its `w:rPr` or `w:sectPr`).
+    pub declared: Props,
+    /// The paragraph mark's `w:rPr`.
+    pub mark: Option<Arc<RunProps>>,
+}
+
+/// A field whose result layout computes (`PAGE`, `NUMPAGES`, `SECTIONPAGES`, `PAGEREF`,
+/// `REF`, `SEQ`, `STYLEREF`): its instruction, keyword, and the result Word cached, run by
+/// run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Field {
+    /// The instruction, stripped.
+    pub instruction: Text,
+    /// Its keyword, upper-cased.
+    pub keyword: Text,
+    /// The cached result as `(text, properties)` per piece.
+    pub cached: Arc<[(Text, Option<Arc<RunProps>>)]>,
+}
+
+/// What an inline drawing's mark shows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InlineObject {
+    /// Nothing the model reads (a picture with no relationship, an embedded object).
+    None,
+    /// A picture, by relationship id.
+    Picture(Text),
+    /// A shape, group, chart or SmartArt.
+    Graphic(Arc<Graphic>),
+}
+
+/// `wp:positionH` / `wp:positionV`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AnchorPosition {
+    /// `relativeFrom`.
+    pub relative: Option<Text>,
+    /// `wp:posOffset`, EMU.
+    pub offset: Option<i64>,
+    /// `wp:align`.
+    pub align: Option<Text>,
+}
+
+/// A floating drawing (`wp:anchor`, or a VML shape read as one), as written.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Anchor {
+    /// Its extent, EMU.
+    pub extent: (i64, i64),
+    /// Its effect extent (left, top, right, bottom), EMU.
+    pub effect: [i64; 4],
+    /// Where it goes across.
+    pub h: AnchorPosition,
+    /// Where it goes down.
+    pub v: AnchorPosition,
+    /// `simplePos` when `simplePos="1"`.
+    pub simple: Option<(i64, i64)>,
+    /// The wrap element's local name.
+    pub wrap: Option<Text>,
+    /// Its `wrapText`.
+    pub wrap_text: Option<Text>,
+    /// `distT`, `distB`, `distL`, `distR`.
+    pub distance: [i64; 4],
+    /// `behindDoc`.
+    pub behind: bool,
+    /// `relativeHeight`.
+    pub relative_height: i64,
+    /// `allowOverlap`.
+    pub allow_overlap: bool,
+    /// `layoutInCell`.
+    pub layout_in_cell: bool,
+    /// `locked`.
+    pub locked: bool,
+    /// What it shows.
+    pub graphic: Option<Arc<Graphic>>,
+    /// `wp:docPr/@id`.
+    pub identifier: Option<Text>,
+    /// A tight or through wrap's polygon.
+    pub polygon: Option<Arc<[(i64, i64)]>>,
+    /// Read from VML.
+    pub vml: bool,
+}
+
+/// A text body setting (`wps:bodyPr`): a number (`None` where not one) or a string.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BodyValue {
+    /// An inset.
+    Int(Option<i64>),
+    /// A setting as written.
+    Str(Text),
+}
+
+/// What a drawing shows, as the file says it (DrawingML), its painting left to the
+/// DrawingML model (phase P3).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Graphic {
+    /// `picture`, `shape`, `group`, `chart`, `diagram` or `other`.
+    pub kind: Text,
+    /// `a:xfrm`'s offset, EMU.
+    pub offset: (i64, i64),
+    /// `a:xfrm`'s extent, EMU.
+    pub extent: (i64, i64),
+    /// Rotation, 60000ths of a degree.
+    pub rotation: i64,
+    /// `flipH`.
+    pub flip_h: bool,
+    /// `flipV`.
+    pub flip_v: bool,
+    /// The picture's, chart's or diagram's relationship id.
+    pub relationship: Option<Text>,
+    /// A text box's blocks.
+    pub text: Arc<[Block]>,
+    /// `wps:bodyPr`'s settings by name.
+    pub body: Arc<[(Text, BodyValue)]>,
+    /// A group's members.
+    pub children: Arc<[Arc<Graphic>]>,
+    /// A group's `a:chOff`.
+    pub child_offset: (i64, i64),
+    /// A group's `a:chExt`.
+    pub child_extent: (i64, i64),
+    /// What is there and not drawn.
+    pub unsupported: Arc<[Text]>,
+    /// `a:graphicData/@uri` for `other`.
+    pub uri: Option<Text>,
+    /// The structural path of its content.
+    pub path: Text,
+}
+
+/// One run as the layout reads it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Run {
+    /// Its drawn text.
+    pub text: Text,
+    /// Its `w:rPr`.
+    pub properties: Option<Arc<RunProps>>,
+    /// Tabs, breaks, note references, drawings: `(index into the text, mark)`, in order.
+    pub breaks: Arc<[(usize, Text)]>,
+    /// Its structural path from its paragraph (`w:hyperlink[1]/w:r[2]`).
+    pub path: Text,
+    /// For each inline drawing's mark, what it shows.
+    pub drawings: Arc<[InlineObject]>,
+    /// Its floating drawings (`anchor:<k>` marks).
+    pub anchors: Arc<[Anchor]>,
+    /// The computed field it carries.
+    pub field: Option<Arc<Field>>,
+    /// A table of contents' link.
+    pub toc_link: bool,
+}
+
+/// A bookmark start or end in a paragraph.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Bookmark {
+    /// A start (else an end).
+    pub start: bool,
+    /// `w:id`.
+    pub id: Option<Text>,
+    /// `w:name`.
+    pub name: Option<Text>,
+    /// The run it stands before.
+    pub run: usize,
+}
+
+/// A paragraph.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Paragraph {
+    /// Its runs.
+    pub runs: Arc<[Run]>,
+    /// Its `w:pPr`.
+    pub properties: Option<Arc<ParaProps>>,
+    /// The innermost table's `w:tblStyle` (`""` none named), `None` outside tables.
+    pub table_style_id: Option<Text>,
+    /// The table style's regions that apply to its cell, in order (band positions unnamed).
+    pub table_conditions: Arc<[Text]>,
+    /// Its structural path in its part.
+    pub path: Text,
+    /// `w14:paraId`.
+    pub para_id: Option<Text>,
+    /// Where each joined paragraph's runs begin (the final view of a deleted mark).
+    pub joins: Arc<[usize]>,
+    /// Its mark is deleted and there was no paragraph to join.
+    pub mark_deleted: bool,
+    /// The section it ends.
+    pub section: Option<Arc<SectionProps>>,
+    /// Its bookmarks.
+    pub bookmarks: Arc<[Bookmark]>,
+}
+
+impl Paragraph {
+    /// Its text.
+    pub fn text(&self) -> String {
+        self.runs.iter().map(|r| &*r.text).collect()
+    }
+}
+
+/// `w:tblLook`: which of the table style's regions the table turns on.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct Look {
+    /// The header row.
+    pub first_row: bool,
+    /// The total row.
+    pub last_row: bool,
+    /// The first column.
+    pub first_column: bool,
+    /// The last column.
+    pub last_column: bool,
+    /// No row bands.
+    pub no_h_band: bool,
+    /// No column bands.
+    pub no_v_band: bool,
+}
+
+/// A table: rows of cells of blocks, and what its geometry is read from, unresolved.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Table {
+    /// `w:tblStyle`, `None` where it names none.
+    pub style_id: Option<Text>,
+    /// rows -> cells -> blocks.
+    pub rows: Arc<[Cells]>,
+    /// Its path.
+    pub path: Text,
+    /// `w:tblGrid`'s widths, twips.
+    pub grid: Arc<[i64]>,
+    /// `w:tblPr` as declared.
+    pub properties: Props,
+    /// Each row's `w:trPr`.
+    pub row_properties: Arc<[Props]>,
+    /// Each cell's `w:tcPr` (revisions accepted).
+    pub cell_properties: Arc<[Arc<[Props]>]>,
+    /// `w:tblLook`.
+    pub look: Look,
+    /// Each cell's regions.
+    pub conditions: Arc<[RowConditions]>,
+    /// Each cell's path.
+    pub cell_paths: Arc<[Arc<[Text]>]>,
+    /// The final view moved content across its edge.
+    pub joined: bool,
+}
+
+/// A block of a story.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Block {
+    /// A paragraph.
+    Paragraph(Arc<Paragraph>),
+    /// A table.
+    Table(Arc<Table>),
+}
+
+/// `w:pgSz`, twips.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PageSize {
+    /// Width.
+    pub width: i64,
+    /// Height.
+    pub height: i64,
+    /// `w:orient`.
+    pub orientation: Option<Text>,
+}
+
+/// `w:pgMar`, twips.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PageMargins {
+    /// Top.
+    pub top: i64,
+    /// Right.
+    pub right: i64,
+    /// Bottom.
+    pub bottom: i64,
+    /// Left.
+    pub left: i64,
+    /// Header distance from the page edge.
+    pub header: i64,
+    /// Footer distance from the page edge.
+    pub footer: i64,
+    /// Gutter.
+    pub gutter: i64,
+}
+
+impl Default for PageMargins {
+    fn default() -> Self {
+        PageMargins {
+            top: 1440,
+            right: 1440,
+            bottom: 1440,
+            left: 1440,
+            header: 720,
+            footer: 720,
+            gutter: 0,
+        }
+    }
+}
+
+/// How a section numbers its notes (`w:footnotePr`, `w:endnotePr`), as stated.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct NoteNumbering {
+    /// `w:numFmt`.
+    pub format: Option<Text>,
+    /// `w:numStart`.
+    pub start: Option<i64>,
+    /// `w:numRestart`.
+    pub restart: Option<Text>,
+    /// `w:pos` (footnotes).
+    pub position: Option<Text>,
+}
+
+/// `w:lnNumType` as Word reads it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LineNumbering {
+    /// `countBy` (1 unstated).
+    pub count_by: i64,
+    /// `start` (0 unstated).
+    pub start: i64,
+    /// `distance`, twips; `None` for automatic.
+    pub distance: Option<i64>,
+    /// `restart` (`newPage` unstated).
+    pub restart: Text,
+}
+
+/// A section's properties (`w:sectPr`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SectionProps {
+    /// `w:pgSz`.
+    pub page_size: PageSize,
+    /// `w:pgMar`.
+    pub margins: PageMargins,
+    /// `w:type`.
+    pub start_type: Option<Text>,
+    /// The number of text columns.
+    pub column_count: i64,
+    /// The space between columns.
+    pub column_space: i64,
+    /// Unequal columns' `(width, space after)`.
+    pub columns: Arc<[(i64, i64)]>,
+    /// `w:cols/@w:sep`.
+    pub column_separator: bool,
+    /// `(type, relationship id)` of each header reference.
+    pub headers: Arc<[(Text, Text)]>,
+    /// The same for footers.
+    pub footers: Arc<[(Text, Text)]>,
+    /// `w:titlePg`.
+    pub title_page: bool,
+    /// `w:pgNumType/@w:start`.
+    pub page_number_start: Option<i64>,
+    /// `w:pgNumType/@w:fmt`.
+    pub page_number_format: Option<Text>,
+    /// `w:vAlign`.
+    pub vertical_alignment: Option<Text>,
+    /// `w:endnotePr`.
+    pub endnotes: NoteNumbering,
+    /// `w:footnotePr`.
+    pub footnotes: NoteNumbering,
+    /// `w:lnNumType`.
+    pub line_numbering: Option<LineNumbering>,
+}
+
+/// A section: its properties and the top-level paragraphs it holds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Section {
+    /// Its properties.
+    pub properties: Arc<SectionProps>,
+    /// Its first paragraph, an index into the story's top-level paragraphs.
+    pub first_paragraph: usize,
+    /// One past its last.
+    pub last_paragraph: usize,
+}

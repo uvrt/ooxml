@@ -1,0 +1,392 @@
+# The elements ooxml-word-model reads, and what it reads of each: the source of src/w.rs
+# (`cargo xtask codegen`; the grammar is in xtask/src/codegen.rs). WordprocessingML (w:),
+# the DrawingML that places a drawing (wp:, a:) and the theme (a:) -- what layout needs, and
+# no more: a reader that needs another child or attribute adds it here.
+#
+# Elements and attributes are found by local name (xmlread), as docx2svg reads them, so a
+# strict-namespace document reads as a transitional one. Only the attributes named with
+# `nsattr` are read in their exact namespace.
+
+ns w14 http://schemas.microsoft.com/office/word/2010/wordml
+ns r http://schemas.openxmlformats.org/officeDocument/2006/relationships
+
+# -- any element -------------------------------------------------------------------------
+
+view Any * | Any element, read by its children and attributes alone.
+view Val * | An element whose meaning is its `w:val` (`w:jc`, `w:pStyle`, `w:numId`...).
+  attr val str val
+  attr int int val
+  attr on onoff val
+
+# -- the main part -------------------------------------------------------------------------
+
+view Document document | `w:document`, the main part's root.
+  child body Body body
+view Body body | `w:body`: the story's blocks, then the last section's properties.
+  child section SectPr sectPr
+view P p | `w:p`, a paragraph.
+  child properties PPr pPr
+  nsattr para_id w14 paraId
+view PPr pPr | `w:pPr`, a paragraph's (a style's, a list level's) properties.
+  child style Val pStyle
+  child numbering NumPr numPr
+  child mark RPr rPr
+  child section SectPr sectPr
+  child alignment Val jc
+  child indent Ind ind
+  child spacing Spacing spacing
+  child tabs Tabs tabs
+  child keep_next Val keepNext
+  child keep_lines Val keepLines
+  child page_break_before Val pageBreakBefore
+  child widow_control Val widowControl
+view NumPr numPr | `w:numPr`: the list a paragraph is in.
+  child num_id Val numId
+  child ilvl Val ilvl
+view Ind ind | `w:ind`, in twips.
+  attr left int left
+  attr start int start
+  attr right int right
+  attr end int end
+  attr first_line int firstLine
+  attr hanging int hanging
+view Spacing spacing | A paragraph's `w:spacing`.
+  attr before int before
+  attr after int after
+  attr line int line
+  attr before_lines int beforeLines
+  attr after_lines int afterLines
+  attr line_rule str lineRule
+  attr before_autospacing str beforeAutospacing
+  attr after_autospacing str afterAutospacing
+view Tabs tabs | `w:tabs`.
+  children stops Tab tab
+view Tab tab | `w:tab` in `w:tabs`: a tab stop.
+  attr pos int pos
+  attr val str val
+  attr leader str leader
+view RPr rPr | `w:rPr`, a run's (a mark's, a style's, a list label's) properties.
+  child style Val rStyle
+  child fonts RFonts rFonts
+  child deleted Any del
+  child moved_from Any moveFrom
+  child bold Val b
+  child italic Val i
+  child strike Val strike
+  child color Colour color
+  child size Val sz
+  child underline Val u
+  child spacing Val spacing
+  child vertical_align Val vertAlign
+view RFonts rFonts | `w:rFonts`: the four font slots, the theme's for each, and the hint.
+  attr ascii str ascii
+  attr h_ansi str hAnsi
+  attr east_asia str eastAsia
+  attr cs str cs
+  attr ascii_theme str asciiTheme
+  attr h_ansi_theme str hAnsiTheme
+  attr east_asia_theme str eastAsiaTheme
+  attr cs_theme str cstheme
+  attr hint str hint
+view Lang * | `w:lang`, `w:themeFontLang`: a language per script.
+  attr val str val
+  attr east_asia str eastAsia
+  attr bidi str bidi
+view Colour * | `w:color`: a value and the theme colour that wins over it.
+  attr val str val
+  attr theme str themeColor
+  attr tint str themeTint
+  attr shade str themeShade
+view Shading shd | `w:shd`: pattern, pattern colour, fill and the theme's fill.
+  attr val str val
+  attr color str color
+  attr fill str fill
+  attr theme_fill str themeFill
+  attr theme_fill_tint str themeFillTint
+  attr theme_fill_shade str themeFillShade
+view Border * | A border side (`w:top`, `w:bdr`...).
+  attr val str val
+  attr sz int sz
+  attr space int space
+  attr color str color
+view Width * | A table width (`w:tblW`, `w:tcW`, a margin side).
+  attr w str w
+  attr kind str type
+view R r | `w:r`, a run.
+  child properties RPr rPr
+view FldChar fldChar | `w:fldChar`: a complex field's begin, separate or end.
+  attr kind str fldCharType
+view FldSimple fldSimple | `w:fldSimple`: a field in one element.
+  attr instruction str instr
+view NoteReference * | `w:footnoteReference`, `w:endnoteReference`.
+  attr id str id
+  attr custom_mark_follows str customMarkFollows
+view Break * | `w:br` and the other marks inside a run.
+  attr kind str type
+view Bookmark * | `w:bookmarkStart`, `w:bookmarkEnd`.
+  attr id str id
+  attr name str name
+view Sdt sdt | `w:sdt`, a content control.
+  child content Any sdtContent
+
+# -- tables --------------------------------------------------------------------------------
+
+view Tbl tbl | `w:tbl`.
+  child properties TblPr tblPr
+  child grid TblGrid tblGrid
+view TblPr tblPr | `w:tblPr`.
+  child style Val tblStyle
+  child look TblLook tblLook
+view TblLook tblLook | `w:tblLook`: which of a table style's regions apply.
+  attr val str val
+view TblGrid tblGrid | `w:tblGrid`.
+  children columns GridCol gridCol
+view GridCol gridCol | `w:gridCol`.
+  attr w int w
+view Tr tr | `w:tr`.
+  child properties TrPr trPr
+view TrPr trPr | `w:trPr`.
+  child deleted Any del
+  child header Val tblHeader
+  child grid_before Val gridBefore
+  child grid_after Val gridAfter
+view Tc tc | `w:tc`.
+  child properties TcPr tcPr
+view TcPr tcPr | `w:tcPr`.
+  child deleted Any cellDel
+  child merge CellMerge cellMerge
+  child span Val gridSpan
+view CellMerge cellMerge | `w:cellMerge`, a tracked vertical merge.
+  attr v_merge str vMerge
+
+# -- sections ------------------------------------------------------------------------------
+
+view SectPr sectPr | `w:sectPr`.
+  child page_size PgSz pgSz
+  child margins PgMar pgMar
+  child kind Val type
+  child columns Cols cols
+  children headers StoryReference headerReference
+  children footers StoryReference footerReference
+  child title_page Val titlePg
+  child page_numbers PgNumType pgNumType
+  child vertical_alignment Val vAlign
+  child endnotes NotePr endnotePr
+  child footnotes NotePr footnotePr
+  child line_numbers LnNumType lnNumType
+view PgSz pgSz | `w:pgSz`, twips.
+  attr w int w
+  attr h int h
+  attr orient str orient
+view PgMar pgMar | `w:pgMar`, twips.
+  attr top int top
+  attr right int right
+  attr bottom int bottom
+  attr left int left
+  attr header int header
+  attr footer int footer
+  attr gutter int gutter
+view Cols cols | `w:cols`.
+  attr num int num
+  attr space int space
+  attr space_raw str space
+  attr equal_width str equalWidth
+  attr sep str sep
+  children columns Col col
+view Col col | `w:col`, one column of unequal ones.
+  attr w int w
+  attr space int space
+view StoryReference * | `w:headerReference`, `w:footerReference`.
+  attr kind str type
+  nsattr id r id
+view PgNumType pgNumType | `w:pgNumType`.
+  attr start int start
+  attr fmt str fmt
+view NotePr * | `w:footnotePr`, `w:endnotePr` (a section's or the settings').
+  child format Val numFmt
+  child start Val numStart
+  child restart Val numRestart
+  child position Val pos
+view LnNumType lnNumType | `w:lnNumType`, line numbers.
+  attr count_by int countBy
+  attr start int start
+  attr distance int distance
+  attr restart str restart
+
+# -- styles --------------------------------------------------------------------------------
+
+view Styles styles | `w:styles`.
+  child defaults DocDefaults docDefaults
+  children styles Style style
+view DocDefaults docDefaults | `w:docDefaults`.
+  child run RPrDefault rPrDefault
+  child paragraph PPrDefault pPrDefault
+view RPrDefault rPrDefault | `w:rPrDefault`.
+  child properties RPr rPr
+view PPrDefault pPrDefault | `w:pPrDefault`.
+  child properties PPr pPr
+view Style style | `w:style`.
+  attr style_id str styleId
+  attr kind str type
+  attr default str default
+  child name Val name
+  child based_on Val basedOn
+  child next Val next
+  child link Val link
+  child paragraph PPr pPr
+  child run RPr rPr
+  children conditional TblStylePr tblStylePr
+  child table TblPr tblPr
+  child row TrPr trPr
+  child cell TcPr tcPr
+view TblStylePr tblStylePr | `w:tblStylePr`: a table style's region.
+  attr kind str type
+  child paragraph PPr pPr
+  child run RPr rPr
+  child table TblPr tblPr
+  child row TrPr trPr
+  child cell TcPr tcPr
+
+# -- numbering -----------------------------------------------------------------------------
+
+view Numbering numbering | `w:numbering`.
+  children definitions AbstractNum abstractNum
+  children instances Num num
+  children picture_bullets NumPicBullet numPicBullet
+view AbstractNum abstractNum | `w:abstractNum`.
+  attr id int abstractNumId
+  child nsid Val nsid
+  child multi_level_type Val multiLevelType
+  children levels Lvl lvl
+  child style_link Val numStyleLink
+view Lvl lvl | `w:lvl`, a list level.
+  attr ilvl int ilvl
+  child format Val numFmt
+  child text Val lvlText
+  child paragraph PPr pPr
+  child run RPr rPr
+  child suffix Val suff
+  child start Val start
+  child picture_bullet Val lvlPicBulletId
+  child alignment Val lvlJc
+  child restart Val lvlRestart
+  child legal Val isLgl
+  child style Val pStyle
+view Num num | `w:num`, a list instance.
+  attr id int numId
+  child definition Val abstractNumId
+  children overrides LvlOverride lvlOverride
+view LvlOverride lvlOverride | `w:lvlOverride`.
+  attr ilvl int ilvl
+  child level Lvl lvl
+  child start Val startOverride
+view NumPicBullet numPicBullet | `w:numPicBullet`.
+  attr id int numPicBulletId
+
+# -- settings ------------------------------------------------------------------------------
+
+view Settings settings | `w:settings`.
+  child theme_font_lang Lang themeFontLang
+  child compat Any compat
+  child default_tab_stop Val defaultTabStop
+  child even_and_odd_headers Val evenAndOddHeaders
+  child auto_hyphenation Val autoHyphenation
+  child hyphenation_zone Val hyphenationZone
+  child hyphen_limit Val consecutiveHyphenLimit
+  child no_caps_hyphenation Val doNotHyphenateCaps
+  child colour_mapping Any clrSchemeMapping
+  child endnotes NotePr endnotePr
+  child footnotes NotePr footnotePr
+view CompatSetting compatSetting | `w:compatSetting`.
+  attr name str name
+  attr val str val
+
+# -- the theme (a:) ------------------------------------------------------------------------
+
+view Theme theme | `a:theme`.
+  child elements ThemeElements themeElements
+view ThemeElements themeElements | `a:themeElements`.
+  child fonts FontScheme fontScheme
+  child colours Any clrScheme
+view FontScheme fontScheme | `a:fontScheme`.
+  child major FontCollection majorFont
+  child minor FontCollection minorFont
+view FontCollection * | `a:majorFont`, `a:minorFont`.
+  child latin TextFont latin
+  child east_asian TextFont ea
+  child complex_script TextFont cs
+  children scripts TextFont font
+view TextFont * | `a:latin`, `a:ea`, `a:cs`, `a:font`.
+  attr typeface str typeface
+  attr script str script
+
+# -- notes ---------------------------------------------------------------------------------
+
+view Note * | `w:footnote`, `w:endnote`.
+  attr id str id
+  attr kind str type
+
+# -- drawings (wp:, a:) --------------------------------------------------------------------
+
+view Drawing drawing | `w:drawing`.
+  child inline Inline inline
+  child anchor Anchor anchor
+view Inline inline | `wp:inline`: a drawing that is a character of its line.
+  child extent Extent extent
+  child effect EffectExtent effectExtent
+  child graphic Graphic graphic
+view Anchor anchor | `wp:anchor`: a floating drawing.
+  attr simple str simplePos
+  attr dist_t int distT
+  attr dist_b int distB
+  attr dist_l int distL
+  attr dist_r int distR
+  attr behind str behindDoc
+  attr relative_height int relativeHeight
+  attr allow_overlap str allowOverlap
+  attr layout_in_cell str layoutInCell
+  attr locked str locked
+  child simple_position Point simplePos
+  child extent Extent extent
+  child effect EffectExtent effectExtent
+  child position_h Position positionH
+  child position_v Position positionV
+  child properties DocPr docPr
+  child graphic Graphic graphic
+view Extent * | An extent (`wp:extent`, `a:ext`), EMU.
+  attr cx int cx
+  attr cy int cy
+view EffectExtent effectExtent | `wp:effectExtent`, EMU.
+  attr l int l
+  attr t int t
+  attr r int r
+  attr b int b
+view Point * | A point (`wp:simplePos`, `a:off`, `wp:start`), EMU.
+  attr x int x
+  attr y int y
+view Position * | `wp:positionH`, `wp:positionV`.
+  attr relative_from str relativeFrom
+  child offset Any posOffset
+  child align Any align
+view DocPr docPr | `wp:docPr`.
+  attr id str id
+view Graphic graphic | `a:graphic`.
+  child data GraphicData graphicData
+view GraphicData graphicData | `a:graphicData`.
+  attr uri str uri
+view Xfrm * | `a:xfrm`, `wpg:xfrm`.
+  attr rot int rot
+  attr flip_h str flipH
+  attr flip_v str flipV
+  child offset Point off
+  child extent Extent ext
+  child child_offset Point chOff
+  child child_extent Extent chExt
+view BodyPr bodyPr | `wps:bodyPr`: a text box's insets and text flow.
+  child warp PrstTxWarp prstTxWarp
+view PrstTxWarp prstTxWarp | `a:prstTxWarp`.
+  attr preset str prst
+view RelationshipRefs * | An element naming parts by relationship (`a:blip`, `c:chart`, `dgm:relIds`).
+  nsattr id r id
+  nsattr embed r embed
+  nsattr data_model r dm
