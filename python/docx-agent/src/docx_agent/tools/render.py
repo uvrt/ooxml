@@ -218,6 +218,17 @@ class PageRenderer(RendererBase):
 
         return svg_to_png(svg, font_dirs=font_dirs)
 
+    def lays_out_here(self, data: bytes, font_dirs: "list[str]", locale: Any, state: Any) -> bool:
+        """Lane L4b: whether the document is laid out in the calling process -- a version the
+        Rust layout lays out, by the document's engine (``state`` names its lineage) -- so
+        that no worker holds a Rust layout: the workers rasterise the pages' SVG only."""
+        if not held_state(state):
+            return False
+        from ..layout import locale_of
+
+        options = {"font_dirs": font_dirs, "locale": locale_of(None) if locale is None else locale}
+        return pages.lay_out(data, options, state[3]) is not None
+
     def warm_up(self) -> None:
         """What a worker's first layout and raster would pay for once (per process): docx2svg's
         imports and its scan of the font folders (:func:`docx2svg.warm`, for the folders

@@ -54,6 +54,9 @@ pub struct Memo<K, V> {
     /// Entries by last use, oldest first.
     ages: BTreeMap<u64, K>,
     clock: u64,
+    /// The clock at the last [`Memo::sweep`]: an entry last used at or before it was not
+    /// used since.
+    swept: u64,
     budget: Arc<dyn CacheBudget>,
     stats: MemoStats,
 }
@@ -65,6 +68,7 @@ impl<K: Hash + Eq + Clone, V: Clone + Weigh> Memo<K, V> {
             entries: HashMap::new(),
             ages: BTreeMap::new(),
             clock: 0,
+            swept: 0,
             budget,
             stats: MemoStats::default(),
         }
@@ -145,6 +149,29 @@ impl<K: Hash + Eq + Clone, V: Clone + Weigh> Memo<K, V> {
             entries: self.entries.len(),
             ..self.stats
         }
+    }
+
+    /// Drop every entry not used since the last sweep (or since the memo was made) that
+    /// `held` says nothing else holds: what no version asks for any more, so that a memo
+    /// kept across versions holds what the versions in use need and not what they used to.
+    /// Returns how many entries were dropped. An entry `held` keeps stays, used or not.
+    pub fn sweep(&mut self, held: impl Fn(&V) -> bool) -> usize {
+        let since = self.swept;
+        self.swept = self.clock;
+        let stale: Vec<u64> = self
+            .ages
+            .range(..=since)
+            .filter(|(_, key)| !self.entries.get(*key).is_some_and(|entry| held(&entry.value)))
+            .map(|(age, _)| *age)
+            .collect();
+        for age in &stale {
+            let Some(key) = self.ages.remove(age) else { continue };
+            if let Some(entry) = self.entries.remove(&key) {
+                self.budget.release(entry.bytes);
+                self.stats.bytes -= entry.bytes;
+            }
+        }
+        stale.len()
     }
 
     fn evict_oldest(&mut self) -> bool {

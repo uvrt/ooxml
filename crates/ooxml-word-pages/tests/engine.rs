@@ -8,9 +8,40 @@
 use ooxml_derive::CacheBudget;
 use ooxml_fonts::{Folder, Location, WordFontOptions};
 use ooxml_word_layout::paint::svg::NoDrawings;
-use ooxml_word_pages::{support, DiskFonts, EngineOptions, FontSetup, PageEngine};
+use ooxml_word_pages::{support, DiskFonts, EngineBudgets, EngineOptions, FontSetup, PageEngine};
 use ooxml_zip::{Method, NewEntry, Writer};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+
+/// Grants every reservation and counts what is held.
+#[derive(Default)]
+struct Counted(AtomicUsize);
+
+impl CacheBudget for Counted {
+    fn reserve(&self, bytes: usize) -> bool {
+        self.0.fetch_add(bytes, Ordering::SeqCst);
+        true
+    }
+    fn release(&self, bytes: usize) {
+        self.0.fetch_sub(bytes, Ordering::SeqCst);
+    }
+    fn used(&self) -> usize {
+        self.0.load(Ordering::SeqCst)
+    }
+}
+
+/// Grants nothing.
+struct Nothing;
+
+impl CacheBudget for Nothing {
+    fn reserve(&self, _bytes: usize) -> bool {
+        false
+    }
+    fn release(&self, _bytes: usize) {}
+    fn used(&self) -> usize {
+        0
+    }
+}
 
 const W: &str = r#"xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main""#;
 
@@ -83,6 +114,13 @@ fn paragraphs(n: usize, edited: Option<usize>) -> String {
 
 /// The open faces the repository ships (pptx2svg-fonts), Calibri laid out with Carlito.
 fn engine() -> PageEngine {
+    engine_in(EngineBudgets {
+        held: Arc::new(Unlimited),
+        paint: Arc::new(Unlimited),
+    })
+}
+
+fn engine_in(budgets: EngineBudgets) -> PageEngine {
     let folder = Folder {
         location: Location::Folder,
         path: concat!(
@@ -97,7 +135,7 @@ fn engine() -> PageEngine {
         fallbacks: false,
     };
     let setup = Arc::new(FontSetup::new(Arc::new(DiskFonts), &[folder], options));
-    PageEngine::new(setup, EngineOptions::default(), Arc::new(Unlimited))
+    PageEngine::new(setup, EngineOptions::default(), budgets)
 }
 
 fn svgs(engine: &mut PageEngine, version: &ooxml_word_pages::LaidVersion) -> Vec<String> {
@@ -215,4 +253,79 @@ fn a_tables_grid_mismatch_and_a_cached_field_are_said_as_docx2svg_says_them() {
         .message
         .starts_with("w:body/w:tbl[1]: rows off its w:tblGrid of 2 column(s) (w:tr[2] reaches 3"));
     assert!(version.relaid_cause().is_none());
+}
+
+#[test]
+fn a_kept_version_holds_what_it_changed_and_not_the_document_part() {
+    let mut kept = engine();
+    let mut versions = vec![kept
+        .lay_out_bytes(Arc::from(package(&paragraphs(200, None))))
+        .unwrap()
+        .unwrap()];
+    let first = versions[0].weight();
+    for k in 0..6 {
+        let next = kept
+            .lay_out_bytes(Arc::from(package(&paragraphs(200, Some(20 + 30 * k)))))
+            .unwrap()
+            .unwrap();
+        assert!(next.relaid());
+        // Laid out from the version before: its own containers and the one block it changed.
+        assert!(next.weight() * 4 < first, "{} of {first}", next.weight());
+        let pictures = next.pictures().unwrap().package();
+        assert!(
+            !pictures.has_part("word/document.xml"),
+            "the text is the version's model, not a tree"
+        );
+        assert!(pictures.has_part("word/_rels/document.xml.rels"));
+        versions.push(next);
+    }
+}
+
+#[test]
+fn the_memos_hold_what_the_versions_in_use_need_however_many_versions() {
+    let held = Arc::new(Counted::default());
+    let mut kept = engine_in(EngineBudgets {
+        held: Arc::clone(&held) as Arc<dyn CacheBudget>,
+        paint: Arc::new(Unlimited),
+    });
+    kept.lay_out_bytes(Arc::from(package(&paragraphs(150, None))))
+        .unwrap()
+        .unwrap();
+    let after_first = held.used();
+    for k in 0..40 {
+        // Each version changes another paragraph and drops the one before.
+        let edited = package(&paragraphs(150, Some(k * 3)));
+        kept.lay_out_bytes(Arc::from(edited)).unwrap().unwrap();
+    }
+    let after = held.used();
+    assert!(
+        after < after_first + after_first / 10,
+        "memos grew from {after_first} to {after} bytes over 40 versions"
+    );
+    assert!(kept.stats().swept > 0);
+}
+
+#[test]
+fn a_page_painted_is_kept_within_the_paint_budget() {
+    let mut kept = engine();
+    let version = kept
+        .lay_out_bytes(Arc::from(package(&paragraphs(80, None))))
+        .unwrap()
+        .unwrap();
+    let once = kept.paint(&version, 0).unwrap();
+    let again = kept.paint(&version, 0).unwrap();
+    assert!(Arc::ptr_eq(&once, &again));
+    assert_eq!((kept.stats().pages_painted, kept.stats().paint_hits), (1, 1));
+    let mut none = engine_in(EngineBudgets {
+        held: Arc::new(Unlimited),
+        paint: Arc::new(Nothing),
+    });
+    let version = none
+        .lay_out_bytes(Arc::from(package(&paragraphs(80, None))))
+        .unwrap()
+        .unwrap();
+    let once = none.paint(&version, 0).unwrap();
+    let again = none.paint(&version, 0).unwrap();
+    assert_eq!(*once, *again, "painted again, the same paint");
+    assert_eq!((none.stats().pages_painted, none.stats().paint_hits), (2, 0));
 }

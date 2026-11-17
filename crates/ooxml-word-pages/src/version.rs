@@ -29,6 +29,9 @@ pub struct LaidVersion {
     pub(crate) relaid_cause: Option<crate::engine::RelaidCause>,
     pub(crate) said: crate::warnings::Said,
     pub(crate) generation: u64,
+    /// Its number among the versions its engine laid out: what its pages' paint is kept
+    /// under.
+    pub(crate) serial: u64,
 }
 
 impl std::fmt::Debug for LaidVersion {
@@ -96,19 +99,13 @@ impl LaidVersion {
         &self.glyphs
     }
 
-    /// What it holds, in bytes, roughly: its flow's items and pages, and its facts where
-    /// made (each line and block counted at its size). A measure for a budget, not an
+    /// What it alone holds, in bytes, roughly: what dropping it would give back now
+    /// (`crate::weight`: its own containers, the measures, pages and blocks no other
+    /// version or memo holds), and its facts where made. A measure for a budget, not an
     /// allocator's count.
     pub fn weight(&self) -> usize {
-        let pages = &self.layout.pagination;
-        let lines: usize = pages.pages.iter().map(|p| p.lines.len() + p.rows.len()).sum();
-        let facts = self.facts.get().map_or(0, |f| {
-            f.pages
-                .iter()
-                .map(|p| p.lines.len() * 96 + p.blocks.iter().map(|b| b.len() + 16).sum::<usize>())
-                .sum()
-        });
-        self.layout.flow.items.len() * 256 + pages.pages.len() * 512 + lines * 64 + facts
+        let facts = self.facts.get().map_or(0, crate::weight::facts_weight);
+        crate::weight::layout_weight(&self.layout) + facts
     }
 }
 

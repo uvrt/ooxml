@@ -126,15 +126,25 @@ def test_describe_render_and_save_read_their_facts_where_the_layout_is_held(repo
         saved = box.dispatch(session, "save_document", {"doc": doc, "name": "out.docx", "format": "docx"})
         assert saved.ok, saved.to_json()
         assert saved.data["coverage"] == expected.coverage_facts()
-        assert not document._layouts          # no whole layout was read here
+        # No whole Python layout was read here: lane L4b reads a version the Rust layout
+        # lays out here, by the document's engine (no worker holds one); the rest in a worker.
+        from docx_agent import pages
+
+        assert all(pages.is_rust(kept.raw) for kept in document._layouts.values())
 
 
 def test_layouts_kept_here_stay_within_their_memory(monkeypatch):
     document = Document.open(build(chapters=1, seed=5)[0])
     document.layout()
     cost = layout_module.layout_cost(next(iter(document._layouts.values())).raw)
-    # A quarter of the memory holds one layout: the newest only is kept.
+    # Room for one layout: the newest only is kept (lane L4b: the room is the document's
+    # account of the process's memory budget where the Rust layout lays it out; a quarter
+    # of LAYOUT_MEMORY for docx2svg's Python layouts).
     monkeypatch.setattr(layout_module, "LAYOUT_MEMORY", 4 * cost)
+    if layout_module._layout_account(document) is not None:
+        import ooxml_core
+
+        monkeypatch.setattr(document, "_layout_account", ooxml_core.MemoryBudget(cost + cost // 2).account())
     for k in range(3):
         document.paragraphs()[3].set_text(f"Changed {k}.")
         document.layout()

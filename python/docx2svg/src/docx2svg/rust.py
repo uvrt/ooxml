@@ -39,8 +39,10 @@ if TYPE_CHECKING:
 _FALLBACKS: Counter = Counter()
 _FALLBACKS_LOCK = threading.Lock()
 
-#: How many pages' paint a layout keeps for its readers (the rest painted again when read).
-PAINTED_PAGES = 24
+#: How many pages a layout keeps as docx2svg's objects for its readers (lane L4b: four; the
+#: pages' paint is kept in Rust, within the process's memory budget, and read from there
+#: again).
+PAINTED_PAGES = 4
 
 
 def count_fallback(reason: str) -> None:
@@ -115,6 +117,27 @@ def unsupported_options(options) -> str | None:
     return None
 
 
+# -- the memory budget (lane L4b) ------------------------------------------------------------
+
+#: What the process's engines keep that can be made again (their pages' paint) and what a
+#: host's own caches reserve (layouts kept for readers) by default, bytes.
+DEFAULT_MEMORY = 256 * 2 ** 20
+
+_BUDGET: list = []
+_BUDGET_LOCK = threading.Lock()
+
+
+def memory_budget(limit: int | None = None) -> Any:
+    """The process's ``ooxml_core.MemoryBudget``: every engine counts in it (its memos as
+    held, its pages' paint within the limit), and a host reserves what it keeps of the
+    layouts from it (``memory_budget().account()``).  Made on first use with ``limit``
+    bytes (default :data:`DEFAULT_MEMORY`); a later ``limit`` is ignored."""
+    with _BUDGET_LOCK:
+        if not _BUDGET:
+            _BUDGET.append(_core().MemoryBudget(int(limit) if limit else DEFAULT_MEMORY))
+        return _BUDGET[0]
+
+
 # -- the engine ------------------------------------------------------------------------------
 
 
@@ -127,7 +150,8 @@ class Engine:
 
         self.key = (_fonts_key(options), options.locale.decimal_separator if options.locale else ".",
                     options.glyph_size)
-        self._pages = ooxml_core.WordPages(word_fonts(options), decimal=self.key[1], glyph_size=options.glyph_size)
+        self._pages = ooxml_core.WordPages(word_fonts(options), decimal=self.key[1], glyph_size=options.glyph_size,
+                                           budget=memory_budget())
         self._lock = threading.Lock()
         #: The last version asked for, by the digest of its bytes, and its layout (``None``: a
         #: fallback): asked again, the same answer.
@@ -460,4 +484,4 @@ def svgs(layout: RustLayout, options) -> "list[str] | None":
 
 
 __all__: Sequence[str] = ("Engine", "RustLayout", "RustPage", "available", "count_fallback", "fallbacks",
-                          "svgs", "unsupported_options", "word_fonts")
+                          "memory_budget", "svgs", "unsupported_options", "word_fonts")

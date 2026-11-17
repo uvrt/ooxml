@@ -396,6 +396,13 @@ impl WordLayout {
         self.lay_out_from(model, document, None)
     }
 
+    /// Drop the measures by content that no layout holds and nothing measured since the
+    /// last sweep ([`ooxml_text::Measurer::sweep`]): called once a version is laid out, so
+    /// the measures kept do not grow with every version. Returns how many were dropped.
+    pub fn sweep(&mut self) -> usize {
+        self.body.measurer.sweep() + self.stories.measurer.sweep()
+    }
+
     /// Lay a version out from a layout of the version before: each pass laid out again
     /// from the same pass of `previous`, from the page the first change reaches until the
     /// pages line up again. The layout is the one [`WordLayout::lay_out`] makes.

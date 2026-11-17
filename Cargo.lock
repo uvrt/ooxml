@@ -647,6 +647,7 @@ name = "ooxml-session"
 version = "0.1.0"
 dependencies = [
  "ooxml-base",
+ "ooxml-derive",
  "ooxml-opc",
  "ooxml-store",
  "ooxml-tools",
@@ -773,6 +774,7 @@ dependencies = [
  "ooxml-fonts",
  "ooxml-metafile",
  "ooxml-opc",
+ "ooxml-text",
  "ooxml-word-layout",
  "ooxml-word-model",
  "ooxml-xml",

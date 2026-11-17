@@ -9,6 +9,11 @@
 //! nothing of it. A change of the document's fonts (its font table or embedded faces)
 //! starts a new generation: new memos, nothing laid out from the old.
 //!
+//! What it keeps is bounded (lane L4b, design section 6, Memory): its memos are swept once
+//! a version is laid out (what no version in use holds goes), and what it painted is kept
+//! by page within its budget's bounded account, the least recently used let go first
+//! ([`EngineBudgets`]).
+//!
 //! Must not: be used by two callers at once (its owner locks it), or keep more than the
 //! last version laid out.
 
@@ -18,7 +23,7 @@ use crate::pictures::PackagePictures;
 use crate::support;
 use crate::version::{LaidVersion, PageView};
 use ooxml_base::{DigestKey, Limits, Locale};
-use ooxml_derive::CacheBudget;
+use ooxml_derive::{CacheBudget, Memo, Weigh};
 use ooxml_opc::Package;
 use ooxml_word_layout::paint::drawings::DrawingSlot;
 use ooxml_word_layout::paint::svg::{page_svg, Drawings, Pictures, SvgContext};
@@ -52,6 +57,10 @@ pub struct EngineStats {
     pub open_time: Duration,
     /// Time spent laying out.
     pub layout_time: Duration,
+    /// Memo entries swept (no version in use held them).
+    pub swept: u64,
+    /// Pages painted that were kept painted already.
+    pub paint_hits: u64,
 }
 
 /// What a generation holds: the fonts, the model, the layout's memos, the last version.
@@ -87,13 +96,46 @@ struct Source {
     package: Package,
 }
 
+/// Where an engine's memory is counted: what the version in use needs (its memos, never
+/// refused) and what can be made again (its pages' paint, within a limit).
+#[derive(Clone)]
+pub struct EngineBudgets {
+    /// The model's and the layout's memos.
+    pub held: Arc<dyn CacheBudget>,
+    /// The pages painted, kept for the next reader while the budget has room.
+    pub paint: Arc<dyn CacheBudget>,
+}
+
+impl std::fmt::Debug for EngineBudgets {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EngineBudgets")
+            .field("held", &self.held.used())
+            .field("paint", &self.paint.used())
+            .finish()
+    }
+}
+
+/// A page painted, as the paint memo keeps it.
+#[derive(Clone)]
+struct Painted(Arc<PagePaint>);
+
+impl Weigh for Painted {
+    fn weight(&self) -> usize {
+        crate::weight::paint_weight(&self.0)
+    }
+}
+
 /// One document's page engine.
 pub struct PageEngine {
     setup: Arc<FontSetup>,
     locale: Locale,
     decimal: char,
     glyph_size: GlyphSize,
-    budget: Arc<dyn CacheBudget>,
+    budgets: EngineBudgets,
+    /// Pages painted, by version (its serial) and page.
+    painted: Memo<(u64, usize), Painted>,
+    /// The serial the next version laid out takes.
+    serial: u64,
     limits: Limits,
     generation: Option<Generation>,
     source: Option<Source>,
@@ -136,14 +178,16 @@ impl Default for EngineOptions {
 }
 
 impl PageEngine {
-    /// An engine laying out with `setup`'s fonts, its memos within `budget`.
-    pub fn new(setup: Arc<FontSetup>, options: EngineOptions, budget: Arc<dyn CacheBudget>) -> PageEngine {
+    /// An engine laying out with `setup`'s fonts, its memory counted in `budgets`.
+    pub fn new(setup: Arc<FontSetup>, options: EngineOptions, budgets: EngineBudgets) -> PageEngine {
         PageEngine {
             setup,
             locale: options.locale,
             decimal: options.decimal,
             glyph_size: options.glyph_size,
-            budget,
+            painted: Memo::new(Arc::clone(&budgets.paint)),
+            serial: 0,
+            budgets,
             limits: options.limits,
             generation: None,
             source: None,
@@ -296,7 +340,7 @@ impl PageEngine {
             // old ones is not this version's (the measures are keyed by content), so it is
             // laid out whole, with fresh memos.
             generation.last = None;
-            generation.layout = new_layout(&generation.fonts, &self.locale, &self.budget);
+            generation.layout = new_layout(&generation.fonts, &self.locale, &self.budgets.held);
             cause = Some(context_cause(&self.changed));
         }
         if let Some(why) = support::unsupported(&document) {
@@ -327,18 +371,25 @@ impl PageEngine {
             self.stats.full += 1;
         }
         let said = crate::warnings::said(&mut generation.model, &laid);
+        self.serial += 1;
         let version = Arc::new(LaidVersion {
             said,
             relaid_cause: cause,
             layout: laid,
             facts: std::sync::OnceLock::new(),
-            pictures: PackagePictures::new(package.clone()),
+            pictures: PackagePictures::new(package),
             glyphs: Arc::clone(&generation.fonts.glyphs),
             names: Arc::clone(&generation.fonts.names),
             relaid,
             generation: generation.number,
+            serial: self.serial,
         });
+        // The version before is no longer the one laid out from: what only it and the
+        // memos held goes now, not with every version kept.
+        drop(previous);
         generation.last = Some(Arc::clone(&version));
+        let swept = generation.model.sweep() + generation.layout.sweep();
+        self.stats.swept += swept as u64;
         Ok(Ok(version))
     }
 
@@ -355,8 +406,8 @@ impl PageEngine {
         self.generations += 1;
         Generation {
             number: self.generations,
-            model: Model::new(Arc::clone(&self.budget), KEY),
-            layout: new_layout(&fonts, &self.locale, &self.budget),
+            model: Model::new(Arc::clone(&self.budgets.held), KEY),
+            layout: new_layout(&fonts, &self.locale, &self.budgets.held),
             fonts,
             last: None,
         }
@@ -367,11 +418,24 @@ impl PageEngine {
     pub fn forget(&mut self) {
         self.generation = None;
         self.source = None;
+        self.painted.clear();
+    }
+
+    /// What its memos hold now (bytes counted on its `held` budget) and what its pages
+    /// painted hold (on its `paint` budget).
+    pub fn memory(&self) -> (usize, usize) {
+        (self.budgets.held.used(), self.painted.stats().bytes)
     }
 
     /// Page `page` of `version` (0-based, blank pages counted) painted: `None` past its
-    /// last page, or where `version` is not of this engine's generation.
-    pub fn paint(&mut self, version: &LaidVersion, page: usize) -> Option<PagePaint> {
+    /// last page, or where `version` is not of this engine's generation. Kept for the
+    /// next reader while the paint budget has room.
+    pub fn paint(&mut self, version: &LaidVersion, page: usize) -> Option<Arc<PagePaint>> {
+        let key = (version.serial, page);
+        if let Some(Painted(found)) = self.painted.get(&key) {
+            self.stats.paint_hits += 1;
+            return Some(found);
+        }
         let generation = self.generation.as_mut().filter(|g| g.number == version.generation)?;
         let parts = generation
             .layout
@@ -382,8 +446,9 @@ impl PageEngine {
             glyph_size: self.glyph_size,
             decimal: self.decimal,
         };
-        let paint = paint_page(&version.layout, &mut generation.model, page, &parts, &cx)?;
+        let paint = Arc::new(paint_page(&version.layout, &mut generation.model, page, &parts, &cx)?);
         self.stats.pages_painted += 1;
+        self.painted.insert(key, Painted(Arc::clone(&paint)));
         Some(paint)
     }
 
@@ -464,6 +529,7 @@ impl PageEngine {
             .get(page)
             .map(|p| p.blocks.clone())
             .unwrap_or_default();
+        let paint = Arc::unwrap_or_clone(paint);
         Some(PageView {
             page,
             info: paint.geometry.info,

@@ -5,6 +5,20 @@ ooxml-core is the Rust core of the ooxml packages (`crates/`), as the Python mod
 
 ## 0.10.0 -- unreleased
 
+- **The layout's memory (phase PL, lane L4b).** A version kept no longer holds the
+  document's parsed text parts (its pictures keep the package without the main part and
+  its headers, footers and notes: those are the version's model); a version laid out from
+  the one before shares every measure, page and block it did not change, and its `weight`
+  is what it alone holds now. The engine's memos are swept once a version is laid out
+  (what no version in use holds goes), so they stay at what the newest version needs
+  however many versions follow; the machine's faces are read once per process and shared
+  by every document. `MemoryBudget(limit)` (with `BudgetAccount`): what a process's
+  engines keep that can be made again -- their pages' paint, now kept in Rust, least
+  recently used let go first -- and its host's kept layouts, within one limit, each
+  document counted apart, and beside it the memos the versions in use hold (`held`);
+  `WordPages(..., budget=)`. `WordPages.stats()` adds `swept`, `paint_hits`, `memo_bytes`
+  and `paint_bytes`.
+
 - **The Word layout in Rust (phase PL, lane L4).** `WordFonts` (a machine's fonts, scanned
   once), `WordPages` (one document's page engine: each version laid out from the one
   before, given as its package's bytes -- only the parts whose stored bytes changed read

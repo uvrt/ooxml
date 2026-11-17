@@ -194,4 +194,12 @@ impl Measurer {
     pub fn stats(&self) -> MemoStats {
         self.memo.stats()
     }
+
+    /// Drop the measures not used since the last sweep that no layout holds any more
+    /// ([`Memo::sweep`]): a measure a kept layout still holds stays, so a block moved or
+    /// brought back is not measured again. Returns how many were dropped.
+    pub fn sweep(&mut self) -> usize {
+        self.memo
+            .sweep(|outcome| outcome.0.as_ref().is_ok_and(|measured| Arc::strong_count(measured) > 1))
+    }
 }

@@ -7,6 +7,12 @@ snapshot commit; the development history before it is summarised here.
 
 ## 0.14.0 -- unreleased
 
+- **`docx2svg.rust.memory_budget()`** (lane L4b): the process's `ooxml_core.MemoryBudget`,
+  which every `Engine` counts in -- its memos held, its pages' paint within the limit,
+  kept in Rust -- and from which a host reserves the layouts it keeps. A `RustLayout`
+  keeps four pages as docx2svg's objects for its readers (was 24): the rest are read again
+  from the paint Rust keeps.
+
 - **`docx2svg.rust`** (lane L4): the layout in Rust (`ooxml_core.WordPages`), read as
   docx2svg's `Layout` -- `pages` whose frame, `info` and `blocks` are there at once and
   whose lines, spans, rules, pictures and floats are painted in Rust when first read --

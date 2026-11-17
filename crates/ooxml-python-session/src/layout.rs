@@ -3,21 +3,25 @@
 //! engine: its versions laid out, each from the one before) and `ooxml_core.LaidPages`
 //! (one version laid out: its pages, facts, page numbers, page views and SVG), and
 //! `ooxml_core.LayoutFallback`, raised for a version the Rust layout does not lay out as
-//! docx2svg does yet. Exact lengths cross as `(numerator, denominator)` pairs.
+//! docx2svg does yet; and `ooxml_core.MemoryBudget` (lane L4b), the session's memory
+//! budget its engines count in and its host's kept layouts reserve from. Exact lengths
+//! cross as `(numerator, denominator)` pairs.
 //!
 //! Must not: lay out or draw (ooxml-word-pages does), hold a Python object beyond a call
 //! (a painter is called while its call lasts), or touch one without the interpreter lock:
 //! every Rust call runs with it released.
 
 use ooxml_base::Locale;
+use ooxml_derive::CacheBudget;
 use ooxml_fonts::{Folder, Location, WordFontOptions};
+use ooxml_session::{Account, MemoryBudget};
 use ooxml_word_layout::facts::BlockKeeps;
 use ooxml_word_layout::fields::update::PageNumbers;
 use ooxml_word_layout::paint::drawings::{DrawingSlot, Layer};
 use ooxml_word_layout::paint::svg::Drawings;
 use ooxml_word_layout::paint::{Drawn, GlyphSize, PaintedLine, Rule, Span};
 use ooxml_word_layout::px::Px;
-use ooxml_word_pages::{DiskFonts, EngineOptions, FontSetup, LaidVersion, PageEngine, PageView};
+use ooxml_word_pages::{DiskFonts, EngineBudgets, EngineOptions, FontSetup, LaidVersion, PageEngine, PageView};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyTuple};
@@ -85,6 +89,80 @@ impl PyWordFonts {
     }
 }
 
+/// What a budget made for an engine alone holds when none is given: its pages' paint.
+const OWN_BUDGET: usize = 64 * 1024 * 1024;
+
+/// A session's memory budget (`MemoryBudget`): what its documents keep that can be made
+/// again -- page paint, layouts kept for readers -- within `limit` bytes, each document
+/// counted apart; and, beside it, what their versions in use hold (`held`).
+#[pyclass(frozen, name = "MemoryBudget", module = "ooxml_core")]
+pub struct PyMemoryBudget {
+    inner: Arc<MemoryBudget>,
+}
+
+#[pymethods]
+impl PyMemoryBudget {
+    /// A budget of `limit` bytes.
+    #[new]
+    fn new(limit: usize) -> Self {
+        Self {
+            inner: MemoryBudget::new(limit),
+        }
+    }
+
+    /// The limit, bytes.
+    #[getter]
+    fn limit(&self) -> usize {
+        self.inner.limit()
+    }
+
+    /// Bytes reserved within the limit now.
+    #[getter]
+    fn used(&self) -> usize {
+        self.inner.used()
+    }
+
+    /// Bytes the engines' versions in use hold now (their memos), beside the limit.
+    #[getter]
+    fn held(&self) -> usize {
+        self.inner.held()
+    }
+
+    /// A new account of this budget, for a host's own cache (a document's kept layouts):
+    /// `reserve(n)` is refused past the limit, `release(n)` gives back.
+    fn account(&self) -> PyBudgetAccount {
+        PyBudgetAccount {
+            inner: self.inner.account(),
+        }
+    }
+}
+
+/// One cache's account in a `MemoryBudget`.
+#[pyclass(frozen, name = "BudgetAccount", module = "ooxml_core")]
+pub struct PyBudgetAccount {
+    inner: Arc<Account>,
+}
+
+#[pymethods]
+impl PyBudgetAccount {
+    /// Reserve `bytes`: false where the budget has no room (the caller lets something go,
+    /// or keeps nothing).
+    fn reserve(&self, bytes: usize) -> bool {
+        self.inner.reserve(bytes)
+    }
+
+    /// Give back `bytes` reserved before.
+    fn release(&self, bytes: usize) {
+        self.inner.release(bytes);
+    }
+
+    /// Bytes this account holds now.
+    #[getter]
+    fn used(&self) -> usize {
+        self.inner.used()
+    }
+}
+
 /// One document's page engine: its versions laid out, each from the one before.
 #[pyclass(frozen, name = "WordPages", module = "ooxml_core")]
 pub struct PyWordPages {
@@ -111,10 +189,18 @@ fn laid_or_raise(engine: &Arc<Mutex<PageEngine>>, laid: Laid) -> PyResult<PyLaid
 #[pymethods]
 impl PyWordPages {
     /// An engine laying out with `fonts`, under `locale` (a BCP 47 tag), lining decimal
-    /// tabs up on `decimal`, drawing glyphs at `glyph_size` (`"device"` or `"exact"`).
+    /// tabs up on `decimal`, drawing glyphs at `glyph_size` (`"device"` or `"exact"`), its
+    /// memory counted in `budget` (a `MemoryBudget`; else one of its own, for its pages'
+    /// paint alone).
     #[new]
-    #[pyo3(signature = (fonts, *, locale = "en-US", decimal = '.', glyph_size = "device"))]
-    fn new(fonts: PyRef<'_, PyWordFonts>, locale: &str, decimal: char, glyph_size: &str) -> PyResult<Self> {
+    #[pyo3(signature = (fonts, *, locale = "en-US", decimal = '.', glyph_size = "device", budget = None))]
+    fn new(
+        fonts: PyRef<'_, PyWordFonts>,
+        locale: &str,
+        decimal: char,
+        glyph_size: &str,
+        budget: Option<PyRef<'_, PyMemoryBudget>>,
+    ) -> PyResult<Self> {
         let locale = Locale::new(locale).map_err(|e| PyValueError::new_err(e.to_string()))?;
         let glyph_size = match glyph_size {
             "device" => GlyphSize::Device,
@@ -127,9 +213,13 @@ impl PyWordPages {
             glyph_size,
             ..EngineOptions::default()
         };
-        let budget: Arc<dyn ooxml_derive::CacheBudget> = Arc::new(Unbounded);
+        let budget = budget.map_or_else(|| MemoryBudget::new(OWN_BUDGET), |b| Arc::clone(&b.inner));
+        let budgets = EngineBudgets {
+            held: budget.holding(),
+            paint: budget.account(),
+        };
         Ok(Self {
-            engine: Arc::new(Mutex::new(PageEngine::new(Arc::clone(&fonts.inner), options, budget))),
+            engine: Arc::new(Mutex::new(PageEngine::new(Arc::clone(&fonts.inner), options, budgets))),
         })
     }
 
@@ -163,10 +253,14 @@ impl PyWordPages {
         py.detach(|| lock(engine).forget());
     }
 
-    /// What the engine did: `(name, value)` pairs (counts, and times in seconds).
+    /// What the engine did: `(name, value)` pairs (counts, times in seconds, and the
+    /// bytes its memos and its pages' paint hold now).
     fn stats(&self, py: Python<'_>) -> Vec<(&'static str, f64)> {
         let engine = &self.engine;
-        let s = py.detach(|| lock(engine).stats());
+        let (s, (held, painted)) = py.detach(|| {
+            let engine = lock(engine);
+            (engine.stats(), engine.memory())
+        });
         #[allow(clippy::cast_precision_loss)]
         let n = |v: u64| v as f64;
         vec![
@@ -176,23 +270,13 @@ impl PyWordPages {
             ("parts_read", n(s.parts_read)),
             ("parts_kept", n(s.parts_kept)),
             ("pages_painted", n(s.pages_painted)),
+            ("swept", n(s.swept)),
+            ("paint_hits", n(s.paint_hits)),
+            ("memo_bytes", held as f64),
+            ("paint_bytes", painted as f64),
             ("open_seconds", s.open_time.as_secs_f64()),
             ("layout_seconds", s.layout_time.as_secs_f64()),
         ]
-    }
-}
-
-/// Grants every reservation: the engine's memos are bounded by its own retention (the
-/// last version's blocks), not by a budget yet.
-struct Unbounded;
-
-impl ooxml_derive::CacheBudget for Unbounded {
-    fn reserve(&self, _bytes: usize) -> bool {
-        true
-    }
-    fn release(&self, _bytes: usize) {}
-    fn used(&self) -> usize {
-        0
     }
 }
 

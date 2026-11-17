@@ -5,6 +5,29 @@ docx-agent has not been released to PyPI. Each version that reaches `main` is ta
 snapshot commit; the development history before it is summarised here.
 [`ROADMAP.md`](ROADMAP.md) has the detail of every phase.
 
+## 0.1.138 -- unreleased
+
+Phase PL, lane L4b: the Rust layout's memory. One engine per document, in the process that
+owns the document, and none in the workers; a version kept costs what it changed; what can
+be made again is bounded by one memory budget per process.
+
+- **No Rust layout in a worker.** A check's facts (`reflow`, `layout`, ranges, keeps,
+  `where`, extents, page references), `describe`'s pages, the layout owner's flight, the
+  live view and a render's layout are made in the calling process for a version the Rust
+  layout lays out -- by the document's engine, the interpreter lock let go, the facts read
+  from the layout mapped to the caller's own copy of the version -- and only the PNGs are
+  rasterised in the workers. A worker makes no engine (`docx_agent.pages.lay_out(...,
+  make=False)`): what it still lays out are docx2svg's Python layouts of the versions the
+  Rust layout falls back on, as before, until phase P2.
+- **One engine per document.** The live view's versions and a check's keep trials are laid
+  out by the document's own engine, not engines of their own.
+- **Kept layouts by weight, within the process's budget.** A document keeps its newest
+  layout and as many before it as its account of the process's memory budget
+  (`docx_agent.pages.account()`, `LAYOUT_MEMORY`, shared with every engine's pages' paint)
+  has room for, each at what it alone holds now (`layout_cost`: the Rust version's `weight`
+  and its Python side); no count of eight. `docx_agent.pages.memory()` says the budget's
+  limit, what it holds and what the engines' memos hold.
+
 ## 0.1.136 -- unreleased
 
 Phase PL, lane L4: the Word layout in Rust. Every layout docx-agent makes of a version -- a

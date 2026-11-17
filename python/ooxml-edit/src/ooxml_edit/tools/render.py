@@ -175,6 +175,13 @@ class Renderer(Protocol):
         renderer's imports, the rasteriser's load of the system's fonts."""
         ...
 
+    def lays_out_here(self, data: bytes, font_dirs: "list[str]", locale: Any, state: Any) -> bool:
+        """Whether a whole document's layout is made in the calling process rather than in
+        a worker (a layout the process holds outside the interpreter, which the workers
+        then need not hold too): :func:`lay_out_views` runs there, its lock let go as in a
+        worker, and only the rasterising goes to the workers."""
+        ...
+
 
 class RendererBase:
     """The defaults of a :class:`Renderer`: ``modules`` stamped as its code, the whole SVG
@@ -202,6 +209,9 @@ class RendererBase:
 
     def warm_up(self) -> None:
         return None
+
+    def lays_out_here(self, data: bytes, font_dirs: "list[str]", locale: Any, state: Any) -> bool:
+        return False
 
     def __eq__(self, other: object) -> bool:      # one per class: the instance has no state
         return type(self) is type(other)
@@ -437,10 +447,14 @@ def draw(call: Any, renderer: Renderer, items: Sequence[Any], width: int, *,
         return keep
 
     if renderer.whole_document:
+        here = getattr(renderer, "lays_out_here", None)
         with call.unlocked():
-            laid = call.run(lay_out_views, renderer, data, sent, width, list(fonts), locale,
-                            list(held), state, *more, timeout=limits.render_timeout_for(len(todo)),
-                            affinity=affinity, affinity_wait=affinity_wait, queued=True)
+            if here is not None and here(data, list(fonts), locale, state):
+                laid = lay_out_views(renderer, data, sent, width, list(fonts), locale, list(held), state, *more)
+            else:
+                laid = call.run(lay_out_views, renderer, data, sent, width, list(fonts), locale,
+                                list(held), state, *more, timeout=limits.render_timeout_for(len(todo)),
+                                affinity=affinity, affinity_wait=affinity_wait, queued=True)
             rough = set(laid.get("approximate", ()))
             fresh = [view for view in laid["views"] if view[2] is not None]
             # A view a task, so a layout waiting behind them waits at most one; many views
