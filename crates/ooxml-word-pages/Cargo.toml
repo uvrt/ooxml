@@ -18,6 +18,13 @@ ooxml-text.workspace = true
 ooxml-metafile.workspace = true
 ooxml-word-model.workspace = true
 ooxml-word-layout.workspace = true
+ooxml-colour.workspace = true
+ooxml-drawingml.workspace = true
+ooxml-chart.workspace = true
+ooxml-render.workspace = true
+ooxml-scene.workspace = true
+ooxml-schema.workspace = true
+ooxml-numfmt.workspace = true
 thiserror.workspace = true
 
 [lints]

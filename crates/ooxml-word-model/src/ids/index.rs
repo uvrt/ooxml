@@ -133,6 +133,64 @@ impl PartIds {
         out
     }
 
+    /// The index of `new_root`, a later version of the part `self` indexes (whose root was
+    /// `old_root`): equal to [`PartIds::new`]'s, with every subtree the new version shares
+    /// with the old one (the same allocation at the same place) taken from this index
+    /// rather than walked again -- an edit that path-copies one block re-reads that block.
+    #[must_use]
+    pub fn after(&self, old_root: &Element, new_root: &Element) -> PartIds {
+        let old = self.found(old_root);
+        let mut found = Vec::with_capacity(old.len());
+        let mut tables: Vec<Path> = Vec::new();
+        walk_after(old_root, new_root, &old, &mut Vec::new(), &mut tables, &mut found);
+        let raws: Vec<Option<&str>> = found
+            .iter()
+            .map(|f| match f.kind {
+                Kind::Tbl => None,
+                Kind::P | Kind::Tr => f.element.attribute(Some(W14), "paraId"),
+            })
+            .collect();
+        let repeats = repeat_counts(&raws);
+        let mut out = PartIds {
+            story: self.story.clone(),
+            ..PartIds::default()
+        };
+        out.index_paragraphs(&found, &raws, &repeats);
+        out.index_tables(&found, &raws, &repeats);
+        out
+    }
+
+    /// The live blocks this index holds, in document order (as [`live_blocks`] found them).
+    fn found(&self, root: &Element) -> Vec<Found> {
+        let mut out: Vec<Found> = Vec::with_capacity(self.paragraphs.len() + self.tables.len());
+        out.extend(self.paragraphs.iter().map(|p| Found {
+            element: Arc::clone(&p.element),
+            path: p.path.clone(),
+            kind: Kind::P,
+            owner: None,
+        }));
+        for table in &self.tables {
+            out.push(Found {
+                element: Arc::clone(&table.element),
+                path: table.path.clone(),
+                kind: Kind::Tbl,
+                owner: None,
+            });
+            for (path, _) in &table.rows {
+                if let Some(row) = element_at(root, path) {
+                    out.push(Found {
+                        element: row,
+                        path: path.clone(),
+                        kind: Kind::Tr,
+                        owner: Some(table.path.clone()),
+                    });
+                }
+            }
+        }
+        out.sort_by(|a, b| a.path.cmp(&b.path));
+        out
+    }
+
     fn index_paragraphs(&mut self, found: &[Found], raws: &[Option<&str>], repeats: &[usize]) {
         let prefix = self.prefix();
         for ((f, raw), repeat) in found.iter().zip(raws).zip(repeats) {
@@ -313,4 +371,81 @@ fn walk(element: &Element, path: &mut Vec<u32>, tables: &mut Vec<Path>, out: &mu
 /// A row's paraId where it names the row: valid and not a repeat.
 fn good(raw: Option<&str>, repeat: usize) -> Option<&str> {
     raw.filter(|r| valid_long_hex(r) && repeat == 0)
+}
+
+/// The element at `path` below `root`.
+fn element_at(root: &Element, path: &[u32]) -> Option<Arc<Element>> {
+    let mut at: Option<&Arc<Element>> = None;
+    for k in path {
+        let parent: &Element = at.map_or(root, |a| a);
+        at = Some(parent.children().get(*k as usize)?.as_element()?);
+    }
+    at.cloned()
+}
+
+/// [`walk`] of `new`, taking from `old_found` (the old version's blocks, sorted by path)
+/// the blocks of each child that is the old version's own child at the same place.
+fn walk_after(
+    old: &Element,
+    new: &Element,
+    old_found: &[Found],
+    path: &mut Vec<u32>,
+    tables: &mut Vec<Path>,
+    out: &mut Vec<Found>,
+) {
+    for (k, node) in new.children().iter().enumerate() {
+        let Node::Element(child) = node else { continue };
+        if child.name().is(Some(MC), "Fallback") {
+            continue;
+        }
+        path.push(u32::try_from(k).unwrap_or(u32::MAX));
+        let before = old.children().get(k).and_then(Node::as_element);
+        if before.is_some_and(|b| Arc::ptr_eq(b, child)) {
+            // the same subtree at the same place: its blocks as they were
+            let start = old_found.partition_point(|f| f.path.as_ref() < path.as_slice());
+            for f in old_found.get(start..).unwrap_or_default() {
+                if !f.path.starts_with(path) {
+                    break;
+                }
+                out.push(Found {
+                    element: Arc::clone(&f.element),
+                    path: f.path.clone(),
+                    kind: f.kind,
+                    owner: f.owner.clone(),
+                });
+            }
+            path.pop();
+            continue;
+        }
+        let kind = if child.name().is(Some(W), "p") {
+            Some(Kind::P)
+        } else if child.name().is(Some(W), "tr") {
+            Some(Kind::Tr)
+        } else if child.name().is(Some(W), "tbl") {
+            Some(Kind::Tbl)
+        } else {
+            None
+        };
+        if let Some(kind) = kind {
+            let here: Path = path.clone().into_boxed_slice();
+            out.push(Found {
+                element: Arc::clone(child),
+                path: here.clone(),
+                kind,
+                owner: if kind == Kind::Tr { tables.last().cloned() } else { None },
+            });
+            if kind == Kind::Tbl {
+                tables.push(here);
+            }
+        }
+        let table = kind == Some(Kind::Tbl);
+        match before {
+            Some(b) if b.name() == child.name() => walk_after(b, child, old_found, path, tables, out),
+            _ => walk(child, path, tables, out),
+        }
+        if table {
+            tables.pop();
+        }
+        path.pop();
+    }
 }

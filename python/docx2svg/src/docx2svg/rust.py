@@ -14,8 +14,9 @@ reasons: ``ooxml_word_pages::support``), or options it does not take (a measurer
 caller's own, ``text="outlines"``), is not laid out here: :meth:`Engine.lay_out` answers
 ``None`` and counts the reason (:func:`fallbacks`), and the caller lays it out with
 docx2svg's Python layout, frozen as that fallback until phase P4 deletes it.  A page whose
-SVG the Rust paint does not draw as docx2svg does (a drawing for the painters of phase P3,
-line numbers...) is the same: :meth:`RustLayout.page_svg` answers ``None`` for it, counted.
+SVG the Rust paint does not draw as docx2svg does (what a page's paint lists as not drawn)
+is the same: :meth:`RustLayout.page_svg` answers ``None`` for it, counted.  Pictures, shapes,
+groups and charts -- floating or inline -- are painted in Rust (lane L4c).
 
 **Memory** (lane L4b).  Every engine counts in the process's ``ooxml_core.MemoryBudget``
 (:func:`memory_budget`): its memos as held (swept once a version is laid out, so they stay at
@@ -35,7 +36,7 @@ import threading
 from collections import Counter, OrderedDict
 from fractions import Fraction
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Sequence
+from typing import TYPE_CHECKING, Any, Sequence
 
 if TYPE_CHECKING:
     from .coverage import Coverage
@@ -147,6 +148,15 @@ def memory_budget(limit: int | None = None) -> Any:
 # -- the engine ------------------------------------------------------------------------------
 
 
+def _engine_key(options) -> tuple:
+    """What an engine is made for: the fonts, the decimal separator, the glyph size, and the
+    locale's language (a chart's numbers are written in it: a document holding a chart in
+    another locale than en-US is laid out by docx2svg's Python layout, counted)."""
+    locale = options.locale
+    return (_fonts_key(options), locale.decimal_separator if locale else ".", options.glyph_size,
+            locale.language if locale else "en-US")
+
+
 class Engine:
     """One document's layouts in Rust (``ooxml_core.WordPages``), each version laid out
     from the one before; safe to share between threads (the Rust engine locks itself)."""
@@ -154,19 +164,18 @@ class Engine:
     def __init__(self, options) -> None:
         ooxml_core = _core()
 
-        self.key = (_fonts_key(options), options.locale.decimal_separator if options.locale else ".",
-                    options.glyph_size)
-        self._pages = ooxml_core.WordPages(word_fonts(options), decimal=self.key[1], glyph_size=options.glyph_size,
-                                           budget=memory_budget())
+        self.key = _engine_key(options)
+        self._pages = ooxml_core.WordPages(word_fonts(options), locale=self.key[3], decimal=self.key[1],
+                                           glyph_size=options.glyph_size, budget=memory_budget())
         self._lock = threading.Lock()
         #: The last version asked for, by the digest of its bytes, and its layout (``None``: a
         #: fallback): asked again, the same answer.
         self._last: tuple | None = None
 
     def fits(self, options) -> bool:
-        """Whether this engine lays out with ``options`` (the same fonts, decimal, glyphs)."""
-        return self.key == (_fonts_key(options), options.locale.decimal_separator if options.locale else ".",
-                            options.glyph_size)
+        """Whether this engine lays out with ``options`` (the same fonts, decimal, glyphs and
+        locale)."""
+        return self.key == _engine_key(options)
 
     def lay_out(self, data: bytes, options) -> "RustLayout | None":
         """``data`` laid out in Rust, or ``None`` (counted) where docx2svg's Python layout
@@ -312,11 +321,10 @@ class RustLayout:
                 self._painted.popitem(last=False)
         return made
 
-    def page_svg(self, index: int, *, painter: Callable | None = None, width: int | None = None,
-                 height: int | None = None) -> str | None:
-        """Page ``index`` (0-based) as SVG, byte for byte docx2svg's; ``None`` (counted) where
-        the Rust paint does not draw it as docx2svg does yet."""
-        svg, missing = self.laid.svg(index, painter)
+    def page_svg(self, index: int, *, width: int | None = None, height: int | None = None) -> str | None:
+        """Page ``index`` (0-based) as SVG, byte for byte docx2svg's, its drawings painted in
+        Rust; ``None`` (counted) where the Rust paint does not draw it as docx2svg does yet."""
+        svg, missing = self.laid.svg(index)
         if missing:
             for reason in dict.fromkeys(missing):
                 count_fallback(reason)

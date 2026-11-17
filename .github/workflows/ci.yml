@@ -4,11 +4,14 @@ name: CI
 # the packages its change touches and every package that depends on one of them run
 # (tools/ci.py, PACKAGES: the dependency graph); a change to the workflows or to tools/
 # runs them all.  A push to main, the nightly run and a manual run take every package.
-# The Pythons per OS (tools/ci.py, LEGS): production runs CPython 3.15 (moving to 3.15t,
-# freethreading.yml); development runs on macOS, whose runners are few:
-#   pull request, push to main:  Linux 3.15, Windows 3.15, no macOS;
+# The Pythons per OS (tools/ci.py, LEGS): production runs CPython 3.15 on Linux (moving to
+# 3.15t, freethreading.yml); development runs on macOS, whose runners are few:
+#   pull request, push to main:  Linux 3.15; Windows 3.15 only for the packages with code
+#                                of their own there (tools/ci.py, windows_smoke); no macOS;
 #   nightly, manual run:         Linux every Python from the package's minimum,
-#                                Windows 3.15, macOS 3.15.
+#                                Windows 3.15, macOS 3.15, every package.
+# A package with `shards` (tools/ci.py: docx-agent) runs its suite on Linux as that many
+# jobs, split by test file on the recorded durations (tools/ci_durations.json).
 #
 # Branch protection requires the `required (...)` jobs at the end, not the legs: a leg
 # that a path filter leaves out never reports, and a required check that never reports
@@ -39,6 +42,7 @@ jobs:
       any: ${{ steps.plan.outputs.any }}
       linux: ${{ steps.plan.outputs.linux }}
       windows: ${{ steps.plan.outputs.windows }}
+      any_windows: ${{ steps.plan.outputs.any_windows }}
       macos: ${{ steps.plan.outputs.macos }}
       any_macos: ${{ steps.plan.outputs.any_macos }}
       build: ${{ steps.plan.outputs.build }}
@@ -60,10 +64,12 @@ jobs:
     with:
       matrix: ${{ needs.plan.outputs.linux }}
 
+  # On a pull request and a push to main, the windows_smoke packages only (none when the
+  # change selects none of them: `required (windows)` then passes, left out).
   test-windows:
     name: test
     needs: plan
-    if: needs.plan.outputs.any == 'true'
+    if: needs.plan.outputs.any_windows == 'true'
     uses: ./.github/workflows/python-tests.yml
     with:
       matrix: ${{ needs.plan.outputs.windows }}

@@ -569,9 +569,11 @@ dependencies = [
  "ooxml-scene",
  "ooxml-schema",
  "ooxml-session",
+ "ooxml-store",
  "ooxml-text",
  "ooxml-tools",
  "ooxml-tools-word",
+ "ooxml-word-edit",
  "ooxml-word-layout",
  "ooxml-word-model",
  "ooxml-word-pages",
@@ -734,6 +736,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "ooxml-word-edit"
+version = "0.1.0"
+dependencies = [
+ "ooxml-base",
+ "ooxml-derive",
+ "ooxml-opc",
+ "ooxml-store",
+ "ooxml-word-model",
+ "ooxml-xml",
+ "ooxml-zip",
+ "thiserror",
+]
+
+[[package]]
 name = "ooxml-word-layout"
 version = "0.1.0"
 dependencies = [
@@ -770,10 +786,17 @@ name = "ooxml-word-pages"
 version = "0.1.0"
 dependencies = [
  "ooxml-base",
+ "ooxml-chart",
+ "ooxml-colour",
  "ooxml-derive",
+ "ooxml-drawingml",
  "ooxml-fonts",
  "ooxml-metafile",
+ "ooxml-numfmt",
  "ooxml-opc",
+ "ooxml-render",
+ "ooxml-scene",
+ "ooxml-schema",
  "ooxml-text",
  "ooxml-word-layout",
  "ooxml-word-model",

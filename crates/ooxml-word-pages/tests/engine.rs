@@ -1,13 +1,12 @@
 //! The page engine over made-up packages: a version read again from its bytes keeps the
 //! parts whose stored bytes did not change and is laid out from the version before; a
 //! version given as its touched parts is the version given whole; a document the layout
-//! does not lay out yet is a fallback with its reason. The faces are the open ones the
-//! repository ships.
+//! does not lay out yet is a fallback with its reason; a floating shape is painted in Rust
+//! and said of as docx2svg says it. The faces are the open ones the repository ships.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use ooxml_derive::CacheBudget;
 use ooxml_fonts::{Folder, Location, WordFontOptions};
-use ooxml_word_layout::paint::svg::NoDrawings;
 use ooxml_word_pages::{support, DiskFonts, EngineBudgets, EngineOptions, FontSetup, PageEngine};
 use ooxml_zip::{Method, NewEntry, Writer};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -140,7 +139,7 @@ fn engine_in(budgets: EngineBudgets) -> PageEngine {
 
 fn svgs(engine: &mut PageEngine, version: &ooxml_word_pages::LaidVersion) -> Vec<String> {
     (0..version.page_count())
-        .map(|k| engine.page_svg(version, k, &NoDrawings).unwrap().0)
+        .map(|k| engine.page_svg(version, k).unwrap().0)
         .collect()
 }
 
@@ -328,4 +327,63 @@ fn a_page_painted_is_kept_within_the_paint_budget() {
     let again = none.paint(&version, 0).unwrap();
     assert_eq!(*once, *again, "painted again, the same paint");
     assert_eq!((none.stats().pages_painted, none.stats().paint_hits), (2, 0));
+}
+
+/// A rectangle floating behind its paragraph: `fill` its `a:spPr` fill, `extra` more of it.
+fn floating_shape(fill: &str, extra: &str) -> String {
+    format!(
+        r#"<w:p><w:r><w:drawing><wp:anchor xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" simplePos="0" relativeHeight="1" behindDoc="1" locked="0" layoutInCell="1" allowOverlap="1"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="914400" cy="457200"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:wrapNone/><wp:docPr id="1" name="Shape 1"/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:cNvSpPr/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="457200"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom>{fill}{extra}</wps:spPr><wps:bodyPr/></wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r><w:r><w:t>beside a shape</w:t></w:r></w:p>"#
+    )
+}
+
+#[test]
+fn a_floating_shape_is_painted_in_rust_behind_the_text() {
+    let body = floating_shape(r#"<a:solidFill><a:srgbClr val="4472c4"/></a:solidFill>"#, "");
+    let mut engine = engine();
+    let version = engine.lay_out_bytes(Arc::from(package(&body))).unwrap().unwrap();
+    let (svg, missing) = engine.page_svg(&version, 0).unwrap();
+    assert!(missing.is_empty(), "{missing:?}");
+    let group = svg
+        .split('\n')
+        .position(|l| l.contains(r#"data-docx-float="behind""#))
+        .expect("a float group");
+    let text = svg.split('\n').position(|l| l.contains("<text")).expect("text");
+    assert!(group < text, "behind the text");
+    assert!(svg.contains(r##"fill="#4472C4""##), "{svg}");
+    assert!(version.said().warnings.is_empty());
+}
+
+#[test]
+fn what_a_painter_cannot_draw_is_said_as_docx2svg_says_it() {
+    let fill = r#"<a:solidFill><a:schemeClr val="accent1"/></a:solidFill>"#;
+    let body = floating_shape(fill, "<a:effectLst><a:reflection/></a:effectLst>");
+    let mut engine = engine();
+    let version = engine.lay_out_bytes(Arc::from(package(&body))).unwrap().unwrap();
+    let said: Vec<(String, String)> = version
+        .said()
+        .warnings
+        .iter()
+        .map(|w| (w.code.clone(), w.message.clone()))
+        .collect();
+    let path = "w:body/w:p[1]/w:r[1]/wp:anchor[1]";
+    assert_eq!(
+        said,
+        vec![
+            (
+                "drawing-not-drawn".to_owned(),
+                format!("a floating drawing's effect reflection is not drawn faithfully ({path})")
+            ),
+            (
+                "drawing-colour-unknown".to_owned(),
+                format!("a floating drawing's accent1 is not drawn faithfully ({path})")
+            ),
+        ]
+    );
+}
+
+#[test]
+fn smartart_falls_back_with_its_reason() {
+    let body = r#"<w:p><w:r><w:drawing><wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"><wp:extent cx="914400" cy="457200"/><wp:docPr id="1" name="Diagram 1"/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/diagram"><dgm:relIds xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:dm="rId9" r:lo="rId10" r:qs="rId11" r:cs="rId12"/></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>"#;
+    let fallback = engine().lay_out_bytes(Arc::from(package(body))).unwrap().unwrap_err();
+    assert_eq!(fallback.reason, support::SMARTART);
 }

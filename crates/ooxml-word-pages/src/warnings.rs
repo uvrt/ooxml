@@ -87,8 +87,36 @@ const RECOMPUTED_BY_WORD: &[&str] = &["DATE", "TIME", "REF", "PAGEREF", "SEQ", "
 /// The fields whose text depends on the pages (`PAGE_FIELDS`).
 const PAGE_FIELDS: &[&str] = &["PAGE", "NUMPAGES", "SECTIONPAGES", "PAGEREF"];
 
-/// What `layout` says, its paragraphs and tables resolved in `model`.
-pub fn said(model: &mut Model, layout: &DocumentLayout) -> Said {
+/// What a page's drawings say as they are painted: its floating drawings' positions not
+/// modelled, and what their painters could not draw faithfully, in the order placed.
+pub trait PageDrawings {
+    /// The warnings of page `page`'s drawings.
+    fn said(&mut self, model: &mut Model, layout: &DocumentLayout, page: usize) -> Vec<LayoutWarning>;
+}
+
+/// Whether a paragraph holds a drawing a painter draws: a floating one, or an inline one
+/// that is not a picture.
+fn holds_drawing(paragraph: &Paragraph) -> bool {
+    paragraph
+        .runs
+        .iter()
+        .any(|r| !r.anchors.is_empty() || r.drawings.iter().any(|d| matches!(d, InlineObject::Graphic(_))))
+}
+
+/// Whether blocks (cells' included) hold a drawing a painter draws.
+fn blocks_hold_drawing(blocks: &[Block]) -> bool {
+    blocks.iter().any(|b| match b {
+        Block::Paragraph(p) => holds_drawing(p),
+        Block::Table(t) => t
+            .rows
+            .iter()
+            .any(|row| row.iter().any(|cell| blocks_hold_drawing(cell))),
+    })
+}
+
+/// What `layout` says, its paragraphs and tables resolved in `model`; `drawings` paints
+/// the pages that hold drawings for what their painters say.
+pub fn said(model: &mut Model, layout: &DocumentLayout, drawings: &mut dyn PageDrawings) -> Said {
     let mut out = Said::default();
     let document = &layout.document;
     for (keyword, why) in cross_reference_problems(document) {
@@ -110,9 +138,24 @@ pub fn said(model: &mut Model, layout: &DocumentLayout) -> Said {
     let mut pages = PageWalk {
         tables: HashSet::new(),
         paragraphs: body_paragraphs(&document.body).0,
+        drawn: false,
     };
+    // A header's, footer's or note's drawing may be on any page.
+    let everywhere = document.stories.values().any(|b| blocks_hold_drawing(b))
+        || document
+            .footnotes
+            .notes
+            .values()
+            .chain(document.endnotes.notes.values())
+            .any(|b| blocks_hold_drawing(b));
     for page in 0..layout.page_count() {
+        pages.drawn = everywhere;
         pages.body(model, layout, page, &mut out);
+        if pages.drawn {
+            for w in drawings.said(model, layout, page) {
+                out.warn(w.code, w.message, w.page);
+            }
+        }
         pages.stories(layout, page, &mut out);
     }
     out
@@ -227,6 +270,8 @@ fn document_notes(document: &WordDocument, out: &mut Said) {
 struct PageWalk {
     tables: HashSet<usize>,
     paragraphs: Vec<std::sync::Arc<Paragraph>>,
+    /// The page holds a drawing a painter draws.
+    drawn: bool,
 }
 
 impl PageWalk {
@@ -255,6 +300,7 @@ impl PageWalk {
                     let (Some(paragraph), Some(line)) = (self.paragraphs.get(p.block).cloned(), line) else {
                         continue;
                     };
+                    self.drawn |= holds_drawing(&paragraph);
                     Self::line(model, layout, (&paragraph, p, line), number, out);
                 }
                 Some(FlowItem::Table(t)) if done.insert(item) => {

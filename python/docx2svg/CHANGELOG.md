@@ -20,6 +20,10 @@ snapshot commit; the development history before it is summarised here.
   versions of one document out, each from the one before; a version or option it does not
   take is `None`, counted by reason (`fallbacks()`). Held in Rust, a `RustLayout` is never
   pickled. `tests/test_rust_layout.py` holds it to the Python layout on every fixture.
+- Lane L4c: a page's drawings are painted in Rust (`ooxml_word_pages::drawings`) --
+  pictures, shapes, groups and charts, floating or inline, with what `drawing.draw` and
+  `chart.py` say of them -- so a document holding them is laid out in Rust too.
+  `RustLayout.page_svg` takes no painter any more.
 
 ## 0.13.1 -- unreleased
 

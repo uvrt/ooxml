@@ -192,6 +192,9 @@ pub struct PagePaint {
     /// What the page holds that this paint does not draw yet, by reason: the page's SVG is
     /// not complete where any is listed.
     pub unpainted: Vec<String>,
+    /// The floating drawings positioned against a frame the model does not know: not
+    /// drawn (docx2svg's `drawing-position-unknown`), by path.
+    pub unplaced: Vec<String>,
 }
 
 pub use ooxml_fonts::DrawingName;
@@ -288,11 +291,7 @@ fn floats(
     };
     let (slots, missed) = drawings::line_floats(&job, &mut out.drawn);
     out.drawings.extend(slots);
-    out.unpainted.extend(
-        missed
-            .into_iter()
-            .map(|p| format!("a floating drawing positioned against a frame not modelled ({p})")),
-    );
+    out.unplaced.extend(missed);
 }
 
 /// The paragraph a drawn line is of, and its measure on the page.
@@ -567,5 +566,6 @@ pub fn paint_page(
         pictures: out.pictures,
         drawings: out.drawings,
         unpainted: out.unpainted,
+        unplaced: out.unplaced,
     })
 }

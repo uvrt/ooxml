@@ -111,7 +111,14 @@ impl Docx {
                 continue;
             }
             let story = story_name(&main, &part);
-            let ids = PartIds::new(&story, tree.root());
+            // a part changed by a path copy: only what changed is walked again
+            let earlier = before
+                .and_then(|b| b.parts.iter().find(|p| p.part == part))
+                .filter(|p| p.story == story);
+            let ids = match earlier {
+                Some(earlier) => earlier.ids.after(earlier.root(), tree.root()),
+                None => PartIds::new(&story, tree.root()),
+            };
             parts.push(Arc::new(StoryPart { part, story, tree, ids }));
         }
         let (styles, style_order) = read_styles(package, &main)?;

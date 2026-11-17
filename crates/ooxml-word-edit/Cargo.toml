@@ -1,0 +1,23 @@
+[package]
+name = "ooxml-word-edit"
+version = "0.1.0"
+description = "Word's edits as transactions: the document as the store keeps it, the edit sink, tracked and untracked revisions, id stamping, validation per change and what a change touched"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+ooxml-base.workspace = true
+ooxml-xml.workspace = true
+ooxml-opc.workspace = true
+ooxml-store.workspace = true
+ooxml-derive.workspace = true
+ooxml-word-model.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+ooxml-zip.workspace = true

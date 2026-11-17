@@ -2,8 +2,8 @@
 //! (conflict detection by the keys a transaction read and wrote, redo, then a run under the
 //! commit lock), history operations, the id allocator and the reopen state.
 //!
-//! Must not: run anything inside the commit lock beyond the check, the replay of a change
-//! set on a moved head and the publish, except a transaction that conflicted
+//! Must not: run anything inside the commit lock beyond the check, the rebase and replay of
+//! a change set on a moved head and the publish, except a transaction that conflicted
 //! [`StoreConfig::optimistic_tries`] times (design section 5); free old versions inside it.
 
 use crate::history::{Garbage, History, Planned, Step};
@@ -15,6 +15,7 @@ use crate::{
     Clock, Command, Counters, CountersError, DocModel, Error, HistoryOutcome, KeySet, Seq, Snapshot, StepInfo,
     StoreStats, Txn, Version,
 };
+use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -26,6 +27,9 @@ pub struct StoreConfig {
     /// How many times a transaction is prepared on a snapshot before it runs under the
     /// commit lock.
     pub optimistic_tries: u32,
+    /// How many of the latest commits' change sets are kept for rebasing: a transaction
+    /// whose snapshot is older than that, with commits since, is prepared again.
+    pub rebase_window: usize,
 }
 
 impl Default for StoreConfig {
@@ -33,6 +37,7 @@ impl Default for StoreConfig {
         Self {
             history_depth: 50,
             optimistic_tries: 3,
+            rebase_window: 64,
         }
     }
 }
@@ -72,6 +77,9 @@ pub struct CommitTiming {
 pub struct Committed<D: DocModel, O> {
     /// The version made, or the snapshot it ran on when it changed nothing.
     pub version: Snapshot<D>,
+    /// The version it was applied to (the head it was published after, which may be
+    /// newer than the snapshot it was prepared on); `None` when it changed nothing.
+    pub previous: Option<Snapshot<D>>,
     /// What the command returned.
     pub out: O,
     /// Whether it changed the document (a no-op makes no version and no history step).
@@ -89,6 +97,7 @@ pub struct Committed<D: DocModel, O> {
 /// What a commit section returns.
 struct Done<D: DocModel> {
     version: Snapshot<D>,
+    previous: Option<Snapshot<D>>,
     changed: bool,
     writes: KeySet<D::Key>,
     held: Duration,
@@ -102,10 +111,16 @@ struct Body<D: DocModel> {
     caller: Option<Arc<str>>,
 }
 
+/// The latest versions published, oldest first: each one's number and the change set that
+/// made it from the one before (`None` for an undo or a redo, which cannot be rebased past).
+type Log<D> = VecDeque<(Seq, Option<Arc<[<D as DocModel>::Change]>>)>;
+
 /// The state under the commit lock.
 struct State<D: DocModel> {
     last: Seq,
     history: History<D>,
+    /// The latest versions published, within the rebase window.
+    log: Log<D>,
 }
 
 /// One document's versions. Readers load the head without a lock; writers prepare in
@@ -144,6 +159,7 @@ impl<D: DocModel> Store<D> {
             state: Mutex::new(State {
                 last: counters.last,
                 history: History::new(config.history_depth),
+                log: VecDeque::new(),
             }),
             ids: IdAllocator::new(counters.cursors),
             config,
@@ -207,6 +223,7 @@ impl<D: DocModel> Store<D> {
         if parts.changes.is_empty() {
             return Some(Done {
                 version: parts.base,
+                previous: None,
                 changed: false,
                 writes: KeySet::new(),
                 held: Duration::ZERO,
@@ -214,19 +231,22 @@ impl<D: DocModel> Store<D> {
         }
         let mut depends = parts.reads.clone();
         depends.extend(&parts.writes);
-        let changes: Arc<[D::Change]> = parts.changes.into();
         let mut state = lock(&self.state);
         let entered = self.clock.monotonic();
         let head = self.head.load();
         if head.written_since(parts.base.seq(), &depends) {
             return None;
         }
-        let doc = if Arc::ptr_eq(&head, &parts.base) {
-            parts.work
+        let (doc, changes) = if Arc::ptr_eq(&head, &parts.base) {
+            (parts.work, parts.changes.into())
         } else {
-            // Disjoint from everything committed since: the same changes apply to the head.
-            // A model whose changes then fail broke the contract; redo surfaces it.
-            replay(head.doc(), &changes).ok()?
+            // Disjoint from everything committed since: the changes, rebased past those
+            // commits' (positions moved past theirs), apply to the head. A change that
+            // cannot be rebased or applied after all is a conflict: prepared again.
+            let rebased: Arc<[D::Change]> = rebase::<D>(&state.log, parts.base.seq(), parts.changes)?.into();
+            let doc = replay(head.doc(), &rebased).ok()?;
+            self.counts.rebased();
+            (doc, rebased)
         };
         let body = Body {
             changes,
@@ -234,12 +254,13 @@ impl<D: DocModel> Store<D> {
             writes: parts.writes,
             caller: caller.0.clone(),
         };
-        let (version, writes, garbage) = self.publish(&mut state, head, doc, body);
+        let (version, writes, garbage) = self.publish(&mut state, Arc::clone(&head), doc, body);
         let held = self.clock.monotonic().saturating_sub(entered);
         drop(state);
         drop(garbage);
         Some(Done {
             version,
+            previous: Some(head),
             changed: true,
             writes,
             held,
@@ -266,6 +287,7 @@ impl<D: DocModel> Store<D> {
             drop(state);
             let done = Done {
                 version: base,
+                previous: None,
                 changed: false,
                 writes: KeySet::new(),
                 held: Duration::ZERO,
@@ -278,13 +300,14 @@ impl<D: DocModel> Store<D> {
             writes: parts.writes,
             caller: caller.0.clone(),
         };
-        let (version, writes, garbage) = self.publish(&mut state, base, parts.work, body);
+        let (version, writes, garbage) = self.publish(&mut state, Arc::clone(&base), parts.work, body);
         let held = self.clock.monotonic().saturating_sub(entered);
         drop(state);
         drop(garbage);
         Ok(self.committed(
             Done {
                 version,
+                previous: Some(base),
                 changed: true,
                 writes,
                 held,
@@ -308,6 +331,7 @@ impl<D: DocModel> Store<D> {
         state.last = seq;
         let version = Arc::new(before.succeed(seq, doc, &body.writes));
         self.head.store(Arc::clone(&version));
+        self.log(state, seq, Some(Arc::clone(&body.changes)));
         let writes = body.writes.clone();
         let step = Step {
             before,
@@ -328,6 +352,7 @@ impl<D: DocModel> Store<D> {
         let total = self.clock.monotonic().saturating_sub(start);
         Committed {
             version: done.version,
+            previous: done.previous,
             out,
             changed: done.changed,
             writes: done.writes,
@@ -376,6 +401,7 @@ impl<D: DocModel> Store<D> {
         state.last = seq;
         let version = Arc::new(head.succeed(seq, planned.doc, &planned.writes));
         self.head.store(Arc::clone(&version));
+        self.log(&mut state, seq, None);
         let garbage = state.history.record(planned.target, head, Arc::clone(&version));
         let held = self.clock.monotonic().saturating_sub(entered);
         drop(state);
@@ -387,6 +413,34 @@ impl<D: DocModel> Store<D> {
             writes: planned.writes,
         })
     }
+}
+
+impl<D: DocModel> Store<D> {
+    /// Keep the change set that made version `seq`, within the rebase window.
+    fn log(&self, state: &mut State<D>, seq: Seq, changes: Option<Arc<[D::Change]>>) {
+        state.log.push_back((seq, changes));
+        while state.log.len() > self.config.rebase_window {
+            state.log.pop_front();
+        }
+    }
+}
+
+/// `changes`, made on version `base`, rebased past every change set published since, in
+/// order; `None` when one of them is not in the log (too old, or an undo or redo) or a
+/// change cannot be moved past one of theirs.
+fn rebase<D: DocModel>(log: &Log<D>, base: Seq, mut changes: Vec<D::Change>) -> Option<Vec<D::Change>> {
+    let since = log.iter().position(|(seq, _)| *seq > base)?;
+    if since == 0 && log.front().is_some_and(|(seq, _)| seq.0 != base.0 + 1) {
+        return None; // the commits right after the snapshot are no longer kept
+    }
+    for (_, past) in log.iter().skip(since) {
+        for past in past.as_deref()? {
+            for change in &mut changes {
+                *change = D::rebase(change, past).ok()?;
+            }
+        }
+    }
+    Some(changes)
 }
 
 /// `changes` applied in order to `doc`.

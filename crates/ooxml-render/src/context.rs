@@ -75,6 +75,11 @@ impl<'m> Painter<'m> {
         self.next_id = count;
     }
 
+    /// The ids minted so far (where a later pass on the same page resumes).
+    pub fn ids(&self) -> u32 {
+        self.next_id
+    }
+
     /// Mint the ids that follow as `{prefix}-{scope}{n}`, counting from 1 again.
     pub fn scope_ids(&mut self, scope: &str) {
         self.id_scope = scope.to_owned();

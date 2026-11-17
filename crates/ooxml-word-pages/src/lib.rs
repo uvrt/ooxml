@@ -7,7 +7,9 @@
 //! - the fonts a document is laid out and drawn with: the machine's, scanned once per
 //!   set of folders ([`FontSetup`], over [`DiskFonts`]), with a package's own font table and
 //!   embedded faces ([`DocumentFonts`]);
-//! - a package's pictures as the SVG writer reads them ([`PackagePictures`]);
+//! - a package's pictures as the SVG writer reads them ([`PackagePictures`]), and the
+//!   painter of its drawings ([`drawings::WordDrawings`]): pictures, shapes, groups and
+//!   charts, as docx2svg paints them;
 //! - what the layout cannot lay out yet, found before a version is laid out
 //!   ([`support::unsupported`]): the caller lays such a document out another way
 //!   ([`Fallback`]), counted, never silently;
@@ -26,6 +28,7 @@
 #![forbid(unsafe_code)]
 
 mod disk;
+pub mod drawings;
 mod engine;
 mod error;
 mod fonts;

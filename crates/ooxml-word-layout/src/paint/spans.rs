@@ -30,6 +30,8 @@ pub(super) struct PageOut {
     /// The drawings met so far (their paint order within a layer).
     pub(super) drawn: usize,
     pub(super) unpainted: Vec<String>,
+    /// Floating drawings not placed (their frame is not modelled), by path.
+    pub(super) unplaced: Vec<String>,
 }
 
 /// One line to paint.
@@ -384,7 +386,7 @@ impl LinePainter<'_, '_> {
         };
         let relationship = match run.drawings.get(n) {
             Some(InlineObject::Picture(r)) => Some(Arc::clone(r)),
-            Some(InlineObject::Graphic(_)) => {
+            Some(InlineObject::Graphic(graphic)) => {
                 // An inline shape, group, chart or SmartArt: drawn as a floating drawing is,
                 // in its line's box, in front of the text, by its painter.
                 self.out.drawn += 1;
@@ -405,6 +407,8 @@ impl LinePainter<'_, '_> {
                     layer: super::drawings::Layer::Front,
                     order: (0, self.out.drawn),
                     story: None,
+                    graphic: Some(Arc::clone(graphic)),
+                    no_overlap: false,
                 });
                 return;
             }

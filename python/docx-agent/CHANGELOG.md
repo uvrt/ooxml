@@ -28,6 +28,18 @@ be made again is bounded by one memory budget per process.
   and its Python side); no count of eight. `docx_agent.pages.memory()` says the budget's
   limit, what it holds and what the engines' memos hold.
 
+## 0.1.137 -- unreleased
+
+Phase PL/P3, lane L4c: a document's drawings painted in Rust. A version holding floating or
+inline pictures, shapes, groups or charts is laid out and drawn by the Rust engine (it fell
+back to docx2svg's Python layout before, reason `drawing`); its pages' SVG and its layout
+warnings are docx2svg's, byte for byte. Text boxes, SmartArt and VML shapes still fall back,
+each under a reason of its own (`text box`, `SmartArt`, `VML shape`).
+
+- `tools/tracked_report.py --figures` and `tools/tracked_report_bench.py --figures`: the
+  made-up report with a bar chart, a picture and a shape floating behind the heading in each
+  chapter.
+
 ## 0.1.136 -- unreleased
 
 Phase PL, lane L4: the Word layout in Rust. Every layout docx-agent makes of a version -- a
@@ -57,6 +69,11 @@ Answers are docx2svg's: the same pages, signatures, facts and SVG (`tests/test_r
   summary a reflow compares is digested in Rust.
 - The tests of the Python layout's own mechanisms (layouts handed between versions and
   workers, held by token) pin it with the `python_layout` fixture.
+
+- With `DOCX_AGENT_FULL_VALIDATE` (the test runs), the story a span read alone is compared
+  with is read once per `Reader`, not once per span: the corpus round trip in every fixture,
+  reading each of its 500-odd insertions back through one reader, took 2-4 minutes per
+  fixture on CI, now about 15 s.
 
 ## 0.1.135 -- unreleased
 
