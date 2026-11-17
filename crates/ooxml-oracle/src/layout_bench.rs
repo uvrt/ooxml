@@ -152,7 +152,18 @@ pub fn run(args: &[String]) -> Result<(), String> {
         } else {
             None
         };
+        // Which items of the first pass differ between the versions, where they line up.
+        let differing: Vec<usize> = match (whole.pass(0), again.pass(0)) {
+            (Some((a, _)), Some((b, _))) if a.items.len() == b.items.len() => (0..a.items.len())
+                .filter(|k| match (a.items.get(*k), b.items.get(*k)) {
+                    (Some(x), Some(y)) => !ooxml_word_layout::incremental::same_item(x, y),
+                    _ => true,
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
         report = json!({
+            "differing_items": differing.len(), "differing_first": differing.iter().take(8).collect::<Vec<_>>(),
             "pages": whole.pagination.page_count(), "laid_pages": whole.pagination.pages.len(),
             "items": whole.flow.items.len(), "passes": whole.passes, "settled": whole.settled,
             "fields": whole.fields.len(), "stopped": whole.pagination.stopped.as_ref().map(|s| s.reason.clone()),

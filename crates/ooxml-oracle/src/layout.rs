@@ -211,6 +211,36 @@ fn cutoff(flow: &[Value]) -> (usize, Option<String>) {
     (flow.len(), None)
 }
 
+/// The first item the model says the comparison must stop before: a paragraph drawing a
+/// note's reference (docx2svg numbers it, which L3c's notes do), and where the body is cut
+/// anyway, a paragraph holding a page-number field (its value may be a page past the cut).
+fn model_cut(document: &WordDocument, ours: &DocumentLayout, cut: bool) -> Option<(usize, &'static str)> {
+    ours.flow.items.iter().enumerate().find_map(|(k, item)| {
+        let FlowItem::Para(p) = item else { return None };
+        let Some(Block::Paragraph(para)) = document.body.get(p.body) else {
+            return None;
+        };
+        let notes = para.runs.iter().any(|r| {
+            r.breaks
+                .iter()
+                .any(|(_, m)| m.starts_with("footnoteReference:") || m.starts_with("endnoteReference:"))
+        });
+        let fields = cut
+            && para.runs.iter().any(|r| {
+                r.field
+                    .as_ref()
+                    .is_some_and(|f| ooxml_word_layout::fields::PAGE_FIELDS.contains(&&*f.keyword))
+            });
+        if notes {
+            Some((k, "notes, drawings or an approximation: a note's reference"))
+        } else if fields {
+            Some((k, "a page-number field in a body cut further on"))
+        } else {
+            None
+        }
+    })
+}
+
 fn compare_flow(ours: &DocumentLayout, theirs: &[Value], cut: usize, diffs: &mut Diffs<'_>, outcome: &mut Outcome) {
     if cut == theirs.len() && ours.flow.items.len() != theirs.len() {
         diffs.push(
@@ -490,6 +520,10 @@ pub fn run_document(records: &LayoutRecords, outcome: &mut Outcome) -> Result<()
     outcome.layout_time += started.elapsed();
     let flow = at(theirs, "flow").as_array().cloned().unwrap_or_default();
     let (cut, why) = cutoff(&flow);
+    let (cut, why) = match model_cut(&document, &laid, cut < flow.len()) {
+        Some((k, reason)) if k < cut => (k, Some(reason.to_owned())),
+        _ => (cut, why),
+    };
     match &why {
         Some(why) => outcome.cut.push((records.path.clone(), format!("item {cut}: {why}"))),
         None => outcome.whole += 1,

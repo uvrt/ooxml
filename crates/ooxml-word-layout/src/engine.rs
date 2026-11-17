@@ -7,7 +7,7 @@
 use crate::faces::Faces;
 use crate::fields::{cross_references, field_values, page_fields, substitute, Computed, FieldValues, Substitutions};
 use crate::flow::{Flow, FlowContext, FlowMaker, FlowState, Labels};
-use crate::incremental::{diff, repaginate, RelayoutStats};
+use crate::incremental::{changes, repaginate, RelayoutStats};
 use crate::paginate::{HyphenMove, PageContext, Pagination, Paginator, Resume};
 use crate::sections::Sections;
 use crate::stories::{StoryContext, StoryTable};
@@ -203,8 +203,8 @@ impl WordLayout {
         };
         match old {
             Some((old_flow, old_pages)) => {
-                let change = diff(&old_flow.items, &layout.flow.items);
-                let (pages, stats) = repaginate(&layout.page_context(), old_pages, change);
+                let found = changes(&old_flow.items, &layout.flow.items);
+                let (pages, stats) = repaginate(&layout.page_context(), old_pages, &found);
                 layout.pagination = pages;
                 layout.relaid.push(stats);
             }

@@ -138,7 +138,10 @@ fn parity_decides(cx: &PageContext<'_>) -> bool {
 
 /// The old page a new page starting at `state` lines up with, past the change.
 fn joins(old: &Pagination, change: Change, delta: isize, parity: bool, state: &Resume) -> Option<usize> {
-    if state.position.item < change.b_new {
+    // A page starting at a paragraph's first line reads the item before it (its space
+    // after, at the page's top): that item must be past the change too.
+    let reads_before = state.position.line == 0 && state.position.part.is_empty();
+    if state.position.item < change.b_new + usize::from(reads_before) {
         return None;
     }
     let old_position = shift(&state.position, -delta);
@@ -150,70 +153,159 @@ fn joins(old: &Pagination, change: Change, delta: isize, parity: bool, state: &R
     (!(parity && odd)).then_some(q)
 }
 
-/// The old pages from `q` on, moved to follow the new pages that end at `state`.
-fn splice_rest(out: &mut Pagination, old: &Pagination, q: usize, state: &Resume, delta: isize) {
-    let Some(join) = old.pages.get(q) else { return };
-    let base = base_of(old, q);
-    let page_shift = isize::try_from(state.page).unwrap_or(0) - isize::try_from(base).unwrap_or(0);
-    let number_shift = state.number - join.number_before;
-    out.pages.extend(
-        old.pages
-            .iter()
-            .skip(q)
-            .map(|page| moved(page, delta, page_shift, number_shift)),
-    );
-    out.info.extend(old.info.iter().skip(base).map(|info| {
-        let mut i = *info;
-        i.number += number_shift;
-        i
-    }));
-    out.stopped = old.stopped.clone().map(|mut s| {
-        s.item = s.item.saturating_add_signed(delta);
-        s
-    });
+/// The changes between two flows: where they have as many items, each run of items that
+/// differ in place; otherwise one change, between their common prefix and suffix.
+pub fn changes(old: &[FlowItem], new: &[FlowItem]) -> Vec<Change> {
+    if old.len() != new.len() {
+        let one = diff(old, new);
+        return if one.a == one.b_old && one.a == one.b_new {
+            Vec::new()
+        } else {
+            vec![one]
+        };
+    }
+    let mut out: Vec<Change> = Vec::new();
+    for (k, (x, y)) in old.iter().zip(new).enumerate() {
+        if same_item(x, y) {
+            continue;
+        }
+        match out.last_mut() {
+            Some(last) if last.b_new == k => {
+                last.b_old = k + 1;
+                last.b_new = k + 1;
+            }
+            _ => out.push(Change {
+                a: k,
+                b_old: k + 1,
+                b_new: k + 1,
+            }),
+        }
+    }
+    out
 }
 
-/// The new flow's pages from the old flow's: the pages before the change kept, the
-/// change's pages laid out again, the rest moved once a page starts where an old one did
-/// (by an even number of pages where parity decides something).
-pub fn repaginate(cx: &PageContext<'_>, old: &Pagination, change: Change) -> (Pagination, RelayoutStats) {
-    let target = Position::at(change.a, 0);
-    let p = old
-        .pages
-        .partition_point(|page| page.reach < target)
-        .min(old.pages.len().saturating_sub(1));
-    let resume = old.pages.get(p).map(|page| Resume {
-        position: page.start.clone(),
-        page: page.page,
-        number: page.number_before,
-    });
-    let delta = isize::try_from(change.b_new).unwrap_or(0) - isize::try_from(change.b_old).unwrap_or(0);
-    let parity = parity_decides(cx);
-    let mut joined: Option<usize> = None;
-    let mut until = |state: &Resume| -> bool {
-        joined = joins(old, change, delta, parity, state);
-        joined.is_some()
+/// How the old pages are moved to follow the new ones: by items, pages and numbers.
+#[derive(Debug, Clone, Copy)]
+struct Shift {
+    items: isize,
+    pages: isize,
+    numbers: i64,
+}
+
+/// The first old laid page whose decision read `target` (the last where none did).
+fn first_reaching(old: &Pagination, from: usize, target: &Position) -> usize {
+    let k = from
+        + old
+            .pages
+            .get(from..)
+            .unwrap_or_default()
+            .partition_point(|page| page.reach < *target);
+    k.min(old.pages.len().saturating_sub(1))
+}
+
+/// Old laid pages `from..to` (and their blank pages' info) moved by `shift`.
+fn copy_moved(out: &mut Pagination, old: &Pagination, from: usize, to: usize, shift: Shift) {
+    let to = to.min(old.pages.len());
+    out.pages.extend(
+        old.pages
+            .get(from..to)
+            .unwrap_or_default()
+            .iter()
+            .map(|page| moved(page, shift.items, shift.pages, shift.numbers)),
+    );
+    let info_to = if to < old.pages.len() {
+        base_of(old, to)
+    } else {
+        old.info.len()
     };
-    let (fresh, stop) = Paginator::new(cx).run(resume, &mut until);
-    let first_page = old.pages.get(p).map_or(0, |page| page.page);
+    out.info.extend(
+        old.info
+            .get(base_of(old, from)..info_to)
+            .unwrap_or_default()
+            .iter()
+            .map(|info| {
+                let mut i = *info;
+                i.number += shift.numbers;
+                i
+            }),
+    );
+}
+
+/// The new flow's pages from the old flow's, given the changes between them: the pages
+/// before the first change kept; from the first page whose decision read a change, pages
+/// laid out again until one starts where an old one did past that change; the old pages
+/// from there moved until the next change is read, and so on.
+pub fn repaginate(cx: &PageContext<'_>, old: &Pagination, changes: &[Change]) -> (Pagination, RelayoutStats) {
+    let Some(first) = changes.first() else {
+        return (old.clone(), RelayoutStats::default());
+    };
+    let parity = parity_decides(cx);
+    let mut p = first_reaching(old, 0, &Position::at(first.a, 0));
     let mut out = Pagination {
         pages: old.pages.get(..p).unwrap_or_default().to_vec(),
-        info: old.info.get(..first_page).unwrap_or_default().to_vec(),
-        stopped: fresh.stopped.clone(),
+        info: old.info.get(..base_of(old, p)).unwrap_or_default().to_vec(),
+        stopped: None,
     };
-    let laid = fresh.pages.len();
-    out.pages.extend(fresh.pages);
-    out.info.extend(fresh.info);
-    if let (Some(q), Some(state)) = (joined, stop) {
-        splice_rest(&mut out, old, q, &state, delta);
+    let mut shift = Shift {
+        items: 0,
+        pages: 0,
+        numbers: 0,
+    };
+    let mut stats = RelayoutStats {
+        change: Some(*first),
+        restart: p,
+        ..RelayoutStats::default()
+    };
+    let mut i = 0;
+    loop {
+        let resume = old.pages.get(p).map(|page| Resume {
+            position: shift_position(&page.start, shift.items),
+            page: base_of(old, p).saturating_add_signed(shift.pages),
+            number: page.number_before + shift.numbers,
+        });
+        let change = changes.get(i).copied().unwrap_or(*first);
+        let delta = isize::try_from(change.b_new).unwrap_or(0) - isize::try_from(change.b_old).unwrap_or(0);
+        let mut joined = None;
+        let mut until = |state: &Resume| {
+            joined = joins(old, change, shift.items + delta, parity, state);
+            joined.is_some()
+        };
+        let (fresh, stop) = Paginator::new(cx).run(resume, &mut until);
+        stats.laid += fresh.pages.len();
+        out.pages.extend(fresh.pages);
+        out.info.extend(fresh.info);
+        out.stopped = fresh.stopped;
+        let (Some(q), Some(state)) = (joined, stop) else { break };
+        stats.joined = Some(q);
+        shift = Shift {
+            items: shift.items + delta,
+            pages: isize::try_from(state.page).unwrap_or(0) - isize::try_from(base_of(old, q)).unwrap_or(0),
+            numbers: state.number - old.pages.get(q).map_or(0, |page| page.number_before),
+        };
+        while changes.get(i).is_some_and(|c| c.b_new <= state.position.item) {
+            i += 1;
+        }
+        match changes.get(i) {
+            Some(c) => {
+                // The next change, where the old pages' items stand.
+                let target = shift_position(&Position::at(c.a, 0), -shift.items);
+                let n = first_reaching(old, q, &target);
+                copy_moved(&mut out, old, q, n, shift);
+                p = n;
+            }
+            None => {
+                copy_moved(&mut out, old, q, old.pages.len(), shift);
+                out.stopped = old.stopped.clone().map(|mut s| {
+                    s.item = s.item.saturating_add_signed(shift.items);
+                    s
+                });
+                break;
+            }
+        }
     }
-    (
-        out,
-        RelayoutStats {
-            change: Some(change),
-            restart: p,
-            laid,
-            joined,
-        },
-    )
+    (out, stats)
+}
+
+fn shift_position(p: &Position, by: isize) -> Position {
+    shift(p, by)
 }
