@@ -98,7 +98,8 @@ example `pip install ./python/ooxml-common ./python/ooxml-edit ./python/docx2svg
   suite runs on Linux as four jobs, split by test file on the times recorded in
   `tools/ci_durations.json` (`python tools/ci.py shard docx-agent K/4` lists a shard's
   files; when the shards drift apart, download a run's `junit-*` artifacts and run
-  `python tools/ci.py durations docx-agent junit-*/junit.xml`). A newer push to a pull
+  `python tools/ci.py durations docx-agent junit-*/junit.xml`, with `--free-threading` for
+  freethreading.yml's: those legs are split on their own times). A newer push to a pull
   request or to main cancels the older push's run.
   Branch protection requires the jobs `required (ubuntu, build)` and `required
   (windows)`, which pass when every leg they cover passed or was left out; the macOS and

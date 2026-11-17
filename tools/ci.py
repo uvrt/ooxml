@@ -24,11 +24,12 @@ differences live here and nowhere else:
     python tools/ci.py test PACKAGE [--event EVENT] [--free-threading] [--shard K/N] [--junit FILE]
         Runs the package's suite as its own repository's CI ran it; with --shard, only the
         test files of shard K of N (SHARDS below), with --junit, a JUnit report of it.
-    python tools/ci.py shard PACKAGE K/N
+    python tools/ci.py shard PACKAGE K/N [--free-threading]
         The test files shard K of N runs, one per line.
-    python tools/ci.py durations PACKAGE JUNIT...
-        Rewrites the package's entry in tools/ci_durations.json from the JUnit reports of a
-        run's shards (the `junit-*` artifacts of python-tests.yml), so the split stays even.
+    python tools/ci.py durations PACKAGE [--free-threading] JUNIT...
+        Rewrites the package's GIL (or free-threaded) times in tools/ci_durations.json from
+        the JUnit reports of a run's shards (the `junit-*` artifacts of python-tests.yml,
+        ci.yml's run or freethreading.yml's), so the split stays even.
     python tools/ci.py gil-check PACKAGE
         On a free-threaded Python: importing the package, its modules and its extras' modules
         leaves the GIL off.
@@ -421,7 +422,7 @@ def test(name: str, event: str, free_threading: bool, coverage: bool = False,
         # xunit1: each test case carries its file, which `durations` sums by.
         args += [f"--junitxml={junit.resolve()}", "-o", "junit_family=xunit1"]
     if shard is not None:
-        args += shard_files(name, *shard)
+        args += shard_files(name, *shard, free_threading=free_threading)
     env = dict(os.environ)
     if free_threading:
         env["PYTHON_GIL"] = "0"
@@ -442,8 +443,10 @@ def test(name: str, event: str, free_threading: bool, coverage: bool = False,
     return code
 
 
-#: Each sharded package's recorded time per test file, in seconds summed over its tests
-#: (`durations` writes it from a run's JUnit reports).  A file not in it counts as the
+#: Each sharded package's recorded time per test file, in seconds summed over its tests,
+#: on the GIL legs ("gil") and the free-threaded ones ("free-threaded"), split each on its
+#: own (some files run only there: tests/test_block_edits_ft.py); `durations` writes them
+#: from a run's JUnit reports.  A file not in it counts as the
 #: median of those that are, so a new test file lands somewhere sensible until the next
 #: refresh; a stale entry only makes the split less even, never drops a test.
 DURATIONS = ROOT / "tools" / "ci_durations.json"
@@ -455,10 +458,14 @@ def test_files(name: str) -> list[str]:
     return sorted(p.relative_to(folder).as_posix() for p in (folder / "tests").rglob("test_*.py"))
 
 
-def _durations(name: str) -> dict[str, float]:
+def _kind(free_threading: bool) -> str:
+    return "free-threaded" if free_threading else "gil"
+
+
+def _durations(name: str, free_threading: bool) -> dict[str, float]:
     if not DURATIONS.is_file():
         return {}
-    return json.loads(DURATIONS.read_text(encoding="utf-8")).get(name, {})
+    return json.loads(DURATIONS.read_text(encoding="utf-8")).get(name, {}).get(_kind(free_threading), {})
 
 
 def split(files: list[str], durations: dict[str, float], count: int) -> list[list[str]]:
@@ -477,11 +484,11 @@ def split(files: list[str], durations: dict[str, float], count: int) -> list[lis
     return [sorted(s) for s in shards]
 
 
-def shard_files(name: str, index: int, count: int) -> list[str]:
+def shard_files(name: str, index: int, count: int, free_threading: bool = False) -> list[str]:
     """The test files shard ``index`` (from 1) of ``count`` runs."""
     if not 1 <= index <= count:
         raise ValueError(f"shard {index} of {count}")
-    return split(test_files(name), _durations(name), count)[index - 1]
+    return split(test_files(name), _durations(name, free_threading), count)[index - 1]
 
 
 def durations_from_junit(reports: list[Path]) -> dict[str, float]:
@@ -497,10 +504,10 @@ def durations_from_junit(reports: list[Path]) -> dict[str, float]:
     return {f: round(t, 1) for f, t in sorted(out.items())}
 
 
-def write_durations(name: str, reports: list[Path]) -> dict[str, float]:
+def write_durations(name: str, reports: list[Path], free_threading: bool = False) -> dict[str, float]:
     found = durations_from_junit(reports)
     data = json.loads(DURATIONS.read_text(encoding="utf-8")) if DURATIONS.is_file() else {}
-    data[name] = found
+    data.setdefault(name, {})[_kind(free_threading)] = found
     DURATIONS.write_text(json.dumps(data, indent=1, sort_keys=True) + "\n", encoding="utf-8")
     return found
 
@@ -642,8 +649,10 @@ def main(argv: list[str] | None = None) -> int:
     sh = sub.add_parser("shard")
     sh.add_argument("package", choices=list(PACKAGES))
     sh.add_argument("shard", type=_shard_arg, help="K/N")
+    sh.add_argument("--free-threading", action="store_true")
     du = sub.add_parser("durations")
     du.add_argument("package", choices=list(PACKAGES))
+    du.add_argument("--free-threading", action="store_true", help="the reports are of the free-threaded legs")
     du.add_argument("reports", nargs="+", type=Path)
     for command in ("install", "test", "gil-check", "build-check"):
         s = sub.add_parser(command)
@@ -686,10 +695,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "test":
         return test(args.package, args.event, args.free_threading, args.coverage, args.shard, args.junit)
     if args.command == "shard":
-        print("\n".join(shard_files(args.package, *args.shard)))
+        print("\n".join(shard_files(args.package, *args.shard, free_threading=args.free_threading)))
         return 0
     if args.command == "durations":
-        found = write_durations(args.package, args.reports)
+        found = write_durations(args.package, args.reports, args.free_threading)
         print(f"{len(found)} files, {sum(found.values()):.0f} s", file=sys.stderr)
         return 0
     if args.command == "gil-check":

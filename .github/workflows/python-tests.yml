@@ -119,8 +119,8 @@ jobs:
       # The Office oracle tests are opt-in and need Office, which no runner has; the
       # provider tests need an API key, which CI does not hold.  Both skip.
       # A shard runs its test files only and writes a JUnit report, kept for a week:
-      # `python tools/ci.py durations PACKAGE junit-*.xml` refreshes tools/ci_durations.json
-      # from a run's reports when the shards' times drift apart.
+      # `python tools/ci.py durations PACKAGE [--free-threading] junit-*/junit.xml` refreshes
+      # tools/ci_durations.json from a run's reports when the shards' times drift apart.
       - name: Test
         shell: bash
         run: python tools/ci.py test ${{ matrix.package }} --event ${{ github.event_name }} ${{ inputs.free-threading && '--free-threading' || '' }} ${{ matrix.coverage && '--coverage' || '' }} ${{ matrix.shards && format('--shard {0}/{1} --junit junit.xml', matrix.shard, matrix.shards) || '' }}

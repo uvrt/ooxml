@@ -134,10 +134,11 @@ class ShardTest(unittest.TestCase):
                 continue
             files = ci.test_files(name)
             self.assertGreater(len(files), count)
-            shards = [ci.shard_files(name, k, count) for k in range(1, count + 1)]
-            flat = [f for shard in shards for f in shard]
-            self.assertEqual(sorted(flat), files)
-            self.assertTrue(all(shards))
+            for free_threading in (False, True):
+                shards = [ci.shard_files(name, k, count, free_threading) for k in range(1, count + 1)]
+                flat = [f for shard in shards for f in shard]
+                self.assertEqual(sorted(flat), files)
+                self.assertTrue(all(shards))
 
     def test_split_balances_and_is_stable(self) -> None:
         durations = {"a": 10.0, "b": 9.0, "c": 6.0, "d": 4.0, "e": 1.0}
@@ -165,9 +166,11 @@ class ShardTest(unittest.TestCase):
         if not ci.DURATIONS.is_file():
             self.skipTest("no durations recorded")
         data = json.loads(ci.DURATIONS.read_text())
-        for name, durations in data.items():
+        for name, kinds in data.items():
             self.assertIn("shards", ci.PACKAGES[name], name)
-            self.assertTrue(set(durations) & set(ci.test_files(name)), name)
+            self.assertEqual(set(kinds), {"gil", "free-threaded"}, name)
+            for durations in kinds.values():
+                self.assertTrue(set(durations) & set(ci.test_files(name)), name)
 
 
 def _workspace_deps(crate: str) -> set[str]:
