@@ -7,7 +7,7 @@
 //! The manifest is a JSON list of `{"file": path, "cases": [{"op", "target", "text",
 //! "tracked": {"author", "date"} or null, ...}]}` (`op`: `set_text` when absent,
 //! `set_text_paragraphs` (set_text in lines), `insert_paragraph` with `after` and `style`,
-//! `set_paragraph_style` with `style` (null: the default), `delete` (a block),
+//! `set_paragraph_style` with `style` (null: the default), `delete` (a block), `set_cells` with `writes`,
 //! `insert_text`, `delete_text`, `replace` with `find`, `case`, `count`, `keep`); each case
 //! runs on the document as opened.
 //!
@@ -22,7 +22,7 @@ use ooxml_word_edit::touched::Touched;
 use ooxml_word_edit::validate::problems;
 use ooxml_word_edit::{
     DeleteBlock, DeleteText, EditError, Edited, Editor, InsertParagraph, InsertText, Keep, RangesEdited, ReplaceText,
-    RevisionPolicy, SetParagraphStyle, SetText, TextEdited, Tracking, WordDoc,
+    RevisionPolicy, SetCells, SetParagraphStyle, SetText, TextEdited, Tracking, WordDoc,
 };
 use serde_json::{json, Map, Value};
 use std::sync::Arc;
@@ -137,6 +137,7 @@ fn edit(bytes: &Arc<[u8]>, case: &Value) -> Result<Value, String> {
         "insert_paragraph" => insert_paragraph(&editor, &caller, &package, case),
         "set_paragraph_style" => set_paragraph_style(&editor, &caller, &package, case),
         "delete" => delete(&editor, &caller, &package, case),
+        "set_cells" => set_cells(&editor, &caller, &package, case),
         "replace" => {
             let pattern = match pattern(case, &text("find"), &text("text")) {
                 Ok(p) => p,
@@ -215,6 +216,37 @@ fn delete(editor: &Editor, caller: &Caller, package: &Package, case: &Value) -> 
         let out = &done.out;
         let result = json!({"id": out.id, "renamed": renamed(&out.renamed), "removed": out.removed});
         report(package, &done, result)
+    })
+}
+
+/// A set_cells case: `writes` is a list of `[row, column, text]`.
+fn set_cells(editor: &Editor, caller: &Caller, package: &Package, case: &Value) -> Result<Value, EditError> {
+    let writes = case
+        .get("writes")
+        .and_then(Value::as_array)
+        .map(|all| {
+            all.iter()
+                .filter_map(|w| {
+                    let row = usize::try_from(w.get(0)?.as_u64()?).ok()?;
+                    let column = usize::try_from(w.get(1)?.as_u64()?).ok()?;
+                    Some((row, column, w.get(2)?.as_str()?.to_owned()))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let command = SetCells {
+        table: case.get("target").and_then(Value::as_str).unwrap_or("").to_owned(),
+        writes,
+        policy: policy(case),
+    };
+    editor.run(caller, &command).map(|done| {
+        let edits: Vec<Value> = done
+            .out
+            .edits
+            .iter()
+            .map(|e| json!({"id": e.id, "renamed": renamed(&e.renamed), "created": e.created, "removed": e.removed}))
+            .collect();
+        report(package, &done, json!({"ids": done.out.ids, "edits": edits}))
     })
 }
 

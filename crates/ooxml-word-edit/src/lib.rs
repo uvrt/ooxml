@@ -10,7 +10,7 @@
 //!   behind it that writes a text edit untracked or as tracked changes, as docx-agent
 //!   writes them;
 //! - stamping blocks with durable ids before the first edit, and new text ids;
-//! - the commands: [`SetText`] (in lines: new paragraphs after it); [`InsertParagraph`]; [`SetParagraphStyle`] (built-in styles added as Word writes them); [`DeleteBlock`]; [`InsertText`], [`DeleteText`] and [`ReplaceText`] (text
+//! - the commands: [`SetText`] (in lines: new paragraphs after it); [`InsertParagraph`]; [`SetParagraphStyle`] (built-in styles added as Word writes them); [`DeleteBlock`]; [`SetCells`]; [`InsertText`], [`DeleteText`] and [`ReplaceText`] (text
 //!   within a paragraph, docx-agent's `_replace_ranges`);
 //! - validation per change ([`validate`]: facts memoised by content, docx-agent's rules)
 //!   and what a change touched ([`touched`]);
@@ -45,6 +45,7 @@ mod ranges;
 mod ranges_across;
 mod release;
 mod revision_ids;
+mod set_cells;
 mod set_text;
 mod sink;
 mod stamping;
@@ -64,5 +65,6 @@ pub use paragraphs::{InsertParagraph, ParagraphInserted};
 pub use policy::{RevisionPolicy, Tracking};
 pub use pool::{Ids, IdsChange, Sequences};
 pub use ranges::{DeleteText, InsertText, RangesEdited, ReplaceText};
+pub use set_cells::{CellEdit, CellsSet, SetCells};
 pub use set_text::{SetText, TextEdited};
 pub use sink::{EditSink, Keep, Numbered, TextWrite};

@@ -170,6 +170,20 @@ impl Command<WordDoc> for SetText {
 /// [`EditError::Text`] for text the paragraph cannot hold; a refusal for a target that is
 /// not a paragraph.
 pub(crate) fn write_text(sink: &mut EditSink<'_, '_>, target: &str, text: &str) -> Result<TextEdited> {
+    write_text_as(sink, target, text, true)
+}
+
+/// [`write_text`], the document stamped first when `stamping` (docx-agent's `_write_text`
+/// with `prepare`): a table filled in one pass writes its cells' text unstamped.
+///
+/// # Errors
+/// As [`write_text`].
+pub(crate) fn write_text_as(
+    sink: &mut EditSink<'_, '_>,
+    target: &str,
+    text: &str,
+    stamping: bool,
+) -> Result<TextEdited> {
     let docx = sink.docx()?;
     let found = find(sink.doc(), &docx, target)?;
     sink.read(block_key(&found.part, &found.id));
@@ -183,7 +197,11 @@ pub(crate) fn write_text(sink: &mut EditSink<'_, '_>, target: &str, text: &str) 
             created: Vec::new(),
         });
     }
-    let renamed = stamp_document(sink, &docx)?;
+    let renamed = if stamping {
+        stamp_document(sink, &docx)?
+    } else {
+        Vec::new()
+    };
     let id = renamed
         .iter()
         .find(|(old, _)| *old == found.id)
