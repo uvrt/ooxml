@@ -109,7 +109,7 @@ def test_cancelled_and_late_calls_stop_with_timeout():
 def test_tool_specs_are_the_exports():
     specs = json.loads(ooxml_core.tool_specs("docx"))
     assert [s["name"] for s in specs] == ["describe", "word_read", "word_inspect", "find_text", "word_set_tracking",
-                                          "word_changes", "word_comments", "word_set_text", "replace_text",
+                                          "word_changes", "word_comments", "word_set_text", "replace_text", "word_fields",
                                           "read_batch"]
     assert specs == json.loads(ooxml_core.Session().tool_specs("docx"))
     assert json.loads(ooxml_core.tool_specs("pptx")) == []
