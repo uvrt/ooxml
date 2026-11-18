@@ -34,3 +34,38 @@ pub(crate) fn part_of(package: &ooxml_opc::Package, main: &str, rel_type: &str) 
         .next()
         .filter(|p| package.has_part(p))
 }
+
+/// A comment part docx-agent makes when a document lacks it (`_PARTS`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Kind {
+    /// `commentsExtended`.
+    Extended,
+}
+
+/// Make the comment part `kind` as docx-agent's `_comment_part(create=True)` does: at its
+/// default name (numbered when taken), its root empty, its content type declared, related
+/// from `main`; the part's name.
+///
+/// # Errors
+/// When the content types or relationships are not XML.
+pub(crate) fn make_part(sink: &mut crate::sink::EditSink<'_, '_>, main: &str, kind: Kind) -> crate::Result<String> {
+    let (default, template, root, content_type, rel) = match kind {
+        Kind::Extended => (
+            "word/commentsExtended.xml",
+            "word/commentsExtended{n}.xml",
+            crate::new_part::ignorable_root("w15", "commentsEx", W15),
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.commentsExtended+xml",
+            REL_EXTENDED,
+        ),
+    };
+    let package = sink.doc().package().clone();
+    let part = crate::new_part::unused_name(&package, default, template);
+    let made = crate::new_part::add_part(&package, main, &part, root, content_type, rel)?;
+    let rels = ooxml_opc::name::rels_for(main);
+    for name in [part.as_str(), ooxml_opc::CONTENT_TYPES_PART, rels.as_str()] {
+        if let Some(tree) = made.tree(name)? {
+            sink.put(name, tree)?;
+        }
+    }
+    Ok(part)
+}

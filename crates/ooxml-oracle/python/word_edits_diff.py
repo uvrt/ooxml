@@ -25,6 +25,7 @@ functions only.
 from __future__ import annotations
 
 import argparse
+import json
 import copy
 import io
 import sys
@@ -211,7 +212,87 @@ def _review_cases(document) -> list[dict]:
     return cases
 
 
+def _tool_cases(document) -> list[dict]:
+    """``word_changes``, ``word_comments`` and ``word_set_tracking`` called as tools
+    (``--tools``): lists, settling, a preview, refusals, the tracking mode and Word's switch,
+    and comments resolved, reopened and deleted."""
+    def call(tool, **arguments):
+        return {"op": "tool", "tool": tool, "arguments": {"doc": "d1", **arguments}}
+
+    out = [call("word_changes", action="list"), call("word_changes", action="list", detail="records"),
+           call("word_changes", action="accept"), call("word_changes", action="list", all=True),
+           call("word_changes", action="reject", ids=["rev:999999"]),
+           call("word_set_tracking", on=True, author="Writer A", word_switch=True),
+           call("word_set_tracking", on=False, word_switch=False), call("word_set_tracking", on=True),
+           call("word_comments", action="list"), call("word_comments", action="list", open_only=True),
+           call("word_comments", action="resolve", items=[]), call("word_comments", action="delete"),
+           call("word_comments", action="resolve", items=[{"comment": "c:00000000"}])]
+    changes = document.changes()
+    if changes:
+        first = changes[0]
+        out += [call("word_changes", action="accept", all=True), call("word_changes", action="reject", all=True),
+                call("word_changes", action="accept", ids=[first.id]),
+                call("word_changes", action="reject", ids=[first.id], author="x"),
+                call("word_changes", action="preview", all=True), call("word_changes", action="preview", ids=[first.id]),
+                call("word_changes", action="list", kind=first.kind), call("word_changes", action="list", detail="records",
+                                                                           kind=first.kind)]
+        if first.author:
+            out += [call("word_changes", action="reject", author=first.author),
+                    call("word_changes", action="list", author=first.author)]
+        if first.paragraph_ids:
+            out += [call("word_changes", action="list", within=first.paragraph_ids[0]),
+                    call("word_changes", action="accept", within=first.paragraph_ids[0])]
+    threads = document.comments(replies=False)
+    if threads:
+        first = threads[0].id
+        out += [call("word_comments", action="resolve", items=[{"comment": first}]),
+                call("word_comments", action="reopen", items=[{"comment": first}]),
+                call("word_comments", action="delete", items=[{"comment": first}])]
+        replies = threads[0].replies
+        if replies:
+            out.append(call("word_comments", action="resolve", items=[{"comment": replies[0].id}]))
+    return out
+
+
+_TOOLBOX = None
+
+
+def _toolbox():
+    global _TOOLBOX
+    if _TOOLBOX is None:
+        from docx_agent.tools import FORMAT, GROUPS, TOOLS
+        from ooxml_edit.tools import Toolbox
+
+        _TOOLBOX = Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS)
+    return _TOOLBOX
+
+
+def _reply(reply: dict) -> dict:
+    """What a reply says that both sides must say alike: an error's code, message and
+    field (the way out is Rust's rule-2 addition); else the summary, data, ids and warnings."""
+    if reply.get("error"):
+        error = reply["error"]
+        return {"error": {k: error.get(k) for k in ("code", "message", "field")}}
+    return {k: reply.get(k) for k in ("summary", "data", "changed", "created", "removed", "renamed", "warnings",
+                                      "total", "next_cursor") if reply.get(k) not in (None, [], {})}
+
+
+def python_tool_case(data: bytes, case: dict) -> dict:
+    toolbox = _toolbox()
+    session = toolbox.session()
+    doc = session.open(data, name="case.docx")
+    arguments = {**case["arguments"], "doc": doc}
+    reply = json.loads(json.dumps(toolbox.dispatch(session, case["tool"], arguments).to_json()))
+    out = session.save(doc).data
+    session.close(doc)
+    before, after = _parts(data), _parts(out)
+    parts = {name: body.decode("utf-8", "replace") for name, body in after.items() if before.get(name) != body}
+    return {"reply": _reply(reply), "parts": parts, "order": _order(out)}
+
+
 def python_case(data: bytes, case: dict, baseline: list) -> dict:
+    if case.get("op") == "tool":
+        return python_tool_case(data, case)
     document = Document.open(data)
     before = _parts(data)
     try:
@@ -272,6 +353,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--ops", action="store_true", help="insert_text, delete_text and replace too")
     parser.add_argument("--only-ops", action="store_true", help="insert_text, delete_text and replace only")
     parser.add_argument("--review", action="store_true", help="accept and reject only (word_changes)")
+    parser.add_argument("--tools", action="store_true", help="the review tools called as tools only")
     parser.add_argument("files", nargs="*")
     args = parser.parse_args(argv)
     expected: dict = {}
@@ -283,16 +365,17 @@ def main(argv: list[str] | None = None) -> int:
             baseline = _validate.check(document.package)
             cases = []
             targets = _targets(document)
-            if args.review:
-                cases = [{**case, "tracked": None} for case in _review_cases(document)]
+            if args.review or args.tools:
+                found = _tool_cases(document) if args.tools else _review_cases(document)
+                cases = [{**case, "tracked": None} for case in found]
                 targets = []
-            if not args.only_ops and not args.review:
+            if not args.only_ops and not (args.review or args.tools):
                 for target in targets:
                     text = document.paragraph(target).text
                     for new in _texts(text):
                         for tracked in (None, TRACKING):
                             cases.append({"target": target, "text": new, "tracked": tracked})
-            if (args.ops or args.only_ops) and not args.review:
+            if (args.ops or args.only_ops) and not (args.review or args.tools):
                 for case in _range_cases(document, targets):
                     for tracked in (None, TRACKING):
                         cases.append({**case, "tracked": tracked})
@@ -309,6 +392,14 @@ def main(argv: list[str] | None = None) -> int:
     rewritten = 0
     for key, want in expected.items():
         have = got.get(key)
+        if isinstance(have, dict) and "reply" in have:
+            if have.get("unported"):
+                got[key] = want      # the host answers it its own way (Done::unported)
+                continue
+            have["reply"] = _reply(have["reply"])
+            have.pop("unported", None)
+            _shorten(want["parts"], have["parts"])
+            continue
         written = want.pop("touched_as_written", None)
         if isinstance(have, dict) and "refused" in have and "refused" in want:
             got[key] = want      # both refused: the messages are each side's own words

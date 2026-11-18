@@ -45,5 +45,6 @@ pub mod reads;
 pub mod reads_bench;
 pub mod records;
 pub mod replay;
+pub mod review_tools;
 pub mod scene_data;
 pub mod text;

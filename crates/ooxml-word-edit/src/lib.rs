@@ -31,6 +31,7 @@ mod error;
 mod inline;
 mod names;
 mod namespaces;
+mod new_part;
 mod people;
 mod policy;
 mod pool;

@@ -102,7 +102,7 @@ pub(crate) fn settle(args: &WordChanges, editing: &Editing<'_>) -> Result<ToolRe
     let out = &done.out;
     let session = this_session(&out.settled, &opened, &changed);
     let left = changes(&after);
-    let blocks = merged(&out.blocks);
+    let (blocks, order) = merged(&out.blocks);
     let verb = if accept { "Accepted" } else { "Rejected" };
     let mut summary = format!("{verb} {} revision record(s)", out.records);
     if !by_ids {
@@ -119,7 +119,7 @@ pub(crate) fn settle(args: &WordChanges, editing: &Editing<'_>) -> Result<ToolRe
     data.insert("changes_left".into(), json!(left.len()));
     data.insert("left_by_author".into(), Value::Object(by_author(&left)));
     if !blocks_empty(&blocks) {
-        data.insert("removed".into(), blocks_json(&blocks));
+        data.insert("removed".into(), blocks_json(&blocks, &order));
     }
     let mut reply = Done::new(summary);
     reply.data = Some(Value::Object(data));
@@ -206,11 +206,37 @@ fn by_author(left: &[LogicalChange]) -> Map<String, Value> {
     out
 }
 
+/// The removed blocks' kinds, in the order docx-agent's merged dict has them: as each
+/// first appears, step by step.
+type Order = Vec<&'static str>;
+
+/// The kinds `typed` holds, in its own order.
+fn kinds(typed: &Typed) -> Order {
+    [
+        ("tables", typed.tables.is_empty()),
+        ("rows", typed.rows.is_empty()),
+        ("paragraphs", typed.paragraphs.is_empty()),
+        ("merged", typed.merged.is_empty()),
+        ("controls", typed.controls.is_empty()),
+    ]
+    .into_iter()
+    .filter(|(_, empty)| !empty)
+    .map(|(k, _)| k)
+    .collect()
+}
+
 /// The steps' removed blocks merged (`_merged_blocks`): a paragraph merged into one a
-/// later step merged in turn named by the last, rows of a table removed left out.
-fn merged(steps: &[RemovedBlocks]) -> Typed {
+/// later step merged in turn named by the last, rows of a table removed left out; and the
+/// order its kinds first appear in.
+fn merged(steps: &[RemovedBlocks]) -> (Typed, Order) {
     let mut out = Typed::default();
+    let mut order: Order = Vec::new();
     for s in steps {
+        for kind in kinds(&s.typed) {
+            if !order.contains(&kind) {
+                order.push(kind);
+            }
+        }
         out.tables.extend(s.typed.tables.iter().cloned());
         out.rows.extend(s.typed.rows.iter().cloned());
         out.paragraphs.extend(s.typed.paragraphs.iter().cloned());
@@ -241,15 +267,18 @@ fn merged(steps: &[RemovedBlocks]) -> Typed {
         .cloned()
         .collect();
     out.rows = rows;
-    out
+    if out.rows.is_empty() {
+        order.retain(|k| *k != "rows");
+    }
+    (out, order)
 }
 
 fn blocks_empty(b: &Typed) -> bool {
     b.tables.is_empty() && b.rows.is_empty() && b.paragraphs.is_empty() && b.merged.is_empty() && b.controls.is_empty()
 }
 
-/// The removed blocks as docx-agent's `data.removed`.
-fn blocks_json(b: &Typed) -> Value {
+/// The removed blocks as docx-agent's `data.removed`, its kinds in `order`.
+fn blocks_json(b: &Typed, order: &Order) -> Value {
     let mut out = Map::new();
     if !b.tables.is_empty() {
         let tables: Vec<Value> = b
@@ -285,7 +314,11 @@ fn blocks_json(b: &Typed) -> Value {
     if !b.controls.is_empty() {
         out.insert("controls".into(), json!(b.controls));
     }
-    Value::Object(out)
+    let ordered: Map<String, Value> = order
+        .iter()
+        .filter_map(|k| out.get(*k).map(|v| ((*k).to_owned(), v.clone())))
+        .collect();
+    Value::Object(ordered)
 }
 
 fn plural(count: u64, word: &str) -> String {
@@ -368,14 +401,14 @@ fn preview(args: &WordChanges, editing: &Editing<'_>, selection: Selection) -> R
             .map(|d| changes(&d).len())
             .map_err(|e| ToolError::internal(e.to_string(), "word:model"))?;
         let reviewed: &Reviewed = &done.out;
-        let blocks = merged(&reviewed.blocks);
+        let (blocks, order) = merged(&reviewed.blocks);
         let session = this_session(&reviewed.settled, &opened, &changed);
         let mut outcome = Map::new();
         outcome.insert("records".into(), json!(reviewed.records));
         outcome.insert("this_session".into(), json!(session));
         outcome.insert("changes_left".into(), json!(left));
         if !blocks_empty(&blocks) {
-            outcome.insert("removed".into(), blocks_json(&blocks));
+            outcome.insert("removed".into(), blocks_json(&blocks, &order));
         }
         let action = if accept { "accept" } else { "reject" };
         data.insert(action.into(), Value::Object(outcome));

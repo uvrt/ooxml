@@ -7,7 +7,8 @@
 //! The manifest is a JSON list of `{"file": path, "cases": [{"op", "target", "text",
 //! "tracked": {"author", "date"} or null, ...}]}` (`op`: `set_text` when absent,
 //! `insert_text`, `delete_text`, `replace` with `find`, `case`, `count`, `keep`, `accept`
-//! and `reject` with `ids`, `all`, or `author`/`kind`/`within`); each case runs on the
+//! and `reject` with `ids`, `all`, or `author`/`kind`/`within`, `tool` with `tool` and
+//! `arguments`: [`crate::review_tools`]); each case runs on the
 //! document as opened.
 //!
 //! Must not: be used by any library; it is a test instrument.
@@ -110,6 +111,9 @@ fn edit(bytes: &Arc<[u8]>, case: &Value) -> Result<Value, String> {
         Arc::new(Unlimited),
     )
     .map_err(|e| e.to_string())?;
+    if case.get("op").and_then(Value::as_str) == Some("tool") {
+        return crate::review_tools::tool_case(bytes, case);
+    }
     let text = |key: &str| case.get(key).and_then(Value::as_str).unwrap_or("").to_owned();
     let caller = Caller::anonymous();
     let done: Result<Value, EditError> = match case.get("op").and_then(Value::as_str).unwrap_or("set_text") {

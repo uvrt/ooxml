@@ -58,7 +58,7 @@ pub(crate) fn act(args: &WordComments, editing: &Editing<'_>) -> Result<ToolResu
     let done = editing
         .editor
         .run(editing.caller, &CommentEdits { edit, ids })
-        .map_err(|e| super::edit_refusal(e, "items[].comment", try_call(&list)))?;
+        .map_err(|e| super::edit_refusal(e, "", try_call(&list)))?;
     let mut reply = Done::new(format!("{action}: {} comment(s)", items.len()));
     for outcome in &done.out {
         if let Some(id) = outcome.id.as_ref().filter(|_| outcome.changed) {

@@ -52,9 +52,7 @@ impl CacheBudget for Unlimited {
 /// A document whose body is `body`, with settings and, when given, a comments part and
 /// its `commentsExtended`.
 fn package(body: &str, comments: Option<(&str, &str)>) -> Package {
-    let mut rels = format!(
-        r#"<Relationship Id="rId1" Type="{R}settings" Target="settings.xml"/>"#
-    );
+    let mut rels = format!(r#"<Relationship Id="rId1" Type="{R}settings" Target="settings.xml"/>"#);
     let mut parts = vec![
         (
             "_rels/.rels".to_owned(),
@@ -62,13 +60,25 @@ fn package(body: &str, comments: Option<(&str, &str)>) -> Package {
                 r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="{R}officeDocument" Target="word/document.xml"/></Relationships>"#
             ),
         ),
-        ("word/settings.xml".to_owned(), format!(r#"<w:settings {W}><w:zoom w:percent="100"/><w:defaultTabStop w:val="720"/></w:settings>"#)),
-        ("word/document.xml".to_owned(), format!("<w:document {W}><w:body>{body}</w:body></w:document>")),
+        (
+            "word/settings.xml".to_owned(),
+            format!(r#"<w:settings {W}><w:zoom w:percent="100"/><w:defaultTabStop w:val="720"/></w:settings>"#),
+        ),
+        (
+            "word/document.xml".to_owned(),
+            format!("<w:document {W}><w:body>{body}</w:body></w:document>"),
+        ),
     ];
     if let Some((comments, extended)) = comments {
         rels.push_str(&format!(r#"<Relationship Id="rId2" Type="{R}comments" Target="comments.xml"/><Relationship Id="rId3" Type="http://schemas.microsoft.com/office/2011/relationships/commentsExtended" Target="commentsExtended.xml"/>"#));
-        parts.push(("word/comments.xml".to_owned(), format!("<w:comments {W}>{comments}</w:comments>")));
-        parts.push(("word/commentsExtended.xml".to_owned(), format!("<w15:commentsEx {W}>{extended}</w15:commentsEx>")));
+        parts.push((
+            "word/comments.xml".to_owned(),
+            format!("<w:comments {W}>{comments}</w:comments>"),
+        ));
+        parts.push((
+            "word/commentsExtended.xml".to_owned(),
+            format!("<w15:commentsEx {W}>{extended}</w15:commentsEx>"),
+        ));
     }
     parts.push((
         "word/_rels/document.xml.rels".to_owned(),
@@ -152,7 +162,10 @@ fn the_definitions_are_the_golden_exports() {
 fn changes_are_listed_grouped_and_as_records() {
     let (editor, opened) = editor(tracked());
     let caller = Caller::anonymous();
-    let result = json(&word_changes(&changes(ChangeAction::List), &editing(&editor, &opened, &caller)));
+    let result = json(&word_changes(
+        &changes(ChangeAction::List),
+        &editing(&editor, &opened, &caller),
+    ));
     assert_eq!(result["summary"], "2 change(s)");
     assert_eq!(result["data"][0]["kind"], "replacement");
     assert_eq!(result["data"][0]["old_text"], "old");
@@ -174,7 +187,10 @@ fn accepting_by_author_settles_only_theirs_and_says_what_is_left() {
     assert_eq!(result["summary"], "Accepted 2 revision record(s)");
     assert_eq!(result["data"]["changes_left"], 1);
     assert_eq!(result["data"]["left_by_author"], serde_json::json!({"B": 1}));
-    let left = json(&word_changes(&changes(ChangeAction::List), &editing(&editor, &opened, &caller)));
+    let left = json(&word_changes(
+        &changes(ChangeAction::List),
+        &editing(&editor, &opened, &caller),
+    ));
     assert_eq!(left["data"][0]["author"], "B");
 }
 
@@ -186,7 +202,10 @@ fn a_preview_changes_nothing() {
     call.all = Some(true);
     let before = editor.store().snapshot().seq();
     let result = json(&word_changes(&call, &editing(&editor, &opened, &caller)));
-    assert!(result["summary"].as_str().unwrap().starts_with("Preview, nothing changed: 2 change(s); accept would settle 3 record(s)"));
+    assert!(result["summary"]
+        .as_str()
+        .unwrap()
+        .starts_with("Preview, nothing changed: 2 change(s); accept would settle 3 record(s)"));
     assert_eq!(result["data"]["reject"]["changes_left"], 0);
     assert_eq!(editor.store().snapshot().seq(), before);
 }
@@ -195,14 +214,21 @@ fn a_preview_changes_nothing() {
 fn refusals_carry_the_way_out() {
     let (editor, opened) = editor(tracked());
     let caller = Caller::anonymous();
-    let result = json(&word_changes(&changes(ChangeAction::Accept), &editing(&editor, &opened, &caller)));
+    let result = json(&word_changes(
+        &changes(ChangeAction::Accept),
+        &editing(&editor, &opened, &caller),
+    ));
     assert_eq!(result["error"]["code"], "invalid_arguments");
-    assert!(result["error"]["valid_options"].as_array().is_some_and(|o| o.len() == 5));
+    assert!(result["error"]["valid_options"]
+        .as_array()
+        .is_some_and(|o| o.len() == 5));
     let mut call = changes(ChangeAction::Reject);
     call.ids = Some(vec!["rev:99".into()]);
     let result = json(&word_changes(&call, &editing(&editor, &opened, &caller)));
     assert_eq!(result["error"]["code"], "not_found");
-    assert!(result["error"]["valid_options"].as_array().is_some_and(|o| !o.is_empty()));
+    assert!(result["error"]["valid_options"]
+        .as_array()
+        .is_some_and(|o| !o.is_empty()));
     let mut call = changes(ChangeAction::List);
     call.all = Some(true);
     let result = json(&word_changes(&call, &editing(&editor, &opened, &caller)));
@@ -225,7 +251,11 @@ fn tracking_is_handed_back_and_words_switch_set_once() {
     let seq = editor.store().snapshot().seq();
     let (again, _) = word_set_tracking(&call, &editing(&editor, &opened, &caller));
     assert_eq!(json(&again)["summary"], "Tracking on, as Reviewer; Word's switch on");
-    assert_eq!(editor.store().snapshot().seq(), seq, "a switch already on is not written again (rule 3)");
+    assert_eq!(
+        editor.store().snapshot().seq(),
+        seq,
+        "a switch already on is not written again (rule 3)"
+    );
     let missing = WordSetTracking {
         author: None,
         word_switch: None,
@@ -267,19 +297,32 @@ fn comments_are_resolved_and_deleted_with_their_replies() {
         open_only: None,
         cursor: None,
     };
-    let listed = json(&word_comments(&call(CommentAction::List, None), &editing(&editor, &opened, &caller)));
+    let listed = json(&word_comments(
+        &call(CommentAction::List, None),
+        &editing(&editor, &opened, &caller),
+    ));
     assert_eq!(listed["summary"], "1 thread(s)");
     assert_eq!(listed["data"][0]["replies"][0]["text"], "Agreed");
     let resolved = json(&word_comments(
         &call(CommentAction::Resolve, Some(vec![item("c#1")])),
         &editing(&editor, &opened, &caller),
     ));
-    assert_eq!(resolved["changed"], serde_json::json!(["c#0"]), "a reply resolves its thread");
+    assert_eq!(
+        resolved["changed"],
+        serde_json::json!(["c#0"]),
+        "a reply resolves its thread"
+    );
     let deleted = json(&word_comments(
         &call(CommentAction::Delete, Some(vec![item("c#0")])),
         &editing(&editor, &opened, &caller),
     ));
     assert_eq!(deleted["removed"], serde_json::json!(["c#0", "c#1"]));
-    let empty = json(&word_comments(&call(CommentAction::Delete, Some(Vec::new())), &editing(&editor, &opened, &caller)));
-    assert_eq!(empty["summary"], "Nothing changed: items is empty", "an empty list is no error (rule 3)");
+    let empty = json(&word_comments(
+        &call(CommentAction::Delete, Some(Vec::new())),
+        &editing(&editor, &opened, &caller),
+    ));
+    assert_eq!(
+        empty["summary"], "Nothing changed: items is empty",
+        "an empty list is no error (rule 3)"
+    );
 }

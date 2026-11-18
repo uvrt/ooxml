@@ -3,8 +3,8 @@
 //! `commentsExtended`; `delete_comment` with its replies), several at once, one history
 //! step.
 //!
-//! Must not: write a comment part but through the step's copies; add a part (a document
-//! without `commentsExtended` is refused as unsupported for now).
+//! Must not: write a comment part but through the command's copies (a part it lacks is
+//! made through the sink first).
 
 use super::delete::{comment_part_relationships, delete, none_left};
 use super::{part_of, REL_EXTENDED, W15};
@@ -113,7 +113,7 @@ impl Command<WordDoc> for CommentEdits {
                 }
                 CommentEdit::Resolve | CommentEdit::Reopen => {
                     let root = thread_root(&left, comment);
-                    let changed = set_done(&doc, &docx, &mut space, root, self.edit == CommentEdit::Resolve)?;
+                    let changed = set_done(&mut sink, &docx, &mut space, root, self.edit == CommentEdit::Resolve)?;
                     out.push(CommentEdited {
                         id: Some(root.id.clone()),
                         changed,
@@ -138,7 +138,7 @@ impl Command<WordDoc> for CommentEdits {
 }
 
 /// `w15:done` of `root`'s entry in `commentsExtended` set (`_set_done`); whether it changed.
-fn set_done(doc: &WordDoc, docx: &Docx, space: &mut Space, root: &Comment, done: bool) -> Result<bool> {
+fn set_done(sink: &mut EditSink<'_, '_>, docx: &Docx, space: &mut Space, root: &Comment, done: bool) -> Result<bool> {
     let para = last_para_as_written(docx, root);
     if para.is_empty() {
         return Err(EditError::Refused(format!(
@@ -146,12 +146,14 @@ fn set_done(doc: &WordDoc, docx: &Docx, space: &mut Space, root: &Comment, done:
             root.id
         )));
     }
-    let Some(part) = part_of(&docx.package, &docx.main, REL_EXTENDED) else {
-        return Err(EditError::Unsupported(
-            "a comments part without commentsExtended (the part would be made)".to_owned(),
-        ));
+    let part = match part_of(sink.doc().package(), &docx.main, REL_EXTENDED) {
+        Some(part) => part,
+        None => super::make_part(sink, &docx.main, super::Kind::Extended)?,
     };
-    let work = space.work(doc, &part)?.ok_or_else(|| EditError::NoPart(part.clone()))?;
+    let doc = sink.doc().clone();
+    let work = space
+        .work(&doc, &part)?
+        .ok_or_else(|| EditError::NoPart(part.clone()))?;
     let value = if done { "1" } else { "0" };
     let found = work.children(work.root()).iter().copied().find(|e| {
         work.is(*e, W15, "commentEx")
