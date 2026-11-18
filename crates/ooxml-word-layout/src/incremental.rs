@@ -110,10 +110,23 @@ fn shift(p: &Position, by: isize) -> Position {
     }
 }
 
-/// An old page moved by the change: its items by `items`, its place by `pages`, its
-/// number by `numbers`.
-fn moved(page: &LaidPage, items: isize, pages: isize, numbers: i64) -> LaidPage {
+/// An old page moved by the change: its items by `by.items` (its drawings' paragraphs
+/// by `shift.blocks`), its place by `shift.pages`, its number by `shift.numbers`.
+fn moved(page: &LaidPage, by: Shift) -> LaidPage {
+    let Shift {
+        items,
+        blocks,
+        pages,
+        numbers,
+    } = by;
     let mut out = page.clone();
+    for band in &mut out.bands {
+        band.key.block = band.key.block.saturating_add_signed(blocks);
+    }
+    for wrap in &mut out.wraps {
+        wrap.drop_cap = wrap.drop_cap.map(|k| k.saturating_add_signed(items));
+        wrap.table = wrap.table.map(|k| k.saturating_add_signed(items));
+    }
     out.start = shift(&page.start, items);
     out.end = shift(&page.end, items);
     out.reach = shift(&page.reach, items);
@@ -212,10 +225,14 @@ pub fn changes(old: &[FlowItem], new: &[FlowItem]) -> Vec<Change> {
     out
 }
 
-/// How the old pages are moved to follow the new ones: by items, pages and numbers.
+/// How the old pages are moved to follow the new ones: by items, blocks, pages and
+/// numbers.
 #[derive(Debug, Clone, Copy)]
 struct Shift {
     items: isize,
+    /// How far the paragraphs' blocks (document order, cells included) moved: a
+    /// drawing's key names its paragraph by its block.
+    blocks: isize,
     pages: isize,
     numbers: i64,
 }
@@ -236,11 +253,11 @@ fn copy_moved(out: &mut Pagination, old: &Pagination, from: usize, to: usize, sh
     let to = to.min(old.pages.len());
     out.pages
         .extend(old.pages.get(from..to).unwrap_or_default().iter().map(|page| {
-            if shift.items == 0 && shift.pages == 0 && shift.numbers == 0 {
+            if shift.items == 0 && shift.blocks == 0 && shift.pages == 0 && shift.numbers == 0 {
                 // A page that stays where it was is the old one.
                 Arc::clone(page)
             } else {
-                Arc::new(moved(page, shift.items, shift.pages, shift.numbers))
+                Arc::new(moved(page, shift))
             }
         }));
     let info_to = if to < old.pages.len() {
@@ -265,7 +282,11 @@ fn copy_moved(out: &mut Pagination, old: &Pagination, from: usize, to: usize, sh
 /// before the first change kept; from the first page whose decision read a change, pages
 /// laid out again until one starts where an old one did past that change; the old pages
 /// from there moved until the next change is read, and so on.
-pub fn repaginate(cx: &PageContext<'_>, old: &Pagination, changes: &[Change]) -> (Pagination, RelayoutStats) {
+pub fn repaginate(
+    cx: &PageContext<'_>,
+    (old, old_items): (&Pagination, &[FlowItem]),
+    changes: &[Change],
+) -> (Pagination, RelayoutStats) {
     let Some(first) = changes.first() else {
         return (old.clone(), RelayoutStats::default());
     };
@@ -282,6 +303,7 @@ pub fn repaginate(cx: &PageContext<'_>, old: &Pagination, changes: &[Change]) ->
     };
     let mut shift = Shift {
         items: 0,
+        blocks: 0,
         pages: 0,
         numbers: 0,
     };
@@ -313,8 +335,11 @@ pub fn repaginate(cx: &PageContext<'_>, old: &Pagination, changes: &[Change]) ->
         out.stopped = fresh.stopped;
         let (Some(q), Some(state)) = (joined, stop) else { break };
         stats.joined = Some(q);
+        let items = shift.items + delta;
+        let start = old.pages.get(q).map_or(0, |page| page.start.item);
         shift = Shift {
-            items: shift.items + delta,
+            items,
+            blocks: block_shift((old_items, cx.items), start, items),
             pages: isize::try_from(state.page).unwrap_or(0) - isize::try_from(base_of(old, q)).unwrap_or(0),
             numbers: state.number - old.pages.get(q).map_or(0, |page| page.number_before),
         };
@@ -340,6 +365,15 @@ pub fn repaginate(cx: &PageContext<'_>, old: &Pagination, changes: &[Change]) ->
         }
     }
     (out, stats)
+}
+
+/// How far old item `start`'s paragraph blocks moved, it being item `start + items` now.
+fn block_shift((old, new): (&[FlowItem], &[FlowItem]), start: usize, items: isize) -> isize {
+    let block = |list: &[FlowItem], k: usize| list.get(k).map(|i| isize::try_from(i.block()).unwrap_or(0));
+    match (block(new, start.saturating_add_signed(items)), block(old, start)) {
+        (Some(now), Some(was)) => now - was,
+        _ => 0,
+    }
 }
 
 /// The page a relayout restarts at, at or before `p`: one whose state holds no paragraph

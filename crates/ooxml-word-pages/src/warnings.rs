@@ -5,13 +5,16 @@
 //! the sections' vertical alignment and the fields Word computes again, then page by page
 //! what its body draws (tables laid out by approximate rules or off their grid, rows past
 //! the page's foot, distributed paragraphs, inline drawings with no picture, floating
-//! drawings that may not overlap) and its header's and footer's fields.
+//! drawings that may not overlap), its header's and footer's fields and a shared page's
+//! notes stacked across it; last, line numbers in sections of several columns.
 //!
 //! A warning is recorded once (`Layout.warn`'s rule: the same code, message and page); an
 //! approximation is a warning too (`layout-approximate:<reason>`).
 //!
 //! Must not: lay out or paint, or say anything docx2svg does not.
 
+use ooxml_base::Locale;
+use ooxml_word_layout::fields::styleref::{body_style_texts, StyleSearch};
 use ooxml_word_layout::fields::update::PageNumbers;
 use ooxml_word_layout::fields::{cross_reference_problems, field_text, page_counts, Uncomputable};
 use ooxml_word_layout::flow::{body_paragraphs, FlowItem};
@@ -126,7 +129,7 @@ fn blocks_hold_drawing(blocks: &[Block]) -> bool {
 
 /// What `layout` says, its paragraphs and tables resolved in `model`; `drawings` paints
 /// the pages that hold drawings for what their painters say.
-pub fn said(model: &mut Model, layout: &DocumentLayout, drawings: &mut dyn PageDrawings) -> Said {
+pub fn said(model: &mut Model, layout: &DocumentLayout, drawings: &mut dyn PageDrawings, locale: &Locale) -> Said {
     let mut out = Said::default();
     let document = &layout.document;
     for (keyword, why) in cross_reference_problems(document) {
@@ -136,6 +139,7 @@ pub fn said(model: &mut Model, layout: &DocumentLayout, drawings: &mut dyn PageD
             None,
         );
     }
+    body_style_references(layout, locale, &mut out);
     body_fields(layout, &mut out);
     if !layout.settled {
         out.warn(
@@ -172,9 +176,61 @@ pub fn said(model: &mut Model, layout: &DocumentLayout, drawings: &mut dyn PageD
                 }
             }
         }
-        pages.stories(layout, page, &mut out);
+        pages.stories(layout, (page, locale), &mut out);
+        shared_page_notes(layout, page, &mut out);
     }
+    line_numbers(document, &mut out);
     out
+}
+
+/// The body's `STYLEREF`s that keep Word's cached result (`_style_references`).
+fn body_style_references(layout: &DocumentLayout, locale: &Locale, out: &mut Said) {
+    let document = &layout.document;
+    let placed = |body: usize| layout.roles.get(body).is_some_and(Option::is_some);
+    let mut search = StyleSearch::new(document, locale, &placed);
+    for (_, text) in body_style_texts(&mut search) {
+        if let Err(Uncomputable(why)) = text {
+            out.warn(
+                "field-not-computed:STYLEREF",
+                format!("a STYLEREF field in the body is drawn as Word cached it ({why})"),
+                None,
+            );
+        }
+    }
+}
+
+/// A section of several text columns that numbers its lines: not drawn there
+/// (`_line_numbers`, not measured).
+fn line_numbers(document: &WordDocument, out: &mut Said) {
+    for section in document.sections.iter() {
+        let props = &section.properties;
+        if props.line_numbering.is_some() && props.column_count > 1 {
+            out.warn(
+                "line-numbers-not-drawn",
+                "a section of several text columns numbers its lines (w:lnNumType), which is not drawn there (not \
+                 measured)",
+                None,
+            );
+        }
+    }
+}
+
+/// A one-column section's footnotes on a page it shares with a section of several
+/// columns whose notes are drawn too: stacked at the page's foot across the text area, by
+/// a rule not measured (`_footnotes`).
+fn shared_page_notes(layout: &DocumentLayout, page: usize, out: &mut Said) {
+    let Some(laid) = layout.laid_page(page) else { return };
+    let noted = |c: &&ooxml_word_layout::paginate::PageColumn| !c.notes.is_empty() || !c.carried.is_empty();
+    let columns_noted = laid.columns.iter().filter(noted).any(|c| c.multi);
+    for _ in laid.columns.iter().filter(noted).filter(|c| !c.multi && columns_noted) {
+        out.approximate(
+            "notes",
+            "footnotes of a one-column section on a page it shares with a section of several columns whose notes are \
+             drawn too: stacked at the page's foot across the text area (not measured)",
+            Some(page + 1),
+            None,
+        );
+    }
 }
 
 /// The body's page-number fields that cannot be computed (`_computed_fields`).
@@ -281,6 +337,43 @@ fn document_notes(document: &WordDocument, out: &mut Said) {
     }
 }
 
+/// What of a paragraph in a section of several columns is laid out as in a column of its
+/// own, not as measured (`paginate.flow`'s carry-on): a floating drawing not positioned
+/// against its column; a footnote in a section a continuous break joins to another (Word
+/// moves such a section to a page of its own below mode 15, and sets the page's notes in
+/// one column in mode 15); in mode 15 an endnote (Word balances the text above the
+/// endnotes and sets them as a region of their own).
+fn column_carry_on(
+    layout: &DocumentLayout,
+    (paragraph, item): (&Paragraph, &ooxml_word_layout::flow::ParaItem),
+) -> Option<&'static str> {
+    let sections = &layout.document.sections;
+    let continuous = |k: usize| {
+        sections
+            .get(k)
+            .is_some_and(|s| s.properties.start_type.as_deref() == Some("continuous"))
+    };
+    let shares_page = (item.section > 0 && continuous(item.section)) || continuous(item.section + 1);
+    let runs = paragraph.runs.iter();
+    if runs
+        .clone()
+        .flat_map(|r| r.anchors.iter())
+        .any(|a| a.h.relative.as_deref().unwrap_or("column") != "column" || a.simple.is_some())
+    {
+        Some("a floating drawing not positioned against its column")
+    } else if shares_page
+        && runs
+            .flat_map(|r| r.breaks.iter())
+            .any(|(_, mark)| mark.starts_with("footnoteReference:"))
+    {
+        Some("a footnote, in a section a continuous break joins to another,")
+    } else if layout.mode15 && layout.roles.get(item.body).is_some_and(Option::is_some) {
+        Some("an endnote")
+    } else {
+        None
+    }
+}
+
 /// A walk of the pages: the body's paragraphs (cells included), and the tables said of
 /// already.
 struct PageWalk {
@@ -337,12 +430,10 @@ impl PageWalk {
     ) {
         let document = &layout.document;
         let multi = layout.sections.get(item.section).is_some_and(|s| s.multi_column());
-        if line == 0 && multi && layout.mode15 && layout.roles.get(item.body).is_some_and(Option::is_some) {
-            // In mode 15 Word balances the text above the endnotes and sets them as a
-            // region of their own (`paginate.flow`'s carry-on): not modelled.
+        if let Some(detail) = column_carry_on(layout, (paragraph, item)).filter(|_| line == 0 && multi) {
             out.approximate(
                 "columns",
-                "an endnote in a section of several text columns is laid out as in a column of its own (not measured)",
+                &format!("{detail} in a section of several text columns is laid out as in a column of its own (not measured)"),
                 number,
                 Some(&paragraph.path),
             );
@@ -478,7 +569,7 @@ impl PageWalk {
     }
 
     /// Page `page`'s header's and footer's fields that cannot be computed (`_draw_story`).
-    fn stories(&mut self, layout: &DocumentLayout, page: usize, out: &mut Said) {
+    fn stories(&mut self, layout: &DocumentLayout, (page, locale): (usize, &Locale), out: &mut Said) {
         let Some(info) = layout.pagination.info.get(page) else {
             return;
         };
@@ -503,14 +594,20 @@ impl PageWalk {
             };
             let part = document.story_parts.get(id).cloned().unwrap_or_else(|| id.clone());
             let (paragraphs, _) = body_paragraphs(blocks);
-            for paragraph in &paragraphs {
-                for run in paragraph.runs.iter() {
-                    let Some(field) = run.field.as_ref().filter(|f| &*f.keyword != "STYLEREF") else {
+            let texts = layout.story_texts(locale).get(&(page, id.clone()));
+            for (p, paragraph) in paragraphs.iter().enumerate() {
+                for (k, run) in paragraph.runs.iter().enumerate() {
+                    let Some(field) = run.field.as_ref() else {
                         continue;
                     };
-                    if let Err(Uncomputable(why)) =
+                    let text = if &*field.keyword == "STYLEREF" {
+                        texts
+                            .and_then(|t| t.iter().find(|(at, _)| *at == (p, k)))
+                            .map_or(Ok(String::new()), |(_, text)| text.clone())
+                    } else {
                         field_text(&field.instruction, &field.keyword, info.number, counts, format)
-                    {
+                    };
+                    if let Err(Uncomputable(why)) = text {
                         out.warn(
                             format!("field-not-computed:{}", field.keyword),
                             format!("a {} field in {part} is drawn as Word cached it ({why})", field.keyword),

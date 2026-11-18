@@ -11,6 +11,8 @@
 
 pub mod footnotes;
 pub mod linebox;
+mod opening;
+pub use opening::page_opening;
 mod lines;
 pub mod stories;
 pub mod walk;
@@ -73,11 +75,16 @@ pub fn device_px(twips: i64) -> i64 {
     i64::try_from(if up { whole + 1 } else { whole }).unwrap_or(i64::MAX)
 }
 
-/// The frame of a page of `section`, showing headers and footers of `info`'s kind.
-pub fn page_frame(layout: &DocumentLayout, section_index: usize, info: &PageInfo) -> Option<PageFrame> {
+/// The frame of page `page` (0-based, blank pages counted), of `section`, showing
+/// headers and footers of `info`'s kind -- of the heights a `STYLEREF` gives them on the
+/// page, where it changes them.
+pub fn page_frame(layout: &DocumentLayout, page: usize, section_index: usize, info: &PageInfo) -> Option<PageFrame> {
     let section: &SectionGeometry = layout.sections.get(section_index)?;
     let props = &section.props;
-    let (header, footer) = layout.stories.heights(section_index, info.story);
+    let (header, footer) = match layout.page_stories.get(&page) {
+        Some(own) => *own,
+        None => layout.stories.heights(section_index, info.story),
+    };
     let (top, bottom) = section.edges(header, footer);
     let width_px = device_px(props.page_size.width);
     let height_px = device_px(props.page_size.height);
@@ -114,7 +121,7 @@ impl DocumentLayout {
     /// Page `page`'s geometry (0-based, blank pages counted); `None` past the last.
     pub fn page_geometry(&self, page: usize) -> Option<PageGeometry> {
         let info = *self.pagination.info.get(page)?;
-        let frame = page_frame(self, info.section, &info)?;
+        let frame = page_frame(self, page, info.section, &info)?;
         let lines = match self.laid_page(page) {
             Some(laid) => lines::body_lines(self, laid, &frame),
             None => Vec::new(),

@@ -4,10 +4,14 @@
 //! the stop, never left of the tab -- then the line moved by its paragraph's alignment:
 //! centred, right, distributed, justified (the slack over the spaces after the last tab),
 //! or a justified line past the edge squeezed. Each tab's pen before and after it is kept
-//! for its leader.
+//! for its leader. A line broken again carries its own setting ([`wrapped_positions`]):
+//! one broken for another of unequal columns is set in that column, one beside drawings
+//! segment by segment.
 //!
 //! Must not: break lines (the text engine has), or know where the line is on the page.
 
+use crate::rebreak::LineExtra;
+use crate::wrap::{segment_geometry, units};
 use ooxml_text::{next_tab, Geometry, Line, Piece, PieceKind, TabAlign, Units};
 use std::collections::BTreeMap;
 
@@ -249,6 +253,50 @@ fn justified(items: &[Piece], line: &Line, mut out: Positions, last: usize, slac
                 before += p.width;
             }
         }
+    }
+    out
+}
+
+/// [`line_positions`] of a line as the paginator broke it (`wrapped_positions`): set in the
+/// column it was broken for, or -- beside drawings -- each segment set in its segment as a
+/// line is in the column (the paragraph's last segment as its last line) and moved by the
+/// segment's shift.
+pub fn wrapped_positions(
+    items: &[Piece],
+    line: &Line,
+    geometry: &Geometry,
+    extra: Option<&LineExtra>,
+    setting: &Setting<'_>,
+) -> Positions {
+    let geometry = extra
+        .and_then(|e| e.column.as_ref())
+        .map_or(geometry, |c| c.geometry.as_ref());
+    let segments = extra.map_or(&[][..], |e| e.segments.as_slice());
+    if segments.is_empty() {
+        return line_positions(items, line, geometry, setting);
+    }
+    let mut out = Positions::default();
+    for (k, part) in segments.iter().enumerate() {
+        let here = segment_geometry(geometry, &part.segment, part.first);
+        let set = Setting {
+            first_line: part.first,
+            last_line: setting.last_line && k + 1 == segments.len(),
+            ..*setting
+        };
+        let found = line_positions(items, &part.line, &here, &set);
+        let shift = units(part.segment.shift);
+        out.at.extend(found.at.into_iter().map(|(j, x)| (j, x + shift)));
+        out.tabs.extend(found.tabs.into_iter().map(|(j, t)| {
+            (
+                j,
+                TabSpan {
+                    from: t.from + shift,
+                    to: t.to + shift,
+                    stop: t.stop + shift,
+                    ..t
+                },
+            )
+        }));
     }
     out
 }

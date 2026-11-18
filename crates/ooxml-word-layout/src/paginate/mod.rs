@@ -201,6 +201,59 @@ pub struct LaidPage {
     pub lines_before: LineStore,
     /// Its paragraphs broken again, as it placed them.
     pub broken: LineStore,
+    /// Where its body's stack ends (`page.body_end`): its last column's, on a page of
+    /// several columns.
+    pub body_end: Px,
+    /// On a page of a document with a section of several columns, its columns as laid
+    /// out, region by region (`Frame`s): where each one's lines and notes are drawn.
+    pub columns: Vec<PageColumn>,
+    /// In mode 15, the page's note area: the footnotes of its columns, laid out in them
+    /// below the text (`note_area`).
+    pub note_area: Option<Arc<NoteArea>>,
+}
+
+/// One text column of a page as laid out, as its drawing reads it (`paginate.Frame`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PageColumn {
+    /// Its section.
+    pub section: usize,
+    /// Its place among its section's columns.
+    pub column: usize,
+    /// Its section has several columns.
+    pub multi: bool,
+    /// In mode 15, a column whose notes go to the page's note area.
+    pub pooled: bool,
+    /// Its offset from the text area's left edge, twips.
+    pub offset: i64,
+    /// Its width, twips.
+    pub width: i64,
+    /// The top of its region.
+    pub region_top: Px,
+    /// Where its stack ends.
+    pub y: Px,
+    /// It holds anything of the flow.
+    pub filled: bool,
+    /// The footnotes at its foot (below mode 15), or referenced in it (pooled).
+    pub notes: Vec<PlacedNote>,
+    /// The lines of notes the column (or page) before could not hold.
+    pub carried: NoteRest,
+}
+
+/// A page's note area in mode 15 (`paginate.NoteArea`): its notes' paragraphs as a flow
+/// of their own laid out in the section's columns, balanced, from the area's top.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NoteArea {
+    /// The section whose columns it is laid out in.
+    pub section: usize,
+    /// Its notes, in order.
+    pub notes: Vec<i64>,
+    /// Its lines, placed from its top (0): of its notes' paragraphs, one item each, in
+    /// order.
+    pub lines: Vec<PlacedLine>,
+    /// Its height, without the separator above it.
+    pub height: Px,
+    /// Its paragraphs broken again in its columns (one of unequal columns), by item.
+    pub broken: LineStore,
 }
 
 /// A line a page opens with that is no line of the flow: the endnotes' continuation
@@ -234,6 +287,9 @@ impl LaidPage {
             wraps: Vec::new(),
             lines_before: LineStore::new(),
             broken: LineStore::new(),
+            body_end: Px::ZERO,
+            columns: Vec::new(),
+            note_area: None,
         }
     }
 }
@@ -471,7 +527,28 @@ impl<'a> Paginator<'a> {
             }
             out.pages.push(Arc::new(laid));
         }
+        if cx.items.is_empty() && out.info.is_empty() {
+            self.empty_page(&mut out);
+        }
         (out, None)
+    }
+
+    /// A body with nothing in it is still a page (Word exports one): its section's first
+    /// page, showing that page's stories.
+    fn empty_page(&self, out: &mut Pagination) {
+        let cx = self.cx;
+        let Some(section) = cx.sections.get(0) else { return };
+        let number = section.props.page_number_start.unwrap_or(1);
+        out.info.push(PageInfo {
+            number,
+            section: 0,
+            section_first: true,
+            story: cx.sections.story_kind(0, true, number),
+            blank: false,
+        });
+        let mut laid = LaidPage::empty(&Position::default(), Arc::from(Vec::new()));
+        laid.number_before = number - 1;
+        out.pages.push(Arc::new(laid));
     }
 
     /// The page starting at `position`: its number and story kind, any blank pages Word
