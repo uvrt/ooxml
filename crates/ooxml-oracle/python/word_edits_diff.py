@@ -236,6 +236,10 @@ def python_case(data: bytes, case: dict, baseline: list) -> dict:
     if main in before:
         rewritten[main] = serialize(etree.fromstring(before[main], etree.XMLParser(huge_tree=True)))
     as_written = _touched(document, rewritten, after, main)
+    # A part docx-agent wrote again unchanged but for lxml's serialization: an edit that
+    # changed nothing writes it, the Rust core does not.
+    reserialized = [main] if main in after and rewritten.get(main) == after[main] and before[main] != after[main] \
+        else []
     problems = _validate.check(document.package)
     validation = compare_problems(baseline, problems, key=lambda p: (p.code, p.part, str(p)))
     pool = copy.deepcopy(document._id_pool())
@@ -246,6 +250,7 @@ def python_case(data: bytes, case: dict, baseline: list) -> dict:
         "order": _order(out),
         "touched": touched,
         "touched_as_written": as_written,
+        "reserialized": reserialized,
         "validation": validation,
         "problems": [str(p) for p in problems],
         "next": next_ids,
@@ -314,6 +319,13 @@ def main(argv: list[str] | None = None) -> int:
     for key, want in expected.items():
         have = got.get(key)
         written = want.pop("touched_as_written", None)
+        reserialized = want.pop("reserialized", [])
+        if isinstance(have, dict) and "parts" in have and "parts" in want:
+            for name in reserialized:
+                if name not in have["parts"]:
+                    want["parts"].pop(name, None)   # no change, only lxml's serialization
+                    if have.get("touched") == written:
+                        want["touched"] = written
         if isinstance(have, dict) and "refused" in have and "refused" in want:
             got[key] = want      # both refused: the messages are each side's own words
         elif isinstance(have, dict) and "parts" in have and "parts" in want:

@@ -118,17 +118,20 @@ impl Command<WordDoc> for SetParagraphStyle {
         write_style(&mut work, paragraph, style.as_deref(), shared.facts.orders());
         let wrote = sink.paragraph_properties_changed(&mut work, paragraph, old)?;
         let new = work.build().ok_or_else(|| EditError::Path(found.part.clone()))?;
-        let draws = wrote
-            .annotations
-            .map(|n| annotation_draws(&new, n, 0))
-            .unwrap_or_default();
-        let mut keys = vec![block_key(&found.part, &id)];
-        if paragraph_has_annotations(&found.element) || paragraph_has_annotations(&new) {
-            keys.push(Key::Annotations);
-        }
-        sink.replace_drawing(&found.part, &found.path, new, keys, draws)?;
-        if wrote.dated {
-            sink.ensure_w14(&found.part, false, &[("w16du", W16DU)])?;
+        // a paragraph that has that style already is not written (rule 3)
+        if *new != **element {
+            let draws = wrote
+                .annotations
+                .map(|n| annotation_draws(&new, n, 0))
+                .unwrap_or_default();
+            let mut keys = vec![block_key(&found.part, &id)];
+            if paragraph_has_annotations(&found.element) || paragraph_has_annotations(&new) {
+                keys.push(Key::Annotations);
+            }
+            sink.replace_drawing(&found.part, &found.path, new, keys, draws)?;
+            if wrote.dated {
+                sink.ensure_w14(&found.part, false, &[("w16du", W16DU)])?;
+            }
         }
         if let RevisionPolicy::Tracked(tracking) = sink.policy().clone() {
             let gave = wrote.annotations.is_some_and(|n| n.to > n.from);
