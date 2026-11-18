@@ -349,5 +349,10 @@ fn a_version_names_the_parts_it_changed_since_another() {
     assert!(body.contains("two words"), "{body}");
     // the other way round: the earlier version's bytes
     let back = before.changed_since(&after).unwrap();
-    assert!(back[0].1.as_deref().map(String::from_utf8_lossy).unwrap_or_default().contains("one word"));
+    assert!(back[0]
+        .1
+        .as_deref()
+        .map(String::from_utf8_lossy)
+        .unwrap_or_default()
+        .contains("one word"));
 }
