@@ -57,6 +57,8 @@ mod set_text;
 mod sink;
 mod stamping;
 mod switch;
+mod table_delete;
+mod table_delete_write;
 mod text;
 mod textbox;
 pub mod touched;

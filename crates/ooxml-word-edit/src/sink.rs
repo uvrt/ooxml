@@ -309,6 +309,30 @@ impl<'t, 's> EditSink<'t, 's> {
         })
     }
 
+    /// A tracked write of `work` by `write` (given the edit's [`Stamp`] and the schema's
+    /// child order; it returns the relationship ids released); untracked, nothing.
+    ///
+    /// # Errors
+    /// When the annotation ids cannot be read.
+    pub(crate) fn track(
+        &mut self,
+        work: &mut Work,
+        write: impl FnOnce(&mut Work, &mut Stamp, &crate::validate::Orders) -> Vec<String>,
+    ) -> Result<TextWrite> {
+        let RevisionPolicy::Tracked(tracking) = self.policy.clone() else {
+            return Ok(TextWrite::default());
+        };
+        let shared = self.doc().shared_handle();
+        let orders = shared.facts.orders();
+        let (released, dated, numbered) = self.tracked(tracking, |stamp| Ok(write(work, stamp, orders)))?;
+        Ok(TextWrite {
+            changed: true,
+            released,
+            dated,
+            annotations: Some(numbered),
+        })
+    }
+
     /// Replace `count` children of the element at `parent` (child indexes from the root)
     /// of `part`, from its child `start` on, by `nodes`; ids drawn into them where the
     /// change is applied.

@@ -5,7 +5,8 @@
 //! left without a paragraph to end on. Untracked -- or tracked, one's own insertion -- the
 //! block goes, range markers whose partner stays moved to the nearest paragraph; tracked,
 //! a paragraph's content and mark are recorded as deleted (last in its container, the mark
-//! before it is, and it takes that paragraph's properties).
+//! before it is, and it takes that paragraph's properties), a table's rows as Word deletes
+//! them ([`crate::table_delete`]).
 //!
 //! Must not: write but through the sink, or read outside what it records reading: the
 //! blocks of the stretch it rewrites, the ledger seeds the stamping draws from, the
