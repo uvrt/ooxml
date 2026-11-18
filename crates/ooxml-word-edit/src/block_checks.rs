@@ -12,13 +12,7 @@ use crate::names::W;
 use crate::{EditError, Result};
 use ooxml_word_model::docx::at_path;
 use ooxml_xml::{Element, Node};
-use std::collections::HashMap;
 use std::sync::Arc;
-
-/// Whether `a` and `b` are the same element (not equal ones).
-fn same(a: &Element, b: &Element) -> bool {
-    std::ptr::eq(a, b)
-}
 
 /// Whether `element` is `w:{local}`.
 fn is(element: &Element, local: &str) -> bool {
@@ -49,28 +43,45 @@ pub(crate) fn has_reference(element: &Element) -> bool {
         .any(|(e, _)| is(e, "footnoteReference") || is(e, "endnoteReference") || is(e, "commentReference"))
 }
 
+/// The elements at or below `element`, in document order, each with its place below
+/// `element` (equal elements may share one allocation: places tell them apart).
+fn placed<'e>(element: &'e Element, at: &mut Vec<u32>, out: &mut Vec<(Vec<u32>, &'e Element)>) {
+    out.push((at.clone(), element));
+    for (k, node) in element.children().iter().enumerate() {
+        if let (Node::Element(child), Ok(k)) = (node, u32::try_from(k)) {
+            at.push(k);
+            placed(child, at, out);
+            at.pop();
+        }
+    }
+}
+
+/// The element at `path` below `element`.
+fn below<'e>(element: &'e Element, path: &[u32]) -> Option<&'e Element> {
+    let mut node = element;
+    for &k in path {
+        node = node.children().get(k as usize)?.as_element()?;
+    }
+    Some(node)
+}
+
 /// docx-agent's `block_references`: whether the references `element` holds are all a
 /// block comment's (the comment's range ending between blocks, the reference run opening
 /// its paragraph), which move to the paragraph after it -- `Some(true)` with some,
 /// `Some(false)` with none -- or `None` when it holds any other.
 pub(crate) fn block_references(root: &Element, element: &Element) -> Option<bool> {
     let mut inside = Vec::new();
-    walk(element, None, &mut inside);
-    let parents: HashMap<*const Element, &Element> = inside
+    placed(element, &mut Vec::new(), &mut inside);
+    let references: Vec<&(Vec<u32>, &Element)> = inside
         .iter()
-        .filter_map(|(e, p)| p.map(|p| (std::ptr::from_ref(*e), p)))
-        .collect();
-    let references: Vec<&Element> = inside
-        .iter()
-        .map(|(e, _)| *e)
-        .filter(|e| is(e, "footnoteReference") || is(e, "endnoteReference") || is(e, "commentReference"))
+        .filter(|(_, e)| is(e, "footnoteReference") || is(e, "endnoteReference") || is(e, "commentReference"))
         .collect();
     if references.is_empty() {
         return Some(false);
     }
     let mut everything = Vec::new();
     walk(root, None, &mut everything);
-    for node in references {
+    for (path, node) in references {
         if !is(node, "commentReference") {
             return None;
         }
@@ -79,17 +90,23 @@ pub(crate) fn block_references(root: &Element, element: &Element) -> Option<bool
             .iter()
             .filter(|(e, _)| is(e, "commentRangeEnd") && e.attribute(Some(W), "id") == id)
             .collect();
-        let run = parents.get(&std::ptr::from_ref(node))?;
-        let paragraph = parents.get(&std::ptr::from_ref(*run))?;
+        let (_, run_path) = path.split_last()?;
+        let (&run_index, paragraph_path) = run_path.split_last()?;
+        let paragraph = below(element, paragraph_path)?;
         let [(_, end_parent)] = ends.as_slice() else {
             return None;
         };
         if !is(paragraph, "p") || end_parent.is_some_and(|p| is(p, "p")) {
             return None;
         }
-        let before = paragraph.child_elements().take_while(|c| !same(c, run));
+        let before = paragraph
+            .children()
+            .iter()
+            .take(run_index as usize)
+            .filter_map(Node::as_element)
+            .filter(|c| is(c, "r"));
         if before
-            .filter(|c| is(c, "r"))
+            .into_iter()
             .any(|c| !c.child_elements().any(|g| is(g, "commentReference")))
         {
             return None;
@@ -98,19 +115,32 @@ pub(crate) fn block_references(root: &Element, element: &Element) -> Option<bool
     Some(true)
 }
 
-/// The blocks of a container in order, through block-level content controls and custom
-/// XML (docx-agent's `_direct_blocks`).
-fn direct_blocks<'e>(container: &'e Element, out: &mut Vec<&'e Element>) {
-    for child in container.child_elements() {
+/// The blocks of a container in order, each with its place, through block-level content
+/// controls and custom XML (docx-agent's `_direct_blocks`). Places, not addresses, tell
+/// blocks apart: equal elements may share one allocation.
+fn direct_blocks<'e>(container: &'e Element, at: &mut Vec<u32>, out: &mut Vec<(Vec<u32>, &'e Element)>) {
+    for (k, node) in container.children().iter().enumerate() {
+        let (Node::Element(child), Ok(k)) = (node, u32::try_from(k)) else {
+            continue;
+        };
+        at.push(k);
         if is(child, "p") || is(child, "tbl") {
-            out.push(child);
+            out.push((at.clone(), child));
         } else if is(child, "sdt") {
-            if let Some(content) = child.child_elements().find(|c| is(c, "sdtContent")) {
-                direct_blocks(content, out);
+            if let Some((c, content)) = child
+                .children()
+                .iter()
+                .enumerate()
+                .find_map(|(c, n)| n.as_element().filter(|e| is(e, "sdtContent")).map(|e| (c, e)))
+            {
+                at.push(u32::try_from(c).unwrap_or(u32::MAX));
+                direct_blocks(content, at, out);
+                at.pop();
             }
         } else if is(child, "customXml") {
-            direct_blocks(child, out);
+            direct_blocks(child, at, out);
         }
+        at.pop();
     }
 }
 
@@ -119,7 +149,7 @@ fn direct_blocks<'e>(container: &'e Element, out: &mut Vec<&'e Element>) {
 ///
 /// # Errors
 /// [`EditError::Refused`] when the container would be left empty or ending on a table.
-pub(crate) fn check_container_survives(root: &Arc<Element>, path: &[u32], element: &Element) -> Result<()> {
+pub(crate) fn check_container_survives(root: &Arc<Element>, path: &[u32]) -> Result<()> {
     let mut at = path.split_last().map(|(_, above)| above.to_vec()).unwrap_or_default();
     let container = loop {
         let node = if at.is_empty() { Some(root) } else { at_path(root, &at) };
@@ -132,13 +162,13 @@ pub(crate) fn check_container_survives(root: &Arc<Element>, path: &[u32], elemen
         break node;
     };
     let mut blocks = Vec::new();
-    direct_blocks(container, &mut blocks);
-    blocks.retain(|b| !std::ptr::eq(*b, element));
+    direct_blocks(container, &mut at, &mut blocks);
+    blocks.retain(|(at, _)| at.as_slice() != path);
     match blocks.last() {
         None => Err(EditError::Refused(
             "deleting it would leave its story or cell with no paragraph".to_owned(),
         )),
-        Some(last) if is(last, "tbl") => Err(EditError::Refused(
+        Some((_, last)) if is(last, "tbl") => Err(EditError::Refused(
             "deleting it would leave a table last in its story or cell; Word needs a paragraph after it".to_owned(),
         )),
         Some(_) => Ok(()),

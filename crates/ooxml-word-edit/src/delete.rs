@@ -97,7 +97,7 @@ fn check(root: &Arc<Element>, block: &Anchor, element: &Element, tracked: bool) 
             )));
         }
     }
-    check_container_survives(root, &block.path, element)?;
+    check_container_survives(root, &block.path)?;
     Ok(moving)
 }
 
@@ -263,11 +263,7 @@ pub(crate) type Editable = (Work, Vec<u32>, (u32, u32), Vec<Id>);
 
 /// A stretch of `root`'s part made editable: its work, the parent's place, the first and
 /// last child's index, and the work's node for each of `wanted`.
-pub(crate) fn editable(
-    root: &Arc<Element>,
-    paths: &[Vec<u32>],
-    wanted: &[&[u32]],
-) -> Option<Editable> {
+pub(crate) fn editable(root: &Arc<Element>, paths: &[Vec<u32>], wanted: &[&[u32]]) -> Option<Editable> {
     let (parent, from, to) = span(paths)?;
     let ends: Vec<Box<[u32]>> = [from, to]
         .iter()
