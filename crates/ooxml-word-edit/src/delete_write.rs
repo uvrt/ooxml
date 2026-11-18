@@ -2,7 +2,8 @@
 //! editable, the block removed outright (untracked, or tracked and one's own insertion:
 //! block comment references moved to the paragraph after it, range markers rehomed, what
 //! it held released) or its paragraph recorded as deleted (docx-agent's
-//! `_track_delete_block` for a paragraph), and the stretch spliced back.
+//! `_track_delete_block` for a paragraph; a table's in [`crate::table_delete_write`]), and
+//! the stretch spliced back; a tracked table deletion's separator paragraph with it.
 //!
 //! Must not: write but through the sink, or touch children outside the stretch.
 
@@ -29,8 +30,7 @@ use std::sync::Arc;
 /// Delete the block `target` names, by the sink's policy.
 ///
 /// # Errors
-/// The refusals of [`crate::delete::plan`]; [`EditError::Unsupported`] for a tracked
-/// table deletion (it lands with the table edits).
+/// The refusals of [`crate::delete::plan`].
 pub(crate) fn delete(sink: &mut EditSink<'_, '_>, target: &str) -> Result<BlockDeleted> {
     let docx = sink.docx()?;
     let planned = plan(sink, &docx, target)?;
