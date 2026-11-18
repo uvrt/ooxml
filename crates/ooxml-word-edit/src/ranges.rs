@@ -252,7 +252,9 @@ pub(crate) fn stretch(root: &Arc<ooxml_xml::Element>, paths: &[Box<[u32]>]) -> O
 }
 
 /// The plans checked and ordered last first, as docx-agent orders them; overlaps refused.
-fn order_plans(plans: &mut [Plan]) -> Result<()> {
+/// Untracked, a range across paragraphs joins its paragraphs, so another range in one of
+/// them is refused; tracked, the paragraphs stay and each range is written in turn.
+fn order_plans(plans: &mut [Plan], tracked: bool) -> Result<()> {
     for plan in plans.iter() {
         check_text(&plan.text)?;
     }
@@ -267,7 +269,8 @@ fn order_plans(plans: &mut [Plan]) -> Result<()> {
     }
     let shares = |a: &Plan, b: &Plan| a.story == b.story && a.index <= b.last_index && b.index <= a.last_index;
     for (k, plan) in plans.iter().enumerate() {
-        if plan.across.is_some() && plans.iter().enumerate().any(|(j, other)| j != k && shares(plan, other)) {
+        if !tracked && plan.across.is_some() && plans.iter().enumerate().any(|(j, other)| j != k && shares(plan, other))
+        {
             return Err(EditError::Unsupported(
                 "ranges sharing a paragraph with a range across paragraphs".to_owned(),
             ));
@@ -287,7 +290,7 @@ fn replace_ranges(sink: &mut EditSink<'_, '_>, mut plans: Vec<Plan>, keep: Keep)
             renamed: Vec::new(),
         });
     }
-    order_plans(&mut plans)?;
+    order_plans(&mut plans, matches!(sink.policy(), RevisionPolicy::Tracked(_)))?;
     let count = plans.len();
     let docx = sink.docx()?;
     for plan in &plans {
@@ -307,12 +310,16 @@ fn replace_ranges(sink: &mut EditSink<'_, '_>, mut plans: Vec<Plan>, keep: Keep)
     let mut k = 0;
     while k < plans.len() {
         // a paragraph's ranges (they are together, last first) in one copy of it
+        // (a range across paragraphs is a group of its own)
         let same = |p: &Plan| {
-            plans
-                .get(k)
-                .is_some_and(|q| q.found.part == p.found.part && q.found.path == p.found.path)
+            plans.get(k).is_some_and(|q| {
+                q.across.is_none() && p.across.is_none() && q.found.part == p.found.part && q.found.path == p.found.path
+            })
         };
-        let group: Vec<&Plan> = plans.iter().skip(k).take_while(|p| same(p)).collect();
+        let group: Vec<&Plan> = match plans.get(k) {
+            Some(p) if p.across.is_some() => vec![p],
+            _ => plans.iter().skip(k).take_while(|p| same(p)).collect(),
+        };
         k += group.len();
         let written = match group.first() {
             Some(plan) if plan.across.is_some() => crate::ranges_across::write_across(sink, plan, keep, &renamed)?,
