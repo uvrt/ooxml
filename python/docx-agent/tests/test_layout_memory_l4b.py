@@ -69,9 +69,19 @@ def test_kept_layouts_are_bounded_by_the_budget_by_weight(monkeypatch):
 
 
 def test_the_process_budget_counts_the_engines_memos_and_paint():
+    # The process's budget is every engine's: other tests' engines, let go at any drain
+    # (docx_agent.finalizers), move it either way.  So this document's own engine is what
+    # is measured, and the budget is asked only whether it counts that engine's part.
+    import docx2svg
+
     document = Document.open(build(chapters=1, seed=6)[0])
-    before = pages.memory()
     layout = document.layout()
     layout.page_count
-    after = pages.memory()
-    assert after["held"] > before["held"], "the engine's memos are counted as held"
+    options = docx2svg.ConvertOptions(**layout_module.layout_options(document, {}))
+    engine = pages._engine(layout_module.lineage(document), options, make=False)
+    assert engine is not None, "the document's own engine laid it out"
+    mine = engine.stats()
+    now = pages.memory()
+    assert mine["memo_bytes"] > 0, "the engine's memos are counted as held"
+    assert now["held"] >= mine["memo_bytes"], "the process budget holds what the engine's memos hold"
+    assert now["used"] >= mine["paint_bytes"], "and its pages' paint within the limit"
