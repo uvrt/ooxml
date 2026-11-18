@@ -343,7 +343,7 @@ impl Command<WordDoc> for SetStoryText {
 
 impl SetStoryText {
     /// The edit, through `sink`.
-    fn edit(&self, sink: &mut EditSink<'_, '_>) -> Result<StoryEdited> {
+    pub(crate) fn edit(&self, sink: &mut EditSink<'_, '_>) -> Result<StoryEdited> {
         sink.read_everything();
         let text = self.text.replace("\r\n", "\n");
         let lines: Vec<&str> = text.split('\n').collect();

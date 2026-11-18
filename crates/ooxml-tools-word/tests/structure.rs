@@ -11,10 +11,10 @@ use ooxml_opc::Package;
 use ooxml_store::{Caller, Clock, StoreConfig};
 use ooxml_tools::{ToolArgs, ToolResult};
 use ooxml_tools_word::{
-    word_links, word_notes, Editing, WordCopyFrom, WordFields, WordHeadersFooters, WordLinks, WordMove, WordNotes,
+    word_fields, word_links, word_notes, Editing, WordCopyFrom, WordFields, WordHeadersFooters, WordLinks, WordMove, WordNotes,
     WordSections, KIND,
 };
-use ooxml_word_edit::Editor;
+use ooxml_word_edit::{Editor, FieldLayout, FieldPlace, LaidFields, PageShows, Unknown};
 use ooxml_zip::{Method, NewEntry, Writer};
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -77,6 +77,44 @@ fn package() -> Package {
     Package::open(Arc::from(w.finish(b"").unwrap()), &Limits::default()).unwrap()
 }
 
+/// A layout of two pages, the first paragraph on page 1, the second on page 2, numbered
+/// from 1 in one section.
+struct TwoPages;
+
+struct LaidTwo;
+
+impl LaidFields for LaidTwo {
+    fn page_field(&self, instruction: &str, keyword: &str, at: FieldPlace<'_>) -> Result<String, Unknown> {
+        let page = match at {
+            FieldPlace::Body("p:10000001") | FieldPlace::Page(0) => 1,
+            FieldPlace::Body("p:10000002") | FieldPlace::Page(1) => 2,
+            _ => return Err(Unknown("not drawn".into())),
+        };
+        let _ = instruction;
+        Ok(match keyword {
+            "PAGE" => page.to_string(),
+            _ => "2".to_owned(),
+        })
+    }
+
+    fn page_reference(&self, instruction: &str, at: FieldPlace<'_>) -> Result<String, Unknown> {
+        self.page_field(instruction, "PAGE", at)
+    }
+
+    fn pages(&self) -> Vec<PageShows> {
+        vec![
+            PageShows { section: 0, kind: "default", blank: false },
+            PageShows { section: 0, kind: "default", blank: false },
+        ]
+    }
+}
+
+impl FieldLayout for TwoPages {
+    fn lay_out(&self, _: &Package) -> Result<Box<dyn LaidFields + '_>, String> {
+        Ok(Box::new(LaidTwo))
+    }
+}
+
 /// `tool` called with `arguments` on a fresh copy of the made-up document.
 fn call<A: ToolArgs>(arguments: Value, tool: impl Fn(&A, &Editing<'_>) -> ToolResult<Value>) -> (Value, Editor) {
     let editor = Editor::open(package(), StoreConfig::default(), Arc::new(Still), Arc::new(Unlimited)).unwrap();
@@ -90,6 +128,8 @@ fn call<A: ToolArgs>(arguments: Value, tool: impl Fn(&A, &Editing<'_>) -> ToolRe
             tracking: None,
             doc: "d1",
             cancel: &Never,
+            date: "2026-11-17T10:00:00Z",
+            layout: Some(&TwoPages),
         };
         let (args, _) = A::accept(arguments, Some("docx")).unwrap();
         Value::Object(tool(&args, &editing).to_json())
@@ -195,4 +235,65 @@ fn a_first_footnote_brings_the_notes_parts() {
     assert!(names.iter().any(|n| n == "word/endnotes.xml"));
     let (reply, _) = call(json!({"doc": "d1", "action": "list"}), word_notes);
     assert_eq!(reply["data"], json!([]));
+}
+
+#[test]
+fn a_page_number_is_inserted_with_its_result() {
+    let (reply, editor) = call(
+        json!({"doc": "d1", "action": "insert_field", "at": "p:10000002@5", "instruction": "PAGE"}),
+        word_fields,
+    );
+    assert_eq!(reply["summary"], json!("Inserted field fld:body/0"));
+    assert_eq!(reply["created"], json!(["fld:body/0"]));
+    let head = editor.store().snapshot();
+    let found = ooxml_word_edit::fields(head.doc()).unwrap();
+    assert_eq!(found.len(), 1);
+    assert_eq!((found[0].keyword.as_str(), found[0].result.as_str()), ("PAGE", "2"));
+}
+
+#[test]
+fn a_date_shows_the_calls_day_and_a_sequence_counts() {
+    let (reply, editor) = call(
+        json!({"doc": "d1", "action": "insert_date", "at": "p:10000001@0"}),
+        word_fields,
+    );
+    assert_eq!(reply["created"], json!(["fld:body/0"]));
+    let head = editor.store().snapshot();
+    let found = ooxml_word_edit::fields(head.doc()).unwrap();
+    assert_eq!(found[0].result, "17 November 2026");
+    let (reply, _) = call(
+        json!({"doc": "d1", "action": "insert_caption", "after": "p:10000002", "label": "Table", "text": ": Results"}),
+        word_fields,
+    );
+    assert_eq!(reply["summary"], json!("Inserted a caption"));
+}
+
+#[test]
+fn a_table_of_contents_with_no_headings_says_so() {
+    let (reply, editor) = call(json!({"doc": "d1", "action": "insert_toc", "after": "p:10000002"}), word_fields);
+    assert_eq!(reply["summary"], json!("Inserted a table of contents fld:body/0"));
+    let warnings = reply["warnings"].as_array().unwrap();
+    assert!(warnings[0].as_str().unwrap().contains("the table of contents has no entries"));
+    let head = editor.store().snapshot();
+    let found = ooxml_word_edit::fields(head.doc()).unwrap();
+    assert_eq!(found[0].result, "No table of contents entries found.");
+}
+
+#[test]
+fn field_refusals_carry_their_way_out() {
+    let (reply, _) = call(json!({"doc": "d1", "action": "update", "ids": ["fld:body/9"]}), word_fields);
+    assert_eq!(reply["error"]["code"], json!("refused"));
+    assert!(reply["error"]["way_out"].is_object() || reply["error"]["try_call"].is_object() || reply["error"].get("valid_options").is_some() || reply["error"].as_object().unwrap().len() > 2);
+    let (reply, _) = call(json!({"doc": "d1", "action": "insert_toc", "after": "p:10000002", "levels": "3-1"}), word_fields);
+    assert_eq!(reply["error"]["code"], json!("invalid_arguments"));
+    assert_eq!(reply["error"]["field"], json!("levels"));
+    let (reply, _) = call(json!({"doc": "d1", "action": "insert_field", "at": "p:10000001@99", "instruction": "PAGE"}), word_fields);
+    assert_eq!(reply["error"]["code"], json!("refused"));
+}
+
+#[test]
+fn an_update_with_nothing_to_change_is_no_change() {
+    let (reply, _) = call(json!({"doc": "d1", "action": "update"}), word_fields);
+    assert_eq!(reply["summary"], json!("Updated fields: 0 result(s) changed"));
+    assert!(reply.get("changed").is_none_or(|c| c == &json!([])));
 }

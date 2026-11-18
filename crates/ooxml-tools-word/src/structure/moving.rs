@@ -127,6 +127,7 @@ fn run(args: &WordMove, editing: &Editing<'_>, way: &TryCall) -> Result<ToolResu
                 removed: Vec::new(),
                 renamed: out.renamed.clone(),
                 warnings: out.warnings.clone(),
+                unknown: Vec::new(),
             };
             let renamed = |id: &String| {
                 out.renamed

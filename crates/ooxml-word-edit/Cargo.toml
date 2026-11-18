@@ -14,6 +14,7 @@ ooxml-opc.workspace = true
 ooxml-store.workspace = true
 ooxml-derive.workspace = true
 ooxml-word-model.workspace = true
+ooxml-style-names.workspace = true
 thiserror.workspace = true
 
 [lints]

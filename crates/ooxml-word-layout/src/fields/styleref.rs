@@ -9,7 +9,7 @@
 //!
 //! Must not: find a page (the caller gives each occurrence's pages), or lay anything out.
 
-use super::format::Uncomputable;
+use ooxml_word_model::fieldtext::Uncomputable;
 use super::{substitute, Rebuild, Substitutions};
 use crate::flow::body_paragraphs;
 use ooxml_base::Locale;

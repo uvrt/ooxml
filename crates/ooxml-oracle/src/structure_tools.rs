@@ -13,8 +13,8 @@ use ooxml_opc::Package;
 use ooxml_store::{Caller, StoreConfig};
 use ooxml_tools::{ToolArgs, ToolResult};
 use ooxml_tools_word::{
-    word_comments, word_headers_footers, word_links, word_move, word_notes, word_sections, Editing, WordComments,
-    WordHeadersFooters, WordLinks, WordMove, WordNotes, WordSections,
+    word_comments, word_fields, word_headers_footers, word_links, word_move, word_notes, word_sections, Editing,
+    EnginePages, WordComments, WordFields, WordHeadersFooters, WordLinks, WordMove, WordNotes, WordSections,
 };
 use ooxml_word_edit::touched::{touched, Touched};
 use ooxml_word_edit::validate::{problems, Delta};
@@ -49,6 +49,12 @@ pub fn case(bytes: &Arc<[u8]>, case: &Value) -> Result<Value, String> {
         author: t.get("author").and_then(Value::as_str).unwrap_or("").to_owned(),
         date: t.get("date").and_then(Value::as_str).unwrap_or("").to_owned(),
     });
+    let layout = case.get("fonts").map(engine_pages);
+    let date = case
+        .get("date")
+        .and_then(Value::as_str)
+        .unwrap_or("2026-11-17T10:00:00Z")
+        .to_owned();
     let editing = Editing {
         editor: &editor,
         caller: &caller,
@@ -56,6 +62,8 @@ pub fn case(bytes: &Arc<[u8]>, case: &Value) -> Result<Value, String> {
         tracking: tracking.as_ref(),
         doc: "d1",
         cancel: &Never,
+        date: &date,
+        layout: layout.as_ref().map(|l| l as &dyn ooxml_word_edit::FieldLayout),
     };
     let arguments = case.get("arguments").cloned().unwrap_or(Value::Object(Map::new()));
     let tool = case.get("tool").and_then(Value::as_str).unwrap_or("");
@@ -64,6 +72,7 @@ pub fn case(bytes: &Arc<[u8]>, case: &Value) -> Result<Value, String> {
         "word_notes" => run(&arguments, |args: &WordNotes| word_notes(args, &editing)),
         "word_comments" => run(&arguments, |args: &WordComments| word_comments(args, &editing)),
         "word_move" => run(&arguments, |args: &WordMove| word_move(args, &editing)),
+        "word_fields" => run(&arguments, |args: &WordFields| word_fields(args, &editing)),
         "word_sections" => run(&arguments, |args: &WordSections| word_sections(args, &editing)),
         "word_headers_footers" => run(&arguments, |args: &WordHeadersFooters| {
             word_headers_footers(args, &editing)
@@ -99,6 +108,50 @@ pub fn case(bytes: &Arc<[u8]>, case: &Value) -> Result<Value, String> {
         "problems": now.iter().map(ToString::to_string).collect::<Vec<_>>(),
         "next": next_ids(doc),
     }))
+}
+
+/// A page engine over the fonts a case names (`folders`: `[location, path]` pairs as
+/// docx2svg hands them to `ooxml_core.WordFonts`, `substitutes`, `substitute`), as the
+/// layout port the field tools read.
+fn engine_pages(fonts: &Value) -> EnginePages {
+    use ooxml_fonts::{Folder, Location, WordFontOptions};
+    use ooxml_word_pages::{DiskFonts, EngineBudgets, EngineOptions, FontSetup, PageEngine};
+    let pairs = |key: &str| -> Vec<(String, String)> {
+        fonts
+            .get(key)
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|pair| {
+                let text = |k: usize| pair.get(k).and_then(Value::as_str).map(str::to_owned);
+                Some((text(0)?, text(1)?))
+            })
+            .collect()
+    };
+    let folders: Vec<Folder> = pairs("folders")
+        .into_iter()
+        .map(|(location, path)| Folder {
+            location: if location == "bundle" {
+                Location::WordBundle
+            } else {
+                Location::Folder
+            },
+            path,
+        })
+        .collect();
+    let substitute = fonts.get("substitute").and_then(Value::as_bool).unwrap_or(true);
+    let options = WordFontOptions {
+        substitutes: pairs("substitutes").into_iter().collect(),
+        recorded_faces: substitute,
+        fallbacks: substitute,
+    };
+    let setup = Arc::new(FontSetup::new(Arc::new(DiskFonts), &folders, options));
+    let budgets = EngineBudgets {
+        held: Arc::new(Unlimited),
+        paint: Arc::new(Unlimited),
+    };
+    let engine = PageEngine::new(setup, EngineOptions::default(), budgets);
+    EnginePages::new(Arc::new(std::sync::Mutex::new(engine)))
 }
 
 /// The tool's reply to `arguments` taken as its intent rules take them (a refusal of the

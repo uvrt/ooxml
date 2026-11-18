@@ -11,10 +11,12 @@
 //! Must not: find a field's paragraph or a bookmark's (the caller names them by path), or
 //! write anything.
 
-use super::format::{field_text, Uncomputable};
+use ooxml_word_model::fieldtext::{field_text, Uncomputable};
 use crate::engine::DocumentLayout;
 use crate::facts::LayoutFacts;
 use crate::paginate::PageInfo;
+use ooxml_word_model::value::Text;
+use std::borrow::Borrow;
 
 /// Why an update cannot say a field's result: the paragraph is not drawn, the layout
 /// stopped before it, or the field's switches are not computed.
@@ -22,21 +24,22 @@ use crate::paginate::PageInfo;
 #[error("the layout cannot say: {0}")]
 pub struct Unknown(pub String);
 
-/// The page numbers of one layout, as a field update reads them.
+/// The page numbers of one layout, as a field update reads them, over its facts `F` (a
+/// reference, or whatever holds them for as long as it is asked).
 #[derive(Debug)]
-pub struct PageNumbers<'f> {
-    facts: &'f LayoutFacts,
+pub struct PageNumbers<F> {
+    facts: F,
     /// Each section's page number format, `None` for decimal or none stated.
     formats: Vec<Option<String>>,
     /// Each paragraph path's first page (0-based, as `LayoutFacts::first_page`), made once: a
     /// field update and a check ask it for every field and reference (lane L4b: a walk of
     /// every page per field was most of a 3,000-page version's warnings).
-    first: std::collections::HashMap<&'f str, usize>,
+    first: std::collections::HashMap<Text, usize>,
 }
 
-impl<'f> PageNumbers<'f> {
+impl<F: Borrow<LayoutFacts>> PageNumbers<F> {
     /// The page numbers of `layout`, whose facts are `facts`.
-    pub fn new(layout: &DocumentLayout, facts: &'f LayoutFacts) -> PageNumbers<'f> {
+    pub fn new(layout: &DocumentLayout, facts: F) -> PageNumbers<F> {
         let formats = layout
             .sections
             .list
@@ -50,9 +53,9 @@ impl<'f> PageNumbers<'f> {
             })
             .collect();
         let mut first = std::collections::HashMap::new();
-        for page in &facts.pages {
+        for page in &facts.borrow().pages {
             for line in &page.lines {
-                first.entry(&*line.path).or_insert(page.page);
+                first.entry(Text::clone(&line.path)).or_insert(page.page);
             }
         }
         PageNumbers { facts, formats, first }
@@ -74,10 +77,16 @@ impl<'f> PageNumbers<'f> {
             .get(path)
             .ok_or_else(|| Unknown(format!("{path} is not drawn")))?;
         self.facts
+            .borrow()
             .pages
             .get(page)
             .map(|p| &p.info)
             .ok_or_else(|| Unknown(format!("{path} is not on a page")))
+    }
+
+    /// What the paginator knows of each page, in order.
+    pub fn pages(&self) -> impl Iterator<Item = &PageInfo> + '_ {
+        self.facts.borrow().pages.iter().map(|p| &p.info)
     }
 
     /// A `PAGE`, `NUMPAGES` or `SECTIONPAGES` field's result, `instruction` as written, in
@@ -86,11 +95,32 @@ impl<'f> PageNumbers<'f> {
     /// neither is known past where the layout stopped.
     pub fn page_field(&self, instruction: &str, keyword: &str, path: &str) -> Result<String, Unknown> {
         let info = self.first_page(path)?;
-        let known = self.facts.stopped.is_none();
-        let pages = known.then(|| i64::try_from(self.facts.pages.len()).unwrap_or(i64::MAX));
+        self.page_field_on(instruction, keyword, info)
+    }
+
+    /// A `PAGE`, `NUMPAGES` or `SECTIONPAGES` field's result on page `page` (0-based): a
+    /// header's or footer's on a page that shows it.
+    ///
+    /// # Errors
+    /// [`Unknown`] where there is no such page, the count is not known or a switch is not
+    /// computed.
+    pub fn page_field_at(&self, instruction: &str, keyword: &str, page: usize) -> Result<String, Unknown> {
+        let info = self
+            .facts
+            .borrow()
+            .pages
+            .get(page)
+            .map(|p| &p.info)
+            .ok_or_else(|| Unknown(format!("no page {page}")))?;
+        self.page_field_on(instruction, keyword, info)
+    }
+
+    fn page_field_on(&self, instruction: &str, keyword: &str, info: &PageInfo) -> Result<String, Unknown> {
+        let facts = self.facts.borrow();
+        let known = facts.stopped.is_none();
+        let pages = known.then(|| i64::try_from(facts.pages.len()).unwrap_or(i64::MAX));
         let section_pages = known.then(|| {
-            let count = self
-                .facts
+            let count = facts
                 .pages
                 .iter()
                 .filter(|p| p.info.section == info.section && !p.info.blank)

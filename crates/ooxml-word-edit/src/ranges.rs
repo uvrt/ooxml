@@ -426,6 +426,18 @@ pub(crate) fn renamed_id(renamed: &[(String, String)], id: &str) -> String {
         .map_or_else(|| id.to_owned(), |(_, new)| new.clone())
 }
 
+/// docx-agent's `insert_text` inside an edit: `text` put at the position `at`.
+///
+/// # Errors
+/// As [`InsertText`]'s.
+pub(crate) fn insert_text(sink: &mut EditSink<'_, '_>, at: &str, text: &str) -> Result<RangesEdited> {
+    check_text(text)?;
+    let docx = sink.docx()?;
+    let found = range_of(sink.doc(), &docx, at, true)?;
+    let plan = plan(sink.doc(), &docx, found, text)?;
+    replace_ranges(sink, vec![plan], Keep::First)
+}
+
 impl Command<WordDoc> for InsertText {
     type Out = RangesEdited;
     type Error = EditError;

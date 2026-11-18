@@ -102,6 +102,23 @@ impl<'t, 's> EditSink<'t, 's> {
         &self.policy
     }
 
+    /// Run `write` with this sink writing by `policy` (a part of an edit docx-agent writes
+    /// untracked whatever the mode: a table of contents' holder paragraph), then by its own
+    /// policy again.
+    ///
+    /// # Errors
+    /// `write`'s.
+    pub(crate) fn with_policy<R>(
+        &mut self,
+        policy: RevisionPolicy,
+        write: impl FnOnce(&mut Self) -> Result<R>,
+    ) -> Result<R> {
+        let own = std::mem::replace(&mut self.policy, policy);
+        let out = write(self);
+        self.policy = own;
+        out
+    }
+
     /// Record that the edit depends on the whole document (a find over every paragraph):
     /// it commits only when nothing came between its snapshot and its commit.
     pub fn read_everything(&mut self) {

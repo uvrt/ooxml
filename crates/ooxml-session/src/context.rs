@@ -55,6 +55,9 @@ pub struct CallContext {
     /// Where the call may ask where blocks are laid out: the host's layout of the version
     /// it reads (`word_inspect`'s `layout`).
     pub placer: Option<Arc<dyn Placer>>,
+    /// The host's layout of the documents' versions, which an edit whose results come from
+    /// the pages reads (`word_fields`); `None`: such a result is left to the host.
+    pub layout: Option<Arc<dyn ooxml_word_edit::FieldLayout>>,
 }
 
 impl std::fmt::Debug for CallContext {

@@ -13,6 +13,7 @@
 
 mod describe;
 mod find_text;
+mod pages;
 mod paging;
 mod placements;
 mod refusal;
@@ -24,13 +25,14 @@ mod word_read;
 
 pub use describe::{describe, Describe, DESCRIBED, NOT_DESCRIBED};
 pub use find_text::{find_text, FindStories, FindText};
+pub use pages::EnginePages;
 pub use placements::Placer;
 pub use review::{
     word_changes, word_comments, word_set_tracking, ChangeAction, ChangeDetail, ChangeKind, CommentAction, CommentItem,
     Editing, Tracked, WordChanges, WordComments, WordSetTracking, COMMENT_WRITES,
 };
 pub use structure::{
-    word_headers_footers, word_links, word_move, word_notes, word_sections, CopyStyles, FieldAction, HeaderAction,
+    word_fields, word_headers_footers, word_links, word_move, word_notes, word_sections, CopyStyles, FieldAction, HeaderAction,
     LinkAction, Margins, NoteAction, NoteKind, Orientation, PageNumber, ReferenceKind, SectionAction, SectionStart,
     StoryType, StyleMapping, Unmapped, Which, WordCopyFrom, WordFields, WordHeadersFooters, WordLinks, WordMove,
     WordNotes, WordSections,

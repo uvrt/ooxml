@@ -37,6 +37,7 @@ mod delete_write;
 mod doc;
 mod editor;
 mod error;
+mod fields;
 pub mod find;
 mod inline;
 mod links;
@@ -79,6 +80,10 @@ pub use delete::{BlockDeleted, DeleteBlock};
 pub use doc::{Change, Draw, DrawFrom, Key, ModelError, Shared, WordDoc};
 pub use editor::{EditTiming, Edited, Editor};
 pub use error::{EditError, Result};
+pub use fields::{
+    fields, format_date, Day, FieldEdited, FieldInfo, FieldLayout, FieldPlace, InsertCaption, InsertCrossReference, InsertField, InsertToc,
+    LaidFields, PageShows, SetStoryNumbered, StoryNumber, StoryNumbered, Unknown, UpdateFields,
+};
 pub use links::{hyperlink_span, AddBookmark, AddHyperlink, LinkEdited, RemoveBookmark, RenameBookmark};
 pub use moving::{section_blocks, BlocksMoved, MoveBlocks, Moving};
 pub use notes::{DeleteNote, EditNote, InsertNote, MoveNote, NoteEdited, NoteKind};

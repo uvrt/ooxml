@@ -19,7 +19,7 @@ mod notes;
 mod sections;
 
 pub use copy_from::{CopyStyles, StyleMapping, Unmapped, WordCopyFrom};
-pub use fields::{FieldAction, ReferenceKind, WordFields};
+pub use fields::{word_fields, FieldAction, ReferenceKind, WordFields};
 pub use headers_footers::{word_headers_footers, HeaderAction, PageNumber, StoryType, Which, WordHeadersFooters};
 pub use links::{word_links, LinkAction, WordLinks};
 pub use moving::{word_move, WordMove};
