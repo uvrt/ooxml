@@ -123,7 +123,13 @@ fn instruction_node(work: &mut Work, parent: Id, text: &str) -> Id {
 
 /// The field's nodes put at `offset` of the paragraph (the root of `work`): the simple
 /// field, or the complex field's five runs (`_field_runs`).
-fn field_runs(work: &mut Work, offset: usize, instruction: &str, simple: bool, orders: &crate::validate::Orders) -> Result<Vec<Id>> {
+fn field_runs(
+    work: &mut Work,
+    offset: usize,
+    instruction: &str,
+    simple: bool,
+    orders: &crate::validate::Orders,
+) -> Result<Vec<Id>> {
     let paragraph = work.root();
     if simple {
         let node = new_w(work, paragraph, "fldSimple", &[("instr", instruction)]);
@@ -193,7 +199,9 @@ pub(crate) fn track(
         } else {
             nodes.to_vec()
         };
-        let (Some(&first), true) = (runs.first(), !runs.is_empty()) else { return Ok(()) };
+        let (Some(&first), true) = (runs.first(), !runs.is_empty()) else {
+            return Ok(());
+        };
         let (Some(parent), Some(index)) = (work.parent(first), work.index(first)) else {
             return Ok(());
         };
@@ -231,7 +239,10 @@ pub(crate) fn put_back(
     let id = renamed_id(renamed, &place.id);
     sink.replace_drawing(&part, &place.path, new, vec![block_key(&part, &id)], draws)?;
     if let (RevisionPolicy::Tracked(tracking), Some((numbered, dated))) = (sink.policy().clone(), tracked) {
-        sink.people((numbered.to > numbered.from).then_some(tracking.author.as_str()), Some(&tracking.author))?;
+        sink.people(
+            (numbered.to > numbered.from).then_some(tracking.author.as_str()),
+            Some(&tracking.author),
+        )?;
         if dated {
             sink.ensure_w14(&part, false, &[("w16du", W16DU)])?;
         }
@@ -243,10 +254,14 @@ impl InsertField<'_> {
     fn check(&self, doc: &WordDoc) -> Result<()> {
         let keyword = self.instruction.split_whitespace().next().unwrap_or("").to_uppercase();
         if keyword == "TOC" {
-            return Err(EditError::Refused("a table of contents is inserted with insert_toc".to_owned()));
+            return Err(EditError::Refused(
+                "a table of contents is inserted with insert_toc".to_owned(),
+            ));
         }
         if keyword == "HYPERLINK" {
-            return Err(EditError::Unsupported("a HYPERLINK field (written as a hyperlink)".to_owned()));
+            return Err(EditError::Unsupported(
+                "a HYPERLINK field (written as a hyperlink)".to_owned(),
+            ));
         }
         place(doc, &*doc.docx()?, &self.at, false).map(|_| ())
     }
@@ -261,7 +276,10 @@ impl InsertField<'_> {
             sink.read_everything(); // its result counts or reads the rest of the document
         }
         let renamed = stamp_document(&mut *sink, &docx)?;
-        let tree = sink.doc().tree(&here.part)?.ok_or_else(|| EditError::NoPart(here.part.clone()))?;
+        let tree = sink
+            .doc()
+            .tree(&here.part)?
+            .ok_or_else(|| EditError::NoPart(here.part.clone()))?;
         let element = at_path(tree.root(), &here.path).ok_or_else(|| EditError::Path(here.part.clone()))?;
         let mut work = Work::of(element, scope_above(tree.root(), &here.path));
         let shared = sink.doc().shared_handle();
@@ -285,7 +303,9 @@ impl InsertField<'_> {
         } else {
             nodes.first().and_then(|r| work.find(*r, W, "fldChar"))
         };
-        let below = begin.and_then(|b| green_path(&work, b)).ok_or_else(|| EditError::Path(here.part.clone()))?;
+        let below = begin
+            .and_then(|b| green_path(&work, b))
+            .ok_or_else(|| EditError::Path(here.part.clone()))?;
         put_back(&mut *sink, &work, (&here, true), tracked, &renamed)?;
         let mut path = here.path.clone();
         path.extend(below);
@@ -393,7 +413,10 @@ impl InsertCrossReference<'_> {
         let (text, unknown) = self.result(sink, &docx, &name)?;
         let instruction = format!(" {} {name} \\h ", if self.page { "PAGEREF" } else { "REF" });
         let renamed = stamp_document(&mut *sink, &docx)?;
-        let tree = sink.doc().tree(&here.part)?.ok_or_else(|| EditError::NoPart(here.part.clone()))?;
+        let tree = sink
+            .doc()
+            .tree(&here.part)?
+            .ok_or_else(|| EditError::NoPart(here.part.clone()))?;
         let element = at_path(tree.root(), &here.path).ok_or_else(|| EditError::Path(here.part.clone()))?;
         let mut work = Work::of(element, scope_above(tree.root(), &here.path));
         let paragraph = work.root();
@@ -428,7 +451,11 @@ impl InsertCrossReference<'_> {
             id: Some(id),
             changed: true,
             renamed,
-            unknown: if unknown { vec![format!("PAGEREF {name}")] } else { Vec::new() },
+            unknown: if unknown {
+                vec![format!("PAGEREF {name}")]
+            } else {
+                Vec::new()
+            },
             ..FieldEdited::default()
         })
     }

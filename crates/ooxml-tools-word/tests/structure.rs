@@ -11,8 +11,8 @@ use ooxml_opc::Package;
 use ooxml_store::{Caller, Clock, StoreConfig};
 use ooxml_tools::{ToolArgs, ToolResult};
 use ooxml_tools_word::{
-    word_fields, word_links, word_notes, Editing, WordCopyFrom, WordFields, WordHeadersFooters, WordLinks, WordMove, WordNotes,
-    WordSections, KIND,
+    word_fields, word_links, word_notes, Editing, WordCopyFrom, WordFields, WordHeadersFooters, WordLinks, WordMove,
+    WordNotes, WordSections, KIND,
 };
 use ooxml_word_edit::{Editor, FieldLayout, FieldPlace, LaidFields, PageShows, Unknown};
 use ooxml_zip::{Method, NewEntry, Writer};
@@ -103,8 +103,16 @@ impl LaidFields for LaidTwo {
 
     fn pages(&self) -> Vec<PageShows> {
         vec![
-            PageShows { section: 0, kind: "default", blank: false },
-            PageShows { section: 0, kind: "default", blank: false },
+            PageShows {
+                section: 0,
+                kind: "default",
+                blank: false,
+            },
+            PageShows {
+                section: 0,
+                kind: "default",
+                blank: false,
+            },
         ]
     }
 }
@@ -270,10 +278,16 @@ fn a_date_shows_the_calls_day_and_a_sequence_counts() {
 
 #[test]
 fn a_table_of_contents_with_no_headings_says_so() {
-    let (reply, editor) = call(json!({"doc": "d1", "action": "insert_toc", "after": "p:10000002"}), word_fields);
+    let (reply, editor) = call(
+        json!({"doc": "d1", "action": "insert_toc", "after": "p:10000002"}),
+        word_fields,
+    );
     assert_eq!(reply["summary"], json!("Inserted a table of contents fld:body/0"));
     let warnings = reply["warnings"].as_array().unwrap();
-    assert!(warnings[0].as_str().unwrap().contains("the table of contents has no entries"));
+    assert!(warnings[0]
+        .as_str()
+        .unwrap()
+        .contains("the table of contents has no entries"));
     let head = editor.store().snapshot();
     let found = ooxml_word_edit::fields(head.doc()).unwrap();
     assert_eq!(found[0].result, "No table of contents entries found.");
@@ -281,13 +295,27 @@ fn a_table_of_contents_with_no_headings_says_so() {
 
 #[test]
 fn field_refusals_carry_their_way_out() {
-    let (reply, _) = call(json!({"doc": "d1", "action": "update", "ids": ["fld:body/9"]}), word_fields);
+    let (reply, _) = call(
+        json!({"doc": "d1", "action": "update", "ids": ["fld:body/9"]}),
+        word_fields,
+    );
     assert_eq!(reply["error"]["code"], json!("refused"));
-    assert!(reply["error"]["way_out"].is_object() || reply["error"]["try_call"].is_object() || reply["error"].get("valid_options").is_some() || reply["error"].as_object().unwrap().len() > 2);
-    let (reply, _) = call(json!({"doc": "d1", "action": "insert_toc", "after": "p:10000002", "levels": "3-1"}), word_fields);
+    assert!(
+        reply["error"]["way_out"].is_object()
+            || reply["error"]["try_call"].is_object()
+            || reply["error"].get("valid_options").is_some()
+            || reply["error"].as_object().unwrap().len() > 2
+    );
+    let (reply, _) = call(
+        json!({"doc": "d1", "action": "insert_toc", "after": "p:10000002", "levels": "3-1"}),
+        word_fields,
+    );
     assert_eq!(reply["error"]["code"], json!("invalid_arguments"));
     assert_eq!(reply["error"]["field"], json!("levels"));
-    let (reply, _) = call(json!({"doc": "d1", "action": "insert_field", "at": "p:10000001@99", "instruction": "PAGE"}), word_fields);
+    let (reply, _) = call(
+        json!({"doc": "d1", "action": "insert_field", "at": "p:10000001@99", "instruction": "PAGE"}),
+        word_fields,
+    );
     assert_eq!(reply["error"]["code"], json!("refused"));
 }
 

@@ -9,9 +9,9 @@
 //! Must not: compute a page-number field (`crate::fields` does, against the pages) or
 //! `STYLEREF` (not ported: see lane L3a's hand-back).
 
+use crate::flow::body_paragraphs;
 use ooxml_word_model::fieldtext::sequence::{sequence_step, sequence_switches};
 use ooxml_word_model::fieldtext::{argument, switches, Uncomputable};
-use crate::flow::body_paragraphs;
 use ooxml_word_model::model::{Block, Paragraph, Run, RunProps};
 use ooxml_word_model::WordDocument;
 use std::collections::{BTreeMap, HashMap, HashSet};

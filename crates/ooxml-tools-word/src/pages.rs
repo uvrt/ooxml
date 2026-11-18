@@ -95,16 +95,16 @@ impl LaidFields for Laid {
                 .numbers
                 .page_field(instruction, keyword, self.path(id)?)
                 .map_err(unknown),
-            FieldPlace::Page(page) => self
-                .numbers
-                .page_field_at(instruction, keyword, page)
-                .map_err(unknown),
+            FieldPlace::Page(page) => self.numbers.page_field_at(instruction, keyword, page).map_err(unknown),
         }
     }
 
     fn page_reference(&self, instruction: &str, at: FieldPlace<'_>) -> Result<String, Unknown> {
         match at {
-            FieldPlace::Body(id) => self.numbers.page_reference(instruction, self.path(id)?).map_err(unknown),
+            FieldPlace::Body(id) => self
+                .numbers
+                .page_reference(instruction, self.path(id)?)
+                .map_err(unknown),
             FieldPlace::Page(page) => Err(Unknown(format!("a reference to page {page}"))),
         }
     }

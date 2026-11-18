@@ -10,9 +10,9 @@
 //! but into the copy it is given.
 
 use crate::links::new_w;
+use crate::names::XML;
 use crate::text::write::{make_run, spell};
 use crate::work::{Id, Work};
-use crate::names::XML;
 
 /// What Word writes in a table of contents that finds no headings.
 pub(crate) const EMPTY_TOC: &str = "No table of contents entries found.";
@@ -147,7 +147,12 @@ pub(crate) fn paragraphs(work: &mut Work, parent: Id, looks: &Looks<'_>, entries
             }
         }
         let container = if looks.hyperlinks {
-            let link = new_w(work, paragraph, "hyperlink", &[("anchor", entry.bookmark), ("history", "1")]);
+            let link = new_w(
+                work,
+                paragraph,
+                "hyperlink",
+                &[("anchor", entry.bookmark), ("history", "1")],
+            );
             work.append(paragraph, link);
             link
         } else {

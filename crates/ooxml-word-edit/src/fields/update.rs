@@ -171,7 +171,11 @@ fn pass(
     let needs = current.iter().any(|l| LAID_OUT.contains(&l.found.keyword().as_str()));
     let laid = match (needs, layout) {
         (false, _) => None,
-        (true, None) => return Err(EditError::Unsupported("a field update that needs the layout".to_owned())),
+        (true, None) => {
+            return Err(EditError::Unsupported(
+                "a field update that needs the layout".to_owned(),
+            ))
+        }
         (true, Some(layout)) => Some(
             layout
                 .lay_out(sink.doc().package())
@@ -205,7 +209,10 @@ fn pass(
             apply(sink, &std::mem::take(&mut batch))?;
             docx = sink.docx()?;
             let fresh = identified(&docx, held).into_iter().find(|(i, _)| *i == known);
-            let laid = pass.laid.as_deref().ok_or_else(|| EditError::Unsupported("no layout".to_owned()))?;
+            let laid = pass
+                .laid
+                .as_deref()
+                .ok_or_else(|| EditError::Unsupported("no layout".to_owned()))?;
             if let Some((_, toc)) = fresh {
                 super::toc::rebuild(sink, &toc, laid, &mut unknown)?;
             }
@@ -276,8 +283,16 @@ fn write_paragraph(
             .and_then(|e| paragraph_of(root, e))
             .is_some_and(|p| p == path);
         let complex = if same {
-            let end = found.end.as_deref().and_then(below).and_then(|p| locate(&work, element, &p));
-            let separate = found.separate.as_deref().and_then(below).and_then(|p| locate(&work, element, &p));
+            let end = found
+                .end
+                .as_deref()
+                .and_then(below)
+                .and_then(|p| locate(&work, element, &p));
+            let separate = found
+                .separate
+                .as_deref()
+                .and_then(below)
+                .and_then(|p| locate(&work, element, &p));
             end.map(|end| Complex {
                 begin,
                 separate,

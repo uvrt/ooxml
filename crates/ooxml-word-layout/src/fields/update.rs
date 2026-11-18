@@ -11,10 +11,10 @@
 //! Must not: find a field's paragraph or a bookmark's (the caller names them by path), or
 //! write anything.
 
-use ooxml_word_model::fieldtext::{field_text, Uncomputable};
 use crate::engine::DocumentLayout;
 use crate::facts::LayoutFacts;
 use crate::paginate::PageInfo;
+use ooxml_word_model::fieldtext::{field_text, Uncomputable};
 use ooxml_word_model::value::Text;
 use std::borrow::Borrow;
 

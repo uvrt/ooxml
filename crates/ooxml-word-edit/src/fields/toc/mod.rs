@@ -62,7 +62,9 @@ pub(crate) fn rebuild(
         .filter(|h| !inside.iter().any(|p| **p == *h.paragraph.path))
         .collect();
     if numbered(&docx, &headings) {
-        return Err(EditError::Unsupported("a numbered heading in a table of contents".to_owned()));
+        return Err(EditError::Unsupported(
+            "a numbered heading in a table of contents".to_owned(),
+        ));
     }
     let instruction = toc.found.instruction.clone();
     let hyperlinks = has(&instruction, 'h');
@@ -182,9 +184,9 @@ fn style_has_tabs(docx: &Docx, id: &str) -> bool {
         }
         let Some(style) = docx.style(&style_id) else { break };
         if let Some(tabs) = find_path(style, &["pPr", "tabs"]) {
-            let set = tabs.child_elements().any(|t| {
-                t.name().is(Some(W), "tab") && t.attribute(Some(W), "val") != Some("clear")
-            });
+            let set = tabs
+                .child_elements()
+                .any(|t| t.name().is(Some(W), "tab") && t.attribute(Some(W), "val") != Some("clear"));
             if set {
                 return true;
             }
@@ -221,7 +223,10 @@ fn text_width(docx: &Docx, path: &[u32]) -> i64 {
 /// The heading's `_Toc` bookmark at `path` of `part` (`_toc_bookmark`): one starting in it
 /// kept, else a new one round its text, numbered one above the document's largest.
 fn bookmark(sink: &mut EditSink<'_, '_>, part: &str, path: &[u32]) -> Result<String> {
-    let tree = sink.doc().tree(part)?.ok_or_else(|| EditError::NoPart(part.to_owned()))?;
+    let tree = sink
+        .doc()
+        .tree(part)?
+        .ok_or_else(|| EditError::NoPart(part.to_owned()))?;
     let element = at_path(tree.root(), path).ok_or_else(|| EditError::Path(part.to_owned()))?;
     if let Some(name) = toc_names(element).into_iter().next() {
         return Ok(name);
@@ -248,8 +253,8 @@ fn bookmark(sink: &mut EditSink<'_, '_>, part: &str, path: &[u32]) -> Result<Str
         .collect();
     let mut at = 0;
     for (k, child) in children.iter().enumerate() {
-        let field_only = !work.iter(*child, W, &["fldChar", "instrText"]).is_empty()
-            && work.iter(*child, W, &["t"]).is_empty();
+        let field_only =
+            !work.iter(*child, W, &["fldChar", "instrText"]).is_empty() && work.iter(*child, W, &["t"]).is_empty();
         if work.is(*child, W, "pPr") || field_only {
             at = k + 1;
         } else if !work.is(*child, W, "proofErr") {
@@ -262,7 +267,12 @@ fn bookmark(sink: &mut EditSink<'_, '_>, part: &str, path: &[u32]) -> Result<Str
     }
     work.append(paragraph, end);
     let new = work.build().ok_or_else(|| EditError::Path(part.to_owned()))?;
-    let draws = marker_draws(&[Node::Element(Arc::clone(&new))], &["bookmarkStart", "bookmarkEnd"], value, offset);
+    let draws = marker_draws(
+        &[Node::Element(Arc::clone(&new))],
+        &["bookmarkStart", "bookmarkEnd"],
+        value,
+        offset,
+    );
     let keys = vec![Key::Part(Arc::from(part)), Key::Annotations];
     sink.replace_drawing(part, path, new, keys, draws)?;
     Ok(name)
@@ -350,8 +360,8 @@ impl Region {
         let mut last_path = self.container.clone();
         last_path.push(e);
         let mut end_work = Work::of(&last, scope_above(root, &last_path));
-        let end_node = locate(&end_work, &last, self.end.get(last_path.len()..).unwrap_or_default())
-            .ok_or_else(path_error)?;
+        let end_node =
+            locate(&end_work, &last, self.end.get(last_path.len()..).unwrap_or_default()).ok_or_else(path_error)?;
         let end_run = work_run_of(&end_work, end_node);
         trim_before(&mut end_work, end_run);
         let end_root = end_work.root();
@@ -364,8 +374,12 @@ impl Region {
             let mut first_path = self.container.clone();
             first_path.push(b);
             let mut begin_work = Work::of(&first, scope_above(root, &first_path));
-            let begin_node = locate(&begin_work, &first, self.begin.get(first_path.len()..).unwrap_or_default())
-                .ok_or_else(path_error)?;
+            let begin_node = locate(
+                &begin_work,
+                &first,
+                self.begin.get(first_path.len()..).unwrap_or_default(),
+            )
+            .ok_or_else(path_error)?;
             let begin_run = work_run_of(&begin_work, begin_node);
             if trim_after(&mut begin_work, begin_run) {
                 kept_begin = Some(begin_work.build().ok_or_else(path_error)?);
@@ -440,9 +454,10 @@ fn trim_before(work: &mut Work, end_run: Id) {
 /// whether it is kept (else it goes whole).
 fn trim_after(work: &mut Work, begin_run: Id) -> bool {
     let root = work.root();
-    let kept_before = work.children(root).iter().any(|c| {
-        work.is_element(*c) && !work.is(*c, W, "pPr") && *c != begin_run && precedes(work, *c, begin_run)
-    });
+    let kept_before = work
+        .children(root)
+        .iter()
+        .any(|c| work.is_element(*c) && !work.is(*c, W, "pPr") && *c != begin_run && precedes(work, *c, begin_run));
     if !kept_before {
         return false;
     }

@@ -109,7 +109,9 @@ pub(crate) fn toc_options(instruction: &str, separator: &str) -> TocOptions {
     let named: Vec<String> = tokens
         .windows(2)
         .filter_map(|pair| match pair {
-            [t, next] if t.to_lowercase() == "\\t" && !next.starts_with('\\') => Some(next.trim_matches('"').to_owned()),
+            [t, next] if t.to_lowercase() == "\\t" && !next.starts_with('\\') => {
+                Some(next.trim_matches('"').to_owned())
+            }
             _ => None,
         })
         .collect();
@@ -164,7 +166,10 @@ mod tests {
         let found = switches(r#" TOC \o "1-3" \h \z \u "#);
         assert_eq!(found.first(), Some(&('o', Argument::Text("1-3".into()))));
         assert!(has(r" TOC \H ", 'h'));
-        assert_eq!(switch(r#" DATE \@ "d MMMM yyyy" "#, '@').as_deref(), Some("d MMMM yyyy"));
+        assert_eq!(
+            switch(r#" DATE \@ "d MMMM yyyy" "#, '@').as_deref(),
+            Some("d MMMM yyyy")
+        );
         assert_eq!(switch(r" SEQ Figure \r 3 ", 'r').as_deref(), Some("3"));
         assert_eq!(switch(r" PAGE \* ARABIC ", '*').as_deref(), Some("ARABIC"));
     }

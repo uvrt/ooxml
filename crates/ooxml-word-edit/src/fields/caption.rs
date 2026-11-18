@@ -110,7 +110,10 @@ impl InsertCaption<'_> {
             .find(|p| p.id == id)
             .ok_or_else(|| EditError::Path(part.to_owned()))?;
         let path = paragraph.path.to_vec();
-        let tree = sink.doc().tree(part)?.ok_or_else(|| EditError::NoPart(part.to_owned()))?;
+        let tree = sink
+            .doc()
+            .tree(part)?
+            .ok_or_else(|| EditError::NoPart(part.to_owned()))?;
         let element = at_path(tree.root(), &path).ok_or_else(|| EditError::Path(part.to_owned()))?;
         let mut work = Work::of(element, scope_above(tree.root(), &path));
         let root = work.root();

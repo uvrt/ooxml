@@ -74,7 +74,12 @@ pub(crate) fn scan(root: &Element) -> Vec<Found> {
         let name = node.name();
         if name.is(Some(W), "fldSimple") {
             let number = out.len();
-            out.push(found(number, true, node.attribute(Some(W), "instr").unwrap_or(""), path));
+            out.push(found(
+                number,
+                true,
+                node.attribute(Some(W), "instr").unwrap_or(""),
+                path,
+            ));
         } else if name.is(Some(W), "instrText") {
             if let Some(field) = stack.last().and_then(|k| out.get_mut(*k)) {
                 if field.separate.is_none() {
@@ -189,16 +194,22 @@ pub(crate) fn result_text(root: &Arc<Element>, found: &Found) -> String {
     let (first, last) = (run_of(root, separate), run_of(root, end));
     let mut out = String::new();
     let mut path = Vec::new();
-    between(root, &mut path, false, (&first, &last), &mut |node, _, deleted, parent_run| {
-        let name = node.name();
-        if name.is(Some(W), "t") && !deleted {
-            out.push_str(&leading_text(node));
-        } else if name.is(Some(W), "tab") && parent_run {
-            out.push('\t');
-        } else if name.is(Some(W), "p") {
-            out.push('\n');
-        }
-    });
+    between(
+        root,
+        &mut path,
+        false,
+        (&first, &last),
+        &mut |node, _, deleted, parent_run| {
+            let name = node.name();
+            if name.is(Some(W), "t") && !deleted {
+                out.push_str(&leading_text(node));
+            } else if name.is(Some(W), "tab") && parent_run {
+                out.push('\t');
+            } else if name.is(Some(W), "p") {
+                out.push('\n');
+            }
+        },
+    );
     out.trim_matches('\n').to_owned()
 }
 

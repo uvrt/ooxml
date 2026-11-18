@@ -110,7 +110,9 @@ pub(crate) fn entries(docx: &Docx, instruction: &str) -> Vec<Heading> {
         let style_id = levels.style_id(element);
         let in_range = |level: i64| options.outline.is_some_and(|(a, b)| a <= level && level <= b);
         let level = if options.own {
-            let Some(found) = levels.effective(element) else { continue };
+            let Some(found) = levels.effective(element) else {
+                continue;
+            };
             if in_range(found) {
                 Some(found)
             } else {

@@ -109,9 +109,16 @@ impl SetStoryNumbered<'_> {
                 } else {
                     ""
                 };
-                typed = Some(crate::ranges::insert_text(&mut *sink, &format!("{id}@{end}"), &format!("{before}Page  of "))?);
+                typed = Some(crate::ranges::insert_text(
+                    &mut *sink,
+                    &format!("{id}@{end}"),
+                    &format!("{before}Page  of "),
+                )?);
                 let (id, text) = Self::last(sink, &story.story)?;
-                fields.push(self.field(format!("{id}@{}", text.len()), "NUMPAGES").edit(&mut *sink)?);
+                fields.push(
+                    self.field(format!("{id}@{}", text.len()), "NUMPAGES")
+                        .edit(&mut *sink)?,
+                );
                 let (id, _) = Self::last(sink, &story.story)?;
                 let at = end + before.chars().count() + 5;
                 fields.push(self.field(format!("{id}@{at}"), "PAGE").edit(&mut *sink)?);

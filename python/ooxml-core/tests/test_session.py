@@ -71,8 +71,8 @@ def test_refusals_are_replies_and_session_errors_are_exceptions():
     assert missing["error"] == {"code": "not_found", "message": "no open document 'd5'", "field": "doc",
                                 "valid_options": ["d1"]}
     assert call(session, "nope", {})["error"]["valid_options"] == [
-        "describe", "find_text", "read_batch", "replace_text", "word_changes", "word_comments", "word_inspect",
-        "word_read", "word_set_text", "word_set_tracking"]
+        "describe", "find_text", "read_batch", "replace_text", "word_changes", "word_comments", "word_fields",
+        "word_inspect", "word_read", "word_set_text", "word_set_tracking"]
     text, _, _ = session.call("describe", "{not json")
     assert json.loads(text)["error"]["code"] == "invalid_arguments"
     assert len(session.call("describe", json.dumps({"doc": doc}), limit=60)[0]) <= 60 + 100

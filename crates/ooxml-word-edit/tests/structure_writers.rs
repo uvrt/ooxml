@@ -13,9 +13,8 @@ use ooxml_opc::Package;
 use ooxml_store::{Caller, Clock, Command, Seq, Snapshot, StoreConfig, Txn};
 use ooxml_word_edit::{
     AddBookmark, AddHyperlink, Day, DeleteNote, EditError, EditNote, Editor, InsertCaption, InsertField, InsertNote,
-    InsertSectionBreak, InsertText, UpdateFields,
-    MoveBlocks, Moving, NoteKind, RemoveBookmark, RevisionPolicy, SectionValues, SetSection, SetStoryText, SetText,
-    Tracking, WordDoc,
+    InsertSectionBreak, InsertText, MoveBlocks, Moving, NoteKind, RemoveBookmark, RevisionPolicy, SectionValues,
+    SetSection, SetStoryText, SetText, Tracking, UpdateFields, WordDoc,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -240,7 +239,12 @@ fn field_edit(rng: &mut Rng, target: String, writer: u64, words: &[&str]) -> Edi
     match 14 + rng.below(3) {
         14 => Edit::Field(InsertField {
             at: format!("{target}@{}", rng.below(2)),
-            instruction: if rng.below(2) == 0 { "SEQ Figure \\* ARABIC" } else { "DATE" }.to_owned(),
+            instruction: if rng.below(2) == 0 {
+                "SEQ Figure \\* ARABIC"
+            } else {
+                "DATE"
+            }
+            .to_owned(),
             result: None,
             simple: rng.below(2) == 0,
             policy: policy(rng, writer),

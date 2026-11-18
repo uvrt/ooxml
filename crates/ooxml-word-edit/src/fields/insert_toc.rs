@@ -90,7 +90,11 @@ impl InsertToc<'_> {
 
     /// The paragraph that holds the field: a new empty one (its properties gone), or the
     /// paragraph it goes before.
-    fn holder(&self, sink: &mut EditSink<'_, '_>, anchor: &crate::paragraphs::Anchor) -> Result<(Holder, Vec<(String, String)>)> {
+    fn holder(
+        &self,
+        sink: &mut EditSink<'_, '_>,
+        anchor: &crate::paragraphs::Anchor,
+    ) -> Result<(Holder, Vec<(String, String)>)> {
         let docx = sink.docx()?;
         let own = !(self.before.is_some() && anchor.paragraph);
         if !own {
@@ -111,7 +115,9 @@ impl InsertToc<'_> {
             insert_paragraph(sink, &target, (after, "", None))
         })?;
         let docx = sink.docx()?;
-        let part = docx.part(&docx.main).ok_or_else(|| EditError::NoPart(docx.main.clone()))?;
+        let part = docx
+            .part(&docx.main)
+            .ok_or_else(|| EditError::NoPart(docx.main.clone()))?;
         let path = part
             .ids
             .paragraphs()
@@ -119,14 +125,7 @@ impl InsertToc<'_> {
             .find(|p| p.id == made.id)
             .map(|p| p.path.to_vec())
             .ok_or_else(|| EditError::Path(docx.main.clone()))?;
-        Ok((
-            Holder {
-                path,
-                id: made.id,
-                own,
-            },
-            made.renamed,
-        ))
+        Ok((Holder { path, id: made.id, own }, made.renamed))
     }
 
     fn edit(&self, sink: &mut EditSink<'_, '_>) -> Result<FieldEdited> {
@@ -211,7 +210,10 @@ fn find_toc(docx: &ooxml_word_model::docx::Docx, main: &str, holder: &Holder) ->
 /// The field's begin, instruction, separator and end put first in the holder (after its
 /// properties), each a run of its own: the begin's path.
 fn put_field(sink: &mut EditSink<'_, '_>, part: &str, holder: &Holder, instruction: &str) -> Result<Vec<u32>> {
-    let tree = sink.doc().tree(part)?.ok_or_else(|| EditError::NoPart(part.to_owned()))?;
+    let tree = sink
+        .doc()
+        .tree(part)?
+        .ok_or_else(|| EditError::NoPart(part.to_owned()))?;
     let element = at_path(tree.root(), &holder.path).ok_or_else(|| EditError::Path(part.to_owned()))?;
     let mut work = Work::of(element, scope_above(tree.root(), &holder.path));
     let paragraph = work.root();
@@ -243,11 +245,17 @@ fn put_field(sink: &mut EditSink<'_, '_>, part: &str, holder: &Holder, instructi
 
 /// The paragraphs from the field's begin to its end, both included (`_toc_paragraphs`).
 fn toc_paragraphs(root: &Arc<Element>, toc: &Located) -> Vec<Vec<u32>> {
-    let Some(first) = paragraph_of(root, &toc.found.begin) else { return Vec::new() };
+    let Some(first) = paragraph_of(root, &toc.found.begin) else {
+        return Vec::new();
+    };
     let last = toc.found.end.as_ref().and_then(|e| paragraph_of(root, e));
     let mut out = vec![first.clone()];
-    let Some((&b, container)) = first.split_last() else { return out };
-    let Some(parent) = at_path(root, container) else { return out };
+    let Some((&b, container)) = first.split_last() else {
+        return out;
+    };
+    let Some(parent) = at_path(root, container) else {
+        return out;
+    };
     let Some(last) = last else { return out };
     for k in b + 1..u32::try_from(parent.children().len()).unwrap_or(0) {
         let mut path = container.to_vec();
@@ -270,8 +278,9 @@ fn toc_paragraphs(root: &Arc<Element>, toc: &Located) -> Vec<Vec<u32>> {
 /// Whether a block follows the child `k` of `parent` (`is_last_in_container`'s negation).
 fn followed(parent: &Element, k: u32) -> bool {
     parent.children().iter().skip(k as usize + 1).any(|n| {
-        n.as_element()
-            .is_some_and(|e| e.name().namespace() == Some(W) && ["p", "tbl", "sdt", "customXml"].contains(&e.name().local()))
+        n.as_element().is_some_and(|e| {
+            e.name().namespace() == Some(W) && ["p", "tbl", "sdt", "customXml"].contains(&e.name().local())
+        })
     })
 }
 
@@ -306,7 +315,12 @@ fn track_toc(sink: &mut EditSink<'_, '_>, toc: &Located, tracking: crate::policy
     };
     let ends = vec![span(from), span(last)];
     let end_path = toc.found.end.clone().ok_or_else(|| EditError::Path(part.clone()))?;
-    let wanted: Vec<Vec<u32>> = places.iter().cloned().chain(previous.map(span)).chain([end_path]).collect();
+    let wanted: Vec<Vec<u32>> = places
+        .iter()
+        .cloned()
+        .chain(previous.map(span))
+        .chain([end_path])
+        .collect();
     let wanted_refs: Vec<&[u32]> = wanted.iter().map(Vec::as_slice).collect();
     let (mut work, parent_path, stretch, found) =
         editable(&root, &ends, &wanted_refs).ok_or_else(|| EditError::Path(part.clone()))?;
@@ -334,7 +348,9 @@ fn track_toc(sink: &mut EditSink<'_, '_>, toc: &Located, tracking: crate::policy
         mark_entries(&mut work, (&entries, &last_flags, previous_node), stamp, orders);
         Ok(())
     })?;
-    let nodes = work.build_content(work.root()).ok_or_else(|| EditError::Path(part.clone()))?;
+    let nodes = work
+        .build_content(work.root())
+        .ok_or_else(|| EditError::Path(part.clone()))?;
     let mut draws: Vec<Draw> = Vec::new();
     for (k, node) in nodes.iter().enumerate() {
         if let (Node::Element(e), Ok(k)) = (node, u32::try_from(k)) {
@@ -348,7 +364,10 @@ fn track_toc(sink: &mut EditSink<'_, '_>, toc: &Located, tracking: crate::policy
         sink.ensure_w14(&part, false, &[("w16du", W16DU)])?;
     }
     if let RevisionPolicy::Tracked(tracking) = sink.policy().clone() {
-        sink.people((numbered.to > numbered.from).then_some(tracking.author.as_str()), Some(&tracking.author))?;
+        sink.people(
+            (numbered.to > numbered.from).then_some(tracking.author.as_str()),
+            Some(&tracking.author),
+        )?;
     }
     Ok(())
 }
@@ -356,13 +375,21 @@ fn track_toc(sink: &mut EditSink<'_, '_>, toc: &Located, tracking: crate::policy
 /// Each entry's mark recorded as inserted; at its container's end, Word's typing form:
 /// the block before's mark instead, where that is a paragraph with no mark record and no
 /// section break.
-fn mark_entries(work: &mut Work, (entries, last, previous): (&[Id], &[bool], Option<Id>), stamp: &mut Stamp, orders: &Orders) {
+fn mark_entries(
+    work: &mut Work,
+    (entries, last, previous): (&[Id], &[bool], Option<Id>),
+    stamp: &mut Stamp,
+    orders: &Orders,
+) {
     for (k, paragraph) in entries.iter().enumerate() {
         if last.get(k).copied().unwrap_or(false) {
             let eligible = previous.filter(|p| {
                 work.is(*p, W, "p")
                     && mark_record(work, *p).is_none()
-                    && work.find(*p, W, "pPr").and_then(|pr| work.find(pr, W, "sectPr")).is_none()
+                    && work
+                        .find(*p, W, "pPr")
+                        .and_then(|pr| work.find(pr, W, "sectPr"))
+                        .is_none()
             });
             if let Some(previous) = eligible {
                 mark(work, previous, "ins", stamp, orders);
@@ -382,7 +409,12 @@ fn insert_content(work: &mut Work, paragraph: Id, stamp: &mut Stamp) {
             continue;
         }
         if work.is(child, W, "hyperlink") {
-            let inner: Vec<Id> = work.children(child).iter().copied().filter(|c| work.is_element(*c)).collect();
+            let inner: Vec<Id> = work
+                .children(child)
+                .iter()
+                .copied()
+                .filter(|c| work.is_element(*c))
+                .collect();
             if let Some(&first) = inner.first() {
                 let container = stamp.make(work, "ins");
                 work.add_previous(first, container);
@@ -435,7 +467,13 @@ fn renew_text_id(sink: &mut EditSink<'_, '_>, toc: &Located) -> Result<()> {
         attribute: Arc::new(QName::new(Some(&prefix), "textId", Some(W14))),
     };
     let id = story.ids.paragraph_at(&path).map(|p| p.id).unwrap_or_default();
-    sink.replace_drawing(part, &path, Arc::clone(element), vec![crate::set_text::block_key(part, &id)], vec![draw])
+    sink.replace_drawing(
+        part,
+        &path,
+        Arc::clone(element),
+        vec![crate::set_text::block_key(part, &id)],
+        vec![draw],
+    )
 }
 
 impl Command<WordDoc> for InsertToc<'_> {

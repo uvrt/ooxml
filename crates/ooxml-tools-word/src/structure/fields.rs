@@ -277,12 +277,19 @@ fn beside(args: &WordFields, editing: &Editing<'_>) -> Result<(Option<String>, O
     };
     if after.is_some() == before.is_some() {
         let way_out = WayOut::names(["after", "before"]).unwrap_or_else(|| WayOut::call(call("word_fields", &[])));
-        return Err(ToolError::refusal(Refusal::InvalidArguments, "give exactly one of after, before", way_out));
+        return Err(ToolError::refusal(
+            Refusal::InvalidArguments,
+            "give exactly one of after, before",
+            way_out,
+        ));
     }
     let Some(after) = after else { return Ok((None, before)) };
     if after == "end" {
         let head = editing.editor.store().snapshot();
-        let docx = head.doc().docx().map_err(|e| ToolError::internal(e.to_string(), "word:model"))?;
+        let docx = head
+            .doc()
+            .docx()
+            .map_err(|e| ToolError::internal(e.to_string(), "word:model"))?;
         return Ok((super::sections::body_blocks(&docx).last().cloned(), None));
     }
     if let Some(anchor) = after.strip_prefix("before:") {
@@ -329,7 +336,11 @@ fn position(args: &WordFields, editing: &Editing<'_>, list: &TryCall) -> Result<
 /// A mark's own place for `side` of `anchor` (docx-agent's `positions._write("mark")`):
 /// after it as it is; before it, a position at its start.
 fn mark_place(side: &str, anchor: &str) -> Option<String> {
-    if side == "after" || ["after:", "before:", "replace:", "end"].iter().any(|s| anchor.starts_with(s)) {
+    if side == "after"
+        || ["after:", "before:", "replace:", "end"]
+            .iter()
+            .any(|s| anchor.starts_with(s))
+    {
         return Some(anchor.to_owned());
     }
     let Some((head, span)) = anchor.split_once('@') else {

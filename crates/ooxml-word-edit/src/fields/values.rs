@@ -9,8 +9,8 @@ use super::pages::{FieldPlace, LaidFields, Unknown};
 use super::scan::{paragraph_of, Located};
 use crate::text_range::{range, Span};
 use crate::WordDoc;
-use ooxml_word_model::docx::text::OBJECT;
 use ooxml_word_model::docx::sections::section_story;
+use ooxml_word_model::docx::text::OBJECT;
 use ooxml_word_model::docx::Docx;
 use ooxml_word_model::fieldtext::argument;
 use ooxml_word_model::fieldtext::sequence::{sequence_step, sequence_switches};
@@ -73,7 +73,15 @@ const MONTHS: [&str; 12] = [
     "December",
 ];
 /// English day names, Monday first.
-const DAYS: [&str; 7] = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+const DAYS: [&str; 7] = [
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sunday",
+];
 
 /// The picture's tokens as docx-agent's pattern takes them: a quoted literal, a run of one
 /// letter (`d`, `M` up to four, `y` two to four, `H` `h` `m` `s` up to two), `AM/PM`,
