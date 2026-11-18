@@ -34,6 +34,11 @@ pub trait DocModel: Clone + Send + Sync + 'static {
     /// is not known).
     fn written(change: &Self::Change, into: &mut KeySet<Self::Key>);
 
+    /// Make now, before a commit takes the commit lock, what applying a change to this
+    /// version would otherwise derive inside it (a version's indexes): the critical
+    /// section stays a check, a rebase and pointer work. Nothing by default.
+    fn warm(&self) {}
+
     /// Add to `into` the keys of [`DocModel::written`] that `change` writes as a merge made
     /// where it is applied (an id drawn from the version it lands on, a name added to a
     /// list): a transaction that read one conflicts with it, but two that both write one

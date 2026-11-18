@@ -233,6 +233,10 @@ impl<D: DocModel> Store<D> {
         // with another writer of it
         let mut depends = parts.reads.clone();
         depends.extend(&parts.writes.without(&parts.merges));
+        // what the head derives for the changes applied to it, made outside the lock
+        if !Arc::ptr_eq(&self.head.load(), &parts.base) {
+            self.head.load().doc().warm();
+        }
         let mut state = lock(&self.state);
         let entered = self.clock.monotonic();
         let head = self.head.load();

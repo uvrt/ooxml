@@ -516,6 +516,12 @@ impl DocModel for WordDoc {
         }
     }
 
+    fn warm(&self) {
+        // the reading and the tally a draw or a people change reads where it lands
+        let _ = self.docx();
+        let _ = self.tally();
+    }
+
     fn merged(change: &Change, into: &mut KeySet<Key>) {
         match change {
             // revision ids drawn where the splice lands, the people part kept there
