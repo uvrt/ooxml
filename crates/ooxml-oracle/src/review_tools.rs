@@ -1,5 +1,5 @@
-//! The review tools' cases of `word-edits` (`op: "tool"`): `word_set_tracking`,
-//! `word_changes` and `word_comments` called with JSON arguments on a document as opened,
+//! The tool cases of `word-edits` (`op: "tool"`): `word_set_tracking`, `word_changes`,
+//! `word_comments`, `word_set_text` and `replace_text` called with JSON arguments on a document as opened,
 //! each reply as the tool writes it (`to_json`) and every part whose content changed (its
 //! bytes as the package writes them), for `python/word_edits_diff.py --tools` to compare
 //! with docx-agent's toolbox.
@@ -12,7 +12,8 @@ use ooxml_opc::Package;
 use ooxml_store::{Caller, StoreConfig};
 use ooxml_tools::ArgType;
 use ooxml_tools_word::{
-    word_changes, word_comments, word_set_tracking, Editing, WordChanges, WordComments, WordSetTracking,
+    replace_text, word_changes, word_comments, word_set_text, word_set_tracking, Editing, ReplaceText, WordChanges,
+    WordComments, WordSetText, WordSetTracking,
 };
 use ooxml_word_edit::Editor;
 use serde_json::{json, Map, Value};
@@ -67,6 +68,14 @@ pub fn tool_case(bytes: &Arc<[u8]>, case: &Value) -> Result<Value, String> {
             )
             .0
         }
+        "word_set_text" => word_set_text(
+            &WordSetText::from_arg(&arguments, "").map_err(|e| e.to_string())?,
+            &editing,
+        ),
+        "replace_text" => replace_text(
+            &ReplaceText::from_arg(&arguments, "").map_err(|e| e.to_string())?,
+            &editing,
+        ),
         other => return Err(format!("no tool {other}")),
     };
     let head = editor.store().snapshot();

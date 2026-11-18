@@ -239,3 +239,84 @@ fn bridged_calls_are_counted_by_tool() {
     let counts: Vec<(String, u64)> = s.bridge_calls().into_iter().collect();
     assert_eq!(counts, vec![("word_format".to_owned(), 2), ("word_move".to_owned(), 1)]);
 }
+
+#[test]
+fn the_text_tools_edit_through_dispatch() {
+    let s = session();
+    let body = format!(
+        "{}{}",
+        paragraph("11111111", "one word here"),
+        paragraph("22222222", "two word there")
+    );
+    let d = s.open(docx(&body), DocKind::Docx, "a.docx").unwrap();
+    let context = as_caller("w1");
+    let set = call(
+        &s,
+        "word_set_text",
+        json!({"doc": "d1", "target": "p:11111111", "text": "First line\nSecond line"}),
+        &context,
+    );
+    assert_eq!(set["summary"], json!("Set the text of 1 paragraph(s), 1 new after them"), "{set}");
+    assert_eq!(set["changed"], json!(["p:11111111"]));
+    // rule 3: the same text again changes nothing, and says so without failing
+    let same = call(
+        &s,
+        "word_set_text",
+        json!({"doc": "d1", "target": "p:11111111", "text": "First line"}),
+        &context,
+    );
+    assert_eq!(same["ok"], json!(true), "{same}");
+    assert_eq!(same["changed"], json!([]));
+    // several items are one step: one undo takes both back
+    let items = call(
+        &s,
+        "word_set_text",
+        json!({"doc": "d1", "items": [
+            {"target": "p:11111111", "text": "A"}, {"target": "p:22222222", "text": "B"}]}),
+        &context,
+    );
+    assert_eq!(items["summary"], json!("Set the text of 2 paragraph(s)"), "{items}");
+    s.undo(&d, 1, &context).unwrap();
+    assert!(body_of(&s, &d).contains("two word there"));
+    // rule 2: a span is refused with the call that would work
+    let span = s.call(
+        "word_set_text",
+        json!({"doc": "d1", "target": "p:11111111..p:22222222", "text": "x"}),
+        &context,
+    );
+    let span = Value::Object(span.to_json());
+    assert_eq!(span["error"]["code"], json!("invalid_arguments"), "{span}");
+    assert!(span["error"]["try_call"].is_object(), "{span}");
+    // what is not ported yet changes nothing and says so to the host
+    let styled = s.call(
+        "word_set_text",
+        json!({"doc": "d1", "target": "p:22222222", "text": "a **strong** word"}),
+        &context,
+    );
+    assert!(!styled.unported().is_empty());
+    assert!(!body_of(&s, &d).contains("strong"));
+    // replace_text: one expected, two found: refused with each listed
+    let two = call(
+        &s,
+        "replace_text",
+        json!({"doc": "d1", "find": "line", "replace": "row"}),
+        &context,
+    );
+    assert_eq!(two["error"]["code"], json!("ambiguous"), "{two}");
+    assert_eq!(two["error"]["valid_options"].as_array().map(Vec::len), Some(2), "{two}");
+    let all = call(
+        &s,
+        "replace_text",
+        json!({"doc": "d1", "find": "line", "replace": "row", "expect": "all"}),
+        &context,
+    );
+    assert_eq!(all["data"]["count"], json!(2), "{all}");
+    assert!(body_of(&s, &d).contains("Second row"));
+    let none = call(
+        &s,
+        "replace_text",
+        json!({"doc": "d1", "find": "absent", "replace": "x"}),
+        &context,
+    );
+    assert_eq!(none["error"]["message"], json!("'absent' occurs nowhere"), "{none}");
+}

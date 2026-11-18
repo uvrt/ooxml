@@ -109,7 +109,7 @@ pub fn find_text(args: &FindText, version: &Version<'_>, cancel: &dyn Cancel) ->
     let found_in = |text: &[char], line: &str| -> Result<Vec<(usize, usize)>, ToolError> {
         match &pattern {
             Some(regex) => regex.find(line).map_err(|why| regex_refusal(args, &why.0)),
-            None => Ok(matches(text, &needle)
+            None => Ok(literal_matches(text, &needle)
                 .into_iter()
                 .map(|start| (start, start + needle.len()))
                 .collect()),
@@ -145,7 +145,7 @@ pub fn find_text(args: &FindText, version: &Version<'_>, cancel: &dyn Cancel) ->
 
 /// Where `needle` starts in `text`, left to right and not overlapping (as `re.finditer`
 /// finds an escaped literal).
-fn matches(text: &[char], needle: &[char]) -> Vec<usize> {
+pub(crate) fn literal_matches(text: &[char], needle: &[char]) -> Vec<usize> {
     let mut out = Vec::new();
     let mut at = 0;
     while at + needle.len() <= text.len() {
@@ -173,18 +173,24 @@ fn regex_refusal(args: &FindText, why: &str) -> ToolError {
 
 /// A match's row: its address, kind, text and context (`before[text]after`).
 fn row(address: &str, text: &[char], start: usize, end: usize) -> Value {
-    let piece = |a: usize, b: usize| -> String { text.get(a..b).unwrap_or(&[]).iter().collect() };
-    let found = piece(start, end);
-    let context = format!(
-        "{}[{found}]{}",
-        piece(start.saturating_sub(CONTEXT), start),
-        piece(end, (end + CONTEXT).min(text.len()))
-    );
+    let found: String = text.get(start..end).unwrap_or(&[]).iter().collect();
+    let context = match_context(text, start, end);
     json!({"address": address, "kind": "text", "text": short(&found, 80), "context": context})
 }
 
+/// A match's context, `before[text]after` (docx-agent's `TextRange.context`).
+pub(crate) fn match_context(text: &[char], start: usize, end: usize) -> String {
+    let piece = |a: usize, b: usize| -> String { text.get(a..b).unwrap_or(&[]).iter().collect() };
+    format!(
+        "{}[{}]{}",
+        piece(start.saturating_sub(CONTEXT), start),
+        piece(start, end),
+        piece(end, (end + CONTEXT).min(text.len()))
+    )
+}
+
 /// Whether a match's address is in the body (docx-agent's `_story_ok` for `stories=body`).
-fn story_ok(address: &str) -> bool {
+pub(crate) fn story_ok(address: &str) -> bool {
     let block = address.split('@').next().unwrap_or(address);
     !(block.contains('/') && !address.starts_with("p@body/"))
 }

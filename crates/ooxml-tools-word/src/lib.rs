@@ -17,6 +17,7 @@ mod paging;
 mod placements;
 mod refusal;
 mod review;
+mod text;
 mod version;
 mod word_inspect;
 mod word_read;
@@ -27,6 +28,9 @@ pub use placements::Placer;
 pub use review::{
     word_changes, word_comments, word_set_tracking, ChangeAction, ChangeDetail, ChangeKind, CommentAction, CommentItem,
     Editing, Tracked, WordChanges, WordComments, WordSetTracking, COMMENT_WRITES,
+};
+pub use text::{
+    replace_text, word_set_text, Expect, ReplaceStories, ReplaceText, SetTextItem, Unported, WordSetText,
 };
 pub use version::Version;
 pub use word_inspect::{word_inspect, WordInspect};
