@@ -209,7 +209,7 @@ fn holds_section_break(element: &Element) -> bool {
 
 /// Whether `element` (in `work`) can go: its container keeps a paragraph to end on
 /// (`_check_container_survives`).
-fn survives(work: &Work, element: Id) -> Result<()> {
+fn survives(work: &Work, element: Id, outside: &Outside) -> Result<()> {
     let mut container = work.parent(element);
     while let Some(c) = container.filter(|c| work.is_any(*c, W, &["sdtContent", "sdt", "customXml"])) {
         container = work.parent(c);
@@ -220,6 +220,20 @@ fn survives(work: &Work, element: Id) -> Result<()> {
     let mut blocks = Vec::new();
     direct_blocks(work, container, &mut blocks);
     blocks.retain(|b| *b != element);
+    if container == work.root() {
+        // the stretch stands for some of its parent's children: the blocks around it count
+        match outside.after {
+            Some(true) => {
+                return Err(EditError::Refused(
+                    "deleting it would leave a table last in its story or cell; Word needs a paragraph after it"
+                        .to_owned(),
+                ))
+            }
+            Some(false) => return Ok(()),
+            None if blocks.is_empty() && outside.before => return Ok(()),
+            None => {}
+        }
+    }
     match blocks.last() {
         None => Err(EditError::Refused(
             "deleting it would leave its story or cell with no paragraph".to_owned(),
@@ -228,6 +242,68 @@ fn survives(work: &Work, element: Id) -> Result<()> {
             "deleting it would leave a table last in its story or cell; Word needs a paragraph after it".to_owned(),
         )),
         Some(_) => Ok(()),
+    }
+}
+
+/// The blocks of a stretch's parent outside the stretch: whether the last after it is a
+/// table (`None`: none after it), and whether any stands before it.
+struct Outside {
+    after: Option<bool>,
+    before: bool,
+}
+
+fn outside_blocks(root: &Arc<Element>, parent: &[u32], (from, to): (u32, u32)) -> Outside {
+    let holder = if parent.is_empty() {
+        Some(root)
+    } else {
+        ooxml_word_model::docx::at_path(root, parent)
+    };
+    let Some(holder) = holder else {
+        return Outside {
+            after: None,
+            before: false,
+        };
+    };
+    let mut after = None;
+    let mut before = false;
+    for (k, node) in holder.children().iter().enumerate() {
+        let ooxml_xml::Node::Element(e) = node else { continue };
+        let mut found = Vec::new();
+        raw_blocks(e, &mut found);
+        let Some(last) = found.last() else { continue };
+        let k = u32::try_from(k).unwrap_or(u32::MAX);
+        if k < from {
+            before = true;
+        } else if k > to {
+            after = Some(*last);
+        }
+    }
+    Outside { after, before }
+}
+
+/// Whether each direct block of `element` (itself, or what a control or custom XML
+/// holds) is a table, in order.
+fn raw_blocks(element: &Element, out: &mut Vec<bool>) {
+    let name = element.name();
+    if name.namespace() != Some(W) {
+        return;
+    }
+    match name.local() {
+        "p" => out.push(false),
+        "tbl" => out.push(true),
+        "sdt" => {
+            if let Some(content) = element.find(Some(W), "sdtContent") {
+                for child in content.child_elements() {
+                    raw_blocks(child, out);
+                }
+            }
+        }
+        "customXml" => {
+            for child in element.child_elements() {
+                raw_blocks(child, out);
+            }
+        }
+        _ => {}
     }
 }
 
@@ -274,6 +350,7 @@ impl MoveBlocks {
         let wanted: Vec<&[u32]> = paths.iter().map(Vec::as_slice).collect();
         let path_error = || EditError::Path(part.to_owned());
         let (mut work, parent, stretch, nodes) = editable(root, &paths, &wanted).ok_or_else(path_error)?;
+        let outside = outside_blocks(root, &parent, stretch);
         let (&target, moving) = nodes.split_last().ok_or_else(path_error)?;
         let after = self.after.is_some();
         let mut changed = false;
@@ -289,7 +366,7 @@ impl MoveBlocks {
             if crate::links::inside(&work, beside, node) {
                 return Err(EditError::Refused(format!("{id} holds the block it would move beside")));
             }
-            survives(&work, node)?;
+            survives(&work, node, &outside)?;
             let already = if side_after {
                 work.next(beside) == Some(node)
             } else {
@@ -331,6 +408,16 @@ impl MoveBlocks {
         sink.read_everything();
         let docx = sink.docx()?;
         let (part, blocks, ids, anchor) = self.plan(sink.doc(), &docx)?;
+        let before = sink.doc().tree(&part)?.ok_or_else(|| EditError::NoPart(part.clone()))?;
+        if self.arrange(before.root(), &part, (&blocks, &ids, &anchor))?.is_none() {
+            return Ok(BlocksMoved {
+                id: ids.first().cloned(),
+                changed: false,
+                moved: ids,
+                renamed: Vec::new(),
+                warnings: Vec::new(),
+            });
+        }
         let mut warnings = Vec::new();
         if matches!(self.policy, RevisionPolicy::Tracked(_)) {
             for (block, id) in blocks.iter().zip(&ids) {
@@ -347,16 +434,6 @@ impl MoveBlocks {
                     ));
                 }
             }
-        }
-        let before = sink.doc().tree(&part)?.ok_or_else(|| EditError::NoPart(part.clone()))?;
-        if self.arrange(before.root(), &part, (&blocks, &ids, &anchor))?.is_none() {
-            return Ok(BlocksMoved {
-                id: ids.first().cloned(),
-                changed: false,
-                moved: ids,
-                renamed: Vec::new(),
-                warnings,
-            });
         }
         let renamed = stamp_document(sink, &docx)?;
         let docx = sink.docx()?;

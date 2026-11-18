@@ -60,6 +60,7 @@ impl RemoveSectionBreak {
         paths.extend(following_path.clone());
         let tracked = matches!(self.policy, RevisionPolicy::Tracked(_));
         let renamed = stamp_document(&mut *sink, &docx)?;
+        let entry_id = crate::ranges::renamed_id(&renamed, &entry_id);
         let tree = sink.doc().tree(&main)?.ok_or_else(|| EditError::NoPart(main.clone()))?;
         let wanted: Vec<&[u32]> = paths.iter().map(Vec::as_slice).collect();
         let path_error = || EditError::Path(main.clone());

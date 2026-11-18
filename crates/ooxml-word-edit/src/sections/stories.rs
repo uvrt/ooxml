@@ -306,7 +306,7 @@ fn add_story(sink: &mut EditSink<'_, '_>, section: &str, which: &str, kind: &str
     if dated {
         sink.ensure_w14(&part, false, &[("w16du", W16DU)])?;
     }
-    if let RevisionPolicy::Tracked(tracking) = sink.policy().clone() {
+    if let (RevisionPolicy::Tracked(tracking), false) = (sink.policy().clone(), text.is_empty()) {
         sink.people(Some(&tracking.author), Some(&tracking.author))?;
     }
     let docx = sink.docx()?;
