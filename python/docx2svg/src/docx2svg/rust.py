@@ -169,8 +169,8 @@ class Engine:
         self.key = _engine_key(options)
         _, decimal, _, language, thousands, date_order, list_separator = self.key
         self._pages = ooxml_core.WordPages(word_fonts(options), locale=language, decimal=decimal,
-                                           glyph_size=options.glyph_size, thousands=thousands,
-                                           date_order=date_order, list_separator=list_separator, budget=memory_budget())
+                                           glyph_size=options.glyph_size,
+                                           numbers=(thousands, date_order, list_separator), budget=memory_budget())
         self._lock = threading.Lock()
         #: The last version asked for, by the digest of its bytes, and its layout (``None``: a
         #: fallback): asked again, the same answer.
