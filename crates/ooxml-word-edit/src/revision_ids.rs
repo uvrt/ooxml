@@ -113,6 +113,38 @@ pub(crate) fn make_unique(sink: &mut EditSink<'_, '_>) -> Result<()> {
         .filter(|(id, n)| **n > before.get(*id).copied().unwrap_or(0) && (**n > 1 || !given(id)))
         .map(|(id, _)| id.clone())
         .collect();
+    renumber(sink, &candidates)
+}
+
+/// Every revision record's `w:id` in every story part of `docx`, counted
+/// (`_revision_id_counts`).
+pub(crate) fn document_counts(docx: &ooxml_word_model::docx::Docx) -> HashMap<String, usize> {
+    let mut out = HashMap::new();
+    for story in &docx.parts {
+        add(&mut out, counts(story.root()));
+    }
+    out
+}
+
+/// Give each revision id the document holds more of than `before` counted, more than
+/// once, an id of its own after its first occurrence (`_unique_revision_ids(before)` over
+/// the whole document, as docx-agent does after a review).
+///
+/// # Errors
+/// When a part is not XML.
+pub(crate) fn unique_since(sink: &mut EditSink<'_, '_>, before: &HashMap<String, usize>) -> Result<()> {
+    let after = document_counts(&*sink.docx()?);
+    let grown: Vec<String> = after
+        .iter()
+        .filter(|(id, n)| **n > 1 && **n > before.get(*id).copied().unwrap_or(0))
+        .map(|(id, _)| id.clone())
+        .collect();
+    renumber(sink, &grown)
+}
+
+/// The later occurrences of each of `candidates` that occurs more than once, numbered
+/// from one above the largest annotation id, in story and document order.
+fn renumber(sink: &mut EditSink<'_, '_>, candidates: &[String]) -> Result<()> {
     if candidates.is_empty() {
         return Ok(());
     }
@@ -120,7 +152,7 @@ pub(crate) fn make_unique(sink: &mut EditSink<'_, '_>) -> Result<()> {
     let mut found: Vec<(String, Vec<u32>, Arc<Element>)> = Vec::new();
     for story in &docx.parts {
         let mut places = Vec::new();
-        occurrences(story.root(), &candidates, &mut Vec::new(), &mut places);
+        occurrences(story.root(), candidates, &mut Vec::new(), &mut places);
         found.extend(places.into_iter().map(|(p, e)| (story.part.clone(), p, e)));
     }
     let mut total: HashMap<&str, usize> = HashMap::new();

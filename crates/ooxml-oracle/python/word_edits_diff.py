@@ -160,6 +160,8 @@ def _run(document, case: dict):
         return document.set_paragraph_style(case["target"], case.get("style"))
     if op == "delete":
         return document.delete_block(case["target"])
+    if op == "set_cells":
+        return document._fill_cells(case["target"], [tuple(w) for w in case["writes"]])
     if op == "replace":
         return document.replace(case["find"], case["text"], case=case.get("case", True),
                                 count=case.get("count"), keep=case.get("keep", "first"),
@@ -178,6 +180,10 @@ def _result(case: dict, result) -> dict:
         return {"id": result.id, "renamed": dict(result.renamed)}
     if op == "delete":
         return {"id": result.id, "renamed": dict(result.renamed), "removed": list(result.removed)}
+    if op == "set_cells":
+        edits, ids = result
+        return {"ids": ids, "edits": [{"id": e.id, "renamed": dict(e.renamed), "created": list(e.created),
+                                       "removed": list(e.removed)} for e in edits]}
     if op in ("set_text_paragraphs", "insert_paragraph"):
         return {"id": result.id, "changed": result.changed, "renamed": dict(result.renamed),
                 "created": list(result.created)}
@@ -374,6 +380,19 @@ def _delete_cases(document, targets: list[str]) -> list[dict]:
     return list({c["target"]: c for c in cases}.values())
 
 
+def _cells_cases(document) -> list[dict]:
+    """Cells written in one pass (``--cells``), on each table of the body (first three):
+    the first cell's text, the last row's first cell in two lines, the first cell made
+    one empty paragraph, and a place the table does not have."""
+    cases = []
+    for table in document._index(document.package.document_part()).tables[:3]:
+        last = len(table.rows) - 1
+        cases.append({"op": "set_cells", "target": table.id, "writes": [[0, 0, "Written"], [last, 0, "First\nSecond"]]})
+        cases.append({"op": "set_cells", "target": table.id, "writes": [[0, 0, ""]]})
+        cases.append({"op": "set_cells", "target": table.id, "writes": [[last + 5, 0, "nowhere"]]})
+    return cases
+
+
 def python_case(data: bytes, case: dict, baseline: list) -> dict:
     if case.get("op") == "tool":
         return python_tool_case(data, case)
@@ -444,6 +463,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--review", action="store_true", help="accept and reject only (word_changes)")
     parser.add_argument("--tools", action="store_true", help="the review tools called as tools only")
     parser.add_argument("--delete", action="store_true", help="block deletions only")
+    parser.add_argument("--cells", action="store_true", help="set_cells only")
     parser.add_argument("--paragraphs", action="store_true",
                         help="set_text in lines and insert_paragraph (only these, with --only-ops none)")
     parser.add_argument("files", nargs="*")
@@ -461,20 +481,23 @@ def main(argv: list[str] | None = None) -> int:
                 found = _tool_cases(document) if args.tools else _review_cases(document)
                 cases = [{**case, "tracked": None} for case in found]
                 targets = []
-            if not args.only_ops and not args.paragraphs and not args.delete and not (args.review or args.tools):
+            if not args.only_ops and not args.paragraphs and not args.delete and not args.cells and not (args.review or args.tools):
                 for target in targets:
                     text = document.paragraph(target).text
                     for new in _texts(text):
                         for tracked in (None, TRACKING):
                             cases.append({"target": target, "text": new, "tracked": tracked})
-            if args.delete:
+            if args.cells:
+                cases = [{**case, "tracked": tracked} for case in _cells_cases(document)
+                         for tracked in (None, TRACKING)]
+            elif args.delete:
                 cases = [{**case, "tracked": tracked} for case in _delete_cases(document, targets)
                          for tracked in (None, TRACKING)]
             elif args.paragraphs:
                 for case in _paragraph_cases(document, targets):
                     for tracked in (None, TRACKING):
                         cases.append({**case, "tracked": tracked})
-            if (args.ops or args.only_ops) and not args.paragraphs and not args.delete and not (args.review or args.tools):
+            if (args.ops or args.only_ops) and not args.paragraphs and not args.delete and not args.cells and not (args.review or args.tools):
                 for case in _range_cases(document, targets):
                     for tracked in (None, TRACKING):
                         cases.append({**case, "tracked": tracked})
