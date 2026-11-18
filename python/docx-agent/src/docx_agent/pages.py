@@ -23,6 +23,11 @@ by the document's own engine.  Every engine counts in the process's memory budge
 (:func:`budget`, ``docx2svg.rust.memory_budget``, sized by
 :data:`docx_agent.layout.LAYOUT_MEMORY`): its memos as held, its pages' paint within the
 limit; a document's kept layouts reserve their weight from it too (:func:`account`).
+
+**Finalizers.**  A document collected lets its engines go through :mod:`docx_agent.finalizers`:
+its finalizer only hands :func:`forget` over, done (:func:`~docx_agent.finalizers.drain`) at
+the start of the next :func:`lay_out`, :func:`known`, :func:`forget` or :func:`clear`, before
+:data:`_LOCK` is taken -- never inside it, where the collector may fire.
 """
 
 from __future__ import annotations
@@ -30,6 +35,8 @@ from __future__ import annotations
 import threading
 from collections import OrderedDict
 from typing import Any
+
+from . import finalizers
 
 #: How many documents' engines one process keeps (the least recently used let go first).
 ENGINES = 16
@@ -71,12 +78,17 @@ def memory() -> dict[str, int]:
 def _engine(lineage: str, convert_options: Any, make: bool = True) -> Any:
     from docx2svg import rust
 
+    # Only the table is read under the lock: whether an engine fits the options is Python
+    # work (the fonts' folders), which allocates -- and may run the collector -- so it is
+    # asked outside.
     with _LOCK:
-        for key in [k for k in _ENGINES if k[0] == lineage]:
-            engine = _ENGINES[key]
-            if engine.fits(convert_options):
-                _ENGINES.move_to_end(key)
-                return engine
+        mine = [(key, engine) for key, engine in _ENGINES.items() if key[0] == lineage]
+    for key, engine in mine:
+        if engine.fits(convert_options):
+            with _LOCK:
+                if key in _ENGINES:
+                    _ENGINES.move_to_end(key)
+            return engine
     if not make:
         return None
     budget()
@@ -95,6 +107,7 @@ def lay_out(data: bytes, options: dict, lineage: str, *, make: bool = True) -> A
     :class:`docx2svg.rust.RustLayout` -- or ``None`` where docx2svg's Python layout lays it
     out instead (counted).  ``make`` false: only by an engine this process has already (a
     worker process has none: ``None``, not counted)."""
+    finalizers.drain()
     if not available():
         return None
     import docx2svg
@@ -119,6 +132,7 @@ def known(data: bytes, options: dict, lineage: str) -> Any:
     """The Rust layout of ``data`` where the engine of ``lineage`` laid it out last (the
     layout owner's flight, an earlier call), else ``None``: nothing is laid out, nothing
     counted."""
+    finalizers.drain()
     if not available():
         return None
     import docx2svg
@@ -128,7 +142,9 @@ def known(data: bytes, options: dict, lineage: str) -> Any:
 
 
 def forget(lineage: str) -> None:
-    """Let go of the engines of ``lineage``: the document is closed or collected."""
+    """Let go of the engines of ``lineage``: the document is closed or collected (never from
+    a finalizer itself: see the module's notes)."""
+    finalizers.drain()
     with _LOCK:
         for key in [k for k in _ENGINES if k[0] == lineage]:
             del _ENGINES[key]
@@ -136,6 +152,7 @@ def forget(lineage: str) -> None:
 
 def clear() -> None:
     """Let go of every engine."""
+    finalizers.drain()
     with _LOCK:
         _ENGINES.clear()
 

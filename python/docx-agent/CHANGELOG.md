@@ -11,6 +11,13 @@ Phase PL, lane L4b: the Rust layout's memory. One engine per document, in the pr
 owns the document, and none in the workers; a version kept costs what it changed; what can
 be made again is bounded by one memory budget per process.
 
+- **Fixed: a deadlock when a document is collected during a layout** (seen on 3.15t). A
+  document's finalizers forgot its engines, layouts and Rust owners themselves; the collector
+  can run them anywhere, also inside `pages.lay_out` on the thread that held the engines'
+  lock, which then waited for itself. Finalizers now only hand their work over
+  (`docx_agent.finalizers`, a `queue.SimpleQueue`), done at the start of the next layout,
+  engine read, release or Rust open, with no layout lock held. Whether an engine fits the
+  options is no longer asked under the engines' lock.
 - **No Rust layout in a worker.** A check's facts (`reflow`, `layout`, ranges, keeps,
   `where`, extents, page references), `describe`'s pages, the layout owner's flight, the
   live view and a render's layout are made in the calling process for a version the Rust

@@ -83,6 +83,7 @@ from docx2svg.relayout import MeasureStore
 from ooxml_edit.tools.results import ToolError
 from ooxml_edit.tools.worker import InProcess, ThreadRunner
 
+from . import finalizers
 from . import pages as _pages
 from .edit.effective import PathFinder
 from .edit import ids as _ids
@@ -2003,7 +2004,10 @@ def _keeper(document: "Document") -> threading.Lock:
                 # Round 58: the layouts this process holds of it go with it, and (Q2) those
                 # the workers of the runners that laid it out hold (:func:`remember_runner`).
                 document._layout_runners = []
-                weakref.finalize(document, _collected, document._layout_lineage, document._layout_runners)
+                # A finalizer does no work and takes no lock (it may fire inside any of
+                # them): it hands :func:`_collected` over (docx_agent.finalizers).
+                weakref.finalize(document, finalizers.later, _collected, document._layout_lineage,
+                                 document._layout_runners)
                 # Q3: the lock last -- another thread that finds it (outside the keepers'
                 # lock) finds everything above too.
                 document._layout_lock = lock
@@ -2043,6 +2047,7 @@ def drop_lineage(lineage: str) -> None:
     Round 59 (Q4): the ids read (``edit.ids.valid_long_hex``'s memo, of every document the
     worker read) go too -- strings made over the document's life, scattered over Python's
     arenas, which they kept after the close (the cache holds up to 65,536)."""
+    finalizers.drain()
     forget_lineage(lineage)
     from .edit.ids import valid_long_hex
 
@@ -2120,8 +2125,9 @@ def _tell_runners(runners: list, lineage: str, *, later: bool, wait: bool = True
 
 
 def _collected(lineage: str, runners: list) -> None:
-    """A document was collected: its lineage forgotten here, and queued for the workers
-    (``later``: a finalizer takes no lock)."""
+    """A document was collected: its lineage forgotten here, and queued for the workers.
+    Never run by the finalizer itself, which only hands it over: run by
+    :func:`docx_agent.finalizers.drain` at a safe point, with no layout lock held."""
     forget_lineage(lineage)
     _tell_runners(runners, lineage, later=True)
 
@@ -2136,6 +2142,7 @@ def release_document(document: "Document") -> None:
     (:func:`remember_runner`) are told to drop its layouts too (:func:`drop_lineage`): the
     idle ones at once, the busy ones as their task ends -- not waited for (round 59): the
     close returns while they collect, and none takes a task before it has dropped them."""
+    finalizers.drain()
     lock = getattr(document, "_layout_lock", None)
     if lock is not None:
         with lock:
