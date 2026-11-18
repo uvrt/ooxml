@@ -46,11 +46,28 @@ impl Scale {
     }
 }
 
-/// Python's `math.floor` of a finite float as an integer.
+/// Python's `math.floor` of a finite float as an integer (saturating outside `i64`; a
+/// caller keeps the value in range, or uses [`whole_rungs`]).
 fn floor_int(value: f64) -> i64 {
     #[allow(clippy::cast_possible_truncation)]
     let int = value.floor() as i64;
     int
+}
+
+/// The most whole rungs an axis can use: any more give the same intervals once the end
+/// labels' lines are taken and the count is held to [`AXIS_MAX_INTERVALS`].
+const MAX_WHOLE_RUNGS: i64 = AXIS_MAX_INTERVALS + AXIS_END_LABEL_LINES;
+
+/// The whole rungs in `rungs` (Python's `math.floor`), held to `0..=MAX_WHOLE_RUNGS`, so the
+/// interval counts made from it take the same value as from Python's unbounded integer and
+/// never overflow; `None` where `rungs` is not finite.
+fn whole_rungs(rungs: f64) -> Option<i64> {
+    if !rungs.is_finite() {
+        return None;
+    }
+    #[allow(clippy::cast_precision_loss)]
+    let held = rungs.clamp(0.0, MAX_WHOLE_RUNGS as f64);
+    Some(floor_int(held))
 }
 
 /// How many intervals a vertical value axis has room for.
@@ -58,11 +75,10 @@ pub fn side_axis_intervals(available_pt: f64, pitch_pt: f64) -> i64 {
     if !(available_pt.is_finite() && pitch_pt.is_finite()) || pitch_pt <= 0.0 {
         return AXIS_MAX_INTERVALS;
     }
-    let rungs = (available_pt - AXIS_EDGE_RESERVE_PT) / pitch_pt;
-    if !rungs.is_finite() {
+    let Some(rungs) = whole_rungs((available_pt - AXIS_EDGE_RESERVE_PT) / pitch_pt) else {
         return AXIS_MAX_INTERVALS;
-    }
-    (floor_int(rungs) - AXIS_END_LABEL_LINES).clamp(1, AXIS_MAX_INTERVALS)
+    };
+    (rungs - AXIS_END_LABEL_LINES).clamp(1, AXIS_MAX_INTERVALS)
 }
 
 /// How many intervals a radar's radial axis has room for.
@@ -70,11 +86,10 @@ pub fn radial_axis_intervals(radial_pt: f64, pitch_pt: f64) -> i64 {
     if !(radial_pt.is_finite() && pitch_pt.is_finite()) || pitch_pt <= 0.0 {
         return AXIS_MAX_INTERVALS;
     }
-    let rungs = radial_pt / pitch_pt + RADIAL_AXIS_SLACK_EM;
-    if !rungs.is_finite() {
+    let Some(rungs) = whole_rungs(radial_pt / pitch_pt + RADIAL_AXIS_SLACK_EM) else {
         return AXIS_MAX_INTERVALS;
-    }
-    floor_int(rungs).clamp(1, AXIS_MAX_INTERVALS)
+    };
+    rungs.clamp(1, AXIS_MAX_INTERVALS)
 }
 
 /// How many intervals a horizontal value axis has room for.
@@ -89,7 +104,9 @@ pub fn bottom_axis_intervals(available_pt: f64, font_size_pt: f64, widest_label_
     if rung <= 0.0 || !rung.is_finite() {
         return AXIS_MAX_INTERVALS;
     }
-    let rungs = floor_int((available_pt - BOTTOM_AXIS_RESERVE_PT) / rung);
+    let Some(rungs) = whole_rungs((available_pt - BOTTOM_AXIS_RESERVE_PT) / rung) else {
+        return AXIS_MAX_INTERVALS;
+    };
     rungs.clamp(1, AXIS_MAX_INTERVALS)
 }
 
@@ -259,8 +276,12 @@ fn power_of_ten(exponent: i64) -> f64 {
     format!("1e{exponent}").parse().unwrap_or(f64::INFINITY)
 }
 
-/// The power of ten `value` reaches.
+/// The power of ten `value` reaches; 0 where `value` is not finite and positive (its
+/// `log10` would not be a finite exponent to step from).
 fn decade(value: f64) -> f64 {
+    if !(value.is_finite() && value > 0.0) {
+        return 0.0;
+    }
     let mut exponent = floor_int(value.log10());
     while !reaches_decade(value, exponent) {
         exponent -= 1;
@@ -297,7 +318,10 @@ pub fn apply_axis_limits(scale: Scale, axis: Option<&Axis>) -> Scale {
 
 #[cfg(test)]
 mod tests {
-    use super::{nice_axis_scale, NiceOptions, Scale};
+    use super::{
+        bottom_axis_intervals, decade, nice_axis_scale, radial_axis_intervals, side_axis_intervals, NiceOptions, Scale,
+        AXIS_MAX_INTERVALS,
+    };
 
     #[test]
     fn scales_are_nice() {
@@ -309,5 +333,51 @@ mod tests {
             nice_axis_scale(3.0, 3.0, NiceOptions::default()),
             Scale::new(0.0, 3.5, 0.5)
         );
+    }
+
+    /// The `chart_layout` fuzz find: a finite rung count past `i64` (a vast negative band over a
+    /// tiny pitch) floored to `i64::MIN` and overflowed taking the end labels' lines.
+    #[test]
+    fn rung_counts_out_of_range_are_held() {
+        assert_eq!(side_axis_intervals(-1e30, 1e-10), 1);
+        assert_eq!(side_axis_intervals(1e30, 1e-10), AXIS_MAX_INTERVALS);
+        assert_eq!(side_axis_intervals(-1e20, 1.0), 1);
+        assert_eq!(radial_axis_intervals(-1e30, 1e-10), 1);
+        assert_eq!(radial_axis_intervals(1e30, 1e-10), AXIS_MAX_INTERVALS);
+        assert_eq!(bottom_axis_intervals(-1e30, 1e-10, 0.0), 1);
+        assert_eq!(bottom_axis_intervals(1e30, 1e-10, 0.0), AXIS_MAX_INTERVALS);
+        // A label width past the band: no room, one interval.
+        assert_eq!(bottom_axis_intervals(100.0, 10.0, 1e308), 1);
+    }
+
+    /// In range, the counts are Python's `math.floor` arithmetic unchanged.
+    #[test]
+    fn rung_counts_in_range_are_floored() {
+        for (available, pitch) in [(100.0, 12.0), (40.0, 12.0), (12.0, 12.0), (0.0, 12.0), (500.0, 7.5)] {
+            let python = (((available - super::AXIS_EDGE_RESERVE_PT) / pitch).floor() as i64
+                - super::AXIS_END_LABEL_LINES)
+                .clamp(1, AXIS_MAX_INTERVALS);
+            assert_eq!(
+                side_axis_intervals(available, pitch),
+                python,
+                "{available} over {pitch}"
+            );
+            let radial =
+                ((available / pitch + super::RADIAL_AXIS_SLACK_EM).floor() as i64).clamp(1, AXIS_MAX_INTERVALS);
+            assert_eq!(
+                radial_axis_intervals(available, pitch),
+                radial,
+                "{available} over {pitch}"
+            );
+        }
+    }
+
+    #[test]
+    fn decade_of_no_positive_value_is_zero() {
+        assert_eq!(decade(0.0), 0.0);
+        assert_eq!(decade(-5.0), 0.0);
+        assert_eq!(decade(f64::NAN), 0.0);
+        assert_eq!(decade(f64::INFINITY), 0.0);
+        assert_eq!(decade(870.0), 100.0);
     }
 }
