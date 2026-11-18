@@ -10,12 +10,13 @@
 //! paragraphs' own blocks, the ledger seeds it draws from.
 
 use crate::doc::{Draw, DrawFrom, Key, WordDoc};
+use crate::find::Pattern;
 use crate::names::{W14, W16DU};
 use crate::policy::RevisionPolicy;
 use crate::set_text::{find, Found};
 use crate::sink::{annotation_draws, EditSink, Keep, Numbered};
 use crate::stamping::{stamp_document, w14_prefix};
-use crate::text::{atoms, paragraph_text, write::check_text};
+use crate::text::{atoms, write::check_text};
 use crate::work::{scope_above, Work};
 use crate::{EditError, Result};
 use ooxml_store::{Command, Txn};
@@ -44,16 +45,14 @@ pub struct DeleteText {
     pub policy: RevisionPolicy,
 }
 
-/// Every place a text occurs replaced (plain text, case-sensitive or not, within one
-/// paragraph each; the first `count` when given).
+/// Every place a find matches replaced (docx-agent's `Document.replace`): within each
+/// paragraph, or across paragraphs; the first `count` when given.
 #[derive(Debug, Clone)]
 pub struct ReplaceText {
-    /// The text looked for.
-    pub find: String,
-    /// What replaces it.
-    pub with: String,
-    /// Whether case matters.
-    pub case: bool,
+    /// What is looked for, and what replaces each match.
+    pub pattern: Arc<dyn Pattern>,
+    /// Whether a match may run across paragraphs (in each story's text joined by `\n`).
+    pub across: bool,
     /// At most this many, in document order.
     pub count: Option<usize>,
     /// How the replacement takes its formatting.
@@ -73,35 +72,52 @@ pub struct RangesEdited {
     pub renamed: Vec<(String, String)>,
 }
 
-/// One range to replace: its paragraph, its characters, the new text.
-struct Plan {
-    found: Found,
+/// One range to replace: its paragraph (its first and last, across paragraphs), its
+/// characters, the new text.
+pub(crate) struct Plan {
+    pub(crate) found: Found,
+    /// The last paragraph of a range across paragraphs, with the places of every
+    /// paragraph from the first to it.
+    pub(crate) across: Option<Across>,
     /// The paragraph's place among its story's paragraphs (for the order of the plans).
-    index: usize,
+    pub(crate) index: usize,
+    /// The last paragraph's.
+    pub(crate) last_index: usize,
     /// Its part's place among the stories.
-    story: usize,
-    start: usize,
-    end: usize,
-    text: String,
+    pub(crate) story: usize,
+    pub(crate) start: usize,
+    pub(crate) end: usize,
+    pub(crate) text: String,
 }
 
-/// A range as docx-agent's `parse_range` reads one: `(paragraph, start, end)`.
-fn range_of(doc: &WordDoc, docx: &Docx, address: &str, position: bool) -> Result<(Found, usize, usize)> {
+/// A range across paragraphs: the last paragraph, and every paragraph's place from the
+/// first to it.
+pub(crate) struct Across {
+    pub(crate) last: Found,
+    pub(crate) paths: Vec<Box<[u32]>>,
+}
+
+/// A range as named: its first paragraph, its last when another, its offsets.
+type Range = (Found, Option<Found>, usize, usize);
+
+/// A range as docx-agent's `parse_range` reads one.
+fn range_of(doc: &WordDoc, docx: &Docx, address: &str, position: bool) -> Result<Range> {
     if let Some(range) = parse_range(address) {
         let found = find(doc, docx, &range.start_id)?;
-        let end_found = find(doc, docx, &range.end_id)?;
-        if end_found.part != found.part || end_found.path != found.path {
-            return Err(EditError::Unsupported(format!(
-                "{address}: a range across paragraphs (phase P2c)"
-            )));
+        if position {
+            return Ok((found, None, range.start, range.start));
         }
-        let end = if position { range.start } else { range.end };
-        return Ok((found, range.start, end));
+        let last = find(doc, docx, &range.end_id)?;
+        if last.part != found.part {
+            return Err(EditError::Refused(format!("{address} runs across stories")));
+        }
+        let last = (last.path != found.path).then_some(last);
+        return Ok((found, last, range.start, range.end));
     }
     // a paragraph's whole text (a cell's, a bookmark's, a link's: not yet)
     let found = find(doc, docx, address)?;
     let length = atoms(&Work::of(&found.element, Vec::new()), 0).len();
-    Ok((found, 0, if position { 0 } else { length }))
+    Ok((found, None, 0, if position { 0 } else { length }))
 }
 
 /// The story and paragraph places of `found`, for ordering.
@@ -118,8 +134,11 @@ fn places(docx: &Docx, found: &Found) -> (usize, usize) {
     (story, index)
 }
 
-fn plan(doc: &WordDoc, docx: &Docx, (found, start, end): (Found, usize, usize), text: &str) -> Result<Plan> {
+fn plan(doc: &WordDoc, docx: &Docx, (found, last, start, end): Range, text: &str) -> Result<Plan> {
     let (story, index) = places(docx, &found);
+    if let Some(last) = last {
+        return plan_across(docx, (found, last, start, end), (story, index), text);
+    }
     let work = Work::of(&found.element, Vec::new());
     let items = atoms(&work, work.root());
     if end > items.len() || start > end {
@@ -133,7 +152,9 @@ fn plan(doc: &WordDoc, docx: &Docx, (found, start, end): (Found, usize, usize), 
     let _ = doc;
     Ok(Plan {
         found,
+        across: None,
         index,
+        last_index: index,
         story,
         start,
         end,
@@ -141,37 +162,118 @@ fn plan(doc: &WordDoc, docx: &Docx, (found, start, end): (Found, usize, usize), 
     })
 }
 
-/// Every place `find` occurs in a paragraph's current text, in document order (docx-agent's
-/// `_matches` for plain text within paragraphs).
-fn matches(docx: &Docx, wanted: &str, case: bool) -> Vec<(String, usize, usize)> {
-    // Python's IGNORECASE on a literal: characters equal, or equal lower-cased one for one
-    let lower = |c: char| {
-        let mut l = c.to_lowercase();
-        match (l.next(), l.next()) {
-            (Some(one), None) => one,
-            _ => c,
-        }
+/// A range across paragraphs checked as docx-agent's `_entries` and `_check_across` check
+/// it, before anything changes.
+fn plan_across(
+    docx: &Docx,
+    (found, last, start, end): (Found, Found, usize, usize),
+    (story, index): (usize, usize),
+    text: &str,
+) -> Result<Plan> {
+    let span = || format!("{}@{start}..{}@{end}", found.id, last.id);
+    let (_, last_index) = places(docx, &last);
+    if last_index < index {
+        return Err(EditError::Refused(format!("{} ends before it starts", span())));
+    }
+    let part = docx
+        .part(&found.part)
+        .ok_or_else(|| EditError::NoPart(found.part.clone()))?;
+    let paths: Vec<Box<[u32]>> = (index..=last_index)
+        .filter_map(|k| part.ids.paragraphs().get(k).map(|p| p.path))
+        .collect();
+    let parent = |p: &[u32]| p.get(..p.len().saturating_sub(1)).map(<[u32]>::to_vec);
+    if paths.iter().any(|p| parent(p) != parent(&found.path)) {
+        return Err(EditError::Span(format!(
+            "{}: the range runs across a table, a cell or a content control",
+            span()
+        )));
+    }
+    let lengths = |f: &Found| atoms(&Work::of(&f.element, Vec::new()), 0).len();
+    if start > lengths(&found) || end > lengths(&last) {
+        return Err(EditError::Span(format!("{} is outside its paragraphs' text", span())));
+    }
+    let (work, paragraphs) = stretch(part.root(), &paths).ok_or_else(|| EditError::Path(found.part.clone()))?;
+    crate::across::check_across(&work, &paragraphs, start, end)
+        .map_err(|e| EditError::Span(format!("{}: {e}", span())))?;
+    Ok(Plan {
+        found,
+        across: Some(Across { last, paths }),
+        index,
+        last_index,
+        story,
+        start,
+        end,
+        text: text.to_owned(),
+    })
+}
+
+/// A work whose root stands for the stretch of a parent's children from the first of
+/// `paths` (siblings, in order) to the last, with the ids of those children in it.
+pub(crate) fn stretch(root: &Arc<ooxml_xml::Element>, paths: &[Box<[u32]>]) -> Option<(Work, Vec<crate::work::Id>)> {
+    let (first, last) = (paths.first()?, paths.last()?);
+    let (&from, parent_path) = first.split_last()?;
+    let &to = last.last()?;
+    let parent = if parent_path.is_empty() {
+        root
+    } else {
+        at_path(root, parent_path)?
     };
-    let same = |a: &char, b: &char| a == b || (!case && lower(*a) == lower(*b));
-    let needle: Vec<char> = wanted.chars().collect();
-    let mut out = Vec::new();
-    for story in &docx.parts {
-        for paragraph in story.ids.paragraphs().iter() {
-            let work = Work::of(&paragraph.element, Vec::new());
-            let text: Vec<char> = paragraph_text(&work, work.root()).chars().collect();
-            let mut k = 0;
-            while k + needle.len() <= text.len() {
-                let here = text.get(k..k + needle.len()).unwrap_or_default();
-                if here.iter().zip(&needle).all(|(a, b)| same(a, b)) {
-                    out.push((paragraph.id.clone(), k, k + needle.len()));
-                    k += needle.len();
-                } else {
-                    k += 1;
-                }
+    let slice: Vec<ooxml_xml::Node> = parent
+        .children()
+        .iter()
+        .skip(from as usize)
+        .take((to - from) as usize + 1)
+        .cloned()
+        .collect();
+    let holder = Arc::new(ooxml_xml::Element::from_head(
+        Arc::clone(parent.head()),
+        ooxml_xml::Children::from_vec(slice.clone()),
+    ));
+    let scope = if parent_path.is_empty() {
+        Vec::new()
+    } else {
+        scope_above(root, parent_path)
+    };
+    let work = Work::of(&holder, scope);
+    let ids: Vec<crate::work::Id> = work.children(work.root()).to_vec();
+    let mut placed = Vec::new();
+    let mut it = ids.iter();
+    for (k, node) in slice.iter().enumerate() {
+        if matches!(node, ooxml_xml::Node::Text(_)) {
+            continue;
+        }
+        let id = *it.next()?;
+        let place = from + u32::try_from(k).ok()?;
+        if paths.iter().any(|p| p.last() == Some(&place)) {
+            placed.push(id);
+        }
+    }
+    Some((work, placed))
+}
+
+/// The plans checked and ordered last first, as docx-agent orders them; overlaps refused.
+fn order_plans(plans: &mut [Plan]) -> Result<()> {
+    for plan in plans.iter() {
+        check_text(&plan.text)?;
+    }
+    plans.sort_by_key(|p| (p.story, p.index, p.start));
+    plans.reverse();
+    for pair in plans.windows(2) {
+        if let [later, earlier] = pair {
+            if earlier.story == later.story && (earlier.last_index, earlier.end) > (later.index, later.start) {
+                return Err(EditError::Span("the ranges overlap".to_owned()));
             }
         }
     }
-    out
+    let shares = |a: &Plan, b: &Plan| a.story == b.story && a.index <= b.last_index && b.index <= a.last_index;
+    for (k, plan) in plans.iter().enumerate() {
+        if plan.across.is_some() && plans.iter().enumerate().any(|(j, other)| j != k && shares(plan, other)) {
+            return Err(EditError::Unsupported(
+                "ranges sharing a paragraph with a range across paragraphs".to_owned(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// docx-agent's `_replace_ranges`: the plans ordered last first, overlaps refused, the
@@ -185,18 +287,7 @@ fn replace_ranges(sink: &mut EditSink<'_, '_>, mut plans: Vec<Plan>, keep: Keep)
             renamed: Vec::new(),
         });
     }
-    for plan in &plans {
-        check_text(&plan.text)?;
-    }
-    plans.sort_by_key(|p| (p.story, p.index, p.start));
-    plans.reverse();
-    for pair in plans.windows(2) {
-        if let [later, earlier] = pair {
-            if earlier.story == later.story && (earlier.index, earlier.end) > (later.index, later.start) {
-                return Err(EditError::Span("the ranges overlap".to_owned()));
-            }
-        }
-    }
+    order_plans(&mut plans)?;
     let count = plans.len();
     let docx = sink.docx()?;
     for plan in &plans {
@@ -206,7 +297,10 @@ fn replace_ranges(sink: &mut EditSink<'_, '_>, mut plans: Vec<Plan>, keep: Keep)
         });
     }
     let renamed = stamp_document(sink, &docx)?;
-    let first = plans.last().map(|p| renamed_id(&renamed, &p.found.id));
+    let first = plans.last().map(|p| {
+        let named = p.across.as_ref().map_or(&p.found.id, |a| &a.last.id);
+        renamed_id(&renamed, named)
+    });
     let mut dated: Vec<String> = Vec::new();
     let mut released: Vec<(String, Vec<String>)> = Vec::new();
     let mut gave = false;
@@ -220,7 +314,11 @@ fn replace_ranges(sink: &mut EditSink<'_, '_>, mut plans: Vec<Plan>, keep: Keep)
         };
         let group: Vec<&Plan> = plans.iter().skip(k).take_while(|p| same(p)).collect();
         k += group.len();
-        let Some(written) = write_paragraph(sink, &group, keep, &renamed)? else {
+        let written = match group.first() {
+            Some(plan) if plan.across.is_some() => crate::ranges_across::write_across(sink, plan, keep, &renamed)?,
+            _ => write_paragraph(sink, &group, keep, &renamed)?,
+        };
+        let Some(written) = written else {
             break;
         };
         gave |= written.gave;
@@ -255,11 +353,11 @@ fn replace_ranges(sink: &mut EditSink<'_, '_>, mut plans: Vec<Plan>, keep: Keep)
 }
 
 /// What writing one paragraph's ranges did.
-struct Written {
-    part: String,
-    released: Vec<String>,
-    dated: bool,
-    gave: bool,
+pub(crate) struct Written {
+    pub(crate) part: String,
+    pub(crate) released: Vec<String>,
+    pub(crate) dated: bool,
+    pub(crate) gave: bool,
 }
 
 /// One paragraph's ranges (`group`, last first) replaced in one copy of it, its revision
@@ -292,13 +390,14 @@ fn write_paragraph(
         }
     }
     let new = work.build().ok_or_else(|| EditError::Path(part.clone()))?;
-    let mut draws = numbered.map(|n| annotation_draws(&new, n)).unwrap_or_default();
+    let mut draws = numbered.map(|n| annotation_draws(&new, n, 0)).unwrap_or_default();
     // docx-agent renews the text id of each range's paragraph, once per range
     if new.attribute(Some(W14), "paraId").is_some() {
         let prefix = w14_prefix(tree.root(), &path);
         for _ in group {
             draws.push(Draw {
                 from: DrawFrom::Seed(Arc::from(format!("{part}\0text"))),
+                node: 0,
                 at: Vec::new(),
                 attribute: Arc::new(QName::new(Some(&prefix), "textId", Some(W14))),
             });
@@ -313,7 +412,7 @@ fn write_paragraph(
     Ok(Some(written))
 }
 
-fn renamed_id(renamed: &[(String, String)], id: &str) -> String {
+pub(crate) fn renamed_id(renamed: &[(String, String)], id: &str) -> String {
     renamed
         .iter()
         .find(|(old, _)| old == id)
@@ -360,10 +459,7 @@ impl Command<WordDoc> for ReplaceText {
     type Error = EditError;
 
     fn validate(&self, _doc: &WordDoc) -> Result<()> {
-        if self.find.is_empty() {
-            return Err(EditError::Refused("nothing to find".to_owned()));
-        }
-        check_text(&self.with)
+        Ok(())
     }
 
     fn prepare(&self, tx: &mut Txn<'_, WordDoc>) -> Result<RangesEdited> {
@@ -371,14 +467,15 @@ impl Command<WordDoc> for ReplaceText {
         let docx = sink.docx()?;
         // every paragraph is read: a find depends on the whole document
         sink.read_everything();
-        let mut found = matches(&docx, &self.find, self.case);
+        let mut found = crate::find::matches(&docx, self.pattern.as_ref(), self.across)?;
         if let Some(count) = self.count {
             found.truncate(count);
         }
         let mut plans = Vec::new();
-        for (id, start, end) in found {
-            let paragraph = find(sink.doc(), &docx, &id)?;
-            plans.push(plan(sink.doc(), &docx, (paragraph, start, end), &self.with)?);
+        for (first, start, last, end, with) in found {
+            let paragraph = find(sink.doc(), &docx, &first)?;
+            let last = (last != first).then(|| find(sink.doc(), &docx, &last)).transpose()?;
+            plans.push(plan(sink.doc(), &docx, (paragraph, last, start, end), &with)?);
         }
         replace_ranges(&mut sink, plans, self.keep)
     }

@@ -117,7 +117,9 @@ def _run(document, case: dict):
         return document.delete_text(case["target"])
     if op == "replace":
         return document.replace(case["find"], case["text"], case=case.get("case", True),
-                                count=case.get("count"), keep=case.get("keep", "first"))
+                                count=case.get("count"), keep=case.get("keep", "first"),
+                                regex=case.get("regex", False), whitespace=case.get("whitespace"),
+                                across_paragraphs=case.get("across", False))
     return document._set_text(case["target"], case["text"])
 
 
@@ -140,8 +142,29 @@ def _range_cases(document, targets: list[str]) -> list[dict]:
             cases.append({"op": "delete_text", "target": f"{target}@{start}:{start + len(words[0])}"})
         if text:
             cases.append({"op": "delete_text", "target": target})
+    # ranges across paragraphs: from a target's middle into the next paragraphs
+    body = [e for e in document._index(document.package.document_part()).paragraphs]
+    for target in targets[:3]:
+        entry = next((e for e in body if e.id == target), None)
+        if entry is None:
+            continue
+        for span in (1, 2):
+            if entry.index + span >= len(body):
+                continue
+            last = body[entry.index + span]
+            first_text = document.paragraph(entry.id).text
+            last_text = document.paragraph(last.id).text
+            start, end = len(first_text) // 2, len(last_text) // 2
+            cases.append({"op": "delete_text", "target": f"{entry.id}@{start}..{last.id}@{end}"})
     for target in targets[:1]:
         words = document.paragraph(target).text.split()
+        if len(words) > 1:
+            cases.append({"op": "replace", "find": f"{words[0]}   {words[1]}", "text": "collapsed",
+                          "whitespace": "collapse"})
+            cases.append({"op": "replace", "find": r"(\w+)\s+(\w+)", "text": r"\2 \1", "regex": True, "count": 2})
+            cases.append({"op": "replace", "find": r"(?P<w>\w+)\.", "text": r"[\g<w>]", "regex": True, "count": 3})
+            cases.append({"op": "replace", "find": r"\w+\n\w+", "text": "joined", "regex": True,
+                          "across": True, "count": 2})
         if words:
             cases.append({"op": "replace", "find": words[0], "text": "Replaced", "case": True})
             cases.append({"op": "replace", "find": words[0].upper(), "text": "replaced again", "case": False,

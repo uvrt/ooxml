@@ -49,9 +49,14 @@ impl Orders {
     /// else its local name (ooxml-edit's `prefixed_name`).
     pub(crate) fn prefixed(&self, element: &Element) -> String {
         let name = element.name();
-        match name.namespace().and_then(|ns| self.prefixes.get(ns)) {
-            Some(prefix) => format!("{prefix}:{}", name.local()),
-            None => name.local().to_owned(),
+        self.prefixed_name(name.namespace(), name.local())
+    }
+
+    /// [`Orders::prefixed`] of a name given by its namespace and local name.
+    pub(crate) fn prefixed_name(&self, namespace: Option<&str>, local: &str) -> String {
+        match namespace.and_then(|ns| self.prefixes.get(ns)) {
+            Some(prefix) => format!("{prefix}:{local}"),
+            None => local.to_owned(),
         }
     }
 

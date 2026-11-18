@@ -20,6 +20,15 @@ const SPACE: &str = r"\s\x{1C}-\x{1F}";
 /// [`Unsupported`] with why: Python refuses it, its meaning would differ, or it can match
 /// the empty string.
 pub fn translate(pattern: &str) -> Result<String, Unsupported> {
+    translate_named(pattern).map(|(out, _, _)| out)
+}
+
+/// [`translate`], with the pattern's group count and its named groups' numbers (Python's
+/// numbering, which the translation keeps).
+///
+/// # Errors
+/// As [`translate`].
+pub fn translate_named(pattern: &str) -> Result<(String, usize, HashMap<String, usize>), Unsupported> {
     let mut parser = Parser {
         chars: pattern.chars().collect(),
         at: 0,
@@ -39,7 +48,7 @@ pub fn translate(pattern: &str) -> Result<String, Unsupported> {
             "the pattern can match nothing (empty), and Python's matches after an empty one may differ",
         ));
     }
-    Ok(parser.out)
+    Ok((parser.out, parser.groups, parser.names))
 }
 
 fn refuse(why: &str) -> Unsupported {

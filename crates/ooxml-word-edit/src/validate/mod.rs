@@ -21,6 +21,7 @@ mod rules;
 mod tally;
 
 pub(crate) use facts::ElementFacts;
+pub(crate) use order::Orders;
 pub(crate) use tally::Tally;
 
 use crate::doc::WordDoc;
@@ -28,7 +29,6 @@ use crate::Result;
 use ooxml_derive::{CacheBudget, Memo, Weigh};
 use ooxml_word_model::ids::W;
 use ooxml_xml::{Element, Node};
-use order::Orders;
 use rules::{body_problem, Inputs, PartFacts};
 use std::fmt;
 use std::sync::{Arc, Mutex, PoisonError};
