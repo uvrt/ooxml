@@ -84,7 +84,7 @@ pub struct Reviewed {
 }
 
 /// Every revision record of `docx` as a mark, counted.
-pub fn marks(docx: &Docx) -> BTreeMap<Mark, usize> {
+pub fn record_marks(docx: &Docx) -> BTreeMap<Mark, usize> {
     let mut out = BTreeMap::new();
     for r in records(docx) {
         let get = |local: &str| r.element.attribute(Some(crate::names::W), local).map(str::to_owned);
@@ -231,7 +231,7 @@ impl Command<WordDoc> for Review {
     fn prepare(&self, tx: &mut Txn<'_, WordDoc>) -> Result<Reviewed> {
         let mut sink = EditSink::new(tx, RevisionPolicy::Untracked);
         let docx = sink.docx()?;
-        let before = marks(&docx);
+        let before = record_marks(&docx);
         let mut steps: Vec<step::Step> = Vec::new();
         match &self.selection {
             Selection::Ids(ids) => {
@@ -253,7 +253,7 @@ impl Command<WordDoc> for Review {
                 }
             }
         }
-        let after = marks(&*sink.docx()?);
+        let after = record_marks(&*sink.docx()?);
         let total = |m: &BTreeMap<Mark, usize>| m.values().sum::<usize>();
         let mut settled = BTreeMap::new();
         for (mark, n) in &before {

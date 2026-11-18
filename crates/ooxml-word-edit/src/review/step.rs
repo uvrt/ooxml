@@ -129,17 +129,26 @@ impl Run {
         let Some(story) = docx.part(part) else {
             return Err(EditError::NoPart(part.to_owned()));
         };
-        // the part's records grouped as word_changes lists them (a table's structure edits)
-        let by_id: HashMap<String, Box<[u32]>> = records(docx)
-            .into_iter()
-            .filter(|r| r.part == part)
-            .map(|r| (r.id, r.path))
-            .collect();
-        let groups: Vec<Vec<Box<[u32]>>> = change_groups(docx)
-            .into_iter()
-            .map(|g| g.iter().filter_map(|id| by_id.get(id).cloned()).collect::<Vec<_>>())
-            .filter(|g: &Vec<Box<[u32]>>| !g.is_empty())
-            .collect();
+        // the part's records grouped as word_changes lists them (a table's structure edits),
+        // read only when a cell's record is settled (docx-agent's `_edit_of`)
+        let structural = mine.iter().any(|r| {
+            r.element.name().namespace() == Some(crate::names::W)
+                && matches!(r.element.name().local(), "cellIns" | "cellDel" | "cellMerge" | "tcPrChange")
+        });
+        let groups: Vec<Vec<Box<[u32]>>> = if structural {
+            let by_id: HashMap<String, Box<[u32]>> = records(docx)
+                .into_iter()
+                .filter(|r| r.part == part)
+                .map(|r| (r.id, r.path))
+                .collect();
+            change_groups(docx)
+                .into_iter()
+                .map(|g| g.iter().filter_map(|id| by_id.get(id).cloned()).collect::<Vec<_>>())
+                .filter(|g: &Vec<Box<[u32]>>| !g.is_empty())
+                .collect()
+        } else {
+            Vec::new()
+        };
         space.work(sink.doc(), part)?;
         let elements: Vec<Id> = mine.iter().filter_map(|r| space.locate(part, &r.path)).collect();
         let mut group_of: HashMap<Id, Vec<Id>> = HashMap::new();

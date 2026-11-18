@@ -61,7 +61,7 @@ fn set(args: &WordSetTracking, editing: &Editing<'_>) -> Result<(Done<Value>, Tr
         let done = editing
             .editor
             .run(editing.caller, &SetWordTracking { on: switch })
-            .map_err(|e| super::edit_refusal(e, "word_switch", try_call(args)))?;
+            .map_err(|e| super::edit_refusal(e, "", try_call(args)))?;
         head = done.version.doc().clone();
     }
     let word_switch = word_tracks_changes(&head).map_err(|e| ToolError::internal(e.to_string(), "word:model"))?;

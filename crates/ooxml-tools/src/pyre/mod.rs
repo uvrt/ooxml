@@ -16,9 +16,14 @@
 //! Must not: answer differently from Python: a pattern not certainly the same is refused,
 //! never approximated. Offsets are in characters (Python's `str` indices).
 
+mod template;
 mod translate;
 
-pub use translate::translate;
+use template::Piece;
+
+pub use translate::{translate, translate_named};
+
+use std::collections::HashMap;
 
 use std::fmt;
 
@@ -38,6 +43,9 @@ impl std::error::Error for Unsupported {}
 #[derive(Debug, Clone)]
 pub struct PyRegex {
     regex: fancy_regex::Regex,
+    /// How many capturing groups the pattern has, and its named groups' numbers.
+    groups: usize,
+    names: HashMap<String, usize>,
 }
 
 /// The backtracking steps one search may take before it gives up (fancy-regex's own
@@ -52,7 +60,7 @@ impl PyRegex {
     /// [`Unsupported`], saying why: a pattern Python refuses, one whose meaning here would
     /// differ, or one that can match the empty string.
     pub fn new(pattern: &str, ignore_case: bool) -> Result<PyRegex, Unsupported> {
-        let translated = translate(pattern)?;
+        let (translated, groups, names) = translate_named(pattern)?;
         let source = if ignore_case {
             format!("(?i){translated}")
         } else {
@@ -62,7 +70,40 @@ impl PyRegex {
             .backtrack_limit(BACKTRACK_LIMIT)
             .build()
             .map_err(|e| Unsupported(format!("the pattern is not one this engine reads as Python does ({e})")))?;
-        Ok(PyRegex { regex })
+        Ok(PyRegex { regex, groups, names })
+    }
+
+    /// Where the pattern matches in `text` (as [`PyRegex::find`]), each match with
+    /// `template` expanded as Python's `match.expand` expands it: `\1`..`\99` and `\g<n>`
+    /// or `\g<name>` a group's text (empty when it did not take part), the escapes `\n`,
+    /// `\t`, `\r`, `\f`, `\v`, `\a`, `\b`, `\\` and octal ones, any other non-letter kept
+    /// with its backslash.
+    ///
+    /// # Errors
+    /// [`Unsupported`] for a template Python refuses (an unknown group, a bad escape), or a
+    /// search that gives up.
+    pub fn find_expanded(&self, text: &str, template: &str) -> Result<Vec<(usize, usize, String)>, Unsupported> {
+        let pieces = template::parse(template, self.groups, &self.names)?;
+        let mut out = Vec::new();
+        let mut chars = 0;
+        let mut counted = 0;
+        for found in self.regex.captures_iter(text) {
+            let found = found.map_err(|e| Unsupported(format!("the search gave up ({e})")))?;
+            let Some(whole) = found.get(0) else { continue };
+            let start = chars + text.get(counted..whole.start()).map_or(0, |s| s.chars().count());
+            let end = start + whole.as_str().chars().count();
+            let mut with = String::new();
+            for piece in &pieces {
+                match piece {
+                    Piece::Text(t) => with.push_str(t),
+                    Piece::Group(n) => with.push_str(found.get(*n).map_or("", |m| m.as_str())),
+                }
+            }
+            out.push((start, end, with));
+            chars = end;
+            counted = whole.end();
+        }
+        Ok(out)
     }
 
     /// Where the pattern matches in `text`, left to right and not overlapping, as

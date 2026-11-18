@@ -182,6 +182,79 @@ impl<'t, 's> EditSink<'t, 's> {
         ))
     }
 
+    /// Replace a range across `paragraphs` (in order, children of `work`'s root) -- from
+    /// `start` in the first to `end` in the last -- with `text`, joining them as Word joins
+    /// paragraphs whose marks are deleted, by the policy ([`crate::across`]).
+    ///
+    /// # Errors
+    /// [`EditError::Text`] or [`EditError::Span`] for a range the paragraphs cannot take.
+    pub(crate) fn replace_across(
+        &mut self,
+        work: &mut Work,
+        paragraphs: &[crate::work::Id],
+        span: (usize, usize),
+        text: &str,
+        keep: Keep,
+    ) -> Result<TextWrite> {
+        write::check_text(text)?;
+        let shared = self.doc().shared_handle();
+        let orders = shared.facts.orders();
+        match self.policy.clone() {
+            RevisionPolicy::Untracked => Ok(TextWrite {
+                released: crate::across::replace_across(work, paragraphs, span, text, keep)?,
+                changed: work.changed(),
+                dated: false,
+                annotations: None,
+            }),
+            RevisionPolicy::Tracked(tracking) => {
+                let (released, dated, numbered) = self.tracked(tracking, |stamp| {
+                    crate::across::replace_across_tracked(work, paragraphs, span, text, keep, stamp, orders)
+                })?;
+                Ok(TextWrite {
+                    changed: work.changed(),
+                    released,
+                    dated,
+                    annotations: Some(numbered),
+                })
+            }
+        }
+    }
+
+    /// Replace `count` children of the element at `parent` (child indexes from the root)
+    /// of `part`, from its child `start` on, by `nodes`; ids drawn into them where the
+    /// change is applied.
+    ///
+    /// # Errors
+    /// When the part has no such element or children.
+    pub(crate) fn splice_children(
+        &mut self,
+        part: &str,
+        (parent, start, count): (&[u32], usize, usize),
+        nodes: Vec<Node>,
+        keys: Vec<Key>,
+        draws: Vec<Draw>,
+    ) -> Result<()> {
+        let tree = self
+            .tx
+            .doc()
+            .tree(part)?
+            .ok_or_else(|| EditError::NoPart(part.to_owned()))?;
+        let element =
+            ooxml_word_model::docx::at_path(tree.root(), parent).ok_or_else(|| EditError::Path(part.to_owned()))?;
+        let removed: Vec<Node> = element.children().iter().skip(start).take(count).cloned().collect();
+        if removed.len() != count {
+            return Err(EditError::Path(part.to_owned()));
+        }
+        let mut parent_path = vec![0usize];
+        parent_path.extend(parent.iter().map(|i| *i as usize));
+        self.write(Change::Splice {
+            part: Arc::from(part),
+            patch: Patch::splice(NodePath(parent_path), start, removed, nodes),
+            keys: keys.into(),
+            draws: draws.into(),
+        })
+    }
+
     /// Replace the current view's characters `[start, end)` of the paragraph `work` holds
     /// with `text`, by the policy (docx-agent's `inline.replace_span`, tracked
     /// `track.replace_span`).
@@ -478,7 +551,7 @@ pub(crate) fn ensured_head(root: &Element, drawings: bool, extra: &[(&str, &str)
 /// The draws that number again, where the change is applied, the revision records a
 /// write made in `element` (`w:id` among the stand-ins it gave), each by its offset from
 /// the edit's first id; paths from `element`.
-pub(crate) fn annotation_draws(element: &Element, numbered: Numbered) -> Vec<Draw> {
+pub(crate) fn annotation_draws(element: &Element, numbered: Numbered, node: u32) -> Vec<Draw> {
     let mut out = Vec::new();
     let mut stack: Vec<(&Element, Vec<u32>)> = vec![(element, Vec::new())];
     while let Some((e, path)) = stack.pop() {
@@ -494,6 +567,7 @@ pub(crate) fn annotation_draws(element: &Element, numbered: Numbered) -> Vec<Dra
                 ) {
                     out.push(Draw {
                         from: DrawFrom::Annotation(offset),
+                        node,
                         at: path.clone(),
                         attribute: Arc::clone(&attribute.name),
                     });

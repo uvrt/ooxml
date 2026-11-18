@@ -30,6 +30,7 @@ pub mod edits;
 pub mod edits_bench;
 pub mod export;
 mod export_parts;
+pub mod find_regex;
 pub mod glyphs;
 pub mod ids;
 pub mod layout;

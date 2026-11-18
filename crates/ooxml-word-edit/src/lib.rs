@@ -24,11 +24,14 @@
 //! store orders concurrent edits.
 #![forbid(unsafe_code)]
 
+mod across;
 mod comments;
 mod doc;
 mod editor;
 mod error;
+pub mod find;
 mod inline;
+mod marks;
 mod names;
 mod namespaces;
 mod new_part;
@@ -36,6 +39,7 @@ mod people;
 mod policy;
 mod pool;
 mod ranges;
+mod ranges_across;
 mod release;
 pub mod review;
 mod revision_ids;
@@ -57,7 +61,7 @@ pub use error::{EditError, Result};
 pub use policy::{RevisionPolicy, Tracking};
 pub use pool::{Ids, IdsChange, Sequences};
 pub use ranges::{DeleteText, InsertText, RangesEdited, ReplaceText};
-pub use review::{marks, Mark, RemovedBlocks, Review, Reviewed, RowGone, Selection, TableGone, Typed};
+pub use review::{record_marks, Mark, RemovedBlocks, Review, Reviewed, RowGone, Selection, TableGone, Typed};
 pub use set_text::{SetText, TextEdited};
 pub use sink::{EditSink, Keep, Numbered, TextWrite};
 pub use switch::{tracks_changes, word_tracks_changes, SetWordTracking, WordTracking};

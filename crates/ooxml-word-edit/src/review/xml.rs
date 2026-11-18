@@ -1,14 +1,15 @@
 //! Owns: the tree helpers the review's rules are written with, over a [`Work`] tree, each
 //! as docx-agent's review reads or writes the XML (`revisions/review.py`'s module
 //! functions, ooxml-edit's `insert_in_order`, `edit/document.py`'s `_rehome_markers`):
-//! what a record is ([`kind_of`]), ancestors, in-order insertion, a paragraph's content,
+//! what a record is ([`kind_of`]), ancestors, a paragraph's content (in-order insertion
+//! and a mark's record are `crate::marks`', re-exported),
 //! range markers kept when their paragraph goes, and what a review leaves empty
 //! ([`prune`]).
 //!
 //! Must not: decide what a review accepts or rejects, or reach outside the tree it is given.
 
 use crate::names::{M, R, W};
-use crate::validate::Orders;
+pub(crate) use crate::marks::{insert_in_order, mark_record};
 use crate::work::{Id, Work};
 
 /// Revision containers: what a run-level record wraps, and a mark's or row's own record.
@@ -183,52 +184,12 @@ pub(crate) fn set_attr(work: &mut Work, id: Id, local: &str, value: &str) {
     work.set(id, name, value);
 }
 
-/// Put `child` where `parent`'s schema sequence wants it (ooxml-edit's `insert_in_order`):
-/// appended first when it is not `parent`'s; a child the sequence does not name, or a
-/// parent without one, stays last; among equals, after the last of them.
-pub(crate) fn insert_in_order(work: &mut Work, parent: Id, child: Id, orders: &Orders) {
-    if work.parent(child) != Some(parent) {
-        work.append(parent, child);
-    }
-    let prefixed = |work: &Work, id: Id| work.name(id).map(|n| orders.prefixed_name(n.namespace(), n.local()));
-    let Some(ranks) = prefixed(work, parent).and_then(|p| orders.ranks(&p)) else {
-        return;
-    };
-    let Some(rank) = prefixed(work, child).and_then(|c| ranks.get(&c).copied()) else {
-        return;
-    };
-    let unknown = ranks.len() + 1;
-    let siblings: Vec<Id> = work.children(parent).to_vec();
-    for sibling in siblings {
-        if sibling == child || !work.is_element(sibling) {
-            continue;
-        }
-        let theirs = prefixed(work, sibling)
-            .and_then(|s| ranks.get(&s).copied())
-            .unwrap_or(unknown);
-        if theirs > rank {
-            work.add_previous(sibling, child);
-            return;
-        }
-    }
-    work.append(parent, child);
-}
-
 /// Whether a paragraph holds anything but properties and range markers.
 pub(crate) fn has_content(work: &Work, paragraph: Id) -> bool {
     work.descendants(paragraph)
         .into_iter()
         .skip(1)
         .any(|n| work.is_any(n, W, &["r", "fldSimple"]) || work.is(n, M, "oMath"))
-}
-
-/// The paragraph mark's own revision record, if it has one.
-pub(crate) fn mark_record(work: &Work, paragraph: Id) -> Option<Id> {
-    let run = find_path(work, paragraph, &["pPr", "rPr"])?;
-    work.children(run)
-        .iter()
-        .copied()
-        .find(|c| work.is_any(*c, W, &CONTAINERS))
 }
 
 /// The paragraph after `paragraph` in its container (none at a table or the end).
