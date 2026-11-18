@@ -141,7 +141,8 @@ fn defined(list: &Membership) -> Result<i64> {
 }
 
 /// docx-agent's `_list_edit`: stamp, `change`, remove what it (and the paragraph's list
-/// before) left unused, end the edit.
+/// before) left unused. The edit's end (text boxes synced, revision ids made unique) is the
+/// command's, once after its last step: no step reads what it changes.
 fn list_edit(
     sink: &mut EditSink<'_, '_>,
     stamped: &mut Stamped,
@@ -156,8 +157,6 @@ fn list_edit(
     }
     let main = sink.docx()?.main.clone();
     let removed = nb::reap(sink, &main, &candidates)?;
-    crate::textbox::sync(sink)?;
-    crate::revision_ids::make_unique(sink)?;
     let docx = sink.docx()?;
     let read::At { id, .. } = read::at(&docx, place).ok_or_else(|| EditError::Path(place.part.clone()))?;
     Ok(ListStep {
@@ -305,17 +304,38 @@ fn remove(sink: &mut EditSink<'_, '_>, place: &Place) -> Result<BTreeSet<i64>> {
     Ok(BTreeSet::new())
 }
 
+/// Whether a paragraph's style gives it a list, found once per style: a paragraph with no
+/// `w:numPr` of its own whose style gives none is in no list, without reading the lists.
+#[derive(Default)]
+struct StyleNumbers(std::collections::HashMap<Option<String>, bool>);
+
+impl StyleNumbers {
+    fn may_list(&mut self, docx: &Docx, paragraph: &ooxml_xml::Element) -> bool {
+        if ooxml_word_model::docx::find_path(paragraph, &["pPr", "numPr"]).is_some() {
+            return true;
+        }
+        let style = read::paragraph_style_id(paragraph);
+        *self.0.entry(style.clone()).or_insert_with(|| {
+            ooxml_word_model::docx::numbering::style_numbering(docx, style.as_deref())
+                .0
+                .is_some()
+        })
+    }
+}
+
 /// The paragraphs from `place` on in its story that are in instance `num_id`.
 fn following(docx: &Docx, place: &Place, num_id: i64) -> Vec<Place> {
     let Some(story) = docx.part(&place.part) else {
         return Vec::new();
     };
     let lists = Lists::read(docx);
+    let mut styles = StyleNumbers::default();
     story
         .ids
         .paragraphs()
         .iter()
         .skip(place.index)
+        .filter(|p| styles.may_list(docx, &p.element))
         .filter(|p| membership(docx, &lists, &p.element).is_some_and(|m| m.num_id == num_id))
         .map(|p| Place {
             part: place.part.clone(),
@@ -394,7 +414,11 @@ fn continued(docx: &Docx, place: &Place, id: &str, list: &Membership, from: Opti
         .part(&place.part)
         .ok_or_else(|| EditError::NoPart(place.part.clone()))?;
     let earlier = story.ids.paragraphs().iter().take(place.index).collect::<Vec<_>>();
+    let mut styles = StyleNumbers::default();
     for other in earlier.into_iter().rev() {
+        if !styles.may_list(docx, &other.element) {
+            continue;
+        }
         let Some(theirs) = membership(docx, &lists, &other.element) else {
             continue;
         };

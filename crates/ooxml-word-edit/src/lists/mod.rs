@@ -195,6 +195,10 @@ impl Command<WordDoc> for ListEdit {
                 steps::Stepped::Listless(id) => out.listless.push(id),
             }
         }
+        if !out.steps.is_empty() {
+            crate::textbox::sync(&mut sink)?;
+            crate::revision_ids::make_unique(&mut sink)?;
+        }
         let docx = sink.docx()?;
         for place in &places {
             if let Some(read::At { id, .. }) = read::at(&docx, place) {

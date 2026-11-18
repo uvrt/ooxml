@@ -410,6 +410,9 @@ pub(crate) fn reap(sink: &mut EditSink<'_, '_>, main: &str, candidates: &BTreeSe
     let Some(part) = part_of(sink, main)? else {
         return Ok(Vec::new());
     };
+    if candidates.is_empty() {
+        return Ok(Vec::new());
+    }
     let used = referenced(sink.docx()?.as_ref());
     let mut removed = Vec::new();
     let mut touched = BTreeSet::new();
