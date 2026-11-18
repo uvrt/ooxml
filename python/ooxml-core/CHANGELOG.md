@@ -11,7 +11,11 @@ ooxml-core is the Rust core of the ooxml packages (`crates/`), as the Python mod
   where they fit an `i64` and a `u32`, the exact value boxed otherwise, so arithmetic stays
   exact -- its format is shared by the pieces of a run, and what a pair kerns under is
   derived from its run and format when kerning instead of kept. A measure keeps no spare
-  room. Measures and lines are unchanged (the text differential). MEASURES_LINE
+  room. Measures and lines are unchanged (the text differential).
+  Measures kept by a layout, counting allocator: 353 -> 149 MB on a made-up 350-page
+  report, 483 -> 311 MB on a 2,988-page document (where line heights, geometries and
+  tables' cell flows are most of the rest); the first layout's time is unchanged
+  (1.56 -> 1.50 s, 8.2 -> 7.7 s).
 
 - **Layout answers by id, made per page (lane L4b, after review).** A version knows its
   body blocks' ids as docx-agent names them in its bytes (`LaidPages.ids_of`, and each body
