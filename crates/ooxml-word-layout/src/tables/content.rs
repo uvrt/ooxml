@@ -60,7 +60,7 @@ pub fn paragraph_minimum(cx: &mut TableContext<'_, '_>, paragraph: &Paragraph) -
             word = Q::from_integer(0);
             continue;
         }
-        word += q(piece.width);
+        word += q(piece.width());
         widest = widest.max(word);
     }
     let indents = prop(&pp, "ind.left") + prop(&pp, "ind.right");
@@ -95,7 +95,7 @@ pub fn paragraph_extent(
     let (mut start, mut first_word, mut first_line) = (first_start, true, true);
     let kinds = found
         .iter()
-        .map(|p| (p.kind, q(p.width)))
+        .map(|p| (p.kind, q(p.width())))
         .chain(std::iter::once((PieceKind::Break, zero)));
     for (kind, width) in kinds {
         if kind == PieceKind::Break {

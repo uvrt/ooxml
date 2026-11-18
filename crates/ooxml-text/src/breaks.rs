@@ -53,7 +53,7 @@ pub fn may_break(before: &Piece, after: &Piece) -> bool {
 /// How far a space lets a justified line in mode 15 run past the edge: a quarter of its
 /// width, rounded half up to the unit.
 pub fn squeeze(space: &Piece) -> Units {
-    let quarter = space.width.scale(1, 4).unwrap_or(Units::ZERO) + Units::ratio(1, 2).unwrap_or(Units::ZERO);
+    let quarter = space.width().scale(1, 4).unwrap_or(Units::ZERO) + Units::ratio(1, 2).unwrap_or(Units::ZERO);
     Units::ratio(quarter.floor(), 1).unwrap_or(Units::ZERO)
 }
 
@@ -176,11 +176,11 @@ pub fn break_line(items: &[Piece], i: usize, geometry: &Geometry, first: bool, h
 
 fn note_break(s: &mut State, geometry: &Geometry, before: &Piece, at: usize) {
     let fits = before.kind != PieceKind::SoftHyphen
-        || s.x + before.hyphen <= geometry.right
+        || s.x + before.hyphen() <= geometry.right
         || (before.auto
             && geometry.squeeze
             && squeezes(
-                s.x + before.hyphen - geometry.right,
+                s.x + before.hyphen() - geometry.right,
                 s.room,
                 s.spaces,
                 s.limit.map(|l| l - s.before_x),
@@ -231,11 +231,11 @@ fn advance(
         return x_new;
     }
     let kern = if j + 1 < items.len() {
-        piece.kern_next
+        piece.kern_next()
     } else {
         Units::ZERO
     };
-    let x_new = s.x + piece.width + kern;
+    let x_new = s.x + piece.width() + kern;
     if piece.kind == PieceKind::Space && geometry.squeeze {
         if j == start || items.get(j - 1).is_some_and(|p| p.kind != PieceKind::Space) {
             s.before_x = s.x;

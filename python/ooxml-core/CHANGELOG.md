@@ -5,6 +5,14 @@ ooxml-core is the Rust core of the ooxml packages (`crates/`), as the Python mod
 
 ## 0.10.0 -- unreleased
 
+- **Smaller text pieces (phase PL, lane L4e).** The text engine keeps a piece per
+  character in every measure; a piece is 104 bytes, was 208. Its lengths (advance, kern
+  pair, hyphen) are kept as `ooxml_text::CompactUnits` -- numerator and denominator inline
+  where they fit an `i64` and a `u32`, the exact value boxed otherwise, so arithmetic stays
+  exact -- its format is shared by the pieces of a run, and what a pair kerns under is
+  derived from its run and format when kerning instead of kept. A measure keeps no spare
+  room. Measures and lines are unchanged (the text differential). MEASURES_LINE
+
 - **Layout answers by id, made per page (lane L4b, after review).** A version knows its
   body blocks' ids as docx-agent names them in its bytes (`LaidPages.ids_of`, and each body
   line's id in `body_lines`); its layout summary is made and compared in Rust

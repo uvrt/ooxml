@@ -186,27 +186,8 @@ impl Token<'_> {
             let run = self.piece(last).map_or(-1, |q| q.run);
             let width = self.runs.get(&run).map_or(info.2, |r| r.2);
             if let (Some(width), Some(at)) = (width, self.piece(after)) {
-                let mut hyphen = auto_hyphen(at.source, width, run);
-                hyphen.proof_end = proof_end;
-                insert.insert(after, hyphen);
+                insert.insert(after, Piece::auto_hyphen(at.source, width, run, proof_end));
             }
         }
-    }
-}
-
-fn auto_hyphen(source: i64, width: Units, run: i64) -> Piece {
-    Piece {
-        kind: PieceKind::SoftHyphen,
-        ch: '\u{ad}',
-        width: Units::ZERO,
-        kern_next: Units::ZERO,
-        kern_key: None,
-        source,
-        hyphen: width,
-        height: 0,
-        run,
-        auto: true,
-        proof_end: None,
-        format: None,
     }
 }
