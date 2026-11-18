@@ -250,6 +250,17 @@ fn text(element: &Element) -> String {
 /// first range start, range end and reference of that id.
 type Markers = HashMap<String, (String, HashMap<&'static str, Box<[u32]>>)>;
 
+/// Every comment with what it is attached to (`{"id", "t"}` in the final view, or null),
+/// in the comments part's order.
+pub(crate) fn comments_with_anchors(docx: &Docx) -> Vec<(ooxml_word_model::docx::comments::Comment, Value)> {
+    let records = comment_records(docx);
+    let by_id: HashMap<&str, &ooxml_word_model::docx::comments::Comment> =
+        records.iter().map(|c| (c.id.as_str(), c)).collect();
+    let markers = comment_markers(docx, records.first().map(|c| c.part.as_str()));
+    let anchors: Vec<Value> = records.iter().map(|r| anchor(docx, r, &by_id, &markers)).collect();
+    records.clone().into_iter().zip(anchors).collect()
+}
+
 fn comment_markers(docx: &Docx, comments_part: Option<&str>) -> Markers {
     let mut out: Markers = HashMap::new();
     for part in &docx.parts {
