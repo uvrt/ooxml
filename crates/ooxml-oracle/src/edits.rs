@@ -20,8 +20,8 @@ use ooxml_word_edit::find::{Literal, Pattern};
 use ooxml_word_edit::touched::Touched;
 use ooxml_word_edit::validate::problems;
 use ooxml_word_edit::{
-    DeleteText, EditError, Edited, Editor, InsertParagraph, InsertText, Keep, RangesEdited, ReplaceText, RevisionPolicy, SetText,
-    TextEdited, Tracking, WordDoc,
+    DeleteText, EditError, Edited, Editor, InsertParagraph, InsertText, Keep, RangesEdited, ReplaceText,
+    RevisionPolicy, SetText, TextEdited, Tracking, WordDoc,
 };
 use serde_json::{json, Map, Value};
 use std::sync::Arc;

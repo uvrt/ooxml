@@ -286,7 +286,10 @@ fn style_of(paragraph: &Element) -> Option<&str> {
 /// `lines`, all in its paragraph style (docx-agent's `_already_lines`); the paragraphs
 /// compared are read.
 fn already_lines(sink: &mut EditSink<'_, '_>, docx: &Docx, part: &str, path: &[u32], lines: &[&str]) -> Result<bool> {
-    let tree = sink.doc().tree(part)?.ok_or_else(|| EditError::NoPart(part.to_owned()))?;
+    let tree = sink
+        .doc()
+        .tree(part)?
+        .ok_or_else(|| EditError::NoPart(part.to_owned()))?;
     let path_error = || EditError::Path(part.to_owned());
     let (&index, above) = path.split_last().ok_or_else(path_error)?;
     let parent = if above.is_empty() {

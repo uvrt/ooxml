@@ -226,7 +226,12 @@ impl<'t, 's> EditSink<'t, 's> {
     ///
     /// # Errors
     /// When the annotation ids cannot be read.
-    pub(crate) fn new_paragraph(&mut self, work: &mut Work, paragraph: crate::work::Id, last: bool) -> Result<TextWrite> {
+    pub(crate) fn new_paragraph(
+        &mut self,
+        work: &mut Work,
+        paragraph: crate::work::Id,
+        last: bool,
+    ) -> Result<TextWrite> {
         let RevisionPolicy::Tracked(tracking) = self.policy.clone() else {
             return Ok(TextWrite::default());
         };
