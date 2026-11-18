@@ -58,6 +58,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
             package,
             number: 1,
             versions,
+            placer: None,
         };
         let reply = if tool == "read_batch" {
             batch(&arguments, file, name)
@@ -111,7 +112,7 @@ fn batch(arguments: &Value, file: &str, name: &str) -> Value {
 
 /// A session's ports for the oracle: no fonts, no stored blobs, the system's clock, an
 /// unbounded cache budget.
-fn session_context() -> Context {
+pub(crate) fn session_context() -> Context {
     struct NoFonts;
     impl FontSource for NoFonts {
         fn face(&self, _: &FaceRequest) -> Result<Option<FaceData>, BaseError> {

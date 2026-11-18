@@ -4,8 +4,11 @@
 //! `word_read` of a span of 20 blocks in the middle, `find_text`; then a one-block edit
 //! made two ways -- a path copy (the paragraph replaced, every other block shared) and the
 //! bridge's (the main part written and parsed again, nothing shared) -- and `describe` and
-//! the span's `word_read` on each new version. Best of `rounds` (default 3), wall in ms, as
-//! one JSON object (the process's CPU from `/usr/bin/time`).
+//! the span's `word_read` on each new version; and the path docx-agent takes (lane P1c):
+//! through a session, the edited main part's bytes committed (parsed, then sharing what did
+//! not change with the version before), then `describe` and the span reads on the version
+//! committed. Best of `rounds` (default 3), wall in ms, as one JSON object (the process's
+//! CPU from `/usr/bin/time`).
 //!
 //! Must not: be used by any library; it is a measuring instrument.
 
@@ -116,8 +119,8 @@ fn middle_span(docx: &Docx) -> Option<String> {
 pub fn run(args: &[String]) -> Result<(), String> {
     let file = args.first().ok_or("usage: word-reads-bench <file.docx> [rounds]")?;
     let rounds: usize = args.get(1).and_then(|r| r.parse().ok()).unwrap_or(3);
-    let bytes = std::fs::read(file).map_err(|e| e.to_string())?;
-    let package = Package::open(Arc::from(bytes), &Limits::default()).map_err(|e| e.to_string())?;
+    let bytes: Arc<[u8]> = Arc::from(std::fs::read(file).map_err(|e| e.to_string())?);
+    let package = Package::open(Arc::clone(&bytes), &Limits::default()).map_err(|e| e.to_string())?;
     let main = ooxml_word_model::parts::main_part(&package)
         .map_err(|e| e.to_string())?
         .ok_or("no main part")?;
@@ -140,6 +143,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
         package: &package,
         number: 1,
         versions: &versions,
+        placer: None,
     };
     let start = Instant::now();
     describe(&d, &v1, &Never).map_err(|e| e.message().to_owned())?;
@@ -175,7 +179,77 @@ pub fn run(args: &[String]) -> Result<(), String> {
         };
         after_edit(&mut out, name, &package, edited, &reads, rounds)?;
     }
+    through_session(&mut out, &bytes, &main, &bridged, &reads_of(&span, &other), rounds)?;
     println!("{}", Value::Object(out));
+    Ok(())
+}
+
+fn reads_of(span: &WordRead, other: &WordRead) -> (Value, Value) {
+    let range = |r: &WordRead| json!({"doc": "d1", "range": r.range});
+    (range(span), range(other))
+}
+
+/// The session path docx-agent takes: the document opened from its bytes and read, then the
+/// edited main part's bytes committed and the new version read, each call on the version
+/// committed (`CallContext::at`). Best of `rounds`.
+fn through_session(
+    out: &mut Map<String, Value>,
+    bytes: &[u8],
+    main: &str,
+    edited: &Package,
+    spans: &(Value, Value),
+    rounds: usize,
+) -> Result<(), String> {
+    use ooxml_session::{CallContext, DocKind, Session, SessionConfig};
+    let written: Arc<[u8]> = Arc::from(
+        edited
+            .tree(main)
+            .map_err(|e| e.to_string())?
+            .ok_or("no main part")?
+            .write(),
+    );
+    let mut best = [f64::MAX; 4];
+    for _ in 0..rounds {
+        let session = Session::new(SessionConfig::default(), crate::reads::session_context());
+        let doc = session
+            .open(Arc::from(bytes), DocKind::Docx, "a.docx")
+            .map_err(|e| e.to_string())?;
+        let call = |name: &str, arguments: Value, context: &CallContext| -> Result<f64, String> {
+            let start = Instant::now();
+            let result = session.call(name, arguments, context);
+            if result.is_error() {
+                return Err(format!("{name}: {:?}", result.to_json().get("error")));
+            }
+            Ok(start.elapsed().as_secs_f64() * 1000.0)
+        };
+        call("describe", json!({"doc": "d1"}), &CallContext::default())?;
+        call("word_read", spans.0.clone(), &CallContext::default())?;
+        let start = Instant::now();
+        let (_, version) = session
+            .commit(
+                &doc,
+                vec![(main.to_owned(), Some(Arc::clone(&written)))],
+                &CallContext::default(),
+            )
+            .map_err(|e| e.to_string())?;
+        let commit = start.elapsed().as_secs_f64() * 1000.0;
+        let at = CallContext {
+            at: vec![version],
+            ..CallContext::default()
+        };
+        let span = call("word_read", spans.0.clone(), &at)?;
+        let describe = call("describe", json!({"doc": "d1"}), &at)?;
+        let other = call("word_read", spans.1.clone(), &at)?;
+        for (slot, value) in best.iter_mut().zip([commit, span, describe, other]) {
+            *slot = slot.min(value);
+        }
+    }
+    for (key, value) in ["commit", "word_read_span_first", "describe", "word_read_other_span"]
+        .iter()
+        .zip(best)
+    {
+        out.insert(format!("session_{key}_ms"), json!((value * 10.0).round() / 10.0));
+    }
     Ok(())
 }
 
@@ -205,6 +279,7 @@ fn after_edit(
             package,
             number: 1,
             versions: &versions,
+            placer: None,
         };
         describe(d, &v1, &Never).map_err(|e| e.message().to_owned())?;
         let v2 = Version {
@@ -212,6 +287,7 @@ fn after_edit(
             package: edited,
             number: 2,
             versions: &versions,
+            placer: None,
         };
         let start = Instant::now();
         describe(d, &v2, &Never).map_err(|e| e.message().to_owned())?;

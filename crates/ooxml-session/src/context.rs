@@ -1,13 +1,15 @@
 //! Owns: a call's context ([`CallContext`]: who calls, its cancellation token, its
-//! deadline), the token a host cancels a call with ([`CancelToken`]), the [`Cancel`] a call
+//! deadline, the versions it reads, where it may ask where blocks are laid out), the token a host cancels a call with ([`CancelToken`]), the [`Cancel`] a call
 //! runs under (its token, its deadline read from the session's [`Clock`], and the
 //! session's own [`Cancel`]), and the store's clock read through the session's.
 //!
 //! Must not: read the system clock (the host gives the [`Clock`]) or keep state beyond a
 //! call.
 
+use crate::Opened;
 use ooxml_base::{Cancel, Clock};
 use ooxml_store::Caller;
+use ooxml_tools_word::Placer;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -45,6 +47,14 @@ pub struct CallContext {
     pub cancel: Option<Arc<CancelToken>>,
     /// How long the call may run; past it, it stops with `timeout`.
     pub deadline: Option<Duration>,
+    /// The versions the call reads (each a document's, as [`crate::Session::commit`] or
+    /// [`crate::Session::snapshot`] gave it): a document named here is read at this
+    /// version, any other at its head. The host that owns the documents names the version
+    /// its caller reads, so a reader never reads a version newer than its own.
+    pub at: Vec<Opened>,
+    /// Where the call may ask where blocks are laid out: the host's layout of the version
+    /// it reads (`word_inspect`'s `layout`).
+    pub placer: Option<Arc<dyn Placer>>,
 }
 
 impl std::fmt::Debug for CallContext {
@@ -52,6 +62,14 @@ impl std::fmt::Debug for CallContext {
         f.debug_struct("CallContext")
             .field("caller", &self.caller)
             .field("deadline", &self.deadline)
+            .field(
+                "at",
+                &self
+                    .at
+                    .iter()
+                    .map(|o| (o.id().to_string(), o.version()))
+                    .collect::<Vec<_>>(),
+            )
             .finish_non_exhaustive()
     }
 }
