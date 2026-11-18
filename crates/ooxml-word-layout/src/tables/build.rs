@@ -672,7 +672,7 @@ struct CellParagraph<'a> {
 }
 
 /// A drawing in a cell this layout cannot read (a VML shape it cannot read, an embedded
-/// object): refused (docx2svg draws a placeholder of its estimated height).
+/// object): refused (docx2svg draws a stand-in box of its estimated height).
 fn refuse_unlaid(paragraph: &Paragraph) -> Result<(), Unsupported> {
     if paragraph
         .runs
