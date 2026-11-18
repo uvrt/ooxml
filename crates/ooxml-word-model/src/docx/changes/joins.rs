@@ -236,7 +236,7 @@ impl Grouping<'_> {
     }
 
     /// The text of the containers `w:t` and `w:delText` below `k`.
-    fn texts(&self, k: usize) -> String {
+    pub(super) fn texts(&self, k: usize) -> String {
         self.arena
             .subtree(k)
             .into_iter()

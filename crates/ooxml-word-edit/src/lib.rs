@@ -10,8 +10,12 @@
 //!   behind it that writes a text edit untracked or as tracked changes, as docx-agent
 //!   writes them;
 //! - stamping blocks with durable ids before the first edit, and new text ids;
-//! - the commands: [`SetText`] (in lines: new paragraphs after it); [`InsertParagraph`]; [`SetParagraphStyle`] (built-in styles added as Word writes them); [`DeleteBlock`]; [`SetCells`]; [`InsertText`], [`DeleteText`] and [`ReplaceText`] (text
-//!   within a paragraph, docx-agent's `_replace_ranges`);
+//! - the commands: [`SetText`] (in lines: new paragraphs after it); [`InsertParagraph`];
+//!   [`SetParagraphStyle`] (built-in styles added as Word writes them); [`DeleteBlock`];
+//!   [`SetCells`]; [`InsertText`], [`DeleteText`] and [`ReplaceText`] (text within a
+//!   paragraph, docx-agent's `_replace_ranges`); [`Review`] (accepting and rejecting tracked
+//!   changes, `word_changes`); [`SetWordTracking`] (Word's own Track Changes switch);
+//!   [`CommentEdits`] (resolving, reopening and deleting comments);
 //! - validation per change ([`validate`]: facts memoised by content, docx-agent's rules)
 //!   and what a change touched ([`touched`]);
 //! - [`Editor`], which runs a command through the store and reports its result with
@@ -25,6 +29,7 @@
 mod across;
 mod block_checks;
 mod builtin;
+mod comments;
 mod delete;
 mod delete_write;
 mod doc;
@@ -36,6 +41,7 @@ mod list_style;
 mod marks;
 mod names;
 mod namespaces;
+mod new_part;
 mod paragraph_style;
 mod paragraphs;
 mod people;
@@ -44,11 +50,13 @@ mod pool;
 mod ranges;
 mod ranges_across;
 mod release;
+pub mod review;
 mod revision_ids;
 mod set_cells;
 mod set_text;
 mod sink;
 mod stamping;
+mod switch;
 mod table_delete;
 mod table_delete_write;
 mod text;
@@ -58,6 +66,7 @@ mod track;
 pub mod validate;
 mod work;
 
+pub use comments::{CommentEdit, CommentEdited, CommentEdits};
 pub use delete::{BlockDeleted, DeleteBlock};
 pub use doc::{Change, Draw, DrawFrom, Key, ModelError, Shared, WordDoc};
 pub use editor::{EditTiming, Edited, Editor};
@@ -67,6 +76,8 @@ pub use paragraphs::{InsertParagraph, ParagraphInserted};
 pub use policy::{RevisionPolicy, Tracking};
 pub use pool::{Ids, IdsChange, Sequences};
 pub use ranges::{DeleteText, InsertText, RangesEdited, ReplaceText};
+pub use review::{record_marks, Mark, RemovedBlocks, Review, Reviewed, RowGone, Selection, TableGone, Typed};
 pub use set_cells::{CellEdit, CellsSet, SetCells};
 pub use set_text::{SetText, TextEdited};
 pub use sink::{EditSink, Keep, Numbered, TextWrite};
+pub use switch::{tracks_changes, word_tracks_changes, SetWordTracking, WordTracking};

@@ -19,6 +19,8 @@
 mod blocks;
 mod extras;
 
+pub(crate) use extras::comments_with_anchors;
+
 use crate::describe::cancelled;
 use crate::refusal::address_refusal;
 use crate::version::Version;

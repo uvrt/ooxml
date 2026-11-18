@@ -744,8 +744,11 @@ name = "ooxml-tools-word"
 version = "0.1.0"
 dependencies = [
  "ooxml-base",
+ "ooxml-derive",
  "ooxml-opc",
+ "ooxml-store",
  "ooxml-tools",
+ "ooxml-word-edit",
  "ooxml-word-model",
  "ooxml-xml",
  "ooxml-zip",

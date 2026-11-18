@@ -1,0 +1,1 @@
+Tracked changes: list them as a reviewer reads them (a replacement is one change, old and new text) or as Word's records; accept, reject or preview them by id, author, kind, within, or all, reporting what remains.
