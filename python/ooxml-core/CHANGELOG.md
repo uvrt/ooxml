@@ -5,6 +5,25 @@ ooxml-core is the Rust core of the ooxml packages (`crates/`), as the Python mod
 
 ## 0.10.0 -- unreleased
 
+- **Smaller text pieces (phase PL, lane L4e).** The text engine keeps a piece per
+  character in every measure; a piece is 104 bytes, was 208. Its lengths (advance, kern
+  pair, hyphen) are kept as `ooxml_text::CompactUnits` -- numerator and denominator inline
+  where they fit an `i64` and a `u32`, the exact value boxed otherwise, so arithmetic stays
+  exact -- its format is shared by the pieces of a run, and what a pair kerns under is
+  derived from its run and format when kerning instead of kept. A measure keeps no spare
+  room. Measures and lines are unchanged (the text differential).
+  Measures kept by a layout, counting allocator: 353 -> 149 MB on a made-up 350-page
+  report, 483 -> 311 MB on a 2,988-page document (where line heights, geometries and
+  tables' cell flows are most of the rest); the first layout's time is unchanged
+  (1.56 -> 1.50 s, 8.2 -> 7.7 s).
+
+- **A chart's axis intervals no longer overflow on a vast plot band** (the `chart_layout`
+  fuzz target's find). How many rungs a value axis has room for is floored to a whole count
+  held to what an axis can use (none to `AXIS_MAX_INTERVALS` plus the end labels' lines)
+  where it is made, for the side, radial and bottom axes alike, so a finite count past `i64`
+  no longer saturates and overflows taking the end labels' lines; a decade is asked only of a
+  finite positive value. Every in-range count is the same as before.
+
 - **Layout answers by id, made per page (lane L4b, after review).** A version knows its
   body blocks' ids as docx-agent names them in its bytes (`LaidPages.ids_of`, and each body
   line's id in `body_lines`); its layout summary is made and compared in Rust

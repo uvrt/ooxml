@@ -1,6 +1,7 @@
 //! Owns: [`Units`], a horizontal length in Word's layout unit, 1/4096 pt, held exactly (an
-//! integer wherever it is one, as docx2svg's `int | Fraction`), and the conversions into
-//! it Word rounds (twips half up to the unit).
+//! integer wherever it is one, as docx2svg's `int | Fraction`), the conversions into it
+//! Word rounds (twips half up to the unit), and [`CompactUnits`], the same value as a
+//! measure keeps it: in half the room, still exact.
 //!
 //! Must not: round anything else, or use floating point.
 
@@ -8,6 +9,7 @@ use num_integer::Integer;
 use num_rational::Ratio;
 use num_traits::{Signed, Zero};
 use std::fmt;
+use std::num::NonZeroU32;
 use std::ops::{Add, AddAssign, Mul, Neg, Sub};
 
 type Q = Ratio<i128>;
@@ -128,6 +130,77 @@ impl std::str::FromStr for Units {
     }
 }
 
+/// A [`Units`] as a measure keeps it (a piece's widths), in 16 bytes rather than 32: inline
+/// where its numerator fits an `i64` and its denominator a `u32` -- every advance a measure
+/// makes, whose denominators divide a face's units per em times a percentage -- and the
+/// exact value boxed otherwise. Exact either way, and one form per value (the inline one
+/// wherever it fits), so equal values compare equal. Arithmetic is done on [`Units`]:
+/// [`CompactUnits::get`] gives the value back.
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub struct CompactUnits(Compact);
+
+#[derive(Clone, PartialEq, Eq, Hash)]
+enum Compact {
+    /// `numerator / denominator`, in lowest terms.
+    Inline { numerator: i64, denominator: NonZeroU32 },
+    /// A value whose parts do not fit inline.
+    Boxed(Box<Units>),
+}
+
+impl CompactUnits {
+    /// Zero.
+    pub const ZERO: CompactUnits = CompactUnits(Compact::Inline {
+        numerator: 0,
+        denominator: NonZeroU32::MIN,
+    });
+
+    /// The value, for arithmetic.
+    pub fn get(&self) -> Units {
+        match &self.0 {
+            Compact::Inline { numerator, denominator } => {
+                Units(Q::new_raw(i128::from(*numerator), i128::from(denominator.get())))
+            }
+            Compact::Boxed(value) => **value,
+        }
+    }
+
+    /// Whether the value is kept inline (not boxed).
+    pub fn is_inline(&self) -> bool {
+        matches!(self.0, Compact::Inline { .. })
+    }
+}
+
+impl From<Units> for CompactUnits {
+    fn from(value: Units) -> CompactUnits {
+        let (numerator, denominator) = value.parts();
+        match (
+            i64::try_from(numerator),
+            u32::try_from(denominator).ok().and_then(NonZeroU32::new),
+        ) {
+            (Ok(numerator), Some(denominator)) => CompactUnits(Compact::Inline { numerator, denominator }),
+            _ => CompactUnits(Compact::Boxed(Box::new(value))),
+        }
+    }
+}
+
+impl Default for CompactUnits {
+    fn default() -> CompactUnits {
+        CompactUnits::ZERO
+    }
+}
+
+impl fmt::Debug for CompactUnits {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.get())
+    }
+}
+
+impl fmt::Display for CompactUnits {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.get())
+    }
+}
+
 /// A twip length as Word holds it: in 1/4096 pt, half up (`linebreak.twips_to_units`).
 pub fn twips_to_units(twips: Units) -> Units {
     // twips x 4096/20, plus 1/2, floored.
@@ -155,5 +228,44 @@ mod tests {
         assert_eq!("7/2".parse::<Units>().unwrap().floor(), 3);
         assert_eq!("-7/2".parse::<Units>().unwrap().floor(), -4);
         assert!(Units::int(2) > third);
+    }
+
+    #[test]
+    fn compact_is_exact_and_half_the_room() {
+        assert_eq!(std::mem::size_of::<CompactUnits>(), 16);
+        assert_eq!(std::mem::size_of::<Units>(), 32);
+        let values = [
+            Units::ZERO,
+            Units::int(-205),
+            Units::ratio(1_843_200, 2_048).unwrap(),
+            Units::ratio(-7, 3).unwrap(),
+            Units::int(i64::MAX),
+            Units::int(i64::MIN),
+            Units::ratio(1, i128::from(u32::MAX)).unwrap(),
+        ];
+        for value in values {
+            let compact = CompactUnits::from(value);
+            assert!(compact.is_inline(), "{value}");
+            assert_eq!(compact.get(), value);
+        }
+        let wide = [
+            Units::ratio(i128::from(i64::MAX) + 1, 1).unwrap(),
+            Units::ratio(i128::from(i64::MIN) - 1, 1).unwrap(),
+            Units::ratio(1, i128::from(u32::MAX) + 2).unwrap(),
+            Units::ratio(i128::MAX, 3).unwrap(),
+        ];
+        for value in wide {
+            let compact = CompactUnits::from(value);
+            assert!(!compact.is_inline(), "{value}");
+            assert_eq!(compact.get(), value);
+            assert_eq!(compact, CompactUnits::from(value));
+        }
+        assert_eq!(CompactUnits::from(Units::ZERO), CompactUnits::ZERO);
+        assert_ne!(CompactUnits::from(Units::int(1)), CompactUnits::from(wide[0]));
+        assert_eq!(CompactUnits::from(third_of(9)).to_string(), "3");
+    }
+
+    fn third_of(value: i64) -> Units {
+        Units::int(value).scale(1, 3).unwrap()
     }
 }

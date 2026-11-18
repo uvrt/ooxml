@@ -206,13 +206,13 @@ fn piece_difference(ours: &ooxml_text::Piece, theirs: &ExpectedPiece) -> Option<
         ("char", ch == theirs.ch, format!("{:?} vs {:?}", ch, theirs.ch)),
         (
             "width",
-            ours.width == theirs.width,
-            format!("{:?}: {} vs {}", ours.ch, ours.width, theirs.width),
+            ours.width() == theirs.width,
+            format!("{:?}: {} vs {}", ours.ch, ours.width(), theirs.width),
         ),
         (
             "kern",
-            theirs.kern.is_none_or(|k| k == ours.kern_next),
-            format!("{:?}: {} vs {:?}", ours.ch, ours.kern_next, theirs.kern),
+            theirs.kern.is_none_or(|k| k == ours.kern_next()),
+            format!("{:?}: {} vs {:?}", ours.ch, ours.kern_next(), theirs.kern),
         ),
         (
             "source",
@@ -221,8 +221,8 @@ fn piece_difference(ours: &ooxml_text::Piece, theirs: &ExpectedPiece) -> Option<
         ),
         (
             "hyphen",
-            ours.hyphen == theirs.hyphen,
-            format!("{} vs {}", ours.hyphen, theirs.hyphen),
+            ours.hyphen() == theirs.hyphen,
+            format!("{} vs {}", ours.hyphen(), theirs.hyphen),
         ),
         ("run", ours.run == theirs.run, format!("{} vs {}", ours.run, theirs.run)),
         (
