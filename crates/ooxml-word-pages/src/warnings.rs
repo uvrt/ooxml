@@ -20,6 +20,7 @@ use ooxml_word_layout::fields::{cross_reference_problems, field_text, page_count
 use ooxml_word_layout::flow::{body_paragraphs, FlowItem};
 use ooxml_word_layout::stories::story_references;
 use ooxml_word_layout::tables::MeasuredTable;
+use ooxml_word_layout::px::Px;
 use ooxml_word_layout::DocumentLayout;
 use ooxml_word_model::model::{Block, InlineObject, Paragraph};
 use ooxml_word_model::value::Value;
@@ -148,6 +149,7 @@ pub fn said(model: &mut Model, layout: &DocumentLayout, drawings: &mut dyn PageD
             None,
         );
     }
+    floating_tables_past_foot(layout, &mut out);
     document_notes(document, &mut out);
     let mut pages = PageWalk {
         tables: HashSet::new(),
@@ -181,6 +183,46 @@ pub fn said(model: &mut Model, layout: &DocumentLayout, drawings: &mut dyn PageD
     }
     line_numbers(document, &mut out);
     out
+}
+
+/// The floating tables that reach below the bottom margin in mode 15, which Word splits
+/// across two pages: each drawn whole where it is positioned, said once, in the order the
+/// pages place them (`page_wraps`' `approximated`).
+fn floating_tables_past_foot(layout: &DocumentLayout, out: &mut Said) {
+    if !layout.mode15 {
+        return;
+    }
+    let mut said: Vec<String> = Vec::new();
+    for page in 0..layout.page_count() {
+        let Some(laid) = layout.laid_page(page) else {
+            continue;
+        };
+        for wrap in &laid.wraps {
+            let Some(FlowItem::Table(t)) = wrap.table.and_then(|item| layout.flow.items.get(item)) else {
+                continue;
+            };
+            let (Some(floating), Some(section)) = (t.flow.floating(), layout.sections.get(t.section)) else {
+                continue;
+            };
+            let props = &section.props;
+            let foot = Px::twips(props.page_size.height - props.margins.bottom.abs());
+            if wrap.bottom - Px::twips(floating.position.bottom).value() <= foot.value() {
+                continue;
+            }
+            let path = match layout.document.body.get(t.body) {
+                Some(Block::Table(table)) => table.path.to_string(),
+                _ => continue,
+            };
+            let message = format!(
+                "a floating table ({path}) that reaches below the bottom margin, which Word splits across pages in \
+                 mode 15, is drawn whole where it is positioned (not modelled)"
+            );
+            if !said.contains(&message) {
+                out.approximate("pagination", &message, None, None);
+                said.push(message);
+            }
+        }
+    }
 }
 
 /// The body's `STYLEREF`s that keep Word's cached result (`_style_references`).

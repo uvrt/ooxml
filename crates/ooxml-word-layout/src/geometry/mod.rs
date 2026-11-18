@@ -15,6 +15,7 @@ mod opening;
 pub use opening::page_opening;
 mod lines;
 pub mod stories;
+pub mod text_box;
 pub mod walk;
 
 pub use lines::{DrawnLine, LineSource};

@@ -27,10 +27,11 @@ pub struct Frames {
     pub page_width: i64,
     /// Its height.
     pub page_height: i64,
-    /// The left margin and gutter.
-    pub left: i64,
-    /// The right margin.
-    pub right: i64,
+    /// The left margin and gutter (in a table cell, its text area's left edge: fractions
+    /// of a twip).
+    pub left: Q,
+    /// The right margin (in a table cell, from its text area's right edge).
+    pub right: Q,
     /// The top margin.
     pub top: Q,
     /// The bottom margin.
@@ -53,6 +54,12 @@ pub struct Frames {
     pub character: Q,
     /// In a section of several columns, the anchor's column: its left edge and width.
     pub column: Option<(i64, i64)>,
+    /// Where `page` (and `leftMargin`, `topMargin`) start: the page's corner, or in a
+    /// table cell the cell's (`page_x`, `page_y`).
+    pub origin: (Q, Q),
+    /// The frames are a table cell's: `margin` has no height there, and every alignment
+    /// against it is its top (`make_cell_anchor_probe.py`).
+    pub cell: bool,
 }
 
 fn int(value: i64) -> Q {
@@ -116,15 +123,15 @@ pub fn horizontal(anchor: &Anchor, frames: &Frames) -> Option<Q> {
     let odd = frames.page % 2 == 1;
     let inside_left = if frames.mode15 { odd } else { !odd };
     let relative = position.relative.as_deref().unwrap_or("column");
-    let (pw, l, r) = (frames.page_width, frames.left, frames.right);
-    let margin = (int(l), int(pw - l - r));
-    let left_margin = (Q::from_integer(0), int(l));
-    let right_margin = (int(pw - r), int(r));
+    let (pw, l, r) = (int(frames.page_width), frames.left, frames.right);
+    let margin = (l, pw - l - r);
+    let left_margin = (Q::from_integer(0), l);
+    let right_margin = (pw - r, r);
     let frame = match relative {
-        "page" => (Q::from_integer(0), int(pw)),
+        "page" => (frames.origin.0, pw),
         "margin" => margin,
         "column" => frames.column.map_or(margin, |(x, w)| (int(x), int(w))),
-        "leftMargin" => left_margin,
+        "leftMargin" => (frames.origin.0, l),
         "rightMargin" => right_margin,
         "insideMargin" if inside_left => left_margin,
         "insideMargin" => right_margin,
@@ -158,9 +165,9 @@ pub fn vertical(anchor: &Anchor, frames: &Frames) -> Option<Q> {
     let top_margin = (Q::from_integer(0), top);
     let bottom_margin = (height - bottom, bottom);
     let margins = match relative {
-        "page" => Some((Q::from_integer(0), height)),
+        "page" => Some((frames.origin.1, height)),
         "margin" => Some((top, height - top - bottom)),
-        "topMargin" => Some(top_margin),
+        "topMargin" => Some((frames.origin.1, top)),
         "bottomMargin" => Some(bottom_margin),
         "insideMargin" => Some(if odd { top_margin } else { bottom_margin }),
         // Below mode 15 the outside margin is the inside one.
@@ -176,7 +183,10 @@ pub fn vertical(anchor: &Anchor, frames: &Frames) -> Option<Q> {
         if let Some(offset) = position.offset {
             return Some(frame.0 + int(emu_twips(offset)));
         }
-        let align = position.align.as_deref().unwrap_or("top");
+        let align = match position.align.as_deref() {
+            _ if frames.cell && relative == "margin" => "top",
+            found => found.unwrap_or("top"),
+        };
         if relative == "page" && matches!(align, "inside" | "outside") {
             if (align == "inside") == odd {
                 return Some(int(frames.header) / int(2) + int(b.top));
@@ -273,8 +283,8 @@ mod tests {
         Frames {
             page_width: 12240,
             page_height: 15840,
-            left: 1440,
-            right: 1440,
+            left: int(1440),
+            right: int(1440),
             top: int(1440),
             bottom: int(1440),
             header: 720,
@@ -286,6 +296,8 @@ mod tests {
             line_bottom: int(2300),
             character: Q::from_integer(0),
             column: None,
+            origin: (Q::from_integer(0), Q::from_integer(0)),
+            cell: false,
         }
     }
 

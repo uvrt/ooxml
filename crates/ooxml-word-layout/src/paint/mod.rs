@@ -22,6 +22,7 @@ mod separators;
 mod spans;
 pub mod svg;
 mod tables;
+pub mod text_box;
 
 pub use line_numbers::{LineNumber, LineNumbers};
 pub use positions::{line_positions, Positions, Setting, TabSpan};
@@ -201,6 +202,9 @@ pub struct PagePaint {
     /// The floating drawings positioned against a frame the model does not know: not
     /// drawn (docx2svg's `drawing-position-unknown`), by path.
     pub unplaced: Vec<String>,
+    /// Its drawings' text boxes painted, by drawing (none until their painter has found
+    /// them: [`text_box::paint_text_box`]).
+    pub text_boxes: Vec<text_box::TextBoxPaint>,
 }
 
 pub use ooxml_fonts::DrawingName;
@@ -292,7 +296,7 @@ fn floats(
             .and_then(FlowItem::para)
             .map_or(&[][..], |p| p.anchors.as_slice())
     };
-    let (anchors, paragraph_top, bands, page) = match set.laid {
+    let (anchors, paragraph_top, (bands, wraps), page) = match set.laid {
         Some(laid) => (
             laid.broken
                 .get(&item)
@@ -301,13 +305,13 @@ fn floats(
                 .iter()
                 .find(|l| l.item == item && l.line == line.number)
                 .map(|l| l.paragraph_top),
-            laid.bands.as_slice(),
+            (laid.bands.as_slice(), laid.wraps.as_slice()),
             laid.page,
         ),
         None => (
             own(),
             set.paragraph_tops.iter().find(|(i, _)| *i == item).map(|(_, top)| *top),
-            &[][..],
+            (&[][..], &[][..]),
             set.page,
         ),
     };
@@ -320,6 +324,7 @@ fn floats(
         page,
         paragraph_top,
         bands,
+        wraps,
         paragraph,
         resolved,
         measured,
@@ -667,5 +672,6 @@ pub fn paint_page(
         drawings: out.drawings,
         unpainted: out.unpainted,
         unplaced: out.unplaced,
+        text_boxes: Vec::new(),
     })
 }

@@ -8,6 +8,7 @@
 //!
 //! Must not: lay out or paint anything (the paint has), or read a picture part.
 
+use super::text_box::TextBoxPaint;
 use super::drawings::{DrawingSlot, Layer};
 use super::{DrawingName, Drawn, FaceNames, GlyphSize, PagePaint, PaintedLine, Rule, Span, SpanKind};
 use crate::px::Px;
@@ -314,60 +315,81 @@ pub fn page_element(paint: &PagePaint, cx: &SvgContext<'_>) -> Element {
     // Painted in the order they were placed, which is the order their resources' ids are
     // minted in; written by layer.
     let mut defs = PageDefs::default();
-    let painted: Vec<(&DrawingSlot, Option<Vec<String>>)> = paint
+    let painted: Vec<Painted<'_>> = paint
         .drawings
         .iter()
-        .map(|slot| (slot, cx.drawings.drawing(slot, &mut defs)))
+        .enumerate()
+        .map(|(k, slot)| Painted {
+            slot,
+            paint: cx.drawings.drawing(slot, &mut defs),
+            text: paint.text_boxes.iter().filter(|t| t.slot == k).collect(),
+        })
         .collect();
     if !defs.defs.is_empty() {
         root.children
             .push(Element::raw(format!("<defs>{}</defs>", defs.defs.concat())));
     }
-    let mut slots: Vec<&(&DrawingSlot, Option<Vec<String>>)> = painted.iter().collect();
-    slots.sort_by_key(|(d, _)| d.order);
-    let layer = |l: Layer, story: bool| -> Vec<&(&DrawingSlot, Option<Vec<String>>)> {
+    let mut slots: Vec<&Painted<'_>> = painted.iter().collect();
+    slots.sort_by_key(|p| p.slot.order);
+    let layer = |l: Layer, story: bool| -> Vec<&Painted<'_>> {
         slots
             .iter()
             .copied()
-            .filter(|(d, _)| d.layer == l && d.story.is_some() == story)
+            .filter(|p| p.slot.layer == l && p.slot.story.is_some() == story)
             .collect()
     };
     let (story_behind, story_front) = (layer(Layer::Behind, true), layer(Layer::Front, true));
     let (body_behind, body_front) = (layer(Layer::Behind, false), layer(Layer::Front, false));
     let story_lines = paint.lines.iter().any(|l| l.story.is_some());
-    let mut under: Vec<&Rule> = paint.rules.iter().filter(|r| under_rank(r.kind).is_some()).collect();
-    under.sort_by_key(|r| under_rank(r.kind));
-    let over = paint.rules.iter().filter(|r| under_rank(r.kind).is_none()).map(rect);
     let pictures = paint.pictures.iter().map(|d| picture(d, cx));
     if story_behind.is_empty() && story_front.is_empty() && !(story_lines && !body_behind.is_empty()) {
-        root.children.extend(floats(&body_behind));
-        root.children.extend(under.into_iter().map(rect));
+        root.children.extend(floats(&body_behind, cx));
+        root.children.extend(under_rules(&paint.rules));
         root.children.extend(lines(&paint.lines, cx));
-        root.children.extend(over);
+        root.children.extend(over_rules(&paint.rules));
         root.children.extend(pictures);
-        root.children.extend(floats(&body_front));
+        root.children.extend(floats(&body_front, cx));
         return root;
     }
     let (stories, body): (Vec<PaintedLine>, Vec<PaintedLine>) =
         paint.lines.iter().cloned().partition(|l| l.story.is_some());
-    root.children.extend(floats(&story_behind));
+    root.children.extend(floats(&story_behind, cx));
     root.children.extend(lines(&stories, cx));
-    root.children.extend(floats(&story_front));
-    root.children.extend(floats(&body_behind));
-    root.children.extend(under.into_iter().map(rect));
+    root.children.extend(floats(&story_front, cx));
+    root.children.extend(floats(&body_behind, cx));
+    root.children.extend(under_rules(&paint.rules));
     root.children.extend(lines(&body, cx));
-    root.children.extend(over);
+    root.children.extend(over_rules(&paint.rules));
     root.children.extend(pictures);
-    root.children.extend(floats(&body_front));
+    root.children.extend(floats(&body_front, cx));
     root
 }
 
-/// Drawings as groups of their painters' paint (`_float`); one with no painter is not
-/// written.
-fn floats(slots: &[&(&DrawingSlot, Option<Vec<String>>)]) -> Vec<Element> {
+/// The rules drawn under the text, in their kinds' order (`_rules`).
+fn under_rules(rules: &[Rule]) -> Vec<Element> {
+    let mut under: Vec<&Rule> = rules.iter().filter(|r| under_rank(r.kind).is_some()).collect();
+    under.sort_by_key(|r| under_rank(r.kind));
+    under.into_iter().map(rect).collect()
+}
+
+/// The rules drawn over the text, in the order made.
+fn over_rules(rules: &[Rule]) -> Vec<Element> {
+    rules.iter().filter(|r| under_rank(r.kind).is_none()).map(rect).collect()
+}
+
+/// A drawing's slot, its painter's paint, and its text boxes' paint.
+struct Painted<'a> {
+    slot: &'a DrawingSlot,
+    paint: Option<Vec<String>>,
+    text: Vec<&'a TextBoxPaint>,
+}
+
+/// Drawings as groups of their painters' paint, then their text boxes' pictures, rules and
+/// lines (`_float`); one with no painter is not written.
+fn floats(slots: &[&Painted<'_>], cx: &SvgContext<'_>) -> Vec<Element> {
     let mut out = Vec::new();
-    for (slot, paint) in slots {
-        let Some(paint) = paint else {
+    for painted in slots {
+        let (slot, Some(paint)) = (painted.slot, &painted.paint) else {
             continue;
         };
         let side = if slot.layer == Layer::Behind { "behind" } else { "front" };
@@ -381,6 +403,14 @@ fn floats(slots: &[&(&DrawingSlot, Option<Vec<String>>)]) -> Vec<Element> {
                 .attr("data-docx-part", Value::Text(part.to_string()));
         }
         g.children = paint.iter().cloned().map(Element::raw).collect();
+        for text in &painted.text {
+            g.children.extend(text.pictures.iter().map(|d| picture(d, cx)));
+        }
+        let rules: Vec<Rule> = painted.text.iter().flat_map(|t| t.rules.iter().cloned()).collect();
+        let text_lines: Vec<PaintedLine> = painted.text.iter().flat_map(|t| t.lines.iter().cloned()).collect();
+        g.children.extend(under_rules(&rules));
+        g.children.extend(lines(&text_lines, cx));
+        g.children.extend(over_rules(&rules));
         out.push(g);
     }
     out

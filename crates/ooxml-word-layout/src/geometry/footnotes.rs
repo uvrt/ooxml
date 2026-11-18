@@ -139,14 +139,18 @@ struct Stack<'a> {
     separator_only: bool,
 }
 
-/// `blocks` as a flow of their own on `props`'s page, one section.
+/// `blocks` as a flow of their own on `props`'s page, one section, their list items
+/// counted in it.
 pub(super) fn story_flow(job: &mut StoryJob<'_, '_>, blocks: &Arc<[Block]>, props: &SectionProps) -> Flow {
     let sections = Sections::new(&[note_section(props, blocks.len())], false);
+    // Its list items counted from scratch in it, as a story's are (`paginate.flow` over
+    // `story_document`).
+    let labels = crate::stories::story_labels(job.model, job.cx.document, blocks);
     let fcx = FlowContext {
         document: job.cx.document,
         blocks,
         sections: &sections,
-        labels: Labels::None,
+        labels: Labels::Given(&labels),
         faces: job.cx.faces,
         locale: job.cx.locale,
         tables: job.cx.tables,

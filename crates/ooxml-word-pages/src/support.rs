@@ -15,6 +15,7 @@
 //! Must not: lay out, draw, or guess past what the model says.
 
 use crate::error::Fallback;
+use ooxml_word_layout::geometry::text_box;
 use ooxml_word_layout::DocumentLayout;
 use ooxml_word_model::model::{Block, Graphic, InlineObject, Paragraph, Table};
 use ooxml_word_model::value::Value;
@@ -30,8 +31,9 @@ pub const DRAWING_IN_CELL: &str = "drawing in a table cell";
 /// A drawing text wraps beside (`wrapSquare`, `wrapTight`, `wrapThrough`), not a drop
 /// cap's frame (lane L3g).
 pub const TEXT_BESIDE_DRAWING: &str = "text beside a drawing";
-/// A drawing holding a text box: its lines are its painter's (until P3), so neither its
-/// facts nor its paint are the layout's.
+/// A text box holding what the layout does not lay out in one: a floating drawing text
+/// wraps around (docx2svg stops the box's text there), or an inline drawing that is not a
+/// picture (docx2svg paints it with the box).
 pub const TEXT_BOX: &str = "text box";
 /// A `STYLEREF` field in a footnote or an endnote (the body's and the headers' and
 /// footers' are laid out).
@@ -132,9 +134,10 @@ fn frame(paragraph: &Paragraph) -> Option<bool> {
     }
 }
 
-/// Whether a drawing (or a member of its group) holds a text box.
+/// Whether a drawing (or a member of its group) holds a text box the layout does not lay
+/// out.
 fn text_box(graphic: &Graphic) -> bool {
-    !graphic.text.is_empty() || graphic.children.iter().any(|g| text_box(g))
+    text_box::unsupported_in(&graphic.text).is_some() || graphic.children.iter().any(|g| text_box(g))
 }
 
 struct Scan {
@@ -155,10 +158,6 @@ impl Scan {
     }
 
     fn table(&mut self, table: &Table) {
-        if table.properties.contains_key("tblpPr") {
-            self.found = Some(fallback(FLOATING_TABLE, &table.path));
-            return;
-        }
         for row in table.rows.iter() {
             for cell in row.iter() {
                 self.story(cell, Story::Cell);
@@ -180,10 +179,11 @@ impl Scan {
             _ => {}
         }
         for run in paragraph.runs.iter() {
-            if run
-                .anchors
-                .iter()
-                .any(|a| a.wrap.as_deref().is_some_and(|w| SIDE_WRAPS.contains(&w)))
+            if story != Story::Body
+                && run
+                    .anchors
+                    .iter()
+                    .any(|a| a.wrap.as_deref().is_some_and(|w| SIDE_WRAPS.contains(&w)))
             {
                 let reason = if in_cell { WRAP_IN_CELL } else { TEXT_BESIDE_DRAWING };
                 self.found = Some(fallback(reason, &paragraph.path));

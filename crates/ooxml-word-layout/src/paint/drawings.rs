@@ -134,6 +134,8 @@ pub(super) struct FloatJob<'a> {
     pub(super) paragraph_top: Option<Px>,
     /// The bands the paginator put drawings text wraps top and bottom of in.
     pub(super) bands: &'a [crate::paginate::Band],
+    /// The drawings the paginator put text beside.
+    pub(super) wraps: &'a [crate::wrap::Wrap],
     pub(super) paragraph: &'a Paragraph,
     pub(super) resolved: &'a ResolvedParagraph,
     pub(super) measured: &'a MeasuredParagraph,
@@ -184,7 +186,7 @@ pub(super) fn line_floats(job: &FloatJob<'_>, count: &mut usize) -> (Vec<Drawing
             continue;
         };
         let path = anchor_path(job.paragraph, a.run, a.index);
-        let Some((x, mut y, width, height)) = anchor_box(&a.anchor, &frames) else {
+        let Some((x, y, width, height)) = anchor_box(&a.anchor, &frames) else {
             missed.push(path);
             continue;
         };
@@ -199,9 +201,10 @@ pub(super) fn line_floats(job: &FloatJob<'_>, count: &mut usize) -> (Vec<Drawing
             run: a.run,
             index: a.index,
         };
-        if let Some(band) = job.bands.iter().find(|b| b.key == key) {
-            y = band.y;
-        }
+        let (x, y) = match job.placed(key) {
+            Some((left, top)) => (left.unwrap_or(x), top),
+            None => (x, y),
+        };
         *count += 1;
         out.push(DrawingSlot {
             path,
@@ -224,6 +227,17 @@ pub(super) fn line_floats(job: &FloatJob<'_>, count: &mut usize) -> (Vec<Drawing
 }
 
 impl FloatJob<'_> {
+    /// Where the paginator positioned drawing `key`, where it did: the top of one text
+    /// wraps top and bottom of, the left edge and top of one text wraps beside.
+    fn placed(&self, key: crate::paginate::DrawingKey) -> Option<(Option<Px>, Px)> {
+        if let Some(band) = self.bands.iter().find(|b| b.key == key) {
+            return Some((None, band.y));
+        }
+        self.wraps
+            .iter()
+            .find_map(|w| w.drawing.filter(|(k, _)| *k == key).map(|(_, x)| (Some(Px::from(x)), Px::from(w.y))))
+    }
+
     /// What an anchor on this page is positioned against (`_frames`): the paragraph's
     /// and line's tops and the character's x given in px, exact.
     fn frames(&self, (paragraph_top, line_top): (Px, Px), character: Px) -> Option<Frames> {
@@ -233,8 +247,8 @@ impl FloatJob<'_> {
         Some(Frames {
             page_width: props.page_size.width,
             page_height: props.page_size.height,
-            left: m.left + m.gutter,
-            right: m.right,
+            left: Q::from_integer(i128::from(m.left + m.gutter)),
+            right: Q::from_integer(i128::from(m.right)),
             top: Q::from_integer(i128::from(m.top)),
             bottom: Q::from_integer(i128::from(m.bottom)),
             header: m.header,
@@ -246,6 +260,8 @@ impl FloatJob<'_> {
             line_bottom: to_twips(self.line.top + self.line.pitch),
             character: to_twips(character),
             column: None,
+            origin: (Q::from_integer(0), Q::from_integer(0)),
+            cell: false,
         })
     }
 }

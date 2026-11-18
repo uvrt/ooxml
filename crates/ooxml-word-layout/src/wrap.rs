@@ -63,6 +63,9 @@ pub struct Wrap {
     pub drop_cap: Option<usize>,
     /// A floating table: its flow item.
     pub table: Option<usize>,
+    /// A drawing's: which it is, and its left edge as positioned (px) -- where it is
+    /// drawn (`Wrap.key`, `Wrap.x`).
+    pub drawing: Option<(crate::paginate::DrawingKey, Q)>,
 }
 
 /// The least and greatest x of the region `points` encloses between heights `y0` and

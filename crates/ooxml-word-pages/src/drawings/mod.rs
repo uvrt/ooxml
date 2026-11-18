@@ -5,8 +5,8 @@
 //! writes a floating drawing's group ([`write`]); and what docx2svg says of it (`drawing-*`,
 //! `chart-*`, `diagram-*` warnings, its messages, in the order met).
 //!
-//! What the layout does not lay out yet in a drawing (a text box's text) is found before a
-//! version is laid out ([`crate::support`]); such a document never reaches this painter.
+//! A drawing's text boxes are found here ([`WordDrawings::text_frames`], [`text_boxes`]);
+//! the layout lays their text out and the page writes it in the drawing's group.
 //!
 //! Must not: lay out or place a drawing (the layout has: [`DrawingSlot`]), hold state
 //! between pages beyond the version's theme, or read anything but the version's package.
@@ -15,6 +15,7 @@ pub mod chart;
 pub mod colours;
 pub mod diagram;
 pub mod shapes;
+pub mod text_boxes;
 pub mod vml;
 pub mod write;
 
@@ -22,6 +23,7 @@ use crate::pictures::PackagePictures;
 use colours::{colour_map_slots, Said, WordColours};
 use ooxml_drawingml::source::FormatScheme;
 use ooxml_render::Painter;
+use ooxml_word_layout::geometry::text_box::TextBoxFrame;
 use ooxml_word_layout::paint::drawings::DrawingSlot;
 use ooxml_word_layout::paint::svg::{Drawings, PageDefs};
 use ooxml_word_model::model::Graphic;
@@ -139,8 +141,8 @@ impl WordDrawings {
         Some(main.to_owned())
     }
 
-    /// `slot`'s drawing painted, its resources added to `defs`.
-    pub fn paint(&self, slot: &DrawingSlot, defs: &mut PageDefs) -> Painted {
+    /// What drawing `slot`'s graphic makes, its resources added to `defs`.
+    fn drawn(&self, slot: &DrawingSlot, defs: &mut PageDefs) -> Drawn {
         let colours = self.colours();
         let measurer = ooxml_render::table_measurer(&ooxml_render::WORD);
         let mut painter = Painter::new(ooxml_render::WORD, &measurer);
@@ -172,13 +174,8 @@ impl WordDrawings {
             height: slot.height,
         };
         draw.graphic(slot.graphic.as_ref(), &at, &slot.path);
-        let Drawn {
-            mut primitives,
-            said,
-            faces,
-            ..
-        } = draw.drawn;
-        for p in &mut primitives {
+        let mut drawn = draw.drawn;
+        for p in &mut drawn.primitives {
             if let Some(path) = p.path_mut().filter(|p| **p != slot.path) {
                 *path = format!("{}/{path}", slot.paragraph_path);
             }
@@ -186,6 +183,33 @@ impl WordDrawings {
         defs.ids = painter.ids();
         defs.defs
             .extend(painter.defs.iter().map(ooxml_scene::markup::Element::to_svg));
+        drawn
+    }
+
+    /// The text boxes of `slot`'s drawing, where the layout lays their text out: each
+    /// shape holding text in its box as the drawing is painted.
+    pub fn text_frames(&self, slot: &DrawingSlot) -> Vec<TextBoxFrame> {
+        if !slot.graphic.as_deref().is_some_and(text_boxes::holds_text) {
+            return Vec::new();
+        }
+        let drawn = self.drawn(slot, &mut PageDefs::default());
+        let colours = self.colours();
+        drawn
+            .text_boxes
+            .iter()
+            .map(|(graphic, at)| text_boxes::frame(graphic, at, &colours))
+            .collect()
+    }
+
+    /// `slot`'s drawing painted, its resources added to `defs`.
+    pub fn paint(&self, slot: &DrawingSlot, defs: &mut PageDefs) -> Painted {
+        let part = slot.story.as_ref().map(|(_, p)| p.to_string());
+        let Drawn {
+            primitives,
+            said,
+            faces,
+            ..
+        } = self.drawn(slot, defs);
         let source = ImageSource {
             pictures: &self.pictures,
             part: part.as_deref(),
