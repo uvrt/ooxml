@@ -32,6 +32,26 @@ pub enum SessionError {
     /// The store refused it.
     #[error(transparent)]
     Store(#[from] StoreError<String, ModelError>),
+    /// A Word document's store refused it.
+    #[error(transparent)]
+    WordStore(#[from] StoreError<ooxml_word_edit::Key, ooxml_word_edit::ModelError>),
+    /// A Word document could not be read or edited.
+    #[error(transparent)]
+    Word(#[from] ooxml_word_edit::EditError),
+    /// A caller's own latest change is not the document's latest: others changed it since.
+    #[error("the change that made version {step} is not the latest: {} later change(s)", later.len())]
+    Entangled {
+        /// The version the caller's change made.
+        step: u64,
+        /// The later changes: the version each made and who made it.
+        later: Vec<(u64, Option<String>)>,
+    },
+    /// Saving was refused: the document has validation problems it did not open with.
+    #[error("{} new validation problem(s): {}", new.len(), new.join("; "))]
+    NewProblems {
+        /// The new problems, as text.
+        new: Vec<String>,
+    },
     /// A port failed, or the work was cancelled.
     #[error(transparent)]
     Base(#[from] BaseError),

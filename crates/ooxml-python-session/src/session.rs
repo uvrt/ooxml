@@ -76,7 +76,9 @@ fn to_py(error: &SessionError) -> PyErr {
         SessionError::NotOpen { .. } => PyKeyError::new_err(message),
         SessionError::Kind(_) | SessionError::PartName(_) | SessionError::Package(_) => PyValueError::new_err(message),
         SessionError::Base(ooxml_base::BaseError::Cancelled) => PyTimeoutError::new_err(message),
-        SessionError::Store(_) | SessionError::Base(_) => PyRuntimeError::new_err(message),
+        SessionError::Word(_) => PyValueError::new_err(message),
+        SessionError::Entangled { .. } | SessionError::NewProblems { .. } => PyValueError::new_err(message),
+        SessionError::Store(_) | SessionError::WordStore(_) | SessionError::Base(_) => PyRuntimeError::new_err(message),
     }
 }
 
@@ -287,6 +289,33 @@ impl PySession {
         Ok(PyVersion { inner: opened })
     }
 
+    /// The bridge: commit the parts the unported tool `tool` changed (``None`` removes one)
+    /// and count the call in ``bridge_calls``; returns the version it leaves, held.
+    #[pyo3(signature = (doc, tool, parts, *, context = None))]
+    fn bridge(
+        &self,
+        py: Python<'_>,
+        doc: &str,
+        tool: &str,
+        parts: &Bound<'_, PyDict>,
+        context: Option<PyRef<'_, PyCallContext>>,
+    ) -> PyResult<PyVersion> {
+        let id = doc_id(doc, &self.inner)?;
+        let context = context_of(context.as_deref());
+        let copied = copy_parts(parts)?;
+        let session = &self.inner;
+        let (_, opened) = py
+            .detach(|| session.bridge(&id, tool, copied, &context))
+            .map_err(|e| to_py(&e))?;
+        Ok(PyVersion { inner: opened })
+    }
+
+    /// ``bridge_calls{tool}``: the calls of each unported tool committed through the bridge.
+    fn bridge_calls(&self, py: Python<'_>) -> Vec<(String, u64)> {
+        let session = &self.inner;
+        py.detach(|| session.bridge_calls().into_iter().collect())
+    }
+
     /// The document's head version, held (`Version`). Never waits for a writer.
     fn head(&self, py: Python<'_>, doc: &str) -> PyResult<PyVersion> {
         let id = doc_id(doc, &self.inner)?;
@@ -295,12 +324,70 @@ impl PySession {
         Ok(PyVersion { inner: opened })
     }
 
-    /// The document's bytes at its head version.
-    fn save<'py>(&self, py: Python<'py>, doc: &str) -> PyResult<Bound<'py, PyBytes>> {
+    /// The document's bytes at its head version. `checked`: through the save gate, refused
+    /// (`ValueError`) when a Word document has validation problems it did not open with.
+    #[pyo3(signature = (doc, *, checked = false))]
+    fn save<'py>(&self, py: Python<'py>, doc: &str, checked: bool) -> PyResult<Bound<'py, PyBytes>> {
         let id = doc_id(doc, &self.inner)?;
         let session = &self.inner;
-        let bytes = py.detach(|| session.save(&id)).map_err(|e| to_py(&e))?;
+        let bytes = py
+            .detach(|| {
+                if checked {
+                    session.save_checked(&id)
+                } else {
+                    session.save(&id)
+                }
+            })
+            .map_err(|e| to_py(&e))?;
         Ok(PyBytes::new(py, &bytes))
+    }
+
+    /// What the save gate compares for a Word document: `(new, fixed, baseline)`, the
+    /// problems now that it did not open with, those it opened with that are gone, and how
+    /// many it opened with; `None` for another kind.
+    fn validation(&self, py: Python<'_>, doc: &str) -> PyResult<Option<(Vec<String>, Vec<String>, usize)>> {
+        let id = doc_id(doc, &self.inner)?;
+        let session = &self.inner;
+        let delta = py.detach(|| session.validation(&id)).map_err(|e| to_py(&e))?;
+        Ok(delta.map(|d| (d.new, d.fixed, d.baseline)))
+    }
+
+    /// Undo up to `steps` calls (with a caller in `context`, only its own, while its latest
+    /// is the document's latest): `(count, version)`. A caller's latest change that others
+    /// changed after raises `ValueError` when nothing was undone.
+    #[pyo3(signature = (doc, steps = 1, *, context = None))]
+    fn undo(
+        &self,
+        py: Python<'_>,
+        doc: &str,
+        steps: usize,
+        context: Option<PyRef<'_, PyCallContext>>,
+    ) -> PyResult<(usize, u64)> {
+        let id = doc_id(doc, &self.inner)?;
+        let context = context_of(context.as_deref());
+        let session = &self.inner;
+        let done = py
+            .detach(|| session.undo(&id, steps, &context))
+            .map_err(|e| to_py(&e))?;
+        Ok((done.count, done.version))
+    }
+
+    /// Redo up to `steps` undone calls (with a caller, its own): `(count, version)`.
+    #[pyo3(signature = (doc, steps = 1, *, context = None))]
+    fn redo(
+        &self,
+        py: Python<'_>,
+        doc: &str,
+        steps: usize,
+        context: Option<PyRef<'_, PyCallContext>>,
+    ) -> PyResult<(usize, u64)> {
+        let id = doc_id(doc, &self.inner)?;
+        let context = context_of(context.as_deref());
+        let session = &self.inner;
+        let done = py
+            .detach(|| session.redo(&id, steps, &context))
+            .map_err(|e| to_py(&e))?;
+        Ok((done.count, done.version))
     }
 
     /// Close the document; its versions and history are let go.

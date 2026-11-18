@@ -24,7 +24,9 @@
 
 mod batch;
 mod context;
+mod document;
 mod error;
+mod history;
 mod ids;
 mod memory;
 mod model;
@@ -35,10 +37,11 @@ mod update;
 pub use batch::{ReadBatch, ReadOp, BATCH_TIMEOUT, MAX_READ_BATCH_CHARS, READ_BATCH};
 pub use context::{CallContext, CancelToken};
 pub use error::SessionError;
+pub use history::Undone;
 pub use ids::{DocId, DocKind};
 pub use memory::{Account, MemoryBudget};
 pub use model::{ModelError, PackageDoc, PartChange, PartContent};
 pub use ooxml_store::Caller;
-pub use registry::{ReadHandler, Registry, Tool};
+pub use registry::{Call, EditFn, EditHandler, ReadHandler, Registry, Tool, TrackingFn};
 pub use session::{Opened, Session, SessionConfig, SessionStats};
 pub use update::{PartUpdate, Updated};

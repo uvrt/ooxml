@@ -15,6 +15,7 @@ ooxml-opc.workspace = true
 ooxml-store.workspace = true
 ooxml-tools.workspace = true
 ooxml-tools-word.workspace = true
+ooxml-word-edit.workspace = true
 ooxml-word-model.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

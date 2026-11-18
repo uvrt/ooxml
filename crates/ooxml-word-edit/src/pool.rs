@@ -142,6 +142,34 @@ impl Ids {
         }
     }
 
+    /// Take in what `head`'s ledger holds: every value it gives as used, each sequence's
+    /// cursor where it got furthest, and its renames (docx-agent's ledger and aliases belong
+    /// to the document, not to a version: an undo or redo keeps them, so an id given is
+    /// never given again and an old id still names the block it was renamed to).
+    pub fn carry(&mut self, head: &Ids) {
+        if !Arc::ptr_eq(&self.added, &head.added) {
+            let mut added = (*self.added).clone();
+            added.extend(head.added.iter().copied());
+            if !Arc::ptr_eq(&self.base, &head.base) {
+                added.extend(head.base.iter().copied().filter(|v| !self.base.contains(v)));
+            }
+            self.added = Arc::new(added);
+        }
+        if !Arc::ptr_eq(&self.cursors, &head.cursors) {
+            let cursors = Arc::make_mut(&mut self.cursors);
+            for (seed, k) in head.cursors.iter() {
+                let at = cursors.entry(seed.clone()).or_insert(*k);
+                *at = (*at).max(*k);
+            }
+        }
+        if !Arc::ptr_eq(&self.aliases, &head.aliases) {
+            let aliases = Arc::make_mut(&mut self.aliases);
+            for (old, new) in head.aliases.iter() {
+                aliases.insert(old.clone(), new.clone());
+            }
+        }
+    }
+
     /// Where `seed`'s new values start: after the last one the pool holds with no later one
     /// within [`REACH`].
     fn after_last(&self, seed: &str, sequences: &Sequences) -> usize {

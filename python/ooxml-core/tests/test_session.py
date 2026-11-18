@@ -107,7 +107,8 @@ def test_cancelled_and_late_calls_stop_with_timeout():
 
 def test_tool_specs_are_the_exports():
     specs = json.loads(ooxml_core.tool_specs("docx"))
-    assert [s["name"] for s in specs] == ["describe", "word_read", "word_inspect", "find_text", "read_batch"]
+    assert [s["name"] for s in specs] == ["describe", "word_read", "word_inspect", "find_text", "word_set_tracking",
+                                          "word_changes", "word_comments", "read_batch"]
     assert specs == json.loads(ooxml_core.Session().tool_specs("docx"))
     assert json.loads(ooxml_core.tool_specs("pptx")) == []
     with pytest.raises(ValueError):
@@ -146,3 +147,32 @@ def test_the_module_keeps_a_free_threaded_build_free():
     if not sysconfig.get_config_var("Py_GIL_DISABLED"):
         pytest.skip("not a free-threaded build")
     assert not sys._is_gil_enabled()
+
+
+def test_undo_redo_and_the_save_gate():
+    session = ooxml_core.Session()
+    doc = session.open(docx(), name="a.docx")
+    ann = ooxml_core.CallContext(caller="ann")
+    bo = ooxml_core.CallContext(caller="bo")
+    session.update(doc, {"word/document.xml": docx_part(2)}, context=ann)
+    session.update(doc, {"word/document.xml": docx_part(3)}, context=bo)
+    with pytest.raises(ValueError, match="not the latest"):
+        session.undo(doc, context=ann)             # bo changed it after ann
+    assert session.undo(doc, 5, context=bo) == (1, 3)
+    assert session.undo(doc) == (1, 4)
+    assert call(session, "describe", {"doc": doc})["data"]["controls"] == 1
+    assert session.redo(doc, 2) == (2, 6)
+    assert call(session, "describe", {"doc": doc})["data"]["controls"] == 3
+    assert session.validation(doc)[:2] == ([], [])
+    assert session.save(doc, checked=True) == session.save(doc)
+    reply = call(session, "word_set_tracking", {"doc": doc, "on": True, "author": "Ann"})
+    assert reply["ok"] and reply["data"]["author"] == "Ann"
+
+
+def test_bridged_calls_are_counted():
+    session = ooxml_core.Session()
+    doc = session.open(docx(), name="a.docx")
+    version = session.bridge(doc, "word_format", {"word/document.xml": docx_part(2)})
+    assert version.number == 1
+    assert session.bridge_calls() == [("word_format", 1)]
+    assert call(session, "describe", {"doc": doc})["data"]["controls"] == 2
