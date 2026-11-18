@@ -48,11 +48,6 @@ impl Stamp {
         }
     }
 
-    /// The author its records carry.
-    pub(crate) fn author(&self) -> &str {
-        &self.tracking.author
-    }
-
     /// The next revision id.
     pub(crate) fn next_id(&mut self) -> String {
         let value = self.next;
@@ -81,6 +76,11 @@ impl Stamp {
         work.set(element, utc, &self.tracking.date);
         self.dated = true;
         element
+    }
+
+    /// The author every record carries.
+    pub(crate) fn author(&self) -> &str {
+        &self.tracking.author
     }
 
     /// Whether a revision record is this edit's author's.

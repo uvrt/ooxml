@@ -165,7 +165,11 @@ fn edit(rng: &mut Rng, targets: &[String], writer: u64) -> Edit {
             policy: policy(rng, writer),
         }),
         11 => Edit::Block(DeleteBlock {
-            target,
+            target: if rng.below(4) == 0 {
+                "t@body/0".to_owned()
+            } else {
+                target
+            },
             policy: policy(rng, writer),
         }),
         10 => Edit::Style(SetParagraphStyle {
