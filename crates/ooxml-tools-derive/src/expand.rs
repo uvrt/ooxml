@@ -197,7 +197,12 @@ fn place_kind(name: &LitStr) -> syn::Result<&'static str> {
         "mark" => "Mark",
         "picture" => "Picture",
         "sides" => "Sides",
-        _ => return Err(syn::Error::new_spanned(name, "places is blocks, text, mark, picture or sides")),
+        _ => {
+            return Err(syn::Error::new_spanned(
+                name,
+                "places is blocks, text, mark, picture or sides",
+            ))
+        }
     })
 }
 

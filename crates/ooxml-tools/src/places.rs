@@ -14,7 +14,9 @@ use crate::pyfmt::repr;
 use serde_json::{Map, Value};
 
 /// The names the placing tools give a place, in the order a tool's aliases list them.
-pub const NAMES: [&str; 8] = ["where", "target", "after", "before", "position", "location", "at", "find"];
+pub const NAMES: [&str; 8] = [
+    "where", "target", "after", "before", "position", "location", "at", "find",
+];
 
 /// Values whose prefix names the side: written as they are.
 const SIDES: [&str; 4] = ["after:", "before:", "replace:", "end"];
@@ -126,7 +128,15 @@ impl Places {
                 }
                 return Ok(Some(field.to_owned()));
             };
-            return Err(refused(tool, kind, node, name, String::new(), Some((side, anchor)), &used));
+            return Err(refused(
+                tool,
+                kind,
+                node,
+                name,
+                String::new(),
+                Some((side, anchor)),
+                &used,
+            ));
         }
         let Some(written) = write(kind, side, &anchor) else {
             return Err(refuse(format!(
@@ -136,7 +146,15 @@ impl Places {
         if !used.contains(&"where") && written == value {
             return Ok(Some(field.to_owned()));
         }
-        Err(refused(tool, kind, node, name, String::new(), Some((field, written)), &used))
+        Err(refused(
+            tool,
+            kind,
+            node,
+            name,
+            String::new(),
+            Some((field, written)),
+            &used,
+        ))
     }
 }
 
@@ -275,17 +293,26 @@ mod tests {
     #[test]
     fn names_are_those_a_tool_lacks() {
         let places = Places::new(PlaceKind::Mark, &["at", "note"], true);
-        assert_eq!(places.names, ["where", "target", "after", "before", "position", "location"]);
+        assert_eq!(
+            places.names,
+            ["where", "target", "after", "before", "position", "location"]
+        );
     }
 
     #[test]
     fn a_side_in_the_value_is_read_as_after() {
         let places = Places::new(PlaceKind::Sides, &["after", "before"], false);
         let call = node(json!({"at": "before:p:A"}));
-        assert_eq!(places.meant("word_move", "at", &call).unwrap().as_deref(), Some("after"));
+        assert_eq!(
+            places.meant("word_move", "at", &call).unwrap().as_deref(),
+            Some("after")
+        );
         let call = node(json!({"at": "replace:p:A"}));
         let error = places.meant("word_move", "at", &call).unwrap_err();
-        assert_eq!(error.message(), "word_move places beside a block: give after or before, not replace");
+        assert_eq!(
+            error.message(),
+            "word_move places beside a block: give after or before, not replace"
+        );
     }
 
     #[test]
@@ -298,9 +325,15 @@ mod tests {
             "before is another tool's way to name a place; word_notes takes at: write at: 'p:A@3'"
         );
         let way_out = error.way_out().and_then(WayOut::try_call).unwrap();
-        assert_eq!(Value::Object(way_out.arguments.clone()), json!({"doc": "d1", "at": "p:A@3"}));
+        assert_eq!(
+            Value::Object(way_out.arguments.clone()),
+            json!({"doc": "d1", "at": "p:A@3"})
+        );
         let call = node(json!({"after": "p:A@3:5"}));
-        assert_eq!(places.meant("word_notes", "after", &call).unwrap().as_deref(), Some("at"));
+        assert_eq!(
+            places.meant("word_notes", "after", &call).unwrap().as_deref(),
+            Some("at")
+        );
     }
 
     #[test]

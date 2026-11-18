@@ -1,0 +1,175 @@
+"""The structure tools' cases for ``word_edits_diff.py --structure`` (lane P4b): the tools
+called through docx-agent's toolbox on a document as opened, and what each side reports
+-- the reply, every changed part, the part order, ``touched``, the validation delta, the
+problems and the next ids -- for the harness to compare with the Rust core's
+(``word-edits``, ``op: "structure"``).
+
+Python's behaviour is not changed: this calls docx-agent's public and documented internal
+functions only.
+"""
+
+from __future__ import annotations
+
+import copy
+import datetime
+import json
+
+from docx_agent import validate as _validate
+from docx_agent.edit import ids as _ids
+from lxml import etree
+from ooxml_edit.tools.savegate import compare_problems
+from ooxml_edit.xml import serialize
+
+
+TRACKING = {"author": "Writer A", "date": "2026-11-17T10:00:00Z"}
+_NOW = datetime.datetime(2026, 11, 17, 10, 0, 0, tzinfo=datetime.timezone.utc)
+
+
+def call(tool: str, **arguments) -> dict:
+    return {"op": "structure", "tool": tool, "arguments": {"doc": "d1", **arguments}, "tracked": None}
+
+
+def tracked(case: dict) -> dict:
+    """``case`` with tracking on, by the harness's author, dated by the harness's clock."""
+    return {**case, "tracked": TRACKING}
+
+
+def _words(document) -> list[tuple[str, str]]:
+    """Body paragraphs with text: (id, text), the first dozen."""
+    out = []
+    for entry in document._index(document.package.document_part()).paragraphs:
+        text = document.paragraph(entry.id).text
+        if text.strip() and "￼" not in text:
+            out.append((entry.id, text))
+        if len(out) == 12:
+            break
+    return out
+
+
+def link_cases(document) -> list[dict]:
+    """``word_links``: the list; bookmarks over a paragraph, a range, text found, a table, a
+    span; hyperlinks to an address and to a bookmark; a bookmark renamed and removed; a
+    bookmark asked again (no change); refusals."""
+    out = [call("word_links", action="list")]
+    paragraphs = _words(document)
+    for k, (pid, text) in enumerate(paragraphs[:4]):
+        out.append(call("word_links", action="add_bookmark", target=pid, bookmark=f"Mark{k}"))
+        if len(text) > 6:
+            out.append(call("word_links", action="add_bookmark", target=f"{pid}@2:5", bookmark="Inner"))
+            out.append(call("word_links", action="add_hyperlink", target=f"{pid}@1:4", url="https://example.com/a"))
+            out.append(call("word_links", action="add_hyperlink", target=f"{pid}@0:{len(text)}",
+                            url="mailto:someone@example.com"))
+            out.append(call("word_links", action="add_bookmark", target=f"{pid}@3", bookmark="Place"))
+        word = text.split()[0] if text.split() else text
+        out.append(call("word_links", action="add_bookmark", find=word, bookmark="Found"))
+        out.append(call("word_links", action="add_hyperlink", find=text[:12], url="https://example.com/"))
+    if paragraphs:
+        pid = paragraphs[0][0]
+        out += [call("word_links", action="add_bookmark", target=pid, bookmark="1bad"),
+                call("word_links", action="add_hyperlink", target=pid, url="example.com"),
+                call("word_links", action="add_hyperlink", target=pid, url="https://x.org", bookmark="B"),
+                call("word_links", action="add_bookmark", target=pid, find="x", bookmark="B"),
+                call("word_links", action="add_bookmark", target=pid),
+                call("word_links", action="add_hyperlink", target=f"{pid}@0:0", url="https://x.org")]
+        if len(paragraphs) > 2:
+            out.append(call("word_links", action="add_bookmark", target=f"{pid}..{paragraphs[2][0]}",
+                            bookmark="Span"))
+            out.append(call("word_links", action="add_bookmark", target=f"{pid}@1..{paragraphs[2][0]}@2",
+                            bookmark="Across"))
+    tables = [b["id"] for b in document.blocks() if b["id"] and b["id"].startswith("t:")]
+    for table in tables[:2]:
+        out.append(call("word_links", action="add_bookmark", target=table, bookmark="Table"))
+        if paragraphs:
+            out.append(call("word_links", action="add_bookmark", target=f"{paragraphs[0][0]}..{table}",
+                            bookmark="ToTable"))
+    marks = document.bookmarks(hidden=True)
+    for mark in marks[:3]:
+        name = mark.name
+        out += [call("word_links", action="rename_bookmark", bookmark=name, new_name="Renamed1"),
+                call("word_links", action="remove_bookmark", bookmark=name),
+                call("word_links", action="add_bookmark", target=f"bm:{name}", bookmark=name),
+                call("word_links", action="add_bookmark", target=f"bm:{name}", bookmark=name.lower())]
+        if paragraphs:
+            out.append(call("word_links", action="add_hyperlink", target=f"{paragraphs[0][0]}@0:2", bookmark=name))
+    out += [call("word_links", action="rename_bookmark", bookmark="NoSuch", new_name="X"),
+            call("word_links", action="remove_bookmark", bookmark="NoSuch")]
+    return out
+
+
+def note_cases(document) -> list[dict]:
+    """``word_notes``: the list; footnotes and endnotes inserted at positions, at a range's
+    end and after text found; each note edited, deleted and moved; refusals -- untracked
+    and tracked."""
+    out = [call("word_notes", action="list")]
+    paragraphs = _words(document)
+    for pid, text in paragraphs[:3]:
+        out += [call("word_notes", action="insert", at=f"{pid}@{min(3, len(text))}", text="A note."),
+                call("word_notes", action="insert", kind="endnote", at=pid, text="First\nSecond"),
+                call("word_notes", action="insert", find=text.split()[0], text="Found.")]
+    if paragraphs:
+        pid, text = paragraphs[-1]
+        out += [call("word_notes", action="insert", at=f"{pid}@{len(text) + 5}", text="x"),
+                call("word_notes", action="insert", at=pid, find="x", text="x"),
+                call("word_notes", action="edit", note="fn:99", text="x"),
+                call("word_notes", action="insert", at=f"{pid}@0", text="bad\u000c")]
+    notes = document.notes()
+    for note in notes[:3]:
+        out += [call("word_notes", action="edit", note=note.id, text="Rewritten"),
+                call("word_notes", action="edit", note=note.id, text="One\nTwo\nThree"),
+                call("word_notes", action="delete", note=note.id)]
+        if paragraphs:
+            out.append(call("word_notes", action="move", note=note.id, at=f"{paragraphs[0][0]}@1"))
+    return out + [tracked(case) for case in out if case["arguments"]["action"] != "list"]
+
+
+def cases(document) -> list[dict]:
+    """Every structure case for ``document``."""
+    return link_cases(document) + note_cases(document)
+
+
+def python_case(data: bytes, case: dict, baseline: list, toolbox, reply_of, parts_of, order_of, touched_of) -> dict:
+    """One case through docx-agent's toolbox: the reply and what the document became."""
+    session = toolbox.session(clock=lambda: _NOW)
+    doc = session.open(data, name="case.docx")
+    if case.get("tracked"):
+        session.entry(doc).tracking = {"on": True, "author": case["tracked"]["author"]}
+    arguments = {**case["arguments"], "doc": doc}
+    reply = json.loads(json.dumps(toolbox.dispatch(session, case["tool"], arguments).to_json()))
+    document = session.entry(doc).document
+    out = session.save(doc).data
+    before, after = parts_of(data), parts_of(out)
+    parts = {name: body.decode("utf-8", "replace") for name, body in after.items() if before.get(name) != body}
+    main = document.package.document_part()
+    problems = _validate.check(document.package)
+    rewritten = dict(before)
+    if main in before:
+        rewritten[main] = serialize(etree.fromstring(before[main], etree.XMLParser(huge_tree=True)))
+    reserialized = [main] if main in after and rewritten.get(main) == after[main] and before[main] != after[main] \
+        else []
+    pool = copy.deepcopy(document._id_pool())
+    result = {
+        "structure": True,
+        "reply": reply_of(reply),
+        "parts": parts,
+        "order": order_of(out),
+        "touched": touched_of(document, before, after, main),
+        "touched_as_written": touched_of(document, rewritten, after, main),
+        "reserialized": reserialized,
+        "validation": compare_problems(baseline, problems, key=lambda p: (p.code, p.part, str(p))),
+        "problems": [str(p) for p in problems],
+        "next": {seed: _ids.generate(seed, pool, 1) for seed in (main, main + "\0text")},
+    }
+    session.close(doc)
+    return result
+
+
+def settle(want: dict, have: dict) -> None:
+    """``want`` as the Rust side is compared with it: a part docx-agent wrote again unchanged
+    but for lxml's serialization dropped when the Rust core did not write it, and
+    ``touched`` read from the body before as lxml writes it when that is what equals."""
+    written = want.pop("touched_as_written", None)
+    for name in want.pop("reserialized", []):
+        if name not in have.get("parts", {}):
+            want["parts"].pop(name, None)
+    if have.get("touched") != want.get("touched") and have.get("touched") == written:
+        want["touched"] = written

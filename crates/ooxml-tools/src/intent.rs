@@ -143,7 +143,10 @@ impl ToolSpec {
         }
         if let Some(places) = &self.places {
             for name in &places.names {
-                let Some(map) = arguments.as_object().filter(|m| m.get(name).is_some_and(|v| !v.is_null())) else {
+                let Some(map) = arguments
+                    .as_object()
+                    .filter(|m| m.get(name).is_some_and(|v| !v.is_null()))
+                else {
                     continue;
                 };
                 if let Some(meant) = places.meant(&self.name, name, map)? {

@@ -47,6 +47,7 @@ from lxml import etree  # noqa: E402
 from ooxml_edit.tools.savegate import compare_problems  # noqa: E402
 from ooxml_edit.xml import serialize  # noqa: E402
 from word_reads_diff import differences, files_of, report, run_rust  # noqa: E402
+import word_structure_cases  # noqa: E402
 
 TRACKING = {"author": "Writer A", "date": "2026-11-17T10:00:00Z"}
 #: Marks the styled reading of word_set_text takes as emphasis; the plain path only here.
@@ -377,6 +378,8 @@ def _delete_cases(document, targets: list[str]) -> list[dict]:
 def python_case(data: bytes, case: dict, baseline: list) -> dict:
     if case.get("op") == "tool":
         return python_tool_case(data, case)
+    if case.get("op") == "structure":
+        return word_structure_cases.python_case(data, case, baseline, _toolbox(), _reply, _parts, _order, _touched)
     document = Document.open(data)
     before = _parts(data)
     try:
@@ -444,6 +447,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--review", action="store_true", help="accept and reject only (word_changes)")
     parser.add_argument("--tools", action="store_true", help="the review tools called as tools only")
     parser.add_argument("--delete", action="store_true", help="block deletions only")
+    parser.add_argument("--structure", action="store_true", help="the structure tools called as tools only")
     parser.add_argument("--paragraphs", action="store_true",
                         help="set_text in lines and insert_paragraph (only these, with --only-ops none)")
     parser.add_argument("files", nargs="*")
@@ -457,11 +461,14 @@ def main(argv: list[str] | None = None) -> int:
             baseline = _validate.check(document.package)
             cases = []
             targets = _targets(document)
-            if args.review or args.tools:
+            if args.structure:
+                cases, targets = word_structure_cases.cases(document), []
+            elif args.review or args.tools:
                 found = _tool_cases(document) if args.tools else _review_cases(document)
                 cases = [{**case, "tracked": None} for case in found]
                 targets = []
-            if not args.only_ops and not args.paragraphs and not args.delete and not (args.review or args.tools):
+            if not args.only_ops and not args.paragraphs and not args.delete and not (args.review or args.tools
+                                                                                      or args.structure):
                 for target in targets:
                     text = document.paragraph(target).text
                     for new in _texts(text):
@@ -491,6 +498,8 @@ def main(argv: list[str] | None = None) -> int:
     rewritten = 0
     for key, want in expected.items():
         have = got.get(key)
+        if want.pop("structure", False) and isinstance(have, dict):
+            word_structure_cases.settle(want, have)
         if isinstance(have, dict) and "reply" in have:
             if have.get("unported"):
                 got[key] = want      # the host answers it its own way (Done::unported)

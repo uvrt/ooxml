@@ -17,7 +17,10 @@ fn the_definitions_are_the_golden_exports() {
         (WordMove::spec(), include_str!("golden/word_move.json")),
         (WordCopyFrom::spec(), include_str!("golden/word_copy_from.json")),
         (WordSections::spec(), include_str!("golden/word_sections.json")),
-        (WordHeadersFooters::spec(), include_str!("golden/word_headers_footers.json")),
+        (
+            WordHeadersFooters::spec(),
+            include_str!("golden/word_headers_footers.json"),
+        ),
         (WordFields::spec(), include_str!("golden/word_fields.json")),
         (WordNotes::spec(), include_str!("golden/word_notes.json")),
         (WordLinks::spec(), include_str!("golden/word_links.json")),

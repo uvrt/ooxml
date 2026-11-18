@@ -9,6 +9,7 @@
 //! Must not: hold sessions or documents by id, keep state between calls, or write the
 //! document but through a command.
 
+mod common;
 mod copy_from;
 mod fields;
 mod headers_footers;
@@ -20,7 +21,7 @@ mod sections;
 pub use copy_from::{CopyStyles, StyleMapping, Unmapped, WordCopyFrom};
 pub use fields::{FieldAction, ReferenceKind, WordFields};
 pub use headers_footers::{HeaderAction, PageNumber, StoryType, Which, WordHeadersFooters};
-pub use links::{LinkAction, WordLinks};
+pub use links::{word_links, LinkAction, WordLinks};
 pub use moving::WordMove;
-pub use notes::{NoteAction, NoteKind, WordNotes};
+pub use notes::{word_notes, NoteAction, NoteKind, WordNotes};
 pub use sections::{Margins, Orientation, SectionAction, SectionStart, WordSections};
