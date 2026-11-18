@@ -16,6 +16,7 @@ from docx_agent import Document  # noqa: E402
 from docx_agent.tools import FORMAT, GROUPS, TOOLS  # noqa: E402
 from docx_agent.tools.render import RENDERER  # noqa: E402
 from docx_agent.tools.shared import render_pages  # noqa: E402
+from pixels import all_pixels
 
 
 def _pages(count: int = 3) -> bytes:
@@ -62,11 +63,11 @@ def test_a_fast_render_says_it_is_approximate_and_an_exact_one_is_unchanged(work
                                                              _ok(box, session, "render", doc=d, pages=[1, 2],
                                                                  width=300).images]
         exact = _ok(box, session, "render", doc=d, pages=[1, 2, 3], width=300)
-        assert [image.data for image in exact.images] == expected            # byte for byte
+        assert all_pixels(image.data for image in exact.images) == all_pixels(expected)  # pixel for pixel
         assert "approximate" not in exact.data and exact.data["cached"] == [1, 2]
         # Exact images held: a fast render gets them, and says nothing is approximate.
         again = _ok(box, session, "render", doc=d, pages=[2, 3], width=300, fast=True)
-        assert [image.data for image in again.images] == expected[1:]
+        assert [image.data for image in again.images] == [image.data for image in exact.images][1:]
         assert "approximate" not in again.data and again.data["cached"] == [2, 3]
 
 

@@ -33,13 +33,6 @@ pub const TEXT_BESIDE_DRAWING: &str = "text beside a drawing";
 /// A drawing holding a text box: its lines are its painter's (until P3), so neither its
 /// facts nor its paint are the layout's.
 pub const TEXT_BOX: &str = "text box";
-/// SmartArt (`dgm:relIds`): its cached drawing is not painted in Rust yet.
-pub const SMARTART: &str = "SmartArt";
-/// A chart in a document laid out in a locale other than en-US: the chart's numbers are
-/// written in en-US's in Rust until the locales' table is ported.
-pub const CHART_LOCALE: &str = "chart in another locale";
-/// A VML shape or text path (a watermark): not painted in Rust yet.
-pub const VML_SHAPE: &str = "VML shape";
 /// A `STYLEREF` field in a footnote or an endnote (the body's and the headers' and
 /// footers' are laid out).
 pub const STYLEREF: &str = "STYLEREF field";
@@ -65,9 +58,6 @@ pub const REASONS: &[&str] = &[
     DRAWING_IN_CELL,
     TEXT_BESIDE_DRAWING,
     TEXT_BOX,
-    SMARTART,
-    CHART_LOCALE,
-    VML_SHAPE,
     STYLEREF,
     LAYOUT_STOPPED,
     STORY_UNSUPPORTED,
@@ -147,16 +137,6 @@ fn text_box(graphic: &Graphic) -> bool {
     !graphic.text.is_empty() || graphic.children.iter().any(|g| text_box(g))
 }
 
-/// What in a drawing (or a member of its group) the painter does not paint yet.
-fn not_painted(graphic: &Graphic) -> Option<&'static str> {
-    match &*graphic.kind {
-        "diagram" => Some(SMARTART),
-        "textpath" => Some(VML_SHAPE),
-        "shape" if graphic.source.is_none() => Some(VML_SHAPE),
-        _ => graphic.children.iter().find_map(|g| not_painted(g)),
-    }
-}
-
 struct Scan {
     found: Option<Fallback>,
 }
@@ -227,19 +207,6 @@ impl Scan {
                 self.found = Some(fallback(TEXT_BOX, &paragraph.path));
                 return;
             }
-            let unpainted = run
-                .anchors
-                .iter()
-                .filter_map(|a| a.graphic.as_deref())
-                .chain(run.drawings.iter().filter_map(|d| match d {
-                    InlineObject::Graphic(g) => Some(&**g),
-                    _ => None,
-                }))
-                .find_map(not_painted);
-            if let Some(reason) = unpainted {
-                self.found = Some(fallback(reason, &paragraph.path));
-                return;
-            }
             if in_cell {
                 let graphic = run
                     .drawings
@@ -252,36 +219,4 @@ impl Scan {
             }
         }
     }
-}
-
-/// The first chart in a document's body, headers, footers or notes, by its paragraph's path.
-pub fn first_chart(document: &WordDocument) -> Option<String> {
-    fn graphic(g: &Graphic) -> bool {
-        &*g.kind == "chart" || g.children.iter().any(|c| graphic(c))
-    }
-    fn blocks(list: &[Block]) -> Option<String> {
-        list.iter().find_map(|b| match b {
-            Block::Paragraph(p) => p
-                .runs
-                .iter()
-                .any(|r| {
-                    r.anchors.iter().filter_map(|a| a.graphic.as_deref()).any(graphic)
-                        || r.drawings
-                            .iter()
-                            .any(|d| matches!(d, InlineObject::Graphic(g) if graphic(g)))
-                })
-                .then(|| p.path.to_string()),
-            Block::Table(t) => t.rows.iter().flat_map(|row| row.iter()).find_map(|cell| blocks(cell)),
-        })
-    }
-    blocks(&document.body)
-        .or_else(|| document.stories.values().find_map(|b| blocks(b)))
-        .or_else(|| {
-            document
-                .footnotes
-                .notes
-                .values()
-                .chain(document.endnotes.notes.values())
-                .find_map(|b| blocks(b))
-        })
 }

@@ -85,6 +85,8 @@ impl Default for Families {
 pub struct FontSet {
     database: Arc<fontdb::Database>,
     default_family: String,
+    /// How many of its faces came from the set it extends (the system's).
+    extended: usize,
 }
 
 impl FontSet {
@@ -111,6 +113,20 @@ impl FontSet {
     pub(crate) fn database(&self) -> Arc<fontdb::Database> {
         Arc::clone(&self.database)
     }
+
+    /// The files of the faces added to the set it extends (the files and folders handed
+    /// over, not the system's), each once, in load order.
+    pub fn handed_files(&self) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        for face in self.database.faces().skip(self.extended) {
+            if let Some(path) = crate::withheld::source_path(&face.source) {
+                if !out.iter().any(|p| p == path) {
+                    out.push(path.to_owned());
+                }
+            }
+        }
+        out
+    }
 }
 
 /// Puts a [`FontSet`] together, face by face, in the order faces are to be preferred.
@@ -118,6 +134,7 @@ impl FontSet {
 pub struct FontLoader {
     database: fontdb::Database,
     families: Families,
+    extended: usize,
 }
 
 impl FontLoader {
@@ -126,6 +143,7 @@ impl FontLoader {
         FontLoader {
             database: fontdb::Database::new(),
             families,
+            extended: 0,
         }
     }
 
@@ -135,6 +153,7 @@ impl FontLoader {
         FontLoader {
             database: (*set.database).clone(),
             families,
+            extended: set.database.len(),
         }
     }
 
@@ -205,6 +224,7 @@ impl FontLoader {
             fantasy,
             monospace,
         } = self.families;
+        let extended = self.extended;
         self.database.set_serif_family(serif);
         self.database.set_sans_serif_family(sans_serif);
         self.database.set_cursive_family(cursive);
@@ -213,6 +233,7 @@ impl FontLoader {
         FontSet {
             database: Arc::new(self.database),
             default_family: default,
+            extended,
         }
     }
 }

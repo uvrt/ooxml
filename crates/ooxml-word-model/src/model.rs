@@ -155,10 +155,11 @@ pub struct Graphic {
     pub uri: Option<Text>,
     /// The structural path of its content.
     pub path: Text,
-    /// The DrawingML element it was read from (`pic:pic`, `wps:wsp`, `wpg:wgp`,
-    /// `wpg:grpSp`), for its painter to read how it is painted (its geometry, fill,
-    /// outline, effects, style references and crop); `None` for a chart, a diagram, VML
-    /// or anything else.
+    /// The element it was read from, for its painter to read how it is painted: the
+    /// DrawingML element (`pic:pic`, `wps:wsp`, `wpg:wgp`, `wpg:grpSp`: its geometry, fill,
+    /// outline, effects, style references and crop), or for a VML preset shape or text path
+    /// the run's object it was read from (`w:pict`, `w:object` or
+    /// `mc:AlternateContent`: its fill, stroke and text path); `None` for a chart, a diagram, a VML picture or anything else.
     pub source: Option<ooxml_xml::Element>,
 }
 

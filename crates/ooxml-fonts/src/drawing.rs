@@ -47,10 +47,10 @@ pub struct DrawingName {
 /// A face as a rasteriser matches it: where it is, and its `(usWeightClass, usWidthClass,
 /// style)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct CssFace {
-    source: String,
-    offset: usize,
-    css: (u16, u16, &'static str),
+pub(crate) struct CssFace {
+    pub(crate) source: String,
+    pub(crate) offset: usize,
+    pub(crate) css: (u16, u16, &'static str),
 }
 
 fn u16_at(t: &[u8], at: usize) -> Option<u16> {
@@ -58,7 +58,7 @@ fn u16_at(t: &[u8], at: usize) -> Option<u16> {
 }
 
 /// `(usWeightClass, usWidthClass, style)` as resvg's database reads them (`Face.css`).
-fn css(face: &Face) -> (u16, u16, &'static str) {
+pub(crate) fn css(face: &Face) -> (u16, u16, &'static str) {
     let Some(os2) = face.table(b"OS/2").filter(|t| t.len() >= 64) else {
         return (400, 5, "normal");
     };
@@ -118,7 +118,7 @@ fn weight_order(desired: u16, weights: &[u16]) -> Vec<u16> {
 }
 
 /// The faces CSS font matching ends with among `faces` for `(stretch, style, weight)`.
-fn css_match(faces: &[CssFace], stretch: u16, style: &str, weight: u16) -> Vec<CssFace> {
+pub(crate) fn css_match(faces: &[CssFace], stretch: u16, style: &str, weight: u16) -> Vec<CssFace> {
     let mut widths: Vec<u16> = faces.iter().map(|f| f.css.1).collect();
     widths.sort_unstable();
     widths.dedup();
@@ -253,6 +253,16 @@ impl DrawingFonts {
             options,
         );
         DrawingFonts { fonts, index }
+    }
+
+    /// The face Word draws `family` in a style with (docx2svg's `drawing_face`): its bundle's
+    /// copy first, then the installed ones, the document's embedded face, its substitute;
+    /// `None` where no file holds it (a symbol face's recorded integers).
+    pub fn drawing_face(&self, family: &str, bold: bool, italic: bool) -> Option<Arc<Face>> {
+        match self.fonts.resolve(family, bold, italic).face? {
+            LayoutFace::Sfnt(face) => Some(face),
+            LayoutFace::Recorded(_) => None,
+        }
     }
 
     /// How a drawing names `family` in a style; `None` where the document's name and style

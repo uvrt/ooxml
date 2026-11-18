@@ -21,6 +21,9 @@ ooxml-drawingml = { path = "../crates/ooxml-drawingml" }
 ooxml-numfmt = { path = "../crates/ooxml-numfmt" }
 ooxml-chart = { path = "../crates/ooxml-chart" }
 ooxml-render = { path = "../crates/ooxml-render" }
+ooxml-fonts = { path = "../crates/ooxml-fonts" }
+ooxml-word-layout = { path = "../crates/ooxml-word-layout" }
+ooxml-word-pages = { path = "../crates/ooxml-word-pages" }
 
 [workspace]
 
@@ -62,6 +65,20 @@ bench = false
 [[bin]]
 name = "drawing_render"
 path = "fuzz_targets/drawing_render.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "vml_paint"
+path = "fuzz_targets/vml_paint.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "glyph_ink"
+path = "fuzz_targets/glyph_ink.rs"
 test = false
 doc = false
 bench = false

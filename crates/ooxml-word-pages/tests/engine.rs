@@ -323,8 +323,53 @@ fn what_a_painter_cannot_draw_is_said_as_docx2svg_says_it() {
 }
 
 #[test]
-fn smartart_falls_back_with_its_reason() {
+fn smartart_with_no_data_model_is_a_stand_in_said_as_docx2svg_says_it() {
     let body = r#"<w:p><w:r><w:drawing><wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"><wp:extent cx="914400" cy="457200"/><wp:docPr id="1" name="Diagram 1"/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/diagram"><dgm:relIds xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:dm="rId9" r:lo="rId10" r:qs="rId11" r:cs="rId12"/></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>"#;
-    let fallback = engine().lay_out_bytes(Arc::from(package(body))).unwrap().unwrap_err();
-    assert_eq!(fallback.reason, support::SMARTART);
+    let version = engine().lay_out_bytes(Arc::from(package(body))).unwrap().unwrap();
+    let codes: Vec<&str> = version.said().warnings.iter().map(|w| w.code.as_str()).collect();
+    assert_eq!(codes, ["diagram-unreadable", "drawing-not-drawn"]);
+}
+
+const VML: &str = r#"xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office""#;
+
+#[test]
+fn a_vml_rectangle_is_painted_as_its_preset() {
+    let body = format!(
+        r##"<w:p><w:r><w:pict {VML}><v:rect style="position:absolute;width:100pt;height:50pt" fillcolor="#FF0000" strokecolor="blue" strokeweight="2pt"/></w:pict></w:r><w:r><w:t>text</w:t></w:r></w:p>"##
+    );
+    let mut engine = engine();
+    let version = engine.lay_out_bytes(Arc::from(package(&body))).unwrap().unwrap();
+    let (svg, missing) = engine.page_svg(&version, 0).unwrap();
+    assert!(missing.is_empty(), "{missing:?}");
+    assert!(svg.contains(r##"fill="#FF0000""##), "{svg}");
+    assert!(svg.contains(r##"stroke="#0000FF""##), "{svg}");
+    assert!(version.said().warnings.is_empty());
+}
+
+#[test]
+fn a_watermark_text_path_is_drawn_in_its_box() {
+    let body = format!(
+        r##"<w:p><w:r><w:pict {VML}><v:shapetype id="_x0000_t136" coordsize="21600,21600" o:spt="136"><v:textpath on="t" fitshape="t"/></v:shapetype><v:shape id="Made1" type="#_x0000_t136" style="position:absolute;width:400pt;height:150pt;rotation:315" fillcolor="silver" stroked="f"><v:fill opacity=".5"/><v:textpath style="font-family:&quot;Carlito&quot;;font-size:1pt" string="DRAFT"/></v:shape></w:pict></w:r><w:r><w:t>text</w:t></w:r></w:p>"##
+    );
+    let mut engine = engine();
+    let version = engine.lay_out_bytes(Arc::from(package(&body))).unwrap().unwrap();
+    let (svg, _) = engine.page_svg(&version, 0).unwrap();
+    assert!(svg.contains(">DRAFT</text>"), "{svg}");
+    assert!(svg.contains(r##"fill="#C0C0C0" fill-opacity="0.5""##), "{svg}");
+    assert!(svg.contains("rotate(315)"), "{svg}");
+    assert!(svg.contains("matrix("), "fitted by its outlines: {svg}");
+}
+
+#[test]
+fn a_text_path_its_shape_type_does_not_say_fits_is_an_approximation() {
+    let body = format!(
+        r##"<w:p><w:r><w:pict {VML}><v:shape id="Made1" type="#_x0000_t999" style="position:absolute;width:400pt;height:150pt" fillcolor="silver" stroked="f"><v:textpath style="font-family:&quot;Carlito&quot;" string="DRAFT"/></v:shape></w:pict></w:r><w:r><w:t>text</w:t></w:r></w:p>"##
+    );
+    let mut engine = engine();
+    let version = engine.lay_out_bytes(Arc::from(package(&body))).unwrap().unwrap();
+    let (svg, _) = engine.page_svg(&version, 0).unwrap();
+    assert!(svg.contains("textLength="), "{svg}");
+    let said = version.said();
+    assert_eq!(said.approximations.len(), 1, "{said:?}");
+    assert_eq!(said.approximations[0].code, "layout-approximate:text-path");
 }

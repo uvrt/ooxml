@@ -264,34 +264,62 @@ struct LineSet<'a> {
     rows: Vec<(usize, &'a PlacedRow, Option<&'a crate::table::TableRoom>)>,
     /// A story's kind and part.
     story: Option<(&'static str, Text)>,
-    /// The page's frame, where the set is the body's (its floating drawings placed).
+    /// The page's frame, where the set's floating drawings are placed (the body's, a
+    /// header's or a footer's; not the footnotes').
     frame: Option<&'a crate::geometry::PageFrame>,
     /// The right edge a note separator's line is cut at.
     clip: Option<Px>,
+    /// The page (0-based).
+    page: usize,
+    /// A walked story's paragraphs' tops for their drawings (`Walked::paragraph_tops`).
+    paragraph_tops: &'a [(usize, Px)],
     /// The layout.
     layout: &'a DocumentLayout,
 }
 
-/// A body line's floating drawings, placed (`_anchors`).
+/// A line's floating drawings, placed (`_anchors`): a body line's on its laid page, a
+/// header's or footer's where its walk put its paragraph.
 fn floats(
     set: &LineSet<'_>,
-    (laid, frame, item): (&LaidPage, &crate::geometry::PageFrame, usize),
+    (frame, item): (&crate::geometry::PageFrame, usize),
     (paragraph, resolved, measured): (&Paragraph, &ooxml_word_model::ResolvedParagraph, &MeasuredParagraph),
     line: &DrawnLine,
     out: &mut spans::PageOut,
 ) {
-    let anchors = match laid.broken.get(&item) {
-        Some(again) => again.anchors.as_slice(),
-        None => set
-            .items
+    let own = || {
+        set.items
             .get(item)
             .and_then(FlowItem::para)
-            .map_or(&[][..], |p| p.anchors.as_slice()),
+            .map_or(&[][..], |p| p.anchors.as_slice())
     };
+    let (anchors, paragraph_top, bands, page) = match set.laid {
+        Some(laid) => (
+            laid.broken
+                .get(&item)
+                .map_or_else(own, |again| again.anchors.as_slice()),
+            laid.lines
+                .iter()
+                .find(|l| l.item == item && l.line == line.number)
+                .map(|l| l.paragraph_top),
+            laid.bands.as_slice(),
+            laid.page,
+        ),
+        None => (
+            own(),
+            set.paragraph_tops.iter().find(|(i, _)| *i == item).map(|(_, top)| *top),
+            &[][..],
+            set.page,
+        ),
+    };
+    if anchors.is_empty() {
+        return;
+    }
     let job = drawings::FloatJob {
         layout: set.layout,
         frame,
-        laid,
+        page,
+        paragraph_top,
+        bands,
         paragraph,
         resolved,
         measured,
@@ -481,14 +509,8 @@ fn paint_set(
             painted.story = set.story.clone();
             to.lines.push(painted);
         }
-        if let (Some(laid), LineSource::Flow { item }, Some(frame)) = (set.laid, line.source, set.frame) {
-            floats(
-                set,
-                (laid, frame, item),
-                (&paragraph, &resolved, &measured),
-                line,
-                to.out,
-            );
+        if let (LineSource::Flow { item }, Some(frame)) = (line.source, set.frame) {
+            floats(set, (frame, item), (&paragraph, &resolved, &measured), line, to.out);
         }
         for slot in to.out.drawings.get_mut(from..).unwrap_or_default() {
             slot.story = set.story.clone();
@@ -532,8 +554,15 @@ fn number_lines(
     }
 }
 
-/// The lines of a header, a footer, a page's footnotes or its opening line, to paint.
-fn story_set<'a>(layout: &'a DocumentLayout, story: &'a StoryPage) -> LineSet<'a> {
+/// The lines of a header, a footer, a page's footnotes or its opening line, to paint, on
+/// page `page` of frame `frame` (where a header's or footer's floating drawings are
+/// placed).
+fn story_set<'a>(
+    layout: &'a DocumentLayout,
+    story: &'a StoryPage,
+    (page, frame): (usize, &'a crate::geometry::PageFrame),
+) -> LineSet<'a> {
+    let header_or_footer = matches!(story.kind, "header" | "footer");
     LineSet {
         items: &story.flow.items,
         blocks: &story.blocks,
@@ -542,9 +571,11 @@ fn story_set<'a>(layout: &'a DocumentLayout, story: &'a StoryPage) -> LineSet<'a
         broken: Some(&story.broken),
         lines: &story.walked.lines,
         rows: story.walked.rows.iter().map(|(i, r)| (*i, r, None)).collect(),
-        story: matches!(story.kind, "header" | "footer").then(|| (story.kind, story.part.clone())),
-        frame: None,
+        story: header_or_footer.then(|| (story.kind, story.part.clone())),
+        frame: header_or_footer.then_some(frame),
         clip: story.clip,
+        page,
+        paragraph_tops: &story.walked.paragraph_tops,
         layout,
     }
 }
@@ -574,7 +605,7 @@ pub fn paint_page(
     };
     if let Some(opening) = &parts.opening {
         paint_set(
-            &story_set(layout, opening),
+            &story_set(layout, opening, (page, &frame)),
             model,
             document,
             (cx, &width),
@@ -597,6 +628,8 @@ pub fn paint_page(
         story: None,
         frame: Some(&frame),
         clip: None,
+        page,
+        paragraph_tops: &[],
         layout,
     };
     paint_set(
@@ -616,7 +649,7 @@ pub fn paint_page(
     out.unpainted.extend(parts.unpainted.iter().cloned());
     for story in parts.stories.iter().chain(&parts.footnotes) {
         paint_set(
-            &story_set(layout, story),
+            &story_set(layout, story, (page, &frame)),
             model,
             document,
             (cx, &width),

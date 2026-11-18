@@ -50,6 +50,7 @@ pub fn page_opening(job: &mut StoryJob<'_, '_>, layout: &DocumentLayout, geometr
             lines: vec![drawn],
             rows: Vec::new(),
             end: line.top + line.pitch,
+            paragraph_tops: Vec::new(),
         },
         clip: None,
         broken: crate::paginate::LineStore::new(),
