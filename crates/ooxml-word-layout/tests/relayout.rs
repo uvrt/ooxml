@@ -3,7 +3,8 @@
 //! lines, section breaks of every kind and of several columns, `PAGE`, `NUMPAGES`,
 //! `PAGEREF`, `SEQ` and `REF` fields with their bookmarks, tables (rows split across
 //! pages, header rows, rows that may not split or keep with the next, cells merged across
-//! and down, fixed and autofit widths, a field in a cell), footnote and endnote
+//! and down, fixed and autofit widths, a field in a cell, a floating drawing in a cell --
+//! its text beside or below it, the cell aligned or not), footnote and endnote
 //! references, floating drawings text wraps beside or top and bottom of, a header of
 //! changing height, drop caps, and sections with a line between their columns, unequal
 //! columns, line numbers or footnotes beneath the text -- edited one block at a time (text, a keep, a cell's text, a header
@@ -58,6 +59,9 @@ struct Tbl {
     exact: Option<usize>,
     /// Floating, positioned this far below the paragraph after it (twips).
     floating: Option<u64>,
+    /// A floating drawing in a row's first cell: the row, its wrap and its offset across
+    /// (twips), and whether the cell is aligned to its middle.
+    cell_drawing: Option<(usize, &'static str, i64, bool)>,
 }
 
 fn tbl(rng: &mut Rng) -> Tbl {
@@ -81,6 +85,11 @@ fn tbl(rng: &mut Rng) -> Tbl {
         autofit: rng.chance(40),
         exact: rng.chance(10).then(|| pick(rng)),
         floating: rng.chance(20).then(|| rng.below(300)),
+        cell_drawing: rng.chance(25).then(|| {
+            let wrap =
+                ["wrapSquare", "wrapTopAndBottom", "wrapNone", "wrapTight"][usize::try_from(rng.below(4)).unwrap()];
+            (pick(rng), wrap, i64::try_from(rng.below(600)).unwrap(), rng.chance(30))
+        }),
         rows,
     }
 }
@@ -128,11 +137,18 @@ fn tbl_xml(t: &Tbl, k: usize, field: Option<&str>) -> String {
             if let Some(kind) = merge {
                 tcpr.push_str(&format!(r#"<w:vMerge w:val="{kind}"/>"#));
             }
+            let drawn = t.cell_drawing.filter(|d| d.0 == r && c == 0);
+            if drawn.is_some_and(|d| d.3) {
+                tcpr.push_str(r#"<w:vAlign w:val="center"/>"#);
+            }
             let words: Vec<String> = (0..row[c]).map(|w| format!("c{}x{}", k, w % 5)).collect();
             let ppr = if t.keep[r] && c == 0 { "<w:keepNext/>" } else { "" };
             let mut content = String::new();
             if r == 0 && c == 0 {
                 content.push_str(&format!(r#"<w:bookmarkStart w:id="{k}" w:name="b{k}"/>"#));
+            }
+            if let Some((_, wrap, x, _)) = drawn {
+                content.push_str(&anchor(wrap, x, 0, 500, 300));
             }
             content.push_str(&run(&words.join(" ")));
             if r == 0 && c == 0 {

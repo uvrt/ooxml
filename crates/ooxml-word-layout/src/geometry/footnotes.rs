@@ -139,14 +139,18 @@ struct Stack<'a> {
     separator_only: bool,
 }
 
-/// `blocks` as a flow of their own on `props`'s page, one section.
+/// `blocks` as a flow of their own on `props`'s page, one section, their list items
+/// counted in it.
 pub(super) fn story_flow(job: &mut StoryJob<'_, '_>, blocks: &Arc<[Block]>, props: &SectionProps) -> Flow {
     let sections = Sections::new(&[note_section(props, blocks.len())], false);
+    // Its list items counted from scratch in it, as a story's are (`paginate.flow` over
+    // `story_document`).
+    let labels = crate::stories::story_labels(job.model, job.cx.document, blocks);
     let fcx = FlowContext {
         document: job.cx.document,
         blocks,
         sections: &sections,
-        labels: Labels::None,
+        labels: Labels::Given(&labels),
         faces: job.cx.faces,
         locale: job.cx.locale,
         tables: job.cx.tables,
@@ -245,6 +249,32 @@ pub fn page_footnotes(
         left: frame.left,
         clip: None,
         place: place(&section.props, laid, frame.bottom),
+        column: None,
+        separator_only: false,
+    };
+    Ok(note_stack(job, layout.mode15, &stack)?.into_iter().collect())
+}
+
+/// The rest of a note a page ended by a forced break could not hold, on the page of its
+/// own it takes in mode 15 (`continuation_page`): at that page's foot, under the
+/// continuation separator. `before` is the page the forced break ended.
+pub fn continued_footnotes(
+    job: &mut StoryJob<'_, '_>,
+    layout: &DocumentLayout,
+    frame: &PageFrame,
+    before: &LaidPage,
+) -> Result<Vec<StoryPage>, &'static str> {
+    let Some(rest) = &before.continued else {
+        return Ok(Vec::new());
+    };
+    let section = layout.sections.get(frame.section).ok_or("no section")?;
+    let stack = Stack {
+        carried: rest,
+        placed: &[],
+        props: &section.props,
+        left: frame.left,
+        clip: None,
+        place: Place::Foot(frame.bottom),
         column: None,
         separator_only: false,
     };

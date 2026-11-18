@@ -55,24 +55,32 @@ def test_the_layout_is_held_in_rust_and_never_pickled(made):
         pickle.dumps(raw)
 
 
-def _floating(data: bytes) -> bytes:
-    """``data`` with its first table floating (``w:tblpPr``)."""
+def _framed_footer(data: bytes) -> bytes:
+    """``data`` with its footer's first paragraph in a frame (``w:framePr``)."""
     import io
+    import re
     import zipfile
 
+    frame = b'<w:framePr w:w="2000" w:wrap="around" w:vAnchor="text" w:hAnchor="margin"/>'
     source, out = zipfile.ZipFile(io.BytesIO(data)), io.BytesIO()
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as target:
         for info in source.infolist():
             body = source.read(info)
-            if info.filename == "word/document.xml":
-                body = body.replace(b"<w:tblPr>", b'<w:tblPr><w:tblpPr w:tblpX="500" w:tblpY="500"/>', 1)
+            if re.fullmatch(r"word/footer\d*\.xml", info.filename):
+                found = re.search(rb"<w:p[ >]", body)
+                assert found is not None, "a footer paragraph"
+                end = body.index(b">", found.start()) + 1
+                if body.startswith(b"<w:pPr>", end):
+                    body = body[:end + 7] + frame + body[end + 7:]
+                else:
+                    body = body[:end] + b"<w:pPr>" + frame + b"</w:pPr>" + body[end:]
             target.writestr(info, body)
     return out.getvalue()
 
 
 def test_a_document_the_rust_layout_does_not_lay_out_falls_back_counted(made):
-    before = pages.fallbacks().get("floating table", 0)
-    document = Document.open(_floating(made))
+    before = pages.fallbacks().get("frame", 0)
+    document = Document.open(_framed_footer(made))
     assert document.layout().page_count >= 1
     assert not pages.is_rust(convert(document).raw)
-    assert pages.fallbacks()["floating table"] == before + 1
+    assert pages.fallbacks()["frame"] == before + 1

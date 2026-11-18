@@ -23,6 +23,83 @@ pub struct FontRef {
     pub theme: Option<Text>,
 }
 
+/// A Word 2010 text effect (`w14:textFill`, `w14:textOutline`) as declared: the element,
+/// DrawingML in the `w14` namespace, which a DrawingML reader reads by its local names.
+/// Two are equal, and ordered, by what they say: their elements' local names, attributes
+/// and children ([`TextEffect::key`]), whatever prefixes and namespace declarations they
+/// were written with.
+#[derive(Clone)]
+pub struct TextEffect {
+    /// The element.
+    pub element: ooxml_xml::Element,
+    key: Text,
+}
+
+impl TextEffect {
+    /// The effect `element` declares.
+    pub fn new(element: ooxml_xml::Element) -> TextEffect {
+        fn write(element: &ooxml_xml::Element, out: &mut String) {
+            out.push('<');
+            out.push_str(ooxml_xml::view::local(element));
+            for a in element.attributes() {
+                out.push(' ');
+                out.push_str(a.name.local());
+                out.push('=');
+                out.push_str(&a.value);
+            }
+            out.push('>');
+            for child in ooxml_xml::view::elements(element) {
+                write(child, out);
+            }
+            out.push_str("</>");
+        }
+        let mut key = String::new();
+        write(&element, &mut key);
+        TextEffect {
+            element,
+            key: Text::from(key.as_str()),
+        }
+    }
+
+    /// What it says, as one text: its element's and its descendants' local names and
+    /// attributes.
+    pub fn key(&self) -> &str {
+        &self.key
+    }
+}
+
+impl std::fmt::Debug for TextEffect {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("TextEffect").field(&self.key).finish()
+    }
+}
+
+impl PartialEq for TextEffect {
+    fn eq(&self, other: &TextEffect) -> bool {
+        self.key == other.key
+    }
+}
+
+impl Eq for TextEffect {}
+
+impl std::hash::Hash for TextEffect {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.key.hash(state);
+    }
+}
+
+impl PartialOrd for TextEffect {
+    fn partial_cmp(&self, other: &TextEffect) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for TextEffect {
+    fn cmp(&self, other: &TextEffect) -> std::cmp::Ordering {
+        self.key.cmp(&other.key)
+    }
+}
+
 /// A tab stop (`w:tab` in `w:tabs`).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct TabStop {
@@ -83,9 +160,9 @@ pub enum Value {
     Width(i64, Text),
     /// A row height (`w:trHeight`): the value and its rule (`atLeast` unstated).
     Height(i64, Text),
-    /// A Word 2010 text effect (`w14:textFill`, `w14:textOutline`): DrawingML, read by the
-    /// DrawingML model (phase P3); here only that it is declared.
-    TextEffect(Text),
+    /// A Word 2010 text effect (`w14:textFill`, `w14:textOutline`): its DrawingML, for its
+    /// painter to read.
+    TextEffect(TextEffect),
 }
 
 impl Value {

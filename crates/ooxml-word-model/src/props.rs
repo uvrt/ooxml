@@ -7,7 +7,7 @@
 //! callers, not properties.
 
 use crate::theme::ThemeColours;
-use crate::value::{joined, known, text, Border, FontRef, Key, Props, Shading, TabStop, Text, Value};
+use crate::value::{joined, known, text, Border, FontRef, Key, Props, Shading, TabStop, Text, TextEffect, Value};
 use crate::xmlread::{attr, attr_int, attr_on, child, elements, is_on, local};
 use ooxml_xml::Element;
 use std::sync::Arc;
@@ -167,7 +167,7 @@ fn read_run_child(node: &Element, colours: &ThemeColours, out: &mut Props) {
             }
         }
         "textFill" | "textOutline" => {
-            out.insert(known(name), Value::TextEffect(text(name)));
+            out.insert(known(name), Value::TextEffect(TextEffect::new(node.clone())));
         }
         _ => {}
     }

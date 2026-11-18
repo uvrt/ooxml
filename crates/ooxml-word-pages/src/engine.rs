@@ -23,6 +23,7 @@ use ooxml_base::{DigestKey, Limits, Locale};
 use ooxml_derive::CacheBudget;
 use ooxml_opc::Package;
 use ooxml_word_layout::paint::svg::{page_svg, Drawings, Pictures, SvgContext};
+use ooxml_word_layout::paint::text_box::{paint_text_box, TextBoxPaint};
 use ooxml_word_layout::paint::{paint_page, GlyphSize, PagePaint, PaintContext};
 use ooxml_word_layout::tables::WordTables;
 use ooxml_word_layout::WordLayout;
@@ -405,7 +406,18 @@ impl PageEngine {
             glyph_size: self.glyph_size,
             decimal: self.decimal,
         };
-        let paint = paint_page(&version.layout, &mut generation.model, page, &parts, &cx)?;
+        let mut paint = paint_page(&version.layout, &mut generation.model, page, &parts, &cx)?;
+        if let Some(drawings) = &version.drawings {
+            let job = TextBoxJob {
+                layout: &mut generation.layout,
+                model: &mut generation.model,
+                laid: &version.layout,
+                cx: &cx,
+            };
+            paint.text_boxes = text_boxes(job, drawings, &paint, page);
+            let unpainted: Vec<String> = paint.text_boxes.iter().flat_map(|t| t.unpainted.clone()).collect();
+            paint.unpainted.extend(unpainted);
+        }
         self.stats.pages_painted += 1;
         Some(paint)
     }
@@ -740,7 +752,44 @@ impl crate::warnings::PageDrawings for DrawingWarnings<'_> {
             for (code, message) in painted.warnings {
                 out.push(warning(&code, message));
             }
+            for frame in drawings.text_frames(slot) {
+                let story = self
+                    .layout
+                    .text_box(model, laid, (&slot.path, &slot.paragraph_path), &frame);
+                for (code, message) in story.said {
+                    out.push(warning(&code, message));
+                }
+            }
         }
         out
     }
+}
+
+/// What laying a page's text boxes out needs: the layout engine, the model, the version
+/// laid out, and the paint's context.
+struct TextBoxJob<'a, 'c> {
+    layout: &'a mut WordLayout,
+    model: &'a mut Model,
+    laid: &'a ooxml_word_layout::DocumentLayout,
+    cx: &'a PaintContext<'c>,
+}
+
+/// The text boxes of a page's drawings, laid out and painted.
+fn text_boxes(job: TextBoxJob<'_, '_>, drawings: &WordDrawings, paint: &PagePaint, page: usize) -> Vec<TextBoxPaint> {
+    let mut out = Vec::new();
+    for (k, slot) in paint.drawings.iter().enumerate() {
+        for frame in drawings.text_frames(slot) {
+            let story = job
+                .layout
+                .text_box(job.model, job.laid, (&slot.path, &slot.paragraph_path), &frame);
+            out.push(paint_text_box(
+                job.laid,
+                job.model,
+                (k, page, slot.story.as_ref()),
+                &story,
+                job.cx,
+            ));
+        }
+    }
+    out
 }
