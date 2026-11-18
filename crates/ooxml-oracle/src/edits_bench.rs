@@ -122,7 +122,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
         .body()
         .map(|b| {
             b.ids
-                .paragraphs
+                .paragraphs()
                 .iter()
                 .filter(|p| p.path.len() == 2 && !has_field(&p.element))
                 .map(|p| p.id.clone())

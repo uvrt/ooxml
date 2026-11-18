@@ -8,7 +8,7 @@
 //! Must not: write but through the sink, or read outside what it records reading: the
 //! paragraph's own block, the ledger seeds it draws from, the annotation ids when tracked.
 
-use crate::doc::{Draw, Key, WordDoc};
+use crate::doc::{Draw, DrawFrom, Key, WordDoc};
 use crate::names::{W14, W16DU};
 use crate::policy::RevisionPolicy;
 use crate::sink::EditSink;
@@ -50,17 +50,17 @@ pub struct TextEdited {
 }
 
 /// A paragraph found: its part, place, id and how its id stands.
-struct Found {
-    part: String,
-    path: Box<[u32]>,
-    id: String,
-    state: IdState,
-    element: Arc<ooxml_xml::Element>,
+pub(crate) struct Found {
+    pub(crate) part: String,
+    pub(crate) path: Box<[u32]>,
+    pub(crate) id: String,
+    pub(crate) state: IdState,
+    pub(crate) element: Arc<ooxml_xml::Element>,
 }
 
 /// The paragraph `target` names now: an alias followed while its target exists; a cell's
 /// first paragraph.
-fn find(doc: &WordDoc, docx: &Docx, target: &str) -> Result<Found> {
+pub(crate) fn find(doc: &WordDoc, docx: &Docx, target: &str) -> Result<Found> {
     let followed = doc.ids().follow(target);
     let block = (followed != target)
         .then(|| direct(docx, &followed))
@@ -75,7 +75,7 @@ fn find(doc: &WordDoc, docx: &Docx, target: &str) -> Result<Found> {
     };
     let paragraph = story
         .ids
-        .paragraphs
+        .paragraphs()
         .get(k)
         .ok_or_else(|| EditError::Refused(format!("{target} is not a paragraph")))?;
     Ok(Found {
@@ -94,7 +94,7 @@ fn cell_paragraph(docx: &Docx, target: &str) -> Result<Found> {
     let column = found
         .column
         .ok_or_else(|| EditError::Refused(format!("{target} is a row, not a paragraph")))?;
-    let table = found.part.ids.tables.get(found.table).ok_or_else(refuse)?;
+    let table = found.part.ids.tables().get(found.table).ok_or_else(refuse)?;
     let (row_path, _) = table.rows.get(found.row).ok_or_else(refuse)?;
     let row = at_path(found.part.root(), row_path).ok_or_else(refuse)?;
     let cell = cell_at(row, column).ok_or_else(refuse)?;
@@ -103,9 +103,9 @@ fn cell_paragraph(docx: &Docx, target: &str) -> Result<Found> {
     let paragraph = found
         .part
         .ids
-        .paragraphs
-        .iter()
-        .find(|p| p.path.len() == cell_path.len() + 1 && p.path.starts_with(&cell_path))
+        .paragraphs_within(&cell_path)
+        .into_iter()
+        .find(|p| p.path.len() == cell_path.len() + 1)
         .ok_or_else(refuse)?;
     Ok(Found {
         part: found.part.part.clone(),
@@ -167,22 +167,20 @@ impl Command<WordDoc> for SetText {
         let element = at_path(tree.root(), &found.path).ok_or_else(|| EditError::Path(found.part.clone()))?;
         work = Work::of(element, scope_above(tree.root(), &found.path));
         let wrote = sink.set_paragraph_text(&mut work, &self.text)?;
-        if !wrote.released.is_empty() {
-            return Err(EditError::Unsupported(
-                "releasing the relationships of content a tracked edit removed outright (phase P2b)".to_owned(),
-            ));
-        }
         // a paragraph stamped before gets a new text id, drawn where the change is applied
         let mut draws = Vec::new();
         if found.state == IdState::Ok {
             let prefix = w14_prefix(tree.root(), &found.path);
             draws.push(Draw {
-                seed: Arc::from(format!("{}\0text", found.part)),
+                from: DrawFrom::Seed(Arc::from(format!("{}\0text", found.part))),
                 at: Vec::new(),
                 attribute: Arc::new(QName::new(Some(&prefix), "textId", Some(W14))),
             });
         }
         let new = work.build().ok_or_else(|| EditError::Path(found.part.clone()))?;
+        if let Some(numbered) = wrote.annotations {
+            draws.extend(crate::sink::annotation_draws(&new, numbered));
+        }
         let mut keys = vec![block_key(&found.part, &id)];
         if paragraph_has_annotations(&found.element) || paragraph_has_annotations(&new) {
             keys.push(Key::Annotations); // the ids in use, which tracked edits number from
@@ -198,6 +196,11 @@ impl Command<WordDoc> for SetText {
         }
         crate::textbox::sync(&mut sink)?;
         crate::revision_ids::make_unique(&mut sink)?;
+        if let RevisionPolicy::Tracked(tracking) = &self.policy {
+            let gave = wrote.annotations.is_some_and(|n| n.to > n.from);
+            sink.people(gave.then_some(tracking.author.as_str()), Some(&tracking.author))?;
+            sink.release(&found.part, &wrote.released)?;
+        }
         Ok(TextEdited {
             id,
             changed: true,

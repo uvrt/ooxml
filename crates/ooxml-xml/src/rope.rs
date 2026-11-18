@@ -306,6 +306,73 @@ impl Children {
         }
     }
 
+    /// The stretch where `other`, a later version of this list, differs from it: its
+    /// start, and its end here and in `other` (`None` when every node is the same,
+    /// [`Node::same`]). Found by allocation: two versions that share their nodes are
+    /// compared without reading them, so a one-node edit of a 29,000-node body costs
+    /// pointer comparisons only.
+    pub fn changed_span(&self, other: &Children) -> Option<(usize, usize, usize)> {
+        if self.ptr_eq(other) {
+            return None;
+        }
+        let (la, lb) = (self.len(), other.len());
+        let start = self.iter().zip(other.iter()).take_while(|(a, b)| a.same(b)).count();
+        if start == la && start == lb {
+            return None;
+        }
+        // the last pair that differs, the two lists aligned at their ends
+        let shorter = la.min(lb);
+        let (skip_a, skip_b) = if lb >= la {
+            (start, start + (lb - la))
+        } else {
+            (start + (la - lb), start)
+        };
+        let last = self
+            .iter()
+            .skip(skip_a)
+            .zip(other.iter().skip(skip_b))
+            .enumerate()
+            .filter(|(_, (a, b))| !a.same(b))
+            .last()
+            .map(|(k, _)| start + k);
+        let suffix = shorter - last.map_or(start, |k| k + 1);
+        Some((start, la - suffix, lb - suffix))
+    }
+
+    /// The stretches where `other` differs from this list, each as [`Children::changed_span`]
+    /// gives one: for two lists of one length (blocks replaced in place, however far
+    /// apart), each run of places whose nodes differ, so the places between are not
+    /// visited again; otherwise the one stretch from the first difference to the last.
+    /// Each stretch's places are those of both lists (the lengths agree before it).
+    pub fn changed_spans(&self, other: &Children) -> Vec<(usize, usize, usize)> {
+        let Some((start, old_end, new_end)) = self.changed_span(other) else {
+            return Vec::new();
+        };
+        if self.len() != other.len() {
+            return vec![(start, old_end, new_end)];
+        }
+        let mut out: Vec<(usize, usize, usize)> = Vec::new();
+        let pairs = self
+            .iter()
+            .zip(other.iter())
+            .enumerate()
+            .skip(start)
+            .take(old_end - start);
+        for (k, (a, b)) in pairs {
+            if a.same(b) {
+                continue;
+            }
+            match out.last_mut() {
+                Some(last) if last.1 == k => {
+                    last.1 = k + 1;
+                    last.2 = k + 1;
+                }
+                _ => out.push((k, k + 1, k + 1)),
+            }
+        }
+        out
+    }
+
     /// The tree's height (0 for one leaf): for tests and measurements.
     pub fn height(&self) -> usize {
         let mut h = 0;
@@ -397,6 +464,30 @@ mod tests {
 
     fn text(i: usize) -> Node {
         Node::Text(i.to_string().into())
+    }
+
+    #[test]
+    fn changed_spans() {
+        let el = |k: usize| {
+            Node::Element(Arc::new(crate::node::Element::new(
+                Arc::new(crate::name::QName::new(None, &k.to_string(), None)),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            )))
+        };
+        let a = Children::from_vec((0..200).map(el).collect());
+        assert_eq!(a.changed_span(&a.clone()), None);
+        let b = a.splice(5..6, vec![el(1000)]).unwrap();
+        assert_eq!(a.changed_span(&b), Some((5, 6, 6)));
+        let c = a.splice(10..10, vec![el(1001), el(1002)]).unwrap();
+        assert_eq!(a.changed_span(&c), Some((10, 10, 12)));
+        let d = a.splice(150..153, vec![]).unwrap();
+        assert_eq!(a.changed_span(&d), Some((150, 153, 150)));
+        let e = b.splice(100..101, vec![el(1003)]).unwrap();
+        assert_eq!(a.changed_span(&e), Some((5, 101, 101)));
+        assert_eq!(a.changed_spans(&e), vec![(5, 6, 6), (100, 101, 101)]);
+        assert_eq!(a.changed_spans(&c), vec![(10, 10, 12)]);
     }
 
     fn values(c: &Children) -> Vec<String> {

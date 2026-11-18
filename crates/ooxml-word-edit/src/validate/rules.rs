@@ -1,4 +1,6 @@
-//! Owns: docx-agent's validation rules (`validate.py`, `check`) over a version's facts:
+//! Owns: docx-agent's validation rules (`validate.py`, `check`) over a version's facts read
+//! from scratch -- the oracle the kept rules ([`super::kept`]) are tested against, and the
+//! rules both share:
 //! each part's facts ([`PartFacts`]: its blocks' memoised facts and its root's own), folded
 //! into the problems the whole-document rules find -- repeated paraIds, unbalanced
 //! fields, unpaired bookmarks and comment ranges, references without notes or comments,
@@ -29,9 +31,6 @@ const REL_NUMBERING: &str = "http://schemas.openxmlformats.org/officeDocument/20
 pub(crate) struct PartFacts {
     /// The blocks' facts, in order (a whole non-story part is one block).
     pub(crate) blocks: Vec<Arc<ElementFacts>>,
-    /// The blocks themselves, in the same order: a later version's blocks that are the
-    /// same allocations take their facts from here, without a lookup.
-    pub(crate) elements: Vec<Arc<Element>>,
     /// The root's own facts (its head, its and its body's child order).
     pub(crate) rest: ElementFacts,
     /// The root (for the rules that read a small part whole).
@@ -87,7 +86,7 @@ impl Inputs<'_> {
     }
 }
 
-fn problem(code: &str, part: &str, detail: impl Into<String>) -> Problem {
+pub(super) fn problem(code: &str, part: &str, detail: impl Into<String>) -> Problem {
     Problem {
         code: code.to_owned(),
         part: part.to_owned(),
@@ -277,12 +276,12 @@ fn marks(out: &mut Vec<Problem>, inputs: &Inputs<'_>) {
 type Ids = BTreeSet<Option<String>>;
 
 /// Python's `str()` of an optional string.
-fn py_str(value: Option<&str>) -> String {
+pub(super) fn py_str(value: Option<&str>) -> String {
     value.unwrap_or("None").to_owned()
 }
 
 /// `[^\W\d][\w]{0,39}`, whole: a letter or underscore, then up to 39 word characters.
-fn bookmark_name_ok(name: &str) -> bool {
+pub(super) fn bookmark_name_ok(name: &str) -> bool {
     let word = |c: char| c.is_alphanumeric() || c == '_';
     let mut chars = name.chars();
     let Some(first) = chars.next() else { return false };
@@ -320,9 +319,29 @@ fn numbering(out: &mut Vec<Problem>, inputs: &Inputs<'_>) {
         .as_deref()
         .and_then(|p| inputs.facts(p))
         .map(|f| Arc::clone(&f.root));
+    let nums = numbering_tables(out, part.as_deref(), root.as_ref());
+    let styles = related(inputs.package, inputs.main, REL_STYLES).ok().flatten();
+    let mut owners: Vec<(&str, &PartFacts)> = inputs.story_facts().collect();
+    if let Some((name, facts)) = styles.as_deref().and_then(|s| inputs.facts(s).map(|f| (s, f))) {
+        owners.push((name, facts));
+    }
+    for (name, facts) in owners {
+        for reference in facts.all().flat_map(|f| f.num_refs.iter()) {
+            num_ref_problems(out, name, reference, &nums, 1);
+        }
+    }
+}
+
+/// The numbering part's `w:num`s (id and abstract id, the last of an id winning), its
+/// own problems pushed (abstracts missing, nsids repeated).
+pub(super) fn numbering_tables(
+    out: &mut Vec<Problem>,
+    part: Option<&str>,
+    root: Option<&Arc<Element>>,
+) -> Vec<(Option<String>, Option<String>)> {
     let mut nums: Vec<(Option<String>, Option<String>)> = Vec::new();
     let mut abstracts: HashSet<Option<String>> = HashSet::new();
-    if let Some(root) = &root {
+    if let Some(root) = root {
         for e in root.child_elements() {
             if e.name().is(Some(W), "abstractNum") {
                 abstracts.insert(e.attribute(Some(W), "abstractNumId").map(str::to_owned));
@@ -339,40 +358,14 @@ fn numbering(out: &mut Vec<Problem>, inputs: &Inputs<'_>) {
             }
         }
     }
-    let styles = related(inputs.package, inputs.main, REL_STYLES).ok().flatten();
-    let mut owners: Vec<(&str, &PartFacts)> = inputs.story_facts().collect();
-    if let Some((name, facts)) = styles.as_deref().and_then(|s| inputs.facts(s).map(|f| (s, f))) {
-        owners.push((name, facts));
-    }
-    for (name, facts) in owners {
-        for (num, level) in facts.all().flat_map(|f| f.num_refs.iter()) {
-            if let Some(value) = num {
-                let missing = value
-                    .as_deref()
-                    .is_some_and(|v| v != "0" && !nums.iter().any(|(n, _)| n.as_deref() == Some(v)));
-                if missing {
-                    out.push(problem("numbering-num-missing", name, py_str(value.as_deref())));
-                }
-            }
-            if let Some(level) = level {
-                let ok = level
-                    .as_deref()
-                    .and_then(python_int)
-                    .is_some_and(|v| (0..=8).contains(&v));
-                if !ok {
-                    out.push(problem("numbering-level-out-of-range", name, py_str(level.as_deref())));
-                }
-            }
-        }
-    }
-    let numbering_part = part.unwrap_or_else(|| "None".to_owned());
+    let numbering_part = part.unwrap_or("None");
     for (num, abstract_id) in &nums {
         if !abstracts.contains(abstract_id) {
             let detail = format!("{} -> {}", py_str(num.as_deref()), py_str(abstract_id.as_deref()));
-            out.push(problem("numbering-abstract-missing", &numbering_part, detail));
+            out.push(problem("numbering-abstract-missing", numbering_part, detail));
         }
     }
-    if let Some(root) = &root {
+    if let Some(root) = root {
         let mut nsids: Vec<(String, usize)> = Vec::new();
         let mut stack = vec![Arc::clone(root)];
         let mut found = Vec::new();
@@ -391,7 +384,37 @@ fn numbering(out: &mut Vec<Problem>, inputs: &Inputs<'_>) {
         }
         for (nsid, count) in nsids {
             if count > 1 {
-                out.push(problem("numbering-nsid-repeated", &numbering_part, nsid));
+                out.push(problem("numbering-nsid-repeated", numbering_part, nsid));
+            }
+        }
+    }
+    nums
+}
+
+/// The problems of one list reference (`count` of them) of the part `name`.
+pub(super) fn num_ref_problems(
+    out: &mut Vec<Problem>,
+    name: &str,
+    (num, level): &crate::validate::facts::NumRef,
+    nums: &[(Option<String>, Option<String>)],
+    count: usize,
+) {
+    for _ in 0..count {
+        if let Some(value) = num {
+            let missing = value
+                .as_deref()
+                .is_some_and(|v| v != "0" && !nums.iter().any(|(n, _)| n.as_deref() == Some(v)));
+            if missing {
+                out.push(problem("numbering-num-missing", name, py_str(value.as_deref())));
+            }
+        }
+        if let Some(level) = level {
+            let ok = level
+                .as_deref()
+                .and_then(python_int)
+                .is_some_and(|v| (0..=8).contains(&v));
+            if !ok {
+                out.push(problem("numbering-level-out-of-range", name, py_str(level.as_deref())));
             }
         }
     }
@@ -403,14 +426,7 @@ fn styles(out: &mut Vec<Problem>, inputs: &Inputs<'_>) {
         return;
     };
     let Some(facts) = inputs.facts(&part) else { return };
-    let mut by_id: Vec<(Option<String>, Arc<Element>)> = Vec::new();
-    for e in facts.root.child_elements().filter(|e| e.name().is(Some(W), "style")) {
-        let id = e.attribute(Some(W), "styleId").map(str::to_owned);
-        match by_id.iter_mut().find(|(k, _)| *k == id) {
-            Some(found) => found.1 = Arc::clone(e),
-            None => by_id.push((id, Arc::clone(e))),
-        }
-    }
+    let by_id = style_table(&facts.root);
     let known = |v: Option<&str>| by_id.iter().any(|(k, _)| k.as_deref() == v);
     for (name, story) in inputs.story_facts() {
         for tag in ["pStyle", "rStyle", "tblStyle"] {
@@ -425,14 +441,39 @@ fn styles(out: &mut Vec<Problem>, inputs: &Inputs<'_>) {
             }
         }
     }
-    let get = |id: Option<&str>| by_id.iter().find(|(k, _)| k.as_deref() == id).map(|(_, e)| e);
-    for (style_id, node) in &by_id {
+    style_part_problems(out, &part, &by_id);
+}
+
+/// The styles part's `w:style`s by id (the last of an id winning, in the place of the
+/// first).
+pub(super) fn style_table(root: &Element) -> Vec<(Option<String>, Arc<Element>)> {
+    let mut by_id: Vec<(Option<String>, Arc<Element>)> = Vec::new();
+    let mut at: HashMap<Option<String>, usize> = HashMap::new();
+    for e in root.child_elements().filter(|e| e.name().is(Some(W), "style")) {
+        let id = e.attribute(Some(W), "styleId").map(str::to_owned);
+        match at.get(&id).and_then(|k| by_id.get_mut(*k)) {
+            Some(found) => found.1 = Arc::clone(e),
+            None => {
+                at.insert(id.clone(), by_id.len());
+                by_id.push((id, Arc::clone(e)));
+            }
+        }
+    }
+    by_id
+}
+
+/// The styles' own references and cycles.
+pub(super) fn style_part_problems(out: &mut Vec<Problem>, part: &str, by_id: &[(Option<String>, Arc<Element>)]) {
+    let index: HashMap<Option<&str>, &Arc<Element>> = by_id.iter().map(|(k, e)| (k.as_deref(), e)).collect();
+    let known = |v: Option<&str>| index.contains_key(&v);
+    let get = |id: Option<&str>| index.get(&id).copied();
+    for (style_id, node) in by_id {
         for tag in ["basedOn", "next", "link"] {
             if let Some(reference) = node.find(Some(W), tag) {
                 let value = reference.attribute(Some(W), "val");
                 if !known(value) {
                     let detail = format!("{} {tag} {}", py_str(style_id.as_deref()), py_str(value));
-                    out.push(problem("style-missing", &part, detail));
+                    out.push(problem("style-missing", part, detail));
                 }
             }
         }
@@ -446,7 +487,7 @@ fn styles(out: &mut Vec<Problem>, inputs: &Inputs<'_>) {
                 .map(str::to_owned);
         }
         if seen.contains(&current) {
-            out.push(problem("style-based-on-cycle", &part, py_str(style_id.as_deref())));
+            out.push(problem("style-based-on-cycle", part, py_str(style_id.as_deref())));
         }
     }
 }
@@ -470,8 +511,6 @@ fn drawings(out: &mut Vec<Problem>, inputs: &Inputs<'_>) {
 fn tracking(out: &mut Vec<Problem>, inputs: &Inputs<'_>) {
     let mut ids: HashMap<&str, usize> = HashMap::new();
     for (name, part) in inputs.story_facts() {
-        let mut starts: [BTreeMap<&str, &str>; 2] = [BTreeMap::new(), BTreeMap::new()];
-        let mut ends: [BTreeSet<&str>; 2] = [BTreeSet::new(), BTreeSet::new()];
         for f in part.all() {
             for (kind, author, id) in &f.records {
                 if !author {
@@ -481,6 +520,22 @@ fn tracking(out: &mut Vec<Problem>, inputs: &Inputs<'_>) {
                     *ids.entry(id).or_insert(0) += 1;
                 }
             }
+        }
+        move_problems(out, name, part.all());
+    }
+    for (id, count) in ids {
+        if count > 1 {
+            out.push(problem("revision-id-repeated", inputs.main, id));
+        }
+    }
+}
+
+/// A story part's move ranges and moves paired, from its facts in order.
+pub(super) fn move_problems<'f>(out: &mut Vec<Problem>, name: &str, facts: impl Iterator<Item = &'f ElementFacts>) {
+    {
+        let mut starts: [BTreeMap<&str, &str>; 2] = [BTreeMap::new(), BTreeMap::new()];
+        let mut ends: [BTreeSet<&str>; 2] = [BTreeSet::new(), BTreeSet::new()];
+        for f in facts {
             for mark in &f.moves {
                 let side = usize::from(!mark.from);
                 if mark.start {
@@ -511,11 +566,6 @@ fn tracking(out: &mut Vec<Problem>, inputs: &Inputs<'_>) {
             out.push(problem("move-unpaired", name, *name_));
         }
     }
-    for (id, count) in ids {
-        if count > 1 {
-            out.push(problem("revision-id-repeated", inputs.main, id));
-        }
-    }
 }
 
 /// `comments.xml` and the modern parts beside it agree; every comment is referenced.
@@ -527,11 +577,22 @@ fn comment_parts(out: &mut Vec<Problem>, inputs: &Inputs<'_>) {
             .flatten()
             .and_then(|p| inputs.facts(&p).map(|f| Arc::clone(&f.root)))
     };
-    let Some(comments) = root_of(REL_COMMENTS) else { return };
     let references: HashSet<Option<String>> = inputs
         .story_facts()
         .flat_map(|(_, p)| p.all().flat_map(|f| f.comment_refs.iter().cloned()).collect::<Vec<_>>())
         .collect();
+    comment_parts_with(out, main, root_of, &references);
+}
+
+/// [`comment_parts`] given the parts' roots by relationship type and the comment
+/// references in the stories.
+pub(super) fn comment_parts_with(
+    out: &mut Vec<Problem>,
+    main: &str,
+    root_of: impl Fn(&str) -> Option<Arc<Element>>,
+    references: &HashSet<Option<String>>,
+) {
+    let Some(comments) = root_of(REL_COMMENTS) else { return };
     let mut last_ids = Vec::new();
     for comment in comments.child_elements().filter(|c| c.name().is(Some(W), "comment")) {
         let id = comment.attribute(Some(W), "id").map(str::to_owned);
@@ -586,7 +647,7 @@ fn comment_parts(out: &mut Vec<Problem>, inputs: &Inputs<'_>) {
 }
 
 /// `commentsExtended`: an entry for each comment's last paragraph, parents that exist.
-fn extended_entries(out: &mut Vec<Problem>, main: &str, extended: &Element, last_ids: &[String]) {
+pub(super) fn extended_entries(out: &mut Vec<Problem>, main: &str, extended: &Element, last_ids: &[String]) {
     // a dict by paraId: the last entry of a key is the one kept
     let mut entries: HashMap<String, Arc<Element>> = HashMap::new();
     for n in extended
@@ -612,7 +673,7 @@ fn extended_entries(out: &mut Vec<Problem>, main: &str, extended: &Element, last
 }
 
 /// The paraId (upper-cased) of a comment's last paragraph, `""` when it has none.
-fn last_paragraph_id(comment: &Element) -> String {
+pub(super) fn last_paragraph_id(comment: &Element) -> String {
     let mut last = None;
     let mut stack: Vec<&Element> = vec![comment];
     let mut order = Vec::new();

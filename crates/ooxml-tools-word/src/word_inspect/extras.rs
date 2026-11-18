@@ -333,7 +333,7 @@ fn range_value(docx: &Docx, part: &str, start: &[u32], end: Option<&[u32]>) -> V
 pub(super) fn cell(docx: &Docx, address: &str) -> Option<Value> {
     let found = in_table(docx, address).ok()??;
     let column = found.column?;
-    let table = found.part.ids.tables.get(found.table)?;
+    let table = found.part.ids.tables().get(found.table)?;
     let (row_path, _) = table.rows.get(found.row)?;
     let row = at_path(found.part.root(), row_path)?;
     let (tc, start) = cells_of(row)

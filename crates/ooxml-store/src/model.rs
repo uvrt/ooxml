@@ -34,6 +34,21 @@ pub trait DocModel: Clone + Send + Sync + 'static {
     /// is not known).
     fn written(change: &Self::Change, into: &mut KeySet<Self::Key>);
 
+    /// Derive now what a version keeps beside its content (its indexes), from the version
+    /// before it. The store calls it on each version it publishes, so every head has them
+    /// and a version's cost is that of its own change: a change applied to the head (an id
+    /// drawn from it) and the next version both derive from the head's. Nothing by default.
+    fn settle(&self) {}
+
+    /// Add to `into` the keys of [`DocModel::written`] that `change` writes as a merge made
+    /// where it is applied (an id drawn from the version it lands on, a name added to a
+    /// list): a transaction that read one conflicts with it, but two that both write one
+    /// do not, as their changes give the serial result in either commit order. None by
+    /// default.
+    fn merged(change: &Self::Change, into: &mut KeySet<Self::Key>) {
+        let _ = (change, into);
+    }
+
     /// `change`, made on a version `past` had not been applied to, moved to apply after
     /// `past` (design section 5: a commit's patches rebased through those committed since
     /// its snapshot). Called only when the two transactions' keys are disjoint; an error

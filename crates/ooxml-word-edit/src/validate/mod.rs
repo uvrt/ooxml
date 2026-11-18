@@ -1,29 +1,33 @@
 //! Owns: validation per change (design sections 5 and 7): docx-agent's problems of a
-//! version ([`problems`], its `validate.py` `check`), found from facts memoised by content
-//! -- each block's ([`ElementFacts`], one walk of the block, kept while the block is
-//! unchanged) and each part's (kept while the part is unchanged) -- so a new version reads
-//! only its changed blocks; the delta against a baseline as the save gate compares it
-//! ([`Delta`]); and the largest annotation id in use ([`annotation_ceiling`]), which
-//! tracked edits number their revisions from.
+//! version ([`problems`], its `validate.py` `check`) read from the version's [`Tally`] --
+//! each block's facts memoised by content ([`ElementFacts`], one walk of the block, kept
+//! while the block is unchanged), held in persistent per-part trees and whole-document
+//! counts that a new version takes from the previous one and changes by its changed
+//! blocks; the delta against a baseline as the save gate compares it ([`Delta`]); the
+//! largest annotation id in use ([`annotation_ceiling`]), which tracked edits number their
+//! revisions from; and who still has revisions or comments ([`author_in_use`]).
 //!
-//! The whole-document rules are folded from the memoised facts of every block: no block's
-//! XML is read again, and the fold is pointer and counter work. The full check without
-//! memos ([`full_problems`]) is the test oracle.
+//! No block's XML is read again and no version folds every block. The full check from
+//! scratch ([`full_problems`]) is the test oracle.
 //!
 //! Must not: change a document, or hold anything but caches that belong to the document.
 
+mod counts;
 mod facts;
 mod grid;
+mod kept;
 mod order;
 mod rules;
+mod tally;
 
 pub(crate) use facts::ElementFacts;
+pub(crate) use tally::Tally;
 
 use crate::doc::WordDoc;
 use crate::Result;
 use ooxml_derive::{CacheBudget, Memo, Weigh};
 use ooxml_word_model::ids::W;
-use ooxml_xml::{Element, Node, Tree};
+use ooxml_xml::{Element, Node};
 use order::Orders;
 use rules::{body_problem, Inputs, PartFacts};
 use std::fmt;
@@ -100,20 +104,13 @@ impl Weigh for Held<ElementFacts> {
     }
 }
 
-impl Weigh for Held<PartFacts> {
-    fn weight(&self) -> usize {
-        std::mem::size_of::<PartFacts>() + 8 * self.facts.blocks.len()
-    }
-}
-
 /// The facts of one document's blocks and parts, memoised by content (an element's
 /// identity: green nodes are immutable).
 pub struct Facts {
     orders: Orders,
+    /// The facts of a node that holds none (text between blocks), shared.
+    empty: Arc<ElementFacts>,
     blocks: Mutex<Memo<usize, Held<ElementFacts>>>,
-    parts: Mutex<Memo<(usize, String), Held<PartFacts>>>,
-    /// Each part's latest facts read: the next version's are made from them.
-    latest: Mutex<std::collections::HashMap<String, Arc<PartFacts>>>,
 }
 
 impl fmt::Debug for Facts {
@@ -137,10 +134,14 @@ impl Facts {
     pub fn new(budget: Arc<dyn CacheBudget>) -> Facts {
         Facts {
             orders: Orders::load(),
-            blocks: Mutex::new(Memo::new(Arc::clone(&budget))),
-            parts: Mutex::new(Memo::new(budget)),
-            latest: Mutex::new(std::collections::HashMap::new()),
+            empty: Arc::new(ElementFacts::default()),
+            blocks: Mutex::new(Memo::new(budget)),
         }
+    }
+
+    /// The child orders validation checks against.
+    pub(crate) fn orders(&self) -> &Orders {
+        &self.orders
     }
 
     /// The facts of one element (a block), from the memo when it is unchanged.
@@ -162,36 +163,8 @@ impl Facts {
         facts
     }
 
-    fn part(&self, name: &str, tree: &Tree, kind: Kind) -> Arc<PartFacts> {
-        let root = tree.root();
-        let key = (Arc::as_ptr(root) as usize, name.to_owned());
-        let held = self.parts.lock().unwrap_or_else(PoisonError::into_inner).get(&key);
-        if let Some(held) = held.filter(|h| Arc::ptr_eq(&h.element, root)) {
-            return held.facts;
-        }
-        let previous = self
-            .latest
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .get(name)
-            .cloned();
-        let facts = Arc::new(self.read_part(root, kind, previous.as_deref()));
-        self.latest
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .insert(name.to_owned(), Arc::clone(&facts));
-        let held = Held {
-            element: Arc::clone(root),
-            facts: Arc::clone(&facts),
-        };
-        self.parts
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .insert(key, held);
-        facts
-    }
-
-    fn read_part(&self, root: &Arc<Element>, kind: Kind, previous: Option<&PartFacts>) -> PartFacts {
+    /// A part read whole, for the oracle (every block's facts looked up or read).
+    fn read_part(&self, root: &Arc<Element>, kind: Kind) -> PartFacts {
         let body = (kind == Kind::Main).then(|| root.find(Some(W), "body")).flatten();
         let holder: Option<&Arc<Element>> = match kind {
             Kind::Main => body,
@@ -202,25 +175,14 @@ impl Facts {
             Some(holder) => holder.children().iter().filter_map(Node::as_element).cloned().collect(),
             None => vec![Arc::clone(root)],
         };
-        // a block at the same place as in the previous reading, the same allocation, has
-        // its facts; only the others are looked up (or read)
-        let blocks = elements
-            .iter()
-            .enumerate()
-            .map(|(k, block)| {
-                previous
-                    .and_then(|p| p.elements.get(k).filter(|e| Arc::ptr_eq(e, block)).and(p.blocks.get(k)))
-                    .map_or_else(|| self.element(block), Arc::clone)
-            })
-            .collect();
+        let blocks = elements.iter().map(|block| self.element(block)).collect();
         let rest = match kind {
             Kind::Other => ElementFacts::default(),
-            Kind::Story => ElementFacts::of_rest(root, None, &self.orders),
-            Kind::Main => ElementFacts::of_rest(root, body.map(|b| &**b), &self.orders),
+            Kind::Story => ElementFacts::of_rest(root, None, &self.orders, true),
+            Kind::Main => ElementFacts::of_rest(root, body.map(|b| &**b), &self.orders, true),
         };
         PartFacts {
             blocks,
-            elements,
             rest,
             root: Arc::clone(root),
             body: (kind == Kind::Main).then(|| body_problem(root)).flatten(),
@@ -235,18 +197,12 @@ struct Read {
     parts: Vec<(String, std::result::Result<Arc<PartFacts>, String>)>,
 }
 
-/// Every XML part of `doc` read for validation: its facts, or why it is not XML.
-fn read_parts(doc: &WordDoc, facts: Option<&Facts>) -> Result<Read> {
+/// Every XML part of `doc` read for validation from scratch (the oracle): its facts, or
+/// why it is not XML.
+fn read_parts(doc: &WordDoc) -> Result<Read> {
     let docx = doc.docx()?;
     let stories: Vec<String> = docx.parts.iter().map(|p| p.part.clone()).collect();
-    let fresh;
-    let facts = match facts {
-        Some(f) => f,
-        None => {
-            fresh = Facts::new(Arc::new(Unlimited));
-            &fresh
-        }
-    };
+    let facts = Facts::new(Arc::new(Unlimited));
     let mut parts = Vec::new();
     for name in doc.package().part_names() {
         if !(name.ends_with(".xml") || name.ends_with(".rels")) {
@@ -260,7 +216,7 @@ fn read_parts(doc: &WordDoc, facts: Option<&Facts>) -> Result<Read> {
             Kind::Other
         };
         let found = match doc.package().tree(&name) {
-            Ok(Some(tree)) => Ok(facts.part(&name, &tree, kind)),
+            Ok(Some(tree)) => Ok(Arc::new(facts.read_part(tree.root(), kind))),
             Ok(None) => continue,
             Err(error) => Err(error.to_string()),
         };
@@ -278,13 +234,7 @@ fn read_parts(doc: &WordDoc, facts: Option<&Facts>) -> Result<Read> {
 /// # Errors
 /// When the document cannot be read as a Word document.
 pub fn problems(doc: &WordDoc) -> Result<Vec<Problem>> {
-    let read = read_parts(doc, Some(&doc.shared().facts))?;
-    Ok(rules::problems(&Inputs {
-        package: doc.package(),
-        main: &read.main,
-        stories: &read.stories,
-        parts: &read.parts,
-    }))
+    Ok(kept::problems(&*doc.tally()?, doc.package()))
 }
 
 /// The problems of `doc` found with no memo at all: the oracle [`problems`] is tested
@@ -293,7 +243,7 @@ pub fn problems(doc: &WordDoc) -> Result<Vec<Problem>> {
 /// # Errors
 /// As [`problems`].
 pub fn full_problems(doc: &WordDoc) -> Result<Vec<Problem>> {
-    let read = read_parts(doc, None)?;
+    let read = read_parts(doc)?;
     Ok(rules::problems(&Inputs {
         package: doc.package(),
         main: &read.main,
@@ -307,20 +257,7 @@ pub fn full_problems(doc: &WordDoc) -> Result<Vec<Problem>> {
 /// # Errors
 /// When the document cannot be read as a Word document.
 pub(crate) fn unstamped_drawings(doc: &WordDoc, part: &str) -> Result<bool> {
-    let docx = doc.docx()?;
-    let Some(story) = docx.part(part) else { return Ok(false) };
-    let kind = if story.part == docx.main {
-        Kind::Main
-    } else {
-        Kind::Story
-    };
-    let facts = doc.shared().facts.part(&story.part, &story.tree, kind);
-    Ok(facts
-        .blocks
-        .iter()
-        .map(|b| &**b)
-        .chain(std::iter::once(&facts.rest))
-        .any(|f| f.unstamped_drawings > 0))
+    Ok(kept::unstamped_drawings(&*doc.tally()?, part))
 }
 
 /// The largest annotation id in use in any story of `doc`, `-1` when none is.
@@ -328,23 +265,16 @@ pub(crate) fn unstamped_drawings(doc: &WordDoc, part: &str) -> Result<bool> {
 /// # Errors
 /// When the document cannot be read as a Word document.
 pub(crate) fn annotation_ceiling(doc: &WordDoc) -> Result<i64> {
-    let docx = doc.docx()?;
-    let facts = &doc.shared().facts;
-    let mut ceiling = -1;
-    for story in &docx.parts {
-        let kind = if story.part == docx.main {
-            Kind::Main
-        } else {
-            Kind::Story
-        };
-        let part = facts.part(&story.part, &story.tree, kind);
-        for f in part.blocks.iter().map(|b| &**b).chain(std::iter::once(&part.rest)) {
-            if let Some(max) = f.annotation_max {
-                ceiling = ceiling.max(max);
-            }
-        }
-    }
-    Ok(ceiling)
+    Ok(kept::annotation_ceiling(&*doc.tally()?))
+}
+
+/// Whether `author` made a revision or a comment still in `doc` (docx-agent's
+/// `_authors_in_use`).
+///
+/// # Errors
+/// When the document cannot be read as a Word document.
+pub(crate) fn author_in_use(doc: &WordDoc, author: &str) -> Result<bool> {
+    Ok(doc.tally()?.counts.author_in_use(author))
 }
 
 /// A budget with no limit, for the oracle's memo-free check.

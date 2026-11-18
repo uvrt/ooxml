@@ -125,7 +125,7 @@ impl Reader<'_> {
         let Some(story) = self.docx.part(part) else {
             return (Vec::new(), false);
         };
-        let Some(entry) = story.ids.table_at(&table.path).cloned() else {
+        let Some(entry) = story.ids.table_at(&table.path) else {
             return (Vec::new(), false);
         };
         let root = Arc::clone(story.root());

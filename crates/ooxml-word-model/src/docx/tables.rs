@@ -174,9 +174,8 @@ impl<'a> TableGrid<'a> {
         let paragraphs: Vec<String> = self
             .part
             .ids
-            .paragraphs
+            .paragraphs_within(path)
             .iter()
-            .filter(|p| p.path.starts_with(path))
             .map(|p| paragraph_text(&p.element, View::Current))
             .collect();
         Some(paragraphs.join("\n"))

@@ -96,7 +96,7 @@ pub fn find_text(args: &FindText, version: &Version<'_>, cancel: &dyn Cancel) ->
         None => docx
             .parts
             .iter()
-            .map(|p| (&**p, (0..p.ids.paragraphs.len()).collect()))
+            .map(|p| (&**p, (0..p.ids.paragraphs().len()).collect()))
             .collect(),
         Some(range) => {
             let mut call = args.clone();
@@ -119,7 +119,7 @@ pub fn find_text(args: &FindText, version: &Version<'_>, cancel: &dyn Cancel) ->
     for (part, paragraphs) in scopes {
         cancel.check().map_err(cancelled)?;
         for k in paragraphs {
-            let Some(entry) = part.ids.paragraphs.get(k) else {
+            let Some(entry) = part.ids.paragraphs().get(k) else {
                 continue;
             };
             let line = paragraph_text(&entry.element, View::Current);

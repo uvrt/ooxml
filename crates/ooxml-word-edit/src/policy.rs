@@ -55,14 +55,9 @@ impl Stamp {
         value.to_string()
     }
 
-    /// Whether ids were given.
-    pub(crate) fn gave(&self, first: i64) -> bool {
-        self.next != first
-    }
-
-    /// The author.
-    pub(crate) fn author(&self) -> &str {
-        &self.tracking.author
+    /// The id the next record would get (the ids given are those below it).
+    pub(crate) fn next(&self) -> i64 {
+        self.next
     }
 
     /// A revision record (`w:ins`, `w:del`), detached: its id, author, date and UTC date.

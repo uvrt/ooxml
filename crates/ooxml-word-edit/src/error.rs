@@ -42,6 +42,9 @@ pub enum EditError {
     /// The store refused a change.
     #[error(transparent)]
     Store(#[from] StoreError<Key, ModelError>),
+    /// A change could not be made on the version.
+    #[error(transparent)]
+    Model(#[from] ModelError),
 }
 
 /// A result of this crate.

@@ -13,6 +13,8 @@ pub struct Txn<'s, D: DocModel> {
     work: D,
     reads: KeySet<D::Key>,
     writes: KeySet<D::Key>,
+    /// The written keys that are merges ([`DocModel::merged`]).
+    merges: KeySet<D::Key>,
     changes: Vec<D::Change>,
     ids: &'s IdAllocator,
 }
@@ -22,6 +24,7 @@ pub struct Txn<'s, D: DocModel> {
 pub struct Savepoint<D: DocModel> {
     work: D,
     writes: KeySet<D::Key>,
+    merges: KeySet<D::Key>,
     changes: usize,
 }
 
@@ -33,6 +36,7 @@ impl<'s, D: DocModel> Txn<'s, D> {
             work,
             reads: KeySet::new(),
             writes: KeySet::new(),
+            merges: KeySet::new(),
             changes: Vec::new(),
             ids,
         }
@@ -65,6 +69,7 @@ impl<'s, D: DocModel> Txn<'s, D> {
         next.apply(&change).map_err(StoreError::Model)?;
         self.work = next;
         D::written(&change, &mut self.writes);
+        D::merged(&change, &mut self.merges);
         self.changes.push(change);
         Ok(())
     }
@@ -95,6 +100,7 @@ impl<'s, D: DocModel> Txn<'s, D> {
         Savepoint {
             work: self.work.clone(),
             writes: self.writes.clone(),
+            merges: self.merges.clone(),
             changes: self.changes.len(),
         }
     }
@@ -103,6 +109,7 @@ impl<'s, D: DocModel> Txn<'s, D> {
     pub fn rollback(&mut self, point: Savepoint<D>) {
         self.work = point.work;
         self.writes = point.writes;
+        self.merges = point.merges;
         self.changes.truncate(point.changes);
     }
 
@@ -112,6 +119,7 @@ impl<'s, D: DocModel> Txn<'s, D> {
             work: self.work,
             reads: self.reads,
             writes: self.writes,
+            merges: self.merges,
             changes: self.changes,
         }
     }
@@ -123,5 +131,6 @@ pub(crate) struct TxnParts<D: DocModel> {
     pub(crate) work: D,
     pub(crate) reads: KeySet<D::Key>,
     pub(crate) writes: KeySet<D::Key>,
+    pub(crate) merges: KeySet<D::Key>,
     pub(crate) changes: Vec<D::Change>,
 }
