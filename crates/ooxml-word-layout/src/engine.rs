@@ -356,14 +356,18 @@ impl WordLayout {
         };
         out.stories = crate::geometry::stories::page_stories(&mut job, layout, &geometry.frame, (page, info));
         out.opening = crate::geometry::page_opening(&mut job, layout, &geometry);
-        if let Some(laid) = layout.laid_page(page) {
-            match crate::geometry::footnotes::page_footnotes(&mut job, layout, &geometry.frame, laid) {
-                Ok(found) => out.footnotes = found,
-                Err(why) => out.unpainted.push(why.to_owned()),
+        let before = page.checked_sub(1).and_then(|p| layout.laid_page(p));
+        let found = match (layout.laid_page(page), before) {
+            (Some(laid), _) => crate::geometry::footnotes::page_footnotes(&mut job, layout, &geometry.frame, laid),
+            // The rest of a note going on to a page of its own.
+            (None, Some(before)) => {
+                crate::geometry::footnotes::continued_footnotes(&mut job, layout, &geometry.frame, before)
             }
-            if laid.continued.is_some() {
-                out.unpainted.push("a note going on to a page of its own".to_owned());
-            }
+            (None, None) => Ok(Vec::new()),
+        };
+        match found {
+            Ok(found) => out.footnotes = found,
+            Err(why) => out.unpainted.push(why.to_owned()),
         }
         out
     }

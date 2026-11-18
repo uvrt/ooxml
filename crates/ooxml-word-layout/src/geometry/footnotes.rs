@@ -255,6 +255,32 @@ pub fn page_footnotes(
     Ok(note_stack(job, layout.mode15, &stack)?.into_iter().collect())
 }
 
+/// The rest of a note a page ended by a forced break could not hold, on the page of its
+/// own it takes in mode 15 (`continuation_page`): at that page's foot, under the
+/// continuation separator. `before` is the page the forced break ended.
+pub fn continued_footnotes(
+    job: &mut StoryJob<'_, '_>,
+    layout: &DocumentLayout,
+    frame: &PageFrame,
+    before: &LaidPage,
+) -> Result<Vec<StoryPage>, &'static str> {
+    let Some(rest) = &before.continued else {
+        return Ok(Vec::new());
+    };
+    let section = layout.sections.get(frame.section).ok_or("no section")?;
+    let stack = Stack {
+        carried: rest,
+        placed: &[],
+        props: &section.props,
+        left: frame.left,
+        clip: None,
+        place: Place::Foot(frame.bottom),
+        column: None,
+        separator_only: false,
+    };
+    Ok(note_stack(job, layout.mode15, &stack)?.into_iter().collect())
+}
+
 /// Where a stack not cut at a column's edge goes: its foot on `bottom`, or under
 /// `w:pos="beneathText"` straight under the body's last line.
 fn place(props: &SectionProps, laid: &LaidPage, bottom: Px) -> Place {
