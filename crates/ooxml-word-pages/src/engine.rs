@@ -9,21 +9,27 @@
 //! nothing of it. A change of the document's fonts (its font table or embedded faces)
 //! starts a new generation: new memos, nothing laid out from the old.
 //!
+//! What it keeps is bounded (lane L4b, design section 6, Memory): its memos are swept once
+//! a version is laid out (what no version in use holds goes), and what it painted is kept
+//! by page within its budget's bounded account, the least recently used let go first
+//! ([`EngineBudgets`]).
+//!
 //! Must not: be used by two callers at once (its owner locks it), or keep more than the
 //! last version laid out.
 
+use crate::causes::{context_cause, part_reason, whole_cause, RelaidCause};
+use crate::drawing_said::DrawingWarnings;
 use crate::drawings::WordDrawings;
 use crate::error::{Fallback, PagesError};
 use crate::fonts::{DocumentFonts, FontSetup};
 use crate::pictures::PackagePictures;
 use crate::support;
+use crate::text_boxes::{text_boxes, TextBoxJob};
 use crate::version::{LaidVersion, PageView};
-use crate::warnings::{Approximation, DrawingSaid, LayoutWarning};
 use ooxml_base::{DigestKey, Limits, Locale};
-use ooxml_derive::CacheBudget;
+use ooxml_derive::{CacheBudget, Memo, Weigh};
 use ooxml_opc::Package;
 use ooxml_word_layout::paint::svg::{page_svg, Drawings, Pictures, SvgContext};
-use ooxml_word_layout::paint::text_box::{paint_text_box, TextBoxPaint};
 use ooxml_word_layout::paint::{paint_page, GlyphSize, PagePaint, PaintContext};
 use ooxml_word_layout::tables::WordTables;
 use ooxml_word_layout::WordLayout;
@@ -54,6 +60,24 @@ pub struct EngineStats {
     pub open_time: Duration,
     /// Time spent laying out.
     pub layout_time: Duration,
+    /// Memo entries swept (no version in use held them).
+    pub swept: u64,
+    /// Pages painted that were kept painted already.
+    pub paint_hits: u64,
+    /// Pages whose warnings were said again as the version before's same page said them,
+    /// and pages walked for them.
+    pub pages_said: (u64, u64),
+}
+
+impl EngineStats {
+    /// Count a version laid out: from the one before (`relaid`) or whole.
+    fn count_laid(&mut self, relaid: bool) {
+        if relaid {
+            self.relaid += 1;
+        } else {
+            self.full += 1;
+        }
+    }
 }
 
 /// What a generation holds: the fonts, the model, the layout's memos, the last version.
@@ -63,6 +87,14 @@ struct Generation {
     model: Model,
     layout: WordLayout,
     last: Option<Arc<LaidVersion>>,
+    /// What each page of the last version said (its warnings), for the pages the next
+    /// version keeps.
+    said: crate::page_said::PageMemo,
+    /// The main part's root and its ids as the last version read them, which the next
+    /// version's ids are found from (only what changed walked again).
+    ids: Option<(Arc<ooxml_xml::Element>, ooxml_word_model::ids::PartIds)>,
+    /// What each page of the version summarised last digested to.
+    summaries: crate::summary::SummaryMemo,
 }
 
 /// A line's paragraph path, its story (a header's or footer's: its kind and part), its
@@ -89,6 +121,35 @@ struct Source {
     package: Package,
 }
 
+/// Where an engine's memory is counted: what the version in use needs (its memos, never
+/// refused) and what can be made again (its pages' paint, within a limit).
+#[derive(Clone)]
+pub struct EngineBudgets {
+    /// The model's and the layout's memos.
+    pub held: Arc<dyn CacheBudget>,
+    /// The pages painted, kept for the next reader while the budget has room.
+    pub paint: Arc<dyn CacheBudget>,
+}
+
+impl std::fmt::Debug for EngineBudgets {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EngineBudgets")
+            .field("held", &self.held.used())
+            .field("paint", &self.paint.used())
+            .finish()
+    }
+}
+
+/// A page painted, as the paint memo keeps it.
+#[derive(Clone)]
+struct Painted(Arc<PagePaint>);
+
+impl Weigh for Painted {
+    fn weight(&self) -> usize {
+        crate::weight::paint_weight(&self.0)
+    }
+}
+
 /// One document's page engine.
 pub struct PageEngine {
     setup: Arc<FontSetup>,
@@ -96,7 +157,11 @@ pub struct PageEngine {
     numbers: ooxml_numfmt::Locale,
     decimal: char,
     glyph_size: GlyphSize,
-    budget: Arc<dyn CacheBudget>,
+    budgets: EngineBudgets,
+    /// Pages painted, by version (its serial) and page.
+    painted: Memo<(u64, usize), Painted>,
+    /// The serial the next version laid out takes.
+    serial: u64,
     limits: Limits,
     generation: Option<Generation>,
     source: Option<Source>,
@@ -143,15 +208,17 @@ impl Default for EngineOptions {
 }
 
 impl PageEngine {
-    /// An engine laying out with `setup`'s fonts, its memos within `budget`.
-    pub fn new(setup: Arc<FontSetup>, options: EngineOptions, budget: Arc<dyn CacheBudget>) -> PageEngine {
+    /// An engine laying out with `setup`'s fonts, its memory counted in `budgets`.
+    pub fn new(setup: Arc<FontSetup>, options: EngineOptions, budgets: EngineBudgets) -> PageEngine {
         PageEngine {
             setup,
             locale: options.locale,
             numbers: options.numbers,
             decimal: options.decimal,
             glyph_size: options.glyph_size,
-            budget,
+            painted: Memo::new(Arc::clone(&budgets.paint)),
+            serial: 0,
+            budgets,
             limits: options.limits,
             generation: None,
             source: None,
@@ -304,7 +371,7 @@ impl PageEngine {
             // old ones is not this version's (the measures are keyed by content), so it is
             // laid out whole, with fresh memos.
             generation.last = None;
-            generation.layout = new_layout(&generation.fonts, &self.locale, &self.budget);
+            generation.layout = new_layout(&generation.fonts, &self.locale, &self.budgets.held);
             cause = Some(context_cause(&self.changed));
         }
         if let Some(why) = support::unsupported(&document) {
@@ -329,40 +396,40 @@ impl PageEngine {
             return Ok(Err(why));
         }
         let relaid = !laid.relaid.is_empty();
-        if relaid {
-            self.stats.relaid += 1;
-        } else {
-            self.stats.full += 1;
-        }
-        let pictures = PackagePictures::new(package.clone());
-        let drawings = pictures.clone().map(|p| {
-            let inks: Arc<dyn crate::drawings::vml::Inks> = Arc::clone(&generation.fonts.inks);
-            WordDrawings::new(&document, p, self.numbers.clone(), Some(inks))
-        });
-        let said = {
-            let mut painter = DrawingWarnings {
-                layout: &mut generation.layout,
-                fonts: &generation.fonts,
-                drawings: drawings.as_ref(),
-                glyph_size: self.glyph_size,
-                decimal: self.decimal,
-                text_paths: Vec::new(),
-            };
-            crate::warnings::said(&mut generation.model, &laid, &mut painter, &self.locale)
+        self.stats.count_laid(relaid);
+        let (pictures, drawings) = pictures_of(package, &document, &generation.fonts, &self.numbers);
+        let others_changed = self.changed.iter().any(|name| *name != *document.main_part);
+        let with = SayWith {
+            locale: &self.locale,
+            glyph_size: self.glyph_size,
+            decimal: self.decimal,
+            others_changed,
         };
+        let (said, facts) = say(generation, &laid, drawings.as_ref(), &with);
+        self.stats.pages_said = generation.said.stats();
+        let ids = Arc::new(block_ids(generation, package, &document.main_part));
+        self.serial += 1;
         let version = Arc::new(LaidVersion {
             drawings,
             said,
             relaid_cause: cause,
             layout: laid,
-            facts: std::sync::OnceLock::new(),
+            facts,
             pictures,
             glyphs: Arc::clone(&generation.fonts.glyphs),
             names: Arc::clone(&generation.fonts.names),
             relaid,
             generation: generation.number,
+            serial: self.serial,
+            ids,
+            summary: std::sync::OnceLock::new(),
         });
+        // The version before is no longer the one laid out from: what only it and the
+        // memos held goes now, not with every version kept.
+        drop(previous);
         generation.last = Some(Arc::clone(&version));
+        let swept = generation.model.sweep() + generation.layout.sweep();
+        self.stats.swept += swept as u64;
         Ok(Ok(version))
     }
 
@@ -379,10 +446,13 @@ impl PageEngine {
         self.generations += 1;
         Generation {
             number: self.generations,
-            model: Model::new(Arc::clone(&self.budget), KEY),
-            layout: new_layout(&fonts, &self.locale, &self.budget),
+            model: Model::new(Arc::clone(&self.budgets.held), KEY),
+            layout: new_layout(&fonts, &self.locale, &self.budgets.held),
             fonts,
             last: None,
+            said: crate::page_said::PageMemo::default(),
+            ids: None,
+            summaries: crate::summary::SummaryMemo::default(),
         }
     }
 
@@ -391,11 +461,31 @@ impl PageEngine {
     pub fn forget(&mut self) {
         self.generation = None;
         self.source = None;
+        self.painted.clear();
+    }
+
+    /// What its memos hold now (bytes counted on its `held` budget) and what its pages
+    /// painted hold (on its `paint` budget).
+    pub fn memory(&self) -> (usize, usize) {
+        (self.budgets.held.used(), self.painted.stats().bytes)
     }
 
     /// Page `page` of `version` (0-based, blank pages counted) painted: `None` past its
-    /// last page, or where `version` is not of this engine's generation.
-    pub fn paint(&mut self, version: &LaidVersion, page: usize) -> Option<PagePaint> {
+    /// last page, or where `version` is not of this engine's generation. Kept for the
+    /// next reader while the paint budget has room.
+    pub fn paint(&mut self, version: &LaidVersion, page: usize) -> Option<Arc<PagePaint>> {
+        self.painted_page(version, page, true)
+    }
+
+    /// Page `page` of `version` painted, taken from the pages kept painted where it is one;
+    /// kept for the next reader where `keep` (a reader's page), not where it is painted to
+    /// be read once (a scan of every page: [`PageEngine::page_digests`]).
+    fn painted_page(&mut self, version: &LaidVersion, page: usize, keep: bool) -> Option<Arc<PagePaint>> {
+        let key = (version.serial, page);
+        if let Some(Painted(found)) = self.painted.get(&key) {
+            self.stats.paint_hits += 1;
+            return Some(found);
+        }
         let generation = self.generation.as_mut().filter(|g| g.number == version.generation)?;
         let parts = generation
             .layout
@@ -418,7 +508,11 @@ impl PageEngine {
             let unpainted: Vec<String> = paint.text_boxes.iter().flat_map(|t| t.unpainted.clone()).collect();
             paint.unpainted.extend(unpainted);
         }
+        let paint = Arc::new(paint);
         self.stats.pages_painted += 1;
+        if keep {
+            self.painted.insert(key, Painted(Arc::clone(&paint)));
+        }
         Some(paint)
     }
 
@@ -444,7 +538,7 @@ impl PageEngine {
     /// rules, pictures and drawings), and each line by its paragraph's path and story --
     /// what tells two versions' pages apart without a reader reading them.
     pub fn page_digests(&mut self, version: &LaidVersion, page: usize) -> Option<PageDigests> {
-        let paint = self.paint(version, page)?;
+        let paint = self.painted_page(version, page, false)?;
         let digest = |value: &dyn std::fmt::Debug| ooxml_base::Digest::of(KEY, format!("{value:?}").as_bytes());
         // What docx-agent's summary digests (`_page_digest`, `_line_digest`): what is drawn
         // and where, never the paths it is drawn for (an edit before a page moves them).
@@ -508,10 +602,58 @@ impl PageEngine {
         Some(PageDigests { rest, lines })
     }
 
+    /// Page `page` of `version`'s lines' text, as a check reads it ([`crate::line_text`]):
+    /// from its paint, taken from the pages kept painted where it is one, not kept itself (a
+    /// check reads every page's text once: its reader keeps the text, not the paint).
+    pub fn line_texts(&mut self, version: &LaidVersion, page: usize) -> Option<Vec<crate::line_text::LineText>> {
+        let paint = self.painted_page(version, page, false)?;
+        Some(paint.lines.iter().map(crate::line_text::LineText::of).collect())
+    }
+
+    /// `version`'s summary (docx-agent's `LayoutSummary`): each page's taken from the
+    /// version summarised before where the relayout kept that page with the same items and
+    /// context, the rest painted and digested; `None` where `version` is not of this
+    /// engine's generation.
+    pub fn summary(&mut self, version: &LaidVersion) -> Option<Arc<crate::summary::Summary>> {
+        if let Some(found) = version.summary.get() {
+            return Some(Arc::clone(found));
+        }
+        if self.generation.as_ref().is_none_or(|g| g.number != version.generation) {
+            return None;
+        }
+        let layout = &version.layout;
+        let context = crate::summary::context_of(layout, KEY);
+        let mut pages = Vec::with_capacity(layout.page_count());
+        let mut kept = Vec::new();
+        for page in 0..layout.page_count() {
+            let key = crate::page_said::page_key(layout, page);
+            let found = key
+                .as_ref()
+                .and_then(|k| self.generation.as_mut().and_then(|g| g.summaries.take(k, context)));
+            let summary = match found {
+                Some(found) => found,
+                None => Arc::new(crate::summary::page_summary(self.page_digests(version, page)?, version)),
+            };
+            if let Some(key) = key {
+                kept.push((key, Arc::clone(&summary)));
+            }
+            pages.push(summary);
+        }
+        if let Some(generation) = self.generation.as_mut() {
+            generation.summaries.keep(kept, context);
+        }
+        let made = Arc::new(crate::summary::Summary {
+            known: pages.len(),
+            pages,
+        });
+        Some(Arc::clone(version.summary.get_or_init(|| made)))
+    }
+
     /// Page `page` of `version` as a reader sees it.
     pub fn page(&mut self, version: &LaidVersion, page: usize) -> Option<PageView> {
         let paint = self.paint(version, page)?;
         let blocks = version.page_facts(page).map(|p| p.blocks.clone()).unwrap_or_default();
+        let paint = Arc::unwrap_or_clone(paint);
         Some(PageView {
             page,
             info: paint.geometry.info,
@@ -560,236 +702,87 @@ impl PageEngine {
     }
 }
 
+/// The version's body blocks by id: the main part's ids found from the last version's
+/// (`PartIds::after`), its paths walked.
+fn block_ids(generation: &mut Generation, package: &Package, main: &str) -> crate::ids::BlockIds {
+    let Ok(Some(tree)) = package.tree(main) else {
+        generation.ids = None;
+        return crate::ids::BlockIds::default();
+    };
+    let root = Arc::clone(tree.root());
+    let ids = match generation.ids.take() {
+        Some((old, ids)) if Arc::ptr_eq(&old, &root) => ids,
+        Some((old, ids)) => ids.after(&old, &root),
+        None => ooxml_word_model::ids::PartIds::new("body", &root),
+    };
+    let found = crate::ids::BlockIds::of(&root, &ids);
+    generation.ids = Some((root, ids));
+    found
+}
+
+/// A version's pictures (its package less its text parts) and its drawings' painter.
+fn pictures_of(
+    package: &Package,
+    document: &ooxml_word_model::WordDocument,
+    fonts: &DocumentFonts,
+    numbers: &ooxml_numfmt::Locale,
+) -> (Option<PackagePictures>, Option<WordDrawings>) {
+    let pictures = PackagePictures::new(package);
+    let drawings = pictures.clone().map(|p| {
+        let inks: Arc<dyn crate::drawings::vml::Inks> = Arc::clone(&fonts.inks);
+        WordDrawings::new(document, p, numbers.clone(), Some(inks))
+    });
+    (pictures, drawings)
+}
+
+/// What a version's warnings are said with, beyond its engine generation.
+struct SayWith<'a> {
+    locale: &'a Locale,
+    glyph_size: GlyphSize,
+    decimal: char,
+    /// A part beside the main one changed since the version before.
+    others_changed: bool,
+}
+
+/// What `laid` says (its warnings and approximations), and its facts where saying them
+/// made them; the pages the version before kept said again as they were.
+fn say(
+    generation: &mut Generation,
+    laid: &ooxml_word_layout::DocumentLayout,
+    drawings: Option<&WordDrawings>,
+    with: &SayWith<'_>,
+) -> (
+    crate::warnings::Said,
+    std::sync::OnceLock<ooxml_word_layout::facts::LayoutFacts>,
+) {
+    let facts = std::sync::OnceLock::new();
+    if with.others_changed {
+        // A part beside the main one changed (a chart's, a picture's, a story's): what a
+        // kept page's drawings said may have changed with it.
+        generation.said = crate::page_said::PageMemo::default();
+        generation.summaries = crate::summary::SummaryMemo::default();
+    }
+    let mut painter = DrawingWarnings {
+        layout: &mut generation.layout,
+        fonts: &generation.fonts,
+        drawings,
+        glyph_size: with.glyph_size,
+        decimal: with.decimal,
+        text_paths: Vec::new(),
+    };
+    let said = crate::warnings::said(
+        &mut generation.model,
+        laid,
+        &mut painter,
+        with.locale,
+        &facts,
+        &mut generation.said,
+    );
+    (said, facts)
+}
+
 /// A layout engine with no memos, measuring with `fonts`.
 fn new_layout(fonts: &DocumentFonts, locale: &Locale, budget: &Arc<dyn CacheBudget>) -> WordLayout {
     let faces: Arc<dyn ooxml_word_layout::Faces> = Arc::clone(&fonts.glyphs) as Arc<dyn ooxml_word_layout::Faces>;
     WordLayout::new(faces, Arc::new(WordTables), locale.clone(), budget, KEY)
-}
-
-/// Why a version was laid out whole although a version before was laid out
-/// (docx2svg's `Layout.relaid_cause`, in its words, `relayout.FALLBACKS`).
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct RelaidCause {
-    /// docx2svg's reason: `styles`, `numbering`, `settings`, `theme`, `fonts`,
-    /// `sections`, `headers-footers`.
-    pub reason: &'static str,
-    /// The body element it is at (`w:body/w:p[4]`), where it is one.
-    pub at: Option<String>,
-    /// That element's first paragraph's `w14:paraId`.
-    pub para_id: Option<String>,
-    /// The part that changed, where it is a part.
-    pub part: Option<String>,
-}
-
-/// The kind of change a part's name says (`_PART_REASONS`).
-fn part_reason(name: &str) -> Option<&'static str> {
-    let story = |n: &str| {
-        let n = n
-            .strip_prefix("word/_rels/")
-            .and_then(|n| n.strip_suffix(".rels"))
-            .unwrap_or(n);
-        let n = n.strip_prefix("word/").unwrap_or(n);
-        ["header", "footer"].iter().any(|k| {
-            n.strip_prefix(k)
-                .and_then(|rest| rest.strip_suffix(".xml"))
-                .is_some_and(|digits| digits.chars().all(|c| c.is_ascii_digit()))
-        })
-    };
-    match name {
-        "word/styles.xml" | "word/stylesWithEffects.xml" => Some("styles"),
-        "word/numbering.xml" => Some("numbering"),
-        "word/settings.xml" => Some("settings"),
-        "word/fontTable.xml" => Some("fonts"),
-        "word/footnotes.xml" | "word/endnotes.xml" => Some("notes"),
-        n if n.starts_with("word/theme/") => Some("theme"),
-        n if n.starts_with("word/fonts/") => Some("fonts"),
-        n if story(n) => Some("headers-footers"),
-        _ => None,
-    }
-}
-
-/// The styles, numbering, settings or theme changed: the first such part, by name.
-fn context_cause(changed: &[String]) -> RelaidCause {
-    changed
-        .iter()
-        .find_map(|n| {
-            part_reason(n)
-                .filter(|r| matches!(*r, "styles" | "numbering" | "settings" | "theme"))
-                .map(|reason| RelaidCause {
-                    reason,
-                    part: Some(n.clone()),
-                    ..RelaidCause::default()
-                })
-        })
-        .unwrap_or(RelaidCause {
-            reason: "styles",
-            ..RelaidCause::default()
-        })
-}
-
-/// Why `laid` was laid out whole from `previous`: its sections changed, or its headers'
-/// and footers' heights.
-fn whole_cause(
-    previous: &ooxml_word_layout::DocumentLayout,
-    laid: &ooxml_word_layout::DocumentLayout,
-    changed: &[String],
-) -> Option<RelaidCause> {
-    if previous.sections != laid.sections {
-        let (old, new) = (&previous.document.sections, &laid.document.sections);
-        let k = (0..new.len().max(old.len()))
-            .find(|k| old.get(*k) != new.get(*k))
-            .unwrap_or(0);
-        let section = new.get(k).or_else(|| new.last());
-        let mut cause = RelaidCause {
-            reason: "sections",
-            ..RelaidCause::default()
-        };
-        if let Some(section) = section {
-            let top: Vec<&ooxml_word_model::model::Paragraph> = laid
-                .document
-                .body
-                .iter()
-                .filter_map(|b| match b {
-                    ooxml_word_model::model::Block::Paragraph(p) => Some(&**p),
-                    ooxml_word_model::model::Block::Table(_) => None,
-                })
-                .collect();
-            if let Some(p) = section.last_paragraph.checked_sub(1).and_then(|k| top.get(k)) {
-                let at: String = p.path.split('/').take(2).collect::<Vec<_>>().join("/");
-                cause.at = Some(at);
-                cause.para_id = p.para_id.as_deref().map(str::to_owned);
-            }
-        }
-        return Some(cause);
-    }
-    if previous.stories != laid.stories {
-        return Some(RelaidCause {
-            reason: "headers-footers",
-            part: changed
-                .iter()
-                .find(|n| part_reason(n) == Some("headers-footers"))
-                .cloned(),
-            ..RelaidCause::default()
-        });
-    }
-    None
-}
-
-/// What a version's drawings say, painted page by page as its warnings are gathered
-/// (docx2svg says them as it draws them, laying out).
-struct DrawingWarnings<'a> {
-    layout: &'a mut WordLayout,
-    fonts: &'a DocumentFonts,
-    drawings: Option<&'a WordDrawings>,
-    glyph_size: GlyphSize,
-    decimal: char,
-    /// The text paths said to be approximated, by part and path: once each, on the first
-    /// page that draws them.
-    text_paths: Vec<(Option<String>, String)>,
-}
-
-impl crate::warnings::PageDrawings for DrawingWarnings<'_> {
-    fn said(&mut self, model: &mut Model, laid: &ooxml_word_layout::DocumentLayout, page: usize) -> Vec<DrawingSaid> {
-        let Some(drawings) = self.drawings else {
-            return Vec::new();
-        };
-        let parts = self.layout.page_parts(model, laid, page);
-        let cx = PaintContext {
-            faces: self.fonts.glyphs.as_ref(),
-            names: self.fonts.names.as_ref(),
-            glyph_size: self.glyph_size,
-            decimal: self.decimal,
-        };
-        let Some(paint) = paint_page(laid, model, page, &parts, &cx) else {
-            return Vec::new();
-        };
-        let number = Some(page + 1);
-        let warning = |code: &str, message: String| {
-            DrawingSaid::Warning(LayoutWarning {
-                code: code.to_owned(),
-                message,
-                page: number,
-            })
-        };
-        let mut out = Vec::new();
-        for path in &paint.unplaced {
-            out.push(warning(
-                "drawing-position-unknown",
-                format!(
-                    "a floating drawing ({path}) is positioned against a frame that is not modelled: it is not drawn"
-                ),
-            ));
-        }
-        let mut defs = ooxml_word_layout::paint::svg::PageDefs::default();
-        for slot in &paint.drawings {
-            if slot.no_overlap {
-                out.push(warning(
-                    "drawing-overlap-not-modelled",
-                    "a floating drawing that may not overlap another (allowOverlap=\"0\") is drawn where it is \
-                     positioned; Word moves it clear of the drawings before it"
-                        .into(),
-                ));
-            }
-            let painted = drawings.paint(slot, &mut defs);
-            let key = (
-                slot.story.as_ref().map(|(_, part)| part.to_string()),
-                slot.path.to_string(),
-            );
-            if painted.approximated && !self.text_paths.contains(&key) {
-                self.text_paths.push(key);
-                out.push(DrawingSaid::Approximation(Approximation {
-                    code: "layout-approximate:text-path".into(),
-                    message: format!(
-                        "a VML text path ({}: a watermark's text) is drawn stretched to its box, in its face, \
-                         colour, opacity and rotation, here and on every page after it that shows it; the glyphs' \
-                         size and place in the box are not measured",
-                        slot.path
-                    ),
-                    page: number,
-                    path: Some(slot.path.to_string()),
-                }));
-            }
-            for (code, message) in painted.warnings {
-                out.push(warning(&code, message));
-            }
-            for frame in drawings.text_frames(slot) {
-                let story = self
-                    .layout
-                    .text_box(model, laid, (&slot.path, &slot.paragraph_path), &frame);
-                for (code, message) in story.said {
-                    out.push(warning(&code, message));
-                }
-            }
-        }
-        out
-    }
-}
-
-/// What laying a page's text boxes out needs: the layout engine, the model, the version
-/// laid out, and the paint's context.
-struct TextBoxJob<'a, 'c> {
-    layout: &'a mut WordLayout,
-    model: &'a mut Model,
-    laid: &'a ooxml_word_layout::DocumentLayout,
-    cx: &'a PaintContext<'c>,
-}
-
-/// The text boxes of a page's drawings, laid out and painted.
-fn text_boxes(job: TextBoxJob<'_, '_>, drawings: &WordDrawings, paint: &PagePaint, page: usize) -> Vec<TextBoxPaint> {
-    let mut out = Vec::new();
-    for (k, slot) in paint.drawings.iter().enumerate() {
-        for frame in drawings.text_frames(slot) {
-            let story = job
-                .layout
-                .text_box(job.model, job.laid, (&slot.path, &slot.paragraph_path), &frame);
-            out.push(paint_text_box(
-                job.laid,
-                job.model,
-                (k, page, slot.story.as_ref()),
-                &story,
-                job.cx,
-            ));
-        }
-    }
-    out
 }

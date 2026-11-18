@@ -244,7 +244,7 @@ from .edit.text_language import facts as text_language_facts
 from .edit import text as _text
 from .edit.document import _cells, _find, _int
 from .edit.effective import PathFinder
-from .layout import PX_PER_PT, _block_id, _story_kind
+from .layout import PX_PER_PT, _block_id, _part_of, _story_kind
 
 if TYPE_CHECKING:  # pragma: no cover
     from .edit.document import Document
@@ -502,33 +502,64 @@ class _Facts:
         return text_language_facts(self.document, keep=keep, whole=scoped is None and self.wanted is None,
                                    top_level=self.top_level, cap=CAP)
 
+    def _text_sizes_of(self, index: int):
+        """Page ``index``'s text not raised or lowered, as ``(key, kind, half_points, chars)``
+        per span with characters that are not white space: from Rust where the page is laid
+        out there (lane L4b: no span read into Python), else from its lines' spans."""
+        layout = self.layout
+        if layout.texts_of is not None:
+            for path, story, part, _number, _inked, sizes, _ink, _widest in layout._raw.line_texts(index):
+                key = layout.id_for_path(_part_of(self.document, path, part), path)
+                kind = _kind(_Story(path, story))
+                for half_points, chars in sizes:
+                    yield key, kind, half_points, chars
+            return
+        for key, line in layout._lines[index]:
+            kind = _kind(line)
+            for span in line.spans:
+                if span.kind not in ("text", "label") or span.vertical_align in ("superscript", "subscript"):
+                    continue
+                chars = sum(1 for c in span.chars if not c.isspace())
+                if chars:
+                    yield key, kind, span.half_points, chars
+
+    def _line_widths_of(self, index: int, page) -> list:
+        """``(path, widths)`` of each body line of page ``index`` (:func:`_line_widths`): from
+        Rust where the page is laid out there (lane L4b), else from its spans."""
+        if self.layout.texts_of is not None:
+            return [(path, None if ink is None else (_pt(ink[1] - ink[0]), _pt(widest)))
+                    for path, story, _part, _n, _i, _s, ink, widest in self.layout._raw.line_texts(index)
+                    if story is None]
+        return [(line.path, _line_widths(line.spans)) for line in page.lines if line.story is None]
+
+    def _inks_of(self, index: int, page) -> list:
+        """``(path, ink)`` of each body line of page ``index`` (:func:`_ink`): from Rust where
+        the page is laid out there (lane L4b), else from its spans."""
+        if self.layout.texts_of is not None:
+            return [(path, ink) for path, story, _part, _n, _i, _s, ink, _w in self.layout._raw.line_texts(index)
+                    if story is None]
+        return [(line.path, _ink(line.spans)) for line in page.lines if line.story is None]
+
     def text_sizes(self, out: dict) -> None:
         smallest: dict[str, float] = {}
         small: dict[tuple, dict] = {}
         for number in range(1, len(self.layout.pages) + 1):
             if self.wanted is not None and number not in self.wanted:
                 continue
-            for key, line in self.layout._lines[number - 1]:
+            for key, kind, half_points, chars in self._text_sizes_of(number - 1):
                 if self.scoped is not None and (key is None or self.layout._canon(key) not in self.scoped):
                     continue
-                kind = _kind(line)
-                for span in line.spans:
-                    if span.kind not in ("text", "label") or span.vertical_align in ("superscript", "subscript"):
+                size = half_points / 2
+                if size < smallest.get(kind, 10_000):
+                    smallest[kind] = size
+                if self.min_size is not None and size < self.min_size and key is not None:
+                    named, minimum = self.minimum(key, kind)
+                    if minimum is None or size >= minimum:
                         continue
-                    chars = sum(1 for c in span.chars if not c.isspace())
-                    if not chars:
-                        continue
-                    size = span.half_points / 2
-                    if size < smallest.get(kind, 10_000):
-                        smallest[kind] = size
-                    if self.min_size is not None and size < self.min_size and key is not None:
-                        named, minimum = self.minimum(key, kind)
-                        if minimum is None or size >= minimum:
-                            continue
-                        entry = small.setdefault((self.layout._canon(key), named, size),
-                                                 {"chars": 0, "pages": set(), "min": minimum})
-                        entry["chars"] += chars
-                        entry["pages"].add(number)
+                    entry = small.setdefault((self.layout._canon(key), named, size),
+                                             {"chars": 0, "pages": set(), "min": minimum})
+                    entry["chars"] += chars
+                    entry["pages"].add(number)
         out["smallest_text"] = {kind: smallest[kind] for kind in sorted(smallest)}
         if self.min_size is None:
             return
@@ -753,7 +784,17 @@ class _Facts:
         found = self.placed.get(self.layout._canon(identifier))
         if not found:
             return False                          # not drawn (hidden, or past a stop)
-        return not any(not c.isspace() for _, line in found for span in line.spans for c in span.chars)
+        texts = self.layout.texts_of
+
+        def inked(page: int, line) -> bool:
+            measured = texts(page - 1).get((line.path, line.number)) if texts is not None and \
+                line.story is None else None
+            if measured is not None:
+                # Lane L4b: a body line's characters counted in Rust, no line read into Python.
+                return measured[0] > 0
+            return any(not c.isspace() for span in line.spans for c in span.chars)
+
+        return not any(inked(page, line) for page, line in found)
 
     def _spacer(self, run: list, before, after) -> dict | None:
         """One run of spacers.  Between two paragraphs the space before and the space after
@@ -1112,14 +1153,13 @@ class _Facts:
             if not any(match and (shown is None or match.group(1) in shown)
                        for _, line in self.layout._body(number - 1) for match in [_CELL_LINE.match(line.path)]):
                 continue
-            for line in page.lines:
-                match = _CELL_LINE.match(line.path) if line.story is None else None
+            for path, widths in self._line_widths_of(number - 1, page):
+                match = _CELL_LINE.match(path)
                 if not match or (shown is not None and match.group(1) not in shown):
                     continue
                 cell = drawn.setdefault(match.group(1), {}).setdefault(
                     (int(match.group(2)) - 1, int(match.group(3)) - 1), {"lines": {}, "words": [], "pages": set()})
                 cell["pages"].add(number)
-                widths = _line_widths(line.spans)
                 if widths is None:
                     continue
                 key = match.group(4)
@@ -1188,9 +1228,9 @@ class _Facts:
                 if match:
                     extent = extents.setdefault(match.group(1), [rule.x, rule.x + rule.width])
                     extent[0], extent[1] = min(extent[0], rule.x), max(extent[1], rule.x + rule.width)
-            for line in page.lines:
-                match = _ROW.match(line.path) if line.story is None else None
-                ink = _ink(line.spans) if match else None
+            for path, ink in self._inks_of(number - 1, page):
+                match = _ROW.match(path)
+                ink = ink if match else None
                 if ink is not None:
                     low, high = ink
                     extent = extents.setdefault(match.group(1), [low, high])
@@ -1312,6 +1352,15 @@ def _all_bold(document: "Document", row) -> bool | None:
                 return False
             found = True
     return found
+
+
+class _Story:
+    """A line's story and path, as :func:`_kind` reads them."""
+
+    __slots__ = ("path", "story")
+
+    def __init__(self, path: str, story: "str | None") -> None:
+        self.path, self.story = path, story
 
 
 def _kind(line) -> str:

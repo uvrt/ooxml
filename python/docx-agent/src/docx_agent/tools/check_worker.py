@@ -12,6 +12,11 @@ ones the caller would have read, for the version it checked.  The caller keeps w
 with the document: the problems (``validate``), the fields, the comparison with the last
 check (from a small :class:`~docx_agent.layout.LayoutSummary`, its ids followed through the
 document's aliases there).
+
+Lane L4b: where the document's version is laid out in Rust, its facts are made in the
+caller's process instead (:func:`docx_agent.layout.check_facts`), by :func:`facts_of` on the
+layout mapped to the caller's own copy of the version -- no worker holds a Rust layout.  This
+task is left for the versions docx2svg's Python layout lays out (the Rust layout's fallbacks).
 """
 
 from __future__ import annotations
@@ -64,12 +69,26 @@ check_bytes.__ooxml_edit_task__ = True  # type: ignore[attr-defined]
 
 
 def _facts(held: Any, data: bytes, options: dict, request: dict) -> dict:
+    def summary() -> LayoutSummary:
+        made = held.extra.get("summary")
+        if made is None:
+            made = held.extra["summary"] = LayoutSummary(opened_layout(held, data, options),
+                                                         held.extra.get("summary before"), keep=True)
+        return made
+
+    return facts_of(opened_layout(held, data, options), held.laid[0], data, options, request, summary)
+
+
+def facts_of(layout: Any, raw: Any, data: bytes, options: dict, request: dict, summary: Any) -> dict:
+    """The facts ``request`` asks (:func:`check_bytes`' list) of ``layout`` -- a
+    :class:`~docx_agent.layout.DocumentLayout` of ``data`` laid out with ``options``, ``raw``
+    its docx2svg (or Rust) layout -- ``summary()`` giving its summary where asked: in a
+    worker (:func:`check_bytes`) or, for a version laid out in Rust, in the caller."""
     from ..layout_facts import layout_facts
     from ..scope import Scope
     from ._base import short
     from .scoped import range_pages
 
-    layout = opened_layout(held, data, options)
     reflow: dict[str, Any] = {"pages": layout.page_count, "complete": layout.pages_known is not None}
     if layout.stopped is not None:
         reflow["stopped"] = {"page": layout.stopped.page, "reason": layout.stopped.reason,
@@ -82,10 +101,7 @@ def _facts(held: Any, data: bytes, options: dict, request: dict) -> dict:
                    "lines": sum(len(layout._body(index)) for index in range(layout.page_count))}
                   if layout.pages_known is not None else {})}
     if request.get("summary"):
-        summary = held.extra.get("summary")
-        if summary is None:
-            summary = held.extra["summary"] = LayoutSummary(layout, held.extra.get("summary before"), keep=True)
-        out["summary"] = summary
+        out["summary"] = summary()
     pages = request.get("pages")
     scoped_pages = pages
     scope = None
@@ -98,7 +114,7 @@ def _facts(held: Any, data: bytes, options: dict, request: dict) -> dict:
             from .keep_trials import keep_effects
 
             caps = request["keeps"]
-            keep_effects(held.laid[0], data, options, layout, scope, out["range"],
+            keep_effects(raw, data, options, layout, scope, out["range"],
                          trials=caps["trials"], seconds=caps["seconds"])
         scoped_pages = on if pages is None else [p for p in on if p in pages]
     if request.get("pages_of") is not None:

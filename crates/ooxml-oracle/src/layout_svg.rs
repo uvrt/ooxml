@@ -30,7 +30,7 @@ pub use ooxml_word_pages::PackagePictures;
 fn pictures_of(bytes: &[u8]) -> Option<PackagePictures> {
     Package::open(Arc::from(bytes), &Limits::default())
         .ok()
-        .and_then(PackagePictures::new)
+        .and_then(|package| PackagePictures::new(&package))
 }
 
 /// Faces named as docx2svg names them on this machine.

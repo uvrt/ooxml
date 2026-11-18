@@ -8,7 +8,8 @@
 //! the handler run on a snapshot, the reply as a [`ooxml_tools::ToolResult`]; and a call's
 //! [`CallContext`]: who calls, its cancellation token and its deadline, read through the
 //! [`ooxml_base::Clock`] and [`ooxml_base::Cancel`] ports of the session's
-//! [`ooxml_base::Context`].
+//! [`ooxml_base::Context`]; and the session's [`MemoryBudget`] (section 6, Memory): what
+//! its documents keep that can be made again, within one limit, counted per document.
 //!
 //! Must not: hold process-wide state (a session is a value; the Python module holds the
 //! sessions), know providers, implement a tool's logic (the `ooxml-tools-*` crates do),
@@ -25,6 +26,7 @@ mod batch;
 mod context;
 mod error;
 mod ids;
+mod memory;
 mod model;
 mod registry;
 mod session;
@@ -34,6 +36,7 @@ pub use batch::{ReadBatch, ReadOp, BATCH_TIMEOUT, MAX_READ_BATCH_CHARS, READ_BAT
 pub use context::{CallContext, CancelToken};
 pub use error::SessionError;
 pub use ids::{DocId, DocKind};
+pub use memory::{Account, MemoryBudget};
 pub use model::{ModelError, PackageDoc, PartChange, PartContent};
 pub use ooxml_store::Caller;
 pub use registry::{ReadHandler, Registry, Tool};

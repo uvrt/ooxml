@@ -8,6 +8,10 @@
 //! drawings that may not overlap), its header's and footer's fields and a shared page's
 //! notes stacked across it; last, line numbers in sections of several columns.
 //!
+//! What a page's body and drawings say is kept by the page as laid out
+//! ([`crate::page_said::PageMemo`]) and said again for a page the next version's relayout
+//! kept, not worked out again: an edit pays for the pages it reached (lane L4b).
+//!
 //! A warning is recorded once (`Layout.warn`'s rule: the same code, message and page); an
 //! approximation is a warning too (`layout-approximate:<reason>`).
 //!
@@ -61,7 +65,7 @@ pub struct Said {
 }
 
 impl Said {
-    fn warn(&mut self, code: impl Into<String>, message: impl Into<String>, page: Option<usize>) {
+    pub(crate) fn warn(&mut self, code: impl Into<String>, message: impl Into<String>, page: Option<usize>) {
         let entry = LayoutWarning {
             code: code.into(),
             message: message.into(),
@@ -69,6 +73,18 @@ impl Said {
         };
         if !self.warnings.contains(&entry) {
             self.warnings.push(entry);
+        }
+    }
+
+    /// Take what `other` said, after what this said: each warning and approximation once.
+    pub(crate) fn extend(&mut self, other: &Said) {
+        for w in &other.warnings {
+            self.warn(w.code.clone(), w.message.clone(), w.page);
+        }
+        for a in &other.approximations {
+            if !self.approximations.contains(a) {
+                self.approximations.push(a.clone());
+            }
         }
     }
 
@@ -130,7 +146,17 @@ fn blocks_hold_drawing(blocks: &[Block]) -> bool {
 
 /// What `layout` says, its paragraphs and tables resolved in `model`; `drawings` paints
 /// the pages that hold drawings for what their painters say.
-pub fn said(model: &mut Model, layout: &DocumentLayout, drawings: &mut dyn PageDrawings, locale: &Locale) -> Said {
+///
+/// `facts` are the version's, made here where its page-number fields need them (and kept
+/// for its readers), else left for them.
+pub fn said(
+    model: &mut Model,
+    layout: &DocumentLayout,
+    drawings: &mut dyn PageDrawings,
+    locale: &Locale,
+    facts: &std::sync::OnceLock<ooxml_word_layout::facts::LayoutFacts>,
+    memo: &mut crate::page_said::PageMemo,
+) -> Said {
     let mut out = Said::default();
     let document = &layout.document;
     for (keyword, why) in cross_reference_problems(document) {
@@ -141,7 +167,7 @@ pub fn said(model: &mut Model, layout: &DocumentLayout, drawings: &mut dyn PageD
         );
     }
     body_style_references(layout, locale, &mut out);
-    body_fields(layout, &mut out);
+    body_fields(layout, facts, &mut out);
     if !layout.settled {
         out.warn(
             "field-layout-unsettled",
@@ -155,6 +181,7 @@ pub fn said(model: &mut Model, layout: &DocumentLayout, drawings: &mut dyn PageD
         tables: HashSet::new(),
         paragraphs: body_paragraphs(&document.body).0,
         drawn: false,
+        counts: HashMap::new(),
     };
     // A header's, footer's or note's drawing may be on any page.
     let everywhere = document.stories.values().any(|b| blocks_hold_drawing(b))
@@ -164,23 +191,30 @@ pub fn said(model: &mut Model, layout: &DocumentLayout, drawings: &mut dyn PageD
             .values()
             .chain(document.endnotes.notes.values())
             .any(|b| blocks_hold_drawing(b));
+    let mut walk = memo.walk();
     for page in 0..layout.page_count() {
-        pages.drawn = everywhere;
-        pages.body(model, layout, page, &mut out);
-        if pages.drawn {
-            for said in drawings.said(model, layout, page) {
-                match said {
-                    DrawingSaid::Warning(w) => out.warn(w.code, w.message, w.page),
-                    DrawingSaid::Approximation(a) => {
-                        let reason = a.code.strip_prefix("layout-approximate:").unwrap_or(&a.code);
-                        out.approximate(reason, &a.message, a.page, a.path.as_deref());
+        let mut body = |out: &mut Said, tables: &mut HashSet<usize>| {
+            std::mem::swap(&mut pages.tables, tables);
+            pages.drawn = everywhere;
+            pages.body(model, layout, page, out);
+            if pages.drawn {
+                for said in drawings.said(model, layout, page) {
+                    match said {
+                        DrawingSaid::Warning(w) => out.warn(w.code, w.message, w.page),
+                        DrawingSaid::Approximation(a) => {
+                            let reason = a.code.strip_prefix("layout-approximate:").unwrap_or(&a.code);
+                            out.approximate(reason, &a.message, a.page, a.path.as_deref());
+                        }
                     }
                 }
             }
-        }
+            std::mem::swap(&mut pages.tables, tables);
+        };
+        walk.page(layout, (page, everywhere), &mut body, &mut out);
         pages.stories(layout, (page, locale), &mut out);
         shared_page_notes(layout, page, &mut out);
     }
+    walk.finish(memo);
     line_numbers(document, &mut out);
     out
 }
@@ -320,7 +354,11 @@ fn shared_page_notes(layout: &DocumentLayout, page: usize, out: &mut Said) {
 }
 
 /// The body's page-number fields that cannot be computed (`_computed_fields`).
-fn body_fields(layout: &DocumentLayout, out: &mut Said) {
+fn body_fields(
+    layout: &DocumentLayout,
+    facts: &std::sync::OnceLock<ooxml_word_layout::facts::LayoutFacts>,
+    out: &mut Said,
+) {
     let (paragraphs, _) = body_paragraphs(&layout.document.body);
     let has = paragraphs.iter().any(|p| {
         p.runs
@@ -330,8 +368,8 @@ fn body_fields(layout: &DocumentLayout, out: &mut Said) {
     if !has {
         return;
     }
-    let facts = ooxml_word_layout::facts::LayoutFacts::of(layout);
-    let numbers = PageNumbers::new(layout, &facts);
+    let facts = facts.get_or_init(|| ooxml_word_layout::facts::LayoutFacts::of(layout));
+    let numbers = PageNumbers::new(layout, facts);
     let marks = bookmarks(&paragraphs);
     for paragraph in &paragraphs {
         for run in paragraph.runs.iter() {
@@ -342,7 +380,7 @@ fn body_fields(layout: &DocumentLayout, out: &mut Said) {
                 let target = ooxml_word_layout::fields::argument(&field.instruction)
                     .and_then(|name| marks.get(name.as_str()))
                     .and_then(|block| paragraphs.get(*block))
-                    .filter(|p| facts.first_page(&p.path).is_some());
+                    .filter(|p| numbers.drawn_on(&p.path).is_some());
                 let Some(target) = target else {
                     out.warn(
                         "field-not-computed:PAGEREF",
@@ -360,7 +398,7 @@ fn body_fields(layout: &DocumentLayout, out: &mut Said) {
                 }
                 continue;
             }
-            if facts.first_page(&paragraph.path).is_none() {
+            if numbers.drawn_on(&paragraph.path).is_none() {
                 continue;
             }
             if let Err(why) = numbers.page_field(&field.instruction, &field.keyword, &paragraph.path) {
@@ -467,6 +505,8 @@ struct PageWalk {
     paragraphs: Vec<std::sync::Arc<Paragraph>>,
     /// The page holds a drawing a painter draws.
     drawn: bool,
+    /// `NUMPAGES` and each section's `SECTIONPAGES`, by section, as counted once.
+    counts: HashMap<usize, (Option<i64>, Option<i64>)>,
 }
 
 impl PageWalk {
@@ -686,7 +726,11 @@ impl PageWalk {
         else {
             return;
         };
-        let counts = page_counts(layout, info.section);
+        // Once per section, not per page: each count walks every page (lane L4b).
+        let counts = *self
+            .counts
+            .entry(info.section)
+            .or_insert_with(|| page_counts(layout, info.section));
         let format = section.properties.page_number_format.as_deref();
         for refs in [headers, footers] {
             let Some(id) = refs.get(info.story.name()) else {

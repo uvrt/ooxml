@@ -13,3 +13,14 @@ def held_lineages() -> dict:
 
 
 held_lineages.__ooxml_edit_task__ = True  # type: ignore[attr-defined]
+
+
+def rust_engines() -> int:
+    """In a worker: how many Rust layout engines it holds (lane L4b: none)."""
+    from docx_agent import pages
+
+    with pages._LOCK:
+        return len(pages._ENGINES)
+
+
+rust_engines.__ooxml_edit_task__ = True  # type: ignore[attr-defined]

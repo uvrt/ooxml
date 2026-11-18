@@ -37,6 +37,7 @@ import weakref
 from collections import Counter, OrderedDict
 from typing import Any
 
+from .. import finalizers
 from .. import incremental as _incremental
 from .classes import once
 
@@ -155,7 +156,8 @@ class RustDoc:
 
 
 def _close_owner(key: str) -> None:
-    """Close the Rust owner ``key``: what a document's finalizer runs, so it holds the key
+    """Close the Rust owner ``key``: what a document's finalizer hands over (run by
+    :func:`docx_agent.finalizers.drain`), so it holds the key
     alone -- never the :class:`RustDoc`, whose mirror reads a copy of the document, which
     would keep the document alive for as long as the finalizer exists (for good)."""
     c = core()
@@ -238,6 +240,9 @@ def open_doc(call: Any) -> RustDoc | None:
         return None
     if core() is None:
         return None
+    # Owners of documents collected since are closed first (their finalizers handed the
+    # close over, docx_agent.finalizers), before any lock here is taken.
+    finalizers.drain()
     # One opening at a time per document: a check that comes meanwhile takes what it made.
     with live.__dict__.setdefault("_rust_opening", threading.Lock()):
         found = live.__dict__.get("_rust_doc")
@@ -310,7 +315,9 @@ def _open(call: Any, copy: Any, live: Any, found: Any) -> "RustDoc | None":
     # document when it is collected -- closed, it goes at once (layout.release_document).
     # Q3: the finalizer holds the owner's key alone; one that held ``doc.close`` held the
     # mirror, its read copy and through it the document, which was then never collected.
-    doc.finalizer = weakref.finalize(live, _close_owner, key)
+    # L4b: the finalizer only hands the close over (docx_agent.finalizers): it may fire
+    # anywhere, inside any lock the close would take.
+    doc.finalizer = weakref.finalize(live, finalizers.later, _close_owner, key)
     # Versions committed while it was made: followed now where the document is free, as
     # each commit would have; else by the next commit (never a wait for an edit in flight).
     if live.history.version != version and entry.lock.acquire(blocking=False):

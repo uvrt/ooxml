@@ -154,7 +154,6 @@ type Key = (String, bool, bool);
 #[derive(Default)]
 struct Caches {
     resolved: HashMap<Key, Resolution>,
-    loaded: HashMap<FaceLoc, Option<Arc<Face>>>,
     defaults: HashMap<Key, Option<(FaceLoc, Substitution)>>,
     glyphs: HashMap<(Key, char), Option<GlyphAdvance>>,
 }
@@ -247,18 +246,7 @@ impl WordFonts {
     }
 
     fn load(&self, at: FaceLoc) -> Option<Arc<Face>> {
-        if let Some(found) = self.caches().loaded.get(&at) {
-            return found.clone();
-        }
-        let path = self.catalogue.file(at.file)?;
-        let face = self
-            .store
-            .read(path)
-            .ok()
-            .and_then(|data| Face::new(data, at.number, path).ok())
-            .map(Arc::new);
-        self.caches().loaded.insert(at, face.clone());
-        face
+        self.catalogue.load(self.store.as_ref(), at)
     }
 
     /// The face Word lays `family` out with in a style, and its grade.

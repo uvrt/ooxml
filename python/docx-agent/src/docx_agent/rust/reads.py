@@ -42,6 +42,8 @@ from typing import Any, Callable
 
 from ooxml_edit.tools import Result
 
+from .. import finalizers
+
 log = logging.getLogger("docx_agent.rust")
 
 #: The versions of a document kept for the calls reading them.
@@ -194,6 +196,7 @@ _MIRRORS_LOCK = threading.Lock()
 def _mirror(copy: Any) -> "Mirror | None":
     """The Rust session's copy of the document ``copy`` is a version of, opened from
     ``copy``'s bytes the first time; ``None`` where ``copy`` is not a read copy."""
+    finalizers.drain()
     live = copy.__dict__.get("_live")
     session = _session()
     if live is None or session is None:
@@ -210,7 +213,8 @@ def _mirror(copy: Any) -> "Mirror | None":
         parts = {part: identity for part, (identity, _) in _identities(copy.package).items()}
         made = Mirror(session, doc, parts)
         made.versions[copy.history.version] = session.head(doc)
-        weakref.finalize(live, _close, session, doc)
+        # L4b: the finalizer only hands the close over (docx_agent.finalizers).
+        weakref.finalize(live, finalizers.later, _close, session, doc)
         live.__dict__["_rust_reads"] = made
         return made
 

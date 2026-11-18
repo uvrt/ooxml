@@ -42,6 +42,10 @@ the version's bytes and its pages -- never a layout -- and the worker sends back
 the pages changed, one page's SVG.  A document no toolbox laid out (``view(document)``, an
 application's own) is laid out here, the same tasks run in this process.
 
+Lane L4b: a version the Rust layout lays out is read in this process instead, by the
+document's engine (no worker holds a Rust layout); the worker only for the versions it
+falls back on.
+
 **Locks** (the order is :mod:`docx_agent.layout`'s; round 34's rule: never wait for a
 layout in progress holding the document's lock).  ``view(session, doc)`` takes the
 document's lock to read its bytes and version, and lets it go while its task runs; the task
@@ -245,6 +249,10 @@ def _run(document: Any, task: Any, data: bytes, options: dict, request: dict, *,
     else:
         state = _held_state(document, data, options, may_wait)
     runner = runner_of(document)
+    if runner is not None and _pages.lay_out(data, options, _layout.lineage(document)) is not None:
+        # Lane L4b: a version the Rust layout lays out is laid out and read here, by the
+        # document's engine; a worker only for the versions it falls back on.
+        runner = None
     try:
         if runner is None:
             result = task(data, dict(options), state, request)
@@ -349,10 +357,9 @@ def _versions(held: _Held) -> "OrderedDict[str, _Version]":
 
 def _lay_out_version(laid: "tuple | None", data: bytes, options: dict, lineage: str) -> _Version:
     """A version this process no longer holds, laid out again -- in Rust where it lays it out
-    (lane L4: by an engine of the lineage's for its views, no version of the document), else
-    from ``laid``, a layout of the same document, where there is one (the pages it reaches
-    only)."""
-    rust = _pages.lay_out(data, options, f"{lineage}/views")
+    (lane L4; lane L4b: by the document's own engine), else from ``laid``, a layout of the
+    same document, where there is one (the pages it reaches only)."""
+    rust = _pages.lay_out(data, options, lineage, make=False)
     if rust is not None:
         return _Version((rust, None, list(rust.warnings)), data, options)
     if laid is not None and _pages.is_rust(laid[0]):

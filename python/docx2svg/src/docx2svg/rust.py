@@ -18,6 +18,12 @@ SVG the Rust paint does not draw as docx2svg does (what a page's paint lists as 
 is the same: :meth:`RustLayout.page_svg` answers ``None`` for it, counted.  Pictures, shapes,
 groups and charts -- floating or inline -- are painted in Rust (lane L4c).
 
+**Memory** (lane L4b).  Every engine counts in the process's ``ooxml_core.MemoryBudget``
+(:func:`memory_budget`): its memos as held (swept once a version is laid out, so they stay at
+what the newest version needs), its pages' paint within the limit, kept in Rust, the least
+recently used let go first; a host reserves the layouts it keeps from the same budget.  A
+:class:`RustLayout`'s ``weight`` is what its version alone holds in Rust now.
+
 Its ``warnings``, ``approximations``, ``coverage`` and ``relaid_cause`` are docx2svg's, in
 docx2svg's order: the layout's own computed in Rust (``ooxml_word_pages::warnings``), the
 faces' in the order first met.
@@ -42,8 +48,10 @@ if TYPE_CHECKING:
 _FALLBACKS: Counter = Counter()
 _FALLBACKS_LOCK = threading.Lock()
 
-#: How many pages' paint a layout keeps for its readers (the rest painted again when read).
-PAINTED_PAGES = 24
+#: How many pages a layout keeps as docx2svg's objects for its readers (lane L4b: four; the
+#: pages' paint is kept in Rust, within the process's memory budget, and read from there
+#: again).
+PAINTED_PAGES = 4
 
 
 def count_fallback(reason: str) -> None:
@@ -118,6 +126,27 @@ def unsupported_options(options) -> str | None:
     return None
 
 
+# -- the memory budget (lane L4b) ------------------------------------------------------------
+
+#: What the process's engines keep that can be made again (their pages' paint) and what a
+#: host's own caches reserve (layouts kept for readers) by default, bytes.
+DEFAULT_MEMORY = 256 * 2 ** 20
+
+_BUDGET: list = []
+_BUDGET_LOCK = threading.Lock()
+
+
+def memory_budget(limit: int | None = None) -> Any:
+    """The process's ``ooxml_core.MemoryBudget``: every engine counts in it (its memos as
+    held, its pages' paint within the limit), and a host reserves what it keeps of the
+    layouts from it (``memory_budget().account()``).  Made on first use with ``limit``
+    bytes (default :data:`DEFAULT_MEMORY`); a later ``limit`` is ignored."""
+    with _BUDGET_LOCK:
+        if not _BUDGET:
+            _BUDGET.append(_core().MemoryBudget(int(limit) if limit else DEFAULT_MEMORY))
+        return _BUDGET[0]
+
+
 # -- the engine ------------------------------------------------------------------------------
 
 
@@ -140,8 +169,8 @@ class Engine:
         self.key = _engine_key(options)
         _, decimal, _, language, thousands, date_order, list_separator = self.key
         self._pages = ooxml_core.WordPages(word_fonts(options), locale=language, decimal=decimal,
-                                           glyph_size=options.glyph_size, thousands=thousands,
-                                           date_order=date_order, list_separator=list_separator)
+                                           glyph_size=options.glyph_size,
+                                           numbers=(thousands, date_order, list_separator), budget=memory_budget())
         self._lock = threading.Lock()
         #: The last version asked for, by the digest of its bytes, and its layout (``None``: a
         #: fallback): asked again, the same answer.
@@ -176,6 +205,15 @@ class Engine:
         with self._lock:
             self._last = (digest, made)
         return made
+
+    def known(self, data: bytes) -> "RustLayout | None":
+        """The layout of ``data`` where it is the last version this engine laid out, else
+        ``None``: nothing is laid out."""
+        digest = hashlib.sha256(data).digest()
+        with self._lock:
+            if self._last is not None and self._last[0] == digest:
+                return self._last[1]
+        return None
 
     def forget(self) -> None:
         """Let go of the last version and the memos."""
@@ -217,6 +255,8 @@ class RustLayout:
         self.relaid_cause = cause
         self._lock = threading.Lock()
         self._painted: OrderedDict[int, dict] = OrderedDict()
+        self._boxes: OrderedDict[int, dict] = OrderedDict()
+        self._texts: OrderedDict[int, list] = OrderedDict()
         frames = laid.pages()
         self.pages = [RustPage(self, index, row) for index, row in enumerate(frames)]
         self._blocks: list | None = None
@@ -276,10 +316,16 @@ class RustLayout:
 
     def body_lines(self) -> list:
         """Per page, its body's lines without their spans: ``(path, number, top, pitch,
-        baseline, column)``, exact -- what an index of where blocks are drawn reads, with
-        no page painted."""
-        return [[(path, number, _q(top), _q(pitch), baseline, column)
-                 for path, number, top, pitch, baseline, column in page] for page in self.laid.body_lines()]
+        baseline, column, id)``, exact -- what an index of where blocks are drawn reads, with
+        no page painted; ``id`` the paragraph's as docx-agent names it in these bytes
+        (lane L4b: found in Rust, ``None`` where no body paragraph is the line's)."""
+        return [[(path, number, _q(top), _q(pitch), baseline, column, found)
+                 for path, number, top, pitch, baseline, column, found in page] for page in self.laid.body_lines()]
+
+    def ids_of(self, paths: list) -> list:
+        """The ids, as docx-agent names them in these bytes, of the body paragraphs, tables
+        and rows at ``paths`` (``None`` where a path names none)."""
+        return self.laid.ids_of(list(paths))
 
     def painted(self, index: int) -> dict:
         """Page ``index`` (0-based) painted, as docx2svg's objects: kept for the next reader
@@ -294,6 +340,41 @@ class RustLayout:
             self._painted[index] = made
             while len(self._painted) > PAINTED_PAGES:
                 self._painted.popitem(last=False)
+        return made
+
+    def boxes(self, index: int) -> dict:
+        """Page ``index``'s rules, pictures and floats as docx2svg's objects, without its
+        lines (lane L4b: a reader of these alone reads no line into Python); kept among the
+        last :data:`PAINTED_PAGES` read, or taken from the page painted whole."""
+        with self._lock:
+            found = self._painted.get(index) or self._boxes.get(index)
+            if found is not None:
+                return found
+        made = _paint(self.laid.page(index, False))
+        with self._lock:
+            self._boxes[index] = made
+            while len(self._boxes) > PAINTED_PAGES:
+                self._boxes.popitem(last=False)
+        return made
+
+    def line_texts(self, index: int) -> list:
+        """Page ``index``'s lines' text as a check reads it, measured in Rust (lane L4b):
+        per line ``(path, story, part, number, inked, sizes, ink, widest)`` -- ``inked`` its
+        characters that are not white space, ``sizes`` ``[(half_points, chars)]`` of its text
+        not raised or lowered, ``ink`` ``(left, right)`` and ``widest`` exact device px, or
+        ``None`` for a line of no ink.  Kept among the last :data:`PAINTED_PAGES` read."""
+        with self._lock:
+            found = self._texts.get(index)
+            if found is not None:
+                self._texts.move_to_end(index)
+                return found
+        made = [(path, story, part, number, inked, sizes,
+                 None if ink is None else (_q(ink[0]), _q(ink[1])), None if widest is None else _q(widest))
+                for path, story, part, number, inked, sizes, ink, widest in self.laid.line_texts(index)]
+        with self._lock:
+            self._texts[index] = made
+            while len(self._texts) > PAINTED_PAGES * 64:
+                self._texts.popitem(last=False)
         return made
 
     def page_svg(self, index: int, *, width: int | None = None, height: int | None = None) -> str | None:
@@ -402,15 +483,15 @@ class RustPage:
 
     @property
     def rules(self) -> list:
-        return self._layout.painted(self.number)["rules"]
+        return self._layout.boxes(self.number)["rules"]
 
     @property
     def pictures(self) -> list:
-        return self._layout.painted(self.number)["pictures"]
+        return self._layout.boxes(self.number)["pictures"]
 
     @property
     def floats(self) -> list:
-        return self._layout.painted(self.number)["floats"]
+        return self._layout.boxes(self.number)["floats"]
 
     @property
     def boxes(self) -> list:
@@ -430,6 +511,56 @@ class RustPage:
         return [line for line in lines if line.story] + [line for line in lines if not line.story]
 
 
+class _Xs(list):
+    """A span's pens as exact lengths, each made a :class:`~fractions.Fraction` when the list
+    is first read (lane L4b: most of a page's spans are never read for their pens, and their
+    Fractions were most of what painting a page into Python cost).  A list in every other
+    way: any read of it makes it first."""
+
+    __slots__ = ("_raw",)
+
+    def __init__(self, raw: Sequence) -> None:
+        super().__init__()
+        self._raw: "Sequence | None" = raw
+
+    def _made(self) -> "_Xs":
+        raw = object.__getattribute__(self, "_raw")
+        if raw is not None:
+            self._raw = None
+            list.extend(self, (_q(x) for x in raw))
+        return self
+
+    def __len__(self) -> int:
+        raw = object.__getattribute__(self, "_raw")
+        return len(raw) if raw is not None else list.__len__(self)
+
+    def __reduce_ex__(self, protocol):
+        return (list, ([*list.__iter__(self._made())],))
+
+    def __copy__(self) -> list:
+        return [*list.__iter__(self._made())]
+
+    __hash__ = None  # type: ignore[assignment]
+
+
+def _made_first(name: str):
+    method = getattr(list, name)
+
+    def call(self, *args):
+        return method(self._made(), *args)
+
+    call.__name__ = name
+    return call
+
+
+for _name in ("__getitem__", "__iter__", "__reversed__", "__contains__", "__eq__", "__ne__", "__lt__",
+              "__le__", "__gt__", "__ge__", "__add__", "__mul__", "__rmul__", "__iadd__", "__imul__",
+              "__setitem__", "__delitem__", "__repr__", "__str__", "append", "extend", "insert", "pop", "remove",
+              "index", "count", "copy", "sort", "reverse", "clear"):
+    if hasattr(list, _name):
+        setattr(_Xs, _name, _made_first(_name))
+
+
 def _paint(view: dict) -> dict:
     """A page's paint as docx2svg's ``Line``, ``Span``, ``Rule``, ``Picture`` and ``Float``."""
     from .drawing import Primitive
@@ -441,7 +572,7 @@ def _paint(view: dict) -> dict:
                     story=story, part=part, column=column)
         for (span_path, chars, xs, y, end, face, bold, italic, half_points, color, underline, strike,
              double_strike, highlight, shading, kind, line_baseline, vertical_align) in spans:
-            line.spans.append(Span(span_path, list(chars), [_q(x) for x in xs], y, _q(end), face, bold, italic,
+            line.spans.append(Span(span_path, list(chars), _Xs(xs), y, _q(end), face, bold, italic,
                                    half_points, color=color, underline=underline, strike=strike,
                                    double_strike=double_strike, highlight=highlight, shading=shading, kind=kind,
                                    line_baseline=line_baseline, vertical_align=vertical_align))
@@ -478,7 +609,7 @@ def svgs(layout: RustLayout, options) -> "list[str] | None":
 
 
 __all__: Sequence[str] = ("Engine", "RustLayout", "RustPage", "available", "count_fallback", "fallbacks",
-                          "svgs", "unsupported_options", "word_fonts")
+                          "memory_budget", "svgs", "unsupported_options", "word_fonts")
 
 
 # -- a page's PNG ----------------------------------------------------------------------------
