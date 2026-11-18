@@ -90,7 +90,7 @@ impl PartIds {
             out.before = Arc::new(before);
             out.after = Arc::new(after);
         }
-        if let Some((start, old_end, new_end)) = old.changed_span(new) {
+        for (start, old_end, new_end) in old.changed_spans(new) {
             let fresh: Vec<Node> = new.iter().skip(start).take(new_end - start).cloned().collect();
             out.replace(start, old_end, &fresh);
         }

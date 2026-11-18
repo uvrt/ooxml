@@ -274,8 +274,8 @@ impl Reader<'_> {
             return self.new_part(name, root, old.role.clone(), counts);
         }
         let mut items = old.items.clone();
-        if let Some((start, old_end, new_end)) = was.children().changed_span(now.children()) {
-            let (_, ranks) = self.ranks(Some(now));
+        let (_, ranks) = self.ranks(Some(now));
+        for (start, old_end, new_end) in was.children().changed_spans(now.children()) {
             for k in start..old_end {
                 if let Some(item) = old.items.get(k) {
                     counts.apply(name, &old.role, &item.facts, -1);

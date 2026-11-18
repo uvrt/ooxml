@@ -335,6 +335,35 @@ impl Children {
         Some((start, la - suffix, lb - suffix))
     }
 
+    /// The stretches where `other` differs from this list, each as [`Children::changed_span`]
+    /// gives one: for two lists of one length (blocks replaced in place, however far
+    /// apart), each run of places whose nodes differ, so the places between are not
+    /// visited again; otherwise the one stretch from the first difference to the last.
+    /// Each stretch's places are those of both lists (the lengths agree before it).
+    pub fn changed_spans(&self, other: &Children) -> Vec<(usize, usize, usize)> {
+        let Some((start, old_end, new_end)) = self.changed_span(other) else {
+            return Vec::new();
+        };
+        if self.len() != other.len() {
+            return vec![(start, old_end, new_end)];
+        }
+        let mut out: Vec<(usize, usize, usize)> = Vec::new();
+        let pairs = self.iter().zip(other.iter()).enumerate().skip(start).take(old_end - start);
+        for (k, (a, b)) in pairs {
+            if a.same(b) {
+                continue;
+            }
+            match out.last_mut() {
+                Some(last) if last.1 == k => {
+                    last.1 = k + 1;
+                    last.2 = k + 1;
+                }
+                _ => out.push((k, k + 1, k + 1)),
+            }
+        }
+        out
+    }
+
     /// The tree's height (0 for one leaf): for tests and measurements.
     pub fn height(&self) -> usize {
         let mut h = 0;
@@ -448,6 +477,8 @@ mod tests {
         assert_eq!(a.changed_span(&d), Some((150, 153, 150)));
         let e = b.splice(100..101, vec![el(1003)]).unwrap();
         assert_eq!(a.changed_span(&e), Some((5, 101, 101)));
+        assert_eq!(a.changed_spans(&e), vec![(5, 6, 6), (100, 101, 101)]);
+        assert_eq!(a.changed_spans(&c), vec![(10, 10, 12)]);
     }
 
     fn values(c: &Children) -> Vec<String> {
