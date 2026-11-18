@@ -13,6 +13,7 @@
 mod index;
 mod ledger;
 mod sha256;
+pub use sha256::sha256;
 mod state;
 
 pub use index::{Entry, IdState, ParagraphId, PartIds, Path, TableId};

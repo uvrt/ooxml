@@ -249,6 +249,66 @@ impl<'t, 's> EditSink<'t, 's> {
         })
     }
 
+    /// Record that `paragraph`'s properties were `old` (a detached clean copy) before the
+    /// edit, by the policy: untracked nothing; tracked a `w:pPrChange`
+    /// ([`crate::marks::record_paragraph_change`], docx-agent's `_track_properties`).
+    ///
+    /// # Errors
+    /// When the annotation ids cannot be read.
+    pub(crate) fn paragraph_properties_changed(
+        &mut self,
+        work: &mut Work,
+        paragraph: crate::work::Id,
+        old: crate::work::Id,
+    ) -> Result<TextWrite> {
+        let RevisionPolicy::Tracked(tracking) = self.policy.clone() else {
+            return Ok(TextWrite::default());
+        };
+        let shared = self.doc().shared_handle();
+        let orders = shared.facts.orders();
+        let (released, dated, numbered) = self.tracked(tracking, |stamp| {
+            crate::marks::record_paragraph_change(work, paragraph, old, stamp, orders);
+            Ok(Vec::new())
+        })?;
+        Ok(TextWrite {
+            changed: true,
+            released,
+            dated,
+            annotations: Some(numbered),
+        })
+    }
+
+    /// Record the deletion of `paragraph` of `work` by the policy (tracked only: an
+    /// untracked deletion removes it outright): its content and mark, or -- `previous`,
+    /// the paragraph before it when it is last in its container -- that one's mark, this
+    /// one taking its properties ([`crate::delete_write::track_delete_paragraph`]).
+    ///
+    /// # Errors
+    /// When the annotation ids cannot be read.
+    pub(crate) fn delete_paragraph(
+        &mut self,
+        work: &mut Work,
+        paragraph: crate::work::Id,
+        previous: Option<crate::work::Id>,
+    ) -> Result<TextWrite> {
+        let RevisionPolicy::Tracked(tracking) = self.policy.clone() else {
+            return Ok(TextWrite::default());
+        };
+        let shared = self.doc().shared_handle();
+        let orders = shared.facts.orders();
+        let (released, dated, numbered) = self.tracked(tracking, |stamp| {
+            Ok(crate::delete_write::track_delete_paragraph(
+                work, paragraph, previous, stamp, orders,
+            ))
+        })?;
+        Ok(TextWrite {
+            changed: true,
+            released,
+            dated,
+            annotations: Some(numbered),
+        })
+    }
+
     /// Replace `count` children of the element at `parent` (child indexes from the root)
     /// of `part`, from its child `start` on, by `nodes`; ids drawn into them where the
     /// change is applied.
