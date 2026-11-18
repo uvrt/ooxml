@@ -133,7 +133,10 @@ impl Run {
         // read only when a cell's record is settled (docx-agent's `_edit_of`)
         let structural = mine.iter().any(|r| {
             r.element.name().namespace() == Some(crate::names::W)
-                && matches!(r.element.name().local(), "cellIns" | "cellDel" | "cellMerge" | "tcPrChange")
+                && matches!(
+                    r.element.name().local(),
+                    "cellIns" | "cellDel" | "cellMerge" | "tcPrChange"
+                )
         });
         let groups: Vec<Vec<Box<[u32]>>> = if structural {
             let by_id: HashMap<String, Box<[u32]>> = records(docx)

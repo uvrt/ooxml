@@ -8,8 +8,8 @@
 //!
 //! Must not: decide what a review accepts or rejects, or reach outside the tree it is given.
 
-use crate::names::{M, R, W};
 pub(crate) use crate::marks::{insert_in_order, mark_record};
+use crate::names::{M, R, W};
 use crate::work::{Id, Work};
 
 /// Revision containers: what a run-level record wraps, and a mark's or row's own record.
