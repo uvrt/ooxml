@@ -95,6 +95,67 @@ pub(crate) fn sync(sink: &mut EditSink<'_, '_>) -> Result<()> {
     Ok(())
 }
 
+/// Every text box of every story part whose fallback does not hold what its choice holds
+/// gets its choice's content (docx-agent's `_sync_text_boxes(None)`, after a review: the
+/// boxes an edit did not touch too).
+///
+/// # Errors
+/// When a part is not XML.
+pub(crate) fn sync_all(sink: &mut EditSink<'_, '_>) -> Result<()> {
+    let stories: Vec<String> = sink.docx()?.parts.iter().map(|p| p.part.clone()).collect();
+    for part in &stories {
+        let Some(tree) = sink.doc().tree(part)? else { continue };
+        let mut found = Vec::new();
+        holders(tree.root(), &mut Vec::new(), &mut found);
+        let mut synced: Vec<Vec<u32>> = Vec::new();
+        for (path, holder) in found {
+            if synced.iter().any(|s| path.starts_with(s)) {
+                continue; // inside a text box written whole just now
+            }
+            if sync_holder(sink, part, &path, &holder)? {
+                synced.push(path);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The text box `holder` at `path` of `part` given its choice's content in its fallback,
+/// when the two differ; whether it was.
+fn sync_holder(sink: &mut EditSink<'_, '_>, part: &str, path: &[u32], holder: &Arc<Element>) -> Result<bool> {
+    let (Some(choice), Some(fallback)) = (holder.find(Some(MC), "Choice"), holder.find(Some(MC), "Fallback")) else {
+        return Ok(false);
+    };
+    let (Some(source), Some(target)) = (first_content(choice), first_content(fallback)) else {
+        return Ok(false);
+    };
+    if *source == *target {
+        return Ok(false);
+    }
+    let Some(tree) = sink.doc().tree(part)? else {
+        return Ok(false);
+    };
+    let mut work = Work::of(holder, scope_above(tree.root(), path));
+    let root = work.root();
+    let content = |work: &Work, side: &str| {
+        let at = work.find(root, MC, side)?;
+        work.iter(at, W, &["txbxContent"]).into_iter().next()
+    };
+    let (Some(from), Some(into)) = (content(&work, "Choice"), content(&work, "Fallback")) else {
+        return Ok(false);
+    };
+    for child in work.children(into).to_vec() {
+        work.remove(child);
+    }
+    for child in work.children(from).to_vec() {
+        let copy = work.deep_copy(child);
+        work.append(into, copy);
+    }
+    let synced = work.build().ok_or_else(|| EditError::Path(part.to_owned()))?;
+    sink.replace(part, path, synced, vec![crate::doc::Key::Part(Arc::from(part))])?;
+    Ok(true)
+}
+
 fn sync_block(sink: &mut EditSink<'_, '_>, part: &str, block: &[u32], old: Option<&Arc<Element>>) -> Result<()> {
     let before: HashSet<usize> = old.map_or_else(HashSet::new, |old| {
         let mut found = Vec::new();
@@ -114,34 +175,7 @@ fn sync_block(sink: &mut EditSink<'_, '_>, part: &str, block: &[u32], old: Optio
             if before.contains(&(Arc::as_ptr(&holder) as usize)) {
                 continue; // the same text box as before the edit
             }
-            let (Some(choice), Some(fallback)) = (holder.find(Some(MC), "Choice"), holder.find(Some(MC), "Fallback"))
-            else {
-                continue;
-            };
-            let (Some(source), Some(target)) = (first_content(choice), first_content(fallback)) else {
-                continue;
-            };
-            if *source == *target {
-                continue;
-            }
-            let mut work = Work::of(&holder, scope_above(tree.root(), &path));
-            let root = work.root();
-            let content = |work: &Work, side: &str| {
-                let at = work.find(root, MC, side)?;
-                work.iter(at, W, &["txbxContent"]).into_iter().next()
-            };
-            let (Some(from), Some(into)) = (content(&work, "Choice"), content(&work, "Fallback")) else {
-                continue;
-            };
-            for child in work.children(into).to_vec() {
-                work.remove(child);
-            }
-            for child in work.children(from).to_vec() {
-                let copy = work.deep_copy(child);
-                work.append(into, copy);
-            }
-            let synced = work.build().ok_or_else(|| EditError::Path(part.to_owned()))?;
-            sink.replace(part, &path, synced, vec![crate::doc::Key::Part(Arc::from(part))])?;
+            sync_holder(sink, part, &path, &holder)?;
         }
     }
     Ok(())
