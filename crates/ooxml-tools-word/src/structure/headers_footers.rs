@@ -1,9 +1,14 @@
-//! Owns: `word_headers_footers`' definition (docx-agent's `tools/structure.py`,
-//! `word_headers_footers`).
+//! Owns: `word_headers_footers` (docx-agent's `tools/structure.py`,
+//! `word_headers_footers`): its definition and its edits through the edit core's story
+//! commands. A page number is a field (`word_fields`' port): not yet, said in `unported`.
 //!
 //! Must not: change the document but through a command.
 
-use ooxml_tools::{ArgEnum, ToolArgs};
+use super::common::{call, outcome, policy, refused, Outcome};
+use crate::review::Editing;
+use ooxml_tools::{ArgEnum, Done, ToolArgs, ToolResult};
+use ooxml_word_edit::{LinkToPrevious, SetStoryText, UnlinkFromPrevious};
+use serde_json::{json, Value};
 
 /// Which story.
 #[derive(ArgEnum, Debug, Clone, Copy, PartialEq, Eq)]
@@ -75,4 +80,156 @@ pub struct WordHeadersFooters {
     pub text: Option<String>,
     /// set: after_text, the bare number; page_x_of_y, 'Page X of Y' (' | ' after text).
     pub page_number: Option<PageNumber>,
+}
+
+impl StoryType {
+    /// Its name.
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            StoryType::Default => "default",
+            StoryType::First => "first",
+            StoryType::Even => "even",
+        }
+    }
+}
+
+/// `word_headers_footers` (docx-agent's `word_headers_footers`): a section's header or
+/// footer set, removed, linked to the previous section's or unlinked -- one command.
+#[must_use]
+pub fn word_headers_footers(args: &WordHeadersFooters, editing: &Editing<'_>) -> ToolResult<Value> {
+    if let Err(error) = crate::review::stopped(editing.cancel) {
+        return ToolResult::failed(error);
+    }
+    let section = args.section.clone();
+    let which = match args.which {
+        Which::Header => "header",
+        Which::Footer => "footer",
+    };
+    let kind = args.kind.unwrap_or(StoryType::Default).name();
+    let way = call("word_sections", &[("doc", json!(args.doc)), ("action", json!("list"))]);
+    let story = Story {
+        section,
+        which,
+        kind,
+        way,
+    };
+    match args.action {
+        HeaderAction::Remove | HeaderAction::Link => link(args, editing, &story),
+        HeaderAction::Unlink => unlink(editing, &story),
+        HeaderAction::Set => set(args, editing, &story),
+    }
+}
+
+/// The story a call names: its section, which and kind, and the call that lists sections.
+struct Story {
+    section: String,
+    which: &'static str,
+    kind: &'static str,
+    way: ooxml_tools::TryCall,
+}
+
+fn link(args: &WordHeadersFooters, editing: &Editing<'_>, story: &Story) -> ToolResult<Value> {
+    let Story {
+        section,
+        which,
+        kind,
+        way,
+    } = story;
+    let (which, kind) = (*which, *kind);
+    let editor = editing.editor;
+    let command = LinkToPrevious {
+        section: section.clone(),
+        which: which.to_owned(),
+        kind: kind.to_owned(),
+    };
+    match editor.run(editing.caller, &command) {
+        Ok(done) if !done.out.changed => {
+            let note = format!("{section} had no {kind} {which} of its own: no change");
+            let mut result = outcome(&[done.out.into()], note.clone(), None);
+            result.warnings.push(note);
+            result
+        }
+        Ok(done) => {
+            let summary = if args.action == HeaderAction::Remove {
+                format!("Removed the {kind} {which} of {section}")
+            } else {
+                format!("Linked the {kind} {which} of {section} to the previous section's")
+            };
+            outcome(&[done.out.into()], summary, None)
+        }
+        Err(error) => refused(error, way.clone()),
+    }
+}
+
+fn unlink(editing: &Editing<'_>, story: &Story) -> ToolResult<Value> {
+    let Story {
+        section,
+        which,
+        kind,
+        way,
+    } = story;
+    let (which, kind) = (*which, *kind);
+    let editor = editing.editor;
+    let command = UnlinkFromPrevious {
+        section: section.clone(),
+        which: which.to_owned(),
+        kind: kind.to_owned(),
+    };
+    match editor.run(editing.caller, &command) {
+        Ok(done) => {
+            let id = done.out.id.clone().unwrap_or_default();
+            let changed = done.out.changed;
+            let mut result = outcome(
+                &[done.out.into()],
+                format!("Unlinked: {id}"),
+                Some(json!({"story": id})),
+            );
+            if !changed {
+                let summary = format!("{section} had its own {kind} {which} already ({id}): no change");
+                if let ooxml_tools::Outcome::Done(made) = &mut result.outcome {
+                    made.summary.clone_from(&summary);
+                }
+                result.warnings.push(summary);
+            }
+            result
+        }
+        Err(error) => refused(error, way.clone()),
+    }
+}
+
+fn set(args: &WordHeadersFooters, editing: &Editing<'_>, story: &Story) -> ToolResult<Value> {
+    let Story {
+        section,
+        which,
+        kind,
+        way,
+    } = story;
+    let (which, kind) = (*which, *kind);
+    let editor = editing.editor;
+    if args.page_number.is_some_and(|p| p != PageNumber::None) {
+        let mut done = Done::new(String::new());
+        done.unported
+            .push("a page number in a header or footer (a field)".to_owned());
+        return ToolResult::done(done);
+    }
+    let command = SetStoryText {
+        section: section.clone(),
+        which: which.to_owned(),
+        kind: kind.to_owned(),
+        text: args.text.clone().unwrap_or_default(),
+        policy: policy(editing),
+    };
+    match editor.run(editing.caller, &command) {
+        Ok(done) => {
+            let story = done.out.story.clone();
+            let steps: Vec<Outcome> = done.out.steps.into_iter().map(Outcome::from).collect();
+            outcome(
+                &steps,
+                format!("Set the {kind} {which} of {section}"),
+                Some(json!({"story": story})),
+            )
+        }
+        Err(error) => refused(error, way.clone()),
+    }
 }

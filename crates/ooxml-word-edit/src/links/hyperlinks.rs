@@ -189,6 +189,15 @@ impl Command<WordDoc> for AddHyperlink {
 
     fn prepare(&self, tx: &mut Txn<'_, WordDoc>) -> Result<LinkEdited> {
         let mut sink = EditSink::new(tx, self.policy.clone());
+        let out = self.edit(&mut sink)?;
+        crate::after::after_edit(&mut sink)?;
+        Ok(out)
+    }
+}
+
+impl AddHyperlink {
+    /// The edit, through `sink`.
+    fn edit(&self, sink: &mut EditSink<'_, '_>) -> Result<LinkEdited> {
         let docx = sink.docx()?;
         if self.anchor.is_some() {
             sink.read_everything(); // the bookmark it goes to, wherever it is
@@ -203,7 +212,7 @@ impl Command<WordDoc> for AddHyperlink {
         let part = span.part.clone();
         sink.read(block_key(&part, &paragraph.id));
         let id = range_id(&crate::text_range::range(sink.doc(), &docx, &self.range)?);
-        let renamed = stamp_document(&mut sink, &docx)?;
+        let renamed = stamp_document(&mut *sink, &docx)?;
         let new_id = crate::ranges::renamed_id(&renamed, &paragraph.id);
         let tree = sink.doc().tree(&part)?.ok_or_else(|| EditError::NoPart(part.clone()))?;
         let element = at_path(tree.root(), &paragraph.path).ok_or_else(|| EditError::Path(part.clone()))?;
@@ -219,9 +228,9 @@ impl Command<WordDoc> for AddHyperlink {
                 "{id} spans runs in different containers (an insertion, a content control); a hyperlink cannot wrap them"
             )));
         }
-        let target = self.target(&mut sink, &part)?;
+        let target = self.target(&mut *sink, &part)?;
         let link = wrap(&mut work, &runs, parent, target);
-        let style = crate::builtin::ensure(&mut sink, "Hyperlink", "character")?;
+        let style = crate::builtin::ensure(&mut *sink, "Hyperlink", "character")?;
         let shared = sink.doc().shared_handle();
         for &run in &runs {
             set_run_style(&mut work, run, &style, shared.facts.orders());

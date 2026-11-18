@@ -496,6 +496,7 @@ def main(argv: list[str] | None = None) -> int:
     rust = run_rust(args.rust, manifest)
     got = {key: value.get("rust") for key, value in rust.items()}
     rewritten = 0
+    unported = 0
     for key, want in expected.items():
         have = got.get(key)
         if want.pop("structure", False) and isinstance(have, dict):
@@ -503,6 +504,7 @@ def main(argv: list[str] | None = None) -> int:
         if isinstance(have, dict) and "reply" in have:
             if have.get("unported"):
                 got[key] = want      # the host answers it its own way (Done::unported)
+                unported += 1
                 continue
             have["reply"] = _reply(have["reply"])
             have.pop("unported", None)
@@ -523,6 +525,8 @@ def main(argv: list[str] | None = None) -> int:
             if have.get("touched") != want["touched"] and have.get("touched") == written:
                 rewritten += 1   # equal once the body before is as lxml writes it
                 want["touched"] = written
+    if unported:
+        print(f"{unported} cases the Rust tools left to the host (unported)")
     if rewritten:
         print(f"{rewritten} cases where docx-agent's touched counts blocks only re-serialized (equal "
               "once the body before is read as lxml writes it)")

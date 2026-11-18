@@ -37,6 +37,15 @@ impl Command<WordDoc> for EditNote {
 
     fn prepare(&self, tx: &mut Txn<'_, WordDoc>) -> Result<NoteEdited> {
         let mut sink = EditSink::new(tx, self.policy.clone());
+        let out = self.edit(&mut sink)?;
+        crate::after::after_edit(&mut sink)?;
+        Ok(out)
+    }
+}
+
+impl EditNote {
+    /// The edit, through `sink`.
+    fn edit(&self, sink: &mut EditSink<'_, '_>) -> Result<NoteEdited> {
         check_text(&self.text.replace('\n', ""))?;
         let docx = sink.docx()?;
         let (part, path, _) = note_element(sink.doc(), &docx, &self.note)?;
@@ -64,7 +73,7 @@ impl Command<WordDoc> for EditNote {
         let current = |renamed: &[(String, String)], id: &str| crate::ranges::renamed_id(renamed, id);
         for entry in entries.iter().skip(1) {
             let target = current(&renamed, &entry.id);
-            let done = crate::delete_write::delete(&mut sink, &target)?;
+            let done = crate::delete_write::delete(&mut *sink, &target)?;
             removed.extend(done.removed.clone());
             merge(&mut renamed, &done.renamed);
         }
@@ -76,11 +85,11 @@ impl Command<WordDoc> for EditNote {
             atoms(&work, work.root()).len()
         };
         let address = format!("{first_id}@{start}:{length}");
-        let done = crate::ranges::replace_range(&mut sink, &address, lines.first().copied().unwrap_or(""))?;
+        let done = crate::ranges::replace_range(&mut *sink, &address, lines.first().copied().unwrap_or(""))?;
         merge(&mut renamed, &done.renamed);
         let mut previous = current(&renamed, &first_id);
         for line in lines.iter().skip(1) {
-            let done = crate::paragraphs::insert_paragraph(&mut sink, &previous, (true, line, None))?;
+            let done = crate::paragraphs::insert_paragraph(&mut *sink, &previous, (true, line, None))?;
             created.push(done.id.clone());
             merge(&mut renamed, &done.renamed);
             previous = done.id;

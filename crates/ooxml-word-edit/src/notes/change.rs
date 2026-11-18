@@ -168,13 +168,22 @@ impl Command<WordDoc> for DeleteNote {
 
     fn prepare(&self, tx: &mut Txn<'_, WordDoc>) -> Result<NoteEdited> {
         let mut sink = EditSink::new(tx, self.policy.clone());
+        let out = self.edit(&mut sink)?;
+        crate::after::after_edit(&mut sink)?;
+        Ok(out)
+    }
+}
+
+impl DeleteNote {
+    /// The edit, through `sink`.
+    fn edit(&self, sink: &mut EditSink<'_, '_>) -> Result<NoteEdited> {
         sink.read_everything();
         let docx = sink.docx()?;
         let (notes_part, note_path, note) = note_element(sink.doc(), &docx, &self.note)?;
         let found = note_reference(&docx, &self.note);
         if let (RevisionPolicy::Tracked(tracking), Some((part, reference))) = (sink.policy().clone(), &found) {
-            let renamed = stamp_document(&mut sink, &docx)?;
-            let mut edited = editable(&sink, part, reference)?;
+            let renamed = stamp_document(&mut *sink, &docx)?;
+            let mut edited = editable(&*sink, part, reference)?;
             let reference_node = edited.node;
             let (released, numbered, dated) = sink.stamped(tracking.clone(), |stamp| {
                 let run = isolate_reference(&mut edited.work, reference_node)
@@ -182,13 +191,13 @@ impl Command<WordDoc> for DeleteNote {
                 Ok(crate::track::delete_runs(&mut edited.work, &[run], stamp))
             })?;
             let gone = !attached(&edited.work, reference_node);
-            write_back(&mut sink, &edited, Some(numbered), false)?;
+            write_back(&mut *sink, &edited, Some(numbered), false)?;
             sink.release(part, &released)?;
             if dated {
                 sink.ensure_w14(part, false, &[("w16du", W16DU)])?;
             }
             if gone {
-                remove_note(&mut sink, &self.note)?;
+                remove_note(&mut *sink, &self.note)?;
                 sink.people(Some(&tracking.author), Some(&tracking.author))?;
                 return Ok(NoteEdited {
                     id: None,
@@ -216,14 +225,14 @@ impl Command<WordDoc> for DeleteNote {
             );
         }
         let _ = note;
-        let renamed = stamp_document(&mut sink, &docx)?;
+        let renamed = stamp_document(&mut *sink, &docx)?;
         if let Some((part, reference)) = &found {
-            let mut edited = editable(&sink, part, reference)?;
+            let mut edited = editable(&*sink, part, reference)?;
             let node = edited.node;
             remove_reference(&mut edited.work, node);
-            write_back(&mut sink, &edited, None, false)?;
+            write_back(&mut *sink, &edited, None, false)?;
         }
-        remove_note(&mut sink, &self.note)?;
+        remove_note(&mut *sink, &self.note)?;
         Ok(NoteEdited {
             id: None,
             renamed: renamed.into_iter().filter(|(old, _)| !removed.contains(old)).collect(),
@@ -247,6 +256,15 @@ impl Command<WordDoc> for MoveNote {
 
     fn prepare(&self, tx: &mut Txn<'_, WordDoc>) -> Result<NoteEdited> {
         let mut sink = EditSink::new(tx, self.policy.clone());
+        let out = self.edit(&mut sink)?;
+        crate::after::after_edit(&mut sink)?;
+        Ok(out)
+    }
+}
+
+impl MoveNote {
+    /// The edit, through `sink`.
+    fn edit(&self, sink: &mut EditSink<'_, '_>) -> Result<NoteEdited> {
         sink.read_everything();
         let docx = sink.docx()?;
         if note_reference(&docx, &self.note).is_none() {
@@ -256,11 +274,11 @@ impl Command<WordDoc> for MoveNote {
         if matches!(self.policy, RevisionPolicy::Tracked(_)) {
             return Err(EditError::Unsupported("a note moved while tracking changes".to_owned()));
         }
-        let renamed = stamp_document(&mut sink, &docx)?;
+        let renamed = stamp_document(&mut *sink, &docx)?;
         let docx = sink.docx()?;
         let (old_part, reference) = note_reference(&docx, &self.note)
             .ok_or_else(|| EditError::Refused(format!("{} has no reference to move", self.note)))?;
-        let mut old = editable(&sink, &old_part, &reference)?;
+        let mut old = editable(&*sink, &old_part, &reference)?;
         let same = old.part == paragraph.part && old.path == paragraph.path.to_vec();
         let mut new = if same {
             None
@@ -302,10 +320,10 @@ impl Command<WordDoc> for MoveNote {
         remove_reference(&mut old.work, old_node);
         match &new {
             Some(new) => {
-                write_back(&mut sink, new, None, true)?;
-                write_back(&mut sink, &old, None, false)?;
+                write_back(&mut *sink, new, None, true)?;
+                write_back(&mut *sink, &old, None, false)?;
             }
-            None => write_back(&mut sink, &old, None, true)?,
+            None => write_back(&mut *sink, &old, None, true)?,
         }
         Ok(NoteEdited {
             id: Some(self.note.clone()),

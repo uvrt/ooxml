@@ -117,6 +117,15 @@ impl Command<WordDoc> for AddBookmark {
 
     fn prepare(&self, tx: &mut Txn<'_, WordDoc>) -> Result<LinkEdited> {
         let mut sink = EditSink::new(tx, crate::RevisionPolicy::Untracked);
+        let out = self.edit(&mut sink)?;
+        crate::after::after_edit(&mut sink)?;
+        Ok(out)
+    }
+}
+
+impl AddBookmark {
+    /// The edit, through `sink`.
+    fn edit(&self, sink: &mut EditSink<'_, '_>) -> Result<LinkEdited> {
         sink.read_everything();
         super::check_name(&self.name)?;
         let docx = sink.docx()?;
@@ -153,7 +162,7 @@ impl Command<WordDoc> for AddBookmark {
             )));
         }
         let (part, first_path, last_path) = (span.part.clone(), first.path.to_vec(), last.path.to_vec());
-        let renamed = stamp_document(&mut sink, &docx)?;
+        let renamed = stamp_document(&mut *sink, &docx)?;
         let (value, offset) = sink.marker_id()?;
         let docx = sink.docx()?;
         let tree = sink.doc().tree(&part)?.ok_or_else(|| EditError::NoPart(part.clone()))?;

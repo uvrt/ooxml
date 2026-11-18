@@ -52,6 +52,15 @@ impl Command<WordDoc> for RenameBookmark {
 
     fn prepare(&self, tx: &mut Txn<'_, WordDoc>) -> Result<LinkEdited> {
         let mut sink = EditSink::new(tx, crate::RevisionPolicy::Untracked);
+        let out = self.edit(&mut sink)?;
+        crate::after::after_edit(&mut sink)?;
+        Ok(out)
+    }
+}
+
+impl RenameBookmark {
+    /// The edit, through `sink`.
+    fn edit(&self, sink: &mut EditSink<'_, '_>) -> Result<LinkEdited> {
         sink.read_everything();
         let docx = sink.docx()?;
         let old = existing(&docx, &self.name)?;
@@ -66,7 +75,7 @@ impl Command<WordDoc> for RenameBookmark {
                 repr_str(&self.new)
             )));
         }
-        let stamped = stamp_document(&mut sink, &docx)?;
+        let stamped = stamp_document(&mut *sink, &docx)?;
         let docx = sink.docx()?;
         let marked = bookmark(&docx, &old).map_err(EditError::Address)?;
         let (marked_part, start) = (marked.part.part.clone(), marked.start.clone());
@@ -95,7 +104,7 @@ impl Command<WordDoc> for RenameBookmark {
                 }
             });
             for edit in edits {
-                edit.write(&mut sink, &story.part)?;
+                edit.write(&mut *sink, &story.part)?;
             }
         }
         let mut renamed = vec![(format!("bm:{old}"), format!("bm:{}", self.new))];
@@ -166,6 +175,15 @@ impl Command<WordDoc> for RemoveBookmark {
 
     fn prepare(&self, tx: &mut Txn<'_, WordDoc>) -> Result<LinkEdited> {
         let mut sink = EditSink::new(tx, crate::RevisionPolicy::Untracked);
+        let out = self.edit(&mut sink)?;
+        crate::after::after_edit(&mut sink)?;
+        Ok(out)
+    }
+}
+
+impl RemoveBookmark {
+    /// The edit, through `sink`.
+    fn edit(&self, sink: &mut EditSink<'_, '_>) -> Result<LinkEdited> {
         sink.read_everything();
         let docx = sink.docx()?;
         let old = existing(&docx, &self.name)?;
@@ -186,7 +204,7 @@ impl Command<WordDoc> for RemoveBookmark {
             dangling.extend(std::iter::repeat_n(format!("a hyperlink in {}", story.story), links));
             dangling.extend(std::iter::repeat_n(format!("a field in {}", story.story), fields));
         }
-        let renamed = stamp_document(&mut sink, &docx)?;
+        let renamed = stamp_document(&mut *sink, &docx)?;
         let docx = sink.docx()?;
         let marked = bookmark(&docx, &old).map_err(EditError::Address)?;
         let part = marked.part.part.clone();

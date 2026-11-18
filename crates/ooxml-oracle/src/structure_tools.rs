@@ -12,7 +12,10 @@ use ooxml_base::{Cancel, Limits};
 use ooxml_opc::Package;
 use ooxml_store::{Caller, StoreConfig};
 use ooxml_tools::{ToolArgs, ToolResult};
-use ooxml_tools_word::{word_links, word_notes, Editing, WordLinks, WordNotes};
+use ooxml_tools_word::{
+    word_headers_footers, word_links, word_move, word_notes, word_sections, Editing, WordHeadersFooters, WordLinks,
+    WordMove, WordNotes, WordSections,
+};
 use ooxml_word_edit::touched::{touched, Touched};
 use ooxml_word_edit::validate::{problems, Delta};
 use ooxml_word_edit::{Editor, Tracking, WordDoc};
@@ -59,6 +62,11 @@ pub fn case(bytes: &Arc<[u8]>, case: &Value) -> Result<Value, String> {
     let reply = match tool {
         "word_links" => run(&arguments, |args: &WordLinks| word_links(args, &editing)),
         "word_notes" => run(&arguments, |args: &WordNotes| word_notes(args, &editing)),
+        "word_move" => run(&arguments, |args: &WordMove| word_move(args, &editing)),
+        "word_sections" => run(&arguments, |args: &WordSections| word_sections(args, &editing)),
+        "word_headers_footers" => run(&arguments, |args: &WordHeadersFooters| {
+            word_headers_footers(args, &editing)
+        }),
         other => return Err(format!("no tool {other}")),
     };
     let head = editor.store().snapshot();

@@ -48,6 +48,11 @@ impl Stamp {
         }
     }
 
+    /// The author its records carry.
+    pub(crate) fn author(&self) -> &str {
+        &self.tracking.author
+    }
+
     /// The next revision id.
     pub(crate) fn next_id(&mut self) -> String {
         let value = self.next;

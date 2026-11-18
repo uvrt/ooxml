@@ -30,9 +30,10 @@ pub use review::{
     Editing, Tracked, WordChanges, WordComments, WordSetTracking, COMMENT_WRITES,
 };
 pub use structure::{
-    word_links, word_notes, CopyStyles, FieldAction, HeaderAction, LinkAction, Margins, NoteAction, NoteKind,
-    Orientation, PageNumber, ReferenceKind, SectionAction, SectionStart, StoryType, StyleMapping, Unmapped, Which,
-    WordCopyFrom, WordFields, WordHeadersFooters, WordLinks, WordMove, WordNotes, WordSections,
+    word_headers_footers, word_links, word_move, word_notes, word_sections, CopyStyles, FieldAction, HeaderAction,
+    LinkAction, Margins, NoteAction, NoteKind, Orientation, PageNumber, ReferenceKind, SectionAction, SectionStart,
+    StoryType, StyleMapping, Unmapped, Which, WordCopyFrom, WordFields, WordHeadersFooters, WordLinks, WordMove,
+    WordNotes, WordSections,
 };
 pub use version::Version;
 pub use word_inspect::{word_inspect, WordInspect};

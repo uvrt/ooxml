@@ -59,19 +59,28 @@ impl Command<WordDoc> for InsertNote {
 
     fn prepare(&self, tx: &mut Txn<'_, WordDoc>) -> Result<NoteEdited> {
         let mut sink = EditSink::new(tx, self.policy.clone());
+        let out = self.edit(&mut sink)?;
+        crate::after::after_edit(&mut sink)?;
+        Ok(out)
+    }
+}
+
+impl InsertNote {
+    /// The edit, through `sink`.
+    fn edit(&self, sink: &mut EditSink<'_, '_>) -> Result<NoteEdited> {
         self.check(sink.doc())?;
         let docx = sink.docx()?;
         let (paragraph, offset) = place(sink.doc(), &docx, &self.at)?;
         sink.read(paragraph_key(&paragraph));
         sink.read(Key::Annotations);
-        let renamed = stamp_document(&mut sink, &docx)?;
+        let renamed = stamp_document(&mut *sink, &docx)?;
         let (text_style, reference_style) = self.kind.styles();
-        let text_id = crate::builtin::ensure(&mut sink, text_style, "paragraph")?;
-        let reference_id = crate::builtin::ensure(&mut sink, reference_style, "character")?;
-        let notes = ensure_notes_part(&mut sink, self.kind)?;
+        let text_id = crate::builtin::ensure(&mut *sink, text_style, "paragraph")?;
+        let reference_id = crate::builtin::ensure(&mut *sink, reference_style, "character")?;
+        let notes = ensure_notes_part(&mut *sink, self.kind)?;
         sink.read(Key::Part(Arc::from(notes.as_str())));
         let (mut space, paragraphs, number, ids) =
-            self.new_note(&mut sink, &docx, &notes, (&text_id, &reference_id))?;
+            self.new_note(&mut *sink, &docx, &notes, (&text_id, &reference_id))?;
         let name = self.kind.name();
         // the reference, in the body paragraph
         let main = paragraph.part.clone();
@@ -84,13 +93,13 @@ impl Command<WordDoc> for InsertNote {
         let shared = sink.doc().shared_handle();
         set_run_style(&mut body, run, &reference_id, shared.facts.orders());
         let (numbered, dated) = track(
-            &mut sink,
+            &mut *sink,
             &mut body,
             run,
             (&mut space, &notes, &paragraphs),
             shared.facts.orders(),
         )?;
-        space.finish(&mut sink)?;
+        space.finish(&mut *sink)?;
         sink.ensure_w14(&notes, false, &[])?;
         let new = body.build().ok_or_else(|| EditError::Path(main.clone()))?;
         let prefix = w14_prefix(tree.root(), &paragraph.path);

@@ -11,6 +11,7 @@ functions only.
 from __future__ import annotations
 
 import copy
+import os
 import datetime
 import json
 
@@ -122,9 +123,89 @@ def note_cases(document) -> list[dict]:
     return out + [tracked(case) for case in out if case["arguments"]["action"] != "list"]
 
 
+def section_cases(document) -> list[dict]:
+    """``word_sections``: the list; breaks inserted after and before blocks, at the end and
+    by a side written in ``after``; each break removed; page setup set; refusals --
+    untracked and tracked."""
+    out = [call("word_sections", action="list")]
+    blocks = [b["id"] for b in document.blocks() if b["id"]]
+    for k, block in enumerate(blocks[:3]):
+        out += [call("word_sections", action="insert_break", after=block),
+                call("word_sections", action="insert_break", before=block, start="continuous")]
+    if blocks:
+        out += [call("word_sections", action="insert_break", after="end", start="oddPage"),
+                call("word_sections", action="insert_break", after=f"before:{blocks[-1]}"),
+                call("word_sections", action="insert_break", after=blocks[0], before=blocks[0]),
+                call("word_sections", action="set", section=blocks[0], columns=2)]
+    sections = [s.id for s in document.sections()]
+    for section in sections:
+        if section != "s:body":
+            out.append(call("word_sections", action="remove_break", section=section))
+        out += [call("word_sections", action="set", section=section, orientation="landscape"),
+                call("word_sections", action="set", section=section, margins={"top": 36, "left": 50.5}),
+                call("word_sections", action="set", section=section, page_width=500, page_height=700,
+                     start="evenPage"),
+                call("word_sections", action="set", section=section, columns=1),
+                call("word_sections", action="set", section=section, orientation="portrait")]
+    out += [call("word_sections", action="remove_break", section="s:body"),
+            call("word_sections", action="set", section="s:1"),
+            call("word_sections", action="set", section="s:99", columns=2),
+            call("word_sections", action="set", section="s:2", columns=3)]
+    return out + [tracked(case) for case in out if case["arguments"]["action"] != "list"]
+
+
+def story_cases(document) -> list[dict]:
+    """``word_headers_footers``: headers and footers set (one line, several, first-page,
+    even), removed, linked and unlinked, on every section -- untracked and tracked."""
+    out = []
+    for section in [s.id for s in document.sections()][:3] + ["s:1"]:
+        for which in ("header", "footer"):
+            out += [call("word_headers_footers", section=section, which=which, action="set", text="Title"),
+                    call("word_headers_footers", section=section, which=which, action="set", text="A\nB\nC"),
+                    call("word_headers_footers", section=section, which=which, action="set", type="first",
+                         text="First"),
+                    call("word_headers_footers", section=section, which=which, action="set", type="even", text=""),
+                    call("word_headers_footers", section=section, which=which, action="remove"),
+                    call("word_headers_footers", section=section, which=which, action="link", type="first"),
+                    call("word_headers_footers", section=section, which=which, action="unlink"),
+                    call("word_headers_footers", section=section, which=which, action="unlink", type="even")]
+    out.append(call("word_headers_footers", section="s:42", which="header", action="set", text="x"))
+    return out + [tracked(case) for case in out if case["arguments"]["action"] == "set"]
+
+
+def move_cases(document) -> list[dict]:
+    """``word_move``: blocks and spans moved after and before blocks, to the end, a
+    heading's section moved after another's; no-ops and refusals -- untracked and tracked."""
+    out = []
+    blocks = [b["id"] for b in document.blocks() if b["id"]]
+    headings = [b["id"] for b in document.blocks() if b.get("level")]
+    if len(blocks) > 3:
+        out += [call("word_move", blocks=blocks[0], after=blocks[2]),
+                call("word_move", blocks=blocks[2], before=blocks[0]),
+                call("word_move", blocks=f"{blocks[0]}..{blocks[1]}", after=blocks[-1]),
+                call("word_move", blocks=blocks[1], after="end"),
+                call("word_move", blocks=blocks[1], after=f"before:{blocks[3]}"),
+                call("word_move", blocks=blocks[1], after=blocks[0]),
+                call("word_move", blocks=blocks[0], after=blocks[0]),
+                call("word_move", blocks=f"{blocks[0]}..{blocks[2]}", after=blocks[1]),
+                call("word_move", blocks=blocks[0], after=blocks[1], before=blocks[2]),
+                call("word_move", blocks=blocks[-1], before=blocks[0])]
+    for heading in headings[:3]:
+        out.append(call("word_move", section_heading=heading, after=blocks[-1]))
+        for other in headings[:3]:
+            if other != heading:
+                out.append(call("word_move", section_heading=heading, after_section=other))
+    if blocks:
+        out.append(call("word_move", section_heading=blocks[0], after=blocks[-1]))
+    return out + [tracked(case) for case in out]
+
+
 def cases(document) -> list[dict]:
     """Every structure case for ``document``."""
-    return link_cases(document) + note_cases(document)
+    found = link_cases(document) + note_cases(document) + section_cases(document) + story_cases(document) \
+        + move_cases(document)
+    wanted = os.environ.get("STRUCTURE_TOOLS")       # a comma list, to run some tools only
+    return [c for c in found if not wanted or c["tool"] in wanted.split(",")]
 
 
 def python_case(data: bytes, case: dict, baseline: list, toolbox, reply_of, parts_of, order_of, touched_of) -> dict:
@@ -173,3 +254,8 @@ def settle(want: dict, have: dict) -> None:
             want["parts"].pop(name, None)
     if have.get("touched") != want.get("touched") and have.get("touched") == written:
         want["touched"] = written
+    # A refused call changes nothing on either side, but docx-agent's id pool keeps the ids
+    # its stamping drew before the refusal (the edit is rolled back, the pool is not).
+    if (want.get("reply") or {}).get("error") and (have.get("reply") or {}).get("error") \
+            and not want.get("parts") and not have.get("parts"):
+        want["next"] = have.get("next")

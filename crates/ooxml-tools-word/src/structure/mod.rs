@@ -20,8 +20,8 @@ mod sections;
 
 pub use copy_from::{CopyStyles, StyleMapping, Unmapped, WordCopyFrom};
 pub use fields::{FieldAction, ReferenceKind, WordFields};
-pub use headers_footers::{HeaderAction, PageNumber, StoryType, Which, WordHeadersFooters};
+pub use headers_footers::{word_headers_footers, HeaderAction, PageNumber, StoryType, Which, WordHeadersFooters};
 pub use links::{word_links, LinkAction, WordLinks};
-pub use moving::WordMove;
+pub use moving::{word_move, WordMove};
 pub use notes::{word_notes, NoteAction, NoteKind, WordNotes};
-pub use sections::{Margins, Orientation, SectionAction, SectionStart, WordSections};
+pub use sections::{word_sections, Margins, Orientation, SectionAction, SectionStart, WordSections};

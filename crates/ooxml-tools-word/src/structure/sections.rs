@@ -1,8 +1,15 @@
-//! Owns: `word_sections`' definition (docx-agent's `tools/structure.py`, `word_sections`).
+//! Owns: `word_sections` (docx-agent's `tools/structure.py`, `word_sections`): its
+//! definition, its list, and its edits through the edit core's section commands.
 //!
 //! Must not: change the document but through a command.
 
-use ooxml_tools::{ArgEnum, ToolArgs};
+use super::common::{call, need, outcome, policy, refused, Outcome};
+use crate::describe::sections_json;
+use crate::review::Editing;
+use ooxml_tools::{ArgEnum, Done, Refusal, ToolArgs, ToolError, ToolResult, TryCall, WayOut};
+use ooxml_word_edit::{InsertSectionBreak, RemoveSectionBreak, SectionEdited, SectionValues, SetSection};
+use ooxml_word_model::docx::sections::sections;
+use serde_json::{json, Value};
 
 /// What `word_sections` does.
 #[derive(ArgEnum, Debug, Clone, Copy, PartialEq, Eq)]
@@ -114,4 +121,185 @@ pub struct WordSections {
     /// set: text columns.
     #[arg(minimum = 1, maximum = 45)]
     pub columns: Option<f64>,
+}
+
+impl From<SectionEdited> for Outcome {
+    fn from(out: SectionEdited) -> Self {
+        Outcome {
+            id: out.id,
+            changed: out.changed,
+            created: out.created,
+            removed: out.removed,
+            renamed: out.renamed,
+            warnings: out.warnings,
+        }
+    }
+}
+
+/// `word_sections` (docx-agent's `word_sections`): list the sections; insert or remove a
+/// break; set a section's page setup -- each one command.
+#[must_use]
+pub fn word_sections(args: &WordSections, editing: &Editing<'_>) -> ToolResult<Value> {
+    if let Err(error) = crate::review::stopped(editing.cancel) {
+        return ToolResult::failed(error);
+    }
+    let list = call("word_sections", &[("doc", json!(args.doc)), ("action", json!("list"))]);
+    match run(args, editing, &list) {
+        Ok(result) => result,
+        Err(error) => ToolResult::failed(error),
+    }
+}
+
+fn run(args: &WordSections, editing: &Editing<'_>, list: &TryCall) -> Result<ToolResult<Value>, ToolError> {
+    let editor = editing.editor;
+    match args.action {
+        SectionAction::List => {
+            let head = editor.store().snapshot();
+            let docx = head
+                .doc()
+                .docx()
+                .map_err(|e| ToolError::internal(e.to_string(), "word:model"))?;
+            let mut done = Done::new("Sections");
+            done.data = Some(sections_json(&docx, &sections(&docx)));
+            Ok(ToolResult::done(done))
+        }
+        SectionAction::InsertBreak => {
+            let (after, before) = sides(args.after.as_deref(), args.before.as_deref(), editing, list)?;
+            let command = InsertSectionBreak {
+                after,
+                before,
+                kind: args.start.unwrap_or(SectionStart::NextPage).name().to_owned(),
+                policy: policy(editing),
+            };
+            Ok(match editor.run(editing.caller, &command) {
+                Ok(done) => {
+                    let id = done.out.id.clone().unwrap_or_default();
+                    let summary = format!("Inserted a section break; the section before it is {id}");
+                    outcome(&[done.out.into()], summary, Some(json!({"section": id})))
+                }
+                Err(error) => refused(error, list.clone()),
+            })
+        }
+        SectionAction::RemoveBreak | SectionAction::Set => {
+            let section = need(args.section.as_deref(), "section", list)?.to_owned();
+            if args.action == SectionAction::RemoveBreak {
+                let command = RemoveSectionBreak {
+                    section: section.clone(),
+                    policy: policy(editing),
+                };
+                return Ok(match editor.run(editing.caller, &command) {
+                    Ok(done) => outcome(&[done.out.into()], format!("Removed the break ending {section}"), None),
+                    Err(error) => refused(error, list.clone()),
+                });
+            }
+            set(args, editing, list, section)
+        }
+    }
+}
+
+/// `set`: the section's page setup.
+fn set(
+    args: &WordSections,
+    editing: &Editing<'_>,
+    list: &TryCall,
+    section: String,
+) -> Result<ToolResult<Value>, ToolError> {
+    let margins = args.margins.as_ref();
+    let values = SectionValues {
+        start: args.start.map(|s| s.name().to_owned()),
+        orientation: args.orientation.map(|o| match o {
+            Orientation::Portrait => "portrait".to_owned(),
+            Orientation::Landscape => "landscape".to_owned(),
+        }),
+        page_width: args.page_width,
+        page_height: args.page_height,
+        margins: [
+            margins.and_then(|m| m.top),
+            margins.and_then(|m| m.right),
+            margins.and_then(|m| m.bottom),
+            margins.and_then(|m| m.left),
+        ],
+        #[allow(clippy::cast_possible_truncation)]
+        columns: args.columns.map(|c| c as i64),
+    };
+    let names = values.names();
+    if names.is_empty() {
+        let way_out = WayOut::names([
+            "start",
+            "orientation",
+            "page_width",
+            "page_height",
+            "margins",
+            "columns",
+        ])
+        .unwrap_or_else(|| WayOut::call(list.clone()));
+        return Err(ToolError::refusal(
+            Refusal::InvalidArguments,
+            "set needs a property to set",
+            way_out,
+        ));
+    }
+    let command = SetSection {
+        section: section.clone(),
+        values,
+        policy: policy(editing),
+    };
+    Ok(match editing.editor.run(editing.caller, &command) {
+        Ok(done) => {
+            let mut edits: Vec<Outcome> = vec![done.out.into()];
+            edits.push(Outcome {
+                id: Some(section.clone()),
+                changed: true,
+                ..Outcome::default()
+            });
+            outcome(&edits, format!("Set {} of {section}", names.join(", ")), None)
+        }
+        Err(error) => refused(error, list.clone()),
+    })
+}
+
+/// `after`/`before` as docx-agent's `_place` reads them: exactly one; `after` may say its
+/// side (`before:X`, `after:X`) or be `end` (after the body's last block).
+fn sides(
+    after: Option<&str>,
+    before: Option<&str>,
+    editing: &Editing<'_>,
+    list: &TryCall,
+) -> Result<(Option<String>, Option<String>), ToolError> {
+    match (after, before) {
+        (Some(after), None) => {
+            if after == "end" {
+                let head = editing.editor.store().snapshot();
+                let docx = head
+                    .doc()
+                    .docx()
+                    .map_err(|e| ToolError::internal(e.to_string(), "word:model"))?;
+                let last = body_blocks(&docx).into_iter().last().unwrap_or_default();
+                return Ok((Some(last), None));
+            }
+            if let Some(anchor) = after.strip_prefix("before:") {
+                return Ok((None, Some(anchor.to_owned())));
+            }
+            Ok((Some(after.strip_prefix("after:").unwrap_or(after).to_owned()), None))
+        }
+        (None, Some(before)) => Ok((None, Some(before.to_owned()))),
+        _ => {
+            let way_out =
+                WayOut::names(["after", "before", "after_section"]).unwrap_or_else(|| WayOut::call(list.clone()));
+            Err(ToolError::refusal(
+                Refusal::InvalidArguments,
+                "give exactly one of after, before",
+                way_out,
+            ))
+        }
+    }
+}
+
+/// The ids of the body's top-level blocks (docx-agent's `blocks()` ids), in order.
+pub(crate) fn body_blocks(docx: &ooxml_word_model::docx::Docx) -> Vec<String> {
+    let found = ooxml_word_model::docx::controls::controls(docx);
+    ooxml_word_model::docx::outline::body_blocks(docx, &found)
+        .into_iter()
+        .filter_map(|b| b.id)
+        .collect()
 }
