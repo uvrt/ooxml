@@ -12,18 +12,18 @@
 //! Must not: decide who is in use (the version's tally says), or touch a story part.
 
 use crate::doc::ModelError;
-use crate::names::{RELS, TYPES, W15};
+use crate::names::W15;
+use crate::new_part::{add_part, unused_name};
 use crate::work::{Id, Work};
-use ooxml_opc::name::{directory, rels_for};
+use ooxml_opc::name::rels_for;
 use ooxml_opc::{Package, CONTENT_TYPES_PART};
-use ooxml_xml::{Attribute, Element, NamespaceDecl, QName, Tree};
+use ooxml_xml::Element;
 use std::sync::Arc;
 
 /// The people part's relationship type.
 const REL_PEOPLE: &str = "http://schemas.microsoft.com/office/2011/relationships/people";
 /// The people part's content type.
 const PEOPLE_TYPE: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.people+xml";
-const MC: &str = crate::names::MC;
 
 /// The people part the main part relates to, when the package has it.
 fn people_part(package: &Package, main: &str) -> Result<Option<String>, ModelError> {
@@ -65,9 +65,8 @@ pub(crate) fn with_person(package: &Package, main: &str, author: &str) -> Result
         Some(part) => (package.clone(), part),
         None => {
             let part = unused_name(package, "word/people.xml", "word/people{n}.xml");
-            let made = package.with_new_tree(&part, Tree::from_root(Arc::new(empty_people())));
-            let made = declare_override(&made, &part)?;
-            (add_relationship(&made, main, &part)?, part)
+            let made = add_part(package, main, &part, empty_people(), PEOPLE_TYPE, REL_PEOPLE)?;
+            (made, part)
         }
     };
     let tree = package.tree(&part)?.ok_or_else(|| ModelError::NoPart(part.clone()))?;
@@ -136,140 +135,5 @@ fn drop_part(package: &Package, main: &str, part: &str) -> Result<Package, Model
 
 /// `<w15:people xmlns:w15=... xmlns:mc=... mc:Ignorable="w15"/>`, as docx-agent makes it.
 fn empty_people() -> Element {
-    let ns = |prefix: &str, uri: &str| NamespaceDecl {
-        prefix: Some(Arc::from(prefix)),
-        uri: Arc::from(uri),
-    };
-    Element::new(
-        Arc::new(QName::new(Some("w15"), "people", Some(W15))),
-        vec![ns("w15", W15), ns("mc", MC)],
-        vec![Attribute {
-            name: Arc::new(QName::new(Some("mc"), "Ignorable", Some(MC))),
-            value: Arc::from("w15"),
-        }],
-        Vec::new(),
-    )
-}
-
-/// `default` when the package has no part of that name, else `template` with the lowest
-/// number free.
-fn unused_name(package: &Package, default: &str, template: &str) -> String {
-    if !package.has_part(default) {
-        return default.to_owned();
-    }
-    (1..)
-        .map(|n: u32| template.replace("{n}", &n.to_string()))
-        .find(|name| !package.has_part(name))
-        .unwrap_or_else(|| default.to_owned())
-}
-
-/// Indent a new last child like its siblings, for parts written pretty-printed
-/// (ooxml-edit's `_match_tail`).
-fn match_tail(work: &mut Work, node: Id) {
-    let Some(previous) = work.previous(node) else { return };
-    let tail = work.tail(previous).to_owned();
-    if tail.is_empty() || !tail.trim().is_empty() {
-        return;
-    }
-    if work.next(node).is_none() {
-        work.set_tail(node, &tail);
-        if let Some(before) = work.previous(previous) {
-            let between = work.tail(before).to_owned();
-            if !between.is_empty() && between.trim().is_empty() {
-                work.set_tail(previous, &between);
-            }
-        }
-    } else {
-        work.set_tail(node, &tail);
-    }
-}
-
-/// An `Override` declaring `part` as a people part, at the end of `[Content_Types].xml`.
-fn declare_override(package: &Package, part: &str) -> Result<Package, ModelError> {
-    edit_part(package, CONTENT_TYPES_PART, |work| {
-        let root = work.root();
-        let node = work.new_element(work.element_name(root, TYPES, "Override", ""));
-        work.append(root, node);
-        for (local, value) in [
-            ("PartName", format!("/{part}")),
-            ("ContentType", PEOPLE_TYPE.to_owned()),
-        ] {
-            work.set(node, Arc::new(QName::new(None, local, None)), &value);
-        }
-        match_tail(work, node);
-    })
-}
-
-/// A relationship from `source` to `target` of the people type, `rIdN` the first number
-/// from one more than the relationships it has.
-fn add_relationship(package: &Package, source: &str, target: &str) -> Result<Package, ModelError> {
-    let rels = rels_for(source);
-    let mut package = package.clone();
-    if !package.has_part(&rels) {
-        let root = Element::new(
-            Arc::new(QName::new(None, "Relationships", Some(RELS))),
-            vec![NamespaceDecl {
-                prefix: None,
-                uri: Arc::from(RELS),
-            }],
-            Vec::new(),
-            Vec::new(),
-        );
-        // `.rels` has its `Default` content type in every Word package: nothing declared
-        package = package.with_new_tree(&rels, Tree::from_root(Arc::new(root)));
-    }
-    let used: Vec<String> = package.relationships(source)?.iter().map(|r| r.id.clone()).collect();
-    let mut index = used.len() + 1;
-    while used.contains(&format!("rId{index}")) {
-        index += 1;
-    }
-    let relative = relative_to(target, directory(source));
-    edit_part(&package, &rels, |work| {
-        let root = work.root();
-        let node = work.new_element(work.element_name(root, RELS, "Relationship", ""));
-        work.append(root, node);
-        for (local, value) in [
-            ("Id", format!("rId{index}")),
-            ("Type", REL_PEOPLE.to_owned()),
-            ("Target", relative.clone()),
-        ] {
-            work.set(node, Arc::new(QName::new(None, local, None)), &value);
-        }
-        match_tail(work, node);
-    })
-}
-
-/// `posixpath.relpath(target, base)` for a target below or beside `base`.
-fn relative_to(target: &str, base: &str) -> String {
-    let t: Vec<&str> = target.split('/').filter(|s| !s.is_empty()).collect();
-    let b: Vec<&str> = base.split('/').filter(|s| !s.is_empty()).collect();
-    let common = t.iter().zip(&b).take_while(|(x, y)| x == y).count();
-    let mut out: Vec<&str> = vec![".."; b.len() - common];
-    out.extend(t.iter().skip(common));
-    if out.is_empty() {
-        ".".to_owned()
-    } else {
-        out.join("/")
-    }
-}
-
-/// Edit a small part (relationships, content types) in an editable copy.
-fn edit_part(package: &Package, part: &str, edit: impl FnOnce(&mut Work)) -> Result<Package, ModelError> {
-    let tree = package.tree(part)?.ok_or_else(|| ModelError::NoPart(part.to_owned()))?;
-    let mut work = Work::of(tree.root(), Vec::new());
-    edit(&mut work);
-    let root = work.build().ok_or_else(|| ModelError::NoPart(part.to_owned()))?;
-    Ok(package.with_tree(part, tree.with_root(root))?)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::relative_to;
-
-    #[test]
-    fn relative_targets() {
-        assert_eq!(relative_to("word/people.xml", "word"), "people.xml");
-        assert_eq!(relative_to("customXml/item1.xml", "word"), "../customXml/item1.xml");
-        assert_eq!(relative_to("word/people.xml", ""), "word/people.xml");
-    }
+    crate::new_part::ignorable_root("w15", "people", W15)
 }

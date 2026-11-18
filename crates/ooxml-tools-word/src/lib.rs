@@ -1,8 +1,9 @@
 //! Word's tools (docs/architecture/README.md, section 3 `ooxml-tools-*`, section 9; layer 4).
 //!
 //! Owns: each Word tool's definition (a `#[derive(ToolArgs)]` struct with its description
-//! as a Markdown file beside it) and its handler, a function of the typed arguments and a
-//! version of the document.
+//! as a Markdown file beside it) and its handler: a reading tool's, a function of the
+//! typed arguments and a version of the document; an editing tool's, of the typed
+//! arguments and the document's editor ([`Editing`]).
 //!
 //! Must not: hold sessions, documents by id, locks or dispatch (`ooxml-session` does, and
 //! hands a handler the version it reads), know providers, or keep state between calls.
@@ -15,6 +16,7 @@ mod find_text;
 mod paging;
 mod placements;
 mod refusal;
+mod review;
 mod version;
 mod word_inspect;
 mod word_read;
@@ -22,6 +24,10 @@ mod word_read;
 pub use describe::{describe, Describe, DESCRIBED, NOT_DESCRIBED};
 pub use find_text::{find_text, FindStories, FindText};
 pub use placements::Placer;
+pub use review::{
+    word_changes, word_comments, word_set_tracking, ChangeAction, ChangeDetail, ChangeKind, CommentAction, CommentItem,
+    Editing, Tracked, WordChanges, WordComments, WordSetTracking, COMMENT_WRITES,
+};
 pub use version::Version;
 pub use word_inspect::{word_inspect, WordInspect};
 pub use word_read::{word_read, Story, View, WordRead};
