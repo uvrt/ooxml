@@ -11,7 +11,8 @@ use ooxml_derive::CacheBudget;
 use ooxml_opc::Package;
 use ooxml_store::{Caller, Clock, Command, Seq, Snapshot, StoreConfig, Txn};
 use ooxml_word_edit::{
-    EditError, Editor, InsertText, LevelFormat, ListAction, ListEdit, RevisionPolicy, SetText, Tracking, WordDoc,
+    EditError, Editor, FormatEdit, FormatPlan, InsertText, LevelFormat, ListAction, ListEdit, Property, RevisionPolicy,
+    SetText, Setting, Tracking, Value, WordDoc,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -72,6 +73,7 @@ enum Edit {
     Set(SetText),
     Insert(InsertText),
     List(ListEdit),
+    Format(FormatEdit),
 }
 
 impl Command<WordDoc> for Edit {
@@ -83,6 +85,7 @@ impl Command<WordDoc> for Edit {
             Edit::Set(c) => c.validate(doc),
             Edit::Insert(c) => c.validate(doc),
             Edit::List(c) => c.validate(doc),
+            Edit::Format(c) => c.validate(doc),
         }
     }
 
@@ -91,6 +94,7 @@ impl Command<WordDoc> for Edit {
             Edit::Set(c) => c.prepare(tx)?.changed,
             Edit::Insert(c) => c.prepare(tx).map(|_| true)?,
             Edit::List(c) => !c.prepare(tx)?.steps.is_empty(),
+            Edit::Format(c) => c.prepare(tx)?.steps.iter().any(|s| s.changed),
         })
     }
 }
@@ -137,7 +141,7 @@ fn edit(rng: &mut Rng, targets: &[String], writer: u64, _n: usize) -> Edit {
     let target = targets[rng.below(targets.len())].clone();
     let other = targets[rng.below(targets.len())].clone();
     let words: Vec<&str> = (0..1 + rng.below(4)).map(|_| WORDS[rng.below(WORDS.len())]).collect();
-    match rng.below(5) {
+    match rng.below(7) {
         0 => Edit::Set(SetText {
             target,
             text: words.join(" "),
@@ -146,6 +150,16 @@ fn edit(rng: &mut Rng, targets: &[String], writer: u64, _n: usize) -> Edit {
         1 => Edit::Insert(InsertText {
             at: format!("{target}@{}", rng.below(3)),
             text: format!("{} ", words.join(" ")),
+            policy: policy(rng, writer),
+        }),
+        5 | 6 => Edit::Format(FormatEdit {
+            targets: vec![if rng.below(2) == 0 {
+                target
+            } else {
+                format!("{target}@0:2")
+            }],
+            plan: plan(rng),
+            cleared: false,
             policy: policy(rng, writer),
         }),
         _ => Edit::List(ListEdit {
@@ -157,6 +171,36 @@ fn edit(rng: &mut Rng, targets: &[String], writer: u64, _n: usize) -> Edit {
             action: action(rng, &other),
             policy: policy(rng, writer),
         }),
+    }
+}
+
+/// What a format edit sets: direct formatting, a style, keeps.
+fn plan(rng: &mut Rng) -> FormatPlan {
+    let flag = |property, on| Setting {
+        property,
+        value: Some(Value::Flag(on)),
+    };
+    match rng.below(4) {
+        0 => FormatPlan {
+            run: vec![flag(Property::Bold, rng.below(2) == 0), flag(Property::Italic, true)],
+            ..FormatPlan::default()
+        },
+        1 => FormatPlan {
+            paragraph_style: Some("Heading 2".to_owned()),
+            ..FormatPlan::default()
+        },
+        2 => FormatPlan {
+            paragraph: vec![flag(Property::KeepWithNext, true)],
+            run: vec![Setting {
+                property: Property::Size,
+                value: Some(Value::Number(13.0)),
+            }],
+            ..FormatPlan::default()
+        },
+        _ => FormatPlan {
+            clear_direct: true,
+            ..FormatPlan::default()
+        },
     }
 }
 
@@ -222,7 +266,10 @@ fn run(seed: u64, writers: u64, per_writer: usize) -> (u64, u64, usize) {
         );
     }
     let stats = shared.store().stats();
-    let lists = records.iter().filter(|r| matches!(r.1, Edit::List(_))).count();
+    let lists = records
+        .iter()
+        .filter(|r| matches!(r.1, Edit::List(_) | Edit::Format(_)))
+        .count();
     (stats.conflicts, stats.exclusive, lists)
 }
 
@@ -247,7 +294,7 @@ fn sixty_seeds_of_eight_writers_styling() {
         lists += s;
     }
     println!(
-        "60 seeds, 8 writers x 6 edits: {lists} list edits committed; {conflicts} conflicts, \
+        "60 seeds, 8 writers x 6 edits: {lists} list and format edits committed; {conflicts} conflicts, \
          {exclusive} exclusive runs"
     );
 }

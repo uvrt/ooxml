@@ -1,5 +1,5 @@
 //! Word's style tools (docx-agent's `tools/style.py` and `word_format` of `tools/text.py`):
-//! `word_lists` so far, over the edit core (`ooxml-word-edit`).
+//! `word_lists` and `word_format`, over the edit core (`ooxml-word-edit`).
 //!
 //! Owns: the tools' definitions (descriptions beside them) and their handlers: a function
 //! of the typed arguments and an [`crate::Editing`], whose edits run as one command each
@@ -8,6 +8,12 @@
 //! Must not: hold sessions or documents by id, keep state between calls, or write the
 //! document but through a command.
 
+mod find;
+mod format;
+mod format_args;
 mod lists;
+mod moves;
 
+pub use format::word_format;
+pub use format_args::{Alignment, Cleared, FindExpect, FindItem, WordFormat};
 pub use lists::{word_lists, Follow, ListKind, ListsAction, WordLists};

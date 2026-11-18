@@ -8,7 +8,10 @@ use ooxml_base::Limits;
 use ooxml_derive::CacheBudget;
 use ooxml_opc::Package;
 use ooxml_store::{Caller, Clock, Command, StoreConfig};
-use ooxml_word_edit::{EditError, Editor, LevelFormat, ListAction, ListEdit, RevisionPolicy, Tracking, WordDoc};
+use ooxml_word_edit::{
+    EditError, Editor, FormatEdit, FormatPlan, LevelFormat, ListAction, ListEdit, Property, RevisionPolicy, Setting,
+    Tracking, Value, WordDoc,
+};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -131,4 +134,56 @@ fn style_edits_on_a_long_document() {
     };
     report("lists restart, 50 items after", on_list(ListAction::Restart(3)));
     report("lists format", on_list(format));
+    format_edits(&bytes, &[middle, span], &tracked);
+}
+
+/// `word_format`'s edits: one paragraph, tracked, a span; a style; keeps.
+fn format_edits(bytes: &Arc<[u8]>, targets: &[String; 2], tracked: &RevisionPolicy) {
+    let [middle, span] = targets;
+    let report = |name: &str, took: Duration| println!("{name}: {:.1} ms", took.as_secs_f64() * 1000.0);
+    let bold = |targets: Vec<String>, policy: &RevisionPolicy| FormatEdit {
+        targets,
+        plan: FormatPlan {
+            run: vec![Setting {
+                property: Property::Bold,
+                value: Some(Value::Flag(true)),
+            }],
+            paragraph: vec![Setting {
+                property: Property::SpaceAfter,
+                value: Some(Value::Number(6.0)),
+            }],
+            ..FormatPlan::default()
+        },
+        cleared: false,
+        policy: policy.clone(),
+    };
+    report(
+        "format, one paragraph",
+        best(bytes, &bold(vec![middle.clone()], &RevisionPolicy::Untracked)),
+    );
+    report("format, tracked", best(bytes, &bold(vec![middle.clone()], tracked)));
+    report(
+        "format, 100 paragraphs",
+        best(bytes, &bold(vec![span.clone()], &RevisionPolicy::Untracked)),
+    );
+    let styled = FormatEdit {
+        targets: vec![span.clone()],
+        plan: FormatPlan {
+            paragraph_style: Some("Heading 2".into()),
+            ..FormatPlan::default()
+        },
+        cleared: false,
+        policy: RevisionPolicy::Untracked,
+    };
+    report("format, 100 paragraphs to a heading style", best(bytes, &styled));
+    let kept = FormatEdit {
+        targets: vec![span.clone()],
+        plan: FormatPlan {
+            keep_together: Some(true),
+            ..FormatPlan::default()
+        },
+        cleared: false,
+        policy: RevisionPolicy::Untracked,
+    };
+    report("format, 100 paragraphs kept together", best(bytes, &kept));
 }
