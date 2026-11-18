@@ -8,7 +8,7 @@
 
 use super::decorate::{decorate, separator_rule, white_text};
 use super::positions::{wrapped_positions, Positions, Setting};
-use super::{Drawn, PaintContext, PaintedLine, Rule, Span, SpanKind};
+use super::{Drawn, PaintContext, PaintedLine, Rule, Span, SpanKind, TextEffects};
 use crate::geometry::DrawnLine;
 use crate::input::{label_props, list_level, RunFormatter};
 use crate::paragraph::MeasuredParagraph;
@@ -260,6 +260,7 @@ impl LinePainter<'_, '_> {
             kind: key.kind,
             line_baseline: self.job.line.baseline,
             vertical_align: None,
+            effects: TextEffects::of(props),
         };
         self.spans.push((key, span));
     }
@@ -458,17 +459,6 @@ fn positions_of(cx: &PaintContext<'_>, job: &LineJob<'_>, line: &ooxml_text::Lin
     wrapped_positions(&measured.pieces, line, &job.measured.geometry, job.extra, &setting)
 }
 
-/// Whether a run on `line` states Word 2010 text effects (`w14:textFill`,
-/// `w14:textOutline`).
-fn text_effects(job: &LineJob<'_>, line: &ooxml_text::Line) -> bool {
-    let pieces = &job.measured.measured.pieces;
-    (line.start..line.end)
-        .filter_map(|j| pieces.get(j))
-        .filter_map(|p| usize::try_from(p.run).ok())
-        .filter_map(|k| job.resolved.runs.get(k))
-        .any(|props| props.get("textFill").is_some() || props.get("textOutline").is_some())
-}
-
 /// Paint one line: its spans (pushed onto the line), its rules, pictures and decorations
 /// (onto the page).
 pub(super) fn paint_line(cx: &PaintContext<'_>, job: &LineJob<'_>, out: &mut PageOut) -> Option<PaintedLine> {
@@ -476,11 +466,6 @@ pub(super) fn paint_line(cx: &PaintContext<'_>, job: &LineJob<'_>, out: &mut Pag
     let pieces = &measured.measured.pieces;
     let broken = measured.measured.lines.get(job.line.number)?;
     let pp = &job.resolved.paragraph;
-    if text_effects(job, broken) {
-        // Painted by DrawingML's fills under Word's rules: not ported yet.
-        out.unpainted
-            .push("a run's text effects (w14:textFill, w14:textOutline)".into());
-    }
     let positions = positions_of(cx, job, broken);
     let mut painter = LinePainter {
         cx,
@@ -616,6 +601,7 @@ impl LinePainter<'_, '_> {
             kind: SpanKind::Tab,
             line_baseline: self.job.line.baseline,
             vertical_align: None,
+            effects: None,
         };
         let key = SpanKey {
             run: None,
@@ -756,6 +742,7 @@ impl LinePainter<'_, '_> {
             kind: SpanKind::Leader,
             line_baseline: self.job.line.baseline,
             vertical_align: format.vertical_align.clone(),
+            effects: TextEffects::of(&props),
         };
         let key = SpanKey {
             run: None,

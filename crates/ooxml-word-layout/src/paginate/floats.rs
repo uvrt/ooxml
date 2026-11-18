@@ -166,8 +166,8 @@ impl PageContext<'_> {
         Some(Frames {
             page_width: props.page_size.width,
             page_height: props.page_size.height,
-            left: m.left + m.gutter,
-            right: m.right,
+            left: Q::from_integer(i128::from(m.left + m.gutter)),
+            right: Q::from_integer(i128::from(m.right)),
             top: Q::from_integer(i128::from(m.top)),
             bottom: Q::from_integer(i128::from(m.bottom)),
             header: m.header,
@@ -179,6 +179,8 @@ impl PageContext<'_> {
             line_bottom: whole(top.top + top.pitch),
             character: character.value() / twip_px(),
             column: top.column.map(|(offset, width)| (m.left + m.gutter + offset, width)),
+            origin: (Q::from_integer(0), Q::from_integer(0)),
+            cell: false,
         })
     }
 
@@ -254,7 +256,13 @@ impl PageContext<'_> {
                     .as_deref()
                     .is_some_and(|w| crate::floating::SIDE_WRAPS.contains(&w));
                 if side {
-                    if let Some(wrap) = self.side_wrap(item, top, page, &anchored.anchor) {
+                    let key = DrawingKey {
+                        block: item.block,
+                        source: anchored.source,
+                        run: anchored.run,
+                        index: anchored.index,
+                    };
+                    if let Some(wrap) = self.side_wrap(item, top, page, (&anchored.anchor, key)) {
                         out.push(wrap);
                     }
                 }
@@ -292,6 +300,7 @@ impl PageContext<'_> {
             text_shift: None,
             drop_cap: None,
             table: Some(top.item),
+            drawing: None,
         })
     }
 
@@ -319,6 +328,7 @@ impl PageContext<'_> {
             text_shift: Some(shift),
             drop_cap: Some(top.item),
             table: None,
+            drawing: None,
         })
     }
 
@@ -328,7 +338,7 @@ impl PageContext<'_> {
         item: &ParaItem,
         top: &Top,
         page: usize,
-        anchor: &ooxml_word_model::model::Anchor,
+        (anchor, key): (&ooxml_word_model::model::Anchor, DrawingKey),
     ) -> Option<Wrap> {
         let mut frames = self.frames(item, top, page, Px::ZERO)?;
         let in_column = anchor.h.relative.as_deref().is_none_or(|r| r == "column");
@@ -344,8 +354,8 @@ impl PageContext<'_> {
                         .and_then(ooxml_word_model::value::Value::int)
                         .unwrap_or(0)
                 };
-                frames.left += indent("ind.left");
-                frames.right += indent("ind.right");
+                frames.left += Q::from_integer(i128::from(indent("ind.left")));
+                frames.right += Q::from_integer(i128::from(indent("ind.right")));
             }
         }
         let mut x = crate::floating::horizontal(anchor, &frames)?;
@@ -404,6 +414,7 @@ impl PageContext<'_> {
             text_shift: None,
             drop_cap: None,
             table: None,
+            drawing: Some((key, x * twip_px())),
         })
     }
 }

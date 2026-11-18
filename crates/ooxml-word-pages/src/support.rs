@@ -1,7 +1,5 @@
 //! Owns: what the Rust layout does not lay out or draw as docx2svg does yet, found in a
-//! version before or after it is laid out -- the lane that closes each case is named
-//! beside it (L3g: text boxes, text beside drawings, drawings in table cells, floating
-//! tables, frames). Two kinds:
+//! version before or after it is laid out. Two kinds:
 //!
 //! - **layout** ([`unsupported`]): the pages or the facts would differ; the caller lays the
 //!   whole document out another way (docx2svg's Python layout, frozen for this);
@@ -15,23 +13,19 @@
 //! Must not: lay out, draw, or guess past what the model says.
 
 use crate::error::Fallback;
+use ooxml_word_layout::geometry::text_box;
 use ooxml_word_layout::DocumentLayout;
 use ooxml_word_model::model::{Block, Graphic, InlineObject, Paragraph, Table};
 use ooxml_word_model::value::Value;
 use ooxml_word_model::WordDocument;
 
-/// A floating table (`w:tblpPr`).
-pub const FLOATING_TABLE: &str = "floating table";
-/// A floating drawing that text wraps around, in a table cell (docx2svg's `wrap_cell`):
-/// the layout does not lay its cell out yet.
-pub const WRAP_IN_CELL: &str = "drawing text wraps around in a table cell";
-/// Another floating drawing, or a drawing that is not a picture, in a table cell.
-pub const DRAWING_IN_CELL: &str = "drawing in a table cell";
-/// A drawing text wraps beside (`wrapSquare`, `wrapTight`, `wrapThrough`), not a drop
-/// cap's frame (lane L3g).
+/// A drawing text wraps beside (`wrapSquare`, `wrapTight`, `wrapThrough`) in a header, a
+/// footer or a note: docx2svg stacks such a paragraph of a header or footer as an
+/// estimated stand-in, which the Rust layout does not draw.
 pub const TEXT_BESIDE_DRAWING: &str = "text beside a drawing";
-/// A drawing holding a text box: its lines are its painter's (until P3), so neither its
-/// facts nor its paint are the layout's.
+/// A text box holding what the layout does not lay out in one: a floating drawing text
+/// wraps around (docx2svg stops the box's text there), or an inline drawing that is not a
+/// picture (docx2svg paints it with the box).
 pub const TEXT_BOX: &str = "text box";
 /// A `STYLEREF` field in a footnote or an endnote (the body's and the headers' and
 /// footers' are laid out).
@@ -40,8 +34,8 @@ pub const STYLEREF: &str = "STYLEREF field";
 pub const LAYOUT_STOPPED: &str = "layout stopped";
 /// A header or footer it cannot measure.
 pub const STORY_UNSUPPORTED: &str = "header or footer not measured";
-/// A frame other than a drop cap (`w:framePr`): docx2svg lays it out by an approximate
-/// rule and says so in its coverage, which the Rust layout does not.
+/// A frame other than a drop cap (`w:framePr`) in a header, a footer or a note (one in the
+/// body or a cell is laid out as a paragraph where it stands, as docx2svg lays it out).
 pub const FRAME: &str = "frame";
 /// A drop cap anywhere but among the body's top-level paragraphs.
 pub const DROP_CAP: &str = "drop cap";
@@ -53,9 +47,6 @@ pub const UNPAINTED: &str = "not painted";
 
 /// Every reason, for a counter's labels.
 pub const REASONS: &[&str] = &[
-    FLOATING_TABLE,
-    WRAP_IN_CELL,
-    DRAWING_IN_CELL,
     TEXT_BESIDE_DRAWING,
     TEXT_BOX,
     STYLEREF,
@@ -132,9 +123,10 @@ fn frame(paragraph: &Paragraph) -> Option<bool> {
     }
 }
 
-/// Whether a drawing (or a member of its group) holds a text box.
+/// Whether a drawing (or a member of its group) holds a text box the layout does not lay
+/// out.
 fn text_box(graphic: &Graphic) -> bool {
-    !graphic.text.is_empty() || graphic.children.iter().any(|g| text_box(g))
+    text_box::unsupported_in(&graphic.text).is_some() || graphic.children.iter().any(|g| text_box(g))
 }
 
 struct Scan {
@@ -155,10 +147,6 @@ impl Scan {
     }
 
     fn table(&mut self, table: &Table) {
-        if table.properties.contains_key("tblpPr") {
-            self.found = Some(fallback(FLOATING_TABLE, &table.path));
-            return;
-        }
         for row in table.rows.iter() {
             for cell in row.iter() {
                 self.story(cell, Story::Cell);
@@ -167,26 +155,25 @@ impl Scan {
     }
 
     fn paragraph(&mut self, paragraph: &Paragraph, story: Story) {
-        let in_cell = story == Story::Cell;
         match frame(paragraph) {
             Some(true) if story != Story::Body => {
                 self.found = Some(fallback(DROP_CAP, &paragraph.path));
                 return;
             }
-            Some(false) => {
+            Some(false) if matches!(story, Story::HeaderFooter | Story::Note) => {
                 self.found = Some(fallback(FRAME, &paragraph.path));
                 return;
             }
             _ => {}
         }
         for run in paragraph.runs.iter() {
-            if run
-                .anchors
-                .iter()
-                .any(|a| a.wrap.as_deref().is_some_and(|w| SIDE_WRAPS.contains(&w)))
+            if matches!(story, Story::HeaderFooter | Story::Note)
+                && run
+                    .anchors
+                    .iter()
+                    .any(|a| a.wrap.as_deref().is_some_and(|w| SIDE_WRAPS.contains(&w)))
             {
-                let reason = if in_cell { WRAP_IN_CELL } else { TEXT_BESIDE_DRAWING };
-                self.found = Some(fallback(reason, &paragraph.path));
+                self.found = Some(fallback(TEXT_BESIDE_DRAWING, &paragraph.path));
                 return;
             }
             if story == Story::Note
@@ -206,16 +193,6 @@ impl Scan {
             if boxed {
                 self.found = Some(fallback(TEXT_BOX, &paragraph.path));
                 return;
-            }
-            if in_cell {
-                let graphic = run
-                    .drawings
-                    .iter()
-                    .any(|d| matches!(d, InlineObject::Graphic(g) if &*g.kind != "picture"));
-                if graphic || !run.anchors.is_empty() {
-                    self.found = Some(fallback(DRAWING_IN_CELL, &paragraph.path));
-                    return;
-                }
             }
         }
     }

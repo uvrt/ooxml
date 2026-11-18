@@ -58,7 +58,7 @@ fn value(v: &Value) -> J {
         ),
         Value::Attrs(a) => J::Object(a.iter().map(|(k, v)| (k.to_string(), json!(&**v))).collect()),
         Value::Width(w, k) | Value::Height(w, k) => json!([w, &**k]),
-        Value::TextEffect(name) => json!({"drawingml": &**name}),
+        Value::TextEffect(effect) => json!({"drawingml": ooxml_xml::view::local(&effect.element)}),
     }
 }
 
