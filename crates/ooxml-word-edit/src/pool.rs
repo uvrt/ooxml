@@ -48,13 +48,16 @@ pub struct IdsChange {
     pub cursors: Vec<(String, usize)>,
     /// Renames: an old id and the id it names now.
     pub aliases: Vec<(String, String)>,
+    /// Ids whose aliases go, after the renames (blocks an edit removed: docx-agent's
+    /// `_aliases` filter in `delete_block`).
+    pub forget: Vec<String>,
 }
 
 impl IdsChange {
     /// Whether it adds nothing.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.values.is_empty() && self.cursors.is_empty() && self.aliases.is_empty()
+        self.values.is_empty() && self.cursors.is_empty() && self.aliases.is_empty() && self.forget.is_empty()
     }
 }
 
@@ -138,6 +141,12 @@ impl Ids {
                         value.clone_from(new);
                     }
                 }
+            }
+        }
+        if change.forget.iter().any(|id| self.aliases.contains_key(id)) {
+            let aliases = Arc::make_mut(&mut self.aliases);
+            for id in &change.forget {
+                aliases.remove(id);
             }
         }
     }

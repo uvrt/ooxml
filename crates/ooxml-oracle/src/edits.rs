@@ -360,6 +360,7 @@ fn report<O>(opened: &Package, done: &Edited<O>, result: Value) -> Value {
         "problems": problems(doc).map(|p| p.iter().map(ToString::to_string).collect::<Vec<_>>())
             .unwrap_or_default(),
         "next": next,
+        "aliases": doc.ids().aliases().iter().map(|(k, v)| (k.clone(), json!(v))).collect::<Map<String, Value>>(),
     })
 }
 

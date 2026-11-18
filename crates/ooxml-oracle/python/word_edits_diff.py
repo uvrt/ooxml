@@ -12,7 +12,9 @@ untracked and tracked, each case on the document as opened, and compares:
 * ``touched``: the parts and the body's heading sections the change touched;
 * ``validation``: the problems after the edit against those the document opened with
   (``new``, ``fixed``, ``baseline``), as the save gate compares them;
-* ``next``: the value the main part's sequence and its text-id sequence give next.
+* ``next``: the value the main part's sequence and its text-id sequence give next;
+* ``aliases``: the old ids the document still follows to new ones (renames, less those of
+  blocks removed).
 
 Every difference is printed with its JSON path; the exit status is 1 when there is any.
 
@@ -476,6 +478,7 @@ def python_case(data: bytes, case: dict, baseline: list) -> dict:
         "validation": validation,
         "problems": [str(p) for p in problems],
         "next": next_ids,
+        "aliases": dict(sorted(document.aliases.items())),
     }
 
 

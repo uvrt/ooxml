@@ -144,6 +144,20 @@ impl<'t, 's> EditSink<'t, 's> {
         }))
     }
 
+    /// Forget the aliases of ids an edit removed (an old id naming a block that went).
+    ///
+    /// # Errors
+    /// When the change cannot be applied.
+    pub(crate) fn forget_aliases(&mut self, ids: &[String]) -> Result<()> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+        self.write(Change::Ids(crate::pool::IdsChange {
+            forget: ids.to_vec(),
+            ..Default::default()
+        }))
+    }
+
     /// One above the largest annotation id in use in any story of the working version: the
     /// first of the stand-in ids an edit numbers its revision records with, drawn again
     /// where the change is applied ([`crate::DrawFrom::Annotation`]), so revision ids

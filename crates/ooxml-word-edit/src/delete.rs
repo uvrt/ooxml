@@ -333,6 +333,8 @@ pub(crate) fn kept_renames(
     removed: &[String],
 ) -> Result<Vec<(String, String)>> {
     let renamed = stamp_document(sink, docx)?;
+    // docx-agent: the aliases of the blocks that go go with them
+    sink.forget_aliases(removed)?;
     Ok(renamed.into_iter().filter(|(old, _)| !removed.contains(old)).collect())
 }
 
