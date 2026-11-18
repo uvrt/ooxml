@@ -158,6 +158,20 @@ impl<'t, 's> EditSink<'t, 's> {
         }))
     }
 
+    /// Forget every alias naming one of `ids` (paragraphs an edit joined away).
+    ///
+    /// # Errors
+    /// When the change cannot be applied.
+    pub(crate) fn forget_alias_targets(&mut self, ids: &[String]) -> Result<()> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+        self.write(Change::Ids(crate::pool::IdsChange {
+            forget_targets: ids.to_vec(),
+            ..Default::default()
+        }))
+    }
+
     /// One above the largest annotation id in use in any story of the working version: the
     /// first of the stand-in ids an edit numbers its revision records with, drawn again
     /// where the change is applied ([`crate::DrawFrom::Annotation`]), so revision ids

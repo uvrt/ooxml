@@ -51,13 +51,20 @@ pub struct IdsChange {
     /// Ids whose aliases go, after the renames (blocks an edit removed: docx-agent's
     /// `_aliases` filter in `delete_block`).
     pub forget: Vec<String>,
+    /// Ids no alias may name any more, after the renames (paragraphs a range edit joined
+    /// away: docx-agent's `_aliases` filter in its range edits).
+    pub forget_targets: Vec<String>,
 }
 
 impl IdsChange {
     /// Whether it adds nothing.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.values.is_empty() && self.cursors.is_empty() && self.aliases.is_empty() && self.forget.is_empty()
+        self.values.is_empty()
+            && self.cursors.is_empty()
+            && self.aliases.is_empty()
+            && self.forget.is_empty()
+            && self.forget_targets.is_empty()
     }
 }
 
@@ -142,6 +149,9 @@ impl Ids {
                     }
                 }
             }
+        }
+        if self.aliases.values().any(|v| change.forget_targets.contains(v)) {
+            Arc::make_mut(&mut self.aliases).retain(|_, v| !change.forget_targets.contains(v));
         }
         if change.forget.iter().any(|id| self.aliases.contains_key(id)) {
             let aliases = Arc::make_mut(&mut self.aliases);
