@@ -8,6 +8,7 @@
 //!
 //! Must not: hold handlers, know providers, or dispatch calls (the session does, lane P0d).
 
+use crate::places::Places;
 use crate::schema::{Kind, ObjectNode, Property, Schema, StringNode};
 use serde_json::{Map, Value};
 
@@ -63,6 +64,9 @@ pub struct ToolSpec {
     pub exactly_one: Vec<Vec<String>>,
     /// The arguments' schema.
     pub arguments: ObjectNode,
+    /// A placing tool's place: the names other placing tools give a place, read as its own
+    /// ([`crate::places`]).
+    pub places: Option<Places>,
 }
 
 /// Which strings a path list is for.
@@ -117,6 +121,7 @@ impl ToolSpec {
             documents: vec!["doc".to_owned()],
             exactly_one: Vec::new(),
             arguments,
+            places: None,
         }
     }
 
@@ -252,8 +257,17 @@ impl ToolSpec {
         ] {
             out.insert(key.into(), strings(&self.paths(what)));
         }
-        let aliases = self.aliases().into_iter().map(|a| (a.key(), Value::from(a.name)));
-        out.insert("aliases".into(), Value::Object(aliases.collect()));
+        let mut aliases: Map<String, Value> = self
+            .aliases()
+            .into_iter()
+            .map(|a| (a.key(), Value::from(a.name)))
+            .collect();
+        if let Some(places) = &self.places {
+            // a function in today's `Tool.aliases`: written as the kind of place it reads
+            let read = Value::from(format!("place:{}", places.kind.name()));
+            aliases.extend(places.names.iter().map(|name| (name.clone(), read.clone())));
+        }
+        out.insert("aliases".into(), Value::Object(aliases));
         let defaults = self.defaults().into_iter().map(|(n, v)| (n.to_owned(), v.clone()));
         out.insert("defaults".into(), Value::Object(defaults.collect()));
         self.export_kinds(&mut out);

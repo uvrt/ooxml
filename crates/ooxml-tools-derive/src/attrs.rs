@@ -22,6 +22,12 @@ pub struct ToolAttrs {
     pub route: Option<LitStr>,
     pub documents: Option<Vec<LitStr>>,
     pub exactly_one: Vec<Vec<LitStr>>,
+    /// `places = "sides"`: a placing tool's kind of place.
+    pub places: Option<LitStr>,
+    /// `place_own("at", ...)`: the names of a place it has (or reads otherwise).
+    pub place_own: Vec<LitStr>,
+    /// `place_find`: it takes `find` itself.
+    pub place_find: bool,
 }
 
 /// One modifier of a field's property, in the order written: a call on `ooxml_tools::support::Field`.
@@ -106,6 +112,9 @@ pub fn tool_attrs(attrs: &[Attribute]) -> syn::Result<Option<ToolAttrs>> {
             "priority" => out.priority = Some(meta.value()?.parse()?),
             "documents" => out.documents = Some(string_list(&meta)?),
             "exactly_one" => out.exactly_one.push(string_list(&meta)?),
+            "places" => out.places = Some(meta.value()?.parse()?),
+            "place_own" => out.place_own = string_list(&meta)?,
+            "place_find" => out.place_find = flag(&meta)?,
             "mutates" | "strict" | "batchable" | "read_batchable" | "retry_key" => {
                 let value = flag(&meta)?;
                 out.flags.push((key, value));

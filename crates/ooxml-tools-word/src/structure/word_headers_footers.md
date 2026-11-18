@@ -1,0 +1,1 @@
+Set a section's header or footer text, with an optional page number; remove it, link it to the previous section's, or unlink. Returns its story name.
