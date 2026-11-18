@@ -11,6 +11,7 @@
 //!   writes them;
 //! - stamping blocks with durable ids before the first edit, and new text ids;
 //! - the commands: [`SetText`] (in lines: new paragraphs after it); [`InsertParagraph`];
+//!   [`SetParagraphStyle`] (built-in styles added as Word writes them); [`DeleteBlock`];
 //!   [`InsertText`], [`DeleteText`] and [`ReplaceText`] (text within a paragraph,
 //!   docx-agent's `_replace_ranges`); [`Review`] (accepting and rejecting tracked changes,
 //!   `word_changes`); [`SetWordTracking`] (Word's own Track Changes switch);
@@ -26,16 +27,22 @@
 #![forbid(unsafe_code)]
 
 mod across;
+mod block_checks;
+mod builtin;
 mod comments;
+mod delete;
+mod delete_write;
 mod doc;
 mod editor;
 mod error;
 pub mod find;
 mod inline;
+mod list_style;
 mod marks;
 mod names;
 mod namespaces;
 mod new_part;
+mod paragraph_style;
 mod paragraphs;
 mod people;
 mod policy;
@@ -57,9 +64,11 @@ pub mod validate;
 mod work;
 
 pub use comments::{CommentEdit, CommentEdited, CommentEdits};
+pub use delete::{BlockDeleted, DeleteBlock};
 pub use doc::{Change, Draw, DrawFrom, Key, ModelError, Shared, WordDoc};
 pub use editor::{EditTiming, Edited, Editor};
 pub use error::{EditError, Result};
+pub use paragraph_style::{SetParagraphStyle, StyleSet};
 pub use paragraphs::{InsertParagraph, ParagraphInserted};
 pub use policy::{RevisionPolicy, Tracking};
 pub use pool::{Ids, IdsChange, Sequences};

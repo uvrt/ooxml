@@ -95,7 +95,7 @@ fn spans(lines: &[Line]) -> Vec<(usize, usize)> {
 #[test]
 fn greedy_first_fit_at_the_edge_inclusive() {
     let m = measure(&Mono, &paragraph(vec![run("aaa bbb ccc")]), &geometry(7), false).unwrap();
-    assert_eq!(m.pieces[0].width, Units::int(2000));
+    assert_eq!(m.pieces[0].width(), Units::int(2000));
     assert_eq!(m.pieces[3].kind, PieceKind::Space);
     // "aaa bbb" is exactly 7 characters: it fits, the space after it hangs.
     assert_eq!(spans(&m.lines), [(0, 8), (8, 11)]);
@@ -109,10 +109,46 @@ fn kerning_is_charged_to_the_left_glyph() {
     let mut r = run("AVA");
     r.kern = 2;
     let m = measure(&Mono, &paragraph(vec![r]), &geometry(10), false).unwrap();
-    assert_eq!(m.pieces[0].kern_next, Units::int(-200));
-    assert_eq!(m.pieces[1].kern_next, Units::ZERO);
+    assert_eq!(m.pieces[0].kern_next(), Units::int(-200));
+    assert_eq!(m.pieces[1].kern_next(), Units::ZERO);
     let unknown = measure(&Mono, &paragraph(vec![run("a\u{4e00}")]), &geometry(10), false);
     assert!(unknown.is_err());
+}
+
+#[test]
+fn kerning_pairs_need_the_same_face_and_size_and_kerning_on() {
+    // Two runs of the same face and size, both kerning: the pair across them kerns.
+    let (mut a, mut v) = (run("A"), run("V"));
+    (a.kern, v.kern) = (2, 2);
+    let m = measure(&Mono, &paragraph(vec![a.clone(), v.clone()]), &geometry(10), false).unwrap();
+    assert_eq!(m.pieces[0].kern_next(), Units::int(-200));
+    // Kerning off on the right one, or only above its size, or another face: no pair.
+    let mut off = v.clone();
+    off.kern = 0;
+    let mut above = v.clone();
+    above.kern = 3;
+    let mut other = v.clone();
+    let mut bold = format();
+    bold.face.as_mut().unwrap().bold = true;
+    other.formats = RunFormats::Uniform(bold);
+    for right in [off, above, other] {
+        let m = measure(&Mono, &paragraph(vec![a.clone(), right]), &geometry(10), false).unwrap();
+        assert_eq!(m.pieces[0].kern_next(), Units::ZERO);
+    }
+}
+
+#[test]
+fn pieces_are_small_and_share_their_run_s_format() {
+    assert!(
+        std::mem::size_of::<ooxml_text::Piece>() <= 104,
+        "{}",
+        std::mem::size_of::<ooxml_text::Piece>()
+    );
+    let m = measure(&Mono, &paragraph(vec![run("abc")]), &geometry(10), false).unwrap();
+    let (first, last) = (m.pieces[0].format().unwrap(), m.pieces[2].format().unwrap());
+    assert!(std::ptr::eq(first, last));
+    assert_eq!(*first, format());
+    assert_eq!(m.pieces.capacity(), m.pieces.len());
 }
 
 #[test]

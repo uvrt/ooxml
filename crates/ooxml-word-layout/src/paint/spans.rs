@@ -277,7 +277,7 @@ impl LinePainter<'_, '_> {
         let measured_ch = if piece.source >= 0 { ch } else { piece.ch };
         let format = RunFormatter::new(document, &props).format(measured_ch).clone();
         let face: Text = piece
-            .format
+            .format()
             .as_ref()
             .and_then(|f| f.face.as_ref())
             .map_or_else(|| format.face.clone(), |f| Arc::clone(&f.family));
@@ -315,9 +315,9 @@ impl LinePainter<'_, '_> {
                 .get(usize::try_from(piece.run).unwrap_or(usize::MAX))
                 .is_some_and(|r| r.note_number);
         let width = if piece.kind == PieceKind::SoftHyphen {
-            piece.hyphen
+            piece.hyphen()
         } else {
-            piece.width
+            piece.width()
         };
         if let Some((_, span)) = self.spans.last_mut() {
             span.chars
@@ -347,7 +347,7 @@ impl LinePainter<'_, '_> {
             };
             bottom -= script(self.cx, &key, format.half_points, align).1;
         }
-        let side = px_at(Px::ZERO, piece.width).round_half_up();
+        let side = px_at(Px::ZERO, piece.width()).round_half_up();
         self.out.pictures.push(Drawn {
             path: format!("{}/label", self.job.paragraph.path),
             relationship: bullet.and_then(|b| b.relationship.clone()),

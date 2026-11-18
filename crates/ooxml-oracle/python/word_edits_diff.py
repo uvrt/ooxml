@@ -155,7 +155,11 @@ def _run(document, case: dict):
         return document.set_text_paragraphs(case["target"], case["text"])
     if op == "insert_paragraph":
         where = {"after": case["target"]} if case.get("after", True) else {"before": case["target"]}
-        return document.insert_paragraph(case["text"], **where)
+        return document.insert_paragraph(case["text"], style=case.get("style"), **where)
+    if op == "set_paragraph_style":
+        return document.set_paragraph_style(case["target"], case.get("style"))
+    if op == "delete":
+        return document.delete_block(case["target"])
     if op == "replace":
         return document.replace(case["find"], case["text"], case=case.get("case", True),
                                 count=case.get("count"), keep=case.get("keep", "first"),
@@ -170,6 +174,10 @@ def _result(case: dict, result) -> dict:
         return result
     if op == "set_text":
         return {"id": result.id, "changed": result.changed, "renamed": dict(result.renamed)}
+    if op == "set_paragraph_style":
+        return {"id": result.id, "renamed": dict(result.renamed)}
+    if op == "delete":
+        return {"id": result.id, "renamed": dict(result.renamed), "removed": list(result.removed)}
     if op in ("set_text_paragraphs", "insert_paragraph"):
         return {"id": result.id, "changed": result.changed, "renamed": dict(result.renamed),
                 "created": list(result.created)}
@@ -323,8 +331,10 @@ def python_tool_case(data: bytes, case: dict) -> dict:
 
 
 def _paragraph_cases(document, targets: list[str]) -> list[dict]:
-    """New paragraphs (``--paragraphs``): a text in lines on each target, and a paragraph
-    after and before it (and after and before the first table)."""
+    """New paragraphs and styles (``--paragraphs``): a text in lines on each target, a
+    paragraph after and before it (and after and before the first table), styles set (the
+    document's, built-in ones it lacks, a list style, ones refused) and paragraphs inserted
+    in a style."""
     cases: list[dict] = []
     for target in targets:
         text = document.paragraph(target).text
@@ -332,11 +342,36 @@ def _paragraph_cases(document, targets: list[str]) -> list[dict]:
         cases.append({"op": "set_text_paragraphs", "target": target, "text": f"{text}\r\n\nA third\vbroken"})
         cases.append({"op": "insert_paragraph", "target": target, "text": "A new paragraph.", "after": True})
         cases.append({"op": "insert_paragraph", "target": target, "text": "", "after": False})
+    for target in targets[:2]:
+        for style in ("Heading 1", "Normal", None, "Quote", "List Number 3", "Intense Quote", "No Such Style",
+                      "Default Paragraph Font"):
+            cases.append({"op": "set_paragraph_style", "target": target, "style": style})
+        cases.append({"op": "insert_paragraph", "target": target, "text": "Styled", "after": True,
+                      "style": "Heading 2"})
+        cases.append({"op": "insert_paragraph", "target": target, "text": "Listed", "after": False,
+                      "style": "List Bullet 4"})
     tables = document._index(document.package.document_part()).tables
     if tables:
         for after in (True, False):
             cases.append({"op": "insert_paragraph", "target": tables[0].id, "text": "Beside a table", "after": after})
     return [c for c in cases if not any(m in c.get("text", "") for m in _STYLED)]
+
+
+def _delete_cases(document, targets: list[str]) -> list[dict]:
+    """Block deletions (``--delete``): each target paragraph, the paragraph before the last
+    in the body, the first and last table, and a paragraph holding a bookmark or comment."""
+    body = document._index(document.package.document_part())
+    cases = [{"op": "delete", "target": t} for t in targets]
+    if len(body.paragraphs) > 1:
+        cases.append({"op": "delete", "target": body.paragraphs[-2].id})
+    for table in body.tables[:1] + body.tables[-1:]:
+        cases.append({"op": "delete", "target": table.id})
+    for entry in body.paragraphs:
+        if any(n.tag.endswith(("}bookmarkStart", "}commentRangeStart", "}commentReference"))
+               for n in entry.element.iter()):
+            cases.append({"op": "delete", "target": entry.id})
+            break
+    return list({c["target"]: c for c in cases}.values())
 
 
 def python_case(data: bytes, case: dict, baseline: list) -> dict:
@@ -364,6 +399,10 @@ def python_case(data: bytes, case: dict, baseline: list) -> dict:
     if main in before:
         rewritten[main] = serialize(etree.fromstring(before[main], etree.XMLParser(huge_tree=True)))
     as_written = _touched(document, rewritten, after, main)
+    # A part docx-agent wrote again unchanged but for lxml's serialization: an edit that
+    # changed nothing writes it, the Rust core does not.
+    reserialized = [main] if main in after and rewritten.get(main) == after[main] and before[main] != after[main] \
+        else []
     problems = _validate.check(document.package)
     validation = compare_problems(baseline, problems, key=lambda p: (p.code, p.part, str(p)))
     pool = copy.deepcopy(document._id_pool())
@@ -374,6 +413,7 @@ def python_case(data: bytes, case: dict, baseline: list) -> dict:
         "order": _order(out),
         "touched": touched,
         "touched_as_written": as_written,
+        "reserialized": reserialized,
         "validation": validation,
         "problems": [str(p) for p in problems],
         "next": next_ids,
@@ -403,6 +443,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--only-ops", action="store_true", help="insert_text, delete_text and replace only")
     parser.add_argument("--review", action="store_true", help="accept and reject only (word_changes)")
     parser.add_argument("--tools", action="store_true", help="the review tools called as tools only")
+    parser.add_argument("--delete", action="store_true", help="block deletions only")
     parser.add_argument("--paragraphs", action="store_true",
                         help="set_text in lines and insert_paragraph (only these, with --only-ops none)")
     parser.add_argument("files", nargs="*")
@@ -420,17 +461,20 @@ def main(argv: list[str] | None = None) -> int:
                 found = _tool_cases(document) if args.tools else _review_cases(document)
                 cases = [{**case, "tracked": None} for case in found]
                 targets = []
-            if not args.only_ops and not args.paragraphs and not (args.review or args.tools):
+            if not args.only_ops and not args.paragraphs and not args.delete and not (args.review or args.tools):
                 for target in targets:
                     text = document.paragraph(target).text
                     for new in _texts(text):
                         for tracked in (None, TRACKING):
                             cases.append({"target": target, "text": new, "tracked": tracked})
-            if args.paragraphs:
+            if args.delete:
+                cases = [{**case, "tracked": tracked} for case in _delete_cases(document, targets)
+                         for tracked in (None, TRACKING)]
+            elif args.paragraphs:
                 for case in _paragraph_cases(document, targets):
                     for tracked in (None, TRACKING):
                         cases.append({**case, "tracked": tracked})
-            if (args.ops or args.only_ops) and not args.paragraphs and not (args.review or args.tools):
+            if (args.ops or args.only_ops) and not args.paragraphs and not args.delete and not (args.review or args.tools):
                 for case in _range_cases(document, targets):
                     for tracked in (None, TRACKING):
                         cases.append({**case, "tracked": tracked})
@@ -456,6 +500,13 @@ def main(argv: list[str] | None = None) -> int:
             _shorten(want["parts"], have["parts"])
             continue
         written = want.pop("touched_as_written", None)
+        reserialized = want.pop("reserialized", [])
+        if isinstance(have, dict) and "parts" in have and "parts" in want:
+            for name in reserialized:
+                if name not in have["parts"]:
+                    want["parts"].pop(name, None)   # no change, only lxml's serialization
+                    if have.get("touched") == written:
+                        want["touched"] = written
         if isinstance(have, dict) and "refused" in have and "refused" in want:
             got[key] = want      # both refused: the messages are each side's own words
         elif isinstance(have, dict) and "parts" in have and "parts" in want:

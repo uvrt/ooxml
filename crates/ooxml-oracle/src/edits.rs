@@ -6,7 +6,8 @@
 //!
 //! The manifest is a JSON list of `{"file": path, "cases": [{"op", "target", "text",
 //! "tracked": {"author", "date"} or null, ...}]}` (`op`: `set_text` when absent,
-//! `set_text_paragraphs` (set_text in lines), `insert_paragraph` with `after`,
+//! `set_text_paragraphs` (set_text in lines), `insert_paragraph` with `after` and `style`,
+//! `set_paragraph_style` with `style` (null: the default), `delete` (a block),
 //! `insert_text`, `delete_text`, `replace` with `find`, `case`, `count`, `keep`, `accept`
 //! and `reject` with `ids`, `all`, or `author`/`kind`/`within`, `tool` with `tool` and
 //! `arguments`: [`crate::review_tools`]); each case runs on the document as opened.
@@ -21,8 +22,8 @@ use ooxml_word_edit::find::{Literal, Pattern};
 use ooxml_word_edit::touched::Touched;
 use ooxml_word_edit::validate::problems;
 use ooxml_word_edit::{
-    DeleteText, EditError, Edited, Editor, InsertParagraph, InsertText, Keep, RangesEdited, ReplaceText, Review,
-    Reviewed, RevisionPolicy, Selection, SetText, TextEdited, Tracking, WordDoc,
+    DeleteBlock, DeleteText, EditError, Edited, Editor, InsertParagraph, InsertText, Keep, RangesEdited, ReplaceText,
+    Review, Reviewed, RevisionPolicy, Selection, SetParagraphStyle, SetText, TextEdited, Tracking, WordDoc,
 };
 use serde_json::{json, Map, Value};
 use std::sync::Arc;
@@ -138,6 +139,8 @@ fn edit(bytes: &Arc<[u8]>, case: &Value) -> Result<Value, String> {
             )
             .map(|done| report(&package, &done, ranges_result(&done.out))),
         "insert_paragraph" => insert_paragraph(&editor, &caller, &package, case),
+        "set_paragraph_style" => set_paragraph_style(&editor, &caller, &package, case),
+        "delete" => delete(&editor, &caller, &package, case),
         "replace" => {
             let pattern = match pattern(case, &text("find"), &text("text")) {
                 Ok(p) => p,
@@ -161,15 +164,7 @@ fn edit(bytes: &Arc<[u8]>, case: &Value) -> Result<Value, String> {
                 .run(&caller, &command)
                 .map(|done| report(&package, &done, ranges_result(&done.out)))
         }
-        "accept" | "reject" => {
-            let command = Review {
-                accept: case.get("op").and_then(Value::as_str) == Some("accept"),
-                selection: selection(case),
-            };
-            editor
-                .run(&caller, &command)
-                .map(|done| report(&package, &done, reviewed_result(&done.out)))
-        }
+        "accept" | "reject" => review_case(&editor, &caller, &package, case),
         op => {
             let lines = op == "set_text_paragraphs";
             let command = SetText {
@@ -183,6 +178,17 @@ fn edit(bytes: &Arc<[u8]>, case: &Value) -> Result<Value, String> {
         }
     };
     Ok(done.unwrap_or_else(|error| json!({"refused": error.to_string()})))
+}
+
+/// An accept or reject case.
+fn review_case(editor: &Editor, caller: &Caller, package: &Package, case: &Value) -> Result<Value, EditError> {
+    let command = Review {
+        accept: case.get("op").and_then(Value::as_str) == Some("accept"),
+        selection: selection(case),
+    };
+    editor
+        .run(caller, &command)
+        .map(|done| report(package, &done, reviewed_result(&done.out)))
 }
 
 /// The changes a review case selects: `ids`, `all`, or `author`/`kind`/`within`.
@@ -214,14 +220,45 @@ fn insert_paragraph(editor: &Editor, caller: &Caller, package: &Package, case: &
         anchor: text("target"),
         after: case.get("after").and_then(Value::as_bool).unwrap_or(true),
         text: text("text"),
+        style: case.get("style").and_then(Value::as_str).map(str::to_owned),
         policy: policy(case),
     };
     editor.run(caller, &command).map(|done| {
         let out = &done.out;
-        let renamed: Map<String, Value> = out.renamed.iter().map(|(old, new)| (old.clone(), json!(new))).collect();
-        let result = json!({"id": out.id, "changed": true, "renamed": renamed, "created": [out.id]});
+        let result = json!({"id": out.id, "changed": true, "renamed": renamed(&out.renamed), "created": [out.id]});
         report(package, &done, result)
     })
+}
+
+/// A set_paragraph_style case.
+fn set_paragraph_style(editor: &Editor, caller: &Caller, package: &Package, case: &Value) -> Result<Value, EditError> {
+    let command = SetParagraphStyle {
+        target: case.get("target").and_then(Value::as_str).unwrap_or("").to_owned(),
+        style: case.get("style").and_then(Value::as_str).map(str::to_owned),
+        policy: policy(case),
+    };
+    editor.run(caller, &command).map(|done| {
+        let result = json!({"id": done.out.id, "renamed": renamed(&done.out.renamed)});
+        report(package, &done, result)
+    })
+}
+
+/// A delete case.
+fn delete(editor: &Editor, caller: &Caller, package: &Package, case: &Value) -> Result<Value, EditError> {
+    let command = DeleteBlock {
+        target: case.get("target").and_then(Value::as_str).unwrap_or("").to_owned(),
+        policy: policy(case),
+    };
+    editor.run(caller, &command).map(|done| {
+        let out = &done.out;
+        let result = json!({"id": out.id, "renamed": renamed(&out.renamed), "removed": out.removed});
+        report(package, &done, result)
+    })
+}
+
+/// Renames as the harness writes them.
+fn renamed(renamed: &[(String, String)]) -> Map<String, Value> {
+    renamed.iter().map(|(old, new)| (old.clone(), json!(new))).collect()
 }
 
 /// A replace's find: plain text (white space collapsed or not), or a Python regular

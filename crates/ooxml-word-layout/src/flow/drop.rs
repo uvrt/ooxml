@@ -124,9 +124,9 @@ impl FlowMaker<'_, '_> {
                 if matches!(piece.kind, PieceKind::Tab | PieceKind::Break | PieceKind::SoftHyphen) {
                     continue;
                 }
-                total += q(piece.width);
+                total += q(piece.width());
                 if j + 1 < line.end {
-                    total += q(piece.kern_next);
+                    total += q(piece.kern_next());
                 }
             }
             width = width.max(total);
