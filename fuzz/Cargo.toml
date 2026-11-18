@@ -24,6 +24,7 @@ ooxml-render = { path = "../crates/ooxml-render" }
 ooxml-fonts = { path = "../crates/ooxml-fonts" }
 ooxml-word-layout = { path = "../crates/ooxml-word-layout" }
 ooxml-word-pages = { path = "../crates/ooxml-word-pages" }
+ooxml-markdown = { path = "../crates/ooxml-markdown" }
 
 [workspace]
 
@@ -79,6 +80,13 @@ bench = false
 [[bin]]
 name = "glyph_ink"
 path = "fuzz_targets/glyph_ink.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "markdown_parse"
+path = "fuzz_targets/markdown_parse.rs"
 test = false
 doc = false
 bench = false

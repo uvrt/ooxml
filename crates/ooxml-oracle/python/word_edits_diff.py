@@ -12,7 +12,9 @@ untracked and tracked, each case on the document as opened, and compares:
 * ``touched``: the parts and the body's heading sections the change touched;
 * ``validation``: the problems after the edit against those the document opened with
   (``new``, ``fixed``, ``baseline``), as the save gate compares them;
-* ``next``: the value the main part's sequence and its text-id sequence give next.
+* ``next``: the value the main part's sequence and its text-id sequence give next;
+* ``aliases``: the old ids the document still follows to new ones (renames, less those of
+  blocks removed).
 
 Every difference is printed with its JSON path; the exit status is 1 when there is any.
 
@@ -159,6 +161,8 @@ def _run(document, case: dict):
         return document.insert_paragraph(case["text"], style=case.get("style"), **where)
     if op == "set_paragraph_style":
         return document.set_paragraph_style(case["target"], case.get("style"))
+    if op == "set_text_styled":
+        return _styled(document, case)
     if op == "delete":
         return document.delete_block(case["target"])
     if op == "set_cells":
@@ -171,9 +175,27 @@ def _run(document, case: dict):
     return document._set_text(case["target"], case["text"])
 
 
+def _styled(document, case: dict) -> dict:
+    """One ``word_set_text`` item as the tool writes it (``tools/text.py``: ``_plan``,
+    ``_set_one``, in the call's batch), its results as the harness compares them."""
+    from docx_agent.tools.text import _plan, _set_one
+
+    class Call:
+        pass
+
+    call = Call()
+    call.document = document
+    plan = _plan(call, case["target"], case["text"], case.get("style"), "")
+    with document.batch():
+        edits, runs, notes, written = _set_one(call, plan)
+    return {"edits": [{"id": e.id, "changed": e.changed, "renamed": dict(e.renamed), "created": list(e.created),
+                       "removed": list(e.removed)} for e in edits],
+            "styled": runs, "notes": notes, "written": [document.get(w).id for w in written]}
+
+
 def _result(case: dict, result) -> dict:
     op = case.get("op", "set_text")
-    if op in ("accept", "reject"):
+    if op in ("accept", "reject", "set_text_styled"):
         return result
     if op == "set_text":
         return {"id": result.id, "changed": result.changed, "renamed": dict(result.renamed)}
@@ -403,6 +425,26 @@ def _paragraph_cases(document, targets: list[str]) -> list[dict]:
     return [c for c in cases if not any(m in c.get("text", "") for m in _STYLED)]
 
 
+def _styled_cases(document, targets: list[str]) -> list[dict]:
+    """``word_set_text`` with inline emphasis (``--styled``): strong and emphasis, a named
+    span (a style the document has, a built-in one it may lack, one refused), lines, a
+    paragraph style, a cell's text in lines."""
+    cases: list[dict] = []
+    for target in targets:
+        cases.append({"op": "set_text_styled", "target": target, "text": "Plain **strong** and *emphasis* end"})
+        cases.append({"op": "set_text_styled", "target": target, "text": "[Titled words]{Book Title}, then ***both***"})
+        cases.append({"op": "set_text_styled", "target": target, "text": "**First** line\nSecond *line*"})
+    for target in targets[:2]:
+        cases.append({"op": "set_text_styled", "target": target, "text": "A *styled* heading", "style": "Heading 2"})
+        cases.append({"op": "set_text_styled", "target": target, "text": "[x]{No Such Style} y"})
+        cases.append({"op": "set_text_styled", "target": target, "text": "[Quoted]{style=\"Intense Emphasis\"} and \\*not\\*"})
+    tables = document._index(document.package.document_part()).tables
+    if tables:
+        cases.append({"op": "set_text_styled", "target": f"{tables[0].id}/c0,0", "text": "**Cell** one\nand *two*"})
+        cases.append({"op": "set_text_styled", "target": f"{tables[0].id}/c0,0", "text": "Only **one**"})
+    return cases
+
+
 def _delete_cases(document, targets: list[str]) -> list[dict]:
     """Block deletions (``--delete``): each target paragraph, the paragraph before the last
     in the body, the first and last table, and a paragraph holding a bookmark or comment."""
@@ -478,6 +520,7 @@ def python_case(data: bytes, case: dict, baseline: list) -> dict:
         "validation": validation,
         "problems": [str(p) for p in problems],
         "next": next_ids,
+        "aliases": dict(sorted(document.aliases.items())),
     }
 
 
@@ -508,6 +551,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--delete", action="store_true", help="block deletions only")
     parser.add_argument("--structure", action="store_true", help="the structure tools called as tools only")
     parser.add_argument("--cells", action="store_true", help="set_cells only")
+    parser.add_argument("--styled", action="store_true", help="word_set_text's styled text only")
     parser.add_argument("--paragraphs", action="store_true",
                         help="set_text in lines and insert_paragraph (only these, with --only-ops none)")
     parser.add_argument("files", nargs="*")
@@ -530,14 +574,17 @@ def main(argv: list[str] | None = None) -> int:
                     if args.tools else _review_cases(document)
                 cases = [{**case, "tracked": None} for case in found]
                 targets = []
-            if not args.only_ops and not args.paragraphs and not args.delete and not args.cells and not (
-                    args.review or args.tools or args.structure):
+            if not args.only_ops and not args.paragraphs and not args.delete and not args.cells and not args.styled \
+                    and not (args.review or args.tools or args.structure):
                 for target in targets:
                     text = document.paragraph(target).text
                     for new in _texts(text):
                         for tracked in (None, TRACKING):
                             cases.append({"target": target, "text": new, "tracked": tracked})
-            if args.cells:
+            if args.styled:
+                cases = [{**case, "tracked": tracked} for case in _styled_cases(document, targets)
+                         for tracked in (None, TRACKING)]
+            elif args.cells:
                 cases = [{**case, "tracked": tracked} for case in _cells_cases(document)
                          for tracked in (None, TRACKING)]
             elif args.delete:
@@ -547,7 +594,8 @@ def main(argv: list[str] | None = None) -> int:
                 for case in _paragraph_cases(document, targets):
                     for tracked in (None, TRACKING):
                         cases.append({**case, "tracked": tracked})
-            if (args.ops or args.only_ops) and not args.paragraphs and not args.delete and not args.cells and not (args.review or args.tools):
+            if (args.ops or args.only_ops) and not args.paragraphs and not args.delete and not args.cells \
+                    and not args.styled and not (args.review or args.tools):
                 for case in _range_cases(document, targets):
                     for tracked in (None, TRACKING):
                         cases.append({**case, "tracked": tracked})

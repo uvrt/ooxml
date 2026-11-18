@@ -219,7 +219,7 @@ WORD_MODEL_CRATES = ("ooxml-oracle", "ooxml-base", "ooxml-xml", "ooxml-zip", "oo
                      "ooxml-drawingml", "ooxml-scene", "ooxml-metafile", "ooxml-word-layout", "ooxml-numfmt",
                      "ooxml-chart", "ooxml-render", "ooxml-tools", "ooxml-tools-derive", "ooxml-tools-word",
                       "ooxml-raster", "ooxml-style-names", "ooxml-word-pages", "ooxml-session", "ooxml-store",
-                      "ooxml-word-edit")
+                      "ooxml-word-edit", "ooxml-markdown")
 
 
 def _crates(names: tuple[str, ...]) -> tuple[str, ...]:
@@ -585,7 +585,7 @@ def fuzz_seeds(out: Path) -> dict[str, int]:
     import hashlib
     import zipfile
 
-    counts = {"package": 0, "xml": 0, "metafile": 0, "font": 0}
+    counts = {"package": 0, "xml": 0, "metafile": 0, "font": 0, "markdown": 0}
     seen: set[str] = set()
 
     def keep(kind: str, data: bytes) -> None:
@@ -602,6 +602,9 @@ def fuzz_seeds(out: Path) -> dict[str, int]:
             continue
         if path.suffix.lower() in FUZZ_FONT_SUFFIXES:
             keep("font", path.read_bytes())  # the faces the repository ships, for glyph_ink
+            continue
+        if path.suffix.lower() == ".md":
+            keep("markdown", path.read_bytes())  # the documentation's Markdown, for markdown_parse
             continue
         if path.suffix.lower() not in FUZZ_SEED_SUFFIXES:
             continue
