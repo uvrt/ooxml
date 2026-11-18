@@ -220,7 +220,7 @@ pub(crate) fn take_properties(work: &mut Work, target: Id, source: Id, stamp: &m
 
 /// Record a new paragraph's content as inserted: its children but the properties, in one
 /// `w:ins` where the first of them stands (docx-agent's `insert_paragraph_content`).
-fn insert_paragraph_content(work: &mut Work, paragraph: Id, stamp: &mut Stamp) {
+pub(crate) fn insert_paragraph_content(work: &mut Work, paragraph: Id, stamp: &mut Stamp) {
     let content: Vec<Id> = work
         .children(paragraph)
         .iter()

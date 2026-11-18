@@ -1,0 +1,1 @@
+Move a heading's whole section, or a span of blocks, keeping ids; tracked when tracking is on.

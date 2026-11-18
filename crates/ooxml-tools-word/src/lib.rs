@@ -17,6 +17,7 @@ mod paging;
 mod placements;
 mod refusal;
 mod review;
+mod structure;
 mod version;
 mod word_inspect;
 mod word_read;
@@ -27,6 +28,12 @@ pub use placements::Placer;
 pub use review::{
     word_changes, word_comments, word_set_tracking, ChangeAction, ChangeDetail, ChangeKind, CommentAction, CommentItem,
     Editing, Tracked, WordChanges, WordComments, WordSetTracking, COMMENT_WRITES,
+};
+pub use structure::{
+    word_headers_footers, word_links, word_move, word_notes, word_sections, CopyStyles, FieldAction, HeaderAction,
+    LinkAction, Margins, NoteAction, NoteKind, Orientation, PageNumber, ReferenceKind, SectionAction, SectionStart,
+    StoryType, StyleMapping, Unmapped, Which, WordCopyFrom, WordFields, WordHeadersFooters, WordLinks, WordMove,
+    WordNotes, WordSections,
 };
 pub use version::Version;
 pub use word_inspect::{word_inspect, WordInspect};

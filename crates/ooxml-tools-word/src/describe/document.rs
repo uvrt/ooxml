@@ -128,40 +128,7 @@ impl<'a> Reading<'a> {
     }
 
     pub(super) fn sections(&self) -> Value {
-        let out: Vec<Value> = self
-            .sections
-            .iter()
-            .enumerate()
-            .map(|(k, s)| {
-                let mut item = Map::new();
-                item.insert("id".into(), json!(s.id));
-                item.insert("start".into(), json!(s.start()));
-                item.insert("orientation".into(), json!(s.orientation()));
-                let (width, height) = s
-                    .page()
-                    .map_or((Value::Null, Value::Null), |(w, h)| (json!(w), json!(h)));
-                item.insert("page".into(), json!([width, height]));
-                let mut margins = Map::new();
-                for side in ["top", "right", "bottom", "left"] {
-                    margins.insert(side.into(), s.margin(side).map_or(Value::Null, |m| json!(m)));
-                }
-                item.insert("margins".into(), Value::Object(margins));
-                item.insert("columns".into(), json!(s.columns()));
-                for which in ["header", "footer"] {
-                    let mut shown = Map::new();
-                    for kind in KINDS {
-                        if let Some(story) = section_story(self.docx, &self.sections, k, which, kind) {
-                            shown.insert(kind.into(), json!(story));
-                        }
-                    }
-                    if !shown.is_empty() {
-                        item.insert(format!("{which}s"), Value::Object(shown));
-                    }
-                }
-                Value::Object(item)
-            })
-            .collect();
-        Value::Array(out)
+        sections_json(self.docx, &self.sections)
     }
 
     /// The paragraph styles applied, by name, most used first (at most 40).
@@ -322,4 +289,42 @@ fn counter_object(counts: Vec<(Option<String>, u64)>) -> Value {
         out.insert(key.unwrap_or_else(|| "null".to_owned()), json!(n));
     }
     Value::Object(out)
+}
+
+/// The sections as docx-agent's `_sections` lists them: id, start, orientation, page,
+/// margins, columns, and the headers and footers each shows.
+pub(crate) fn sections_json(docx: &Docx, found: &[Section]) -> Value {
+    let out: Vec<Value> = found
+        .iter()
+        .enumerate()
+        .map(|(k, s)| {
+            let mut item = Map::new();
+            item.insert("id".into(), json!(s.id));
+            item.insert("start".into(), json!(s.start()));
+            item.insert("orientation".into(), json!(s.orientation()));
+            let (width, height) = s
+                .page()
+                .map_or((Value::Null, Value::Null), |(w, h)| (json!(w), json!(h)));
+            item.insert("page".into(), json!([width, height]));
+            let mut margins = Map::new();
+            for side in ["top", "right", "bottom", "left"] {
+                margins.insert(side.into(), s.margin(side).map_or(Value::Null, |m| json!(m)));
+            }
+            item.insert("margins".into(), Value::Object(margins));
+            item.insert("columns".into(), json!(s.columns()));
+            for which in ["header", "footer"] {
+                let mut shown = Map::new();
+                for kind in KINDS {
+                    if let Some(story) = section_story(docx, found, k, which, kind) {
+                        shown.insert(kind.into(), json!(story));
+                    }
+                }
+                if !shown.is_empty() {
+                    item.insert(format!("{which}s"), Value::Object(shown));
+                }
+            }
+            Value::Object(item)
+        })
+        .collect();
+    Value::Array(out)
 }
