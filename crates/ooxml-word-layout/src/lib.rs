@@ -60,4 +60,4 @@ pub mod wrap;
 pub use engine::{DocumentLayout, WordLayout};
 pub use error::LayoutError;
 pub use faces::{Coverage, Faces, WordGlyphs};
-pub use px::Px;
+pub use px::{CompactPx, Px};

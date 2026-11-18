@@ -36,16 +36,15 @@ impl Fitted<'_> {
 
 /// A line of no height: a table cell's line is fitted by where it ends.
 fn no_height() -> LineHeight {
-    LineHeight {
-        pitch: Px::ZERO,
-        text_above: Px::ZERO,
-        text_below: Px::ZERO,
-        natural: Px::ZERO,
-        rule: crate::vertical::LineRule::Exact,
-        line: 0,
-        mixed: false,
-        object_drop: None,
-    }
+    LineHeight::new(
+        Px::ZERO,
+        Px::ZERO,
+        Px::ZERO,
+        Px::ZERO,
+        crate::vertical::LineRule::Exact,
+        0,
+        false,
+    )
 }
 
 /// How the column's notes stand.

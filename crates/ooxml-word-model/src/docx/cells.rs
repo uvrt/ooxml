@@ -64,6 +64,7 @@ impl TableFacts {
         let resolved = resolve_table(&formatting.sources(), table);
         for row in resolved.rows {
             for cell in row.cells {
+                let cell = Arc::unwrap_or_clone(cell);
                 self.cells.insert(cell.path, cell.properties);
             }
         }

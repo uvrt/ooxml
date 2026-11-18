@@ -7,6 +7,11 @@ snapshot commit; the development history before it is summarised here.
 
 ## 0.14.0 -- unreleased
 
+- **`docx2svg.rust` keeps less again (lane L4f):** lines' heights, cells' stacked lines,
+  geometries, cells' resolved formats and painted spans' pens are kept compact or shared in
+  Rust (ooxml-core 0.10.0). Its measures at 2,988 pages: 311 -> 192 MB; 350 pages painted:
+  109 -> 77 MB. Pages and SVG are unchanged.
+
 - **`docx2svg.rust` keeps half the memory for its measures (lane L4e):** the Rust text
   engine's pieces are 104 bytes each, were 208 (ooxml-core 0.10.0).Its measures at 350 pages: 353 -> 149 MB.
 

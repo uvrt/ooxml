@@ -425,24 +425,24 @@ impl Breaker<'_> {
         };
         let reach = |h: &LineHeight| -> Q {
             if beside.column.mode15 {
-                (h.pitch - h.multiple_extra()).value()
+                (h.pitch() - h.multiple_extra()).value()
             } else {
-                h.pitch.value() + if beside.last { beside.after } else { Q::from_integer(0) }
+                h.pitch().value() + if beside.last { beside.after } else { Q::from_integer(0) }
             }
         };
         let (mut y, mut moved) = (y, None);
         let mut found_line: (Line, LineExtra) = (plain, LineExtra::default());
         for _ in 0..64 {
             let height = self.height(source, pieces, &plain, first)?;
-            let text = y + (height.pitch - height.multiple_extra()).value();
+            let text = y + (height.pitch() - height.multiple_extra()).value();
             let (segs, by) = segments(beside.wraps, (y, y + reach(&height), Some(text)), &beside.column);
             let Some(segs) = segs else { break };
             if let Some((line, parts)) = break_across(pieces, start, &segs, &source.geometry, first) {
                 found_line = wrapped(line, parts);
                 let again = self.height(source, pieces, &line, first);
-                if let Some(again) = again.filter(|a| a.pitch != height.pitch) {
+                if let Some(again) = again.filter(|a| a.pitch() != height.pitch()) {
                     // The line's own height, not the whole column's, says what it is beside.
-                    let text = y + (again.pitch - again.multiple_extra()).value();
+                    let text = y + (again.pitch() - again.multiple_extra()).value();
                     let (others, _) = segments(beside.wraps, (y, y + reach(&again), Some(text)), &beside.column);
                     match others {
                         None => found_line = (plain, LineExtra::default()),

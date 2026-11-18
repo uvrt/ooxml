@@ -165,7 +165,7 @@ fn flow_line(layout: &DocumentLayout, laid: &LaidPage, placed: &PlacedLine, fram
     } else {
         Px::ZERO
     };
-    let b = LineBox::new(*height, placed.space_before, space_after);
+    let b = LineBox::new(height.clone(), placed.space_before, space_after);
     Some(DrawnLine {
         source: LineSource::Flow { item: placed.item },
         block: Some(item.block),
@@ -205,7 +205,7 @@ fn drop_cap_lines(layout: &DocumentLayout, placed: &PlacedLine, frame: &PageFram
     let mut y = placed.paragraph_top + Px::twips(drop.before);
     let mut out = Vec::new();
     for (number, height) in drop.measured.heights.iter().enumerate() {
-        let b = LineBox::new(*height, Px::ZERO, Px::ZERO);
+        let b = LineBox::new(height.clone(), Px::ZERO, Px::ZERO);
         let below = line_extent(height).1;
         out.push(DrawnLine {
             source: LineSource::DropCap { item: placed.item },
@@ -213,14 +213,14 @@ fn drop_cap_lines(layout: &DocumentLayout, placed: &PlacedLine, frame: &PageFram
             body: Some(drop.body),
             number,
             top: y,
-            pitch: height.pitch,
-            baseline: (y + height.pitch).round_half_up() - below.round_half_up(),
+            pitch: height.pitch(),
+            baseline: (y + height.pitch()).round_half_up() - below.round_half_up(),
             band: text_band(y, &b),
             column: placed.column,
             left,
             white_text: false,
         });
-        y += height.pitch;
+        y += height.pitch();
     }
     out
 }
@@ -229,7 +229,7 @@ fn drop_cap_lines(layout: &DocumentLayout, placed: &PlacedLine, frame: &PageFram
 fn opening_line(layout: &DocumentLayout, laid: &LaidPage, frame: &PageFrame) -> Option<DrawnLine> {
     let opening = laid.opens?;
     let item = laid.start.item;
-    let height: LineHeight = layout.flow.items.get(item)?.para()?.continuation?;
+    let height: LineHeight = layout.flow.items.get(item)?.para()?.continuation.clone()?;
     let b = LineBox::new(height, Px::ZERO, Px::ZERO);
     Some(DrawnLine {
         source: LineSource::Opening { item },
@@ -284,7 +284,7 @@ pub(crate) fn row_lines(
         }
         let Some(h) = flow
             .paragraph(line.block)
-            .and_then(|m| m.heights.get(line.line).copied())
+            .and_then(|m| m.heights.get(line.line).cloned())
         else {
             continue;
         };

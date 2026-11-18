@@ -137,7 +137,7 @@ fn percent_widths(spec: &TableSpec, column_width: Q) -> Result<Vec<i64>, Unsuppo
     if spec.fixed() {
         return Err(unsupported("a fixed table with a width in percent (not measured)"));
     }
-    let shares: Vec<Option<(i64, &str)>> = first_row.cells.iter().map(cell_width).collect();
+    let shares: Vec<Option<(i64, &str)>> = first_row.cells.iter().map(|c| cell_width(c)).collect();
     let kinds: BTreeSet<Option<&str>> = shares.iter().map(|s| s.map(|(_, k)| k)).collect();
     let dxa = kinds.len() == 1 && kinds.contains(&Some("dxa"));
     let pct = kinds.len() == 1 && kinds.contains(&Some("pct"));
@@ -153,7 +153,7 @@ fn percent_widths(spec: &TableSpec, column_width: Q) -> Result<Vec<i64>, Unsuppo
     }
     let columns = spec.columns();
     for row in rows {
-        let widths: Vec<Option<(i64, &str)>> = row.cells.iter().map(cell_width).collect();
+        let widths: Vec<Option<(i64, &str)>> = row.cells.iter().map(|c| cell_width(c)).collect();
         if row.grid_before != 0
             || row.grid_after != 0
             || row.cells.len() != columns

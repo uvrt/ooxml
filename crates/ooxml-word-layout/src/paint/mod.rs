@@ -35,7 +35,7 @@ use crate::geometry::stories::{PageParts, StoryPage};
 use crate::geometry::{DrawnLine, LineSource, PageGeometry};
 use crate::paginate::LaidPage;
 use crate::paragraph::MeasuredParagraph;
-use crate::px::Px;
+use crate::px::{CompactPx, Px};
 use crate::table::PlacedRow;
 use ooxml_word_model::model::{Block, Paragraph};
 use ooxml_word_model::value::Text;
@@ -80,8 +80,9 @@ pub struct Span {
     pub path: String,
     /// Its characters.
     pub chars: Vec<char>,
-    /// Each glyph's pen x, px from the page's left edge.
-    pub xs: Vec<Px>,
+    /// Each glyph's pen x, px from the page's left edge, kept compact ([`Span::x`] reads
+    /// one as [`Px`]).
+    pub xs: Vec<CompactPx>,
     /// The baseline it is drawn on.
     pub y: i64,
     /// The pen after its last glyph.
@@ -180,6 +181,18 @@ pub struct Drawn {
     pub height: Px,
     /// Its picture's `a:srcRect` crop (left, top, right, bottom fractions), where cropped.
     pub crop: Option<[ooxml_base::Q; 4]>,
+}
+
+impl Span {
+    /// Glyph `k`'s pen x.
+    pub fn x(&self, k: usize) -> Option<Px> {
+        self.xs.get(k).map(CompactPx::get)
+    }
+
+    /// Every glyph's pen x.
+    pub fn pens(&self) -> impl Iterator<Item = Px> + '_ {
+        self.xs.iter().map(CompactPx::get)
+    }
 }
 
 /// One line drawn, with its spans.

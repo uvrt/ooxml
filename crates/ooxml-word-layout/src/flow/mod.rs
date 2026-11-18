@@ -91,7 +91,7 @@ impl ParaItem {
 
     /// The pitch of the continuation separator's line a page it starts opens with.
     pub fn continuation_pitch(&self) -> Option<Px> {
-        self.continuation.map(|h| h.pitch)
+        self.continuation.as_ref().map(crate::heights::LineHeight::pitch)
     }
 
     /// The footnotes referenced on line `line`.

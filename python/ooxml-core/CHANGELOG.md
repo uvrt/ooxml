@@ -5,6 +5,24 @@ ooxml-core is the Rust core of the ooxml packages (`crates/`), as the Python mod
 
 ## 0.10.0 -- unreleased
 
+- **Compact lengths in the layout's structures (phase PL, lane L4f).** One compact form
+  for every exact length kept in quantity: `ooxml_base::Compact<L>` (16 bytes, numerator
+  and denominator inline, the exact value boxed where they do not fit; `ExactLength` for
+  a length type). `ooxml_text::CompactUnits` is `Compact<Units>`, and
+  `ooxml_word_layout::CompactPx` is `Compact<Px>`; arithmetic stays exact on `Units` and
+  `Px`. A line's height (`LineHeight`, 192 -> 96 bytes) and a cell's stacked line
+  (`StackedLine`, 176 -> 96 bytes, its stack with no spare room) keep their lengths so and
+  read them through methods; a cell block's pitches too. Equal geometries are kept once
+  (`Measurer::share`, swept with the measures): a document breaks its paragraphs at a
+  handful. A measured cell shares the model's resolved cell (`ResolvedRow.cells` holds
+  `Arc<ResolvedCell>`) instead of copying 880 bytes. A painted span's pens
+  (`Span.xs`) are `CompactPx` too, read through `x()` and `pens()`, with no spare room.
+  Answers are unchanged (the text and page differentials).
+  Measures kept by a layout, counting allocator: 311 -> 192 MB on a 2,988-page document,
+  149 -> 121 MB on a made-up 350-page report; the first layout's live bytes 471 -> 341 MB
+  and 178 -> 149 MB; its time is unchanged (8.4 -> 7.6 s, 1.60 -> 1.54 s best of 3). All
+  350 pages painted: 109 -> 77 MB.
+
 - **Smaller text pieces (phase PL, lane L4e).** The text engine keeps a piece per
   character in every measure; a piece is 104 bytes, was 208. Its lengths (advance, kern
   pair, hyphen) are kept as `ooxml_text::CompactUnits` -- numerator and denominator inline

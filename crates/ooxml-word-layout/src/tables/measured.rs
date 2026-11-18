@@ -155,18 +155,18 @@ impl MeasuredTable {
                 let Some(entry) = cell.entries.get(placed.entry) else {
                     continue;
                 };
-                let top = line_y + placed.above;
-                line_y = top + placed.pitch + placed.below;
+                let top = line_y + placed.above();
+                line_y = top + placed.pitch() + placed.below();
                 match &entry.content {
                     Content::Table(nested) => nested.draw_whole(top, base + entry.block, out),
                     Content::Paragraph(_) => out.push(CellLine {
                         block: base + entry.block,
                         line: placed.number,
                         top,
-                        pitch: placed.pitch,
+                        pitch: placed.pitch(),
                         drawn: !entry.undrawn(placed.number),
-                        space_before: placed.box_before,
-                        space_after: placed.box_after,
+                        space_before: placed.box_before(),
+                        space_after: placed.box_after(),
                         left: cell.cell_box.text_left,
                         white_text: white_text(&cell.resolved.properties),
                     }),

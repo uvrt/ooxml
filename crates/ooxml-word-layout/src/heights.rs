@@ -7,39 +7,92 @@
 //! Must not: break lines (the text engine has), or place them.
 
 use crate::faces::Faces;
-use crate::px::Px;
+use crate::px::{CompactPx, Px};
 use crate::vertical::{line_extent, mixed_line_pitch, tallest_natural, HeightItem, LineRule, Shape};
 use ooxml_base::Q;
 use ooxml_text::{Line, Piece, PieceKind};
 use std::collections::HashMap;
 
-/// One line's vertical facts, exact device px (`lines.LineHeight`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// One line's vertical facts, exact device px (`lines.LineHeight`), its lengths kept
+/// compact ([`CompactPx`]) and read as [`Px`].
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct LineHeight {
-    /// Its pitch.
-    pub pitch: Px,
-    /// The text's extent above the baseline (ascent and line gap).
-    pub text_above: Px,
-    /// Below it.
-    pub text_below: Px,
-    /// The natural height the rule scales or compares with.
-    pub natural: Px,
+    pitch: CompactPx,
+    text_above: CompactPx,
+    text_below: CompactPx,
+    natural: CompactPx,
+    object_drop: Option<CompactPx>,
     /// The rule.
     pub rule: LineRule,
     /// `w:line`.
     pub line: i64,
     /// More than one face or size on it.
     pub mixed: bool,
-    /// A line holding inline pictures: how far below its top a picture's bottom stands.
-    pub object_drop: Option<Px>,
 }
 
 impl LineHeight {
+    /// A line of text: its pitch, the text's extent above the baseline (ascent and line
+    /// gap) and below it, the natural height the rule scales or compares with, the rule,
+    /// `w:line`, and whether more than one face or size is on it.
+    pub fn new(
+        pitch: Px,
+        text_above: Px,
+        text_below: Px,
+        natural: Px,
+        rule: LineRule,
+        line: i64,
+        mixed: bool,
+    ) -> LineHeight {
+        LineHeight {
+            pitch: pitch.into(),
+            text_above: text_above.into(),
+            text_below: text_below.into(),
+            natural: natural.into(),
+            object_drop: None,
+            rule,
+            line,
+            mixed,
+        }
+    }
+
+    /// The same line holding inline pictures, the lowest a `drop` below its top.
+    pub fn with_object_drop(self, drop: Px) -> LineHeight {
+        LineHeight {
+            object_drop: Some(drop.into()),
+            ..self
+        }
+    }
+
+    /// Its pitch.
+    pub fn pitch(&self) -> Px {
+        self.pitch.get()
+    }
+
+    /// The text's extent above the baseline (ascent and line gap).
+    pub fn text_above(&self) -> Px {
+        self.text_above.get()
+    }
+
+    /// The text's extent below the baseline.
+    pub fn text_below(&self) -> Px {
+        self.text_below.get()
+    }
+
+    /// The natural height the rule scales or compares with.
+    pub fn natural(&self) -> Px {
+        self.natural.get()
+    }
+
+    /// A line holding inline pictures: how far below its top a picture's bottom stands.
+    pub fn object_drop(&self) -> Option<Px> {
+        self.object_drop.as_ref().map(CompactPx::get)
+    }
+
     /// The part of an `auto` multiple above one that is below the text
     /// (`paginate.multiple_extra`).
     pub fn multiple_extra(&self) -> Px {
         if self.rule == LineRule::Auto && self.line > 240 {
-            self.pitch - self.text_above - self.text_below
+            self.pitch() - self.text_above() - self.text_below()
         } else {
             Px::ZERO
         }
@@ -48,7 +101,7 @@ impl LineHeight {
     /// What of the line must fit above the margin: its pitch less an `auto` multiple's
     /// extra (`paginate.fits`, rule `text-border`, before the border).
     pub fn fit(&self) -> Px {
-        self.pitch - self.multiple_extra()
+        self.pitch() - self.multiple_extra()
     }
 }
 
@@ -157,10 +210,10 @@ impl<'a> HeightRules<'a> {
             line: self.line,
         };
         if let Some(found) = self.cache.get(&key) {
-            return *found;
+            return found.clone();
         }
         let found = self.compute(&key.text, &key.label);
-        self.cache.insert(key, found);
+        self.cache.insert(key, found.clone());
         found
     }
 
@@ -173,16 +226,15 @@ impl<'a> HeightRules<'a> {
         };
         let text_natural = tallest_natural(text, self.faces);
         let (above, below) = combined.shape.extent(combined.half_points);
-        Some(LineHeight {
-            pitch: mixed_line_pitch(&combined, text_only.as_ref(), self.rule, self.line, text_natural),
-            text_above: above,
-            text_below: below,
-            natural: combined.shape.natural(combined.half_points),
-            rule: self.rule,
-            line: self.line,
-            mixed: combined.mixed,
-            object_drop: None,
-        })
+        Some(LineHeight::new(
+            mixed_line_pitch(&combined, text_only.as_ref(), self.rule, self.line, text_natural),
+            above,
+            below,
+            combined.shape.natural(combined.half_points),
+            self.rule,
+            self.line,
+            combined.mixed,
+        ))
     }
 
     /// A line holding inline pictures `objects` (their heights, twips): a picture stands on
@@ -206,8 +258,8 @@ impl<'a> HeightRules<'a> {
         } else {
             None
         };
-        let mut above = text.map_or(picture, |t| picture.max(t.text_above));
-        let below = text.map_or(Px::ZERO, |t| t.text_below);
+        let mut above = text.as_ref().map_or(picture, |t| picture.max(t.text_above()));
+        let below = text.as_ref().map_or(Px::ZERO, LineHeight::text_below);
         let mut natural = above + below;
         if text.is_none() && !self.mode15 {
             natural = natural.max(mark_natural);
@@ -223,28 +275,45 @@ impl<'a> HeightRules<'a> {
             LineRule::Exact => Px::twips(self.line),
             LineRule::AtLeast => natural.max(Px::twips(self.line)),
             LineRule::Auto if self.line != 240 => {
-                let base = text.map_or(mark_natural, |t| t.natural);
+                let base = text.as_ref().map_or(mark_natural, LineHeight::natural);
                 Px::quantise_q(
                     natural.value() + base.value() * (Q::new(i128::from(self.line), 240) - Q::from_integer(1)),
                 )
             }
             LineRule::Auto => natural,
         };
-        let descent = text.map_or(Px::ZERO, |t| t.text_below);
+        let descent = text.as_ref().map_or(Px::ZERO, LineHeight::text_below);
         let drop = match self.rule {
             LineRule::Exact => pitch * Q::new(4, 5),
             LineRule::AtLeast => pitch - descent,
             LineRule::Auto => natural - descent,
         };
-        Some(LineHeight {
-            pitch,
-            text_above: above,
-            text_below: natural - above,
-            natural,
-            rule: self.rule,
-            line: self.line,
-            mixed: true,
-            object_drop: Some(drop),
-        })
+        Some(LineHeight::new(pitch, above, natural - above, natural, self.rule, self.line, true).with_object_drop(drop))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_line_height_keeps_its_lengths_exact_in_half_the_room() {
+        let third = Px::ratio(1, 3).unwrap_or(Px::ZERO);
+        let h = LineHeight::new(
+            Px::int(50),
+            Px::twips(3),
+            third,
+            Px::int(46),
+            LineRule::AtLeast,
+            300,
+            true,
+        );
+        assert_eq!(
+            (h.pitch(), h.text_above(), h.text_below(), h.natural(), h.object_drop()),
+            (Px::int(50), Px::twips(3), third, Px::int(46), None)
+        );
+        let wide = Px::ratio(1, i128::from(u32::MAX) + 2).unwrap_or(Px::ZERO);
+        assert_eq!(h.clone().with_object_drop(wide).object_drop(), Some(wide));
+        assert_eq!(std::mem::size_of::<LineHeight>(), 96);
     }
 }
