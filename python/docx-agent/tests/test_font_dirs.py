@@ -30,6 +30,7 @@ import docx2svg
 from docx2svg import fonts
 from docx_agent import Document
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
+from pixels import pixels
 
 FAMILY = "Fontdirs Probe Mono"
 _W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
@@ -148,7 +149,7 @@ def test_in_process_and_the_png_match_a_direct_render(folder):
         session = box.session()
         session.open(_document(), "report.docx")
         render = box.dispatch(session, "render", {"doc": "d1", "pages": [1], "width": 400})
-    assert render.ok and render.images[0].data == expected and _complete(render.data["coverage"])
+    assert render.ok and pixels(render.images[0].data) == pixels(expected) and _complete(render.data["coverage"])
 
 
 def test_the_definitions_and_prompt_do_not_change(folder):

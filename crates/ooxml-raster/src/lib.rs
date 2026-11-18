@@ -17,14 +17,17 @@
 //! resvg-py's `svg_to_bytes`.
 //!
 //! Must not: write or rewrite SVG, choose a face itself (resvg's database does, as in
-//! Python), hold state between drawings beyond the [`FontSet`] its caller keeps, or depend
+//! Python; a text docx2svg's drawing plan draws without some files is chosen for in the set
+//! less those, [`Withheld`]), hold state between drawings beyond the [`FontSet`] its caller keeps, or depend
 //! on an interpreter lock: every value here is `Send + Sync`.
 #![forbid(unsafe_code)]
 
 mod error;
 pub mod fonts;
 pub mod raster;
+pub mod withheld;
 
 pub use error::RasterError;
 pub use fonts::{Families, FontLoader, FontSet};
 pub use raster::{rasterise, Fit, Raster, RasterOptions, Rgba};
+pub use withheld::Withheld;

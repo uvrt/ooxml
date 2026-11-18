@@ -2,14 +2,16 @@
 //! in its box (its crop, its outline), a shape's fill then its outline (Word's drawn
 //! arrowheads, the line cut back for them) in a group carrying its effects, a group's
 //! members in its child coordinates scaled onto its box (a member's `a:grpFill` the
-//! group's fill over the group's box), a chart or SmartArt by their painters, and a marked
-//! stand-in box for what cannot be drawn -- each element turned by its own and its groups'
-//! rotations and flips; what is not drawn faithfully said as warning codes.
+//! group's fill over the group's box), a VML shape as its preset and a VML text path
+//! ([`super::vml`]), a chart or SmartArt by their painters, and a marked stand-in box for
+//! what cannot be drawn -- each element turned by its own and its groups' rotations and
+//! flips; what is not drawn faithfully said as warning codes.
 //!
 //! Must not: lay out a text box's text (the caller does, from [`Drawn::text_boxes`]), or
 //! write SVG beyond what the renderers return.
 
 use super::colours::{Said, WordColours};
+use super::vml::{Inks, TextPath};
 use super::write::{attrs_text, Primitive, PxBox};
 use ooxml_base::Q;
 use ooxml_drawingml::drawable::{Effects, Fill};
@@ -57,6 +59,9 @@ impl Paint {
             return Paint::default();
         };
         let kind = ooxml_xml::view::local(element);
+        if matches!(kind, "pict" | "object" | "AlternateContent") {
+            return super::vml::paint(element).unwrap_or_default();
+        }
         let properties = child(
             element,
             if matches!(kind, "wgp" | "grpSp") {
@@ -250,6 +255,8 @@ pub struct Drawn {
     pub text_boxes: Vec<(std::sync::Arc<Graphic>, PxBox)>,
     /// What could not be drawn faithfully, as warning codes in the order met.
     pub said: Said,
+    /// The faces its text is drawn in (a text path's): `(face, bold, italic)`.
+    pub faces: Vec<(String, bool, bool)>,
 }
 
 /// One drawing pass over a graphic.
@@ -260,6 +267,10 @@ pub struct Draw<'a, 'p, 'm> {
     pub painter: &'p mut Painter<'m>,
     /// The charts' and diagrams' painter.
     pub frames: &'a dyn Frames,
+    /// A text path's faces' outlines (`None`: none at hand).
+    pub inks: Option<&'a dyn Inks>,
+    /// The theme's minor Latin face (a text path in no face is drawn in it).
+    pub minor: Option<&'a str>,
     /// What is drawn.
     pub drawn: Drawn,
 }
@@ -308,6 +319,9 @@ impl Draw<'_, '_, '_> {
             if let Some(found) = self.frames.draw(g, at, path, self.painter, &mut self.drawn.said) {
                 let outer = transform(&up.turns);
                 for mut p in found {
+                    if let Primitive::Markup { markup, .. } = &p {
+                        self.drawn.faces.extend(super::write::text_faces(markup));
+                    }
                     if let (Some(outer), Primitive::Markup { transform, .. }) = (&outer, &mut p) {
                         *transform = Some(match transform.take() {
                             Some(t) => format!("{outer} {t}"),
@@ -341,7 +355,29 @@ impl Draw<'_, '_, '_> {
                 self.outline(&paint, at, path, &here.turns, None);
             }
             "group" => self.group(g, &paint, at, path, here),
+            "textpath" => self.text_path(g, at, path, &here.turns),
             _ => self.shape(g, &paint, at, path, &here),
+        }
+    }
+
+    /// A VML text path (`drawing.draw`'s `textpath`): nothing where its shape type does not
+    /// fit it, else its text, fitted to the box by its outlines where they are at hand.
+    fn text_path(&mut self, g: &Graphic, at: &PxBox, path: &str, turns: &[Turn]) {
+        let Some(text) = g.source.as_ref().and_then(|s| TextPath::of(s, self.minor)) else {
+            return;
+        };
+        if text.fit == Some(false) {
+            return;
+        }
+        let outlines = text.ink(self.inks);
+        self.drawn.primitives.push(Primitive::Markup {
+            path: path.to_owned(),
+            markup: text.markup(at, outlines.as_ref()),
+            transform: transform(turns),
+        });
+        self.drawn.faces.push(text.drawn_face(outlines.as_ref()));
+        if outlines.is_none() {
+            self.drawn.said.push("drawing-approximate:text path".into());
         }
     }
 

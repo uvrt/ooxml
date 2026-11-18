@@ -26,6 +26,7 @@ that box.  On ``tools/make_dml_probe.py``: the Word rules above, the style refer
 from __future__ import annotations
 
 import dataclasses
+import re
 from dataclasses import dataclass, field
 from fractions import Fraction
 
@@ -655,3 +656,28 @@ def text_area_edges(graphic: Graphic, colours: Colours, width: Fraction, height:
     left, top, right, bottom = dml_geometry.text_rect(graphic.geometry, w, h, rect=graphic.text_rect)
     half = Fraction(round(outline_width(graphic, colours)) // 2)
     return (Fraction(left) + half, Fraction(top) + half, Fraction(w - right) + half, Fraction(h - bottom) + half)
+
+
+_TEXT_TAG = re.compile(r"<(?:text|tspan)\b[^>]*>")
+
+
+def markup_faces(markup: str) -> list[tuple[str, bool, bool]]:
+    """The faces the text of markup a renderer wrote whole (a chart's, a diagram's) is drawn
+    in: each ``<text>`` or ``<tspan>`` naming a ``font-family``, as ``(its first family,
+    bold, italic)``, once each, in the order met -- for the rasteriser to be given the files
+    of (:func:`docx2svg.drawn_faces`)."""
+    out: list[tuple[str, bool, bool]] = []
+    for tag in _TEXT_TAG.findall(markup):
+        family = re.search(r' font-family="([^"]*)"', tag)
+        if family is None:
+            continue
+        name = family.group(1).split(",")[0].strip().strip("'\"").replace("&apos;", "'").replace("&amp;", "&")
+        if not name:
+            continue
+        weight = re.search(r' font-weight="([^"]*)"', tag)
+        style = re.search(r' font-style="([^"]*)"', tag)
+        face = (name, weight is not None and weight.group(1) in ("bold", "700", "800", "900"),
+                style is not None and style.group(1) == "italic")
+        if face not in out:
+            out.append(face)
+    return out
