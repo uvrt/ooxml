@@ -19,6 +19,8 @@ use std::sync::{Arc, OnceLock};
 
 /// The relationship type of the styles part.
 const REL_STYLES: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles";
+/// The styles part's content type.
+const STYLES_TYPE: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml";
 /// The kinds a style is of.
 const KINDS: &[&str] = &["paragraph", "character", "table", "numbering"];
 
@@ -197,8 +199,7 @@ fn w_val(element: &Element) -> ooxml_xml::Name {
 /// (docx-agent's `Styles._ensure`).
 ///
 /// # Errors
-/// [`resolve`]'s refusals; [`EditError::Unsupported`] where the definition would need a
-/// part the document lacks (a styles part, a list style's numbering part).
+/// [`resolve`]'s refusals; when a part is not XML.
 pub(crate) fn ensure(sink: &mut EditSink<'_, '_>, name: &str, kind: &str) -> Result<String> {
     let docx = sink.docx()?;
     if let Some(found) = docx.find_style(name, kind) {
@@ -207,12 +208,10 @@ pub(crate) fn ensure(sink: &mut EditSink<'_, '_>, name: &str, kind: &str) -> Res
     resolve(&docx, name, kind)?;
     let planned = plan(&docx, name, kind).unwrap_or_default();
     let main = docx.main.clone();
-    let part = ooxml_word_model::parts::related(sink.doc().package(), &main, REL_STYLES)?.ok_or_else(|| {
-        EditError::Unsupported(format!(
-            "adding the built-in style '{name}' to a document without styles"
-        ))
-    })?;
-    sink.read(Key::Part(Arc::from(part.as_str())));
+    let found = ooxml_word_model::parts::related(sink.doc().package(), &main, REL_STYLES)?;
+    if let Some(part) = &found {
+        sink.read(Key::Part(Arc::from(part.as_str())));
+    }
     let ids: Vec<(String, String)> = planned.iter().map(|(c, id, _)| (casefold(c), id.clone())).collect();
     let target = |reference: &str| -> Option<String> {
         let wanted = casefold(reference);
@@ -233,6 +232,17 @@ pub(crate) fn ensure(sink: &mut EditSink<'_, '_>, name: &str, kind: &str) -> Res
         }
         nodes.push(Node::Element(node));
     }
+    // docx-agent's `_create_styles_part`, when the first style is appended
+    let part = match found {
+        Some(part) => part,
+        None => sink.new_part(
+            &main,
+            ("word/styles.xml", "word/styles{n}.xml"),
+            crate::new_part::word_root("styles"),
+            STYLES_TYPE,
+            REL_STYLES,
+        )?,
+    };
     let tree = sink.doc().tree(&part)?.ok_or_else(|| EditError::NoPart(part.clone()))?;
     let at = tree.root().children().len();
     sink.splice_children(
