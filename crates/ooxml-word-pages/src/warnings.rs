@@ -179,6 +179,7 @@ pub fn said(
         tables: HashSet::new(),
         paragraphs: body_paragraphs(&document.body).0,
         drawn: false,
+        counts: HashMap::new(),
     };
     // A header's, footer's or note's drawing may be on any page.
     let everywhere = document.stories.values().any(|b| blocks_hold_drawing(b))
@@ -418,6 +419,8 @@ struct PageWalk {
     paragraphs: Vec<std::sync::Arc<Paragraph>>,
     /// The page holds a drawing a painter draws.
     drawn: bool,
+    /// `NUMPAGES` and each section's `SECTIONPAGES`, by section, as counted once.
+    counts: HashMap<usize, (Option<i64>, Option<i64>)>,
 }
 
 impl PageWalk {
@@ -620,7 +623,11 @@ impl PageWalk {
         else {
             return;
         };
-        let counts = page_counts(layout, info.section);
+        // Once per section, not per page: each count walks every page (lane L4b).
+        let counts = *self
+            .counts
+            .entry(info.section)
+            .or_insert_with(|| page_counts(layout, info.section));
         let format = section.properties.page_number_format.as_deref();
         for refs in [headers, footers] {
             let Some(id) = refs.get(info.story.name()) else {

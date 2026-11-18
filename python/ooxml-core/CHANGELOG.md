@@ -5,6 +5,17 @@ ooxml-core is the Rust core of the ooxml packages (`crates/`), as the Python mod
 
 ## 0.10.0 -- unreleased
 
+- **Layout answers by id, made per page (lane L4b, after review).** A version knows its
+  body blocks' ids as docx-agent names them in its bytes (`LaidPages.ids_of`, and each body
+  line's id in `body_lines`); its layout summary is made and compared in Rust
+  (`LaidPages.summary()`, `LayoutSummary.compare(before, aliases)`), each page's taken from
+  the version before where the relayout kept that page; its warnings likewise (a page the
+  relayout kept is said again, not walked again: 16 s a version at 3,000 pages before, now
+  only the pages an edit reached), its page counts once per section, a field's page found
+  through an index; `LaidPages.line_texts(page)` gives a page's lines' text facts (inked
+  characters, text sizes, ink, widest word) without reading a span into Python, and
+  `page(page, lines=False)` its rules, pictures and drawings alone.
+
 - **The layout's memory (phase PL, lane L4b).** A version kept no longer holds the
   document's parsed text parts (its pictures keep the package without the main part and
   its headers, footers and notes: those are the version's model); a version laid out from

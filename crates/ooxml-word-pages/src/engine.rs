@@ -579,9 +579,10 @@ impl PageEngine {
     }
 
     /// Page `page` of `version`'s lines' text, as a check reads it ([`crate::line_text`]):
-    /// from its paint, kept for the next reader within the paint budget.
+    /// from its paint, taken from the pages kept painted where it is one, not kept itself (a
+    /// check reads every page's text once: its reader keeps the text, not the paint).
     pub fn line_texts(&mut self, version: &LaidVersion, page: usize) -> Option<Vec<crate::line_text::LineText>> {
-        let paint = self.paint(version, page)?;
+        let paint = self.painted_page(version, page, false)?;
         Some(paint.lines.iter().map(crate::line_text::LineText::of).collect())
     }
 

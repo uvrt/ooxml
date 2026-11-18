@@ -7,6 +7,10 @@ snapshot commit; the development history before it is summarised here.
 
 ## 0.14.0 -- unreleased
 
+- **`docx2svg.rust`, read lightly (lane L4b):** a page's rules, pictures and floats are read
+  without its lines; a span's pens become `Fraction`s only when read; `RustLayout.ids_of`
+  and `line_texts`.
+
 - **`docx2svg.rust.memory_budget()`** (lane L4b): the process's `ooxml_core.MemoryBudget`,
   which every `Engine` counts in -- its memos held, its pages' paint within the limit,
   kept in Rust -- and from which a host reserves the layouts it keeps. A `RustLayout`

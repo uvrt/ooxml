@@ -27,6 +27,12 @@ be made again is bounded by one memory budget per process.
   has room for, each at what it alone holds now (`layout_cost`: the Rust version's `weight`
   and its Python side); no count of eight. `docx_agent.pages.memory()` says the budget's
   limit, what it holds and what the engines' memos hold.
+- **What a check reads of a Rust layout comes from Rust.** Each body line's id (no path
+  resolved here), the layout summary and its comparison (no line of it a Python object;
+  `canon_of` carries the aliases it follows), and the text facts of `layout` (smallest text,
+  empty paragraphs, column fit, a table's ink past the margins: `line_texts`, no span read
+  into Python). A check's facts map the version's layout once, kept alone; a version the
+  document's engine laid out already is read without letting the document's lock go.
 
 ## 0.1.138 -- unreleased
 
