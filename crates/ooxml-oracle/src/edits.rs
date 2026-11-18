@@ -133,23 +133,7 @@ fn edit(bytes: &Arc<[u8]>, case: &Value) -> Result<Value, String> {
                 },
             )
             .map(|done| report(&package, &done, ranges_result(&done.out))),
-        "insert_paragraph" => editor
-            .run(
-                &caller,
-                &InsertParagraph {
-                    anchor: text("target"),
-                    after: case.get("after").and_then(Value::as_bool).unwrap_or(true),
-                    text: text("text"),
-                    policy: policy(case),
-                },
-            )
-            .map(|done| {
-                let out = &done.out;
-                let renamed: Map<String, Value> =
-                    out.renamed.iter().map(|(old, new)| (old.clone(), json!(new))).collect();
-                let result = json!({"id": out.id, "changed": true, "renamed": renamed, "created": [out.id]});
-                report(&package, &done, result)
-            }),
+        "insert_paragraph" => insert_paragraph(&editor, &caller, &package, case),
         "replace" => {
             let pattern = match pattern(case, &text("find"), &text("text")) {
                 Ok(p) => p,
@@ -186,6 +170,23 @@ fn edit(bytes: &Arc<[u8]>, case: &Value) -> Result<Value, String> {
         }
     };
     Ok(done.unwrap_or_else(|error| json!({"refused": error.to_string()})))
+}
+
+/// An insert_paragraph case.
+fn insert_paragraph(editor: &Editor, caller: &Caller, package: &Package, case: &Value) -> Result<Value, EditError> {
+    let text = |key: &str| case.get(key).and_then(Value::as_str).unwrap_or("").to_owned();
+    let command = InsertParagraph {
+        anchor: text("target"),
+        after: case.get("after").and_then(Value::as_bool).unwrap_or(true),
+        text: text("text"),
+        policy: policy(case),
+    };
+    editor.run(caller, &command).map(|done| {
+        let out = &done.out;
+        let renamed: Map<String, Value> = out.renamed.iter().map(|(old, new)| (old.clone(), json!(new))).collect();
+        let result = json!({"id": out.id, "changed": true, "renamed": renamed, "created": [out.id]});
+        report(package, &done, result)
+    })
 }
 
 /// A replace's find: plain text (white space collapsed or not), or a Python regular
