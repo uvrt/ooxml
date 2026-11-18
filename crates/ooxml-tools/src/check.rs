@@ -9,7 +9,7 @@
 //! Must not: change a definition.
 
 use crate::schema::{Kind, ObjectNode, Property, Schema};
-use crate::spec::ToolSpec;
+use crate::spec::{Holding, ToolSpec};
 
 /// At most this many enum values per property.
 pub const MAX_ENUM: usize = 50;
@@ -161,6 +161,17 @@ impl ToolSpec {
         }
         for property in self.arguments.properties() {
             kind_problems(property, out);
+            if let Some(name) = property.intent.names_as.as_deref() {
+                if self.arguments.property(name).is_none() || name == property.name {
+                    out.push(format!("{} names_as {name:?}, which is not another parameter", property.name));
+                }
+            }
+        }
+        let holding = [Holding::Refs, Holding::Datasets, Holding::Sources, Holding::Facts];
+        for path in &self.paths_first {
+            if !holding.iter().any(|what| self.paths(*what).contains(path)) {
+                out.push(format!("paths_first names {path:?}, which holds nothing"));
+            }
         }
     }
 }

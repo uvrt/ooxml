@@ -181,6 +181,13 @@ impl Field {
         self
     }
 
+    /// The argument a list of names given here means (today's `names_as`).
+    #[must_use]
+    pub fn names_as(mut self, name: &str) -> Self {
+        self.property.intent.names_as = Some(name.to_owned());
+        self
+    }
+
     /// The value a required field left out is read as.
     #[must_use]
     pub fn default(mut self, value: Value) -> Self {

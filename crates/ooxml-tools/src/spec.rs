@@ -67,6 +67,9 @@ pub struct ToolSpec {
     /// A placing tool's place: the names other placing tools give a place, read as its own
     /// ([`crate::places`]).
     pub places: Option<Places>,
+    /// Paths of [`ToolSpec::paths`] listed before the others, in this order, as today's
+    /// tool declares them (`sources=("from", "cells[].from")`).
+    pub paths_first: Vec<String>,
 }
 
 /// Which strings a path list is for.
@@ -122,6 +125,7 @@ impl ToolSpec {
             exactly_one: Vec::new(),
             arguments,
             places: None,
+            paths_first: Vec::new(),
         }
     }
 
@@ -132,11 +136,18 @@ impl ToolSpec {
     }
 
     /// The paths (`items[].target`, `targets[]`) of the string arguments that hold `what`,
-    /// depth first in field order.
+    /// depth first in field order, those of `paths_first` first.
     #[must_use]
     pub fn paths(&self, what: Holding) -> Vec<String> {
         let mut found = Vec::new();
         holding(&self.arguments, "", what, &mut found);
+        let rank = |path: &String| {
+            self.paths_first
+                .iter()
+                .position(|p| p == path)
+                .unwrap_or(self.paths_first.len())
+        };
+        found.sort_by_key(rank);
         found
     }
 
@@ -262,6 +273,12 @@ impl ToolSpec {
             .into_iter()
             .map(|a| (a.key(), Value::from(a.name)))
             .collect();
+        for property in self.arguments.properties() {
+            if let Some(name) = &property.intent.names_as {
+                // a function in today's `Tool.aliases` (`names_as`): written as what it reads
+                aliases.insert(property.name.clone(), Value::from(format!("names:{name}")));
+            }
+        }
         if let Some(places) = &self.places {
             // a function in today's `Tool.aliases`: written as the kind of place it reads
             let read = Value::from(format!("place:{}", places.kind.name()));

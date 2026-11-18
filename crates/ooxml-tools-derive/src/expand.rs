@@ -162,6 +162,12 @@ fn tool_impl(ident: &syn::Ident, attrs: &ToolAttrs) -> syn::Result<TokenStream> 
             spec.exactly_one.push(::std::vec![#(::std::string::String::from(#group)),*]);
         });
     }
+    if !attrs.paths_first.is_empty() {
+        let first = &attrs.paths_first;
+        settings.push(quote! {
+            spec.paths_first = ::std::vec![#(::std::string::String::from(#first)),*];
+        });
+    }
     if let Some(places) = &attrs.places {
         let kind = format_ident!("{}", place_kind(places)?);
         let own = &attrs.place_own;

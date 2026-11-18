@@ -130,6 +130,10 @@ pub struct Property {
 pub struct Intent {
     /// Argument names read as this one, with a note (`top` for `space_before`).
     pub aliases: Vec<String>,
+    /// For a property that takes no names (a count): the argument a list of names given
+    /// here can only mean, unless that one is given too (`columns: ["region", "total"]`
+    /// read as `from_columns`; today's `names_as`), with a note.
+    pub names_as: Option<String>,
     /// For a required property: the safe value a call that leaves it out is read as, with
     /// a note. It stays required in the schema, so a strict decoder sends it.
     pub default: Option<Value>,
