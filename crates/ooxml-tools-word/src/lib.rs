@@ -19,6 +19,7 @@ mod placements;
 mod refusal;
 mod review;
 mod structure;
+mod style;
 mod text;
 mod version;
 mod word_inspect;
@@ -42,6 +43,7 @@ pub use structure::{
     StoryType, StyleMapping, Unmapped, Which, WordCopyFrom, WordFields, WordHeadersFooters, WordLinks, WordMove,
     WordNotes, WordSections,
 };
+pub use style::{word_lists, Follow, ListKind, ListsAction, WordLists};
 pub use text::{replace_text, word_set_text, Expect, ReplaceStories, ReplaceText, SetTextItem, Unported, WordSetText};
 pub use version::Version;
 pub use word_inspect::{word_inspect, WordInspect};

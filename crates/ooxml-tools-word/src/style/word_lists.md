@@ -1,0 +1,1 @@
+Lists: add paragraphs to a bullet or numbered list, remove them, set level, restart or continue numbering, change a level's number format and positions.

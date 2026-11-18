@@ -251,6 +251,7 @@ def python_case(data: bytes, case: dict, baseline: list, toolbox, reply_of, part
         rewritten[main] = serialize(etree.fromstring(before[main], etree.XMLParser(huge_tree=True)))
     reserialized = [main] if main in after and rewritten.get(main) == after[main] and before[main] != after[main] \
         else []
+    reserialized += _reserialized(before, after, main)
     pool = copy.deepcopy(document._id_pool())
     result = {
         "structure": True,
@@ -268,14 +269,36 @@ def python_case(data: bytes, case: dict, baseline: list, toolbox, reply_of, part
     return result
 
 
+def _reserialized(before: dict, after: dict, main: str) -> list[str]:
+    """The XML parts other than ``main`` docx-agent wrote again unchanged but for lxml's
+    serialization (a part it marks dirty without changing it)."""
+    out = []
+    for name, body in after.items():
+        if name == main or name not in before or before[name] == body:
+            continue
+        try:
+            again = serialize(etree.fromstring(before[name], etree.XMLParser(huge_tree=True)))
+        except etree.XMLSyntaxError:
+            continue
+        if again == body:
+            out.append(name)
+    return out
+
+
 def settle(want: dict, have: dict) -> None:
     """``want`` as the Rust side is compared with it: a part docx-agent wrote again unchanged
     but for lxml's serialization dropped when the Rust core did not write it, and
     ``touched`` read from the body before as lxml writes it when that is what equals."""
     written = want.pop("touched_as_written", None)
-    for name in want.pop("reserialized", []):
-        if name not in have.get("parts", {}):
-            want["parts"].pop(name, None)
+    gone = [name for name in want.pop("reserialized", []) if name not in have.get("parts", {})]
+    for name in gone:
+        want["parts"].pop(name, None)
+    # A part only re-serialized is not touched either (docx-agent's touched compares bytes).
+    for key in ("touched",):
+        if isinstance(want.get(key), list):
+            want[key] = [t for t in want[key] if t.get("part") not in gone or "heading" in t]
+    if isinstance(written, list):
+        written = [t for t in written if t.get("part") not in gone or "heading" in t]
     if have.get("touched") != want.get("touched") and have.get("touched") == written:
         want["touched"] = written
     # A refused call changes nothing on either side, but docx-agent's id pool keeps the ids

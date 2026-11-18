@@ -165,6 +165,26 @@ impl<'a> TableGrid<'a> {
             .count()
     }
 
+    /// The number of rows.
+    #[must_use]
+    pub fn row_count(&self) -> usize {
+        self.grid.len()
+    }
+
+    /// The paragraphs (indexes among the part's) of the cell over grid position `(row,
+    /// column)`, those of tables nested in it included, in document order; none where no
+    /// cell is there (docx-agent's `Table.cell(row, column).paragraphs`).
+    #[must_use]
+    pub fn cell_paragraphs(&self, row: usize, column: usize) -> Vec<usize> {
+        let Some(origin) = self.grid.get(row).and_then(|r| r.get(column)).copied().flatten() else {
+            return Vec::new();
+        };
+        let Some((_, path)) = self.cells.get(&origin) else {
+            return Vec::new();
+        };
+        self.part.ids.paragraphs_within(path).iter().map(|p| p.index).collect()
+    }
+
     /// The text of the cell over grid position `(row, column)`: its paragraphs' text in the
     /// current view, one line each; `None` where no cell is there.
     #[must_use]
