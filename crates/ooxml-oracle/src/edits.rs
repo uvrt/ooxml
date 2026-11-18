@@ -8,6 +8,7 @@
 //! "tracked": {"author", "date"} or null, ...}]}` (`op`: `set_text` when absent,
 //! `set_text_paragraphs` (set_text in lines), `insert_paragraph` with `after` and `style`,
 //! `set_paragraph_style` with `style` (null: the default), `delete` (a block), `set_cells` with `writes`,
+//! `insert_markdown` with `markdown`, `html`, `emphasis`, `style_map` ([`crate::edits_markdown`]),
 //! `set_text_styled` with `style` (word_set_text's item: [`crate::edits_styled`]),
 //! `insert_text`, `delete_text`, `replace` with `find`, `case`, `count`, `keep`, `accept`
 //! and `reject` with `ids`, `all`, or `author`/`kind`/`within`, `tool` with `tool` and
@@ -146,6 +147,9 @@ fn edit(bytes: &Arc<[u8]>, case: &Value) -> Result<Value, String> {
         "set_paragraph_style" => set_paragraph_style(&editor, &caller, &package, case),
         "delete" => delete(&editor, &caller, &package, case),
         "set_cells" => set_cells(&editor, &caller, &package, case),
+        "insert_markdown" => {
+            crate::edits_markdown::insert_markdown(&editor, &caller, case, |done, result| report(&package, done, result))
+        }
         "set_text_styled" => {
             crate::edits_styled::set_text_styled(&editor, &caller, case, |done, result| report(&package, done, result))
         }
