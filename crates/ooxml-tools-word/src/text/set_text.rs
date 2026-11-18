@@ -93,7 +93,10 @@ fn run(args: &WordSetText, editing: &Editing<'_>) -> Result<ToolResult<Value>, T
             vec![(target, text.clone(), args.paragraph_style.clone(), String::new())]
         }
     };
-    if let Some(unported) = work.iter().find_map(|(target, text, style, _)| unported(target, text, style.as_ref())) {
+    if let Some(unported) = work
+        .iter()
+        .find_map(|(target, text, style, _)| unported(target, text, style.as_ref()))
+    {
         return Ok(unported.reply());
     }
     if let Some((target, _, _, prefix)) = work.iter().find(|(target, ..)| target.contains("..")) {
@@ -115,11 +118,11 @@ fn run(args: &WordSetText, editing: &Editing<'_>) -> Result<ToolResult<Value>, T
             policy: policy.clone(),
         })
         .collect();
-    let field = if args.items.is_some() { "items" } else { "target" };
+    // docx-agent names no field when the document refuses an address or a text
     let done = editing
         .editor
         .run(editing.caller, &Batch::atomic(ops))
-        .map_err(|e| edit_refusal(e, field, try_call(args)))?;
+        .map_err(|e| edit_refusal(e, "", try_call(args)))?;
     let edits: Vec<TextEdited> = done.out.into_iter().filter_map(Result::ok).collect();
     Ok(ToolResult::done(reply(work.len(), &edits)))
 }

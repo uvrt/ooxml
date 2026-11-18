@@ -10,7 +10,7 @@ use crate::edits::{Monotonic, Unlimited};
 use ooxml_base::{Cancel, Limits};
 use ooxml_opc::Package;
 use ooxml_store::{Caller, StoreConfig};
-use ooxml_tools::ArgType;
+use ooxml_tools::{ArgType, ToolArgs};
 use ooxml_tools_word::{
     replace_text, word_changes, word_comments, word_set_text, word_set_tracking, Editing, ReplaceText, WordChanges,
     WordComments, WordSetText, WordSetTracking,
@@ -50,9 +50,27 @@ pub fn tool_case(bytes: &Arc<[u8]>, case: &Value) -> Result<Value, String> {
         doc: "d1",
         cancel: &Never,
     };
-    let arguments = case.get("arguments").cloned().unwrap_or(Value::Object(Map::new()));
+    let mut arguments = case.get("arguments").cloned().unwrap_or(Value::Object(Map::new()));
     let tool = case.get("tool").and_then(Value::as_str).unwrap_or("");
-    let reply = match tool {
+    // the text tools' arguments taken as meant, as the session takes them (defaults filled)
+    let spec = match tool {
+        "word_set_text" => Some(WordSetText::spec()),
+        "replace_text" => Some(ReplaceText::spec()),
+        _ => None,
+    };
+    let mut notes = Vec::new();
+    if let Some(spec) = spec {
+        match spec.accept(arguments.clone()) {
+            Ok(accepted) => {
+                arguments = Value::Object(accepted.arguments);
+                notes = accepted.notes;
+            }
+            Err(error) => {
+                return Ok(json!({"reply": {"ok": false, "error": error.to_json()}, "parts": {}, "order": []}));
+            }
+        }
+    }
+    let mut reply = match tool {
         "word_changes" => word_changes(
             &WordChanges::from_arg(&arguments, "").map_err(|e| e.to_string())?,
             &editing,
@@ -78,6 +96,8 @@ pub fn tool_case(bytes: &Arc<[u8]>, case: &Value) -> Result<Value, String> {
         ),
         other => return Err(format!("no tool {other}")),
     };
+    notes.append(&mut reply.warnings);
+    reply.warnings = notes;
     let head = editor.store().snapshot();
     let doc = head.doc();
     let mut parts = Map::new();

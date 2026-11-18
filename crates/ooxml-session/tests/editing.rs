@@ -256,7 +256,11 @@ fn the_text_tools_edit_through_dispatch() {
         json!({"doc": "d1", "target": "p:11111111", "text": "First line\nSecond line"}),
         &context,
     );
-    assert_eq!(set["summary"], json!("Set the text of 1 paragraph(s), 1 new after them"), "{set}");
+    assert_eq!(
+        set["summary"],
+        json!("Set the text of 1 paragraph(s), 1 new after them"),
+        "{set}"
+    );
     assert_eq!(set["changed"], json!(["p:11111111"]));
     // rule 3: the same text again changes nothing, and says so without failing
     let same = call(

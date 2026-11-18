@@ -129,8 +129,8 @@ fn run(args: &ReplaceText, editing: &Editing<'_>) -> Result<ToolResult<Value>, T
     if args.stories != Some(ReplaceStories::All) && matches.len() != all {
         return Ok(Unported::Form.reply());
     }
-    let pattern = Literal::new(&args.find, true, false, &args.replace)
-        .map_err(|e| edit_refusal(e, "find", find_call(args)))?;
+    let pattern =
+        Literal::new(&args.find, true, false, &args.replace).map_err(|e| edit_refusal(e, "", find_call(args)))?;
     let command = Replace {
         pattern: Arc::new(pattern),
         across: false,
@@ -141,7 +141,7 @@ fn run(args: &ReplaceText, editing: &Editing<'_>) -> Result<ToolResult<Value>, T
     let done = editing
         .editor
         .run(editing.caller, &command)
-        .map_err(|e| edit_refusal(e, "find", find_call(args)))?;
+        .map_err(|e| edit_refusal(e, "", find_call(args)))?;
     let count = done.out.count;
     let mut paragraphs: Vec<String> = Vec::new();
     for (id, ..) in &matches {
@@ -151,9 +151,8 @@ fn run(args: &ReplaceText, editing: &Editing<'_>) -> Result<ToolResult<Value>, T
     }
     let mut reply = Done::new(format!("Replaced {count} occurrence(s)"));
     merge_renamed(&mut reply.renamed, &done.out.renamed);
-    let listed: Vec<&String> = paragraphs.iter().take(LISTED).collect();
-    reply.data = Some(json!({"count": count, "paragraphs": listed}));
-    reply.changed = paragraphs
+    // the paragraphs by the ids they have now (a match's paragraph may have been stamped)
+    let now: Vec<String> = paragraphs
         .iter()
         .map(|p| {
             reply
@@ -163,6 +162,9 @@ fn run(args: &ReplaceText, editing: &Editing<'_>) -> Result<ToolResult<Value>, T
                 .map_or_else(|| p.clone(), |(_, new)| new.clone())
         })
         .collect();
+    let listed: Vec<&String> = now.iter().take(LISTED).collect();
+    reply.data = Some(json!({"count": count, "paragraphs": listed}));
+    reply.changed = now;
     Ok(ToolResult::done(reply))
 }
 

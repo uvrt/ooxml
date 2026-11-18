@@ -172,22 +172,21 @@ fn rebased_commits_equal_a_serial_replay() {
                             forced.push((done.version.seq(), op, done.version));
                         }
                         start.wait();
-                        forced.extend((0..80u32)
-                            .map(|k| {
-                                let op = if rng.below(3) == 0 {
-                                    Op::Insert {
-                                        name: 1000 + t as u32 * 100 + k,
-                                        before: rng.below(12) as u32,
-                                    }
-                                } else {
-                                    Op::Add {
-                                        name: rng.below(12) as u32,
-                                        add: rng.below(50) as i64,
-                                    }
-                                };
-                                let done = store.run(&caller, &op).unwrap();
-                                (done.version.seq(), op, done.version)
-                            }));
+                        forced.extend((0..80u32).map(|k| {
+                            let op = if rng.below(3) == 0 {
+                                Op::Insert {
+                                    name: 1000 + t as u32 * 100 + k,
+                                    before: rng.below(12) as u32,
+                                }
+                            } else {
+                                Op::Add {
+                                    name: rng.below(12) as u32,
+                                    add: rng.below(50) as i64,
+                                }
+                            };
+                            let done = store.run(&caller, &op).unwrap();
+                            (done.version.seq(), op, done.version)
+                        }));
                         forced
                     })
                 })

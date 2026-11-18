@@ -12,7 +12,7 @@
 mod replace_text;
 mod set_text;
 
-pub use replace_text::{replace_text, Expect, ReplaceText, ReplaceStories};
+pub use replace_text::{replace_text, Expect, ReplaceStories, ReplaceText};
 pub use set_text::{word_set_text, SetTextItem, WordSetText};
 
 use crate::Editing;
