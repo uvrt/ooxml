@@ -9,6 +9,7 @@
 //! [`NOT_DESCRIBED`].
 
 mod document;
+pub(crate) use document::sections_json;
 mod package;
 
 pub(crate) use document::short;

@@ -487,3 +487,15 @@ impl Command<WordDoc> for ReplaceText {
         replace_ranges(&mut sink, plans, self.keep)
     }
 }
+
+/// The range `address` names replaced by `text` (docx-agent's `TextRange.replace`, the
+/// first replaced character's formatting kept), as one write of an edit through `sink`.
+///
+/// # Errors
+/// The range's refusal.
+pub(crate) fn replace_range(sink: &mut EditSink<'_, '_>, address: &str, text: &str) -> Result<RangesEdited> {
+    let docx = sink.docx()?;
+    let found = range_of(sink.doc(), &docx, address, false)?;
+    let plan = plan(sink.doc(), &docx, found, text)?;
+    replace_ranges(sink, vec![plan], Keep::First)
+}

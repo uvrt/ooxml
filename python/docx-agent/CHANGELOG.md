@@ -11,6 +11,10 @@ Phase PL, lane L4b: the Rust layout's memory. One engine per document, in the pr
 owns the document, and none in the workers; a version kept costs what it changed; what can
 be made again is bounded by one memory budget per process.
 
+- **Fixed: a text box's VML fallback after a tool call** (lane P2c2). A tool call is a
+  batch, and a batch did not sync the fallback of a text box an edit inside changed, as a
+  lone edit does: the fallback kept the old text and got no paraIds. A batch now syncs it
+  when it ends, after the edits' stamping, as the Rust session does.
 - **Fixed: a deadlock when a document is collected during a layout** (seen on 3.15t). A
   document's finalizers forgot its engines, layouts and Rust owners themselves; the collector
   can run them anywhere, also inside `pages.lay_out` on the thread that held the engines'

@@ -160,7 +160,7 @@ fn split_container(work: &mut Work, container: Id, index: usize, stamp: &mut Sta
 }
 
 /// Track the insertion of run-level `nodes` at `parent[index]`.
-fn insert_nodes(work: &mut Work, mut parent: Id, mut index: usize, nodes: &[Id], stamp: &mut Stamp) {
+pub(crate) fn insert_nodes(work: &mut Work, mut parent: Id, mut index: usize, nodes: &[Id], stamp: &mut Stamp) {
     let owner_of = |work: &Work, p: Id| {
         if is_container(work, p) {
             Some(p)

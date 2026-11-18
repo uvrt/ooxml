@@ -141,6 +141,19 @@ impl ToolSpec {
                 renamed(node, &alias.alias, &alias.name, where_, notes)
             })?;
         }
+        if let Some(places) = &self.places {
+            for name in &places.names {
+                let Some(map) = arguments
+                    .as_object()
+                    .filter(|m| m.get(name).is_some_and(|v| !v.is_null()))
+                else {
+                    continue;
+                };
+                if let Some(meant) = places.meant(&self.name, name, map)? {
+                    renamed(&mut arguments, name, &meant, "", notes)?;
+                }
+            }
+        }
         Ok(arguments)
     }
 

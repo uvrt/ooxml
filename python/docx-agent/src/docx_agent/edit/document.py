@@ -2736,11 +2736,16 @@ class Document(TrackingOps, RevisionOps, TextOps, FormatOps, ListOps, LinkOps, P
                 # Round 50: a record an edit inside repeated gets an id of its own when the
                 # batch ends, as an edit's own does (every tool call is a batch).
                 before = self._revision_id_counts() if outermost else None
+                # Lane P2c2: a text box an edit inside changed gets its VML fallback synced
+                # when the batch ends, after the edits' stamping, as a lone edit's is (every
+                # tool call is a batch; the Rust session syncs it so too).
+                boxes = self._text_box_snapshot() if outermost else None
                 yield
                 if recording is not None:
                     self._space_written(_typography.recorder())
                 self._follow_text_facts()     # round 36: as each edit does
                 if outermost:
+                    self._sync_text_boxes(boxes)
                     self._unique_revision_ids(before)
                     self._prune_provenance()  # a deleted table's record goes with it
             if outermost:

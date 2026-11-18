@@ -29,7 +29,9 @@
 #![forbid(unsafe_code)]
 
 mod across;
+mod after;
 mod block_checks;
+mod blocks;
 mod builtin;
 mod comments;
 mod delete;
@@ -39,11 +41,15 @@ mod editor;
 mod error;
 pub mod find;
 mod inline;
+mod links;
 mod list_style;
 mod marks;
+mod merge;
+mod moving;
 mod names;
 mod namespaces;
 mod new_part;
+mod notes;
 mod paragraph_style;
 mod paragraphs;
 mod people;
@@ -55,6 +61,7 @@ mod ranges_across;
 mod release;
 pub mod review;
 mod revision_ids;
+mod sections;
 mod set_cells;
 mod set_text;
 mod sink;
@@ -65,26 +72,35 @@ mod switch;
 mod table_delete;
 mod table_delete_write;
 mod text;
+mod text_range;
 mod textbox;
 pub mod touched;
 mod track;
 pub mod validate;
 mod work;
 
-pub use comments::{CommentEdit, CommentEdited, CommentEdits};
+pub use comments::{CommentEdit, CommentEdited, CommentEdits, EditCommentText};
 pub use delete::{BlockDeleted, DeleteBlock};
 pub use doc::{Change, Draw, DrawFrom, Key, ModelError, Shared, WordDoc};
 pub use editor::{EditTiming, Edited, Editor};
 pub use error::{EditError, Result};
+pub use links::{hyperlink_span, AddBookmark, AddHyperlink, LinkEdited, RemoveBookmark, RenameBookmark};
+pub use moving::{section_blocks, BlocksMoved, MoveBlocks, Moving};
+pub use notes::{DeleteNote, EditNote, InsertNote, MoveNote, NoteEdited, NoteKind};
 pub use paragraph_style::{SetParagraphStyle, StyleSet};
 pub use paragraphs::{InsertParagraph, ParagraphInserted};
 pub use policy::{RevisionPolicy, Tracking};
 pub use pool::{Ids, IdsChange, Sequences};
 pub use ranges::{DeleteText, InsertText, RangesEdited, ReplaceText};
 pub use review::{record_marks, Mark, RemovedBlocks, Review, Reviewed, RowGone, Selection, TableGone, Typed};
+pub use sections::{
+    InsertSectionBreak, LinkToPrevious, RemoveSectionBreak, SectionEdited, SectionValues, SetSection, SetStoryText,
+    StoryEdited, UnlinkFromPrevious,
+};
 pub use set_cells::{CellEdit, CellsSet, SetCells};
 pub use set_text::{SetText, TextEdited};
 pub use sink::{EditSink, Keep, Numbered, TextWrite};
 pub use style_spans::{Span, SpansStyled, StyleSpans};
 pub use styled_text::{ItemEdit, SetStyledText, StyledRun, StyledTextSet};
 pub use switch::{tracks_changes, word_tracks_changes, SetWordTracking, WordTracking};
+pub use text_range::anchor;

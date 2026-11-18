@@ -24,6 +24,8 @@ pub struct Section {
     pub id: String,
     /// Its `w:sectPr`.
     pub properties: Arc<Element>,
+    /// The `w:sectPr`'s place in the main part.
+    pub path: Box<[u32]>,
 }
 
 fn int_of(node: Option<&Element>, local: &str, default: Option<i64>) -> Option<i64> {
@@ -113,15 +115,24 @@ pub fn sections(docx: &Docx) -> Vec<Section> {
     let mut ancestors: Vec<(Arc<Element>, Box<[u32]>)> = Vec::new();
     let mut path = Vec::new();
     find_breaks(docx, body.root(), &mut ancestors, &mut path, &mut out);
-    if let Some(last) = body
-        .root()
-        .find(Some(W), "body")
-        .and_then(|b| b.find(Some(W), "sectPr"))
-    {
-        out.push(Section {
-            id: "s:body".to_owned(),
-            properties: Arc::clone(last),
-        });
+    let root = body.root();
+    let at = |e: &Element, local: &str| {
+        e.children()
+            .iter()
+            .position(|n| matches!(n, Node::Element(c) if c.name().is(Some(W), local)))
+    };
+    if let Some(b) = at(root, "body") {
+        if let Some(Node::Element(body_element)) = root.children().get(b) {
+            if let Some(s) = at(body_element, "sectPr") {
+                if let Some(Node::Element(last)) = body_element.children().get(s) {
+                    out.push(Section {
+                        id: "s:body".to_owned(),
+                        properties: Arc::clone(last),
+                        path: [b, s].map(|k| u32::try_from(k).unwrap_or(u32::MAX)).into(),
+                    });
+                }
+            }
+        }
     }
     out
 }
@@ -141,6 +152,7 @@ fn find_breaks(
                 out.push(Section {
                     id,
                     properties: Arc::clone(child),
+                    path: path.clone().into_boxed_slice(),
                 });
             }
         }

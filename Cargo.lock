@@ -688,6 +688,7 @@ dependencies = [
  "ooxml-store",
  "ooxml-tools",
  "ooxml-tools-word",
+ "ooxml-word-edit",
  "ooxml-word-model",
  "ooxml-xml",
  "ooxml-zip",

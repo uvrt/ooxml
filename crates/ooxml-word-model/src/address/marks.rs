@@ -25,8 +25,10 @@ pub struct Bookmark<'d> {
     pub end: Option<Box<[u32]>>,
 }
 
-/// Every bookmark's markers, name to (part, start, end), the first start of a name winning.
-fn bookmark_markers(docx: &Docx) -> Vec<Bookmark<'_>> {
+/// Every bookmark's markers, name to (part, start, end), the first start of a name winning,
+/// in story and document order (docx-agent's `_bookmark_markers`).
+#[must_use]
+pub fn bookmark_markers(docx: &Docx) -> Vec<Bookmark<'_>> {
     let mut out: Vec<Bookmark<'_>> = Vec::new();
     for part in &docx.parts {
         let mut starts = Vec::new();

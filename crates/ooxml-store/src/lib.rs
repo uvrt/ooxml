@@ -20,11 +20,13 @@
 //! contract every run equals a serial replay in commit order (tests/serial_replay.rs).
 #![forbid(unsafe_code)]
 
+mod changeset;
 mod clock;
 mod command;
 mod error;
 mod history;
 mod ids;
+mod journal;
 mod keys;
 mod model;
 mod stamps;

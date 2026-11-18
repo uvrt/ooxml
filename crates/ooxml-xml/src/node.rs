@@ -87,8 +87,16 @@ impl Node {
         }
     }
 
+    /// Whether `self` is the node a patch made elsewhere means to remove: the same node
+    /// ([`Node::same`]) or an equal one -- small identical subtrees share one allocation
+    /// anyway, and a change made again on another version (an undo's inverse, its ids drawn
+    /// the same way) builds equal ones.
+    pub fn removable_as(&self, other: &Node) -> bool {
+        self.same(other) || self == other
+    }
+
     /// Whether `self` and `other` are the same node: the same element allocation, or leaves
-    /// with equal content. What a patch checks before it removes a node.
+    /// with equal content.
     pub fn same(&self, other: &Node) -> bool {
         match (self, other) {
             (Node::Element(a), Node::Element(b)) => Arc::ptr_eq(a, b),

@@ -189,6 +189,45 @@ impl<'t, 's> EditSink<'t, 's> {
         Ok(first)
     }
 
+    /// One annotation id for a range marker this edit writes (a bookmark's, a comment's):
+    /// its value on this version and its offset from the edit's first id, for a
+    /// [`Draw`] that numbers it again where the change is applied.
+    ///
+    /// # Errors
+    /// When a story part is not XML.
+    pub(crate) fn marker_id(&mut self) -> Result<(i64, u32)> {
+        let value = self.next_annotation_id()?;
+        let base = self.numbered.map_or(value, |(base, _)| base);
+        self.numbered = Some((base, value + 1));
+        let offset =
+            u32::try_from(value - base).map_err(|_| EditError::Refused("too many annotation ids".to_owned()))?;
+        Ok((value, offset))
+    }
+
+    /// Revision records an edit of its own writes (`write` given the [`Stamp`]), numbered
+    /// on from this edit's last id; the ids it gave, and whether a record carries a UTC
+    /// date.
+    ///
+    /// # Errors
+    /// `write`'s, or when a story part is not XML.
+    pub(crate) fn stamped<R>(
+        &mut self,
+        tracking: crate::policy::Tracking,
+        write: impl FnOnce(&mut Stamp) -> Result<R>,
+    ) -> Result<(R, Numbered, bool)> {
+        let from = self.next_annotation_id()?;
+        let mut stamp = Stamp::new(tracking, from);
+        let out = write(&mut stamp)?;
+        let base = self.numbered.map_or(from, |(base, _)| base);
+        self.numbered = Some((base, stamp.next()));
+        let numbered = Numbered {
+            base,
+            from,
+            to: stamp.next(),
+        };
+        Ok((out, numbered, stamp.dated))
+    }
+
     /// A tracked write through a [`Stamp`] numbering on from this edit's last id.
     fn tracked(
         &mut self,

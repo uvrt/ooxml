@@ -169,7 +169,18 @@ fn refusals_carry_their_way_out() {
     assert_eq!(tool["error"]["code"], json!("invalid_arguments"));
     assert_eq!(
         tool["error"]["valid_options"],
-        json!(["describe", "find_text", "read_batch", "word_inspect", "word_read"])
+        json!([
+            "describe",
+            "find_text",
+            "read_batch",
+            "replace_text",
+            "word_changes",
+            "word_comments",
+            "word_inspect",
+            "word_read",
+            "word_set_text",
+            "word_set_tracking"
+        ])
     );
     let extra = call(&s, "describe", json!({"doc": "d1", "x": 1}));
     assert_eq!(extra["error"]["field"], json!("x"));

@@ -1,0 +1,1 @@
+Copy blocks from an open document, this one too, with styles, lists, pictures, notes, comments; style_map renames source styles.

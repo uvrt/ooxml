@@ -51,4 +51,5 @@ pub mod replay;
 pub mod review_bench;
 pub mod review_tools;
 pub mod scene_data;
+pub mod structure_tools;
 pub mod text;
