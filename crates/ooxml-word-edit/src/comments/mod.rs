@@ -60,14 +60,5 @@ pub(crate) fn make_part(sink: &mut crate::sink::EditSink<'_, '_>, main: &str, ki
             REL_EXTENDED,
         ),
     };
-    let package = sink.doc().package().clone();
-    let part = crate::new_part::unused_name(&package, default, template);
-    let made = crate::new_part::add_part(&package, main, &part, root, content_type, rel)?;
-    let rels = ooxml_opc::name::rels_for(main);
-    for name in [part.as_str(), ooxml_opc::CONTENT_TYPES_PART, rels.as_str()] {
-        if let Some(tree) = made.tree(name)? {
-            sink.put(name, tree)?;
-        }
-    }
-    Ok(part)
+    sink.new_part(main, (default, template), root, content_type, rel)
 }

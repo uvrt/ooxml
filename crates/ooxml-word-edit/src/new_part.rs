@@ -2,7 +2,8 @@
 //! an `Override`, `add_relationship`): the part's tree, its content type declared at the
 //! end of `[Content_Types].xml`, a relationship from its source with the first free
 //! `rIdN`, each new element indented like its siblings; and the empty roots docx-agent
-//! makes such parts with (`<w15:people .../>`, `<w15:commentsEx .../>`).
+//! makes such parts with (`<w15:people .../>`, `<w15:commentsEx .../>`, `<w:styles/>`,
+//! `<w:numbering/>`).
 //!
 //! Must not: decide which part a document needs, or touch a story part.
 
@@ -27,6 +28,20 @@ pub(crate) fn ignorable_root(prefix: &str, local: &str, uri: &str) -> Element {
             name: Arc::new(QName::new(Some("mc"), "Ignorable", Some(MC))),
             value: Arc::from(prefix),
         }],
+        Vec::new(),
+    )
+}
+
+/// `<w:local xmlns:w=...>`, empty: the root docx-agent makes a styles or numbering part
+/// with.
+pub(crate) fn word_root(local: &str) -> Element {
+    Element::new(
+        Arc::new(QName::new(Some("w"), local, Some(crate::names::W))),
+        vec![NamespaceDecl {
+            prefix: Some(Arc::from("w")),
+            uri: Arc::from(crate::names::W),
+        }],
+        Vec::new(),
         Vec::new(),
     )
 }

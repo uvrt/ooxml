@@ -6,12 +6,14 @@
 //! lock is held only to find or change an entry), or implement a tool.
 
 use crate::batch::{MAX_READ_BATCH_CHARS, READ_BATCH};
-use crate::context::{CallCancel, StoreClock};
+use crate::context::{revision_date, CallCancel};
+use crate::document::{At, Document};
+use crate::registry::Call;
 use crate::update::{PartUpdate, Updated};
-use crate::{CallContext, DocId, DocKind, PackageDoc, Registry, SessionError};
+use crate::{CallContext, DocId, DocKind, Registry, SessionError};
 use ooxml_base::{Cancel, Context};
 use ooxml_opc::Package;
-use ooxml_store::{Snapshot, Store, StoreConfig, StoreStats};
+use ooxml_store::{StoreConfig, StoreStats};
 use ooxml_tools::{Accepted, Refusal, ToolError, ToolResult, ToolSpec, WayOut};
 use ooxml_tools_word::{Placer, Version};
 use ooxml_word_model::docx::Versions;
@@ -27,16 +29,6 @@ pub struct SessionConfig {
     pub store: StoreConfig,
 }
 
-/// One open document.
-struct Document {
-    kind: DocKind,
-    name: String,
-    store: Store<PackageDoc>,
-    /// Its readings as a Word document, kept for its latest versions (design section 7:
-    /// caches belong to a document).
-    versions: Arc<Versions>,
-}
-
 /// A document at one version, as a call reads it: it stays readable, unchanged, while
 /// others commit, and after the document is closed.
 #[derive(Clone)]
@@ -44,7 +36,7 @@ pub struct Opened {
     id: DocId,
     kind: DocKind,
     name: Arc<str>,
-    version: Snapshot<PackageDoc>,
+    version: At,
     versions: Arc<Versions>,
     /// Where the call reading it may ask where blocks are laid out (its context's).
     placer: Option<Arc<dyn Placer>>,
@@ -72,13 +64,22 @@ impl Opened {
     /// The version's number.
     #[must_use]
     pub fn version(&self) -> u64 {
-        self.version.seq().0
+        self.version.seq()
     }
 
     /// The package at this version.
     #[must_use]
     pub fn package(&self) -> &Package {
-        self.version.doc().package()
+        self.version.package()
+    }
+
+    /// The Word document at this version, when the session owns it as one.
+    #[must_use]
+    pub fn word(&self) -> Option<&ooxml_word_edit::WordDoc> {
+        match &self.version {
+            At::Word(version) => Some(version.doc()),
+            At::Package(_) => None,
+        }
     }
 
     /// This version as a Word reading tool is handed it.
@@ -93,6 +94,9 @@ impl Opened {
         }
     }
 }
+
+/// A call's tool and its arguments as meant.
+type Found = (Arc<dyn crate::Tool>, Map<String, Value>);
 
 /// The versions a batch reads, by document.
 pub(crate) type Pinned = BTreeMap<DocId, Opened>;
@@ -132,6 +136,8 @@ struct Counts {
     failed: AtomicU64,
     cancelled: AtomicU64,
     updates: AtomicU64,
+    /// `bridge_calls{tool}` (section 13): unported tools' calls committed through the bridge.
+    bridged: std::sync::Mutex<BTreeMap<String, u64>>,
 }
 
 /// Documents by id, their versions, and the tools that read and change them.
@@ -170,25 +176,17 @@ impl Session {
         &self.registry
     }
 
-    /// Open a package of `kind` from its bytes, as `name`. Nothing is inflated or parsed
-    /// until read.
+    /// Open a package of `kind` from its bytes, as `name`. A Word document is read (the
+    /// session owns it: its ids, the problems it opened with); another kind's parts are not
+    /// inflated or parsed until read.
     ///
     /// # Errors
-    /// [`SessionError::Package`] when the bytes are not a package within the limits.
+    /// [`SessionError::Package`] when the bytes are not a package within the limits;
+    /// [`SessionError::Word`] when a Word document cannot be read.
     pub fn open(&self, bytes: Arc<[u8]>, kind: DocKind, name: &str) -> Result<DocId, SessionError> {
         let package = Package::open(bytes, &self.context.limits)?;
-        let store = Store::new(
-            PackageDoc::new(package),
-            self.config.store,
-            Arc::new(StoreClock(Arc::clone(&self.context.clock))),
-        );
+        let document = Arc::new(Document::open(package, kind, name, self.config.store, &self.context)?);
         let id = DocId::nth(self.last_id.fetch_add(1, Ordering::Relaxed) + 1);
-        let document = Arc::new(Document {
-            kind,
-            name: name.to_owned(),
-            store,
-            versions: Arc::new(Versions::new()),
-        });
         self.write_table().insert(id.clone(), document);
         Ok(id)
     }
@@ -199,10 +197,10 @@ impl Session {
     /// [`SessionError::NotOpen`].
     pub fn snapshot(&self, id: &DocId) -> Result<Opened, SessionError> {
         let document = self.document(id)?;
-        Ok(Self::opened(id, &document, document.store.snapshot()))
+        Ok(Self::opened(id, &document, document.head()))
     }
 
-    fn opened(id: &DocId, document: &Document, version: Snapshot<PackageDoc>) -> Opened {
+    pub(crate) fn opened(id: &DocId, document: &Document, version: At) -> Opened {
         Opened {
             id: id.clone(),
             kind: document.kind,
@@ -219,6 +217,36 @@ impl Session {
     /// [`SessionError::NotOpen`], or the package's error writing a part.
     pub fn save(&self, id: &DocId) -> Result<Vec<u8>, SessionError> {
         Ok(self.snapshot(id)?.package().save()?)
+    }
+
+    /// The save gate (section 13, P2): the document's bytes at its head version, refused
+    /// when a Word document has validation problems it did not open with.
+    ///
+    /// # Errors
+    /// [`SessionError::NewProblems`], with every new problem; as [`Session::save`].
+    pub fn save_checked(&self, id: &DocId) -> Result<Vec<u8>, SessionError> {
+        let document = self.document(id)?;
+        let head = document.head();
+        if let (Some(word), At::Word(version)) = (document.word(), &head) {
+            let delta = word.validation(version)?;
+            if !delta.new.is_empty() {
+                return Err(SessionError::NewProblems { new: delta.new });
+            }
+        }
+        Ok(head.package().save()?)
+    }
+
+    /// What the save gate compares for a Word document at its head: its problems now
+    /// against those it opened with (`None` for another kind).
+    ///
+    /// # Errors
+    /// [`SessionError::NotOpen`]; the edit core's when a version cannot be read.
+    pub fn validation(&self, id: &DocId) -> Result<Option<ooxml_word_edit::validate::Delta>, SessionError> {
+        let document = self.document(id)?;
+        match (document.word(), document.head()) {
+            (Some(word), At::Word(version)) => Ok(Some(word.validation(&version)?)),
+            _ => Ok(None),
+        }
     }
 
     /// Close the document: the session lets go of it and its history at once; a snapshot
@@ -254,6 +282,36 @@ impl Session {
         self.commit(id, parts, context).map(|(updated, _)| updated)
     }
 
+    /// The bridge (section 13): commit the parts an unported tool `tool` changed, run by the
+    /// host on the head's bytes, as one step made by `context.caller`, and count it in
+    /// `bridge_calls{tool}`. The version it leaves, held.
+    ///
+    /// # Errors
+    /// As [`Session::update`]; a conflict with a commit since the head the tool ran on is
+    /// prepared again on the newer head (the update reads the whole document).
+    pub fn bridge(
+        &self,
+        id: &DocId,
+        tool: &str,
+        parts: Vec<(String, Option<Arc<[u8]>>)>,
+        context: &CallContext,
+    ) -> Result<(Updated, Opened), SessionError> {
+        let done = self.commit(id, parts, context)?;
+        let mut counts = self.counts.bridged.lock().unwrap_or_else(PoisonError::into_inner);
+        *counts.entry(tool.to_owned()).or_default() += 1;
+        Ok(done)
+    }
+
+    /// `bridge_calls{tool}`: how many calls of each unported tool went through the bridge.
+    #[must_use]
+    pub fn bridge_calls(&self) -> BTreeMap<String, u64> {
+        self.counts
+            .bridged
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
     /// [`Session::update`], and the version it leaves (the one it ran on where it changed
     /// nothing), held: a call whose context names it reads that version, whatever was
     /// committed since (the host that owns the document hands each version over and reads
@@ -270,20 +328,20 @@ impl Session {
         let document = self.document(id)?;
         let cancel = CallCancel::new(context, &*self.context.cancel, &*self.context.clock);
         let update = PartUpdate::new(parts, self.context.limits, &cancel);
-        let committed = document.store.run(&context.caller, &update).inspect_err(|e| {
+        let (version, changed, attempts) = document.update(&context.caller, &update).inspect_err(|e| {
             if matches!(e, SessionError::Base(ooxml_base::BaseError::Cancelled)) {
                 self.counts.cancelled.fetch_add(1, Ordering::Relaxed);
             }
         })?;
-        if committed.changed {
+        if changed {
             self.counts.updates.fetch_add(1, Ordering::Relaxed);
         }
         let updated = Updated {
-            version: committed.version.seq().0,
-            changed: committed.changed,
-            attempts: committed.attempts,
+            version: version.seq(),
+            changed,
+            attempts,
         };
-        Ok((updated, Self::opened(id, &document, committed.version)))
+        Ok((updated, Self::opened(id, &document, version)))
     }
 
     /// The store's counters for the document (commits, conflicts, exclusive runs).
@@ -291,7 +349,7 @@ impl Session {
     /// # Errors
     /// [`SessionError::NotOpen`].
     pub fn store_stats(&self, id: &DocId) -> Result<StoreStats, SessionError> {
-        Ok(self.document(id)?.store.stats())
+        Ok(self.document(id)?.stats())
     }
 
     /// The session's counters.
@@ -362,26 +420,28 @@ impl Session {
             pinned,
             placer: context.placer.clone(),
         };
-        let outcome = if within.is_empty() {
-            self.dispatch(name, arguments, &cancel, &mut state)
+        let mut result = if within.is_empty() {
+            self.dispatch(name, arguments, context, &cancel, &mut state)
         } else {
-            self.dispatch_within(name, arguments, &cancel, &mut state, within)
+            self.dispatch_within(name, arguments, context, &cancel, &mut state, within)
         };
-        let CallState { opened, warnings, .. } = state;
-        let mut result = match outcome {
-            Ok(done) => ToolResult::done(done),
-            Err(error) => {
-                self.counts.failed.fetch_add(1, Ordering::Relaxed);
-                if error.code().as_str() == "timeout" {
-                    self.counts.cancelled.fetch_add(1, Ordering::Relaxed);
-                }
-                ToolResult::failed(error)
+        if let ooxml_tools::Outcome::Failed(error) = &result.outcome {
+            self.counts.failed.fetch_add(1, Ordering::Relaxed);
+            if error.code().as_str() == "timeout" {
+                self.counts.cancelled.fetch_add(1, Ordering::Relaxed);
             }
-        };
+        }
+        let CallState {
+            opened, mut warnings, ..
+        } = state;
         if let Some(opened) = opened {
             result.doc = Some(opened.id.to_string());
-            result.version = Some(opened.version());
+            // a changing call's version is the head it left; a reading call's, the one read
+            let mutates = self.registry.named(name).is_some_and(|t| t.spec().flags.mutates);
+            let head = || self.document(&opened.id).ok().map(|d| d.head().seq());
+            result.version = Some(if mutates { head() } else { None }.unwrap_or_else(|| opened.version()));
         }
+        warnings.append(&mut result.warnings);
         result.warnings = warnings;
         result.app.tool = name.to_owned();
         result
@@ -391,9 +451,38 @@ impl Session {
         &self,
         name: &str,
         arguments: Value,
+        context: &CallContext,
         cancel: &dyn Cancel,
         state: &mut CallState<'_>,
-    ) -> Result<ooxml_tools::Done<Value>, ToolError> {
+    ) -> ToolResult<Value> {
+        let found = self.found(name, arguments, cancel, state);
+        let (tool, arguments) = match found {
+            Ok(found) => found,
+            Err(error) => return ToolResult::failed(error),
+        };
+        let Some(doc) = state.opened.as_ref() else {
+            return ToolResult::failed(ToolError::internal("no document", "session:dispatch"));
+        };
+        let document = self.document(&doc.id).ok();
+        let call = Call {
+            doc,
+            word: document.as_deref().and_then(Document::word),
+            caller: &context.caller,
+            cancel,
+            date: revision_date(self.context.clock.now()),
+        };
+        tool.run(arguments, &call)
+    }
+
+    /// The tool a call names, its arguments as meant, and the document it reads (kept in
+    /// `state`).
+    fn found(
+        &self,
+        name: &str,
+        arguments: Value,
+        cancel: &dyn Cancel,
+        state: &mut CallState<'_>,
+    ) -> Result<Found, ToolError> {
         cancel.check().map_err(|e| SessionError::from(e).to_tool_error())?;
         let spec = self.spec_named(name)?;
         let Accepted { mut arguments, notes } = spec.accept(arguments)?;
@@ -406,11 +495,11 @@ impl Session {
         state
             .warnings
             .extend(spec.ignored_for(Some(doc.kind.as_str()), &mut arguments));
-        let doc = state.opened.insert(Opened {
+        state.opened = Some(Opened {
             placer: state.placer.clone(),
             ..doc
         });
-        tool.run(arguments, doc, cancel)
+        Ok((Arc::clone(tool), arguments))
     }
 
     /// One op of a batch `within`: a tool that may run there, its argument errors fielded
@@ -419,32 +508,40 @@ impl Session {
         &self,
         name: &str,
         arguments: Value,
+        context: &CallContext,
         cancel: &dyn Cancel,
         state: &mut CallState<'_>,
         within: &str,
-    ) -> Result<ooxml_tools::Done<Value>, ToolError> {
+    ) -> ToolResult<Value> {
         let runs = self.registry.named(name).map(|t| t.spec().flags);
         if name == READ_BATCH || runs.is_some_and(|f| !(f.batchable || f.read_batchable)) {
-            return Err(ToolError::refusal(
-                Refusal::InvalidArguments,
-                format!("{name} cannot run inside a {within}; call it on its own"),
-                WayOut::names([name]).ok_or_else(|| ToolError::internal("no name", "session:batch"))?,
-            )
-            .at("tool"));
+            let way_out = match WayOut::names([name]) {
+                Some(way_out) => way_out,
+                None => return ToolResult::failed(ToolError::internal("no name", "session:batch")),
+            };
+            return ToolResult::failed(
+                ToolError::refusal(
+                    Refusal::InvalidArguments,
+                    format!("{name} cannot run inside a {within}; call it on its own"),
+                    way_out,
+                )
+                .at("tool"),
+            );
         }
         if runs.is_none() {
-            return self
-                .spec_named(name)
-                .map(|_| ooxml_tools::Done::new(""))
-                .map_err(|e| e.at("tool"));
+            return match self.spec_named(name) {
+                Ok(_) => ToolResult::done(ooxml_tools::Done::new("")),
+                Err(e) => ToolResult::failed(e.at("tool")),
+            };
         }
-        self.dispatch(name, arguments, cancel, state).map_err(|error| {
+        let mut result = self.dispatch(name, arguments, context, cancel, state);
+        if let ooxml_tools::Outcome::Failed(error) = &mut result.outcome {
             let field = error.field().map(|f| format!("arguments.{f}"));
-            match field {
-                Some(field) if error.code().as_str() == "invalid_arguments" => error.at(field),
-                _ => error,
+            if let Some(field) = field.filter(|_| error.code().as_str() == "invalid_arguments") {
+                *error = error.clone().at(field);
             }
-        })
+        }
+        result
     }
 
     /// The definition of `name` (the first registered: tools of one name share it).
@@ -503,7 +600,7 @@ impl Session {
         }
     }
 
-    fn document(&self, id: &DocId) -> Result<Arc<Document>, SessionError> {
+    pub(crate) fn document(&self, id: &DocId) -> Result<Arc<Document>, SessionError> {
         self.read_table()
             .get(id)
             .cloned()

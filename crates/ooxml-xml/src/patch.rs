@@ -1,6 +1,7 @@
 //! Owns: [`Patch`] -- one splice of an element's children (or the root's replacement),
-//! addressed by a [`NodePath`] and checked by node pointer: applying it makes a new tree by
-//! path copying and refuses when the nodes it removes are not the ones at its position.
+//! addressed by a [`NodePath`] and checked by node (pointer, else equal content): applying it
+//! makes a new tree by path copying and refuses when the nodes it removes are not the ones at
+//! its position.
 //! [`Patch::rebase`] moves a patch made on one version past a patch committed since, the way
 //! the store re-applies a transaction's change set to a newer head (design section 5).
 //!
@@ -154,7 +155,7 @@ impl Patch {
         };
         let children = element.children();
         for (k, node) in self.removed.iter().enumerate() {
-            if !children.get(self.start + k).is_some_and(|have| have.same(node)) {
+            if !children.get(self.start + k).is_some_and(|have| have.removable_as(node)) {
                 return Err(stale());
             }
         }
