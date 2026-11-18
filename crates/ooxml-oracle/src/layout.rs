@@ -167,10 +167,10 @@ fn para_fields(p: &ParaItem, last: &MeasuredParagraph) -> Vec<(&'static str, Val
         .iter()
         .map(|h| {
             serde_json::json!([
-                h.pitch.to_string(),
-                h.text_above.to_string(),
-                h.text_below.to_string(),
-                h.natural.to_string(),
+                h.pitch().to_string(),
+                h.text_above().to_string(),
+                h.text_below().to_string(),
+                h.natural().to_string(),
                 h.rule.name(),
                 h.line
             ])

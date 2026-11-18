@@ -55,7 +55,7 @@ fn target_of(spec: &TableSpec, column_width: Q, room: Q) -> Option<i64> {
 fn cells(spec: &TableSpec) -> Vec<&ResolvedCell> {
     spec.rows()
         .iter()
-        .flat_map(|r| &r.cells)
+        .flat_map(|r| r.cells.iter().map(|c| &**c))
         .filter(|c| c.merge.as_deref() != Some("continue"))
         .collect()
 }

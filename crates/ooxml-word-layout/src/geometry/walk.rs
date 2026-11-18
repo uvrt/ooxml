@@ -169,10 +169,14 @@ fn walk_paragraph(
             let own_after = if p.contextual && same_next { 0 } else { p.after };
             space_after = p.border + Px::twips(own_after);
             if let (Some(bottom), true) = (from.bottom, index + 1 == items.len()) {
-                space_after = space_after.max(bottom - (y + height.pitch));
+                space_after = space_after.max(bottom - (y + height.pitch()));
             }
         }
-        let b = LineBox::new(*height, if number == 0 { space_before } else { Px::ZERO }, space_after);
+        let b = LineBox::new(
+            height.clone(),
+            if number == 0 { space_before } else { Px::ZERO },
+            space_after,
+        );
         if !p.measured.undrawn.contains(&number) {
             out.lines.push(DrawnLine {
                 source: LineSource::Flow { item: index },
@@ -180,7 +184,7 @@ fn walk_paragraph(
                 body: Some(p.body),
                 number,
                 top: y,
-                pitch: height.pitch,
+                pitch: height.pitch(),
                 baseline: baseline_in_box(y - b.space_before, &b),
                 band: text_band(y - b.space_before, &b),
                 column: None,
@@ -188,7 +192,7 @@ fn walk_paragraph(
                 white_text: false,
             });
         }
-        y += height.pitch;
+        y += height.pitch();
         *first = false;
     }
     if (index, count) <= end {

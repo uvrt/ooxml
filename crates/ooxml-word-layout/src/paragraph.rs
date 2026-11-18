@@ -151,7 +151,7 @@ pub fn measure_paragraph(
         resolved: job.resolved,
         columns: job.columns,
     };
-    derive(cx, &lines, measured, Arc::new(job.geometry.clone()))
+    derive(cx, &lines, measured, measurer.share(job.geometry))
 }
 
 /// A paragraph whose lines are given: what each line's height and breaks are read from.

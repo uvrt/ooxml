@@ -68,8 +68,8 @@ pub struct ResolvedRow {
     pub index: usize,
     /// Its properties.
     pub properties: Props,
-    /// Its cells.
-    pub cells: Vec<ResolvedCell>,
+    /// Its cells, each shared with what keeps it (a table's layout keeps its cells').
+    pub cells: Vec<Arc<ResolvedCell>>,
     /// `w:gridBefore`.
     pub grid_before: i64,
     /// `w:gridAfter`.
@@ -346,10 +346,12 @@ fn cell_margins(props: &Props, table: &Props) -> [i64; 4] {
 fn settle_edges(row: &mut ResolvedRow) {
     for k in 0..row.cells.len() {
         let (before, rest) = row.cells.split_at_mut(k);
-        let Some(cell) = rest.first_mut() else { continue };
+        let Some(cell) = rest.first_mut().map(Arc::make_mut) else {
+            continue;
+        };
         let left_border = cell.borders.get(1).and_then(Option::as_ref);
         let left_own = cell.own.get(1).copied().unwrap_or(false);
-        match before.last_mut() {
+        match before.last_mut().map(Arc::make_mut) {
             None => cell.left_edge = (left_border.cloned(), left_own),
             Some(left) => {
                 let edge = edge_winner(
@@ -364,7 +366,7 @@ fn settle_edges(row: &mut ResolvedRow) {
             }
         }
     }
-    if let Some(last) = row.cells.last_mut() {
+    if let Some(last) = row.cells.last_mut().map(Arc::make_mut) {
         last.right_edge = (last.borders.get(3).cloned().flatten(), false);
     }
 }
@@ -420,7 +422,7 @@ fn resolve_row(
             .and_then(|row| row.get(c))
             .cloned()
             .unwrap_or_else(|| key(&format!("{}/w:tr[{}]/w:tc[{}]", table.path, r + 1, c + 1)));
-        cells.push(ResolvedCell {
+        cells.push(Arc::new(ResolvedCell {
             row: r,
             index: c,
             column,
@@ -433,7 +435,7 @@ fn resolve_row(
             own: [false; 4],
             left_edge: (None, false),
             right_edge: (None, false),
-        });
+        }));
         column += span;
     }
     ResolvedRow {
@@ -474,7 +476,7 @@ pub fn resolve_table(src: &Sources<'_>, table: &Table) -> ResolvedTable {
     let count = rows.len();
     for row in &mut rows {
         for cell in &mut row.cells {
-            cell_borders(&properties, cell, count, columns);
+            cell_borders(&properties, Arc::make_mut(cell), count, columns);
         }
         settle_edges(row);
     }

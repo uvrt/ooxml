@@ -34,7 +34,7 @@ pub use anchors::{CellEdges, CellPage};
 pub use build::{effective_style, table_paragraphs, Frame};
 pub use cell_rules::in_cell;
 pub use cells::{
-    Align, CellBlock, CellDrawings, CellFlow, Content, Merge, Positioned, RowFlow, RowHeight, StackedLine,
+    Align, CellBlock, CellDrawings, CellFlow, Content, Merge, Positioned, RowFlow, RowHeight, StackedLine, StackedRoom,
 };
 pub use drawn::AnchoredLine;
 pub use grid::{inner_part, line_at as grid_line, twips_px as grid_twips_px, CellBox};

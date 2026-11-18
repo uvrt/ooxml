@@ -73,7 +73,9 @@ fn flow_weight(flow: &Flow) -> usize {
                     } else {
                         0
                     };
-                    size_of::<ooxml_word_layout::paragraph::MeasuredParagraph>() + m.heights.capacity() * 64 + text
+                    size_of::<ooxml_word_layout::paragraph::MeasuredParagraph>()
+                        + m.heights.capacity() * size_of::<ooxml_word_layout::heights::LineHeight>()
+                        + text
                 } else {
                     0
                 };
@@ -151,7 +153,7 @@ pub fn paint_weight(paint: &PagePaint) -> usize {
         .map(|span| {
             size_of::<ooxml_word_layout::paint::Span>()
                 + span.chars.capacity() * size_of::<char>()
-                + span.xs.capacity() * size_of::<ooxml_word_layout::Px>()
+                + span.xs.capacity() * size_of::<ooxml_word_layout::CompactPx>()
                 + span.path.len()
                 + span.face.len()
         })

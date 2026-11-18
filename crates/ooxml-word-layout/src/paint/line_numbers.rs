@@ -199,7 +199,7 @@ pub fn number_span(
     let mut x = widths.iter().fold(end, |x, w| x - *w);
     let mut xs = Vec::with_capacity(widths.len());
     for w in widths {
-        xs.push(x);
+        xs.push(x.into());
         x += w;
     }
     Some(Span {

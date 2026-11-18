@@ -43,7 +43,7 @@ impl DropCap {
         self.measured
             .heights
             .iter()
-            .fold(Px::twips(self.before), |sum, h| sum + h.pitch)
+            .fold(Px::twips(self.before), |sum, h| sum + h.pitch())
     }
 
     /// Whether text goes beside it: a `drop` cap's, and a `margin` cap's anchored to the

@@ -3,12 +3,12 @@
 //! length half up to the layout unit ([`Px::twips`]), a computed length half up or down
 //! to it ([`Px::quantise`], [`Px::quantise_down`]), and whole-pixel rounding
 //! ([`Px::round_half_up`]) -- docx2svg's `vertical.twips_to_px`, `quantise`,
-//! `quantise_down` and `round_half_up`.
+//! `quantise_down` and `round_half_up` -- and [`CompactPx`], a `Px` as the measures keep it.
 //!
 //! Must not: use floating point, or round anywhere but in the functions named above.
 
 use num_integer::Integer;
-use ooxml_base::Q;
+use ooxml_base::{Compact, ExactLength, Q};
 use std::fmt;
 use std::ops::{Add, AddAssign, Div, Mul, Neg, Sub, SubAssign};
 
@@ -22,6 +22,20 @@ const UNITS_PER_POINT: i128 = 4096;
 /// A length in device px, exact.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct Px(Q);
+
+/// A [`Px`] as the measures keep it (lines' heights, cells' stacked lines): ooxml-base's
+/// [`Compact`], 16 bytes rather than 32, exact. Arithmetic is done on [`Px`]:
+/// [`Compact::get`] gives the value back.
+pub type CompactPx = Compact<Px>;
+
+impl ExactLength for Px {
+    fn exact(self) -> Q {
+        self.0
+    }
+    fn from_exact(value: Q) -> Px {
+        Px(value)
+    }
+}
 
 impl fmt::Debug for Px {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

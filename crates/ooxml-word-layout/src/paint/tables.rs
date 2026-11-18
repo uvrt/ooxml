@@ -396,8 +396,8 @@ pub(super) fn nested_tables<'t>(table: &'t MeasuredTable, piece: &PlacedRow) -> 
         let mut line_y = content_top + cell.margin_top + offset;
         let range = usize::try_from(start).unwrap_or(0)..usize::try_from(end).unwrap_or(0);
         for placed in cell.stack.get(range).unwrap_or_default() {
-            let top = line_y + placed.above;
-            line_y = top + placed.pitch + placed.below;
+            let top = line_y + placed.above();
+            line_y = top + placed.pitch() + placed.below();
             if let Some(Content::Table(nested)) = cell.entries.get(placed.entry).map(|e| &e.content) {
                 out.push((&**nested, top));
             }

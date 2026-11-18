@@ -162,14 +162,14 @@ fn stack_tops(job: &CellJob<'_>, entries: &[CellBlock]) -> Vec<StackTop> {
                 None => line_y,
             };
         }
-        let top = line_y + placed.above;
+        let top = line_y + placed.above();
         out.push(StackTop {
             at: (placed.entry, placed.number),
             top,
-            pitch: placed.pitch,
+            pitch: placed.pitch(),
             paragraph_top,
         });
-        line_y = top + placed.pitch + placed.below;
+        line_y = top + placed.pitch() + placed.below();
         before = Some(entry);
     }
     out
@@ -506,7 +506,7 @@ fn take_line(
     let again = breaker
         .set_lines(source, current, lines, 0)
         .ok_or_else(|| Unsupported("no face metrics in a cell".into()))?;
-    entry.pitches = again.measured.heights.iter().map(|h| h.pitch).collect();
+    entry.pitches = again.measured.heights.iter().map(|h| h.pitch().into()).collect();
     entry.drawings.extra = again.extra.clone();
     entry.drawings.anchors = again.anchors.clone();
     entry.content = Content::Paragraph(Arc::clone(&again.measured));
@@ -547,13 +547,13 @@ fn place_line(
         .ok_or_else(|| Unsupported("no face metrics in a cell".into()))?;
     let last = number + 1 == measured.measured.lines.len();
     let reach = if mode15 {
-        height.pitch - height.multiple_extra()
+        height.pitch() - height.multiple_extra()
     } else {
-        height.pitch + if last { after } else { Px::ZERO }
+        height.pitch() + if last { after } else { Px::ZERO }
     };
     let mut y = top;
     if !around.bands.is_empty() {
-        let tall = height.pitch + if last && !mode15 { after } else { Px::ZERO };
+        let tall = height.pitch() + if last && !mode15 { after } else { Px::ZERO };
         y = clear_of_bands(y, tall, &around.bands);
     }
     let (mut line, mut extra) = (plain, LineExtra::default());
@@ -561,7 +561,7 @@ fn place_line(
         if around.wraps.is_empty() {
             break;
         }
-        let text = y + height.pitch - height.multiple_extra();
+        let text = y + height.pitch() - height.multiple_extra();
         let band = (y.value(), (y + reach).value(), Some(text.value()));
         let (segs, beside) = segments(&around.wraps, band, column);
         let Some(segs) = segs else {
@@ -580,7 +580,7 @@ fn place_line(
             .iter()
             .map(|w| {
                 if w.polygon.is_some() {
-                    (y + height.pitch).value()
+                    (y + height.pitch()).value()
                 } else {
                     w.bottom
                 }

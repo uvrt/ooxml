@@ -175,10 +175,10 @@ impl NoteMaker {
         section: (usize, &SectionGeometry),
     ) -> Option<LineHeight> {
         if let Some(found) = self.continuations.get(&section.0) {
-            return *found;
+            return found.clone();
         }
         let found = continuation_line(cx, section.1).ok();
-        self.continuations.insert(section.0, found);
+        self.continuations.insert(section.0, found.clone());
         found
     }
 }
@@ -203,5 +203,5 @@ fn continuation_line(cx: &mut NoteContext<'_, '_>, section: &SectionGeometry) ->
         label: None,
     };
     let measured = measure_paragraph(&mcx, cx.measurer, &job)?;
-    measured.heights.first().copied().ok_or(Unmeasured::NoFaceMetrics)
+    measured.heights.first().cloned().ok_or(Unmeasured::NoFaceMetrics)
 }

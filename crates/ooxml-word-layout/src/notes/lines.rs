@@ -133,7 +133,7 @@ pub fn note_lines(
         for (number, height) in measured.heights.iter().enumerate() {
             let at = out.len();
             out.push(NoteLine {
-                height: height.pitch + if number == 0 { gap } else { Px::ZERO },
+                height: height.pitch() + if number == 0 { gap } else { Px::ZERO },
                 line: number,
                 count,
                 widow,

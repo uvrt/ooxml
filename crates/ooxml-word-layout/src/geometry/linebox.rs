@@ -18,7 +18,7 @@ const LAMBDA_PLAIN: (i128, i128) = (1, 2);
 const LAMBDA_EXACT: (i128, i128) = (1, 4);
 
 /// One line's box, exact device px, from the top of its first part.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LineBox {
     /// The line's own facts: its pitch, text extent and rule.
     pub height: LineHeight,
@@ -41,7 +41,7 @@ impl LineBox {
 
     /// Its whole height.
     pub fn whole(&self) -> Px {
-        self.space_before + self.height.pitch + self.space_after
+        self.space_before + self.height.pitch() + self.space_after
     }
 
     /// Everything in it below the text line (`below_text`).
@@ -53,7 +53,12 @@ impl LineBox {
 /// `(above, below)` of the baseline within the line's pitch, and whether the line puts its
 /// slack above the text (`_line_extent`).
 pub fn line_extent(height: &LineHeight) -> (Px, Px, bool) {
-    let (h, above, below, natural) = (height.pitch, height.text_above, height.text_below, height.natural);
+    let (h, above, below, natural) = (
+        height.pitch(),
+        height.text_above(),
+        height.text_below(),
+        height.natural(),
+    );
     match height.rule {
         LineRule::Exact => {
             let below = (h * Q::new(1, 5)).quantise_down();
@@ -72,21 +77,21 @@ pub fn line_extent(height: &LineHeight) -> (Px, Px, bool) {
 /// `(space above the text inside the pitch, the text's own pitch, above, below)`
 /// (`_text_line`).
 fn text_line(height: &LineHeight) -> (Px, Px, Px, Px) {
-    let h = height.pitch;
-    if height.rule == LineRule::AtLeast && h > height.natural {
+    let h = height.pitch();
+    if height.rule == LineRule::AtLeast && h > height.natural() {
         return (
-            h - height.natural,
-            height.natural,
-            height.text_above,
-            height.natural - height.text_above,
+            h - height.natural(),
+            height.natural(),
+            height.text_above(),
+            height.natural() - height.text_above(),
         );
     }
     if height.rule == LineRule::Auto && height.line > 240 {
         return (
             Px::ZERO,
-            height.text_above + height.text_below,
-            height.text_above,
-            height.text_below,
+            height.text_above() + height.text_below(),
+            height.text_above(),
+            height.text_below(),
         );
     }
     let (above, below, _) = line_extent(height);
@@ -142,16 +147,7 @@ mod tests {
     use super::*;
 
     fn plain(pitch: Px, above: Px, below: Px) -> LineHeight {
-        LineHeight {
-            pitch,
-            text_above: above,
-            text_below: below,
-            natural: pitch,
-            rule: LineRule::Auto,
-            line: 240,
-            mixed: false,
-            object_drop: None,
-        }
+        LineHeight::new(pitch, above, below, pitch, LineRule::Auto, 240, false)
     }
 
     #[test]

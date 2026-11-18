@@ -92,7 +92,10 @@ impl TableSpec {
     /// The first row's first and last cells.
     pub fn outer_cells(&self) -> (Option<&ResolvedCell>, Option<&ResolvedCell>) {
         let row = self.rows().first();
-        (row.and_then(|r| r.cells.first()), row.and_then(|r| r.cells.last()))
+        (
+            row.and_then(|r| r.cells.first()).map(|c| &**c),
+            row.and_then(|r| r.cells.last()).map(|c| &**c),
+        )
     }
 
     /// Lay it out on its `w:tblGrid` as a fixed table (`table.on_grid`).
