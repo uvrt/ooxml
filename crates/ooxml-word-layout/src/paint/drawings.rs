@@ -11,7 +11,6 @@ use super::positions::{line_positions, Setting};
 use super::spans::picture_size;
 use crate::floating::{emu_twips, horizontal, vertical, AnchorRef, Frames};
 use crate::geometry::{DrawnLine, PageFrame};
-use crate::paginate::LaidPage;
 use crate::paragraph::MeasuredParagraph;
 use crate::px::Px;
 use ooxml_base::Q;
@@ -93,11 +92,20 @@ fn character_units(
 }
 
 /// A floating drawing's path (`anchor_path`): its `wp:anchor[n]` among the run's DrawingML
-/// ones.
+/// ones, or a VML shape's own path.
 fn anchor_path(paragraph: &Paragraph, run: usize, k: usize) -> String {
     let Some(r) = paragraph.runs.get(run).filter(|r| !r.path.is_empty()) else {
         return paragraph.path.to_string();
     };
+    let vml = r
+        .anchors
+        .get(k)
+        .filter(|a| a.vml)
+        .and_then(|a| a.graphic.as_deref())
+        .filter(|g| !g.path.is_empty());
+    if let Some(graphic) = vml {
+        return format!("{}/{}", paragraph.path, graphic.path);
+    }
     let n = r.anchors.iter().take(k).filter(|a| !a.vml).count();
     format!("{}/{}/wp:anchor[{}]", paragraph.path, r.path, n + 1)
 }
@@ -120,7 +128,12 @@ fn anchor_box(anchor: &Anchor, frames: &Frames) -> Option<(Px, Px, Px, Px)> {
 pub(super) struct FloatJob<'a> {
     pub(super) layout: &'a crate::DocumentLayout,
     pub(super) frame: &'a PageFrame,
-    pub(super) laid: &'a LaidPage,
+    /// The page (0-based).
+    pub(super) page: usize,
+    /// The paragraph's top for its drawings, where the page placed it.
+    pub(super) paragraph_top: Option<Px>,
+    /// The bands the paginator put drawings text wraps top and bottom of in.
+    pub(super) bands: &'a [crate::paginate::Band],
     pub(super) paragraph: &'a Paragraph,
     pub(super) resolved: &'a ResolvedParagraph,
     pub(super) measured: &'a MeasuredParagraph,
@@ -129,7 +142,8 @@ pub(super) struct FloatJob<'a> {
     pub(super) line: &'a DrawnLine,
 }
 
-/// The floating drawings anchored on a body line, placed (`_anchors`); `count` the
+/// The floating drawings anchored on a line of the body or of a header or footer, placed
+/// (`_anchors`); `count` the
 /// page's drawings so far. A drawing positioned against a frame the model does not know
 /// is not placed, and named in the second list.
 pub(super) fn line_floats(job: &FloatJob<'_>, count: &mut usize) -> (Vec<DrawingSlot>, Vec<String>) {
@@ -145,8 +159,7 @@ pub(super) fn line_floats(job: &FloatJob<'_>, count: &mut usize) -> (Vec<Drawing
     if mine.is_empty() {
         return (out, missed);
     }
-    let placed = job.laid.lines.iter().find(|l| l.item == job.item && l.line == number);
-    let paragraph_top = placed.map_or(job.line.top, |p| p.paragraph_top);
+    let paragraph_top = job.paragraph_top.unwrap_or(job.line.top);
     let setting = Setting {
         alignment: job.resolved.paragraph.get("jc").and_then(Value::str),
         first_line: number == 0,
@@ -186,7 +199,7 @@ pub(super) fn line_floats(job: &FloatJob<'_>, count: &mut usize) -> (Vec<Drawing
             run: a.run,
             index: a.index,
         };
-        if let Some(band) = job.laid.bands.iter().find(|b| b.key == key) {
+        if let Some(band) = job.bands.iter().find(|b| b.key == key) {
             y = band.y;
         }
         *count += 1;
@@ -226,7 +239,7 @@ impl FloatJob<'_> {
             bottom: Q::from_integer(i128::from(m.bottom)),
             header: m.header,
             footer: m.footer,
-            page: self.laid.page + 1,
+            page: self.page + 1,
             mode15: self.layout.mode15,
             paragraph_top: to_twips(paragraph_top),
             line_top: to_twips(line_top),

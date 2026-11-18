@@ -1,20 +1,21 @@
 //! Owns: the painter of a page's drawings ([`WordDrawings`], the layout's `Drawings`
 //! port): each drawing slot's graphic painted in its box as docx2svg's `_draw_graphic`
-//! paints it -- pictures, shapes and groups ([`shapes`]), charts ([`chart`]) -- its
-//! resources added to the page's, its markup written as `svg._float` writes a floating
-//! drawing's group ([`write`]); and what docx2svg says of it (`drawing-*`, `chart-*`
-//! warnings, its messages, in the order met).
+//! paints it -- pictures, shapes and groups ([`shapes`]), charts ([`chart`]), SmartArt
+//! ([`diagram`]) -- its resources added to the page's, its markup written as `svg._float`
+//! writes a floating drawing's group ([`write`]); and what docx2svg says of it (`drawing-*`,
+//! `chart-*`, `diagram-*` warnings, its messages, in the order met).
 //!
-//! What the layout does not lay out yet in a drawing (a text box's text, SmartArt, VML
-//! shapes and text paths) is found before a version is laid out ([`crate::support`]); such
-//! a document never reaches this painter.
+//! What the layout does not lay out yet in a drawing (a text box's text) is found before a
+//! version is laid out ([`crate::support`]); such a document never reaches this painter.
 //!
 //! Must not: lay out or place a drawing (the layout has: [`DrawingSlot`]), hold state
 //! between pages beyond the version's theme, or read anything but the version's package.
 
 pub mod chart;
 pub mod colours;
+pub mod diagram;
 pub mod shapes;
+pub mod vml;
 pub mod write;
 
 use crate::pictures::PackagePictures;
@@ -30,6 +31,7 @@ use ooxml_word_model::WordDocument;
 use shapes::{Draw, Drawn, Frames};
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use vml::Inks;
 use write::{ImageSource, Primitive, PxBox};
 
 const THEME: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme";
@@ -53,6 +55,12 @@ pub struct Painted {
     pub warnings: Vec<(String, String)>,
     /// What writing its pictures said (`picture-not-drawn`): `(code, message)`.
     pub pictures: Vec<(String, String)>,
+    /// Its text path is drawn stretched by its advances, its outlines not at hand (said as
+    /// an approximation, once per drawing).
+    pub approximated: bool,
+    /// The faces its text is drawn in (a text path's): `(face, bold, italic)`, for a
+    /// rasteriser to be given.
+    pub faces: Vec<(String, bool, bool)>,
 }
 
 /// One version's painter of drawings.
@@ -63,6 +71,7 @@ pub struct WordDrawings {
     formats: Option<FormatScheme>,
     fonts: Option<Arc<FontScheme>>,
     locale: ooxml_numfmt::Locale,
+    inks: Option<Arc<dyn Inks>>,
 }
 
 impl std::fmt::Debug for WordDrawings {
@@ -72,8 +81,14 @@ impl std::fmt::Debug for WordDrawings {
 }
 
 impl WordDrawings {
-    /// The painter of `document`'s drawings, its parts read from `pictures`' package.
-    pub fn new(document: &WordDocument, pictures: PackagePictures) -> WordDrawings {
+    /// The painter of `document`'s drawings, its parts read from `pictures`' package, a
+    /// chart's numbers written in `numbers`, a text path's outlines read through `inks`.
+    pub fn new(
+        document: &WordDocument,
+        pictures: PackagePictures,
+        numbers: ooxml_numfmt::Locale,
+        inks: Option<Arc<dyn Inks>>,
+    ) -> WordDrawings {
         let package = pictures.package();
         let formats = package
             .relationships(&document.main_part)
@@ -90,7 +105,8 @@ impl WordDrawings {
             slots: colour_map_slots(document.context.settings.color_map.iter().map(|(k, v)| (&**k, &**v))),
             formats,
             fonts: document.context.font_scheme.clone(),
-            locale: ooxml_numfmt::EN_US,
+            locale: numbers,
+            inks,
             pictures,
         }
     }
@@ -136,10 +152,17 @@ impl WordDrawings {
             colours: &colours,
             part: part.as_deref(),
         };
+        let minor = self
+            .fonts
+            .as_deref()
+            .map(|f| f.minor.latin.to_string())
+            .filter(|m| !m.is_empty());
         let mut draw = Draw {
             colours: &colours,
             painter: &mut painter,
             frames: &frames,
+            inks: self.inks.as_deref(),
+            minor: minor.as_deref(),
             drawn: Drawn::default(),
         };
         let at = PxBox {
@@ -150,7 +173,10 @@ impl WordDrawings {
         };
         draw.graphic(slot.graphic.as_ref(), &at, &slot.path);
         let Drawn {
-            mut primitives, said, ..
+            mut primitives,
+            said,
+            faces,
+            ..
         } = draw.drawn;
         for p in &mut primitives {
             if let Some(path) = p.path_mut().filter(|p| **p != slot.path) {
@@ -169,16 +195,51 @@ impl WordDrawings {
             lines,
             warnings: messages(&said, &slot.path),
             pictures,
+            approximated: said.iter().any(|c| c == TEXT_PATH_APPROXIMATE),
+            faces,
         }
     }
 }
 
-/// The warnings said of a drawing, once each, as docx2svg words them (`_draw_graphic`).
+/// What a text path drawn stretched by its advances says (an approximation, not a warning).
+const TEXT_PATH_APPROXIMATE: &str = "drawing-approximate:text path";
+
+impl WordDrawings {
+    /// The faces `slot`'s text is drawn in (a text path's): `(face, bold, italic)`, for a
+    /// rasteriser to be given (docx2svg's `drawn_faces`).
+    pub fn faces(&self, slot: &DrawingSlot) -> Vec<(String, bool, bool)> {
+        fn written(g: &Graphic) -> bool {
+            matches!(&*g.kind, "chart" | "diagram") || g.children.iter().any(|c| written(c))
+        }
+        if slot.graphic.as_deref().is_some_and(written) {
+            // A chart's or a diagram's text: its faces are what its renderer wrote.
+            return self.paint(slot, &mut PageDefs::default()).faces;
+        }
+        let Some(graphic) = slot.graphic.as_deref().filter(|g| &*g.kind == "textpath") else {
+            return Vec::new();
+        };
+        let minor = self
+            .fonts
+            .as_deref()
+            .map(|f| f.minor.latin.to_string())
+            .filter(|m| !m.is_empty());
+        let text = graphic
+            .source
+            .as_ref()
+            .and_then(|s| vml::TextPath::of(s, minor.as_deref()))
+            .filter(|t| t.fit != Some(false));
+        text.map(|t| vec![t.drawn_face(t.ink(self.inks.as_deref()).as_ref())])
+            .unwrap_or_default()
+    }
+}
+
+/// The warnings said of a drawing, once each, as docx2svg words them (`_draw_graphic`); a
+/// text path's approximation is said apart ([`Painted::approximated`]).
 fn messages(said: &Said, path: &str) -> Vec<(String, String)> {
     let mut seen: Vec<&str> = Vec::new();
     let mut out = Vec::new();
     for code in said {
-        if seen.contains(&code.as_str()) {
+        if seen.contains(&code.as_str()) || code == TEXT_PATH_APPROXIMATE {
             continue;
         }
         seen.push(code);
@@ -218,10 +279,18 @@ impl Frames for PartFrames<'_> {
             said.push(format!("drawing-not-drawn:{}", graphic.kind));
             return None;
         };
+        let package = self.drawings.pictures.package();
+        if &*graphic.kind == "diagram" {
+            let job = diagram::DiagramJob {
+                colours: self.colours,
+                fonts: self.drawings.fonts.as_deref(),
+            };
+            let relationship = graphic.relationship.as_deref();
+            return diagram::draw(&job, (package, &owner, relationship), (at, path), painter, said);
+        }
         if &*graphic.kind != "chart" {
             return None;
         }
-        let package = self.drawings.pictures.package();
         let target = graphic.relationship.as_deref().and_then(|r| {
             let rels = package.relationships(&owner).ok()?;
             rels.get(r)?.target_part.clone()

@@ -188,18 +188,25 @@ fn laid_or_raise(engine: &Arc<Mutex<PageEngine>>, laid: Laid) -> PyResult<PyLaid
 #[pymethods]
 impl PyWordPages {
     /// An engine laying out with `fonts`, under `locale` (a BCP 47 tag), lining decimal
-    /// tabs up on `decimal`, drawing glyphs at `glyph_size` (`"device"` or `"exact"`), its
-    /// memory counted in `budget` (a `MemoryBudget`; else one of its own, for its pages'
-    /// paint alone).
+    /// tabs up on `decimal`, drawing glyphs at `glyph_size` (`"device"` or `"exact"`); a
+    /// chart's numbers and dates written with `decimal`, `thousands`, `date_order` and
+    /// `list_separator` in `locale`'s language (ooxml-common's `Locale`); its memory counted
+    /// in `budget` (a `MemoryBudget`; else one of its own, for its pages' paint alone).
     #[new]
-    #[pyo3(signature = (fonts, *, locale = "en-US", decimal = '.', glyph_size = "device", budget = None))]
+    #[pyo3(signature = (fonts, *, locale = "en-US", decimal = '.', glyph_size = "device", thousands = ',',
+                        date_order = "mdy", list_separator = ',', budget = None))]
     fn new(
         fonts: PyRef<'_, PyWordFonts>,
         locale: &str,
         decimal: char,
         glyph_size: &str,
+        thousands: char,
+        date_order: &str,
+        list_separator: char,
         budget: Option<PyRef<'_, PyMemoryBudget>>,
     ) -> PyResult<Self> {
+        let numbers = ooxml_numfmt::Locale::new(decimal, thousands, date_order, locale, list_separator)
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
         let locale = Locale::new(locale).map_err(|e| PyValueError::new_err(e.to_string()))?;
         let glyph_size = match glyph_size {
             "device" => GlyphSize::Device,
@@ -208,6 +215,7 @@ impl PyWordPages {
         };
         let options = EngineOptions {
             locale,
+            numbers,
             decimal,
             glyph_size,
             ..EngineOptions::default()
@@ -736,7 +744,12 @@ fn view_dict<'py>(py: Python<'py>, view: &PageView) -> PyResult<Bound<'py, PyDic
     let slots = view
         .drawings
         .iter()
-        .map(|s| slot_dict(py, s))
+        .zip(&view.drawing_faces)
+        .map(|(s, faces)| {
+            let d = slot_dict(py, s)?;
+            d.set_item("faces", faces.clone())?;
+            Ok(d)
+        })
         .collect::<PyResult<Vec<_>>>()?;
     d.set_item("drawings", slots)?;
     d.set_item(

@@ -256,7 +256,7 @@ pub fn segments<'w>(
 }
 
 /// A rational as the text engine's units.
-fn units(q: Q) -> Units {
+pub(crate) fn units(q: Q) -> Units {
     Units::ratio(*q.numer(), *q.denom()).unwrap_or(Units::ZERO)
 }
 

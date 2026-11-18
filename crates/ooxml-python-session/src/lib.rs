@@ -22,11 +22,13 @@
 
 mod adapters;
 mod layout;
+mod raster;
 mod session;
 
 use pyo3::prelude::*;
 
 pub use layout::{LayoutFallback, PyBudgetAccount, PyLaidPages, PyMemoryBudget, PyWordFonts, PyWordPages};
+pub use raster::PyPageRaster;
 pub use session::{PyCallContext, PyCancelToken, PySession};
 
 /// Add the session API to the module `m`: `Session`, `CancelToken`, `CallContext` and
@@ -45,6 +47,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyLaidPages>()?;
     m.add_class::<PyMemoryBudget>()?;
     m.add_class::<PyBudgetAccount>()?;
+    m.add_class::<PyPageRaster>()?;
     m.add("LayoutFallback", m.py().get_type::<LayoutFallback>())?;
     Ok(())
 }

@@ -1,8 +1,7 @@
 //! Owns: what the Rust layout does not lay out or draw as docx2svg does yet, found in a
-//! version before or after it is laid out -- the lanes that close each case are named
-//! beside it (L3e: tables beside drawings, floating tables, drawings in cells, STYLEREF;
-//! L3f: footnotes in columns and beneath the text, line numbers, column separators, text
-//! beside a drop cap in columns). Two kinds:
+//! version before or after it is laid out -- the lane that closes each case is named
+//! beside it (L3g: text boxes, text beside drawings, drawings in table cells, floating
+//! tables, frames). Two kinds:
 //!
 //! - **layout** ([`unsupported`]): the pages or the facts would differ; the caller lays the
 //!   whole document out another way (docx2svg's Python layout, frozen for this);
@@ -28,48 +27,24 @@ pub const FLOATING_TABLE: &str = "floating table";
 pub const WRAP_IN_CELL: &str = "drawing text wraps around in a table cell";
 /// Another floating drawing, or a drawing that is not a picture, in a table cell.
 pub const DRAWING_IN_CELL: &str = "drawing in a table cell";
-/// A drawing text wraps beside (`wrapSquare`, `wrapTight`, `wrapThrough`): the lines'
-/// segments beside it are the paint's from L3f.
+/// A drawing text wraps beside (`wrapSquare`, `wrapTight`, `wrapThrough`), not a drop
+/// cap's frame (lane L3g).
 pub const TEXT_BESIDE_DRAWING: &str = "text beside a drawing";
 /// A drawing holding a text box: its lines are its painter's (until P3), so neither its
 /// facts nor its paint are the layout's.
 pub const TEXT_BOX: &str = "text box";
-/// SmartArt (`dgm:relIds`): its cached drawing is not painted in Rust yet.
-pub const SMARTART: &str = "SmartArt";
-/// A chart in a document laid out in a locale other than en-US: the chart's numbers are
-/// written in en-US's in Rust until the locales' table is ported.
-pub const CHART_LOCALE: &str = "chart in another locale";
-/// A VML shape or text path (a watermark): not painted in Rust yet.
-pub const VML_SHAPE: &str = "VML shape";
-/// A `STYLEREF` field.
+/// A `STYLEREF` field in a footnote or an endnote (the body's and the headers' and
+/// footers' are laid out).
 pub const STYLEREF: &str = "STYLEREF field";
-/// Footnotes referenced in a section of several columns.
-pub const FOOTNOTES_IN_COLUMNS: &str = "footnotes in columns";
-/// Footnotes placed beneath the text (`w:pos="beneathText"`).
-pub const FOOTNOTES_BENEATH_TEXT: &str = "footnotes beneath the text";
-/// A body the layout gives no page (docx2svg draws one blank page).
-pub const NO_PAGES: &str = "no pages";
 /// The layout stopped at a block it cannot lay out.
 pub const LAYOUT_STOPPED: &str = "layout stopped";
 /// A header or footer it cannot measure.
 pub const STORY_UNSUPPORTED: &str = "header or footer not measured";
-/// A table in a document of several text columns: its borders in a later column are the
-/// paint's from L3f.
-pub const TABLE_IN_COLUMNS: &str = "table in columns";
-/// A section of unequal columns: the paint places its re-broken lines from L3f.
-pub const UNEQUAL_COLUMNS: &str = "unequal columns";
-/// Line numbers (`w:lnNumType`): drawn by the paint only from L3f.
-pub const LINE_NUMBERS: &str = "line numbers";
-/// A line between columns (`w:cols/@w:sep`).
-pub const COLUMN_SEPARATOR: &str = "column separator";
 /// A frame other than a drop cap (`w:framePr`): docx2svg lays it out by an approximate
 /// rule and says so in its coverage, which the Rust layout does not.
 pub const FRAME: &str = "frame";
-/// A drop cap: the text beside it is the paint's from L3f.
+/// A drop cap anywhere but among the body's top-level paragraphs.
 pub const DROP_CAP: &str = "drop cap";
-/// Endnotes going on to a page under the continuation separator, which the paint draws
-/// from L3f.
-pub const ENDNOTES_CONTINUED: &str = "endnotes continued";
 /// A drawing a painter of DrawingML, charts or SmartArt fills (`DrawingSlot`), where none
 /// is given.
 pub const DRAWINGS: &str = "drawing for a painter";
@@ -83,22 +58,11 @@ pub const REASONS: &[&str] = &[
     DRAWING_IN_CELL,
     TEXT_BESIDE_DRAWING,
     TEXT_BOX,
-    SMARTART,
-    CHART_LOCALE,
-    VML_SHAPE,
     STYLEREF,
-    FOOTNOTES_IN_COLUMNS,
-    FOOTNOTES_BENEATH_TEXT,
-    NO_PAGES,
     LAYOUT_STOPPED,
     STORY_UNSUPPORTED,
-    TABLE_IN_COLUMNS,
-    UNEQUAL_COLUMNS,
-    LINE_NUMBERS,
-    COLUMN_SEPARATOR,
     FRAME,
     DROP_CAP,
-    ENDNOTES_CONTINUED,
     DRAWINGS,
     UNPAINTED,
 ];
@@ -113,38 +77,23 @@ fn fallback(reason: &'static str, at: &str) -> Fallback {
     }
 }
 
+/// Where a scan is: the body's top-level blocks, a table cell, a header or footer, or a
+/// note.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Story {
+    Body,
+    Cell,
+    HeaderFooter,
+    Note,
+}
+
 /// Why a version cannot be laid out by the Rust layout as docx2svg lays it out, before it
 /// is: the first case found, in the body, its headers and footers, and its notes.
 pub fn unsupported(document: &WordDocument) -> Option<Fallback> {
-    let multi = document.sections.iter().any(|s| s.properties.column_count > 1);
-    for section in document.sections.iter() {
-        let props = &section.properties;
-        if props.footnotes.position.as_deref() == Some("beneathText") {
-            return Some(fallback(FOOTNOTES_BENEATH_TEXT, "w:sectPr"));
-        }
-        // The page's rules and lines a check reads hold them too: the whole document.
-        if props.line_numbering.is_some() {
-            return Some(fallback(LINE_NUMBERS, "w:lnNumType"));
-        }
-        if props.column_separator {
-            return Some(fallback(COLUMN_SEPARATOR, "w:cols"));
-        }
-        if props.column_count > 1
-            && props
-                .columns
-                .windows(2)
-                .any(|w| w.first().map(|c| c.0) != w.get(1).map(|c| c.0))
-        {
-            return Some(fallback(UNEQUAL_COLUMNS, "w:cols"));
-        }
-    }
-    let mut scan = Scan {
-        multi_column: multi,
-        found: None,
-    };
-    scan.story(&document.body, false);
+    let mut scan = Scan { found: None };
+    scan.story(&document.body, Story::Body);
     for blocks in document.stories.values() {
-        scan.story(blocks, false);
+        scan.story(blocks, Story::HeaderFooter);
     }
     for blocks in document
         .footnotes
@@ -152,29 +101,22 @@ pub fn unsupported(document: &WordDocument) -> Option<Fallback> {
         .values()
         .chain(document.endnotes.notes.values())
     {
-        scan.story(blocks, false);
+        scan.story(blocks, Story::Note);
     }
     scan.found
 }
 
-/// Why a version laid out cannot be taken as docx2svg's: the layout stopped, a story was
-/// not measured, or endnotes go on under the continuation separator.
+/// Why a version laid out cannot be taken as docx2svg's: the layout stopped, or a story
+/// was not measured.
 pub fn stopped(layout: &DocumentLayout) -> Option<Fallback> {
-    if layout.page_count() == 0 {
-        return Some(fallback(NO_PAGES, "w:body"));
-    }
     if let Some(stop) = &layout.pagination.stopped {
         return Some(fallback(LAYOUT_STOPPED, &stop.reason));
     }
-    if let Some(why) = layout.stories.unsupported.first() {
-        return Some(fallback(STORY_UNSUPPORTED, why));
-    }
     layout
-        .pagination
-        .pages
-        .iter()
-        .find(|p| p.opens.is_some())
-        .map(|p| fallback(ENDNOTES_CONTINUED, &format!("page {}", p.page + 1)))
+        .stories
+        .unsupported
+        .first()
+        .map(|why| fallback(STORY_UNSUPPORTED, why))
 }
 
 /// Whether a paragraph is framed (`w:framePr` declared): `Some(true)` as a drop cap.
@@ -195,29 +137,18 @@ fn text_box(graphic: &Graphic) -> bool {
     !graphic.text.is_empty() || graphic.children.iter().any(|g| text_box(g))
 }
 
-/// What in a drawing (or a member of its group) the painter does not paint yet.
-fn not_painted(graphic: &Graphic) -> Option<&'static str> {
-    match &*graphic.kind {
-        "diagram" => Some(SMARTART),
-        "textpath" => Some(VML_SHAPE),
-        "shape" if graphic.source.is_none() => Some(VML_SHAPE),
-        _ => graphic.children.iter().find_map(|g| not_painted(g)),
-    }
-}
-
 struct Scan {
-    multi_column: bool,
     found: Option<Fallback>,
 }
 
 impl Scan {
-    fn story(&mut self, blocks: &[Block], in_cell: bool) {
+    fn story(&mut self, blocks: &[Block], story: Story) {
         for block in blocks {
             if self.found.is_some() {
                 return;
             }
             match block {
-                Block::Paragraph(p) => self.paragraph(p, in_cell),
+                Block::Paragraph(p) => self.paragraph(p, story),
                 Block::Table(t) => self.table(t),
             }
         }
@@ -228,20 +159,17 @@ impl Scan {
             self.found = Some(fallback(FLOATING_TABLE, &table.path));
             return;
         }
-        if self.multi_column {
-            self.found = Some(fallback(TABLE_IN_COLUMNS, &table.path));
-            return;
-        }
         for row in table.rows.iter() {
             for cell in row.iter() {
-                self.story(cell, true);
+                self.story(cell, Story::Cell);
             }
         }
     }
 
-    fn paragraph(&mut self, paragraph: &Paragraph, in_cell: bool) {
+    fn paragraph(&mut self, paragraph: &Paragraph, story: Story) {
+        let in_cell = story == Story::Cell;
         match frame(paragraph) {
-            Some(true) => {
+            Some(true) if story != Story::Body => {
                 self.found = Some(fallback(DROP_CAP, &paragraph.path));
                 return;
             }
@@ -249,7 +177,7 @@ impl Scan {
                 self.found = Some(fallback(FRAME, &paragraph.path));
                 return;
             }
-            None => {}
+            _ => {}
         }
         for run in paragraph.runs.iter() {
             if run
@@ -261,16 +189,13 @@ impl Scan {
                 self.found = Some(fallback(reason, &paragraph.path));
                 return;
             }
-            if run
-                .field
-                .as_ref()
-                .is_some_and(|f| f.keyword.eq_ignore_ascii_case("STYLEREF"))
+            if story == Story::Note
+                && run
+                    .field
+                    .as_ref()
+                    .is_some_and(|f| f.keyword.eq_ignore_ascii_case("STYLEREF"))
             {
                 self.found = Some(fallback(STYLEREF, &paragraph.path));
-                return;
-            }
-            if self.multi_column && run.breaks.iter().any(|(_, mark)| mark.starts_with("footnoteReference")) {
-                self.found = Some(fallback(FOOTNOTES_IN_COLUMNS, &paragraph.path));
                 return;
             }
             let boxed = run.anchors.iter().filter_map(|a| a.graphic.as_deref()).any(text_box)
@@ -280,19 +205,6 @@ impl Scan {
                     .any(|d| matches!(d, InlineObject::Graphic(g) if text_box(g)));
             if boxed {
                 self.found = Some(fallback(TEXT_BOX, &paragraph.path));
-                return;
-            }
-            let unpainted = run
-                .anchors
-                .iter()
-                .filter_map(|a| a.graphic.as_deref())
-                .chain(run.drawings.iter().filter_map(|d| match d {
-                    InlineObject::Graphic(g) => Some(&**g),
-                    _ => None,
-                }))
-                .find_map(not_painted);
-            if let Some(reason) = unpainted {
-                self.found = Some(fallback(reason, &paragraph.path));
                 return;
             }
             if in_cell {
@@ -307,36 +219,4 @@ impl Scan {
             }
         }
     }
-}
-
-/// The first chart in a document's body, headers, footers or notes, by its paragraph's path.
-pub fn first_chart(document: &WordDocument) -> Option<String> {
-    fn graphic(g: &Graphic) -> bool {
-        &*g.kind == "chart" || g.children.iter().any(|c| graphic(c))
-    }
-    fn blocks(list: &[Block]) -> Option<String> {
-        list.iter().find_map(|b| match b {
-            Block::Paragraph(p) => p
-                .runs
-                .iter()
-                .any(|r| {
-                    r.anchors.iter().filter_map(|a| a.graphic.as_deref()).any(graphic)
-                        || r.drawings
-                            .iter()
-                            .any(|d| matches!(d, InlineObject::Graphic(g) if graphic(g)))
-                })
-                .then(|| p.path.to_string()),
-            Block::Table(t) => t.rows.iter().flat_map(|row| row.iter()).find_map(|cell| blocks(cell)),
-        })
-    }
-    blocks(&document.body)
-        .or_else(|| document.stories.values().find_map(|b| blocks(b)))
-        .or_else(|| {
-            document
-                .footnotes
-                .notes
-                .values()
-                .chain(document.endnotes.notes.values())
-                .find_map(|b| blocks(b))
-        })
 }

@@ -5,7 +5,7 @@ docx-agent has not been released to PyPI. Each version that reaches `main` is ta
 snapshot commit; the development history before it is summarised here.
 [`ROADMAP.md`](ROADMAP.md) has the detail of every phase.
 
-## 0.1.138 -- unreleased
+## 0.1.140 -- unreleased
 
 Phase PL, lane L4b: the Rust layout's memory. One engine per document, in the process that
 owns the document, and none in the workers; a version kept costs what it changed; what can
@@ -27,6 +27,15 @@ be made again is bounded by one memory budget per process.
   has room for, each at what it alone holds now (`layout_cost`: the Rust version's `weight`
   and its Python side); no count of eight. `docx_agent.pages.memory()` says the budget's
   limit, what it holds and what the engines' memos hold.
+
+## 0.1.138 -- unreleased
+
+Phase PL/P3, lane L4d: SmartArt, VML shapes and VML text paths (a watermark) are painted in
+Rust, and a document holding a chart is laid out in Rust in any locale; the fallbacks
+`SmartArt`, `VML shape` and `chart in another locale` are gone. Answers are docx2svg's.
+A chart's and a SmartArt diagram's text is rendered in its own faces: their files are handed
+to the rasteriser (docx2svg's `drawn_faces`), where before a page whose body named no such face
+drew them in the generic family's face, or not at all.
 
 ## 0.1.137 -- unreleased
 

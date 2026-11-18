@@ -5,7 +5,8 @@
 //! pages, header rows, rows that may not split or keep with the next, cells merged across
 //! and down, fixed and autofit widths, a field in a cell), footnote and endnote
 //! references, floating drawings text wraps beside or top and bottom of, a header of
-//! changing height -- edited one block at a time (text, a keep, a cell's text, a header
+//! changing height, drop caps, and sections with a line between their columns, unequal
+//! columns, line numbers or footnotes beneath the text -- edited one block at a time (text, a keep, a cell's text, a header
 //! row, a note, a drawing, a paragraph or table inserted or deleted, the header), each
 //! version laid out again from the one before and
 //! laid out whole in a fresh engine and model: the pages, their numbers and the fields'
@@ -175,6 +176,8 @@ struct Spec {
     list: Option<u64>,
     /// In the style the header's STYLEREF shows.
     heading: bool,
+    /// A drop cap of its first letter (a frame paragraph before it).
+    drop_cap: bool,
 }
 
 fn spec(rng: &mut Rng, k: usize) -> Spec {
@@ -210,6 +213,38 @@ fn spec(rng: &mut Rng, k: usize) -> Spec {
         drawing: drawing(rng),
         list: rng.chance(20).then(|| rng.below(3)),
         heading: rng.chance(8),
+        drop_cap: rng.chance(4),
+    }
+}
+
+/// What a section break's `w:sectPr` holds beyond its kind and columns: a line between its
+/// columns, unequal columns, line numbers, footnotes beneath the text.
+fn section_xml(kind: &str, columns: u32, flavour: u64) -> String {
+    let base = sect(kind, columns);
+    match flavour {
+        0 => base.replace(r#"w:space="120"/>"#, r#"w:space="120" w:sep="1"/>"#),
+        1 if columns > 1 => base.replace(
+            &format!(r#"<w:cols w:num="{columns}" w:space="120"/>"#),
+            &format!(
+                r#"<w:cols w:num="{columns}" w:equalWidth="0">{}</w:cols>"#,
+                (0..columns)
+                    .map(|c| format!(r#"<w:col w:w="{}" w:space="120"/>"#, 500 + 300 * c))
+                    .collect::<String>()
+            ),
+        ),
+        2 => base.replace(
+            "<w:cols ",
+            r#"<w:lnNumType w:countBy="2" w:restart="continuous" w:distance="200"/><w:cols "#,
+        ),
+        3 => base.replace(
+            "<w:cols ",
+            r#"<w:lnNumType w:countBy="1" w:restart="newSection"/><w:cols "#,
+        ),
+        4 => base.replace(
+            "<w:pgSz ",
+            r#"<w:footnotePr><w:pos w:val="beneathText"/></w:footnotePr><w:pgSz "#,
+        ),
+        _ => base,
     }
 }
 
@@ -338,7 +373,13 @@ fn xml(specs: &[Spec]) -> String {
             ));
         }
         if let Some((kind, columns)) = s.section {
-            ppr.push_str(&sect(kind, columns));
+            ppr.push_str(&section_xml(kind, columns, (k as u64) % 8));
+        }
+        if s.drop_cap && s.words > 0 && s.section.is_none() {
+            body.push_str(&para(
+                r#"<w:framePr w:dropCap="drop" w:lines="2" w:wrap="around" w:vAnchor="text" w:hAnchor="text"/>"#,
+                &run("D"),
+            ));
         }
         let words: Vec<String> = (0..s.words).map(|w| format!("w{}x{}", k, w % 7)).collect();
         let mut content = String::new();
@@ -382,6 +423,7 @@ fn edit(rng: &mut Rng, specs: &mut Vec<Spec>, extra: &mut Extra) {
         10 if rng.chance(30) => extra.header = 1 + rng.below(30),
         10 if rng.chance(30) => specs[k].list = specs[k].list.is_none().then(|| rng.below(3)),
         10 if rng.chance(30) => specs[k].heading = !specs[k].heading,
+        10 if rng.chance(30) => specs[k].drop_cap = !specs[k].drop_cap,
         0 => specs[k].words = 1 + rng.below(80),
         5 => match &mut specs[k].table {
             Some(t) => {
@@ -428,7 +470,25 @@ fn same_flow(relaid: &[FlowItem], whole: &[FlowItem], at: &str) {
         };
         assert!(
             alike && x.block() == y.block() && x.section() == y.section(),
-            "{at}: flow item {k} differs"
+            "{at}: flow item {k} differs: alike {alike}, blocks {} {}, sections {} {}; {:?} vs {:?}",
+            x.block(),
+            y.block(),
+            x.section(),
+            y.section(),
+            x.para().map(|p| (
+                p.body,
+                p.drop_cap.is_some(),
+                p.measured.heights.len(),
+                p.before,
+                p.after
+            )),
+            y.para().map(|p| (
+                p.body,
+                p.drop_cap.is_some(),
+                p.measured.heights.len(),
+                p.before,
+                p.after
+            )),
         );
     }
 }
@@ -438,6 +498,42 @@ fn same_passes(relaid: &ooxml_word_layout::DocumentLayout, whole: &ooxml_word_la
     for k in 0..relaid.passes.min(whole.passes) {
         if let (Some((fa, pa)), Some((fb, pb))) = (relaid.pass(k), whole.pass(k)) {
             same_flow(&fa.items, &fb.items, &format!("{at} pass {k}"));
+            if pa != pb {
+                for (x, y) in pa.pages.iter().zip(&pb.pages) {
+                    if x != y {
+                        let fields = [
+                            ("start", x.start == y.start),
+                            ("end", x.end == y.end),
+                            ("lines", x.lines == y.lines),
+                            ("rows", x.rows == y.rows),
+                            ("notes", x.notes == y.notes),
+                            ("carried", x.carried == y.carried),
+                            ("body_end", x.body_end == y.body_end),
+                            ("columns", x.columns == y.columns),
+                            ("note_area", x.note_area == y.note_area),
+                            ("broken", x.broken == y.broken),
+                            ("lines_before", x.lines_before == y.lines_before),
+                            ("reach", x.reach == y.reach),
+                            ("wraps", x.wraps == y.wraps),
+                            ("page", x.page == y.page),
+                            ("number_before", x.number_before == y.number_before),
+                            ("forced", x.forced == y.forced),
+                            ("continued", x.continued == y.continued),
+                            ("opens", x.opens == y.opens),
+                            ("bands", x.bands == y.bands),
+                            ("carry_out", x.carry_out == y.carry_out),
+                        ];
+                        panic!(
+                            "{at} pass {k}: page {} differs: {:?}; {:?} vs {:?}; stats {:?}",
+                            x.page,
+                            fields.iter().filter(|f| !f.1).collect::<Vec<_>>(),
+                            x.bands,
+                            y.bands,
+                            relaid.relaid
+                        );
+                    }
+                }
+            }
             assert!(pa == pb, "{at} pass {k}: pages differ");
         }
     }
@@ -556,6 +652,14 @@ fn relayout_equals_full_layout() {
 #[ignore = "many seeds: run at the end of a lane and nightly"]
 fn many_seeds() {
     for seed in 1..=300 {
+        let _ = check(seed, 12);
+    }
+}
+
+#[test]
+#[ignore = "sixty seeds: a lane's end gate (its rule: no long testing)"]
+fn sixty_seeds() {
+    for seed in 1..=60 {
         let _ = check(seed, 12);
     }
 }

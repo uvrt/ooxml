@@ -3,8 +3,10 @@
 //! end, its bottom far below): each paragraph's lines with their boxes, on whole device
 //! pixels, and each table's rows as placed, in drawing order.
 //!
-//! Must not: break pages, or place floating drawings (a story's are drawn with it, by the
-//! drawings' painters).
+//! Each paragraph's top as a floating drawing anchored in it sees it (docx2svg's
+//! `_paragraph_top`) is recorded beside its lines, for the story's drawings to be placed.
+//!
+//! Must not: break pages, or place floating drawings (a story's are placed with its paint).
 
 use super::linebox::{baseline_in_box, text_band, LineBox};
 use super::lines::{DrawnLine, LineSource};
@@ -23,6 +25,10 @@ pub struct Walked {
     pub rows: Vec<(usize, PlacedRow)>,
     /// Where the stack ends.
     pub end: Px,
+    /// Each paragraph's top as its floating drawings' `paragraph` frame sees it: the flow
+    /// item and the top (the stack's top for the first, else where the paragraph before
+    /// ends after its own space after).
+    pub paragraph_tops: Vec<(usize, Px)>,
 }
 
 /// How a flow is walked: from `top`, its text starting at `left`.
@@ -53,6 +59,19 @@ fn gap_above(item: &crate::flow::ParaItem, previous: Option<&FlowItem>, first: b
             paragraph_gap(after, own)
         }
         _ => (Px::twips(item.before), Px::twips(item.before)),
+    }
+}
+
+/// Where a paragraph whose first line is walked at `y` is for its floating drawings
+/// (`_paragraph_top`): `y` for the stack's first or after a table, else after the space
+/// after of the paragraph before.
+fn paragraph_top(item: &crate::flow::ParaItem, previous: Option<&FlowItem>, first: bool, y: Px) -> Px {
+    match previous {
+        Some(FlowItem::Para(before)) if !first => {
+            let same = item.style == before.style;
+            y + Px::twips(if before.contextual && same { 0 } else { before.after })
+        }
+        _ => y,
     }
 }
 
@@ -135,6 +154,7 @@ fn walk_paragraph(
             return y;
         }
         if number == 0 {
+            out.paragraph_tops.push((index, paragraph_top(p, previous, *first, y)));
             let (gap, boxed) = gap_above(p, previous, *first, from.mode15);
             y += gap + p.top_border;
             space_before = boxed + p.top_border;

@@ -1,16 +1,17 @@
 //! Owns: a page's header and footer as drawn (docx2svg's `_draw_stories` and `_draw_story`):
-//! the story the page's kind shows, its page-number fields holding the page's values, laid
-//! out as a document of its own and stacked from where Word puts it -- a header's first
-//! line's box from `w:pgMar/@w:header` below the page's top, a footer's last from
-//! `@w:footer` above its foot.
+//! the story the page's kind shows, its page-number fields holding the page's values and
+//! its `STYLEREF`s the page's texts, laid out as a document of its own and stacked from
+//! where Word puts it -- a header's first line's box from `w:pgMar/@w:header` below the
+//! page's top, a footer's last from `@w:footer` above its foot.
 //!
-//! Must not: lay out the body, or compute `STYLEREF` (a story's keeps the text Word cached).
+//! Must not: lay out the body, or compute what a `STYLEREF` shows (the layout has, per page).
 
 use super::walk::{walk, WalkFrom, Walked};
 use super::PageFrame;
 use crate::engine::DocumentLayout;
 use crate::fields::{field_text, page_counts};
 use crate::flow::{Flow, FlowState};
+use crate::page_stories::story_on_page;
 use crate::paginate::PageInfo;
 use crate::px::Px;
 use crate::stories::{stack_height, story_flow, story_references, StoryContext};
@@ -25,8 +26,11 @@ use std::sync::Arc;
 pub struct PageParts {
     /// The header and footer.
     pub stories: Vec<StoryPage>,
-    /// The footnotes at its foot.
-    pub footnotes: Option<StoryPage>,
+    /// The footnotes it draws: at its foot, or at its columns' feet, or in its note area.
+    pub footnotes: Vec<StoryPage>,
+    /// The endnotes' continuation separator's line a page they go on to opens with, as a
+    /// flow of its own (drawn before the body's lines).
+    pub opening: Option<StoryPage>,
     /// What is not drawn.
     pub unpainted: Vec<String>,
 }
@@ -44,6 +48,12 @@ pub struct StoryPage {
     pub flow: Flow,
     /// Its lines and rows as stacked on the page.
     pub walked: Walked,
+    /// The right edge a note separator's line is cut at, where its column is narrower
+    /// than the line (below mode 15).
+    pub clip: Option<Px>,
+    /// Its paragraphs broken again where they were placed (a note area's in a column of
+    /// another width), by flow item.
+    pub broken: crate::paginate::LineStore,
 }
 
 /// What a page's stories need beyond the layout: the story context and its flow state.
@@ -99,12 +109,13 @@ fn with_fields(blocks: &[Block], text: &dyn Fn(&Run) -> Option<String>) -> Vec<B
     blocks.iter().map(|b| block(b, text)).collect()
 }
 
-/// The header and footer page `info` shows, laid out and stacked in `frame`.
+/// The header and footer page `page` (0-based, blank pages counted; `info`) shows, laid
+/// out and stacked in `frame`.
 pub fn page_stories(
     job: &mut StoryJob<'_, '_>,
     layout: &DocumentLayout,
     frame: &PageFrame,
-    info: &PageInfo,
+    (page, info): (usize, &PageInfo),
 ) -> Vec<StoryPage> {
     let document = job.cx.document;
     if info.blank {
@@ -134,7 +145,8 @@ pub fn page_stories(
         let Some(blocks) = document.stories.get(id).filter(|b| !b.is_empty()) else {
             continue;
         };
-        let blocks: Arc<[Block]> = with_fields(blocks, &text).into();
+        let blocks = story_on_page(blocks, layout.story_texts(job.cx.locale), page, id);
+        let blocks: Arc<[Block]> = with_fields(&blocks, &text).into();
         let flow = story_flow(job.cx, job.model, job.state, &blocks, props);
         let height = stack_height(&flow.items, mode15);
         let m = &props.margins;
@@ -159,6 +171,8 @@ pub fn page_stories(
             blocks,
             flow,
             walked,
+            clip: None,
+            broken: crate::paginate::LineStore::new(),
         });
     }
     out

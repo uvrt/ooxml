@@ -62,6 +62,61 @@ pub struct DocumentLayout {
     pub earlier: Vec<PassRecord>,
     /// What each pass's relayout did (empty for a full layout).
     pub relaid: Vec<RelayoutStats>,
+    /// What is worked out from it when first asked.
+    pub memo: LayoutMemo,
+}
+
+/// What is worked out from a layout when first asked, kept with it: a page's drawing
+/// reads these for every page, so each is made once per layout.
+#[derive(Debug, Clone, Default)]
+pub struct LayoutMemo {
+    /// The texts the headers' and footers' `STYLEREF`s show on each page.
+    story_texts: std::sync::OnceLock<Arc<crate::page_stories::StoryTexts>>,
+    /// Where each page's line numbers count from.
+    line_numbers: std::sync::OnceLock<Arc<crate::paint::LineNumbers>>,
+    /// The paths its drawn lines can be of.
+    line_paths: std::sync::OnceLock<Arc<crate::facts::LinePaths>>,
+    /// Each page's facts, made when first asked.
+    page_facts: std::sync::OnceLock<Arc<[std::sync::OnceLock<Option<crate::facts::PageFacts>>]>>,
+}
+
+impl DocumentLayout {
+    /// The texts its headers' and footers' `STYLEREF`s show on each page, made when first
+    /// asked.
+    pub fn story_texts(&self, locale: &Locale) -> &crate::page_stories::StoryTexts {
+        self.memo
+            .story_texts
+            .get_or_init(|| Arc::new(crate::page_stories::story_texts(self, locale, &self.roles)))
+    }
+
+    /// The paths its drawn lines can be of, made when first asked.
+    pub(crate) fn line_paths(&self) -> &crate::facts::LinePaths {
+        self.memo
+            .line_paths
+            .get_or_init(|| Arc::new(crate::facts::LinePaths::of(self)))
+    }
+
+    /// Page `page`'s facts (0-based, blank pages counted), made when first asked; `None`
+    /// past the last.
+    pub fn page_facts(&self, page: usize) -> Option<&crate::facts::PageFacts> {
+        let cells = self
+            .memo
+            .page_facts
+            .get_or_init(|| (0..self.page_count()).map(|_| std::sync::OnceLock::new()).collect());
+        cells
+            .get(page)?
+            .get_or_init(|| crate::facts::PageFacts::of(self, page))
+            .as_ref()
+    }
+
+    /// Where each page's line numbers count from (`w:lnNumType`), made when first asked.
+    pub fn line_numbers(&self, model: &mut Model) -> Arc<crate::paint::LineNumbers> {
+        Arc::clone(
+            self.memo
+                .line_numbers
+                .get_or_init(|| Arc::new(crate::paint::LineNumbers::of(self, model))),
+        )
+    }
 }
 
 /// One pass of the field passes as laid out.
@@ -258,7 +313,8 @@ impl WordLayout {
             model,
             state: &mut self.stories,
         };
-        out.stories = crate::geometry::stories::page_stories(&mut job, layout, &geometry.frame, info);
+        out.stories = crate::geometry::stories::page_stories(&mut job, layout, &geometry.frame, (page, info));
+        out.opening = crate::geometry::page_opening(&mut job, layout, &geometry);
         if let Some(laid) = layout.laid_page(page) {
             match crate::geometry::footnotes::page_footnotes(&mut job, layout, &geometry.frame, laid) {
                 Ok(found) => out.footnotes = found,
@@ -357,6 +413,7 @@ impl WordLayout {
             settled: false,
             earlier: Vec::new(),
             relaid: Vec::new(),
+            memo: LayoutMemo::default(),
         };
         let found = match (old, found) {
             (Some(_), Some(found)) => Some(found),
@@ -377,7 +434,7 @@ impl WordLayout {
         cx.rooms = Some(&rooms);
         let (pages, stats) = match (old, found) {
             (Some(o), Some(found)) => {
-                let (pages, stats) = repaginate(&cx, o.pagination, &found);
+                let (pages, stats) = repaginate(&cx, (o.pagination, &o.flow.items), &found);
                 (pages, Some(stats))
             }
             _ => (Paginator::new(&cx).run(None, &mut |_: &Resume| false).0, None),

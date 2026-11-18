@@ -1,8 +1,9 @@
 //! The page engine over made-up packages: a version read again from its bytes keeps the
 //! parts whose stored bytes did not change and is laid out from the version before; a
 //! version given as its touched parts is the version given whole; a document the layout
-//! does not lay out yet is a fallback with its reason; a floating shape is painted in Rust
-//! and said of as docx2svg says it. The faces are the open ones the repository ships.
+//! does not lay out yet is a fallback with its reason; columns with a line between them,
+//! line numbers and a drop cap are laid out and painted in Rust; a floating shape is
+//! painted in Rust and said of as docx2svg says it. The faces are the open ones the repository ships.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use ooxml_derive::CacheBudget;
@@ -68,6 +69,12 @@ fn package(body: &str) -> Vec<u8> {
 
 /// A package of `body` with `styles` (`w:styles`' content) where given.
 fn package_styled(body: &str, styles: Option<&str>) -> Vec<u8> {
+    package_parts(body, styles, None)
+}
+
+/// A package of `body` with `styles` where given and a default header of `header`
+/// (`w:hdr`'s content, related as `rIdH`) where given.
+fn package_parts(body: &str, styles: Option<&str>, header: Option<&str>) -> Vec<u8> {
     let entry = |name: &str| NewEntry {
         name: name.into(),
         method: Method::Deflated,
@@ -77,20 +84,27 @@ fn package_styled(body: &str, styles: Option<&str>) -> Vec<u8> {
         create_system: 0,
     };
     let rels = r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
-    let styles_rel = r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>"#;
-    let files = [
+    let header_rel = r#"<Relationship Id="rIdH" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/>"#;
+    let styles_rel = format!(
+        r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>{}</Relationships>"#,
+        if header.is_some() { header_rel } else { "" }
+    );
+    let mut files = vec![
         (
             "[Content_Types].xml",
             r#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>"#.to_owned(),
         ),
         ("_rels/.rels", rels.to_owned()),
         ("word/document.xml", document_xml(body)),
-        ("word/_rels/document.xml.rels", styles_rel.to_owned()),
+        ("word/_rels/document.xml.rels", styles_rel),
         (
             "word/styles.xml",
             format!(r#"<w:styles {W}>{}</w:styles>"#, styles.unwrap_or_default()),
         ),
     ];
+    if let Some(header) = header {
+        files.push(("word/header1.xml", format!(r#"<w:hdr {W}>{header}</w:hdr>"#)));
+    }
     let mut w = Writer::new();
     for (name, data) in files {
         w.add(&entry(name), data.as_bytes()).unwrap();
@@ -191,6 +205,46 @@ fn a_floating_table_falls_back_with_its_reason() {
     let fallback = engine().lay_out_bytes(Arc::from(package(&body))).unwrap().unwrap_err();
     assert_eq!(fallback.reason, support::FLOATING_TABLE);
     assert!(support::REASONS.contains(&fallback.reason));
+}
+
+#[test]
+fn columns_line_numbers_and_a_drop_cap_are_laid_out_and_painted_in_rust() {
+    let body = format!(
+        r#"<w:p><w:pPr><w:framePr w:dropCap="drop" w:lines="3" w:wrap="around" w:vAnchor="text" w:hAnchor="text"/></w:pPr><w:r><w:t>D</w:t></w:r></w:p>{}<w:sectPr xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:headerReference w:type="default" r:id="rIdH"/><w:lnNumType w:countBy="5"/><w:cols w:num="2" w:space="720" w:sep="1"/></w:sectPr>"#,
+        paragraphs(60, None)
+    );
+    let header = "<w:p><w:r><w:t>A header of two words</w:t></w:r></w:p>";
+    let mut kept = engine();
+    let version = kept
+        .lay_out_bytes(Arc::from(package_parts(&body, None, Some(header))))
+        .unwrap()
+        .unwrap();
+    for k in 0..version.page_count() {
+        let page = kept.page(&version, k).unwrap();
+        assert!(page.unpainted.is_empty(), "page {k}: {:?}", page.unpainted);
+        assert!(page.rules.iter().any(|r| r.kind == "column-separator"), "page {k}");
+    }
+    // The header's lines are facts of their own, as painted.
+    let painted = kept.page(&version, 0).unwrap();
+    let story_lines = kept.story_lines(&version, 0).unwrap();
+    let drawn: Vec<_> = painted
+        .lines
+        .iter()
+        .filter(|l| l.story.is_some())
+        .map(|l| (l.path.clone(), l.baseline))
+        .collect();
+    let facts: Vec<_> = story_lines
+        .iter()
+        .map(|l| (l.line.path.clone(), l.line.baseline))
+        .collect();
+    assert!(!facts.is_empty());
+    assert_eq!(drawn, facts);
+    // A section of several columns is not numbered: docx2svg says so.
+    let said = version.said();
+    assert!(
+        said.warnings.iter().any(|w| w.code == "line-numbers-not-drawn"),
+        "{said:?}"
+    );
 }
 
 #[test]
@@ -382,8 +436,53 @@ fn what_a_painter_cannot_draw_is_said_as_docx2svg_says_it() {
 }
 
 #[test]
-fn smartart_falls_back_with_its_reason() {
+fn smartart_with_no_data_model_is_a_stand_in_said_as_docx2svg_says_it() {
     let body = r#"<w:p><w:r><w:drawing><wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"><wp:extent cx="914400" cy="457200"/><wp:docPr id="1" name="Diagram 1"/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/diagram"><dgm:relIds xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:dm="rId9" r:lo="rId10" r:qs="rId11" r:cs="rId12"/></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>"#;
-    let fallback = engine().lay_out_bytes(Arc::from(package(body))).unwrap().unwrap_err();
-    assert_eq!(fallback.reason, support::SMARTART);
+    let version = engine().lay_out_bytes(Arc::from(package(body))).unwrap().unwrap();
+    let codes: Vec<&str> = version.said().warnings.iter().map(|w| w.code.as_str()).collect();
+    assert_eq!(codes, ["diagram-unreadable", "drawing-not-drawn"]);
+}
+
+const VML: &str = r#"xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office""#;
+
+#[test]
+fn a_vml_rectangle_is_painted_as_its_preset() {
+    let body = format!(
+        r##"<w:p><w:r><w:pict {VML}><v:rect style="position:absolute;width:100pt;height:50pt" fillcolor="#FF0000" strokecolor="blue" strokeweight="2pt"/></w:pict></w:r><w:r><w:t>text</w:t></w:r></w:p>"##
+    );
+    let mut engine = engine();
+    let version = engine.lay_out_bytes(Arc::from(package(&body))).unwrap().unwrap();
+    let (svg, missing) = engine.page_svg(&version, 0).unwrap();
+    assert!(missing.is_empty(), "{missing:?}");
+    assert!(svg.contains(r##"fill="#FF0000""##), "{svg}");
+    assert!(svg.contains(r##"stroke="#0000FF""##), "{svg}");
+    assert!(version.said().warnings.is_empty());
+}
+
+#[test]
+fn a_watermark_text_path_is_drawn_in_its_box() {
+    let body = format!(
+        r##"<w:p><w:r><w:pict {VML}><v:shapetype id="_x0000_t136" coordsize="21600,21600" o:spt="136"><v:textpath on="t" fitshape="t"/></v:shapetype><v:shape id="Made1" type="#_x0000_t136" style="position:absolute;width:400pt;height:150pt;rotation:315" fillcolor="silver" stroked="f"><v:fill opacity=".5"/><v:textpath style="font-family:&quot;Carlito&quot;;font-size:1pt" string="DRAFT"/></v:shape></w:pict></w:r><w:r><w:t>text</w:t></w:r></w:p>"##
+    );
+    let mut engine = engine();
+    let version = engine.lay_out_bytes(Arc::from(package(&body))).unwrap().unwrap();
+    let (svg, _) = engine.page_svg(&version, 0).unwrap();
+    assert!(svg.contains(">DRAFT</text>"), "{svg}");
+    assert!(svg.contains(r##"fill="#C0C0C0" fill-opacity="0.5""##), "{svg}");
+    assert!(svg.contains("rotate(315)"), "{svg}");
+    assert!(svg.contains("matrix("), "fitted by its outlines: {svg}");
+}
+
+#[test]
+fn a_text_path_its_shape_type_does_not_say_fits_is_an_approximation() {
+    let body = format!(
+        r##"<w:p><w:r><w:pict {VML}><v:shape id="Made1" type="#_x0000_t999" style="position:absolute;width:400pt;height:150pt" fillcolor="silver" stroked="f"><v:textpath style="font-family:&quot;Carlito&quot;" string="DRAFT"/></v:shape></w:pict></w:r><w:r><w:t>text</w:t></w:r></w:p>"##
+    );
+    let mut engine = engine();
+    let version = engine.lay_out_bytes(Arc::from(package(&body))).unwrap().unwrap();
+    let (svg, _) = engine.page_svg(&version, 0).unwrap();
+    assert!(svg.contains("textLength="), "{svg}");
+    let said = version.said();
+    assert_eq!(said.approximations.len(), 1, "{said:?}");
+    assert_eq!(said.approximations[0].code, "layout-approximate:text-path");
 }

@@ -13,7 +13,7 @@ mod paragraph;
 mod runs;
 mod sections;
 mod tables;
-mod vml;
+pub mod vml;
 
 pub use blocks::{body_story, BodyElement};
 pub use fields::Fields;

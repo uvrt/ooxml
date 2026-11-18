@@ -38,6 +38,8 @@ from fractions import Fraction
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Sequence
 
+from ooxml_common.locales import EN_US
+
 if TYPE_CHECKING:
     from .coverage import Coverage
 
@@ -150,11 +152,11 @@ def memory_budget(limit: int | None = None) -> Any:
 
 def _engine_key(options) -> tuple:
     """What an engine is made for: the fonts, the decimal separator, the glyph size, and the
-    locale's language (a chart's numbers are written in it: a document holding a chart in
-    another locale than en-US is laid out by docx2svg's Python layout, counted)."""
-    locale = options.locale
-    return (_fonts_key(options), locale.decimal_separator if locale else ".", options.glyph_size,
-            locale.language if locale else "en-US")
+    locale's language, thousands separator, date order and list separator (a chart's
+    numbers and dates are written in them)."""
+    locale = options.locale or EN_US
+    return (_fonts_key(options), locale.decimal_separator, options.glyph_size, locale.language,
+            locale.thousands_separator, locale.date_order, locale.list_separator)
 
 
 class Engine:
@@ -165,8 +167,10 @@ class Engine:
         ooxml_core = _core()
 
         self.key = _engine_key(options)
-        self._pages = ooxml_core.WordPages(word_fonts(options), locale=self.key[3], decimal=self.key[1],
-                                           glyph_size=options.glyph_size, budget=memory_budget())
+        _, decimal, _, language, thousands, date_order, list_separator = self.key
+        self._pages = ooxml_core.WordPages(word_fonts(options), locale=language, decimal=decimal,
+                                           glyph_size=options.glyph_size, thousands=thousands,
+                                           date_order=date_order, list_separator=list_separator, budget=memory_budget())
         self._lock = threading.Lock()
         #: The last version asked for, by the digest of its bytes, and its layout (``None``: a
         #: fallback): asked again, the same answer.
@@ -466,6 +470,7 @@ class RustPage:
 
 def _paint(view: dict) -> dict:
     """A page's paint as docx2svg's ``Line``, ``Span``, ``Rule``, ``Picture`` and ``Float``."""
+    from .drawing import Primitive
     from .layout import Float, Line, Picture, Rule, Span
 
     lines = []
@@ -484,11 +489,15 @@ def _paint(view: dict) -> dict:
     pictures = [Picture(path, relationship, _q(x), _q(y), _q(w), _q(h), part=part,
                         crop=tuple(_q(c) for c in crop) if crop is not None else None)
                 for path, relationship, x, y, w, h, part, crop in view["pictures"]]
-    floats = [Float(slot["path"], _q(slot["x"]), _q(slot["y"]), _q(slot["width"]), _q(slot["height"]),
-                    slot["behind"], tuple(slot["order"]),
-                    story=slot["story"][0] if slot["story"] else None,
-                    part=slot["story"][1] if slot["story"] else None)
-              for slot in view["drawings"]]
+    floats = []
+    for slot in view["drawings"]:
+        placed = Float(slot["path"], _q(slot["x"]), _q(slot["y"]), _q(slot["width"]), _q(slot["height"]),
+                       slot["behind"], tuple(slot["order"]),
+                       story=slot["story"][0] if slot["story"] else None,
+                       part=slot["story"][1] if slot["story"] else None)
+        # What its text is drawn in (a text path's), for the rasteriser's faces (``drawn_faces``).
+        placed.primitives = [Primitive("markup", slot["path"], face=tuple(face)) for face in slot["faces"]]
+        floats.append(placed)
     return {"lines": lines, "rules": rules, "pictures": pictures, "floats": floats}
 
 
@@ -508,3 +517,39 @@ def svgs(layout: RustLayout, options) -> "list[str] | None":
 
 __all__: Sequence[str] = ("Engine", "RustLayout", "RustPage", "available", "count_fallback", "fallbacks",
                           "memory_budget", "svgs", "unsupported_options", "word_fonts")
+
+
+# -- a page's PNG ----------------------------------------------------------------------------
+
+#: The faces pages are drawn with (``ooxml_core.PageRaster``), read once, by what they were
+#: read from: the files and folders handed over (with each file's modification time and
+#: size: a font changed is read again), the system's fonts or not, the ``sans-serif`` face.
+_RASTERS: OrderedDict = OrderedDict()
+_RASTERS_LIMIT = 8
+_RASTERS_LOCK = threading.Lock()
+
+
+def page_png(svg: str, *, font_dirs: Sequence[str] | None = None, font_files: Sequence[str] | None = None,
+             skip_system_fonts: bool = False, sans_serif_family: str | None = None, width: int | None = None,
+             height: int | None = None, scale: float | None = None, background: str | None = None) -> bytes:
+    """``svg`` (a page the Rust layout drew) as PNG, drawn in Rust as :func:`docx2svg.png.svg_to_png`
+    draws it with resvg-py -- the same faces, a metafile's picture inline, the drawing plan's
+    faces -- pixel for pixel.  ``font_dirs`` left out reads ``OOXML_FONT_DIRS``."""
+    from ooxml_common.fonts.office import user_font_dirs
+    from ooxml_common.fonts.rasterdb import file_stamps
+
+    files = [str(path) for path in font_files or ()]
+    dirs = [str(path) for path in user_font_dirs(font_dirs)]
+    key = (tuple(file_stamps(files, dirs)), tuple(files), tuple(dirs), bool(skip_system_fonts), sans_serif_family)
+    with _RASTERS_LOCK:
+        raster = _RASTERS.get(key)
+        if raster is not None:
+            _RASTERS.move_to_end(key)
+    if raster is None:
+        raster = _core().PageRaster(files, dirs, skip_system_fonts=bool(skip_system_fonts),
+                                    sans_serif_family=sans_serif_family)
+        with _RASTERS_LOCK:
+            raster = _RASTERS.setdefault(key, raster)
+            while len(_RASTERS) > _RASTERS_LIMIT:
+                _RASTERS.popitem(last=False)
+    return raster.png(svg, width=width, height=height, scale=scale, background=background)
