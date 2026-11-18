@@ -399,7 +399,7 @@ jobs:
         run: |
           bin=fuzz/target/x86_64-unknown-linux-gnu/release
           status=0
-          for pair in xml_roundtrip:xml zip_read:package opc_open:package metafile_draw:metafile chart_layout:xml drawing_render:xml vml_paint:xml glyph_ink:font; do
+          for pair in xml_roundtrip:xml zip_read:package opc_open:package metafile_draw:metafile chart_layout:xml drawing_render:xml vml_paint:xml glyph_ink:font markdown_parse:markdown; do
             target=${pair%%:*}
             mkdir -p "$RUNNER_TEMP/corpus/$target" "$RUNNER_TEMP/crashes/$target"
             "$bin/$target" "$RUNNER_TEMP/corpus/$target" "$RUNNER_TEMP/seeds/${pair##*:}" \
