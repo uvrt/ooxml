@@ -301,6 +301,45 @@ def _tool_cases(document) -> list[dict]:
     return out
 
 
+def _text_tool_cases(document, targets: list[str]) -> list[dict]:
+    """``word_set_text`` and ``replace_text`` called as tools (``--text``): a paragraph's or
+    cell's text, in lines, several items in one call, and the refusals (no target, both,
+    no text, a span, an id the document lacks); a word replaced where it occurs once and
+    everywhere, in the body and in every story, and a text that occurs nowhere. Calls that
+    need what is not ported (styled text, spacing) are answered by docx-agent on both sides."""
+    def call(tool, **arguments):
+        return {"op": "tool", "tool": tool, "arguments": {"doc": "d1", **arguments}}
+
+    out = [call("word_set_text", text="x"), call("word_set_text", target=targets[0] if targets else "p:00000001",
+                                                  items=[]),
+           call("word_set_text", items=[]), call("word_set_text", target="p:7FFFFFFE", text="Nowhere"),
+           call("replace_text", find="zz-nowhere-zz", replace="x"),
+           call("word_set_text", target="p:00000001..p:00000002", text="Span")]
+    for target in targets:
+        text = document.paragraph(target).text
+        out += [call("word_set_text", target=target, text="A new sentence, written whole."),
+                call("word_set_text", target=target, text=text),
+                call("word_set_text", target=target, text="First line\nSecond line"),
+                call("word_set_text", target=target, text=""),
+                call("word_set_text", target=target, text="Some **strong** words"),
+                call("word_set_text", target=target)]
+        words = [w for w in text.split() if w.isalpha() and len(w) > 3]
+        for word in words[:2]:
+            out += [call("replace_text", find=word, replace=word.upper()),
+                    call("replace_text", find=word, replace="new words", expect="all"),
+                    call("replace_text", find=word, replace="x", expect="all", stories="all")]
+    if len(targets) > 1:
+        out.append(call("word_set_text", items=[{"target": targets[0], "text": "One"},
+                                                {"target": targets[-1], "text": "Two\nThree"}]))
+        out.append(call("word_set_text", items=[{"target": targets[0], "text": "One"},
+                                                {"target": "p:7FFFFFFE", "text": "Two"}]))
+    tables = document._index(document.package.document_part()).tables
+    if tables:
+        out += [call("word_set_text", target=f"{tables[0].id}/c0,0", text="Cell text"),
+                call("word_set_text", target=tables[0].id, text="A table")]
+    return out
+
+
 _TOOLBOX = None
 
 
@@ -465,6 +504,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--only-ops", action="store_true", help="insert_text, delete_text and replace only")
     parser.add_argument("--review", action="store_true", help="accept and reject only (word_changes)")
     parser.add_argument("--tools", action="store_true", help="the review tools called as tools only")
+    parser.add_argument("--text", action="store_true", help="word_set_text and replace_text called as tools only")
     parser.add_argument("--delete", action="store_true", help="block deletions only")
     parser.add_argument("--structure", action="store_true", help="the structure tools called as tools only")
     parser.add_argument("--cells", action="store_true", help="set_cells only")
@@ -481,10 +521,13 @@ def main(argv: list[str] | None = None) -> int:
             baseline = _validate.check(document.package)
             cases = []
             targets = _targets(document)
+            if args.text:
+                args.tools = True
             if args.structure:
                 cases, targets = word_structure_cases.cases(document), []
             elif args.review or args.tools:
-                found = _tool_cases(document) if args.tools else _review_cases(document)
+                found = (_text_tool_cases(document, targets) if args.text else _tool_cases(document)) \
+                    if args.tools else _review_cases(document)
                 cases = [{**case, "tracked": None} for case in found]
                 targets = []
             if not args.only_ops and not args.paragraphs and not args.delete and not args.cells and not (
