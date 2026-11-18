@@ -81,6 +81,7 @@ pub(crate) fn step(sink: &mut EditSink<'_, '_>, accept: bool, wanted: Option<&[S
     let before = Before {
         nums: super::cleanup::referenced_nums(sink.doc(), &docx, &run.space)?,
         authors: super::cleanup::authors_in_use(&docx),
+        ids: crate::revision_ids::document_counts(&docx),
         known,
         renames,
         count: selected.len(),
@@ -107,6 +108,8 @@ struct Before {
     renames: Vec<(String, String)>,
     nums: BTreeSet<i64>,
     authors: BTreeSet<String>,
+    /// Every revision id's count as the step began (its renumbering of repeats after).
+    ids: HashMap<String, usize>,
     count: usize,
 }
 
@@ -198,9 +201,10 @@ impl Run {
             renames,
             nums: before_nums,
             authors,
+            ids,
             count,
         } = before;
-        clean(sink, docx, &mut space, &gathered, &before_nums, &authors)?;
+        clean(sink, docx, &mut space, &gathered, &before_nums, &authors, &ids)?;
         let after = sink.docx()?;
         let now = |part: &str, path: &[u32]| -> Option<String> {
             let story = after.part(part)?;
@@ -287,6 +291,7 @@ fn clean(
     gathered: &Gathered,
     before_nums: &BTreeSet<i64>,
     authors: &BTreeSet<String>,
+    ids_before: &HashMap<String, usize>,
 ) -> Result<()> {
     let doc = sink.doc().clone();
     let mut released = gathered.released.clone();
@@ -316,7 +321,8 @@ fn clean(
         let rels = comment_part_relationships(docx);
         sink.release(&docx.main, &rels)?;
     }
-    crate::textbox::sync(sink)?;
+    crate::textbox::sync_all(sink)?;
+    crate::revision_ids::unique_since(sink, ids_before)?;
     for author in authors {
         sink.people(None, Some(author))?;
     }
