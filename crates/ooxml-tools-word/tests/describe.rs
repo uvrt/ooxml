@@ -128,6 +128,7 @@ fn describes_what_the_parts_say() {
             package: &made_up(),
             number: 1,
             versions: &Versions::new(),
+            placer: None,
         },
         &Never,
     )
@@ -176,6 +177,7 @@ fn a_bare_package_has_the_defaults() {
             package: &p,
             number: 1,
             versions: &Versions::new(),
+            placer: None,
         },
         &Never,
     )
@@ -199,6 +201,7 @@ fn cancellation_stops_it_with_timeout() {
             package: &made_up(),
             number: 1,
             versions: &Versions::new(),
+            placer: None,
         },
         &After(AtomicBool::new(false)),
     )
@@ -218,6 +221,7 @@ fn not_a_word_package_is_an_internal_error() {
             package: &p,
             number: 1,
             versions: &Versions::new(),
+            placer: None,
         },
         &Never,
     )

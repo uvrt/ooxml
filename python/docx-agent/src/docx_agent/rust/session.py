@@ -11,13 +11,15 @@ unchanged for Claude and OpenAI.
 
 The Rust session serves the reading tools so far (phase P1): ``describe`` with every field of
 today's but ``pages`` and ``problems`` (``RUST_DESCRIBED``; ``tests/test_rust_describe.py``
-holds them equal to today's on every fixture), ``word_read``, ``word_inspect`` (without
-``layout``), ``find_text`` (a regular expression only where it is plain text) and
-``read_batch`` over them, equal to today's on every fixture but drawings' chart and SmartArt
-summaries (``tests/test_rust_word_read.py``, ``tests/test_rust_reads.py``).  A version read
-once is kept for the calls after it, and a new version (:meth:`RustTools.update`) reads only
-the story parts that changed.  Nothing in docx-agent uses this module unless
-an application does: the toolbox's own tools are unchanged.
+holds them equal to today's on every fixture), ``word_read``, ``word_inspect`` (``layout``
+with a placer the host gives), ``find_text`` (a regular expression where its meaning is
+certainly Python's) and ``read_batch`` over them, equal to today's on every fixture but
+drawings' chart and SmartArt summaries (``tests/test_rust_word_read.py``,
+``tests/test_rust_reads.py``).  A version read once is kept for the calls after it, and a
+new version (:meth:`RustTools.update`) reads only the story parts that changed.  docx-agent's
+own toolbox answers its reading tools through the same session by default
+(:mod:`docx_agent.rust.reads`, lane P1c); this module is the session's tools as an
+application would hold them itself.
 """
 from __future__ import annotations
 
@@ -113,7 +115,7 @@ class RustTools:
                  context: Any = None) -> RustResult:
         """Run the tool ``name``; its reply as a :class:`RustResult`."""
         text = arguments if isinstance(arguments, str) else json.dumps(arguments)
-        reply, _images = self.session.call(name, text, context=context)
+        reply, _images, _app = self.session.call(name, text, context=context)
         return RustResult.of(reply, name)
 
     def definitions(self, provider: str, **options: Any) -> list[dict[str, Any]]:

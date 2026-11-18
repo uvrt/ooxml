@@ -106,6 +106,18 @@ def _clock():
 
 
 def test_a_read_copy_parses_with_its_documents_kept_blocks():
+    # The Python path's reading (lane P1c: the Rust session's fallback), which parses the
+    # read copy with its document's kept blocks.
+    from docx_agent.rust import reads
+
+    before = reads.use_session(None)
+    try:
+        _read_copy_parses_with_kept_blocks()
+    finally:
+        reads.use_session(before)
+
+
+def _read_copy_parses_with_kept_blocks():
     with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, workers=0) as box:
         session = box.session(clock=_clock)
         doc = session.open(made(), "report.docx")

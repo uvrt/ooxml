@@ -316,9 +316,15 @@ def main() -> None:
                     help="the share of the changing calls compared at the start and the end")
     ap.add_argument("--profile", help="a directory: cProfile calls there, one file per call (one call at a time)")
     ap.add_argument("--add-fields", action="store_true", help="--mix full: add the fields through the tools first")
+    ap.add_argument("--python-reads", action="store_true",
+                    help="answer the reading tools by the Python path (before lane P1c), not the Rust session")
     ap.add_argument("--figures", action="store_true", help="the report with charts, pictures and shapes "
                     "(tracked_report.py --figures)")
     args = ap.parse_args()
+    if args.python_reads:
+        from docx_agent.rust import reads as _reads
+
+        _reads.use_session(None)
     if args.reviewers is None:
         args.reviewers = 0 if args.mix == "full" else 2
 
@@ -603,6 +609,10 @@ def main() -> None:
     from docx_agent import pages
 
     out["layout_fallbacks"] = pages.fallbacks()
+    from docx_agent.rust import reads as _reads
+
+    out["read_fallbacks"] = _reads.fallbacks()
+    out["reads_served"] = _reads.served()
     Path(args.out).write_text(json.dumps(out, indent=1))
     print(json.dumps({"layout_fallbacks": out["layout_fallbacks"], "by_kind": out["by_kind"], "windows": out["windows"], "memory": out["memory"],
                       "elapsed_s": out["elapsed_s"], "process_cpu_s": out["process_cpu_s"],

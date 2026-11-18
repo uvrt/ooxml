@@ -13,6 +13,7 @@
 mod describe;
 mod find_text;
 mod paging;
+mod placements;
 mod refusal;
 mod version;
 mod word_inspect;
@@ -20,9 +21,17 @@ mod word_read;
 
 pub use describe::{describe, Describe, DESCRIBED, NOT_DESCRIBED};
 pub use find_text::{find_text, FindStories, FindText};
+pub use placements::Placer;
 pub use version::Version;
 pub use word_inspect::{word_inspect, WordInspect};
 pub use word_read::{word_read, Story, View, WordRead};
+
+/// What `unported` says of a reply holding a chart's or SmartArt diagram's summary or JSON,
+/// which docx-agent reads from the chart model (phase P3).
+pub const GRAPHICS: &str = "chart or SmartArt summary";
+
+/// What `unported` says of a final view where a cell's end is one Accept All takes away.
+pub const CELL_ENDS: &str = "Accept All's cell ends";
 
 /// The document kind these tools serve.
 pub const KIND: &str = "docx";

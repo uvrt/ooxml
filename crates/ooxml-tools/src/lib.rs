@@ -48,6 +48,7 @@ mod difflib;
 mod error;
 mod intent;
 pub mod pyfmt;
+pub mod pyre;
 mod result;
 pub mod schema;
 mod spec;

@@ -57,6 +57,11 @@ pub struct Done<T> {
     /// The call that asks for what did not fit in the budget (the next page, a narrower
     /// range); without one, the reply says to ask for less.
     pub ask: Option<TryCall>,
+    /// What of the answer the Rust core does not give as the tool it replaces gives it
+    /// yet, each a reason (a chart's summary, until phase P3): for the application only,
+    /// never in the model's JSON -- a host that owns the document answers such a call its
+    /// own way meanwhile, so nothing reaches the model otherwise than before.
+    pub unported: Vec<String>,
 }
 
 impl<T> Done<T> {
@@ -77,6 +82,7 @@ impl<T> Done<T> {
             total: None,
             images: Vec::new(),
             ask: None,
+            unported: Vec::new(),
         }
     }
 }
@@ -186,6 +192,16 @@ impl<T: ReplyData> ToolResult<T> {
             format!("Nothing {done}: {field} is empty"),
             format!("{field} is empty: nothing was {done}"),
         )
+    }
+
+    /// What of a successful answer is not yet given as the tool it replaces gives it
+    /// ([`Done::unported`]); nothing for a failure.
+    #[must_use]
+    pub fn unported(&self) -> &[String] {
+        match &self.outcome {
+            Outcome::Done(done) => &done.unported,
+            Outcome::Failed(_) => &[],
+        }
     }
 
     /// Whether the call failed.
