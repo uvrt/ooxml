@@ -17,7 +17,8 @@
 //!   [`InsertText`], [`DeleteText`] and [`ReplaceText`] (text within a
 //!   paragraph, docx-agent's `_replace_ranges`); [`Review`] (accepting and rejecting tracked
 //!   changes, `word_changes`); [`SetWordTracking`] (Word's own Track Changes switch);
-//!   [`CommentEdits`] (resolving, reopening and deleting comments);
+//!   [`CommentEdits`] (resolving, reopening and deleting comments); [`FormatTable`] (a
+//!   table's, row's, column's and cell's formatting);
 //! - validation per change ([`validate`]: facts memoised by content, docx-agent's rules)
 //!   and what a change touched ([`touched`]);
 //! - [`Editor`], which runs a command through the store and reports its result with
@@ -72,6 +73,7 @@ mod styled_text;
 mod switch;
 mod table_delete;
 mod table_delete_write;
+mod tables;
 mod text;
 mod text_range;
 mod textbox;
@@ -107,4 +109,5 @@ pub use sink::{EditSink, Keep, Numbered, TextWrite};
 pub use style_spans::{Span, SpansStyled, StyleSpans};
 pub use styled_text::{ItemEdit, SetStyledText, StyledRun, StyledTextSet};
 pub use switch::{tracks_changes, word_tracks_changes, SetWordTracking, WordTracking};
+pub use tables::{CellValues, FormatTable, Look, TableEdit, TableFormat, TableFormatted, TableValues, TableWidth};
 pub use text_range::anchor;

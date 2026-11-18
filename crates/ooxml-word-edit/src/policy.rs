@@ -60,10 +60,17 @@ impl Stamp {
         self.next
     }
 
-    /// A revision record (`w:ins`, `w:del`), detached: its id, author, date and UTC date.
+    /// A revision record (`w:ins`, `w:del`), detached: its id, author, date and UTC date
+    /// (a `w:tblGridChange` its id only).
     pub(crate) fn make(&mut self, work: &mut Work, local: &str) -> Id {
         let element = work.new_element(work.qname(W, local, "w"));
         let id = self.next_id();
+        if local == "tblGridChange" {
+            // a grid's record carries its id only (as Word writes it)
+            let name = work.qname(W, "id", "w");
+            work.set(element, name, &id);
+            return element;
+        }
         for (name, value) in [
             ("id", id.as_str()),
             ("author", &self.tracking.author),

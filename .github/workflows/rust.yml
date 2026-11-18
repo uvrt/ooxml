@@ -371,7 +371,7 @@ jobs:
   # scripts and macros are left uninstrumented; seeded with the repository's documents and
   # their XML parts (tools/ci.py fuzz-seeds).
   fuzz:
-    name: fuzz (5 minutes per target)
+    name: fuzz (4 minutes per target)
     needs: plan
     if: needs.plan.outputs.fuzz == 'true'
     runs-on: ubuntu-latest

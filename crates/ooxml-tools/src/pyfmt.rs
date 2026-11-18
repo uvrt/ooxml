@@ -90,6 +90,25 @@ pub fn repr(value: &Value) -> String {
     }
 }
 
+/// Whether Python's `float(text)` reads `text` as a number: surrounding white space,
+/// a sign, `inf`, `infinity` and `nan` in any case, and single underscores between
+/// digits (PEP 515) allowed.
+#[must_use]
+pub fn is_float(text: &str) -> bool {
+    let text = text.trim();
+    let chars: Vec<char> = text.chars().collect();
+    let between_digits = |k: usize| {
+        k > 0
+            && chars.get(k - 1).is_some_and(char::is_ascii_digit)
+            && chars.get(k + 1).is_some_and(char::is_ascii_digit)
+    };
+    if chars.iter().enumerate().any(|(k, c)| *c == '_' && !between_digits(k)) {
+        return false;
+    }
+    let plain: String = chars.into_iter().filter(|c| *c != '_').collect();
+    !plain.is_empty() && plain.parse::<f64>().is_ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -117,5 +136,15 @@ mod tests {
         assert_eq!(repr_str("a'b\"c"), "'a\\'b\"c'");
         assert_eq!(repr_str("a\nb\u{b}"), "'a\\nb\\x0b'");
         assert_eq!(repr(&serde_json::json!([true, null, "x", 2])), "[True, None, 'x', 2]");
+    }
+
+    #[test]
+    fn numbers_as_python_reads_them() {
+        for yes in ["5", " 2.5 ", "1_000", "-inf", "NaN", "1e3", ".5", "+7."] {
+            assert!(super::is_float(yes), "{yes}");
+        }
+        for no in ["region", "", "1__0", "_1", "1_", "1e", "total 5"] {
+            assert!(!super::is_float(no), "{no}");
+        }
     }
 }

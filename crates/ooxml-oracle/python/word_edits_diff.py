@@ -49,6 +49,7 @@ from lxml import etree  # noqa: E402
 from ooxml_edit.tools.savegate import compare_problems  # noqa: E402
 from ooxml_edit.xml import serialize  # noqa: E402
 from word_reads_diff import differences, files_of, report, run_rust  # noqa: E402
+import word_object_cases  # noqa: E402
 import word_structure_cases  # noqa: E402
 import word_style_cases  # noqa: E402
 
@@ -479,7 +480,7 @@ def _cells_cases(document) -> list[dict]:
 def python_case(data: bytes, case: dict, baseline: list) -> dict:
     if case.get("op") == "tool":
         return python_tool_case(data, case)
-    if case.get("op") in ("structure", "style"):
+    if case.get("op") in ("structure", "objects", "style"):
         return word_structure_cases.python_case(data, case, baseline, _toolbox(), _reply, _parts, _order, _touched)
     document = Document.open(data)
     before = _parts(data)
@@ -551,6 +552,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--text", action="store_true", help="word_set_text and replace_text called as tools only")
     parser.add_argument("--delete", action="store_true", help="block deletions only")
     parser.add_argument("--structure", action="store_true", help="the structure tools called as tools only")
+    parser.add_argument("--objects", action="store_true", help="the object tools called as tools only")
     parser.add_argument("--style", action="store_true", help="the style tools called as tools only")
     parser.add_argument("--cells", action="store_true", help="set_cells only")
     parser.add_argument("--styled", action="store_true", help="word_set_text's styled text only")
@@ -571,6 +573,8 @@ def main(argv: list[str] | None = None) -> int:
                 args.tools = True
             if args.structure:
                 cases, targets = word_structure_cases.cases(document), []
+            elif args.objects:
+                cases, targets = word_object_cases.cases(document), []
             elif args.style:
                 cases, targets = word_style_cases.cases(document), []
             elif args.review or args.tools:
@@ -579,7 +583,7 @@ def main(argv: list[str] | None = None) -> int:
                 cases = [{**case, "tracked": None} for case in found]
                 targets = []
             if not args.only_ops and not args.paragraphs and not args.delete and not args.cells and not args.styled \
-                    and not (args.review or args.tools or args.structure or args.style):
+                    and not (args.review or args.tools or args.structure or args.objects or args.style):
                 for target in targets:
                     text = document.paragraph(target).text
                     for new in _texts(text):
