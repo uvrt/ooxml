@@ -453,6 +453,7 @@ dependencies = [
  "ooxml-colour",
  "ooxml-drawingml",
  "ooxml-fonts",
+ "ooxml-markdown",
  "ooxml-metafile",
  "ooxml-numfmt",
  "ooxml-opc",
@@ -462,6 +463,10 @@ dependencies = [
  "ooxml-xml",
  "ooxml-zip",
 ]
+
+[[package]]
+name = "ooxml-markdown"
+version = "0.1.0"
 
 [[package]]
 name = "ooxml-metafile"

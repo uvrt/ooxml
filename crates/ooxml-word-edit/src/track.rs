@@ -248,6 +248,13 @@ fn look(work: &Work, run: Id) -> String {
     out
 }
 
+/// An element in a form equal for equal canonical XML (lxml's `c14n`).
+pub(crate) fn canonical_of(work: &Work, node: Id) -> String {
+    let mut out = String::new();
+    canonical(work, node, &mut out);
+    out
+}
+
 /// An element in a form equal for equal canonical XML: names by namespace, attributes in
 /// sorted order, text and tails, comments left out.
 fn canonical(work: &Work, node: Id, out: &mut String) {

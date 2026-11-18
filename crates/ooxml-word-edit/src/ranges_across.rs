@@ -98,6 +98,14 @@ pub(crate) fn write_across(
             id: Arc::from(renamed_id(renamed, &p.id).as_str()),
         })
         .collect();
+    // docx-agent: aliases naming a paragraph the edit joined away go with it
+    let gone: Vec<String> = paragraphs
+        .iter()
+        .zip(&across.paths)
+        .filter(|(p, _)| content_index(&work, root, **p).is_none())
+        .filter_map(|(_, path)| docx.part(&part).and_then(|s| s.ids.paragraph_at(path)))
+        .map(|p| renamed_id(renamed, &p.id))
+        .collect();
     sink.splice_children(
         &part,
         (parent, from as usize, (to - from) as usize + 1),
@@ -105,6 +113,7 @@ pub(crate) fn write_across(
         keys,
         draws,
     )?;
+    sink.forget_alias_targets(&gone)?;
     Ok(Some(Written {
         part,
         released: wrote.released,

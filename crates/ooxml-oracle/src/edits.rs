@@ -8,6 +8,7 @@
 //! "tracked": {"author", "date"} or null, ...}]}` (`op`: `set_text` when absent,
 //! `set_text_paragraphs` (set_text in lines), `insert_paragraph` with `after` and `style`,
 //! `set_paragraph_style` with `style` (null: the default), `delete` (a block), `set_cells` with `writes`,
+//! `set_text_styled` with `style` (word_set_text's item: [`crate::edits_styled`]),
 //! `insert_text`, `delete_text`, `replace` with `find`, `case`, `count`, `keep`, `accept`
 //! and `reject` with `ids`, `all`, or `author`/`kind`/`within`, `tool` with `tool` and
 //! `arguments`: [`crate::review_tools`]); each case runs on the document as opened.
@@ -89,7 +90,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
 }
 
 /// The policy a case asks for.
-fn policy(case: &Value) -> RevisionPolicy {
+pub(crate) fn policy(case: &Value) -> RevisionPolicy {
     match case.get("tracked").filter(|t| !t.is_null()) {
         Some(t) => RevisionPolicy::Tracked(Tracking {
             author: t
@@ -145,6 +146,9 @@ fn edit(bytes: &Arc<[u8]>, case: &Value) -> Result<Value, String> {
         "set_paragraph_style" => set_paragraph_style(&editor, &caller, &package, case),
         "delete" => delete(&editor, &caller, &package, case),
         "set_cells" => set_cells(&editor, &caller, &package, case),
+        "set_text_styled" => {
+            crate::edits_styled::set_text_styled(&editor, &caller, case, |done, result| report(&package, done, result))
+        }
         "replace" => {
             let pattern = match pattern(case, &text("find"), &text("text")) {
                 Ok(p) => p,
@@ -292,7 +296,7 @@ fn set_cells(editor: &Editor, caller: &Caller, package: &Package, case: &Value) 
 }
 
 /// Renames as the harness writes them.
-fn renamed(renamed: &[(String, String)]) -> Map<String, Value> {
+pub(crate) fn renamed(renamed: &[(String, String)]) -> Map<String, Value> {
     renamed.iter().map(|(old, new)| (old.clone(), json!(new))).collect()
 }
 
@@ -359,6 +363,7 @@ fn report<O>(opened: &Package, done: &Edited<O>, result: Value) -> Value {
         "problems": problems(doc).map(|p| p.iter().map(ToString::to_string).collect::<Vec<_>>())
             .unwrap_or_default(),
         "next": next,
+        "aliases": doc.ids().aliases().iter().map(|(k, v)| (k.clone(), json!(v))).collect::<Map<String, Value>>(),
     })
 }
 
