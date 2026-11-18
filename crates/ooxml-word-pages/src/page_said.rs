@@ -1,6 +1,6 @@
 //! Owns: what each page's body and drawings said in the version laid out last
 //! ([`PageMemo`]), kept by the page as laid out -- its `LaidPage` and the flow items it
-//! draws, by identity -- so that a page the next version's relayout kept is said again
+//! draws, by pointer -- so that a page the next version's relayout kept is said again
 //! without being walked again (lane L4b: a 3,000-page version walked every page for its
 //! warnings, 16 s an edit). A page is taken as it was only where it is the very same laid
 //! page drawing the very same items, with the same tables said of before it and the same
