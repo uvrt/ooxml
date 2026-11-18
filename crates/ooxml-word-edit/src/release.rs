@@ -109,11 +109,7 @@ pub(crate) fn release(package: &Package, part: &str, ids: &[String]) -> Result<R
 
 /// The parts relationships come from (a relationships part's owner; the package's).
 fn owners(package: &Package) -> Vec<String> {
-    package
-        .part_names()
-        .iter()
-        .filter_map(|p| owner_of(p))
-        .collect()
+    package.part_names().iter().filter_map(|p| owner_of(p)).collect()
 }
 
 /// The part a relationships part belongs to (`""` for the package's).
@@ -151,7 +147,9 @@ fn reap(out: &mut Released, candidates: Vec<String>) -> Result<(), ModelError> {
     }
     let mut incoming: HashMap<String, HashSet<String>> = doomed.iter().map(|p| (p.clone(), HashSet::new())).collect();
     for owner in owners(&package) {
-        let Ok(rels) = package.relationships(&owner) else { continue };
+        let Ok(rels) = package.relationships(&owner) else {
+            continue;
+        };
         for rel in rels.iter() {
             if let Some(sources) = rel.target_part.as_ref().and_then(|t| incoming.get_mut(t)) {
                 sources.insert(owner.clone());
@@ -161,7 +159,11 @@ fn reap(out: &mut Released, candidates: Vec<String>) -> Result<(), ModelError> {
     loop {
         let keep: Vec<String> = doomed
             .iter()
-            .filter(|p| incoming.get(*p).is_some_and(|s| s.iter().any(|source| !doomed.contains(source))))
+            .filter(|p| {
+                incoming
+                    .get(*p)
+                    .is_some_and(|s| s.iter().any(|source| !doomed.contains(source)))
+            })
             .cloned()
             .collect();
         if keep.is_empty() {

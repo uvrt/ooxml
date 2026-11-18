@@ -413,8 +413,8 @@ impl DocModel for WordDoc {
                 (self.package.clone(), ids)
             }
             Change::Number => {
-                let ceiling = crate::validate::annotation_ceiling(self)
-                    .map_err(|e| ModelError::Unreadable(e.to_string()))?;
+                let ceiling =
+                    crate::validate::annotation_ceiling(self).map_err(|e| ModelError::Unreadable(e.to_string()))?;
                 let mut ids = self.ids.clone();
                 ids.number_from(ceiling + 1);
                 (self.package.clone(), ids)
@@ -459,7 +459,11 @@ impl DocModel for WordDoc {
                 from: self.package.clone(),
             },
             Change::People { .. } => {
-                let main = self.docx().map_err(|e| ModelError::Unreadable(e.to_string()))?.main.clone();
+                let main = self
+                    .docx()
+                    .map_err(|e| ModelError::Unreadable(e.to_string()))?
+                    .main
+                    .clone();
                 Change::Restore {
                     parts: crate::people::parts_written(&self.package, &main)?.into(),
                     from: self.package.clone(),

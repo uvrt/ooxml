@@ -71,7 +71,10 @@ impl PartIds {
         let c = self.container.len();
         if marker.len() > c && marker.starts_with(&self.container) {
             let k = marker.get(c).map_or(0, |k| *k as usize);
-            let before = self.segments.prefix(k.min(self.segments.len())).unwrap_or_else(|_| Count::empty());
+            let before = self
+                .segments
+                .prefix(k.min(self.segments.len()))
+                .unwrap_or_else(|_| Count::empty());
             out += before.paragraphs;
             if let Some(at) = self.segment(k, &before) {
                 out += counts(&at);

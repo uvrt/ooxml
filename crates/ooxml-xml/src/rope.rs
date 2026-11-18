@@ -322,7 +322,11 @@ impl Children {
         }
         // the last pair that differs, the two lists aligned at their ends
         let shorter = la.min(lb);
-        let (skip_a, skip_b) = if lb >= la { (start, start + (lb - la)) } else { (start + (la - lb), start) };
+        let (skip_a, skip_b) = if lb >= la {
+            (start, start + (lb - la))
+        } else {
+            (start + (la - lb), start)
+        };
         let last = self
             .iter()
             .skip(skip_a)
@@ -348,7 +352,12 @@ impl Children {
             return vec![(start, old_end, new_end)];
         }
         let mut out: Vec<(usize, usize, usize)> = Vec::new();
-        let pairs = self.iter().zip(other.iter()).enumerate().skip(start).take(old_end - start);
+        let pairs = self
+            .iter()
+            .zip(other.iter())
+            .enumerate()
+            .skip(start)
+            .take(old_end - start);
         for (k, (a, b)) in pairs {
             if a.same(b) {
                 continue;

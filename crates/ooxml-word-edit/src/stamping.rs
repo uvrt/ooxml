@@ -102,7 +102,12 @@ fn stamp_part(sink: &mut EditSink<'_, '_>, story: &StoryPart) -> Result<Vec<(Str
     let (paragraphs, rows): (Vec<ParagraphId>, _) = if story.ids.fully_stamped() {
         (Vec::new(), Vec::new())
     } else {
-        let paragraphs = story.ids.paragraphs().iter().filter(|p| p.state != IdState::Ok).collect();
+        let paragraphs = story
+            .ids
+            .paragraphs()
+            .iter()
+            .filter(|p| p.state != IdState::Ok)
+            .collect();
         (paragraphs, unstamped_rows(story, &prefix))
     };
     // drawings are looked for only in a part whose memoised facts say it has one to stamp
@@ -128,7 +133,10 @@ fn stamp_part(sink: &mut EditSink<'_, '_>, story: &StoryPart) -> Result<Vec<(Str
         renames.push((paragraph.id.clone(), format!("{prefix}p:{para}")));
     }
     let mut table_renames = Vec::new();
-    for (table, k) in rows.iter().flat_map(|(table, rows)| rows.iter().map(move |k| (table, k))) {
+    for (table, k) in rows
+        .iter()
+        .flat_map(|(table, rows)| rows.iter().map(move |k| (table, k)))
+    {
         let Some((path, row_id)) = table.rows.get(*k) else {
             continue;
         };

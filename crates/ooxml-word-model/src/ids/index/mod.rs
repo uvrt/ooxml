@@ -271,7 +271,9 @@ impl PartIds {
         let Some(upper) = block.upper.as_ref().filter(|_| self.repeated > 0) else {
             return 0;
         };
-        let Some(list) = self.occurrences.get(upper) else { return 0 };
+        let Some(list) = self.occurrences.get(upper) else {
+            return 0;
+        };
         if list.len() < 2 {
             return 0;
         }

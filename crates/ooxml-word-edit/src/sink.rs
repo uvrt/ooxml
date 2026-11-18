@@ -189,7 +189,13 @@ impl<'t, 's> EditSink<'t, 's> {
     /// # Errors
     /// [`EditError::Text`] or [`EditError::Span`] for a span or text the paragraph cannot
     /// take.
-    pub(crate) fn replace_span(&mut self, work: &mut Work, span: (usize, usize), text: &str, keep: Keep) -> Result<TextWrite> {
+    pub(crate) fn replace_span(
+        &mut self,
+        work: &mut Work,
+        span: (usize, usize),
+        text: &str,
+        keep: Keep,
+    ) -> Result<TextWrite> {
         let paragraph = work.root();
         write::check_text(text)?;
         match self.policy.clone() {
@@ -200,8 +206,9 @@ impl<'t, 's> EditSink<'t, 's> {
                 annotations: None,
             }),
             RevisionPolicy::Tracked(tracking) => {
-                let (released, dated, numbered) =
-                    self.tracked(tracking, |stamp| track::replace_span(work, paragraph, span, text, keep, stamp))?;
+                let (released, dated, numbered) = self.tracked(tracking, |stamp| {
+                    track::replace_span(work, paragraph, span, text, keep, stamp)
+                })?;
                 Ok(TextWrite {
                     changed: work.changed(),
                     released,
@@ -232,7 +239,9 @@ impl<'t, 's> EditSink<'t, 's> {
         }
         for name in &released.removed {
             if self.doc().package().has_part(name) {
-                self.write(Change::Remove { part: Arc::from(name.as_str()) })?;
+                self.write(Change::Remove {
+                    part: Arc::from(name.as_str()),
+                })?;
             }
         }
         Ok(())

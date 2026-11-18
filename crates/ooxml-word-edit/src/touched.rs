@@ -352,7 +352,12 @@ fn body_sections(before: &WordDoc, after: &WordDoc, docx: &Docx) -> Result<Optio
     let Some((start, old_end, new_end)) = old.children.changed_span(new.children) else {
         return Ok(Some(vec![None]));
     };
-    let changed = changed_blocks(after, &new, (&old.blocks(start, old_end), &new.blocks(start, new_end)), start);
+    let changed = changed_blocks(
+        after,
+        &new,
+        (&old.blocks(start, old_end), &new.blocks(start, new_end)),
+        start,
+    );
     let mut out = if changed.is_empty() {
         Vec::new()
     } else {
@@ -373,7 +378,12 @@ type Stretch<'a> = [(usize, &'a Arc<Element>)];
 /// that differs (the blocks before and after it are the same allocations): the blocks of
 /// the stretch that are not the old version's (by pointer, at its ends), compared within
 /// it by content without stamps; a removal counts at the block before it.
-fn changed_blocks(after: &WordDoc, new: &Body<'_>, (old, now): (&Stretch<'_>, &Stretch<'_>), start: usize) -> BTreeSet<usize> {
+fn changed_blocks(
+    after: &WordDoc,
+    new: &Body<'_>,
+    (old, now): (&Stretch<'_>, &Stretch<'_>),
+    start: usize,
+) -> BTreeSet<usize> {
     let facts = &after.shared().facts;
     let digest = |b: &Arc<Element>| facts.element(b).stampless;
     let prefix = old
@@ -381,7 +391,10 @@ fn changed_blocks(after: &WordDoc, new: &Body<'_>, (old, now): (&Stretch<'_>, &S
         .zip(now)
         .take_while(|((_, a), (_, b))| Arc::ptr_eq(a, b))
         .count();
-    let (old_rest, new_rest) = (old.get(prefix..).unwrap_or_default(), now.get(prefix..).unwrap_or_default());
+    let (old_rest, new_rest) = (
+        old.get(prefix..).unwrap_or_default(),
+        now.get(prefix..).unwrap_or_default(),
+    );
     let suffix = old_rest
         .iter()
         .rev()

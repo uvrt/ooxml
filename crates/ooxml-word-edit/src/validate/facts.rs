@@ -152,7 +152,12 @@ impl ElementFacts {
     /// (the main part's), with the children `blocks_of` names left out; the order of the
     /// blocks' container (the body's children, a story root's) only with `container_order`
     /// (a tally keeps that order in place).
-    pub(crate) fn of_rest(root: &Element, body: Option<&Element>, orders: &Orders, container_order: bool) -> ElementFacts {
+    pub(crate) fn of_rest(
+        root: &Element,
+        body: Option<&Element>,
+        orders: &Orders,
+        container_order: bool,
+    ) -> ElementFacts {
         let mut facts = ElementFacts::default();
         head_facts(root, &[], false, &mut facts);
         if container_order || body.is_some() {

@@ -106,7 +106,11 @@ fn range_of(doc: &WordDoc, docx: &Docx, address: &str, position: bool) -> Result
 
 /// The story and paragraph places of `found`, for ordering.
 fn places(docx: &Docx, found: &Found) -> (usize, usize) {
-    let story = docx.parts.iter().position(|p| p.part == found.part).unwrap_or(usize::MAX);
+    let story = docx
+        .parts
+        .iter()
+        .position(|p| p.part == found.part)
+        .unwrap_or(usize::MAX);
     let index = docx
         .part(&found.part)
         .and_then(|p| p.ids.paragraph_at(&found.path))
@@ -209,10 +213,16 @@ fn replace_ranges(sink: &mut EditSink<'_, '_>, mut plans: Vec<Plan>, keep: Keep)
     let mut k = 0;
     while k < plans.len() {
         // a paragraph's ranges (they are together, last first) in one copy of it
-        let same = |p: &Plan| plans.get(k).is_some_and(|q| q.found.part == p.found.part && q.found.path == p.found.path);
+        let same = |p: &Plan| {
+            plans
+                .get(k)
+                .is_some_and(|q| q.found.part == p.found.part && q.found.path == p.found.path)
+        };
         let group: Vec<&Plan> = plans.iter().skip(k).take_while(|p| same(p)).collect();
         k += group.len();
-        let Some(written) = write_paragraph(sink, &group, keep, &renamed)? else { break };
+        let Some(written) = write_paragraph(sink, &group, keep, &renamed)? else {
+            break;
+        };
         gave |= written.gave;
         if written.dated && !dated.contains(&written.part) {
             dated.push(written.part.clone());
@@ -228,12 +238,20 @@ fn replace_ranges(sink: &mut EditSink<'_, '_>, mut plans: Vec<Plan>, keep: Keep)
     for (part, ids) in &released {
         sink.release(part, ids)?;
     }
-    for part in plans.iter().map(|p| p.found.part.clone()).collect::<std::collections::BTreeSet<_>>() {
+    for part in plans
+        .iter()
+        .map(|p| p.found.part.clone())
+        .collect::<std::collections::BTreeSet<_>>()
+    {
         sink.ensure_w14(&part, false, &[])?;
     }
     crate::textbox::sync(sink)?;
     crate::revision_ids::make_unique(sink)?;
-    Ok(RangesEdited { id: first, count, renamed })
+    Ok(RangesEdited {
+        id: first,
+        count,
+        renamed,
+    })
 }
 
 /// What writing one paragraph's ranges did.

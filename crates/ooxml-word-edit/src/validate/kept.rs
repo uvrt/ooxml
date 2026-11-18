@@ -168,7 +168,9 @@ fn styles(out: &mut Vec<Problem>, tally: &Tally, package: &Package) {
     let Some(part) = related(package, &tally.main, REL_STYLES).ok().flatten() else {
         return;
     };
-    let Some(styles) = tally.parts.get(part.as_str()) else { return };
+    let Some(styles) = tally.parts.get(part.as_str()) else {
+        return;
+    };
     let by_id = style_table(&styles.root);
     let known: HashSet<Option<&str>> = by_id.iter().map(|(k, _)| k.as_deref()).collect();
     for ((name, tag, value), count) in tally.counts.style_refs.iter() {
@@ -176,7 +178,11 @@ fn styles(out: &mut Vec<Problem>, tally: &Tally, package: &Package) {
             continue;
         }
         for _ in 0..*count {
-            out.push(problem("style-missing", name, format!("{tag} {}", py_str(value.as_deref()))));
+            out.push(problem(
+                "style-missing",
+                name,
+                format!("{tag} {}", py_str(value.as_deref())),
+            ));
         }
     }
     style_part_problems(out, &part, &by_id);

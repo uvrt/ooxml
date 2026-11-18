@@ -13,9 +13,9 @@ use crate::sink::Keep;
 use crate::text::diff::{coarse, Tag};
 use crate::text::write::{anchor, apply, run_properties_for, set_spaced_text, spell, Side};
 use crate::text::{atoms, runs, Atom, AtomKind, OBJECT};
-use std::collections::BTreeSet;
 use crate::work::{Id, Work};
 use crate::EditError;
+use std::collections::BTreeSet;
 
 /// Refuse a span that cuts a field, or (`deleting`) would delete a note reference.
 pub(crate) fn check_span(

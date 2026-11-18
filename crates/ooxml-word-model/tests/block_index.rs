@@ -46,7 +46,9 @@ fn para_id(rng: &mut Rng, pool: &[&str]) -> Vec<Attribute> {
     }
 }
 
-const POOL: &[&str] = &["1A2B3C4D", "1a2b3c4d", "0BADF00D", "ZZ", "00000000", "7FFFFFFF", "80000000", "5E5E5E5E"];
+const POOL: &[&str] = &[
+    "1A2B3C4D", "1a2b3c4d", "0BADF00D", "ZZ", "00000000", "7FFFFFFF", "80000000", "5E5E5E5E",
+];
 
 fn paragraph(rng: &mut Rng) -> Node {
     let mut children = Vec::new();
@@ -54,10 +56,13 @@ fn paragraph(rng: &mut Rng) -> Node {
         // a text box: its fallback's paragraphs are not blocks
         let choice = el(MC, "mc", "Choice", Vec::new(), vec![Node::Element(inner_p(rng))]);
         let fallback = el(MC, "mc", "Fallback", Vec::new(), vec![Node::Element(inner_p(rng))]);
-        children.push(Node::Element(el(MC, "mc", "AlternateContent", Vec::new(), vec![
-            Node::Element(choice),
-            Node::Element(fallback),
-        ])));
+        children.push(Node::Element(el(
+            MC,
+            "mc",
+            "AlternateContent",
+            Vec::new(),
+            vec![Node::Element(choice), Node::Element(fallback)],
+        )));
     }
     Node::Element(el(W, "w", "p", para_id(rng, POOL), children))
 }
@@ -100,7 +105,13 @@ fn document(rng: &mut Rng, blocks: usize, story: bool) -> Arc<Element> {
     let body = el(W, "w", "body", Vec::new(), children);
     let mut root = Vec::new();
     if rng.below(2) == 0 {
-        root.push(Node::Element(el(W, "w", "background", Vec::new(), vec![paragraph(rng)])));
+        root.push(Node::Element(el(
+            W,
+            "w",
+            "background",
+            Vec::new(),
+            vec![paragraph(rng)],
+        )));
     }
     root.push(Node::Element(body));
     if rng.below(3) == 0 {
@@ -141,8 +152,15 @@ fn walk(e: &Element, path: &mut Vec<u32>, tables: &mut Vec<Vec<u32>>, out: &mut 
             None
         };
         if let Some(kind) = kind {
-            let raw = (kind != 't').then(|| c.attribute(Some(W14), "paraId").map(str::to_owned)).flatten();
-            out.push((path.clone(), kind, raw, if kind == 'r' { tables.last().cloned() } else { None }));
+            let raw = (kind != 't')
+                .then(|| c.attribute(Some(W14), "paraId").map(str::to_owned))
+                .flatten();
+            out.push((
+                path.clone(),
+                kind,
+                raw,
+                if kind == 'r' { tables.last().cloned() } else { None },
+            ));
             if kind == 't' {
                 tables.push(path.clone());
             }
@@ -170,7 +188,11 @@ fn reference(story: &str, root: &Element) -> Named {
             }
         })
         .collect();
-    let prefix = if story == "body" { String::new() } else { format!("{story}/") };
+    let prefix = if story == "body" {
+        String::new()
+    } else {
+        format!("{story}/")
+    };
     let mut paragraphs = Vec::new();
     for ((path, kind, raw, _), repeat) in found.iter().zip(&repeats) {
         if *kind != 'p' {
@@ -233,7 +255,13 @@ fn named(ids: &PartIds) -> Named {
         tables: ids
             .tables()
             .iter()
-            .map(|t| (t.id, t.path.to_vec(), t.rows.iter().map(|(p, r)| (p.to_vec(), r.clone())).collect()))
+            .map(|t| {
+                (
+                    t.id,
+                    t.path.to_vec(),
+                    t.rows.iter().map(|(p, r)| (p.to_vec(), r.clone())).collect(),
+                )
+            })
             .collect(),
     }
 }
@@ -261,7 +289,12 @@ fn check(story: &str, ids: &PartIds, root: &Element, rng: &mut Rng) {
         && want.tables.iter().all(|t| t.2.iter().all(|(_, r)| r.contains("tr:")));
     assert_eq!(ids.fully_stamped(), all_ok);
     // queries by place, against a scan
-    let paths: Vec<Vec<u32>> = want.paragraphs.iter().map(|p| p.1.clone()).chain(want.tables.iter().map(|t| t.1.clone())).collect();
+    let paths: Vec<Vec<u32>> = want
+        .paragraphs
+        .iter()
+        .map(|p| p.1.clone())
+        .chain(want.tables.iter().map(|t| t.1.clone()))
+        .collect();
     for _ in 0..8 {
         if paths.is_empty() {
             break;
@@ -273,9 +306,24 @@ fn check(story: &str, ids: &PartIds, root: &Element, rng: &mut Rng) {
         let after = want.paragraphs.iter().find(|p| p.1 > marker).map(|p| p.3);
         let before = want.paragraphs.iter().rev().find(|p| p.1 < marker).map(|p| p.3);
         assert_eq!(ids.paragraph_after(&marker).map(|p| p.index), after, "after {marker:?}");
-        assert_eq!(ids.paragraph_before(&marker).map(|p| p.index), before, "before {marker:?}");
-        let within: Vec<usize> = want.paragraphs.iter().filter(|p| p.1.starts_with(&marker)).map(|p| p.3).collect();
-        assert_eq!(ids.paragraphs_within(&marker).iter().map(|p| p.index).collect::<Vec<_>>(), within);
+        assert_eq!(
+            ids.paragraph_before(&marker).map(|p| p.index),
+            before,
+            "before {marker:?}"
+        );
+        let within: Vec<usize> = want
+            .paragraphs
+            .iter()
+            .filter(|p| p.1.starts_with(&marker))
+            .map(|p| p.3)
+            .collect();
+        assert_eq!(
+            ids.paragraphs_within(&marker)
+                .iter()
+                .map(|p| p.index)
+                .collect::<Vec<_>>(),
+            within
+        );
     }
 }
 
@@ -283,7 +331,9 @@ fn edited(rng: &mut Rng, root: &Arc<Element>, story: bool) -> Arc<Element> {
     let holder_at = if story {
         None
     } else {
-        root.children().iter().position(|n| n.as_element().is_some_and(|e| e.name().is(Some(W), "body")))
+        root.children()
+            .iter()
+            .position(|n| n.as_element().is_some_and(|e| e.name().is(Some(W), "body")))
     };
     let holder = match holder_at {
         Some(k) => Arc::clone(root.children().get(k).and_then(Node::as_element).unwrap()),
@@ -293,7 +343,9 @@ fn edited(rng: &mut Rng, root: &Arc<Element>, story: bool) -> Arc<Element> {
     let at = if len == 0 { 0 } else { rng.below(len + 1).min(len) };
     let children = match rng.below(5) {
         0 if len > 0 => holder.children().splice(at.min(len - 1)..at.min(len - 1) + 1, vec![]),
-        1 => holder.children().splice(at..at, (0..1 + rng.below(3)).map(|_| block(rng)).collect()),
+        1 => holder
+            .children()
+            .splice(at..at, (0..1 + rng.below(3)).map(|_| block(rng)).collect()),
         // many insertions at one place: labels run out and are given again
         2 => {
             let mut c = holder.children().clone();

@@ -18,7 +18,7 @@ use ooxml_store::{Caller, Clock, StoreConfig};
 use ooxml_word_edit::touched::Touched;
 use ooxml_word_edit::validate::problems;
 use ooxml_word_edit::{
-    DeleteText, Edited, Editor, EditError, InsertText, Keep, RangesEdited, ReplaceText, RevisionPolicy, SetText,
+    DeleteText, EditError, Edited, Editor, InsertText, Keep, RangesEdited, ReplaceText, RevisionPolicy, SetText,
     TextEdited, Tracking, WordDoc,
 };
 use serde_json::{json, Map, Value};
@@ -113,25 +113,53 @@ fn edit(bytes: &Arc<[u8]>, case: &Value) -> Result<Value, String> {
     let caller = Caller::anonymous();
     let done: Result<Value, EditError> = match case.get("op").and_then(Value::as_str).unwrap_or("set_text") {
         "insert_text" => editor
-            .run(&caller, &InsertText { at: text("target"), text: text("text"), policy: policy(case) })
+            .run(
+                &caller,
+                &InsertText {
+                    at: text("target"),
+                    text: text("text"),
+                    policy: policy(case),
+                },
+            )
             .map(|done| report(&package, &done, ranges_result(&done.out))),
         "delete_text" => editor
-            .run(&caller, &DeleteText { range: text("target"), policy: policy(case) })
+            .run(
+                &caller,
+                &DeleteText {
+                    range: text("target"),
+                    policy: policy(case),
+                },
+            )
             .map(|done| report(&package, &done, ranges_result(&done.out))),
         "replace" => {
             let command = ReplaceText {
                 find: text("find"),
                 with: text("text"),
                 case: case.get("case").and_then(Value::as_bool).unwrap_or(true),
-                count: case.get("count").and_then(Value::as_u64).and_then(|c| usize::try_from(c).ok()),
-                keep: if text("keep") == "characters" { Keep::Characters } else { Keep::First },
+                count: case
+                    .get("count")
+                    .and_then(Value::as_u64)
+                    .and_then(|c| usize::try_from(c).ok()),
+                keep: if text("keep") == "characters" {
+                    Keep::Characters
+                } else {
+                    Keep::First
+                },
                 policy: policy(case),
             };
-            editor.run(&caller, &command).map(|done| report(&package, &done, ranges_result(&done.out)))
+            editor
+                .run(&caller, &command)
+                .map(|done| report(&package, &done, ranges_result(&done.out)))
         }
         _ => {
-            let command = SetText { target: text("target"), text: text("text"), policy: policy(case) };
-            editor.run(&caller, &command).map(|done| report(&package, &done, text_result(&done.out)))
+            let command = SetText {
+                target: text("target"),
+                text: text("text"),
+                policy: policy(case),
+            };
+            editor
+                .run(&caller, &command)
+                .map(|done| report(&package, &done, text_result(&done.out)))
         }
     };
     Ok(done.unwrap_or_else(|error| json!({"refused": error.to_string()})))

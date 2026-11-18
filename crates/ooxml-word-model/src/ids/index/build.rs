@@ -57,7 +57,10 @@ impl PartIds {
             .unwrap_or_default();
         let mut out = PartIds {
             story: Arc::from(story),
-            container: at.and_then(|k| u32::try_from(k).ok()).map_or_else(Vec::new, |k| vec![k]).into(),
+            container: at
+                .and_then(|k| u32::try_from(k).ok())
+                .map_or_else(Vec::new, |k| vec![k])
+                .into(),
             before: Arc::new(before),
             after: Arc::new(after),
             segments,
@@ -78,7 +81,10 @@ impl PartIds {
         let same_place = old_at == new_at
             && self.container.len() == usize::from(new_at.is_some())
             && self.segments.len() == container_children(old_root, old_at).map_or(0, Children::len);
-        let (Some(old), Some(new)) = (container_children(old_root, old_at), container_children(new_root, new_at)) else {
+        let (Some(old), Some(new)) = (
+            container_children(old_root, old_at),
+            container_children(new_root, new_at),
+        ) else {
             return PartIds::new(&self.story, new_root);
         };
         if !same_place {
@@ -151,7 +157,14 @@ impl PartIds {
 
     /// The segment tree with `removed` (at `start..old_end`) replaced by `bodies` labelled
     /// `labels` (`None`: labels to be given by a relabelling), the occurrences kept.
-    fn splice(&mut self, start: usize, old_end: usize, removed: &[Seg], bodies: Vec<Arc<Body>>, labels: Option<Vec<u64>>) {
+    fn splice(
+        &mut self,
+        start: usize,
+        old_end: usize,
+        removed: &[Seg],
+        bodies: Vec<Arc<Body>>,
+        labels: Option<Vec<u64>>,
+    ) {
         for seg in removed {
             self.forget(seg);
         }
@@ -199,7 +212,9 @@ impl PartIds {
     /// Take a segment's paraIds out of the occurrences.
     fn forget(&mut self, seg: &Seg) {
         for upper in seg.body.blocks.iter().filter_map(|b| b.upper.as_ref()) {
-            let Some(list) = self.occurrences.get(upper).cloned() else { continue };
+            let Some(list) = self.occurrences.get(upper).cloned() else {
+                continue;
+            };
             let mut list = list.to_vec();
             if let Some(at) = list.iter().position(|l| *l == seg.label) {
                 list.remove(at);

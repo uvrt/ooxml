@@ -304,7 +304,9 @@ pub fn section_paragraphs(docx: &Docx, id: &str) -> Vec<usize> {
                 .ids
                 .paragraphs()
                 .iter()
-                .filter(|p| start.as_deref().is_none_or(|s| &*p.path > s) && end.as_deref().is_none_or(|e| &*p.path <= e))
+                .filter(|p| {
+                    start.as_deref().is_none_or(|s| &*p.path > s) && end.as_deref().is_none_or(|e| &*p.path <= e)
+                })
                 .map(|p| p.index)
                 .collect();
         }

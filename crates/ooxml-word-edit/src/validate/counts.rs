@@ -277,7 +277,11 @@ impl Counts {
         for name in &facts.bookmark_names {
             let key = text(name);
             let (_, now) = bump(&mut self.bookmark_names, key.clone(), sign);
-            mark(&mut self.bookmark_names_invalid, key, now > 0 && !super::kept::bookmark_name_ok(name));
+            mark(
+                &mut self.bookmark_names_invalid,
+                key,
+                now > 0 && !super::kept::bookmark_name_ok(name),
+            );
             let folded = text(&ooxml_word_model::docx::casefold(name));
             let (_, now) = bump(&mut self.bookmark_folded, folded.clone(), sign);
             mark(&mut self.bookmark_folded_repeated, folded, now > 1);

@@ -49,6 +49,6 @@ pub use editor::{EditTiming, Edited, Editor};
 pub use error::{EditError, Result};
 pub use policy::{RevisionPolicy, Tracking};
 pub use pool::{Ids, IdsChange, Sequences};
-pub use set_text::{SetText, TextEdited};
 pub use ranges::{DeleteText, InsertText, RangesEdited, ReplaceText};
+pub use set_text::{SetText, TextEdited};
 pub use sink::{EditSink, Keep, Numbered, TextWrite};

@@ -175,10 +175,7 @@ impl PartTally {
     /// Every block's facts, then the root's own, in order (rules read a part whole only
     /// where it is rare: moves).
     pub(crate) fn all(&self) -> impl Iterator<Item = &ElementFacts> {
-        self.items
-            .iter()
-            .map(|i| &*i.facts)
-            .chain(std::iter::once(&*self.rest))
+        self.items.iter().map(|i| &*i.facts).chain(std::iter::once(&*self.rest))
     }
 }
 
@@ -222,8 +219,13 @@ impl Reader<'_> {
     }
 
     /// The order table's name for a container and its children's ranks.
-    fn ranks(&self, container: Option<&Arc<Element>>) -> (Option<Arc<str>>, Option<&std::collections::HashMap<String, usize>>) {
-        let Some(container) = container else { return (None, None) };
+    fn ranks(
+        &self,
+        container: Option<&Arc<Element>>,
+    ) -> (Option<Arc<str>>, Option<&std::collections::HashMap<String, usize>>) {
+        let Some(container) = container else {
+            return (None, None);
+        };
         let name = self.orders.prefixed(container);
         let ranks = self.orders.ranks(&name);
         (ranks.map(|_| Arc::from(name)), ranks)
@@ -262,7 +264,13 @@ impl Reader<'_> {
 
     /// The tally of `root`, a later version of the part `old` tallies, with the same role:
     /// only the container children it does not share are read; `counts` kept.
-    pub(crate) fn after(&self, name: &Arc<str>, old: &PartTally, root: &Arc<Element>, counts: &mut Counts) -> PartTally {
+    pub(crate) fn after(
+        &self,
+        name: &Arc<str>,
+        old: &PartTally,
+        root: &Arc<Element>,
+        counts: &mut Counts,
+    ) -> PartTally {
         let holder = holder_of(root, &old.role);
         let (old_container, new_container) = (container_of(&old.root, old.holder), container_of(root, holder));
         let (Some(was), Some(now)) = (old_container, new_container) else {
@@ -329,7 +337,9 @@ impl Tally {
     pub(crate) fn of(doc: &crate::doc::WordDoc, previous: Option<&Tally>) -> crate::Result<Tally> {
         let docx = doc.docx()?;
         let package = doc.package();
-        let styles = ooxml_word_model::parts::related(package, &docx.main, REL_STYLES).ok().flatten();
+        let styles = ooxml_word_model::parts::related(package, &docx.main, REL_STYLES)
+            .ok()
+            .flatten();
         let stories: Arc<[Arc<str>]> = docx.parts.iter().map(|p| Arc::from(p.part.as_str())).collect();
         let shared = doc.shared();
         let reader = Reader {
