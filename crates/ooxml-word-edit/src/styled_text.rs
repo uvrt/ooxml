@@ -344,9 +344,15 @@ fn paragraph_style(
     Ok(first.filter(|_| plan.cell.is_none()))
 }
 
-/// The ids of the paragraphs of the cell `target` names, in order.
+/// The ids of the paragraphs of the cell `target` names, in order (its table's id
+/// followed through renames, as the stamping may have renamed it).
 fn cell_paragraph_ids(sink: &mut EditSink<'_, '_>, target: &str) -> Result<Vec<String>> {
     let docx = sink.docx()?;
+    let target = match target.rsplit_once('/') {
+        Some((table, cell)) => format!("{}/{cell}", sink.doc().ids().follow(table)),
+        None => target.to_owned(),
+    };
+    let target = target.as_str();
     let found = in_table(&docx, target)
         .map_err(EditError::Address)?
         .ok_or_else(|| EditError::Refused(format!("{target} is not a cell")))?;
