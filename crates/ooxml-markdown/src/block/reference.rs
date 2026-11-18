@@ -99,6 +99,51 @@ impl Reader {
     }
 }
 
+/// The title after a destination ending at `pos` (`dest`: where the destination ended and
+/// the line after it), lines taken while it is open: the title (empty for none, the reader
+/// put back to the destination's end) and the place after it and its spaces.
+fn read_title(
+    state: &mut State<'_, '_>,
+    reader: &mut Reader,
+    mut pos: usize,
+    (dest_end, dest_line): (usize, usize),
+) -> (String, usize) {
+    let title_start = pos;
+    pos = reader.skip_space(state, pos);
+    let mut found = title(&reader.text, pos, reader.text.len(), None);
+    while found.can_continue {
+        let old = reader.text.len();
+        if !reader.more(state) {
+            break;
+        }
+        pos = old;
+        found = title(&reader.text, pos, reader.text.len(), Some(&found));
+    }
+    let maximum = reader.text.len();
+    let mut text_title;
+    if pos < maximum && title_start != pos && found.ok {
+        text_title = found.text.clone();
+        pos = found.pos;
+    } else {
+        text_title = String::new();
+        pos = dest_end;
+        reader.next = dest_line;
+    }
+    let skip = |reader: &Reader, mut pos: usize| {
+        while pos < maximum && reader.at(pos).is_some_and(is_str_space) {
+            pos += 1;
+        }
+        pos
+    };
+    pos = skip(&*reader, pos);
+    if pos < maximum && reader.at(pos) != Some('\n') && !text_title.is_empty() {
+        text_title.clear();
+        pos = skip(&*reader, dest_end);
+        reader.next = dest_line;
+    }
+    (text_title, pos)
+}
+
 pub(super) fn reference(state: &mut State<'_, '_>, start: usize, _end: usize, silent: bool) -> bool {
     let pos = state.first(start);
     if state.is_code_block(start) || state.at(pos) != Some('[') {
@@ -127,39 +172,8 @@ pub(super) fn reference(state: &mut State<'_, '_>, start: usize, _end: usize, si
     }
     pos = dest.pos;
     let (dest_end, dest_line) = (pos, reader.next);
-    let title_start = pos;
-    pos = reader.skip_space(state, pos);
-    let mut found = title(&reader.text, pos, reader.text.len(), None);
-    while found.can_continue {
-        let old = reader.text.len();
-        if !reader.more(state) {
-            break;
-        }
-        pos = old;
-        found = title(&reader.text, pos, reader.text.len(), Some(&found));
-    }
+    let (text_title, pos) = read_title(state, &mut reader, pos, (dest_end, dest_line));
     let maximum = reader.text.len();
-    let mut text_title;
-    if pos < maximum && title_start != pos && found.ok {
-        text_title = found.text.clone();
-        pos = found.pos;
-    } else {
-        text_title = String::new();
-        pos = dest_end;
-        reader.next = dest_line;
-    }
-    let skip = |reader: &Reader, mut pos: usize| {
-        while pos < maximum && reader.at(pos).is_some_and(is_str_space) {
-            pos += 1;
-        }
-        pos
-    };
-    pos = skip(&reader, pos);
-    if pos < maximum && reader.at(pos) != Some('\n') && !text_title.is_empty() {
-        text_title.clear();
-        pos = skip(&reader, dest_end);
-        reader.next = dest_line;
-    }
     if pos < maximum && reader.at(pos) != Some('\n') {
         return false;
     }

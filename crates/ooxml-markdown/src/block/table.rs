@@ -120,6 +120,49 @@ fn push_cell(
     state.push(close, tag, -1);
 }
 
+/// The body rows after the delimiter row, up to an empty line or another block; the line
+/// after them.
+fn body_rows(state: &mut State<'_, '_>, (start, end): (usize, usize), aligns: &[&str], count: usize) -> usize {
+    let mut autocompleted: isize = 0;
+    let mut next = start + 2;
+    let mut body = None;
+    while next < end {
+        if state.s(next) < state.blk_indent || terminates(state, Chain::Blockquote, next, end) {
+            break;
+        }
+        let text = md_trim(&line_text(state, next)).to_owned();
+        if text.is_empty() || state.is_code_block(next) {
+            break;
+        }
+        let cells = trim_edges(escaped_split(&text));
+        autocompleted += isize::try_from(count).unwrap_or(0) - isize::try_from(cells.len()).unwrap_or(0);
+        if autocompleted > MAX_AUTOCOMPLETED_CELLS {
+            break;
+        }
+        if next == start + 2 {
+            body = Some(state.push(Kind::TbodyOpen, "tbody", 1));
+        }
+        let row = state.push(Kind::TrOpen, "tr", 1);
+        if let Some(token) = state.token(row) {
+            token.map = Some((next, next + 1));
+        }
+        for i in 0..count {
+            let content = cells.get(i).map(|c| md_trim(c).to_owned()).unwrap_or_default();
+            let align = aligns.get(i).copied().unwrap_or("");
+            push_cell(state, (Kind::TdOpen, Kind::TdClose, "td"), align, content, next);
+        }
+        state.push(Kind::TrClose, "tr", -1);
+        next += 1;
+    }
+    if let Some(index) = body {
+        state.push(Kind::TbodyClose, "tbody", -1);
+        if let Some(token) = state.token(index) {
+            token.map = Some((start + 2, next));
+        }
+    }
+    next
+}
+
 pub(super) fn table(state: &mut State<'_, '_>, start: usize, end: usize, silent: bool) -> bool {
     if start + 2 > end {
         return false;
@@ -160,43 +203,7 @@ pub(super) fn table(state: &mut State<'_, '_>, start: usize, end: usize, silent:
     }
     state.push(Kind::TrClose, "tr", -1);
     state.push(Kind::TheadClose, "thead", -1);
-    let mut autocompleted: isize = 0;
-    let mut next = start + 2;
-    let mut body = None;
-    while next < end {
-        if state.s(next) < state.blk_indent || terminates(state, Chain::Blockquote, next, end) {
-            break;
-        }
-        let text = md_trim(&line_text(state, next)).to_owned();
-        if text.is_empty() || state.is_code_block(next) {
-            break;
-        }
-        let cells = trim_edges(escaped_split(&text));
-        autocompleted += isize::try_from(count).unwrap_or(0) - isize::try_from(cells.len()).unwrap_or(0);
-        if autocompleted > MAX_AUTOCOMPLETED_CELLS {
-            break;
-        }
-        if next == start + 2 {
-            body = Some(state.push(Kind::TbodyOpen, "tbody", 1));
-        }
-        let row = state.push(Kind::TrOpen, "tr", 1);
-        if let Some(token) = state.token(row) {
-            token.map = Some((next, next + 1));
-        }
-        for i in 0..count {
-            let content = cells.get(i).map(|c| md_trim(c).to_owned()).unwrap_or_default();
-            let align = aligns.get(i).copied().unwrap_or("");
-            push_cell(state, (Kind::TdOpen, Kind::TdClose, "td"), align, content, next);
-        }
-        state.push(Kind::TrClose, "tr", -1);
-        next += 1;
-    }
-    if let Some(index) = body {
-        state.push(Kind::TbodyClose, "tbody", -1);
-        if let Some(token) = state.token(index) {
-            token.map = Some((start + 2, next));
-        }
-    }
+    let next = body_rows(state, (start, end), &aligns, count);
     state.push(Kind::TableClose, "table", -1);
     if let Some(token) = state.token(table) {
         token.map = Some((start, next));
