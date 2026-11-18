@@ -28,6 +28,7 @@ use ooxml_word_model::address::direct;
 use ooxml_word_model::docx::{at_path, find_path, Docx};
 use ooxml_word_model::ids::Entry;
 use ooxml_xml::Element;
+use std::sync::Arc;
 use tracker::TableTracker;
 
 /// One edit of [`FormatTable`], as one of docx-agent's `Document` methods makes it.
@@ -96,7 +97,7 @@ pub(crate) struct Found {
     pub(crate) part: String,
     pub(crate) path: Vec<u32>,
     pub(crate) id: String,
-    pub(crate) element: std::sync::Arc<Element>,
+    pub(crate) element: Arc<Element>,
 }
 
 /// The table `target` names (an id, or an alias followed).
@@ -275,23 +276,10 @@ impl FormatTable {
             .part(&found.part)
             .and_then(|p| p.ids.table_at(&found.path))
             .map_or_else(|| found.id.clone(), |t| t.id);
-        let draws = written
-            .numbered
-            .map(|n| annotation_draws(&new, n, 0))
-            .unwrap_or_default();
-        let mut keys = vec![block_key(&found.part, &id)];
-        if written.numbered.is_some() {
-            keys.push(Key::Annotations);
-        }
-        sink.replace_drawing(&found.part, &found.path, new, keys, draws)?;
-        if written.dated {
-            sink.ensure_w14(&found.part, false, &[("w16du", W16DU)])?;
-        }
-        if let (RevisionPolicy::Tracked(tracking), Some(n)) = (sink.policy().clone(), written.numbered) {
-            sink.people(
-                (n.to > n.from).then_some(tracking.author.as_str()),
-                Some(&tracking.author),
-            )?;
+        // an edit that leaves the table as it was writes nothing (docx-agent's part, written
+        // again unchanged, is the same bytes)
+        if new.as_ref() != element.as_ref() {
+            write(sink, &found, &id, new, &written)?;
         }
         let edits = written
             .warnings
@@ -371,4 +359,28 @@ impl FormatTable {
         }
         out
     }
+}
+
+/// The table's copy put in place, with its revision ids drawn at commit, `w16du` declared
+/// where a record carries a UTC date, and the author among the people.
+fn write(sink: &mut EditSink<'_, '_>, found: &Found, id: &str, new: Arc<Element>, written: &Written) -> Result<()> {
+    let draws = written
+        .numbered
+        .map(|n| annotation_draws(&new, n, 0))
+        .unwrap_or_default();
+    let mut keys = vec![block_key(&found.part, id)];
+    if written.numbered.is_some() {
+        keys.push(Key::Annotations);
+    }
+    sink.replace_drawing(&found.part, &found.path, new, keys, draws)?;
+    if written.dated {
+        sink.ensure_w14(&found.part, false, &[("w16du", W16DU)])?;
+    }
+    if let (RevisionPolicy::Tracked(tracking), Some(n)) = (sink.policy().clone(), written.numbered) {
+        sink.people(
+            (n.to > n.from).then_some(tracking.author.as_str()),
+            Some(&tracking.author),
+        )?;
+    }
+    Ok(())
 }
