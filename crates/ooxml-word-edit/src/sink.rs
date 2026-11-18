@@ -333,6 +333,33 @@ impl<'t, 's> EditSink<'t, 's> {
         })
     }
 
+    /// Add a part as docx-agent's package adds one (ooxml-edit's `add_part` with an
+    /// `Override`, `add_relationship`): named `default`, or `template` numbered when that
+    /// is taken, its tree `root`, its content type declared, related from `main` by
+    /// `rel_type`; its name.
+    ///
+    /// # Errors
+    /// When the content types or relationships are not XML.
+    pub(crate) fn new_part(
+        &mut self,
+        main: &str,
+        (default, template): (&str, &str),
+        root: Element,
+        content_type: &str,
+        rel_type: &str,
+    ) -> Result<String> {
+        let package = self.doc().package().clone();
+        let part = crate::new_part::unused_name(&package, default, template);
+        let made = crate::new_part::add_part(&package, main, &part, root, content_type, rel_type)?;
+        let rels = ooxml_opc::name::rels_for(main);
+        for name in [part.as_str(), ooxml_opc::CONTENT_TYPES_PART, rels.as_str()] {
+            if let Some(tree) = made.tree(name)? {
+                self.put(name, tree)?;
+            }
+        }
+        Ok(part)
+    }
+
     /// Replace `count` children of the element at `parent` (child indexes from the root)
     /// of `part`, from its child `start` on, by `nodes`; ids drawn into them where the
     /// change is applied.

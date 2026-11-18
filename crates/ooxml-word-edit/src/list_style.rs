@@ -2,7 +2,8 @@
 //! `builtin_styles.write` with `numbering.add_abstract` and `add_num`): the measured
 //! abstract definition numbered after the document's last, its `w:nsid` and `w:tmpl` drawn
 //! as docx-agent draws them (`_nsid`: a SHA-256 of the style's seed, past the ones in use),
-//! put after the last abstract definition, and an instance of it after the last instance.
+//! put after the last abstract definition, and an instance of it after the last instance;
+//! the numbering part made first when the document has none.
 //!
 //! Must not: write but through the sink, or change a definition or instance already there.
 
@@ -14,6 +15,8 @@ use ooxml_xml::{Attribute, Element, Head, Limits, Node, QName};
 use std::collections::HashSet;
 use std::sync::Arc;
 
+/// The numbering part's content type.
+const NUMBERING_TYPE: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml";
 /// The relationship type of the numbering part.
 const REL_NUMBERING: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering";
 
@@ -80,11 +83,19 @@ fn nsid(seed: &str, used: &HashSet<String>) -> String {
 /// to the numbering part; the new instance's id.
 ///
 /// # Errors
-/// [`EditError::Unsupported`] for a document without a numbering part.
+/// When the numbering part is not XML.
 pub(crate) fn add_list(sink: &mut EditSink<'_, '_>, main: &str, style_id: &str, definition: &str) -> Result<String> {
-    let part = ooxml_word_model::parts::related(sink.doc().package(), main, REL_NUMBERING)?.ok_or_else(|| {
-        EditError::Unsupported(format!("the list of the style {style_id} in a document without lists"))
-    })?;
+    let part = match ooxml_word_model::parts::related(sink.doc().package(), main, REL_NUMBERING)? {
+        Some(part) => part,
+        // docx-agent's `numbering._ensure_part`: made as Word declares it
+        None => sink.new_part(
+            main,
+            ("word/numbering.xml", "word/numbering{n}.xml"),
+            crate::new_part::word_root("numbering"),
+            NUMBERING_TYPE,
+            REL_NUMBERING,
+        )?,
+    };
     let key = || vec![Key::Part(Arc::from(part.as_str()))];
     sink.read(Key::Part(Arc::from(part.as_str())));
     let tree = sink.doc().tree(&part)?.ok_or_else(|| EditError::NoPart(part.clone()))?;
