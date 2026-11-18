@@ -6,8 +6,9 @@
 //!
 //! The manifest is a JSON list of `{"file": path, "cases": [{"op", "target", "text",
 //! "tracked": {"author", "date"} or null, ...}]}` (`op`: `set_text` when absent,
-//! `insert_text`, `delete_text`, `replace` with `find`, `case`, `count`, `keep`); each case
-//! runs on the document as opened.
+//! `insert_text`, `delete_text`, `replace` with `find`, `case`, `count`, `keep`, `accept`
+//! and `reject` with `ids`, `all`, or `author`/`kind`/`within`); each case runs on the
+//! document as opened.
 //!
 //! Must not: be used by any library; it is a test instrument.
 
@@ -18,8 +19,8 @@ use ooxml_store::{Caller, Clock, StoreConfig};
 use ooxml_word_edit::touched::Touched;
 use ooxml_word_edit::validate::problems;
 use ooxml_word_edit::{
-    DeleteText, EditError, Edited, Editor, InsertText, Keep, RangesEdited, ReplaceText, RevisionPolicy, SetText,
-    TextEdited, Tracking, WordDoc,
+    DeleteText, EditError, Edited, Editor, InsertText, Keep, RangesEdited, ReplaceText, Review, Reviewed,
+    RevisionPolicy, Selection, SetText, TextEdited, Tracking, WordDoc,
 };
 use serde_json::{json, Map, Value};
 use std::sync::Arc;
@@ -151,6 +152,15 @@ fn edit(bytes: &Arc<[u8]>, case: &Value) -> Result<Value, String> {
                 .run(&caller, &command)
                 .map(|done| report(&package, &done, ranges_result(&done.out)))
         }
+        "accept" | "reject" => {
+            let command = Review {
+                accept: case.get("op").and_then(Value::as_str) == Some("accept"),
+                selection: selection(case),
+            };
+            editor
+                .run(&caller, &command)
+                .map(|done| report(&package, &done, reviewed_result(&done.out)))
+        }
         _ => {
             let command = SetText {
                 target: text("target"),
@@ -163,6 +173,28 @@ fn edit(bytes: &Arc<[u8]>, case: &Value) -> Result<Value, String> {
         }
     };
     Ok(done.unwrap_or_else(|error| json!({"refused": error.to_string()})))
+}
+
+/// The changes a review case selects: `ids`, `all`, or `author`/`kind`/`within`.
+fn selection(case: &Value) -> Selection {
+    if let Some(ids) = case.get("ids").and_then(Value::as_array) {
+        return Selection::Ids(ids.iter().filter_map(Value::as_str).map(str::to_owned).collect());
+    }
+    let text = |key: &str| case.get(key).and_then(Value::as_str).map(str::to_owned);
+    if case.get("all").and_then(Value::as_bool) == Some(true) {
+        return Selection::All;
+    }
+    Selection::Matching {
+        author: text("author"),
+        kind: text("kind"),
+        within: text("within"),
+    }
+}
+
+/// A review's result, as the harness writes docx-agent's.
+fn reviewed_result(out: &Reviewed) -> Value {
+    let renamed: Map<String, Value> = out.renamed.iter().map(|(old, new)| (old.clone(), json!(new))).collect();
+    json!({"records": out.records, "removed": out.removed, "renamed": renamed, "warnings": out.warnings})
 }
 
 /// A set_text's result, as the harness writes docx-agent's.

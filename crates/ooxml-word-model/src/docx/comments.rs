@@ -36,6 +36,10 @@ pub struct Comment {
     pub date: Option<String>,
     /// Its part.
     pub part: String,
+    /// Its place in its part.
+    pub path: Box<[u32]>,
+    /// The `w14:paraId` of its last paragraph, upper case (empty: none).
+    pub last_para: String,
 }
 
 /// A `commentsIds` or `commentsEx` entry: its `durableId`, `paraIdParent` and `done`.
@@ -103,7 +107,7 @@ pub fn comments(docx: &Docx) -> Vec<Comment> {
             .filter(|t| !t.is_empty())
             .collect();
         if !last.is_empty() {
-            by_last.insert(last, id.clone());
+            by_last.insert(last.clone(), id.clone());
         }
         out.push((
             Comment {
@@ -117,6 +121,8 @@ pub fn comments(docx: &Docx) -> Vec<Comment> {
                 initials: comment.attribute(Some(W), "initials").map(str::to_owned),
                 date: comment.attribute(Some(W), "date").map(str::to_owned),
                 part: part.part.clone(),
+                path: Box::new(path),
+                last_para: last.clone(),
             },
             parent_para,
         ));

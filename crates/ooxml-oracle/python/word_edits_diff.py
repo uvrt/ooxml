@@ -108,9 +108,44 @@ def _text_of(entry) -> str:
     return _text.paragraph_text(entry.element)
 
 
+class _Call:
+    """What docx-agent's review selection reads of a tool call: refs (none here) and the
+    document's id in a refusal's way out."""
+
+    class entry:  # noqa: N801 -- the attribute docx-agent reads
+        doc_id = "d1"
+
+    def resolve_ref(self, name):
+        raise KeyError(name)
+
+
+def _review(document, case: dict):
+    """An accept or reject as ``word_changes`` makes it: its selection and its settling
+    (``tools/review.py``), the results merged as the tool merges them."""
+    from docx_agent.tools.review import _selection, _settle
+
+    action = case["op"]
+    call = _Call()
+    how, what = _selection(call, document, case.get("ids"), case.get("author"), case.get("kind"),
+                           case.get("within"), bool(case.get("all")))
+    before = len(document.revisions())
+    edits = _settle(document, action, how, what, case.get("author"), case.get("kind"))
+    removed, renamed, warnings = [], {}, []
+    for edit in edits:
+        if edit is None:
+            continue
+        removed += [r for r in edit.removed if r not in removed]
+        renamed.update(edit.renamed)
+        warnings += [w for w in edit.warnings if w not in warnings]
+    return {"records": before - len(document.revisions()), "removed": removed, "renamed": renamed,
+            "warnings": warnings}
+
+
 def _run(document, case: dict):
     """The case's edit, by its ``op``."""
     op = case.get("op", "set_text")
+    if op in ("accept", "reject"):
+        return _review(document, case)
     if op == "insert_text":
         return document.insert_text(case["target"], case["text"])
     if op == "delete_text":
@@ -122,6 +157,8 @@ def _run(document, case: dict):
 
 
 def _result(case: dict, result) -> dict:
+    if case.get("op") in ("accept", "reject"):
+        return result
     if case.get("op", "set_text") == "set_text":
         return {"id": result.id, "changed": result.changed, "renamed": dict(result.renamed)}
     return {"id": result.id, "count": result.count, "renamed": dict(result.renamed)}
@@ -148,6 +185,30 @@ def _range_cases(document, targets: list[str]) -> list[dict]:
                           "count": 1})
             cases.append({"op": "replace", "find": words[0], "text": words[0] + "s", "keep": "characters"})
     return [c for c in cases if not any(m in c.get("text", "") for m in _STYLED)]
+
+
+def _review_cases(document) -> list[dict]:
+    """Accepts and rejects (``--review``): everything; each of the first changes by its id;
+    a later record of a change by its own id; by the first author; by the first change's
+    kind; within the first change's paragraph."""
+    changes = document.changes()
+    if not changes:
+        return []
+    cases: list[dict] = []
+    for op in ("accept", "reject"):
+        cases.append({"op": op, "all": True})
+        for change in changes[:3]:
+            cases.append({"op": op, "ids": [change.id]})
+        multi = next((c for c in changes if len(c.revisions) > 1), None)
+        if multi is not None:
+            cases.append({"op": op, "ids": [multi.revisions[-1]]})
+        if changes[0].author:
+            cases.append({"op": op, "author": changes[0].author})
+        cases.append({"op": op, "kind": changes[0].kind})
+        if changes[0].paragraph_ids:
+            cases.append({"op": op, "within": changes[0].paragraph_ids[0]})
+    cases.append({"op": "accept", "ids": ["rev:999999"]})
+    return cases
 
 
 def python_case(data: bytes, case: dict, baseline: list) -> dict:
@@ -210,6 +271,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--limit", type=int, default=0, help="at most this many cases per document")
     parser.add_argument("--ops", action="store_true", help="insert_text, delete_text and replace too")
     parser.add_argument("--only-ops", action="store_true", help="insert_text, delete_text and replace only")
+    parser.add_argument("--review", action="store_true", help="accept and reject only (word_changes)")
     parser.add_argument("files", nargs="*")
     args = parser.parse_args(argv)
     expected: dict = {}
@@ -221,13 +283,16 @@ def main(argv: list[str] | None = None) -> int:
             baseline = _validate.check(document.package)
             cases = []
             targets = _targets(document)
-            if not args.only_ops:
+            if args.review:
+                cases = [{**case, "tracked": None} for case in _review_cases(document)]
+                targets = []
+            if not args.only_ops and not args.review:
                 for target in targets:
                     text = document.paragraph(target).text
                     for new in _texts(text):
                         for tracked in (None, TRACKING):
                             cases.append({"target": target, "text": new, "tracked": tracked})
-            if args.ops or args.only_ops:
+            if (args.ops or args.only_ops) and not args.review:
                 for case in _range_cases(document, targets):
                     for tracked in (None, TRACKING):
                         cases.append({**case, "tracked": tracked})
