@@ -68,6 +68,17 @@ pub struct EngineStats {
     pub pages_said: (u64, u64),
 }
 
+impl EngineStats {
+    /// Count a version laid out: from the one before (`relaid`) or whole.
+    fn count_laid(&mut self, relaid: bool) {
+        if relaid {
+            self.relaid += 1;
+        } else {
+            self.full += 1;
+        }
+    }
+}
+
 /// What a generation holds: the fonts, the model, the layout's memos, the last version.
 struct Generation {
     number: u64,
@@ -384,7 +395,7 @@ impl PageEngine {
             return Ok(Err(why));
         }
         let relaid = !laid.relaid.is_empty();
-        self.count_laid(relaid);
+        self.stats.count_laid(relaid);
         let (pictures, drawings) = pictures_of(package, &document, &generation.fonts, &self.numbers);
         let others_changed = self.changed.iter().any(|name| *name != *document.main_part);
         let with = SayWith {
@@ -419,15 +430,6 @@ impl PageEngine {
         let swept = generation.model.sweep() + generation.layout.sweep();
         self.stats.swept += swept as u64;
         Ok(Ok(version))
-    }
-
-    /// Count a version laid out: from the one before (`relaid`) or whole.
-    fn count_laid(&mut self, relaid: bool) {
-        if relaid {
-            self.stats.relaid += 1;
-        } else {
-            self.stats.full += 1;
-        }
     }
 
     /// Why a version was laid out whole, from the first changed part of `reason`'s kind.
