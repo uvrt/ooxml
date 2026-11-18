@@ -1,18 +1,20 @@
-"""docx-agent's editing tools answered by the Rust session that owns the document (phase P2,
-lane P2c3; :mod:`.owner` says who owns what).
+"""docx-agent's editing tools answered by the Rust session that owns the document (phase P2;
+lane P2c4: the session is the only owner, :mod:`.owner`).
 
-A tool with a Rust editing handler (``word_set_text``, ``replace_text``, and each one ported
-after them) runs there: the call's arguments, its ``$name`` refs resolved, go to
-``Session.call`` with the call's caller and the document's tracking mode; the parts the edit
-changed are written into the working copy as the call's step (``Document.take_parts``), and
-the reply is the session's.  The Python handler answers instead -- counted by tool and reason
-(:func:`fallbacks`, ``edit_fallbacks{tool,reason}``), never silently, and committed in the
-session through the bridge as every unported tool is -- where the session does not answer as
-it yet: an op of a ``batch`` (one step of the working copy's, so one bridged step), a call
-prepared on a draft, an address naming an id the working copy renamed or deleted, values
-written by reference, a refusal (the session's carries its own way out, tool rule 2, which
-today's does not), and what the session says it leaves to the host (its ``unported``:
-styled text, French spacing, regex, ...).  The Rust handler changes nothing in each of those.
+A tool with a Rust editing handler (:data:`SERVED`: ``word_set_text``, ``replace_text``, and
+each one ported after them) runs there, ahead of docx-agent's handler and its wrapper
+(:func:`docx_agent.tools._base.wrap`): the call's arguments, its ``$name`` refs resolved, go to
+``Session.call`` with the call's caller and the document's tracking mode; the session's
+version is the call's step (:meth:`~ooxml_edit.tools.owned.OwnedEntry.served`), its reply the
+result, its ``touched`` the result's.  The Python view of the document is not read.
+
+The Python handler answers instead -- on the view, committed through the bridge, counted by
+tool and reason (:func:`fallbacks`, ``edit_fallbacks{tool,reason}``), never silently -- where
+the session does not answer as it yet: an op of a ``batch`` (one step), a call on a draft,
+values written by reference, a refusal (the session's carries its own way out, tool rule 2,
+which today's does not), a session given its own clock (the Rust session dates revisions by
+the system's), and what the session says it leaves to the host (its ``unported``: styled text,
+French spacing, regex, ...).  The Rust handler changes nothing in each of those.
 """
 
 from __future__ import annotations
@@ -26,7 +28,7 @@ from ooxml_edit.tools import Result
 from ooxml_edit.tools.session import utc_now
 
 from . import reads
-from .owner import context_of, owned
+from .owner import context_of
 
 _COUNTS_LOCK = threading.Lock()
 _FALLBACKS: Counter = Counter()
@@ -49,13 +51,43 @@ def served() -> dict[str, int]:
         return dict(_SERVED)
 
 
+def _set_text(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+    items = arguments.get("items")
+    return {"target": reads._refs(call, arguments.get("target")), "text": arguments.get("text"),
+            "paragraph_style": arguments.get("paragraph_style"),
+            "items": None if items is None else [
+                {**item, "target": reads._refs(call, item.get("target"))} if isinstance(item, dict) else item
+                for item in items]}
+
+
+def _replace_text(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+    return {"find": arguments.get("find"), "replace": arguments.get("replace"),
+            "expect": arguments.get("expect"), "regex": arguments.get("regex") or None,
+            "slides": arguments.get("slides"), "range": reads._refs(call, arguments.get("range")),
+            "stories": arguments.get("stories", "body")}
+
+
+#: The tools the session edits with, and each one's arguments as the session takes them.
+SERVED: dict[str, Callable[[Any, dict[str, Any]], dict[str, Any]]] = {
+    "word_set_text": _set_text,
+    "replace_text": _replace_text,
+}
+
+
 class _Fallback(Exception):
     """The call is answered by the Python handler, for this reason."""
 
 
-def _why_not(call: Any) -> str | None:
+def owned_entry(call: Any) -> Any:
+    """The call's document's entry when the session owns it and serves the call's tool."""
     entry = call.entry
-    if entry is None or entry.live is not None or entry.pinned is not None or call.document is not entry.document:
+    if call.tool.name not in SERVED or entry is None or getattr(entry, "owner", None) is None:
+        return None
+    return entry
+
+
+def _why_not(call: Any, entry: Any) -> str | None:
+    if entry.live is not None or entry.pinned is not None:
         return "a draft"
     if call.in_batch:
         return "batch op"
@@ -81,51 +113,38 @@ def _tracking(mirror: "reads.Mirror", entry: Any, context: Any) -> None:
     mirror.tracking = wanted
 
 
-def _run(call: Any, tool: str, arguments: dict[str, Any]) -> Result:
-    document = call.document
-    mirror = owned(document)
-    if mirror is None:
-        raise _Fallback("no session")
+def _run(call: Any, entry: Any, arguments: dict[str, Any]) -> Result:
+    mirror = entry.handle
+    tool = call.tool.name
+    context = context_of(call.caller)
     with mirror.lock:
-        if mirror.synced != document.history.version:
-            raise _Fallback("not at the session's head")
-        context = context_of(call.caller)
-        _tracking(mirror, call.entry, context)
-        before = mirror.session.head(mirror.doc)
-        given = {"doc": mirror.doc, **{k: v for k, v in arguments.items() if v is not None}}
+        _tracking(mirror, entry, context)
+        given = {"doc": mirror.doc, **{k: v for k, v in SERVED[tool](call, arguments).items()
+                                       if v is not None}}
         reply, _images, app = mirror.session.call(tool, json.dumps(given), context=context)
         envelope = json.loads(reply)
         error = envelope.get("error")
         if error is not None:
             raise _Fallback(f"refusal: {error.get('code')}")
-        unported = json.loads(app).get("unported") or []
+        application = json.loads(app)
+        unported = application.get("unported") or []
         if unported:
             raise _Fallback(unported[0])
         head = mirror.session.head(mirror.doc)
-        if head.number != before.number:
-            parts = dict(head.changed_since(before))
-            document.take_parts(parts, dict(envelope.get("renamed") or {}))
-            # The session has these parts as written: the working copy's commit of the call
-            # hands over nothing more (unless something else changed in its step).
-            for part, data in parts.items():
-                if data is None:
-                    mirror.parts.pop(part, None)
-                else:
-                    mirror.parts[part] = ("bytes", len(data), reads._digest(data))
+    entry.served(head, application.get("touched") or [])
     return _result(envelope)
 
 
-def serve(call: Any, tool: str, arguments: dict[str, Any], python: Callable[[], Result],
-          *, addresses: tuple = ()) -> Result:
-    """``tool``'s edit made by the Rust session, or ``python()``'s where the session does not
-    answer as it yet (counted, with why)."""
+def serve(call: Any, arguments: dict[str, Any], python: Callable[[], Any]) -> Any:
+    """The call's edit made by the Rust session, or ``python()``'s where the session does not
+    answer as it yet (counted, with why).  Only for a call :func:`owned_entry` names."""
+    entry = owned_entry(call)
+    tool = call.tool.name
     try:
-        why = _why_not(call)
+        why = _why_not(call, entry)
         if why is not None:
             raise _Fallback(why)
-        if reads._renamed_or_deleted(call.document, *addresses):
-            raise _Fallback("renamed or deleted id")
-        result = _run(call, tool, arguments)
+        result = _run(call, entry, arguments)
     except _Fallback as why:
         with _COUNTS_LOCK:
             _FALLBACKS[(tool, str(why))] += 1

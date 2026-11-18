@@ -1748,7 +1748,8 @@ class Toolbox:
         entry, _running = found
         fmt = session.formats.get(entry.kind)
         hook = getattr(fmt, "blocks", None)
-        if hook is None or getattr(fmt, "read_copy", None) is None or entry.pinned is not None:
+        if hook is None or getattr(fmt, "read_copy", None) is None or entry.pinned is not None \
+                or not entry.draftable:
             return None
         try:
             admitted = self._admitted(hook, tool, clean, entry.kind, entry.doc_id, roles,
@@ -3426,7 +3427,7 @@ class Toolbox:
             found = part_entries(change)
         else:
             try:
-                found = list(fmt.touched(entry.document, change))
+                found = entry.touched_of(change, fmt)
             except Exception:  # noqa: BLE001 -- the parts still say what changed
                 logger.exception("the %s format's touched failed; reporting parts", entry.kind)
                 found = part_entries(change)

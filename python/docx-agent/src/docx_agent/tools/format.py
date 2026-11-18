@@ -103,10 +103,6 @@ def configure(document: Document, session: Any) -> None:
     # Round 37: an id that is gone names the call that removed it, and how to read again.
     document.describe_step = _StepOwner(session, document)
     document.read_hint = "word_read"
-    # Lane P2c3: the Rust session owns the document from now on; this one is its working copy.
-    from ..rust.owner import OWNER
-
-    OWNER.hold(document)
 
 
 class _StepOwner:
@@ -254,10 +250,12 @@ TOOL_HINTS = {
 }
 
 def _owner() -> Any:
-    """Lane P2c3: the Rust session as the owner of the format's documents."""
+    """Lane P2c4: the Rust session as the owner of the format's documents (``None`` where
+    ``ooxml_core`` has no session: the tool layer then holds the document itself)."""
+    from ..rust import reads
     from ..rust.owner import OWNER
 
-    return OWNER
+    return OWNER if reads.available() else None
 
 
 FORMAT = DocumentFormat(

@@ -2755,35 +2755,6 @@ class Document(TrackingOps, RevisionOps, TextOps, FormatOps, ListOps, LinkOps, P
                 _typography.stop(recording)
             self._invalidate()
 
-    def take_parts(self, parts: dict[str, bytes | None], renamed: dict[str, str]) -> None:
-        """Lane P2c3: parts the document's owner wrote -- an edit the Rust session made, with
-        its stamping, its text boxes' fallbacks and its ids -- taken as they are, as one undo
-        step (inside a call's :meth:`batch`, as part of it): ``None`` removes a part.
-        ``renamed`` (old id -> new) is kept as the edit's aliases; the ids are read again."""
-        outermost = not self.history.in_batch
-        if outermost:
-            self._note_ids()
-        # The ids are read whole after parts put in place as bytes: the per-change scan
-        # reads the main part by the blocks lxml wrote (docx_agent.edit.ids.IdScan).
-        self.__dict__.pop("_id_scan", None)
-        try:
-            with self.history.batch():
-                for name, data in parts.items():
-                    if data is None:
-                        if self.package.has_part(name):
-                            self.package.remove_part(name)
-                    else:
-                        self.package.replace_part(name, data)
-                # The ids the owner gave are never given again here either.
-                written = [self.package.tree(name) for name, data in parts.items()
-                           if data is not None and name in self._parts()]
-                self._remember_ids(_ids.used_long_hex([root for root in written if root is not None]))
-                self._rename(renamed)
-            if outermost:
-                self._note_ids()
-        finally:
-            self._invalidate()
-
     def undo(self) -> bool:
         """Undo the last edit (one step; a :meth:`batch` is one); ``False`` if there is none.
         Undoing every step gives back the original bytes."""

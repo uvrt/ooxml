@@ -96,6 +96,14 @@ impl Ids {
         self.base.contains(&value) || self.added.contains(&value)
     }
 
+    /// The values given since the document was opened (by its edits, or brought by parts
+    /// the bridge committed): what a host that keeps a view of the document learns from
+    /// the session, never by reading its parts again.
+    #[must_use]
+    pub fn added(&self) -> &BTreeSet<u32> {
+        &self.added
+    }
+
     /// The renames: an old id and the id it names now.
     #[must_use]
     pub fn aliases(&self) -> &BTreeMap<String, String> {

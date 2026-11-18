@@ -7,6 +7,18 @@ snapshot commit; the development history before it is summarised here.
 
 ## 0.1.140 -- unreleased
 
+Phase P2, lane P2c4: the Rust session is the only owner. docx-agent keeps no working copy
+of a Word document the session owns: its versions, steps, ids and saved bytes are the
+session's, and the `Document` is a view made current from the session's head only when Python
+reads it (`docx_agent.rust.view`).
+
+- `word_set_text` and `replace_text` run in the session ahead of the Python handler
+  (`docx_agent.rust.edits.SERVED`); the Python document is not read, the result's `touched`
+  is the session's and the checks read the session's validation (`rust.owner.owned_checks`).
+- Every other tool runs on the view; the parts it changed are committed through
+  `Session.bridge` as its step. Undo and redo are the session's.
+- `Document.take_parts` and `owner.disagreements()` are gone (nothing is mirrored back).
+
 Phase P2, lane P2c3: the switch. A Word document open in a toolbox session is owned by the
 process's Rust session (`ooxml_core.Session`): its versions, its history and its saved bytes
 are the session's, and the `Document` the tool layer holds is the bridge's working copy, kept

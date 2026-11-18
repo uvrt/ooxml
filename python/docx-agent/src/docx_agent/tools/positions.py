@@ -59,11 +59,14 @@ def aliases(tool: str, kind: str, own: Mapping[str, Any], *, prefix: str = "",
     for name in NAMES:
         if name in own or (name == "find" and find):
             continue
-        out[prefix + name] = _alias(tool, kind, name, prefix)
+        out[prefix + name] = alias(tool, kind, name, prefix)
     return out
 
 
-def _alias(tool: str, kind: str, name: str, prefix: str) -> Callable[[Mapping[str, Any]], str | None]:
+def alias(tool: str, kind: str, name: str, prefix: str) -> Callable[[Mapping[str, Any]], str | None]:
+    """The alias function of :func:`aliases` for one name ``name`` (at ``prefix``) of a
+    placing tool ``tool`` of ``kind`` (also what a Rust tool's exported ``place:<kind>``
+    alias stands for, :mod:`docx_agent.rust.session`)."""
     field = "after" if kind == "sides" else "at"
 
     def meant(node: Mapping[str, Any]) -> str | None:

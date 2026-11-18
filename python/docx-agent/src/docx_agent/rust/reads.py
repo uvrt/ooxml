@@ -140,12 +140,11 @@ class Mirror:
         self.parts = parts
         self.versions: OrderedDict[int, Any] = OrderedDict()
         self.lock = threading.Lock()
-        #: Lane P2c3: whether the session owns the document (:mod:`.owner`): every version
-        #: the working copy makes is committed there as it is made, so a read copy's version
-        #: is found here, never handed over at the read.
+        #: Lane P2c4: whether the session owns the document (:mod:`.owner`): its versions are
+        #: kept here by the tool layer's numbers as the session makes them, never handed over.
         self.owned = False
-        #: The working copy's version the session's head is (an owned document's).
-        self.synced: int | None = None
+        #: The session's version the owned document's Python view is (:mod:`.view`).
+        self.view_head: Any = None
         #: The tracking mode the session edits the document under (:mod:`.edits`).
         self.tracking: dict[str, Any] | None = None
 
@@ -254,10 +253,23 @@ class _Fallback(Exception):
     """The call is answered by the Python path, for this reason."""
 
 
+def _named(call: Any) -> Any:
+    """The document whose ids an address of the call names: the call's; for one the session
+    owns, its view where it is current, else none -- the session follows its renames and
+    refuses a deleted id itself, and a refusal is answered by the Python path."""
+    entry = call.entry
+    if isinstance(getattr(entry, "handle", None), Mirror) and not entry.view_current:
+        return None
+    return call.document
+
+
 def _renamed_or_deleted(document: Any, *texts: Any) -> bool:
     """Whether an address names an id this session renamed (an alias) or deleted (the
     ledger): Python's answer follows the alias or says who deleted it."""
     from ..edit.document import _GONE_BLOCK
+
+    if document is None:
+        return False
 
     aliases = getattr(document, "_aliases", None) or {}
     for text in texts:
@@ -285,15 +297,31 @@ def _refs(call: Any, value: Any) -> Any:
     return value
 
 
+def _owned_version(call: Any) -> tuple["Mirror | None", Any]:
+    """Lane P2c4: the session's version a call on a document the session owns reads (the
+    entry's version now), found without the Python view; ``(None, None)`` otherwise."""
+    entry = call.entry
+    mirror = getattr(entry, "handle", None)
+    if not isinstance(mirror, Mirror):
+        return None, None
+    with mirror.lock:
+        found = mirror.versions.get(entry.version)
+    if found is None:
+        raise _Fallback("version let go")
+    return mirror, found
+
+
 def _call(call: Any, tool: str, arguments: dict[str, Any], *, placer: "Placer | None" = None) -> dict[str, Any]:
     """The Rust envelope of ``tool`` with ``arguments`` on the version ``call`` reads."""
-    copy = call.document
     if _session() is None:
         raise _Fallback("no session")
-    mirror = _mirror(copy)
+    mirror, version = _owned_version(call)
     if mirror is None:
-        raise _Fallback("not a committed version")
-    version = mirror.version(copy)
+        copy = call.document
+        mirror = _mirror(copy)
+        if mirror is None:
+            raise _Fallback("not a committed version")
+        version = mirror.version(copy)
     arguments = {"doc": mirror.doc, **{k: v for k, v in arguments.items() if v is not None}}
     reply, _images, app = mirror.session.call(tool, json.dumps(arguments), at=[version],
                                               placer=placer.place if placer is not None else None)
@@ -323,7 +351,7 @@ def serve(call: Any, tool: str, arguments: dict[str, Any],
             raise _Fallback(why_not)
         if call.limits.max_result_chars != _RESULT_CHARS or call.limits.max_list_items != _LIST_ITEMS:
             raise _Fallback("limits")
-        if _renamed_or_deleted(call.document, *addresses):
+        if _renamed_or_deleted(_named(call), *addresses):
             raise _Fallback("renamed or deleted id")
         envelope = _call(call, tool, arguments, placer=placer)
         result = (answer or _result)(envelope)

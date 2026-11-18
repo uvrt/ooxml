@@ -29,6 +29,8 @@ from ooxml_edit.tools import Result, ToolError, page_list, tool as _tool, valida
 
 from ooxml_edit.tools.worker import takes_affinity, takes_lane
 
+from ..rust import edits
+from ..rust.owner import owned_checks
 from ..layout import (adopt, affinity, canon_of, known_summary, layout_key, summary_for, cache_key, convert_bytes, held_state, lay_out_bytes,
                       lay_out_unlocked, layout_options, remember_runner, twin, twin_of)
 
@@ -480,7 +482,11 @@ def checks(entry: Any, touched: Sequence[Any]) -> dict[str, Any]:
     """The docx format's ``checks``: the ``validate()`` delta against the document's problems
     when opened, and the reflow -- the pages the change touched, from the layout before (when
     it was laid out) and after, for a document of :data:`REFLOW_PAGES` pages or fewer
-    (``"stale: call check"`` beyond)."""
+    (``"stale: call check"`` beyond).  Lane P2c4: after an edit the Rust session made, the
+    session's (:func:`docx_agent.rust.owner.owned_checks`)."""
+    owned = owned_checks(entry)
+    if owned is not None:
+        return owned
     document = entry.document
     handed = getattr(document, "_handed_engine", None)
     if handed is not None and not isinstance(document.converter, Engine):
@@ -717,6 +723,13 @@ def _space_written(call: Any) -> int:
 def wrap(handler: Callable[..., Any], *, mutates: bool, track: bool = True) -> Callable[..., Any]:
     @functools.wraps(handler)
     def run(call: Any, **arguments: Any) -> Any:
+        if mutates and call.changing and edits.owned_entry(call) is not None:
+            # Lane P2c4: a tool the Rust session edits with runs there first; the Python
+            # handler (on the document's view) only where the session does not answer.
+            return edits.serve(call, arguments, lambda: in_python(call, **arguments))
+        return in_python(call, **arguments)
+
+    def in_python(call: Any, **arguments: Any) -> Any:
         engage(call)
         keep = False
         try:

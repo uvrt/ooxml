@@ -95,23 +95,7 @@ def word_set_text(call: Any, doc: str, target: str | None = None, text: str | No
     one it lacks is refused with its paragraph styles); text with ``**strong**``,
     ``*emphasis*`` or ``[text]{Character style}`` is written in those character styles
     (:func:`styled_text`), and the result lists the styled runs (``data.styled``).  Text
-    without them is written as before, its formatting kept.
-
-    Lane P2c3: made by the Rust session that owns the document where it answers the call
-    (:mod:`docx_agent.rust.edits`), else here."""
-    from ..rust import edits, reads
-
-    given = {"target": reads._refs(call, target), "text": text, "paragraph_style": paragraph_style,
-             "items": None if items is None else [
-                 {**item, "target": reads._refs(call, item.get("target"))} if isinstance(item, dict) else item
-                 for item in items]}
-    addresses = (target, *(item.get("target") for item in items or () if isinstance(item, dict)))
-    return edits.serve(call, "word_set_text", given,
-                       lambda: _set_text(call, target, text, items, paragraph_style), addresses=addresses)
-
-
-def _set_text(call: Any, target: str | None, text: str | None, items: list[dict] | None,
-              paragraph_style: str | None) -> Result:
+    without them is written as before, its formatting kept."""
     one_of({"target": target, "items": items}, "target", "items")
     if items == []:         # a trimmed batch's leftover: nothing to do, said, not refused
         return Result.nothing_given("written")

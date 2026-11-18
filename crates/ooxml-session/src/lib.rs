@@ -36,7 +36,7 @@ mod session;
 mod update;
 
 pub use batch::{ReadBatch, ReadOp, BATCH_TIMEOUT, MAX_READ_BATCH_CHARS, READ_BATCH};
-pub use changes::ChangedPart;
+pub use changes::{ChangedPart, IdsSince};
 pub use context::{CallContext, CancelToken};
 pub use error::SessionError;
 pub use history::Undone;

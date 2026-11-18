@@ -1,0 +1,376 @@
+"""Documents whose owner is a store outside the tool layer (lane P2c4): a format's
+:attr:`~.session.DocumentFormat.owner` -- docx-agent's Rust session -- keeps the document's
+versions, its steps, its ids and its saved bytes; the tool layer keeps no working copy of
+its own.
+
+**What the owner is.**  An object with these methods, each given the handle
+:meth:`open` returned (the owner's per-document state):
+
+- ``open(document) -> handle``: hold ``document`` (as opened, its bytes and ids) from now on;
+- ``head(handle) -> head``: the document's latest version, a value whose ``number`` is the
+  owner's own count of its versions (a new one for every version it makes);
+- ``parts_between(handle, before, after) -> Iterable[str]``: the parts whose content differs
+  between two heads;
+- ``follow(handle, document, head, number, last)``: bring ``document`` -- the view -- to
+  ``head``, numbered ``number`` (``last``: the highest number given), its ids too;
+- ``bridge(handle, tool, caller, parts) -> head``: commit the parts a Python tool changed in
+  the view (bytes, ``None`` removes one) as the step of ``tool`` and ``caller``;
+- ``undo(handle) -> head | None`` and ``redo(handle) -> head | None``: one step of the
+  document's history, ``None`` when there is none (refused: ``ValueError``);
+- ``keep(handle, number, head)``: the head is the document's version ``number`` (reads find it);
+- ``save(handle) -> bytes`` and ``close(handle)``.
+
+**The view.**  :attr:`OwnedEntry.document` is a Python document of the format, made current
+lazily: only when something reads it -- a Python tool (whose change the owner commits through
+``bridge``), a check only Python makes -- and only when the head moved since it was last
+made current.  A call the owner serves itself (a Rust editing tool, :meth:`OwnedEntry.served`)
+never reads it.
+
+**Numbers.**  :class:`OwnedHistory` numbers the document's states as
+:class:`~ooxml_edit.history.History` does (a step a new number, undo and redo back to the
+number of the state they bring back), so every version-keyed thing of the tool layer (refs,
+owners, caches) means what it meant.  The steps are the owner's: an undo the owner does not
+make as the numbers say is an error, never smoothed over.
+
+Must not: keep a copy of the document beside the owner's, or read the view on a served call.
+"""
+
+from __future__ import annotations
+
+from contextlib import ExitStack, contextmanager
+from dataclasses import dataclass, field
+from typing import Any, Iterator
+
+from ..history import Step
+from .session import DocumentEntry, StepOwner
+
+#: The steps kept for undo, as the owner keeps them (``ooxml_core.Session``'s depth).
+DEPTH = 50
+
+
+class OwnerDisagrees(RuntimeError):
+    """The owner did what the tool layer's numbers say it would not (an undo it did not make,
+    a step where none was expected): the two would say different things from now on."""
+
+
+class OwnedHistory:
+    """The numbers of an owned document's states and its undo and redo, which the owner
+    makes (the protocol the tool layer reads of a :class:`~ooxml_edit.history.History`)."""
+
+    compares = False
+
+    def __init__(self, entry: "OwnedEntry", head: Any, version: int, last: int) -> None:
+        self._entry = entry
+        self._number = version
+        self._last = last
+        self._undo: list[int] = []
+        self._redo: list[int] = []
+        self._heads: dict[int, Any] = {version: head}
+
+    @property
+    def version(self) -> int:
+        return self._number
+
+    @property
+    def last_version(self) -> int:
+        return self._last
+
+    @property
+    def in_batch(self) -> bool:
+        return self._entry.batch_depth > 0
+
+    def head(self, number: int | None = None) -> Any:
+        """The owner's version numbered ``number`` (now: the latest), ``None`` when let go."""
+        return self._heads.get(self._number if number is None else number)
+
+    def committed(self, head: Any) -> int:
+        """A step the owner made: its new head numbered, redo dropped."""
+        self._undo.append(self._number)
+        if len(self._undo) > DEPTH:
+            del self._undo[0]
+        self._redo.clear()
+        self._last += 1
+        self._number = self._last
+        self._keep(head)
+        return self._number
+
+    def _keep(self, head: Any) -> None:
+        self._heads[self._number] = head
+        kept = set(self._undo) | set(self._redo) | {self._number}
+        for number in [n for n in self._heads if n not in kept]:
+            del self._heads[number]
+        self._entry.owner.keep(self._entry.handle, self._number, head)
+
+    def steps(self) -> list[Step]:
+        versions = [*self._undo, self._number]
+        return [Step(versions[k], versions[k + 1]) for k in range(len(self._undo))]
+
+    def can_undo(self) -> bool:
+        return bool(self._undo)
+
+    def can_redo(self) -> bool:
+        return bool(self._redo)
+
+    @property
+    def next_redo(self) -> int | None:
+        return self._redo[-1] if self._redo else None
+
+    def undo(self) -> bool:
+        return self._move(self._entry.owner.undo, self._undo, self._redo)
+
+    def redo(self) -> bool:
+        return self._move(self._entry.owner.redo, self._redo, self._undo)
+
+    def _move(self, step: Any, source: list[int], target: list[int]) -> bool:
+        head = step(self._entry.handle)
+        if head is None:
+            if source:
+                raise OwnerDisagrees(f"{self._entry.doc_id}: the owner has no step where the "
+                                     f"history has {len(source)}")
+            return False
+        if not source:
+            raise OwnerDisagrees(f"{self._entry.doc_id}: the owner made a step the history "
+                                 "does not have")
+        target.append(self._number)
+        self._number = source.pop()
+        self._keep(head)
+        return True
+
+    def mark(self) -> Any:
+        return None
+
+    def clear(self) -> None:
+        self._undo.clear()
+        self._redo.clear()
+        self._heads = {self._number: self._heads.get(self._number)}
+
+    def kept_bytes(self) -> int:
+        return 0
+
+
+class OwnedChange:
+    """What an owned document's content did while :meth:`OwnedEntry.watch` was open: the
+    parts between the heads before and after (asked of the owner), what the call that
+    changed it said it touched (a served call, :meth:`OwnedEntry.served`), and -- where a
+    Python tool changed the view -- the view's own :class:`~ooxml_edit.history.Change`."""
+
+    def __init__(self, entry: "OwnedEntry") -> None:
+        self._entry = entry
+        self.start = entry.version
+        self.end: int | None = None
+        self.touched: list[dict[str, Any]] | None = None
+        self.view: Any = None
+        self._parts: frozenset[str] | None = None
+
+    @property
+    def changed(self) -> bool:
+        return (self._entry.version if self.end is None else self.end) != self.start
+
+    @property
+    def parts(self) -> frozenset[str]:
+        if self._parts is None:
+            history = self._entry.history
+            end = history.version if self.end is None else self.end
+            before, after = history.head(self.start), history.head(end)
+            if end == self.start:
+                self._parts = frozenset()
+            elif before is None or after is None:
+                self._parts = frozenset(self.view.parts) if self.view is not None else frozenset()
+            else:
+                self._parts = frozenset(self._entry.owner.parts_between(
+                    self._entry.handle, before, after))
+        return self._parts
+
+    def before(self, path: str) -> bytes | None:
+        return self.view.before(path) if self.view is not None else None
+
+    def after(self, path: str) -> bytes | None:
+        return self.view.after(path) if self.view is not None else None
+
+
+@dataclass(eq=False)
+class OwnedEntry(DocumentEntry):
+    """A document the format's owner holds (see the module docstring)."""
+
+    owner: Any = field(default=None, repr=False)
+    handle: Any = field(default=None, repr=False)
+    batch_depth: int = field(default=0, repr=False)
+    _view_number: int | None = field(default=None, repr=False)
+    _owned: OwnedHistory | None = field(default=None, repr=False)
+    _step: ExitStack | None = field(default=None, repr=False)
+    _view_change: Any = field(default=None, repr=False)
+    _watches: list[OwnedChange] = field(default_factory=list, repr=False)
+
+    #: The view (set by the dataclass's ``document`` argument, through the setter).
+    _view: Any = None
+    draftable = False
+
+    def own(self, owner: Any) -> None:
+        """Give the document (the one this entry was made with) to ``owner``."""
+        document = self._view
+        self.owner = owner
+        self.handle = owner.open(document)
+        history = getattr(document, "history", None)
+        version = getattr(history, "version", 0)
+        last = getattr(history, "last_version", version)
+        self._owned = OwnedHistory(self, owner.head(self.handle), version, last)
+        self._view_number = version
+
+    # -- the view ---------------------------------------------------------------------------
+
+    @property  # type: ignore[override,misc]
+    def document(self) -> Any:
+        """The view at the head, made current now if the head moved since it last was."""
+        owned = self._owned
+        if owned is not None and self._view_number != owned.version and self.pinned is None:
+            self.owner.follow(self.handle, self._view, owned.head(), owned.version,
+                              owned.last_version)
+            self._view_number = owned.version
+        if self.batch_depth and self._step is not None and self._view_change is None:
+            self._open_view_step()
+        return self._view
+
+    @document.setter
+    def document(self, value: Any) -> None:
+        self._view = value
+
+    @property
+    def view_current(self) -> bool:
+        """Whether the view is the head's (reading it costs nothing now)."""
+        return self._owned is None or self._view_number == self._owned.version
+
+    @property  # type: ignore[override]
+    def history(self) -> Any:
+        return self._owned if self._owned is not None else getattr(self._view, "history", None)
+
+    @property  # type: ignore[override]
+    def version(self) -> int:
+        if self.pinned is not None:
+            return self.pinned
+        return self._owned.version if self._owned is not None else 0
+
+    def bump(self) -> None:
+        """(A step is counted by the owner's head.)"""
+
+    def step_target(self, direction: str) -> Any:
+        return getattr(self.history, direction)
+
+    # -- a call's step ---------------------------------------------------------------------
+
+    def _open_view_step(self) -> None:
+        """The view's own batch and watch, opened the first time a call's step reads it: a
+        Python tool's change is one step of the view's, made one step of the owner's."""
+        view, stack = self._view, self._step
+        assert stack is not None
+        batch = getattr(view, "batch", None) or view.history.batch
+        stack.enter_context(batch())
+        self._view_change = stack.enter_context(view.history.watch())
+        for watch in self._watches:
+            watch.view = self._view_change
+
+    @contextmanager
+    def batch(self, owner: StepOwner | None = None) -> Iterator[None]:
+        """One step around a call: what a Python tool changed in the view is committed by the
+        owner as the step of ``owner``'s tool and caller; a served call's step is the
+        owner's already."""
+        outer = self.batch_depth == 0
+        before = self.version
+        self.batch_depth += 1
+        try:
+            if not outer:
+                yield
+            else:
+                with ExitStack() as stack:
+                    self._step = stack
+                    yield
+                # The view's batch closed (its step made, as the format makes one) and its
+                # watch with it: what it changed is the owner's to commit.
+                self._step = None
+                self._end_step(owner)
+        finally:
+            self.batch_depth -= 1
+            if outer:
+                self._step = None
+                self._view_change = None
+        if owner is not None and self.version != before:
+            self.owners[self.version] = owner
+            self.own_undos = [undo for undo in self.own_undos if undo.kind != "plain"]
+
+    def _end_step(self, owner: StepOwner | None) -> None:
+        change, owned = self._view_change, self._owned
+        if change is None or not change.changed or not change.parts or owned is None:
+            return
+        if self.owner.head(self.handle).number != owned.head().number:
+            raise OwnerDisagrees(f"{self.doc_id}: the owner's head moved during a Python step")
+        package = self._view.package
+        parts = {part: (package.read(part) if package.has_part(part) else None)
+                 for part in change.parts}
+        head = self.owner.bridge(self.handle, owner.tool if owner is not None else "library",
+                                 dict(owner.caller) if owner is not None else None, parts)
+        owned.committed(head)
+        self._view.history.follow(owned.version, owned.last_version)
+        self._view_number = owned.version
+
+    def served(self, head: Any, touched: list[dict[str, Any]]) -> None:
+        """A call the owner served made ``head``, touching ``touched``: the call's step."""
+        assert self._owned is not None
+        if head.number == self._owned.head().number:
+            return
+        self._owned.committed(head)
+        for watch in self._watches:
+            watch.touched = [*(watch.touched or []), *touched]
+
+    @contextmanager
+    def savepoint(self, start: Any = None) -> Iterator[bool]:
+        view = self.document
+        savepoint = getattr(view, "savepoint", None)
+        with (savepoint() if savepoint is not None else view.history.savepoint(start)):
+            yield True
+
+    @contextmanager
+    def watch(self) -> Iterator[Any]:
+        change = OwnedChange(self)
+        change.view = self._view_change
+        self._watches.append(change)
+        try:
+            yield change
+        finally:
+            self._watches.remove(change)
+            change.end = self.version
+
+    def mark(self) -> Any:
+        return None
+
+    def touched_of(self, change: Any, fmt: Any) -> list[dict[str, Any]]:
+        if getattr(change, "touched", None) is not None:
+            return list(change.touched)
+        view = getattr(change, "view", None)
+        if view is None or fmt is None or fmt.touched is None:
+            return [{"part": part} for part in sorted(change.parts)]
+        return list(fmt.touched(self._view, view))
+
+    # -- versions for others ----------------------------------------------------------------
+
+    def commit(self, fmt: Any) -> None:
+        """Reads find each version in the owner (``keep``), so nothing is copied here."""
+        self._told()
+
+    def snapshot(self) -> bytes:
+        version = self.version
+        kept = self._snapshot
+        if kept is not None and kept[0] == version:
+            return kept[1]
+        data = self.owner.save(self.handle)
+        self._snapshot = (version, data)
+        return data
+
+    def release(self) -> None:
+        super().release()
+        view_history = getattr(self._view, "history", None)
+        if view_history is not None:
+            view_history.clear()
+        if self.owner is not None:
+            self.owner.close(self.handle)
+
+
+__all__ = ["DEPTH", "OwnedChange", "OwnedEntry", "OwnedHistory", "OwnerDisagrees"]

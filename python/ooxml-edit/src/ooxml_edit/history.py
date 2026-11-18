@@ -248,6 +248,22 @@ class History:
         self._version = version
         self._last_version = last
 
+    def follow(self, version: int, last: int) -> None:
+        """The history of a view whose owner keeps the document's steps (an
+        :class:`~ooxml_edit.tools.owned.OwnedEntry`'s): its content is now the owner's state
+        ``version``, the highest number given ``last``, and it keeps no step of its own --
+        undo and redo are the owner's.  Outside a batch; a ``ValueError`` otherwise, or for
+        numbers as :meth:`continue_from` refuses them."""
+        if isinstance(version, bool) or isinstance(last, bool) or not isinstance(version, int) \
+                or not isinstance(last, int) or version < 0 or last < version:
+            raise ValueError(f"follow takes whole numbers 0 <= version <= last, not "
+                             f"version={version!r}, last={last!r}")
+        if self._batch_depth:
+            raise ValueError("follow is outside a batch: the batch's step is still to come")
+        self.clear()
+        self._version = version
+        self._last_version = last
+
     # -- watching --------------------------------------------------------------------------
 
     @contextmanager

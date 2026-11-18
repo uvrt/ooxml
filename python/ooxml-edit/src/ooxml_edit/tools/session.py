@@ -135,6 +135,7 @@ from .numbers import NumberRules, rules_of
 from .registry import role_set
 from .results import ToolError
 from .timing import TimedLock
+from .ownundo import OwnUndo, OwnUndoing
 from ..errors import ArgumentError, ArgumentTypeError
 
 Clock = Callable[[], _dt.datetime]
@@ -393,15 +394,10 @@ class DocumentFormat:
     #: committed before ``at_call``.  ``None`` (or a hook that raises): the read reads the
     #: committed version as before.  ``None`` here: no hook.
     read_version: Callable[..., Any] | None = None
-    #: Lane P2c3: the store that owns the format's documents -- their versions, their history
-    #: and their saved bytes (a library's native session, say) -- with the document the tool
-    #: layer holds as its working copy, kept at the owner's head.  An object with
-    #: ``committed(entry)``: a version the working copy made, committed under the document's
-    #: lock (the owner takes it, as the step of :attr:`DocumentEntry.owners`' tool and caller);
-    #: ``followed(entry, direction, count, caller)``: an undo or redo of ``count`` steps the
-    #: working copy made, with ``caller`` (``None``: the session's own), which the owner makes
-    #: too; and ``save(entry) -> bytes``: the document's bytes, the owner's.  ``None``: the
-    #: working copy is the document.
+    #: Lane P2c4: the store that owns the format's documents -- their versions, their steps,
+    #: their ids and their saved bytes (a library's native session, say); the tool layer keeps
+    #: no copy of its own, only a view made current when Python reads it (:mod:`.owned`, which
+    #: says what the object does).  ``None``: the document the tool layer holds is the document.
     owner: Any = None
 
 
@@ -523,19 +519,6 @@ class StepOwner:
         return {"tool": self.tool, "context": dict(self.caller)}
 
 
-@dataclass(frozen=True)
-class OwnUndo:
-    """An undo a caller made of its own change, for its redo: ``plain`` (the document's
-    latest change, on the history's redo stack) or ``taken`` (taken out from under later
-    changes, :meth:`~ooxml_edit.history.History.redo_step`); ``after`` is the version the
-    change made, ``parts`` what it touched (``None`` when unknown)."""
-
-    caller: Mapping[str, Any]
-    kind: str
-    after: int
-    parts: frozenset[str] | None
-
-
 @dataclass
 class DocumentEntry:
     """One open document and what the session keeps beside it."""
@@ -643,6 +626,23 @@ class DocumentEntry:
             return history.version
         return self._own_version
 
+    #: Lane P2c4: whether a changing call may run on a draft of the document (round 45);
+    #: a document its format's owner holds (:mod:`.owned`) runs each call on the owner.
+    draftable = True
+
+    def step_target(self, direction: str) -> Any:
+        """What makes one plain undo or redo (``direction``): the document's own, else its
+        history's; ``None`` when it has neither."""
+        target = getattr(self.document, direction, None)
+        if target is None and self.history is not None:
+            target = getattr(self.history, direction, None)
+        return target
+
+    def touched_of(self, change: Any, fmt: Any) -> list[dict[str, Any]]:
+        """The format's ``touched`` of ``change`` (lane P2c4: an owned document says it
+        from the owner's step, :class:`~.owned.OwnedEntry`)."""
+        return list(fmt.touched(self.document, change))
+
     def bump(self) -> None:
         """Count a change in a document without a history (the dispatcher calls this)."""
         if self.pinned is not None:
@@ -663,9 +663,6 @@ class DocumentEntry:
         if self.pinned is not None:
             return
         self.count_outside()
-        owner = getattr(fmt, "owner", None)
-        if owner is not None:
-            owner.committed(self)
         read_copy = getattr(fmt, "read_copy", None)
         if read_copy is None:
             return
@@ -1378,13 +1375,16 @@ class Session:
             else:
                 self._free_id(doc_id)
                 self._given_ids.add(doc_id)
-            self.documents[doc_id] = DocumentEntry(
+            made = DocumentEntry if fmt.owner is None else OwnedEntry
+            self.documents[doc_id] = made(
                 doc_id=doc_id, kind=kind, name=name, source=source, document=document,
                 size=size, baseline_problems=baseline, font_dirs=self.font_dirs,
                 locale=self.locale,
                 render_cache=LRU(self.limits.render_cache_size),
                 check_cache=LRU(self.limits.check_cache_size))
             entry = self.documents[doc_id]
+            if isinstance(entry, OwnedEntry):
+                entry.own(fmt.owner)
             entry.ref_states[entry.version] = {}
             entry.change_version = entry.version
             if fmt.problems:
@@ -1443,9 +1443,8 @@ class Session:
         Writes nothing anywhere: the application keeps them where it keeps its run."""
         entry = self.entry(doc_id)
         fmt = self.formats.get(entry.kind)
-        owner = getattr(fmt, "owner", None)
         with entry.lock:
-            data = owner.save(entry) if owner is not None else entry.snapshot()
+            data = entry.snapshot()
             state = fmt.state(entry.document) if fmt is not None and fmt.state is not None else None
             return SavedDocument(doc=doc_id, name=entry.name, kind=entry.kind,
                                  version=entry.version, data=data, state=state)
@@ -1578,20 +1577,12 @@ class Session:
 
     def _history(self, doc_id: str, steps: int, scope: str | None, direction: str,
                  caller: Mapping[str, Any] | None) -> int:
-        """Undo or redo (:meth:`undo`) on the working copy, and -- lane P2c3 -- the same steps
-        in the format's :attr:`~DocumentFormat.owner` of the document, under its lock."""
-        entry = self.entry(doc_id)
-        owner = getattr(self.formats.get(entry.kind), "owner", None)
-        with entry.lock:
-            if caller:
-                done = self._own(doc_id, steps, scope, direction, caller)
-            elif scope is not None:
-                done = self._scoped(doc_id, steps, scope, direction)
-            else:
-                done = self._step(doc_id, steps, direction)
-            if done and owner is not None:
-                owner.followed(entry, direction, done, dict(caller) if caller else None)
-            return done
+        """Undo or redo (:meth:`undo`): a caller's own, a scope's, or the session's."""
+        if caller:
+            return self._own(doc_id, steps, scope, direction, caller)
+        if scope is not None:
+            return self._scoped(doc_id, steps, scope, direction)
+        return self._step(doc_id, steps, direction)
 
     def _own(self, doc_id: str, steps: int, scope: str | None, direction: str,
              caller: Mapping[str, Any]) -> int:
@@ -1611,7 +1602,7 @@ class Session:
             scope_parts = (frozenset(fmt.undo_scope(entry.document, scope))
                            if scope is not None and fmt is not None
                            and fmt.undo_scope is not None else None)
-            own = _OwnUndoing(self, entry, fmt, history, caller, scope_parts, doc_id)
+            own = OwnUndoing(self, entry, fmt, history, caller, scope_parts, doc_id)
             done = 0
             try:
                 while done < steps:
@@ -1676,9 +1667,7 @@ class Session:
     def _step(self, doc_id: str, steps: int, direction: str) -> int:
         entry = self.entry(doc_id)
         with entry.lock:
-            target = getattr(entry.document, direction, None)
-            if target is None and entry.history is not None:
-                target = getattr(entry.history, direction)
+            target = entry.step_target(direction)
             if target is None:
                 raise ToolError("refused", f"{doc_id} keeps no history to {direction}")
             done = 0
@@ -1962,150 +1951,6 @@ class Session:
                                  f"{self.limits.max_total_document_bytes}")
 
 
-class _OwnUndoing:
-    """One caller's undo or redo of its own changes to one document, its lock held
-    (:meth:`Session.undo` with ``caller``)."""
-
-    def __init__(self, session: Session, entry: DocumentEntry, fmt: DocumentFormat | None,
-                 history: Any, caller: dict[str, Any], scope: frozenset[str] | None,
-                 doc_id: str) -> None:
-        self.session = session
-        self.entry = entry
-        self.fmt = fmt
-        self.history = history
-        self.caller = caller
-        self.scope = scope
-        self.doc_id = doc_id
-        #: Whether parts were put back behind the document's back (``fmt.restored``).
-        self.restored = False
-
-    def _mine(self, version: int) -> bool:
-        owner = self.entry.owners.get(version)
-        return owner is not None and dict(owner.caller) == self.caller
-
-    def _in_scope(self, parts: frozenset[str] | None) -> bool:
-        return self.scope is None or bool(parts and parts & self.scope)
-
-    def _who(self, version: int) -> str:
-        owner = self.entry.owners.get(version)
-        if owner is None:
-            return "a change made outside the tools"
-        if dict(owner.caller) == self.caller:
-            return f"your own {owner.tool}"
-        return owner.describe()
-
-    def _later(self, versions: Sequence[int]) -> list[dict[str, Any]]:
-        out = []
-        for version in versions:
-            owner = self.entry.owners.get(version)
-            out.append({"version": version, **(owner.to_json() if owner else {})})
-        return out
-
-    def undo(self) -> bool:
-        """Undo the caller's latest change; ``False`` when it has none left to undo."""
-        from ..history import Entangled
-
-        entry, history = self.entry, self.history
-        steps = history.steps()
-        mine = [k for k, step in enumerate(steps)
-                if self._mine(step.after) and self._in_scope(step.parts)]
-        if not mine:
-            return False
-        index = mine[-1]
-        step = steps[index]
-        later = steps[index + 1:]
-        if not later:
-            # The document's latest change: a plain undo, exact, as the session's.
-            target = getattr(entry.document, "undo", None) or history.undo
-            target()
-            entry.restore_refs()
-            entry.own_undos.append(OwnUndo(self.caller, "plain", step.after, step.parts))
-            return True
-        owner = entry.owners[step.after]
-        mine_words = f"your latest change to {self.doc_id} ({owner.tool}, version {step.after})"
-        last = later[-1].after
-        if (self.fmt is None or self.fmt.undo_scope is None or step.parts is None
-                or not hasattr(history, "undo_step")):
-            # One body every change shares: a later change may build on any of it.
-            raise ToolError(
-                "entangled", f"{mine_words} is not the latest: {self._who(last)} changed "
-                f"{self.doc_id} after it (version {last}"
-                + (f", one of {len(later)} later changes" if len(later) > 1 else "")
-                + "), and undoing yours would take back what came after. Change it back "
-                "with an edit, or ask whoever made the later change to undo it first",
-                details={"version": step.after, "later": self._later(
-                    [later_step.after for later_step in later])})
-        shared = (list(self.fmt.undo_shared(entry.document)) if self.fmt.undo_shared
-                  else [])
-        try:
-            done = history.undo_step(step.after, shared=shared)
-        except Entangled as exc:
-            if not exc.later:
-                raise ToolError(
-                    "entangled", f"{mine_words} also changed {', '.join(exc.shared)}, which "
-                    "other pages show too, and others changed the document since: it is no "
-                    "one caller's to take back. Change it back with an edit",
-                    details={"version": step.after, "parts": exc.parts,
-                             "shared": exc.shared}) from None
-            first = exc.later[0]
-            raise ToolError(
-                "entangled", f"{mine_words} is not the latest: {self._who(first)} (version "
-                f"{first}) changed {', '.join(exc.shared)} after it, which yours changed "
-                "too, so undoing yours would revert that as well. Change it back with an "
-                "edit, or ask whoever made the later change to undo it first",
-                details={"version": step.after, "parts": exc.parts, "shared": exc.shared,
-                         "later": self._later(exc.later)}) from None
-        self.restored = True
-        entry.scoped_refs(done, undone=True)
-        entry.renumber_owners(done, undone=True)
-        entry.own_undos.append(OwnUndo(self.caller, "taken", step.after, step.parts))
-        return True
-
-    def redo(self) -> bool:
-        """Redo the caller's latest undo of its own; ``False`` when there is none."""
-        from ..history import Entangled
-
-        entry, history = self.entry, self.history
-        while True:
-            found = [k for k, undo in enumerate(entry.own_undos)
-                     if dict(undo.caller) == self.caller and self._in_scope(undo.parts)]
-            if not found:
-                return False
-            index = found[-1]
-            undo = entry.own_undos[index]
-            if undo.kind == "plain":
-                waiting = getattr(history, "next_redo", None)
-                if waiting is None:     # the redo stack went: nothing of it comes back
-                    del entry.own_undos[index]
-                    continue
-                if waiting != undo.after:
-                    raise ToolError(
-                        "entangled", f"your undone change to {self.doc_id} (version "
-                        f"{undo.after}) is not the next to redo: another caller undid a "
-                        "change since. Make your change again instead")
-                target = getattr(entry.document, "redo", None) or history.redo
-                target()
-                entry.restore_refs()
-                del entry.own_undos[index]
-                return True
-            try:
-                step = history.redo_step(undo.after)
-            except Entangled as exc:
-                raise ToolError(
-                    "entangled", f"your undone change to {self.doc_id} (version "
-                    f"{undo.after}) cannot come back: {', '.join(exc.shared)} changed since "
-                    "the undo. Make your change again instead",
-                    details={"version": undo.after, "parts": exc.parts,
-                             "shared": exc.shared}) from None
-            del entry.own_undos[index]
-            if step is None:        # out of the history's depth: gone; the one before?
-                continue
-            self.restored = True
-            entry.scoped_refs(step, undone=False)
-            entry.renumber_owners(step, undone=False)
-            return True
-
-
 class SessionView:
     """A session as one agent uses it: :meth:`Session.view`.
 
@@ -2234,3 +2079,6 @@ def _require_bytes(data: Any, what: str) -> bytes:
         kind = "a path" if isinstance(data, (str, PathLike)) else type(data).__name__
         raise ArgumentTypeError(f"{what} takes bytes, not {kind}: the tool layer reads no files")
     return data
+
+
+from .owned import OwnedEntry  # noqa: E402 -- owned.py builds on DocumentEntry
