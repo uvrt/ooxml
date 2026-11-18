@@ -88,6 +88,14 @@ impl crate::warnings::PageDrawings for DrawingWarnings<'_> {
             for (code, message) in painted.warnings {
                 out.push(warning(&code, message));
             }
+            for frame in drawings.text_frames(slot) {
+                let story = self
+                    .layout
+                    .text_box(model, laid, (&slot.path, &slot.paragraph_path), &frame);
+                for (code, message) in story.said {
+                    out.push(warning(&code, message));
+                }
+            }
         }
         out
     }

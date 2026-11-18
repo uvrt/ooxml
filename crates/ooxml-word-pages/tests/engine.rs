@@ -197,13 +197,23 @@ fn a_version_given_by_its_touched_parts_is_the_version_given_whole() {
 }
 
 #[test]
-fn a_floating_table_falls_back_with_its_reason() {
+fn a_floating_table_is_laid_out_in_rust() {
     let body = format!(
         r#"<w:tbl><w:tblPr><w:tblpPr w:tblpX="500" w:tblpY="500"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:p/></w:tc></w:tr></w:tbl>{}"#,
         paragraphs(2, None)
     );
+    let laid = engine().lay_out_bytes(Arc::from(package(&body))).unwrap();
+    assert!(laid.is_ok(), "{:?}", laid.err());
+}
+
+#[test]
+fn a_drop_cap_in_a_cell_falls_back_with_its_reason() {
+    let body = format!(
+        r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc><w:p><w:pPr><w:framePr w:dropCap="drop" w:lines="2" w:wrap="around" w:vAnchor="text" w:hAnchor="text"/></w:pPr><w:r><w:t>D</w:t></w:r></w:p><w:p><w:r><w:t>rop</w:t></w:r></w:p></w:tc></w:tr></w:tbl>{}"#,
+        paragraphs(2, None)
+    );
     let fallback = engine().lay_out_bytes(Arc::from(package(&body))).unwrap().unwrap_err();
-    assert_eq!(fallback.reason, support::FLOATING_TABLE);
+    assert_eq!(fallback.reason, support::DROP_CAP);
     assert!(support::REASONS.contains(&fallback.reason));
 }
 

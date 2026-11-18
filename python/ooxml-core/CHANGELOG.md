@@ -30,6 +30,16 @@ ooxml-core is the Rust core of the ooxml packages (`crates/`), as the Python mod
   `WordPages(..., budget=)`. `WordPages.stats()` adds `swept`, `paint_hits`, `memo_bytes`
   and `paint_bytes`.
 
+- **Glyph outlines and pair kerning bounded on untrusted fonts** (the `glyph_ink` fuzz target's
+  timeout and slow unit). `GPOS` coverage and class ranges are kept as ranges instead of spread
+  out glyph by glyph (a malformed table's ranges claimed every glyph thousands of times); a
+  feature table is read once however many records point at it, and a table stating more lookup
+  references than it has pairs of bytes is refused. A TrueType glyph is read within its own
+  bytes, contours must end in increasing order, and a glyph's outline -- composites and Type 2
+  subroutines followed -- may follow at most 65,535 points, components or operators (the
+  format's own 16-bit counts); past that it is refused, never cut short. Real fonts' boxes and
+  kerning are unchanged.
+
 - **docx-agent's reads served by Rust (phase P1, lane P1c).** `Session.commit(doc, parts)` hands
   a version's touched parts over as `update` does and returns the version it made, held
   (`ooxml_core.Version`: `doc`, `number`); `Session.head(doc)` holds the head. A call given
@@ -44,6 +54,16 @@ ooxml-core is the Rust core of the ooxml packages (`crates/`), as the Python mod
   `re.finditer` matches them where the meaning is certainly the same, refused with why
   (and the call that finds the text as written) where it could differ or the pattern can
   match nothing.
+
+- **Text boxes, text beside drawings, drawings in table cells, floating tables, frames and
+  text effects laid out and drawn in Rust (lane L3g).** A text box's text is laid out as a
+  story of its own in its text area and drawn in its drawing; a cell is laid out around the
+  floating drawings anchored in it (beside or below them, held inside the cell, its row
+  reaching down to them, aligned with its lines); a run's `w14:textFill` and
+  `w14:textOutline` are painted. The fallbacks `floating table`, `drawing in a table cell`
+  and `drawing text wraps around in a table cell` are gone; `text beside a drawing` and
+  `frame` remain only in headers, footers and notes, `text box` only for a text box holding
+  a drawing text wraps around or an inline drawing that is not a picture.
 
 - **SmartArt, VML shapes and text paths painted in Rust; charts in any locale (lane L4d).**
   `ooxml_word_pages::drawings` draws a SmartArt diagram's cached drawing (`dsp:drawing`,

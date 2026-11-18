@@ -9,6 +9,7 @@
 
 use super::grid::CellBox;
 use super::measured::MeasuredTable;
+use crate::floating::AnchorRef;
 use crate::paragraph::MeasuredParagraph;
 use crate::px::Px;
 use crate::vertical::paragraph_gap;
@@ -23,6 +24,58 @@ pub enum Content {
     Paragraph(Arc<MeasuredParagraph>),
     /// A table nested in the cell.
     Table(Arc<MeasuredTable>),
+}
+
+/// Where a drawing text wraps around in a cell is (`CellParagraph.positioned`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Positioned {
+    /// The drawing: its index in the paragraph's text, its run and its index in the run.
+    pub at: (i64, usize, usize),
+    /// Its left edge, px from the page's left.
+    pub x: Px,
+    /// Its top, px from below the row's top border.
+    pub y: Px,
+}
+
+/// A cell paragraph's floating drawings, as the cell is laid out around them (docx2svg's
+/// `CellParagraph.anchors`, `approximate`, `positioned`, `drops`, and its lines broken
+/// beside them).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CellDrawings {
+    /// Its floating drawings and the lines they are on (`anchors_of`).
+    pub anchors: Vec<AnchorRef>,
+    /// `(run, index in the run)` -> why, for each positioned as no probe measured in a
+    /// cell: laid out as if text did not wrap around it, placed by its anchor where it
+    /// can be, and said (`cell_anchors_approximate`).
+    pub approximate: Vec<((usize, usize), String)>,
+    /// `(text index, run, index in the run)` -> where a drawing text wraps around in the
+    /// cell is, px: from the page's left edge, and from below the row's top border
+    /// (`wrap_cell`).
+    pub positioned: Vec<Positioned>,
+    /// Line -> how far it went down below a drawing it could not go beside, or out of
+    /// the band of one text wraps above and below.
+    pub drops: Vec<(usize, Px)>,
+    /// Per line, what it carries beyond its pieces: the segments beside drawings it was
+    /// broken across (empty where none is).
+    pub extra: Vec<crate::rebreak::LineExtra>,
+}
+
+impl CellDrawings {
+    /// How far line `line` went down.
+    pub fn drop(&self, line: usize) -> Px {
+        self.drops
+            .iter()
+            .find(|(l, _)| *l == line)
+            .map_or(Px::ZERO, |(_, d)| *d)
+    }
+
+    /// Why drawing `(run, index)` is approximated, where it is.
+    pub fn approximated(&self, at: (usize, usize)) -> Option<&str> {
+        self.approximate
+            .iter()
+            .find(|(k, _)| *k == at)
+            .map(|(_, why)| why.as_str())
+    }
 }
 
 /// One block of a cell, as its stack takes it.
@@ -56,6 +109,8 @@ pub struct CellBlock {
     pub keep_next: bool,
     /// `w:widowControl`, where stated.
     pub widow: Option<bool>,
+    /// Its floating drawings, as the cell is laid out around them.
+    pub drawings: CellDrawings,
 }
 
 impl CellBlock {
@@ -141,7 +196,7 @@ pub fn cell_stack(
             out.push(StackedLine {
                 entry: *entry,
                 number: n,
-                above: if first { gap + paragraph.top_border } else { Px::ZERO },
+                above: (if first { gap + paragraph.top_border } else { Px::ZERO }) + paragraph.drawings.drop(n),
                 pitch: *pitch,
                 below: if ends { paragraph.border } else { Px::ZERO },
                 box_before: if first { boxed + paragraph.top_border } else { Px::ZERO },
@@ -220,6 +275,10 @@ pub struct CellFlow {
     pub stack: Vec<StackedLine>,
     /// The space after its last block.
     pub after: Px,
+    /// `(top, foot)` of each floating drawing text does not wrap around positioned in a
+    /// vertically aligned cell, px from below the row's top border, laid out from the
+    /// cell's top: its foot counts in the height aligned (`CellFlow.loose`).
+    pub loose: Vec<(Px, Px)>,
 }
 
 impl CellFlow {
@@ -265,16 +324,24 @@ impl CellFlow {
         end
     }
 
-    /// How far down its lines go under its `w:vAlign`, `space` the room between its
-    /// margins (`align_offset`).
+    /// How far down its lines -- and the drawings anchored in it -- go under its
+    /// `w:vAlign`, `space` the room between its margins (`align_offset`): the height
+    /// aligned is its content's, down to the foot of a drawing text does not wrap around
+    /// that starts above its bottom margin (`make_cell_valign_probe.py`, F.25).
     pub fn align_offset(&self, space: Px) -> Px {
+        let mut height = self.content;
+        for (top, foot) in &self.loose {
+            if *top - self.margin_top < space {
+                height = height.max(*foot - self.margin_top);
+            }
+        }
         match self.align {
             Align::Top => Px::ZERO,
             Align::Center => {
-                let half = (space - self.content).scale(1, 2).unwrap_or(Px::ZERO);
+                let half = (space - height).scale(1, 2).unwrap_or(Px::ZERO);
                 half.max(Px::ZERO)
             }
-            Align::Bottom => (space - self.content).max(Px::ZERO),
+            Align::Bottom => (space - height).max(Px::ZERO),
         }
     }
 }

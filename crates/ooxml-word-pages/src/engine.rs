@@ -24,6 +24,7 @@ use crate::error::{Fallback, PagesError};
 use crate::fonts::{DocumentFonts, FontSetup};
 use crate::pictures::PackagePictures;
 use crate::support;
+use crate::text_boxes::{text_boxes, TextBoxJob};
 use crate::version::{LaidVersion, PageView};
 use ooxml_base::{DigestKey, Limits, Locale};
 use ooxml_derive::{CacheBudget, Memo, Weigh};
@@ -495,7 +496,19 @@ impl PageEngine {
             glyph_size: self.glyph_size,
             decimal: self.decimal,
         };
-        let paint = Arc::new(paint_page(&version.layout, &mut generation.model, page, &parts, &cx)?);
+        let mut paint = paint_page(&version.layout, &mut generation.model, page, &parts, &cx)?;
+        if let Some(drawings) = &version.drawings {
+            let job = TextBoxJob {
+                layout: &mut generation.layout,
+                model: &mut generation.model,
+                laid: &version.layout,
+                cx: &cx,
+            };
+            paint.text_boxes = text_boxes(job, drawings, &paint, page);
+            let unpainted: Vec<String> = paint.text_boxes.iter().flat_map(|t| t.unpainted.clone()).collect();
+            paint.unpainted.extend(unpainted);
+        }
+        let paint = Arc::new(paint);
         self.stats.pages_painted += 1;
         if keep {
             self.painted.insert(key, Painted(Arc::clone(&paint)));

@@ -76,6 +76,8 @@ pub struct LayoutMemo {
     line_numbers: std::sync::OnceLock<Arc<crate::paint::LineNumbers>>,
     /// The paths its drawn lines can be of.
     line_paths: std::sync::OnceLock<Arc<crate::facts::LinePaths>>,
+    /// The list labels of the text boxes anchored in the body.
+    text_box_labels: std::sync::OnceLock<Arc<std::collections::HashMap<String, Option<String>>>>,
     /// Each page's facts, made when first asked.
     page_facts: std::sync::OnceLock<Arc<[std::sync::OnceLock<Option<crate::facts::PageFacts>>]>>,
 }
@@ -107,6 +109,16 @@ impl DocumentLayout {
             .get(page)?
             .get_or_init(|| crate::facts::PageFacts::of(self, page))
             .as_ref()
+    }
+
+    /// The list labels of the text boxes anchored in its body
+    /// ([`crate::geometry::text_box::text_box_labels`]), made when first asked.
+    pub fn text_box_labels(&self, model: &mut Model) -> Arc<std::collections::HashMap<String, Option<String>>> {
+        Arc::clone(
+            self.memo
+                .text_box_labels
+                .get_or_init(|| Arc::new(crate::geometry::text_box::text_box_labels(model, &self.document))),
+        )
     }
 
     /// Where each page's line numbers count from (`w:lnNumType`), made when first asked.
@@ -289,6 +301,35 @@ impl WordLayout {
         page_stories(&job, model, &mut self.stories, layout, memo)
     }
 
+    /// A text box of a drawing of `layout` laid out in `frame` as docx2svg lays it out
+    /// (`_text_box`): `path` is the drawing's, `paragraph_path` its anchor's paragraph's.
+    pub fn text_box(
+        &mut self,
+        model: &mut Model,
+        layout: &DocumentLayout,
+        (path, paragraph_path): (&str, &str),
+        frame: &crate::geometry::text_box::TextBoxFrame,
+    ) -> crate::geometry::text_box::TextBoxStory {
+        let labels = layout.text_box_labels(model);
+        let cx = StoryContext {
+            document: &layout.document,
+            faces: self.faces.as_ref(),
+            locale: &self.locale,
+            tables: self.tables.as_ref(),
+        };
+        let mut job = crate::geometry::stories::StoryJob {
+            cx: &cx,
+            model,
+            state: &mut self.stories,
+        };
+        let text = crate::geometry::text_box::TextBoxJob {
+            path,
+            paragraph_path,
+            labels: &labels,
+        };
+        crate::geometry::text_box::lay_out_text_box(&mut job, &text, frame)
+    }
+
     /// What page `page` (0-based, blank pages counted) of `layout` draws beyond its body:
     /// its header and footer, each laid out with the page's field values and stacked where
     /// Word puts it, and its footnotes at its foot.
@@ -315,14 +356,18 @@ impl WordLayout {
         };
         out.stories = crate::geometry::stories::page_stories(&mut job, layout, &geometry.frame, (page, info));
         out.opening = crate::geometry::page_opening(&mut job, layout, &geometry);
-        if let Some(laid) = layout.laid_page(page) {
-            match crate::geometry::footnotes::page_footnotes(&mut job, layout, &geometry.frame, laid) {
-                Ok(found) => out.footnotes = found,
-                Err(why) => out.unpainted.push(why.to_owned()),
+        let before = page.checked_sub(1).and_then(|p| layout.laid_page(p));
+        let found = match (layout.laid_page(page), before) {
+            (Some(laid), _) => crate::geometry::footnotes::page_footnotes(&mut job, layout, &geometry.frame, laid),
+            // The rest of a note going on to a page of its own.
+            (None, Some(before)) => {
+                crate::geometry::footnotes::continued_footnotes(&mut job, layout, &geometry.frame, before)
             }
-            if laid.continued.is_some() {
-                out.unpainted.push("a note going on to a page of its own".to_owned());
-            }
+            (None, None) => Ok(Vec::new()),
+        };
+        match found {
+            Ok(found) => out.footnotes = found,
+            Err(why) => out.unpainted.push(why.to_owned()),
         }
         out
     }

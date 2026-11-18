@@ -41,6 +41,7 @@ mod pictures;
 pub mod png;
 pub mod summary;
 pub mod support;
+mod text_boxes;
 mod version;
 pub mod warnings;
 mod weight;

@@ -22,6 +22,7 @@ use ooxml_word_layout::fields::styleref::{body_style_texts, StyleSearch};
 use ooxml_word_layout::fields::update::PageNumbers;
 use ooxml_word_layout::fields::{cross_reference_problems, field_text, page_counts, Uncomputable};
 use ooxml_word_layout::flow::{body_paragraphs, FlowItem};
+use ooxml_word_layout::px::Px;
 use ooxml_word_layout::stories::story_references;
 use ooxml_word_layout::tables::MeasuredTable;
 use ooxml_word_layout::DocumentLayout;
@@ -174,6 +175,7 @@ pub fn said(
             None,
         );
     }
+    floating_tables_past_foot(layout, &mut out);
     document_notes(document, &mut out);
     let mut pages = PageWalk {
         tables: HashSet::new(),
@@ -215,6 +217,90 @@ pub fn said(
     walk.finish(memo);
     line_numbers(document, &mut out);
     out
+}
+
+/// The floating drawings in a table's cells on a page positioned as no probe measured in a
+/// cell (`_cell_anchors`' approximations), in the order its rows draw them.
+fn cell_drawings(
+    layout: &DocumentLayout,
+    laid: &ooxml_word_layout::paginate::LaidPage,
+    (item, t): (usize, &ooxml_word_layout::flow::TableItem),
+    number: Option<usize>,
+    out: &mut Said,
+) {
+    let paragraphs = || -> Vec<std::sync::Arc<Paragraph>> {
+        layout
+            .document
+            .body
+            .get(t.body)
+            .map(|block| body_paragraphs(std::slice::from_ref(block)).0)
+            .unwrap_or_default()
+    };
+    let mut all: Option<Vec<std::sync::Arc<Paragraph>>> = None;
+    for row in laid.rows.iter().filter(|r| r.item == item) {
+        let table = match &row.room {
+            Some(room) => room.flow.as_any().downcast_ref::<MeasuredTable>(),
+            None => t.flow.as_any().downcast_ref::<MeasuredTable>(),
+        };
+        let Some(table) = table else { continue };
+        for line in table.anchored_lines(&row.row, 0) {
+            for a in line.entry.drawings.anchors.iter().filter(|a| a.line == line.line) {
+                let Some(why) = line.entry.drawings.approximated((a.run, a.index)) else {
+                    continue;
+                };
+                let found = all.get_or_insert_with(paragraphs);
+                let Some(paragraph) = found.get(line.block) else {
+                    continue;
+                };
+                let path = ooxml_word_layout::paint::drawings::anchor_path(paragraph, a.run, a.index);
+                let message = format!(
+                    "a floating drawing in a table cell ({path}) {why}: the cell's text is laid out as if text did \
+                     not wrap around it, and the drawing is placed by its anchor where it can be"
+                );
+                out.approximate("cell-drawing", &message, number, Some(&path));
+            }
+        }
+    }
+}
+
+/// The floating tables that reach below the bottom margin in mode 15, which Word splits
+/// across two pages: each drawn whole where it is positioned, said once, in the order the
+/// pages place them (`page_wraps`' `approximated`).
+fn floating_tables_past_foot(layout: &DocumentLayout, out: &mut Said) {
+    if !layout.mode15 {
+        return;
+    }
+    let mut said: Vec<String> = Vec::new();
+    for page in 0..layout.page_count() {
+        let Some(laid) = layout.laid_page(page) else {
+            continue;
+        };
+        for wrap in &laid.wraps {
+            let Some(FlowItem::Table(t)) = wrap.table.and_then(|item| layout.flow.items.get(item)) else {
+                continue;
+            };
+            let (Some(floating), Some(section)) = (t.flow.floating(), layout.sections.get(t.section)) else {
+                continue;
+            };
+            let props = &section.props;
+            let foot = Px::twips(props.page_size.height - props.margins.bottom.abs());
+            if wrap.bottom - Px::twips(floating.position.bottom).value() <= foot.value() {
+                continue;
+            }
+            let path = match layout.document.body.get(t.body) {
+                Some(Block::Table(table)) => table.path.to_string(),
+                _ => continue,
+            };
+            let message = format!(
+                "a floating table ({path}) that reaches below the bottom margin, which Word splits across pages in \
+                 mode 15, is drawn whole where it is positioned (not modelled)"
+            );
+            if !said.contains(&message) {
+                out.approximate("pagination", &message, None, None);
+                said.push(message);
+            }
+        }
+    }
 }
 
 /// The body's `STYLEREF`s that keep Word's cached result (`_style_references`).
@@ -453,7 +539,11 @@ impl PageWalk {
                     Self::line(model, layout, (&paragraph, p, line), number, out);
                 }
                 Some(FlowItem::Table(t)) if done.insert(item) => {
+                    if let Some(block) = layout.document.body.get(t.body) {
+                        self.drawn |= blocks_hold_drawing(std::slice::from_ref(block));
+                    }
                     self.table(model, layout, laid, (item, t), number, out);
+                    cell_drawings(layout, laid, (item, t), number, out);
                 }
                 _ => {}
             }
@@ -470,6 +560,19 @@ impl PageWalk {
     ) {
         let document = &layout.document;
         let multi = layout.sections.get(item.section).is_some_and(|s| s.multi_column());
+        let framed = paragraph
+            .properties
+            .as_ref()
+            .is_some_and(|p| p.declared.contains_key("framePr"));
+        if line == 0 && framed {
+            out.approximate(
+                "frame",
+                "a frame (w:framePr) is laid out as a paragraph of the flow where it stands, not positioned by its \
+                 frame",
+                number,
+                Some(&paragraph.path),
+            );
+        }
         if let Some(detail) = column_carry_on(layout, (paragraph, item)).filter(|_| line == 0 && multi) {
             out.approximate(
                 "columns",

@@ -222,5 +222,6 @@ pub fn number_span(
         // docx2svg's line-number span leaves its line's baseline unset.
         line_baseline: 0,
         vertical_align: None,
+        effects: None,
     })
 }
