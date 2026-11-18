@@ -78,6 +78,11 @@ impl Stamp {
         element
     }
 
+    /// The author every record carries.
+    pub(crate) fn author(&self) -> &str {
+        &self.tracking.author
+    }
+
     /// Whether a revision record is this edit's author's.
     pub(crate) fn same(&self, work: &Work, element: Id) -> bool {
         work.get(element, Some(W), "author") == Some(self.tracking.author.as_str())

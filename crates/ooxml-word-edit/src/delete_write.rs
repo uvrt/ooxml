@@ -18,10 +18,13 @@ use crate::ranges::renamed_id;
 use crate::set_text::block_key;
 use crate::sink::EditSink;
 use crate::stamping::stamp_document;
+use crate::table_delete::{drop_separator, own_table, separator_of};
 use crate::validate::Orders;
 use crate::work::{Id, Work};
 use crate::{EditError, Result};
 use ooxml_word_model::docx::{at_path, Docx};
+use ooxml_xml::Element;
+use std::sync::Arc;
 
 /// Delete the block `target` names, by the sink's policy.
 ///
@@ -33,33 +36,57 @@ pub(crate) fn delete(sink: &mut EditSink<'_, '_>, target: &str) -> Result<BlockD
     let planned = plan(sink, &docx, target)?;
     let part = planned.block.part.clone();
     sink.read(block_key(&part, &planned.block.id));
-    if let RevisionPolicy::Tracked(tracking) = sink.policy().clone() {
-        if !planned.block.paragraph {
-            return Err(EditError::Unsupported(format!(
-                "a tracked deletion of the table {} (it lands with the table edits)",
-                planned.block.id
-            )));
+    let RevisionPolicy::Tracked(tracking) = sink.policy().clone() else {
+        return outright(sink, &docx, planned, None);
+    };
+    let tree = sink.doc().tree(&part)?.ok_or_else(|| EditError::NoPart(part.clone()))?;
+    let element = at_path(tree.root(), &planned.block.path).ok_or_else(|| EditError::Path(part.clone()))?;
+    let work = Work::of(element, Vec::new());
+    if planned.block.paragraph {
+        if own_insertion(&work, work.root(), &tracking.author) {
+            return outright(sink, &docx, planned, None);
         }
-        let tree = sink.doc().tree(&part)?.ok_or_else(|| EditError::NoPart(part.clone()))?;
-        let element = at_path(tree.root(), &planned.block.path).ok_or_else(|| EditError::Path(part.clone()))?;
-        let work = Work::of(element, Vec::new());
-        if !own_insertion(&work, work.root(), &tracking.author) {
-            return tracked(sink, &docx, &planned, &tracking);
-        }
+        return tracked(sink, &docx, &planned, &tracking);
     }
-    outright(sink, &docx, planned)
+    let separator = separator(tree.root(), &docx, &planned, &tracking.author);
+    if own_table(&work, work.root(), &tracking.author) {
+        return outright(sink, &docx, planned, separator);
+    }
+    crate::table_delete_write::tracked_table(sink, &docx, planned, separator, &tracking)
+}
+
+/// The separator paragraph a table docx-agent inserted came with: its place and id.
+fn separator(root: &Arc<Element>, docx: &Docx, planned: &Planned, author: &str) -> Option<(Vec<u32>, String)> {
+    let (&index, above) = planned.block.path.split_last()?;
+    let parent = if above.is_empty() { root } else { at_path(root, above)? };
+    let k = separator_of(parent, index as usize, author)?;
+    let mut path = above.to_vec();
+    path.push(u32::try_from(k).ok()?);
+    let id = docx.part(&planned.block.part)?.ids.paragraph_at(&path)?.id;
+    Some((path, id))
 }
 
 /// The block removed outright.
-fn outright(sink: &mut EditSink<'_, '_>, docx: &Docx, planned: Planned) -> Result<BlockDeleted> {
+fn outright(
+    sink: &mut EditSink<'_, '_>,
+    docx: &Docx,
+    planned: Planned,
+    separator: Option<(Vec<u32>, String)>,
+) -> Result<BlockDeleted> {
     let part = planned.block.part.clone();
     let path_error = || EditError::Path(part.clone());
-    let renamed = kept_renames(sink, docx, &planned.removed)?;
+    let mut renamed = kept_renames(sink, docx, &planned.removed)?;
+    let mut removed = planned.removed;
     let tree = sink.doc().tree(&part)?.ok_or_else(|| EditError::NoPart(part.clone()))?;
     let path = planned.block.path.to_vec();
     let element = at_path(tree.root(), &path).ok_or_else(path_error)?;
-    let paths = stretch_paths(tree.root(), element, &path, planned.moving);
-    let (mut work, parent, range, found) = editable(tree.root(), &paths, &[&path]).ok_or_else(path_error)?;
+    let mut paths = stretch_paths(tree.root(), element, &path, planned.moving);
+    let mut wanted: Vec<&[u32]> = vec![&path];
+    if let Some((at, _)) = &separator {
+        paths.push(at.clone());
+        wanted.push(at);
+    }
+    let (mut work, parent, range, found) = editable(tree.root(), &paths, &wanted).ok_or_else(path_error)?;
     let &block = found.first().ok_or_else(path_error)?;
     let released = if matches!(sink.policy(), RevisionPolicy::Tracked(_)) {
         crate::inline::relationship_ids(&work, block)
@@ -83,6 +110,12 @@ fn outright(sink: &mut EditSink<'_, '_>, docx: &Docx, planned: Planned) -> Resul
     }
     crate::across::rehome_markers(&mut work, block);
     work.remove(block);
+    if let (Some((_, id)), Some(&paragraph)) = (&separator, found.get(1)) {
+        if drop_separator(&mut work, paragraph) {
+            removed.push(id.clone());
+            renamed.retain(|(old, _)| old != id);
+        }
+    }
     let nodes = work.build_content(work.root()).ok_or_else(path_error)?;
     let keys = stretch_keys(docx, &part, &parent, range);
     let count = (range.1 - range.0) as usize + 1;
@@ -91,7 +124,7 @@ fn outright(sink: &mut EditSink<'_, '_>, docx: &Docx, planned: Planned) -> Resul
     Ok(BlockDeleted {
         id: None,
         renamed,
-        removed: planned.removed,
+        removed,
         part,
     })
 }

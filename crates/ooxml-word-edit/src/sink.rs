@@ -309,6 +309,30 @@ impl<'t, 's> EditSink<'t, 's> {
         })
     }
 
+    /// A tracked write of `work` by `write` (given the edit's [`Stamp`] and the schema's
+    /// child order; it returns the relationship ids released); untracked, nothing.
+    ///
+    /// # Errors
+    /// When the annotation ids cannot be read.
+    pub(crate) fn track(
+        &mut self,
+        work: &mut Work,
+        write: impl FnOnce(&mut Work, &mut Stamp, &crate::validate::Orders) -> Vec<String>,
+    ) -> Result<TextWrite> {
+        let RevisionPolicy::Tracked(tracking) = self.policy.clone() else {
+            return Ok(TextWrite::default());
+        };
+        let shared = self.doc().shared_handle();
+        let orders = shared.facts.orders();
+        let (released, dated, numbered) = self.tracked(tracking, |stamp| Ok(write(work, stamp, orders)))?;
+        Ok(TextWrite {
+            changed: true,
+            released,
+            dated,
+            annotations: Some(numbered),
+        })
+    }
+
     /// Replace `count` children of the element at `parent` (child indexes from the root)
     /// of `part`, from its child `start` on, by `nodes`; ids drawn into them where the
     /// change is applied.
@@ -584,7 +608,8 @@ pub(crate) fn ensured_head(root: &Element, drawings: bool, extra: &[(&str, &str)
     let mc_missing = declared(&namespaces, MC).is_none();
     if missing_any || mc_missing {
         for (name, uri) in &wanted {
-            if declared(&namespaces, uri).is_none() {
+            // lxml's cleanup declares at the top only what the tree uses
+            if declared(&namespaces, uri).is_none() && uses_namespace(root, uri) {
                 namespaces.push(NamespaceDecl {
                     prefix: Some(Arc::from(*name)),
                     uri: Arc::from(*uri),
@@ -635,6 +660,13 @@ pub(crate) fn ensured_head(root: &Element, drawings: bool, extra: &[(&str, &str)
         };
         (head, declared_new)
     })
+}
+
+/// Whether an element or attribute at or below `element` is in the namespace `uri`.
+fn uses_namespace(element: &Element, uri: &str) -> bool {
+    element.name().namespace() == Some(uri)
+        || element.attributes().iter().any(|a| a.name.namespace() == Some(uri))
+        || element.child_elements().any(|c| uses_namespace(c, uri))
 }
 
 /// The draws that number again, where the change is applied, the revision records a
