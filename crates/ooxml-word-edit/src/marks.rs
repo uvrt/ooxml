@@ -217,3 +217,57 @@ pub(crate) fn take_properties(work: &mut Work, target: Id, source: Id, stamp: &m
     }
     record_paragraph_change(work, target, old, stamp, orders);
 }
+
+/// Record a new paragraph's content as inserted: its children but the properties, in one
+/// `w:ins` where the first of them stands (docx-agent's `insert_paragraph_content`).
+fn insert_paragraph_content(work: &mut Work, paragraph: Id, stamp: &mut Stamp) {
+    let content: Vec<Id> = work
+        .children(paragraph)
+        .iter()
+        .copied()
+        .filter(|c| work.is_element(*c) && !work.is(*c, W, "pPr"))
+        .collect();
+    let Some(&first) = content.first() else { return };
+    let container = stamp.make(work, "ins");
+    work.add_previous(first, container);
+    for child in content {
+        work.append(container, child);
+    }
+}
+
+/// Word's typing form at a container's end (docx-agent's `pass_mark`): `previous` gets an
+/// inserted mark, and the properties its old mark had -- before a change recorded on them,
+/// which goes -- are returned (detached) for the new paragraph to record its own against.
+fn pass_mark(work: &mut Work, previous: Id, stamp: &mut Stamp, orders: &Orders) -> Id {
+    mark(work, previous, "ins", stamp, orders);
+    let properties = work.find(previous, W, "pPr");
+    let change = properties.and_then(|p| work.find(p, W, "pPrChange"));
+    let recorded = change.and_then(|c| work.find(c, W, "pPr"));
+    let old = clean_properties(work, recorded.or(properties), previous);
+    if let Some(change) = change {
+        work.remove(change);
+    }
+    old
+}
+
+/// Record `paragraph`, just put in place, as inserted (docx-agent's
+/// `_track_new_paragraph`): its content in a `w:ins`; then, `last` in its container after a
+/// paragraph without a mark record or a section break, as Word writes a paragraph typed at
+/// the end of the one before (that one's mark the inserted one, the new paragraph's
+/// properties a change from the old mark's); else its own mark inserted.
+pub(crate) fn track_new_paragraph(work: &mut Work, paragraph: Id, last: bool, stamp: &mut Stamp, orders: &Orders) {
+    insert_paragraph_content(work, paragraph, stamp);
+    let mut previous = work.previous(paragraph);
+    while let Some(node) = previous.filter(|n| !work.is_any(*n, W, &["p", "tbl"])) {
+        previous = work.previous(node);
+    }
+    if let Some(previous) = previous.filter(|p| last && work.is(*p, W, "p") && mark_record(work, *p).is_none()) {
+        let breaks = work.find(previous, W, "pPr").and_then(|p| work.find(p, W, "sectPr"));
+        if breaks.is_none() {
+            let old = pass_mark(work, previous, stamp, orders);
+            record_paragraph_change(work, paragraph, old, stamp, orders);
+            return;
+        }
+    }
+    mark(work, paragraph, "ins", stamp, orders);
+}
