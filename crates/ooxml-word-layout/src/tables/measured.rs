@@ -89,6 +89,9 @@ pub struct MeasuredTable {
     pub measures: Vec<Option<Arc<MeasuredParagraph>>>,
     /// Where it is positioned, where it floats.
     pub floating: Option<FloatingTable>,
+    /// The lines of its paragraphs broken beside drawings in their cells, by block
+    /// ([`MeasuredTable::line_extra`]).
+    pub extras: Vec<(usize, Vec<crate::rebreak::LineExtra>)>,
     /// How far right of its column's left edge it reaches as a room measures it, twips
     /// (`table_fits`: its last grid line with its right border's outer part in mode 15,
     /// less its last cell's right offset below).

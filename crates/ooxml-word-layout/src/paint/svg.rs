@@ -10,7 +10,7 @@
 
 use super::text_box::TextBoxPaint;
 use super::drawings::{DrawingSlot, Layer};
-use super::{DrawingName, Drawn, FaceNames, GlyphSize, PagePaint, PaintedLine, Rule, Span, SpanKind};
+use super::{DrawingName, Drawn, FaceNames, GlyphSize, PagePaint, PaintedLine, Rule, Span, SpanKind, TextEffects};
 use crate::px::Px;
 use ooxml_base::Q;
 use ooxml_scene::exact::{Decimal4, Element, Value};
@@ -52,6 +52,22 @@ pub struct PageDefs {
 pub trait Drawings {
     /// The paint of the drawing in `slot`.
     fn drawing(&self, slot: &DrawingSlot, defs: &mut PageDefs) -> Option<Vec<String>>;
+
+    /// The paint of glyphs drawn with Word 2010 text effects in `bounds` (`x`, `y`, width,
+    /// height, px), their colour `colour` where the effects state no fill: its attributes
+    /// as written (`fill="..." stroke="..."`), resources added to `defs` (docx2svg's
+    /// `svg._paint`); `None` where there is no painter (the glyphs are drawn in their
+    /// colour).
+    fn text_paint(
+        &self,
+        effects: &TextEffects,
+        bounds: (f64, f64, f64, f64),
+        colour: Option<&str>,
+        defs: &mut PageDefs,
+    ) -> Option<String> {
+        let _ = (effects, bounds, colour, defs);
+        None
+    }
 }
 
 /// No painters: no drawing is drawn.
@@ -144,7 +160,7 @@ fn font(span: &Span, name: Option<DrawingName>) -> Vec<(&'static str, Value)> {
     out
 }
 
-fn text(span: &Span, cx: &SvgContext<'_>) -> Element {
+fn text(span: &Span, cx: &SvgContext<'_>, defs: &mut PageDefs) -> Element {
     let chars: String = span.chars.iter().collect();
     let attrs = font(span, cx.names.drawing_name(&span.face, span.bold, span.italic));
     let mut e = Element::new("text")
@@ -162,7 +178,10 @@ fn text(span: &Span, cx: &SvgContext<'_>) -> Element {
     for (name, value) in attrs {
         e = e.attr(name, value);
     }
-    e = e.attr("fill", colour(span.color.as_deref()));
+    e = match span.effects.as_ref().and_then(|effects| effects_paint(span, effects, cx, defs)) {
+        Some(paint) => e.attr("fill", Value::Attributes(paint)),
+        None => e.attr("fill", colour(span.color.as_deref())),
+    };
     if span.kind != SpanKind::Text {
         e = e.attr("data-docx-kind", Value::Plain(span.kind.name().into()));
     }
@@ -171,6 +190,27 @@ fn text(span: &Span, cx: &SvgContext<'_>) -> Element {
         e = e.attr("xml:space", Value::Plain("preserve".into()));
     }
     e.content(chars)
+}
+
+/// A span's text effects as paint, the box their gradient spans its text (`_paint`): from
+/// its first glyph to its end, an em tall with its baseline four fifths down.
+fn effects_paint(
+    span: &Span,
+    effects: &TextEffects,
+    cx: &SvgContext<'_>,
+    defs: &mut PageDefs,
+) -> Option<String> {
+    let size = font_size(span.half_points, cx.glyph_size);
+    let float = |q: Q| {
+        #[allow(clippy::cast_precision_loss)]
+        let out = *q.numer() as f64 / *q.denom() as f64;
+        out
+    };
+    let x0 = span.xs.first().map_or(span.end, |x| *x).value();
+    let top = Q::from_integer(i128::from(span.y)) - size * Q::new(4, 5);
+    let bounds = (float(x0), float(top), float(span.end.value() - x0), float(size));
+    cx.drawings
+        .text_paint(effects, bounds, span.color.as_deref(), defs)
 }
 
 fn rect(rule: &Rule) -> Element {
@@ -196,7 +236,7 @@ fn under_rank(kind: &str) -> Option<u8> {
 }
 
 /// Lines of text, grouped by paragraph.
-fn lines(painted: &[PaintedLine], cx: &SvgContext<'_>) -> Vec<Element> {
+fn lines(painted: &[PaintedLine], cx: &SvgContext<'_>, defs: &mut PageDefs) -> Vec<Element> {
     let mut out: Vec<Element> = Vec::new();
     let mut current: Option<(&str, Option<&(&'static str, ooxml_word_model::value::Text)>)> = None;
     for line in painted {
@@ -224,7 +264,7 @@ fn lines(painted: &[PaintedLine], cx: &SvgContext<'_>) -> Vec<Element> {
             .spans
             .iter()
             .filter(|s| !s.chars.is_empty())
-            .map(|s| text(s, cx))
+            .map(|s| text(s, cx, defs))
             .collect();
         if let Some(group) = out.last_mut() {
             group.children.push(g);
@@ -325,10 +365,6 @@ pub fn page_element(paint: &PagePaint, cx: &SvgContext<'_>) -> Element {
             text: paint.text_boxes.iter().filter(|t| t.slot == k).collect(),
         })
         .collect();
-    if !defs.defs.is_empty() {
-        root.children
-            .push(Element::raw(format!("<defs>{}</defs>", defs.defs.concat())));
-    }
     let mut slots: Vec<&Painted<'_>> = painted.iter().collect();
     slots.sort_by_key(|p| p.slot.order);
     let layer = |l: Layer, story: bool| -> Vec<&Painted<'_>> {
@@ -342,26 +378,32 @@ pub fn page_element(paint: &PagePaint, cx: &SvgContext<'_>) -> Element {
     let (body_behind, body_front) = (layer(Layer::Behind, false), layer(Layer::Front, false));
     let story_lines = paint.lines.iter().any(|l| l.story.is_some());
     let pictures = paint.pictures.iter().map(|d| picture(d, cx));
+    let d = &mut defs;
     if story_behind.is_empty() && story_front.is_empty() && !(story_lines && !body_behind.is_empty()) {
-        root.children.extend(floats(&body_behind, cx));
+        root.children.extend(floats(&body_behind, cx, d));
         root.children.extend(under_rules(&paint.rules));
-        root.children.extend(lines(&paint.lines, cx));
+        root.children.extend(lines(&paint.lines, cx, d));
         root.children.extend(over_rules(&paint.rules));
         root.children.extend(pictures);
-        root.children.extend(floats(&body_front, cx));
-        return root;
+        root.children.extend(floats(&body_front, cx, d));
+    } else {
+        let (stories, body): (Vec<PaintedLine>, Vec<PaintedLine>) =
+            paint.lines.iter().cloned().partition(|l| l.story.is_some());
+        root.children.extend(floats(&story_behind, cx, d));
+        root.children.extend(lines(&stories, cx, d));
+        root.children.extend(floats(&story_front, cx, d));
+        root.children.extend(floats(&body_behind, cx, d));
+        root.children.extend(under_rules(&paint.rules));
+        root.children.extend(lines(&body, cx, d));
+        root.children.extend(over_rules(&paint.rules));
+        root.children.extend(pictures);
+        root.children.extend(floats(&body_front, cx, d));
     }
-    let (stories, body): (Vec<PaintedLine>, Vec<PaintedLine>) =
-        paint.lines.iter().cloned().partition(|l| l.story.is_some());
-    root.children.extend(floats(&story_behind, cx));
-    root.children.extend(lines(&stories, cx));
-    root.children.extend(floats(&story_front, cx));
-    root.children.extend(floats(&body_behind, cx));
-    root.children.extend(under_rules(&paint.rules));
-    root.children.extend(lines(&body, cx));
-    root.children.extend(over_rules(&paint.rules));
-    root.children.extend(pictures);
-    root.children.extend(floats(&body_front, cx));
+    if !defs.defs.is_empty() {
+        // After the page's white ground, as docx2svg puts them once everything is drawn.
+        root.children
+            .insert(1, Element::raw(format!("<defs>{}</defs>", defs.defs.concat())));
+    }
     root
 }
 
@@ -386,7 +428,7 @@ struct Painted<'a> {
 
 /// Drawings as groups of their painters' paint, then their text boxes' pictures, rules and
 /// lines (`_float`); one with no painter is not written.
-fn floats(slots: &[&Painted<'_>], cx: &SvgContext<'_>) -> Vec<Element> {
+fn floats(slots: &[&Painted<'_>], cx: &SvgContext<'_>, defs: &mut PageDefs) -> Vec<Element> {
     let mut out = Vec::new();
     for painted in slots {
         let (slot, Some(paint)) = (painted.slot, &painted.paint) else {
@@ -409,7 +451,7 @@ fn floats(slots: &[&Painted<'_>], cx: &SvgContext<'_>) -> Vec<Element> {
         let rules: Vec<Rule> = painted.text.iter().flat_map(|t| t.rules.iter().cloned()).collect();
         let text_lines: Vec<PaintedLine> = painted.text.iter().flat_map(|t| t.lines.iter().cloned()).collect();
         g.children.extend(under_rules(&rules));
-        g.children.extend(lines(&text_lines, cx));
+        g.children.extend(lines(&text_lines, cx, defs));
         g.children.extend(over_rules(&rules));
         out.push(g);
     }

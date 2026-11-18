@@ -91,9 +91,33 @@ fn character_units(
     }
 }
 
+/// The pen x, px from the page's left, of the character a drawing anchored at `source` of
+/// run `run` on line `number` of a measured paragraph is positioned against, its column's
+/// text starting at `left` (`anchor_character_units` over `wrapped_positions`): what a
+/// drawing anchored in a table cell is positioned against.
+pub(crate) fn character_px(
+    measured: &MeasuredParagraph,
+    (number, extra, alignment): (usize, Option<&crate::rebreak::LineExtra>, Option<&str>),
+    (source, run): (i64, usize),
+    left: Px,
+) -> Option<Px> {
+    let line = measured.measured.lines.get(number)?;
+    let setting = Setting {
+        alignment,
+        first_line: number == 0,
+        last_line: number + 1 == measured.measured.lines.len(),
+        decimal: '.',
+    };
+    let pieces = &measured.measured.pieces;
+    let geometry = &measured.geometry;
+    let positions = super::positions::wrapped_positions(pieces, line, geometry, extra, &setting).at;
+    let units = character_units(pieces, line, &positions, (source, run), (geometry, number == 0));
+    Some(super::spans::px_at(left, units))
+}
+
 /// A floating drawing's path (`anchor_path`): its `wp:anchor[n]` among the run's DrawingML
 /// ones, or a VML shape's own path.
-fn anchor_path(paragraph: &Paragraph, run: usize, k: usize) -> String {
+pub fn anchor_path(paragraph: &Paragraph, run: usize, k: usize) -> String {
     let Some(r) = paragraph.runs.get(run).filter(|r| !r.path.is_empty()) else {
         return paragraph.path.to_string();
     };
@@ -111,7 +135,7 @@ fn anchor_path(paragraph: &Paragraph, run: usize, k: usize) -> String {
 }
 
 /// The drawing's box, px: where `floating` puts it, at the size Word draws it.
-fn anchor_box(anchor: &Anchor, frames: &Frames) -> Option<(Px, Px, Px, Px)> {
+pub(crate) fn anchor_box(anchor: &Anchor, frames: &Frames) -> Option<(Px, Px, Px, Px)> {
     let twip = |q: Q| Px::from(q * Q::new(5, 24));
     let (x, y) = (horizontal(anchor, frames)?, vertical(anchor, frames)?);
     let picture = anchor.graphic.as_ref().is_some_and(|g| &*g.kind == "picture");
@@ -241,27 +265,41 @@ impl FloatJob<'_> {
     /// What an anchor on this page is positioned against (`_frames`): the paragraph's
     /// and line's tops and the character's x given in px, exact.
     fn frames(&self, (paragraph_top, line_top): (Px, Px), character: Px) -> Option<Frames> {
-        let props = &self.layout.sections.get(self.frame.section)?.props;
-        let m = &props.margins;
-        let to_twips = |v: Px| v.value() / Q::new(5, 24);
-        Some(Frames {
-            page_width: props.page_size.width,
-            page_height: props.page_size.height,
-            left: Q::from_integer(i128::from(m.left + m.gutter)),
-            right: Q::from_integer(i128::from(m.right)),
-            top: Q::from_integer(i128::from(m.top)),
-            bottom: Q::from_integer(i128::from(m.bottom)),
-            header: m.header,
-            footer: m.footer,
-            page: self.page + 1,
-            mode15: self.layout.mode15,
-            paragraph_top: to_twips(paragraph_top),
-            line_top: to_twips(line_top),
-            line_bottom: to_twips(self.line.top + self.line.pitch),
-            character: to_twips(character),
-            column: None,
-            origin: (Q::from_integer(0), Q::from_integer(0)),
-            cell: false,
-        })
+        let tops = [paragraph_top, line_top, self.line.top + self.line.pitch];
+        page_frames(self.layout, (self.frame.section, self.page), tops, character)
     }
+}
+
+/// What an anchor on page `page` (0-based) of section `section` is positioned against
+/// (`_frames`): the page's margins, the paragraph's and line's tops and the line's foot
+/// (`tops`) and the character's x given in px, exact.
+pub(super) fn page_frames(
+    layout: &crate::DocumentLayout,
+    (section, page): (usize, usize),
+    tops: [Px; 3],
+    character: Px,
+) -> Option<Frames> {
+    let props = &layout.sections.get(section)?.props;
+    let m = &props.margins;
+    let to_twips = |v: Px| v.value() / Q::new(5, 24);
+    let [paragraph_top, line_top, line_bottom] = tops;
+    Some(Frames {
+        page_width: props.page_size.width,
+        page_height: props.page_size.height,
+        left: Q::from_integer(i128::from(m.left + m.gutter)),
+        right: Q::from_integer(i128::from(m.right)),
+        top: Q::from_integer(i128::from(m.top)),
+        bottom: Q::from_integer(i128::from(m.bottom)),
+        header: m.header,
+        footer: m.footer,
+        page: page + 1,
+        mode15: layout.mode15,
+        paragraph_top: to_twips(paragraph_top),
+        line_top: to_twips(line_top),
+        line_bottom: to_twips(line_bottom),
+        character: to_twips(character),
+        column: None,
+        origin: (Q::from_integer(0), Q::from_integer(0)),
+        cell: false,
+    })
 }

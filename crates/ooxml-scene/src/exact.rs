@@ -51,6 +51,9 @@ pub enum Value {
     /// Text written between double quotes as it is: the producer says it needs no
     /// escaping (a keyword, a colour, a dash list).
     Plain(String),
+    /// Attributes a painter wrote, `name="value"` pairs written as they are, in its place
+    /// among the element's (its name is not written).
+    Attributes(String),
     /// Bytes as a `data:` URI of their media type, in base64.
     Data {
         /// The media type.
@@ -197,7 +200,7 @@ fn write_value(out: &mut String, value: &Value) {
             out.push('"');
         }
         Value::Text(t) => out.push_str(&quote(t)),
-        Value::Plain(t) => {
+        Value::Plain(t) | Value::Attributes(t) => {
             out.push('"');
             out.push_str(t);
             out.push('"');
@@ -217,6 +220,10 @@ fn open_tag(out: &mut String, e: &Element) {
     out.push_str(e.tag);
     for (name, value) in &e.attrs {
         out.push(' ');
+        if let Value::Attributes(written) = value {
+            out.push_str(written);
+            continue;
+        }
         out.push_str(name);
         out.push('=');
         write_value(out, value);

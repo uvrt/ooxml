@@ -1,7 +1,5 @@
 //! Owns: what the Rust layout does not lay out or draw as docx2svg does yet, found in a
-//! version before or after it is laid out -- the lane that closes each case is named
-//! beside it (L3g: text boxes, text beside drawings, drawings in table cells, floating
-//! tables, frames). Two kinds:
+//! version before or after it is laid out. Two kinds:
 //!
 //! - **layout** ([`unsupported`]): the pages or the facts would differ; the caller lays the
 //!   whole document out another way (docx2svg's Python layout, frozen for this);
@@ -42,8 +40,8 @@ pub const STYLEREF: &str = "STYLEREF field";
 pub const LAYOUT_STOPPED: &str = "layout stopped";
 /// A header or footer it cannot measure.
 pub const STORY_UNSUPPORTED: &str = "header or footer not measured";
-/// A frame other than a drop cap (`w:framePr`): docx2svg lays it out by an approximate
-/// rule and says so in its coverage, which the Rust layout does not.
+/// A frame other than a drop cap (`w:framePr`) in a header, a footer or a note (one in the
+/// body or a cell is laid out as a paragraph where it stands, as docx2svg lays it out).
 pub const FRAME: &str = "frame";
 /// A drop cap anywhere but among the body's top-level paragraphs.
 pub const DROP_CAP: &str = "drop cap";
@@ -55,9 +53,6 @@ pub const UNPAINTED: &str = "not painted";
 
 /// Every reason, for a counter's labels.
 pub const REASONS: &[&str] = &[
-    FLOATING_TABLE,
-    WRAP_IN_CELL,
-    DRAWING_IN_CELL,
     TEXT_BESIDE_DRAWING,
     TEXT_BOX,
     STYLEREF,
@@ -166,27 +161,25 @@ impl Scan {
     }
 
     fn paragraph(&mut self, paragraph: &Paragraph, story: Story) {
-        let in_cell = story == Story::Cell;
         match frame(paragraph) {
             Some(true) if story != Story::Body => {
                 self.found = Some(fallback(DROP_CAP, &paragraph.path));
                 return;
             }
-            Some(false) => {
+            Some(false) if matches!(story, Story::HeaderFooter | Story::Note) => {
                 self.found = Some(fallback(FRAME, &paragraph.path));
                 return;
             }
             _ => {}
         }
         for run in paragraph.runs.iter() {
-            if story != Story::Body
+            if matches!(story, Story::HeaderFooter | Story::Note)
                 && run
                     .anchors
                     .iter()
                     .any(|a| a.wrap.as_deref().is_some_and(|w| SIDE_WRAPS.contains(&w)))
             {
-                let reason = if in_cell { WRAP_IN_CELL } else { TEXT_BESIDE_DRAWING };
-                self.found = Some(fallback(reason, &paragraph.path));
+                self.found = Some(fallback(TEXT_BESIDE_DRAWING, &paragraph.path));
                 return;
             }
             if story == Story::Note
@@ -206,16 +199,6 @@ impl Scan {
             if boxed {
                 self.found = Some(fallback(TEXT_BOX, &paragraph.path));
                 return;
-            }
-            if in_cell {
-                let graphic = run
-                    .drawings
-                    .iter()
-                    .any(|d| matches!(d, InlineObject::Graphic(g) if &*g.kind != "picture"));
-                if graphic || !run.anchors.is_empty() {
-                    self.found = Some(fallback(DRAWING_IN_CELL, &paragraph.path));
-                    return;
-                }
             }
         }
     }

@@ -13,6 +13,7 @@
 //! Must not: place lines (the geometry has), measure (the text engine has), or read a
 //! drawing's or picture's bytes.
 
+mod cell_floats;
 mod decorate;
 pub mod drawings;
 mod line_numbers;
@@ -111,6 +112,30 @@ pub struct Span {
     pub line_baseline: i64,
     /// `w:vertAlign` of the glyph that opened it, where a script (`Span.vertical_align`).
     pub vertical_align: Option<Text>,
+    /// Its run's Word 2010 text effects, where it states any (`Span.paint`).
+    pub effects: Option<TextEffects>,
+}
+
+/// A run's Word 2010 text effects (`w14:textFill`, `w14:textOutline`): DrawingML a painter
+/// of drawings paints the span's glyphs with (the SVG asks [`svg::Drawings::text_paint`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TextEffects {
+    /// `w14:textFill`.
+    pub fill: Option<ooxml_word_model::value::TextEffect>,
+    /// `w14:textOutline`.
+    pub outline: Option<ooxml_word_model::value::TextEffect>,
+}
+
+impl TextEffects {
+    /// The effects run properties `props` state, where they state any.
+    pub fn of(props: &ooxml_word_model::value::Props) -> Option<TextEffects> {
+        let effect = |name: &str| match props.get(name) {
+            Some(ooxml_word_model::value::Value::TextEffect(e)) => Some(e.clone()),
+            _ => None,
+        };
+        let (fill, outline) = (effect("textFill"), effect("textOutline"));
+        (fill.is_some() || outline.is_some()).then_some(TextEffects { fill, outline })
+    }
 }
 
 /// A filled rectangle the text needs (`layout.Rule`).
@@ -476,6 +501,29 @@ fn rows_rules(table: &crate::tables::MeasuredTable, rows: &[&PlacedRow], out: &m
     }
 }
 
+/// The table laid out for flow item `item` of a set (the table's own layout, not a room's).
+fn cell_table<'s>(set: &LineSet<'s>, item: usize) -> Option<&'s crate::tables::MeasuredTable> {
+    match set.items.get(item) {
+        Some(FlowItem::Table(t)) => t.flow.as_any().downcast_ref::<crate::tables::MeasuredTable>(),
+        _ => None,
+    }
+}
+
+/// The cell lines of a set's tables holding floating drawings, by flow item.
+fn anchored_lines<'s>(set: &LineSet<'s>) -> Vec<(usize, crate::tables::AnchoredLine<'s>)> {
+    let mut out = Vec::new();
+    for (item, row, room) in &set.rows {
+        let table = match room {
+            Some(room) => room.flow.as_any().downcast_ref::<crate::tables::MeasuredTable>(),
+            None => cell_table(set, *item),
+        };
+        if let Some(table) = table {
+            out.extend(table.anchored_lines(row, 0).into_iter().map(|a| (*item, a)));
+        }
+    }
+    out
+}
+
 /// Paint a set of lines: each line's spans, each paragraph's rules after its last line,
 /// the tables' rules after the lines.
 fn paint_set(
@@ -486,6 +534,7 @@ fn paint_set(
     to: PaintOut<'_>,
 ) {
     let pictures_from = to.out.pictures.len();
+    let anchored = anchored_lines(set);
     for (k, line) in set.lines.iter().enumerate() {
         if let LineSource::Opening { .. } = line.source {
             // Painted with the page's opening (`PageParts::opening`), before the body.
@@ -498,6 +547,7 @@ fn paint_set(
         let resolved = model.resolve_paragraph(document, &paragraph);
         let extra = match (set.broken, line.source) {
             (Some(broken), LineSource::Flow { item }) => broken.get(&item).and_then(|r| r.extra.get(line.number)),
+            (_, LineSource::Cell { item, block }) => cell_table(set, item).and_then(|t| t.line_extra(block, line.number)),
             _ => None,
         };
         let job = spans::LineJob {
@@ -516,6 +566,20 @@ fn paint_set(
         }
         if let (LineSource::Flow { item }, Some(frame)) = (line.source, set.frame) {
             floats(set, (frame, item), (&paragraph, &resolved, &measured), line, to.out);
+        }
+        if let (LineSource::Cell { item, block }, Some(frame)) = (line.source, set.frame) {
+            let found = anchored.iter().find(|(i, a)| *i == item && a.block == block && a.line == line.number && a.top == line.top);
+            if let Some((_, anchored)) = found {
+                let job = cell_floats::CellFloatJob {
+                    layout: set.layout,
+                    frame,
+                    page: set.page,
+                    paragraph: &paragraph,
+                    resolved: &resolved,
+                    line: anchored,
+                };
+                cell_floats::cell_floats(&job, to.out);
+            }
         }
         for slot in to.out.drawings.get_mut(from..).unwrap_or_default() {
             slot.story = set.story.clone();

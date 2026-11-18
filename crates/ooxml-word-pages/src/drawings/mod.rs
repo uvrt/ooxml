@@ -16,6 +16,7 @@ pub mod colours;
 pub mod diagram;
 pub mod shapes;
 pub mod text_boxes;
+pub mod text_effects;
 pub mod vml;
 pub mod write;
 
@@ -26,6 +27,7 @@ use ooxml_render::Painter;
 use ooxml_word_layout::geometry::text_box::TextBoxFrame;
 use ooxml_word_layout::paint::drawings::DrawingSlot;
 use ooxml_word_layout::paint::svg::{Drawings, PageDefs};
+use ooxml_word_layout::paint::TextEffects;
 use ooxml_word_model::model::Graphic;
 use ooxml_word_model::theme::FontScheme;
 use ooxml_word_model::value::Text;
@@ -280,6 +282,16 @@ fn messages(said: &Said, path: &str) -> Vec<(String, String)> {
 impl Drawings for WordDrawings {
     fn drawing(&self, slot: &DrawingSlot, defs: &mut PageDefs) -> Option<Vec<String>> {
         Some(self.paint(slot, defs).lines)
+    }
+
+    fn text_paint(
+        &self,
+        effects: &TextEffects,
+        bounds: (f64, f64, f64, f64),
+        colour: Option<&str>,
+        defs: &mut PageDefs,
+    ) -> Option<String> {
+        Some(text_effects::paint(&self.colours(), effects, (bounds, colour), defs))
     }
 }
 

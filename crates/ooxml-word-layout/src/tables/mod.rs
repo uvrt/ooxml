@@ -14,10 +14,12 @@
 //! notes in cells (lane L3c), or draw (lane L3d); hold state between tables (the
 //! paginator's flow keeps each table's measure by its `Arc`).
 
+mod anchors;
 mod autofit;
 mod build;
 mod cells;
 mod content;
+mod drawn;
 mod floating;
 mod grid;
 mod measured;
@@ -25,9 +27,11 @@ mod place;
 mod rows;
 mod widths;
 
+pub use anchors::{in_cell, CellEdges, CellPage};
+pub use drawn::AnchoredLine;
 pub use build::{effective_style, table_paragraphs, Frame};
-pub use cells::{Align, CellBlock, CellFlow, Content, Merge, RowFlow, RowHeight, StackedLine};
-pub use grid::{inner_part, line_at as grid_line, CellBox};
+pub use cells::{Align, CellBlock, CellDrawings, CellFlow, Content, Merge, Positioned, RowFlow, RowHeight, StackedLine};
+pub use grid::{inner_part, line_at as grid_line, twips_px as grid_twips_px, CellBox};
 pub use measured::{Approximated, MeasuredTable};
 pub use place::place_table;
 pub use place::MergeDown;
@@ -52,6 +56,12 @@ impl WordTables {
                 page_left: Q::from_integer(i128::from(margins.left + margins.gutter)),
                 column_width: Q::from_integer(i128::from(job.section.column_width(0))),
                 page_width: Q::from_integer(i128::from(job.section.props.page_size.width)),
+                page: CellPage {
+                    width: job.section.props.page_size.width,
+                    height: job.section.props.page_size.height,
+                    header: margins.header,
+                    footer: margins.footer,
+                },
             },
             previous_style: job.previous.and_then(|p| effective_style(cx.document, p)),
             labels: job.labels,

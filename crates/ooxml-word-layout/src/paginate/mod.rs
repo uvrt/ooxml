@@ -31,7 +31,7 @@ use crate::rebreak::{Breaker, Lines, Rebroken};
 use crate::sections::{Sections, StoryKind};
 use crate::stories::StoryHeights;
 use crate::table::PlacedRow;
-pub use floats::{Band, DrawingKey};
+pub use floats::{clear_of_bands, Band, DrawingKey};
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::sync::Arc;

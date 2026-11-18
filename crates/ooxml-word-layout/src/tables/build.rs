@@ -8,7 +8,8 @@
 //! Must not: place rows on pages (`super::place`), or lay out floating tables, floating
 //! drawings text wraps around in a cell, or notes (lane L3c): those are refused.
 
-use super::cells::{cell_stack, Align, CellBlock, CellFlow, Content, Merge};
+use super::anchors::{self, wrap_cell, CellEdges, CellJob, CellPage};
+use super::cells::{cell_stack, Align, CellBlock, CellDrawings, CellFlow, Content, Merge};
 use super::content::{cell_extent, column_minimums, paragraph_minimum};
 use super::floating::{floats, Floating, Standing, UNBORDERED_EDGE};
 use super::grid::{cell_box, cell_width, grid_lines, left_offset, line_at, right_offset, CellBox, TableSpec};
@@ -16,7 +17,9 @@ use super::measured::{Approximated, MeasuredTable};
 use super::rows::{edge_width, row_flow, settle_rows};
 use super::widths::{autofit_room, autofit_unmodelled, Extents};
 use crate::flow::{is_empty, paragraph_borders};
+use crate::floating::anchors_of;
 use crate::input::geometry;
+use crate::rebreak::ParaSource;
 use crate::paragraph::{measure_paragraph, MeasureContext, MeasuredParagraph, ParagraphJob, Unmeasured};
 use crate::px::Px;
 use crate::table::FloatingTable;
@@ -41,6 +44,8 @@ pub struct Frame {
     /// The page's width (a floating table positioned against the page is laid out across
     /// it).
     pub page_width: Q,
+    /// The page its cells' drawings are positioned on.
+    pub page: CellPage,
 }
 
 /// One table to lay out.
@@ -179,7 +184,7 @@ impl Laying<'_, '_, '_, '_> {
                     self.frame = Frame {
                         page_left: Q::from_integer(0),
                         column_width: self.frame.page_width,
-                        page_width: self.frame.page_width,
+                        ..self.frame
                     };
                 }
                 let indent = floating.x - i64::from(floating.x > 0);
@@ -358,6 +363,7 @@ impl Laying<'_, '_, '_, '_> {
             approximation: None,
             approximated: std::mem::take(&mut self.approximated),
             measures: Vec::new(),
+            extras: Vec::new(),
             floating: None,
             fit_right: Q::default(),
         };
@@ -366,6 +372,7 @@ impl Laying<'_, '_, '_, '_> {
             table.floating = Some(floating_box(position, &table, &resolved));
         }
         table.measures = measures_of(&table);
+        table.extras = super::drawn::extras_of(&table);
         Ok(table)
     }
 
@@ -386,8 +393,9 @@ impl Laying<'_, '_, '_, '_> {
             _ => Align::Top,
         };
         let mut placed: Vec<CellBlock> = Vec::with_capacity(items.len());
+        let mut sources: Vec<Option<ParaSource>> = Vec::with_capacity(items.len());
         for (k, (offset, block)) in items.iter().enumerate() {
-            let entry = match block {
+            let (entry, source) = match block {
                 Block::Table(nested) => {
                     let previous = k
                         .checked_sub(1)
@@ -397,7 +405,7 @@ impl Laying<'_, '_, '_, '_> {
                             Block::Table(_) => None,
                         })
                         .flatten();
-                    self.nested_entry(nested, cell, lines, *offset, previous)?
+                    (self.nested_entry(nested, cell, lines, *offset, previous)?, None)
                 }
                 Block::Paragraph(p) => {
                     let near = |j: Option<usize>| j.and_then(|j| resolved.get(j)).cloned().flatten();
@@ -406,17 +414,25 @@ impl Laying<'_, '_, '_, '_> {
                         paragraph: p,
                         offset: *offset,
                         cell_box: &cell_box,
-                        aligned: align != Align::Top,
                     };
-                    self.paragraph_entry(&job, (neighbours.0.as_deref(), neighbours.1.as_deref()))?
+                    let (entry, source) =
+                        self.paragraph_entry(&job, (neighbours.0.as_deref(), neighbours.1.as_deref()))?;
+                    (entry, Some(source))
                 }
             };
             placed.push(entry);
+            sources.push(source);
         }
         hide_marks(cell, items, &mut placed);
+        let mut loose = Vec::new();
+        let reach = self.around_drawings(cell, (lines, &cell_box), (&mut placed, &sources), &mut loose, align)?;
         let previous_style = self.input.previous_style.as_ref();
         let (stack, after) = cell_stack(&placed, previous_style, self.default_style.as_ref());
-        let content = stack.iter().map(|l| l.height()).sum::<Px>() + after;
+        let mut content = stack.iter().map(|l| l.height()).sum::<Px>() + after;
+        if let Some(reach) = reach {
+            // The row holds a drawing text wraps around in it (`make_cell_anchor_probe.py`).
+            content = content.max(reach - Px::twips(cell.margins[0]));
+        }
         let merge = match cell.merge.as_deref() {
             Some("restart") => Merge::Restart,
             Some("continue") => Merge::Continue,
@@ -439,7 +455,37 @@ impl Laying<'_, '_, '_, '_> {
             span_height: None,
             stack,
             after,
+            loose,
         })
+    }
+
+    /// A cell laid out around the drawings anchored in it (`wrap_cell`): how far down the
+    /// lowest one text wraps around reaches, and in a cell aligned vertically, where those
+    /// it does not wrap around are (`loose`).
+    fn around_drawings(
+        &mut self,
+        cell: &ResolvedCell,
+        (lines, cell_box): (&[Q], &CellBox),
+        (placed, sources): (&mut [CellBlock], &[Option<ParaSource>]),
+        loose: &mut Vec<(Px, Px)>,
+        align: Align,
+    ) -> Result<Option<Px>, Unsupported> {
+        if placed.iter().all(|e| e.drawings.anchors.is_empty()) {
+            return Ok(None);
+        }
+        let job = CellJob {
+            document: self.cx.document,
+            faces: self.cx.faces,
+            locale: self.cx.locale,
+            cell,
+            cell_box,
+            edges: CellEdges::of(cell, self.frame.page_left, lines),
+            page: self.frame.page,
+            styles: (self.input.previous_style.as_ref(), self.default_style.as_ref()),
+            sources,
+            mode15: self.spec.mode15,
+        };
+        wrap_cell(&job, placed, (align != Align::Top).then_some(loose))
     }
 
     /// A table nested in `cell`: one line as tall as the table, laid out in the cell's
@@ -462,7 +508,7 @@ impl Laying<'_, '_, '_, '_> {
             frame: Frame {
                 page_left: text_left,
                 column_width: text_right - text_left,
-                page_width: self.frame.page_width,
+                ..self.frame
             },
             previous_style,
             labels,
@@ -485,6 +531,7 @@ impl Laying<'_, '_, '_, '_> {
             hidden: false,
             keep_next: false,
             widow: None,
+            drawings: CellDrawings::default(),
         })
     }
 
@@ -493,10 +540,9 @@ impl Laying<'_, '_, '_, '_> {
         &mut self,
         job: &CellParagraph<'_>,
         neighbours: (Option<&Props>, Option<&Props>),
-    ) -> Result<CellBlock, Unsupported> {
+    ) -> Result<(CellBlock, ParaSource), Unsupported> {
         let document = self.cx.document;
         let paragraph = job.paragraph;
-        refuse_unlaid(paragraph, job.aligned)?;
         let frame = paragraph
             .properties
             .as_ref()
@@ -511,6 +557,8 @@ impl Laying<'_, '_, '_, '_> {
                 &paragraph.path,
             );
         }
+        refuse_unlaid(paragraph)?;
+        let paragraph = &self.cell_drawings_laid(paragraph)?;
         let resolved = self.cx.model.resolve_paragraph(document, paragraph);
         let pp = Arc::clone(&resolved.paragraph);
         let width = job.cell_box.budget.max(1);
@@ -538,7 +586,20 @@ impl Laying<'_, '_, '_, '_> {
         })?;
         self.word_wider(paragraph, &measured, job.cell_box.budget)?;
         let (top_border, border) = paragraph_borders(&pp, neighbours.0, neighbours.1);
-        Ok(CellBlock {
+        let drawings = CellDrawings {
+            anchors: anchors_of(paragraph, &measured),
+            approximate: anchors::approximate(paragraph, self.spec.mode15),
+            ..CellDrawings::default()
+        };
+        let source = ParaSource {
+            paragraph: Arc::clone(paragraph),
+            resolved: resolved.clone(),
+            geometry: Arc::unwrap_or_clone(Arc::clone(&measured.geometry)),
+            columns: false,
+            first_column: None,
+            notes: Vec::new(),
+        };
+        let entry = CellBlock {
             block: job.offset,
             pitches: measured.heights.iter().map(|h| h.pitch).collect(),
             content: Content::Paragraph(Arc::new(measured)),
@@ -552,7 +613,27 @@ impl Laying<'_, '_, '_, '_> {
             hidden: false,
             keep_next: flag(&pp, "keepNext"),
             widow: pp.get("widowControl").map(Value::truthy),
-        })
+            drawings,
+        };
+        Ok((entry, source))
+    }
+
+    /// A cell paragraph as its floating drawings let it be laid out: where they wrap
+    /// text in a way not measured in a cell, refused, or with `carry_on` made drawings
+    /// text does not wrap around, said (`cell_anchors_unmodelled`, `unwrapped`).
+    fn cell_drawings_laid(&mut self, paragraph: &Paragraph) -> Result<Arc<Paragraph>, Unsupported> {
+        let Some(why) = anchors::unmodelled(paragraph, self.spec.mode15) else {
+            return Ok(Arc::new(paragraph.clone()));
+        };
+        if !self.carry_on {
+            return Err(Unsupported(why));
+        }
+        self.approximate(
+            "cell-drawing",
+            format!("{why}: laid out as if text did not wrap around it"),
+            &paragraph.path,
+        );
+        Ok(Arc::new(anchors::unwrapped(paragraph)))
     }
 
     /// A word wider than its column in an autofit table Word would widen the column for
@@ -587,31 +668,17 @@ struct CellParagraph<'a> {
     paragraph: &'a Paragraph,
     offset: usize,
     cell_box: &'a CellBox,
-    aligned: bool,
 }
 
-/// What of a cell paragraph this layout does not lay out: a drawing it cannot read, a
-/// floating drawing text wraps around, one in a cell aligned vertically (lane L3c).
-fn refuse_unlaid(paragraph: &Paragraph, aligned: bool) -> Result<(), Unsupported> {
+/// A drawing in a cell this layout cannot read (a VML shape it cannot read, an embedded
+/// object): refused (docx2svg draws a placeholder of its estimated height).
+fn refuse_unlaid(paragraph: &Paragraph) -> Result<(), Unsupported> {
     if paragraph
         .runs
         .iter()
         .any(|r| r.breaks.iter().any(|(_, k)| &**k == "drawing"))
     {
         return Err(unsupported("a drawing in a cell"));
-    }
-    let anchors = paragraph.runs.iter().flat_map(|r| r.anchors.iter());
-    for anchor in anchors {
-        if !matches!(anchor.wrap.as_deref(), None | Some("wrapNone")) {
-            return Err(unsupported(
-                "a floating drawing text wraps around in a cell (laid out by the floats' lane)",
-            ));
-        }
-        if aligned {
-            return Err(unsupported(
-                "a floating drawing in a cell aligned vertically (laid out by the floats' lane)",
-            ));
-        }
     }
     Ok(())
 }
