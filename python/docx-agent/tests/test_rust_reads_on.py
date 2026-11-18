@@ -149,3 +149,71 @@ def test_inspect_with_layout_places_the_blocks_as_the_python_path_does(toolbox, 
         assert reads.served()["word_inspect"] == served + 1
     finally:
         session.close(doc)
+
+
+def test_a_placer_callback_holds_no_rust_lock_another_thread_needs():
+    """While Rust waits for a placer (the interpreter lock taken back), another thread's
+    calls on the same document and session -- a commit, a read, a read_batch -- finish:
+    no session, document or memo lock is held across the callback (a deadlock pinned)."""
+    import threading
+
+    path = HERE / "fixtures" / "generated" / "ids-and-markup.docx"
+    data = path.read_bytes()
+    session = ooxml_core.Session()
+    doc = session.open(data, kind="docx", name=path.name)
+    head = session.head(doc)
+    done: list[str] = []
+
+    def other() -> None:
+        session.commit(doc, {"word/document.xml": _part(data, "word/document.xml")})
+        session.call("word_read", json.dumps({"doc": doc}), at=[head])
+        session.call("read_batch", json.dumps({"ops": [{"tool": "describe", "arguments": {"doc": doc}},
+                                                       {"tool": "word_read", "arguments": {"doc": doc}}]}))
+        done.append("other")
+
+    def placer(asked: str) -> str:
+        # Called by Rust in the middle of word_inspect: the other thread runs to its end
+        # meanwhile, through the same session and document.
+        thread = threading.Thread(target=other)
+        thread.start()
+        thread.join(timeout=60)
+        assert not thread.is_alive(), "a call on the same document waited for the placer's caller"
+        return json.dumps([{"unknown": {"reason": "not-drawn", "after_page": None}} for _ in json.loads(asked)])
+
+    reply, _images, _app = session.call("word_inspect", json.dumps({"doc": doc, "target": "body", "layout": True}),
+                                        at=[head], placer=placer)
+    assert json.loads(reply)["ok"] and done == ["other"]
+
+    # Two threads at once, one inspecting with a placer, one committing and reading.
+    errors: list[BaseException] = []
+
+    def inspect() -> None:
+        try:
+            for _ in range(5):
+                session.call("word_inspect", json.dumps({"doc": doc, "target": "body", "layout": True}),
+                             placer=lambda asked: json.dumps([{"placements": []} for _ in json.loads(asked)]))
+        except BaseException as error:  # noqa: BLE001
+            errors.append(error)
+
+    def write() -> None:
+        try:
+            for _ in range(5):
+                session.commit(doc, {"word/document.xml": _part(data, "word/document.xml")})
+                session.call("describe", json.dumps({"doc": doc}))
+        except BaseException as error:  # noqa: BLE001
+            errors.append(error)
+
+    threads = [threading.Thread(target=inspect), threading.Thread(target=write)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=120)
+    assert not any(t.is_alive() for t in threads) and not errors, errors
+
+
+def _part(data: bytes, name: str) -> bytes:
+    import io
+    import zipfile
+
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        return archive.read(name)
