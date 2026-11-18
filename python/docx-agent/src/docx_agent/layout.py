@@ -83,6 +83,7 @@ from docx2svg.relayout import MeasureStore
 from ooxml_edit.tools.results import ToolError
 from ooxml_edit.tools.worker import InProcess, ThreadRunner
 
+from . import finalizers
 from . import pages as _pages
 from .edit.effective import PathFinder
 from .edit import ids as _ids
@@ -345,13 +346,27 @@ class DocumentLayout:
 
     def _map_bodies(self, pages: list, raw: Any) -> list:
         """The body's lines of each page of a Rust layout (``(path, number, top, pitch,
-        baseline, column)``) as lines without spans, mapped to ids."""
-        paths = PathFinder()
-        out = []
+        baseline, column, id)``) as lines without spans, with their ids -- found in Rust
+        (lane L4b: the ids the version's bytes give its paragraphs); a line Rust names no
+        id for is resolved here, as before."""
+        main = self._document.package.document_part()
+        resolved, paths, out = self._paths, None, []
         for index, page in enumerate(pages):
-            lines = [_BodyLine(path, number, top, pitch, baseline, column, index, raw)
-                     for path, number, top, pitch, baseline, column in page if _story_kind(path) == "body"]
-            out.append(self._mapped(lines, paths))
+            mapped = []
+            for path, number, top, pitch, baseline, column, found in page:
+                if _story_kind(path) != "body":
+                    continue
+                line = _BodyLine(path, number, top, pitch, baseline, column, index, raw)
+                key = (main, path)
+                if key not in resolved:
+                    if found is None:
+                        paths = paths or PathFinder()
+                        found = _paragraph_id(self._document, main, path, paths)
+                        if found is None:
+                            self.unmapped.append(path)
+                    resolved[key] = found
+                mapped.append((resolved[key], line))
+            out.append(mapped)
         return out
 
     def _body(self, index: int) -> list:
@@ -359,6 +374,23 @@ class DocumentLayout:
         if self._rust:
             return self._bodies[index]
         return [(key, line) for key, line in self._lines[index] if _in_body(line)]
+
+    @property
+    def texts_of(self) -> Any:
+        """Lane L4b: for a layout laid out in Rust, ``texts_of(index)``: page ``index``'s
+        body lines' text measured there, ``{(path, line number): (characters not white
+        space,)}`` -- what a fact about text reads without painting a line into Python;
+        ``None`` for docx2svg's Python layout (its lines' spans are read)."""
+        return self._texts_by_line if self._rust else None
+
+    def _texts_by_line(self, index: int) -> dict:
+        kept = self.__dict__.setdefault("_texts", {})
+        found = kept.get(index)
+        if found is None:
+            found = kept[index] = {(path, number): (inked,)
+                                   for path, story, _part, number, inked, *_ in self._raw.line_texts(index)
+                                   if story is None}
+        return found
 
     # -- what is known -----------------------------------------------------------------------
 
@@ -869,15 +901,13 @@ class LayoutSummary:
             drawn[id(item)] = (item, value)
             return value
 
+        #: Lane L4b: the summary held in Rust (``ooxml_core.LayoutSummary``), for a layout
+        #: laid out there: made by its engine, each page the version before kept taken as it
+        #: was, compared in Rust -- no line of it is a Python object.
+        self._rust = None
         if layout._rust:
-            # Lane L4: digested in Rust, every page painted there and none read into Python.
-            document = layout._document
-            for rest, lines in layout._raw.laid.digests():
-                self.rest.append(rest)
-                self.lines.append(tuple(
-                    (layout.id_for_path(_part_of(document, path, part), path), path,
-                     story is None and _story_kind(path) == "body", digest)
-                    for path, story, part, digest in lines))
+            self._rust = layout._raw.laid.summary()
+            self.count, self.known = self._rust.count, self._rust.known
             self._drawn = None
             return
         for index, page in enumerate(layout.pages):
@@ -886,6 +916,14 @@ class LayoutSummary:
                                     for key, line in layout._lines[index]))
         #: id -> (page or line, its digest), for the next summary (``keep``), else ``None``.
         self._drawn: dict[int, tuple] | None = drawn if keep else None
+
+    def _lines_here(self) -> None:
+        """The pages and lines of a summary held in Rust, read into Python: for a comparison
+        with a summary made here (a layout docx2svg's Python layout made)."""
+        if self._rust is not None and not self.lines:
+            for rest, lines in self._rust.pages():
+                self.rest.append(rest)
+                self.lines.append(tuple((found, path, body, drawn) for found, path, body, drawn in lines))
 
     def __getstate__(self) -> dict:
         # Sent to the caller without the pages and lines kept for the next summary.
@@ -910,7 +948,18 @@ class LayoutSummary:
 
     def compare(self, before: "LayoutSummary", canon: Any) -> Reflow:
         """:meth:`DocumentLayout.compare` of the layouts these summarise: which pages of
-        this one differ from ``before``'s, ids followed by ``canon``."""
+        this one differ from ``before``'s, ids followed by ``canon``.  Both held in Rust: compared
+        there, ids followed through the aliases ``canon`` follows (:func:`canon_of`)."""
+        aliases = getattr(canon, "aliases", None)
+        if self._rust is not None and before._rust is not None and aliases is not None:
+            found = self._rust.compare(before._rust, dict(aliases))
+            changed = list(found["changed"])
+            return Reflow(changed=changed, first_changed_page=changed[0] if changed else None,
+                          page_count=tuple(found["page_count"]),
+                          moved={key: (was, now) for key, was, now in found["moved"]},
+                          unknown=list(found["unknown"]), why=dict(found["why"]))
+        self._lines_here()
+        before._lines_here()
         limit = min(before.known, self.known)
         count = max(before.count, self.count)
         changed: list[int] = []
@@ -950,6 +999,8 @@ def canon_of(document: "Document") -> Any:
             identifier = aliases[identifier]
         return identifier
 
+    #: What it follows: a summary held in Rust is compared there with these (lane L4b).
+    canon.aliases = aliases  # type: ignore[attr-defined]
     return canon
 
 
@@ -1315,14 +1366,21 @@ PAGE_COST = 2 ** 20
 MEASURE_COST = 96 * 2 ** 10
 
 
+#: What a layout held in Rust costs per page on this side, in bytes: its pages' frames and
+#: the index of where blocks are drawn (:class:`DocumentLayout`), Python objects.
+RUST_PAGE_COST = 16 * 2 ** 10
+
+
 def layout_cost(layout: Any) -> int:
     """What keeping ``layout`` costs, in bytes: :data:`PAGE_COST` a page (one at least); a
-    layout held in Rust (lane L4) what it holds there, and the pages it keeps painted for
-    its readers."""
+    layout held in Rust (lane L4) what it alone holds there now (its ``weight``, lane L4b:
+    what dropping it would give back), the pages it keeps as docx2svg's objects for its
+    readers and :data:`RUST_PAGE_COST` a page."""
     if _pages.is_rust(layout):
         from docx2svg.rust import PAINTED_PAGES
 
-        return layout.weight + min(PAINTED_PAGES, len(layout.pages)) * PAGE_COST // 4
+        pages = len(layout.pages)
+        return layout.weight + min(PAINTED_PAGES, pages) * PAGE_COST // 4 + pages * RUST_PAGE_COST
     return max(1, len(getattr(layout, "pages", None) or ())) * PAGE_COST
 
 
@@ -1543,8 +1601,10 @@ def held_layout(data: bytes, options: dict, state: tuple, *, changed_pages: bool
     try:
         began = time.perf_counter()
         # Lane L4: in Rust where it lays the version out (docx_agent.pages), from the lineage's
-        # last version there; else docx2svg's Python layout, from the one found.
-        rust = _pages.lay_out(data, options, lineage)
+        # last version there; else docx2svg's Python layout, from the one found.  Lane L4b:
+        # only by an engine this process has (a task run here, by the caller's): a worker
+        # process makes none, and lays out only what the Rust layout falls back on.
+        rust = _pages.lay_out(data, options, lineage, make=False)
         if rust is not None:
             laid = (rust, None, list(rust.warnings))
         else:
@@ -1874,6 +1934,12 @@ def own_layout(document: "Document", data: bytes, converter: Any) -> "dict | Non
         return {"layout": 0.0, "facts": 0.0}
     if _kept_failure(document, cache_key(data, options)) is not None:
         return None
+    if _pages.available():
+        # Lane L4b: laid out here, by the document's engine, which keeps it as its last: the
+        # checks served read it here (:func:`check_facts`), nothing goes to a worker.
+        began = time.perf_counter()
+        if _pages.lay_out(data, options, lineage(document)) is not None:
+            return {"layout": time.perf_counter() - began, "facts": 0.0}
     request = dict(BARE_REQUEST)
     state = kept_layout(document, data, options)
     try:
@@ -1938,7 +2004,10 @@ def _keeper(document: "Document") -> threading.Lock:
                 # Round 58: the layouts this process holds of it go with it, and (Q2) those
                 # the workers of the runners that laid it out hold (:func:`remember_runner`).
                 document._layout_runners = []
-                weakref.finalize(document, _collected, document._layout_lineage, document._layout_runners)
+                # A finalizer does no work and takes no lock (it may fire inside any of
+                # them): it hands :func:`_collected` over (docx_agent.finalizers).
+                weakref.finalize(document, finalizers.later, _collected, document._layout_lineage,
+                                 document._layout_runners)
                 # Q3: the lock last -- another thread that finds it (outside the keepers'
                 # lock) finds everything above too.
                 document._layout_lock = lock
@@ -1978,6 +2047,7 @@ def drop_lineage(lineage: str) -> None:
     Round 59 (Q4): the ids read (``edit.ids.valid_long_hex``'s memo, of every document the
     worker read) go too -- strings made over the document's life, scattered over Python's
     arenas, which they kept after the close (the cache holds up to 65,536)."""
+    finalizers.drain()
     forget_lineage(lineage)
     from .edit.ids import valid_long_hex
 
@@ -2055,8 +2125,9 @@ def _tell_runners(runners: list, lineage: str, *, later: bool, wait: bool = True
 
 
 def _collected(lineage: str, runners: list) -> None:
-    """A document was collected: its lineage forgotten here, and queued for the workers
-    (``later``: a finalizer takes no lock)."""
+    """A document was collected: its lineage forgotten here, and queued for the workers.
+    Never run by the finalizer itself, which only hands it over: run by
+    :func:`docx_agent.finalizers.drain` at a safe point, with no layout lock held."""
     forget_lineage(lineage)
     _tell_runners(runners, lineage, later=True)
 
@@ -2071,10 +2142,15 @@ def release_document(document: "Document") -> None:
     (:func:`remember_runner`) are told to drop its layouts too (:func:`drop_lineage`): the
     idle ones at once, the busy ones as their task ends -- not waited for (round 59): the
     close returns while they collect, and none takes a task before it has dropped them."""
+    finalizers.drain()
     lock = getattr(document, "_layout_lock", None)
     if lock is not None:
         with lock:
             document._layouts.clear()
+            account = getattr(document, "_layout_account", None)
+            if account is not None:
+                account.release(account.used)
+            document.__dict__.pop("_facts_layout", None)
             document._layout_kept = None
             document._layout_summaries.clear()
             document._check_facts.clear()
@@ -2348,16 +2424,39 @@ def _lay_out(document: "Document", data: bytes, options: dict, converter: Any = 
 
 def keep(document: "Document", key: str, conversion: _Conversion) -> _Conversion:
     """Cache ``conversion`` -- of the bytes and options ``key`` names -- on ``document``:
-    the newest kept, and as many before it as :data:`_CACHE_SIZE` and a quarter of
-    :data:`LAYOUT_MEMORY` allow (round 58: by what they cost, :func:`layout_cost`, as the
-    process's other layouts are; by count alone, a long document kept eight whole layouts
-    here, about half a gigabyte each at 360 pages)."""
+    the newest kept, and as many before it as the document's room allows, by what each
+    costs now (:func:`layout_cost`).  Lane L4b: the room is the document's account of the
+    process's memory budget (:func:`docx_agent.pages.account`, shared with every engine's
+    pages' paint and every other document's kept layouts), the costs reserved again at
+    each keep -- a layout held in Rust weighs what it alone holds, which grows as the
+    versions after it stop sharing its parts -- and the oldest let go first; no count.
+    Without the Rust layout, as before (round 58): within :data:`_CACHE_SIZE` and a quarter
+    of :data:`LAYOUT_MEMORY`.  Called with the document's layouts' lock held."""
     layouts = document._layouts
     layouts[key] = conversion
-    total = sum(layout_cost(kept.raw) for kept in layouts.values())
-    while len(layouts) > 1 and (len(layouts) > _CACHE_SIZE or total > LAYOUT_MEMORY // 4):
-        total -= layout_cost(layouts.pop(next(iter(layouts))).raw)
+    account = _layout_account(document)
+    if account is None:
+        total = sum(layout_cost(kept.raw) for kept in layouts.values())
+        while len(layouts) > 1 and (len(layouts) > _CACHE_SIZE or total > LAYOUT_MEMORY // 4):
+            total -= layout_cost(layouts.pop(next(iter(layouts))).raw)
+        return conversion
+    account.release(account.used)
+    newest_first = list(reversed(layouts))
+    for index, name in enumerate(newest_first):
+        if not account.reserve(layout_cost(layouts[name].raw)) and index > 0:
+            for older in newest_first[index:]:
+                del layouts[older]
+            break
     return conversion
+
+
+def _layout_account(document: "Document") -> Any:
+    """``document``'s account of the process's memory budget (made once; a read copy shares
+    its document's), or ``None`` without the Rust layout."""
+    account = getattr(document, "_layout_account", None)
+    if account is None and _pages.available():
+        account = document._layout_account = _pages.account()
+    return account
 
 
 def twin_of(document: "Document") -> dict:
@@ -2407,7 +2506,7 @@ def twin(data: bytes, like: dict) -> "Document":
 _SHARED_LAYOUT = ("_layout_lock", "_layout_flights", "_layout_kept", "_layout_count",
                   "_layout_tickets", "_layout_lineage", "_layout_fresh", "_layout_summaries",
                   "_check_facts", "_layout_failures", "_layouts", "_layout_stats", "_tool_seen_layout",
-                  "_layout_owner", "_layout_runners",
+                  "_layout_owner", "_layout_runners", "_layout_account", "_facts_layout",
                   # Lane F: the document's Rust owner and what its checks saw (docx_agent.rust).
                   "_rust_doc", "_rust_refused", "_rust_seen",
                   # The tools' caches keyed by content or by version, set whole (a tuple) or
@@ -2714,6 +2813,86 @@ def check_facts(document: "Document", unlocked: Any, request: dict, *,
     failed = _kept_failure(document, cache_key(data, options))
     if failed is not None:
         raise failed                          # round 53: this version failed already
+    # Lane L4b: a version the Rust layout lays out has its facts made here, by the
+    # document's engine in this process; a worker only for the versions it falls back on.
+    result = _facts_here(document, unlocked, {**request, "summary": summary is None}, data, options, timed)
+    if result is None:
+        result = _facts_there(document, unlocked, converter, request, data, options, key, summary, timed)
+    made = result.pop("summary", None)
+    summary = summary if summary is not None else summary_for(document, key, made)
+    _keep_facts(document, asked, result, data, options)
+    if also is not None:
+        extra = set(request) - set(also)
+        _keep_facts(document, (key, repr(sorted(also.items()))),
+                    {name: value for name, value in result.items() if name not in extra}, data, options)
+    return copy.deepcopy(result), summary
+
+
+def _facts_here(document: "Document", unlocked: Any, request: dict, data: bytes, options: dict,
+                timed: Any) -> "dict | None":
+    """Lane L4b: :func:`check_facts`' facts of ``data`` -- ``document``'s version -- made in
+    this process where the Rust layout lays it out (the document's engine,
+    :func:`docx_agent.pages.lay_out`, the lock let go while it does): the layout mapped to
+    ids on ``document`` where it has not changed meanwhile, else on a copy opened from
+    ``data`` (:func:`convert`'s rule) -- for these facts alone, not kept: mapped, it holds
+    the copy it was mapped on -- and the facts read from it as a worker reads them
+    (:func:`docx_agent.tools.check_worker.facts_of`).  ``None`` where the Rust layout falls
+    back: the caller asks the worker holding the document's Python layouts."""
+    if not _pages.available():
+        return None
+    history = getattr(document, "history", None)
+    seen = history.version if history is not None else None
+    began = time.perf_counter()
+    # Laid out already by the document's owner (lane O) or an earlier call: read as it is,
+    # the lock kept; else laid out with the lock let go.
+    rust = _pages.known(data, options, lineage(document))
+    if rust is None:
+        with unlocked():
+            rust = _pages.lay_out(data, options, lineage(document))
+    laid = time.perf_counter() - began
+    if rust is None:
+        return None
+    try:
+        began = time.perf_counter()
+        key = cache_key(data, options)
+        with _keeper(document):
+            conversion = document._layouts.get(key)
+            mapped = getattr(document, "_facts_layout", None)
+        if conversion is not None and _pages.is_rust(conversion.raw):
+            layout = conversion.layout
+        elif mapped is not None and mapped[0] == key and mapped[1]._raw is rust:
+            layout = mapped[1]
+        else:
+            # Mapped for the checks of this version, the last one only (the checks served
+            # read the newest): a layout mapped to ids holds the document it was mapped on
+            # (a read copy of the version, a whole document), so it is not kept with the
+            # document's conversions; the engine keeps the Rust layout.
+            same = history is not None and history.version == seen
+            layout = DocumentLayout(document if same else type(document).open(data), rust, list(rust.warnings))
+            layout.key = layout_key(data, options)
+            with _keeper(document):
+                document._facts_layout = (key, layout)
+        from .tools.check_worker import facts_of
+
+        result = facts_of(layout, rust, data, options, request, lambda: LayoutSummary(layout))
+        result.update({"made": "rust", "seconds": round(laid, 3), "relaid": rust.relaid,
+                       "relaid_cause": rust.relaid_cause})
+    except _PASSED_ON:
+        raise
+    except Exception as error:
+        raise _failed(document, cache_key(data, options), error) from error
+    finally:
+        read_done()             # lane O: its facts are made; the next layout may start
+    if timed is not None:
+        timed("layout", laid)
+        timed("facts", time.perf_counter() - began)
+    return result
+
+
+def _facts_there(document: "Document", unlocked: Any, converter: Any, request: dict, data: bytes,
+                 options: dict, key: tuple, summary: Any, timed: Any) -> dict:
+    """:func:`check_facts`' facts made in the worker holding the document's (Python) layout
+    (round 38, :func:`docx_agent.tools.check_worker.check_bytes`)."""
     with unlocked() as let_go:
         # Round 59 (R134): a caller holding the document's lock (``unlocked`` yields
         # ``False``: a batch's op, a change) never waits for another's layout in progress.
@@ -2735,14 +2914,7 @@ def check_facts(document: "Document", unlocked: Any, request: dict, *,
             timed("layout", worker["layout"])
             timed("facts", worker["facts"])
             timed("worker_wait", max(0.0, waited - worker["layout"] - worker["facts"]))
-    made = result.pop("summary", None)
-    summary = summary if summary is not None else summary_for(document, key, made)
-    _keep_facts(document, asked, result, data, options)
-    if also is not None:
-        extra = set(request) - set(also)
-        _keep_facts(document, (key, repr(sorted(also.items()))),
-                    {name: value for name, value in result.items() if name not in extra}, data, options)
-    return copy.deepcopy(result), summary
+    return result
 
 
 @contextmanager

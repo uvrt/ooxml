@@ -3,14 +3,19 @@
 //! (docx2svg's `installed_index`): the files of each folder sorted, first found winning --
 //! except the families Word lays out from its own bundle although macOS has them
 //! ([`WORD_PREFER_BUNDLE`]), whose bundle copy wins. And the catalogue's part of the fonts
-//! epoch: a digest of the folders, the files and their stamps.
+//! epoch: a digest of the folders, the files and their stamps. And the installed faces
+//! read so far ([`Catalogue::load`]): read once per catalogue and shared by every clone of
+//! it, so the documents laid out with one machine's fonts hold one copy of each face
+//! (lane L4b).
 //!
 //! Must not: substitute (that is [`crate::word`]), or read a whole file to index it.
 
 use crate::scan::scan_file;
+use crate::sfnt::Face;
 use crate::store::FontStore;
 use ooxml_base::{Digest, DigestKey, Digester};
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex, PoisonError};
 
 /// The families (lowercased) Word lays out from its bundle's copy although an earlier
 /// folder has one (ooxml-common's `office.WORD.prefer_bundle`): the bullet line of a
@@ -54,12 +59,16 @@ pub struct FaceLoc {
 
 type Key = (String, bool, bool);
 
+/// The installed faces read so far, shared by a catalogue's clones.
+type Loaded = Mutex<HashMap<FaceLoc, Option<Arc<Face>>>>;
+
 /// Every installed face by `(family lowercased, bold, italic)`.
 #[derive(Debug, Clone, Default)]
 pub struct Catalogue {
     files: Vec<String>,
     index: HashMap<Key, FaceLoc>,
     epoch: Digest,
+    loaded: Arc<Loaded>,
 }
 
 impl Catalogue {
@@ -130,6 +139,22 @@ impl Catalogue {
         out.sort_unstable();
         out.dedup();
         out
+    }
+
+    /// The face at `at`, read through `store` the first time any clone of this catalogue
+    /// asks; `None` where it cannot be read.
+    pub(crate) fn load(&self, store: &dyn FontStore, at: FaceLoc) -> Option<Arc<Face>> {
+        let loaded = || self.loaded.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(found) = loaded().get(&at) {
+            return found.clone();
+        }
+        let path = self.file(at.file)?;
+        let face = store
+            .read(path)
+            .ok()
+            .and_then(|data| Face::new(data, at.number, path).ok())
+            .map(Arc::new);
+        loaded().entry(at).or_insert(face).clone()
     }
 
     /// The path of an indexed file.

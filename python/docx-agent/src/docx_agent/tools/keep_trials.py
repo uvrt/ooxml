@@ -191,12 +191,13 @@ class _Index:
 
 
 def _trial_layout(data: bytes, options: dict, previous: Any) -> Any:
-    """A trial's bytes laid out in Rust (lane L4) where the layout checked was: by an engine
-    of its own for the document's trials (a trial is no version of the document), each from
-    the trial before; ``None`` where docx2svg's Python layout lays it out."""
+    """A trial's bytes laid out in Rust (lane L4) where the layout checked was: by the
+    document's own engine (lane L4b: one per document; a trial is laid out from the version
+    before it, as any version is, and the next version from the trial); ``None`` where
+    docx2svg's Python layout lays it out."""
     if not pages.is_rust(previous):
         return None
-    return pages.lay_out(data, options, f"{previous.lineage}/trials")
+    return pages.lay_out(data, options, previous.lineage)
 
 
 def _trial(previous: Any, data: bytes, options: dict, layout: Any, index: _Index, found: Any,

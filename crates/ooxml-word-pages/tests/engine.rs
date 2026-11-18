@@ -8,9 +8,40 @@
 
 use ooxml_derive::CacheBudget;
 use ooxml_fonts::{Folder, Location, WordFontOptions};
-use ooxml_word_pages::{support, DiskFonts, EngineOptions, FontSetup, PageEngine};
+use ooxml_word_pages::{support, DiskFonts, EngineBudgets, EngineOptions, FontSetup, PageEngine};
 use ooxml_zip::{Method, NewEntry, Writer};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+
+/// Grants every reservation and counts what is held.
+#[derive(Default)]
+struct Counted(AtomicUsize);
+
+impl CacheBudget for Counted {
+    fn reserve(&self, bytes: usize) -> bool {
+        self.0.fetch_add(bytes, Ordering::SeqCst);
+        true
+    }
+    fn release(&self, bytes: usize) {
+        self.0.fetch_sub(bytes, Ordering::SeqCst);
+    }
+    fn used(&self) -> usize {
+        self.0.load(Ordering::SeqCst)
+    }
+}
+
+/// Grants nothing.
+struct Nothing;
+
+impl CacheBudget for Nothing {
+    fn reserve(&self, _bytes: usize) -> bool {
+        false
+    }
+    fn release(&self, _bytes: usize) {}
+    fn used(&self) -> usize {
+        0
+    }
+}
 
 const W: &str = r#"xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main""#;
 
@@ -96,6 +127,13 @@ fn paragraphs(n: usize, edited: Option<usize>) -> String {
 
 /// The open faces the repository ships (pptx2svg-fonts), Calibri laid out with Carlito.
 fn engine() -> PageEngine {
+    engine_in(EngineBudgets {
+        held: Arc::new(Unlimited),
+        paint: Arc::new(Unlimited),
+    })
+}
+
+fn engine_in(budgets: EngineBudgets) -> PageEngine {
     let folder = Folder {
         location: Location::Folder,
         path: concat!(
@@ -110,7 +148,7 @@ fn engine() -> PageEngine {
         fallbacks: false,
     };
     let setup = Arc::new(FontSetup::new(Arc::new(DiskFonts), &[folder], options));
-    PageEngine::new(setup, EngineOptions::default(), Arc::new(Unlimited))
+    PageEngine::new(setup, EngineOptions::default(), budgets)
 }
 
 fn svgs(engine: &mut PageEngine, version: &ooxml_word_pages::LaidVersion) -> Vec<String> {
@@ -280,6 +318,82 @@ fn a_tables_grid_mismatch_and_a_cached_field_are_said_as_docx2svg_says_them() {
     assert!(version.relaid_cause().is_none());
 }
 
+#[test]
+fn a_kept_version_holds_what_it_changed_and_not_the_document_part() {
+    let mut kept = engine();
+    let mut versions = vec![kept
+        .lay_out_bytes(Arc::from(package(&paragraphs(200, None))))
+        .unwrap()
+        .unwrap()];
+    let first = versions[0].weight();
+    for k in 0..6 {
+        let next = kept
+            .lay_out_bytes(Arc::from(package(&paragraphs(200, Some(20 + 30 * k)))))
+            .unwrap()
+            .unwrap();
+        assert!(next.relaid());
+        // Laid out from the version before: its own containers and the one block it changed
+        // (every measure it shares with the engine is not its own).
+        assert!(next.weight() <= first + first / 4, "{} of {first}", next.weight());
+        let pictures = next.pictures().unwrap().package();
+        assert!(
+            !pictures.has_part("word/document.xml"),
+            "the text is the version's model, not a tree"
+        );
+        assert!(pictures.has_part("word/_rels/document.xml.rels"));
+        versions.push(next);
+    }
+}
+
+#[test]
+fn the_memos_hold_what_the_versions_in_use_need_however_many_versions() {
+    let held = Arc::new(Counted::default());
+    let mut kept = engine_in(EngineBudgets {
+        held: Arc::clone(&held) as Arc<dyn CacheBudget>,
+        paint: Arc::new(Unlimited),
+    });
+    kept.lay_out_bytes(Arc::from(package(&paragraphs(150, None))))
+        .unwrap()
+        .unwrap();
+    let after_first = held.used();
+    for k in 0..40 {
+        // Each version changes another paragraph and drops the one before.
+        let edited = package(&paragraphs(150, Some(k * 3)));
+        kept.lay_out_bytes(Arc::from(edited)).unwrap().unwrap();
+    }
+    let after = held.used();
+    assert!(
+        after < after_first + after_first / 10,
+        "memos grew from {after_first} to {after} bytes over 40 versions"
+    );
+    assert!(kept.stats().swept > 0);
+}
+
+#[test]
+fn a_page_painted_is_kept_within_the_paint_budget() {
+    let mut kept = engine();
+    let version = kept
+        .lay_out_bytes(Arc::from(package(&paragraphs(80, None))))
+        .unwrap()
+        .unwrap();
+    let once = kept.paint(&version, 0).unwrap();
+    let again = kept.paint(&version, 0).unwrap();
+    assert!(Arc::ptr_eq(&once, &again));
+    assert_eq!((kept.stats().pages_painted, kept.stats().paint_hits), (1, 1));
+    let mut none = engine_in(EngineBudgets {
+        held: Arc::new(Unlimited),
+        paint: Arc::new(Nothing),
+    });
+    let version = none
+        .lay_out_bytes(Arc::from(package(&paragraphs(80, None))))
+        .unwrap()
+        .unwrap();
+    let once = none.paint(&version, 0).unwrap();
+    let again = none.paint(&version, 0).unwrap();
+    assert_eq!(*once, *again, "painted again, the same paint");
+    assert_eq!((none.stats().pages_painted, none.stats().paint_hits), (2, 0));
+}
+
 /// A rectangle floating behind its paragraph: `fill` its `a:spPr` fill, `extra` more of it.
 fn floating_shape(fill: &str, extra: &str) -> String {
     format!(
@@ -382,4 +496,74 @@ fn a_text_path_its_shape_type_does_not_say_fits_is_an_approximation() {
     let said = version.said();
     assert_eq!(said.approximations.len(), 1, "{said:?}");
     assert_eq!(said.approximations[0].code, "layout-approximate:text-path");
+}
+
+#[test]
+fn a_kept_pages_warnings_are_said_again_without_walking_it() {
+    let row = |cells: usize| {
+        format!(
+            "<w:tr>{}</w:tr>",
+            "<w:tc><w:p><w:r><w:t>x</w:t></w:r></w:p></w:tc>".repeat(cells)
+        )
+    };
+    // A table off its grid on the last page; the versions edit a paragraph on the first.
+    let body = |edited: Option<usize>| {
+        format!(
+            r#"{}<w:tbl><w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/></w:tblGrid>{}{}</w:tbl>"#,
+            paragraphs(160, edited),
+            row(2),
+            row(3)
+        )
+    };
+    let mut kept = engine();
+    kept.lay_out_bytes(Arc::from(package(&body(None)))).unwrap().unwrap();
+    for k in 0..3 {
+        let next = kept
+            .lay_out_bytes(Arc::from(package(&body(Some(2 + k)))))
+            .unwrap()
+            .unwrap();
+        let whole = engine()
+            .lay_out_bytes(Arc::from(package(&body(Some(2 + k)))))
+            .unwrap()
+            .unwrap();
+        assert_eq!(next.said(), whole.said(), "version {k}");
+        assert!(next.said().warnings.iter().any(|w| w.code == "table-grid-mismatch"));
+    }
+    let (again, walked) = kept.stats().pages_said;
+    assert!(
+        again > walked,
+        "the pages the edits did not reach are said again: {again} again, {walked} walked"
+    );
+}
+
+#[test]
+fn a_summary_made_from_the_one_before_is_the_one_made_whole_and_says_what_changed() {
+    let mut kept = engine();
+    let first = kept
+        .lay_out_bytes(Arc::from(package(&paragraphs(160, None))))
+        .unwrap()
+        .unwrap();
+    let before = kept.summary(&first).unwrap();
+    let edited = package(&paragraphs(160, Some(100)));
+    let second = kept.lay_out_bytes(Arc::from(edited.clone())).unwrap().unwrap();
+    let after = kept.summary(&second).unwrap();
+    let mut fresh = engine();
+    let whole = fresh.lay_out_bytes(Arc::from(edited)).unwrap().unwrap();
+    let alone = fresh.summary(&whole).unwrap();
+    assert_eq!(after.pages.len(), alone.pages.len());
+    for (a, b) in after.pages.iter().zip(&alone.pages) {
+        assert_eq!(**a, **b);
+    }
+    // The pages before the edit are the very summaries of the version before.
+    assert!(Arc::ptr_eq(&after.pages[0], &before.pages[0]));
+    let reflow = after.compare(&before, &std::collections::HashMap::new());
+    assert!(!reflow.changed.is_empty() && !reflow.changed.contains(&1), "{reflow:?}");
+    assert!(
+        reflow.changed.iter().all(|p| reflow.why.get(p) == Some(&"content")),
+        "{reflow:?}"
+    );
+    assert!(after.pages[0]
+        .lines
+        .iter()
+        .all(|l| l.id.as_deref().is_some_and(|id| id.starts_with('p'))));
 }

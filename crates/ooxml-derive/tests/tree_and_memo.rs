@@ -214,3 +214,28 @@ fn memo_misses_computed_elsewhere_are_kept_with_insert() {
     assert!(!memo.insert(4, Blob(5000)), "larger than the whole budget");
     assert!(memo.peek(&4).is_none());
 }
+
+#[test]
+fn a_sweep_drops_what_was_not_used_since_the_last_and_nothing_else_holds() {
+    let budget = Arc::new(Budget {
+        used: AtomicUsize::new(0),
+        limit: usize::MAX,
+    });
+    let mut memo: Memo<u32, Blob> = Memo::new(budget.clone());
+    for key in 0..6u32 {
+        memo.insert(key, Blob(10));
+    }
+    // Everything was used since the memo was made: nothing goes.
+    assert_eq!(memo.sweep(|_| false), 0);
+    memo.get(&1);
+    memo.insert(7, Blob(10));
+    // 0, 2, 3, 4 and 5 were not used since the last sweep.
+    assert_eq!(memo.sweep(|_| false), 5);
+    assert_eq!(memo.stats().entries, 2);
+    assert!(memo.peek(&1).is_some() && memo.peek(&7).is_some());
+    assert_eq!(budget.used(), memo.stats().bytes);
+    memo.insert(8, Blob(11));
+    assert_eq!(memo.sweep(|blob| blob.0 == 10), 0, "held entries stay, used or not");
+    assert_eq!(memo.sweep(|_| false), 3);
+    assert_eq!(budget.used(), 0);
+}

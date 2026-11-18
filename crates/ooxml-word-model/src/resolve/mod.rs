@@ -110,6 +110,14 @@ impl Resolver {
         self.tables.clear();
     }
 
+    /// Drop the resolutions not used since the last sweep that nothing holds any more
+    /// ([`Memo::sweep`]). Returns how many were dropped.
+    pub fn sweep(&mut self) -> usize {
+        self.paragraphs.sweep(|kept| Arc::strong_count(&kept.0) > 1)
+            + self.runs.sweep(|kept| Arc::strong_count(&kept.0) > 1)
+            + self.tables.sweep(|kept| Arc::strong_count(&kept.0) > 1)
+    }
+
     /// The memos' counters: paragraphs, runs and tables together.
     pub fn stats(&self) -> MemoStats {
         let (a, b, c) = (self.paragraphs.stats(), self.runs.stats(), self.tables.stats());

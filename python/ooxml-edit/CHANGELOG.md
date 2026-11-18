@@ -6,6 +6,13 @@ earlier ones were never tagged.
 
 ## 0.124.1 -- unreleased
 
+- **A renderer may lay a whole document out in the caller's process**
+  (`Renderer.lays_out_here(data, font_dirs, locale, state)`, default `False`): where it
+  says so, `lay_out_views` runs there, the document's lock let go as for a worker, and only
+  the rasterising goes to the workers -- for a layout the process holds outside the
+  interpreter, which the workers then need not hold too (docx-agent's Rust layout, lane
+  L4b).
+
 - **`warm(wait=True)` means every worker is ready.** A worker that had started was no longer
   counted as starting while its notes were delivered, before it was idle, so a
   `warm(wait=True)` after a background `warm()` could return one worker short (a flaky
