@@ -11,6 +11,7 @@ mod setup;
 mod stories;
 
 pub use breaks::{InsertSectionBreak, RemoveSectionBreak};
+pub(crate) use setup::canonical as element_canonical;
 pub use setup::SectionValues;
 pub use stories::{LinkToPrevious, SetStoryText, StoryEdited, UnlinkFromPrevious};
 

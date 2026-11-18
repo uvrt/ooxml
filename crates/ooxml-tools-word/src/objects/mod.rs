@@ -11,10 +11,11 @@
 
 mod drawings_args;
 mod edit_table;
+mod format_table;
 mod format_table_args;
+mod table_view;
 
-pub use drawings_args::{
-    Against, ControlAction, ControlType, DrawingAction, WordControls, WordDrawings, Wrap, ZOrder,
-};
+pub use drawings_args::{Against, ControlAction, ControlType, DrawingAction, WordControls, WordDrawings, Wrap, ZOrder};
 pub use edit_table::{CellArg, KeyPair, Loose, Position, Side, TableAction, WordEditTable};
+pub use format_table::word_format_table;
 pub use format_table_args::{Across, BorderStyle, HeightRule, Look, Scope, Vertical, WidthOf, WordFormatTable};

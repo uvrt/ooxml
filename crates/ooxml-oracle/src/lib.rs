@@ -39,6 +39,7 @@ pub mod layout_svg;
 pub mod layout_tables;
 pub mod layout_updates;
 pub mod metafile;
+pub mod object_tools;
 pub mod painter;
 pub mod pixels;
 pub mod raster;

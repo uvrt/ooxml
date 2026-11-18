@@ -142,7 +142,9 @@ impl ToolSpec {
             })?;
         }
         for property in self.arguments.properties() {
-            let Some(name) = &property.intent.names_as else { continue };
+            let Some(name) = &property.intent.names_as else {
+                continue;
+            };
             if names_meant(&arguments, &property.name, name) {
                 renamed(&mut arguments, &property.name, name, "", notes)?;
             }
@@ -293,7 +295,9 @@ fn names_meant(arguments: &Value, alias: &str, name: &str) -> bool {
     if map.get(name).is_some_and(|v| !v.is_null()) {
         return false;
     }
-    let Some(Value::Array(items)) = map.get(alias) else { return false };
+    let Some(Value::Array(items)) = map.get(alias) else {
+        return false;
+    };
     !items.is_empty()
         && items
             .iter()

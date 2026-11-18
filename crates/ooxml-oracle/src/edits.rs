@@ -116,6 +116,9 @@ fn edit(bytes: &Arc<[u8]>, case: &Value) -> Result<Value, String> {
     if case.get("op").and_then(Value::as_str) == Some("tool") {
         return crate::review_tools::tool_case(bytes, case);
     }
+    if case.get("op").and_then(Value::as_str) == Some("objects") {
+        return crate::object_tools::case(bytes, case);
+    }
     if case.get("op").and_then(Value::as_str) == Some("structure") {
         return crate::structure_tools::case(bytes, case);
     }

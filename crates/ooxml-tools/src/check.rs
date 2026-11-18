@@ -163,7 +163,10 @@ impl ToolSpec {
             kind_problems(property, out);
             if let Some(name) = property.intent.names_as.as_deref() {
                 if self.arguments.property(name).is_none() || name == property.name {
-                    out.push(format!("{} names_as {name:?}, which is not another parameter", property.name));
+                    out.push(format!(
+                        "{} names_as {name:?}, which is not another parameter",
+                        property.name
+                    ));
                 }
             }
         }
