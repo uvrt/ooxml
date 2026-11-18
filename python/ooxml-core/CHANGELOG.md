@@ -5,6 +5,13 @@ ooxml-core is the Rust core of the ooxml packages (`crates/`), as the Python mod
 
 ## 0.10.0 -- unreleased
 
+- **A chart's axis intervals no longer overflow on a vast plot band** (the `chart_layout`
+  fuzz target's find). How many rungs a value axis has room for is floored to a whole count
+  held to what an axis can use (none to `AXIS_MAX_INTERVALS` plus the end labels' lines)
+  where it is made, for the side, radial and bottom axes alike, so a finite count past `i64`
+  no longer saturates and overflows taking the end labels' lines; a decade is asked only of a
+  finite positive value. Every in-range count is the same as before.
+
 - **Layout answers by id, made per page (lane L4b, after review).** A version knows its
   body blocks' ids as docx-agent names them in its bytes (`LaidPages.ids_of`, and each body
   line's id in `body_lines`); its layout summary is made and compared in Rust
