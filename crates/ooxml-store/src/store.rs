@@ -229,8 +229,10 @@ impl<D: DocModel> Store<D> {
                 held: Duration::ZERO,
             });
         }
+        // a key written only as a merge (made where the change is applied) is no conflict
+        // with another writer of it
         let mut depends = parts.reads.clone();
-        depends.extend(&parts.writes);
+        depends.extend(&parts.writes.without(&parts.merges));
         let mut state = lock(&self.state);
         let entered = self.clock.monotonic();
         let head = self.head.load();

@@ -34,6 +34,15 @@ pub trait DocModel: Clone + Send + Sync + 'static {
     /// is not known).
     fn written(change: &Self::Change, into: &mut KeySet<Self::Key>);
 
+    /// Add to `into` the keys of [`DocModel::written`] that `change` writes as a merge made
+    /// where it is applied (an id drawn from the version it lands on, a name added to a
+    /// list): a transaction that read one conflicts with it, but two that both write one
+    /// do not, as their changes give the serial result in either commit order. None by
+    /// default.
+    fn merged(change: &Self::Change, into: &mut KeySet<Self::Key>) {
+        let _ = (change, into);
+    }
+
     /// `change`, made on a version `past` had not been applied to, moved to apply after
     /// `past` (design section 5: a commit's patches rebased through those committed since
     /// its snapshot). Called only when the two transactions' keys are disjoint; an error

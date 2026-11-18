@@ -516,6 +516,23 @@ impl DocModel for WordDoc {
         }
     }
 
+    fn merged(change: &Change, into: &mut KeySet<Key>) {
+        match change {
+            // revision ids drawn where the splice lands, the people part kept there
+            Change::Splice { keys, .. } => {
+                if keys.contains(&Key::Annotations) {
+                    into.insert(Key::Annotations);
+                }
+            }
+            Change::People { keys, .. } => {
+                for key in keys.iter() {
+                    into.insert(key.clone());
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn rebase(change: &Change, past: &Change) -> Result<Change, ModelError> {
         if change.part().is_none() || change.part() != past.part() {
             return Ok(change.clone());

@@ -73,6 +73,15 @@ impl<K: Ord + Clone> KeySet<K> {
         }
     }
 
+    /// The keys of this set not in `other` (every key less some keys stays every key).
+    pub fn without(&self, other: &Self) -> Self {
+        match (self, other) {
+            (Self::Everything, _) => Self::Everything,
+            (Self::Keys(_), Self::Everything) => Self::new(),
+            (Self::Keys(a), Self::Keys(b)) => Self::Keys(a.difference(b).cloned().collect()),
+        }
+    }
+
     /// Whether the sets share a key.
     pub fn intersects(&self, other: &Self) -> bool {
         match (self, other) {
