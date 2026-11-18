@@ -26,10 +26,10 @@ pub struct BlockIds {
 impl BlockIds {
     /// The ids of the body of the part whose root is `root`, indexed as `ids`.
     pub fn of(root: &Element, ids: &PartIds) -> BlockIds {
-        let rows: HashMap<&[u32], &str> = ids
-            .tables
+        let rows: HashMap<Vec<u32>, String> = ids
+            .tables()
             .iter()
-            .flat_map(|t| t.rows.iter().map(|(path, id)| (&**path, id.as_str())))
+            .flat_map(|t| t.rows.into_iter().map(|(path, id)| (path.to_vec(), id)))
             .collect();
         let mut walk = Walk {
             ids,
@@ -76,7 +76,7 @@ impl BlockIds {
 /// One walk of a part's tree.
 struct Walk<'a> {
     ids: &'a PartIds,
-    rows: HashMap<&'a [u32], &'a str>,
+    rows: HashMap<Vec<u32>, String>,
     out: HashMap<Text, Text>,
     /// The child indexes from the root of the element walked now.
     place: Vec<u32>,
@@ -97,12 +97,11 @@ impl Walk<'_> {
             let here = format!("{path}/w:{local}[{count}]");
             self.place.push(u32::try_from(k).unwrap_or(u32::MAX));
             let named = if child.name().is(Some(W), "tr") {
-                self.rows.get(self.place.as_slice()).map(|id| (*id).to_owned())
+                self.rows.get(&self.place).cloned()
             } else {
                 self.ids
                     .at(self.place.as_slice())
                     .and_then(|entry: Entry| self.ids.id_of(entry))
-                    .map(str::to_owned)
             };
             if let Some(id) = named {
                 self.out.insert(Text::from(here.as_str()), Text::from(id.as_str()));

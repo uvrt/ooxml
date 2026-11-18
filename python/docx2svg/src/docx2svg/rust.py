@@ -521,7 +521,7 @@ class _Xs(list):
 
     def __init__(self, raw: Sequence) -> None:
         super().__init__()
-        self._raw = raw
+        self._raw: "Sequence | None" = raw
 
     def _made(self) -> "_Xs":
         raw = object.__getattribute__(self, "_raw")

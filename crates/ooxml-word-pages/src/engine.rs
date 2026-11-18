@@ -384,7 +384,11 @@ impl PageEngine {
             return Ok(Err(why));
         }
         let relaid = !laid.relaid.is_empty();
-        *(if relaid { &mut self.stats.relaid } else { &mut self.stats.full }) += 1;
+        *(if relaid {
+            &mut self.stats.relaid
+        } else {
+            &mut self.stats.full
+        }) += 1;
         let (pictures, drawings) = pictures_of(package, &document, &generation.fonts, &self.numbers);
         let others_changed = self.changed.iter().any(|name| *name != *document.main_part);
         let with = SayWith {
