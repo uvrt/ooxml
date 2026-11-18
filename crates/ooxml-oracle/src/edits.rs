@@ -6,7 +6,8 @@
 //!
 //! The manifest is a JSON list of `{"file": path, "cases": [{"op", "target", "text",
 //! "tracked": {"author", "date"} or null, ...}]}` (`op`: `set_text` when absent,
-//! `set_text_paragraphs` (set_text in lines), `insert_paragraph` with `after`,
+//! `set_text_paragraphs` (set_text in lines), `insert_paragraph` with `after` and `style`,
+//! `set_paragraph_style` with `style` (null: the default),
 //! `insert_text`, `delete_text`, `replace` with `find`, `case`, `count`, `keep`); each case
 //! runs on the document as opened.
 //!
@@ -20,8 +21,8 @@ use ooxml_word_edit::find::{Literal, Pattern};
 use ooxml_word_edit::touched::Touched;
 use ooxml_word_edit::validate::problems;
 use ooxml_word_edit::{
-    DeleteText, EditError, Edited, Editor, InsertParagraph, InsertText, Keep, RangesEdited, ReplaceText, RevisionPolicy, SetText,
-    TextEdited, Tracking, WordDoc,
+    DeleteText, EditError, Edited, Editor, InsertParagraph, InsertText, Keep, RangesEdited, ReplaceText,
+    RevisionPolicy, SetParagraphStyle, SetText, TextEdited, Tracking, WordDoc,
 };
 use serde_json::{json, Map, Value};
 use std::sync::Arc;
@@ -140,6 +141,7 @@ fn edit(bytes: &Arc<[u8]>, case: &Value) -> Result<Value, String> {
                     anchor: text("target"),
                     after: case.get("after").and_then(Value::as_bool).unwrap_or(true),
                     text: text("text"),
+                    style: case.get("style").and_then(Value::as_str).map(str::to_owned),
                     policy: policy(case),
                 },
             )
@@ -149,6 +151,21 @@ fn edit(bytes: &Arc<[u8]>, case: &Value) -> Result<Value, String> {
                     out.renamed.iter().map(|(old, new)| (old.clone(), json!(new))).collect();
                 let result = json!({"id": out.id, "changed": true, "renamed": renamed, "created": [out.id]});
                 report(&package, &done, result)
+            }),
+        "set_paragraph_style" => editor
+            .run(
+                &caller,
+                &SetParagraphStyle {
+                    target: text("target"),
+                    style: case.get("style").and_then(Value::as_str).map(str::to_owned),
+                    policy: policy(case),
+                },
+            )
+            .map(|done| {
+                let out = &done.out;
+                let renamed: Map<String, Value> =
+                    out.renamed.iter().map(|(old, new)| (old.clone(), json!(new))).collect();
+                report(&package, &done, json!({"id": out.id, "renamed": renamed}))
             }),
         "replace" => {
             let pattern = match pattern(case, &text("find"), &text("text")) {

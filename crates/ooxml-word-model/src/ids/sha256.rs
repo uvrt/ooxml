@@ -134,7 +134,7 @@ impl Sha256 {
 }
 
 /// SHA-256 of `data`.
-pub(crate) fn sha256(data: &[u8]) -> [u8; 32] {
+pub fn sha256(data: &[u8]) -> [u8; 32] {
     let mut hash = Sha256::new();
     hash.update(data);
     hash.finish()

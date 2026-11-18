@@ -15,7 +15,8 @@ use ooxml_store::{Caller, Clock, Seq, Snapshot, StoreConfig};
 use ooxml_store::{Command, Txn};
 use ooxml_word_edit::find::Literal;
 use ooxml_word_edit::{
-    DeleteText, EditError, Editor, InsertParagraph, InsertText, Keep, ReplaceText, RevisionPolicy, SetText, Tracking, WordDoc,
+    DeleteText, EditError, Editor, InsertParagraph, InsertText, Keep, ReplaceText, RevisionPolicy, SetText, Tracking,
+    WordDoc,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -142,6 +143,7 @@ fn edit(rng: &mut Rng, targets: &[String], writer: u64) -> Edit {
             anchor: target,
             after: rng.below(2) == 0,
             text: WORDS[rng.below(WORDS.len())].to_owned(),
+            style: None,
             policy: policy(rng, writer),
         }),
         9 => {

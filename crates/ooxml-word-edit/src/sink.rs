@@ -226,7 +226,12 @@ impl<'t, 's> EditSink<'t, 's> {
     ///
     /// # Errors
     /// When the annotation ids cannot be read.
-    pub(crate) fn new_paragraph(&mut self, work: &mut Work, paragraph: crate::work::Id, last: bool) -> Result<TextWrite> {
+    pub(crate) fn new_paragraph(
+        &mut self,
+        work: &mut Work,
+        paragraph: crate::work::Id,
+        last: bool,
+    ) -> Result<TextWrite> {
         let RevisionPolicy::Tracked(tracking) = self.policy.clone() else {
             return Ok(TextWrite::default());
         };
@@ -234,6 +239,35 @@ impl<'t, 's> EditSink<'t, 's> {
         let orders = shared.facts.orders();
         let (released, dated, numbered) = self.tracked(tracking, |stamp| {
             crate::marks::track_new_paragraph(work, paragraph, last, stamp, orders);
+            Ok(Vec::new())
+        })?;
+        Ok(TextWrite {
+            changed: true,
+            released,
+            dated,
+            annotations: Some(numbered),
+        })
+    }
+
+    /// Record that `paragraph`'s properties were `old` (a detached clean copy) before the
+    /// edit, by the policy: untracked nothing; tracked a `w:pPrChange`
+    /// ([`crate::marks::record_paragraph_change`], docx-agent's `_track_properties`).
+    ///
+    /// # Errors
+    /// When the annotation ids cannot be read.
+    pub(crate) fn paragraph_properties_changed(
+        &mut self,
+        work: &mut Work,
+        paragraph: crate::work::Id,
+        old: crate::work::Id,
+    ) -> Result<TextWrite> {
+        let RevisionPolicy::Tracked(tracking) = self.policy.clone() else {
+            return Ok(TextWrite::default());
+        };
+        let shared = self.doc().shared_handle();
+        let orders = shared.facts.orders();
+        let (released, dated, numbered) = self.tracked(tracking, |stamp| {
+            crate::marks::record_paragraph_change(work, paragraph, old, stamp, orders);
             Ok(Vec::new())
         })?;
         Ok(TextWrite {
