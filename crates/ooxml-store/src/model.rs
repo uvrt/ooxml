@@ -34,11 +34,27 @@ pub trait DocModel: Clone + Send + Sync + 'static {
     /// is not known).
     fn written(change: &Self::Change, into: &mut KeySet<Self::Key>);
 
+    /// Whether `key` names what no step takes back (an id sequence drawn from: an undo keeps
+    /// every id given, [`DocModel::carry`]). A later step writing such a key does not
+    /// entangle an earlier one with it. None by default.
+    fn kept(key: &Self::Key) -> bool {
+        let _ = key;
+        false
+    }
+
     /// Derive now what a version keeps beside its content (its indexes), from the version
     /// before it. The store calls it on each version it publishes, so every head has them
     /// and a version's cost is that of its own change: a change applied to the head (an id
     /// drawn from it) and the next version both derive from the head's. Nothing by default.
     fn settle(&self) {}
+
+    /// Take into `self`, an undo's or a redo's new version, what `head` (the version it is
+    /// made on) holds that no step takes back: an id ledger, where an id once given is never
+    /// given again (design sections 4 and 9). The store calls it on every version an undo or
+    /// redo makes, before publishing it. Nothing by default.
+    fn carry(&mut self, head: &Self) {
+        let _ = head;
+    }
 
     /// Add to `into` the keys of [`DocModel::written`] that `change` writes as a merge made
     /// where it is applied (an id drawn from the version it lands on, a name added to a

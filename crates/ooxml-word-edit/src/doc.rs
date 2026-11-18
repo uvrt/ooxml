@@ -71,6 +71,14 @@ pub enum Change {
         /// Its tree.
         tree: Tree,
     },
+    /// A part put in place as bytes, kept as given (media, or any part a bridged tool wrote
+    /// that is not XML).
+    Bytes {
+        /// The part.
+        part: Arc<str>,
+        /// Its bytes.
+        bytes: Arc<[u8]>,
+    },
     /// A part removed (a relationships part left empty, a part nothing uses any more).
     Remove {
         /// The part.
@@ -384,6 +392,7 @@ impl Change {
             Change::Splice { part, .. }
             | Change::Head { part, .. }
             | Change::Put { part, .. }
+            | Change::Bytes { part, .. }
             | Change::Remove { part } => Some(part),
             Change::Restore { .. } | Change::Ids(_) | Change::Number | Change::People { .. } => None,
         }
@@ -406,6 +415,7 @@ impl DocModel for WordDoc {
             Change::Splice { part, patch, .. } => (self.with_tree(part, |t| patch.apply(t))?, self.ids.clone()),
             Change::Head { part, patch, .. } => (self.with_tree(part, |t| patch.apply(t))?, self.ids.clone()),
             Change::Put { part, tree } => (self.package.with_new_tree(part, tree.clone()), self.ids.clone()),
+            Change::Bytes { part, bytes } => (self.package.with_bytes(part, Arc::clone(bytes)), self.ids.clone()),
             Change::Remove { part } => (self.package.without(part)?, self.ids.clone()),
             Change::Restore { parts, from } => {
                 let mut package = self.package.clone();
@@ -458,7 +468,7 @@ impl DocModel for WordDoc {
                 patch: patch.inverse(),
                 keys: Arc::clone(keys),
             },
-            Change::Put { part, .. } | Change::Remove { part } => Change::Restore {
+            Change::Put { part, .. } | Change::Bytes { part, .. } | Change::Remove { part } => Change::Restore {
                 parts: Arc::from([Arc::clone(part)]),
                 from: self.package.clone(),
             },
@@ -508,7 +518,9 @@ impl DocModel for WordDoc {
                     into.insert(key.clone());
                 }
             }
-            Change::Put { part, .. } | Change::Remove { part } => into.insert(Key::Part(Arc::from(normalize(part)))),
+            Change::Put { part, .. } | Change::Bytes { part, .. } | Change::Remove { part } => {
+                into.insert(Key::Part(Arc::from(normalize(part))));
+            }
             Change::Restore { parts, .. } => {
                 for part in parts.iter() {
                     into.insert(Key::Part(Arc::from(normalize(part))));
@@ -526,6 +538,16 @@ impl DocModel for WordDoc {
             }
             Change::Number => {}
         }
+    }
+
+    fn kept(key: &Key) -> bool {
+        // ids drawn stay drawn: undoing a step gives none of them back
+        matches!(key, Key::Seq(_) | Key::Annotations)
+    }
+
+    fn carry(&mut self, head: &Self) {
+        // the ledger is the document's: an undo or redo keeps every id given
+        self.ids.carry(&head.ids);
     }
 
     fn settle(&self) {
@@ -553,6 +575,15 @@ impl DocModel for WordDoc {
     }
 
     fn rebase(change: &Change, past: &Change) -> Result<Change, ModelError> {
+        // parts restored whole (an undo's inverse of a part put) cannot move past another
+        // change of one of them, nor another change past them
+        let restores = |restore: &Change, other: &Change| match (restore, other.part()) {
+            (Change::Restore { parts, .. }, Some(part)) => parts.iter().any(|p| **p == *part),
+            _ => false,
+        };
+        if restores(change, past) || restores(past, change) {
+            return Err(ModelError::Patch(PatchError::Conflict(Vec::new())));
+        }
         if change.part().is_none() || change.part() != past.part() {
             return Ok(change.clone());
         }

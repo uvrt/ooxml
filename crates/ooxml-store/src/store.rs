@@ -6,8 +6,10 @@
 //! a change set on a moved head and the publish, except a transaction that conflicted
 //! [`StoreConfig::optimistic_tries`] times (design section 5); free old versions inside it.
 
+use crate::changeset::ChangeSet;
 use crate::history::{Garbage, History, Planned, Step};
 use crate::ids::IdAllocator;
+use crate::journal::Journal;
 use crate::stats::Counts;
 use crate::sync::{lock, HeadCell, Mutex};
 use crate::txn::TxnParts;
@@ -15,7 +17,6 @@ use crate::{
     Clock, Command, Counters, CountersError, DocModel, Error, HistoryOutcome, KeySet, Seq, Snapshot, StepInfo,
     StoreStats, Txn, Version,
 };
-use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -111,16 +112,13 @@ struct Body<D: DocModel> {
     caller: Option<Arc<str>>,
 }
 
-/// The latest versions published, oldest first: each one's number and the change set that
-/// made it from the one before (`None` for an undo or a redo, which cannot be rebased past).
-type Log<D> = VecDeque<(Seq, Option<Arc<[<D as DocModel>::Change]>>)>;
-
 /// The state under the commit lock.
 struct State<D: DocModel> {
     last: Seq,
     history: History<D>,
-    /// The latest versions published, within the rebase window.
-    log: Log<D>,
+    /// The latest versions' change sets: within the rebase window, and back to the oldest
+    /// version the history may still move a change set from.
+    journal: Journal<D>,
 }
 
 /// One document's versions. Readers load the head without a lock; writers prepare in
@@ -159,7 +157,7 @@ impl<D: DocModel> Store<D> {
             state: Mutex::new(State {
                 last: counters.last,
                 history: History::new(config.history_depth),
-                log: VecDeque::new(),
+                journal: Journal::new(),
             }),
             ids: IdAllocator::new(counters.cursors),
             config,
@@ -191,6 +189,11 @@ impl<D: DocModel> Store<D> {
     /// The steps undo can reach, oldest first.
     pub fn steps(&self) -> Vec<StepInfo<D::Key>> {
         lock(&self.state).history.steps()
+    }
+
+    /// The steps plain redo can bring back, the next one last.
+    pub fn redoable(&self) -> Vec<StepInfo<D::Key>> {
+        lock(&self.state).history.redoable()
     }
 
     /// The newest step `caller` made that undo can reach.
@@ -245,7 +248,7 @@ impl<D: DocModel> Store<D> {
             // Disjoint from everything committed since: the changes, rebased past those
             // commits' (positions moved past theirs), apply to the head. A change that
             // cannot be rebased or applied after all is a conflict: prepared again.
-            let rebased: Arc<[D::Change]> = rebase::<D>(&state.log, parts.base.seq(), parts.changes)?.into();
+            let rebased: Arc<[D::Change]> = state.journal.rebase(parts.base.seq(), parts.changes)?.into();
             let doc = replay(head.doc(), &rebased).ok()?;
             self.counts.rebased();
             (doc, rebased)
@@ -334,17 +337,18 @@ impl<D: DocModel> Store<D> {
         doc.settle();
         let version = Arc::new(before.succeed(seq, doc, &body.writes));
         self.head.store(Arc::clone(&version));
-        self.log(state, seq, Some(Arc::clone(&body.changes)));
+        let changes = ChangeSet::made(body.changes);
         let writes = body.writes.clone();
         let step = Step {
             before,
             after: Arc::clone(&version),
-            changes: body.changes,
+            changes: changes.clone(),
             reads: body.reads,
             writes: body.writes,
             caller: body.caller,
         };
         let garbage = state.history.commit(step);
+        self.journal(state, seq, changes);
         (version, writes, garbage)
     }
 
@@ -368,12 +372,12 @@ impl<D: DocModel> Store<D> {
     /// Undo the newest step undo can reach (a scoped undo may have taken out newer ones'
     /// predecessors; this is the newest left).
     pub fn undo(&self) -> Result<HistoryOutcome<D>, Error<D>> {
-        self.history_op(|history, head| history.plan_undo(None, &KeySet::new(), head))
+        self.history_op(|history, head, journal| history.plan_undo(None, &KeySet::new(), head, journal))
     }
 
     /// Redo the newest step plain undo took back.
     pub fn redo(&self) -> Result<HistoryOutcome<D>, Error<D>> {
-        self.history_op(|history, head| history.plan_redo(None, head))
+        self.history_op(|history, head, journal| history.plan_redo(None, head, journal))
     }
 
     /// Scoped undo: take back the step that made version `step`, wherever it is in the
@@ -381,7 +385,7 @@ impl<D: DocModel> Store<D> {
     /// [`crate::StoreError::Entangled`], changing nothing, when a later step read or wrote
     /// a key it wrote, or when it wrote a key of `shared` (keys every scope depends on).
     pub fn undo_step(&self, step: Seq, shared: &KeySet<D::Key>) -> Result<HistoryOutcome<D>, Error<D>> {
-        self.history_op(|history, head| history.plan_undo(Some(step), shared, head))
+        self.history_op(|history, head, journal| history.plan_undo(Some(step), shared, head, journal))
     }
 
     /// Bring back the step that made version `step`, taken back by an undo, as a new
@@ -389,24 +393,28 @@ impl<D: DocModel> Store<D> {
     /// [`crate::StoreError::Entangled`] when what it read or wrote holds other content than
     /// its undo left.
     pub fn redo_step(&self, step: Seq) -> Result<HistoryOutcome<D>, Error<D>> {
-        self.history_op(|history, head| history.plan_redo(Some(step), head))
+        self.history_op(|history, head, journal| history.plan_redo(Some(step), head, journal))
     }
 
     fn history_op(
         &self,
-        plan: impl FnOnce(&History<D>, &Snapshot<D>) -> Result<Planned<D>, Error<D>>,
+        plan: impl FnOnce(&History<D>, &Snapshot<D>, &Journal<D>) -> Result<Planned<D>, Error<D>>,
     ) -> Result<HistoryOutcome<D>, Error<D>> {
         let mut state = lock(&self.state);
         let entered = self.clock.monotonic();
         let head = self.head.load();
-        let planned = plan(&state.history, &head)?;
+        let mut planned = plan(&state.history, &head, &state.journal)?;
         let seq = state.last.next();
         state.last = seq;
+        planned.doc.carry(head.doc());
         planned.doc.settle();
         let version = Arc::new(head.succeed(seq, planned.doc, &planned.writes));
         self.head.store(Arc::clone(&version));
-        self.log(&mut state, seq, None);
-        let garbage = state.history.record(planned.target, head, Arc::clone(&version));
+        let changes = planned.changes;
+        let garbage = state
+            .history
+            .record(planned.target, head, Arc::clone(&version), changes.clone());
+        self.journal(&mut state, seq, changes);
         let held = self.clock.monotonic().saturating_sub(entered);
         drop(state);
         drop(garbage);
@@ -420,31 +428,13 @@ impl<D: DocModel> Store<D> {
 }
 
 impl<D: DocModel> Store<D> {
-    /// Keep the change set that made version `seq`, within the rebase window.
-    fn log(&self, state: &mut State<D>, seq: Seq, changes: Option<Arc<[D::Change]>>) {
-        state.log.push_back((seq, changes));
-        while state.log.len() > self.config.rebase_window {
-            state.log.pop_front();
-        }
+    /// Keep the change set that made version `seq`: within the rebase window, and back to
+    /// the oldest version the history may still move a change set from.
+    fn journal(&self, state: &mut State<D>, seq: Seq, changes: ChangeSet<D>) {
+        state.journal.push(seq, changes);
+        let needed = state.history.oldest_reach();
+        state.journal.trim(self.config.rebase_window, needed);
     }
-}
-
-/// `changes`, made on version `base`, rebased past every change set published since, in
-/// order; `None` when one of them is not in the log (too old, or an undo or redo) or a
-/// change cannot be moved past one of theirs.
-fn rebase<D: DocModel>(log: &Log<D>, base: Seq, mut changes: Vec<D::Change>) -> Option<Vec<D::Change>> {
-    let since = log.iter().position(|(seq, _)| *seq > base)?;
-    if since == 0 && log.front().is_some_and(|(seq, _)| seq.0 != base.0 + 1) {
-        return None; // the commits right after the snapshot are no longer kept
-    }
-    for (_, past) in log.iter().skip(since) {
-        for past in past.as_deref()? {
-            for change in &mut changes {
-                *change = D::rebase(change, past).ok()?;
-            }
-        }
-    }
-    Some(changes)
 }
 
 /// `changes` applied in order to `doc`.

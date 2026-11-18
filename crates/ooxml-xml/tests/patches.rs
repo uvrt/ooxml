@@ -87,8 +87,12 @@ fn patches_apply_and_invert() {
                 assert!(parent.children().get(patch.start() + k).unwrap().same(node));
             }
             assert_eq!(patch.inverse().apply(&edited).unwrap(), tree);
-            // applying it twice finds its removed nodes gone (unless it removed nothing)
-            if !patch.removed().is_empty() && patch.removed() != patch.inserted() {
+            // applying it twice finds its removed nodes gone (unless it removed nothing, or
+            // what it put there is equal to what it removes: a patch checks by content too)
+            let there: Vec<_> = (0..patch.removed().len())
+                .filter_map(|k| parent.children().get(patch.start() + k).cloned())
+                .collect();
+            if !patch.removed().is_empty() && there.as_slice() != patch.removed() {
                 assert!(matches!(
                     patch.apply(&edited),
                     Err(PatchError::Stale { .. }) | Err(PatchError::NoElement(_))
