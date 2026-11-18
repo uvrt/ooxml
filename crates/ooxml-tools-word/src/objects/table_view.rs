@@ -167,23 +167,7 @@ impl TableView {
     /// paragraph mark deleted -- that its accepted view counts otherwise (docx-agent's
     /// `_Accepted`, not ported yet).
     pub(crate) fn pending(&self) -> bool {
-        fn walk(element: &Element, under: &[&str]) -> bool {
-            element.children().iter().any(|n| {
-                let Node::Element(child) = n else { return false };
-                let local = child.name().local();
-                let held = child.name().namespace() == Some(W);
-                if held && matches!(local, "cellDel" | "cellMerge" | "cellIns") {
-                    return true;
-                }
-                if held && local == "del" && under.last().is_some_and(|p| *p == "trPr" || *p == "rPr") {
-                    return true;
-                }
-                let mut path = under.to_vec();
-                path.push(local);
-                walk(child, &path)
-            })
-        }
-        walk(&self.table.element, &[])
+        ooxml_word_edit::pending_structure(&self.table.element)
     }
 }
 
