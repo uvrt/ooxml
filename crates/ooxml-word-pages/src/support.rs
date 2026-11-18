@@ -19,15 +19,9 @@ use ooxml_word_model::model::{Block, Graphic, InlineObject, Paragraph, Table};
 use ooxml_word_model::value::Value;
 use ooxml_word_model::WordDocument;
 
-/// A floating table (`w:tblpPr`).
-pub const FLOATING_TABLE: &str = "floating table";
-/// A floating drawing that text wraps around, in a table cell (docx2svg's `wrap_cell`):
-/// the layout does not lay its cell out yet.
-pub const WRAP_IN_CELL: &str = "drawing text wraps around in a table cell";
-/// Another floating drawing, or a drawing that is not a picture, in a table cell.
-pub const DRAWING_IN_CELL: &str = "drawing in a table cell";
-/// A drawing text wraps beside (`wrapSquare`, `wrapTight`, `wrapThrough`), not a drop
-/// cap's frame (lane L3g).
+/// A drawing text wraps beside (`wrapSquare`, `wrapTight`, `wrapThrough`) in a header, a
+/// footer or a note: docx2svg stacks such a paragraph of a header or footer as an
+/// estimated stand-in, which the Rust layout does not draw.
 pub const TEXT_BESIDE_DRAWING: &str = "text beside a drawing";
 /// A text box holding what the layout does not lay out in one: a floating drawing text
 /// wraps around (docx2svg stops the box's text there), or an inline drawing that is not a
