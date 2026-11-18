@@ -347,7 +347,7 @@ impl PageEngine {
                 decimal: self.decimal,
                 text_paths: Vec::new(),
             };
-            crate::warnings::said(&mut generation.model, &laid, &mut painter)
+            crate::warnings::said(&mut generation.model, &laid, &mut painter, &self.locale)
         };
         let version = Arc::new(LaidVersion {
             drawings,
@@ -408,6 +408,24 @@ impl PageEngine {
         let paint = paint_page(&version.layout, &mut generation.model, page, &parts, &cx)?;
         self.stats.pages_painted += 1;
         Some(paint)
+    }
+
+    /// The header's and footer's lines page `page` of `version` draws, as a check reads
+    /// them: laid out with the page's field values, not painted. `None` for a version of
+    /// another generation or a page past the last.
+    pub fn story_lines(
+        &mut self,
+        version: &LaidVersion,
+        page: usize,
+    ) -> Option<Vec<ooxml_word_layout::facts::StoryLineFact>> {
+        let generation = self.generation.as_mut().filter(|g| g.number == version.generation)?;
+        if page >= version.page_count() {
+            return None;
+        }
+        let parts = generation
+            .layout
+            .page_parts(&mut generation.model, &version.layout, page);
+        Some(ooxml_word_layout::facts::story_line_facts(&parts))
     }
 
     /// What page `page` of `version` paints, digested: what besides its lines (its frame,
@@ -481,12 +499,7 @@ impl PageEngine {
     /// Page `page` of `version` as a reader sees it.
     pub fn page(&mut self, version: &LaidVersion, page: usize) -> Option<PageView> {
         let paint = self.paint(version, page)?;
-        let blocks = version
-            .facts()
-            .pages
-            .get(page)
-            .map(|p| p.blocks.clone())
-            .unwrap_or_default();
+        let blocks = version.page_facts(page).map(|p| p.blocks.clone()).unwrap_or_default();
         Some(PageView {
             page,
             info: paint.geometry.info,

@@ -63,7 +63,7 @@ impl FlowMaker<'_, '_> {
             resolved,
             geometry: lines_at,
             columns: geometry.multi_column(),
-            section: unequal.then_some(geometry),
+            first_column: unequal.then(|| geometry.column_width(0)),
             notes,
         }))
     }

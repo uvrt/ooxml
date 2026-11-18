@@ -460,9 +460,15 @@ impl<'d> StyleSearch<'d> {
     /// What a `STYLEREF` instruction searches for and its reading; `None` where it cannot
     /// be computed.
     pub fn target(&self, instruction: &str) -> Option<(StyleReference, Target)> {
-        let reference = style_reference(instruction).ok()?;
-        let target = target(&reference, self.styles, &self.language, self.names_language.as_deref()).ok()?;
-        Some((reference, target))
+        self.find(instruction).ok()
+    }
+
+    /// What a `STYLEREF` instruction searches for and its reading, or why it cannot be
+    /// computed (`_styleref_target`).
+    pub fn find(&self, instruction: &str) -> Result<(StyleReference, Target), Uncomputable> {
+        let reference = style_reference(instruction)?;
+        let target = target(&reference, self.styles, &self.language, self.names_language.as_deref())?;
+        Ok((reference, target))
     }
 
     /// The occurrences of a style target, found once.
@@ -486,8 +492,9 @@ impl<'d> StyleSearch<'d> {
 /// Each occurrence's pages (0-based, blank pages counted), given the occurrences.
 pub type OccurrencePages<'p> = dyn FnMut(&[Occurrence]) -> Arc<[BTreeSet<usize>]> + 'p;
 
-/// A story's `STYLEREF` run (paragraph, run) and the text it was given (none: cached).
-pub type StoryText = ((usize, usize), Option<String>);
+/// A story's `STYLEREF` run (paragraph, run) and the text it was given, or why it keeps
+/// Word's cached result.
+pub type StoryText = ((usize, usize), Result<String, Uncomputable>);
 
 /// Whether any run of `blocks` (cells included) holds a `STYLEREF`.
 pub fn has_style_reference(blocks: &[Block]) -> bool {
@@ -501,16 +508,11 @@ fn is_style_reference(run: &Run) -> bool {
     run.field.as_ref().is_some_and(|f| &*f.keyword == "STYLEREF")
 }
 
-/// The body with every `STYLEREF` field's text computed (`_style_references`): the last
-/// text of its style before the field in the document, else the first after it, whatever
-/// the pages; `\p` draws `above` or `below` (in en-US). A field that cannot be computed
-/// keeps Word's cached result. Paragraphs computed alike before are taken from `kept`.
-pub fn style_references(
-    document: &WordDocument,
-    search: &mut StyleSearch<'_>,
-    kept: &mut Substitutions,
-) -> WordDocument {
-    let mut values: BTreeMap<(usize, usize), String> = BTreeMap::new();
+/// Every body `STYLEREF` (paragraph, run) in document order with its text
+/// (`_style_references`): the last text of its style before the field in the document,
+/// else the first after it, whatever the pages; `\p` draws `above` or `below` (in en-US);
+/// or why it keeps Word's cached result.
+pub fn body_style_texts(search: &mut StyleSearch<'_>) -> Vec<StoryText> {
     let keys: Vec<(usize, usize, Text)> = search
         .paragraphs
         .iter()
@@ -524,40 +526,59 @@ pub fn style_references(
             })
         })
         .collect();
-    if keys.is_empty() {
+    keys.into_iter()
+        .map(|(block, k, instruction)| ((block, k), body_style_text(search, (block, k), &instruction)))
+        .collect()
+}
+
+/// The text of the body `STYLEREF` at run `k` of paragraph `block`.
+fn body_style_text(
+    search: &mut StyleSearch<'_>,
+    (block, k): (usize, usize),
+    instruction: &str,
+) -> Result<String, Uncomputable> {
+    let (reference, target) = search.find(instruction)?;
+    let (occurrence, before) = match &target {
+        Target::Style { paragraph, ids } => {
+            let offset: usize = search
+                .paragraphs
+                .get(block)
+                .map_or(0, |p| p.runs.iter().take(k).map(|r| r.text.chars().count()).sum());
+            let all = search.occurrences(*paragraph, ids);
+            let earlier = all.iter().rfind(|o| (o.block, o.offset) < (block, offset));
+            let later = all.iter().find(|o| (o.block, o.offset) >= (block, offset));
+            (earlier.or(later).cloned(), earlier.is_some())
+        }
+        Target::Error(_) => (None, true),
+    };
+    if reference.position && occurrence.is_some() {
+        if search.language == "en-US" {
+            Ok(if before { "above" } else { "below" }.to_owned())
+        } else {
+            Err(uncomputable("\\p says where the text is in the application's language"))
+        }
+    } else {
+        reference_text(instruction, occurrence.as_ref(), &target, &search.language)
+    }
+}
+
+/// The body with every `STYLEREF` field's text computed ([`body_style_texts`]). A field
+/// that cannot be computed keeps Word's cached result. Paragraphs computed alike before
+/// are taken from `kept`.
+pub fn style_references(
+    document: &WordDocument,
+    search: &mut StyleSearch<'_>,
+    kept: &mut Substitutions,
+) -> WordDocument {
+    let found = body_style_texts(search);
+    if found.is_empty() {
         kept.retain_used();
         return document.clone();
     }
-    for (block, k, instruction) in keys {
-        let Some((reference, target)) = search.target(&instruction) else {
-            continue;
-        };
-        let (occurrence, before) = match &target {
-            Target::Style { paragraph, ids } => {
-                let offset: usize = search
-                    .paragraphs
-                    .get(block)
-                    .map_or(0, |p| p.runs.iter().take(k).map(|r| r.text.chars().count()).sum());
-                let all = search.occurrences(*paragraph, ids);
-                let earlier = all.iter().rfind(|o| (o.block, o.offset) < (block, offset));
-                let later = all.iter().find(|o| (o.block, o.offset) >= (block, offset));
-                (earlier.or(later).cloned(), earlier.is_some())
-            }
-            Target::Error(_) => (None, true),
-        };
-        let text = if reference.position && occurrence.is_some() {
-            if search.language == "en-US" {
-                Ok(if before { "above" } else { "below" }.to_owned())
-            } else {
-                Err(uncomputable("\\p says where the text is in the application's language"))
-            }
-        } else {
-            reference_text(&instruction, occurrence.as_ref(), &target, &search.language)
-        };
-        if let Ok(text) = text {
-            values.insert((block, k), text);
-        }
-    }
+    let values: BTreeMap<(usize, usize), String> = found
+        .into_iter()
+        .filter_map(|(key, text)| text.ok().map(|t| (key, t)))
+        .collect();
     let out = substitute(document, &values, kept);
     kept.retain_used();
     out
@@ -566,14 +587,14 @@ pub fn style_references(
 /// A header's or footer's `STYLEREF` on page `page` (`_story_reference`): the first text
 /// of its style on the page -- with `\l` the last -- else the last before the page, else
 /// the first after it. `pages_of` gives each occurrence's pages (0-based, blank pages
-/// counted). `None` where it cannot be computed (Word's cached result is drawn).
+/// counted). Why not where it cannot be computed (Word's cached result is drawn).
 pub fn story_reference(
     search: &mut StyleSearch<'_>,
     instruction: &str,
     page: usize,
     pages_of: &mut OccurrencePages<'_>,
-) -> Option<String> {
-    let (reference, target) = search.target(instruction)?;
+) -> Result<String, Uncomputable> {
+    let (reference, target) = search.find(instruction)?;
     let mut occurrence = None;
     if let Target::Style { paragraph, ids } = &target {
         let all = search.occurrences(*paragraph, ids);
@@ -600,14 +621,14 @@ pub fn story_reference(
             occurrence = earlier.or(later).cloned();
         }
     }
-    reference_text(instruction, occurrence.as_ref(), &target, &search.language).ok()
+    reference_text(instruction, occurrence.as_ref(), &target, &search.language)
 }
 
 /// `blocks` with each `STYLEREF` run's text as `text_of(paragraph, run)` gives it (none:
 /// kept), every other block shared (`substitute_blocks`); and the texts given.
 pub fn with_story_references(
     blocks: &[Block],
-    text_of: &mut dyn FnMut(&Run) -> Option<String>,
+    text_of: &mut dyn FnMut(&Run) -> Result<String, Uncomputable>,
 ) -> (Arc<[Block]>, Vec<StoryText>) {
     let mut texts = Vec::new();
     let mut change = |index: usize, paragraph: &Arc<Paragraph>| -> Option<Arc<Paragraph>> {
@@ -623,7 +644,7 @@ pub fn with_story_references(
                 let text = text_of(run);
                 texts.push(((index, k), text.clone()));
                 match text {
-                    Some(t) if *t != *run.text => {
+                    Ok(t) if *t != *run.text => {
                         changed = true;
                         Run {
                             text: Arc::from(t.as_str()),

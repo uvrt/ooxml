@@ -153,9 +153,45 @@ impl PageContext<'_> {
             again.stopped = first.stopped.or(again.stopped);
             again
         };
+        let mut laid = laid;
+        self.record_columns(&mut laid);
         match laid.stopped {
             Some(stopped) => Err((laid.page, stopped)),
             None => Ok(laid.page),
+        }
+    }
+
+    /// The page's columns as its drawing reads them, where its body's stack ends (its last
+    /// column's), and in mode 15 its note area.
+    fn record_columns(&self, laid: &mut Regions) {
+        let page = &mut laid.page;
+        page.columns = laid
+            .frames
+            .iter()
+            .map(|f| super::PageColumn {
+                section: f.section,
+                column: f.column,
+                multi: f.multi,
+                pooled: f.pooled,
+                offset: f.offset,
+                width: f.width,
+                region_top: f.region_top,
+                y: f.y,
+                filled: f.end > f.start,
+                notes: f.notes.clone(),
+                carried: std::sync::Arc::clone(&f.carried),
+            })
+            .collect();
+        if let Some(last) = laid.frames.last() {
+            page.body_end = last.y;
+        }
+        let pooled: Vec<&Frame> = laid.frames.iter().filter(|f| f.pooled).collect();
+        let ids: Vec<i64> = pooled
+            .iter()
+            .flat_map(|f| f.notes.iter().filter_map(|n| n.lines.first().and_then(|l| l.note)))
+            .collect();
+        if let (Some(first), false) = (pooled.first(), ids.is_empty()) {
+            page.note_area = self.note_region(first.section, &ids).map(std::sync::Arc::new);
         }
     }
 
@@ -290,6 +326,13 @@ impl PageContext<'_> {
     /// which the columns, filled in turn under the keeps, hold them all), and the
     /// separator's line above (`note_area`); `None` where a note cannot be laid out.
     fn note_area(&self, section: usize, ids: &[i64]) -> Option<Px> {
+        let area = self.note_region(section, ids)?;
+        Some(area.height + self.separators(section).0)
+    }
+
+    /// The note area for notes `ids` in section `section`'s columns, laid out
+    /// (`note_area`): its flow, its lines from its top, its height without the separator.
+    fn note_region(&self, section: usize, ids: &[i64]) -> Option<super::NoteArea> {
         let mut items: Vec<FlowItem> = Vec::new();
         for id in ids {
             for item in self.note_items.get(&(*id, section))?.iter() {
@@ -359,8 +402,17 @@ impl PageContext<'_> {
                 lo = mid;
             }
         }
-        let height = holds(hi)?.frames.iter().map(|f| f.y).max()?;
-        Some(height + self.separators(section).0)
+        // Its paragraphs broken again as the last fill broke them.
+        cx.lines.borrow_mut().clear();
+        let region = holds(hi)?;
+        let height = region.frames.iter().map(|f| f.y).max()?;
+        Some(super::NoteArea {
+            section,
+            notes: ids.to_vec(),
+            lines: region.page.lines,
+            height,
+            broken: cx.lines.take(),
+        })
     }
 
     /// One region from its start: its section's columns filled in turn, each from the
