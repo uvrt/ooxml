@@ -239,6 +239,11 @@ impl Type2<'_, '_> {
                 self.stack.push(value);
                 continue;
             }
+            // Every operator followed counts against the glyph's budget: subroutines that
+            // call one another over and over are refused, not followed for ever.
+            if !self.bounds.follow(1) {
+                return Some(Some(false));
+            }
             if let Step::Done(ran) = self.operator(b0, code, &mut at, depth)? {
                 return Some(ran);
             }
