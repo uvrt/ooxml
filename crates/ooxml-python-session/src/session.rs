@@ -82,6 +82,10 @@ fn to_py(error: &SessionError) -> PyErr {
     }
 }
 
+/// The save gate's comparison as Python receives it: new problems, fixed ones, how many
+/// the document opened with.
+type Validation = (Vec<String>, Vec<String>, usize);
+
 /// What a call runs with (`ooxml_core.CallContext`): who calls, a token that stops it,
 /// and how long it may run, in seconds. One may serve many calls.
 #[pyclass(frozen, name = "CallContext", module = "ooxml_core")]
@@ -345,7 +349,7 @@ impl PySession {
     /// What the save gate compares for a Word document: `(new, fixed, baseline)`, the
     /// problems now that it did not open with, those it opened with that are gone, and how
     /// many it opened with; `None` for another kind.
-    fn validation(&self, py: Python<'_>, doc: &str) -> PyResult<Option<(Vec<String>, Vec<String>, usize)>> {
+    fn validation(&self, py: Python<'_>, doc: &str) -> PyResult<Option<Validation>> {
         let id = doc_id(doc, &self.inner)?;
         let session = &self.inner;
         let delta = py.detach(|| session.validation(&id)).map_err(|e| to_py(&e))?;
