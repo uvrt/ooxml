@@ -5,6 +5,16 @@ ooxml-core is the Rust core of the ooxml packages (`crates/`), as the Python mod
 
 ## 0.10.0 -- unreleased
 
+- **Glyph outlines and pair kerning bounded on untrusted fonts** (the `glyph_ink` fuzz target's
+  timeout and slow unit). `GPOS` coverage and class ranges are kept as ranges instead of spread
+  out glyph by glyph (a malformed table's ranges claimed every glyph thousands of times); a
+  feature table is read once however many records point at it, and a table stating more lookup
+  references than it has pairs of bytes is refused. A TrueType glyph is read within its own
+  bytes, contours must end in increasing order, and a glyph's outline -- composites and Type 2
+  subroutines followed -- may follow at most 65,535 points, components or operators (the
+  format's own 16-bit counts); past that it is refused, never cut short. Real fonts' boxes and
+  kerning are unchanged.
+
 - **docx-agent's reads served by Rust (phase P1, lane P1c).** `Session.commit(doc, parts)` hands
   a version's touched parts over as `update` does and returns the version it made, held
   (`ooxml_core.Version`: `doc`, `number`); `Session.head(doc)` holds the head. A call given

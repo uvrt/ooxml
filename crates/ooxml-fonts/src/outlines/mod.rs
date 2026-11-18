@@ -32,15 +32,33 @@ pub enum GlyphInk {
     Empty,
 }
 
+/// The most points and components one glyph's outline may hold, composites followed: the
+/// format's own counts (`maxp`'s `maxCompositePoints` and `maxComponentElements` are 16-bit,
+/// a simple glyph's last point a 16-bit index, a Type 2 charstring at most 65,535 bytes).
+/// An outline that would follow more is refused, never cut short.
+pub(crate) const MOST_FOLLOWED: usize = 65_535;
+
 /// The running box of segments, each in the slanted frame (`_Bounds`).
 pub(crate) struct Bounds {
     slant: f64,
     found: Option<[f64; 4]>,
+    /// The points and components followed so far.
+    followed: usize,
 }
 
 impl Bounds {
     pub(crate) fn new(slant: f64) -> Bounds {
-        Bounds { slant, found: None }
+        Bounds {
+            slant,
+            found: None,
+            followed: 0,
+        }
+    }
+
+    /// Count `n` more points or components followed; false past [`MOST_FOLLOWED`].
+    pub(crate) fn follow(&mut self, n: usize) -> bool {
+        self.followed = self.followed.saturating_add(n);
+        self.followed <= MOST_FOLLOWED
     }
 
     pub(crate) fn point(&mut self, x: f64, y: f64) {
@@ -203,25 +221,36 @@ impl Glyf<'_> {
         if end > self.glyf.len() || end - start < 10 {
             return Some(false);
         }
-        let contours = i16_at(self.glyf, start)?;
+        // A glyph's data is read within its own bytes (`loca`'s range): a header, an end
+        // or a coordinate past them is a glyph that cannot be read, not its neighbour's.
+        let data = self.glyf.get(..end)?;
+        let contours = i16_at(data, start)?;
         let mut at = start + 10;
         if contours < 0 {
             return self.composite(at, end, matrix, bounds, depth);
         }
         let contours = usize::try_from(contours).ok()?;
         let ends: Vec<usize> = (0..contours)
-            .map(|k| u16_at(self.glyf, at + 2 * k).map(usize::from))
+            .map(|k| u16_at(data, at + 2 * k).map(usize::from))
             .collect::<Option<_>>()?;
+        // The format states each contour's last point in increasing order: anything else
+        // is refused (it would walk the same points again for every contour).
+        if ends.windows(2).any(|w| matches!(w, [a, b] if b <= a)) {
+            return Some(false);
+        }
         at += 2 * contours;
         let count = ends.last().map_or(0, |e| e + 1);
-        at += 2 + usize::from(u16_at(self.glyf, at)?);
+        if !bounds.follow(count) {
+            return Some(false);
+        }
+        at += 2 + usize::from(u16_at(data, at)?);
         let mut flags: Vec<u8> = Vec::new();
         while flags.len() < count {
-            let flag = *self.glyf.get(at)?;
+            let flag = *data.get(at)?;
             at += 1;
             let mut repeat = 1;
             if flag & 8 != 0 {
-                repeat += usize::from(*self.glyf.get(at)?);
+                repeat += usize::from(*data.get(at)?);
                 at += 1;
             }
             flags.extend(std::iter::repeat_n(flag, repeat));
@@ -232,11 +261,11 @@ impl Glyf<'_> {
             let mut values = Vec::with_capacity(count);
             for &flag in flags.iter().take(count) {
                 if flag & short != 0 {
-                    let delta = i64::from(*self.glyf.get(at)?);
+                    let delta = i64::from(*data.get(at)?);
                     at += 1;
                     value += if flag & same != 0 { delta } else { -delta };
                 } else if flag & same == 0 {
-                    value += i64::from(i16_at(self.glyf, at)?);
+                    value += i64::from(i16_at(data, at)?);
                     at += 2;
                 }
                 values.push(value);
@@ -265,19 +294,20 @@ impl Glyf<'_> {
     }
 
     fn composite(&self, mut at: usize, end: usize, matrix: Matrix, bounds: &mut Bounds, depth: usize) -> Option<bool> {
+        let data = self.glyf.get(..end)?;
         loop {
-            if at + 4 > end {
+            if at + 4 > end || !bounds.follow(1) {
                 return Some(false);
             }
-            let flags = u16_at(self.glyf, at)?;
-            let component = u16_at(self.glyf, at + 2)?;
+            let flags = u16_at(data, at)?;
+            let component = u16_at(data, at + 2)?;
             at += 4;
             let (dx, dy) = if flags & 1 != 0 {
-                let v = (i16_at(self.glyf, at)?, i16_at(self.glyf, at + 2)?);
+                let v = (i16_at(data, at)?, i16_at(data, at + 2)?);
                 at += 4;
                 (f64::from(v.0), f64::from(v.1))
             } else {
-                let byte = |k: usize| self.glyf.get(k).map(|b| f64::from(i8::from_be_bytes([*b])));
+                let byte = |k: usize| data.get(k).map(|b| f64::from(i8::from_be_bytes([*b])));
                 let v = (byte(at)?, byte(at + 1)?);
                 at += 2;
                 v
@@ -285,7 +315,7 @@ impl Glyf<'_> {
             if flags & 2 == 0 {
                 return Some(false);
             }
-            let scale = |k: usize| i16_at(self.glyf, k).map(|v| f64::from(v) / 16384.0);
+            let scale = |k: usize| i16_at(data, k).map(|v| f64::from(v) / 16384.0);
             let (mut a, mut b, mut c, mut d) = (1.0, 0.0, 0.0, 1.0);
             if flags & 8 != 0 {
                 a = scale(at)?;
@@ -387,5 +417,99 @@ mod tests {
         bounds.point(0.0, 10.0);
         bounds.point(10.0, 0.0);
         assert_eq!(bounds.found, Some([5.0, 0.0, 10.0, 10.0]));
+    }
+
+    /// A `glyf`/`loca` pair of the glyphs given (long offsets).
+    fn font(glyphs: &[Vec<u8>]) -> (Vec<u8>, Vec<u8>) {
+        let (mut glyf, mut loca) = (Vec::new(), Vec::new());
+        for g in glyphs {
+            loca.extend_from_slice(&u32::try_from(glyf.len()).unwrap().to_be_bytes());
+            glyf.extend_from_slice(g);
+        }
+        loca.extend_from_slice(&u32::try_from(glyf.len()).unwrap().to_be_bytes());
+        (glyf, loca)
+    }
+
+    fn words(values: &[u16]) -> Vec<u8> {
+        values.iter().flat_map(|v| v.to_be_bytes()).collect()
+    }
+
+    /// A simple glyph of contours ending at `ends`, every point on the curve at the origin.
+    fn simple(ends: &[u16]) -> Vec<u8> {
+        let count = usize::from(ends.iter().copied().max().unwrap_or(0)) + 1;
+        let mut g = words(&[u16::try_from(ends.len()).unwrap(), 0, 0, 10, 10]);
+        g.extend(words(ends));
+        g.extend(words(&[0]));
+        // Flags: on the curve, x and y the same as before, repeated.
+        let mut left = count;
+        while left > 0 {
+            let run = left.min(256);
+            g.extend_from_slice(&[0x39, u8::try_from(run - 1).unwrap()]);
+            left -= run;
+        }
+        g
+    }
+
+    #[test]
+    fn contours_not_ending_in_increasing_order_are_refused_at_once() {
+        // The fuzzer's slow `glyph_ink` unit: each contour walked the same points again.
+        let ends: Vec<u16> = (0..2000).map(|k| if k % 2 == 0 { 0 } else { 60_000 }).collect();
+        let (glyf, loca) = font(&[simple(&ends)]);
+        let outlines = Glyf {
+            glyf: &glyf,
+            loca: &loca,
+            long_offsets: true,
+        };
+        let started = std::time::Instant::now();
+        assert_eq!(outlines.outline_box(0, 0.34), None);
+        assert!(started.elapsed() < std::time::Duration::from_secs(1));
+        let (glyf, loca) = font(&[simple(&[3, 7])]);
+        let outlines = Glyf {
+            glyf: &glyf,
+            loca: &loca,
+            long_offsets: true,
+        };
+        assert_eq!(
+            outlines.outline_box(0, 0.34),
+            Some(GlyphInk::Box(InkBox::Float([0.0, 0.0, 0.0, 0.0])))
+        );
+    }
+
+    #[test]
+    fn a_glyph_is_read_within_its_own_bytes() {
+        // Two contours stated, the second's end past the glyph's bytes.
+        let mut g = simple(&[0]);
+        g.splice(0..2, 2_u16.to_be_bytes());
+        let (glyf, loca) = font(&[g, simple(&[1])]);
+        let outlines = Glyf {
+            glyf: &glyf,
+            loca: &loca,
+            long_offsets: true,
+        };
+        assert_eq!(outlines.outline_box(0, 0.34), None);
+    }
+
+    #[test]
+    fn composites_of_composites_past_the_formats_counts_are_refused() {
+        // Each level 300 copies of the next: 300^4 outlines, were they followed.
+        let level = |next: u16| {
+            let mut g = words(&[u16::MAX, 0, 0, 10, 10]);
+            for k in 0..300 {
+                let more = if k < 299 { 0x20 } else { 0 };
+                g.extend(words(&[0x02 | more, next]));
+                g.extend_from_slice(&[0, 0]);
+            }
+            g
+        };
+        let (glyf, loca) = font(&[level(1), level(2), level(3), level(4), simple(&[0])]);
+        let outlines = Glyf {
+            glyf: &glyf,
+            loca: &loca,
+            long_offsets: true,
+        };
+        let started = std::time::Instant::now();
+        assert_eq!(outlines.outline_box(0, 0.34), None);
+        assert!(started.elapsed() < std::time::Duration::from_secs(1));
+        assert!(outlines.outline_box(3, 0.34).is_some(), "300 points: followed");
     }
 }
