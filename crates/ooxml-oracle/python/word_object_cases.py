@@ -78,6 +78,9 @@ def cases(document) -> list[dict]:
     found = format_table_cases(document)
     wanted = os.environ.get("OBJECT_TOOLS")       # a comma list, to run some tools only
     found = [c for c in found if not wanted or c["tool"] in wanted.split(",")]
+    every = int(os.environ.get("OBJECTS_EVERY") or 0)      # every n-th case, across the scopes
+    if every:
+        found = found[::every]
     limit = int(os.environ.get("OBJECTS_PER_TOOL") or 0)   # the first n of each tool's
     if limit:
         taken: dict[str, int] = {}
