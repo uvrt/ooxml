@@ -16,7 +16,7 @@ use ooxml_store::{Command, Txn};
 use ooxml_word_edit::find::Literal;
 use ooxml_word_edit::{
     DeleteBlock, DeleteText, EditError, Editor, InsertParagraph, InsertText, Keep, ReplaceText, RevisionPolicy,
-    SetParagraphStyle, SetText, Tracking, WordDoc,
+    SetCells, SetParagraphStyle, SetText, Tracking, WordDoc,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -88,6 +88,7 @@ enum Edit {
     Paragraph(InsertParagraph),
     Style(SetParagraphStyle),
     Block(DeleteBlock),
+    Cells(SetCells),
 }
 
 impl Command<WordDoc> for Edit {
@@ -103,6 +104,7 @@ impl Command<WordDoc> for Edit {
             Edit::Paragraph(c) => c.validate(doc),
             Edit::Style(c) => c.validate(doc),
             Edit::Block(c) => c.validate(doc),
+            Edit::Cells(c) => c.validate(doc),
         }
     }
 
@@ -115,6 +117,7 @@ impl Command<WordDoc> for Edit {
             Edit::Paragraph(c) => c.prepare(tx).map(|_| true)?,
             Edit::Style(c) => c.prepare(tx).map(|_| true)?,
             Edit::Block(c) => c.prepare(tx).map(|_| true)?,
+            Edit::Cells(c) => c.prepare(tx).map(|_| true)?,
         })
     }
 }
@@ -143,13 +146,22 @@ fn policy(rng: &mut Rng, writer: u64) -> RevisionPolicy {
 /// A random common edit (positions within the first characters, so they stay in range).
 fn edit(rng: &mut Rng, targets: &[String], writer: u64) -> Edit {
     let target = targets[rng.below(targets.len())].clone();
-    match rng.below(12) {
+    match rng.below(13) {
         0..=3 => Edit::Set(command(rng, targets, writer)),
         8 => Edit::Paragraph(InsertParagraph {
             anchor: target,
             after: rng.below(2) == 0,
             text: WORDS[rng.below(WORDS.len())].to_owned(),
             style: None,
+            policy: policy(rng, writer),
+        }),
+        12 => Edit::Cells(SetCells {
+            table: "t@body/0".to_owned(),
+            writes: vec![(
+                rng.below(2),
+                rng.below(2),
+                format!("{}\n{}", WORDS[rng.below(WORDS.len())], WORDS[rng.below(4)]),
+            )],
             policy: policy(rng, writer),
         }),
         11 => Edit::Block(DeleteBlock {
@@ -198,7 +210,11 @@ fn written(doc: &WordDoc) -> Vec<(String, Arc<[u8]>)> {
 }
 
 fn run(seed: u64, writers: u64, per_writer: usize) -> (u64, u64) {
-    let bytes = fixture("samplelib/sample-long.docx");
+    run_on("samplelib/sample-long.docx", seed, writers, per_writer)
+}
+
+fn run_on(name: &str, seed: u64, writers: u64, per_writer: usize) -> (u64, u64) {
+    let bytes = fixture(name);
     let shared = editor(&bytes);
     let docx = shared.store().snapshot().doc().docx().unwrap();
     let body = docx.body().unwrap();
@@ -254,6 +270,13 @@ fn concurrent_edits_equal_their_serial_order() {
         conflicts += run(seed, 4, 6).0;
     }
     assert!(conflicts > 0, "writers stamping one document should conflict");
+}
+
+#[test]
+fn concurrent_edits_on_a_table_equal_their_serial_order() {
+    for seed in [21u64, 22] {
+        run_on("wordto/sample-with-table.docx", seed, 4, 6);
+    }
 }
 
 #[test]
