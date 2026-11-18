@@ -617,7 +617,7 @@ All are under 0.1 % of the edit budgets.
 - **Formulas:** length and token caps.
 - **Calls:** a deadline and cancellation per call.
 
-**Fuzz targets** (cargo-fuzz) run nightly, and for 5 minutes per target on PRs that touch one. Corpora are seeded from the fixtures, and every crash becomes a test. The targets:
+**Fuzz targets** (cargo-fuzz) run nightly, and for 4 minutes per target on PRs that touch one. Corpora are seeded from the fixtures, and every crash becomes a test. The targets:
 - the XML parser and writer (round-trip property);
 - zip and OPC;
 - each format's open;
@@ -788,7 +788,7 @@ No parser contains unsafe code.
   - `Session.open(bytes)`, `save`, `call(name, json)` with the lock released, `tool_specs`;
   - one real read-only tool end to end: `describe` over package parts, rendered for both providers by the Python adapters.
 - **xtask:** check-layers, a codegen skeleton (relationships and content-types schemas), data-table packing, lint configuration.
-- **CI:** fmt, clippy with the §2 lints, deny, doc, tests, fuzz (5 minutes per target), iai budgets, abi3 wheels.
+- **CI:** fmt, clippy with the §2 lints, deny, doc, tests, fuzz (4 minutes per target), iai budgets, abi3 wheels.
 - The prototype crates stay as they are, beside the new ones, until PL, P1 and P2 replace them.
 
 **Acceptance tests:**

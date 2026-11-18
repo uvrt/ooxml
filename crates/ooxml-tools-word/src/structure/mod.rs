@@ -9,7 +9,7 @@
 //! Must not: hold sessions or documents by id, keep state between calls, or write the
 //! document but through a command.
 
-mod common;
+pub(crate) mod common;
 mod copy_from;
 mod fields;
 mod headers_footers;
