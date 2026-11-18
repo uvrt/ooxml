@@ -23,7 +23,7 @@ pub use records::{
     CellRecord, Detail, DrawingRecord, Kind, Marker, ParagraphRecord, Placed, Record, RunRecord, TableRecord,
 };
 pub use table::table_style;
-pub use window::Groups;
+pub use window::{Groups, Kept};
 
 use crate::docx::controls::control_kind;
 use crate::docx::formatting::Cell;
@@ -82,7 +82,7 @@ impl<'a> Reader<'a> {
             view,
             view_name,
             map: StyleMap::default(),
-            shared: docx.memo().reading(|| Shared::read(docx)),
+            shared: Shared::of(docx),
             counters: HashMap::new(),
             outline: HashMap::new(),
             into: HashMap::new(),
@@ -573,6 +573,7 @@ impl<'a> Reader<'a> {
 }
 
 /// A container's groups: paragraphs one in the view, tables, markers.
+#[derive(Debug, Clone)]
 enum Item2 {
     P(Vec<Placed>),
     Tbl(Placed),

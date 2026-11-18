@@ -6,8 +6,8 @@
 //!
 //! Must not: decide where the line is (the geometry has) or how its pieces are measured.
 
-use super::decorate::{decoration_rects, separator_rule};
-use super::positions::{line_positions, Positions, Setting};
+use super::decorate::{decorate, separator_rule, white_text};
+use super::positions::{wrapped_positions, Positions, Setting};
 use super::{Drawn, PaintContext, PaintedLine, Rule, Span, SpanKind};
 use crate::geometry::DrawnLine;
 use crate::input::{label_props, list_level, RunFormatter};
@@ -41,6 +41,11 @@ pub(super) struct LineJob<'a> {
     pub(super) resolved: &'a ResolvedParagraph,
     pub(super) measured: &'a MeasuredParagraph,
     pub(super) line: &'a DrawnLine,
+    /// What the paginator broke the line again with: another column's setting, segments
+    /// beside drawings.
+    pub(super) extra: Option<&'a crate::rebreak::LineExtra>,
+    /// The right edge a note separator's line is cut at.
+    pub(super) clip: Option<Px>,
 }
 
 /// `w:highlight`'s names as colours.
@@ -440,34 +445,28 @@ pub(super) fn picture_size(cx: i64, cy: i64) -> (Px, Px) {
     (emu(cx) * scale, emu(cy) * scale)
 }
 
-/// Automatic text on a dark cell fill drawn white, where the paragraph has no background:
-/// the spans with no colour, highlight or shading of their own.
-fn white_text(spans: &mut [Span]) {
-    for span in spans
-        .iter_mut()
-        .filter(|s| s.color.is_none() && s.highlight.is_none() && s.shading.is_none())
-    {
-        span.color = Some("FFFFFF".to_owned());
-    }
+/// Where each piece of `line` is drawn, as its paragraph sets it and as the paginator broke
+/// it.
+fn positions_of(cx: &PaintContext<'_>, job: &LineJob<'_>, line: &ooxml_text::Line) -> Positions {
+    let measured = &job.measured.measured;
+    let setting = Setting {
+        alignment: job.resolved.paragraph.get("jc").and_then(Value::str),
+        first_line: job.line.number == 0,
+        last_line: job.line.number + 1 == measured.lines.len(),
+        decimal: cx.decimal,
+    };
+    wrapped_positions(&measured.pieces, line, &job.measured.geometry, job.extra, &setting)
 }
 
-/// The decorations of a line's spans (`_decorate`).
-fn decorate(cx: &PaintContext<'_>, spans: &[Span], band: (i64, i64), out: &mut PageOut) {
-    let drawn: Vec<&Span> = spans.iter().filter(|s| !s.chars.is_empty()).collect();
-    for (k, span) in drawn.iter().enumerate() {
-        let key = FaceKey {
-            family: Arc::clone(&span.face),
-            bold: span.bold,
-            italic: span.italic,
-        };
-        let decorations = cx.faces.decorations(&key);
-        out.rules.extend(decoration_rects(
-            span,
-            decorations.as_ref(),
-            k + 1 == drawn.len(),
-            Some(band),
-        ));
-    }
+/// Whether a run on `line` states Word 2010 text effects (`w14:textFill`,
+/// `w14:textOutline`).
+fn text_effects(job: &LineJob<'_>, line: &ooxml_text::Line) -> bool {
+    let pieces = &job.measured.measured.pieces;
+    (line.start..line.end)
+        .filter_map(|j| pieces.get(j))
+        .filter_map(|p| usize::try_from(p.run).ok())
+        .filter_map(|k| job.resolved.runs.get(k))
+        .any(|props| props.get("textFill").is_some() || props.get("textOutline").is_some())
 }
 
 /// Paint one line: its spans (pushed onto the line), its rules, pictures and decorations
@@ -477,14 +476,12 @@ pub(super) fn paint_line(cx: &PaintContext<'_>, job: &LineJob<'_>, out: &mut Pag
     let pieces = &measured.measured.pieces;
     let broken = measured.measured.lines.get(job.line.number)?;
     let pp = &job.resolved.paragraph;
-    let alignment = pp.get("jc").and_then(Value::str);
-    let setting = Setting {
-        alignment,
-        first_line: job.line.number == 0,
-        last_line: job.line.number + 1 == measured.measured.lines.len(),
-        decimal: cx.decimal,
-    };
-    let positions = line_positions(pieces, broken, &measured.geometry, &setting);
+    if text_effects(job, broken) {
+        // Painted by DrawingML's fills under Word's rules: not ported yet.
+        out.unpainted
+            .push("a run's text effects (w14:textFill, w14:textOutline)".into());
+    }
+    let positions = positions_of(cx, job, broken);
     let mut painter = LinePainter {
         cx,
         job,
@@ -658,7 +655,7 @@ impl LinePainter<'_, '_> {
         match separator_rule(
             self.cx.faces.decorations(&key).as_ref(),
             &format,
-            (x, end),
+            (x, end, self.job.clip),
             self.job.line.baseline,
         ) {
             Some((x, y, width, height)) => self.out.rules.push(Rule {

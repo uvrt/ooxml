@@ -5,7 +5,7 @@
 //!
 //! Must not: change a drawing or read its geometry.
 
-use crate::docx::{live_paths, Docx};
+use crate::docx::Docx;
 use crate::ids::{W, WP};
 use ooxml_xml::{Element, Node};
 use std::collections::HashMap;
@@ -57,9 +57,7 @@ impl Drawing {
 fn frames(docx: &Docx) -> Vec<(String, Arc<Element>, Box<[u32]>)> {
     let mut out = Vec::new();
     for part in &docx.parts {
-        let found = live_paths(part.root(), &[], &|e| {
-            e.name().is(Some(WP), "inline") || e.name().is(Some(WP), "anchor")
-        });
+        let found = part.facts().frames();
         out.extend(found.into_iter().map(|f| (part.part.clone(), f.element, f.path)));
     }
     out

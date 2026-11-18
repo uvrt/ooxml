@@ -130,7 +130,15 @@ def test_the_rust_definition_renders_as_todays_for_every_provider():
 
 @pytest.fixture(scope="module")
 def toolbox():
-    return Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS)
+    """Today's tools, every read answered by the Python path (lane P1c: the toolbox's reads
+    are the Rust session's by default; this compares the two)."""
+    from docx_agent.rust import reads
+
+    before = reads.use_session(None)
+    try:
+        yield Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS)
+    finally:
+        reads.use_session(before)
 
 
 def _both(toolbox, data: bytes, name: str):

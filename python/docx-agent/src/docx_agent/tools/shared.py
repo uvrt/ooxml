@@ -188,6 +188,17 @@ def find_text(call: Any, doc: str, text: str, regex: bool = False, slides: list 
               range: str | None = None, stories: str = "body", cursor: str | None = None) -> Result:
     if slides is not None:
         raise _decks_only("slides", "range or stories")
+    from ..rust import reads
+
+    given = reads._refs(call, range)
+    return reads.serve(call, "find_text", {"text": text, "regex": regex or None, "range": given,
+                                            "stories": stories, "cursor": cursor},
+                       lambda: _python_find_text(call, text, regex, range, stories, cursor), addresses=(given,))
+
+
+def _python_find_text(call: Any, text: str, regex: bool, range: str | None, stories: str,
+                      cursor: str | None) -> Result:
+    """``find_text`` by docx-agent's own model (the Rust session's fallback)."""
     found = call.document.find(text, within=resolve(call, range), regex=regex)
     rows = [{"address": m.id, "kind": "text", "text": short(m.text, 80), "context": m.context()}
             for m in found if _story_ok(m.id, stories)]

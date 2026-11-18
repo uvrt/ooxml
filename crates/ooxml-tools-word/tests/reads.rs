@@ -82,6 +82,7 @@ fn find(args: &FindText) -> Result<Value, Value> {
         package: &package,
         number: 1,
         versions: &versions,
+        placer: None,
     };
     find_text(args, &version, &Never)
         .map(|d| json!({"summary": d.summary, "data": d.data, "next": d.next_cursor, "total": d.total}))
@@ -96,6 +97,7 @@ fn inspect(target: &str, layout: Option<bool>) -> Result<Value, Value> {
         package: &package,
         number: 1,
         versions: &versions,
+        placer: None,
     };
     let args = WordInspect {
         doc: "d1".into(),
@@ -148,14 +150,18 @@ fn every_match_is_a_text_range_with_its_context() {
 }
 
 #[test]
-fn find_refusals_carry_the_way_out() {
+fn find_refusals_carry_the_way_out_and_a_python_pattern_is_matched() {
     let empty = find(&looking_for("")).unwrap_err();
     assert_eq!(empty["code"], "unit");
     let mut pattern = looking_for("c.t");
     pattern.regex = Some(true);
-    let refused = find(&pattern).unwrap_err();
+    assert_eq!(find(&pattern).unwrap()["total"], 3);
+    let mut empty_match = looking_for("c?a*");
+    empty_match.regex = Some(true);
+    let refused = find(&empty_match).unwrap_err();
     assert_eq!(refused["code"], "refused");
-    assert_eq!(refused["try_call"]["arguments"], json!({"doc": "d1", "text": "c.t"}));
+    assert_eq!(refused["field"], "regex");
+    assert_eq!(refused["try_call"]["arguments"], json!({"doc": "d1", "text": "c?a*"}));
     let mut plain = looking_for("cat");
     plain.regex = Some(true);
     assert_eq!(find(&plain).unwrap()["total"], 3);

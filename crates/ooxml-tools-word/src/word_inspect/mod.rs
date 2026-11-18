@@ -8,9 +8,13 @@
 //!
 //! Owns: the tool's definition and the reply's shape, key for key as today's.
 //!
-//! Must not: lay out (`layout: true` waits for the Rust layout's switch, phase PL step
-//! L4, and is refused with the call that works), read addresses itself (the address
-//! resolver does), or cache between calls.
+//! With `layout: true` each block (and each block of the notes shown) gets where it is laid
+//! out, asked of the version's [`crate::Placer`] once for them all, in the place
+//! docx-agent's `state` keeps for it.
+//!
+//! Must not: lay out (the host's placer does; without one `layout: true` is refused with
+//! the call that works), read addresses itself (the address resolver does), or cache
+//! between calls.
 
 mod blocks;
 mod extras;
@@ -42,19 +46,11 @@ pub struct WordInspect {
 /// `word_inspect` on a Word document at one version.
 ///
 /// # Errors
-/// The address resolver's refusal of `target`; `refused` for `layout: true` (the Rust
-/// layout is not switched on yet); `timeout` when cancelled.
+/// The address resolver's refusal of `target`; `refused` for `layout: true` where the
+/// version has no placer; `internal` where its placer could not place the blocks; `timeout`
+/// when cancelled.
 pub fn word_inspect(args: &WordInspect, version: &Version<'_>, cancel: &dyn Cancel) -> Result<Done<Value>, ToolError> {
-    if args.layout == Some(true) {
-        let mut call = args.clone();
-        call.layout = None;
-        return Err(ToolError::refusal(
-            Refusal::Refused,
-            "layout: where blocks are placed is read from the Word layout, which the Rust core does not serve yet; inspect without layout",
-            WayOut::call(try_call(&call)),
-        )
-        .at("layout"));
-    }
+    let placer = placer_of(args, version)?;
     let docx = version.docx()?;
     let mut reader = Reader::new(&docx, ViewName::Final);
     let mut first = args.clone();
@@ -63,6 +59,9 @@ pub fn word_inspect(args: &WordInspect, version: &Version<'_>, cancel: &dyn Canc
     let selected = select(&mut reader, Some(&args.target)).map_err(refuse)?;
     cancel.check().map_err(cancelled)?;
     let mut writer = Writer::new(&docx);
+    if placer.is_some() {
+        writer.placing = Some(Vec::new());
+    }
     let mut blocks = Vec::new();
     let mut all = Vec::new();
     let mut cell = false;
@@ -115,9 +114,69 @@ pub fn word_inspect(args: &WordInspect, version: &Version<'_>, cancel: &dyn Canc
             data.insert(key.into(), value);
         }
     }
+    let mut data = Value::Object(data);
+    if let (Some(placer), Some(asked)) = (placer, writer.placing.take()) {
+        cancel.check().map_err(cancelled)?;
+        let answers = placer
+            .place(&asked)
+            .ok_or_else(|| ToolError::internal("the layout did not place the blocks", "word_inspect:layout"))?;
+        crate::placements::fill(&mut data, &answers);
+    }
     let mut done = Done::new(format!("Inspected {}", args.target));
-    done.data = Some(Value::Object(data));
+    done.unported = unported(&docx, &data);
+    done.data = Some(data);
     Ok(done)
+}
+
+/// The placer `layout: true` asks (`None` without `layout`); refused where the version has
+/// none, with the call that works without.
+fn placer_of<'v>(args: &WordInspect, version: &Version<'v>) -> Result<Option<&'v dyn crate::Placer>, ToolError> {
+    if args.layout != Some(true) {
+        return Ok(None);
+    }
+    version.placer.map(Some).ok_or_else(|| {
+        let mut call = args.clone();
+        call.layout = None;
+        ToolError::refusal(
+            Refusal::Refused,
+            "layout: where blocks are placed is read from the Word layout, which this session is not given; inspect without layout",
+            WayOut::call(try_call(&call)),
+        )
+        .at("layout")
+    })
+}
+
+/// What of `data` docx-agent gives otherwise: a chart's or SmartArt diagram's JSON on its
+/// drawing (the chart model, phase P3); the final view's cells whose end Accept All takes
+/// away.
+fn unported(docx: &ooxml_word_model::docx::Docx, data: &Value) -> Vec<String> {
+    let shared = ooxml_word_model::markdown::read::Shared::of(docx);
+    let mut out = Vec::new();
+    let graphics = shared.graphics();
+    if !graphics.is_empty() && holds_drawing(data, graphics) {
+        out.push(crate::GRAPHICS.to_owned());
+    }
+    if shared.cell_ends() {
+        out.push(crate::CELL_ENDS.to_owned());
+    }
+    out
+}
+
+/// Whether a block of `value` lists one of `ids` among its drawings.
+fn holds_drawing(value: &Value, ids: &[String]) -> bool {
+    match value {
+        Value::Array(items) => items.iter().any(|v| holds_drawing(v, ids)),
+        Value::Object(map) => {
+            let listed = map.get("drawings").and_then(Value::as_array).is_some_and(|drawings| {
+                drawings
+                    .iter()
+                    .filter_map(|d| d.get("id").and_then(Value::as_str))
+                    .any(|id| ids.iter().any(|g| g == id))
+            });
+            listed || map.values().any(|v| holds_drawing(v, ids))
+        }
+        _ => false,
+    }
 }
 
 /// Whether Python reads `value` as false (`if state.get(key)`).

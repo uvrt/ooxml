@@ -31,6 +31,9 @@ pub(super) struct Writer<'d> {
     pub(super) used_styles: BTreeSet<String>,
     /// Every table written: part, place, id.
     pub(super) tables: Vec<(String, Box<[u32]>, String)>,
+    /// With `layout`: each block to place (its id, then the ids it joins), in the order
+    /// their places were kept (`None`: blocks are not placed).
+    pub(super) placing: Option<Vec<Vec<String>>>,
 }
 
 /// Python's `bool`-as-JSON of an optional string.
@@ -83,6 +86,16 @@ impl<'d> Writer<'d> {
             comment_places: BTreeMap::new(),
             used_styles: BTreeSet::new(),
             tables: Vec::new(),
+            placing: None,
+        }
+    }
+
+    /// Keep the place of `out`'s placements (the next key), to be filled once every block
+    /// is written and the layout asked at once (`state._Writer._place`).
+    fn place(&mut self, out: &mut Map<String, Value>, id: &str, joins: &[String]) {
+        if let Some(asked) = &mut self.placing {
+            out.insert("placements".into(), crate::placements::pending(asked.len()));
+            asked.push(std::iter::once(id.to_owned()).chain(joins.iter().cloned()).collect());
         }
     }
 
@@ -214,6 +227,7 @@ impl<'d> Writer<'d> {
         if let Some((id, kind)) = &record.section {
             out.insert("section".into(), json!({"id": id, "type": kind}));
         }
+        self.place(&mut out, &record.id, &record.joins);
         Value::Object(out)
     }
 
@@ -332,6 +346,7 @@ impl<'d> Writer<'d> {
             rows.push(Value::Array(cells));
         }
         out.insert("rows".into(), Value::Array(rows));
+        self.place(&mut out, &record.id, &[]);
         Value::Object(out)
     }
 

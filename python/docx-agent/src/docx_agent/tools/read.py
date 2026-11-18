@@ -1,6 +1,10 @@
 """Reading: the document at a glance (``word_describe``, the shared ``describe``'s Word
 handler, made a tool in :mod:`.shared`), ``word_read`` (Markdown with ids,
-paged) and ``word_inspect`` (a block's exact formatting)."""
+paged) and ``word_inspect`` (a block's exact formatting).
+
+Lane P1c: each is answered by the Rust session where its answer is the same
+(:mod:`docx_agent.rust.reads`, the interpreter lock let go while Rust reads), else by the
+Python path here (``_python_*``), counted with why."""
 
 from __future__ import annotations
 
@@ -119,7 +123,36 @@ def _styles_in_use(document: Any) -> list[dict[str, Any]]:
 
 
 def word_describe(call: Any, doc: str) -> Result:
-    """The shared ``describe``'s Word handler: the document at a glance."""
+    """The shared ``describe``'s Word handler: the document at a glance -- read in Rust,
+    with what Python holds of the document added (:func:`_described`)."""
+    from ..rust import reads
+
+    return reads.serve(call, "describe", {}, lambda: _python_describe(call, doc),
+                       answer=lambda envelope: _described(call, envelope))
+
+
+def _described(call: Any, envelope: dict) -> Result:
+    """``describe``'s answer from the Rust session's: its data with what the session holds
+    (``name``, ``pages``, ``tracking``, ``problems``) in today's places, and ``memory``."""
+    entry = call.entry
+    rust = envelope["data"]
+    data: dict[str, Any] = {"name": entry.name, "pages": _pages(call)}
+    for key, value in rust.items():
+        if key == "name":
+            continue
+        if key == "tracking":
+            value = ({"author": entry.tracking["author"]} if entry.tracking and entry.tracking.get("on")
+                     else None)
+        data[key] = value
+        if key == "controls":
+            data["problems"] = [str(p) for p in entry.baseline_problems][:20]
+    result = Result(summary=f"Described {entry.name}", data=data)
+    result.memory = _memory(call)        # round 58: the application's, never the model's
+    return result
+
+
+def _python_describe(call: Any, doc: str) -> Result:
+    """``describe`` read by docx-agent's own model (the Rust session's fallback)."""
     document = call.document
     entry = call.entry
     # Round 59 (R135): the comments' records found once -- each comment's ``author``,
@@ -228,6 +261,16 @@ def _drawings(document: Any) -> list[Any]:
            refs=('range',), group="core")
 def word_read(call: Any, doc: str, range: str | None = None, view: str = "final",
               stories: str = "body", cursor: str | None = None) -> Result:
+    from ..rust import reads
+
+    given = reads._refs(call, range)
+    return reads.serve(call, "word_read", {"range": given, "view": view, "stories": stories, "cursor": cursor},
+                       lambda: _python_word_read(call, doc, range, view, stories, cursor), addresses=(given,))
+
+
+def _python_word_read(call: Any, doc: str, range: str | None, view: str, stories: str,
+                      cursor: str | None) -> Result:
+    """``word_read`` by docx-agent's own model (the Rust session's fallback)."""
     if range is not None and stories == "all":
         raise ToolError("invalid_arguments", "stories=all reads whole stories: give no range with it",
                         field="range")
@@ -252,6 +295,16 @@ def word_read(call: Any, doc: str, range: str | None = None, view: str = "final"
                               optional=True)},
            refs=('target',), group="word_text")
 def word_inspect(call: Any, doc: str, target: str, layout: bool = False) -> Result:
+    from ..rust import reads
+
+    given = reads._refs(call, target)
+    return reads.serve(call, "word_inspect", {"target": given, "layout": layout or None},
+                       lambda: _python_word_inspect(call, doc, target, layout), addresses=(given,),
+                       placer=reads.Placer(call) if layout else None)
+
+
+def _python_word_inspect(call: Any, doc: str, target: str, layout: bool) -> Result:
+    """``word_inspect`` by docx-agent's own model (the Rust session's fallback)."""
     from ..state import state as state_of
 
     state = state_of(call.document, resolve(call, target), layout=layout, placed=_placed_by_worker(call))

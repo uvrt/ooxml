@@ -5,6 +5,35 @@ ooxml-core is the Rust core of the ooxml packages (`crates/`), as the Python mod
 
 ## 0.10.0 -- unreleased
 
+- **docx-agent's reads served by Rust (phase P1, lane P1c).** `Session.commit(doc, parts)` hands
+  a version's touched parts over as `update` does and returns the version it made, held
+  (`ooxml_core.Version`: `doc`, `number`); `Session.head(doc)` holds the head. A call given
+  `at=[version]` reads that version whatever was committed since, and `placer` answers
+  `word_inspect`'s `layout` (called with the blocks asked, it answers where each is placed).
+  `Session.call` now returns a third item: what only the application reads, as JSON text
+  (`unported`: what of the answer is not yet given as the Python tool gives it).
+- A part handed over is diffed with its tree in the version before and shares every subtree
+  that did not change; a story part's lookups (controls, revision records, drawings, link
+  anchors) are found in one walk and kept per block, so a new version reads only what changed.
+- `find_text`'s `regex` takes Python's regular expressions (`fancy-regex`): matched as
+  `re.finditer` matches them where the meaning is certainly the same, refused with why
+  (and the call that finds the text as written) where it could differ or the pattern can
+  match nothing.
+
+- **SmartArt, VML shapes and text paths painted in Rust; charts in any locale (lane L4d).**
+  `ooxml_word_pages::drawings` draws a SmartArt diagram's cached drawing (`dsp:drawing`,
+  found from its data model as ooxml-common's `diagram_drawing_part` finds it, its shapes
+  resolved through the document's theme, colour map and font scheme as docx2svg's
+  `diagram.py` resolves them), a VML rectangle, rounded rectangle, oval or text box as the
+  DrawingML preset it is, and a VML text path (a watermark) stretched to its box by its
+  face's outlines at its kerned pens, as docx2svg's `drawing.text_path_markup`; the
+  fallbacks `SmartArt`, `VML shape` and `chart in another locale` are gone. `WordPages`
+  takes the number locale a chart's numbers and dates are written in (`thousands`,
+  `date_order`, `list_separator` beside `decimal` and `locale`). A page view's drawing
+  slots say the faces their text is drawn in (`faces`). `ooxml-fonts` reads glyph outlines'
+  exact boxes (TrueType `glyf`, CFF Type 2) and `GPOS` pair kerning (`Face::ink`,
+  `Face::pair_kern`), as docx2svg's `outlines.py`.
+
 - **Drawings painted in Rust (phase PL/P3, lane L4c).** `ooxml_word_pages::drawings` paints a
   page's pictures, shapes, groups and charts as docx2svg does (through `ooxml-render` and
   `ooxml-chart`, with Word's colours, theme style references and chart rules) and says what

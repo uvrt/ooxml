@@ -4,7 +4,7 @@
 //!
 //! Must not: change a control or read its content's formatting.
 
-use crate::docx::{child_val, live_paths, Docx};
+use crate::docx::{child_val, Docx};
 use crate::ids::W;
 use ooxml_xml::Element;
 use std::collections::HashMap;
@@ -54,8 +54,7 @@ pub fn controls(docx: &Docx) -> Vec<Control> {
     let mut out = Vec::new();
     let mut seen: HashMap<String, usize> = HashMap::new();
     for part in &docx.parts {
-        let found = live_paths(part.root(), &[], &|e| e.name().is(Some(W), "sdt"));
-        for (number, f) in found.into_iter().enumerate() {
+        for (number, f) in part.facts().controls().into_iter().enumerate() {
             let raw = f.element.find(Some(W), "sdtPr").and_then(|p| child_val(p, "id"));
             let id = match raw {
                 None => format!("cc@{}/{number}", part.story),

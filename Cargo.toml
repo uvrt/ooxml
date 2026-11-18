@@ -55,6 +55,7 @@ thiserror = "2"
 flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 arc-swap = "1"
 loom = "0.7"
+fancy-regex = "0.14"
 ooxml-base = { path = "crates/ooxml-base" }
 ooxml-xml = { path = "crates/ooxml-xml" }
 ooxml-zip = { path = "crates/ooxml-zip" }

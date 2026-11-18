@@ -39,8 +39,10 @@ differences live here and nowhere else:
     python tools/ci.py fuzz-seeds DIR
         rust.yml's fuzz job's seed corpora from this checkout's documents (FUZZ_SEED_SUFFIXES
         under python/): DIR/package (each package, for zip_read and opc_open) and DIR/xml
-        (each XML part, for xml_roundtrip) and DIR/metafile (the metafiles in ooxml-oracle's
-        recorded case bundle, for metafile_draw), every distinct file once, none over 1 MiB.
+        (each XML part, for xml_roundtrip, chart_layout, drawing_render and vml_paint),
+        DIR/metafile (the metafiles in ooxml-oracle's recorded case bundle, for metafile_draw)
+        and DIR/font (the .ttf and .otf faces under python/, for glyph_ink), every distinct
+        file once, none over 1 MiB.
 
 Standard library only, Python 3.10+.
 """
@@ -136,7 +138,8 @@ PACKAGES: dict[str, dict] = {
         "siblings": ["ooxml-common", "ooxml-edit", "docx2svg[png]", "ooxml-core"],
         "extras": "dev,png",
         "min_python": "3.10",
-        "pytest": ["-n", "auto", "--durations=30"],
+        # A test past 5 minutes dumps every thread's stack (a hang is named, not a timeout).
+        "pytest": ["-n", "auto", "--durations=30", "-o", "faulthandler_timeout=300"],
         "ft_pytest": ["-n", "auto", "-o", "faulthandler_timeout=300", "-v"],
         # The suite takes about 18 minutes on one Linux runner: split into this many jobs
         # on Linux (SHARDS below).
@@ -573,6 +576,7 @@ def build_check(name: str) -> None:
 #: tools/rust_oracles.py does), up to libFuzzer's -max_len in rust.yml.
 FUZZ_SEED_SUFFIXES = (".docx", ".docm", ".dotx", ".dotm", ".pptx", ".pptm", ".potx", ".xlsx", ".xlsm", ".xltx")
 FUZZ_XML_SUFFIXES = (".xml", ".rels", ".vml")
+FUZZ_FONT_SUFFIXES = (".ttf", ".otf")
 FUZZ_MAX_LEN = 1 << 20
 METAFILE_CASES = ROOT / "crates" / "ooxml-oracle" / "tests" / "data" / "metafile-cases.gz"
 
@@ -581,7 +585,7 @@ def fuzz_seeds(out: Path) -> dict[str, int]:
     import hashlib
     import zipfile
 
-    counts = {"package": 0, "xml": 0, "metafile": 0}
+    counts = {"package": 0, "xml": 0, "metafile": 0, "font": 0}
     seen: set[str] = set()
 
     def keep(kind: str, data: bytes) -> None:
@@ -594,7 +598,12 @@ def fuzz_seeds(out: Path) -> dict[str, int]:
     for kind in counts:
         (out / kind).mkdir(parents=True, exist_ok=True)
     for path in sorted(PY.rglob("*")):
-        if path.suffix.lower() not in FUZZ_SEED_SUFFIXES or not path.is_file() or ".venv" in path.parts:
+        if not path.is_file() or ".venv" in path.parts:
+            continue
+        if path.suffix.lower() in FUZZ_FONT_SUFFIXES:
+            keep("font", path.read_bytes())  # the faces the repository ships, for glyph_ink
+            continue
+        if path.suffix.lower() not in FUZZ_SEED_SUFFIXES:
             continue
         data = path.read_bytes()
         keep("package", data)

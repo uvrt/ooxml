@@ -684,11 +684,18 @@ def convert_docx(source, options: ConvertOptions | None = None) -> Conversion:
 
 def drawn_faces(layout) -> list[tuple[str, bool, bool]]:
     """Every ``(face, bold, italic)`` a layout draws text in, sorted: its lines' and its
-    floating drawings' (a watermark's text path)."""
+    floating drawings' (a watermark's text path, a chart's or a diagram's text)."""
+    from .drawing import markup_faces
+
     faces = {(span.face, span.bold, span.italic) for page in layout.pages for line in page.text_lines()
              for span in line.spans if span.chars}
-    faces.update(primitive.face for page in layout.pages for placed in getattr(page, "floats", ())
-                 for primitive in getattr(placed, "primitives", None) or () if getattr(primitive, "face", None))
+    for page in layout.pages:
+        for placed in getattr(page, "floats", ()):
+            for primitive in getattr(placed, "primitives", None) or ():
+                if getattr(primitive, "face", None):
+                    faces.add(primitive.face)
+                if primitive.kind == "markup" and primitive.what in ("chart", "diagram"):
+                    faces.update(markup_faces(primitive.markup))
     return sorted(faces)
 
 

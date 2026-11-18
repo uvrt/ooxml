@@ -7,7 +7,7 @@
 //! application's language (that is drawn as Word cached it).
 
 /// Why a field's text cannot be computed from the file.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Uncomputable(pub String);
 
 fn uncomputable(why: impl Into<String>) -> Uncomputable {

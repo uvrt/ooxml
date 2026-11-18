@@ -33,7 +33,7 @@ def docx(controls: int = 1) -> bytes:
 
 
 def call(session, name: str, arguments, **options) -> dict:
-    text, images = session.call(name, json.dumps(arguments), **options)
+    text, images, _app = session.call(name, json.dumps(arguments), **options)
     assert images == []
     return json.loads(text)
 
@@ -72,7 +72,7 @@ def test_refusals_are_replies_and_session_errors_are_exceptions():
                                 "valid_options": ["d1"]}
     assert call(session, "nope", {})["error"]["valid_options"] == [
         "describe", "find_text", "read_batch", "word_inspect", "word_read"]
-    text, _ = session.call("describe", "{not json")
+    text, _, _ = session.call("describe", "{not json")
     assert json.loads(text)["error"]["code"] == "invalid_arguments"
     assert len(session.call("describe", json.dumps({"doc": doc}), limit=60)[0]) <= 60 + 100
     with pytest.raises(KeyError):

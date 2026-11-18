@@ -7,7 +7,9 @@
 //! Must not: choose the folders (the caller passes docx2svg's, in Word's order) or read a
 //! font file beyond what the fonts layer asks for.
 
+use crate::drawings::vml::Inks;
 use ooxml_base::Digest;
+use ooxml_fonts::ink::TextInk;
 use ooxml_fonts::{
     Catalogue, DrawingFonts, DrawingIndex, DrawingName, EmbeddedPart, Folder, FontStore, FontTable, FontTableEntry,
     WordFontOptions, WordFonts,
@@ -61,10 +63,16 @@ impl FontSetup {
             self.options.clone(),
         );
         let epoch = fonts.epoch();
-        let names = DrawingFonts::new(Arc::clone(&self.index), &embedded, table, self.options.clone());
+        let drawing = Arc::new(DrawingFonts::new(
+            Arc::clone(&self.index),
+            &embedded,
+            table,
+            self.options.clone(),
+        ));
         DocumentFonts {
             glyphs: Arc::new(WordGlyphs::new(fonts)),
-            names: Arc::new(Names(names)),
+            names: Arc::new(Names(Arc::clone(&drawing))),
+            inks: Arc::new(Names(drawing)),
             epoch,
         }
     }
@@ -77,6 +85,8 @@ pub struct DocumentFonts {
     pub glyphs: Arc<WordGlyphs>,
     /// How the SVG names faces.
     pub names: Arc<dyn FaceNames>,
+    /// A text path's outlines, in the faces Word draws with.
+    pub inks: Arc<dyn Inks>,
     /// What measures under these fonts are keyed by: a change means a new engine.
     pub epoch: Digest,
 }
@@ -89,12 +99,21 @@ impl std::fmt::Debug for DocumentFonts {
     }
 }
 
-/// Faces named as docx2svg names them on this machine (`drawing_name`).
-struct Names(DrawingFonts);
+/// Faces named as docx2svg names them on this machine (`drawing_name`), and their outlines
+/// (`InstalledFonts.ink`).
+struct Names(Arc<DrawingFonts>);
 
 impl FaceNames for Names {
     fn drawing_name(&self, family: &str, bold: bool, italic: bool) -> Option<DrawingName> {
         self.0.drawing_name(family, bold, italic)
+    }
+}
+
+impl Inks for Names {
+    fn ink(&self, family: &str, bold: bool, italic: bool, text: &str, oblique: f64) -> Option<TextInk> {
+        let face = self.0.drawing_face(family, bold, italic)?;
+        let upright = !face.style().is_ok_and(|(_, italic)| italic);
+        face.ink(text, if italic && upright { oblique } else { 0.0 })
     }
 }
 
