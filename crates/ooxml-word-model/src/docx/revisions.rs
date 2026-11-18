@@ -84,3 +84,71 @@ pub fn records(docx: &Docx) -> Vec<Record> {
     }
     out
 }
+
+/// A record as docx-agent's `Revision` describes it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecordInfo {
+    /// Its kind (`insertion`, `paragraph-mark-deletion`, `row-insertion`, `cell-merge`...).
+    pub kind: String,
+    /// The id of the paragraph it is in (none for a row's or table's own record).
+    pub paragraph: Option<String>,
+    /// The text it inserts, deletes or moves (empty for the others).
+    pub text: String,
+    /// `w:date`.
+    pub date: Option<String>,
+}
+
+/// `record` described: its kind, paragraph and text.
+#[must_use]
+pub fn describe_record(docx: &Docx, record: &Record) -> RecordInfo {
+    let part = docx.part(&record.part);
+    let root = part.map(|p| p.root());
+    let above = |up: usize| -> Option<&Element> {
+        let n = record.path.len().checked_sub(up)?;
+        crate::docx::at_path(root?, record.path.get(..n)?).map(|e| &**e)
+    };
+    let local = record.element.name().local();
+    let base = KINDS.iter().find(|(l, _)| *l == local).map_or("", |(_, k)| *k);
+    let is = |e: Option<&Element>, name: &str| e.is_some_and(|e| e.name().is(Some(W), name));
+    let kind = if ["ins", "del", "moveFrom", "moveTo"].contains(&local) {
+        if is(above(1), "rPr") && is(above(2), "pPr") {
+            format!("paragraph-mark-{base}")
+        } else if is(above(1), "rPr") {
+            format!("run-mark-{base}")
+        } else if is(above(1), "trPr") {
+            format!("row-{base}")
+        } else {
+            base.to_owned()
+        }
+    } else {
+        base.to_owned()
+    };
+    let paragraph = (1..=record.path.len())
+        .find(|up| is(above(*up), "p"))
+        .and_then(|up| record.path.get(..record.path.len() - up))
+        .and_then(|path| part.and_then(|p| p.ids.paragraph_at(path)))
+        .map(|p| p.id);
+    let text = if ["ins", "del", "moveFrom", "moveTo"].contains(&local) {
+        let mut out = String::new();
+        texts_below(&record.element, &mut out);
+        out
+    } else {
+        String::new()
+    };
+    RecordInfo {
+        kind,
+        paragraph,
+        text,
+        date: record.element.attribute(Some(W), "date").map(str::to_owned),
+    }
+}
+
+/// The leading text of every `w:t` and `w:delText` below `element`, in document order.
+fn texts_below(element: &Element, out: &mut String) {
+    for child in element.child_elements() {
+        if child.name().is(Some(W), "t") || child.name().is(Some(W), "delText") {
+            out.push_str(&crate::docx::text::leading_text(child));
+        }
+        texts_below(child, out);
+    }
+}

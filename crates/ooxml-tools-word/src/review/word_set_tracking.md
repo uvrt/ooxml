@@ -1,0 +1,1 @@
+Tracking mode: while on, every edit is a tracked change by author. word_switch also sets Word's own Track Changes.

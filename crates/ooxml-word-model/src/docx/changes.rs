@@ -10,7 +10,7 @@
 //! Must not: accept, reject, or word a change (only its records are grouped here).
 
 use super::revisions::{records, Record, KINDS};
-use super::Docx;
+use super::{Docx, StoryPart};
 use crate::ids::W;
 use ooxml_xml::{Element, Node};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -22,6 +22,7 @@ struct Arena {
     nodes: Vec<Arc<Element>>,
     parents: Vec<Option<usize>>,
     by_path: HashMap<Box<[u32]>, usize>,
+    paths: Vec<Box<[u32]>>,
 }
 
 impl Arena {
@@ -31,6 +32,7 @@ impl Arena {
             nodes: vec![Arc::clone(root)],
             parents: vec![None],
             by_path: HashMap::new(),
+            paths: vec![Box::default()],
         };
         arena.by_path.insert(Box::default(), 0);
         let mut path = Vec::new();
@@ -45,7 +47,9 @@ impl Arena {
             let index = self.nodes.len();
             self.nodes.push(Arc::clone(child));
             self.parents.push(Some(at));
-            self.by_path.insert(path.clone().into_boxed_slice(), index);
+            let boxed: Box<[u32]> = path.clone().into_boxed_slice();
+            self.paths.push(boxed.clone());
+            self.by_path.insert(boxed, index);
             self.walk(child, index, path);
             path.pop();
         }
@@ -171,6 +175,18 @@ fn is_move(e: &Element) -> bool {
 /// of each group's records.
 #[must_use]
 pub fn change_groups(docx: &Docx) -> Vec<Vec<String>> {
+    grouped(docx, |_, grouping, group| {
+        group
+            .members
+            .iter()
+            .filter_map(|k| grouping.held.get(*k).map(|r| r.id.clone()))
+            .collect()
+    })
+}
+
+/// Every part's records grouped, each group made into a value by `make` with the part's
+/// grouping, in story and document order.
+fn grouped<T>(docx: &Docx, mut make: impl FnMut(&StoryPart, &Grouping<'_>, &Group) -> T) -> Vec<T> {
     let all = records(docx);
     let mut by_part: BTreeMap<usize, Vec<Record>> = BTreeMap::new();
     for record in all {
@@ -184,9 +200,19 @@ pub fn change_groups(docx: &Docx) -> Vec<Vec<String>> {
     let mut out = Vec::new();
     for (place, held) in by_part {
         let Some(part) = docx.parts.get(place) else { continue };
-        out.extend(Grouping::new(part.root(), &held).groups());
+        let mut grouping = Grouping::new(part.root(), &held);
+        for group in grouping.groups() {
+            out.push(make(part, &grouping, &group));
+        }
     }
     out
+}
+
+/// One group of a part's records: their indexes in the part's record list, in document
+/// order, and the table structure edit it is, where one is.
+struct Group {
+    members: Vec<usize>,
+    label: Option<&'static str>,
 }
 
 /// The grouping of one part's records.
@@ -252,7 +278,7 @@ impl<'r> Grouping<'r> {
         self.union.union(ka, kb);
     }
 
-    fn groups(mut self) -> Vec<Vec<String>> {
+    fn groups(&mut self) -> Vec<Group> {
         self.moves_and_nesting();
         let tables: Vec<usize> = (0..self.arena.nodes.len())
             .filter(|k| self.arena.is(*k, "tbl"))
@@ -269,10 +295,11 @@ impl<'r> Grouping<'r> {
         let mut out: Vec<Vec<usize>> = groups.into_values().collect();
         out.sort_by_key(|m| m.first().copied().unwrap_or(0));
         out.into_iter()
-            .map(|m| {
-                m.into_iter()
-                    .filter_map(|k| self.held.get(k).map(|r| r.id.clone()))
-                    .collect()
+            .map(|members| {
+                let label = members
+                    .iter()
+                    .find_map(|k| self.at.get(*k).and_then(|a| self.labels.get(a)).copied());
+                Group { members, label }
             })
             .collect()
     }
@@ -384,4 +411,7 @@ fn is_mark(arena: &Arena, k: usize) -> bool {
         .is_some_and(|g| arena.is(g, "pPr"))
 }
 
+mod describe;
 mod joins;
+
+pub use describe::{changes, LogicalChange, CHANGE_KINDS};
