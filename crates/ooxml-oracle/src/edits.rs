@@ -106,6 +106,12 @@ pub(crate) fn policy(case: &Value) -> RevisionPolicy {
 
 /// One case on a freshly opened document.
 fn edit(bytes: &Arc<[u8]>, case: &Value) -> Result<Value, String> {
+    match case.get("op").and_then(Value::as_str) {
+        Some("tool") => return crate::review_tools::tool_case(bytes, case),
+        Some("objects") => return crate::object_tools::case(bytes, case),
+        Some("structure") => return crate::structure_tools::case(bytes, case),
+        _ => {}
+    }
     let package = Package::open(Arc::clone(bytes), &Limits::default()).map_err(|e| e.to_string())?;
     let editor = Editor::open(
         package.clone(),
@@ -114,12 +120,6 @@ fn edit(bytes: &Arc<[u8]>, case: &Value) -> Result<Value, String> {
         Arc::new(Unlimited),
     )
     .map_err(|e| e.to_string())?;
-    if case.get("op").and_then(Value::as_str) == Some("tool") {
-        return crate::review_tools::tool_case(bytes, case);
-    }
-    if case.get("op").and_then(Value::as_str) == Some("structure") {
-        return crate::structure_tools::case(bytes, case);
-    }
     let text = |key: &str| case.get(key).and_then(Value::as_str).unwrap_or("").to_owned();
     let caller = Caller::anonymous();
     let done: Result<Value, EditError> = match case.get("op").and_then(Value::as_str).unwrap_or("set_text") {

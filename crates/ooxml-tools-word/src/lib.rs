@@ -13,6 +13,7 @@
 
 mod describe;
 mod find_text;
+mod objects;
 mod paging;
 mod placements;
 mod refusal;
@@ -25,6 +26,11 @@ mod word_read;
 
 pub use describe::{describe, Describe, DESCRIBED, NOT_DESCRIBED};
 pub use find_text::{find_text, FindStories, FindText};
+pub use objects::{
+    word_format_table, Across, Against, BorderStyle, CellArg, ControlAction, ControlType, DrawingAction, HeightRule,
+    KeyPair, Look, Loose, Position, Scope, Side, TableAction, Vertical, WidthOf, WordControls, WordDrawings,
+    WordEditTable, WordFormatTable, Wrap, ZOrder,
+};
 pub use placements::Placer;
 pub use review::{
     word_changes, word_comments, word_set_tracking, ChangeAction, ChangeDetail, ChangeKind, CommentAction, CommentItem,
