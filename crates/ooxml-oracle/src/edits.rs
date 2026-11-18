@@ -15,6 +15,7 @@ use ooxml_base::Limits;
 use ooxml_derive::CacheBudget;
 use ooxml_opc::Package;
 use ooxml_store::{Caller, Clock, StoreConfig};
+use ooxml_word_edit::find::{Literal, Pattern};
 use ooxml_word_edit::touched::Touched;
 use ooxml_word_edit::validate::problems;
 use ooxml_word_edit::{
@@ -132,10 +133,13 @@ fn edit(bytes: &Arc<[u8]>, case: &Value) -> Result<Value, String> {
             )
             .map(|done| report(&package, &done, ranges_result(&done.out))),
         "replace" => {
+            let pattern = match pattern(case, &text("find"), &text("text")) {
+                Ok(p) => p,
+                Err(error) => return Ok(json!({"refused": error})),
+            };
             let command = ReplaceText {
-                find: text("find"),
-                with: text("text"),
-                case: case.get("case").and_then(Value::as_bool).unwrap_or(true),
+                pattern,
+                across: case.get("across").and_then(Value::as_bool).unwrap_or(false),
                 count: case
                     .get("count")
                     .and_then(Value::as_u64)
@@ -163,6 +167,19 @@ fn edit(bytes: &Arc<[u8]>, case: &Value) -> Result<Value, String> {
         }
     };
     Ok(done.unwrap_or_else(|error| json!({"refused": error.to_string()})))
+}
+
+/// A replace's find: plain text (white space collapsed or not), or a Python regular
+/// expression matched by the tools' translation, its template expanded.
+fn pattern(case: &Value, find: &str, with: &str) -> Result<Arc<dyn Pattern>, String> {
+    let sensitive = case.get("case").and_then(Value::as_bool).unwrap_or(true);
+    if case.get("regex").and_then(Value::as_bool).unwrap_or(false) {
+        return crate::find_regex::Regex::new(find, !sensitive, with).map(|r| Arc::new(r) as Arc<dyn Pattern>);
+    }
+    let collapse = case.get("whitespace").and_then(Value::as_str) == Some("collapse");
+    Literal::new(find, sensitive, collapse, with)
+        .map(|l| Arc::new(l) as Arc<dyn Pattern>)
+        .map_err(|e| e.to_string())
 }
 
 /// A set_text's result, as the harness writes docx-agent's.

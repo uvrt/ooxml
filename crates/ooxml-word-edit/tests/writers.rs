@@ -13,6 +13,7 @@ use ooxml_derive::CacheBudget;
 use ooxml_opc::Package;
 use ooxml_store::{Caller, Clock, Seq, Snapshot, StoreConfig};
 use ooxml_store::{Command, Txn};
+use ooxml_word_edit::find::Literal;
 use ooxml_word_edit::{
     DeleteText, EditError, Editor, InsertText, Keep, ReplaceText, RevisionPolicy, SetText, Tracking, WordDoc,
 };
@@ -144,9 +145,8 @@ fn edit(rng: &mut Rng, targets: &[String], writer: u64) -> Edit {
             policy: policy(rng, writer),
         }),
         _ => Edit::Replace(ReplaceText {
-            find: WORDS[rng.below(6)].to_owned(),
-            with: "omega".to_owned(),
-            case: rng.below(2) == 0,
+            pattern: Arc::new(Literal::new(WORDS[rng.below(6)], rng.below(2) == 0, false, "omega").unwrap()),
+            across: false,
             count: Some(1),
             keep: Keep::First,
             policy: policy(rng, writer),

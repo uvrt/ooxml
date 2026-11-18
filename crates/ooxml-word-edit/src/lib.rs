@@ -22,16 +22,20 @@
 //! store orders concurrent edits.
 #![forbid(unsafe_code)]
 
+mod across;
 mod doc;
 mod editor;
 mod error;
+pub mod find;
 mod inline;
+mod marks;
 mod names;
 mod namespaces;
 mod people;
 mod policy;
 mod pool;
 mod ranges;
+mod ranges_across;
 mod release;
 mod revision_ids;
 mod set_text;

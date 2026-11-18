@@ -173,13 +173,14 @@ impl Command<WordDoc> for SetText {
             let prefix = w14_prefix(tree.root(), &found.path);
             draws.push(Draw {
                 from: DrawFrom::Seed(Arc::from(format!("{}\0text", found.part))),
+                node: 0,
                 at: Vec::new(),
                 attribute: Arc::new(QName::new(Some(&prefix), "textId", Some(W14))),
             });
         }
         let new = work.build().ok_or_else(|| EditError::Path(found.part.clone()))?;
         if let Some(numbered) = wrote.annotations {
-            draws.extend(crate::sink::annotation_draws(&new, numbered));
+            draws.extend(crate::sink::annotation_draws(&new, numbered, 0));
         }
         let mut keys = vec![block_key(&found.part, &id)];
         if paragraph_has_annotations(&found.element) || paragraph_has_annotations(&new) {
