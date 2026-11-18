@@ -152,6 +152,14 @@ fn the_definitions_are_the_golden_exports() {
         (WordSetTracking::spec(), include_str!("golden/word_set_tracking.json")),
         (WordChanges::spec(), include_str!("golden/word_changes.json")),
         (WordComments::spec(), include_str!("golden/word_comments.json")),
+        (
+            ooxml_tools_word::WordSetText::spec(),
+            include_str!("golden/word_set_text.json"),
+        ),
+        (
+            ooxml_tools_word::ReplaceText::spec(),
+            include_str!("golden/replace_text.json"),
+        ),
     ] {
         assert_eq!(format!("{}\n", spec.export(Some(&[KIND]))), golden, "{}", spec.name);
     }

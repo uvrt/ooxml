@@ -97,20 +97,32 @@ fn call<A: ToolArgs>(arguments: Value, tool: impl Fn(&A, &Editing<'_>) -> ToolRe
 #[test]
 fn the_definitions_are_the_golden_exports() {
     let spec = WordLists::spec();
-    assert_eq!(format!("{}\n", spec.export(Some(&[KIND]))), include_str!("golden/word_lists.json"));
+    assert_eq!(
+        format!("{}\n", spec.export(Some(&[KIND]))),
+        include_str!("golden/word_lists.json")
+    );
 }
 
 #[test]
 fn paragraphs_join_a_new_list_and_are_listed() {
-    let (reply, _) = call(json!({"doc": "d1", "targets": ["p:10000001", "p:10000002"], "action": "add"}), word_lists);
+    let (reply, _) = call(
+        json!({"doc": "d1", "targets": ["p:10000001", "p:10000002"], "action": "add"}),
+        word_lists,
+    );
     assert_eq!(reply["summary"], json!("add: 2 paragraph(s)"));
-    assert_eq!(reply["data"][1]["list"], json!({"kind": "bullet", "level": 0, "num_id": 2}));
+    assert_eq!(
+        reply["data"][1]["list"],
+        json!({"kind": "bullet", "level": 0, "num_id": 2})
+    );
     assert_eq!(reply["data"][0]["list"]["num_id"], reply["data"][1]["list"]["num_id"]);
 }
 
 #[test]
 fn a_paragraph_in_no_list_is_left_as_it_was_and_said() {
-    let (reply, _) = call(json!({"doc": "d1", "targets": ["p:10000001"], "action": "remove"}), word_lists);
+    let (reply, _) = call(
+        json!({"doc": "d1", "targets": ["p:10000001"], "action": "remove"}),
+        word_lists,
+    );
     assert!(reply.get("error").is_none(), "{reply}");
     assert_eq!(
         reply["warnings"],
@@ -120,7 +132,10 @@ fn a_paragraph_in_no_list_is_left_as_it_was_and_said() {
 
 #[test]
 fn a_style_numbered_paragraph_is_refused_with_the_styles_and_force() {
-    let (reply, _) = call(json!({"doc": "d1", "targets": ["p:10000003"], "action": "remove"}), word_lists);
+    let (reply, _) = call(
+        json!({"doc": "d1", "targets": ["p:10000003"], "action": "remove"}),
+        word_lists,
+    );
     assert_eq!(reply["error"]["code"], json!("invalid_arguments"));
     assert_eq!(reply["error"]["field"], json!("targets"));
     assert_eq!(reply["error"]["valid_options"], json!(["Normal", "force"]));

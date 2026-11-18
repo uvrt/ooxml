@@ -16,7 +16,7 @@ use ooxml_store::{Command, Txn};
 use ooxml_word_edit::find::Literal;
 use ooxml_word_edit::{
     DeleteBlock, DeleteText, EditError, Editor, InsertParagraph, InsertText, Keep, ReplaceText, RevisionPolicy,
-    SetCells, SetParagraphStyle, SetText, Tracking, WordDoc,
+    SetCells, SetParagraphStyle, SetStyledText, SetText, Tracking, WordDoc,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -89,6 +89,7 @@ enum Edit {
     Style(SetParagraphStyle),
     Block(DeleteBlock),
     Cells(SetCells),
+    Styled(SetStyledText),
 }
 
 impl Command<WordDoc> for Edit {
@@ -105,6 +106,7 @@ impl Command<WordDoc> for Edit {
             Edit::Style(c) => c.validate(doc),
             Edit::Block(c) => c.validate(doc),
             Edit::Cells(c) => c.validate(doc),
+            Edit::Styled(c) => c.validate(doc),
         }
     }
 
@@ -118,6 +120,7 @@ impl Command<WordDoc> for Edit {
             Edit::Style(c) => c.prepare(tx).map(|_| true)?,
             Edit::Block(c) => c.prepare(tx).map(|_| true)?,
             Edit::Cells(c) => c.prepare(tx).map(|_| true)?,
+            Edit::Styled(c) => c.prepare(tx).map(|_| true)?,
         })
     }
 }
@@ -146,8 +149,19 @@ fn policy(rng: &mut Rng, writer: u64) -> RevisionPolicy {
 /// A random common edit (positions within the first characters, so they stay in range).
 fn edit(rng: &mut Rng, targets: &[String], writer: u64) -> Edit {
     let target = targets[rng.below(targets.len())].clone();
-    match rng.below(13) {
+    match rng.below(14) {
         0..=3 => Edit::Set(command(rng, targets, writer)),
+        13 => Edit::Styled(SetStyledText {
+            target,
+            text: format!(
+                "{} **{}** *{}*",
+                WORDS[rng.below(WORDS.len())],
+                WORDS[rng.below(WORDS.len())],
+                WORDS[rng.below(4)]
+            ),
+            paragraph_style: None,
+            policy: policy(rng, writer),
+        }),
         8 => Edit::Paragraph(InsertParagraph {
             anchor: target,
             after: rng.below(2) == 0,

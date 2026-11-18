@@ -19,6 +19,7 @@ mod refusal;
 mod review;
 mod structure;
 mod style;
+mod text;
 mod version;
 mod word_inspect;
 mod word_read;
@@ -37,6 +38,7 @@ pub use structure::{
     WordNotes, WordSections,
 };
 pub use style::{word_lists, Follow, ListKind, ListsAction, WordLists};
+pub use text::{replace_text, word_set_text, Expect, ReplaceStories, ReplaceText, SetTextItem, Unported, WordSetText};
 pub use version::Version;
 pub use word_inspect::{word_inspect, WordInspect};
 pub use word_read::{word_read, Story, View, WordRead};

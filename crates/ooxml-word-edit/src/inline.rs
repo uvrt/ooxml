@@ -289,3 +289,137 @@ pub(crate) fn new_run(work: &mut Work, paragraph: Id, offset: usize, children: &
     work.insert(parent, index, run);
     Ok(run)
 }
+
+/// What a run may hold and still be merged with its twin.
+const MERGEABLE: &[&str] = &[
+    "rPr",
+    "t",
+    "tab",
+    "br",
+    "cr",
+    "noBreakHyphen",
+    "softHyphen",
+    "sym",
+    "ptab",
+];
+
+/// Merge adjacent runs among `runs` and their immediate neighbours whose properties are
+/// the same: the pieces a split left on either side of the runs an edit changed
+/// (docx-agent's `merge_around`).
+pub(crate) fn merge_around(work: &mut Work, runs: &[Id]) {
+    let mut widened: Vec<Id> = Vec::new();
+    for &run in runs {
+        for candidate in [work.previous(run), Some(run), work.next(run)].into_iter().flatten() {
+            if work.is(candidate, W, "r") && !widened.contains(&candidate) {
+                widened.push(candidate);
+            }
+        }
+    }
+    merge_runs(work, &widened);
+}
+
+/// Merge adjacent runs among `runs` whose properties are the same (`merge_runs`).
+fn merge_runs(work: &mut Work, runs: &[Id]) {
+    let touched: BTreeSet<Id> = runs.iter().copied().collect();
+    let mut seen: BTreeSet<Id> = BTreeSet::new();
+    for &run in runs {
+        if seen.contains(&run) || work.parent(run).is_none() {
+            continue;
+        }
+        seen.insert(run);
+        let mut current = run;
+        while let Some(previous) = work.previous(current).filter(|p| touched.contains(p)) {
+            if !twins(work, previous, current) {
+                break;
+            }
+            join(work, previous, current);
+            current = previous;
+        }
+        while let Some(following) = work.next(current).filter(|f| touched.contains(f)) {
+            if !twins(work, current, following) {
+                break;
+            }
+            seen.insert(following);
+            join(work, current, following);
+        }
+    }
+}
+
+fn mergeable(work: &Work, run: Id) -> bool {
+    work.is(run, W, "r")
+        && work
+            .children(run)
+            .iter()
+            .all(|c| !work.is_element(*c) || work.is_any(*c, W, MERGEABLE))
+}
+
+/// A run's attributes (with the key a tracking edit gave it) and properties, compared as
+/// docx-agent's `_signature` compares them.
+fn signature(work: &Work, run: Id) -> (Vec<(String, String, String)>, Option<u32>, String) {
+    let mut attributes: Vec<(String, String, String)> = work
+        .attributes(run)
+        .iter()
+        .map(|a| {
+            let namespace = a.name.namespace().unwrap_or("").to_owned();
+            (namespace, a.name.local().to_owned(), a.value.to_string())
+        })
+        .collect();
+    attributes.sort();
+    let properties = work
+        .find(run, W, "rPr")
+        .map(|p| crate::track::canonical_of(work, p))
+        .unwrap_or_default();
+    (attributes, work.key(run), properties)
+}
+
+fn twins(work: &Work, left: Id, right: Id) -> bool {
+    work.next(left) == Some(right)
+        && work.tail(left).trim_matches(crate::text::diff::python_space).is_empty()
+        && mergeable(work, left)
+        && mergeable(work, right)
+        && signature(work, left) == signature(work, right)
+}
+
+/// Move `right`'s content (its properties aside) to the end of `left`, remove `right`, and
+/// join `left`'s adjacent texts.
+fn join(work: &mut Work, left: Id, right: Id) {
+    for child in work.children(right).to_vec() {
+        if !work.is(child, W, "rPr") {
+            work.append(left, child);
+        }
+    }
+    work.remove(right);
+    let mut previous: Option<Id> = None;
+    for child in work.children(left).to_vec() {
+        if let Some(before) = previous.filter(|p| work.is(*p, W, "t") && work.is(child, W, "t")) {
+            if same_attributes(work, before, child) {
+                let text = format!("{}{}", work.text(before), work.text(child));
+                set_spaced_text(work, before, &text);
+                work.remove(child);
+                continue;
+            }
+        }
+        previous = Some(child);
+    }
+}
+
+/// Whether two `w:t` have the same attributes, `xml:space` aside.
+fn same_attributes(work: &Work, a: Id, b: Id) -> bool {
+    let of = |id: Id| {
+        let mut out: Vec<(String, String, String)> = work
+            .attributes(id)
+            .iter()
+            .filter(|x| !(x.name.namespace() == Some(XML) && x.name.local() == "space"))
+            .map(|x| {
+                (
+                    x.name.namespace().unwrap_or("").to_owned(),
+                    x.name.local().to_owned(),
+                    x.value.to_string(),
+                )
+            })
+            .collect();
+        out.sort();
+        out
+    };
+    of(a) == of(b)
+}

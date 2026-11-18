@@ -11,6 +11,7 @@
 use crate::doc::{Change, Draw, DrawFrom, Key, WordDoc};
 use crate::names::{MC, W14, WP14};
 use crate::policy::{RevisionPolicy, Stamp};
+use crate::props::PropertyTracker;
 use crate::text::write;
 use crate::track;
 use crate::validate::annotation_ceiling;
@@ -139,6 +140,34 @@ impl<'t, 's> EditSink<'t, 's> {
         }
         self.write(Change::Ids(crate::pool::IdsChange {
             aliases: renames,
+            ..Default::default()
+        }))
+    }
+
+    /// Forget the aliases of ids an edit removed (an old id naming a block that went).
+    ///
+    /// # Errors
+    /// When the change cannot be applied.
+    pub(crate) fn forget_aliases(&mut self, ids: &[String]) -> Result<()> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+        self.write(Change::Ids(crate::pool::IdsChange {
+            forget: ids.to_vec(),
+            ..Default::default()
+        }))
+    }
+
+    /// Forget every alias naming one of `ids` (paragraphs an edit joined away).
+    ///
+    /// # Errors
+    /// When the change cannot be applied.
+    pub(crate) fn forget_alias_targets(&mut self, ids: &[String]) -> Result<()> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+        self.write(Change::Ids(crate::pool::IdsChange {
+            forget_targets: ids.to_vec(),
             ..Default::default()
         }))
     }
@@ -307,6 +336,41 @@ impl<'t, 's> EditSink<'t, 's> {
         let orders = shared.facts.orders();
         let (released, dated, numbered) = self.tracked(tracking, |stamp| {
             crate::marks::record_paragraph_change(work, paragraph, old, stamp, orders);
+            Ok(Vec::new())
+        })?;
+        Ok(TextWrite {
+            changed: true,
+            released,
+            dated,
+            annotations: Some(numbered),
+        })
+    }
+
+    /// Read the formatting of every paragraph and run at or below `roots` of `work` before
+    /// an edit formats them, when the policy records formatting changes (tracked); `None`
+    /// untracked, where nothing is recorded (docx-agent's `_track_properties`).
+    pub(crate) fn watch_properties(&self, work: &mut Work, roots: &[crate::work::Id]) -> Option<PropertyTracker> {
+        matches!(self.policy, RevisionPolicy::Tracked(_)).then(|| PropertyTracker::start(work, roots))
+    }
+
+    /// Record the formatting changes an edit made under `tracker`'s roots
+    /// ([`EditSink::watch_properties`]): each paragraph's in a `w:pPrChange`, its mark's and
+    /// each run's in a `w:rPrChange` ([`PropertyTracker::record`]).
+    ///
+    /// # Errors
+    /// When the annotation ids cannot be read.
+    pub(crate) fn properties_changed(
+        &mut self,
+        work: &mut Work,
+        tracker: Option<PropertyTracker>,
+    ) -> Result<TextWrite> {
+        let (Some(tracker), RevisionPolicy::Tracked(tracking)) = (tracker, self.policy.clone()) else {
+            return Ok(TextWrite::default());
+        };
+        let shared = self.doc().shared_handle();
+        let orders = shared.facts.orders();
+        let (released, dated, numbered) = self.tracked(tracking, |stamp| {
+            tracker.record(work, stamp, orders);
             Ok(Vec::new())
         })?;
         Ok(TextWrite {

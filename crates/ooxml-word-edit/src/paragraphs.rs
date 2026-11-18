@@ -297,7 +297,7 @@ pub(crate) fn is_lines(text: &str) -> bool {
 }
 
 /// The `w:pStyle` value of a paragraph, if it has one.
-fn style_of(paragraph: &Element) -> Option<&str> {
+pub(crate) fn style_of(paragraph: &Element) -> Option<&str> {
     paragraph
         .child_elements()
         .find(|c| c.name().is(Some(W), "pPr"))?
@@ -369,6 +369,21 @@ fn already_lines(sink: &mut EditSink<'_, '_>, docx: &Docx, part: &str, path: &[u
 /// [`EditError::Text`] for a line a paragraph cannot hold; a refusal for a target that is
 /// not a paragraph or ends a section.
 pub(crate) fn set_lines(sink: &mut EditSink<'_, '_>, target: &str, text: &str) -> Result<TextEdited> {
+    let out = set_lines_in(sink, target, text)?;
+    // docx-agent's batch, once it ends: revision ids unique (text boxes are synced by an
+    // edit standing alone only)
+    if out.changed && is_lines(text) {
+        crate::revision_ids::make_unique(sink)?;
+    }
+    Ok(out)
+}
+
+/// [`set_lines`] inside a batch: without making revision ids unique, which the batch does
+/// once it ends.
+///
+/// # Errors
+/// As [`set_lines`].
+pub(crate) fn set_lines_in(sink: &mut EditSink<'_, '_>, target: &str, text: &str) -> Result<TextEdited> {
     let lines = lines(text);
     for line in &lines {
         check_text(line)?;
@@ -418,9 +433,6 @@ pub(crate) fn set_lines(sink: &mut EditSink<'_, '_>, target: &str, text: &str) -
         created.push(made.id.clone());
         current = made.id;
     }
-    // docx-agent's batch, once it ends: revision ids unique (text boxes are synced by an
-    // edit standing alone only)
-    crate::revision_ids::make_unique(sink)?;
     Ok(TextEdited {
         id: renamed
             .iter()
