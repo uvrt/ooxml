@@ -5,10 +5,11 @@
 //! that fails answered with its error while the others run.
 //!
 //! Must not: run a changing tool (the session serves reading tools only so far). Every op
-//! reads a document at the version the batch's first op on it read, as today's batch holds
-//! its documents for all its ops; nothing is held after the batch.
+//! reads a document at the version the batch's context names for it, else at the version
+//! the batch's first op on it read, as today's batch holds its documents for all its ops;
+//! nothing is held after the batch.
 
-use crate::session::Pinned;
+use crate::session::pinned_by;
 use crate::{CallContext, Session};
 use ooxml_tools::{compact, Done, Failure, Outcome, ToolArgs, ToolError, ToolResult, MAX_RESULT_CHARS};
 use serde_json::{json, Map, Value};
@@ -118,7 +119,8 @@ impl Session {
         let mut answers: Vec<(Map<String, Value>, usize, bool)> = Vec::new();
         let mut left: Vec<(usize, Left)> = Vec::new();
         let mut used = MARGIN;
-        let mut pinned = Pinned::new();
+        let mut pinned = pinned_by(context);
+        let mut unported = Vec::new();
         for (index, op) in ops.iter().enumerate() {
             if clock.monotonic().saturating_sub(started) > BATCH_TIMEOUT {
                 left.push((index, Left::Deadline));
@@ -138,15 +140,18 @@ impl Session {
                 continue;
             }
             used += size;
+            unported.extend(result.unported().iter().map(|why| format!("ops[{index}]: {why}")));
             answers.push((one, index, result.is_error()));
         }
         let mut combined = combine(&ops, &answers, &left, cap);
+        combined.unported.clone_from(&unported);
         while !answers.is_empty() && compact(&Value::Object(envelope(&combined))).chars().count() > cap {
             if let Some((_, index, _)) = answers.pop() {
                 left.push((index, Left::Budget));
                 left.sort_by_key(|(k, _)| *k);
             }
             combined = combine(&ops, &answers, &left, cap);
+            combined.unported.clone_from(&unported);
         }
         Ok(combined)
     }

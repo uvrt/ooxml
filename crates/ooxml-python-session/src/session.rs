@@ -1,17 +1,21 @@
-//! Owns: `ooxml_core.Session`, `ooxml_core.CancelToken` and `ooxml_core.tool_specs`: their
-//! Python signatures, the copying of Python values into Rust ones while the interpreter
+//! Owns: `ooxml_core.Session`, `ooxml_core.CancelToken`, `ooxml_core.CallContext`,
+//! `ooxml_core.Version` (a document's version a call may be pinned to) and
+//! `ooxml_core.tool_specs`: their Python signatures, the adapter of a Python placer (a
+//! `Placer` called with the interpreter lock taken back), the copying of Python values into Rust ones while the interpreter
 //! lock is held, every session call made with it released, and the mapping of errors.
 //!
 //! Must not: do a session's work itself, or touch a Python object without the lock.
 
 use crate::adapters::{context, SessionStop};
 use ooxml_base::Locale;
-use ooxml_session::{CallContext, CancelToken, DocId, DocKind, Registry, Session, SessionConfig, SessionError};
+use ooxml_session::{CallContext, CancelToken, DocId, DocKind, Opened, Registry, Session, SessionConfig, SessionError};
 use ooxml_store::{Caller, StoreConfig};
 use ooxml_tools::{compact, ToolError, ToolResult};
+use ooxml_tools_word::Placer;
 use pyo3::exceptions::{PyKeyError, PyRuntimeError, PyTimeoutError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict};
+use serde_json::Map;
 use serde_json::Value;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
@@ -99,6 +103,7 @@ impl PyCallContext {
                 caller: caller.map_or_else(Caller::anonymous, Caller::named),
                 cancel: cancel.map(|t| Arc::clone(&t.inner)),
                 deadline,
+                ..CallContext::default()
             },
         })
     }
@@ -106,6 +111,59 @@ impl PyCallContext {
 
 fn context_of(context: Option<&PyCallContext>) -> CallContext {
     context.map(|c| c.inner.clone()).unwrap_or_default()
+}
+
+/// A document at one version (`ooxml_core.Version`), held while Python holds it: a call
+/// given it (`Session.call(..., at=[version])`) reads that version, whatever was
+/// committed since.
+#[pyclass(frozen, name = "Version", module = "ooxml_core")]
+pub struct PyVersion {
+    inner: Opened,
+}
+
+#[pymethods]
+impl PyVersion {
+    /// The document's id.
+    #[getter]
+    fn doc(&self) -> String {
+        self.inner.id().to_string()
+    }
+
+    /// The version's number.
+    #[getter]
+    fn number(&self) -> u64 {
+        self.inner.version()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("<ooxml_core.Version {} {}>", self.inner.id(), self.inner.version())
+    }
+}
+
+/// What `Session.call` answers: the reply's JSON text, its images, and what only the
+/// application reads (JSON text).
+type Reply = (String, Vec<Py<PyBytes>>, String);
+
+/// Python's placer of blocks (`placer(asked_json) -> answers_json | None`), called with the
+/// interpreter lock taken back.
+struct PyPlacer(Py<PyAny>);
+
+impl Placer for PyPlacer {
+    fn place(&self, asked: &[Vec<String>]) -> Option<Vec<Map<String, Value>>> {
+        let asked = serde_json::to_string(asked).ok()?;
+        let answer = Python::attach(|py| {
+            let answer = self.0.call1(py, (asked,)).ok()?;
+            answer.extract::<Option<String>>(py).ok().flatten()
+        })?;
+        let answers: Vec<Value> = serde_json::from_str(&answer).ok()?;
+        answers
+            .into_iter()
+            .map(|a| match a {
+                Value::Object(map) => Some(map),
+                _ => None,
+            })
+            .collect()
+    }
 }
 
 #[pymethods]
@@ -142,9 +200,16 @@ impl PySession {
 
     /// Run the tool `name` with `arguments` (JSON text) on a snapshot, under `context`: returns the reply as
     /// JSON text -- the whole envelope, or within `limit` characters as the model is sent
-    /// it -- and the images beside it (bytes). Never raises for the call's own failure:
-    /// that is the reply's `error`, with its way out.
-    #[pyo3(signature = (name, arguments, *, context = None, limit = None))]
+    /// it --, the images beside it (bytes), and what only the application reads, as JSON
+    /// text: `unported`, what of the answer is not yet given as the Python tool gives it
+    /// (a list of reasons). Never raises for the call's own failure:
+    /// that is the reply's `error`, with its way out. `at`: the versions the call reads
+    /// (`Version`s; a document not among them is read at its head). `placer`: where it may
+    /// ask where blocks are laid out -- called with the blocks asked as JSON text (a list,
+    /// each an id then the ids it joins), it answers each one's `placements` or `unknown`
+    /// as JSON text (a list of objects), or `None` where it cannot.
+    #[pyo3(signature = (name, arguments, *, context = None, limit = None, at = None, placer = None))]
+    #[allow(clippy::too_many_arguments)]
     fn call(
         &self,
         py: Python<'_>,
@@ -152,8 +217,12 @@ impl PySession {
         arguments: String,
         context: Option<PyRef<'_, PyCallContext>>,
         limit: Option<usize>,
-    ) -> (String, Vec<Py<PyBytes>>) {
-        let context = context_of(context.as_deref());
+        at: Option<Vec<PyRef<'_, PyVersion>>>,
+        placer: Option<Py<PyAny>>,
+    ) -> Reply {
+        let mut context = context_of(context.as_deref());
+        context.at = at.iter().flatten().map(|v| v.inner.clone()).collect();
+        context.placer = placer.map(|p| Arc::new(PyPlacer(p)) as Arc<dyn Placer>);
         let session = &self.inner;
         let text = py.detach(|| {
             let run = || session.call(name, Value::String(arguments), &context);
@@ -168,12 +237,14 @@ impl PySession {
                     &format!("call:{name}"),
                 ))
             });
-            match limit {
+            let app = serde_json::json!({"unported": result.unported()});
+            let text = match limit {
                 Some(limit) => result.to_text(Some(limit)),
                 None => compact(&Value::Object(result.to_json())),
-            }
+            };
+            (text, compact(&app))
         });
-        (text, Vec::new())
+        (text.0, Vec::new(), text.1)
     }
 
     /// Commit a version's touched parts (bytes, or `None` to remove the part) as one step:
@@ -188,17 +259,40 @@ impl PySession {
     ) -> PyResult<(u64, bool, u32)> {
         let id = doc_id(doc, &self.inner)?;
         let context = context_of(context.as_deref());
-        let mut copied = Vec::with_capacity(parts.len());
-        for (name, data) in parts.iter() {
-            let name: String = name.extract()?;
-            let data: Option<Vec<u8>> = data.extract()?;
-            copied.push((name, data.map(Arc::<[u8]>::from)));
-        }
+        let copied = copy_parts(parts)?;
         let session = &self.inner;
         let updated = py
             .detach(|| session.update(&id, copied, &context))
             .map_err(|e| to_py(&e))?;
         Ok((updated.version, updated.changed, updated.attempts))
+    }
+
+    /// Commit a version's touched parts as [`update`](Self::update) does: returns the
+    /// version it leaves, held (`Version`; the version it ran on where nothing changed).
+    #[pyo3(signature = (doc, parts, *, context = None))]
+    fn commit(
+        &self,
+        py: Python<'_>,
+        doc: &str,
+        parts: &Bound<'_, PyDict>,
+        context: Option<PyRef<'_, PyCallContext>>,
+    ) -> PyResult<PyVersion> {
+        let id = doc_id(doc, &self.inner)?;
+        let context = context_of(context.as_deref());
+        let copied = copy_parts(parts)?;
+        let session = &self.inner;
+        let (_, opened) = py
+            .detach(|| session.commit(&id, copied, &context))
+            .map_err(|e| to_py(&e))?;
+        Ok(PyVersion { inner: opened })
+    }
+
+    /// The document's head version, held (`Version`). Never waits for a writer.
+    fn head(&self, py: Python<'_>, doc: &str) -> PyResult<PyVersion> {
+        let id = doc_id(doc, &self.inner)?;
+        let session = &self.inner;
+        let opened = py.detach(|| session.snapshot(&id)).map_err(|e| to_py(&e))?;
+        Ok(PyVersion { inner: opened })
     }
 
     /// The document's bytes at its head version.
@@ -266,6 +360,20 @@ impl PySession {
     fn shutdown(&self) {
         self.stop.stop();
     }
+}
+
+/// Parts by name: bytes to put, or `None` to remove.
+type Parts = Vec<(String, Option<Arc<[u8]>>)>;
+
+/// `parts` (name -> bytes, or `None` to remove) copied in, the interpreter lock held.
+fn copy_parts(parts: &Bound<'_, PyDict>) -> PyResult<Parts> {
+    let mut copied = Vec::with_capacity(parts.len());
+    for (name, data) in parts.iter() {
+        let name: String = name.extract()?;
+        let data: Option<Vec<u8>> = data.extract()?;
+        copied.push((name, data.map(Arc::<[u8]>::from)));
+    }
+    Ok(copied)
 }
 
 /// The tools' definitions for `kind` as JSON text (a list of `ToolSpec` exports): what a

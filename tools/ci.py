@@ -138,7 +138,8 @@ PACKAGES: dict[str, dict] = {
         "siblings": ["ooxml-common", "ooxml-edit", "docx2svg[png]", "ooxml-core"],
         "extras": "dev,png",
         "min_python": "3.10",
-        "pytest": ["-n", "auto", "--durations=30"],
+        # A test past 5 minutes dumps every thread's stack (a hang is named, not a timeout).
+        "pytest": ["-n", "auto", "--durations=30", "-o", "faulthandler_timeout=300"],
         "ft_pytest": ["-n", "auto", "-o", "faulthandler_timeout=300", "-v"],
         # The suite takes about 18 minutes on one Linux runner: split into this many jobs
         # on Linux (SHARDS below).

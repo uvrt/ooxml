@@ -1,5 +1,6 @@
 //! Owns: [`Session`], documents by id with their stores, and the operations on them: open,
-//! save, close, the bridge's update, snapshots, and dispatch of a tool call.
+//! save, close, the bridge's update, snapshots, and dispatch of a tool call (on the
+//! versions its context names, else on the documents' heads).
 //!
 //! Must not: hold a lock while a handler runs or a package is parsed or written (the table
 //! lock is held only to find or change an entry), or implement a tool.
@@ -12,7 +13,7 @@ use ooxml_base::{Cancel, Context};
 use ooxml_opc::Package;
 use ooxml_store::{Snapshot, Store, StoreConfig, StoreStats};
 use ooxml_tools::{Accepted, Refusal, ToolError, ToolResult, ToolSpec, WayOut};
-use ooxml_tools_word::Version;
+use ooxml_tools_word::{Placer, Version};
 use ooxml_word_model::docx::Versions;
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
@@ -45,6 +46,8 @@ pub struct Opened {
     name: Arc<str>,
     version: Snapshot<PackageDoc>,
     versions: Arc<Versions>,
+    /// Where the call reading it may ask where blocks are laid out (its context's).
+    placer: Option<Arc<dyn Placer>>,
 }
 
 impl Opened {
@@ -86,6 +89,7 @@ impl Opened {
             package: self.package(),
             number: self.version(),
             versions: &self.versions,
+            placer: self.placer.as_deref(),
         }
     }
 }
@@ -93,12 +97,18 @@ impl Opened {
 /// The versions a batch reads, by document.
 pub(crate) type Pinned = BTreeMap<DocId, Opened>;
 
-/// What one call gathers as it runs: the document version it read, its warnings, and the
-/// versions its batch reads.
+/// What one call gathers as it runs: the document version it read, its warnings, the
+/// versions its batch reads, and where it may ask where blocks are laid out.
 pub(crate) struct CallState<'p> {
     opened: Option<Opened>,
     warnings: Vec<String>,
     pinned: Option<&'p mut Pinned>,
+    placer: Option<Arc<dyn Placer>>,
+}
+
+/// The versions `context` names, by document.
+pub(crate) fn pinned_by(context: &CallContext) -> Pinned {
+    context.at.iter().map(|o| (o.id.clone(), o.clone())).collect()
 }
 
 /// A copy of a session's counters (section 10).
@@ -189,13 +199,18 @@ impl Session {
     /// [`SessionError::NotOpen`].
     pub fn snapshot(&self, id: &DocId) -> Result<Opened, SessionError> {
         let document = self.document(id)?;
-        Ok(Opened {
+        Ok(Self::opened(id, &document, document.store.snapshot()))
+    }
+
+    fn opened(id: &DocId, document: &Document, version: Snapshot<PackageDoc>) -> Opened {
+        Opened {
             id: id.clone(),
             kind: document.kind,
             name: Arc::from(document.name.as_str()),
-            version: document.store.snapshot(),
+            version,
             versions: Arc::clone(&document.versions),
-        })
+            placer: None,
+        }
     }
 
     /// The document's bytes at its head version: untouched entries copied raw.
@@ -236,6 +251,22 @@ impl Session {
         parts: Vec<(String, Option<Arc<[u8]>>)>,
         context: &CallContext,
     ) -> Result<Updated, SessionError> {
+        self.commit(id, parts, context).map(|(updated, _)| updated)
+    }
+
+    /// [`Session::update`], and the version it leaves (the one it ran on where it changed
+    /// nothing), held: a call whose context names it reads that version, whatever was
+    /// committed since (the host that owns the document hands each version over and reads
+    /// it so).
+    ///
+    /// # Errors
+    /// As [`Session::update`].
+    pub fn commit(
+        &self,
+        id: &DocId,
+        parts: Vec<(String, Option<Arc<[u8]>>)>,
+        context: &CallContext,
+    ) -> Result<(Updated, Opened), SessionError> {
         let document = self.document(id)?;
         let cancel = CallCancel::new(context, &*self.context.cancel, &*self.context.clock);
         let update = PartUpdate::new(parts, self.context.limits, &cancel);
@@ -247,11 +278,12 @@ impl Session {
         if committed.changed {
             self.counts.updates.fetch_add(1, Ordering::Relaxed);
         }
-        Ok(Updated {
+        let updated = Updated {
             version: committed.version.seq().0,
             changed: committed.changed,
             attempts: committed.attempts,
-        })
+        };
+        Ok((updated, Self::opened(id, &document, committed.version)))
     }
 
     /// The store's counters for the document (commits, conflicts, exclusive runs).
@@ -276,13 +308,14 @@ impl Session {
 
     /// Run the tool `name` with `arguments` (a JSON object, or its text) under `context`:
     /// the arguments taken as meant and validated, the document found, the handler run on
-    /// its head snapshot. Never panics and never fails: what went wrong is the result's
-    /// error, with its way out.
+    /// the version `context` names for it, else on its head snapshot. Never panics and
+    /// never fails: what went wrong is the result's error, with its way out.
     pub fn call(&self, name: &str, arguments: Value, context: &CallContext) -> ToolResult<Value> {
         if name == READ_BATCH {
             return self.call_batch(arguments, context);
         }
-        self.call_one(name, arguments, context, "", None)
+        let mut pinned = pinned_by(context);
+        self.call_one(name, arguments, context, "", Some(&mut pinned))
     }
 
     /// `read_batch`: its arguments taken as meant and validated, then its ops run.
@@ -327,6 +360,7 @@ impl Session {
             opened: None,
             warnings: Vec::new(),
             pinned,
+            placer: context.placer.clone(),
         };
         let outcome = if within.is_empty() {
             self.dispatch(name, arguments, &cancel, &mut state)
@@ -372,7 +406,10 @@ impl Session {
         state
             .warnings
             .extend(spec.ignored_for(Some(doc.kind.as_str()), &mut arguments));
-        let doc = state.opened.insert(doc);
+        let doc = state.opened.insert(Opened {
+            placer: state.placer.clone(),
+            ..doc
+        });
         tool.run(arguments, doc, cancel)
     }
 

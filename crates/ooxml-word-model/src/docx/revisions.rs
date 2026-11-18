@@ -5,7 +5,7 @@
 //!
 //! Must not: group records into changes, accept or reject.
 
-use crate::docx::{live_paths, Docx};
+use crate::docx::Docx;
 use crate::ids::W;
 use ooxml_xml::Element;
 use std::collections::HashMap;
@@ -63,7 +63,7 @@ pub fn records(docx: &Docx) -> Vec<Record> {
     let mut out = Vec::new();
     let mut seen: HashMap<String, usize> = HashMap::new();
     for part in &docx.parts {
-        for found in live_paths(part.root(), &[], &is_revision) {
+        for found in part.facts().revisions() {
             let Some(raw) = found.element.attribute(Some(W), "id") else {
                 continue;
             };
