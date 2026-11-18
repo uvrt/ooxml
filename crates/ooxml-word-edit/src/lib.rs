@@ -10,7 +10,7 @@
 //!   behind it that writes a text edit untracked or as tracked changes, as docx-agent
 //!   writes them;
 //! - stamping blocks with durable ids before the first edit, and new text ids;
-//! - the commands: [`SetText`] (in lines: new paragraphs after it); [`InsertParagraph`]; [`SetParagraphStyle`] (built-in styles added as Word writes them); [`InsertText`], [`DeleteText`] and [`ReplaceText`] (text
+//! - the commands: [`SetText`] (in lines: new paragraphs after it); [`InsertParagraph`]; [`SetParagraphStyle`] (built-in styles added as Word writes them); [`DeleteBlock`]; [`InsertText`], [`DeleteText`] and [`ReplaceText`] (text
 //!   within a paragraph, docx-agent's `_replace_ranges`);
 //! - validation per change ([`validate`]: facts memoised by content, docx-agent's rules)
 //!   and what a change touched ([`touched`]);
@@ -23,7 +23,10 @@
 #![forbid(unsafe_code)]
 
 mod across;
+mod block_checks;
 mod builtin;
+mod delete;
+mod delete_write;
 mod doc;
 mod editor;
 mod error;
@@ -52,6 +55,7 @@ mod track;
 pub mod validate;
 mod work;
 
+pub use delete::{BlockDeleted, DeleteBlock};
 pub use doc::{Change, Draw, DrawFrom, Key, ModelError, Shared, WordDoc};
 pub use editor::{EditTiming, Edited, Editor};
 pub use error::{EditError, Result};

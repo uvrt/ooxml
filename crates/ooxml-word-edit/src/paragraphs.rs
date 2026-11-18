@@ -55,17 +55,17 @@ pub struct ParagraphInserted {
 }
 
 /// A block a paragraph goes beside.
-struct Anchor {
-    part: String,
-    story: String,
-    path: Box<[u32]>,
-    id: String,
-    paragraph: bool,
+pub(crate) struct Anchor {
+    pub(crate) part: String,
+    pub(crate) story: String,
+    pub(crate) path: Box<[u32]>,
+    pub(crate) id: String,
+    pub(crate) paragraph: bool,
 }
 
 /// The block `target` names now: an alias followed while its target exists; a cell's
 /// first paragraph.
-fn anchor(doc: &WordDoc, docx: &Docx, target: &str) -> Result<Anchor> {
+pub(crate) fn anchor(doc: &WordDoc, docx: &Docx, target: &str) -> Result<Anchor> {
     let followed = doc.ids().follow(target);
     let block = (followed != target)
         .then(|| direct(docx, &followed))
@@ -107,7 +107,7 @@ fn anchor(doc: &WordDoc, docx: &Docx, target: &str) -> Result<Anchor> {
 
 /// Whether a block (a paragraph, a table, a content control, custom XML) follows the
 /// child `index` of `parent`: docx-agent's `is_last_in_container`, negated.
-fn followed(parent: &Element, index: usize) -> bool {
+pub(crate) fn followed(parent: &Element, index: usize) -> bool {
     parent.children().iter().skip(index + 1).any(|node| {
         matches!(node, Node::Element(e) if e.name().namespace() == Some(W)
             && matches!(e.name().local(), "p" | "tbl" | "sdt" | "customXml"))

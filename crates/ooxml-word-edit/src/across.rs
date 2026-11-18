@@ -25,7 +25,7 @@ use crate::work::{Id, Work};
 use crate::EditError;
 
 /// Range markers and their partners.
-const PAIRS: &[(&str, &str)] = &[
+pub(crate) const PAIRS: &[(&str, &str)] = &[
     ("bookmarkStart", "bookmarkEnd"),
     ("commentRangeStart", "commentRangeEnd"),
     ("moveFromRangeStart", "moveFromRangeEnd"),
@@ -38,7 +38,7 @@ fn span_error(message: &str) -> EditError {
 }
 
 /// Whether a paragraph's field characters balance (docx-agent's `_fields_balanced`).
-fn fields_balanced(work: &Work, paragraph: Id) -> bool {
+pub(crate) fn fields_balanced(work: &Work, paragraph: Id) -> bool {
     let mut depth = 0i64;
     for node in work.iter(paragraph, W, &["fldChar"]) {
         match work.get(node, Some(W), "fldCharType") {
@@ -109,7 +109,7 @@ pub(crate) fn check_across(work: &Work, paragraphs: &[Id], start: usize, end: us
 
 /// The first paragraph after `element` in document order that is not inside it, else the
 /// last one before it (docx-agent's `_neighbour_paragraph`, within the stretch).
-fn neighbour(work: &Work, element: Id, forward: bool) -> Option<Id> {
+pub(crate) fn neighbour(work: &Work, element: Id, forward: bool) -> Option<Id> {
     let all = work.iter(work.root(), W, &["p"]);
     let inside = work.iter(element, W, &["p"]);
     let first = all.iter().position(|p| inside.contains(p))?;
@@ -123,7 +123,7 @@ fn neighbour(work: &Work, element: Id, forward: bool) -> Option<Id> {
 
 /// Move the range markers in `element` whose partner is outside it to the nearest
 /// paragraph that stays (docx-agent's `_rehome_markers`).
-fn rehome_markers(work: &mut Work, element: Id) {
+pub(crate) fn rehome_markers(work: &mut Work, element: Id) {
     let markers: Vec<(Id, String, String)> = work
         .descendants(element)
         .into_iter()
