@@ -119,7 +119,9 @@ def _run(document, case: dict):
         return document.set_text_paragraphs(case["target"], case["text"])
     if op == "insert_paragraph":
         where = {"after": case["target"]} if case.get("after", True) else {"before": case["target"]}
-        return document.insert_paragraph(case["text"], **where)
+        return document.insert_paragraph(case["text"], style=case.get("style"), **where)
+    if op == "set_paragraph_style":
+        return document.set_paragraph_style(case["target"], case.get("style"))
     if op == "replace":
         return document.replace(case["find"], case["text"], case=case.get("case", True),
                                 count=case.get("count"), keep=case.get("keep", "first"),
@@ -132,6 +134,8 @@ def _result(case: dict, result) -> dict:
     op = case.get("op", "set_text")
     if op == "set_text":
         return {"id": result.id, "changed": result.changed, "renamed": dict(result.renamed)}
+    if op == "set_paragraph_style":
+        return {"id": result.id, "renamed": dict(result.renamed)}
     if op in ("set_text_paragraphs", "insert_paragraph"):
         return {"id": result.id, "changed": result.changed, "renamed": dict(result.renamed),
                 "created": list(result.created)}
@@ -183,8 +187,10 @@ def _range_cases(document, targets: list[str]) -> list[dict]:
 
 
 def _paragraph_cases(document, targets: list[str]) -> list[dict]:
-    """New paragraphs (``--paragraphs``): a text in lines on each target, and a paragraph
-    after and before it (and after and before the first table)."""
+    """New paragraphs and styles (``--paragraphs``): a text in lines on each target, a
+    paragraph after and before it (and after and before the first table), styles set (the
+    document's, built-in ones it lacks, a list style, ones refused) and paragraphs inserted
+    in a style."""
     cases: list[dict] = []
     for target in targets:
         text = document.paragraph(target).text
@@ -192,6 +198,14 @@ def _paragraph_cases(document, targets: list[str]) -> list[dict]:
         cases.append({"op": "set_text_paragraphs", "target": target, "text": f"{text}\r\n\nA third\vbroken"})
         cases.append({"op": "insert_paragraph", "target": target, "text": "A new paragraph.", "after": True})
         cases.append({"op": "insert_paragraph", "target": target, "text": "", "after": False})
+    for target in targets[:2]:
+        for style in ("Heading 1", "Normal", None, "Quote", "List Number 3", "Intense Quote", "No Such Style",
+                      "Default Paragraph Font"):
+            cases.append({"op": "set_paragraph_style", "target": target, "style": style})
+        cases.append({"op": "insert_paragraph", "target": target, "text": "Styled", "after": True,
+                      "style": "Heading 2"})
+        cases.append({"op": "insert_paragraph", "target": target, "text": "Listed", "after": False,
+                      "style": "List Bullet 4"})
     tables = document._index(document.package.document_part()).tables
     if tables:
         for after in (True, False):
@@ -222,6 +236,10 @@ def python_case(data: bytes, case: dict, baseline: list) -> dict:
     if main in before:
         rewritten[main] = serialize(etree.fromstring(before[main], etree.XMLParser(huge_tree=True)))
     as_written = _touched(document, rewritten, after, main)
+    # A part docx-agent wrote again unchanged but for lxml's serialization: an edit that
+    # changed nothing writes it, the Rust core does not.
+    reserialized = [main] if main in after and rewritten.get(main) == after[main] and before[main] != after[main] \
+        else []
     problems = _validate.check(document.package)
     validation = compare_problems(baseline, problems, key=lambda p: (p.code, p.part, str(p)))
     pool = copy.deepcopy(document._id_pool())
@@ -232,6 +250,7 @@ def python_case(data: bytes, case: dict, baseline: list) -> dict:
         "order": _order(out),
         "touched": touched,
         "touched_as_written": as_written,
+        "reserialized": reserialized,
         "validation": validation,
         "problems": [str(p) for p in problems],
         "next": next_ids,
@@ -300,6 +319,13 @@ def main(argv: list[str] | None = None) -> int:
     for key, want in expected.items():
         have = got.get(key)
         written = want.pop("touched_as_written", None)
+        reserialized = want.pop("reserialized", [])
+        if isinstance(have, dict) and "parts" in have and "parts" in want:
+            for name in reserialized:
+                if name not in have["parts"]:
+                    want["parts"].pop(name, None)   # no change, only lxml's serialization
+                    if have.get("touched") == written:
+                        want["touched"] = written
         if isinstance(have, dict) and "refused" in have and "refused" in want:
             got[key] = want      # both refused: the messages are each side's own words
         elif isinstance(have, dict) and "parts" in have and "parts" in want:

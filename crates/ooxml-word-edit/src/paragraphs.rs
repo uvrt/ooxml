@@ -36,6 +36,9 @@ pub struct InsertParagraph {
     pub after: bool,
     /// Its text: one line (`\v` a line break, `\t` a tab); empty for an empty paragraph.
     pub text: String,
+    /// A paragraph style (name, alias or id; a built-in one the document lacks added as
+    /// Word writes it) in place of the properties it would continue.
+    pub style: Option<String>,
     /// Untracked or tracked.
     pub policy: RevisionPolicy,
 }
@@ -113,9 +116,19 @@ fn followed(parent: &Element, index: usize) -> bool {
 
 /// The new paragraph, detached: the anchor paragraph's properties (no section break,
 /// change record or revision marks), a run of `text` formatted as the anchor's nearest
-/// text run (the last after it, the first before it).
-fn made(work: &mut Work, anchor: Id, template: bool, after: bool, text: &str) -> Id {
+/// text run (the last after it, the first before it); with `style`, that paragraph style
+/// alone and a run without properties.
+fn made(work: &mut Work, anchor: Id, template: bool, after: bool, text: &str, style: Option<&str>) -> Id {
     let paragraph = work.new_element(work.element_name(work.root(), W, "p", "w"));
+    if let Some(style) = style {
+        let properties = work.new_element(work.element_name(paragraph, W, "pPr", "w"));
+        let node = work.new_element(work.element_name(properties, W, "pStyle", "w"));
+        let val = work.qname(W, "val", "w");
+        work.set(node, val, style);
+        work.append(properties, node);
+        work.append(paragraph, properties);
+    }
+    let template = template && style.is_none();
     let properties = template.then(|| work.find(anchor, W, "pPr")).flatten();
     if let Some(properties) = properties {
         let copy = work.deep_copy(properties);
@@ -164,16 +177,22 @@ fn made(work: &mut Work, anchor: Id, template: bool, after: bool, text: &str) ->
 pub(crate) fn insert_paragraph(
     sink: &mut EditSink<'_, '_>,
     target: &str,
-    after: bool,
-    text: &str,
+    (after, text, style): (bool, &str, Option<&str>),
 ) -> Result<ParagraphInserted> {
     check_text(text)?;
     let docx = sink.docx()?;
     let anchor = anchor(sink.doc(), &docx, target)?;
+    if let Some(name) = style {
+        crate::builtin::resolve(&docx, name, "paragraph")?;
+    }
     let part = anchor.part.clone();
     sink.read(block_key(&part, &anchor.id));
     let renamed = stamp_document(sink, &docx)?;
     let anchor_id = renamed_id(&renamed, &anchor.id);
+    let style = match style {
+        Some(name) => Some(crate::builtin::ensure(sink, name, "paragraph")?),
+        None => None,
+    };
     let tree = sink.doc().tree(&part)?.ok_or_else(|| EditError::NoPart(part.clone()))?;
     let path_error = || EditError::Path(part.clone());
     let (&index, above) = anchor.path.split_last().ok_or_else(path_error)?;
@@ -185,7 +204,7 @@ pub(crate) fn insert_paragraph(
     let last = after && !followed(parent, index as usize);
     let (mut work, placed) = stretch(tree.root(), std::slice::from_ref(&anchor.path)).ok_or_else(path_error)?;
     let &anchor_node = placed.first().ok_or_else(path_error)?;
-    let paragraph = made(&mut work, anchor_node, anchor.paragraph, after, text);
+    let paragraph = made(&mut work, anchor_node, anchor.paragraph, after, text, style.as_deref());
     let drawn = sink.draw(&part, 2)?;
     let (Some(para_id), Some(text_id)) = (drawn.first(), drawn.get(1)) else {
         return Err(path_error());
@@ -242,12 +261,17 @@ impl Command<WordDoc> for InsertParagraph {
 
     fn validate(&self, doc: &WordDoc) -> Result<()> {
         check_text(&self.text)?;
-        anchor(doc, &*doc.docx()?, &self.anchor).map(|_| ())
+        let docx = doc.docx()?;
+        anchor(doc, &docx, &self.anchor)?;
+        if let Some(name) = &self.style {
+            crate::builtin::resolve(&docx, name, "paragraph")?;
+        }
+        Ok(())
     }
 
     fn prepare(&self, tx: &mut Txn<'_, WordDoc>) -> Result<ParagraphInserted> {
         let mut sink = EditSink::new(tx, self.policy.clone());
-        let out = insert_paragraph(&mut sink, &self.anchor, self.after, &self.text)?;
+        let out = insert_paragraph(&mut sink, &self.anchor, (self.after, &self.text, self.style.as_deref()))?;
         // docx-agent's batch, once it ends: revision ids unique
         crate::revision_ids::make_unique(&mut sink)?;
         Ok(out)
@@ -384,7 +408,7 @@ pub(crate) fn set_lines(sink: &mut EditSink<'_, '_>, target: &str, text: &str) -
     let mut created = Vec::new();
     let mut current = first.id.clone();
     for line in rest {
-        let made = insert_paragraph(sink, &current, true, line)?;
+        let made = insert_paragraph(sink, &current, (true, line, None))?;
         for (old, new) in made.renamed {
             match renamed.iter_mut().find(|(o, _)| *o == old) {
                 Some(slot) => slot.1 = new,
