@@ -584,7 +584,8 @@ pub(crate) fn ensured_head(root: &Element, drawings: bool, extra: &[(&str, &str)
     let mc_missing = declared(&namespaces, MC).is_none();
     if missing_any || mc_missing {
         for (name, uri) in &wanted {
-            if declared(&namespaces, uri).is_none() {
+            // lxml's cleanup declares at the top only what the tree uses
+            if declared(&namespaces, uri).is_none() && uses_namespace(root, uri) {
                 namespaces.push(NamespaceDecl {
                     prefix: Some(Arc::from(*name)),
                     uri: Arc::from(*uri),
@@ -635,6 +636,13 @@ pub(crate) fn ensured_head(root: &Element, drawings: bool, extra: &[(&str, &str)
         };
         (head, declared_new)
     })
+}
+
+/// Whether an element or attribute at or below `element` is in the namespace `uri`.
+fn uses_namespace(element: &Element, uri: &str) -> bool {
+    element.name().namespace() == Some(uri)
+        || element.attributes().iter().any(|a| a.name.namespace() == Some(uri))
+        || element.child_elements().any(|c| uses_namespace(c, uri))
 }
 
 /// The draws that number again, where the change is applied, the revision records a
