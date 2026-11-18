@@ -233,10 +233,6 @@ impl<D: DocModel> Store<D> {
         // with another writer of it
         let mut depends = parts.reads.clone();
         depends.extend(&parts.writes.without(&parts.merges));
-        // what the head derives for the changes applied to it, made outside the lock
-        if !Arc::ptr_eq(&self.head.load(), &parts.base) {
-            self.head.load().doc().warm();
-        }
         let mut state = lock(&self.state);
         let entered = self.clock.monotonic();
         let head = self.head.load();
@@ -335,6 +331,7 @@ impl<D: DocModel> Store<D> {
     ) -> (Snapshot<D>, KeySet<D::Key>, Garbage<D>) {
         let seq = state.last.next();
         state.last = seq;
+        doc.settle();
         let version = Arc::new(before.succeed(seq, doc, &body.writes));
         self.head.store(Arc::clone(&version));
         self.log(state, seq, Some(Arc::clone(&body.changes)));
@@ -405,6 +402,7 @@ impl<D: DocModel> Store<D> {
         let planned = plan(&state.history, &head)?;
         let seq = state.last.next();
         state.last = seq;
+        planned.doc.settle();
         let version = Arc::new(head.succeed(seq, planned.doc, &planned.writes));
         self.head.store(Arc::clone(&version));
         self.log(&mut state, seq, None);

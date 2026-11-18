@@ -516,8 +516,9 @@ impl DocModel for WordDoc {
         }
     }
 
-    fn warm(&self) {
-        // the reading and the tally a draw or a people change reads where it lands
+    fn settle(&self) {
+        // the reading and the tally, each from the version before (the head's, settled):
+        // what the next commit's draws and people change read where they land
         let _ = self.docx();
         let _ = self.tally();
     }
