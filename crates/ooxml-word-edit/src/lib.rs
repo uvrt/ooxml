@@ -72,7 +72,7 @@ mod track;
 pub mod validate;
 mod work;
 
-pub use comments::{CommentEdit, CommentEdited, CommentEdits};
+pub use comments::{CommentEdit, CommentEdited, CommentEdits, EditCommentText};
 pub use delete::{BlockDeleted, DeleteBlock};
 pub use doc::{Change, Draw, DrawFrom, Key, ModelError, Shared, WordDoc};
 pub use editor::{EditTiming, Edited, Editor};

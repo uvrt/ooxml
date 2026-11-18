@@ -7,8 +7,10 @@
 
 pub(crate) mod delete;
 mod edits;
+mod text;
 
 pub use edits::{CommentEdit, CommentEdited, CommentEdits};
+pub use text::EditCommentText;
 
 /// `commentsExtended`'s namespace (`w15`).
 pub(crate) const W15: &str = "http://schemas.microsoft.com/office/word/2012/wordml";

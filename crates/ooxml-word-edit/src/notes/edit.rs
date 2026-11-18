@@ -46,6 +46,8 @@ impl Command<WordDoc> for EditNote {
 impl EditNote {
     /// The edit, through `sink`.
     fn edit(&self, sink: &mut EditSink<'_, '_>) -> Result<NoteEdited> {
+        // its steps (deletions, a replacement, new paragraphs) read across the notes part
+        sink.read_everything();
         check_text(&self.text.replace('\n', ""))?;
         let docx = sink.docx()?;
         let (part, path, _) = note_element(sink.doc(), &docx, &self.note)?;
@@ -59,7 +61,6 @@ impl EditNote {
         let Some(first) = entries.first() else {
             return Err(EditError::Refused(format!("{} has no paragraph", self.note)));
         };
-        sink.read(crate::doc::Key::Part(std::sync::Arc::from(part.as_str())));
         let lines: Vec<&str> = self.text.split('\n').collect();
         let work = Work::of(&first.element, Vec::new());
         let items = atoms(&work, work.root());

@@ -200,10 +200,23 @@ def move_cases(document) -> list[dict]:
     return out + [tracked(case) for case in out]
 
 
+def comment_cases(document) -> list[dict]:
+    """``word_comments`` edit (lane P4b, P4a's deferred): each thread's comments and their
+    replies rewritten, in one line and several; a comment that does not exist."""
+    out = [call("word_comments", action="edit", items=[{"comment": "c:00000000", "text": "x"}])]
+    for thread in document.comments(replies=False)[:3]:
+        out += [call("word_comments", action="edit", items=[{"comment": thread.id, "text": "Rewritten"}]),
+                call("word_comments", action="edit", items=[{"comment": thread.id, "text": "One\nTwo"}])]
+        for reply in thread.replies[:1]:
+            out.append(call("word_comments", action="edit", items=[{"comment": reply.id, "text": ""},
+                                                                    {"comment": thread.id, "text": "Both"}]))
+    return out
+
+
 def cases(document) -> list[dict]:
     """Every structure case for ``document``."""
     found = link_cases(document) + note_cases(document) + section_cases(document) + story_cases(document) \
-        + move_cases(document)
+        + move_cases(document) + comment_cases(document)
     wanted = os.environ.get("STRUCTURE_TOOLS")       # a comma list, to run some tools only
     return [c for c in found if not wanted or c["tool"] in wanted.split(",")]
 
