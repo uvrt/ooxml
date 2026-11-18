@@ -144,6 +144,22 @@ impl PyVersion {
     fn __repr__(&self) -> String {
         format!("<ooxml_core.Version {} {}>", self.inner.id(), self.inner.version())
     }
+
+    /// The parts whose content differs from `before` (a version of the same document):
+    /// ``{part: bytes here, or None where this version lacks it}`` -- what a copy of the
+    /// document kept beside the session takes to follow an edit made in it.
+    fn changed_since<'py>(&self, py: Python<'py>, before: PyRef<'_, PyVersion>) -> PyResult<Bound<'py, PyDict>> {
+        let (now, then) = (&self.inner, &before.inner);
+        let changed = py.detach(|| now.changed_since(then)).map_err(|e| to_py(&e))?;
+        let out = PyDict::new(py);
+        for (name, bytes) in changed {
+            match bytes {
+                Some(bytes) => out.set_item(name, PyBytes::new(py, &bytes))?,
+                None => out.set_item(name, py.None())?,
+            }
+        }
+        Ok(out)
+    }
 }
 
 /// What `Session.call` answers: the reply's JSON text, its images, and what only the

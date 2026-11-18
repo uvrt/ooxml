@@ -103,6 +103,10 @@ def configure(document: Document, session: Any) -> None:
     # Round 37: an id that is gone names the call that removed it, and how to read again.
     document.describe_step = _StepOwner(session, document)
     document.read_hint = "word_read"
+    # Lane P2c3: the Rust session owns the document from now on; this one is its working copy.
+    from ..rust.owner import OWNER
+
+    OWNER.hold(document)
 
 
 class _StepOwner:
@@ -249,6 +253,13 @@ TOOL_HINTS = {
     "word_upgrade": "word_template upgrade_to_modern",
 }
 
+def _owner() -> Any:
+    """Lane P2c3: the Rust session as the owner of the format's documents."""
+    from ..rust.owner import OWNER
+
+    return OWNER
+
+
 FORMAT = DocumentFormat(
     kind=KIND, open=open_docx, detect=detect, problems=problems, problem_key=problem_key,
     warnings=(AuthoringWarning, UntrackedChartEdit, DiagramDrawingDropped, ChartDataWarning),
@@ -257,4 +268,4 @@ FORMAT = DocumentFormat(
     read_provenance=read_provenance, restored=restored, own_facts=dict(OWN_REFUSED),
     tool_hints=TOOL_HINTS, warm_up=warm_up, touched=touched, number_texts=number_texts,
     scale_values=scale_values, state=id_state, open_with_state=open_docx_with_state,
-    read_copy=read_copy, blocks=BLOCKS, read_version=read_version, closed=release_document)
+    read_copy=read_copy, blocks=BLOCKS, read_version=read_version, closed=release_document, owner=_owner())

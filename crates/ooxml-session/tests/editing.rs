@@ -324,3 +324,30 @@ fn the_text_tools_edit_through_dispatch() {
     );
     assert_eq!(none["error"]["message"], json!("'absent' occurs nowhere"), "{none}");
 }
+
+#[test]
+fn a_version_names_the_parts_it_changed_since_another() {
+    let s = session();
+    let d = s
+        .open(docx(&paragraph("11111111", "one word")), DocKind::Docx, "a.docx")
+        .unwrap();
+    let context = as_caller("w1");
+    let before = s.snapshot(&d).unwrap();
+    assert!(before.changed_since(&before).unwrap().is_empty());
+    let set = call(
+        &s,
+        "word_set_text",
+        json!({"doc": "d1", "target": "p:11111111", "text": "two words"}),
+        &context,
+    );
+    assert_eq!(set["ok"], json!(true), "{set}");
+    let after = s.snapshot(&d).unwrap();
+    let changed = after.changed_since(&before).unwrap();
+    let names: Vec<&str> = changed.iter().map(|(name, _)| name.as_str()).collect();
+    assert_eq!(names, ["word/document.xml"]);
+    let body = changed[0].1.as_deref().map(String::from_utf8_lossy).unwrap_or_default();
+    assert!(body.contains("two words"), "{body}");
+    // the other way round: the earlier version's bytes
+    let back = before.changed_since(&after).unwrap();
+    assert!(back[0].1.as_deref().map(String::from_utf8_lossy).unwrap_or_default().contains("one word"));
+}

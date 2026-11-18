@@ -393,6 +393,16 @@ class DocumentFormat:
     #: committed before ``at_call``.  ``None`` (or a hook that raises): the read reads the
     #: committed version as before.  ``None`` here: no hook.
     read_version: Callable[..., Any] | None = None
+    #: Lane P2c3: the store that owns the format's documents -- their versions, their history
+    #: and their saved bytes (docx-agent's: the Rust session) -- with the document the tool
+    #: layer holds as its working copy, kept at the owner's head.  An object with
+    #: ``committed(entry)``: a version the working copy made, committed under the document's
+    #: lock (the owner takes it, as the step of :attr:`DocumentEntry.owners`' tool and caller);
+    #: ``followed(entry, direction, count, caller)``: an undo or redo of ``count`` steps the
+    #: working copy made, with ``caller`` (``None``: the session's own), which the owner makes
+    #: too; and ``save(entry) -> bytes``: the document's bytes, the owner's.  ``None``: the
+    #: working copy is the document.
+    owner: Any = None
 
 
 #: :attr:`DocumentEntry.render_keys` and :attr:`DocumentEntry.font_keys`, in entries.
@@ -653,6 +663,9 @@ class DocumentEntry:
         if self.pinned is not None:
             return
         self.count_outside()
+        owner = getattr(fmt, "owner", None)
+        if owner is not None:
+            owner.committed(self)
         read_copy = getattr(fmt, "read_copy", None)
         if read_copy is None:
             return
@@ -1430,8 +1443,9 @@ class Session:
         Writes nothing anywhere: the application keeps them where it keeps its run."""
         entry = self.entry(doc_id)
         fmt = self.formats.get(entry.kind)
+        owner = getattr(fmt, "owner", None)
         with entry.lock:
-            data = entry.snapshot()
+            data = owner.save(entry) if owner is not None else entry.snapshot()
             state = fmt.state(entry.document) if fmt is not None and fmt.state is not None else None
             return SavedDocument(doc=doc_id, name=entry.name, kind=entry.kind,
                                  version=entry.version, data=data, state=state)
@@ -1554,21 +1568,30 @@ class Session:
         the later changes in a format with undo scopes, when none of them touched a part it
         touched (as a scoped undo); otherwise ``entangled``, naming the later change and
         who made it.  An empty or no ``caller`` is the session's own undo, as above."""
-        if caller:
-            return self._own(doc_id, steps, scope, "undo", caller)
-        if scope is not None:
-            return self._scoped(doc_id, steps, scope, "undo")
-        return self._step(doc_id, steps, "undo")
+        return self._history(doc_id, steps, scope, "undo", caller)
 
     def redo(self, doc_id: str, steps: int = 1, *, scope: str | None = None,
              caller: Mapping[str, Any] | None = None) -> int:
         """Redo up to ``steps`` undone calls; with ``scope``, the scoped undos of it; with
         ``caller``, that caller's own undos (its latest first)."""
-        if caller:
-            return self._own(doc_id, steps, scope, "redo", caller)
-        if scope is not None:
-            return self._scoped(doc_id, steps, scope, "redo")
-        return self._step(doc_id, steps, "redo")
+        return self._history(doc_id, steps, scope, "redo", caller)
+
+    def _history(self, doc_id: str, steps: int, scope: str | None, direction: str,
+                 caller: Mapping[str, Any] | None) -> int:
+        """Undo or redo (:meth:`undo`) on the working copy, and -- lane P2c3 -- the same steps
+        in the format's :attr:`~DocumentFormat.owner` of the document, under its lock."""
+        entry = self.entry(doc_id)
+        owner = getattr(self.formats.get(entry.kind), "owner", None)
+        with entry.lock:
+            if caller:
+                done = self._own(doc_id, steps, scope, direction, caller)
+            elif scope is not None:
+                done = self._scoped(doc_id, steps, scope, direction)
+            else:
+                done = self._step(doc_id, steps, direction)
+            if done and owner is not None:
+                owner.followed(entry, direction, done, dict(caller) if caller else None)
+            return done
 
     def _own(self, doc_id: str, steps: int, scope: str | None, direction: str,
              caller: Mapping[str, Any]) -> int:

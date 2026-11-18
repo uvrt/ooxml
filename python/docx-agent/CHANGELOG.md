@@ -7,6 +7,25 @@ snapshot commit; the development history before it is summarised here.
 
 ## 0.1.140 -- unreleased
 
+Phase P2, lane P2c3: the switch. A Word document open in a toolbox session is owned by the
+process's Rust session (`ooxml_core.Session`): its versions, its history and its saved bytes
+are the session's, and the `Document` the tool layer holds is the bridge's working copy, kept
+at the session's head (`docx_agent.rust.owner`).
+
+- `word_set_text` and `replace_text` run in the Rust session (`docx_agent.rust.edits`); the
+  parts the edit changed are written into the working copy as the call's step
+  (`Document.take_parts`). A call the session leaves to the host (its `unported`: styled
+  text, French spacing, regex, ...), a refusal, an op of a `batch`, a call prepared on a
+  draft, values written by reference and an address naming a renamed or deleted id run the
+  Python handler, counted (`edits.fallbacks()`, `edit_fallbacks{tool,reason}`).
+- Every other tool runs on the working copy, and the version it made is committed in the
+  session through `Session.bridge` as that tool's and caller's step (`bridge_calls{tool}`).
+- Undo and redo are made in the session step for step with the working copy's, with the same
+  caller; a disagreement is logged, counted (`owner.disagreements()`) and brought back
+  through the bridge.
+- `Session.save` returns the session's bytes.
+- Reads of a version find it in the session, committed when it was made.
+
 Phase PL, lane L4b: the Rust layout's memory. One engine per document, in the process that
 owns the document, and none in the workers; a version kept costs what it changed; what can
 be made again is bounded by one memory budget per process.

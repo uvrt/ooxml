@@ -214,6 +214,19 @@ def _python_find_text(call: Any, text: str, regex: bool, range: str | None, stor
 @handler("replace_text", mutates=True)
 def replace_text(call: Any, doc: str, find: str, replace: str, expect: str, regex: bool = False,
                  slides: list | None = None, range: str | None = None, stories: str = "body") -> Result:
+    """Lane P2c3: made by the Rust session that owns the document where it answers the call
+    (:mod:`docx_agent.rust.edits`), else here."""
+    from ..rust import edits, reads
+
+    given = {"find": find, "replace": replace, "expect": expect, "regex": regex or None, "slides": slides,
+             "range": reads._refs(call, range), "stories": stories}
+    return edits.serve(call, "replace_text", given,
+                       lambda: _replace_text(call, find, replace, expect, regex, slides, range, stories),
+                       addresses=(range,))
+
+
+def _replace_text(call: Any, find: str, replace: str, expect: str, regex: bool,
+                  slides: list | None, range: str | None, stories: str) -> Result:
     if slides is not None:
         raise _decks_only("slides", "range or stories")
     document = call.document

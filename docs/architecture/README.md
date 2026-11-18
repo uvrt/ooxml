@@ -564,6 +564,11 @@ All are under 0.1 % of the edit budgets.
 - The save gate: `Session::save_checked` refuses a Word document with problems it did not open with (`SessionError::NewProblems`); `Session::validation` is what it compares.
 - The bridge: `Session::update` reads the whole document (an exclusive commit, section 13 step 5) and adds the id values the parts bring to the ledger; `Session::bridge(doc, tool, parts)` is the same commit counted in `bridge_calls{tool}` (`Session::bridge_calls`). Python: `ooxml_core.Session.undo`, `redo`, `validation`, `save(checked=)`, `bridge`, `bridge_calls`.
 
+**As built (lane P2c3: the switch).**
+- docx-agent's Word documents in a toolbox session are owned by the process's Rust session from the moment they join it: ooxml-edit's `DocumentFormat.owner` (docx-agent's `docx_agent.rust.owner`) takes each version the tool layer's `Document` makes (`committed`, at each commit), makes each undo and redo it makes with the same caller (`followed`), and gives the saved bytes (`save`). The Python `Document` is the bridge's working copy, kept at the session's head.
+- A tool with a Rust editing handler runs in the session (`docx_agent.rust.edits`); the parts it changed come back as `Opened::changed_since` (`ooxml_core.Version.changed_since`) and are written into the working copy as the call's step. A call the handler answers `Done::unported`, a refusal (its words stay today's), an op of a `batch`, a call prepared on a draft, values written by reference and an address naming a renamed or deleted id run the Python handler, counted in `edit_fallbacks{tool,reason}`.
+- Every other tool runs on the working copy and its version is committed through `Session::bridge` as that tool's and caller's step: one working-copy step is one session step, so the session's own-undo rule finds the same steps. The working copy's history still words an undo's refusal; a disagreement between the two is logged, counted and brought back through the bridge.
+
 **Library API.**
 - `docx_agent.Document`, `pptx_agent` and `xlsx_agent` become handles. Methods that take and return plain values keep their signatures.
 - APIs that expose lxml (`.element`, `package.tree()`, `History`) warn for two releases and are then removed, each with a CHANGELOG note naming the replacement.

@@ -6,6 +6,11 @@ earlier ones were never tagged.
 
 ## 0.124.1 -- unreleased
 
+Phase P2, lane P2c3: `DocumentFormat.owner`, the store that owns a format's documents (their
+versions, history and saved bytes) with the tool layer's document as its working copy:
+`committed(entry)` at each commit, `followed(entry, direction, count, caller)` after an undo
+or redo, `save(entry)` for `Session.save`. docx-agent's is the Rust session.
+
 - **A renderer may lay a whole document out in the caller's process**
   (`Renderer.lays_out_here(data, font_dirs, locale, state)`, default `False`): where it
   says so, `lay_out_views` runs there, the document's lock let go as for a worker, and only

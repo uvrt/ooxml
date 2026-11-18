@@ -23,6 +23,7 @@
 #![forbid(unsafe_code)]
 
 mod batch;
+mod changes;
 mod context;
 mod document;
 mod error;
@@ -34,6 +35,7 @@ mod registry;
 mod session;
 mod update;
 
+pub use changes::ChangedPart;
 pub use batch::{ReadBatch, ReadOp, BATCH_TIMEOUT, MAX_READ_BATCH_CHARS, READ_BATCH};
 pub use context::{CallContext, CancelToken};
 pub use error::SessionError;

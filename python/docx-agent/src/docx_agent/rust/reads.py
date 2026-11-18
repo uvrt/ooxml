@@ -140,6 +140,21 @@ class Mirror:
         self.parts = parts
         self.versions: OrderedDict[int, Any] = OrderedDict()
         self.lock = threading.Lock()
+        #: Lane P2c3: whether the session owns the document (:mod:`.owner`): every version
+        #: the working copy makes is committed there as it is made, so a read copy's version
+        #: is found here, never handed over at the read.
+        self.owned = False
+        #: The working copy's version the session's head is (an owned document's).
+        self.synced: int | None = None
+        #: The tracking mode the session edits the document under (:mod:`.edits`).
+        self.tracking: dict[str, Any] | None = None
+
+    def keep(self, number: int, version: Any) -> None:
+        """Keep ``version`` (an ``ooxml_core.Version``) as the document's version ``number``."""
+        self.versions[number] = version
+        self.versions.move_to_end(number)
+        while len(self.versions) > KEPT:
+            self.versions.popitem(last=False)
 
     def version(self, copy: Any) -> Any:
         """The ``ooxml_core.Version`` of ``copy``'s version, handed over where it is new."""
@@ -149,6 +164,9 @@ class Mirror:
             if found is not None:
                 self.versions.move_to_end(number)
                 return found
+            if self.owned:
+                # Committed in the session as it was made (lane P2c3), and let go since.
+                raise _Fallback("version let go")
             now = _identities(copy.package)
             changed: dict[str, bytes | None] = {}
             for part, (identity, data) in now.items():
@@ -196,10 +214,19 @@ _MIRRORS_LOCK = threading.Lock()
 def _mirror(copy: Any) -> "Mirror | None":
     """The Rust session's copy of the document ``copy`` is a version of, opened from
     ``copy``'s bytes the first time; ``None`` where ``copy`` is not a read copy."""
-    finalizers.drain()
     live = copy.__dict__.get("_live")
+    if live is None:
+        return None
+    return mirror_of(live, copy)
+
+
+def mirror_of(live: Any, copy: Any = None) -> "Mirror | None":
+    """The Rust session's copy of the document ``live``, opened the first time from
+    ``copy``'s bytes (a read copy of it; ``live``'s own where none is given); ``None`` where
+    there is no session."""
+    finalizers.drain()
     session = _session()
-    if live is None or session is None:
+    if session is None:
         return None
     found = live.__dict__.get("_rust_reads")
     if found is not None and found.session is session:
@@ -208,11 +235,12 @@ def _mirror(copy: Any) -> "Mirror | None":
         found = live.__dict__.get("_rust_reads")
         if found is not None and found.session is session:
             return found
-        data = copy.to_bytes()
+        source = live if copy is None else copy
+        data = source.to_bytes()
         doc = session.open(data, kind="docx", name="document.docx")
-        parts = {part: identity for part, (identity, _) in _identities(copy.package).items()}
+        parts = {part: identity for part, (identity, _) in _identities(source.package).items()}
         made = Mirror(session, doc, parts)
-        made.versions[copy.history.version] = session.head(doc)
+        made.versions[source.history.version] = session.head(doc)
         # L4b: the finalizer only hands the close over (docx_agent.finalizers).
         weakref.finalize(live, finalizers.later, _close, session, doc)
         live.__dict__["_rust_reads"] = made
