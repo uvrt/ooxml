@@ -1,0 +1,132 @@
+//! The style tools' definitions: the golden exports docx-agent's Python test holds to
+//! today's (`test_rust_style.py`), and the rules their replies keep (a no-op said, a
+//! refusal with its way out). Their handlers' equality with docx-agent is
+//! `crates/ooxml-oracle/python/word_edits_diff.py --style`'s.
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
+
+use ooxml_base::{Cancel, Limits};
+use ooxml_derive::CacheBudget;
+use ooxml_opc::Package;
+use ooxml_store::{Caller, Clock, StoreConfig};
+use ooxml_tools::{ToolArgs, ToolResult};
+use ooxml_tools_word::{word_lists, Editing, WordLists, KIND};
+use ooxml_word_edit::Editor;
+use ooxml_zip::{Method, NewEntry, Writer};
+use serde_json::{json, Value};
+use std::sync::Arc;
+use std::time::Duration;
+
+struct Never;
+impl Cancel for Never {
+    fn is_cancelled(&self) -> bool {
+        false
+    }
+}
+
+struct Still;
+impl Clock for Still {
+    fn monotonic(&self) -> Duration {
+        Duration::ZERO
+    }
+}
+
+struct Unlimited;
+impl CacheBudget for Unlimited {
+    fn reserve(&self, _bytes: usize) -> bool {
+        true
+    }
+    fn release(&self, _bytes: usize) {}
+    fn used(&self) -> usize {
+        0
+    }
+}
+
+const W: &str = r#"xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml""#;
+const R: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/";
+
+/// A made-up document: three paragraphs, the last in a style that numbers it.
+fn package() -> Package {
+    let body = concat!(
+        r#"<w:p w14:paraId="10000001" w14:textId="20000001"><w:r><w:t>Alpha</w:t></w:r></w:p>"#,
+        r#"<w:p w14:paraId="10000002" w14:textId="20000002"><w:r><w:t>Beta</w:t></w:r></w:p>"#,
+        r#"<w:p w14:paraId="10000003" w14:textId="20000003"><w:pPr><w:pStyle w:val="Numbered"/></w:pPr><w:r><w:t>Gamma</w:t></w:r></w:p>"#,
+    );
+    let parts = [
+        ("[Content_Types].xml".to_owned(), r#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/></Types>"#.to_owned()),
+        ("word/_rels/document.xml.rels".to_owned(), format!(r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="{R}styles" Target="styles.xml"/><Relationship Id="rId2" Type="{R}numbering" Target="numbering.xml"/></Relationships>"#)),
+        ("word/styles.xml".to_owned(), format!(r#"<w:styles {W}><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="Numbered"><w:name w:val="Numbered"/><w:basedOn w:val="Normal"/><w:pPr><w:numPr><w:numId w:val="1"/></w:numPr></w:pPr></w:style></w:styles>"#)),
+        ("word/numbering.xml".to_owned(), format!(r#"<w:numbering {W}><w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/></w:lvl></w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num></w:numbering>"#)),
+        ("_rels/.rels".to_owned(), format!(r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="{R}officeDocument" Target="word/document.xml"/></Relationships>"#)),
+        ("word/document.xml".to_owned(), format!("<w:document {W}><w:body>{body}</w:body></w:document>")),
+    ];
+    let mut w = Writer::new();
+    for (name, data) in parts {
+        let entry = NewEntry {
+            name,
+            method: Method::Deflated,
+            dos_time: 0,
+            dos_date: 33,
+            external_attr: 0,
+            create_system: 3,
+        };
+        w.add(&entry, data.as_bytes()).unwrap();
+    }
+    Package::open(Arc::from(w.finish(b"").unwrap()), &Limits::default()).unwrap()
+}
+
+/// `tool` called with `arguments` on a fresh copy of the made-up document.
+fn call<A: ToolArgs>(arguments: Value, tool: impl Fn(&A, &Editing<'_>) -> ToolResult<Value>) -> (Value, Editor) {
+    let editor = Editor::open(package(), StoreConfig::default(), Arc::new(Still), Arc::new(Unlimited)).unwrap();
+    let opened = editor.store().snapshot().doc().clone();
+    let caller = Caller::anonymous();
+    let reply = {
+        let editing = Editing {
+            editor: &editor,
+            caller: &caller,
+            opened: &opened,
+            tracking: None,
+            doc: "d1",
+            cancel: &Never,
+        };
+        let (args, _) = A::accept(arguments, Some("docx")).unwrap();
+        Value::Object(tool(&args, &editing).to_json())
+    };
+    (reply, editor)
+}
+
+#[test]
+fn the_definitions_are_the_golden_exports() {
+    let spec = WordLists::spec();
+    assert_eq!(format!("{}\n", spec.export(Some(&[KIND]))), include_str!("golden/word_lists.json"));
+}
+
+#[test]
+fn paragraphs_join_a_new_list_and_are_listed() {
+    let (reply, _) = call(json!({"doc": "d1", "targets": ["p:10000001", "p:10000002"], "action": "add"}), word_lists);
+    assert_eq!(reply["summary"], json!("add: 2 paragraph(s)"));
+    assert_eq!(reply["data"][1]["list"], json!({"kind": "bullet", "level": 0, "num_id": 2}));
+    assert_eq!(reply["data"][0]["list"]["num_id"], reply["data"][1]["list"]["num_id"]);
+}
+
+#[test]
+fn a_paragraph_in_no_list_is_left_as_it_was_and_said() {
+    let (reply, _) = call(json!({"doc": "d1", "targets": ["p:10000001"], "action": "remove"}), word_lists);
+    assert!(reply.get("error").is_none(), "{reply}");
+    assert_eq!(
+        reply["warnings"],
+        json!(["1 paragraph(s) were not in a list, left as they were: p:10000001"])
+    );
+}
+
+#[test]
+fn a_style_numbered_paragraph_is_refused_with_the_styles_and_force() {
+    let (reply, _) = call(json!({"doc": "d1", "targets": ["p:10000003"], "action": "remove"}), word_lists);
+    assert_eq!(reply["error"]["code"], json!("invalid_arguments"));
+    assert_eq!(reply["error"]["field"], json!("targets"));
+    assert_eq!(reply["error"]["valid_options"], json!(["Normal", "force"]));
+    let (forced, _) = call(
+        json!({"doc": "d1", "targets": ["p:10000003"], "action": "remove", "force": true}),
+        word_lists,
+    );
+    assert_eq!(forced["data"][0]["list"], Value::Null);
+}

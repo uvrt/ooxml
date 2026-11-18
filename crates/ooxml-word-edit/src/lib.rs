@@ -41,6 +41,7 @@ pub mod find;
 mod inline;
 mod links;
 mod list_style;
+mod lists;
 mod marks;
 mod merge;
 mod moving;
@@ -80,6 +81,9 @@ pub use doc::{Change, Draw, DrawFrom, Key, ModelError, Shared, WordDoc};
 pub use editor::{EditTiming, Edited, Editor};
 pub use error::{EditError, Result};
 pub use links::{hyperlink_span, AddBookmark, AddHyperlink, LinkEdited, RemoveBookmark, RenameBookmark};
+pub use lists::{
+    numbered_by_style, paragraphs_of, unnumbered_styles_like, LevelFormat, ListAction, ListEdit, ListStep, ListsEdited,
+};
 pub use moving::{section_blocks, BlocksMoved, MoveBlocks, Moving};
 pub use notes::{DeleteNote, EditNote, InsertNote, MoveNote, NoteEdited, NoteKind};
 pub use paragraph_style::{SetParagraphStyle, StyleSet};

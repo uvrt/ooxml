@@ -176,6 +176,7 @@ fn refusals_carry_their_way_out() {
             "word_changes",
             "word_comments",
             "word_inspect",
+            "word_lists",
             "word_read",
             "word_set_tracking"
         ])

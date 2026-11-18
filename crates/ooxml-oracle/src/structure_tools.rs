@@ -35,6 +35,29 @@ impl Cancel for Never {
 /// # Errors
 /// A message when the document cannot be opened.
 pub fn case(bytes: &Arc<[u8]>, case: &Value) -> Result<Value, String> {
+    case_with(bytes, case, |tool, arguments, editing| match tool {
+        "word_links" => Some(run(arguments, |args: &WordLinks| word_links(args, editing))),
+        "word_notes" => Some(run(arguments, |args: &WordNotes| word_notes(args, editing))),
+        "word_comments" => Some(run(arguments, |args: &WordComments| word_comments(args, editing))),
+        "word_move" => Some(run(arguments, |args: &WordMove| word_move(args, editing))),
+        "word_sections" => Some(run(arguments, |args: &WordSections| word_sections(args, editing))),
+        "word_headers_footers" => Some(run(arguments, |args: &WordHeadersFooters| {
+            word_headers_footers(args, editing)
+        })),
+        _ => None,
+    })
+}
+
+/// One tool case on a freshly opened document, the tool called by `dispatch` (`None`: a
+/// tool it does not know).
+///
+/// # Errors
+/// A message when the document cannot be opened or the tool is unknown.
+pub fn case_with(
+    bytes: &Arc<[u8]>,
+    case: &Value,
+    dispatch: impl FnOnce(&str, &Value, &Editing<'_>) -> Option<ToolResult<Value>>,
+) -> Result<Value, String> {
     let package = Package::open(Arc::clone(bytes), &Limits::default()).map_err(|e| e.to_string())?;
     let editor = Editor::open(
         package.clone(),
@@ -59,16 +82,8 @@ pub fn case(bytes: &Arc<[u8]>, case: &Value) -> Result<Value, String> {
     };
     let arguments = case.get("arguments").cloned().unwrap_or(Value::Object(Map::new()));
     let tool = case.get("tool").and_then(Value::as_str).unwrap_or("");
-    let reply = match tool {
-        "word_links" => run(&arguments, |args: &WordLinks| word_links(args, &editing)),
-        "word_notes" => run(&arguments, |args: &WordNotes| word_notes(args, &editing)),
-        "word_comments" => run(&arguments, |args: &WordComments| word_comments(args, &editing)),
-        "word_move" => run(&arguments, |args: &WordMove| word_move(args, &editing)),
-        "word_sections" => run(&arguments, |args: &WordSections| word_sections(args, &editing)),
-        "word_headers_footers" => run(&arguments, |args: &WordHeadersFooters| {
-            word_headers_footers(args, &editing)
-        }),
-        other => return Err(format!("no tool {other}")),
+    let Some(reply) = dispatch(tool, &arguments, &editing) else {
+        return Err(format!("no tool {tool}"));
     };
     let head = editor.store().snapshot();
     let doc = head.doc();
@@ -103,7 +118,7 @@ pub fn case(bytes: &Arc<[u8]>, case: &Value) -> Result<Value, String> {
 
 /// The tool's reply to `arguments` taken as its intent rules take them (a refusal of the
 /// arguments is its reply), the notes on what was read as what first among its warnings.
-fn run<A: ToolArgs>(arguments: &Value, handler: impl FnOnce(&A) -> ToolResult<Value>) -> ToolResult<Value> {
+pub fn run<A: ToolArgs>(arguments: &Value, handler: impl FnOnce(&A) -> ToolResult<Value>) -> ToolResult<Value> {
     match A::accept(arguments.clone(), Some("docx")) {
         Ok((args, notes)) => {
             let mut reply = handler(&args);
