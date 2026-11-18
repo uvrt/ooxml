@@ -20,7 +20,7 @@ name: Rust
 # - `word-model`: the Word model against docx2svg's layout input, on the repository's
 #   documents and on those docx2svg's tools/make_*.py make;
 # - `cargo-deny`: licences, duplicate versions, sources and advisories (deny.toml);
-# - `fuzz`: fuzz/'s five targets, 5 minutes each.  Not part of `required (rust)`: a find
+# - `fuzz`: fuzz/'s eight targets, 5 minutes each.  Not part of `required (rust)`: a find
 #   shows as a failed job with the crashing input uploaded, without blocking a merge.
 # Not in CI: ooxml-oracle's `text-diff` (the text engine against docx2svg's records) needs
 # Word's own fonts, so it stays a local gate (README, Development).
@@ -399,7 +399,7 @@ jobs:
         run: |
           bin=fuzz/target/x86_64-unknown-linux-gnu/release
           status=0
-          for pair in xml_roundtrip:xml zip_read:package opc_open:package metafile_draw:metafile chart_layout:xml drawing_render:xml; do
+          for pair in xml_roundtrip:xml zip_read:package opc_open:package metafile_draw:metafile chart_layout:xml drawing_render:xml vml_paint:xml glyph_ink:font; do
             target=${pair%%:*}
             mkdir -p "$RUNNER_TEMP/corpus/$target" "$RUNNER_TEMP/crashes/$target"
             "$bin/$target" "$RUNNER_TEMP/corpus/$target" "$RUNNER_TEMP/seeds/${pair##*:}" \
