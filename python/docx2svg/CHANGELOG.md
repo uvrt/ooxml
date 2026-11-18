@@ -7,6 +7,9 @@ snapshot commit; the development history before it is summarised here.
 
 ## 0.14.0 -- unreleased
 
+- **`docx2svg.rust` keeps half the memory for its measures (lane L4e):** the Rust text
+  engine's pieces are 104 bytes each, were 208 (ooxml-core 0.10.0).Its measures at 350 pages: 353 -> 149 MB.
+
 - **`docx2svg.rust`, read lightly (lane L4b):** a page's rules, pictures and floats are read
   without its lines; a span's pens become `Fraction`s only when read; `RustLayout.ids_of`
   and `line_texts`.

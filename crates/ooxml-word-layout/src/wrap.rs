@@ -316,7 +316,7 @@ fn fits_in(items: &[Piece], line: &Line, geometry: &Geometry, first: bool) -> bo
     ) {
         return true;
     }
-    x + piece.width <= geometry.right
+    x + piece.width() <= geometry.right
 }
 
 /// One segment's part of a wrapped line: its pieces, the segment, and whether the

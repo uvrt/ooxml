@@ -53,7 +53,7 @@ pub struct Setting<'a> {
 }
 
 fn advance(piece: &Piece) -> Units {
-    piece.width + piece.kern_next
+    piece.width() + piece.kern_next()
 }
 
 /// The width of the pieces `start..end`, tabs, breaks and soft hyphens left out.
@@ -168,9 +168,9 @@ pub fn line_positions(items: &[Piece], line: &Line, geometry: &Geometry, setting
     };
     let text_end = pen
         + match piece.kind {
-            PieceKind::SoftHyphen => piece.hyphen,
+            PieceKind::SoftHyphen => piece.hyphen(),
             PieceKind::Tab => Units::ZERO,
-            _ => piece.width,
+            _ => piece.width(),
         };
     let slack = geometry.right - text_end;
     let positive = slack > Units::ZERO;
@@ -231,7 +231,7 @@ fn justified(items: &[Piece], line: &Line, mut out: Positions, last: usize, slac
     let total_width = spaces
         .iter()
         .filter_map(|k| items.get(*k))
-        .fold(Units::ZERO, |sum, p| sum + p.width);
+        .fold(Units::ZERO, |sum, p| sum + p.width());
     let mut extra = Units::ZERO;
     let mut before = Units::ZERO;
     for (k, x) in &mut out.at {
@@ -250,7 +250,7 @@ fn justified(items: &[Piece], line: &Line, mut out: Positions, last: usize, slac
         if spaces.contains(k) {
             extra += share;
             if let Some(p) = items.get(*k) {
-                before += p.width;
+                before += p.width();
             }
         }
     }

@@ -40,7 +40,9 @@ pub fn pieces(glyphs: &dyn Glyphs, paragraph: &Paragraph) -> Result<Vec<Piece>, 
         }
         items = auto_hyphens(items, &runs, hyphenation.mode15, hyphenation.no_caps);
     }
-    kern(glyphs, &mut items)?;
+    kern(glyphs, paragraph, &mut items)?;
+    // A measure is kept (memoised) as made: no room beyond its pieces.
+    items.shrink_to_fit();
     Ok(items)
 }
 
