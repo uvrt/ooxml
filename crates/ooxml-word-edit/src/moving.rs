@@ -418,16 +418,17 @@ impl MoveBlocks {
                 warnings: Vec::new(),
             });
         }
-        let mut warnings = Vec::new();
+        let mut warnings: Vec<(usize, String)> = Vec::new();
         if matches!(self.policy, RevisionPolicy::Tracked(_)) {
-            for (block, id) in blocks.iter().zip(&ids) {
+            for (k, block) in blocks.iter().enumerate() {
                 let element = element_at(&docx, &part, block).ok_or_else(|| EditError::Path(part.clone()))?;
                 if block.kind == BlockKind::Control {
-                    warnings.push(format!(
-                        "{id} is a content control: Word has no revision for a control, so it moved untracked"
+                    warnings.push((
+                        k,
+                        "is a content control: Word has no revision for a control, so it moved untracked".to_owned(),
                     ));
                 } else if holds_reference(&element) {
-                    warnings.push(format!("{id} holds a note or comment reference: moved untracked"));
+                    warnings.push((k, "holds a note or comment reference: moved untracked".to_owned()));
                 } else {
                     return Err(EditError::Unsupported(
                         "a block moved while tracking changes".to_owned(),
@@ -436,6 +437,20 @@ impl MoveBlocks {
             }
         }
         let renamed = stamp_document(sink, &docx)?;
+        // docx-agent moves the blocks one by one, the first stamping the document: a later
+        // block's warning names it by its stamped id
+        let warnings: Vec<String> = warnings
+            .into_iter()
+            .map(|(k, said)| {
+                let id = ids.get(k).cloned().unwrap_or_default();
+                let id = if k == 0 {
+                    id
+                } else {
+                    crate::ranges::renamed_id(&renamed, &id)
+                };
+                format!("{id} {said}")
+            })
+            .collect();
         let docx = sink.docx()?;
         let tree = sink.doc().tree(&part)?.ok_or_else(|| EditError::NoPart(part.clone()))?;
         let (work, parent, stretch) = self

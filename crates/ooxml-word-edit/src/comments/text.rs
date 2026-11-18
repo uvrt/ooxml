@@ -86,7 +86,7 @@ impl Command<WordDoc> for EditCommentText {
                 let work = space
                     .get_mut(&comment.part)
                     .ok_or_else(|| EditError::NoPart(comment.part.clone()))?;
-                let paragraph = comment_paragraph(work, (&para, text_id), (&style, &reference), (k == 0, line));
+                let paragraph = comment_paragraph(work, node, (&para, text_id), (&style, &reference), (k == 0, line));
                 work.append(node, paragraph);
             }
             space.mark_dirty(&comment.part);
@@ -105,13 +105,24 @@ impl Command<WordDoc> for EditCommentText {
 /// A comment's paragraph as docx-agent writes it (`_comment_paragraphs`).
 fn comment_paragraph(
     work: &mut Work,
+    holder: Id,
     (para, text): (&str, &str),
     (style, reference): (&str, &str),
     (first, line): (bool, &str),
 ) -> Id {
     let paragraph = make(work, "p", &[]);
+    // lxml, where nothing declares w14, declares it on the paragraph under a made-up prefix
+    let prefix = if work.has_prefix_for(holder, W14) {
+        None
+    } else {
+        work.declare(paragraph, "ns1", W14);
+        Some("ns1")
+    };
     for (local, value) in [("paraId", para), ("textId", text)] {
-        let name = work.qname(W14, local, "w14");
+        let name = match prefix {
+            None => work.qname(W14, local, "w14"),
+            Some(p) => std::sync::Arc::new(ooxml_xml::QName::new(Some(p), local, Some(W14))),
+        };
         work.set(paragraph, name, value);
     }
     let properties = make(work, "pPr", &[]);
