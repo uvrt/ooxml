@@ -7,7 +7,7 @@
 //!
 //! Must not: write but through the sink.
 
-use super::{ensure_notes_part, next_number, paragraph_key, place, stamp_paragraph, NoteEdited, NoteKind};
+use super::{ensure_notes_part, next_number, place, stamp_paragraph, NoteEdited, NoteKind};
 use crate::doc::{Draw, DrawFrom, Key};
 use crate::links::set_run_style;
 use crate::names::{W, W14, W16DU};
@@ -71,8 +71,9 @@ impl InsertNote {
         self.check(sink.doc())?;
         let docx = sink.docx()?;
         let (paragraph, offset) = place(sink.doc(), &docx, &self.at)?;
-        sink.read(paragraph_key(&paragraph));
-        sink.read(Key::Annotations);
+        // the notes part is written whole (and made with the first note), its number one
+        // above the largest: the note reads the whole document
+        sink.read_everything();
         let renamed = stamp_document(&mut *sink, &docx)?;
         let (text_style, reference_style) = self.kind.styles();
         let text_id = crate::builtin::ensure(&mut *sink, text_style, "paragraph")?;

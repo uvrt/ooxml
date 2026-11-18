@@ -218,7 +218,18 @@ def cases(document) -> list[dict]:
     found = link_cases(document) + note_cases(document) + section_cases(document) + story_cases(document) \
         + move_cases(document) + comment_cases(document)
     wanted = os.environ.get("STRUCTURE_TOOLS")       # a comma list, to run some tools only
-    return [c for c in found if not wanted or c["tool"] in wanted.split(",")]
+    found = [c for c in found if not wanted or c["tool"] in wanted.split(",")]
+    per_tool = int(os.environ.get("STRUCTURE_PER_TOOL") or 0)   # the first n of each tool's
+    if per_tool:
+        taken: dict[str, int] = {}
+        kept = []
+        for case in found:
+            key = case["tool"] + ("+tracked" if case.get("tracked") else "")
+            if taken.get(key, 0) < per_tool:
+                taken[key] = taken.get(key, 0) + 1
+                kept.append(case)
+        found = kept
+    return found
 
 
 def python_case(data: bytes, case: dict, baseline: list, toolbox, reply_of, parts_of, order_of, touched_of) -> dict:

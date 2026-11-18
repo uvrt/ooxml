@@ -16,7 +16,6 @@ pub use change::{DeleteNote, MoveNote};
 pub use edit::EditNote;
 pub use insert::InsertNote;
 
-use crate::doc::Key;
 use crate::names::{W, W14};
 use crate::review::space::Space;
 use crate::review::xml::{insert_in_order, make};
@@ -387,9 +386,4 @@ fn next_number(root: &Element, kind: NoteKind) -> i64 {
         .max()
         .unwrap_or(0)
         + 1
-}
-
-/// The keys of a paragraph read and written by its id.
-fn paragraph_key(found: &Found) -> Key {
-    crate::set_text::block_key(&found.part, &found.id)
 }
