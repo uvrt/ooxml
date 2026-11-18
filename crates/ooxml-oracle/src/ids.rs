@@ -75,12 +75,12 @@ pub fn ids_of(bytes: Vec<u8>, state: Option<&str>) -> Result<Value, String> {
 fn index_json(part: &str, story: &str, tree: &Tree) -> Value {
     let ids = PartIds::new(story, tree.root());
     let paragraphs: Vec<Value> = ids
-        .paragraphs
+        .paragraphs()
         .iter()
         .map(|p| json!([p.id, format!("{:?}", p.state).to_lowercase()]))
         .collect();
     let tables: Vec<Value> = ids
-        .tables
+        .tables()
         .iter()
         .map(|t| json!([t.id, t.rows.iter().map(|(_, r)| r.clone()).collect::<Vec<_>>()]))
         .collect();

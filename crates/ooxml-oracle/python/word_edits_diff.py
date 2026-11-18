@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""The Word edits' differential harness (test support; phase P2, lane P2a).
+"""The Word edits' differential harness (test support; phase P2, lanes P2a and P2b).
 
-Runs ``set_text`` in docx-agent and in the Rust core (``word-edits``) on the same documents,
+Runs ``set_text`` -- and with ``--ops``, ``insert_text``, ``delete_text`` and ``replace``
+(lane P2b) -- in docx-agent and in the Rust core (``word-edits``) on the same documents,
 untracked and tracked, each case on the document as opened, and compares:
 
 * ``result``: the paragraph's id after the edit, whether it changed, the renames its
@@ -107,15 +108,57 @@ def _text_of(entry) -> str:
     return _text.paragraph_text(entry.element)
 
 
+def _run(document, case: dict):
+    """The case's edit, by its ``op``."""
+    op = case.get("op", "set_text")
+    if op == "insert_text":
+        return document.insert_text(case["target"], case["text"])
+    if op == "delete_text":
+        return document.delete_text(case["target"])
+    if op == "replace":
+        return document.replace(case["find"], case["text"], case=case.get("case", True),
+                                count=case.get("count"), keep=case.get("keep", "first"))
+    return document._set_text(case["target"], case["text"])
+
+
+def _result(case: dict, result) -> dict:
+    if case.get("op", "set_text") == "set_text":
+        return {"id": result.id, "changed": result.changed, "renamed": dict(result.renamed)}
+    return {"id": result.id, "count": result.count, "renamed": dict(result.renamed)}
+
+
+def _range_cases(document, targets: list[str]) -> list[dict]:
+    """Insertions, deletions and replacements on the targets' text (``--ops``)."""
+    cases: list[dict] = []
+    for target in targets:
+        text = document.paragraph(target).text
+        words = text.split()
+        for at in sorted({0, len(text) // 2, len(text)}):
+            cases.append({"op": "insert_text", "target": f"{target}@{at}", "text": "inserted words "})
+        if words:
+            start = text.index(words[0])
+            cases.append({"op": "delete_text", "target": f"{target}@{start}:{start + len(words[0])}"})
+        if text:
+            cases.append({"op": "delete_text", "target": target})
+    for target in targets[:1]:
+        words = document.paragraph(target).text.split()
+        if words:
+            cases.append({"op": "replace", "find": words[0], "text": "Replaced", "case": True})
+            cases.append({"op": "replace", "find": words[0].upper(), "text": "replaced again", "case": False,
+                          "count": 1})
+            cases.append({"op": "replace", "find": words[0], "text": words[0] + "s", "keep": "characters"})
+    return [c for c in cases if not any(m in c.get("text", "") for m in _STYLED)]
+
+
 def python_case(data: bytes, case: dict, baseline: list) -> dict:
     document = Document.open(data)
     before = _parts(data)
     try:
         if case["tracked"]:
             with document.tracking(**case["tracked"]):
-                result = document._set_text(case["target"], case["text"])
+                result = _run(document, case)
         else:
-            result = document._set_text(case["target"], case["text"])
+            result = _run(document, case)
     except Exception as error:  # noqa: BLE001 -- a test instrument: a refusal is compared as one
         return {"refused": f"{type(error).__name__}: {error}"}
     out = document.to_bytes()
@@ -135,7 +178,7 @@ def python_case(data: bytes, case: dict, baseline: list) -> dict:
     pool = copy.deepcopy(document._id_pool())
     next_ids = {seed: _ids.generate(seed, pool, 1) for seed in (main, main + "\0text")}
     return {
-        "result": {"id": result.id, "changed": result.changed, "renamed": dict(result.renamed)},
+        "result": _result(case, result),
         "parts": parts,
         "order": _order(out),
         "touched": touched,
@@ -165,6 +208,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--rust", required=True, help="the word-edits binary")
     parser.add_argument("--tree", action="append", help="every .docx below this folder")
     parser.add_argument("--limit", type=int, default=0, help="at most this many cases per document")
+    parser.add_argument("--ops", action="store_true", help="insert_text, delete_text and replace too")
+    parser.add_argument("--only-ops", action="store_true", help="insert_text, delete_text and replace only")
     parser.add_argument("files", nargs="*")
     args = parser.parse_args(argv)
     expected: dict = {}
@@ -175,11 +220,17 @@ def main(argv: list[str] | None = None) -> int:
             document = Document.open(data)
             baseline = _validate.check(document.package)
             cases = []
-            for target in _targets(document):
-                text = document.paragraph(target).text
-                for new in _texts(text):
+            targets = _targets(document)
+            if not args.only_ops:
+                for target in targets:
+                    text = document.paragraph(target).text
+                    for new in _texts(text):
+                        for tracked in (None, TRACKING):
+                            cases.append({"target": target, "text": new, "tracked": tracked})
+            if args.ops or args.only_ops:
+                for case in _range_cases(document, targets):
                     for tracked in (None, TRACKING):
-                        cases.append({"target": target, "text": new, "tracked": tracked})
+                        cases.append({**case, "tracked": tracked})
             if args.limit:
                 cases = cases[:args.limit]
         except Exception as error:  # noqa: BLE001

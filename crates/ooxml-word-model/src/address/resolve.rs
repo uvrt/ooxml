@@ -141,7 +141,7 @@ pub fn unknown(docx: &Docx, id: &str) -> AddressError {
     }
     let options = docx
         .body()
-        .map(|b| b.ids.paragraphs.iter().take(10).map(|p| p.id.clone()).collect())
+        .map(|b| b.ids.paragraphs().iter().take(10).map(|p| p.id.clone()).collect())
         .unwrap_or_default();
     AddressError::not_found(format!("no paragraph or table {}", repr_str(id)), options)
 }
@@ -167,7 +167,7 @@ pub struct InTable<'d> {
 pub fn in_table<'d>(docx: &'d Docx, address: &str) -> Result<Option<InTable<'d>>, AddressError> {
     if address.starts_with("tr:") || address.contains("/tr:") {
         for part in &docx.parts {
-            for (t, table) in part.ids.tables.iter().enumerate() {
+            for (t, table) in part.ids.tables().iter().enumerate() {
                 if let Some(row) = table.rows.iter().position(|(_, r)| r == address) {
                     return Ok(Some(InTable {
                         part,
@@ -205,7 +205,7 @@ pub fn in_table<'d>(docx: &'d Docx, address: &str) -> Result<Option<InTable<'d>>
 #[must_use]
 pub fn refuse_inside_table(docx: &Docx, address: &str, wanted: &str) -> Option<AddressError> {
     let found = in_table(docx, address).ok()??;
-    let table = found.part.ids.tables.get(found.table)?.id.clone();
+    let table = found.part.ids.tables().get(found.table)?.id.clone();
     Some(match found.column {
         Some(_) => AddressError::invalid(
             format!("{address} is a cell, not {wanted}: give its table {table}"),
@@ -285,26 +285,28 @@ pub fn section(docx: &Docx, address: &str) -> Result<String, AddressError> {
 #[must_use]
 pub fn section_paragraphs(docx: &Docx, id: &str) -> Vec<usize> {
     let Some(body) = docx.body() else { return Vec::new() };
-    let ends: Vec<(String, Option<&[u32]>)> = sections(docx)
+    let ends: Vec<(String, Option<Box<[u32]>>)> = sections(docx)
         .into_iter()
         .map(|s| {
             let end = body
                 .ids
-                .paragraphs
+                .paragraphs()
                 .iter()
                 .find(|p| s.id != "s:body" && section_id(&p.id) == s.id)
-                .map(|p| &*p.path);
+                .map(|p| p.path);
             (s.id, end)
         })
         .collect();
-    let mut start: Option<&[u32]> = None;
+    let mut start: Option<Box<[u32]>> = None;
     for (section, end) in ends {
         if section == id {
             return body
                 .ids
-                .paragraphs
+                .paragraphs()
                 .iter()
-                .filter(|p| start.is_none_or(|s| &*p.path > s) && end.is_none_or(|e| &*p.path <= e))
+                .filter(|p| {
+                    start.as_deref().is_none_or(|s| &*p.path > s) && end.as_deref().is_none_or(|e| &*p.path <= e)
+                })
                 .map(|p| p.index)
                 .collect();
         }
@@ -365,18 +367,19 @@ pub fn heading(docx: &Docx, given: &str) -> Result<Heading, AddressError> {
     let Entry::Paragraph(k) = entry else {
         return Err(refuse(format!("{given} is not a paragraph: {HEADING_SYNTAX}")));
     };
-    let element = part.ids.paragraphs.get(k);
-    let top = element.is_some_and(|p| p.path.len() == 2);
+    let element = part.ids.paragraphs().get(k);
+    let top = element.as_ref().is_some_and(|p| p.path.len() == 2);
     if Some(part.part.as_str()) != body || !top {
         return Err(refuse(format!(
             "{given} is not a block of the body itself (a heading in a table, text box, content control, header or note owns no blocks): {HEADING_SYNTAX}"
         )));
     }
-    let own = element.map(|p| p.id.clone()).unwrap_or_default();
+    let own = element.as_ref().map(|p| p.id.clone()).unwrap_or_default();
     if let Some(found) = body_headings(docx).into_iter().find(|h| h.id == own) {
         return Ok(found);
     }
     let style = element
+        .as_ref()
         .and_then(|p| crate::docx::find_path(&p.element, &["pPr", "pStyle"]))
         .and_then(|s| s.attribute(Some(W), "val"))
         .and_then(|s| docx.style(s))
@@ -428,12 +431,14 @@ pub fn expand_heading(docx: &Docx, address: &str) -> Result<String, AddressError
 /// The paragraphs (indexes in their part's index, in document order, tables' cells
 /// included) of the elements at `paths` of `part`.
 fn paragraphs_in(part: &StoryPart, paths: &[&[u32]]) -> Vec<usize> {
-    part.ids
-        .paragraphs
+    let mut out: Vec<usize> = paths
         .iter()
-        .filter(|p| paths.iter().any(|path| p.path.starts_with(path)))
+        .flat_map(|path| part.ids.paragraphs_within(path))
         .map(|p| p.index)
-        .collect()
+        .collect();
+    out.sort_unstable();
+    out.dedup();
+    out
 }
 
 /// The paragraphs a range of text runs through.
@@ -465,7 +470,7 @@ pub fn scope_paragraphs<'d>(docx: &'d Docx, address: &str) -> Result<Paragraphs<
     let address = expand_heading(docx, address)?;
     let address = address.as_str();
     if let Some(part) = docx.story(address) {
-        return Ok((part, (0..part.ids.paragraphs.len()).collect()));
+        return Ok((part, (0..part.ids.paragraphs().len()).collect()));
     }
     if let Some((first, last)) = span_ends(address)? {
         return span_paragraphs(docx, first, last);
@@ -508,7 +513,7 @@ pub fn scope_paragraphs<'d>(docx: &'d Docx, address: &str) -> Result<Paragraphs<
     match entry {
         Entry::Paragraph(k) => Ok((part, vec![k])),
         Entry::Table(t) => {
-            let path = part.ids.tables.get(t).map(|t| t.path.clone()).unwrap_or_default();
+            let path = part.ids.tables().get(t).map(|t| t.path.clone()).unwrap_or_default();
             Ok((part, paragraphs_in(part, &[&path])))
         }
     }
@@ -516,7 +521,7 @@ pub fn scope_paragraphs<'d>(docx: &'d Docx, address: &str) -> Result<Paragraphs<
 
 /// The paragraphs of a row or cell (a cell found by its grid place, merges counted).
 fn cell_paragraphs(found: &InTable<'_>) -> Vec<usize> {
-    let Some(table) = found.part.ids.tables.get(found.table) else {
+    let Some(table) = found.part.ids.tables().get(found.table) else {
         return Vec::new();
     };
     let Some((row_path, _)) = table.rows.get(found.row) else {
@@ -583,8 +588,8 @@ fn span_paragraphs<'d>(
         }
         let (part, entry) = resolve(docx, id)?;
         let path = match entry {
-            Entry::Paragraph(k) => part.ids.paragraphs.get(k).map(|p| p.path.clone()),
-            Entry::Table(k) => part.ids.tables.get(k).map(|t| t.path.clone()),
+            Entry::Paragraph(k) => part.ids.paragraphs().get(k).map(|p| p.path.clone()),
+            Entry::Table(k) => part.ids.tables().get(k).map(|t| t.path.clone()),
         };
         Ok((part, path.unwrap_or_default()))
     };

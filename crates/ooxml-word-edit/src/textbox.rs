@@ -38,7 +38,8 @@ fn holders(element: &Arc<Element>, path: &mut Vec<u32>, out: &mut Vec<(Vec<u32>,
 
 /// The top-level blocks of a story part (the main part's body's children, another
 /// part's root's) that are not the snapshot's: each one's path and the snapshot's block
-/// at that place.
+/// it took the place of (none for one inserted). Found from the stretch of children that
+/// differs (pointer comparisons), so the blocks the edit did not touch are not visited.
 pub(crate) fn changed_blocks(old: &Arc<Element>, new: &Arc<Element>) -> Vec<(Vec<u32>, Option<Arc<Element>>)> {
     let holder = |root: &Arc<Element>| -> (Vec<u32>, Arc<Element>) {
         root.children()
@@ -51,13 +52,15 @@ pub(crate) fn changed_blocks(old: &Arc<Element>, new: &Arc<Element>) -> Vec<(Vec
             .unwrap_or_else(|| (Vec::new(), Arc::clone(root)))
     };
     let ((base, old), (_, new)) = (holder(old), holder(new));
-    if Arc::ptr_eq(&old, &new) {
+    let Some((start, old_end, new_end)) = old.children().changed_span(new.children()) else {
         return Vec::new();
-    }
+    };
     let mut out = Vec::new();
-    for (k, node) in new.children().iter().enumerate() {
+    for (k, node) in new.children().iter().enumerate().skip(start).take(new_end - start) {
         let Node::Element(block) = node else { continue };
-        let before = old.children().get(k).and_then(Node::as_element);
+        let before = (k < old_end)
+            .then(|| old.children().get(k).and_then(Node::as_element))
+            .flatten();
         if before.is_some_and(|b| Arc::ptr_eq(b, block)) {
             continue;
         }

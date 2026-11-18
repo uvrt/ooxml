@@ -168,8 +168,8 @@ impl<'a> Reading<'a> {
     pub(super) fn styles_in_use(&self) -> Value {
         let mut declared: Vec<(Option<String>, u64)> = Vec::new();
         for part in &self.docx.parts {
-            for p in &part.ids.paragraphs {
-                let style = find_path(&p.element, &["pPr", "pStyle"])
+            for element in part.ids.paragraph_elements() {
+                let style = find_path(element, &["pPr", "pStyle"])
                     .map(|s| s.attribute(Some(W), "val").unwrap_or("").to_owned());
                 count(&mut declared, style);
             }
@@ -229,11 +229,11 @@ impl<'a> Reading<'a> {
         let Some(body) = self.docx.body() else { return json!([]) };
         let out: Vec<Value> = body
             .ids
-            .tables
+            .tables()
             .iter()
             .take(30)
             .map(|t| {
-                let grid = TableGrid::new(body, t);
+                let grid = TableGrid::new(body, &t);
                 let mut item = Map::new();
                 item.insert("id".into(), json!(t.id));
                 item.insert("rows".into(), json!(grid.accepted_rows()));

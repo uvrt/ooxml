@@ -11,6 +11,7 @@
 use crate::inline::{check_span, isolate, position, prune, relationship_ids};
 use crate::names::{R, W};
 use crate::policy::Stamp;
+use crate::sink::Keep;
 use crate::text::diff::{by_words, coarse, Tag};
 use crate::text::write::{make_run, run_properties_for};
 use crate::text::{atoms, Atom, AtomKind, OBJECT};
@@ -338,9 +339,9 @@ fn after_deletion(work: &mut Work, run: Id, made: &[Id]) {
 pub(crate) fn replace_span(
     work: &mut Work,
     paragraph: Id,
-    start: usize,
-    end: usize,
+    (start, end): (usize, usize),
     new: &str,
+    keep: Keep,
     stamp: &mut Stamp,
 ) -> Result<Vec<String>, EditError> {
     let items = atoms(work, paragraph);
@@ -353,7 +354,7 @@ pub(crate) fn replace_span(
     if old == new {
         return Ok(Vec::new());
     }
-    let stretches: Vec<(usize, usize, Vec<char>)> = if old.is_empty() {
+    let stretches: Vec<(usize, usize, Vec<char>)> = if old.is_empty() || keep == Keep::First {
         vec![(start, end, new.clone())]
     } else {
         by_words(&old, &new)
@@ -385,7 +386,7 @@ pub(crate) fn replace_span(
         {
             reference = items.get(a).and_then(|x| x.run);
         }
-        let pieces = if b > a {
+        let pieces = if b > a && keep == Keep::Characters {
             pieces(work, &items, a, b, &text)
         } else {
             Vec::new()
