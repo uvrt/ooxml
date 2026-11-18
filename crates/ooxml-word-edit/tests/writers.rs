@@ -15,8 +15,8 @@ use ooxml_store::{Caller, Clock, Seq, Snapshot, StoreConfig};
 use ooxml_store::{Command, Txn};
 use ooxml_word_edit::find::Literal;
 use ooxml_word_edit::{
-    DeleteText, EditError, Editor, InsertParagraph, InsertText, Keep, ReplaceText, RevisionPolicy, SetParagraphStyle,
-    SetText, Tracking, WordDoc,
+    DeleteBlock, DeleteText, EditError, Editor, InsertParagraph, InsertText, Keep, ReplaceText, RevisionPolicy,
+    SetParagraphStyle, SetText, Tracking, WordDoc,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -87,6 +87,7 @@ enum Edit {
     Replace(ReplaceText),
     Paragraph(InsertParagraph),
     Style(SetParagraphStyle),
+    Block(DeleteBlock),
 }
 
 impl Command<WordDoc> for Edit {
@@ -101,6 +102,7 @@ impl Command<WordDoc> for Edit {
             Edit::Replace(c) => c.validate(doc),
             Edit::Paragraph(c) => c.validate(doc),
             Edit::Style(c) => c.validate(doc),
+            Edit::Block(c) => c.validate(doc),
         }
     }
 
@@ -112,6 +114,7 @@ impl Command<WordDoc> for Edit {
             Edit::Replace(c) => c.prepare(tx).map(|_| true)?,
             Edit::Paragraph(c) => c.prepare(tx).map(|_| true)?,
             Edit::Style(c) => c.prepare(tx).map(|_| true)?,
+            Edit::Block(c) => c.prepare(tx).map(|_| true)?,
         })
     }
 }
@@ -140,13 +143,17 @@ fn policy(rng: &mut Rng, writer: u64) -> RevisionPolicy {
 /// A random common edit (positions within the first characters, so they stay in range).
 fn edit(rng: &mut Rng, targets: &[String], writer: u64) -> Edit {
     let target = targets[rng.below(targets.len())].clone();
-    match rng.below(11) {
+    match rng.below(12) {
         0..=3 => Edit::Set(command(rng, targets, writer)),
         8 => Edit::Paragraph(InsertParagraph {
             anchor: target,
             after: rng.below(2) == 0,
             text: WORDS[rng.below(WORDS.len())].to_owned(),
             style: None,
+            policy: policy(rng, writer),
+        }),
+        11 => Edit::Block(DeleteBlock {
+            target,
             policy: policy(rng, writer),
         }),
         10 => Edit::Style(SetParagraphStyle {

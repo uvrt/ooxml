@@ -7,7 +7,7 @@
 //! The manifest is a JSON list of `{"file": path, "cases": [{"op", "target", "text",
 //! "tracked": {"author", "date"} or null, ...}]}` (`op`: `set_text` when absent,
 //! `set_text_paragraphs` (set_text in lines), `insert_paragraph` with `after` and `style`,
-//! `set_paragraph_style` with `style` (null: the default),
+//! `set_paragraph_style` with `style` (null: the default), `delete` (a block),
 //! `insert_text`, `delete_text`, `replace` with `find`, `case`, `count`, `keep`); each case
 //! runs on the document as opened.
 //!
@@ -21,7 +21,7 @@ use ooxml_word_edit::find::{Literal, Pattern};
 use ooxml_word_edit::touched::Touched;
 use ooxml_word_edit::validate::problems;
 use ooxml_word_edit::{
-    DeleteText, EditError, Edited, Editor, InsertParagraph, InsertText, Keep, RangesEdited, ReplaceText,
+    DeleteBlock, DeleteText, EditError, Edited, Editor, InsertParagraph, InsertText, Keep, RangesEdited, ReplaceText,
     RevisionPolicy, SetParagraphStyle, SetText, TextEdited, Tracking, WordDoc,
 };
 use serde_json::{json, Map, Value};
@@ -136,6 +136,7 @@ fn edit(bytes: &Arc<[u8]>, case: &Value) -> Result<Value, String> {
             .map(|done| report(&package, &done, ranges_result(&done.out))),
         "insert_paragraph" => insert_paragraph(&editor, &caller, &package, case),
         "set_paragraph_style" => set_paragraph_style(&editor, &caller, &package, case),
+        "delete" => delete(&editor, &caller, &package, case),
         "replace" => {
             let pattern = match pattern(case, &text("find"), &text("text")) {
                 Ok(p) => p,
@@ -200,6 +201,19 @@ fn set_paragraph_style(editor: &Editor, caller: &Caller, package: &Package, case
     };
     editor.run(caller, &command).map(|done| {
         let result = json!({"id": done.out.id, "renamed": renamed(&done.out.renamed)});
+        report(package, &done, result)
+    })
+}
+
+/// A delete case.
+fn delete(editor: &Editor, caller: &Caller, package: &Package, case: &Value) -> Result<Value, EditError> {
+    let command = DeleteBlock {
+        target: case.get("target").and_then(Value::as_str).unwrap_or("").to_owned(),
+        policy: policy(case),
+    };
+    editor.run(caller, &command).map(|done| {
+        let out = &done.out;
+        let result = json!({"id": out.id, "renamed": renamed(&out.renamed), "removed": out.removed});
         report(package, &done, result)
     })
 }
