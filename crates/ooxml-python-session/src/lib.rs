@@ -21,13 +21,16 @@
 //! crate takes it and becomes the module itself.
 
 mod adapters;
+mod budget;
 mod layout;
 mod raster;
 mod session;
+mod summary;
 
 use pyo3::prelude::*;
 
-pub use layout::{LayoutFallback, PyBudgetAccount, PyLaidPages, PyMemoryBudget, PyWordFonts, PyWordPages};
+pub use budget::{PyBudgetAccount, PyMemoryBudget};
+pub use layout::{LayoutFallback, PyLaidPages, PyWordFonts, PyWordPages};
 pub use raster::PyPageRaster;
 pub use session::{PyCallContext, PyCancelToken, PySession};
 
@@ -47,6 +50,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyLaidPages>()?;
     m.add_class::<PyMemoryBudget>()?;
     m.add_class::<PyBudgetAccount>()?;
+    m.add_class::<summary::PyLayoutSummary>()?;
     m.add_class::<PyPageRaster>()?;
     m.add("LayoutFallback", m.py().get_type::<LayoutFallback>())?;
     Ok(())

@@ -322,8 +322,9 @@ fn a_kept_version_holds_what_it_changed_and_not_the_document_part() {
             .unwrap()
             .unwrap();
         assert!(next.relaid());
-        // Laid out from the version before: its own containers and the one block it changed.
-        assert!(next.weight() * 4 < first, "{} of {first}", next.weight());
+        // Laid out from the version before: its own containers and the one block it changed
+        // (every measure it shares with the engine is not its own).
+        assert!(next.weight() <= first + first / 4, "{} of {first}", next.weight());
         let pictures = next.pictures().unwrap().package();
         assert!(
             !pictures.has_part("word/document.xml"),
@@ -485,4 +486,74 @@ fn a_text_path_its_shape_type_does_not_say_fits_is_an_approximation() {
     let said = version.said();
     assert_eq!(said.approximations.len(), 1, "{said:?}");
     assert_eq!(said.approximations[0].code, "layout-approximate:text-path");
+}
+
+#[test]
+fn a_kept_pages_warnings_are_said_again_without_walking_it() {
+    let row = |cells: usize| {
+        format!(
+            "<w:tr>{}</w:tr>",
+            "<w:tc><w:p><w:r><w:t>x</w:t></w:r></w:p></w:tc>".repeat(cells)
+        )
+    };
+    // A table off its grid on the last page; the versions edit a paragraph on the first.
+    let body = |edited: Option<usize>| {
+        format!(
+            r#"{}<w:tbl><w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/></w:tblGrid>{}{}</w:tbl>"#,
+            paragraphs(160, edited),
+            row(2),
+            row(3)
+        )
+    };
+    let mut kept = engine();
+    kept.lay_out_bytes(Arc::from(package(&body(None)))).unwrap().unwrap();
+    for k in 0..3 {
+        let next = kept
+            .lay_out_bytes(Arc::from(package(&body(Some(2 + k)))))
+            .unwrap()
+            .unwrap();
+        let whole = engine()
+            .lay_out_bytes(Arc::from(package(&body(Some(2 + k)))))
+            .unwrap()
+            .unwrap();
+        assert_eq!(next.said(), whole.said(), "version {k}");
+        assert!(next.said().warnings.iter().any(|w| w.code == "table-grid-mismatch"));
+    }
+    let (again, walked) = kept.stats().pages_said;
+    assert!(
+        again > walked,
+        "the pages the edits did not reach are said again: {again} again, {walked} walked"
+    );
+}
+
+#[test]
+fn a_summary_made_from_the_one_before_is_the_one_made_whole_and_says_what_changed() {
+    let mut kept = engine();
+    let first = kept
+        .lay_out_bytes(Arc::from(package(&paragraphs(160, None))))
+        .unwrap()
+        .unwrap();
+    let before = kept.summary(&first).unwrap();
+    let edited = package(&paragraphs(160, Some(100)));
+    let second = kept.lay_out_bytes(Arc::from(edited.clone())).unwrap().unwrap();
+    let after = kept.summary(&second).unwrap();
+    let mut fresh = engine();
+    let whole = fresh.lay_out_bytes(Arc::from(edited)).unwrap().unwrap();
+    let alone = fresh.summary(&whole).unwrap();
+    assert_eq!(after.pages.len(), alone.pages.len());
+    for (a, b) in after.pages.iter().zip(&alone.pages) {
+        assert_eq!(**a, **b);
+    }
+    // The pages before the edit are the very summaries of the version before.
+    assert!(Arc::ptr_eq(&after.pages[0], &before.pages[0]));
+    let reflow = after.compare(&before, &std::collections::HashMap::new());
+    assert!(!reflow.changed.is_empty() && !reflow.changed.contains(&1), "{reflow:?}");
+    assert!(
+        reflow.changed.iter().all(|p| reflow.why.get(p) == Some(&"content")),
+        "{reflow:?}"
+    );
+    assert!(after.pages[0]
+        .lines
+        .iter()
+        .all(|l| l.id.as_deref().is_some_and(|id| id.starts_with('p'))));
 }

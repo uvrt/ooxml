@@ -27,20 +27,27 @@
 //! (its owner wraps it in a lock), and a laid version is immutable and `Send + Sync`.
 #![forbid(unsafe_code)]
 
+mod causes;
 mod disk;
+mod drawing_said;
 pub mod drawings;
 mod engine;
 mod error;
 mod fonts;
+pub mod ids;
+pub mod line_text;
+pub mod page_said;
 mod pictures;
 pub mod png;
+pub mod summary;
 pub mod support;
 mod version;
 pub mod warnings;
 mod weight;
 
+pub use causes::RelaidCause;
 pub use disk::DiskFonts;
-pub use engine::{EngineBudgets, EngineOptions, EngineStats, PageDigests, PageEngine, RelaidCause};
+pub use engine::{EngineBudgets, EngineOptions, EngineStats, PageDigests, PageEngine};
 pub use error::{Fallback, PagesError};
 pub use fonts::{embedded_parts, font_table, DocumentFonts, FontSetup};
 pub use pictures::PackagePictures;

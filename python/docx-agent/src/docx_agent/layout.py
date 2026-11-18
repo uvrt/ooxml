@@ -345,13 +345,27 @@ class DocumentLayout:
 
     def _map_bodies(self, pages: list, raw: Any) -> list:
         """The body's lines of each page of a Rust layout (``(path, number, top, pitch,
-        baseline, column)``) as lines without spans, mapped to ids."""
-        paths = PathFinder()
-        out = []
+        baseline, column, id)``) as lines without spans, with their ids -- found in Rust
+        (lane L4b: the ids the version's bytes give its paragraphs); a line Rust names no
+        id for is resolved here, as before."""
+        main = self._document.package.document_part()
+        resolved, paths, out = self._paths, None, []
         for index, page in enumerate(pages):
-            lines = [_BodyLine(path, number, top, pitch, baseline, column, index, raw)
-                     for path, number, top, pitch, baseline, column in page if _story_kind(path) == "body"]
-            out.append(self._mapped(lines, paths))
+            mapped = []
+            for path, number, top, pitch, baseline, column, found in page:
+                if _story_kind(path) != "body":
+                    continue
+                line = _BodyLine(path, number, top, pitch, baseline, column, index, raw)
+                key = (main, path)
+                if key not in resolved:
+                    if found is None:
+                        paths = paths or PathFinder()
+                        found = _paragraph_id(self._document, main, path, paths)
+                        if found is None:
+                            self.unmapped.append(path)
+                    resolved[key] = found
+                mapped.append((resolved[key], line))
+            out.append(mapped)
         return out
 
     def _body(self, index: int) -> list:
@@ -359,6 +373,23 @@ class DocumentLayout:
         if self._rust:
             return self._bodies[index]
         return [(key, line) for key, line in self._lines[index] if _in_body(line)]
+
+    @property
+    def texts_of(self) -> Any:
+        """Lane L4b: for a layout laid out in Rust, ``texts_of(index)``: page ``index``'s
+        body lines' text measured there, ``{(path, line number): (characters not white
+        space,)}`` -- what a fact about text reads without painting a line into Python;
+        ``None`` for docx2svg's Python layout (its lines' spans are read)."""
+        return self._texts_by_line if self._rust else None
+
+    def _texts_by_line(self, index: int) -> dict:
+        kept = self.__dict__.setdefault("_texts", {})
+        found = kept.get(index)
+        if found is None:
+            found = kept[index] = {(path, number): (inked,)
+                                   for path, story, _part, number, inked, *_ in self._raw.line_texts(index)
+                                   if story is None}
+        return found
 
     # -- what is known -----------------------------------------------------------------------
 
@@ -869,15 +900,13 @@ class LayoutSummary:
             drawn[id(item)] = (item, value)
             return value
 
+        #: Lane L4b: the summary held in Rust (``ooxml_core.LayoutSummary``), for a layout
+        #: laid out there: made by its engine, each page the version before kept taken as it
+        #: was, compared in Rust -- no line of it is a Python object.
+        self._rust = None
         if layout._rust:
-            # Lane L4: digested in Rust, every page painted there and none read into Python.
-            document = layout._document
-            for rest, lines in layout._raw.laid.digests():
-                self.rest.append(rest)
-                self.lines.append(tuple(
-                    (layout.id_for_path(_part_of(document, path, part), path), path,
-                     story is None and _story_kind(path) == "body", digest)
-                    for path, story, part, digest in lines))
+            self._rust = layout._raw.laid.summary()
+            self.count, self.known = self._rust.count, self._rust.known
             self._drawn = None
             return
         for index, page in enumerate(layout.pages):
@@ -886,6 +915,14 @@ class LayoutSummary:
                                     for key, line in layout._lines[index]))
         #: id -> (page or line, its digest), for the next summary (``keep``), else ``None``.
         self._drawn: dict[int, tuple] | None = drawn if keep else None
+
+    def _lines_here(self) -> None:
+        """The pages and lines of a summary held in Rust, read into Python: for a comparison
+        with a summary made here (a layout docx2svg's Python layout made)."""
+        if self._rust is not None and not self.lines:
+            for rest, lines in self._rust.pages():
+                self.rest.append(rest)
+                self.lines.append(tuple((found, path, body, drawn) for found, path, body, drawn in lines))
 
     def __getstate__(self) -> dict:
         # Sent to the caller without the pages and lines kept for the next summary.
@@ -910,7 +947,18 @@ class LayoutSummary:
 
     def compare(self, before: "LayoutSummary", canon: Any) -> Reflow:
         """:meth:`DocumentLayout.compare` of the layouts these summarise: which pages of
-        this one differ from ``before``'s, ids followed by ``canon``."""
+        this one differ from ``before``'s, ids followed by ``canon``.  Both held in Rust: compared
+        there, ids followed through the aliases ``canon`` follows (:func:`canon_of`)."""
+        aliases = getattr(canon, "aliases", None)
+        if self._rust is not None and before._rust is not None and aliases is not None:
+            found = self._rust.compare(before._rust, dict(aliases))
+            changed = list(found["changed"])
+            return Reflow(changed=changed, first_changed_page=changed[0] if changed else None,
+                          page_count=tuple(found["page_count"]),
+                          moved={key: (was, now) for key, was, now in found["moved"]},
+                          unknown=list(found["unknown"]), why=dict(found["why"]))
+        self._lines_here()
+        before._lines_here()
         limit = min(before.known, self.known)
         count = max(before.count, self.count)
         changed: list[int] = []
@@ -950,6 +998,8 @@ def canon_of(document: "Document") -> Any:
             identifier = aliases[identifier]
         return identifier
 
+    #: What it follows: a summary held in Rust is compared there with these (lane L4b).
+    canon.aliases = aliases  # type: ignore[attr-defined]
     return canon
 
 

@@ -27,12 +27,16 @@ pub struct LaidVersion {
     pub(crate) glyphs: Arc<WordGlyphs>,
     pub(crate) names: Arc<dyn FaceNames>,
     pub(crate) relaid: bool,
-    pub(crate) relaid_cause: Option<crate::engine::RelaidCause>,
+    pub(crate) relaid_cause: Option<crate::causes::RelaidCause>,
     pub(crate) said: crate::warnings::Said,
     pub(crate) generation: u64,
     /// Its number among the versions its engine laid out: what its pages' paint is kept
     /// under.
     pub(crate) serial: u64,
+    /// Its body blocks by the tool's ids.
+    pub(crate) ids: Arc<crate::ids::BlockIds>,
+    /// Its summary, made once when first asked (its engine paints the pages it needs).
+    pub(crate) summary: OnceLock<Arc<crate::summary::Summary>>,
 }
 
 impl std::fmt::Debug for LaidVersion {
@@ -45,6 +49,12 @@ impl std::fmt::Debug for LaidVersion {
 }
 
 impl LaidVersion {
+    /// The id of the paragraph, table or row at body path `path` (`w:body/w:p[3]`), as the
+    /// tool names it in this version's bytes.
+    pub fn id_of(&self, path: &str) -> Option<&str> {
+        self.ids.get(path).map(|id| &**id)
+    }
+
     /// The layout.
     pub fn layout(&self) -> &DocumentLayout {
         &self.layout
@@ -80,7 +90,7 @@ impl LaidVersion {
     }
 
     /// Why it was laid out whole although a version before was laid out, where it was.
-    pub fn relaid_cause(&self) -> Option<&crate::engine::RelaidCause> {
+    pub fn relaid_cause(&self) -> Option<&crate::causes::RelaidCause> {
         self.relaid_cause.as_ref()
     }
 
@@ -115,7 +125,7 @@ impl LaidVersion {
     /// allocator's count.
     pub fn weight(&self) -> usize {
         let facts = self.facts.get().map_or(0, crate::weight::facts_weight);
-        crate::weight::layout_weight(&self.layout) + facts
+        crate::weight::layout_weight(&self.layout) + facts + self.ids.weight()
     }
 }
 
