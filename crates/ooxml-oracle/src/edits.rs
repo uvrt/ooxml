@@ -6,6 +6,7 @@
 //!
 //! The manifest is a JSON list of `{"file": path, "cases": [{"op", "target", "text",
 //! "tracked": {"author", "date"} or null, ...}]}` (`op`: `set_text` when absent,
+//! `set_text_paragraphs` (set_text in lines), `insert_paragraph` with `after`,
 //! `insert_text`, `delete_text`, `replace` with `find`, `case`, `count`, `keep`); each case
 //! runs on the document as opened.
 //!
@@ -19,7 +20,7 @@ use ooxml_word_edit::find::{Literal, Pattern};
 use ooxml_word_edit::touched::Touched;
 use ooxml_word_edit::validate::problems;
 use ooxml_word_edit::{
-    DeleteText, EditError, Edited, Editor, InsertText, Keep, RangesEdited, ReplaceText, RevisionPolicy, SetText,
+    DeleteText, EditError, Edited, Editor, InsertParagraph, InsertText, Keep, RangesEdited, ReplaceText, RevisionPolicy, SetText,
     TextEdited, Tracking, WordDoc,
 };
 use serde_json::{json, Map, Value};
@@ -132,6 +133,23 @@ fn edit(bytes: &Arc<[u8]>, case: &Value) -> Result<Value, String> {
                 },
             )
             .map(|done| report(&package, &done, ranges_result(&done.out))),
+        "insert_paragraph" => editor
+            .run(
+                &caller,
+                &InsertParagraph {
+                    anchor: text("target"),
+                    after: case.get("after").and_then(Value::as_bool).unwrap_or(true),
+                    text: text("text"),
+                    policy: policy(case),
+                },
+            )
+            .map(|done| {
+                let out = &done.out;
+                let renamed: Map<String, Value> =
+                    out.renamed.iter().map(|(old, new)| (old.clone(), json!(new))).collect();
+                let result = json!({"id": out.id, "changed": true, "renamed": renamed, "created": [out.id]});
+                report(&package, &done, result)
+            }),
         "replace" => {
             let pattern = match pattern(case, &text("find"), &text("text")) {
                 Ok(p) => p,
@@ -155,7 +173,8 @@ fn edit(bytes: &Arc<[u8]>, case: &Value) -> Result<Value, String> {
                 .run(&caller, &command)
                 .map(|done| report(&package, &done, ranges_result(&done.out)))
         }
-        _ => {
+        op => {
+            let lines = op == "set_text_paragraphs";
             let command = SetText {
                 target: text("target"),
                 text: text("text"),
@@ -163,7 +182,7 @@ fn edit(bytes: &Arc<[u8]>, case: &Value) -> Result<Value, String> {
             };
             editor
                 .run(&caller, &command)
-                .map(|done| report(&package, &done, text_result(&done.out)))
+                .map(|done| report(&package, &done, text_result(&done.out, lines)))
         }
     };
     Ok(done.unwrap_or_else(|error| json!({"refused": error.to_string()})))
@@ -183,8 +202,11 @@ fn pattern(case: &Value, find: &str, with: &str) -> Result<Arc<dyn Pattern>, Str
 }
 
 /// A set_text's result, as the harness writes docx-agent's.
-fn text_result(out: &TextEdited) -> Value {
+fn text_result(out: &TextEdited, lines: bool) -> Value {
     let renamed: Map<String, Value> = out.renamed.iter().map(|(old, new)| (old.clone(), json!(new))).collect();
+    if lines {
+        return json!({"id": out.id, "changed": out.changed, "renamed": renamed, "created": out.created});
+    }
     json!({"id": out.id, "changed": out.changed, "renamed": renamed})
 }
 

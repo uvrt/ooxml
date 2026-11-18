@@ -10,7 +10,7 @@
 //!   behind it that writes a text edit untracked or as tracked changes, as docx-agent
 //!   writes them;
 //! - stamping blocks with durable ids before the first edit, and new text ids;
-//! - the commands: [`SetText`]; [`InsertText`], [`DeleteText`] and [`ReplaceText`] (text
+//! - the commands: [`SetText`] (in lines: new paragraphs after it); [`InsertParagraph`]; [`InsertText`], [`DeleteText`] and [`ReplaceText`] (text
 //!   within a paragraph, docx-agent's `_replace_ranges`);
 //! - validation per change ([`validate`]: facts memoised by content, docx-agent's rules)
 //!   and what a change touched ([`touched`]);
@@ -31,6 +31,7 @@ mod inline;
 mod marks;
 mod names;
 mod namespaces;
+mod paragraphs;
 mod people;
 mod policy;
 mod pool;
@@ -51,6 +52,7 @@ mod work;
 pub use doc::{Change, Draw, DrawFrom, Key, ModelError, Shared, WordDoc};
 pub use editor::{EditTiming, Edited, Editor};
 pub use error::{EditError, Result};
+pub use paragraphs::{InsertParagraph, ParagraphInserted};
 pub use policy::{RevisionPolicy, Tracking};
 pub use pool::{Ids, IdsChange, Sequences};
 pub use ranges::{DeleteText, InsertText, RangesEdited, ReplaceText};

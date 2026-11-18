@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """The Word edits' differential harness (test support; phase P2, lanes P2a and P2b).
 
-Runs ``set_text`` -- and with ``--ops``, ``insert_text``, ``delete_text`` and ``replace``
-(lane P2b) -- in docx-agent and in the Rust core (``word-edits``) on the same documents,
+Runs ``set_text`` -- with ``--ops``, ``insert_text``, ``delete_text`` and ``replace``; with
+``--paragraphs``, ``set_text`` in lines and ``insert_paragraph`` (lane P2b) -- in docx-agent and in the Rust core (``word-edits``) on the same documents,
 untracked and tracked, each case on the document as opened, and compares:
 
 * ``result``: the paragraph's id after the edit, whether it changed, the renames its
@@ -115,6 +115,11 @@ def _run(document, case: dict):
         return document.insert_text(case["target"], case["text"])
     if op == "delete_text":
         return document.delete_text(case["target"])
+    if op == "set_text_paragraphs":
+        return document.set_text_paragraphs(case["target"], case["text"])
+    if op == "insert_paragraph":
+        where = {"after": case["target"]} if case.get("after", True) else {"before": case["target"]}
+        return document.insert_paragraph(case["text"], **where)
     if op == "replace":
         return document.replace(case["find"], case["text"], case=case.get("case", True),
                                 count=case.get("count"), keep=case.get("keep", "first"),
@@ -124,8 +129,12 @@ def _run(document, case: dict):
 
 
 def _result(case: dict, result) -> dict:
-    if case.get("op", "set_text") == "set_text":
+    op = case.get("op", "set_text")
+    if op == "set_text":
         return {"id": result.id, "changed": result.changed, "renamed": dict(result.renamed)}
+    if op in ("set_text_paragraphs", "insert_paragraph"):
+        return {"id": result.id, "changed": result.changed, "renamed": dict(result.renamed),
+                "created": list(result.created)}
     return {"id": result.id, "count": result.count, "renamed": dict(result.renamed)}
 
 
@@ -170,6 +179,23 @@ def _range_cases(document, targets: list[str]) -> list[dict]:
             cases.append({"op": "replace", "find": words[0].upper(), "text": "replaced again", "case": False,
                           "count": 1})
             cases.append({"op": "replace", "find": words[0], "text": words[0] + "s", "keep": "characters"})
+    return [c for c in cases if not any(m in c.get("text", "") for m in _STYLED)]
+
+
+def _paragraph_cases(document, targets: list[str]) -> list[dict]:
+    """New paragraphs (``--paragraphs``): a text in lines on each target, and a paragraph
+    after and before it (and after and before the first table)."""
+    cases: list[dict] = []
+    for target in targets:
+        text = document.paragraph(target).text
+        cases.append({"op": "set_text_paragraphs", "target": target, "text": "First line\nSecond line"})
+        cases.append({"op": "set_text_paragraphs", "target": target, "text": f"{text}\r\n\nA third\vbroken"})
+        cases.append({"op": "insert_paragraph", "target": target, "text": "A new paragraph.", "after": True})
+        cases.append({"op": "insert_paragraph", "target": target, "text": "", "after": False})
+    tables = document._index(document.package.document_part()).tables
+    if tables:
+        for after in (True, False):
+            cases.append({"op": "insert_paragraph", "target": tables[0].id, "text": "Beside a table", "after": after})
     return [c for c in cases if not any(m in c.get("text", "") for m in _STYLED)]
 
 
@@ -233,6 +259,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--limit", type=int, default=0, help="at most this many cases per document")
     parser.add_argument("--ops", action="store_true", help="insert_text, delete_text and replace too")
     parser.add_argument("--only-ops", action="store_true", help="insert_text, delete_text and replace only")
+    parser.add_argument("--paragraphs", action="store_true",
+                        help="set_text in lines and insert_paragraph (only these, with --only-ops none)")
     parser.add_argument("files", nargs="*")
     args = parser.parse_args(argv)
     expected: dict = {}
@@ -244,13 +272,17 @@ def main(argv: list[str] | None = None) -> int:
             baseline = _validate.check(document.package)
             cases = []
             targets = _targets(document)
-            if not args.only_ops:
+            if not args.only_ops and not args.paragraphs:
                 for target in targets:
                     text = document.paragraph(target).text
                     for new in _texts(text):
                         for tracked in (None, TRACKING):
                             cases.append({"target": target, "text": new, "tracked": tracked})
-            if args.ops or args.only_ops:
+            if args.paragraphs:
+                for case in _paragraph_cases(document, targets):
+                    for tracked in (None, TRACKING):
+                        cases.append({**case, "tracked": tracked})
+            if (args.ops or args.only_ops) and not args.paragraphs:
                 for case in _range_cases(document, targets):
                     for tracked in (None, TRACKING):
                         cases.append({**case, "tracked": tracked})

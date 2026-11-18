@@ -220,6 +220,30 @@ impl<'t, 's> EditSink<'t, 's> {
         }
     }
 
+    /// Record `paragraph` of `work`, just put in place, as the policy writes a new
+    /// paragraph: untracked as it is; tracked as inserted ([`crate::marks::track_new_paragraph`];
+    /// `last`: no block follows it in its container).
+    ///
+    /// # Errors
+    /// When the annotation ids cannot be read.
+    pub(crate) fn new_paragraph(&mut self, work: &mut Work, paragraph: crate::work::Id, last: bool) -> Result<TextWrite> {
+        let RevisionPolicy::Tracked(tracking) = self.policy.clone() else {
+            return Ok(TextWrite::default());
+        };
+        let shared = self.doc().shared_handle();
+        let orders = shared.facts.orders();
+        let (released, dated, numbered) = self.tracked(tracking, |stamp| {
+            crate::marks::track_new_paragraph(work, paragraph, last, stamp, orders);
+            Ok(Vec::new())
+        })?;
+        Ok(TextWrite {
+            changed: true,
+            released,
+            dated,
+            annotations: Some(numbered),
+        })
+    }
+
     /// Replace `count` children of the element at `parent` (child indexes from the root)
     /// of `part`, from its child `start` on, by `nodes`; ids drawn into them where the
     /// change is applied.
