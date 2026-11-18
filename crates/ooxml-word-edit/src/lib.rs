@@ -12,9 +12,9 @@
 //! - stamping blocks with durable ids before the first edit, and new text ids;
 //! - the commands: [`SetText`] (in lines: new paragraphs after it); [`InsertParagraph`];
 //!   [`SetParagraphStyle`] (built-in styles added as Word writes them); [`DeleteBlock`];
-//!   [`InsertText`], [`DeleteText`] and [`ReplaceText`] (text within a paragraph,
-//!   docx-agent's `_replace_ranges`); [`Review`] (accepting and rejecting tracked changes,
-//!   `word_changes`); [`SetWordTracking`] (Word's own Track Changes switch);
+//!   [`SetCells`]; [`InsertText`], [`DeleteText`] and [`ReplaceText`] (text within a
+//!   paragraph, docx-agent's `_replace_ranges`); [`Review`] (accepting and rejecting tracked
+//!   changes, `word_changes`); [`SetWordTracking`] (Word's own Track Changes switch);
 //!   [`CommentEdits`] (resolving, reopening and deleting comments);
 //! - validation per change ([`validate`]: facts memoised by content, docx-agent's rules)
 //!   and what a change touched ([`touched`]);
@@ -59,6 +59,7 @@ mod release;
 pub mod review;
 mod revision_ids;
 mod sections;
+mod set_cells;
 mod set_text;
 mod sink;
 mod stamping;
@@ -89,6 +90,7 @@ pub use sections::{
     InsertSectionBreak, LinkToPrevious, RemoveSectionBreak, SectionEdited, SectionValues, SetSection, SetStoryText,
     StoryEdited, UnlinkFromPrevious,
 };
+pub use set_cells::{CellEdit, CellsSet, SetCells};
 pub use set_text::{SetText, TextEdited};
 pub use sink::{EditSink, Keep, Numbered, TextWrite};
 pub use switch::{tracks_changes, word_tracks_changes, SetWordTracking, WordTracking};
