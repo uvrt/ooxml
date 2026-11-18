@@ -219,7 +219,8 @@ pub fn number_span(
         highlight: None,
         shading: None,
         kind: SpanKind::LineNumber,
-        line_baseline: number.baseline,
+        // docx2svg's line-number span leaves its line's baseline unset.
+        line_baseline: 0,
         vertical_align: None,
     })
 }

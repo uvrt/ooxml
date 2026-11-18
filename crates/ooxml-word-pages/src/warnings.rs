@@ -321,6 +321,43 @@ fn document_notes(document: &WordDocument, out: &mut Said) {
     }
 }
 
+/// What of a paragraph in a section of several columns is laid out as in a column of its
+/// own, not as measured (`paginate.flow`'s carry-on): a floating drawing not positioned
+/// against its column; a footnote in a section a continuous break joins to another (Word
+/// moves such a section to a page of its own below mode 15, and sets the page's notes in
+/// one column in mode 15); in mode 15 an endnote (Word balances the text above the
+/// endnotes and sets them as a region of their own).
+fn column_carry_on(
+    layout: &DocumentLayout,
+    (paragraph, item): (&Paragraph, &ooxml_word_layout::flow::ParaItem),
+) -> Option<&'static str> {
+    let sections = &layout.document.sections;
+    let continuous = |k: usize| {
+        sections
+            .get(k)
+            .is_some_and(|s| s.properties.start_type.as_deref() == Some("continuous"))
+    };
+    let shares_page = (item.section > 0 && continuous(item.section)) || continuous(item.section + 1);
+    let runs = paragraph.runs.iter();
+    if runs
+        .clone()
+        .flat_map(|r| r.anchors.iter())
+        .any(|a| a.h.relative.as_deref().unwrap_or("column") != "column" || a.simple.is_some())
+    {
+        Some("a floating drawing not positioned against its column")
+    } else if shares_page
+        && runs
+            .flat_map(|r| r.breaks.iter())
+            .any(|(_, mark)| mark.starts_with("footnoteReference:"))
+    {
+        Some("a footnote, in a section a continuous break joins to another,")
+    } else if layout.mode15 && layout.roles.get(item.body).is_some_and(Option::is_some) {
+        Some("an endnote")
+    } else {
+        None
+    }
+}
+
 /// A walk of the pages: the body's paragraphs (cells included), and the tables said of
 /// already.
 struct PageWalk {
@@ -377,12 +414,10 @@ impl PageWalk {
     ) {
         let document = &layout.document;
         let multi = layout.sections.get(item.section).is_some_and(|s| s.multi_column());
-        if line == 0 && multi && layout.mode15 && layout.roles.get(item.body).is_some_and(Option::is_some) {
-            // In mode 15 Word balances the text above the endnotes and sets them as a
-            // region of their own (`paginate.flow`'s carry-on): not modelled.
+        if let Some(detail) = column_carry_on(layout, (paragraph, item)).filter(|_| line == 0 && multi) {
             out.approximate(
                 "columns",
-                "an endnote in a section of several text columns is laid out as in a column of its own (not measured)",
+                &format!("{detail} in a section of several text columns is laid out as in a column of its own (not measured)"),
                 number,
                 Some(&paragraph.path),
             );
