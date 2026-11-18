@@ -23,6 +23,10 @@ snapshot commit; the development history before it is summarised here.
   options' whole `Locale` (separators, date order, list separator and language). A
   `RustLayout` float's `primitives` carry the face a text path is drawn in, for
   `drawn_faces`.
+- `drawn_faces` counts the faces a chart's or a SmartArt diagram's text is drawn in (read from
+  its markup, `drawing.markup_faces`), so the rasteriser is handed their files: a page whose
+  body named no such face drew the chart's words and numbers in whatever face answered the
+  generic family, or, where none did (Linux with the open substitutes), none at all.
 
 ## 0.13.1 -- unreleased
 

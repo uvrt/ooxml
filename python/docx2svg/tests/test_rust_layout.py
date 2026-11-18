@@ -187,3 +187,32 @@ def test_a_page_drawn_in_rust_is_png_as_resvg_py_draws_it(name: str):
     page = ours.pages[0]
     svg = ours.page_svg(0, width=page.width_px // 4, height=page.height_px // 4)
     assert _pixels(rust.page_png(svg)) == _pixels(svg_to_png(svg))
+
+
+@pytest.mark.parametrize("name", ["smartart", "charts-nl"])
+def test_a_chart_s_and_a_diagram_s_text_faces_are_drawn_faces(name: str):
+    """The faces a chart's or a diagram's text is drawn in are handed to the rasteriser
+    (``drawn_faces``): without them a page whose body names no such face -- a chart alone,
+    on a machine where no handed face answers to the generic family -- draws none of the
+    chart's words or numbers."""
+    from docx2svg.drawing import markup_faces
+
+    data, locale = _made()[name]
+    options = docx2svg.ConvertOptions(locale=locale) if locale else docx2svg.ConvertOptions()
+    ours = rust.Engine(options).lay_out(data, options)
+    theirs, _, _ = docx2svg.lay_out_docx(data, docx2svg.ConvertOptions(locale=locale) if locale
+                                         else docx2svg.ConvertOptions(), keep=False)
+    written = {face for page in theirs.pages for placed in page.floats for primitive in placed.primitives
+               if primitive.kind == "markup" and primitive.what in ("chart", "diagram")
+               for face in markup_faces(primitive.markup)}
+    assert written and written <= set(docx2svg.drawn_faces(theirs))
+    assert docx2svg.drawn_faces(ours) == docx2svg.drawn_faces(theirs)
+
+
+def test_a_chart_s_text_faces_are_read_from_its_markup():
+    from docx2svg.drawing import markup_faces
+
+    markup = ('<g><text x="0"><tspan font-size="12" font-family="Aptos, Carlito, sans-serif">0.2</tspan></text>'
+              '<text><tspan font-family="\'Aptos Display\', sans-serif" font-weight="bold" font-style="italic">T'
+              '</tspan><tspan font-family="Aptos, Carlito, sans-serif">x</tspan></text><rect/></g>')
+    assert markup_faces(markup) == [("Aptos", False, False), ("Aptos Display", True, True)]

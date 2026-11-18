@@ -208,6 +208,13 @@ impl WordDrawings {
     /// The faces `slot`'s text is drawn in (a text path's): `(face, bold, italic)`, for a
     /// rasteriser to be given (docx2svg's `drawn_faces`).
     pub fn faces(&self, slot: &DrawingSlot) -> Vec<(String, bool, bool)> {
+        fn written(g: &Graphic) -> bool {
+            matches!(&*g.kind, "chart" | "diagram") || g.children.iter().any(|c| written(c))
+        }
+        if slot.graphic.as_deref().is_some_and(written) {
+            // A chart's or a diagram's text: its faces are what its renderer wrote.
+            return self.paint(slot, &mut PageDefs::default()).faces;
+        }
         let Some(graphic) = slot.graphic.as_deref().filter(|g| &*g.kind == "textpath") else {
             return Vec::new();
         };

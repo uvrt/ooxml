@@ -319,6 +319,9 @@ impl Draw<'_, '_, '_> {
             if let Some(found) = self.frames.draw(g, at, path, self.painter, &mut self.drawn.said) {
                 let outer = transform(&up.turns);
                 for mut p in found {
+                    if let Primitive::Markup { markup, .. } = &p {
+                        self.drawn.faces.extend(super::write::text_faces(markup));
+                    }
                     if let (Some(outer), Primitive::Markup { transform, .. }) = (&outer, &mut p) {
                         *transform = Some(match transform.take() {
                             Some(t) => format!("{outer} {t}"),

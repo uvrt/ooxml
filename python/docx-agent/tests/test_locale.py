@@ -217,36 +217,6 @@ def test_the_toolbox_locale_reaches_the_document_and_the_worker(chart_bytes):
         assert _render(in_process, chart_bytes) == dutch
 
 
-def _why(data: bytes) -> str:
-    """What two locales' renders of ``data`` are drawn from (temporary diagnosis)."""
-    from docx2svg import rust
-    from docx2svg.png import svg_to_png
-
-    from pixels import pixels
-
-    out = []
-    fonts = None
-    for locale in (EN_US, DUTCH):
-        options = docx2svg.ConvertOptions(locale=locale)
-        laid = rust.Engine(options).lay_out(data, options)
-        svg = laid.page_svg(0, width=320, height=453) if laid is not None else None
-        fonts = docx2svg._fonts(data, options)
-        faces = {family: getattr(fonts.drawing_face(family, record=False), "source", None)
-                 for family in ("Arial", "Helvetica", "Calibri", "Aptos", "Carlito")} if fonts else None
-        out.append((locale.language, laid is not None, sorted(_numbers(svg or ""))[:6], faces,
-                    docx2svg.drawn_faces(laid) if laid is not None else None))
-        if svg is not None:
-            for files, skip in (([], True), ([faces["Arial"]] if faces and faces["Arial"] else [], True),
-                                ([], False)):
-                py = pixels(svg_to_png(svg, font_files=files, font_dirs=[], skip_system_fonts=skip,
-                                       sans_serif_family="Arial"))
-                ru = pixels(rust.page_png(svg, font_files=files, font_dirs=[], skip_system_fonts=skip,
-                                          sans_serif_family="Arial"))
-                out.append((files, skip, py == ru, hash(py[1]), hash(ru[1])))
-    out.append(rust.fallbacks())
-    return repr(out)
-
-
 def test_the_render_cache_is_keyed_by_the_locale(chart_bytes):
     with _box(workers=0) as box:
         session = box.session()
@@ -254,7 +224,7 @@ def test_the_render_cache_is_keyed_by_the_locale(chart_bytes):
         first = box.dispatch(session, "render", {"doc": "d1", "pages": [1], "width": 320})
         session.entry("d1").document.locale = DUTCH
         second = box.dispatch(session, "render", {"doc": "d1", "pages": [1], "width": 320})
-    assert first.images[0].data != second.images[0].data, _why(chart_bytes)
+    assert first.images[0].data != second.images[0].data
 
 
 def test_a_subprocess_worker_gets_the_locale_from_its_arguments(chart_bytes):

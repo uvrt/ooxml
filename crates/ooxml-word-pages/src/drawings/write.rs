@@ -271,3 +271,64 @@ pub fn lines(primitives: &[Primitive], source: &ImageSource<'_>) -> (Vec<String>
     }
     (out, said)
 }
+
+/// The faces the text of markup a renderer wrote whole (a chart's, a diagram's) is drawn
+/// in: each `<text>` or `<tspan>` naming a `font-family`, as `(its first family, bold,
+/// italic)`, once each, in the order met -- for a rasteriser to be given (`drawn_faces`).
+pub fn text_faces(markup: &str) -> Vec<(String, bool, bool)> {
+    let mut out: Vec<(String, bool, bool)> = Vec::new();
+    let mut rest = markup;
+    while let Some(at) = rest.find('<') {
+        rest = rest.get(at + 1..).unwrap_or("");
+        let name_end = rest
+            .find(|c: char| c.is_whitespace() || c == '>' || c == '/')
+            .unwrap_or(rest.len());
+        if !matches!(rest.get(..name_end), Some("text" | "tspan")) {
+            continue;
+        }
+        let tag = rest.get(..rest.find('>').unwrap_or(rest.len())).unwrap_or("");
+        let value = |name: &str| {
+            let needle = format!(" {name}=\"");
+            let from = tag.find(&needle)? + needle.len();
+            let len = tag.get(from..)?.find('"')?;
+            tag.get(from..from + len)
+        };
+        let Some(family) = value("font-family").and_then(|v| v.split(',').next()) else {
+            continue;
+        };
+        let family = family
+            .trim()
+            .trim_matches(|c| c == '\'' || c == '"')
+            .replace("&apos;", "'")
+            .replace("&amp;", "&");
+        if family.is_empty() {
+            continue;
+        }
+        let face = (
+            family,
+            matches!(value("font-weight"), Some("bold" | "700" | "800" | "900")),
+            value("font-style") == Some("italic"),
+        );
+        if !out.contains(&face) {
+            out.push(face);
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_charts_text_is_drawn_in_its_first_family() {
+        let markup = r#"<g><text x="0"><tspan font-size="12" font-family="Aptos, Carlito, sans-serif">0.2</tspan></text><text><tspan font-family="'Aptos Display', sans-serif" font-weight="bold" font-style="italic">T</tspan><tspan font-family="Aptos, Carlito, sans-serif">x</tspan></text><rect/></g>"#;
+        assert_eq!(
+            text_faces(markup),
+            vec![
+                ("Aptos".to_owned(), false, false),
+                ("Aptos Display".to_owned(), true, true)
+            ]
+        );
+    }
+}
