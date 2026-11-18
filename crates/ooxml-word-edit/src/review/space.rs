@@ -14,7 +14,8 @@ use crate::sink::EditSink;
 use crate::work::{Id, Work};
 use crate::{EditError, Result};
 use ooxml_xml::{Element, Node, Tree};
-use std::collections::BTreeMap;
+use std::cell::RefCell;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 /// One part's copy: the tree it was made from and the copy.
@@ -24,6 +25,28 @@ pub(crate) struct Copy {
     /// The node each of the root's children was read as (none for text): a copy numbers
     /// the nodes it reads in document order, text aside.
     top: Vec<Option<Id>>,
+    /// For each element of the tree a path went through (by address: the tree is held),
+    /// how many nodes its children before each one read as: a place is found in one step
+    /// per level, however many siblings come before it.
+    before: RefCell<HashMap<usize, Arc<[usize]>>>,
+}
+
+impl Copy {
+    /// How many nodes `element`'s children before its `k`th read as.
+    fn before(&self, element: &Arc<Element>, k: usize) -> Option<usize> {
+        let key = Arc::as_ptr(element) as usize;
+        let mut memo = self.before.borrow_mut();
+        let sums = memo.entry(key).or_insert_with(|| {
+            let mut sum = 0;
+            let mut out = Vec::with_capacity(element.children().len());
+            for child in element.children().iter() {
+                out.push(sum);
+                sum += weight(child);
+            }
+            Arc::from(out)
+        });
+        sums.get(k).copied()
+    }
 }
 
 /// How many nodes a copy reads for `node` and everything below it (text is no node).
@@ -61,7 +84,15 @@ impl Space {
                     next += weight(node);
                 }
             }
-            self.copies.insert(part.to_owned(), Copy { tree, work, top });
+            self.copies.insert(
+                part.to_owned(),
+                Copy {
+                    tree,
+                    work,
+                    top,
+                    before: RefCell::new(HashMap::new()),
+                },
+            );
         }
         Ok(self.copies.get_mut(part).map(|c| &mut c.work))
     }
@@ -92,8 +123,7 @@ impl Space {
         let mut green = copy.tree.root().children().get(first as usize)?;
         for &step in rest {
             let Node::Element(e) = green else { return None };
-            let before: usize = e.children().iter().take(step as usize).map(weight).sum();
-            node += 1 + before;
+            node += 1 + copy.before(e, step as usize)?;
             green = e.children().get(step as usize)?;
         }
         let same = match green {
