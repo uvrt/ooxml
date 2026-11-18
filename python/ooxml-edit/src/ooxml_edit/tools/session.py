@@ -394,7 +394,7 @@ class DocumentFormat:
     #: committed version as before.  ``None`` here: no hook.
     read_version: Callable[..., Any] | None = None
     #: Lane P2c3: the store that owns the format's documents -- their versions, their history
-    #: and their saved bytes (docx-agent's: the Rust session) -- with the document the tool
+    #: and their saved bytes (a library's native session, say) -- with the document the tool
     #: layer holds as its working copy, kept at the owner's head.  An object with
     #: ``committed(entry)``: a version the working copy made, committed under the document's
     #: lock (the owner takes it, as the step of :attr:`DocumentEntry.owners`' tool and caller);
