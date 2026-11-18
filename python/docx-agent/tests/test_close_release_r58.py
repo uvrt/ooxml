@@ -16,6 +16,7 @@ from ooxml_edit import opc
 from ooxml_edit.tools import Toolbox
 
 from docx_agent import blocks as blocks_module
+from docx_agent import finalizers
 from docx_agent.rust import check as rust_check
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
 
@@ -85,9 +86,11 @@ def test_a_document_let_go_without_closing_is_collected(report):
         owner = document.__dict__["_rust_doc"]
         finalizer = owner.finalizer
         _, func, args, _ = finalizer.peek()
-        assert func is rust_check._close_owner and args == (owner.key,)    # the key alone
+        # The key alone, handed over: a finalizer does no work itself (lane L4b).
+        assert func is finalizers.later and args == (rust_check._close_owner, owner.key)
         gone = weakref.ref(document)
         del owner, document
         session.documents.pop(doc)          # dropped by the application, never closed
         gc.collect()
-        assert gone() is None and not finalizer.alive                       # the owner closed
+        assert gone() is None and not finalizer.alive
+        finalizers.drain()                                                  # the owner closed

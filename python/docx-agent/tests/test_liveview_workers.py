@@ -20,7 +20,10 @@ from docx_agent.liveview import embed_images, page_svg, view
 import worker_probe
 from test_liveview import _body, report
 
-pytestmark = pytest.mark.any_faces
+# Lane L4b: what these tests read -- a live view's versions held in a worker -- is docx2svg's Python layout's, the fallback
+# where the Rust layout does not lay a version out: a version it lays out is laid out and
+# read in the calling process, by the document's engine (tests/test_layout_memory_l4b.py).
+pytestmark = [pytest.mark.any_faces, pytest.mark.usefixtures("python_layout")]
 
 
 @pytest.fixture(scope="module")

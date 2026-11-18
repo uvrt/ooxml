@@ -27,9 +27,16 @@ pub struct LaidVersion {
     pub(crate) glyphs: Arc<WordGlyphs>,
     pub(crate) names: Arc<dyn FaceNames>,
     pub(crate) relaid: bool,
-    pub(crate) relaid_cause: Option<crate::engine::RelaidCause>,
+    pub(crate) relaid_cause: Option<crate::causes::RelaidCause>,
     pub(crate) said: crate::warnings::Said,
     pub(crate) generation: u64,
+    /// Its number among the versions its engine laid out: what its pages' paint is kept
+    /// under.
+    pub(crate) serial: u64,
+    /// Its body blocks by the tool's ids.
+    pub(crate) ids: Arc<crate::ids::BlockIds>,
+    /// Its summary, made once when first asked (its engine paints the pages it needs).
+    pub(crate) summary: OnceLock<Arc<crate::summary::Summary>>,
 }
 
 impl std::fmt::Debug for LaidVersion {
@@ -42,6 +49,12 @@ impl std::fmt::Debug for LaidVersion {
 }
 
 impl LaidVersion {
+    /// The id of the paragraph, table or row at body path `path` (`w:body/w:p[3]`), as the
+    /// tool names it in this version's bytes.
+    pub fn id_of(&self, path: &str) -> Option<&str> {
+        self.ids.get(path).map(|id| &**id)
+    }
+
     /// The layout.
     pub fn layout(&self) -> &DocumentLayout {
         &self.layout
@@ -77,7 +90,7 @@ impl LaidVersion {
     }
 
     /// Why it was laid out whole although a version before was laid out, where it was.
-    pub fn relaid_cause(&self) -> Option<&crate::engine::RelaidCause> {
+    pub fn relaid_cause(&self) -> Option<&crate::causes::RelaidCause> {
         self.relaid_cause.as_ref()
     }
 
@@ -106,19 +119,13 @@ impl LaidVersion {
         &self.glyphs
     }
 
-    /// What it holds, in bytes, roughly: its flow's items and pages, and its facts where
-    /// made (each line and block counted at its size). A measure for a budget, not an
+    /// What it alone holds, in bytes, roughly: what dropping it would give back now
+    /// (`crate::weight`: its own containers, the measures, pages and blocks no other
+    /// version or memo holds), and its facts where made. A measure for a budget, not an
     /// allocator's count.
     pub fn weight(&self) -> usize {
-        let pages = &self.layout.pagination;
-        let lines: usize = pages.pages.iter().map(|p| p.lines.len() + p.rows.len()).sum();
-        let facts = self.facts.get().map_or(0, |f| {
-            f.pages
-                .iter()
-                .map(|p| p.lines.len() * 96 + p.blocks.iter().map(|b| b.len() + 16).sum::<usize>())
-                .sum()
-        });
-        self.layout.flow.items.len() * 256 + pages.pages.len() * 512 + lines * 64 + facts
+        let facts = self.facts.get().map_or(0, crate::weight::facts_weight);
+        crate::weight::layout_weight(&self.layout) + facts + self.ids.weight()
     }
 }
 

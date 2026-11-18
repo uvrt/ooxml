@@ -2,6 +2,12 @@
 //! `Pictures` port): a picture part's bytes and media type by its relationship, a
 //! metafile drawn as SVG by `ooxml-metafile` (as docx2svg draws one with ooxml-common).
 //!
+//! It keeps the package without the parts the Word model reads into the version (the
+//! main document part, its headers, footers and notes): those are the version's text,
+//! held in its model, and a version kept for its pictures must not hold a second copy of
+//! them as parsed trees (lane L4b). The relationship parts, the content types and every
+//! other part stay, shared with the package they came from.
+//!
 //! Must not: decode, scale or re-encode a picture.
 
 use ooxml_opc::Package;
@@ -9,6 +15,14 @@ use ooxml_word_layout::paint::svg::Pictures;
 use std::sync::Arc;
 
 const OFFICE: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument";
+/// The relationship types of the parts the model reads as the version's text.
+const TEXT_PARTS: [&str; 5] = [
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header",
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer",
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes",
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/endnotes",
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments",
+];
 
 /// The pictures of one version's package.
 #[derive(Debug, Clone)]
@@ -18,18 +32,35 @@ pub struct PackagePictures {
 }
 
 impl PackagePictures {
-    /// The pictures of `package`; `None` where it has no main document part.
-    pub fn new(package: Package) -> Option<PackagePictures> {
+    /// The pictures of `package`; `None` where it has no main document part. The main
+    /// part and the story parts it relates to are left out (the module's notes).
+    pub fn new(package: &Package) -> Option<PackagePictures> {
         let main = package
             .relationships("")
             .ok()?
             .iter()
             .find(|r| r.rel_type == OFFICE)
             .and_then(|r| r.target_part.clone())?;
-        Some(PackagePictures { package, main })
+        let mut text: Vec<String> = package
+            .relationships(&main)
+            .map(|rels| {
+                rels.iter()
+                    .filter(|r| !r.external && TEXT_PARTS.contains(&r.rel_type.as_str()))
+                    .filter_map(|r| r.target_part.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        text.push(main.clone());
+        let mut kept = package.clone();
+        for name in &text {
+            if kept.has_part(name) {
+                kept = kept.without(name).ok()?;
+            }
+        }
+        Some(PackagePictures { package: kept, main })
     }
 
-    /// The package.
+    /// The package, without the parts the model reads as the version's text.
     pub fn package(&self) -> &Package {
         &self.package
     }

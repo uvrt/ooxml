@@ -30,7 +30,9 @@ pub struct SetText {
     /// The paragraph (`p:...`, `p@body/3`, a renamed id) or a cell (`t:X/c1,1`: its first
     /// paragraph).
     pub target: String,
-    /// The whole new text: no `\n` (`\v` is a line break, `\t` a tab).
+    /// The whole new text (`\v` is a line break, `\t` a tab). With `\n` (`\r\n` and `\r`
+    /// read as one) each later line is a new paragraph after it, in order, as docx-agent's
+    /// `set_text_paragraphs` writes them.
     pub text: String,
     /// Untracked or tracked.
     pub policy: RevisionPolicy,
@@ -47,6 +49,8 @@ pub struct TextEdited {
     pub renamed: Vec<(String, String)>,
     /// The paragraph's part.
     pub part: String,
+    /// The paragraphs made for the text's later lines, in order.
+    pub created: Vec<String>,
 }
 
 /// A paragraph found: its part, place, id and how its id stands.
@@ -88,7 +92,7 @@ pub(crate) fn find(doc: &WordDoc, docx: &Docx, target: &str) -> Result<Found> {
 }
 
 /// The first paragraph of the cell `target` names (`t:X/c<row>,<col>`).
-fn cell_paragraph(docx: &Docx, target: &str) -> Result<Found> {
+pub(crate) fn cell_paragraph(docx: &Docx, target: &str) -> Result<Found> {
     let refuse = || EditError::Address(unknown(docx, target));
     let found = in_table(docx, target).map_err(EditError::Address)?.ok_or_else(refuse)?;
     let column = found
@@ -117,7 +121,7 @@ fn cell_paragraph(docx: &Docx, target: &str) -> Result<Found> {
 }
 
 /// Whether a paragraph holds an element whose `w:id` is an annotation id.
-fn paragraph_has_annotations(paragraph: &ooxml_xml::Element) -> bool {
+pub(crate) fn paragraph_has_annotations(paragraph: &ooxml_xml::Element) -> bool {
     paragraph.child_elements().any(|c| {
         (c.name().namespace() == Some(crate::names::W) && c.attribute(Some(crate::names::W), "id").is_some())
             || paragraph_has_annotations(c)
@@ -125,7 +129,7 @@ fn paragraph_has_annotations(paragraph: &ooxml_xml::Element) -> bool {
 }
 
 /// The key a block is read and written under: its durable id.
-fn block_key(part: &str, id: &str) -> Key {
+pub(crate) fn block_key(part: &str, id: &str) -> Key {
     Key::Block {
         part: Arc::from(part),
         id: Arc::from(id),
@@ -137,76 +141,98 @@ impl Command<WordDoc> for SetText {
     type Error = EditError;
 
     fn validate(&self, doc: &WordDoc) -> Result<()> {
-        check_text(&self.text)?;
+        for line in crate::paragraphs::lines(&self.text) {
+            check_text(line)?;
+        }
         find(doc, &*doc.docx()?, &self.target).map(|_| ())
     }
 
     fn prepare(&self, tx: &mut Txn<'_, WordDoc>) -> Result<TextEdited> {
         let mut sink = EditSink::new(tx, self.policy.clone());
-        let docx = sink.docx()?;
-        let found = find(sink.doc(), &docx, &self.target)?;
-        sink.read(block_key(&found.part, &found.id));
-        let mut work = Work::of(&found.element, Vec::new());
-        if paragraph_text(&work, work.root()) == self.text {
-            return Ok(TextEdited {
-                id: found.id,
-                changed: false,
-                renamed: Vec::new(),
-                part: found.part,
-            });
+        if crate::paragraphs::is_lines(&self.text) {
+            return crate::paragraphs::set_lines(&mut sink, &self.target, &self.text);
         }
-        let renamed = stamp_document(&mut sink, &docx)?;
-        let id = renamed
-            .iter()
-            .find(|(old, _)| *old == found.id)
-            .map_or_else(|| found.id.clone(), |(_, new)| new.clone());
-        let tree = sink
-            .doc()
-            .tree(&found.part)?
-            .ok_or_else(|| EditError::NoPart(found.part.clone()))?;
-        let element = at_path(tree.root(), &found.path).ok_or_else(|| EditError::Path(found.part.clone()))?;
-        work = Work::of(element, scope_above(tree.root(), &found.path));
-        let wrote = sink.set_paragraph_text(&mut work, &self.text)?;
-        // a paragraph stamped before gets a new text id, drawn where the change is applied
-        let mut draws = Vec::new();
-        if found.state == IdState::Ok {
-            let prefix = w14_prefix(tree.root(), &found.path);
-            draws.push(Draw {
-                from: DrawFrom::Seed(Arc::from(format!("{}\0text", found.part))),
-                node: 0,
-                at: Vec::new(),
-                attribute: Arc::new(QName::new(Some(&prefix), "textId", Some(W14))),
-            });
+        let out = write_text(&mut sink, &self.target, &self.text)?;
+        if out.changed {
+            // docx-agent's edit, once it ends: text boxes synced, revision ids unique
+            crate::textbox::sync(&mut sink)?;
+            crate::revision_ids::make_unique(&mut sink)?;
         }
-        let new = work.build().ok_or_else(|| EditError::Path(found.part.clone()))?;
-        if let Some(numbered) = wrote.annotations {
-            draws.extend(crate::sink::annotation_draws(&new, numbered, 0));
-        }
-        let mut keys = vec![block_key(&found.part, &id)];
-        if paragraph_has_annotations(&found.element) || paragraph_has_annotations(&new) {
-            keys.push(Key::Annotations); // the ids in use, which tracked edits number from
-        }
-        sink.replace_drawing(&found.part, &found.path, new, keys, draws)?;
-        // the part's root declares what the paragraph now uses (docx-agent: the revisions'
-        // `w16du`, then the text id's `w14`), once the paragraph is in place
-        if wrote.dated {
-            sink.ensure_w14(&found.part, false, &[("w16du", W16DU)])?;
-        }
-        if found.state == IdState::Ok {
-            sink.ensure_w14(&found.part, false, &[])?;
-        }
-        crate::textbox::sync(&mut sink)?;
-        crate::revision_ids::make_unique(&mut sink)?;
-        if let RevisionPolicy::Tracked(tracking) = &self.policy {
-            let gave = wrote.annotations.is_some_and(|n| n.to > n.from);
-            sink.people(gave.then_some(tracking.author.as_str()), Some(&tracking.author))?;
-            sink.release(&found.part, &wrote.released)?;
-        }
-        Ok(TextEdited {
-            id,
-            changed: true,
-            renamed,
-            part: found.part,
-        })
+        Ok(out)
     }
+}
+
+/// docx-agent's `_set_text` inside an edit: the paragraph `target` names given `text`
+/// (one line), through `sink` by its policy -- without what the edit does once it ends
+/// (text boxes synced, revision ids made unique), which the command's caller does.
+///
+/// # Errors
+/// [`EditError::Text`] for text the paragraph cannot hold; a refusal for a target that is
+/// not a paragraph.
+pub(crate) fn write_text(sink: &mut EditSink<'_, '_>, target: &str, text: &str) -> Result<TextEdited> {
+    let docx = sink.docx()?;
+    let found = find(sink.doc(), &docx, target)?;
+    sink.read(block_key(&found.part, &found.id));
+    let mut work = Work::of(&found.element, Vec::new());
+    if paragraph_text(&work, work.root()) == text {
+        return Ok(TextEdited {
+            id: found.id,
+            changed: false,
+            renamed: Vec::new(),
+            part: found.part,
+            created: Vec::new(),
+        });
+    }
+    let renamed = stamp_document(sink, &docx)?;
+    let id = renamed
+        .iter()
+        .find(|(old, _)| *old == found.id)
+        .map_or_else(|| found.id.clone(), |(_, new)| new.clone());
+    let tree = sink
+        .doc()
+        .tree(&found.part)?
+        .ok_or_else(|| EditError::NoPart(found.part.clone()))?;
+    let element = at_path(tree.root(), &found.path).ok_or_else(|| EditError::Path(found.part.clone()))?;
+    work = Work::of(element, scope_above(tree.root(), &found.path));
+    let wrote = sink.set_paragraph_text(&mut work, text)?;
+    // a paragraph stamped before gets a new text id, drawn where the change is applied
+    let mut draws = Vec::new();
+    if found.state == IdState::Ok {
+        let prefix = w14_prefix(tree.root(), &found.path);
+        draws.push(Draw {
+            from: DrawFrom::Seed(Arc::from(format!("{}\0text", found.part))),
+            node: 0,
+            at: Vec::new(),
+            attribute: Arc::new(QName::new(Some(&prefix), "textId", Some(W14))),
+        });
+    }
+    let new = work.build().ok_or_else(|| EditError::Path(found.part.clone()))?;
+    if let Some(numbered) = wrote.annotations {
+        draws.extend(crate::sink::annotation_draws(&new, numbered, 0));
+    }
+    let mut keys = vec![block_key(&found.part, &id)];
+    if paragraph_has_annotations(&found.element) || paragraph_has_annotations(&new) {
+        keys.push(Key::Annotations); // the ids in use, which tracked edits number from
+    }
+    sink.replace_drawing(&found.part, &found.path, new, keys, draws)?;
+    // the part's root declares what the paragraph now uses (docx-agent: the revisions'
+    // `w16du`, then the text id's `w14`), once the paragraph is in place
+    if wrote.dated {
+        sink.ensure_w14(&found.part, false, &[("w16du", W16DU)])?;
+    }
+    if found.state == IdState::Ok {
+        sink.ensure_w14(&found.part, false, &[])?;
+    }
+    if let RevisionPolicy::Tracked(tracking) = sink.policy().clone() {
+        let gave = wrote.annotations.is_some_and(|n| n.to > n.from);
+        sink.people(gave.then_some(tracking.author.as_str()), Some(tracking.author.as_str()))?;
+        sink.release(&found.part, &wrote.released)?;
+    }
+    Ok(TextEdited {
+        id,
+        changed: true,
+        renamed,
+        part: found.part,
+        created: Vec::new(),
+    })
 }

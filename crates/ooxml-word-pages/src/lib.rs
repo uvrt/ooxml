@@ -18,26 +18,37 @@
 //! - one version laid out ([`LaidVersion`]): its facts (made once, when first asked), its
 //!   pages' views (lines with their spans, rules, pictures and drawing slots) and SVG,
 //!   painted when asked;
-//! - what it holds, in bytes, roughly ([`LaidVersion::weight`]).
+//! - what a version alone holds, in bytes, roughly ([`LaidVersion::weight`]), and what the
+//!   engine keeps within its budgets ([`EngineBudgets`]: its memos, swept once a version is
+//!   laid out; its pages' paint, least recently used let go first).
 //!
 //! Must not: edit a document, read anything of the machine but font files, hold global
 //! state, or rely on an interpreter lock: an engine is used by one caller at a time
 //! (its owner wraps it in a lock), and a laid version is immutable and `Send + Sync`.
 #![forbid(unsafe_code)]
 
+mod causes;
 mod disk;
+mod drawing_said;
 pub mod drawings;
 mod engine;
 mod error;
 mod fonts;
+pub mod ids;
+pub mod line_text;
+pub mod page_said;
 mod pictures;
 pub mod png;
+pub mod summary;
 pub mod support;
+mod text_boxes;
 mod version;
 pub mod warnings;
+mod weight;
 
+pub use causes::RelaidCause;
 pub use disk::DiskFonts;
-pub use engine::{EngineOptions, EngineStats, PageDigests, PageEngine, RelaidCause};
+pub use engine::{EngineBudgets, EngineOptions, EngineStats, PageDigests, PageEngine};
 pub use error::{Fallback, PagesError};
 pub use fonts::{embedded_parts, font_table, DocumentFonts, FontSetup};
 pub use pictures::PackagePictures;

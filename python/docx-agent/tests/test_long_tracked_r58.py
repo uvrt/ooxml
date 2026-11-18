@@ -126,15 +126,25 @@ def test_describe_render_and_save_read_their_facts_where_the_layout_is_held(repo
         saved = box.dispatch(session, "save_document", {"doc": doc, "name": "out.docx", "format": "docx"})
         assert saved.ok, saved.to_json()
         assert saved.data["coverage"] == expected.coverage_facts()
-        assert not document._layouts          # no whole layout was read here
+        # No whole Python layout was read here: lane L4b reads a version the Rust layout
+        # lays out here, by the document's engine (no worker holds one); the rest in a worker.
+        from docx_agent import pages
+
+        assert all(pages.is_rust(kept.raw) for kept in document._layouts.values())
 
 
 def test_layouts_kept_here_stay_within_their_memory(monkeypatch):
     document = Document.open(build(chapters=1, seed=5)[0])
     document.layout()
     cost = layout_module.layout_cost(next(iter(document._layouts.values())).raw)
-    # A quarter of the memory holds one layout: the newest only is kept.
+    # Room for one layout: the newest only is kept (lane L4b: the room is the document's
+    # account of the process's memory budget where the Rust layout lays it out; a quarter
+    # of LAYOUT_MEMORY for docx2svg's Python layouts).
     monkeypatch.setattr(layout_module, "LAYOUT_MEMORY", 4 * cost)
+    if layout_module._layout_account(document) is not None:
+        import ooxml_core
+
+        monkeypatch.setattr(document, "_layout_account", ooxml_core.MemoryBudget(cost + cost // 2).account())
     for k in range(3):
         document.paragraphs()[3].set_text(f"Changed {k}.")
         document.layout()
@@ -266,12 +276,22 @@ def test_closing_a_document_lets_go_of_what_was_kept_for_it(report):
         assert set(described.memory) >= {"document"}        # the application's figure
         assert "memory" not in described.to_json()["data"]
         lineage = layout_module.lineage(document)
-        assert any(held.lineage == lineage for held in layout_module._HELD.values())
+        assert _held_here(lineage)
         document.layout()
         assert document._layouts
         session.close(doc)
         assert not document._layouts and document._layout_kept is None
-        assert not any(held.lineage == lineage for held in layout_module._HELD.values())
+        assert not _held_here(lineage)
+
+
+def _held_here(lineage: str) -> bool:
+    """Whether this process holds a layout of ``lineage``: docx2svg's Python layout by token,
+    or (lane L4b) the document's Rust engine."""
+    from docx_agent import pages
+
+    with pages._LOCK:
+        engines = any(key[0] == lineage for key in pages._ENGINES)
+    return engines or any(held.lineage == lineage for held in layout_module._HELD.values())
 
 
 def test_clear_caches_lets_go_of_every_document(report):
@@ -280,7 +300,9 @@ def test_clear_caches_lets_go_of_every_document(report):
         session = box.session()
         doc = session.open(report, "report.docx")
         box.dispatch(session, "describe", {"doc": doc})
-    assert layout_module._HELD
+        lineage = layout_module.lineage(session.entry(doc).document)
+    assert _held_here(lineage)
     layout_module.clear_caches()
+    assert not _held_here(lineage)
     assert not layout_module._HELD and not layout_module._RECENT and not blocks_module._BODIES
     assert document.layout().pages_known        # made again when next asked

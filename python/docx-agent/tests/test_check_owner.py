@@ -189,9 +189,12 @@ def test_a_check_reports_what_a_check_of_its_version_alone_reports(made, workers
     assert results["owner"] == results["alone"]
 
 
+@pytest.mark.usefixtures("python_layout")
 def test_a_check_with_numbers_goes_to_the_worker_once(made, monkeypatch):
     # The worker's trips: docx-agent's own way of checking (0.1.114 answers a check of a
     # range in Rust where it can: none goes to the worker then; tests/test_rust_check.py).
+    # Lane L4b: only for docx2svg's Python layout -- a version the Rust layout lays out has
+    # its facts made in this process, no trip at all (tests/test_layout_memory_l4b.py).
     monkeypatch.setenv("DOCX_AGENT_RUST", "0")
     trips: list[dict] = []
     real = base_module.Engine.check

@@ -20,7 +20,10 @@ import pytest
 
 from docx_agent.tools import _base
 
-pytestmark = pytest.mark.any_faces
+# Lane L4b: what these tests read -- a layout in progress in a worker, stalled -- is docx2svg's Python layout's, the fallback
+# where the Rust layout does not lay a version out: a version it lays out is laid out and
+# read in the calling process, by the document's engine (tests/test_layout_memory_l4b.py).
+pytestmark = [pytest.mark.any_faces, pytest.mark.usefixtures("python_layout")]
 
 #: How long the slowed layout engine stalls before each layout.
 STALL = 0.4

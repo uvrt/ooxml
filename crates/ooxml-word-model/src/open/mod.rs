@@ -207,6 +207,20 @@ impl Model {
         self.stats
     }
 
+    /// Drop what the memos hold that no version opened since the last sweep read and
+    /// nothing else holds ([`ooxml_derive::Memo::sweep`]): called once a version is
+    /// opened and laid out, it keeps the memos at what the versions in use need, so they
+    /// do not grow with every version. Every open reads every body element, story and
+    /// note part, so what the newest version is made of stays; list items and
+    /// resolutions stay while a version holds them. Returns how many entries were dropped.
+    pub fn sweep(&mut self) -> usize {
+        self.elements.sweep(|_| false)
+            + self.stories.sweep(|_| false)
+            + self.notes.sweep(|_| false)
+            + self.label_memo.sweep(|items| Arc::strong_count(&items.items) > 1)
+            + self.resolver.sweep()
+    }
+
     /// The resolution memo's counters.
     pub fn resolver_stats(&self) -> MemoStats {
         self.resolver.stats()

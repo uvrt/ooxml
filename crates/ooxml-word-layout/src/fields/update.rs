@@ -28,6 +28,10 @@ pub struct PageNumbers<'f> {
     facts: &'f LayoutFacts,
     /// Each section's page number format, `None` for decimal or none stated.
     formats: Vec<Option<String>>,
+    /// Each paragraph path's first page (0-based, as `LayoutFacts::first_page`), made once: a
+    /// field update and a check ask it for every field and reference (lane L4b: a walk of
+    /// every page per field was most of a 3,000-page version's warnings).
+    first: std::collections::HashMap<&'f str, usize>,
 }
 
 impl<'f> PageNumbers<'f> {
@@ -45,7 +49,18 @@ impl<'f> PageNumbers<'f> {
                     .map(str::to_owned)
             })
             .collect();
-        PageNumbers { facts, formats }
+        let mut first = std::collections::HashMap::new();
+        for page in &facts.pages {
+            for line in &page.lines {
+                first.entry(&*line.path).or_insert(page.page);
+            }
+        }
+        PageNumbers { facts, formats, first }
+    }
+
+    /// Whether the paragraph at `path` is drawn: the page its first line is on.
+    pub fn drawn_on(&self, path: &str) -> Option<usize> {
+        self.first.get(path).copied()
     }
 
     fn format_of(&self, section: usize) -> Option<&str> {
@@ -54,9 +69,9 @@ impl<'f> PageNumbers<'f> {
 
     /// What the paginator knows of the page the paragraph at `path` is first drawn on.
     fn first_page(&self, path: &str) -> Result<&PageInfo, Unknown> {
-        let page = self
-            .facts
-            .first_page(path)
+        let page = *self
+            .first
+            .get(path)
             .ok_or_else(|| Unknown(format!("{path} is not drawn")))?;
         self.facts
             .pages

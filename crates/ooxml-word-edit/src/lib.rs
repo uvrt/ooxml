@@ -10,10 +10,11 @@
 //!   behind it that writes a text edit untracked or as tracked changes, as docx-agent
 //!   writes them;
 //! - stamping blocks with durable ids before the first edit, and new text ids;
-//! - the commands: [`SetText`]; [`InsertText`], [`DeleteText`] and [`ReplaceText`] (text
-//!   within a paragraph, docx-agent's `_replace_ranges`); [`Review`] (accepting and
-//!   rejecting tracked changes, `word_changes`); [`SetWordTracking`] (Word's own Track
-//!   Changes switch); [`CommentEdits`] (resolving, reopening and deleting comments);
+//! - the commands: [`SetText`] (in lines: new paragraphs after it); [`InsertParagraph`];
+//!   [`InsertText`], [`DeleteText`] and [`ReplaceText`] (text within a paragraph,
+//!   docx-agent's `_replace_ranges`); [`Review`] (accepting and rejecting tracked changes,
+//!   `word_changes`); [`SetWordTracking`] (Word's own Track Changes switch);
+//!   [`CommentEdits`] (resolving, reopening and deleting comments);
 //! - validation per change ([`validate`]: facts memoised by content, docx-agent's rules)
 //!   and what a change touched ([`touched`]);
 //! - [`Editor`], which runs a command through the store and reports its result with
@@ -35,6 +36,7 @@ mod marks;
 mod names;
 mod namespaces;
 mod new_part;
+mod paragraphs;
 mod people;
 mod policy;
 mod pool;
@@ -58,6 +60,7 @@ pub use comments::{CommentEdit, CommentEdited, CommentEdits};
 pub use doc::{Change, Draw, DrawFrom, Key, ModelError, Shared, WordDoc};
 pub use editor::{EditTiming, Edited, Editor};
 pub use error::{EditError, Result};
+pub use paragraphs::{InsertParagraph, ParagraphInserted};
 pub use policy::{RevisionPolicy, Tracking};
 pub use pool::{Ids, IdsChange, Sequences};
 pub use ranges::{DeleteText, InsertText, RangesEdited, ReplaceText};

@@ -5,6 +5,38 @@ ooxml-core is the Rust core of the ooxml packages (`crates/`), as the Python mod
 
 ## 0.10.0 -- unreleased
 
+- **A chart's axis intervals no longer overflow on a vast plot band** (the `chart_layout`
+  fuzz target's find). How many rungs a value axis has room for is floored to a whole count
+  held to what an axis can use (none to `AXIS_MAX_INTERVALS` plus the end labels' lines)
+  where it is made, for the side, radial and bottom axes alike, so a finite count past `i64`
+  no longer saturates and overflows taking the end labels' lines; a decade is asked only of a
+  finite positive value. Every in-range count is the same as before.
+
+- **Layout answers by id, made per page (lane L4b, after review).** A version knows its
+  body blocks' ids as docx-agent names them in its bytes (`LaidPages.ids_of`, and each body
+  line's id in `body_lines`); its layout summary is made and compared in Rust
+  (`LaidPages.summary()`, `LayoutSummary.compare(before, aliases)`), each page's taken from
+  the version before where the relayout kept that page; its warnings likewise (a page the
+  relayout kept is said again, not walked again: 16 s a version at 3,000 pages before, now
+  only the pages an edit reached), its page counts once per section, a field's page found
+  through an index; `LaidPages.line_texts(page)` gives a page's lines' text facts (inked
+  characters, text sizes, ink, widest word) without reading a span into Python, and
+  `page(page, lines=False)` its rules, pictures and drawings alone.
+
+- **The layout's memory (phase PL, lane L4b).** A version kept no longer holds the
+  document's parsed text parts (its pictures keep the package without the main part and
+  its headers, footers and notes: those are the version's model); a version laid out from
+  the one before shares every measure, page and block it did not change, and its `weight`
+  is what it alone holds now. The engine's memos are swept once a version is laid out
+  (what no version in use holds goes), so they stay at what the newest version needs
+  however many versions follow; the machine's faces are read once per process and shared
+  by every document. `MemoryBudget(limit)` (with `BudgetAccount`): what a process's
+  engines keep that can be made again -- their pages' paint, now kept in Rust, least
+  recently used let go first -- and its host's kept layouts, within one limit, each
+  document counted apart, and beside it the memos the versions in use hold (`held`);
+  `WordPages(..., budget=)`. `WordPages.stats()` adds `swept`, `paint_hits`, `memo_bytes`
+  and `paint_bytes`.
+
 - **Glyph outlines and pair kerning bounded on untrusted fonts** (the `glyph_ink` fuzz target's
   timeout and slow unit). `GPOS` coverage and class ranges are kept as ranges instead of spread
   out glyph by glyph (a malformed table's ranges claimed every glyph thousands of times); a
