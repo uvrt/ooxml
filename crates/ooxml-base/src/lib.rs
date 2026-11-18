@@ -1,7 +1,8 @@
 //! The bottom of the crate graph (docs/architecture/README.md, section 3, layer 0): what every
 //! other crate shares and nothing else.
 //!
-//! Owns: units and exact arithmetic ([`units`]), content digests ([`digest`]), the limits on
+//! Owns: units and exact arithmetic ([`units`]), the compact form exact lengths are kept in
+//! ([`compact`]), content digests ([`digest`]), the limits on
 //! untrusted input and the locale as values ([`limits`], [`locale`]), a string as Python's `repr` writes it in messages ([`pyfmt`]), the ports the core is
 //! given its I/O through ([`context`]), and the error type for all of these ([`BaseError`]).
 //!
@@ -9,6 +10,7 @@
 //! of the ports (file-system fonts, the system clock, ...) live in leaf crates.
 #![forbid(unsafe_code)]
 
+pub mod compact;
 pub mod context;
 pub mod digest;
 mod error;
@@ -17,6 +19,7 @@ pub mod locale;
 pub mod pyfmt;
 pub mod units;
 
+pub use compact::{Compact, ExactLength};
 pub use context::{CacheBudget, Cancel, Clock, Context, FontSource, PartStore};
 pub use digest::{Digest, DigestKey, Digester};
 pub use error::BaseError;

@@ -40,8 +40,8 @@ fn space(c: char) -> bool {
 /// A character's start and end on its line: its pen, and the next one's (the span's end
 /// after its last).
 fn extent(span: &Span, k: usize) -> Option<(Px, Px)> {
-    let start = *span.xs.get(k)?;
-    let end = span.xs.get(k + 1).copied().unwrap_or(span.end);
+    let start = span.x(k)?;
+    let end = span.x(k + 1).unwrap_or(span.end);
     Some((start, end))
 }
 

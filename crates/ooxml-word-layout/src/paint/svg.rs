@@ -165,7 +165,7 @@ fn text(span: &Span, cx: &SvgContext<'_>, defs: &mut PageDefs) -> Element {
     let attrs = font(span, cx.names.drawing_name(&span.face, span.bold, span.italic));
     let mut e = Element::new("text")
         .attr("data-docx-path", Value::Text(span.path.clone()))
-        .attr("x", Value::Numbers(span.xs.iter().map(|x| number(x.value())).collect()))
+        .attr("x", Value::Numbers(span.pens().map(|x| number(x.value())).collect()))
         .attr("y", Value::Int(span.y));
     let mut attrs = attrs.into_iter();
     if let Some((name, value)) = attrs.next() {
@@ -205,7 +205,7 @@ fn effects_paint(span: &Span, effects: &TextEffects, cx: &SvgContext<'_>, defs: 
         let out = *q.numer() as f64 / *q.denom() as f64;
         out
     };
-    let x0 = span.xs.first().map_or(span.end, |x| *x).value();
+    let x0 = span.x(0).unwrap_or(span.end).value();
     let top = Q::from_integer(i128::from(span.y)) - size * Q::new(4, 5);
     let bounds = (float(x0), float(top), float(span.end.value() - x0), float(size));
     cx.drawings.text_paint(effects, bounds, span.color.as_deref(), defs)

@@ -1,7 +1,8 @@
 //! Owns: a paragraph measured -- its pieces (advances, automatic hyphens, kern pairs) and
 //! its lines at a geometry -- and [`Measurer`], which memoises measures by content: the
 //! paragraph's digest, the geometry's, the fonts epoch and the locale (design section 8),
-//! through `ooxml-derive`'s [`Memo`] within a cache budget.
+//! through `ooxml-derive`'s [`Memo`] within a cache budget -- and the geometries its
+//! measures were broken at, one shared copy of each ([`Measurer::share`]).
 //!
 //! Must not: hold a measure under anything but its content key (nothing is invalidated by
 //! hand), or know where a paragraph is in a document.
@@ -16,6 +17,7 @@ use crate::units::Units;
 use crate::TextError;
 use ooxml_base::{Digest, DigestKey, Digester, Locale};
 use ooxml_derive::{CacheBudget, Memo, MemoStats, Weigh};
+use std::collections::HashSet;
 use std::sync::Arc;
 
 /// A paragraph's pieces and lines.
@@ -135,6 +137,7 @@ impl Weigh for Outcome {
 pub struct Measurer {
     memo: Memo<MeasureKey, Outcome>,
     key: DigestKey,
+    geometries: HashSet<Arc<Geometry>>,
 }
 
 impl Measurer {
@@ -144,6 +147,7 @@ impl Measurer {
         Measurer {
             memo: Memo::new(budget),
             key,
+            geometries: HashSet::new(),
         }
     }
 
@@ -192,6 +196,18 @@ impl Measurer {
         self.memo.insert(key, Outcome(measured))
     }
 
+    /// One shared copy of `geometry`: most paragraphs of a document break at one of a few
+    /// geometries, so what keeps a paragraph's geometry beside its measure keeps this copy
+    /// (8 bytes) rather than its own.
+    pub fn share(&mut self, geometry: &Geometry) -> Arc<Geometry> {
+        if let Some(shared) = self.geometries.get(geometry) {
+            return Arc::clone(shared);
+        }
+        let shared = Arc::new(geometry.clone());
+        self.geometries.insert(Arc::clone(&shared));
+        shared
+    }
+
     /// The memo's counters.
     pub fn stats(&self) -> MemoStats {
         self.memo.stats()
@@ -199,8 +215,10 @@ impl Measurer {
 
     /// Drop the measures not used since the last sweep that no layout holds any more
     /// ([`Memo::sweep`]): a measure a kept layout still holds stays, so a block moved or
-    /// brought back is not measured again. Returns how many were dropped.
+    /// brought back is not measured again. Returns how many were dropped. The shared
+    /// geometries nothing else holds go too.
     pub fn sweep(&mut self) -> usize {
+        self.geometries.retain(|geometry| Arc::strong_count(geometry) > 1);
         self.memo
             .sweep(|outcome| outcome.0.as_ref().is_ok_and(|measured| Arc::strong_count(measured) > 1))
     }

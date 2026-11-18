@@ -30,9 +30,9 @@ fn extent(span: &Span, line_end: bool) -> Option<(Px, Px)> {
     let end = if last + 1 == span.chars.len() {
         span.end
     } else {
-        *span.xs.get(last + 1)?
+        span.x(last + 1)?
     };
-    Some((*span.xs.first()?, end))
+    Some((span.x(0)?, end))
 }
 
 /// Every word's pen extent (spaces left out).
@@ -40,7 +40,7 @@ fn words(span: &Span) -> Vec<(Px, Px)> {
     let mut out = Vec::new();
     let mut start = None;
     for (k, ch) in span.chars.iter().enumerate() {
-        let x = span.xs.get(k).copied().unwrap_or(span.end);
+        let x = span.x(k).unwrap_or(span.end);
         if ch.is_whitespace() {
             if let Some(s) = start.take() {
                 out.push((s, x));
@@ -105,7 +105,7 @@ pub(super) fn decoration_rects(
     let (x0, x1) = (a.round_half_up(), b.round_half_up());
     if let Some(colour) = span.highlight.map(str::to_owned).or_else(|| span.shading.clone()) {
         let band = band.unwrap_or((span.line_baseline, span.line_baseline));
-        let fx0 = span.xs.first().map_or(x0, |x| x.round_half_up());
+        let fx0 = span.x(0).map_or(x0, Px::round_half_up);
         let fx1 = span.end.round_half_up();
         let kind = if span.highlight.is_some() {
             "highlight"

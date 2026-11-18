@@ -193,7 +193,7 @@ pub fn stack_height(items: &[FlowItem], mode15: bool) -> Px {
                 };
                 y += gap + p.top_border;
             }
-            y += height.pitch;
+            y += height.pitch();
             first = false;
         }
         y += p.border;
@@ -307,15 +307,16 @@ fn stand_in(
     }
     let heights = pitches
         .into_iter()
-        .map(|h| LineHeight {
-            pitch: Px::from(h),
-            text_above: Px::from(h),
-            text_below: Px::ZERO,
-            natural: Px::from(h),
-            rule: LineRule::Exact,
-            line: 0,
-            mixed: false,
-            object_drop: None,
+        .map(|h| {
+            LineHeight::new(
+                Px::from(h),
+                Px::from(h),
+                Px::ZERO,
+                Px::from(h),
+                LineRule::Exact,
+                0,
+                false,
+            )
         })
         .collect();
     let measured = MeasuredParagraph {

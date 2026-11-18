@@ -51,7 +51,7 @@ fn lay_out(body: &str) -> DocumentLayout {
 /// One line's pitch: a one-line paragraph's.
 fn pitch() -> Px {
     let layout = lay_out(&para("", &run(WORD)));
-    layout.flow.items[0].para().unwrap().measured.heights[0].pitch
+    layout.flow.items[0].para().unwrap().measured.heights[0].pitch()
 }
 
 fn measured(layout: &DocumentLayout, item: usize) -> &MeasuredTable {
@@ -72,6 +72,24 @@ fn a_row_is_its_tallest_cell() {
     let t = measured(&layout, 0);
     assert_eq!(t.rows[0].height, lines(3));
     assert_eq!(t.rows[0].cells[1].stack.len(), 3);
+}
+
+#[test]
+fn a_measured_cell_shares_the_model_s_resolved_cell() {
+    let mut m = model();
+    let body = table(2, &[row("", &[text_cell("", 1), text_cell("", 3)])]);
+    let d = open(&mut m, &format!("{body}{}", sect("nextPage", 1)), None);
+    let layout = engine().lay_out(&mut m, &d);
+    let ooxml_word_model::model::Block::Table(source) = &d.body[0] else {
+        panic!("not a table: {:?}", d.body[0]);
+    };
+    let resolved = m.resolve_table(&d, source);
+    let t = measured(&layout, 0);
+    for (r, row) in t.rows.iter().enumerate() {
+        for (c, cell) in row.cells.iter().enumerate() {
+            assert!(std::sync::Arc::ptr_eq(&cell.resolved, &resolved.rows[r].cells[c]));
+        }
+    }
 }
 
 #[test]

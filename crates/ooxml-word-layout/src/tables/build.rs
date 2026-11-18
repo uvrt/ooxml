@@ -377,7 +377,12 @@ impl Laying<'_, '_, '_, '_> {
         Ok(table)
     }
 
-    fn cell(&mut self, cell: &ResolvedCell, lines: &[Q], items: &[(usize, Block)]) -> Result<CellFlow, Unsupported> {
+    fn cell(
+        &mut self,
+        cell: &Arc<ResolvedCell>,
+        lines: &[Q],
+        items: &[(usize, Block)],
+    ) -> Result<CellFlow, Unsupported> {
         let frame = self.frame;
         let cell_box = cell_box(&self.spec, frame.page_left, lines, cell);
         let document = self.cx.document;
@@ -440,7 +445,7 @@ impl Laying<'_, '_, '_, '_> {
             _ => Merge::None,
         };
         Ok(CellFlow {
-            resolved: Arc::new(cell.clone()),
+            resolved: Arc::clone(cell),
             column: cell.column,
             border_top: side_twips(cell, 0),
             border_bottom: side_twips(cell, 2),
@@ -521,7 +526,7 @@ impl Laying<'_, '_, '_, '_> {
         Ok(CellBlock {
             block: offset,
             content: Content::Table(Arc::new(flow)),
-            pitches: vec![height],
+            pitches: vec![height.into()],
             before: 0,
             after: 0,
             top_border: Px::ZERO,
@@ -602,7 +607,7 @@ impl Laying<'_, '_, '_, '_> {
         };
         let entry = CellBlock {
             block: job.offset,
-            pitches: measured.heights.iter().map(|h| h.pitch).collect(),
+            pitches: measured.heights.iter().map(|h| h.pitch().into()).collect(),
             content: Content::Paragraph(Arc::new(measured)),
             before: number(&pp, "spacing.before"),
             after: number(&pp, "spacing.after"),

@@ -214,3 +214,20 @@ fn measures_are_memoised_by_content() {
     drop(measurer);
     assert_eq!(budget.used(), 0);
 }
+
+#[test]
+fn equal_geometries_are_kept_once() {
+    let budget = Arc::new(Budget(AtomicUsize::new(0)));
+    let mut measurer = Measurer::new(budget, DigestKey::new(1, 2));
+    let first = measurer.share(&geometry(7));
+    let again = measurer.share(&geometry(7));
+    let other = measurer.share(&geometry(5));
+    assert!(Arc::ptr_eq(&first, &again));
+    assert!(!Arc::ptr_eq(&first, &other));
+    assert_eq!(*first, geometry(7));
+    // A sweep lets go of a shared geometry nothing else holds, and keeps one still held.
+    drop(other);
+    measurer.sweep();
+    assert!(Arc::ptr_eq(&first, &measurer.share(&geometry(7))));
+    assert_eq!(*measurer.share(&geometry(5)), geometry(5));
+}

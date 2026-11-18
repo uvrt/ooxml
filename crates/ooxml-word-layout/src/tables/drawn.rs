@@ -135,7 +135,7 @@ impl<'t> CellWalk<'t> {
             let Some(entry) = cell.entries.get(placed.entry) else {
                 continue;
             };
-            let top = line_y + placed.above;
+            let top = line_y + placed.above();
             if placed.number == 0 && k > 0 {
                 let before = cell.stack.get(k - 1).and_then(|p| cell.entries.get(p.entry));
                 if let Some(before) = before {
@@ -143,7 +143,7 @@ impl<'t> CellWalk<'t> {
                     paragraph_top = line_y + Px::twips(if before.contextual && same { 0 } else { before.after });
                 }
             }
-            line_y = top + placed.pitch + placed.below;
+            line_y = top + placed.pitch() + placed.below();
             let Content::Paragraph(measured) = &entry.content else {
                 continue;
             };
@@ -154,7 +154,7 @@ impl<'t> CellWalk<'t> {
                 block: self.base + entry.block,
                 line: placed.number,
                 top,
-                pitch: placed.pitch,
+                pitch: placed.pitch(),
                 paragraph_top,
                 cell_top: self.content_top,
                 offset: self.offset,

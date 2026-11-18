@@ -625,7 +625,7 @@ fn slot_dict<'py>(py: Python<'py>, slot: &DrawingSlot) -> PyResult<Bound<'py, Py
 }
 
 fn span_tuple<'py>(py: Python<'py>, s: &Span) -> PyResult<Bound<'py, PyTuple>> {
-    let xs: Vec<Exact> = s.xs.iter().map(|x| exact(*x)).collect();
+    let xs: Vec<Exact> = s.pens().map(exact).collect();
     let items: Vec<Bound<'py, PyAny>> = vec![
         s.path.as_str().into_pyobject(py)?.into_any(),
         s.chars.iter().collect::<String>().into_pyobject(py)?.into_any(),

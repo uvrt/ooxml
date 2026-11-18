@@ -12,7 +12,7 @@ use super::{Drawn, PaintContext, PaintedLine, Rule, Span, SpanKind, TextEffects}
 use crate::geometry::DrawnLine;
 use crate::input::{label_props, list_level, RunFormatter};
 use crate::paragraph::MeasuredParagraph;
-use crate::px::Px;
+use crate::px::{CompactPx, Px};
 use ooxml_base::Q;
 use ooxml_text::pieces::{LABEL_SHIFT, NOTE_CONTINUATION, NOTE_SEPARATOR, OBJECT_CHAR as PICTURE_BULLET};
 use ooxml_text::{FaceKey, Piece, PieceKind, Units, VerticalAlign};
@@ -322,7 +322,8 @@ impl LinePainter<'_, '_> {
         if let Some((_, span)) = self.spans.last_mut() {
             span.chars
                 .push(if piece.kind == PieceKind::Space { piece.ch } else { ch });
-            span.xs.push(if note_number { Px::int(x.round_half_up()) } else { x });
+            span.xs
+                .push(if note_number { Px::int(x.round_half_up()) } else { x }.into());
             span.end = px_at(x, width);
         }
         self.open = true;
@@ -381,7 +382,7 @@ impl LinePainter<'_, '_> {
         let emu = |e: i64| Px::points(Q::new(i128::from(e), 12_700));
         let (width, depth) = picture_size(cx_emu, cy_emu);
         let height = &self.job.measured.heights;
-        let stands = match height.get(self.job.line.number).and_then(|h| h.object_drop) {
+        let stands = match height.get(self.job.line.number).and_then(|h| h.object_drop()) {
             Some(drop) => self.job.line.top + drop,
             None => Px::int(self.job.line.baseline),
         };
@@ -518,7 +519,7 @@ pub(super) fn paint_line(cx: &PaintContext<'_>, job: &LineJob<'_>, out: &mut Pag
         painter.glyph(piece, x);
     }
     painter.leaders(left);
-    let mut spans: Vec<Span> = painter.spans.into_iter().map(|(_, s)| s).collect();
+    let mut spans = kept(painter.spans);
     if job.line.white_text && shading(pp.get("shd")).is_none() {
         white_text(&mut spans);
     }
@@ -535,6 +536,19 @@ pub(super) fn paint_line(cx: &PaintContext<'_>, job: &LineJob<'_>, out: &mut Pag
         spans,
         story: None,
     })
+}
+
+/// A line's spans as a page's paint keeps them (within the paint budget): no room beyond
+/// their glyphs.
+fn kept(spans: Vec<(SpanKey, Span)>) -> Vec<Span> {
+    spans
+        .into_iter()
+        .map(|(_, mut span)| {
+            span.chars.shrink_to_fit();
+            span.xs.shrink_to_fit();
+            span
+        })
+        .collect()
 }
 
 impl LinePainter<'_, '_> {
@@ -585,7 +599,7 @@ impl LinePainter<'_, '_> {
         let span = Span {
             path: self.run_path(k),
             chars: vec![' '],
-            xs: vec![start],
+            xs: vec![start.into()],
             y: self.job.line.baseline - offset_px(format.position),
             end,
             face: Arc::clone(&format.face),
@@ -720,8 +734,8 @@ impl LinePainter<'_, '_> {
         if last < first {
             return;
         }
-        let xs: Vec<Px> = (first..=last)
-            .map(|n| Px::from(step_q * Q::from_integer(n) * lu))
+        let xs: Vec<CompactPx> = (first..=last)
+            .map(|n| Px::from(step_q * Q::from_integer(n) * lu).into())
             .collect();
         let span = Span {
             path: self.run_path(k),

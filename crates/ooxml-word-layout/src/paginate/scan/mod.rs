@@ -468,7 +468,11 @@ impl PageContext<'_> {
         if p.section_mark && !stack.first_on_page && !(self.mode15 && previous_is_table) {
             // On this page, and taking no room: the stack goes on as if it were not there.
             // It is drawn where it stands, past its space before (the page walk's).
-            let pitch = self.lines_of(index, p).heights().first().map_or(Px::ZERO, |h| h.pitch);
+            let pitch = self
+                .lines_of(index, p)
+                .heights()
+                .first()
+                .map_or(Px::ZERO, |h| h.pitch());
             let (gap, box_top, boxed) = self.first_line_gap(p, index, stack);
             let line = placed(frame, index, 0, stack.y + gap + p.top_border, pitch, (box_top, boxed));
             stack.out.lines.push(line);
@@ -533,7 +537,7 @@ impl PageContext<'_> {
             self.broken(index, self.breaker.fit_width(source, &current, number, f.width));
         }
         let lines = self.lines_of(index, p);
-        let height = *lines.heights().get(number)?;
+        let height = lines.heights().get(number)?.clone();
         let height = &height;
         let count = lines.count();
         let last = number + 1 == count;
@@ -545,14 +549,14 @@ impl PageContext<'_> {
             } else {
                 Px::ZERO
             };
-            stack.y = clear_of_bands(stack.y, height.pitch + after, &stack.bands);
+            stack.y = clear_of_bands(stack.y, height.pitch() + after, &stack.bands);
         }
         if let (false, Some(source)) = (stack.wraps.is_empty(), &p.source) {
             stack.y = self.beside(p, at, stack, source, number);
         }
         // The line as broken beside the drawings.
         let lines = self.lines_of(index, p);
-        let height = *lines.heights().get(number)?;
+        let height = lines.heights().get(number)?.clone();
         let height = &height;
         let count = lines.count();
         let last = number + 1 == count;
@@ -586,12 +590,12 @@ impl PageContext<'_> {
         stack.foot.mark(Position::at(index, number));
         stack
             .tops
-            .record(top_of(frame, index, number, (stack.y, height.pitch, paragraph_top)));
+            .record(top_of(frame, index, number, (stack.y, height.pitch(), paragraph_top)));
         stack
             .out
             .lines
-            .push(placed(frame, index, number, stack.y, height.pitch, boxed));
-        stack.y += height.pitch;
+            .push(placed(frame, index, number, stack.y, height.pitch(), boxed));
+        stack.y += height.pitch();
         let end_y = stack.y + if last { p.border } else { Px::ZERO };
         stack.stack_ends.push((Position::at(index, number), end_y));
         stack.first_on_page = false;

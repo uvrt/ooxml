@@ -11,7 +11,7 @@ use super::grid::CellBox;
 use super::measured::MeasuredTable;
 use crate::floating::AnchorRef;
 use crate::paragraph::MeasuredParagraph;
-use crate::px::Px;
+use crate::px::{CompactPx, Px};
 use crate::vertical::paragraph_gap;
 use ooxml_word_model::resolve::ResolvedCell;
 use ooxml_word_model::value::Text;
@@ -86,8 +86,8 @@ pub struct CellBlock {
     pub block: usize,
     /// What it is.
     pub content: Content,
-    /// Each line's pitch (a nested table's one line: its height).
-    pub pitches: Vec<Px>,
+    /// Each line's pitch (a nested table's one line: its height), kept compact.
+    pub pitches: Vec<CompactPx>,
     /// Space before and after, twips.
     pub before: i64,
     /// Space after, twips.
@@ -123,13 +123,24 @@ impl CellBlock {
     }
 }
 
-/// One line of a cell as its stack places it (`table.StackedLine`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// One line of a cell as its stack places it (`table.StackedLine`), its lengths kept
+/// compact ([`CompactPx`]) and read as [`Px`].
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StackedLine {
     /// Its block, an index into the cell's blocks.
     pub entry: usize,
     /// Its line in the block.
     pub number: usize,
+    above: CompactPx,
+    pitch: CompactPx,
+    below: CompactPx,
+    box_before: CompactPx,
+    box_after: CompactPx,
+}
+
+/// The lengths of a [`StackedLine`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StackedRoom {
     /// The room above it that is its own: its paragraph's gap and top border, on its
     /// first line.
     pub above: Px,
@@ -146,9 +157,48 @@ pub struct StackedLine {
 }
 
 impl StackedLine {
+    /// Line `number` of block `entry`, taking `room`.
+    pub fn new(entry: usize, number: usize, room: StackedRoom) -> StackedLine {
+        StackedLine {
+            entry,
+            number,
+            above: room.above.into(),
+            pitch: room.pitch.into(),
+            below: room.below.into(),
+            box_before: room.box_before.into(),
+            box_after: room.box_after.into(),
+        }
+    }
+
+    /// The room above it that is its own: its paragraph's gap and top border, on its
+    /// first line.
+    pub fn above(&self) -> Px {
+        self.above.get()
+    }
+
+    /// Its pitch.
+    pub fn pitch(&self) -> Px {
+        self.pitch.get()
+    }
+
+    /// The room below: its paragraph's bottom border, on its last line.
+    pub fn below(&self) -> Px {
+        self.below.get()
+    }
+
+    /// What of the space before it is in its line box.
+    pub fn box_before(&self) -> Px {
+        self.box_before.get()
+    }
+
+    /// What of the space after it is in its line box.
+    pub fn box_after(&self) -> Px {
+        self.box_after.get()
+    }
+
     /// Its whole height.
     pub fn height(&self) -> Px {
-        self.above + self.pitch + self.below
+        self.above() + self.pitch() + self.below()
     }
 }
 
@@ -162,7 +212,8 @@ pub fn cell_stack(
     default_style: Option<&Text>,
 ) -> (Vec<StackedLine>, Px) {
     let shown: Vec<(usize, &CellBlock)> = entries.iter().enumerate().filter(|(_, e)| !e.hidden).collect();
-    let mut out = Vec::new();
+    // A cell's stack is kept with its measure: no room beyond its lines.
+    let mut out = Vec::with_capacity(shown.iter().map(|(_, e)| e.pitches.len()).sum());
     let mut previous: Option<&CellBlock> = None;
     for (index, (entry, paragraph)) in shown.iter().enumerate() {
         let (gap, boxed) = match previous {
@@ -193,11 +244,9 @@ pub fn cell_stack(
         for (n, pitch) in paragraph.pitches.iter().enumerate() {
             let first = n == 0;
             let ends = n == last;
-            out.push(StackedLine {
-                entry: *entry,
-                number: n,
+            let room = StackedRoom {
                 above: (if first { gap + paragraph.top_border } else { Px::ZERO }) + paragraph.drawings.drop(n),
-                pitch: *pitch,
+                pitch: pitch.get(),
                 below: if ends { paragraph.border } else { Px::ZERO },
                 box_before: if first { boxed + paragraph.top_border } else { Px::ZERO },
                 box_after: if ends {
@@ -205,7 +254,8 @@ pub fn cell_stack(
                 } else {
                     Px::ZERO
                 },
-            });
+            };
+            out.push(StackedLine::new(*entry, n, room));
         }
         previous = Some(paragraph);
     }
@@ -396,4 +446,33 @@ pub fn row_height(row: &RowFlow) -> Px {
         })
         .max()
         .unwrap_or(Px::ZERO)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_stacked_line_keeps_its_room_exact_in_half_the_room() {
+        let room = StackedRoom {
+            above: Px::twips(120),
+            pitch: Px::ratio(2_875, 48).unwrap_or(Px::ZERO),
+            below: Px::ZERO,
+            box_before: Px::twips(3),
+            box_after: Px::int(-2),
+        };
+        let line = StackedLine::new(1, 2, room);
+        assert_eq!(
+            StackedRoom {
+                above: line.above(),
+                pitch: line.pitch(),
+                below: line.below(),
+                box_before: line.box_before(),
+                box_after: line.box_after(),
+            },
+            room
+        );
+        assert_eq!(line.height(), room.above + room.pitch + room.below);
+        assert_eq!(std::mem::size_of::<StackedLine>(), 96);
+    }
 }

@@ -427,7 +427,7 @@ fn area_line(
         Px::ZERO
     };
     let line_top = placed.top + top;
-    let b = LineBox::new(*height, placed.space_before, space_after);
+    let b = LineBox::new(height.clone(), placed.space_before, space_after);
     Some(DrawnLine {
         source: LineSource::Flow { item: placed.item },
         block: Some(item.block),

@@ -9,7 +9,6 @@
 
 use ooxml_base::Q;
 use ooxml_word_layout::flow::FlowItem;
-use ooxml_word_layout::px::Px;
 use ooxml_word_layout::tables::{Content, MeasuredTable};
 use serde_json::{json, Value};
 
@@ -91,7 +90,7 @@ pub fn table_record(table: &MeasuredTable, base: usize) -> Value {
 
 fn entry_record(entry: &ooxml_word_layout::tables::CellBlock, base: usize) -> Value {
     let block = base + entry.block;
-    let pitches: Vec<String> = entry.pitches.iter().map(Px::to_string).collect();
+    let pitches: Vec<String> = entry.pitches.iter().map(ToString::to_string).collect();
     match &entry.content {
         Content::Table(nested) => json!([block, "table", null, pitches, table_record(nested, block)]),
         Content::Paragraph(m) => {
