@@ -162,6 +162,18 @@ fn tool_impl(ident: &syn::Ident, attrs: &ToolAttrs) -> syn::Result<TokenStream> 
             spec.exactly_one.push(::std::vec![#(::std::string::String::from(#group)),*]);
         });
     }
+    if let Some(places) = &attrs.places {
+        let kind = format_ident!("{}", place_kind(places)?);
+        let own = &attrs.place_own;
+        let find = attrs.place_find;
+        settings.push(quote! {
+            spec.places = ::std::option::Option::Some(::ooxml_tools::Places::new(
+                ::ooxml_tools::PlaceKind::#kind,
+                &[#(#own),*],
+                #find,
+            ));
+        });
+    }
     Ok(quote! {
         impl ::ooxml_tools::ToolArgs for #ident {
             fn spec() -> ::ooxml_tools::ToolSpec {
@@ -173,6 +185,23 @@ fn tool_impl(ident: &syn::Ident, attrs: &ToolAttrs) -> syn::Result<TokenStream> 
                 #(#settings)*
                 spec
             }
+        }
+    })
+}
+
+/// The `ooxml_tools::PlaceKind` variant `places = "..."` names.
+fn place_kind(name: &LitStr) -> syn::Result<&'static str> {
+    Ok(match name.value().as_str() {
+        "blocks" => "Blocks",
+        "text" => "Text",
+        "mark" => "Mark",
+        "picture" => "Picture",
+        "sides" => "Sides",
+        _ => {
+            return Err(syn::Error::new_spanned(
+                name,
+                "places is blocks, text, mark, picture or sides",
+            ))
         }
     })
 }

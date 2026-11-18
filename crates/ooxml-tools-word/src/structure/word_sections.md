@@ -1,0 +1,1 @@
+Sections: list, insert or remove a break, or set page setup: orientation, size, margins, columns, start.

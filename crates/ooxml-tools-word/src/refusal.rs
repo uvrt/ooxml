@@ -12,6 +12,7 @@ pub(crate) fn address_refusal(error: AddressError, field: &str, call: TryCall) -
     let code = match error.code {
         "not_found" => Refusal::NotFound,
         "refused" => Refusal::Refused,
+        "ambiguous" => Refusal::Ambiguous,
         "unit" => {
             return ToolError::failure(Failure::Unit, error.message)
                 .with_way_out(WayOut::call(call))

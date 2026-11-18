@@ -116,6 +116,42 @@ fn declare_override(package: &Package, part: &str, content_type: &str) -> Result
 /// A relationship from `source` to `target` of `rel_type`, `rIdN` the first number from
 /// one more than the relationships it has.
 fn add_relationship(package: &Package, source: &str, target: &str, rel_type: &str) -> Result<Package, ModelError> {
+    let relative = relative_to(target, directory(source));
+    Ok(relate(package, source, rel_type, &relative, false)?.0)
+}
+
+/// An external relationship from `source` to the address `target` of `rel_type`, as
+/// ooxml-edit's `add_external_relationship` adds one: an existing one of that type and
+/// address reused. Returns the package made (`None`: none was added) and the
+/// relationship's id.
+///
+/// # Errors
+/// When the relationships part is not XML.
+pub(crate) fn add_external(
+    package: &Package,
+    source: &str,
+    rel_type: &str,
+    target: &str,
+) -> Result<(Option<Package>, String), ModelError> {
+    let existing = package
+        .relationships(source)?
+        .iter()
+        .find(|r| r.rel_type == rel_type && r.external && r.target == target)
+        .map(|r| r.id.clone());
+    match existing {
+        Some(id) => Ok((None, id)),
+        None => relate(package, source, rel_type, target, true).map(|(p, id)| (Some(p), id)),
+    }
+}
+
+/// A new relationship written into `source`'s relationships part (made when missing).
+fn relate(
+    package: &Package,
+    source: &str,
+    rel_type: &str,
+    target: &str,
+    external: bool,
+) -> Result<(Package, String), ModelError> {
     let rels = rels_for(source);
     let mut package = package.clone();
     if !package.has_part(&rels) {
@@ -136,20 +172,25 @@ fn add_relationship(package: &Package, source: &str, target: &str, rel_type: &st
     while used.contains(&format!("rId{index}")) {
         index += 1;
     }
-    let relative = relative_to(target, directory(source));
-    edit_part(&package, &rels, |work| {
+    let id = format!("rId{index}");
+    let mut attributes = vec![
+        ("Id", id.clone()),
+        ("Type", rel_type.to_owned()),
+        ("Target", target.to_owned()),
+    ];
+    if external {
+        attributes.push(("TargetMode", "External".to_owned()));
+    }
+    let package = edit_part(&package, &rels, |work| {
         let root = work.root();
         let node = work.new_element(work.element_name(root, RELS, "Relationship", ""));
         work.append(root, node);
-        for (local, value) in [
-            ("Id", format!("rId{index}")),
-            ("Type", rel_type.to_owned()),
-            ("Target", relative.clone()),
-        ] {
-            work.set(node, Arc::new(QName::new(None, local, None)), &value);
+        for (local, value) in &attributes {
+            work.set(node, Arc::new(QName::new(None, local, None)), value);
         }
         match_tail(work, node);
-    })
+    })?;
+    Ok((package, id))
 }
 
 /// `posixpath.relpath(target, base)` for a target below or beside `base`.

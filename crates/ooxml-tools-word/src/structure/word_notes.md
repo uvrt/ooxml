@@ -1,0 +1,1 @@
+Footnotes and endnotes: list, insert after text found once or at a position, edit, delete, move.

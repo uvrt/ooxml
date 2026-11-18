@@ -277,6 +277,22 @@ impl Work {
         Arc::new(QName::new(Some(&prefix), local, Some(namespace)))
     }
 
+    /// Whether `namespace` has a prefix declared for it at `id` (or above it).
+    pub(crate) fn has_prefix_for(&self, id: Id, namespace: &str) -> bool {
+        self.declared(id, namespace, false).flatten().is_some()
+    }
+
+    /// Declare `prefix` for `uri` on the element `id`.
+    pub(crate) fn declare(&mut self, id: Id, prefix: &str, uri: &str) {
+        if let Some(Kind::Element { namespaces, .. }) = self.slots.get_mut(id).map(|s| &mut s.kind) {
+            namespaces.push(NamespaceDecl {
+                prefix: Some(Atom::from(prefix)),
+                uri: Atom::from(uri),
+            });
+        }
+        self.touch(id);
+    }
+
     /// An element's name in `namespace` as an element made under `parent` is written: the
     /// nearest declaration's prefix, none for the default namespace.
     pub(crate) fn element_name(&self, parent: Id, namespace: &str, local: &str, fallback: &str) -> Name {
@@ -618,6 +634,19 @@ impl Work {
             Some(Node::Element(e)) => Some(e),
             _ => None,
         }
+    }
+
+    /// The element `id` built, detached (its tail left out).
+    pub(crate) fn build_element(&self, id: Id) -> Option<Arc<Element>> {
+        match self.build_node(id) {
+            Some(Node::Element(e)) => Some(e),
+            _ => None,
+        }
+    }
+
+    /// `element` (built elsewhere) read into this work, detached.
+    pub(crate) fn adopt(&mut self, element: &Arc<Element>) -> Option<Id> {
+        self.read(&Node::Element(Arc::clone(element)), None)
     }
 
     /// The element's content as green nodes (its text, its children, their tails): what
