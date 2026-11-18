@@ -20,6 +20,16 @@ ooxml-core is the Rust core of the ooxml packages (`crates/`), as the Python mod
   (and the call that finds the text as written) where it could differ or the pattern can
   match nothing.
 
+- **Text boxes, text beside drawings, drawings in table cells, floating tables, frames and
+  text effects laid out and drawn in Rust (lane L3g).** A text box's text is laid out as a
+  story of its own in its text area and drawn in its drawing; a cell is laid out around the
+  floating drawings anchored in it (beside or below them, held inside the cell, its row
+  reaching down to them, aligned with its lines); a run's `w14:textFill` and
+  `w14:textOutline` are painted. The fallbacks `floating table`, `drawing in a table cell`
+  and `drawing text wraps around in a table cell` are gone; `text beside a drawing` and
+  `frame` remain only in headers, footers and notes, `text box` only for a text box holding
+  a drawing text wraps around or an inline drawing that is not a picture.
+
 - **SmartArt, VML shapes and text paths painted in Rust; charts in any locale (lane L4d).**
   `ooxml_word_pages::drawings` draws a SmartArt diagram's cached drawing (`dsp:drawing`,
   found from its data model as ooxml-common's `diagram_drawing_part` finds it, its shapes
