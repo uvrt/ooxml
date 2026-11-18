@@ -15,9 +15,10 @@ mod grid;
 mod part;
 pub(crate) mod space;
 mod step;
-mod xml;
+pub(crate) mod xml;
 
 pub use blocks::{RemovedBlocks, RowGone, TableGone, Typed};
+pub(crate) use cleanup::authors_in_use;
 
 use crate::doc::WordDoc;
 use crate::policy::RevisionPolicy;
@@ -99,52 +100,76 @@ pub fn marks(docx: &Docx) -> BTreeMap<Mark, usize> {
     out
 }
 
-impl Review {
-    /// The record ids `Selection::Ids` names: a change's id stands for its records.
-    fn wanted(docx: &Docx, ids: &[String]) -> Result<Vec<String>> {
-        let grouped = changes(docx);
-        let known: BTreeSet<String> = records(docx).into_iter().map(|r| r.id).collect();
-        let mut wanted: Vec<String> = Vec::new();
-        let mut missing: Vec<String> = Vec::new();
-        for id in ids {
-            let members: Vec<String> = match grouped.iter().find(|c| c.id() == id) {
-                Some(change) => change.records.clone(),
-                None if known.contains(id) => vec![id.clone()],
-                None => Vec::new(),
-            };
-            if members.is_empty() {
-                missing.push(id.clone());
-            }
-            for m in members {
-                if !wanted.contains(&m) {
-                    wanted.push(m);
-                }
+/// The record ids `ids` name (`Selection::Ids`): a change's id stands for its records, a
+/// record's for itself.
+///
+/// # Errors
+/// [`EditError::Address`] (not found) naming every id the document has no change or
+/// record of, the changes' ids as the options.
+pub fn wanted_records(docx: &Docx, ids: &[String]) -> Result<Vec<String>> {
+    let grouped = changes(docx);
+    let known: BTreeSet<String> = records(docx).into_iter().map(|r| r.id).collect();
+    let mut wanted: Vec<String> = Vec::new();
+    let mut missing: Vec<String> = Vec::new();
+    for id in ids {
+        let members: Vec<String> = match grouped.iter().find(|c| c.id() == id) {
+            Some(change) => change.records.clone(),
+            None if known.contains(id) => vec![id.clone()],
+            None => Vec::new(),
+        };
+        if members.is_empty() {
+            missing.push(id.clone());
+        }
+        for m in members {
+            if !wanted.contains(&m) {
+                wanted.push(m);
             }
         }
-        if !missing.is_empty() {
-            let named: Vec<String> = missing.iter().map(|m| ooxml_base::pyfmt::repr_str(m)).collect();
-            let listed: Vec<String> = grouped.iter().map(|c| c.id().to_owned()).collect();
-            return Err(EditError::Address(AddressError::not_found(
-                format!(
-                    "no change or record {}: the ids are word_changes list's (changes) or list detail records' \
-                     (records), as they stand now",
-                    named.join(", ")
-                ),
-                listed.into_iter().take(50).collect(),
-            )));
-        }
-        Ok(wanted)
     }
+    if !missing.is_empty() {
+        let named: Vec<String> = missing.iter().map(|m| ooxml_base::pyfmt::repr_str(m)).collect();
+        let listed: Vec<String> = grouped.iter().map(|c| c.id().to_owned()).collect();
+        return Err(EditError::Address(AddressError::not_found(
+            format!(
+                "no change or record {}: the ids are word_changes list's (changes) or list detail records' \
+                     (records), as they stand now",
+                named.join(", ")
+            ),
+            listed.into_iter().take(50).collect(),
+        )));
+    }
+    Ok(wanted)
 }
 
 /// The paragraphs and records a `within` names (`_within_paragraphs`, and the records
 /// `_revisions_within` finds).
-pub(crate) fn place(docx: &Docx, within: &str) -> Result<(BTreeSet<String>, BTreeSet<String>)> {
+///
+/// # Errors
+/// The address resolver's refusal.
+pub fn place_of(docx: &Docx, within: &str) -> Result<Place> {
     let (part, indexes) = scope_paragraphs(docx, within).map_err(EditError::Address)?;
     let ids: BTreeSet<String> = indexes
         .iter()
         .filter_map(|k| part.ids.paragraphs().get(*k).map(|p| p.id))
         .collect();
+    Ok((ids, records_within(docx, within)?))
+}
+
+/// The ids of the records a `within` holds (`_revisions_within`): a story's every record;
+/// a block's (paragraph or table) every record in it; else every record in the
+/// paragraphs the address covers.
+///
+/// # Errors
+/// The address resolver's refusal.
+pub fn records_within(docx: &Docx, within: &str) -> Result<BTreeSet<String>> {
+    if let Some(story) = docx.story(within) {
+        return Ok(records(docx)
+            .into_iter()
+            .filter(|r| r.part == story.part)
+            .map(|r| r.id)
+            .collect());
+    }
+    let (part, indexes) = scope_paragraphs(docx, within).map_err(EditError::Address)?;
     let paths: Vec<Box<[u32]>> = indexes
         .iter()
         .filter_map(|k| part.ids.paragraphs().get(*k).map(|p| p.path))
@@ -163,11 +188,22 @@ pub(crate) fn place(docx: &Docx, within: &str) -> Result<(BTreeSet<String>, BTre
             found.insert(r.id);
         }
     }
-    Ok((ids, found))
+    Ok(found)
+}
+
+/// The paragraphs and records a `within` names.
+pub type Place = (BTreeSet<String>, BTreeSet<String>);
+
+/// Whether `change` is one a selection by `author`, `kind` and place settles.
+#[must_use]
+pub fn matches(change: &LogicalChange, author: Option<&str>, kind: Option<&str>, place: Option<&Place>) -> bool {
+    author.is_none_or(|a| change.author.as_deref() == Some(a))
+        && kind.is_none_or(|k| change.kind == k)
+        && inside(change, place)
 }
 
 /// Whether `change` is in the place `(paragraphs, records)`.
-fn inside(change: &LogicalChange, place: Option<&(BTreeSet<String>, BTreeSet<String>)>) -> bool {
+fn inside(change: &LogicalChange, place: Option<&Place>) -> bool {
     match place {
         None => true,
         Some((paragraphs, found)) => {
@@ -184,10 +220,10 @@ impl Command<WordDoc> for Review {
     fn validate(&self, doc: &WordDoc) -> Result<()> {
         let docx = doc.docx()?;
         match &self.selection {
-            Selection::Ids(ids) => Review::wanted(&docx, ids).map(|_| ()),
+            Selection::Ids(ids) => wanted_records(&docx, ids).map(|_| ()),
             Selection::Matching {
                 within: Some(within), ..
-            } => place(&docx, within).map(|_| ()),
+            } => place_of(&docx, within).map(|_| ()),
             _ => Ok(()),
         }
     }
@@ -199,20 +235,17 @@ impl Command<WordDoc> for Review {
         let mut steps: Vec<step::Step> = Vec::new();
         match &self.selection {
             Selection::Ids(ids) => {
-                let wanted = Review::wanted(&docx, ids)?;
+                let wanted = wanted_records(&docx, ids)?;
                 steps.push(step::step(&mut sink, self.accept, Some(&wanted))?);
             }
             Selection::All => steps.push(step::step(&mut sink, self.accept, None)?),
             Selection::Matching { author, kind, within } => {
-                let at = within.as_deref().map(|w| place(&docx, w)).transpose()?;
+                let at = within.as_deref().map(|w| place_of(&docx, w)).transpose()?;
                 let mut seen: BTreeSet<ChangeKey> = BTreeSet::new();
                 loop {
                     let now = sink.docx()?;
                     let next = changes(&now).into_iter().find(|c| {
-                        author.as_ref().is_none_or(|a| c.author.as_ref() == Some(a))
-                            && kind.as_ref().is_none_or(|k| c.kind == k)
-                            && inside(c, at.as_ref())
-                            && !seen.contains(&key(c))
+                        matches(c, author.as_deref(), kind.as_deref(), at.as_ref()) && !seen.contains(&key(c))
                     });
                     let Some(change) = next else { break };
                     seen.insert(key(&change));

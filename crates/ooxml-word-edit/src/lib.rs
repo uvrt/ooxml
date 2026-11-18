@@ -12,7 +12,8 @@
 //! - stamping blocks with durable ids before the first edit, and new text ids;
 //! - the commands: [`SetText`]; [`InsertText`], [`DeleteText`] and [`ReplaceText`] (text
 //!   within a paragraph, docx-agent's `_replace_ranges`); [`Review`] (accepting and
-//!   rejecting tracked changes, `word_changes`);
+//!   rejecting tracked changes, `word_changes`); [`SetWordTracking`] (Word's own Track
+//!   Changes switch); [`CommentEdits`] (resolving, reopening and deleting comments);
 //! - validation per change ([`validate`]: facts memoised by content, docx-agent's rules)
 //!   and what a change touched ([`touched`]);
 //! - [`Editor`], which runs a command through the store and reports its result with
@@ -40,6 +41,7 @@ mod revision_ids;
 mod set_text;
 mod sink;
 mod stamping;
+mod switch;
 mod text;
 mod textbox;
 pub mod touched;
@@ -47,12 +49,14 @@ mod track;
 pub mod validate;
 mod work;
 
+pub use comments::{CommentEdit, CommentEdited, CommentEdits};
 pub use doc::{Change, Draw, DrawFrom, Key, ModelError, Shared, WordDoc};
 pub use editor::{EditTiming, Edited, Editor};
 pub use error::{EditError, Result};
 pub use policy::{RevisionPolicy, Tracking};
 pub use pool::{Ids, IdsChange, Sequences};
 pub use ranges::{DeleteText, InsertText, RangesEdited, ReplaceText};
-pub use review::{Review, Reviewed, Selection};
+pub use review::{marks, Mark, RemovedBlocks, Review, Reviewed, RowGone, Selection, TableGone, Typed};
 pub use set_text::{SetText, TextEdited};
 pub use sink::{EditSink, Keep, Numbered, TextWrite};
+pub use switch::{tracks_changes, word_tracks_changes, SetWordTracking, WordTracking};

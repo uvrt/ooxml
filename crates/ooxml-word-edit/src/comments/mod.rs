@@ -1,10 +1,14 @@
 //! Owns: Word comments as docx-agent edits them (`edit/comments.py`): the comment parts by
 //! their relationship from the main part (`comments`, `commentsExtended`, `commentsIds`,
-//! `commentsExtensible`), and deleting a comment with its replies ([`delete`]).
+//! `commentsExtensible`), deleting a comment with its replies ([`delete`]), and the
+//! command resolving, reopening and deleting comments ([`CommentEdits`]).
 //!
 //! Must not: write a comment part but through a review step's or command's copies.
 
 pub(crate) mod delete;
+mod edits;
+
+pub use edits::{CommentEdit, CommentEdited, CommentEdits};
 
 /// `commentsExtended`'s namespace (`w15`).
 pub(crate) const W15: &str = "http://schemas.microsoft.com/office/word/2012/wordml";
