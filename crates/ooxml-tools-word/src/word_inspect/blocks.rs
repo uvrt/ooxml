@@ -481,7 +481,7 @@ fn resolved_cell(reader: &Reader<'_>, table: &TableRecord, cell: &CellRecord) ->
     if in_text_box(part.root(), &cell.path) {
         return None;
     }
-    let facts = reader.shared().table_facts(&table.part, top);
+    let facts = reader.shared().table_facts(&table.part, &top);
     let path = model_path(&top.element, cell.path.get(at..)?)?;
     facts.cell_properties(&path).cloned()
 }

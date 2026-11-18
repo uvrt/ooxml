@@ -229,8 +229,10 @@ impl<D: DocModel> Store<D> {
                 held: Duration::ZERO,
             });
         }
+        // a key written only as a merge (made where the change is applied) is no conflict
+        // with another writer of it
         let mut depends = parts.reads.clone();
-        depends.extend(&parts.writes);
+        depends.extend(&parts.writes.without(&parts.merges));
         let mut state = lock(&self.state);
         let entered = self.clock.monotonic();
         let head = self.head.load();
@@ -329,6 +331,7 @@ impl<D: DocModel> Store<D> {
     ) -> (Snapshot<D>, KeySet<D::Key>, Garbage<D>) {
         let seq = state.last.next();
         state.last = seq;
+        doc.settle();
         let version = Arc::new(before.succeed(seq, doc, &body.writes));
         self.head.store(Arc::clone(&version));
         self.log(state, seq, Some(Arc::clone(&body.changes)));
@@ -399,6 +402,7 @@ impl<D: DocModel> Store<D> {
         let planned = plan(&state.history, &head)?;
         let seq = state.last.next();
         state.last = seq;
+        planned.doc.settle();
         let version = Arc::new(head.succeed(seq, planned.doc, &planned.writes));
         self.head.store(Arc::clone(&version));
         self.log(&mut state, seq, None);

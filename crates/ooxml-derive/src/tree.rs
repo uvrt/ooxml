@@ -156,6 +156,44 @@ impl<T: Measured> MonoidTree<T> {
         Ok(acc)
     }
 
+    /// The first position whose aggregate through it -- the items before it and the item
+    /// -- satisfies `found`, with the aggregate of the items before it; `None` when even the
+    /// whole sequence's does not. `found` must be monotone (once true for a prefix, true for
+    /// every longer one): the n-th paragraph is found by the count of paragraphs in O(log n).
+    pub fn seek(&self, found: impl Fn(&T::Summary) -> bool) -> Option<(usize, T::Summary)> {
+        let mut node = self.root.as_deref()?;
+        if !found(&node.summary) {
+            return None;
+        }
+        let mut acc = T::Summary::empty();
+        let mut at = 0;
+        loop {
+            match &node.kind {
+                Kind::Leaf(items) => {
+                    for item in items {
+                        let with = acc.combine(&item.measure());
+                        if found(&with) {
+                            return Some((at, acc));
+                        }
+                        acc = with;
+                        at += 1;
+                    }
+                    return None;
+                }
+                Kind::Branch(left, right) => {
+                    let with = acc.combine(&left.summary);
+                    if found(&with) {
+                        node = left;
+                    } else {
+                        acc = with;
+                        at += left.len;
+                        node = right;
+                    }
+                }
+            }
+        }
+    }
+
     /// The items in order.
     pub fn iter(&self) -> Iter<'_, T> {
         Iter::new(self.root.as_deref(), 0)

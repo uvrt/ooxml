@@ -65,6 +65,9 @@ pub struct Ids {
     added: Arc<BTreeSet<u32>>,
     cursors: Arc<BTreeMap<String, usize>>,
     aliases: Arc<BTreeMap<String, String>>,
+    /// The first annotation id of the edit being applied (one above the largest in use
+    /// when it began numbering): its revision records' ids count from here.
+    annotations: Option<i64>,
 }
 
 impl Ids {
@@ -101,6 +104,17 @@ impl Ids {
             target = next;
         }
         target.to_owned()
+    }
+
+    /// The first annotation id of the edit being applied.
+    #[must_use]
+    pub fn annotations(&self) -> Option<i64> {
+        self.annotations
+    }
+
+    /// Start numbering an edit's revision records from `first`.
+    pub(crate) fn number_from(&mut self, first: i64) {
+        self.annotations = Some(first);
     }
 
     /// Add what `change` adds.
