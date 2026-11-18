@@ -20,6 +20,8 @@
 //! - relayout from the version before ([`incremental`]), and the engine that keeps
 //!   measures between versions ([`engine`]).
 //!
+//! - a text box's text laid out as a story of its own (`geometry::text_box`) and painted in
+//!   its drawing (`paint::text_box`), where the drawing's painter finds the box (lane L3g);
 //! - a page's geometry: its frame and its lines on whole device pixels ([`geometry`]); the
 //!   layout facts a check reads ([`facts`]); the page numbers a field update writes
 //!   ([`fields::update`]); a page's paint and its SVG ([`paint`]) (lane L3d).

@@ -5,8 +5,8 @@
 //! made tall enough for their cells. With `carry_on` the approximate rules lay out what
 //! the measured ones refuse (`flow_table`'s `carry_on`), each recorded.
 //!
-//! Must not: place rows on pages (`super::place`), or lay out floating tables, floating
-//! drawings text wraps around in a cell, or notes (lane L3c): those are refused.
+//! Must not: place rows on pages (`super::place`), lay a cell out around its drawings
+//! (`super::anchors` does, called from here), or lay out notes.
 
 use super::anchors::{self, wrap_cell, CellEdges, CellJob, CellPage};
 use super::cells::{cell_stack, Align, CellBlock, CellDrawings, CellFlow, Content, Merge};

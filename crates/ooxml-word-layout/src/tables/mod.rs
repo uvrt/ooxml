@@ -3,16 +3,18 @@
 //! top-level tables out with; the grid and the cells' boxes (`grid`), the columns' widths
 //! (`widths`, `autofit`) from the cells' content where Word sizes by it (`content`),
 //! whether a table floats (`floating`), the cells and rows measured (`cells`, `build`),
-//! the table as the paginator sees it (`measured`) and one page's part of it (`place`).
+//! a cell laid out around the floating drawings anchored in it (`anchors`), the table as
+//! the paginator sees it (`measured`), one page's part of it (`place`), and what its
+//! placed rows give the drawing of their cells' drawings (`drawn`).
 //!
 //! The rules are docx2svg's, each measured in Word (ROADMAP.md, "Tables --
 //! measured"); a table the measured rules refuse is laid out by docx2svg's approximate
 //! ones where those are rules of widths (its grid) or of a frame in a cell, and reports
 //! [`MeasuredTable::approximation`]; anything else stays refused.
 //!
-//! Must not: lay out floating tables, floating drawings text wraps around in a cell, or
-//! notes in cells (lane L3c), or draw (lane L3d); hold state between tables (the
-//! paginator's flow keeps each table's measure by its `Arc`).
+//! Must not: place a floating table on its page (the paginator does) or notes in cells,
+//! or draw (`crate::paint`); hold state between tables (the paginator's flow keeps each
+//! table's measure by its `Arc`).
 
 mod anchors;
 mod autofit;

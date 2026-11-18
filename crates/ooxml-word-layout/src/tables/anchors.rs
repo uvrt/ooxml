@@ -693,3 +693,78 @@ fn place_line(
     }
     Ok((y, line, extra))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ooxml_word_model::model::AnchorPosition;
+
+    fn anchor(h: (&str, Option<i64>, Option<&str>), v: (&str, Option<i64>, Option<&str>), wrap: &str) -> Anchor {
+        let position = |(relative, offset, align): (&str, Option<i64>, Option<&str>)| AnchorPosition {
+            relative: Some(Text::from(relative)),
+            offset,
+            align: align.map(Text::from),
+        };
+        Anchor {
+            h: position(h),
+            v: position(v),
+            wrap: Some(Text::from(wrap)),
+            ..Anchor::default()
+        }
+    }
+
+    #[test]
+    fn a_drawing_is_in_its_cell_in_mode_15_or_by_its_anchor() {
+        let page = anchor(("page", Some(0), None), ("page", Some(0), None), "wrapSquare");
+        assert!(in_cell(&page, true));
+        assert!(!in_cell(&page, false));
+        let character = anchor(("character", Some(0), None), ("page", Some(0), None), "wrapSquare");
+        assert!(in_cell(&character, false));
+        let laid = Anchor {
+            layout_in_cell: true,
+            ..page.clone()
+        };
+        assert!(in_cell(&laid, false));
+    }
+
+    #[test]
+    fn positions_no_probe_measured_are_named() {
+        let measured = anchor(("column", Some(100), None), ("paragraph", None, Some("center")), "wrapSquare");
+        assert_eq!(position_unmodelled(&measured, true), None);
+        let inside = anchor(("insideMargin", None, Some("left")), ("paragraph", Some(0), None), "wrapSquare");
+        assert_eq!(position_unmodelled(&inside, true).as_deref(), Some("insideMargin left"));
+        // `character` is measured only in the cell.
+        let character = anchor(("character", Some(0), None), ("page", Some(0), None), "wrapNone");
+        assert_eq!(position_unmodelled(&character, true), None);
+        let simple = Anchor {
+            simple: Some((0, 0)),
+            ..measured
+        };
+        assert_eq!(position_unmodelled(&simple, true).as_deref(), Some("simplePos"));
+    }
+
+    #[test]
+    fn wraps_not_measured_in_a_cell_are_laid_out_as_none() {
+        let against_page = anchor(("page", Some(0), None), ("page", Some(0), None), "wrapSquare");
+        let run = Run {
+            anchors: vec![against_page].into(),
+            ..Run::default()
+        };
+        let paragraph = Paragraph {
+            runs: vec![run].into(),
+            ..Paragraph::default()
+        };
+        assert_eq!(
+            unmodelled(&paragraph, false).as_deref(),
+            Some("a floating drawing text wraps around in a cell, positioned against the page")
+        );
+        assert_eq!(unmodelled(&paragraph, true), None);
+        let laid = unwrapped(&paragraph);
+        let wraps: Vec<&str> = laid
+            .runs
+            .iter()
+            .flat_map(|r| r.anchors.iter().filter_map(|a| a.wrap.as_deref()))
+            .collect();
+        assert_eq!(wraps, ["wrapNone"]);
+    }
+}
