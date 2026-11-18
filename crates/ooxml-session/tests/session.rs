@@ -173,10 +173,13 @@ fn refusals_carry_their_way_out() {
             "describe",
             "find_text",
             "read_batch",
+            "replace_text",
             "word_changes",
             "word_comments",
+            "word_fields",
             "word_inspect",
             "word_read",
+            "word_set_text",
             "word_set_tracking"
         ])
     );

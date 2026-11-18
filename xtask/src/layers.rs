@@ -45,6 +45,7 @@ pub const MAP: &[(&str, Place)] = &[
     ("ooxml-colour", Place::Layer(1, 0)),
     ("ooxml-numfmt", Place::Layer(1, 0)),
     ("ooxml-style-names", Place::Layer(1, 0)),
+    ("ooxml-markdown", Place::Layer(1, 0)),
     ("ooxml-drawingml", Place::Layer(2, 0)),
     // Charts and metafiles lower to a scene (design section 8): the scene under them; charts
     // lower to DrawingML's drawable elements too, so they rank above it.

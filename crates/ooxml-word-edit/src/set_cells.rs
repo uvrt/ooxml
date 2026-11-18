@@ -205,7 +205,14 @@ impl Command<WordDoc> for SetCells {
             ids: Vec::new(),
         };
         for (row, column, text) in &self.writes {
-            write_cell(&mut sink, &found, &places, (*row, *column), text, &mut out.edits)?;
+            write_cell(
+                &mut sink,
+                &found,
+                &places,
+                (*row, *column),
+                (text, false),
+                &mut out.edits,
+            )?;
             if let Some(Some((r, c))) = places.get(*row).and_then(|l| l.get(*column)) {
                 out.ids.push(format!("{}/c{r},{c}", found.id));
             }
@@ -217,13 +224,39 @@ impl Command<WordDoc> for SetCells {
     }
 }
 
-/// One cell's text.
+/// docx-agent's `_set_cell` (`word_set_text` on a cell, in lines): the cell at the grid
+/// place `(row, column)` of `table` given `text`, its first paragraph stamped and written
+/// as set_text writes it where it differs; its edits.
+///
+/// # Errors
+/// A refusal for a target that is not a table or a place it lacks.
+pub(crate) fn set_cell(
+    sink: &mut EditSink<'_, '_>,
+    table_id: &str,
+    (row, column): (usize, usize),
+    text: &str,
+) -> Result<Vec<CellEdit>> {
+    let docx = sink.docx()?;
+    let found = table(sink.doc(), &docx, table_id)?;
+    sink.read(block_key(&found.part, &found.id));
+    let tree = sink
+        .doc()
+        .tree(&found.part)?
+        .ok_or_else(|| EditError::NoPart(found.part.clone()))?;
+    let places = grid(tree.root(), &found.rows);
+    let mut edits = Vec::new();
+    write_cell(sink, &found, &places, (row, column), (text, true), &mut edits)?;
+    Ok(edits)
+}
+
+/// One cell's text (`stamping`: its first paragraph written as an edit of its own, the
+/// document stamped first).
 fn write_cell(
     sink: &mut EditSink<'_, '_>,
     table: &Table,
     places: &[Vec<Option<(usize, usize)>>],
     (row, column): (usize, usize),
-    text: &str,
+    (text, stamping): (&str, bool),
     edits: &mut Vec<CellEdit>,
 ) -> Result<()> {
     let missing = || EditError::Refused(format!("{} has no cell at row {row}, column {column}", table.id));
@@ -254,10 +287,10 @@ fn write_cell(
         .unwrap_or_default();
     if current != head {
         check_text(head)?;
-        let wrote = crate::set_text::write_text_as(sink, first, head, false)?;
+        let wrote = crate::set_text::write_text_as(sink, first, head, stamping)?;
         edits.push(CellEdit {
             id: Some(wrote.id),
-            renamed: Vec::new(),
+            renamed: wrote.renamed,
             created: Vec::new(),
             removed: Vec::new(),
         });

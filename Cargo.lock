@@ -548,6 +548,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "ooxml-markdown"
+version = "0.1.0"
+
+[[package]]
 name = "ooxml-metafile"
 version = "0.1.0"
 dependencies = [
@@ -587,6 +591,7 @@ dependencies = [
  "ooxml-derive",
  "ooxml-drawingml",
  "ooxml-fonts",
+ "ooxml-markdown",
  "ooxml-metafile",
  "ooxml-numfmt",
  "ooxml-opc",
@@ -777,6 +782,7 @@ version = "0.1.0"
 dependencies = [
  "ooxml-base",
  "ooxml-derive",
+ "ooxml-markdown",
  "ooxml-opc",
  "ooxml-store",
  "ooxml-style-names",
