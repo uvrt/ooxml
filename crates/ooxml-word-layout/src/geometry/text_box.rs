@@ -353,7 +353,12 @@ pub fn lay_out_text_box(story: &mut StoryJob<'_, '_>, job: &TextBoxJob<'_>, fram
 
 /// A text box's blocks laid out as the body of the document's first section, one column
 /// `width` twips wide with no left or right margin (`story_document` at the box's width).
-fn box_flow(story: &mut StoryJob<'_, '_>, job: &TextBoxJob<'_>, blocks: &[Block], width: i64) -> Option<crate::flow::Flow> {
+fn box_flow(
+    story: &mut StoryJob<'_, '_>,
+    job: &TextBoxJob<'_>,
+    blocks: &[Block],
+    width: i64,
+) -> Option<crate::flow::Flow> {
     let document = story.cx.document;
     let section = document.sections.first()?;
     let mut props = (*section.properties).clone();
@@ -460,7 +465,12 @@ mod tests {
 
     #[test]
     fn room_rounds_the_corner_to_twips_and_aligns_the_content() {
-        let insets = [Q::from_integer(144), Q::from_integer(72), Q::from_integer(144), Q::from_integer(72)];
+        let insets = [
+            Q::from_integer(144),
+            Q::from_integer(72),
+            Q::from_integer(144),
+            Q::from_integer(72),
+        ];
         let content = Px::int(50);
         let top = room(&frame(Px::int(300), "t"), (&insets, content, true), "t");
         // 600 px is 2,880 twips; 72 twips in: 2,952 twips, 615 px in the nearest unit.

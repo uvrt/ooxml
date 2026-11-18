@@ -41,15 +41,17 @@ pub fn paint(
     painter.dpi = super::shapes::DPI;
     painter.resume_ids(defs.ids);
     let mut out = match &fill {
-        None => format!(
-            "fill=\"#{}\"",
-            colour.unwrap_or("000000").to_ascii_uppercase()
-        ),
+        None => format!("fill=\"#{}\"", colour.unwrap_or("000000").to_ascii_uppercase()),
         Some(found) => attrs_text(&fill_attrs(Some(found), &mut painter, Some(bounds), None)),
     };
     if let Some(outline) = &outline {
         out.push(' ');
-        out.push_str(&attrs_text(&outline_attrs(Some(outline), &mut painter, Some(bounds), None)));
+        out.push_str(&attrs_text(&outline_attrs(
+            Some(outline),
+            &mut painter,
+            Some(bounds),
+            None,
+        )));
     }
     defs.ids = painter.ids();
     defs.defs

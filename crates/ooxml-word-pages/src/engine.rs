@@ -753,7 +753,9 @@ impl crate::warnings::PageDrawings for DrawingWarnings<'_> {
                 out.push(warning(&code, message));
             }
             for frame in drawings.text_frames(slot) {
-                let story = self.layout.text_box(model, laid, (&slot.path, &slot.paragraph_path), &frame);
+                let story = self
+                    .layout
+                    .text_box(model, laid, (&slot.path, &slot.paragraph_path), &frame);
                 for (code, message) in story.said {
                     out.push(warning(&code, message));
                 }
@@ -780,7 +782,13 @@ fn text_boxes(job: TextBoxJob<'_, '_>, drawings: &WordDrawings, paint: &PagePain
             let story = job
                 .layout
                 .text_box(job.model, job.laid, (&slot.path, &slot.paragraph_path), &frame);
-            out.push(paint_text_box(job.laid, job.model, (k, page, slot.story.as_ref()), &story, job.cx));
+            out.push(paint_text_box(
+                job.laid,
+                job.model,
+                (k, page, slot.story.as_ref()),
+                &story,
+                job.cx,
+            ));
         }
     }
     out

@@ -10,10 +10,11 @@
 //!
 //! Must not: measure a paragraph (`super::build` does), place rows on pages, or draw.
 
+use super::cell_rules::{in_cell, CELL_WRAPS};
 use super::cells::{cell_stack, CellBlock, Content, Positioned};
 use super::grid::{inner_part, left_offset, line_at, right_offset, twips_px, CellBox};
 use crate::faces::Faces;
-use crate::floating::{emu_twips, horizontal, moves_text, vertical, AnchorRef, Frames};
+use crate::floating::{emu_twips, horizontal, vertical, AnchorRef, Frames};
 use crate::paginate::{clear_of_bands, Band, DrawingKey};
 use crate::px::Px;
 use crate::rebreak::{Breaker, LineExtra, Lines, ParaSource, Rebroken};
@@ -21,42 +22,11 @@ use crate::table::Unsupported;
 use crate::wrap::{break_across, segments, Column, Wrap};
 use ooxml_base::{Locale, Q};
 use ooxml_text::Line;
-use ooxml_word_model::model::{Anchor, Paragraph, Run};
+use ooxml_word_model::model::Anchor;
 use ooxml_word_model::resolve::ResolvedCell;
 use ooxml_word_model::value::{Text, Value};
 use ooxml_word_model::WordDocument;
 use std::sync::Arc;
-
-/// The wraps text goes around a drawing in a cell by: beside it, above and below it.
-const CELL_WRAPS: [&str; 4] = ["wrapSquare", "wrapTight", "wrapThrough", "wrapTopAndBottom"];
-
-/// What a drawing anchored in a cell may be positioned by, as measured:
-/// `(axis, relativeFrom, offset or the alignment)` (`CELL_POSITIONS`); against the page
-/// the same but `character` (`PAGE_POSITIONS`).
-const CELL_POSITIONS: [(&str, &str, &str); 22] = [
-    ("h", "column", "offset"),
-    ("h", "column", "left"),
-    ("h", "column", "center"),
-    ("h", "column", "right"),
-    ("h", "margin", "offset"),
-    ("h", "margin", "left"),
-    ("h", "margin", "center"),
-    ("h", "margin", "right"),
-    ("h", "page", "offset"),
-    ("h", "leftMargin", "offset"),
-    ("h", "character", "offset"),
-    ("v", "paragraph", "offset"),
-    ("v", "paragraph", "top"),
-    ("v", "paragraph", "center"),
-    ("v", "paragraph", "bottom"),
-    ("v", "line", "offset"),
-    ("v", "margin", "offset"),
-    ("v", "margin", "top"),
-    ("v", "margin", "center"),
-    ("v", "margin", "bottom"),
-    ("v", "page", "offset"),
-    ("v", "topMargin", "offset"),
-];
 
 fn twip_px() -> Q {
     Q::new(300, 1440)
@@ -64,116 +34,6 @@ fn twip_px() -> Q {
 
 fn int(x: i64) -> Q {
     Q::from_integer(i128::from(x))
-}
-
-/// Whether a drawing anchored in a cell is positioned against the cell: with
-/// `layoutInCell`, in mode 15 whatever it says, and below mode 15 without it where either
-/// axis is against the anchor's `character` or `line` (`floating.in_cell`).
-pub fn in_cell(anchor: &Anchor, mode15: bool) -> bool {
-    mode15
-        || anchor.layout_in_cell
-        || anchor.h.relative.as_deref().unwrap_or("column") == "character"
-        || anchor.v.relative.as_deref().unwrap_or("paragraph") == "line"
-}
-
-/// Why a drawing anchored in a cell cannot be positioned as measured (`None` where it
-/// can): `simplePos`, or a position the probes did not measure (`cell_position_modelled`).
-pub fn position_unmodelled(anchor: &Anchor, mode15: bool) -> Option<String> {
-    if anchor.simple.is_some() {
-        return Some("simplePos".to_owned());
-    }
-    let cell = in_cell(anchor, mode15);
-    for (axis, position) in [("h", &anchor.h), ("v", &anchor.v)] {
-        let relative = position
-            .relative
-            .as_deref()
-            .unwrap_or(if axis == "h" { "column" } else { "paragraph" });
-        let how = if position.offset.is_some() {
-            "offset"
-        } else {
-            position
-                .align
-                .as_deref()
-                .unwrap_or(if axis == "h" { "left" } else { "top" })
-        };
-        let known = CELL_POSITIONS
-            .iter()
-            .any(|k| *k == (axis, relative, how) && (cell || *k != ("h", "character", "offset")));
-        if !known {
-            return Some(format!("{relative} {how}"));
-        }
-    }
-    None
-}
-
-/// Why a cell paragraph's floating drawings are not laid out as measured (`None` where
-/// they are, `cell_anchors_unmodelled`): one text wraps around positioned against the
-/// page below mode 15, or one with a wrap not measured in a cell.
-pub fn unmodelled(paragraph: &Paragraph, mode15: bool) -> Option<String> {
-    for anchor in paragraph.runs.iter().flat_map(|r| r.anchors.iter()) {
-        if position_unmodelled(anchor, mode15).is_some() {
-            continue;
-        }
-        if moves_text(anchor) && !in_cell(anchor, mode15) {
-            return Some("a floating drawing text wraps around in a cell, positioned against the page".to_owned());
-        }
-        let wrap = anchor.wrap.as_deref().unwrap_or_default();
-        if moves_text(anchor) && !CELL_WRAPS.contains(&wrap) {
-            return Some(format!("a floating drawing in a cell with {wrap}"));
-        }
-    }
-    None
-}
-
-/// Each of a cell paragraph's floating drawings positioned as no probe measured in a
-/// cell, by `(run, index in the run)`, and why (`cell_anchors_approximate`).
-pub fn approximate(paragraph: &Paragraph, mode15: bool) -> Vec<((usize, usize), String)> {
-    let mut out = Vec::new();
-    for (r, run) in paragraph.runs.iter().enumerate() {
-        for (k, anchor) in run.anchors.iter().enumerate() {
-            if let Some(why) = position_unmodelled(anchor, mode15) {
-                out.push(((r, k), format!("is positioned by {why}, which no probe measured in a cell")));
-            }
-        }
-    }
-    out
-}
-
-/// `paragraph` with every floating drawing text wraps around made one it does not
-/// (`wrapNone`): what the approximate rules lay a cell out with where the wrap is not
-/// measured in a cell (`unwrapped`).
-pub fn unwrapped(paragraph: &Paragraph) -> Paragraph {
-    let runs: Vec<Run> = paragraph
-        .runs
-        .iter()
-        .map(|run| {
-            if run.anchors.is_empty() {
-                return run.clone();
-            }
-            let anchors: Vec<Anchor> = run
-                .anchors
-                .iter()
-                .map(|a| {
-                    if moves_text(a) {
-                        Anchor {
-                            wrap: Some(Text::from("wrapNone")),
-                            ..a.clone()
-                        }
-                    } else {
-                        a.clone()
-                    }
-                })
-                .collect();
-            Run {
-                anchors: anchors.into(),
-                ..run.clone()
-            }
-        })
-        .collect();
-    Paragraph {
-        runs: runs.into(),
-        ..paragraph.clone()
-    }
 }
 
 /// The page a table's cells are laid out on: its size and header and footer distances,
@@ -290,7 +150,9 @@ fn stack_tops(job: &CellJob<'_>, entries: &[CellBlock]) -> Vec<StackTop> {
     let (mut line_y, mut paragraph_top) = (margin_top, margin_top);
     let mut before: Option<&CellBlock> = None;
     for placed in &stack {
-        let Some(entry) = entries.get(placed.entry) else { continue };
+        let Some(entry) = entries.get(placed.entry) else {
+            continue;
+        };
         if placed.number == 0 {
             paragraph_top = match before {
                 Some(b) => {
@@ -401,8 +263,7 @@ pub fn wrap_cell(
             }
         }
     }
-    let wrapping: Vec<&(usize, AnchorRef)> =
-        anchored.iter().filter(|(_, a)| wraps_in_cell(&a.anchor)).collect();
+    let wrapping: Vec<&(usize, AnchorRef)> = anchored.iter().filter(|(_, a)| wraps_in_cell(&a.anchor)).collect();
     if wrapping.is_empty() {
         return Ok(None);
     }
@@ -484,19 +345,23 @@ fn side_wrap(anchor: &Anchor, (x, y): (Q, Q), key: DrawingKey, mode15: bool) -> 
     let [el, et, er, eb] = anchor.effect.map(|v| int(emu_twips(v)));
     let [mut dt, mut db, dl, dr] = anchor.distance.map(|v| int(emu_twips(v)) * px);
     let tight = matches!(anchor.wrap.as_deref(), Some("wrapTight" | "wrapThrough"));
-    let polygon: Option<Vec<(Q, Q)>> = anchor.polygon.as_ref().filter(|p| tight && !p.is_empty()).map(|points| {
-        points
-            .iter()
-            .map(|(pa, pb)| {
-                let w = emu_twips(anchor.extent.0);
-                let h = emu_twips(anchor.extent.1);
-                (
-                    (x + int(i64::try_from(i128::from(w) * i128::from(*pa) / 21600).unwrap_or(0))) * px,
-                    (y + int(i64::try_from(i128::from(h) * i128::from(*pb) / 21600).unwrap_or(0))) * px,
-                )
-            })
-            .collect()
-    });
+    let polygon: Option<Vec<(Q, Q)>> = anchor
+        .polygon
+        .as_ref()
+        .filter(|p| tight && !p.is_empty())
+        .map(|points| {
+            points
+                .iter()
+                .map(|(pa, pb)| {
+                    let w = emu_twips(anchor.extent.0);
+                    let h = emu_twips(anchor.extent.1);
+                    (
+                        (x + int(i64::try_from(i128::from(w) * i128::from(*pa) / 21600).unwrap_or(0))) * px,
+                        (y + int(i64::try_from(i128::from(h) * i128::from(*pb) / 21600).unwrap_or(0))) * px,
+                    )
+                })
+                .collect()
+        });
     if polygon.is_some() && !mode15 {
         dt = Q::from_integer(0);
         db = Q::from_integer(0);
@@ -543,26 +408,21 @@ fn lay_around(job: &CellJob<'_>, entries: &mut [CellBlock], k: usize, around: &A
         faces: job.faces,
         locale: job.locale,
     };
-    let column = Column {
-        exact: twips_px(job.edges.text_left).value(),
-        start: job.cell_box.text_left.value(),
-        width: {
-            let (n, d) = ooxml_text::twips(job.cell_box.budget).parts();
-            Q::new(n, d)
-        },
-        mode15: job.mode15,
-        width_px: Px::twips(job.cell_box.budget).value(),
-    };
+    let column = column_of(job);
     let mut number = 0;
     loop {
         let tops = stack_tops(job, entries);
         let Some(entry) = entries.get(k) else { break };
-        let Content::Paragraph(measured) = &entry.content else { break };
+        let Content::Paragraph(measured) = &entry.content else {
+            break;
+        };
         let count = measured.measured.lines.len();
         if number >= count {
             break;
         }
-        let Some(stacked) = top_of(&tops, (k, number)) else { break };
+        let Some(stacked) = top_of(&tops, (k, number)) else {
+            break;
+        };
         let top = stacked.top - entry.drawings.drop(number);
         let after = Px::twips(entry.after);
         let current = Lines::Again(Arc::new(Rebroken {
@@ -572,44 +432,84 @@ fn lay_around(job: &CellJob<'_>, entries: &mut [CellBlock], k: usize, around: &A
             anchors: entry.drawings.anchors.clone(),
             plain_from: 0,
         }));
-        let placed = place_line(&breaker, source, &current, (number, top, after), (around, &column), job.mode15)?;
+        let placed = place_line(
+            &breaker,
+            source,
+            &current,
+            (number, top, after),
+            (around, &column),
+            job.mode15,
+        )?;
         let (y, line, extra) = placed;
         let Some(entry) = entries.get_mut(k) else { break };
         entry.drawings.drops.retain(|(l, _)| *l != number);
         if y != top {
             entry.drawings.drops.push((number, y - top));
         }
-        let pieces = &current.measured().measured.pieces;
-        let n = pieces.len();
-        let old = current.measured().measured.lines.get(number).copied();
-        if extra.wrapped() || old.is_none_or(|o| (o.start, o.end) != (line.start, line.end)) {
-            let mut lines: Vec<(Line, LineExtra)> = current
-                .measured()
-                .measured
-                .lines
-                .iter()
-                .zip(entry.drawings.extra.iter().cloned().chain(std::iter::repeat(LineExtra::default())))
-                .take(number)
-                .map(|(l, e)| (*l, e))
-                .collect();
-            let ends_newline = line.forced && n > 0 && pieces.get(n - 1).is_some_and(|p| p.ch == '\n');
-            let tail = if line.end < n || ends_newline {
-                breaker.rest(source, pieces, line.end, false, None)
-            } else {
-                Vec::new()
-            };
-            lines.push((line, extra));
-            lines.extend(tail);
-            let again = breaker
-                .set_lines(source, &current, lines, 0)
-                .ok_or_else(|| Unsupported("no face metrics in a cell".into()))?;
-            entry.pitches = again.measured.heights.iter().map(|h| h.pitch).collect();
-            entry.drawings.extra = again.extra.clone();
-            entry.drawings.anchors = again.anchors.clone();
-            entry.content = Content::Paragraph(Arc::clone(&again.measured));
-        }
+        take_line(&breaker, source, &current, (number, line, extra), entry)?;
         number += 1;
     }
+    Ok(())
+}
+
+/// The cell's text area as the column its lines go beside drawings in.
+fn column_of(job: &CellJob<'_>) -> Column {
+    let (n, d) = ooxml_text::twips(job.cell_box.budget).parts();
+    Column {
+        exact: twips_px(job.edges.text_left).value(),
+        start: job.cell_box.text_left.value(),
+        width: Q::new(n, d),
+        mode15: job.mode15,
+        width_px: Px::twips(job.cell_box.budget).value(),
+    }
+}
+
+/// Line `number` taken as `line` (with what it carries), the paragraph broken again after
+/// it, where it is broken beside drawings or ends elsewhere than it did (`wrap_cell`'s
+/// `paragraph.lines = ...`, `_derive`).
+fn take_line(
+    breaker: &Breaker<'_>,
+    source: &ParaSource,
+    current: &Lines<'_>,
+    (number, line, extra): (usize, Line, LineExtra),
+    entry: &mut CellBlock,
+) -> Result<(), Unsupported> {
+    let pieces = &current.measured().measured.pieces;
+    let n = pieces.len();
+    let old = current.measured().measured.lines.get(number).copied();
+    if !extra.wrapped() && old.is_some_and(|o| (o.start, o.end) == (line.start, line.end)) {
+        return Ok(());
+    }
+    let carried = entry
+        .drawings
+        .extra
+        .iter()
+        .cloned()
+        .chain(std::iter::repeat(LineExtra::default()));
+    let mut lines: Vec<(Line, LineExtra)> = current
+        .measured()
+        .measured
+        .lines
+        .iter()
+        .copied()
+        .zip(carried)
+        .take(number)
+        .collect();
+    let ends_newline = line.forced && n > 0 && pieces.get(n - 1).is_some_and(|p| p.ch == '\n');
+    let tail = if line.end < n || ends_newline {
+        breaker.rest(source, pieces, line.end, false, None)
+    } else {
+        Vec::new()
+    };
+    lines.push((line, extra));
+    lines.extend(tail);
+    let again = breaker
+        .set_lines(source, current, lines, 0)
+        .ok_or_else(|| Unsupported("no face metrics in a cell".into()))?;
+    entry.pitches = again.measured.heights.iter().map(|h| h.pitch).collect();
+    entry.drawings.extra = again.extra.clone();
+    entry.drawings.anchors = again.anchors.clone();
+    entry.content = Content::Paragraph(Arc::clone(&again.measured));
     Ok(())
 }
 
@@ -692,79 +592,4 @@ fn place_line(
         }
     }
     Ok((y, line, extra))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use ooxml_word_model::model::AnchorPosition;
-
-    fn anchor(h: (&str, Option<i64>, Option<&str>), v: (&str, Option<i64>, Option<&str>), wrap: &str) -> Anchor {
-        let position = |(relative, offset, align): (&str, Option<i64>, Option<&str>)| AnchorPosition {
-            relative: Some(Text::from(relative)),
-            offset,
-            align: align.map(Text::from),
-        };
-        Anchor {
-            h: position(h),
-            v: position(v),
-            wrap: Some(Text::from(wrap)),
-            ..Anchor::default()
-        }
-    }
-
-    #[test]
-    fn a_drawing_is_in_its_cell_in_mode_15_or_by_its_anchor() {
-        let page = anchor(("page", Some(0), None), ("page", Some(0), None), "wrapSquare");
-        assert!(in_cell(&page, true));
-        assert!(!in_cell(&page, false));
-        let character = anchor(("character", Some(0), None), ("page", Some(0), None), "wrapSquare");
-        assert!(in_cell(&character, false));
-        let laid = Anchor {
-            layout_in_cell: true,
-            ..page.clone()
-        };
-        assert!(in_cell(&laid, false));
-    }
-
-    #[test]
-    fn positions_no_probe_measured_are_named() {
-        let measured = anchor(("column", Some(100), None), ("paragraph", None, Some("center")), "wrapSquare");
-        assert_eq!(position_unmodelled(&measured, true), None);
-        let inside = anchor(("insideMargin", None, Some("left")), ("paragraph", Some(0), None), "wrapSquare");
-        assert_eq!(position_unmodelled(&inside, true).as_deref(), Some("insideMargin left"));
-        // `character` is measured only in the cell.
-        let character = anchor(("character", Some(0), None), ("page", Some(0), None), "wrapNone");
-        assert_eq!(position_unmodelled(&character, true), None);
-        let simple = Anchor {
-            simple: Some((0, 0)),
-            ..measured
-        };
-        assert_eq!(position_unmodelled(&simple, true).as_deref(), Some("simplePos"));
-    }
-
-    #[test]
-    fn wraps_not_measured_in_a_cell_are_laid_out_as_none() {
-        let against_page = anchor(("page", Some(0), None), ("page", Some(0), None), "wrapSquare");
-        let run = Run {
-            anchors: vec![against_page].into(),
-            ..Run::default()
-        };
-        let paragraph = Paragraph {
-            runs: vec![run].into(),
-            ..Paragraph::default()
-        };
-        assert_eq!(
-            unmodelled(&paragraph, false).as_deref(),
-            Some("a floating drawing text wraps around in a cell, positioned against the page")
-        );
-        assert_eq!(unmodelled(&paragraph, true), None);
-        let laid = unwrapped(&paragraph);
-        let wraps: Vec<&str> = laid
-            .runs
-            .iter()
-            .flat_map(|r| r.anchors.iter().filter_map(|a| a.wrap.as_deref()))
-            .collect();
-        assert_eq!(wraps, ["wrapNone"]);
-    }
 }

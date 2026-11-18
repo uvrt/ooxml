@@ -19,6 +19,7 @@
 mod anchors;
 mod autofit;
 mod build;
+mod cell_rules;
 mod cells;
 mod content;
 mod drawn;
@@ -29,10 +30,13 @@ mod place;
 mod rows;
 mod widths;
 
-pub use anchors::{in_cell, CellEdges, CellPage};
-pub use drawn::AnchoredLine;
+pub use anchors::{CellEdges, CellPage};
 pub use build::{effective_style, table_paragraphs, Frame};
-pub use cells::{Align, CellBlock, CellDrawings, CellFlow, Content, Merge, Positioned, RowFlow, RowHeight, StackedLine};
+pub use cell_rules::in_cell;
+pub use cells::{
+    Align, CellBlock, CellDrawings, CellFlow, Content, Merge, Positioned, RowFlow, RowHeight, StackedLine,
+};
+pub use drawn::AnchoredLine;
 pub use grid::{inner_part, line_at as grid_line, twips_px as grid_twips_px, CellBox};
 pub use measured::{Approximated, MeasuredTable};
 pub use place::place_table;

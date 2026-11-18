@@ -257,9 +257,11 @@ impl FloatJob<'_> {
         if let Some(band) = self.bands.iter().find(|b| b.key == key) {
             return Some((None, band.y));
         }
-        self.wraps
-            .iter()
-            .find_map(|w| w.drawing.filter(|(k, _)| *k == key).map(|(_, x)| (Some(Px::from(x)), Px::from(w.y))))
+        self.wraps.iter().find_map(|w| {
+            w.drawing
+                .filter(|(k, _)| *k == key)
+                .map(|(_, x)| (Some(Px::from(x)), Px::from(w.y)))
+        })
     }
 
     /// What an anchor on this page is positioned against (`_frames`): the paragraph's

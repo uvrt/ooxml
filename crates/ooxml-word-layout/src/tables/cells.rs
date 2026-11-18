@@ -71,7 +71,10 @@ impl CellDrawings {
 
     /// Why drawing `(run, index)` is approximated, where it is.
     pub fn approximated(&self, at: (usize, usize)) -> Option<&str> {
-        self.approximate.iter().find(|(k, _)| *k == at).map(|(_, why)| why.as_str())
+        self.approximate
+            .iter()
+            .find(|(k, _)| *k == at)
+            .map(|(_, why)| why.as_str())
     }
 }
 

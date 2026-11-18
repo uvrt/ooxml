@@ -8,7 +8,8 @@
 //! Must not: place rows on pages (`super::place`), lay a cell out around its drawings
 //! (`super::anchors` does, called from here), or lay out notes.
 
-use super::anchors::{self, wrap_cell, CellEdges, CellJob, CellPage};
+use super::anchors::{wrap_cell, CellEdges, CellJob, CellPage};
+use super::cell_rules as anchors;
 use super::cells::{cell_stack, Align, CellBlock, CellDrawings, CellFlow, Content, Merge};
 use super::content::{cell_extent, column_minimums, paragraph_minimum};
 use super::floating::{floats, Floating, Standing, UNBORDERED_EDGE};
@@ -16,12 +17,12 @@ use super::grid::{cell_box, cell_width, grid_lines, left_offset, line_at, right_
 use super::measured::{Approximated, MeasuredTable};
 use super::rows::{edge_width, row_flow, settle_rows};
 use super::widths::{autofit_room, autofit_unmodelled, Extents};
-use crate::flow::{is_empty, paragraph_borders};
 use crate::floating::anchors_of;
+use crate::flow::{is_empty, paragraph_borders};
 use crate::input::geometry;
-use crate::rebreak::ParaSource;
 use crate::paragraph::{measure_paragraph, MeasureContext, MeasuredParagraph, ParagraphJob, Unmeasured};
 use crate::px::Px;
+use crate::rebreak::ParaSource;
 use crate::table::FloatingTable;
 use crate::table::{TableContext, Unsupported};
 use ooxml_base::Q;

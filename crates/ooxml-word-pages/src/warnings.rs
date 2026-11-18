@@ -18,9 +18,9 @@ use ooxml_word_layout::fields::styleref::{body_style_texts, StyleSearch};
 use ooxml_word_layout::fields::update::PageNumbers;
 use ooxml_word_layout::fields::{cross_reference_problems, field_text, page_counts, Uncomputable};
 use ooxml_word_layout::flow::{body_paragraphs, FlowItem};
+use ooxml_word_layout::px::Px;
 use ooxml_word_layout::stories::story_references;
 use ooxml_word_layout::tables::MeasuredTable;
-use ooxml_word_layout::px::Px;
 use ooxml_word_layout::DocumentLayout;
 use ooxml_word_model::model::{Block, InlineObject, Paragraph};
 use ooxml_word_model::value::Value;
@@ -215,7 +215,9 @@ fn cell_drawings(
                     continue;
                 };
                 let found = all.get_or_insert_with(paragraphs);
-                let Some(paragraph) = found.get(line.block) else { continue };
+                let Some(paragraph) = found.get(line.block) else {
+                    continue;
+                };
                 let path = ooxml_word_layout::paint::drawings::anchor_path(paragraph, a.run, a.index);
                 let message = format!(
                     "a floating drawing in a table cell ({path}) {why}: the cell's text is laid out as if text did \

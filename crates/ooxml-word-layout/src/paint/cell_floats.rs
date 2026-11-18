@@ -77,7 +77,12 @@ pub(super) fn cell_floats(job: &CellFloatJob<'_>, out: &mut PageOut) {
             out.unplaced.push(path);
             continue;
         };
-        let positioned = line.entry.drawings.positioned.iter().find(|p| p.at == (a.source, a.run, a.index));
+        let positioned = line
+            .entry
+            .drawings
+            .positioned
+            .iter()
+            .find(|p| p.at == (a.source, a.run, a.index));
         let (x, y) = match positioned {
             // One text wraps around: where the cell's layout without it put it.
             Some(p) => (p.x, line.cell_top + line.offset + p.y),

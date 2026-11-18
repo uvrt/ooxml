@@ -547,7 +547,9 @@ fn paint_set(
         let resolved = model.resolve_paragraph(document, &paragraph);
         let extra = match (set.broken, line.source) {
             (Some(broken), LineSource::Flow { item }) => broken.get(&item).and_then(|r| r.extra.get(line.number)),
-            (_, LineSource::Cell { item, block }) => cell_table(set, item).and_then(|t| t.line_extra(block, line.number)),
+            (_, LineSource::Cell { item, block }) => {
+                cell_table(set, item).and_then(|t| t.line_extra(block, line.number))
+            }
             _ => None,
         };
         let job = spans::LineJob {
@@ -568,7 +570,9 @@ fn paint_set(
             floats(set, (frame, item), (&paragraph, &resolved, &measured), line, to.out);
         }
         if let (LineSource::Cell { item, block }, Some(frame)) = (line.source, set.frame) {
-            let found = anchored.iter().find(|(i, a)| *i == item && a.block == block && a.line == line.number && a.top == line.top);
+            let found = anchored
+                .iter()
+                .find(|(i, a)| *i == item && a.block == block && a.line == line.number && a.top == line.top);
             if let Some((_, anchored)) = found {
                 let job = cell_floats::CellFloatJob {
                     layout: set.layout,

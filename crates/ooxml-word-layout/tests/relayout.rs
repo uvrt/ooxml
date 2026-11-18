@@ -86,7 +86,8 @@ fn tbl(rng: &mut Rng) -> Tbl {
         exact: rng.chance(10).then(|| pick(rng)),
         floating: rng.chance(20).then(|| rng.below(300)),
         cell_drawing: rng.chance(25).then(|| {
-            let wrap = ["wrapSquare", "wrapTopAndBottom", "wrapNone", "wrapTight"][usize::try_from(rng.below(4)).unwrap()];
+            let wrap =
+                ["wrapSquare", "wrapTopAndBottom", "wrapNone", "wrapTight"][usize::try_from(rng.below(4)).unwrap()];
             (pick(rng), wrap, i64::try_from(rng.below(600)).unwrap(), rng.chance(30))
         }),
         rows,

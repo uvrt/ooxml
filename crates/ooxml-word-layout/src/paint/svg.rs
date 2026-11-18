@@ -8,8 +8,8 @@
 //!
 //! Must not: lay out or paint anything (the paint has), or read a picture part.
 
-use super::text_box::TextBoxPaint;
 use super::drawings::{DrawingSlot, Layer};
+use super::text_box::TextBoxPaint;
 use super::{DrawingName, Drawn, FaceNames, GlyphSize, PagePaint, PaintedLine, Rule, Span, SpanKind, TextEffects};
 use crate::px::Px;
 use ooxml_base::Q;
@@ -178,7 +178,11 @@ fn text(span: &Span, cx: &SvgContext<'_>, defs: &mut PageDefs) -> Element {
     for (name, value) in attrs {
         e = e.attr(name, value);
     }
-    e = match span.effects.as_ref().and_then(|effects| effects_paint(span, effects, cx, defs)) {
+    e = match span
+        .effects
+        .as_ref()
+        .and_then(|effects| effects_paint(span, effects, cx, defs))
+    {
         Some(paint) => e.attr("fill", Value::Attributes(paint)),
         None => e.attr("fill", colour(span.color.as_deref())),
     };
@@ -194,12 +198,7 @@ fn text(span: &Span, cx: &SvgContext<'_>, defs: &mut PageDefs) -> Element {
 
 /// A span's text effects as paint, the box their gradient spans its text (`_paint`): from
 /// its first glyph to its end, an em tall with its baseline four fifths down.
-fn effects_paint(
-    span: &Span,
-    effects: &TextEffects,
-    cx: &SvgContext<'_>,
-    defs: &mut PageDefs,
-) -> Option<String> {
+fn effects_paint(span: &Span, effects: &TextEffects, cx: &SvgContext<'_>, defs: &mut PageDefs) -> Option<String> {
     let size = font_size(span.half_points, cx.glyph_size);
     let float = |q: Q| {
         #[allow(clippy::cast_precision_loss)]
@@ -209,8 +208,7 @@ fn effects_paint(
     let x0 = span.xs.first().map_or(span.end, |x| *x).value();
     let top = Q::from_integer(i128::from(span.y)) - size * Q::new(4, 5);
     let bounds = (float(x0), float(top), float(span.end.value() - x0), float(size));
-    cx.drawings
-        .text_paint(effects, bounds, span.color.as_deref(), defs)
+    cx.drawings.text_paint(effects, bounds, span.color.as_deref(), defs)
 }
 
 fn rect(rule: &Rule) -> Element {
@@ -416,7 +414,11 @@ fn under_rules(rules: &[Rule]) -> Vec<Element> {
 
 /// The rules drawn over the text, in the order made.
 fn over_rules(rules: &[Rule]) -> Vec<Element> {
-    rules.iter().filter(|r| under_rank(r.kind).is_none()).map(rect).collect()
+    rules
+        .iter()
+        .filter(|r| under_rank(r.kind).is_none())
+        .map(rect)
+        .collect()
 }
 
 /// A drawing's slot, its painter's paint, and its text boxes' paint.
