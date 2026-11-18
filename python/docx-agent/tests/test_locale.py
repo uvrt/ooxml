@@ -27,6 +27,7 @@ import docx2svg
 from docx_agent import Document
 from docx_agent.edit import blank
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
+from pixels import pixels
 
 DUTCH = Locale(decimal_separator=",", thousands_separator=".", date_order="dmy", language="nl-NL",
                list_separator=";")
@@ -180,18 +181,18 @@ def _box(**options) -> Toolbox:
     return Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, **options)
 
 
-def _render(box: Toolbox, data: bytes, **session_options) -> bytes:
+def _render(box: Toolbox, data: bytes, **session_options) -> tuple:
     session = box.session(**session_options)
     session.open(data, "chart.docx")
     result = box.dispatch(session, "render", {"doc": "d1", "pages": [1], "width": 320})
     assert result.ok, result.error
-    return result.images[0].data
+    return pixels(result.images[0].data)
 
 
-def _direct(data: bytes, locale) -> bytes:
+def _direct(data: bytes, locale) -> tuple:
     document = Document.open(data)
     document.locale = locale
-    return document.render_png(pages=[1], width=320)[0]
+    return pixels(document.render_png(pages=[1], width=320)[0])
 
 
 @pytest.fixture
