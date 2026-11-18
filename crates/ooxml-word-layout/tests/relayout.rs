@@ -470,7 +470,25 @@ fn same_flow(relaid: &[FlowItem], whole: &[FlowItem], at: &str) {
         };
         assert!(
             alike && x.block() == y.block() && x.section() == y.section(),
-            "{at}: flow item {k} differs"
+            "{at}: flow item {k} differs: alike {alike}, blocks {} {}, sections {} {}; {:?} vs {:?}",
+            x.block(),
+            y.block(),
+            x.section(),
+            y.section(),
+            x.para().map(|p| (
+                p.body,
+                p.drop_cap.is_some(),
+                p.measured.heights.len(),
+                p.before,
+                p.after
+            )),
+            y.para().map(|p| (
+                p.body,
+                p.drop_cap.is_some(),
+                p.measured.heights.len(),
+                p.before,
+                p.after
+            )),
         );
     }
 }

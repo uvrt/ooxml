@@ -15,7 +15,6 @@ use crate::heights::LineHeight;
 use crate::notes::flowed::{line_at, line_of_sources};
 use crate::notes::NoteLines;
 use crate::paragraph::{derive, line_height, LinesOf, MeasureContext, MeasuredParagraph};
-use crate::sections::SectionGeometry;
 use crate::wrap::{break_across, segments, Column, SegmentLine, Wrap};
 use ooxml_base::{Locale, Q};
 use ooxml_text::{break_from, Geometry, Line, Measured};
@@ -36,9 +35,11 @@ pub struct ParaSource {
     pub geometry: Geometry,
     /// Its section has several columns.
     pub columns: bool,
-    /// Its section, where its columns are of unequal widths: a line broken for a column
-    /// other than the first carries that column's geometry.
-    pub section: Option<SectionGeometry>,
+    /// Its section's first column's width (twips), where its columns are of unequal
+    /// widths: a line broken for a column other than the first carries that column's
+    /// geometry. (Not the section itself: its paragraph ranges move with every paragraph
+    /// added before it, which the lines do not read.)
+    pub first_column: Option<i64>,
     /// Every footnote reference: its index in the text and the note's lines.
     pub notes: Vec<(i64, NoteLines)>,
 }
@@ -176,7 +177,7 @@ impl Breaker<'_> {
         first: bool,
         width: Option<i64>,
     ) -> Vec<(Line, LineExtra)> {
-        match (width, &source.section) {
+        match (width, source.first_column) {
             (Some(width), Some(_)) => {
                 let geometry = Arc::new(crate::input::geometry(self.document, &source.resolved.paragraph, width));
                 break_from(pieces, start, &geometry, first, source.columns, None)
@@ -205,9 +206,9 @@ impl Breaker<'_> {
 
     /// The width (twips) of the column a line was broken for (`width_of`).
     pub fn width_of(source: &ParaSource, extra: Option<&LineExtra>) -> i64 {
-        match (extra.and_then(|e| e.column.as_ref()), &source.section) {
+        match (extra.and_then(|e| e.column.as_ref()), source.first_column) {
             (Some(column), _) => column.width,
-            (None, Some(section)) => section.column_width(0),
+            (None, Some(width)) => width,
             (None, None) => 0,
         }
     }
@@ -268,7 +269,7 @@ impl Breaker<'_> {
     /// The paragraph broken again from line `line` on for a column `width` twips wide,
     /// where its lines were broken for another (`fit_width`); `None` where nothing changes.
     pub fn fit_width(&self, source: &ParaSource, current: &Lines<'_>, line: usize, width: i64) -> Option<Rebroken> {
-        source.section.as_ref()?;
+        source.first_column?;
         let lines = Breaker::current(current);
         let (at, extra) = lines.get(line)?;
         if Breaker::width_of(source, Some(extra)) == width {

@@ -648,7 +648,7 @@ impl PageContext<'_> {
             return Position::at(index, number);
         }
         let moved = match (&p.source, self.hyphen_at_page_end) {
-            (Some(source), super::HyphenMove::Word) if source.section.is_none() => {
+            (Some(source), super::HyphenMove::Word) if source.first_column.is_none() => {
                 let found = self.breaker.move_hyphenated_word(source, lines, number - 1);
                 let moved = found.is_some();
                 self.broken(index, found);
