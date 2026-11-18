@@ -384,11 +384,7 @@ impl PageEngine {
             return Ok(Err(why));
         }
         let relaid = !laid.relaid.is_empty();
-        *(if relaid {
-            &mut self.stats.relaid
-        } else {
-            &mut self.stats.full
-        }) += 1;
+        self.count_laid(relaid);
         let (pictures, drawings) = pictures_of(package, &document, &generation.fonts, &self.numbers);
         let others_changed = self.changed.iter().any(|name| *name != *document.main_part);
         let with = SayWith {
@@ -423,6 +419,15 @@ impl PageEngine {
         let swept = generation.model.sweep() + generation.layout.sweep();
         self.stats.swept += swept as u64;
         Ok(Ok(version))
+    }
+
+    /// Count a version laid out: from the one before (`relaid`) or whole.
+    fn count_laid(&mut self, relaid: bool) {
+        if relaid {
+            self.stats.relaid += 1;
+        } else {
+            self.stats.full += 1;
+        }
     }
 
     /// Why a version was laid out whole, from the first changed part of `reason`'s kind.
