@@ -50,26 +50,12 @@ pub fn tool_case(bytes: &Arc<[u8]>, case: &Value) -> Result<Value, String> {
         doc: "d1",
         cancel: &Never,
     };
-    let mut arguments = case.get("arguments").cloned().unwrap_or(Value::Object(Map::new()));
+    let arguments = case.get("arguments").cloned().unwrap_or(Value::Object(Map::new()));
     let tool = case.get("tool").and_then(Value::as_str).unwrap_or("");
-    // the text tools' arguments taken as meant, as the session takes them (defaults filled)
-    let spec = match tool {
-        "word_set_text" => Some(WordSetText::spec()),
-        "replace_text" => Some(ReplaceText::spec()),
-        _ => None,
+    let (arguments, mut notes) = match accepted(tool, arguments) {
+        Ok(taken) => taken,
+        Err(reply) => return Ok(reply),
     };
-    let mut notes = Vec::new();
-    if let Some(spec) = spec {
-        match spec.accept(arguments.clone()) {
-            Ok(accepted) => {
-                arguments = Value::Object(accepted.arguments);
-                notes = accepted.notes;
-            }
-            Err(error) => {
-                return Ok(json!({"reply": {"ok": false, "error": error.to_json()}, "parts": {}, "order": []}));
-            }
-        }
-    }
     let mut reply = match tool {
         "word_changes" => word_changes(
             &WordChanges::from_arg(&arguments, "").map_err(|e| e.to_string())?,
@@ -120,4 +106,18 @@ pub fn tool_case(bytes: &Arc<[u8]>, case: &Value) -> Result<Value, String> {
         "parts": parts,
         "order": doc.package().part_names(),
     }))
+}
+
+/// The text tools' arguments taken as meant, as the session takes them (defaults filled),
+/// with the notes saying so; a refusal as the case's reply.
+fn accepted(tool: &str, arguments: Value) -> Result<(Value, Vec<String>), Value> {
+    let spec = match tool {
+        "word_set_text" => WordSetText::spec(),
+        "replace_text" => ReplaceText::spec(),
+        _ => return Ok((arguments, Vec::new())),
+    };
+    match spec.accept(arguments) {
+        Ok(accepted) => Ok((Value::Object(accepted.arguments), accepted.notes)),
+        Err(error) => Err(json!({"reply": {"ok": false, "error": error.to_json()}, "parts": {}, "order": []})),
+    }
 }
