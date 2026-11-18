@@ -121,7 +121,9 @@ pub enum DrawFrom {
 pub struct Draw {
     /// Where the value comes from.
     pub from: DrawFrom,
-    /// The element's place below the inserted element (empty: that element).
+    /// Which of the splice's inserted nodes it goes into (0 for a splice of one).
+    pub node: u32,
+    /// The element's place below that node (empty: the node itself).
     pub at: Vec<u32>,
     /// The attribute the value goes into.
     pub attribute: ooxml_xml::Name,
@@ -262,6 +264,11 @@ impl WordDoc {
         &self.shared
     }
 
+    /// The same, as a handle that outlives this version's borrow.
+    pub(crate) fn shared_handle(&self) -> Arc<Shared> {
+        Arc::clone(&self.shared)
+    }
+
     /// This version as docx-agent's reading tools read it.
     ///
     /// # Errors
@@ -308,10 +315,7 @@ impl WordDoc {
                 start: patch.start(),
             })
         };
-        let [ooxml_xml::Node::Element(inserted)] = patch.inserted() else {
-            return Err(stale());
-        };
-        let mut element = Arc::clone(inserted);
+        let mut inserted = patch.inserted().to_vec();
         let mut ids = self.ids.clone();
         let mut added = IdsChange::default();
         for draw in draws {
@@ -328,13 +332,17 @@ impl WordDoc {
                     (first + i64::from(*offset)).to_string()
                 }
             };
-            element = set_below(&element, &draw.at, &draw.attribute, &value).ok_or_else(stale)?;
+            let slot = inserted.get_mut(draw.node as usize).ok_or_else(stale)?;
+            let ooxml_xml::Node::Element(element) = slot else {
+                return Err(stale());
+            };
+            *element = set_below(element, &draw.at, &draw.attribute, &value).ok_or_else(stale)?;
         }
         let patch = Patch::splice(
             patch.parent().clone(),
             patch.start(),
             patch.removed().to_vec(),
-            vec![ooxml_xml::Node::Element(element)],
+            inserted,
         );
         Ok((patch, added))
     }

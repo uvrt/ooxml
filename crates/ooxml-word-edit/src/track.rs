@@ -87,7 +87,7 @@ fn spell_deleted(work: &mut Work, run: Id) {
 
 /// Track the deletion of `runs` (in document order); the relationship ids of what was
 /// removed outright.
-fn delete_runs(work: &mut Work, runs: &[Id], stamp: &mut Stamp) -> Vec<String> {
+pub(crate) fn delete_runs(work: &mut Work, runs: &[Id], stamp: &mut Stamp) -> Vec<String> {
     let mut released = Vec::new();
     let mut current: Option<Id> = None;
     for &run in runs {
@@ -131,7 +131,7 @@ fn delete_runs(work: &mut Work, runs: &[Id], stamp: &mut Stamp) -> Vec<String> {
 }
 
 /// Track the deletion of the current view's characters `[start, end)`.
-fn delete_span(
+pub(crate) fn delete_span(
     work: &mut Work,
     paragraph: Id,
     start: usize,

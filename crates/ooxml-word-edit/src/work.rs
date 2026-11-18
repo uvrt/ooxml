@@ -620,6 +620,76 @@ impl Work {
         }
     }
 
+    /// The element's content as green nodes (its text, its children, their tails): what
+    /// replaces a stretch of a parent's children when the root stands for that stretch.
+    pub(crate) fn build_content(&self, id: Id) -> Option<Vec<Node>> {
+        let slot = self.slot(id)?;
+        let mut out = Vec::new();
+        if !self.text(id).is_empty() {
+            out.push(Node::Text(Atom::from(self.text(id))));
+        }
+        for child in &slot.children {
+            out.push(self.build_node(*child)?);
+            let tail = self.tail(*child);
+            if !tail.is_empty() {
+                out.push(Node::Text(Atom::from(tail)));
+            }
+        }
+        Some(out)
+    }
+
+    /// Whether two elements are the same XML as canonical serialisation compares them
+    /// (lxml's c14n): names and attributes by namespace (attributes in any order), text,
+    /// and children in order with their tails; prefixes do not matter.
+    pub(crate) fn same_xml(&self, a: Id, b: Id) -> bool {
+        let (Some(x), Some(y)) = (self.slot(a), self.slot(b)) else {
+            return false;
+        };
+        match (&x.kind, &y.kind) {
+            (
+                Kind::Element {
+                    name: n1,
+                    attributes: a1,
+                    text: t1,
+                    ..
+                },
+                Kind::Element {
+                    name: n2,
+                    attributes: a2,
+                    text: t2,
+                    ..
+                },
+            ) => {
+                let key = |attrs: &[Attribute]| {
+                    let mut v: Vec<(Option<String>, String, String)> = attrs
+                        .iter()
+                        .map(|t| {
+                            (
+                                t.name.namespace().map(str::to_owned),
+                                t.name.local().to_owned(),
+                                t.value.to_string(),
+                            )
+                        })
+                        .collect();
+                    v.sort();
+                    v
+                };
+                n1.namespace() == n2.namespace()
+                    && n1.local() == n2.local()
+                    && t1 == t2
+                    && key(a1) == key(a2)
+                    && x.children.len() == y.children.len()
+                    && x.children
+                        .iter()
+                        .zip(&y.children)
+                        .all(|(c, d)| self.tail(*c) == self.tail(*d) && self.same_xml(*c, *d))
+            }
+            (Kind::Comment(c), Kind::Comment(d)) | (Kind::Entity(c), Kind::Entity(d)) => c == d,
+            (Kind::Pi(c), Kind::Pi(d)) => c == d,
+            _ => false,
+        }
+    }
+
     fn build_node(&self, id: Id) -> Option<Node> {
         let slot = self.slot(id)?;
         if !slot.changed {
