@@ -41,6 +41,9 @@ struct Slot {
     /// The green node this one was read from, while nothing below it changed.
     origin: Option<Node>,
     changed: bool,
+    /// A key an edit gives the node to know it again after splits (copies carry it); not
+    /// part of the XML (docx-agent's temporary tracking attribute).
+    key: Option<u32>,
 }
 
 /// An editable subtree.
@@ -119,11 +122,24 @@ impl Work {
             tail: String::new(),
             origin,
             changed,
+            key: None,
         });
         self.slots.len() - 1
     }
 
     // -- reading -------------------------------------------------------------------------
+
+    /// The key the node was given ([`Work::set_key`]), carried by its copies.
+    pub(crate) fn key(&self, id: Id) -> Option<u32> {
+        self.slot(id).and_then(|s| s.key)
+    }
+
+    /// Give the node a key (or take it away), which its copies carry; the XML is unchanged.
+    pub(crate) fn set_key(&mut self, id: Id, key: Option<u32>) {
+        if let Some(slot) = self.slots.get_mut(id) {
+            slot.key = key;
+        }
+    }
 
     /// The root.
     pub(crate) fn root(&self) -> Id {
@@ -578,6 +594,7 @@ impl Work {
         if let Some(s) = self.slots.get_mut(copy) {
             s.tail = slot.tail.clone();
             s.changed = slot.changed;
+            s.key = slot.key;
         }
         for child in slot.children {
             let c = self.copy_subtree(child);
@@ -598,9 +615,13 @@ impl Work {
             Some(Kind::Element { name, attributes, .. }) => (name.clone(), attributes.clone()),
             _ => return id,
         };
+        let key = self.key(id);
         let copy = self.new_element(name);
-        if let Some(Kind::Element { attributes: a, .. }) = self.slots.get_mut(copy).map(|s| &mut s.kind) {
-            *a = attributes;
+        if let Some(slot) = self.slots.get_mut(copy) {
+            slot.key = key;
+            if let Kind::Element { attributes: a, .. } = &mut slot.kind {
+                *a = attributes;
+            }
         }
         copy
     }

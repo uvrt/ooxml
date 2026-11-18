@@ -87,62 +87,73 @@ impl Command<WordDoc> for SetParagraphStyle {
 
     fn prepare(&self, tx: &mut Txn<'_, WordDoc>) -> Result<StyleSet> {
         let mut sink = EditSink::new(tx, self.policy.clone());
-        let docx = sink.docx()?;
-        let found = find(sink.doc(), &docx, &self.target)?;
-        if let Some(name) = &self.style {
-            crate::builtin::resolve(&docx, name, "paragraph")?;
-        }
-        sink.read(block_key(&found.part, &found.id));
-        let renamed = stamp_document(&mut sink, &docx)?;
-        let id = crate::ranges::renamed_id(&renamed, &found.id);
-        let style = match &self.style {
-            Some(name) => Some(crate::builtin::ensure(&mut sink, name, "paragraph")?),
-            None => None,
-        };
-        let default = sink
-            .docx()?
-            .default_style("paragraph")
-            .and_then(|s| s.attribute(Some(W), "styleId"))
-            .map(str::to_owned);
-        let style = style.filter(|s| Some(s) != default.as_ref());
-        let tree = sink
-            .doc()
-            .tree(&found.part)?
-            .ok_or_else(|| EditError::NoPart(found.part.clone()))?;
-        let element = at_path(tree.root(), &found.path).ok_or_else(|| EditError::Path(found.part.clone()))?;
-        let mut work = Work::of(element, scope_above(tree.root(), &found.path));
-        let paragraph = work.root();
-        let properties = work.find(paragraph, W, "pPr");
-        let old = clean_properties(&mut work, properties, paragraph);
-        let shared = sink.doc().shared_handle();
-        write_style(&mut work, paragraph, style.as_deref(), shared.facts.orders());
-        let wrote = sink.paragraph_properties_changed(&mut work, paragraph, old)?;
-        let new = work.build().ok_or_else(|| EditError::Path(found.part.clone()))?;
-        // a paragraph that has that style already is not written (rule 3)
-        if *new != **element {
-            let draws = wrote
-                .annotations
-                .map(|n| annotation_draws(&new, n, 0))
-                .unwrap_or_default();
-            let mut keys = vec![block_key(&found.part, &id)];
-            if paragraph_has_annotations(&found.element) || paragraph_has_annotations(&new) {
-                keys.push(Key::Annotations);
-            }
-            sink.replace_drawing(&found.part, &found.path, new, keys, draws)?;
-            if wrote.dated {
-                sink.ensure_w14(&found.part, false, &[("w16du", W16DU)])?;
-            }
-        }
-        if let RevisionPolicy::Tracked(tracking) = sink.policy().clone() {
-            let gave = wrote.annotations.is_some_and(|n| n.to > n.from);
-            sink.people(gave.then_some(tracking.author.as_str()), Some(tracking.author.as_str()))?;
-        }
+        let out = set_style(&mut sink, &self.target, self.style.as_deref())?;
         crate::textbox::sync(&mut sink)?;
         crate::revision_ids::make_unique(&mut sink)?;
-        Ok(StyleSet {
-            id,
-            renamed,
-            part: found.part,
-        })
+        Ok(out)
     }
+}
+
+/// docx-agent's `set_paragraph_style` inside an edit, without what the edit does once it
+/// ends (text boxes synced, revision ids made unique), which the command's caller does.
+///
+/// # Errors
+/// A refusal for a target that is not a paragraph, or a style neither the document nor
+/// Word has.
+pub(crate) fn set_style(sink: &mut EditSink<'_, '_>, target: &str, style: Option<&str>) -> Result<StyleSet> {
+    let docx = sink.docx()?;
+    let found = find(sink.doc(), &docx, target)?;
+    if let Some(name) = style {
+        crate::builtin::resolve(&docx, name, "paragraph")?;
+    }
+    sink.read(block_key(&found.part, &found.id));
+    let renamed = stamp_document(sink, &docx)?;
+    let id = crate::ranges::renamed_id(&renamed, &found.id);
+    let style = match style {
+        Some(name) => Some(crate::builtin::ensure(sink, name, "paragraph")?),
+        None => None,
+    };
+    let default = sink
+        .docx()?
+        .default_style("paragraph")
+        .and_then(|s| s.attribute(Some(W), "styleId"))
+        .map(str::to_owned);
+    let style = style.filter(|s| Some(s) != default.as_ref());
+    let tree = sink
+        .doc()
+        .tree(&found.part)?
+        .ok_or_else(|| EditError::NoPart(found.part.clone()))?;
+    let element = at_path(tree.root(), &found.path).ok_or_else(|| EditError::Path(found.part.clone()))?;
+    let mut work = Work::of(element, scope_above(tree.root(), &found.path));
+    let paragraph = work.root();
+    let properties = work.find(paragraph, W, "pPr");
+    let old = clean_properties(&mut work, properties, paragraph);
+    let shared = sink.doc().shared_handle();
+    write_style(&mut work, paragraph, style.as_deref(), shared.facts.orders());
+    let wrote = sink.paragraph_properties_changed(&mut work, paragraph, old)?;
+    let new = work.build().ok_or_else(|| EditError::Path(found.part.clone()))?;
+    // a paragraph that has that style already is not written (rule 3)
+    if *new != **element {
+        let draws = wrote
+            .annotations
+            .map(|n| annotation_draws(&new, n, 0))
+            .unwrap_or_default();
+        let mut keys = vec![block_key(&found.part, &id)];
+        if paragraph_has_annotations(&found.element) || paragraph_has_annotations(&new) {
+            keys.push(Key::Annotations);
+        }
+        sink.replace_drawing(&found.part, &found.path, new, keys, draws)?;
+        if wrote.dated {
+            sink.ensure_w14(&found.part, false, &[("w16du", W16DU)])?;
+        }
+    }
+    if let RevisionPolicy::Tracked(tracking) = sink.policy().clone() {
+        let gave = wrote.annotations.is_some_and(|n| n.to > n.from);
+        sink.people(gave.then_some(tracking.author.as_str()), Some(tracking.author.as_str()))?;
+    }
+    Ok(StyleSet {
+        id,
+        renamed,
+        part: found.part,
+    })
 }

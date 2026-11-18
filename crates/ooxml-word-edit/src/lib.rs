@@ -12,7 +12,9 @@
 //! - stamping blocks with durable ids before the first edit, and new text ids;
 //! - the commands: [`SetText`] (in lines: new paragraphs after it); [`InsertParagraph`];
 //!   [`SetParagraphStyle`] (built-in styles added as Word writes them); [`DeleteBlock`];
-//!   [`SetCells`]; [`InsertText`], [`DeleteText`] and [`ReplaceText`] (text within a
+//!   [`SetCells`]; [`StyleSpans`] (character styles and emphasis over a paragraph's text);
+//!   [`SetStyledText`] (`word_set_text`'s item: text with inline emphasis);
+//!   [`InsertText`], [`DeleteText`] and [`ReplaceText`] (text within a
 //!   paragraph, docx-agent's `_replace_ranges`); [`Review`] (accepting and rejecting tracked
 //!   changes, `word_changes`); [`SetWordTracking`] (Word's own Track Changes switch);
 //!   [`CommentEdits`] (resolving, reopening and deleting comments);
@@ -47,6 +49,7 @@ mod paragraphs;
 mod people;
 mod policy;
 mod pool;
+mod props;
 mod ranges;
 mod ranges_across;
 mod release;
@@ -56,6 +59,8 @@ mod set_cells;
 mod set_text;
 mod sink;
 mod stamping;
+mod style_spans;
+mod styled_text;
 mod switch;
 mod table_delete;
 mod table_delete_write;
@@ -80,4 +85,6 @@ pub use review::{record_marks, Mark, RemovedBlocks, Review, Reviewed, RowGone, S
 pub use set_cells::{CellEdit, CellsSet, SetCells};
 pub use set_text::{SetText, TextEdited};
 pub use sink::{EditSink, Keep, Numbered, TextWrite};
+pub use style_spans::{Span, SpansStyled, StyleSpans};
+pub use styled_text::{ItemEdit, SetStyledText, StyledRun, StyledTextSet};
 pub use switch::{tracks_changes, word_tracks_changes, SetWordTracking, WordTracking};
