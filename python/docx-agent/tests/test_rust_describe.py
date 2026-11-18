@@ -116,7 +116,7 @@ def test_the_rust_definition_is_todays_byte_for_byte():
     rust = RustTools()
     assert [tool.name for tool in rust.tools] == ["describe", "word_read", "word_inspect", "find_text",
                                                   "word_set_tracking", "word_changes", "word_comments",
-                                                  "word_set_text", "replace_text", "read_batch"]
+                                                  "word_set_text", "replace_text", "word_lists", "read_batch"]
     assert json.loads(ooxml_core.tool_specs("docx"))[0] == json.loads(GOLDEN.read_text(encoding="utf-8"))
 
 
