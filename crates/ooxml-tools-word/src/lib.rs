@@ -48,6 +48,10 @@ pub use structure::{
 };
 pub use style::{word_format, Alignment, Cleared, FindExpect, FindItem, WordFormat};
 pub use style::{word_lists, Follow, ListKind, ListsAction, WordLists};
+pub use style::{
+    word_styles, RegionBorderStyle, RegionBordersArg, RegionItem, RegionName, RegionSide, StyleKind, StyleNumbering,
+    StylesAction, TabAlignment, TabItem, TabLeader, WordStyles,
+};
 pub use text::{replace_text, word_set_text, Expect, ReplaceStories, ReplaceText, SetTextItem, Unported, WordSetText};
 pub use version::Version;
 pub use word_inspect::{word_inspect, WordInspect};

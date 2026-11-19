@@ -24,6 +24,9 @@ pub enum EditError {
     /// The target is not what the edit takes.
     #[error("{0}")]
     Refused(String),
+    /// A style edit refused, with the field it names and the options that would do.
+    #[error("{0}")]
+    Style(crate::styles::StyleRefusal),
     /// What the edit would have to do is not ported yet.
     #[error("not supported yet: {0}")]
     Unsupported(String),

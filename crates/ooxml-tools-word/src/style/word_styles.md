@@ -1,0 +1,1 @@
+The style sheet: list, describe, add, modify (a table style per region; no middle column), remove (replacement while used), purge unused, set_default (the style new tables get), set_language (the language text is proofed and spaced in: the document's, or name's).
