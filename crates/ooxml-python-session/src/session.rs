@@ -8,7 +8,9 @@
 
 use crate::adapters::{context, SessionStop};
 use ooxml_base::Locale;
-use ooxml_session::{CallContext, CancelToken, DocId, DocKind, Opened, Registry, Session, SessionConfig, SessionError};
+use ooxml_session::{
+    CallContext, CancelToken, DocId, DocKind, HeldId, Opened, Registry, RetiredBy, Session, SessionConfig, SessionError,
+};
 use ooxml_store::{Caller, StoreConfig};
 use ooxml_tools::{compact, ToolError, ToolResult};
 use ooxml_tools_word::Placer;
@@ -215,6 +217,52 @@ impl PyVersion {
 
 /// What `Version.ids_since` answers: the id values given, and the renames (old id, id now).
 type IdsSince = (Vec<u32>, Vec<(String, String)>);
+
+/// One retired id as `Session.retired` gives it: `(kind, value, seq, caller, tool, version,
+/// said)` -- `"block"` (a paraId's value) or `"drawing"`; a version this session made
+/// (`seq`, its caller's key and its tool) or, from a state the document was opened with, the
+/// host's `version` and words.
+type RetiredRow = (
+    &'static str,
+    u64,
+    Option<u64>,
+    Option<String>,
+    Option<String>,
+    Option<u64>,
+    Option<String>,
+);
+
+fn retired_row((id, by): (HeldId, RetiredBy)) -> RetiredRow {
+    let (kind, value) = match id {
+        HeldId::Block(v) => ("block", u64::from(v)),
+        HeldId::Drawing(n) => ("drawing", n),
+    };
+    match by {
+        RetiredBy::Step { seq, caller, tool } => (
+            kind,
+            value,
+            Some(seq),
+            caller.map(|c| c.to_string()),
+            tool.map(|t| t.to_string()),
+            None,
+            None,
+        ),
+        RetiredBy::Earlier { version, said } => (kind, value, None, None, None, Some(version), said),
+    }
+}
+
+/// An id `Session.seed_retired` is given: `"block"` or `"drawing"` and its value.
+fn held_id(kind: &str, value: u64) -> PyResult<HeldId> {
+    match kind {
+        "block" => u32::try_from(value)
+            .map(HeldId::Block)
+            .map_err(|_| PyValueError::new_err(format!("a block id's value is at most 0xFFFFFFFF, not {value}"))),
+        "drawing" => Ok(HeldId::Drawing(value)),
+        _ => Err(PyValueError::new_err(format!(
+            "an id's kind is 'block' or 'drawing', not {kind:?}"
+        ))),
+    }
+}
 
 /// What `Session.call` answers: the reply's JSON text, its images, and what only the
 /// application reads (JSON text).
@@ -498,6 +546,29 @@ impl PySession {
             .detach(|| session.redo(&id, steps, &context))
             .map_err(|e| to_py(&e))?;
         Ok((done.count, done.version))
+    }
+
+    /// The Word document's retired ids: each block id (a paraId's value) and drawing number a
+    /// version removed and none brought back since, with who removed it, as rows
+    /// `(kind, value, seq, caller, tool, version, said)` (see `seed_retired` for the last two).
+    fn retired(&self, py: Python<'_>, doc: &str) -> PyResult<Vec<RetiredRow>> {
+        let id = doc_id(doc, &self.inner)?;
+        let session = &self.inner;
+        let rows = py.detach(|| session.retired(&id)).map_err(|e| to_py(&e))?;
+        Ok(rows.into_iter().map(retired_row).collect())
+    }
+
+    /// Give the Word document the ids its saved state retired before it was opened again:
+    /// rows `(kind, value, version, said)`, the version that removed each as the host numbered
+    /// it and who made it in the host's words (`None`: not known).
+    fn seed_retired(&self, py: Python<'_>, doc: &str, rows: Vec<(String, u64, u64, Option<String>)>) -> PyResult<()> {
+        let id = doc_id(doc, &self.inner)?;
+        let given = rows
+            .into_iter()
+            .map(|(kind, value, version, said)| Ok((held_id(&kind, value)?, version, said)))
+            .collect::<PyResult<Vec<_>>>()?;
+        let session = &self.inner;
+        py.detach(|| session.seed_retired(&id, given)).map_err(|e| to_py(&e))
     }
 
     /// Close the document; its versions and history are let go.

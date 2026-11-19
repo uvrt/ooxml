@@ -11,6 +11,7 @@
 
 use crate::context::StoreClock;
 use crate::model::PackageDoc;
+use crate::retired::{Made, Retired};
 use crate::update::PartUpdate;
 use crate::{DocKind, SessionError};
 use ooxml_base::Context;
@@ -47,6 +48,8 @@ pub(crate) struct Word {
     pub(crate) opened: Snapshot<WordDoc>,
     /// Who its edits are tracked as (`None`: untracked), as `word_set_tracking` left it.
     tracking: RwLock<Option<String>>,
+    /// The ids its versions removed, and who removed each.
+    pub(crate) retired: Retired,
 }
 
 impl Word {
@@ -154,6 +157,7 @@ impl Document {
                     editor,
                     opened,
                     tracking: RwLock::new(None),
+                    retired: Retired::default(),
                 }))
             }
             DocKind::Pptx | DocKind::Xlsx => {
@@ -192,15 +196,34 @@ impl Document {
         }
     }
 
-    /// Commit the bridge's update as `caller`: the version it leaves, whether it changed
-    /// anything, and how many times it was prepared.
-    pub(crate) fn update(&self, caller: &Caller, update: &PartUpdate<'_>) -> Result<(At, bool, u32), SessionError> {
+    /// Commit the bridge's update as `caller`, made by `tool`: the version it leaves,
+    /// whether it changed anything, and how many times it was prepared. A Word document's
+    /// retired ids note what it removed.
+    pub(crate) fn update(
+        &self,
+        caller: &Caller,
+        tool: Option<&str>,
+        update: &PartUpdate<'_>,
+    ) -> Result<(At, bool, u32), SessionError> {
         fn out<D: ooxml_store::DocModel>(done: Committed<D, ()>, at: fn(Snapshot<D>) -> At) -> (At, bool, u32) {
             (at(done.version), done.changed, done.attempts)
         }
         Ok(match &self.held {
             Held::Package(store) => out(store.run(caller, update)?, At::Package),
-            Held::Word(word) => out(word.editor.store().run(caller, update)?, At::Word),
+            Held::Word(word) => {
+                let done = word.editor.store().run(caller, update)?;
+                if let Some(previous) = done.previous.as_ref().filter(|_| done.changed) {
+                    let delta = ooxml_word_edit::ids_delta(previous.doc(), done.version.doc())?;
+                    let made = Made {
+                        seq: done.version.seq().0,
+                        caller: caller.name(),
+                        tool,
+                        history: false,
+                    };
+                    word.retired.note(&made, &delta);
+                }
+                out(done, At::Word)
+            }
         })
     }
 }

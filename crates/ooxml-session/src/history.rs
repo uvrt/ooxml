@@ -9,8 +9,10 @@
 //!
 //! Must not: plan an undo itself (the store does), or say anything in a tool's words.
 
+use crate::retired::Made;
 use crate::{CallContext, DocId, Session, SessionError};
-use ooxml_store::{DocModel, Error, Store, StoreError};
+use ooxml_store::{DocModel, Error, HistoryOutcome, Store, StoreError};
+use ooxml_word_edit::WordDoc;
 
 /// What an undo or redo through the session did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,8 +58,22 @@ impl Session {
         let document = self.document(id)?;
         let caller = context.caller.name();
         let count = match &document.held {
-            crate::document::Held::Package(store) => run(store, steps, caller, direction)?,
-            crate::document::Held::Word(word) => run(word.editor.store(), steps, caller, direction)?,
+            crate::document::Held::Package(store) => run(store, steps, caller, direction, &mut |_| Ok(()))?,
+            crate::document::Held::Word(word) => {
+                // what each undo or redo removed and brought back, in the document's retired ids
+                let mut note = |done: &HistoryOutcome<WordDoc>| -> Result<(), SessionError> {
+                    let delta = ooxml_word_edit::ids_delta(done.previous.doc(), done.version.doc())?;
+                    let made = Made {
+                        seq: done.version.seq().0,
+                        caller,
+                        tool: None,
+                        history: true,
+                    };
+                    word.retired.note(&made, &delta);
+                    Ok(())
+                };
+                run(word.editor.store(), steps, caller, direction, &mut note)?
+            }
         };
         Ok(Undone {
             count,
@@ -72,6 +88,7 @@ fn run<D: DocModel>(
     steps: usize,
     caller: Option<&str>,
     direction: Direction,
+    note: &mut dyn FnMut(&HistoryOutcome<D>) -> Result<(), SessionError>,
 ) -> Result<usize, SessionError>
 where
     SessionError: From<Error<D>>,
@@ -79,10 +96,10 @@ where
     let mut done = 0;
     while done < steps {
         let outcome = match (direction, caller) {
-            (Direction::Undo, None) => store.undo().map(drop),
-            (Direction::Redo, None) => store.redo().map(drop),
+            (Direction::Undo, None) => store.undo(),
+            (Direction::Redo, None) => store.redo(),
             (Direction::Undo, Some(caller)) => match own_undo(store, caller) {
-                Ok(Some(())) => Ok(()),
+                Ok(Some(outcome)) => Ok(outcome),
                 Ok(None) => break,
                 Err(error) if done == 0 => return Err(error),
                 Err(_) => break,
@@ -92,11 +109,14 @@ where
                 if next.and_then(|step| step.caller).as_deref() != Some(caller) {
                     break;
                 }
-                store.redo().map(drop)
+                store.redo()
             }
         };
         match outcome {
-            Ok(()) => done += 1,
+            Ok(outcome) => {
+                note(&outcome)?;
+                done += 1;
+            }
             Err(StoreError::NothingToUndo | StoreError::NothingToRedo) => break,
             Err(error) if done == 0 => return Err(error.into()),
             Err(_) => break,
@@ -106,7 +126,7 @@ where
 }
 
 /// Undo `caller`'s latest step when it is the document's latest; `None` when it has none.
-fn own_undo<D: DocModel>(store: &Store<D>, caller: &str) -> Result<Option<()>, SessionError>
+fn own_undo<D: DocModel>(store: &Store<D>, caller: &str) -> Result<Option<HistoryOutcome<D>>, SessionError>
 where
     SessionError: From<Error<D>>,
 {
@@ -125,6 +145,5 @@ where
             later,
         });
     }
-    store.undo()?;
-    Ok(Some(()))
+    Ok(Some(store.undo()?))
 }
