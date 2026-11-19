@@ -13,9 +13,12 @@
 //!
 //! Cells written without a source ([`super::set_cells`]).
 //!
-//! Not ported yet, said in `unported` for the host to answer its own way: `sync`, `from`;
-//! a row holding a drawing or a control copied; a table with pending tracked structure or
-//! a placement record.
+//! `from` given to another action than `set_cells` refused (rule 2: the action that takes
+//! it).
+//!
+//! Not ported yet, said in `unported` for the host to answer its own way: `sync` and
+//! `set_cells` `from` (a source's rows or one value: the session's datasets and other
+//! documents' rows); a table with pending tracked structure or a placement record.
 //!
 //! Must not: change the document but through the command.
 
@@ -105,7 +108,9 @@ fn no_table(docx: &Docx, doc: &str, table: &str, retry: &TryCall) -> ToolError {
 }
 
 /// The arguments for another action refused, as docx-agent refuses them before it edits.
-fn check_arguments(args: &WordEditTable, retry: &TryCall) -> Result<(), ToolError> {
+/// Refuse what belongs to `sync` given to another action (docx-agent reads these before
+/// `from`).
+fn check_sync_fields(args: &WordEditTable, retry: &TryCall) -> Result<(), ToolError> {
     // a strict decoder's empty values ("", false, []) are no value (rule 1)
     for (name, given) in [
         ("key", args.key.as_deref().is_some_and(|k| !k.is_empty())),
@@ -122,6 +127,29 @@ fn check_arguments(args: &WordEditTable, retry: &TryCall) -> Result<(), ToolErro
             ));
         }
     }
+    Ok(())
+}
+
+/// A `from` given: refused for another action than `set_cells`; for `set_cells` (a source's
+/// rows, or one value by reference: the session's datasets and other documents' rows) the
+/// host's. `None` without one.
+fn from_source(args: &WordEditTable, retry: &TryCall) -> Result<Option<ToolResult<Value>>, ToolError> {
+    if !args.from.as_deref().is_some_and(|f| !f.is_empty()) {
+        return Ok(None);
+    }
+    if args.action != TableAction::SetCells {
+        return Err(invalid(
+            format!("{} takes no from; from is for set_cells", args.action.as_str()),
+            "from",
+            &["set_cells"],
+            retry,
+        ));
+    }
+    Ok(Some(unported("word_edit_table set_cells from (sources)", retry)))
+}
+
+/// Refuse what belongs to `from` given without it, and `grow` without a source.
+fn check_arguments(args: &WordEditTable, retry: &TryCall) -> Result<(), ToolError> {
     for (name, given) in [
         ("from_columns", args.from_columns.is_some()),
         ("header", args.header.is_some()),
@@ -160,9 +188,9 @@ fn run(args: &WordEditTable, editing: &Editing<'_>, retry: &TryCall) -> Result<T
     if args.action == TableAction::Sync {
         return Ok(unported("word_edit_table sync", retry));
     }
-    if args.from.as_deref().is_some_and(|f| !f.is_empty()) {
-        // docx-agent reads a `from` before it refuses it for another action
-        return Ok(unported("word_edit_table from (sources)", retry));
+    check_sync_fields(args, retry)?;
+    if let Some(left) = from_source(args, retry)? {
+        return Ok(left);
     }
     check_arguments(args, retry)?;
     if args.action == TableAction::SetCells {

@@ -14,7 +14,7 @@ use ooxml_derive::CacheBudget;
 use ooxml_opc::{name::normalize, OpcError, Package};
 use ooxml_store::{DocModel, KeySet};
 use ooxml_word_model::docx::Docx;
-use ooxml_word_model::ids::used_long_hex;
+use ooxml_word_model::ids::{drawing_numbers, used_long_hex};
 use ooxml_xml::{HeadPatch, Patch, PatchError, Tree};
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -235,7 +235,8 @@ impl WordDoc {
     pub fn open(package: Package, budget: Arc<dyn CacheBudget>) -> Result<WordDoc, EditError> {
         let docx = Arc::new(Docx::open(&package)?);
         let roots: Vec<&ooxml_xml::Element> = docx.parts.iter().map(|p| &**p.root()).collect();
-        let ids = Ids::opened(used_long_hex(&roots));
+        let highest = drawing_numbers(&roots).into_iter().max().unwrap_or(0);
+        let ids = Ids::opened(used_long_hex(&roots), highest);
         Ok(WordDoc {
             package,
             ids,
@@ -534,6 +535,9 @@ impl DocModel for WordDoc {
             Change::Ids(added) => {
                 for (seed, _) in &added.cursors {
                     into.insert(Key::Seq(Arc::from(seed.as_str())));
+                }
+                if added.highest_drawing > 0 {
+                    into.insert(Key::Seq(Arc::from(crate::pool::DRAWING_NUMBERS)));
                 }
             }
             Change::Number => {}

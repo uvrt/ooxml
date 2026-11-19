@@ -25,6 +25,7 @@ use crate::sink::EditSink;
 use crate::validate::Orders;
 use crate::work::{Id, Work};
 use crate::{EditError, Result};
+use ooxml_word_model::docx::tables::no_cell_text;
 use std::collections::HashMap;
 
 /// A grid position: (row, grid column).
@@ -78,9 +79,8 @@ pub(super) fn plan_split(
     Ok(Some(columns))
 }
 
-/// `t:X has no cell at (1, 2)`, then what the table has (docx-agent's `no_cell_message` over
-/// `Table.grid`): its rows and columns, each merged cell with the positions it covers, the
-/// positions no cell covers.
+/// `t:X has no cell at (1, 2)`, then what the table has ([`no_cell_text`] over the grid
+/// `Table.grid` gives).
 fn no_cell_message(work: &Work, rows: &[Id], id: &str, row: usize, column: usize) -> String {
     let mut grid: Vec<Vec<Option<Spot>>> = Vec::new();
     let mut origins: HashMap<usize, Spot> = HashMap::new();
@@ -103,51 +103,7 @@ fn no_cell_message(work: &Work, rows: &[Id], id: &str, row: usize, column: usize
         }
         grid.push(line);
     }
-    let columns = grid.iter().map(Vec::len).max().unwrap_or(0);
-    let mut spans: Vec<(Spot, Vec<Spot>)> = Vec::new();
-    let mut empty = Vec::new();
-    for (r, line) in grid.iter().enumerate() {
-        for c in 0..columns {
-            match line.get(c).copied().flatten() {
-                None => empty.push(format!("({r}, {c})")),
-                Some(origin) => match spans.iter_mut().find(|(o, _)| *o == origin) {
-                    Some((_, cells)) => cells.push((r, c)),
-                    None => spans.push((origin, vec![(r, c)])),
-                },
-            }
-        }
-    }
-    let merged: Vec<String> = spans
-        .iter()
-        .filter(|(_, cells)| cells.len() > 1)
-        .filter_map(|(o, cells)| cells.last().map(|l| format!("({}, {})-({}, {})", o.0, o.1, l.0, l.1)))
-        .collect();
-    let count = |n: usize| i64::try_from(n).unwrap_or(i64::MAX) - 1;
-    let mut text = format!(
-        "{id} has no cell at ({row}, {column}): it has {} row(s) (0 to {}) and {columns} column(s) (0 to {}), \
-         counted from 0",
-        grid.len(),
-        count(grid.len()),
-        count(columns)
-    );
-    let listed = |items: &[String]| {
-        let shown = items.iter().take(10).cloned().collect::<Vec<_>>().join(", ");
-        if items.len() > 10 {
-            format!("{shown} and {} more", items.len() - 10)
-        } else {
-            shown
-        }
-    };
-    if !merged.is_empty() {
-        text += &format!(
-            "; merged: {} (a merged cell's id is its first position's)",
-            listed(&merged)
-        );
-    }
-    if !empty.is_empty() {
-        text += &format!("; no cell at {}", listed(&empty));
-    }
-    text
+    no_cell_text(&grid, id, row, column)
 }
 
 /// A cell's span set to `span` grid columns and its width to `width` twips

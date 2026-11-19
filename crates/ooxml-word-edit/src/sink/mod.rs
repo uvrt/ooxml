@@ -154,6 +154,21 @@ impl<'t, 's> EditSink<'t, 's> {
         Ok(values)
     }
 
+    /// `count` new drawing numbers (`wp:docPr/@id`), past every one the document has and
+    /// had (read and written: two transactions drawing them are ordered by their commits).
+    ///
+    /// # Errors
+    /// When the change cannot be applied.
+    pub fn draw_drawings(&mut self, count: usize) -> Result<Vec<u64>> {
+        if count == 0 {
+            return Ok(Vec::new());
+        }
+        self.tx.read(Key::Seq(Arc::from(crate::pool::DRAWING_NUMBERS)));
+        let (values, change) = self.tx.doc().ids().draw_drawings(count);
+        self.write(Change::Ids(change))?;
+        Ok(values)
+    }
+
     /// Record renames (an old id and the id it names now).
     ///
     /// # Errors
