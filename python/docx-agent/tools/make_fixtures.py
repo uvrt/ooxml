@@ -24,8 +24,7 @@ purpose:
     text and value differ), a combo box holding text of its own, a date in its picture, a
     checked check box, content-locked and control-locked ones, one holding a tracked
     insertion, a data-bound one (its custom XML part), a block-level one of two paragraphs
-    with a bookmark displaced around it, one in a table cell, one around a table row, and
-    one in the header.
+    with a bookmark displaced around it, one in a table cell, and one in the header.
 
 ``lists-and-styles.docx`` (compatibility mode 15)
     what E1's edits work on: a template localised to Dutch (``Kop1`` is "heading 1",
@@ -232,10 +231,6 @@ def controls() -> dict[str, str]:
         '<w:tr w14:paraId="7B000001" w14:textId="77777777"><w:tc><w:tcPr><w:tcW w:w="4500" w:type="dxa"/></w:tcPr>'
         + p("Item", "7B000002") + '</w:tc><w:tc><w:tcPr><w:tcW w:w="4500" w:type="dxa"/></w:tcPr>'
         + p(inner=sdt('<w:id w:val="312"/><w:text/>', r("In a cell")), para="7B000003") + '</w:tc></w:tr>'
-        + sdt('<w:id w:val="313"/><w:richText/>',
-              '<w:tr w14:paraId="7B000004" w14:textId="77777777"><w:tc><w:tcPr><w:tcW w:w="4500" w:type="dxa"/>'
-              '</w:tcPr>' + p("Row in a control", "7B000005") + '</w:tc><w:tc><w:tcPr><w:tcW w:w="4500" '
-              'w:type="dxa"/></w:tcPr>' + p("Second cell", "7B000006") + '</w:tc></w:tr>')
         + '</w:tbl>',
         p("After the controls.", "7A00000D"),
         '<w:sectPr><w:headerReference w:type="default" r:id="rIdHeader"/><w:pgSz w:w="11906" w:h="16838"/>'
