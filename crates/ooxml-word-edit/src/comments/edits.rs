@@ -52,7 +52,7 @@ pub struct CommentEdited {
 }
 
 /// The comment `id`, or the refusal naming the document's.
-fn find<'c>(listed: &'c [Comment], id: &str) -> Result<&'c Comment> {
+pub(super) fn find<'c>(listed: &'c [Comment], id: &str) -> Result<&'c Comment> {
     listed.iter().find(|c| c.id == id).ok_or_else(|| {
         EditError::Address(AddressError::not_found(
             format!("no comment {}", repr_str(id)),
@@ -62,7 +62,7 @@ fn find<'c>(listed: &'c [Comment], id: &str) -> Result<&'c Comment> {
 }
 
 /// The first comment of `comment`'s thread.
-fn thread_root<'c>(listed: &'c [Comment], comment: &'c Comment) -> &'c Comment {
+pub(super) fn thread_root<'c>(listed: &'c [Comment], comment: &'c Comment) -> &'c Comment {
     let mut at = comment;
     let mut seen = BTreeSet::new();
     while let Some(parent) = at.parent.as_deref().and_then(|p| listed.iter().find(|c| c.id == p)) {
@@ -138,7 +138,7 @@ impl Command<WordDoc> for CommentEdits {
 }
 
 /// `w15:done` of `root`'s entry in `commentsExtended` set (`_set_done`); whether it changed.
-fn set_done(sink: &mut EditSink<'_, '_>, docx: &Docx, space: &mut Space, root: &Comment, done: bool) -> Result<bool> {
+pub(super) fn set_done(sink: &mut EditSink<'_, '_>, docx: &Docx, space: &mut Space, root: &Comment, done: bool) -> Result<bool> {
     let para = last_para_as_written(docx, root);
     if para.is_empty() {
         return Err(EditError::Refused(format!(
@@ -181,7 +181,7 @@ fn set_done(sink: &mut EditSink<'_, '_>, docx: &Docx, space: &mut Space, root: &
 }
 
 /// The `w14:paraId` of a comment's last paragraph as written (`_last_para_id`).
-fn last_para_as_written(docx: &Docx, comment: &Comment) -> String {
+pub(super) fn last_para_as_written(docx: &Docx, comment: &Comment) -> String {
     let Some(element) = docx
         .part(&comment.part)
         .and_then(|p| ooxml_word_model::docx::at_path(p.root(), &comment.path))
