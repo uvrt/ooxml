@@ -17,6 +17,22 @@ const R: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relations
 /// The kinds of header and footer, in docx-agent's order.
 pub const KINDS: [&str; 3] = ["default", "first", "even"];
 
+/// A section's text columns as it states them (docx-agent's `Section.columns`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Columns {
+    /// How many.
+    pub count: i64,
+    /// The space between them, points (36 where it states none; `None` for a bad value).
+    pub space: Option<f64>,
+    /// Whether a line is drawn between them.
+    pub separator: bool,
+    /// For unequal columns, each one's width and the space after it, points.
+    pub widths: Vec<(Option<f64>, f64)>,
+}
+
+/// The margins docx-agent reads, in its order.
+pub const MARGINS: [&str; 7] = ["top", "right", "bottom", "left", "header", "footer", "gutter"];
+
 /// A section.
 #[derive(Debug, Clone)]
 pub struct Section {
@@ -92,6 +108,63 @@ impl Section {
             Some(0) | None => 1,
             Some(n) => n,
         }
+    }
+
+    /// The width between the margins and gutter, twips, where it states a page size.
+    #[must_use]
+    pub fn text_width(&self) -> Option<i64> {
+        let size = self.properties.find(Some(W), "pgSz")?;
+        let width = int_of(Some(size), "w", Some(0)).unwrap_or(0);
+        let margins = self.properties.find(Some(W), "pgMar").map(|m| &**m);
+        let side = |local| int_of(margins, local, Some(0)).unwrap_or(0);
+        Some(width - side("left") - side("right") - side("gutter"))
+    }
+
+    /// Its text columns.
+    #[must_use]
+    pub fn column_layout(&self) -> Columns {
+        let node = self.properties.find(Some(W), "cols").map(|n| &**n);
+        let space = node
+            .and_then(|n| n.attribute(Some(W), "space"))
+            .filter(|s| !s.is_empty());
+        let separator = node
+            .and_then(|n| n.attribute(Some(W), "sep"))
+            .filter(|s| !s.is_empty())
+            .is_some_and(super::on);
+        let widths = node.map_or_else(Vec::new, |n| {
+            n.child_elements()
+                .filter(|c| c.name().is(Some(W), "col"))
+                .map(|c| {
+                    let width = points(c.attribute(Some(W), "w"));
+                    let after = points(c.attribute(Some(W), "space")).filter(|v| *v != 0.0);
+                    (width, after.unwrap_or(0.0))
+                })
+                .collect()
+        });
+        Columns {
+            count: self.columns(),
+            space: match space {
+                Some(s) => points(Some(s)),
+                None => Some(36.0),
+            },
+            separator,
+            widths,
+        }
+    }
+
+    /// `w:titlePg`: whether the first page shows the `first` header and footer.
+    #[must_use]
+    pub fn title_page(&self) -> bool {
+        self.properties.find(Some(W), "titlePg").is_some_and(|n| {
+            let value = n.attribute(Some(W), "val").filter(|v| !v.is_empty()).unwrap_or("true");
+            !matches!(value.to_lowercase().as_str(), "0" | "false" | "off")
+        })
+    }
+
+    /// Whether it states its own `which` (`header`, `footer`) of `kind`.
+    #[must_use]
+    pub fn owns(&self, which: &str, kind: &str) -> bool {
+        self.own_reference(which, kind).is_some()
     }
 
     fn own_reference(&self, which: &str, kind: &str) -> Option<&Arc<Element>> {

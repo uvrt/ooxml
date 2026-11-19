@@ -12,7 +12,7 @@ use super::cascade::{banded, Sources};
 use super::origin::{Holder, Level, Origin, Trace};
 use crate::model::Table;
 use crate::styles::{Style, StyleKind};
-use crate::value::{joined, key, Border, Props, Text, Value};
+use crate::value::{joined, key, Border, Key, Props, Text, Value};
 use std::sync::Arc;
 
 /// The cell margin Word uses on a left or right side nothing declares, twips (measured).
@@ -286,13 +286,18 @@ pub fn drawn(border: Option<&Border>) -> bool {
 /// The border drawn where two cells meet: the wider, else the left (upper) one's.
 pub fn edge_winner(first: (Option<&Border>, bool), second: (Option<&Border>, bool)) -> Edge {
     let ((a, _), (b, b_own)) = (first, second);
-    if !drawn(b) {
-        return (a.cloned(), false);
+    if second_wins(a, b) {
+        (b.cloned(), b_own)
+    } else {
+        (a.cloned(), false)
     }
-    if !drawn(a) || border_twips(b) > border_twips(a) {
-        return (b.cloned(), b_own);
-    }
-    (a.cloned(), false)
+}
+
+/// Whether, where two cells meet, the right (lower) one's border `b` is drawn rather than
+/// the left (upper) one's `a` ([`edge_winner`]).
+#[must_use]
+pub fn second_wins(a: Option<&Border>, b: Option<&Border>) -> bool {
+    drawn(b) && (!drawn(a) || border_twips(b) > border_twips(a))
 }
 
 fn border_of(props: &Props, name: &str) -> Option<Border> {
@@ -302,28 +307,42 @@ fn border_of(props: &Props, name: &str) -> Option<Border> {
     }
 }
 
-fn cell_borders(table: &Props, cell: &mut ResolvedCell, rows: usize, columns: i64) {
-    let edge = [
+/// Which sides of a cell are on the table's edge, in [`SIDES`] order.
+fn on_edges(cell: &ResolvedCell, rows: usize, columns: i64) -> [bool; 4] {
+    [
         cell.row == 0,
         cell.column == 0,
         cell.row + 1 == rows,
         cell.column + cell.span >= columns,
-    ];
-    for (k, side) in SIDES.iter().enumerate() {
-        let own = cell.properties.get(format!("tcBorders.{side}").as_str());
-        let on_edge = edge.get(k).copied().unwrap_or(false);
-        let inside = if matches!(*side, "top" | "bottom") {
-            "insideH"
-        } else {
-            "insideV"
-        };
-        let value = match own {
-            Some(_) => border_of(&cell.properties, &format!("tcBorders.{side}")),
-            None => border_of(table, &format!("tblBorders.{}", if on_edge { side } else { inside })),
-        };
+    ]
+}
+
+/// The key a cell's border side `k` ([`SIDES`]) was read from, in a table of `rows` rows
+/// on `columns` grid columns: the cell's own `tcBorders.<side>` where it has one (`true`),
+/// else the table's `tblBorders` line it takes -- its edge's, or the inside line.
+#[must_use]
+pub fn border_key(cell: &ResolvedCell, k: usize, rows: usize, columns: i64) -> (bool, Key) {
+    let side = SIDES.get(k).copied().unwrap_or("top");
+    let own = joined("tcBorders", side);
+    if cell.properties.contains_key(own.as_ref()) {
+        return (true, own);
+    }
+    let on_edge = on_edges(cell, rows, columns).get(k).copied().unwrap_or(false);
+    let inside = if matches!(side, "top" | "bottom") {
+        "insideH"
+    } else {
+        "insideV"
+    };
+    (false, joined("tblBorders", if on_edge { side } else { inside }))
+}
+
+fn cell_borders(table: &Props, cell: &mut ResolvedCell, rows: usize, columns: i64) {
+    for k in 0..SIDES.len() {
+        let (own, from) = border_key(cell, k, rows, columns);
+        let value = border_of(if own { &cell.properties } else { table }, &from);
         if let (Some(slot), Some(o)) = (cell.borders.get_mut(k), cell.own.get_mut(k)) {
             *slot = value;
-            *o = own.is_some();
+            *o = own;
         }
     }
 }

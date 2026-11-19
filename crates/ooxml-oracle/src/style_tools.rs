@@ -1,5 +1,5 @@
 //! The style tools' cases of `word-edits` (`op: "style"`): `word_lists`, `word_format`,
-//! `word_compare_blocks`, `word_follow_sample` (and the other style tools as they are ported) called with JSON arguments on a document as opened,
+//! `word_compare_blocks`, `word_follow_sample`, `word_design_facts` (and the other style tools as they are ported) called with JSON arguments on a document as opened,
 //! compared as the structure tools' cases are (`structure_tools::tool_case`), for
 //! `python/word_edits_diff.py --style` to compare with docx-agent's toolbox.
 //!
@@ -10,8 +10,9 @@ use ooxml_base::{Cancel, Limits};
 use ooxml_opc::Package;
 use ooxml_tools::ToolResult;
 use ooxml_tools_word::{
-    word_compare_blocks, word_follow_sample, word_format, word_lists, word_styles, word_template, Editing, Others,
-    Version, WordCompareBlocks, WordFollowSample, WordFormat, WordLists, WordStyles, WordTemplate,
+    word_compare_blocks, word_design_facts, word_follow_sample, word_format, word_lists, word_styles, word_template,
+    Editing, Others, Version, WordCompareBlocks, WordDesignFacts, WordFollowSample, WordFormat, WordLists, WordStyles,
+    WordTemplate,
 };
 use ooxml_word_model::docx::Versions;
 use serde_json::Value;
@@ -40,8 +41,28 @@ pub fn case(bytes: &Arc<[u8]>, case: &Value) -> Result<Value, String> {
         "word_follow_sample" => Some(run(arguments, |args: &WordFollowSample| {
             follow(bytes, case, editing, args)
         })),
+        "word_design_facts" => Some(run(arguments, |args: &WordDesignFacts| {
+            design(editing.opened.package(), args)
+        })),
         _ => None,
     })
+}
+
+/// `word_design_facts` on the document as opened.
+fn design(package: &Package, args: &WordDesignFacts) -> ToolResult<Value> {
+    let versions = Versions::new();
+    let version = Version {
+        name: "case.docx",
+        package,
+        number: 1,
+        versions: &versions,
+        placer: None,
+        others: Others::default(),
+    };
+    match word_design_facts(args, &version, &Never) {
+        Ok(done) => ToolResult::done(done),
+        Err(error) => ToolResult::failed(error),
+    }
 }
 
 /// `d2`, which a call may name: the document opened again (`reference_copy`) or the file
