@@ -70,13 +70,14 @@ fn unported(what: &str, retry: &TryCall) -> ToolResult<Value> {
     refused(EditError::Unsupported(what.to_owned()), retry.clone())
 }
 
-/// No table `table` in the document (docx-agent's `_no_table`): its tables are the options.
+/// No table `table` in the document (docx-agent's `_no_table`): its body's tables are the
+/// options.
 fn no_table(docx: &Docx, doc: &str, table: &str, retry: &TryCall) -> ToolError {
+    // docx-agent's `Document.tables()`: the body's
     let ids: Vec<String> = docx
-        .parts
-        .iter()
-        .flat_map(|p| p.ids.tables().iter().map(|t| t.id).collect::<Vec<_>>())
-        .collect();
+        .body()
+        .map(|b| b.ids.tables().iter().map(|t| t.id).collect())
+        .unwrap_or_default();
     let mut shown: Vec<String> = ids.iter().take(12).cloned().collect();
     if ids.len() > 12 {
         shown.push(format!("and {} more", ids.len() - 12));
