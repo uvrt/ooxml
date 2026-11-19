@@ -42,6 +42,16 @@ pub(crate) fn range(doc: &WordDoc, docx: &Docx, address: &str) -> Result<RangeTe
         let marked = bookmark(docx, address).map_err(EditError::Address)?;
         return bookmark_range(docx, &marked).map_err(EditError::Address);
     }
+    if (address.starts_with("cc:") || address.starts_with("cc@"))
+        && ooxml_word_model::docx::controls::controls(docx)
+            .iter()
+            .any(|c| c.id == address)
+    {
+        return Err(EditError::Address(AddressError::invalid(
+            format!("{address} is a contentcontrol, not text: {WANTED}"),
+            Vec::new(),
+        )));
+    }
     if let Some(cell) = cell_range(docx, address)? {
         return Ok(cell);
     }
