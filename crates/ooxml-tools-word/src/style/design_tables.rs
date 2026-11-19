@@ -112,7 +112,12 @@ pub(crate) fn element_at(root: &Arc<Element>, path: &[u32]) -> Option<Arc<Elemen
 
 /// The tables of one top-level table of `part` at `path` as the layout model reads them,
 /// each with its id where the part's index has it.
-fn model_tables(design: &Design<'_>, part: &StoryPart, path: &[u32]) -> Vec<(Arc<Table>, Option<String>)> {
+fn model_tables(
+    design: &Design<'_>,
+    part: &StoryPart,
+    indexed: &[(Box<[u32]>, String)],
+    path: &[u32],
+) -> Vec<(Arc<Table>, Option<String>)> {
     let Some(element) = element_at(part.root(), path) else {
         return Vec::new();
     };
@@ -120,12 +125,10 @@ fn model_tables(design: &Design<'_>, part: &StoryPart, path: &[u32]) -> Vec<(Arc
         Some(id) => design.shared().table_facts(&part.part, &id),
         None => Arc::new(TableFacts::read(design.formatting(), &element)),
     };
-    let ids: Vec<(String, String)> = part
-        .ids
-        .tables()
+    let ids: Vec<(String, String)> = indexed
         .iter()
-        .filter(|t| t.path.starts_with(path))
-        .filter_map(|t| Some((model_path(&element, t.path.get(path.len()..)?)?, t.id.clone())))
+        .filter(|(p, _)| p.starts_with(path))
+        .filter_map(|(p, id)| Some((model_path(&element, p.get(path.len()..)?)?, id.clone())))
         .collect();
     facts
         .tables()
@@ -149,8 +152,10 @@ pub(crate) fn table_styles(design: &Design<'_>, cancel: &dyn Cancel) -> Result<V
         cancel.check().map_err(crate::describe::cancelled)?;
         let mut found = Vec::new();
         block_tables(part.root(), &mut Vec::new(), &mut found);
+        // each indexed table's place and id, read once for the part
+        let indexed: Vec<(Box<[u32]>, String)> = part.ids.tables().iter().map(|t| (t.path, t.id)).collect();
         for path in found {
-            for (table, id) in model_tables(design, part, &path) {
+            for (table, id) in model_tables(design, part, &indexed, &path) {
                 let style = sources.table_style_of(&table);
                 let k = match groups.iter().position(|g| g.style == style) {
                     Some(k) => k,
