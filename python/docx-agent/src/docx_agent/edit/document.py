@@ -3230,15 +3230,17 @@ _STAMPED_IDS = (_ids.PARA_ID, _ids.TEXT_ID, _ids.ANCHOR_ID, _ids.EDIT_ID)
 
 def _box_content(content: Element) -> bytes:
     """A text box's content as compared before and after an edit: without the durable ids
-    stamping gives (paraId, textId, anchorId, editId) and the namespace declarations nothing
-    left uses, so stamping alone is no change -- whenever in the edit or batch it ran."""
+    stamping gives (paraId, textId, anchorId, editId), so stamping alone is no change --
+    whenever in the edit or batch it ran.  Written in exclusive canonical form, so where
+    the namespaces are declared is not content either: w14/wp14 declared once stamped, and
+    the declarations lxml moves onto a block moved with its box (a moved block is no change
+    to its box, P4b6)."""
     plain = copy.deepcopy(content)
     for node in plain.iter(tag=etree.Element):
         for name in _STAMPED_IDS:
             if name in node.attrib:
                 del node.attrib[name]
-    etree.cleanup_namespaces(plain)  # w14/wp14 declared once stamped: not content either
-    return etree.tostring(plain)
+    return etree.tostring(plain, method="c14n", exclusive=True)
 
 
 def _control_movable(entry: ControlBlock, doing: str) -> None:
