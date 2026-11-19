@@ -59,7 +59,7 @@ def aliases(tool: str, kind: str, own: Mapping[str, Any], *, prefix: str = "",
     for name in NAMES:
         if name in own or (name == "find" and find):
             continue
-        out[prefix + name] = _alias(tool, kind, name, prefix)
+        out[prefix + name] = alias(tool, kind, name, prefix)
     return out
 
 

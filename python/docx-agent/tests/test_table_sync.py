@@ -435,6 +435,7 @@ def test_a_sync_from_a_dataset_runs_on_a_draft():
     assert not _blocks.admits("word_edit_table", {"action": "delete_row", "table": "t:1A2B3C4D", "index": 1})
 
 
+@pytest.mark.usefixtures("python_owned")   # prepared on drafts
 def test_concurrent_syncs_equal_their_commit_order_run_alone():
     import block_stress
 
@@ -443,6 +444,7 @@ def test_concurrent_syncs_equal_their_commit_order_run_alone():
     assert found["drafted"] > 0
 
 
+@pytest.mark.usefixtures("python_owned")   # prepared on drafts
 def test_a_sync_on_a_draft_names_only_its_own_table(monkeypatch):
     """Round 51: finding the synced table again after the sync reads the tables before it on
     the way; on a draft those are not the call's -- a sync of an earlier table meanwhile is

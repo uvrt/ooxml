@@ -11,8 +11,8 @@ use ooxml_opc::Package;
 use ooxml_store::{Caller, Clock, StoreConfig};
 use ooxml_tools::{ToolArgs, ToolResult};
 use ooxml_tools_word::{
-    word_fields, word_links, word_notes, Editing, WordCopyFrom, WordFields, WordHeadersFooters, WordLinks, WordMove,
-    WordNotes, WordSections, KIND,
+    word_fields, word_links, word_notes, CallEditor, Editing, WordCopyFrom, WordFields, WordHeadersFooters, WordLinks,
+    WordMove, WordNotes, WordSections, KIND,
 };
 use ooxml_word_edit::{Editor, FieldLayout, FieldPlace, LaidFields, PageShows, Unknown};
 use ooxml_zip::{Method, NewEntry, Writer};
@@ -130,7 +130,7 @@ fn call<A: ToolArgs>(arguments: Value, tool: impl Fn(&A, &Editing<'_>) -> ToolRe
     let caller = Caller::anonymous();
     let reply = {
         let editing = Editing {
-            editor: &editor,
+            editor: &CallEditor::new(&editor),
             caller: &caller,
             opened: &opened,
             tracking: None,

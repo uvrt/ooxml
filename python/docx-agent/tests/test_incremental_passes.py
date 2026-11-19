@@ -22,7 +22,8 @@ from docx_agent.tools import FORMAT, GROUPS  # noqa: E402
 
 from test_rust_check import CLOCK, INCLUDE, TOOLS, WORDS, _first_difference, _ids, _normal, report  # noqa: E402,F401,F811
 
-pytestmark = pytest.mark.any_faces
+# Calls prepared on drafts: documents the tool layer holds itself (conftest.python_owned).
+pytestmark = [pytest.mark.any_faces, pytest.mark.usefixtures("python_owned")]
 
 
 def _sequence(session, doc):

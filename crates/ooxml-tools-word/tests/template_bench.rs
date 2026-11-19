@@ -11,7 +11,7 @@ use ooxml_fonts::{Folder, Location, WordFontOptions};
 use ooxml_opc::Package;
 use ooxml_store::{Caller, Clock, StoreConfig};
 use ooxml_tools::ToolArgs;
-use ooxml_tools_word::{word_template, Editing, EnginePages, WordTemplate};
+use ooxml_tools_word::{word_template, CallEditor, Editing, EnginePages, WordTemplate};
 use ooxml_word_edit::Editor;
 use ooxml_word_pages::{DiskFonts, EngineBudgets, EngineOptions, FontSetup, PageEngine};
 use serde_json::{json, Value};
@@ -106,7 +106,7 @@ fn convert_on_a_long_document() {
         );
         let caller = Caller::anonymous();
         let editing = Editing {
-            editor: &editor,
+            editor: &CallEditor::new(&editor),
             caller: &caller,
             opened: &opened,
             tracking: None,

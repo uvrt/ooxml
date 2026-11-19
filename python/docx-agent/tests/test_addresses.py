@@ -257,12 +257,16 @@ def test_the_library_reads_the_same_forms():
 
 
 def test_a_newline_split_writes_each_line_as_a_paragraph_in_the_targets_properties(box, session):
-    doc, document, ids = opened(session, made())
-    document.format_paragraph(ids["Bravo"], alignment="center", space_after=3)
-    document.paragraph(ids["Bravo"]).format(bold=True)
-    style = document.paragraph(ids["Bravo"]).style
+    # (The formatting made before the document is opened: the session holds what it opens.)
+    source = Document.open(made())
+    ids = _ids(source)
+    source.format_paragraph(ids["Bravo"], alignment="center", space_after=3)
+    source.paragraph(ids["Bravo"]).format(bold=True)
+    style = source.paragraph(ids["Bravo"]).style
+    doc = session.open(source.to_bytes(), "addresses.docx")
     result = ok(box, session, "word_set_text", doc=doc, target=ids["Bravo"],
                 text="First line.\nSecond\vwith a break.\n\nFourth.")
+    document = session.entry(doc).document
     texts = [p.text for p in document.paragraphs()]
     at = texts.index("First line.")
     assert texts[at:at + 4] == ["First line.", "Second\vwith a break.", "", "Fourth."]
@@ -276,7 +280,7 @@ def test_a_newline_split_writes_each_line_as_a_paragraph_in_the_targets_properti
     again = ok(box, session, "word_set_text", doc=doc, target=ids["Bravo"],
                text="First line.\nSecond\vwith a break.\n\nFourth.")
     assert again.created == [] and again.changed == []
-    assert [p.text for p in document.paragraphs()] == texts
+    assert [p.text for p in session.entry(doc).document.paragraphs()] == texts
 
 
 def test_without_a_newline_a_cell_target_rewrites_its_first_paragraph_as_before(box, session):
@@ -284,6 +288,7 @@ def test_without_a_newline_a_cell_target_rewrites_its_first_paragraph_as_before(
     table = document.tables()[0]
     ok(box, session, "word_set_text", doc=doc, target=f"{table.id}/c1,1", text="R1\nR2")
     ok(box, session, "word_set_text", doc=doc, target=f"{table.id}/c1,1", text="Only\vbroken")
+    table = session.entry(doc).document.tables()[0]
     assert [p.text for p in table.cell(1, 1).paragraphs] == ["Only\vbroken", "R2"]
 
 
@@ -306,9 +311,11 @@ def test_a_newline_split_is_tracked_and_undone_as_one_call(box, session):
     texts = [p.text for p in document.paragraphs()]
     ok(box, session, "word_set_tracking", doc=doc, on=True, author="Reviewer")
     ok(box, session, "word_set_text", doc=doc, target=ids["Charlie"], text="Charlie words here.\nAdded.")
+    document = session.entry(doc).document
     assert "insertion" in {r.kind for r in document.revisions()}
     assert "Added." in [p.text for p in document.paragraphs()]
     ok(box, session, "undo", doc=doc)
+    document = session.entry(doc).document
     assert [p.text for p in document.paragraphs()] == texts and not document.revisions()
 
 

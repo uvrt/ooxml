@@ -3,18 +3,21 @@
 //! a grid column's width, a row's height and breaking, a cell's formatting), each written
 //! as its `Document` method writes it, in order, as one step -- with what they share: a
 //! table's shape on an editable copy ([`shape`]), its properties ([`props`]) and Word's
-//! records of them when tracked ([`tracker`]).
+//! records of them when tracked ([`tracker`]); and [`EditTable`], a table's rows and
+//! columns inserted, copied and deleted, its cells merged and split.
 //!
 //! Must not: write but through the sink, or decide what a tool's arguments mean (the tool
 //! does).
 
 mod columns;
 mod copy_row;
+mod merge;
 mod new_column;
 mod new_row;
 mod props;
 mod rows;
 mod shape;
+mod split;
 mod tracker;
 
 pub use props::{CellValues, Look, TableValues, TableWidth};

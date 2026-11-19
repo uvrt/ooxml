@@ -10,6 +10,7 @@
 //! state between calls (the tracking mode is the host's, given in and handed back), or
 //! write the document but through a command.
 
+mod call_editor;
 mod changes;
 mod comment_edits;
 mod comments;
@@ -17,6 +18,7 @@ mod listing;
 mod settle;
 mod tracking;
 
+pub use call_editor::{CallEditor, Made};
 pub use changes::{word_changes, ChangeAction, ChangeDetail, ChangeKind, WordChanges};
 pub use comment_edits::COMMENT_WRITES;
 pub use comments::{word_comments, CommentAction, CommentItem, WordComments};
@@ -25,12 +27,13 @@ pub use tracking::{word_set_tracking, Tracked, WordSetTracking};
 use ooxml_base::Cancel;
 use ooxml_store::Caller;
 use ooxml_tools::{Failure, Refusal, ToolError, TryCall, WayOut};
-use ooxml_word_edit::{EditError, Editor, FieldLayout, Tracking, WordDoc};
+use ooxml_word_edit::{EditError, FieldLayout, Tracking, WordDoc};
 
 /// What an editing tool is handed: the document's editor and what the host keeps of it.
 pub struct Editing<'a> {
-    /// The document's editor (its versions).
-    pub editor: &'a Editor,
+    /// The document's editor (its versions), for this call: the versions its edits make
+    /// are the call's ([`CallEditor::made`]).
+    pub editor: &'a CallEditor<'a>,
     /// Who calls.
     pub caller: &'a Caller,
     /// The document as it was opened (what a session's own edits are told from).

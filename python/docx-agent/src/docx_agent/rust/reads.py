@@ -140,6 +140,26 @@ class Mirror:
         self.parts = parts
         self.versions: OrderedDict[int, Any] = OrderedDict()
         self.lock = threading.Lock()
+        #: Lane P2c4: whether the session owns the document (:mod:`.owner`): its versions are
+        #: kept here by the tool layer's numbers as the session makes them, never handed over.
+        self.owned = False
+        #: The session's version the owned document's Python view is (:mod:`.view`), the
+        #: one it was opened as, and the view (a weak reference: the entry holds it).
+        self.view_head: Any = None
+        self.opened: Any = None
+        self.live: Any = None
+        #: The tracking mode the session edits the document under (:mod:`.edits`).
+        self.tracking: dict[str, Any] | None = None
+        #: The view's :func:`docx_agent.layout.laid_mark` when its last Python step was
+        #: committed (:meth:`docx_agent.rust.owner.RustOwner.bridge`).
+        self.laid: tuple | None = None
+
+    def keep(self, number: int, version: Any) -> None:
+        """Keep ``version`` (an ``ooxml_core.Version``) as the document's version ``number``."""
+        self.versions[number] = version
+        self.versions.move_to_end(number)
+        while len(self.versions) > KEPT:
+            self.versions.popitem(last=False)
 
     def version(self, copy: Any) -> Any:
         """The ``ooxml_core.Version`` of ``copy``'s version, handed over where it is new."""
@@ -149,6 +169,9 @@ class Mirror:
             if found is not None:
                 self.versions.move_to_end(number)
                 return found
+            if self.owned:
+                # Committed in the session as it was made (lane P2c3), and let go since.
+                raise _Fallback("version let go")
             now = _identities(copy.package)
             changed: dict[str, bytes | None] = {}
             for part, (identity, data) in now.items():
@@ -196,10 +219,19 @@ _MIRRORS_LOCK = threading.Lock()
 def _mirror(copy: Any) -> "Mirror | None":
     """The Rust session's copy of the document ``copy`` is a version of, opened from
     ``copy``'s bytes the first time; ``None`` where ``copy`` is not a read copy."""
-    finalizers.drain()
     live = copy.__dict__.get("_live")
+    if live is None:
+        return None
+    return mirror_of(live, copy)
+
+
+def mirror_of(live: Any, copy: Any = None) -> "Mirror | None":
+    """The Rust session's copy of the document ``live``, opened the first time from
+    ``copy``'s bytes (a read copy of it; ``live``'s own where none is given); ``None`` where
+    there is no session."""
+    finalizers.drain()
     session = _session()
-    if live is None or session is None:
+    if session is None:
         return None
     found = live.__dict__.get("_rust_reads")
     if found is not None and found.session is session:
@@ -208,11 +240,12 @@ def _mirror(copy: Any) -> "Mirror | None":
         found = live.__dict__.get("_rust_reads")
         if found is not None and found.session is session:
             return found
-        data = copy.to_bytes()
+        source = live if copy is None else copy
+        data = source.to_bytes()
         doc = session.open(data, kind="docx", name="document.docx")
-        parts = {part: identity for part, (identity, _) in _identities(copy.package).items()}
+        parts = {part: identity for part, (identity, _) in _identities(source.package).items()}
         made = Mirror(session, doc, parts)
-        made.versions[copy.history.version] = session.head(doc)
+        made.versions[source.history.version] = session.head(doc)
         # L4b: the finalizer only hands the close over (docx_agent.finalizers).
         weakref.finalize(live, finalizers.later, _close, session, doc)
         live.__dict__["_rust_reads"] = made
@@ -226,10 +259,37 @@ class _Fallback(Exception):
     """The call is answered by the Python path, for this reason."""
 
 
+def _named(call: Any) -> Any:
+    """The document whose ids an address of the call names: the call's; for one the session
+    owns (or a read of a version of it), its view where that is current at the call's
+    version, else none -- the session follows its renames and refuses a deleted id itself,
+    and a refusal is answered by the Python path."""
+    entry = call.entry
+    owned = _owned(entry)
+    if owned is None:
+        return call.document
+    if owned.view_current and owned.version == entry.version:
+        # (The view as held: reading it through the entry would open the step of a call
+        # changing it meanwhile, in this call's thread.)
+        return owned.held
+    return None
+
+
+def _owned(entry: Any) -> Any:
+    """The entry the session owns that ``entry`` is, or reads a committed version of."""
+    for found in (entry, getattr(entry, "live", None)):
+        if isinstance(getattr(found, "handle", None), Mirror):
+            return found
+    return None
+
+
 def _renamed_or_deleted(document: Any, *texts: Any) -> bool:
     """Whether an address names an id this session renamed (an alias) or deleted (the
     ledger): Python's answer follows the alias or says who deleted it."""
     from ..edit.document import _GONE_BLOCK
+
+    if document is None:
+        return False
 
     aliases = getattr(document, "_aliases", None) or {}
     for text in texts:
@@ -257,15 +317,31 @@ def _refs(call: Any, value: Any) -> Any:
     return value
 
 
+def _owned_version(call: Any) -> tuple["Mirror | None", Any]:
+    """Lane P2c4: the session's version a call on a document the session owns reads (the
+    entry's version now), found without the Python view; ``(None, None)`` otherwise."""
+    entry = call.entry
+    mirror = getattr(_owned(entry), "handle", None)
+    if not isinstance(mirror, Mirror):
+        return None, None
+    with mirror.lock:
+        found = mirror.versions.get(entry.version)
+    if found is None:
+        raise _Fallback("version let go")
+    return mirror, found
+
+
 def _call(call: Any, tool: str, arguments: dict[str, Any], *, placer: "Placer | None" = None) -> dict[str, Any]:
     """The Rust envelope of ``tool`` with ``arguments`` on the version ``call`` reads."""
-    copy = call.document
     if _session() is None:
         raise _Fallback("no session")
-    mirror = _mirror(copy)
+    mirror, version = _owned_version(call)
     if mirror is None:
-        raise _Fallback("not a committed version")
-    version = mirror.version(copy)
+        copy = call.document
+        mirror = _mirror(copy)
+        if mirror is None:
+            raise _Fallback("not a committed version")
+        version = mirror.version(copy)
     arguments = {"doc": mirror.doc, **{k: v for k, v in arguments.items() if v is not None}}
     reply, _images, app = mirror.session.call(tool, json.dumps(arguments), at=[version],
                                               placer=placer.place if placer is not None else None)
@@ -295,7 +371,7 @@ def serve(call: Any, tool: str, arguments: dict[str, Any],
             raise _Fallback(why_not)
         if call.limits.max_result_chars != _RESULT_CHARS or call.limits.max_list_items != _LIST_ITEMS:
             raise _Fallback("limits")
-        if _renamed_or_deleted(call.document, *addresses):
+        if _renamed_or_deleted(_named(call), *addresses):
             raise _Fallback("renamed or deleted id")
         envelope = _call(call, tool, arguments, placer=placer)
         result = (answer or _result)(envelope)

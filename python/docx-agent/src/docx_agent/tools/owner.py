@@ -187,7 +187,7 @@ def commit_relayout(entry: Any, engine: Any) -> None:
     if not ASKED_SECONDS or engine is None:
         return
     live = getattr(entry, "live", None) or entry
-    document = live.document
+    document = live.held        # (its layouts' keeper: a view not made current for it)
     _keeper(document)
     owner = document._layout_owner
     if not owner.take_arm(ASKED_SECONDS):

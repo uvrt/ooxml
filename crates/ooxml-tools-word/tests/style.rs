@@ -10,7 +10,8 @@ use ooxml_opc::Package;
 use ooxml_store::{Caller, Clock, StoreConfig};
 use ooxml_tools::{ToolArgs, ToolResult};
 use ooxml_tools_word::{
-    word_format, word_lists, word_styles, word_template, Editing, WordFormat, WordLists, WordStyles, WordTemplate, KIND,
+    word_format, word_lists, word_styles, word_template, CallEditor, Editing, WordFormat, WordLists, WordStyles,
+    WordTemplate, KIND,
 };
 use ooxml_word_edit::{Editor, FieldLayout, LaidFields, PageReflow};
 use ooxml_zip::{Method, NewEntry, Writer};
@@ -83,7 +84,7 @@ fn call<A: ToolArgs>(arguments: Value, tool: impl Fn(&A, &Editing<'_>) -> ToolRe
     let caller = Caller::anonymous();
     let reply = {
         let editing = Editing {
-            editor: &editor,
+            editor: &CallEditor::new(&editor),
             caller: &caller,
             opened: &opened,
             tracking: None,
@@ -355,7 +356,7 @@ fn template(editor: &Editor, layout: Option<&dyn FieldLayout>) -> ToolResult<Val
     let opened = editor.store().snapshot().doc().clone();
     let caller = Caller::anonymous();
     let editing = Editing {
-        editor,
+        editor: &CallEditor::new(editor),
         caller: &caller,
         opened: &opened,
         tracking: None,

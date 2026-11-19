@@ -248,6 +248,22 @@ class History:
         self._version = version
         self._last_version = last
 
+    def follow(self, version: int, last: int) -> None:
+        """The history of a view whose owner keeps the document's steps (an
+        :class:`~ooxml_edit.tools.owned.OwnedEntry`'s): its content is now the owner's state
+        ``version``, the highest number given ``last``, and it keeps no step of its own --
+        undo and redo are the owner's.  Outside a batch; a ``ValueError`` otherwise, or for
+        numbers as :meth:`continue_from` refuses them."""
+        if isinstance(version, bool) or isinstance(last, bool) or not isinstance(version, int) \
+                or not isinstance(last, int) or version < 0 or last < version:
+            raise ValueError(f"follow takes whole numbers 0 <= version <= last, not "
+                             f"version={version!r}, last={last!r}")
+        if self._batch_depth:
+            raise ValueError("follow is outside a batch: the batch's step is still to come")
+        self.clear()
+        self._version = version
+        self._last_version = last
+
     # -- watching --------------------------------------------------------------------------
 
     @contextmanager
@@ -341,6 +357,13 @@ class History:
     @property
     def in_batch(self) -> bool:
         return self._batch_depth > 0
+
+    @property
+    def batch_changed(self) -> bool:
+        """Whether the open batch changed the content so far (lane P2c5: a view whose owner
+        holds its versions is ahead of the owner then); ``False`` outside a batch."""
+        snapshot = self._batch_snapshot
+        return self._batch_depth > 0 and snapshot is not None and self._package.snapshot() != snapshot
 
     def kept_bytes(self) -> int:
         """What the history's states hold, in bytes (round 58): every distinct piece of the
