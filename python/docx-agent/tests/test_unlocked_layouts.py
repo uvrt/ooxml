@@ -246,6 +246,7 @@ def test_word_fields_update_writes_what_it_wrote_before(made):
 LONG = "Edited while the fields laid out, long enough to push the chapters a page on. " * 40
 
 
+@pytest.mark.usefixtures("python_owned")   # an edit's checks deferred to its read copy
 def test_an_edit_while_fields_lay_out_ahead_goes_first_and_the_update_sees_it(made, monkeypatch):
     with _toolbox(workers=0) as box:
         session = box.session()

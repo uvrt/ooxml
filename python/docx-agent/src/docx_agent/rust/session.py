@@ -45,6 +45,27 @@ def _runs_in_rust(call: Any, **arguments: Any) -> Result:
     raise ToolError("internal", "this tool runs in the Rust session: RustTools.dispatch")
 
 
+def aliases_of(tool: str, exported: Mapping[str, str]) -> dict[str, Any]:
+    """A Rust tool's exported ``aliases`` as :attr:`Tool.aliases` takes them: a name stays a
+    name; ``names:<param>`` (a list of names given for a parameter that takes none can only
+    mean ``param``) and ``place:<kind>`` (a place said in another placing tool's words) are
+    the functions today's Python tools have for them (``names_as``, :func:`.positions.alias`)."""
+    from ooxml_edit.tools.registry import names_as
+
+    from ..tools.positions import alias
+
+    out: dict[str, Any] = {}
+    for key, target in exported.items():
+        where, _, name = key.rpartition(".")
+        if target.startswith("names:"):
+            out[key] = names_as(name, target.removeprefix("names:"))
+        elif target.startswith("place:"):
+            out[key] = alias(tool, target.removeprefix("place:"), name, f"{where}." if where else "")
+        else:
+            out[key] = target
+    return out
+
+
 def tool_of(export: Mapping[str, Any], kind: str = KIND) -> Tool:
     """A :class:`Tool` from one of ``ooxml_core.tool_specs(kind)``'s exports: its
     definition only (the handler runs in Rust)."""
@@ -57,28 +78,12 @@ def tool_of(export: Mapping[str, Any], kind: str = KIND) -> Tool:
                 exactly_one=tuple(tuple(group) for group in export["exactly_one"]),
                 refs=tuple(export["refs"]), datasets=tuple(export["datasets"]),
                 sources=tuple(export["sources"]), facts=tuple(export["facts"]),
-                aliases=_aliases(export), defaults=export["defaults"],
+                aliases=aliases_of(export["name"], export["aliases"]), defaults=export["defaults"],
                 kind_fields={k: tuple(v) for k, v in export["kind_fields"].items()},
                 kind_neutral={k: tuple(v) for k, v in export["kind_neutral"].items()},
                 kind_values={k: {v: tuple(kinds) for v, kinds in values.items()}
                              for k, values in export["kind_values"].items()},
                 kind_descriptions=export["kind_descriptions"])
-
-
-def _aliases(export: Mapping[str, Any]) -> dict[str, Any]:
-    """The export's aliases as a :class:`Tool` takes them: a placing tool's names for a
-    place (``place:<kind>``, the intent rule Rust exports) read as :mod:`..tools.positions`
-    reads them."""
-    from ..tools import positions
-
-    out: dict[str, Any] = {}
-    for name, target in export["aliases"].items():
-        if isinstance(target, str) and target.startswith("place:"):
-            prefix, _, bare = name.rpartition(".")
-            out[name] = positions.alias(export["name"], target[len("place:"):], bare, prefix + "." if prefix else "")
-        else:
-            out[name] = target
-    return out
 
 
 @dataclass

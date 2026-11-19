@@ -20,7 +20,6 @@ use ooxml_base::Cancel;
 use ooxml_tools::pyre::PyRegex;
 use ooxml_tools::{ArgEnum, Done, Failure, IntOrStr, Refusal, ToolArgs, ToolError, TryCall, WayOut};
 use ooxml_word_model::address::scope_paragraphs;
-use ooxml_word_model::docx::text::{paragraph_text, View};
 use serde_json::{json, Map, Value};
 
 /// Which stories a search covers.
@@ -118,13 +117,19 @@ pub fn find_text(args: &FindText, version: &Version<'_>, cancel: &dyn Cancel) ->
     let mut rows = Vec::new();
     for (part, paragraphs) in scopes {
         cancel.check().map_err(cancelled)?;
+        let texts = part.texts();
         for k in paragraphs {
+            let Some(line) = texts.get(k) else {
+                continue;
+            };
+            if pattern.is_none() && !line.contains(args.text.as_str()) {
+                continue;
+            }
             let Some(entry) = part.ids.paragraphs().get(k) else {
                 continue;
             };
-            let line = paragraph_text(&entry.element, View::Current);
             let text: Vec<char> = line.chars().collect();
-            for (start, end) in found_in(&text, &line)? {
+            for (start, end) in found_in(&text, line)? {
                 let address = format!("{}@{start}:{end}", entry.id);
                 if !(every || story_ok(&address)) {
                     continue;

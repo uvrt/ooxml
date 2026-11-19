@@ -14,8 +14,10 @@ import pytest
 
 import block_stress
 
+# Calls prepared on drafts: documents the tool layer holds itself (conftest.python_owned).
 pytestmark = [
     pytest.mark.any_faces,
+    pytest.mark.usefixtures("python_owned"),
     pytest.mark.skipif(getattr(sys, "_is_gil_enabled", lambda: True)(),
                        reason="many writers side by side: only without the interpreter lock"),
 ]

@@ -1393,7 +1393,8 @@ class Blocks:
         return plan.renames
 
     def settle(self, document: Any, plan: Plan, *, touched: list[Any], before: bytes) -> None:
-        from .tools._base import Before, Engine, laid_before, seen_before
+        from .tools._base import Before, Engine
+        from .tools.laid import laid_before, seen_before
 
         document._note_ids()
         # The body's bytes at this version, as the patch was checked to make them: the next

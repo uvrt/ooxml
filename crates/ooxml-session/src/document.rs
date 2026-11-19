@@ -145,6 +145,11 @@ impl Document {
                 let budget = Arc::new(Budget(Arc::clone(&context.budget)));
                 let editor = Editor::open(package, config, clock, budget)?;
                 let opened = editor.store().snapshot();
+                // the paragraph texts every find reads, read once as the document opens:
+                // each later version reads only the paragraphs it changed
+                for part in &opened.doc().docx()?.parts {
+                    part.texts();
+                }
                 Held::Word(Box::new(Word {
                     editor,
                     opened,

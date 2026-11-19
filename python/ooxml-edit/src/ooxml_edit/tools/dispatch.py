@@ -125,6 +125,7 @@ from .session import _folded_use, _misspelt_ref
 from .sources import Rows, qualify, refusal, resolve as resolve_rows
 from .rendercache import ContentStore
 from .timing import CallClock
+from .served import Declined, serve_unlocked
 from .savegate import validation
 from .worker import (InProcess, SubprocessPool, ThreadRunner, WorkerPool, default_workers,
                      gil_enabled, refuse_while_bootstrapping, run_all, takes_affinity,
@@ -265,6 +266,9 @@ class Call:
         #: Whether this is a changing call's work ahead of its change (:attr:`Tool.aheads`,
         #: round 33): nothing is changed yet, so the locks may be let go.
         self.ahead = False
+        #: Lane P2c6: the document's owner was tried for this change without the lock and
+        #: left it to the format's handler (:class:`~.served.Declined`): not to be tried again.
+        self.owner_declined = False
 
     @property
     def in_batch(self) -> bool:
@@ -1509,10 +1513,17 @@ class Toolbox:
                 # Round 45 (lane B): a changing call the format admits, beside another
                 # edit of its document, runs on a draft (blocks.py); else as before.
                 others: list[str] = []
-                drafted = (None if reads_only else
+                # Lane P2c6: a change its document's owner serves runs beside the others it
+                # serves, without the document's lock (served.py).
+                served = (None if reads_only or reading else
+                          serve_unlocked(self, session, tool, clean, doc_ids, roles, caller, turn))
+                declined = isinstance(served, Declined)
+                outcome = None if served is None or isinstance(served, Declined) else served
+                drafted = (None if reads_only or outcome is not None else
                            self._block_entry(session, tool, clean, doc_ids, reading, roles,
                                              counted, editing, others))
-                outcome = None
+                if outcome is not None and holding is not None:
+                    holding.set()
                 if drafted is not None:
                     if holding is not None:
                         holding.set()
@@ -1552,6 +1563,8 @@ class Toolbox:
                             # start (keep_settled): a toolbox's document changes between calls
                             # only through the history, or marked dirty.
                             for entry in locked:
+                                if entry.owned:
+                                    continue    # (lane P2c4: its versions are the owner's)
                                 scope = getattr(getattr(entry.document, "package", None), "serializing", None)
                                 if scope is not None and entry.pinned is None:
                                     serializing.enter_context(scope(keep_settled=True))
@@ -1562,7 +1575,7 @@ class Toolbox:
                         try:
                             result = self._run(session, tool, clean, entries, primary, reading,
                                                roles=roles, caller=caller, turn=turn, after=after,
-                                               served=bool(pinned))
+                                               served=bool(pinned), declined=declined)
                             if primary is not None and result.version is None:
                                 # The version the call left, under its lock (round 45: its
                                 # checks run after the lock is let go, when another call may
@@ -1748,7 +1761,8 @@ class Toolbox:
         entry, _running = found
         fmt = session.formats.get(entry.kind)
         hook = getattr(fmt, "blocks", None)
-        if hook is None or getattr(fmt, "read_copy", None) is None or entry.pinned is not None:
+        if hook is None or getattr(fmt, "read_copy", None) is None or entry.pinned is not None \
+                or entry.owned:
             return None
         try:
             admitted = self._admitted(hook, tool, clean, entry.kind, entry.doc_id, roles,
@@ -2322,7 +2336,7 @@ class Toolbox:
              failed_refs: Mapping[str, int] | None = None,
              holding: Mapping[str, DocumentEntry] | None = None,
              after: "After | None" = None, drafting: "_Drafting | None" = None,
-             served: bool = False) -> Result:
+             served: bool = False, declined: bool = False) -> Result:
         """One call, its documents' locks held (``entries``; ``reading``: those it only
         takes rows from).  ``failed_refs``: for a batch's read after its last change, the
         refs its failed ops would have made (:meth:`CallContext.missing_ref`).
@@ -2377,6 +2391,7 @@ class Toolbox:
             read: list[str] = []
             arguments = self._with_refs(tool, arguments, entries, primary, context, read)
             call = Call(self, session, tool, arguments, entries, primary, context)
+            call.owner_declined = declined
             if changing:
                 call._own_refs_first(arguments)
             call.result.warnings += ignored + early + read
@@ -2441,6 +2456,7 @@ class Toolbox:
                         result.checks = {**self._checks(session, entry, context), **own}
 
                     if after is None or not after.defer(session, primary, checked):
+                        _committed_for_checks(session, after, [primary])
                         checked(primary)
             if not result.ok:
                 result.datasets = []
@@ -2770,6 +2786,7 @@ class Toolbox:
         every = sorted([*docs, *read], key=doc_order)
         found: dict[str, dict[str, Any]] = dict(read)
         if after is None or not all(after.can_defer(session, entries[doc]) for doc in docs):
+            _committed_for_checks(session, after, [entries[doc] for doc in docs])
             found.update({doc: self._checks(session, entries[doc], context) for doc in docs})
             _set_checks(combined, {doc: found[doc] for doc in every})
             return
@@ -3426,7 +3443,7 @@ class Toolbox:
             found = part_entries(change)
         else:
             try:
-                found = list(fmt.touched(entry.document, change))
+                found = entry.touched_of(change, fmt)
             except Exception:  # noqa: BLE001 -- the parts still say what changed
                 logger.exception("the %s format's touched failed; reporting parts", entry.kind)
                 found = part_entries(change)
@@ -3892,6 +3909,16 @@ def _not_run(timeout: float, first: int, total: int, elapsed: float
     return text, data
 
 
+
+def _committed_for_checks(session: Session, after: "After | None", entries: Iterable[DocumentEntry]) -> None:
+    """Lane P2c5: where a changing call's checks run under its lock (an owned document's,
+    :meth:`After.can_defer`), its version committed first, as a deferred check's is (the
+    relayout on commit lays that version out); none outside a call that commits (no ``after``)."""
+    if after is None:
+        return
+    for entry in entries:
+        entry.commit(session.formats.get(entry.kind))
+
 class After:
     """A changing call's work after its change -- its checks -- run once its locks are let
     go (round 45, R64 stage 2): on the version it made, through that version's read copy
@@ -3909,8 +3936,9 @@ class After:
     @staticmethod
     def can_defer(session: Session, entry: DocumentEntry) -> bool:
         fmt = session.formats.get(entry.kind)
-        return (entry.pinned is None and fmt is not None and fmt.checks is not None
-                and getattr(fmt, "read_copy", None) is not None)
+        # (Lane P2c4: an owned document's checks read its owner, under the lock: no copy.)
+        return (entry.pinned is None and not entry.owned and fmt is not None
+                and fmt.checks is not None and getattr(fmt, "read_copy", None) is not None)
 
     def defer(self, session: Session, entry: DocumentEntry,
               work: Callable[[DocumentEntry], None]) -> bool:

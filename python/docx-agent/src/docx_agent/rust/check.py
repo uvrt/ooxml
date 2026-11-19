@@ -475,6 +475,19 @@ def committed(live: Any) -> None:
     del doc.commits[:-64]
 
 
+def owner_committed(live: Any, number: int) -> None:
+    """Lane P2c5: the version ``number`` of a document the Rust session owns
+    (:mod:`.owner`) was committed: followed from the view where the view is that version (a
+    Python step made it), as :func:`committed` follows one; else (the session made it, the
+    view not read) the mirror is made again at the next check, from that version's copy."""
+    if live.history.version == number and not live.history.in_batch:
+        committed(live)
+        return
+    doc = live.__dict__.get("_rust_doc")
+    if doc is not None and doc.stale is None:
+        doc.stale = "a version the session made"
+
+
 def sync_state(live: Any, doc: RustDoc) -> int | None:
     """0.1.117: the live document's state now -- within an edit, a fields update between
     its passes (:mod:`.fields`) -- handed to its owner where it changed since the state the

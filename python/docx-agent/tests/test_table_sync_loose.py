@@ -184,6 +184,7 @@ def test_values_keep_their_source_on_loosely_matched_rows(toolbox):
     assert record["source"] == "d:next" and record["columns"][0]["rows"] == "7,6,5,4,3,2,1"
 
 
+@pytest.mark.usefixtures("python_owned")   # prepared on drafts
 def test_a_loose_sync_runs_on_a_draft():
     args = {"action": "sync", "table": "t:1A2B3C4D", "from": "d:next", "loose": "data",
             "match": [{"table": "K7-1", "data": "k7.01"}]}

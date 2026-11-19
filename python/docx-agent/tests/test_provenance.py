@@ -135,7 +135,7 @@ def test_undo_takes_the_item_away_with_the_table(toolbox, session):
     assert session.provenance("d1") == {}
     assert items(document(session).to_bytes()) == {}
     assert parts(document(session).to_bytes()) == parts(before)
-    document(session).redo()
+    ok(call(toolbox, session, "undo", doc="d1", redo=True))
     assert list(session.provenance("d1")) == [table]
 
 
