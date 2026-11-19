@@ -1,10 +1,10 @@
 """A long made-up report from a short one: make_report.py's chapters repeated, renumbered and
-cut to CHAPTERS, then opened and saved through docx-agent's tools (which stamp the copies'
-paragraph ids); its fields as the base left them (the contents list the base's chapters:
-UPDATE=1 in the environment updates them, which in Python at 3,000 pages takes over half an
-hour).  The 3k-page benches' document (gates.yml): ``make_report.py base.docx 6`` then
+cut to CHAPTERS, then opened through docx-agent's tools, its title edited (which stamps every
+paragraph's id) and saved; its fields as the base left them (the contents list the base's
+chapters: UPDATE=1 in the environment updates them, which in Python at 3,000 pages takes over
+half an hour).  The 3k-page benches' document (gates.yml): ``make_report.py base.docx 6`` then
 ``grow_report.py base.docx out.docx 61`` -- chapter 1's "Items in full" comes back in chapters
-7, 13, ... 61, about 3,000 pages.
+7, 13, ... 61; about 3,000 pages, 1,292 tables, 67,000 paragraphs.
 
     python grow_report.py base.docx out.docx CHAPTERS
 """
@@ -73,6 +73,12 @@ def saved(data: bytes, update: bool) -> bytes:
                  limits=Limits(render_timeout=3600, layout_timeout=3600, batch_timeout=3600)) as box:
         session = box.session(clock=CLOCK)
         doc = session.open(data, "report.docx")
+        # One edit (the title) stamps every paragraph's id, as a long report's own edits did.
+        title = session.entry(doc).document.paragraphs()[0]
+        out = box.dispatch(session, "word_set_text", {"doc": doc, "target": title.id,
+                                                      "text": f"{title.text} (long edition)"}).to_json()
+        if not out.get("ok", True):
+            raise SystemExit(json.dumps(out, indent=1)[:3000])
         if update:
             out = box.dispatch(session, "word_fields", {"doc": doc, "action": "update"}).to_json()
             if not out.get("ok", True):
