@@ -13,8 +13,7 @@ use crate::describe::short;
 use ooxml_base::pyfmt::repr_str;
 use ooxml_tools::{Outcome, ToolResult};
 use ooxml_word_edit::WordDoc;
-use ooxml_word_model::docx::changes::change_groups;
-use ooxml_word_model::docx::revisions::records;
+use ooxml_word_model::docx::changes::changes_holding;
 use ooxml_word_model::docx::{at_path, find_path, Docx, StoryPart};
 use ooxml_word_model::ids::{Entry, TableId, W};
 use ooxml_xml::{Element, Node};
@@ -235,20 +234,9 @@ fn changes_of(docx: &Docx, originals: &mut Originals<'_>, held: &[(String, Vec<u
             }
         }
     }
-    if wanted.is_empty() {
-        return Vec::new();
-    }
-    let ids: HashSet<String> = records(docx)
-        .into_iter()
-        .filter(|r| wanted.contains(&(r.part.clone(), r.path.to_vec())))
-        .map(|r| r.id)
-        .collect();
+    let wanted: Vec<(String, Vec<u32>)> = wanted.into_iter().collect();
     // a listed change's id is its first record's
-    change_groups(docx)
-        .into_iter()
-        .filter(|g| g.iter().any(|r| ids.contains(r)))
-        .filter_map(|g| g.into_iter().next())
-        .collect()
+    changes_holding(docx, &wanted)
 }
 
 fn trpr_index(row: &Element) -> Option<u32> {
