@@ -54,6 +54,9 @@ pub struct Editing<'a> {
     pub layout: Option<&'a dyn FieldLayout>,
     /// The other open documents the call names, each at the version pinned for the call.
     pub others: crate::Others<'a>,
+    /// The session's blobs, where the host hands them over (`word_drawings`' pictures);
+    /// `None`: a call that reads one is left to the host.
+    pub blobs: Option<&'a dyn crate::Blobs>,
 }
 
 /// An edit's refusal as the tool's: an address refused with its way out, a refusal with

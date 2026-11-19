@@ -128,6 +128,7 @@ fn edits_on(package: Package, calls: &[Value]) -> (Value, String) {
         date: "2026-11-17T10:00:00Z",
         layout: None,
         others: ooxml_tools_word::Others::default(),
+        blobs: None,
     };
     let mut reply = Value::Null;
     for arguments in calls {

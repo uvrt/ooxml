@@ -104,6 +104,7 @@ fn follow(mut arguments: Value) -> Value {
         date: "2026-11-17T10:00:00Z",
         layout: None,
         others: Others::new(&others),
+        blobs: None,
     };
     let (args, _) = WordFollowSample::accept(arguments, Some("docx")).unwrap();
     let reply = Value::Object(word_follow_sample(&args, &editing).to_json());
@@ -171,6 +172,7 @@ fn follow_on_a_long_document() {
                 date: "2026-11-17T10:00:00Z",
                 layout: None,
                 others: Others::default(),
+                blobs: None,
             };
             let arguments = json!({"doc": "d1", "sample": {"block": sample}, "copies": copies});
             let (args, _) = WordFollowSample::accept(arguments, Some("docx")).unwrap();

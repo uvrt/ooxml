@@ -136,6 +136,7 @@ fn best<A: ToolArgs>(
             date: "2026-11-17T10:00:00Z",
             layout: Some(layout),
             others: ooxml_tools_word::Others::default(),
+            blobs: None,
         };
         // The document's field scans as a session keeps them between calls (not counted).
         let (list, _) = WordFields::accept(json!({"doc": "d1", "action": "list"}), Some("docx")).unwrap();
@@ -267,6 +268,7 @@ fn page_field(bytes: &Arc<[u8]>, layout: &Timed) -> String {
         date: "2026-11-17T10:00:00Z",
         layout: Some(layout),
         others: ooxml_tools_word::Others::default(),
+        blobs: None,
     };
     let (args, _) = <WordFields as ToolArgs>::accept(json!({"doc": "d1", "action": "list"}), Some("docx")).unwrap();
     let listed = Value::Object(word_fields(&args, &editing).to_json());

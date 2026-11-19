@@ -111,7 +111,10 @@ pub use controls::{ControlEdited, ControlKind, FillControl, Filling, InsertContr
 pub use delete::{BlockDeleted, DeleteBlock};
 pub use delete_blocks::{blocks_named, BlocksDeleted, DeleteBlocks};
 pub use doc::{Change, Draw, DrawFrom, Key, ModelError, Shared, WordDoc};
-pub use drawings::{DrawingEdited, DrawingValues, FloatDrawing, InlineDrawing, InsertShape, SetDrawing, ZOrder};
+pub use drawings::{
+    image_format, picture_size, written_size, DrawingEdited, DrawingValues, FloatDrawing, InlineDrawing, InsertPicture,
+    InsertShape, SetDrawing, ZOrder,
+};
 pub use editor::{EditTiming, Edited, Editor};
 pub use error::{EditError, Result};
 pub use fields::{

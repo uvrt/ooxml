@@ -148,6 +148,7 @@ fn call_tracking<A: ToolArgs>(
             date: "2026-11-17T10:00:00Z",
             layout: Some(&TwoPages),
             others: ooxml_tools_word::Others::default(),
+            blobs: None,
         };
         let (args, _) = A::accept(arguments, Some("docx")).unwrap();
         Value::Object(tool(&args, &editing).to_json())

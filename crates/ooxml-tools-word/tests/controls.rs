@@ -66,6 +66,7 @@ fn calls(calls: &[Value], author: Option<&str>) -> (Vec<Value>, String) {
         date: "2026-11-17T10:00:00Z",
         layout: None,
         others: ooxml_tools_word::Others::default(),
+        blobs: None,
     };
     let mut replies = Vec::new();
     for arguments in calls {

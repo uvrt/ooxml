@@ -108,6 +108,56 @@ file = "generated/lists-and-styles.docx"
 input = { tool = "word_drawings", arguments = { action = "float" } }
 cause = """P4c10: as the constructs.docx float entry above: docx-agent's ns0 prefix on the new wp:anchor."""
 
+# P4c11: word_drawings insert_picture floated (wrap given) in the same two fixtures: the
+# float's new wp:anchor, as the float entries above.
+[[difference]]
+mode = "objects"
+file = "generated/markdown/constructs.docx"
+input = { tool = "word_drawings", arguments = { action = "insert_picture", wrap = "square" } }
+cause = """P4c11: as the constructs.docx float entry above: the picture floated by docx-agent's float_drawing gets the ns0 prefix."""
+
+[[difference]]
+mode = "objects"
+file = "generated/markdown/constructs.docx"
+input = { tool = "word_drawings", arguments = { action = "insert_picture", wrap = "behind" } }
+cause = """P4c11: as the constructs.docx float entry above: the picture floated by docx-agent's float_drawing gets the ns0 prefix."""
+
+[[difference]]
+mode = "objects"
+file = "generated/markdown/constructs.docx"
+input = { tool = "word_drawings", arguments = { action = "insert_picture", wrap = "tight" } }
+cause = """P4c11: as the constructs.docx float entry above: the picture floated by docx-agent's float_drawing gets the ns0 prefix."""
+
+[[difference]]
+mode = "objects"
+file = "generated/markdown/constructs.docx"
+input = { tool = "word_drawings", arguments = { action = "insert_picture", wrap = "front" } }
+cause = """P4c11: as the constructs.docx float entry above: the picture floated by docx-agent's float_drawing gets the ns0 prefix."""
+
+[[difference]]
+mode = "objects"
+file = "generated/lists-and-styles.docx"
+input = { tool = "word_drawings", arguments = { action = "insert_picture", wrap = "square" } }
+cause = """P4c11: as the constructs.docx float entry above: the picture floated by docx-agent's float_drawing gets the ns0 prefix."""
+
+[[difference]]
+mode = "objects"
+file = "generated/lists-and-styles.docx"
+input = { tool = "word_drawings", arguments = { action = "insert_picture", wrap = "behind" } }
+cause = """P4c11: as the constructs.docx float entry above: the picture floated by docx-agent's float_drawing gets the ns0 prefix."""
+
+[[difference]]
+mode = "objects"
+file = "generated/lists-and-styles.docx"
+input = { tool = "word_drawings", arguments = { action = "insert_picture", wrap = "tight" } }
+cause = """P4c11: as the constructs.docx float entry above: the picture floated by docx-agent's float_drawing gets the ns0 prefix."""
+
+[[difference]]
+mode = "objects"
+file = "generated/lists-and-styles.docx"
+input = { tool = "word_drawings", arguments = { action = "insert_picture", wrap = "front" } }
+cause = """P4c11: as the constructs.docx float entry above: the picture floated by docx-agent's float_drawing gets the ns0 prefix."""
+
 # P4c10: a set that leaves the frame as it was (square wrapping on a frame wrapped square,
 # one step back or forward with no drawing there) in a fixture lxml did not write.
 [[difference]]
