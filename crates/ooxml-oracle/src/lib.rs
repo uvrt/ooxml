@@ -41,6 +41,7 @@ pub mod layout_tables;
 pub mod layout_updates;
 pub mod markdown;
 pub mod metafile;
+pub mod object_bench;
 pub mod object_tools;
 pub mod painter;
 pub mod pixels;

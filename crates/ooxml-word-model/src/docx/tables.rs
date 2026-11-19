@@ -115,6 +115,13 @@ impl<'a> TableGrid<'a> {
     /// `accepted_columns`).
     #[must_use]
     pub fn accepted_columns(&self) -> usize {
+        self.kept_columns().len()
+    }
+
+    /// The grid columns accepting the tracked changes keeps, in order (docx-agent's
+    /// `accepted_columns`' first value).
+    #[must_use]
+    pub fn kept_columns(&self) -> Vec<usize> {
         let count = self.column_count();
         let mut covered: HashMap<usize, bool> = HashMap::new();
         for row in &self.rows {
@@ -153,7 +160,9 @@ impl<'a> TableGrid<'a> {
                 }
             }
         }
-        (0..count).filter(|c| !covered.get(c).copied().unwrap_or(false)).count()
+        (0..count)
+            .filter(|c| !covered.get(c).copied().unwrap_or(false))
+            .collect()
     }
 
     /// How many rows accepting the tracked changes keeps: every row not deleted as one.
