@@ -51,16 +51,16 @@ def _items(session):
 # -- two agents, one session --------------------------------------------------------------------
 
 
-def test_a_reviewer_and_a_builder_share_one_session_with_their_own_roles(toolbox, shared):
+def test_a_reviewer_and_a_writer_share_one_session_with_their_own_roles(toolbox, shared):
     reviewer = shared.view(roles=["review"], context={"agent": "reviewer-1"})
-    builder = shared.view(roles=["review", "edit"], context={"agent": "builder-1"})
+    writer = shared.view(roles=["review", "edit"], context={"agent": "writer-1"})
     assert isinstance(reviewer, SessionView) and reviewer.session is shared
-    assert reviewer.roles == ("review",) and builder.roles == ("review", "edit")
+    assert reviewer.roles == ("review",) and writer.roles == ("review", "edit")
     # The same documents, history and outputs: nothing is copied.
-    assert reviewer.documents is shared.documents is builder.documents
-    assert reviewer.entry("d1") is builder.entry("d1")
+    assert reviewer.documents is shared.documents is writer.documents
+    assert reviewer.entry("d1") is writer.entry("d1")
 
-    added = toolbox.dispatch(builder, "t_add", {"doc": "d1", "items": [{"text": "new",
+    added = toolbox.dispatch(writer, "t_add", {"doc": "d1", "items": [{"text": "new",
                                                                          "ref": "fresh"}]})
     assert added.ok
     refused = toolbox.dispatch(reviewer, "t_set", {"doc": "d1", "target": "$fresh",
@@ -69,7 +69,7 @@ def test_a_reviewer_and_a_builder_share_one_session_with_their_own_roles(toolbox
         "role": "edit", "roles": ["review"]}
     assert refused.error.message.startswith("t_set needs the edit role; this session has "
                                             "review.")
-    # The reviewer reads what the builder made, at the version it made.
+    # The reviewer reads what the writer made, at the version it made.
     read = toolbox.dispatch(reviewer, "t_read", {"doc": "d1"})
     assert read.ok and read.data[-1] == "new" and read.version == added.version
     assert toolbox.dispatch(reviewer, "t_comments", {"doc": "d1", "action": "add",
@@ -98,9 +98,9 @@ def test_a_view_s_batch_holds_every_op_to_the_view_s_roles(toolbox, shared):
         ("t_set", {"doc": "d1", "target": "item:1", "text": "x"}))})
     assert atomic.error.code == "refused" and atomic.error.field == "ops[1].tool"
     assert _items(shared) == before
-    # The same batch through the session, or a builder's view, applies.
-    builder = shared.view(roles=["review", "edit"])
-    assert toolbox.dispatch(builder, "batch", {"atomic": True, "ops": _ops(
+    # The same batch through the session, or a writer's view, applies.
+    writer = shared.view(roles=["review", "edit"])
+    assert toolbox.dispatch(writer, "batch", {"atomic": True, "ops": _ops(
         ("t_read", {"doc": "d1"}),
         ("t_add", {"doc": "d1", "items": [{"text": "x"}]}))}).ok
     assert _items(shared) == before + ["x"]
@@ -111,11 +111,11 @@ def test_per_call_roles_on_dispatch_narrow_a_session_or_a_view(toolbox, shared):
                                roles=["review"], context={"agent": "reviewer-1"})
     assert refused.error.code == "refused" and refused.error.details["roles"] == ["review"]
     assert toolbox.dispatch(shared, "t_read", {"doc": "d1"}, roles="review").ok
-    builder = shared.view(roles=["review", "edit"])
-    assert toolbox.dispatch(builder, "t_add", {"doc": "d1", "items": [{"text": "y"}]},
+    writer = shared.view(roles=["review", "edit"])
+    assert toolbox.dispatch(writer, "t_add", {"doc": "d1", "items": [{"text": "y"}]},
                             roles=["review"]).error.code == "refused"
-    assert toolbox.dispatch(builder, "t_add", {"doc": "d1", "items": [{"text": "y"}]}).ok
-    results = toolbox.dispatch_many(builder, [
+    assert toolbox.dispatch(writer, "t_add", {"doc": "d1", "items": [{"text": "y"}]}).ok
+    results = toolbox.dispatch_many(writer, [
         ("t_read", {"doc": "d1"}), ("t_add", {"doc": "d1", "items": [{"text": "z"}]})],
         roles=["review"])
     assert results[0].ok and results[1].error.code == "refused"
@@ -146,10 +146,10 @@ def test_a_view_cannot_widen_its_session_s_roles(toolbox):
 
 
 def test_a_session_narrowed_after_a_view_was_made_refuses_the_view(toolbox, shared):
-    builder = shared.view(roles=["review", "edit"])
+    writer = shared.view(roles=["review", "edit"])
     shared.roles = ("review",)
     with pytest.raises(ValueError, match="edit is not among this session's roles"):
-        toolbox.dispatch(builder, "t_read", {"doc": "d1"})
+        toolbox.dispatch(writer, "t_read", {"doc": "d1"})
 
 
 def test_a_view_sets_nothing_and_reads_through(shared):
@@ -227,7 +227,7 @@ def test_the_log_tells_the_agents_apart(toolbox, shared):
 
 
 def test_views_in_threads_at_once_share_the_session_s_locks(toolbox, shared):
-    views = [shared.view(roles=["review", "edit"], context={"agent": f"builder-{n}"})
+    views = [shared.view(roles=["review", "edit"], context={"agent": f"writer-{n}"})
              for n in range(4)]
     reviewer = shared.view(roles=["review"])
     before = len(_items(shared))
@@ -255,11 +255,11 @@ def test_views_in_threads_at_once_share_the_session_s_locks(toolbox, shared):
     assert not errors
     assert len(_items(shared)) == before + 40
     assert {record.context["agent"] for record in shared.log if record.context and
-            record.tool == "t_add" and record.ok} == {f"builder-{n}" for n in range(4)}
+            record.tool == "t_add" and record.ok} == {f"writer-{n}" for n in range(4)}
 
 
 def test_undo_without_a_caller_takes_back_the_latest_change_whoever_made_it(toolbox, shared):
-    first = shared.view(roles=["review", "edit"], context={"agent": "builder-1"})
+    first = shared.view(roles=["review", "edit"], context={"agent": "writer-1"})
     before = _items(shared)
     assert toolbox.dispatch(first, "t_add", {"doc": "d1", "items": [{"text": "one"}]}).ok
     # The session itself, and a view with no context, undo as before: whoever made it.
@@ -274,8 +274,8 @@ def test_undo_without_a_caller_takes_back_the_latest_change_whoever_made_it(tool
 # -- undo by caller (round 9) --------------------------------------------------------------------
 
 
-def _builders(shared, count=2):
-    return [shared.view(roles=["review", "edit"], context={"agent": f"builder-{n}"})
+def _writers(shared, count=2):
+    return [shared.view(roles=["review", "edit"], context={"agent": f"writer-{n}"})
             for n in range(1, count + 1)]
 
 
@@ -286,17 +286,17 @@ def _add(toolbox, view, text, doc="d1"):
 
 
 def test_a_view_s_undo_takes_back_its_own_latest_change(toolbox, shared):
-    first, second = _builders(shared)
+    first, second = _writers(shared)
     entry = shared.entry("d1")
     before = _items(shared)
     made = _add(toolbox, first, "one")
     _add(toolbox, second, "two")
-    assert entry.owners[made.version].caller == {"agent": "builder-1"}
+    assert entry.owners[made.version].caller == {"agent": "writer-1"}
     assert entry.owners[made.version].tool == "t_add"
     undone = toolbox.dispatch(second, "undo", {"doc": "d1"})
     assert undone.ok and undone.data["own"] and undone.summary == "Undid 1 of your own step(s) of d1"
     assert _items(shared) == before + ["one"]
-    # builder-1's change is the latest again: its undo takes it back.
+    # writer-1's change is the latest again: its undo takes it back.
     assert toolbox.dispatch(first, "undo", {"doc": "d1"}).ok and _items(shared) == before
     nothing = toolbox.dispatch(first, "undo", {"doc": "d1"})
     assert nothing.error.code == "refused" and "nothing of yours" in nothing.error.message
@@ -308,7 +308,7 @@ def test_a_view_s_undo_takes_back_its_own_latest_change(toolbox, shared):
 
 
 def test_a_view_s_undo_is_refused_when_another_s_later_change_depends_on_it(toolbox, shared):
-    first, second = _builders(shared)
+    first, second = _writers(shared)
     _add(toolbox, first, "one")
     later = _add(toolbox, second, "two")
     before = shared.entry("d1").document.to_bytes()
@@ -316,23 +316,23 @@ def test_a_view_s_undo_is_refused_when_another_s_later_change_depends_on_it(tool
     assert refused.error.code == "entangled"
     message = refused.error.message
     assert "your latest change to d1 (t_add" in message and "is not the latest" in message
-    assert "t_add by agent=builder-2" in message and f"version {later.version}" in message
+    assert "t_add by agent=writer-2" in message and f"version {later.version}" in message
     assert "Change it back with an edit" in message
     assert refused.error.details["later"] == [{"version": later.version, "tool": "t_add",
-                                               "context": {"agent": "builder-2"}}]
+                                               "context": {"agent": "writer-2"}}]
     assert shared.entry("d1").document.to_bytes() == before       # nothing changed
-    # Once builder-2 took its change back, builder-1's is the latest and can go.
+    # Once writer-2 took its change back, writer-1's is the latest and can go.
     assert toolbox.dispatch(second, "undo", {"doc": "d1"}).ok
     assert toolbox.dispatch(first, "undo", {"doc": "d1"}).ok
 
 
 def test_a_per_call_context_undoes_its_own_and_steps_stop_at_the_first_refusal(toolbox, shared):
-    first, second = _builders(shared)
+    first, second = _writers(shared)
     before = _items(shared)
     _add(toolbox, first, "a")
     _add(toolbox, second, "b")
     _add(toolbox, first, "c")
-    mine = {"agent": "builder-1"}
+    mine = {"agent": "writer-1"}
     undone = toolbox.dispatch(shared, "undo", {"doc": "d1", "steps": 3}, context=mine)
     assert undone.ok and undone.data["steps"] == 1 and _items(shared) == before + ["a", "b"]
     assert undone.warnings == ["1 of 3 step(s): no more of yours, or the next depends on a "
@@ -352,7 +352,7 @@ def test_a_per_call_context_undoes_its_own_and_steps_stop_at_the_first_refusal(t
 
 
 def test_a_view_s_redo_is_refused_while_another_s_undo_comes_first(toolbox, shared):
-    first, second = _builders(shared)
+    first, second = _writers(shared)
     before = _items(shared)
     _add(toolbox, first, "one")
     _add(toolbox, second, "two")
@@ -391,15 +391,15 @@ def test_in_a_format_with_scopes_a_view_takes_out_its_own_change_under_others(to
     import tools_toys
 
     tools_toys.RESTORED.clear()
-    first, second = _builders(deck)
+    first, second = _writers(deck)
     entry = deck.entry("d2")
     _title(toolbox, first, "1", "A", ref="mine")
     _title(toolbox, second, "2", "B", ref="theirs")
     undone = toolbox.dispatch(first, "undo", {"doc": "d2"})
     assert undone.ok and _titles(deck) == [None, "B"]
     assert tools_toys.RESTORED == [id(entry.document)] and entry.refs == {"theirs": "page:2"}
-    # builder-2's step kept its owner under its new version.
-    assert entry.owners[entry.version].caller == {"agent": "builder-2"}
+    # writer-2's step kept its owner under its new version.
+    assert entry.owners[entry.version].caller == {"agent": "writer-2"}
     assert toolbox.dispatch(first, "undo", {"doc": "d2", "redo": True}).ok
     assert _titles(deck) == ["A", "B"] and entry.refs == {"mine": "page:1", "theirs": "page:2"}
     assert toolbox.dispatch(second, "undo", {"doc": "d2"}).ok and _titles(deck) == ["A", None]
@@ -409,7 +409,7 @@ def test_in_a_format_with_scopes_a_view_takes_out_its_own_change_under_others(to
     later = _title(toolbox, second, "1", "D")
     refused = toolbox.dispatch(first, "undo", {"doc": "d2"})
     assert refused.error.code == "entangled" and _titles(deck) == ["D", None]
-    assert "t_title by agent=builder-2" in refused.error.message
+    assert "t_title by agent=writer-2" in refused.error.message
     assert refused.error.details["later"][0]["version"] == later.version
     assert refused.error.details["shared"] == [synthetic.PAGE1]
     # A scope narrows it to its own changes there.
@@ -428,7 +428,7 @@ def test_a_view_s_change_to_what_every_page_shares_is_its_own_only_while_latest(
     with Toolbox(DECK_TOOLS, formats=[deck_format], groups=GROUPS) as box:
         session = box.session(clock=CLOCK)
         session.open(synthetic.outer_package(), "deck.pptx")      # d1
-        first, second = _builders(session)
+        first, second = _writers(session)
         entry = session.entry("d1")
 
         def shared_change():
@@ -450,7 +450,7 @@ def _owner(view):
 
 
 def test_a_change_made_outside_the_tools_is_no_caller_s(toolbox, shared):
-    first, = _builders(shared, 1)
+    first, = _writers(shared, 1)
     _add(toolbox, first, "one")
     shared.entry("d1").document.insert("direct", "end")       # the library's API, no call
     refused = toolbox.dispatch(first, "undo", {"doc": "d1"})
@@ -464,10 +464,10 @@ def test_a_change_made_outside_the_tools_is_no_caller_s(toolbox, shared):
 
 
 def test_views_undo_their_own_in_threads_and_never_another_s(toolbox, shared):
-    """Builders on one document at once, each adding and undoing its own: an undo either
-    takes back that builder's item or is refused because another's came after -- never
+    """Writers on one document at once, each adding and undoing its own: an undo either
+    takes back that writer's item or is refused because another's came after -- never
     another's item."""
-    views = _builders(shared, 4)
+    views = _writers(shared, 4)
     before = _items(shared)
     kept: list[str] = []
     undone: list[str] = []
@@ -500,7 +500,7 @@ def test_views_undo_their_own_in_threads_and_never_another_s(toolbox, shared):
 
 
 def test_views_take_out_their_own_page_changes_in_threads(toolbox, deck):
-    first, second = _builders(deck)
+    first, second = _writers(deck)
     errors = []
 
     def build(view, page):

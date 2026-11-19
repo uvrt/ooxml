@@ -13,9 +13,9 @@ for word_styles -- and edit_chart with only read).  ``["review", "resolve"]``: 2
 reject, word_comments for its text edits, every role's).  ``["edit"]``: core 1,418, every
 definition 10,653 (word_changes is accept's now).  Claude's strict set for a reviewer is
 word_comments, word_changes and word_notes; for ``["edit"]`` alone word_changes leaves it
-and edit_smartart and set_properties join; the default's and a builder's
+and edit_smartart and set_properties join; the default's and a writer's
 (``["review", "edit"]``) are unchanged but for round 42 (word_insert_markdown's ``like``): the
-default sends word_set_text non-strict and edit_smartart strict, a builder keeps word_set_text
+default sends word_set_text non-strict and edit_smartart strict, a writer keeps word_set_text
 strict and edit_smartart, which fitted beside it, not.
 """
 
@@ -145,18 +145,18 @@ def test_a_reviewer_is_sent_the_reading_tools_the_list_actions_and_comments(box)
     assert "word_changes" not in _sent(box, ["edit"])
 
 
-def test_a_builder_without_resolve_keeps_the_default_tools_and_strict_set(box):
-    default, builder = _sent(box, None), _sent(box, ["review", "edit"])
-    assert set(builder) == set(default)
+def test_a_writer_without_resolve_keeps_the_default_tools_and_strict_set(box):
+    default, writer = _sent(box, None), _sent(box, ["review", "edit"])
+    assert set(writer) == set(default)
     # Its word_changes offers list alone and so has no ids or all (round 17,
     # Tool.action_fields): the strict optional parameters it frees kept word_set_text strict
     # (round 42: five optional parameters, which the default set has no room for; edit_smartart
     # takes its place there) until word_insert_markdown's like (R47) took one of them: a
-    # builder's strict set is now the default's.
-    assert {n for n, d in builder.items() if d["strict"]} == {n for n, d in default.items() if d["strict"]}
-    assert "ids" not in builder["word_changes"]["input_schema"]["properties"]
+    # writer's strict set is now the default's.
+    assert {n for n, d in writer.items() if d["strict"]} == {n for n, d in default.items() if d["strict"]}
+    assert "ids" not in writer["word_changes"]["input_schema"]["properties"]
     assert "ids" in default["word_changes"]["input_schema"]["properties"]
-    assert _enum(builder["word_comments"]) == ["list", "add", "reply", "edit"]
+    assert _enum(writer["word_comments"]) == ["list", "add", "reply", "edit"]
 
 
 @pytest.mark.parametrize("roles", [["review"], ["review", "resolve"], ["resolve"], ["edit"],
@@ -245,10 +245,10 @@ def test_a_review_batch_applies_its_comments_and_refuses_the_edits(box):
 
 
 def _tracked(box, roles):
-    """A session on the agreement with one tracked change made by a builder first."""
+    """A session on the agreement with one tracked change made by a writer first."""
     session = _session(box, None)
     run = lambda tool_, **arguments: box.dispatch(session, tool_, arguments)  # noqa: E731
-    assert run("word_set_tracking", doc="d1", on=True, author="Builder").ok
+    assert run("word_set_tracking", doc="d1", on=True, author="Writer").ok
     assert run("replace_text", doc="d1", find="99.5%", replace="99.9%", expect="one").ok
     session.roles = tuple(roles)          # the editor-in-chief takes over the session
     return session, run
@@ -287,16 +287,16 @@ def test_a_batch_holds_each_op_to_the_accept_role(box):
 # -- several agents on one document (ooxml-edit 0.46.0, round 8, M1 and M2) ---------------------
 
 
-def test_a_builder_a_reviewer_and_an_editor_in_chief_share_one_session(box):
+def test_a_writer_a_reviewer_and_an_editor_in_chief_share_one_session(box):
     """One session, every role; each agent a view of it with its own roles and context."""
     session = _session(box, None)
-    builder = session.view(roles=["review", "edit"], context={"agent": "builder-1"})
+    writer = session.view(roles=["review", "edit"], context={"agent": "writer-1"})
     reviewer = session.view(roles=["review"], context={"agent": "reviewer-1"})
     chief = session.view(roles=["review", "accept"], context={"agent": "chief-1"})
-    assert builder.entry("d1") is reviewer.entry("d1") is session.entry("d1")
-    assert box.dispatch(builder, "word_set_tracking",
-                        {"doc": "d1", "on": True, "author": "Builder"}).ok
-    assert box.dispatch(builder, "replace_text", {"doc": "d1", "find": "99.5%",
+    assert writer.entry("d1") is reviewer.entry("d1") is session.entry("d1")
+    assert box.dispatch(writer, "word_set_tracking",
+                        {"doc": "d1", "on": True, "author": "Writer"}).ok
+    assert box.dispatch(writer, "replace_text", {"doc": "d1", "find": "99.5%",
                                                   "replace": "99.9%", "expect": "one"}).ok
     assert box.dispatch(reviewer, "word_comments", {
         "doc": "d1", "action": "add", "author": "Rev",
@@ -310,7 +310,7 @@ def test_a_builder_a_reviewer_and_an_editor_in_chief_share_one_session(box):
         {"tool": "replace_text", "arguments": {"doc": "d1", "find": "99.9%",
                                                "replace": "99%", "expect": "one"}}]})
     assert batch.ok and batch.data["failed"] == [1]
-    # The editor-in-chief settles the builder's tracked change, and edits nothing.
+    # The editor-in-chief settles the writer's tracked change, and edits nothing.
     assert box.dispatch(chief, "word_changes", {"doc": "d1", "action": "list"}).data
     assert box.dispatch(chief, "word_changes", {"doc": "d1", "action": "accept",
                                                 "all": True}).ok
@@ -318,7 +318,7 @@ def test_a_builder_a_reviewer_and_an_editor_in_chief_share_one_session(box):
     assert box.dispatch(chief, "replace_text", {"doc": "d1", "find": "99.9%", "replace": "99%",
                                                 "expect": "one"}).error.code == "refused"
     agents = [record.context["agent"] for record in session.log if record.context]
-    assert {"builder-1", "reviewer-1", "chief-1"} == set(agents)
+    assert {"writer-1", "reviewer-1", "chief-1"} == set(agents)
 
 
 def test_an_editor_in_chief_s_prompt_follows_the_tools_sent(box):
@@ -356,7 +356,7 @@ def test_a_reviewer_reads_many_blocks_in_one_read_batch(box):
     assert session.entry("d1").version == 0
 
 
-def test_a_builder_s_change_in_a_read_batch_is_sent_to_batch(box):
+def test_a_writer_s_change_in_a_read_batch_is_sent_to_batch(box):
     session = _session(box, None)
     result = box.dispatch(session, "read_batch", {"ops": [
         {"tool": "word_set_text", "arguments": {"doc": "d1", "target": "p:1", "text": "x"}},

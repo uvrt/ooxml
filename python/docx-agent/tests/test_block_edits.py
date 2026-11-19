@@ -313,7 +313,7 @@ def test_ids_drawn_meanwhile_are_drawn_again_and_the_result_says_the_documents(m
 
 def test_a_first_fill_while_others_draw_ids_is_prepared_once_its_added_part_renamed(monkeypatch):
     """A document's first fill from a dataset adds the provenance item (a part); another
-    builder draws ids while the fill is held on its draft.  The fill's ids are drawn again
+    writer draws ids while the fill is held on its draft.  The fill's ids are drawn again
     when it applies -- in the body and in the part it adds -- and it is prepared once: every
     row's id is the document's, and every place the provenance names is one the document has."""
     with opened(first_fill=True) as (box, session, doc, layout), held(monkeypatch) as hold:

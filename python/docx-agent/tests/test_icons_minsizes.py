@@ -1,6 +1,6 @@
 """Round 17, P6: an icon from the application's asset catalogue, inline or floating, tinted
 as Word draws a recoloured SVG (measured: agent-work feedback-round17/measurements-B.md), and
-the application's minimum text sizes by kind, which check and the builders both read.
+the application's minimum text sizes by kind, which check and the writers both read.
 Made-up icons and documents."""
 
 from __future__ import annotations
@@ -177,7 +177,7 @@ def _box_session(box, markdown: str):
     return session, d, result
 
 
-def test_builders_and_check_report_text_below_its_kinds_minimum():
+def test_writers_and_check_report_text_below_its_kinds_minimum():
     markdown = "Body text.\n\n| Item | Note |\n| --- | --- |\n| One | a |"
     with Toolbox(TOOLS, formats=[docx_format(min_text_size={"table": 30})], groups=GROUPS) as box:
         session, d, result = _box_session(box, markdown)
