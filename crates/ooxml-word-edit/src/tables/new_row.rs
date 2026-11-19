@@ -51,7 +51,7 @@ fn shape_row(work: &Work, rows: &[Id], at: usize) -> Option<usize> {
 }
 
 /// A cell's properties without revision records (`_clean_cell_properties`).
-fn clean_cell_properties(work: &mut Work, properties: Option<Id>) -> Id {
+pub(super) fn clean_cell_properties(work: &mut Work, properties: Option<Id>) -> Id {
     let out = make(work, "tcPr", &[]);
     let Some(properties) = properties else { return out };
     for child in work.children(properties).to_vec() {
@@ -143,7 +143,7 @@ fn first_text_run(work: &Work, paragraph: Id) -> Option<Id> {
 
 /// A new empty paragraph with `paragraph`'s properties, no section break and no revision
 /// record (`_empty_paragraph_like`).
-fn empty_paragraph_like(work: &mut Work, paragraph: Option<Id>) -> Id {
+pub(super) fn empty_paragraph_like(work: &mut Work, paragraph: Option<Id>) -> Id {
     let new = make(work, "p", &[]);
     let Some(properties) = paragraph.and_then(|p| work.find(p, W, "pPr")) else {
         return new;
@@ -172,7 +172,7 @@ fn empty_paragraph_like(work: &mut Work, paragraph: Option<Id>) -> Id {
 /// The empty paragraph a new row's cell beside `cell` gets (`_new_row_paragraph`): the
 /// cell's first paragraph's properties, its mark formatted as that paragraph's first run
 /// of text where it has one.
-fn new_row_paragraph(work: &mut Work, cell: Id, orders: &Orders) -> Id {
+pub(super) fn new_row_paragraph(work: &mut Work, cell: Id, orders: &Orders) -> Id {
     let source = work.find(cell, W, "p");
     let new = empty_paragraph_like(work, source);
     let Some(run) = source.and_then(|s| first_text_run(work, s)) else {

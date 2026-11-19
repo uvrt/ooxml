@@ -51,6 +51,21 @@ pub enum TableChange {
         /// The row, from 0.
         index: usize,
     },
+    /// A new column beside grid column `index`, to its right unless `right` is false.
+    InsertColumn {
+        /// The grid column beside which, from 0.
+        index: usize,
+        /// To its right (else its left).
+        right: bool,
+    },
+    /// A copy of row `index` (the last by default) with its content, below it unless
+    /// `below` is false.
+    CopyRow {
+        /// The row copied, from 0.
+        index: Option<usize>,
+        /// Below it (else above).
+        below: bool,
+    },
     /// Grid column `index` deleted.
     DeleteColumn {
         /// The grid column, from 0.
@@ -158,10 +173,21 @@ impl EditTable {
         let work = Work::of(&found.element, Vec::new());
         let rows = own_rows(&work, work.root());
         let index = match self.change {
+            TableChange::CopyRow { index, .. } => {
+                let index = index.unwrap_or(rows.len().saturating_sub(1));
+                return super::copy_row::check_copy(&work, &found.id, &rows, index).map(|()| index);
+            }
             TableChange::InsertRow { index, .. } => index.unwrap_or(rows.len().saturating_sub(1)),
             TableChange::DeleteRow { index } => index,
             TableChange::DeleteColumn { index } => {
                 return super::columns::check_column(&work, &found.id, index).map(|()| index)
+            }
+            TableChange::InsertColumn { index, .. } => {
+                return if index < super::shape::grid_widths(&work, work.root()).len() {
+                    Ok(index)
+                } else {
+                    Err(EditError::Refused(format!("{} has no column {index}", found.id)))
+                };
             }
         };
         let Some(row) = rows.get(index).copied() else {
@@ -210,9 +236,9 @@ pub(super) struct Held {
     /// The table as stamped, before the edit.
     pub(super) table: Arc<Element>,
     /// The table's place in its part's tree.
-    root: Arc<Element>,
+    pub(super) root: Arc<Element>,
     /// The story's name.
-    story: String,
+    pub(super) story: String,
 }
 
 impl Held {
@@ -281,6 +307,10 @@ impl EditTable {
             TableChange::InsertRow { below, plain, .. } => insert_row(sink, &mut held, index, below, plain, orders)?,
             TableChange::DeleteRow { .. } => delete_row(sink, &mut held, &docx, index, old_row, orders)?,
             TableChange::DeleteColumn { .. } => super::columns::delete_column(sink, &mut held, &docx, index, orders)?,
+            TableChange::CopyRow { below, .. } => super::copy_row::copy_row(sink, &mut held, index, below, orders)?,
+            TableChange::InsertColumn { right, .. } => {
+                super::new_column::insert_column(sink, &mut held, index, right, orders)?
+            }
         };
         out.renamed = renamed;
         out.table = sink

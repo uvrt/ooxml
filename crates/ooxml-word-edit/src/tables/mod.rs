@@ -9,6 +9,8 @@
 //! does).
 
 mod columns;
+mod copy_row;
+mod new_column;
 mod new_row;
 mod props;
 mod rows;

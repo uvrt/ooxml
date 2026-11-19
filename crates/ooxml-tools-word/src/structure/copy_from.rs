@@ -51,7 +51,8 @@ pub struct WordCopyFrom {
     pub doc: String,
     /// Open document to copy from, e.g. d2.
     pub source_doc: String,
-    /// end, after:<id>, before:<id> or replace:<id>[..<id>].
+    /// end, `after:<id>`, `before:<id>` or `replace:<id>[..<id>]`.
+    #[arg(description = "end, after:<id>, before:<id> or replace:<id>[..<id>].")]
     pub at: String,
     /// Source block or span p:A..t:B.
     pub range: Option<String>,
