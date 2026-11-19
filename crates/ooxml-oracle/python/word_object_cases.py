@@ -73,11 +73,46 @@ def format_table_cases(document) -> list[dict]:
     return out + [tracked(case) for case in out]
 
 
+def _rows(table: str) -> list[dict]:
+    def edit(action: str, **arguments) -> dict:
+        return call("word_edit_table", table=table, action=action, **arguments)
+
+    return [edit("insert_row"), edit("insert_row", index=0), edit("insert_row", index=0, side="before"),
+            edit("insert_row", index=1, side="before"), edit("insert_row", index=99), edit("delete_row", index=0),
+            edit("delete_row", index=1), edit("delete_row"), edit("delete_row", index=99),
+            edit("insert_row", key="Region"), edit("insert_row", **{"from": "d:nothing"}),
+            edit("delete_row", index=0, header=["A"]), edit("insert_row", grow=True),
+            edit("insert_row", key="", remove=False, match=[])]
+
+
+def _columns(table: str) -> list[dict]:
+    def edit(action: str, **arguments) -> dict:
+        return call("word_edit_table", table=table, action=action, **arguments)
+
+    return [edit("delete_column", index=0), edit("delete_column", index=1), edit("delete_column"),
+            edit("delete_column", index=99)]
+
+
+def edit_table_cases(document) -> list[dict]:
+    """``word_edit_table``: rows inserted (after, before, at the top, past the end) and
+    deleted (the first, a middle one, none named, past the end); columns deleted (the first,
+    the second, none named, past the end), each with the file's text it removes; arguments
+    of another action refused; strict mode's empty values taken as none -- untracked and
+    tracked."""
+    out = []
+    for table in _tables(document)[:3]:
+        out += _rows(table) + _columns(table)
+    out += [call("word_edit_table", table="t:00000000", action="insert_row")]
+    return out + [tracked(case) for case in out]
+
+
 def cases(document) -> list[dict]:
     """Every object case for ``document``."""
-    found = format_table_cases(document)
+    found = format_table_cases(document) + edit_table_cases(document)
     wanted = os.environ.get("OBJECT_TOOLS")       # a comma list, to run some tools only
     found = [c for c in found if not wanted or c["tool"] in wanted.split(",")]
+    actions = os.environ.get("OBJECT_ACTIONS")    # a comma list of actions (word_edit_table's)
+    found = [c for c in found if not actions or c["arguments"].get("action") in actions.split(",")]
     every = int(os.environ.get("OBJECTS_EVERY") or 0)      # every n-th case, across the scopes
     if every:
         found = found[::every]

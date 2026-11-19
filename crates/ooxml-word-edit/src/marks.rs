@@ -238,7 +238,7 @@ pub(crate) fn insert_paragraph_content(work: &mut Work, paragraph: Id, stamp: &m
 /// Word's typing form at a container's end (docx-agent's `pass_mark`): `previous` gets an
 /// inserted mark, and the properties its old mark had -- before a change recorded on them,
 /// which goes -- are returned (detached) for the new paragraph to record its own against.
-fn pass_mark(work: &mut Work, previous: Id, stamp: &mut Stamp, orders: &Orders) -> Id {
+pub(crate) fn pass_mark(work: &mut Work, previous: Id, stamp: &mut Stamp, orders: &Orders) -> Id {
     mark(work, previous, "ins", stamp, orders);
     let properties = work.find(previous, W, "pPr");
     let change = properties.and_then(|p| work.find(p, W, "pPrChange"));

@@ -23,9 +23,14 @@ use ooxml_store::{Command, Txn};
 use ooxml_word_model::address::resolve::in_table;
 use ooxml_word_model::docx::Docx;
 
-/// The style map's strong and emphasis roles (insert_markdown's default style map).
-const STRONG: &str = "Strong";
-const EMPHASIS: &str = "Emphasis";
+/// The style insert_markdown's default style map writes `construct` in (`_role_styles`:
+/// the strong and emphasis roles).
+fn role_style(construct: &str) -> String {
+    crate::markdown::WriteMap::default()
+        .style_for(construct, 0)
+        .and_then(|r| r.style.clone())
+        .unwrap_or_default()
+}
 
 /// Write one paragraph's (or cell's) text with inline emphasis.
 #[derive(Debug, Clone)]
@@ -172,7 +177,7 @@ fn plan(doc: &WordDoc, docx: &Docx, item: &SetStyledText) -> Result<Plan> {
     let mut plan = Plan {
         lines,
         cell,
-        roles: (STRONG.to_owned(), EMPHASIS.to_owned()),
+        roles: (role_style("strong"), role_style("emphasis")),
         added: Vec::new(),
     };
     if plan.marked() {
@@ -197,7 +202,7 @@ fn plan(doc: &WordDoc, docx: &Docx, item: &SetStyledText) -> Result<Plan> {
                 name.to_owned()
             }
         };
-        plan.roles = (role(STRONG, strong), role(EMPHASIS, em));
+        plan.roles = (role(&role_style("strong"), strong), role(&role_style("emphasis"), em));
         let named: Vec<String> = {
             let mut out: Vec<String> = Vec::new();
             for name in plan.lines.iter().flat_map(Styled::styles_named) {

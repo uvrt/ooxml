@@ -9,7 +9,7 @@
 //! Must not: write but through the sink, or know a tool's JSON. Every step reads the whole
 //! document: an instance is removed when no paragraph of any story names it.
 
-mod numbering;
+pub(crate) mod numbering;
 mod paragraph;
 mod read;
 mod steps;

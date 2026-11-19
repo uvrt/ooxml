@@ -19,6 +19,8 @@ use std::sync::Arc;
 
 /// A table found on a version.
 pub(crate) struct TableView {
+    /// Its part.
+    pub(crate) part: String,
     /// The table.
     pub(crate) table: TableId,
     /// Per row, per grid position: the origin `(row, column)` of the cell there.
@@ -57,7 +59,11 @@ pub(crate) fn table_view(doc: &WordDoc, docx: &Docx, identifier: &str, call: &Tr
                 .get(k)
                 .ok_or_else(|| refuse(format!("no table {identifier}"), vec![]))?;
             let grid = grid(&table);
-            Ok(TableView { table, grid })
+            Ok(TableView {
+                part: story.part.clone(),
+                table,
+                grid,
+            })
         }
         Entry::Paragraph(k) => {
             let paragraph = story.ids.paragraphs().get(k);
@@ -163,27 +169,34 @@ impl TableView {
         self.grid.get(row)?.get(column).copied().flatten()
     }
 
+    /// Whether a row's cells, with `w:gridBefore` and `w:gridAfter`, do not reach exactly
+    /// across the grid (`_off_grid`: check's `table_grid_mismatch`).
+    pub(crate) fn off_grid(&self) -> bool {
+        let count = self.column_count();
+        self.table.rows.iter().any(|(path, _)| {
+            let Some(row) = ooxml_word_model::docx::at_path(
+                &self.table.element,
+                path.get(self.table.path.len()..).unwrap_or_default(),
+            ) else {
+                return false;
+            };
+            let skips = val(row, &["trPr", "gridBefore"]).unwrap_or(0) + val(row, &["trPr", "gridAfter"]).unwrap_or(0);
+            let mut found = Vec::new();
+            cells(row, &mut found);
+            let reach = skips
+                + found
+                    .iter()
+                    .map(|c| val(c, &["tcPr", "gridSpan"]).unwrap_or(1).max(1))
+                    .sum::<i64>();
+            usize::try_from(reach).ok() != Some(count)
+        })
+    }
+
     /// Whether the table holds tracked structure -- a row or cell deleted, cells merged, a
     /// paragraph mark deleted -- that its accepted view counts otherwise (docx-agent's
     /// `_Accepted`, not ported yet).
     pub(crate) fn pending(&self) -> bool {
-        fn walk(element: &Element, under: &[&str]) -> bool {
-            element.children().iter().any(|n| {
-                let Node::Element(child) = n else { return false };
-                let local = child.name().local();
-                let held = child.name().namespace() == Some(W);
-                if held && matches!(local, "cellDel" | "cellMerge" | "cellIns") {
-                    return true;
-                }
-                if held && local == "del" && under.last().is_some_and(|p| *p == "trPr" || *p == "rPr") {
-                    return true;
-                }
-                let mut path = under.to_vec();
-                path.push(local);
-                walk(child, &path)
-            })
-        }
-        walk(&self.table.element, &[])
+        ooxml_word_edit::pending_structure(&self.table.element)
     }
 }
 

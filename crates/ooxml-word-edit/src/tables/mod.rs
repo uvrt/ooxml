@@ -8,11 +8,15 @@
 //! Must not: write but through the sink, or decide what a tool's arguments mean (the tool
 //! does).
 
+mod columns;
+mod new_row;
 mod props;
+mod rows;
 mod shape;
 mod tracker;
 
 pub use props::{CellValues, Look, TableValues, TableWidth};
+pub use rows::{pending_structure, EditTable, TableChange, TableChanged};
 
 use crate::doc::Key;
 use crate::names::{W, W16DU};
@@ -228,6 +232,17 @@ struct Written {
     numbered: Option<crate::sink::Numbered>,
     dated: bool,
     warnings: Vec<Vec<String>>,
+}
+
+impl Written {
+    /// What a tracked write numbered and whether it dated a record; nothing untracked.
+    fn of(tracked: Option<(crate::sink::Numbered, bool)>) -> Written {
+        Written {
+            numbered: tracked.map(|t| t.0),
+            dated: tracked.is_some_and(|t| t.1),
+            warnings: Vec::new(),
+        }
+    }
 }
 
 impl FormatTable {
