@@ -78,7 +78,6 @@ impl From<NoteEdited> for Outcome {
             removed: out.removed,
             renamed: out.renamed,
             warnings: Vec::new(),
-            unknown: Vec::new(),
         }
     }
 }

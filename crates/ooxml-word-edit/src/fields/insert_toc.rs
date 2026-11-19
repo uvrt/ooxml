@@ -348,9 +348,20 @@ fn track_toc(sink: &mut EditSink<'_, '_>, toc: &Located, tracking: crate::policy
         mark_entries(&mut work, (&entries, &last_flags, previous_node), stamp, orders);
         Ok(())
     })?;
+    put_stretch(sink, (&part, &parent_path, stretch), &work, (numbered, dated))
+}
+
+/// The tracked stretch `work` holds put back in place of the children `stretch` of the
+/// element at `parent` of `part`, its revision ids drawn where the change is applied.
+fn put_stretch(
+    sink: &mut EditSink<'_, '_>,
+    (part, parent, stretch): (&str, &[u32], (u32, u32)),
+    work: &Work,
+    (numbered, dated): (crate::sink::Numbered, bool),
+) -> Result<()> {
     let nodes = work
         .build_content(work.root())
-        .ok_or_else(|| EditError::Path(part.clone()))?;
+        .ok_or_else(|| EditError::Path(part.to_owned()))?;
     let mut draws: Vec<Draw> = Vec::new();
     for (k, node) in nodes.iter().enumerate() {
         if let (Node::Element(e), Ok(k)) = (node, u32::try_from(k)) {
@@ -358,10 +369,10 @@ fn track_toc(sink: &mut EditSink<'_, '_>, toc: &Located, tracking: crate::policy
         }
     }
     let count = (stretch.1 - stretch.0) as usize + 1;
-    let keys = vec![Key::Part(Arc::from(part.as_str())), Key::Annotations];
-    sink.splice_children(&part, (&parent_path, stretch.0 as usize, count), nodes, keys, draws)?;
+    let keys = vec![Key::Part(Arc::from(part)), Key::Annotations];
+    sink.splice_children(part, (parent, stretch.0 as usize, count), nodes, keys, draws)?;
     if dated {
-        sink.ensure_w14(&part, false, &[("w16du", W16DU)])?;
+        sink.ensure_w14(part, false, &[("w16du", W16DU)])?;
     }
     if let RevisionPolicy::Tracked(tracking) = sink.policy().clone() {
         sink.people(

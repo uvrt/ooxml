@@ -141,6 +141,14 @@ impl ToolSpec {
                 renamed(node, &alias.alias, &alias.name, where_, notes)
             })?;
         }
+        for property in self.arguments.properties() {
+            let Some(name) = &property.intent.names_as else {
+                continue;
+            };
+            if names_meant(&arguments, &property.name, name) {
+                renamed(&mut arguments, &property.name, name, "", notes)?;
+            }
+        }
         if let Some(places) = &self.places {
             for name in &places.names {
                 let Some(map) = arguments
@@ -279,6 +287,23 @@ fn walk(node: &mut Value, parts: &[&str], where_: &str, visit: &mut Visit) -> Re
 
 /// One object of the arguments (at `where_`) with `alias` read as `name`; both given is a
 /// refusal (the call says one thing twice).
+/// Whether `alias`, a property that takes no names, holds a list of names -- strings that
+/// are not numbers -- while `name` is not given: then it can only mean `name` (today's
+/// `names_as`).
+fn names_meant(arguments: &Value, alias: &str, name: &str) -> bool {
+    let Value::Object(map) = arguments else { return false };
+    if map.get(name).is_some_and(|v| !v.is_null()) {
+        return false;
+    }
+    let Some(Value::Array(items)) = map.get(alias) else {
+        return false;
+    };
+    !items.is_empty()
+        && items
+            .iter()
+            .all(|item| item.as_str().is_some_and(|text| !crate::pyfmt::is_float(text)))
+}
+
 fn renamed(node: &mut Value, alias: &str, name: &str, where_: &str, notes: &mut Vec<String>) -> Result<(), ToolError> {
     let Value::Object(map) = node else { return Ok(()) };
     if map.get(alias).is_none_or(Value::is_null) {

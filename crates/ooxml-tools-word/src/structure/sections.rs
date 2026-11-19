@@ -132,7 +132,6 @@ impl From<SectionEdited> for Outcome {
             removed: out.removed,
             renamed: out.renamed,
             warnings: out.warnings,
-            unknown: Vec::new(),
         }
     }
 }

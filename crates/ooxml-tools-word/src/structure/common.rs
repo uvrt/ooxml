@@ -20,8 +20,6 @@ pub(crate) struct Outcome {
     pub(crate) removed: Vec<String>,
     pub(crate) renamed: Vec<(String, String)>,
     pub(crate) warnings: Vec<String>,
-    /// What the layout cannot say (docx-agent's `unknown`).
-    pub(crate) unknown: Vec<String>,
 }
 
 impl From<ooxml_word_edit::FieldEdited> for Outcome {
@@ -32,8 +30,12 @@ impl From<ooxml_word_edit::FieldEdited> for Outcome {
             created: out.created,
             removed: Vec::new(),
             renamed: out.renamed,
-            warnings: out.warnings,
-            unknown: out.unknown,
+            // docx-agent's `outcome` notes each of an edit's `unknown` after its warnings
+            warnings: out
+                .warnings
+                .into_iter()
+                .chain(out.unknown.iter().map(|u| format!("{u}: the layout cannot say")))
+                .collect(),
         }
     }
 }
@@ -47,7 +49,6 @@ impl From<ooxml_word_edit::LinkEdited> for Outcome {
             removed: out.removed,
             renamed: out.renamed,
             warnings: out.warnings,
-            unknown: Vec::new(),
         }
     }
 }
@@ -84,12 +85,6 @@ pub(crate) fn outcome(edits: &[Outcome], summary: String, data: Option<Value>) -
         for warning in &edit.warnings {
             if !warnings.contains(warning) {
                 warnings.push(warning.clone());
-            }
-        }
-        for unknown in &edit.unknown {
-            let note = format!("{unknown}: the layout cannot say");
-            if !warnings.contains(&note) {
-                warnings.push(note);
             }
         }
     }
