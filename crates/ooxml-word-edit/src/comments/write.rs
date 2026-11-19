@@ -61,7 +61,11 @@ fn initials(author: &str) -> String {
         .take(9)
         .collect();
     if made.is_empty() {
-        author.chars().next().map(|c| c.to_uppercase().collect()).unwrap_or_default()
+        author
+            .chars()
+            .next()
+            .map(|c| c.to_uppercase().collect())
+            .unwrap_or_default()
     } else {
         made
     }
@@ -164,7 +168,9 @@ pub(super) fn complete(sink: &mut EditSink<'_, '_>, space: &mut Space, main: &st
         None => HashSet::new(),
     };
     let listed: Vec<(String, Option<String>)> = {
-        let work = space.get(comments).ok_or_else(|| EditError::NoPart(comments.to_owned()))?;
+        let work = space
+            .get(comments)
+            .ok_or_else(|| EditError::NoPart(comments.to_owned()))?;
         work.children(work.root())
             .iter()
             .filter(|c| work.is(**c, W, "comment"))
@@ -262,7 +268,9 @@ fn append(
     attributes: &[(&str, &str)],
 ) -> Result<()> {
     let doc = sink.doc().clone();
-    let work = space.work(&doc, part)?.ok_or_else(|| EditError::NoPart(part.to_owned()))?;
+    let work = space
+        .work(&doc, part)?
+        .ok_or_else(|| EditError::NoPart(part.to_owned()))?;
     let root = work.root();
     let element = work.new_element(work.element_name(root, ns, local, prefix));
     for (name, value) in attributes {

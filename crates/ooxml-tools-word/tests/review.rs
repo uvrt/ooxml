@@ -372,12 +372,21 @@ fn comments_are_added_and_replied_to_with_their_parts() {
         ),
         &editing(&CallEditor::new(&editor), &opened, &caller),
     ));
-    let id = added["data"]["comments"][0].as_str().unwrap_or_else(|| panic!("{added}")).to_owned();
+    let id = added["data"]["comments"][0]
+        .as_str()
+        .unwrap_or_else(|| panic!("{added}"))
+        .to_owned();
     assert!(id.starts_with("c:"), "{added}");
     assert_eq!(added["created"], serde_json::json!([id]));
     let head = editor.store().snapshot();
     let package = head.doc().package();
-    for part in ["word/comments.xml", "word/commentsExtended.xml", "word/commentsIds.xml", "word/commentsExtensible.xml", "word/people.xml"] {
+    for part in [
+        "word/comments.xml",
+        "word/commentsExtended.xml",
+        "word/commentsIds.xml",
+        "word/commentsExtensible.xml",
+        "word/people.xml",
+    ] {
         assert!(package.has_part(part), "{part} made");
     }
     let document = String::from_utf8(package.read("word/document.xml").unwrap().unwrap().to_vec()).unwrap();
@@ -400,7 +409,11 @@ fn comments_are_added_and_replied_to_with_their_parts() {
         ),
         &editing(&CallEditor::new(&editor), &opened, &caller),
     ));
-    assert_eq!(replied["changed"], serde_json::json!([id]), "the thread resolved: {replied}");
+    assert_eq!(
+        replied["changed"],
+        serde_json::json!([id]),
+        "the thread resolved: {replied}"
+    );
     let listed = json(&word_comments(
         &WordComments {
             doc: "d1".into(),

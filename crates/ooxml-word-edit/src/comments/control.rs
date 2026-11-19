@@ -54,7 +54,10 @@ pub(super) fn control(docx: &Docx, identifier: &str) -> Result<Control> {
         } else {
             String::new()
         };
-        format!("{}{more}", known.iter().take(20).cloned().collect::<Vec<_>>().join(", "))
+        format!(
+            "{}{more}",
+            known.iter().take(20).cloned().collect::<Vec<_>>().join(", ")
+        )
     };
     Err(EditError::Address(AddressError::invalid(
         format!(
@@ -131,7 +134,12 @@ pub(super) fn mark_control(
                 items.iter().filter(|a| rank(a.node) < at).count()
             }
         };
-        (size_at(space, &part, paragraph, offset, sizes), paragraph, paragraph, true)
+        (
+            size_at(space, &part, paragraph, offset, sizes),
+            paragraph,
+            paragraph,
+            true,
+        )
     } else {
         let own = own_paragraphs(work, sdt);
         let Some(last) = own.last().copied() else {

@@ -33,7 +33,12 @@ pub(super) enum Anchor {
         collapsed: bool,
     },
     /// A whole table or row: its part, its place, its id, and whether it is a row.
-    Block { part: String, path: Vec<u32>, id: String, row: bool },
+    Block {
+        part: String,
+        path: Vec<u32>,
+        id: String,
+        row: bool,
+    },
     /// A whole content control.
     Control(Control),
 }
@@ -156,7 +161,9 @@ pub(super) fn mark(
             let run = reference_run(work, id, reference, size);
             work.add_next(end_marker, run);
         }
-        Anchor::Block { path, id: name, row, .. } => {
+        Anchor::Block {
+            path, id: name, row, ..
+        } => {
             let element = space.locate(&part, path).ok_or_else(gone)?;
             let work = space.get(&part).ok_or_else(gone)?;
             let end_after = if *row {

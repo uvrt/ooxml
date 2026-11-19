@@ -138,7 +138,13 @@ impl Command<WordDoc> for CommentEdits {
 }
 
 /// `w15:done` of `root`'s entry in `commentsExtended` set (`_set_done`); whether it changed.
-pub(super) fn set_done(sink: &mut EditSink<'_, '_>, docx: &Docx, space: &mut Space, root: &Comment, done: bool) -> Result<bool> {
+pub(super) fn set_done(
+    sink: &mut EditSink<'_, '_>,
+    docx: &Docx,
+    space: &mut Space,
+    root: &Comment,
+    done: bool,
+) -> Result<bool> {
     let para = last_para_as_written(docx, root);
     if para.is_empty() {
         return Err(EditError::Refused(format!(

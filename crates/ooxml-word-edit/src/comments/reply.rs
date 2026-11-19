@@ -76,13 +76,19 @@ fn past(work: &Work, node: Id, like: impl Fn(&Work, Id) -> bool) -> Id {
 
 /// Whether a comment marker or reference of `w:id` `id` is at or below `element`.
 fn holds(element: &Element, id: &str) -> bool {
-    holds_any(element, id, &["commentRangeStart", "commentRangeEnd", "commentReference"])
+    holds_any(
+        element,
+        id,
+        &["commentRangeStart", "commentRangeEnd", "commentReference"],
+    )
 }
 
 /// Whether some story holds a reference run of the comment whose `w:id` is `id`: a reply
 /// then writes one (and the Comment Reference style is made first).
 pub(super) fn has_reference(docx: &Docx, id: &str) -> bool {
-    docx.parts.iter().any(|s| holds_any(s.root(), id, &["commentReference"]))
+    docx.parts
+        .iter()
+        .any(|s| holds_any(s.root(), id, &["commentReference"]))
 }
 
 /// Whether an element of Word's named one of `locals` with `w:id` `id` is at or below

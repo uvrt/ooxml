@@ -45,9 +45,12 @@ impl<'d> Sizes<'d> {
             .and_then(|r| items.iter().find(|a| a.run == Some(r)))
             .map_or('a', |a| a.ch);
         let cell = self.cell(part, path);
-        let effective = self
-            .formatting
-            .run(paragraph, element.as_deref().map(|e| e as &Element), first, cell.as_ref());
+        let effective = self.formatting.run(
+            paragraph,
+            element.as_deref().map(|e| e as &Element),
+            first,
+            cell.as_ref(),
+        );
         // Python's round(): halves to even
         let doubled = effective.size * 2.0;
         #[allow(clippy::cast_possible_truncation)]
