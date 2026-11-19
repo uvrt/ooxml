@@ -3912,8 +3912,9 @@ class After:
     @staticmethod
     def can_defer(session: Session, entry: DocumentEntry) -> bool:
         fmt = session.formats.get(entry.kind)
-        return (entry.pinned is None and fmt is not None and fmt.checks is not None
-                and getattr(fmt, "read_copy", None) is not None)
+        # (Lane P2c4: an owned document's checks read its owner, under the lock: no copy.)
+        return (entry.pinned is None and not entry.owned and fmt is not None
+                and fmt.checks is not None and getattr(fmt, "read_copy", None) is not None)
 
     def defer(self, session: Session, entry: DocumentEntry,
               work: Callable[[DocumentEntry], None]) -> bool:
