@@ -328,7 +328,7 @@ impl Session {
         parts: Vec<(String, Option<Arc<[u8]>>)>,
         context: &CallContext,
     ) -> Result<(Updated, Opened), SessionError> {
-        let done = self.commit(id, parts, context)?;
+        let done = self.commit_by(id, Some(tool), parts, context)?;
         let mut counts = self.counts.bridged.lock().unwrap_or_else(PoisonError::into_inner);
         *counts.entry(tool.to_owned()).or_default() += 1;
         Ok(done)
@@ -357,10 +357,21 @@ impl Session {
         parts: Vec<(String, Option<Arc<[u8]>>)>,
         context: &CallContext,
     ) -> Result<(Updated, Opened), SessionError> {
+        self.commit_by(id, None, parts, context)
+    }
+
+    /// [`Session::commit`] of the parts `tool` changed (`None`: no tool named).
+    fn commit_by(
+        &self,
+        id: &DocId,
+        tool: Option<&str>,
+        parts: Vec<(String, Option<Arc<[u8]>>)>,
+        context: &CallContext,
+    ) -> Result<(Updated, Opened), SessionError> {
         let document = self.document(id)?;
         let cancel = CallCancel::new(context, &*self.context.cancel, &*self.context.clock);
         let update = PartUpdate::new(parts, self.context.limits, &cancel);
-        let (version, changed, attempts) = document.update(&context.caller, &update).inspect_err(|e| {
+        let (version, changed, attempts) = document.update(&context.caller, tool, &update).inspect_err(|e| {
             if matches!(e, SessionError::Base(ooxml_base::BaseError::Cancelled)) {
                 self.counts.cancelled.fetch_add(1, Ordering::Relaxed);
             }
@@ -499,6 +510,17 @@ impl Session {
             // reading call's, the one read
             let mutates = self.registry.named(name).is_some_and(|t| t.spec().flags.mutates);
             let document = self.document(&opened.id).ok();
+            if let (Some(made), Some(word)) = (&made, document.as_deref().and_then(Document::word)) {
+                for (seq, delta) in &made.ids {
+                    let by = crate::retired::Made {
+                        seq: seq.0,
+                        caller: context.caller.name(),
+                        tool: Some(name),
+                        history: false,
+                    };
+                    word.retired.note(&by, delta);
+                }
+            }
             call_made = made.zip(document.as_ref()).map(|(made, document)| {
                 let one = made.first.seq() == made.last.seq();
                 CallMade {

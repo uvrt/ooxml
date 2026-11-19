@@ -72,6 +72,7 @@ def test_a_target_alone_still_deletes_the_block(box):
     document = session.entry(d).document
     second = document.paragraphs()[2].id
     result = ok(box, session, "word_delete", doc=d, target=second)
+    document = session.entry(d).document        # (the view as the served call left it)
     assert result.warnings == [] and len(document.paragraphs()) == 2
 
 
