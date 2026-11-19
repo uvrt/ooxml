@@ -234,7 +234,7 @@ pub(crate) fn regions_off(docx: &Docx, table: &TableId) -> Option<String> {
 }
 
 /// The look options as the tool names them, in `LOOK_NAMES`' order.
-const LOOK_NAMES: [&str; 6] = [
+pub(crate) const LOOK_NAMES: [&str; 6] = [
     "header_row",
     "first_column",
     "banded_rows",
@@ -254,7 +254,7 @@ const LOOK_BITS: [(&str, u32, bool); 6] = [
 
 /// `w:tblLook` as the options it switches on, in `LOOK_NAMES`' order (`read_look`): the
 /// default look (header row, first column, banded rows) where there is none.
-fn read_look(node: Option<&Element>) -> [bool; 6] {
+pub(crate) fn read_look(node: Option<&Element>) -> [bool; 6] {
     let Some(node) = node else {
         return [true, true, true, false, false, false];
     };

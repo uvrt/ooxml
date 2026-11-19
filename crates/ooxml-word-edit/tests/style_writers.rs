@@ -12,7 +12,7 @@ use ooxml_opc::Package;
 use ooxml_store::{Caller, Clock, Command, Seq, Snapshot, StoreConfig, Txn};
 use ooxml_word_edit::{
     EditError, Editor, FormatEdit, FormatPlan, InsertText, LevelFormat, ListAction, ListEdit, Property, RevisionPolicy,
-    SetText, Setting, Tracking, Value, WordDoc,
+    SetText, Setting, StyleAction, StyleEdit, StyleFormatting, Tracking, Value, WordDoc,
 };
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -75,6 +75,7 @@ enum Edit {
     Insert(InsertText),
     List(ListEdit),
     Format(FormatEdit),
+    Style(StyleEdit),
 }
 
 impl Command<WordDoc> for Edit {
@@ -87,6 +88,7 @@ impl Command<WordDoc> for Edit {
             Edit::Insert(c) => c.validate(doc),
             Edit::List(c) => c.validate(doc),
             Edit::Format(c) => c.validate(doc),
+            Edit::Style(c) => c.validate(doc),
         }
     }
 
@@ -96,6 +98,7 @@ impl Command<WordDoc> for Edit {
             Edit::Insert(c) => c.prepare(tx).map(|_| true)?,
             Edit::List(c) => !c.prepare(tx)?.steps.is_empty(),
             Edit::Format(c) => c.prepare(tx)?.steps.iter().any(|s| s.changed),
+            Edit::Style(c) => c.prepare(tx)?.changed,
         })
     }
 }
@@ -138,11 +141,14 @@ fn action(rng: &mut Rng, other: &str) -> ListAction {
 }
 
 /// A random edit of the mix.
-fn edit(rng: &mut Rng, targets: &[String], writer: u64, _n: usize) -> Edit {
+fn edit(rng: &mut Rng, targets: &[String], writer: u64, n: usize) -> Edit {
     let target = targets[rng.below(targets.len())].clone();
     let other = targets[rng.below(targets.len())].clone();
     let words: Vec<&str> = (0..1 + rng.below(4)).map(|_| WORDS[rng.below(WORDS.len())]).collect();
-    match rng.below(7) {
+    match rng.below(9) {
+        7 | 8 => Edit::Style(StyleEdit {
+            action: style_action(rng, writer, n),
+        }),
         0 => Edit::Set(SetText {
             target,
             text: words.join(" "),
@@ -172,6 +178,54 @@ fn edit(rng: &mut Rng, targets: &[String], writer: u64, _n: usize) -> Edit {
             action: action(rng, &other),
             policy: policy(rng, writer),
         }),
+    }
+}
+
+/// A style sheet edit: a style's formatting changed, one added, one removed (its uses
+/// pointed at Normal), the unused purged, the default table style, the language.
+fn style_action(rng: &mut Rng, writer: u64, n: usize) -> StyleAction {
+    let flag = |property, on| Setting {
+        property,
+        value: Some(Value::Flag(on)),
+    };
+    let named = ["Normal", "Heading 2", "List Paragraph"][rng.below(3)].to_owned();
+    match rng.below(6) {
+        0 => StyleAction::Modify {
+            name: named,
+            kind: None,
+            numbering: None,
+            tabs: None,
+            regions: Vec::new(),
+            formatting: StyleFormatting {
+                run: vec![flag(Property::Bold, rng.below(2) == 0)],
+                ..StyleFormatting::default()
+            },
+        },
+        1 => StyleAction::Add {
+            name: format!("Writer {writer} style {}", n % 3),
+            kind: "paragraph".to_owned(),
+            based_on: Some("Heading 2".to_owned()),
+            next_style: None,
+            tabs: None,
+            regions: Vec::new(),
+            formatting: StyleFormatting {
+                run: vec![flag(Property::Italic, true)],
+                ..StyleFormatting::default()
+            },
+        },
+        2 => StyleAction::Remove {
+            name: "Heading 2".to_owned(),
+            kind: None,
+            replacement: Some("Normal".to_owned()),
+        },
+        3 => StyleAction::PurgeUnused,
+        4 => StyleAction::SetDefault {
+            name: ["Table Grid", "Normal Table"][rng.below(2)].to_owned(),
+        },
+        _ => StyleAction::SetLanguage {
+            language: ["fr-BE", "nl-BE"][rng.below(2)].to_owned(),
+            style: None,
+        },
     }
 }
 

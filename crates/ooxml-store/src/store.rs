@@ -203,7 +203,8 @@ impl<D: DocModel> Store<D> {
 
     /// Run `command`: validate and prepare on the head's snapshot, commit if nothing it
     /// read or wrote was written since, otherwise prepare again on the new head; after
-    /// [`StoreConfig::optimistic_tries`] conflicts, run it under the commit lock.
+    /// [`StoreConfig::optimistic_tries`] conflicts (after one, for a command that read the
+    /// whole document), run it under the commit lock.
     pub fn run<C: Command<D>>(&self, caller: &Caller, command: &C) -> Result<Committed<D, C::Out>, C::Error> {
         let start = self.clock.monotonic();
         let mut attempts = 0;
@@ -213,10 +214,16 @@ impl<D: DocModel> Store<D> {
             command.validate(base.doc())?;
             let mut tx = Txn::new(base, &self.ids);
             let out = command.prepare(&mut tx)?;
+            let whole = tx.reads().keys().is_none();
             if let Some(done) = self.try_commit(caller, tx.into_parts()) {
                 return Ok(self.committed(done, out, attempts, false, start));
             }
             self.counts.conflict();
+            if whole {
+                // it read the whole document: any commit since conflicts with it again, so
+                // it is prepared again under the commit lock at once
+                break;
+            }
         }
         self.run_exclusive(caller, command, attempts + 1, start)
     }

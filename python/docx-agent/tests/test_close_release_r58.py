@@ -55,7 +55,8 @@ def test_closing_empties_what_the_entry_keeps(report):
         session = box.session()
         doc, document = _edited_and_checked(box, session, report)
         entry = session.entry(doc)
-        assert document.history.can_undo() and entry.committed is not None and len(entry.check_cache)
+        # (The steps are the entry's history: the Rust session's, where it owns the document.)
+        assert entry.history.can_undo() and entry.committed is not None and len(entry.check_cache)
         session.close(doc)
         # What the application still holds stays usable, emptied of its history and copies.
         assert not document.history.can_undo() and entry.committed is None

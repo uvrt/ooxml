@@ -10,7 +10,7 @@ use ooxml_derive::CacheBudget;
 use ooxml_opc::Package;
 use ooxml_store::{Caller, Clock, StoreConfig};
 use ooxml_tools::ToolArgs;
-use ooxml_tools_word::{word_edit_table, Editing, WordEditTable};
+use ooxml_tools_word::{word_edit_table, CallEditor, Editing, WordEditTable};
 use ooxml_word_edit::Editor;
 use ooxml_zip::{Method, NewEntry, Writer};
 use serde_json::{json, Value};
@@ -95,12 +95,14 @@ fn edit(arguments: Value) -> Value {
     let opened = editor.store().snapshot().doc().clone();
     let caller = Caller::anonymous();
     let editing = Editing {
-        editor: &editor,
+        editor: &CallEditor::new(&editor),
         caller: &caller,
         opened: &opened,
         tracking: None,
         doc: "d1",
         cancel: &Never,
+        date: "2026-11-17T10:00:00Z",
+        layout: None,
     };
     let mut arguments = arguments;
     arguments["doc"] = json!("d1");

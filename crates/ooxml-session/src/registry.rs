@@ -15,10 +15,10 @@ use crate::DocKind;
 use ooxml_base::Cancel;
 use ooxml_store::Caller;
 use ooxml_tools::{Done, Failure, ToolArgs, ToolError, ToolResult, ToolSpec};
-use ooxml_tools_word::{Editing, Tracked, Version};
+use ooxml_tools_word::{CallEditor, Editing, Made, Tracked, Version};
 use serde_json::{Map, Value};
 use std::marker::PhantomData;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 /// A tool as the session dispatches it.
 pub trait Tool: Send + Sync {
@@ -43,6 +43,8 @@ pub struct Call<'a> {
     pub(crate) cancel: &'a dyn Cancel,
     /// The revision date edits made now carry (the session's clock, to the minute).
     pub(crate) date: String,
+    /// The versions the call's edits made (an editing tool's: [`CallEditor::made`]).
+    pub(crate) made: &'a Mutex<Option<Made>>,
     /// The host's layout of the document's versions.
     pub(crate) layout: Option<&'a dyn ooxml_word_edit::FieldLayout>,
 }
@@ -180,8 +182,9 @@ impl<T: ToolArgs> Tool for EditHandler<T> {
             ooxml_word_edit::RevisionPolicy::Untracked => None,
         };
         let doc = call.doc.id().to_string();
+        let editor = CallEditor::new(&word.editor);
         let editing = Editing {
-            editor: &word.editor,
+            editor: &editor,
             caller: call.caller,
             opened: word.opened.doc(),
             tracking,
@@ -190,7 +193,7 @@ impl<T: ToolArgs> Tool for EditHandler<T> {
             date: &call.date,
             layout: call.layout,
         };
-        match &self.run {
+        let result = match &self.run {
             EditRun::Plain(run) => run(&args, &editing),
             EditRun::Tracking(run) => {
                 let (result, mode) = run(&args, &editing);
@@ -199,7 +202,9 @@ impl<T: ToolArgs> Tool for EditHandler<T> {
                 }
                 result
             }
-        }
+        };
+        *call.made.lock().unwrap_or_else(PoisonError::into_inner) = editor.made();
+        result
     }
 }
 
@@ -230,7 +235,8 @@ impl Registry {
     /// The tools ported so far: Word's `describe`, `word_read`, `word_inspect` and
     /// `find_text`, and `read_batch` over them; its review tools `word_set_tracking`,
     /// `word_changes` and `word_comments`; its text tools `word_set_text` and
-    /// `replace_text`; the object tool `word_format_table`; its style tools `word_lists` and `word_format`.
+    /// `replace_text`; the object tools `word_format_table` and `word_edit_table`; its style tools `word_lists`,
+    /// `word_format` and `word_styles`.
     #[must_use]
     pub fn standard() -> Self {
         let mut registry = Self::empty();
@@ -274,6 +280,10 @@ impl Registry {
             &[DocKind::Docx],
             ooxml_tools_word::word_format_table,
         )));
+        registry.register(Arc::new(EditHandler::<ooxml_tools_word::WordEditTable>::new(
+            &[DocKind::Docx],
+            ooxml_tools_word::word_edit_table,
+        )));
         registry.register(Arc::new(EditHandler::<ooxml_tools_word::WordLists>::new(
             &[DocKind::Docx],
             ooxml_tools_word::word_lists,
@@ -285,6 +295,10 @@ impl Registry {
         registry.register(Arc::new(EditHandler::<ooxml_tools_word::WordFormat>::new(
             &[DocKind::Docx],
             ooxml_tools_word::word_format,
+        )));
+        registry.register(Arc::new(EditHandler::<ooxml_tools_word::WordStyles>::new(
+            &[DocKind::Docx],
+            ooxml_tools_word::word_styles,
         )));
         registry
     }

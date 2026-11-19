@@ -321,6 +321,7 @@ def test_a_table_with_another_authors_row_keeps_that_row_marked(box):
     assert len([i for i in deleted.removed if i.startswith("tr:")]) == 3
 
 
+@pytest.mark.usefixtures("python_owned")   # prepared on drafts
 def test_the_first_tracked_call_after_untracked_drafts_drafts_at_once():
     """Switching tracking makes no new version: the version drafts are made from carries
     it, so the next call does not find "tracking was switched" (ooxml-edit 0.109.0)."""
@@ -337,6 +338,7 @@ def test_the_first_tracked_call_after_untracked_drafts_drafts_at_once():
             assert result.block and result.block["tries"] == 1 and result.block["conflicts"] == [], result.block
 
 
+@pytest.mark.usefixtures("python_owned")   # prepared on drafts
 def test_tracked_syncs_and_a_table_deletion_still_run_on_a_draft():
     """Drafted as before (round 50, R97): a sync confined to its table, adding rows and then
     removing them, and a deletion of a known table prepare on a draft; one's own rows go."""

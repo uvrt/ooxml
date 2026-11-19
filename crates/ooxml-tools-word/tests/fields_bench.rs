@@ -13,7 +13,7 @@ use ooxml_fonts::{Folder, Location, WordFontOptions};
 use ooxml_opc::Package;
 use ooxml_store::{Caller, Clock, StoreConfig};
 use ooxml_tools::{ToolArgs, ToolResult};
-use ooxml_tools_word::{word_fields, word_headers_footers, Editing, EnginePages};
+use ooxml_tools_word::{word_fields, word_headers_footers, CallEditor, Editing, EnginePages};
 use ooxml_word_edit::{Editor, FieldLayout, LaidFields};
 use ooxml_word_pages::{DiskFonts, EngineBudgets, EngineOptions, FontSetup, PageEngine};
 use serde_json::{json, Value};
@@ -126,7 +126,7 @@ fn best<A: ToolArgs>(
         let before = layout.engine.lock().unwrap().stats();
         let caller = Caller::anonymous();
         let editing = Editing {
-            editor: &editor,
+            editor: &CallEditor::new(&editor),
             caller: &caller,
             opened: &opened,
             tracking: None,
@@ -187,6 +187,11 @@ fn field_tools_on_a_long_document() {
         engine,
         spent: Mutex::new(Vec::new()),
     };
+    run_calls(&bytes, &layout, &ids);
+}
+
+/// The calls `FIELDS_CALLS` names (every one by default), each reported.
+fn run_calls(bytes: &Arc<[u8]>, layout: &Timed, ids: &[String]) {
     let report = |name: &str, (took, reply): (Duration, Value)| {
         let summary = reply.get("summary").cloned().unwrap_or(Value::Null);
         let warnings = reply.get("warnings").cloned().unwrap_or(Value::Null);
@@ -201,16 +206,16 @@ fn field_tools_on_a_long_document() {
     if wanted("update") {
         report(
             "word_fields update",
-            best(&bytes, &layout, &json!({"doc": "d1", "action": "update"}), word_fields),
+            best(bytes, layout, &json!({"doc": "d1", "action": "update"}), word_fields),
         );
     }
     if wanted("one") {
-        let field = page_field(&bytes, &layout);
+        let field = page_field(bytes, layout);
         report(
             &format!("word_fields update {field}"),
             best(
-                &bytes,
-                &layout,
+                bytes,
+                layout,
                 &json!({"doc": "d1", "action": "update", "ids": [field]}),
                 word_fields,
             ),
@@ -220,8 +225,8 @@ fn field_tools_on_a_long_document() {
         report(
             "word_fields insert_toc",
             best(
-                &bytes,
-                &layout,
+                bytes,
+                layout,
                 &json!({"doc": "d1", "action": "insert_toc", "after": ids[10]}),
                 word_fields,
             ),
@@ -231,8 +236,8 @@ fn field_tools_on_a_long_document() {
         report(
             "word_headers_footers page_x_of_y",
             best(
-                &bytes,
-                &layout,
+                bytes,
+                layout,
                 &json!({"doc": "d1", "section": "s:1", "which": "footer", "action": "set", "text": "",
                         "page_number": "page_x_of_y"}),
                 word_headers_footers,
@@ -248,7 +253,7 @@ fn page_field(bytes: &Arc<[u8]>, layout: &Timed) -> String {
     let opened = editor.store().snapshot().doc().clone();
     let caller = Caller::anonymous();
     let editing = Editing {
-        editor: &editor,
+        editor: &CallEditor::new(&editor),
         caller: &caller,
         opened: &opened,
         tracking: None,

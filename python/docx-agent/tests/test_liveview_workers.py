@@ -115,6 +115,7 @@ def test_the_view_through_a_worker_is_the_versions_own(made, monkeypatch):
         assert shown.token in _held(box, document)[layout_module.lineage(document)]
 
 
+@pytest.mark.usefixtures("python_owned")   # the application's own edit: not yet an owned document's step
 def test_a_page_of_a_version_the_worker_let_go_is_laid_out_again_there(made, monkeypatch):
     """The worker lost the version (its layouts dropped): it lays it out again from the
     bytes this process kept, and draws the same page."""

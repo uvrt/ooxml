@@ -6,7 +6,7 @@
 //! Must not: be used by any library; it is a test instrument.
 
 use crate::structure_tools::{run, tool_case};
-use ooxml_tools_word::{word_format, word_lists, WordFormat, WordLists};
+use ooxml_tools_word::{word_format, word_lists, word_styles, WordFormat, WordLists, WordStyles};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -18,6 +18,7 @@ pub fn case(bytes: &Arc<[u8]>, case: &Value) -> Result<Value, String> {
     tool_case(bytes, case, |tool, arguments, editing| match tool {
         "word_lists" => Some(run(arguments, |args: &WordLists| word_lists(args, editing))),
         "word_format" => Some(run(arguments, |args: &WordFormat| word_format(args, editing))),
+        "word_styles" => Some(run(arguments, |args: &WordStyles| word_styles(args, editing))),
         _ => None,
     })
 }

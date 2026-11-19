@@ -75,7 +75,7 @@ from collections import OrderedDict
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from fractions import Fraction
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 import docx2svg
 from docx2svg.paths import path_part, resolve_path
@@ -2602,6 +2602,29 @@ def _draft_class(kind: type) -> type:
         return found
 
 
+def reader_copy(live: "Document", data: bytes, ids: "Callable[[Document], None]") -> "Document":
+    """A read copy of ``live`` at one of its versions, opened from that version's ``data``
+    (lane P2c5: the seam a document's owner makes its readers with, :mod:`docx_agent.rust.owner`):
+    the read copy's class, ``ids(copy)`` giving it the version's ids and number, then the
+    document's settings, its layouts (read through ``live``), no engine of its own, and its
+    bytes ``data`` while it is that version.  Never edited: its tools only read."""
+    copy = _reader_class(type(live)).open(data, stamping=live.stamping)
+    ids(copy)
+    for name, value in settings_of(live).items():
+        setattr(copy, name, value)
+    copy.__dict__["_live"] = live
+    copy.converter = None
+    copy.__dict__["_frozen"] = (copy.history.version, copy._state, data)
+    return copy
+
+
+def settings_of(document: "Document") -> "dict[str, Any]":
+    """The settings a copy of ``document`` takes as they are now (its public attributes, less
+    :data:`_NOT_SETTINGS` and the ones it reads from the document whenever asked)."""
+    return {name: value for name, value in vars(document).items()
+            if not name.startswith("_") and name not in _NOT_SETTINGS + _LIVE_SETTINGS}
+
+
 def read_copy(document: "Document"):
     """ooxml-edit's ``DocumentFormat.read_copy`` (round 45): what a copy of ``document`` at
     this version needs -- its ids (the ledger of every id it had, the renames, the version
@@ -2628,8 +2651,7 @@ def read_copy(document: "Document"):
     ledger = _ids.copy_ledger(document._ledger)
     aliases = dict(document._aliases)
     version, last = document.history.version, document.history.last_version
-    settings = {name: value for name, value in vars(document).items()
-                if not name.startswith("_") and name not in _NOT_SETTINGS + _LIVE_SETTINGS}
+    settings = settings_of(document)
     kind = type(document)
     # A changing call's layout engine, still pointed at for its checks, goes to the copy
     # its checks run on once the lock is let go (ooxml-edit's After): the document's own is
@@ -2766,6 +2788,35 @@ def adopt(document: "Document", copy: "Document") -> None:
             # The copy's last is of the document's bytes now: numbered as started now.
             document._layout_count += 1
             document._layout_kept = (kept[0], kept[1], document._layout_count)
+
+
+def laid_mark(document: "Document") -> tuple:
+    """What changes whenever ``document`` keeps a layout or a summary of a state (lane P2c5:
+    whether a Python step laid out, :func:`same_state`): its count of layouts started and
+    its latest summary's key."""
+    with _keeper(document):
+        summaries = document._layout_summaries
+        return (document._layout_count, next(reversed(summaries)) if summaries else None)
+
+
+def same_state(document: "Document", made: bytes, written: bytes) -> None:
+    """Lane P2c5: the state laid out as ``made`` (a Python step's last, as the document wrote
+    it) is ``written`` (that version as the document's owner writes it, :mod:`.rust.owner`):
+    what is kept here of its layout -- the layout, its summary, its statistics -- is found
+    under ``written`` too.  Nothing kept of ``made``: nothing done."""
+    options = layout_options(document, {})
+    before, after = cache_key(made, options), cache_key(written, options)
+    summary_before, summary_after = layout_key(made, options), layout_key(written, options)
+    with _keeper(document):
+        conversion = document._layouts.get(before)
+        if conversion is not None and after not in document._layouts:
+            keep(document, after, conversion)
+        summary = document._layout_summaries.get(summary_before)
+        if summary is not None:
+            document._layout_summaries[summary_after] = summary
+        stats = getattr(document, "_layout_stats", None)
+        if stats and before in stats:
+            stats[after] = stats[before]
 
 
 #: How many checks' facts a document keeps, by layout and request (:func:`check_facts`).
