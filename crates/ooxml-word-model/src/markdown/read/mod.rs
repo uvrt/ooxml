@@ -66,6 +66,9 @@ pub struct Reader<'a> {
     /// While a window's blocks before it are passed: their list items counted, no record
     /// made ([`window`]).
     counting: bool,
+    /// Whether the Markdown carries the id comments (docx-agent's `Options.ids`; off:
+    /// plain Markdown).
+    pub ids: bool,
 }
 
 impl<'a> Reader<'a> {
@@ -87,6 +90,7 @@ impl<'a> Reader<'a> {
             outline: HashMap::new(),
             into: HashMap::new(),
             counting: false,
+            ids: true,
         }
     }
 

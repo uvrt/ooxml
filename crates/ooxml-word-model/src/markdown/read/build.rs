@@ -13,12 +13,20 @@ use crate::markdown::model::{has_content, Block, Inline, ListBlock, Table};
 use crate::markdown::select::{select, RangeError, Selected};
 use crate::markdown::{Stories, ViewName};
 
-/// The model blocks `to_markdown` writes for `range` (`None`: the body) of `docx`.
+/// The model blocks `to_markdown` writes for `range` (`None`: the body) of `docx`, with
+/// the id comments or (`ids` off) as plain Markdown.
 ///
 /// # Errors
 /// A [`RangeError`] when `range` names nothing.
-pub fn project(docx: &Docx, range: Option<&str>, view: ViewName, stories: Stories) -> Result<Vec<Block>, RangeError> {
+pub fn project(
+    docx: &Docx,
+    range: Option<&str>,
+    view: ViewName,
+    stories: Stories,
+    ids: bool,
+) -> Result<Vec<Block>, RangeError> {
     let mut reader = Reader::new(docx, view);
+    reader.ids = ids;
     let mut blocks = Vec::new();
     let mut labels: Vec<String> = Vec::new();
     let notes = note_elements(docx);
@@ -26,7 +34,7 @@ pub fn project(docx: &Docx, range: Option<&str>, view: ViewName, stories: Storie
         match selected {
             Selected::Notes(part) => labels.extend(notes.iter().filter(|n| n.0 == part).map(|n| n.1.clone())),
             Selected::Records { story, records, .. } => {
-                if let Some(story) = story {
+                if let Some(story) = story.filter(|_| ids) {
                     blocks.push(Block::Comment(format!("story: {story}")));
                 }
                 blocks.extend(build(&mut reader, &records, false));
@@ -48,7 +56,9 @@ pub fn project(docx: &Docx, range: Option<&str>, view: ViewName, stories: Storie
                     "footer"
                 };
                 let records = reader.story(part);
-                blocks.push(Block::Comment(format!("story: {} ({kind})", part.story)));
+                if ids {
+                    blocks.push(Block::Comment(format!("story: {} ({kind})", part.story)));
+                }
                 blocks.extend(build(&mut reader, &records, false));
                 labels.extend(referenced(&records));
             } else if root.name().is(Some(W), "footnotes") || root.name().is(Some(W), "endnotes") {
@@ -175,23 +185,26 @@ pub fn build(reader: &mut Reader<'_>, records: &[Record], trailing: bool) -> Vec
                     .flat_map(|r| paragraph_blocks(reader, r, false))
                     .collect();
                 out.push(Block::Quote(inner));
-                out.extend(after(&group));
+                out.extend(after(&group, reader.ids));
                 continue;
             }
             Record::Paragraph(p) if p.kind == Kind::Code => {
                 let group = run(&[Kind::Code]);
                 k += group.len();
-                out.push(Block::Comment(group.iter().map(label).collect::<Vec<_>>().join(" ")));
+                if reader.ids {
+                    out.push(Block::Comment(group.iter().map(label).collect::<Vec<_>>().join(" ")));
+                }
                 out.push(Block::Code(group.iter().map(|r| code_text(r) + "\n").collect()));
-                out.extend(after(&group));
+                out.extend(after(&group, reader.ids));
                 continue;
             }
             Record::Paragraph(p) => {
                 let mut p = p.as_ref().clone();
                 out.extend(paragraph_blocks(reader, &mut p, trailing));
-                out.extend(after(std::slice::from_ref(&p)));
+                out.extend(after(std::slice::from_ref(&p), reader.ids));
             }
             Record::Table(t) => out.extend(table(reader, t)),
+            Record::Marker(m) if !reader.ids => {}
             Record::Marker(m) => {
                 if m.begin {
                     let mut words = vec![m.id.clone(), m.kind.to_owned()];
@@ -292,7 +305,11 @@ fn hoist(record: &mut ParagraphRecord, inline: Vec<Inline>) -> Vec<Inline> {
 }
 
 fn paragraph_blocks(reader: &mut Reader<'_>, record: &mut ParagraphRecord, trailing: bool) -> Vec<Block> {
-    let mut inline = hoist(record, record.inline.clone());
+    let mut inline = if reader.ids {
+        hoist(record, record.inline.clone())
+    } else {
+        strip_comments(&record.inline)
+    };
     if record.kind == Kind::Heading {
         inline = inline
             .into_iter()
@@ -304,45 +321,63 @@ fn paragraph_blocks(reader: &mut Reader<'_>, record: &mut ParagraphRecord, trail
     }
     let mut out = Vec::new();
     if record.kind == Kind::Rule {
-        out.push(Block::Comment(label(record)));
+        if reader.ids {
+            out.push(Block::Comment(label(record)));
+        }
         out.push(Block::Rule);
         return out;
     }
     let empty = !has_content(&inline);
-    if trailing && !(empty && inline.is_empty() && record.kind != Kind::Heading) {
-        if !inline.is_empty() {
-            inline.push(Inline::text(" "));
+    if reader.ids {
+        if trailing && !(empty && inline.is_empty() && record.kind != Kind::Heading) {
+            if !inline.is_empty() {
+                inline.push(Inline::text(" "));
+            }
+            inline.push(Inline::Html(comment(&label(record))));
+        } else if empty && record.kind != Kind::Heading {
+            out.push(Block::Comment(format!("{} empty", label(record))));
+        } else {
+            out.push(Block::Comment(label(record)));
         }
-        inline.push(Inline::Html(comment(&label(record))));
-    } else if empty && record.kind != Kind::Heading {
-        out.push(Block::Comment(format!("{} empty", label(record))));
-    } else {
-        out.push(Block::Comment(label(record)));
     }
     if record.kind == Kind::Heading {
         out.push(Block::Heading(record.level.min(6), inline));
-    } else if !(empty && (!trailing || inline.is_empty())) {
+    } else if !(reader.ids && empty && (!trailing || inline.is_empty())) {
         out.push(Block::Paragraph(inline));
     }
     for (identifier, b) in record.text_boxes.clone() {
         let records = reader.container(&record.part, &b);
         let name = identifier.unwrap_or_else(|| "drawing".to_owned());
-        out.push(Block::Comment(format!("{name} text-box")));
+        if reader.ids {
+            out.push(Block::Comment(format!("{name} text-box")));
+        }
         out.extend(build(reader, &records, false));
-        out.push(Block::Comment(format!("/{name}")));
+        if reader.ids {
+            out.push(Block::Comment(format!("/{name}")));
+        }
     }
     out
 }
 
-/// A section break a group of paragraphs ends.
-fn after(records: &[ParagraphRecord]) -> Vec<Block> {
+/// A section break a group of paragraphs ends, said where the Markdown carries `ids`.
+fn after(records: &[ParagraphRecord], ids: bool) -> Vec<Block> {
     records
         .iter()
+        .filter(|_| ids)
         .filter_map(|r| {
             r.section
                 .as_ref()
                 .map(|(id, kind)| Block::Comment(format!("{id} section break: {kind}")))
         })
+        .collect()
+}
+
+/// `inline` without its HTML comments (docx-agent's `_strip_comments`).
+fn strip_comments(inline: &[Inline]) -> Vec<Inline> {
+    inline
+        .iter()
+        .filter(|i| !matches!(i, Inline::Html(_)))
+        .cloned()
         .collect()
 }
 
@@ -420,7 +455,7 @@ fn lists(reader: &mut Reader<'_>, records: &[ParagraphRecord], before: &[Block])
         }
         let mut record = record.clone();
         let mut item = paragraph_blocks(reader, &mut record, true);
-        item.extend(after(std::slice::from_ref(&record)));
+        item.extend(after(std::slice::from_ref(&record), reader.ids));
         if let Some(list) = stack.last().map(|s| s.1.clone()).and_then(|p| list_at(&mut out, &p)) {
             list.items.push(item);
         }
@@ -502,7 +537,11 @@ fn table(reader: &mut Reader<'_>, t: &TableRecord) -> Vec<Block> {
             words.push(format!("{label}: {}", comment_text(&one_line(v, 120))));
         }
     }
-    let mut out = vec![Block::Comment(words.join(" "))];
+    let mut out = if reader.ids {
+        vec![Block::Comment(words.join(" "))]
+    } else {
+        Vec::new()
+    };
     match gfm(reader, t) {
         Some(table) => out.push(Block::Table(table)),
         None => out.push(Block::Html(crate::markdown::html::table_html(reader, t))),
@@ -524,11 +563,18 @@ fn gfm(reader: &Reader<'_>, t: &TableRecord) -> Option<Table> {
                     if !matches!(p.kind, Kind::Paragraph | Kind::Quote | Kind::Code)
                         || !p.text_boxes.is_empty()
                         || p.section.is_some()
-                        || p.inline.contains(&Inline::Break)
                     {
                         return None;
                     }
-                    cells.push(p.inline.clone());
+                    let inline = if reader.ids {
+                        p.inline.clone()
+                    } else {
+                        strip_comments(&p.inline)
+                    };
+                    if inline.contains(&Inline::Break) {
+                        return None;
+                    }
+                    cells.push(inline);
                 }
                 _ => return None,
             }

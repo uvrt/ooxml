@@ -83,6 +83,11 @@ impl TableTracker {
         canonical(work, now) != canonical(work, old)
     }
 
+    /// Each cell watched, with its properties as they were.
+    pub(crate) fn cells(&self) -> &[(Id, Id)] {
+        &self.cells
+    }
+
     /// Record what changed (`TableTracker.record`): the table's properties too with
     /// `table_level`, its grid with `grid`.
     pub(crate) fn record(&self, work: &mut Work, stamp: &mut Stamp, table_level: bool, grid: bool, orders: &Orders) {

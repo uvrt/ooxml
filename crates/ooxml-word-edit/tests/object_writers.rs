@@ -1,7 +1,8 @@
 //! The random multi-writer oracle for the object edits (lane P4c): writers on threads mix
 //! tracked and untracked `set_text` and `insert_text` (in body and cell paragraphs) and
 //! `set_cells` with tables formatted (`FormatTable`: a table's properties, a column's
-//! width, a row's height, cells' shading and borders) through one document's store;
+//! width, a row's height, cells' shading and borders) and rows inserted and deleted
+//! (`EditTable`) through one document's store;
 //! replayed serially in commit order on the document as opened, every version is the
 //! same, byte for byte, as the concurrent run made it.
 // Tests may unwrap, panic and index (docs/architecture/README.md, section 2.5).
@@ -13,8 +14,8 @@ use ooxml_derive::CacheBudget;
 use ooxml_opc::Package;
 use ooxml_store::{Caller, Clock, Command, Seq, Snapshot, StoreConfig, Txn};
 use ooxml_word_edit::{
-    CellValues, EditError, Editor, FormatTable, InsertText, RevisionPolicy, SetCells, SetText, TableFormat,
-    TableValues, TableWidth, Tracking, WordDoc,
+    CellValues, EditError, EditTable, Editor, FormatTable, InsertText, RevisionPolicy, SetCells, SetText, TableChange,
+    TableFormat, TableValues, TableWidth, Tracking, WordDoc,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -76,6 +77,7 @@ enum Edit {
     Insert(InsertText),
     Cells(SetCells),
     Format(FormatTable),
+    Rows(EditTable),
 }
 
 impl Command<WordDoc> for Edit {
@@ -88,6 +90,7 @@ impl Command<WordDoc> for Edit {
             Edit::Insert(c) => c.validate(doc),
             Edit::Cells(c) => c.validate(doc),
             Edit::Format(c) => c.validate(doc),
+            Edit::Rows(c) => c.validate(doc),
         }
     }
 
@@ -97,6 +100,7 @@ impl Command<WordDoc> for Edit {
             Edit::Insert(c) => c.prepare(tx).map(|_| true)?,
             Edit::Cells(c) => c.prepare(tx).map(|out| !out.edits.is_empty())?,
             Edit::Format(c) => c.prepare(tx).map(|_| true)?,
+            Edit::Rows(c) => c.prepare(tx).map(|_| true)?,
         })
     }
 }
@@ -149,12 +153,12 @@ fn format(rng: &mut Rng) -> TableFormat {
 }
 
 /// A random edit of the mix: text in body and cell paragraphs, cells written, tables
-/// formatted.
+/// formatted, rows inserted and deleted.
 fn edit(rng: &mut Rng, targets: &[String], tables: &[String], writer: u64) -> Edit {
     let target = targets[rng.below(targets.len())].clone();
     let table = tables[rng.below(tables.len())].clone();
     let words: Vec<&str> = (0..1 + rng.below(4)).map(|_| WORDS[rng.below(WORDS.len())]).collect();
-    match rng.below(8) {
+    match rng.below(10) {
         0 | 1 => Edit::Set(SetText {
             target,
             text: words.join(" "),
@@ -168,6 +172,19 @@ fn edit(rng: &mut Rng, targets: &[String], tables: &[String], writer: u64) -> Ed
         3 => Edit::Cells(SetCells {
             table,
             writes: vec![(rng.below(3), rng.below(3), words.join(" "))],
+            policy: policy(rng, writer),
+        }),
+        8 | 9 => Edit::Rows(EditTable {
+            table,
+            change: if rng.below(3) == 0 {
+                TableChange::DeleteRow { index: rng.below(3) }
+            } else {
+                TableChange::InsertRow {
+                    index: (rng.below(2) == 0).then(|| rng.below(3)),
+                    below: rng.below(2) == 0,
+                    plain: true,
+                }
+            },
             policy: policy(rng, writer),
         }),
         _ => Edit::Format(FormatTable {
@@ -234,7 +251,10 @@ fn run(seed: u64, writers: u64, per_writer: usize) -> (u64, u64, usize) {
         );
     }
     let stats = shared.store().stats();
-    let formats = records.iter().filter(|r| matches!(r.1, Edit::Format(_))).count();
+    let formats = records
+        .iter()
+        .filter(|r| matches!(r.1, Edit::Format(_) | Edit::Rows(_)))
+        .count();
     (stats.conflicts, stats.exclusive, formats)
 }
 
@@ -259,7 +279,7 @@ fn sixty_seeds_of_eight_writers_formatting_tables() {
         structure += s;
     }
     println!(
-        "60 seeds, 8 writers x 6 edits: {structure} table formattings committed; {conflicts} conflicts, \
+        "60 seeds, 8 writers x 6 edits: {structure} table formattings and row edits committed; {conflicts} conflicts, \
          {exclusive} exclusive runs"
     );
 }

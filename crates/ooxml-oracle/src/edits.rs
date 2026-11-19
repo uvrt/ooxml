@@ -104,13 +104,22 @@ pub(crate) fn policy(case: &Value) -> RevisionPolicy {
     }
 }
 
+/// A case of a tool called as a tool (`op` `tool`, `objects`, `structure`, `style`), run
+/// by its module; `None` for an edit case.
+fn tool_op(bytes: &Arc<[u8]>, case: &Value) -> Option<Result<Value, String>> {
+    Some(match case.get("op").and_then(Value::as_str)? {
+        "tool" => crate::review_tools::tool_case(bytes, case),
+        "objects" => crate::object_tools::case(bytes, case),
+        "structure" => crate::structure_tools::case(bytes, case),
+        "style" => crate::style_tools::case(bytes, case),
+        _ => return None,
+    })
+}
+
 /// One case on a freshly opened document.
 fn edit(bytes: &Arc<[u8]>, case: &Value) -> Result<Value, String> {
-    match case.get("op").and_then(Value::as_str) {
-        Some("tool") => return crate::review_tools::tool_case(bytes, case),
-        Some("objects") => return crate::object_tools::case(bytes, case),
-        Some("structure") => return crate::structure_tools::case(bytes, case),
-        _ => {}
+    if let Some(done) = tool_op(bytes, case) {
+        return done;
     }
     let package = Package::open(Arc::clone(bytes), &Limits::default()).map_err(|e| e.to_string())?;
     let editor = Editor::open(

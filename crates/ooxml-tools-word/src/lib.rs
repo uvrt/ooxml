@@ -19,6 +19,7 @@ mod placements;
 mod refusal;
 mod review;
 mod structure;
+mod style;
 mod text;
 mod version;
 mod word_inspect;
@@ -27,9 +28,9 @@ mod word_read;
 pub use describe::{describe, Describe, DESCRIBED, NOT_DESCRIBED};
 pub use find_text::{find_text, FindStories, FindText};
 pub use objects::{
-    word_format_table, Across, Against, BorderStyle, CellArg, ControlAction, ControlType, DrawingAction, HeightRule,
-    KeyPair, Look, Loose, Position, Scope, Side, TableAction, Vertical, WidthOf, WordControls, WordDrawings,
-    WordEditTable, WordFormatTable, Wrap, ZOrder,
+    word_edit_table, word_format_table, Across, Against, BorderStyle, CellArg, ControlAction, ControlType,
+    DrawingAction, HeightRule, KeyPair, Look, Loose, Position, Scope, Side, TableAction, Vertical, WidthOf,
+    WordControls, WordDrawings, WordEditTable, WordFormatTable, Wrap, ZOrder,
 };
 pub use placements::Placer;
 pub use review::{
@@ -42,6 +43,7 @@ pub use structure::{
     StoryType, StyleMapping, Unmapped, Which, WordCopyFrom, WordFields, WordHeadersFooters, WordLinks, WordMove,
     WordNotes, WordSections,
 };
+pub use style::{word_lists, Follow, ListKind, ListsAction, WordLists};
 pub use text::{replace_text, word_set_text, Expect, ReplaceStories, ReplaceText, SetTextItem, Unported, WordSetText};
 pub use version::Version;
 pub use word_inspect::{word_inspect, WordInspect};
