@@ -120,6 +120,11 @@ pub struct CallMade {
     pub first: u64,
     /// The version its last edit made.
     pub last: Opened,
+    /// What the call's edit touched (`touched` entries), where it made one version (else
+    /// `None`: [`Opened::touched_since`] the version before `first` says).
+    pub touched: Option<Vec<Value>>,
+    /// The validation delta of `last` against the problems the document opened with.
+    pub validation: ooxml_word_edit::validate::Delta,
 }
 
 /// The versions `context` names, by document.
@@ -490,9 +495,14 @@ impl Session {
             // reading call's, the one read
             let mutates = self.registry.named(name).is_some_and(|t| t.spec().flags.mutates);
             let document = self.document(&opened.id).ok();
-            call_made = made.zip(document.as_ref()).map(|(made, document)| CallMade {
-                first: made.first.seq().0,
-                last: Self::opened(&opened.id, document, At::Word(made.last)),
+            call_made = made.zip(document.as_ref()).map(|(made, document)| {
+                let one = made.first.seq() == made.last.seq();
+                CallMade {
+                    first: made.first.seq().0,
+                    touched: one.then(|| made.touched.iter().map(crate::changes::touched_json).collect()),
+                    validation: made.validation,
+                    last: Self::opened(&opened.id, document, At::Word(made.last)),
+                }
             });
             let head = || document.as_ref().map(|d| d.head().seq());
             let left = call_made.as_ref().map(|m| m.last.version());

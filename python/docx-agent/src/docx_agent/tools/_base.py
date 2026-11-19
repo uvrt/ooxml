@@ -422,9 +422,9 @@ def checks(entry: Any, touched: Sequence[Any]) -> dict[str, Any]:
     before = next((t.layout for t in touched if isinstance(t, Before)), None)
     if before is None or before.count > REFLOW_PAGES:
         # No layout to compare in Python: after an edit the Rust session made, its checks
-        # (of the version the call made, where it ran beside others: lane P2c6).
-        made = next((t.head for t in touched if isinstance(t, Made)), None)
-        validated = owned_validation(entry, made)
+        # (one served without the lock carries its version's own: lane P2c6).
+        made = next((t for t in touched if isinstance(t, Made)), None)
+        validated = made.validation if made is not None else owned_validation(entry)
         if validated is not None:
             _relayout_owned(entry)
             return {"validate": validated, "reflow": None if before is None else STALE}

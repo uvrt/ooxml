@@ -42,6 +42,9 @@ class Served:
     head: Any
     #: Markers for the call's checks (the format's ``checks`` get them with what it touched).
     touched: list[Any] = field(default_factory=list)
+    #: What the step touched, as the owner's ``touched`` says it, where the owner said it
+    #: with the edit (``None``: asked of the owner between the step's versions).
+    step_touched: list[dict[str, Any]] | None = None
 
 
 class Declined:
@@ -89,7 +92,9 @@ def serve_unlocked(toolbox: "Toolbox", session: Session, tool: "Tool", arguments
     result.warnings[:0] = tool.ignored_for(entry.kind, given) + read
     result.version = number
     if before is not None:
-        made = entry.owner.touched(entry.handle, entry.history.head(before), served.head)
+        made = served.step_touched
+        if made is None:
+            made = entry.owner.touched(entry.handle, entry.history.head(before), served.head)
         result.touched = [{"doc": entry.doc_id, **item} for item in made]
     context.touched.setdefault(entry.doc_id, []).extend(served.touched)
     result.checks = {**toolbox._checks(session, entry, context), **result.checks}

@@ -122,7 +122,7 @@ def _tracking(call: Any, entry: Any, context: Any, counted: bool) -> None:
             raise _Fallback("tracking")
         mirror.tracking = wanted
     if made is not None:
-        first, head = made
+        first, head, _touched, _validation = made
         entry.served(first, head, StepOwner(dict(call.caller), "word_set_tracking"), counted=counted)
 
 
@@ -159,8 +159,8 @@ def _compares(before: Any) -> bool:
 
 
 def _edit(call: Any, entry: Any, arguments: dict[str, Any], counted: bool) -> tuple[Result, Any]:
-    """The call's edit made by the session: its result, and the versions it made (``(first,
-    head)``, ``None`` where it changed nothing).  ``counted``: as for
+    """The call's edit made by the session: its result, and what it made (``Session.edit``'s
+    ``(first, head, touched, validation)``, ``None`` where it changed nothing).  ``counted``: as for
     :meth:`~ooxml_edit.tools.owned.OwnedEntry.served`."""
     mirror = entry.handle
     tool = call.tool.name
@@ -189,10 +189,13 @@ def _count(tool: str, why: str | None) -> None:
 
 class Made:
     """A check's marker (:attr:`~ooxml_edit.tools.served.Served.touched`): the version a
-    call the session served made, whose validation its checks report."""
+    call the session served made, and its validation (``(new, fixed, baseline)``, as
+    ``Session.validation`` gives it), which its checks report."""
 
-    def __init__(self, head: Any) -> None:
+    def __init__(self, head: Any, validation: tuple[list[str], list[str], int]) -> None:
         self.head = head
+        new, fixed, baseline = validation
+        self.validation = {"new": list(new), "fixed": list(fixed), "baseline": baseline}
 
 
 def serve_owned(call: Any, arguments: dict[str, Any]) -> Any:
@@ -223,7 +226,9 @@ def serve_owned(call: Any, arguments: dict[str, Any]) -> Any:
     touched: list[Any] = [_before(before)] if current else []
     if made is None:
         return Served(result, None, None, touched)
-    return Served(result, made[0], made[1], [*touched, Made(made[1])])
+    first, head, step, validation = made
+    return Served(result, first, head, [*touched, Made(head, validation)],
+                  None if step is None else json.loads(step))
 
 
 def _before(layout: Any) -> Any:
@@ -251,7 +256,7 @@ def serve(call: Any, arguments: dict[str, Any], python: Callable[[], Any]) -> An
         with entry.serving():
             result, made = _edit(call, entry, arguments, counted=False)
             if made is not None:
-                entry.served(*made)
+                entry.served(made[0], made[1])
         _hand_engine(call, entry, before)
     except _Fallback as fallback:
         _count(tool, str(fallback))

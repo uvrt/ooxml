@@ -6,17 +6,24 @@
 //! Must not: change how an edit runs, or outlive the call.
 
 use ooxml_store::{Caller, Command, Snapshot, Store};
-use ooxml_word_edit::validate::Problem;
+use ooxml_word_edit::touched::Touched;
+use ooxml_word_edit::validate::{Delta, Problem};
 use ooxml_word_edit::{EditError, Edited, Editor, WordDoc};
 use std::sync::{Mutex, PoisonError};
 
-/// The versions one call made: its first edit's and its last's (the same for one edit).
+/// The versions one call made: its first edit's and its last's (the same for one edit),
+/// with what its last edit touched and the validation delta of the version it made (the
+/// editor works both out with each edit).
 #[derive(Debug, Clone)]
 pub struct Made {
     /// The version the call's first changing edit made.
     pub first: Snapshot<WordDoc>,
     /// The version its last changing edit made: the call's step ends there.
     pub last: Snapshot<WordDoc>,
+    /// What the last edit touched (from the version it was applied to).
+    pub touched: Vec<Touched>,
+    /// The validation delta of `last`.
+    pub validation: Delta,
 }
 
 /// The document's editor for one call: its edits, and the versions they made.
@@ -51,6 +58,8 @@ impl<'a> CallEditor<'a> {
             *made = Some(Made {
                 first,
                 last: edited.version.clone(),
+                touched: edited.touched.clone(),
+                validation: edited.validation.clone(),
             });
         }
         Ok(edited)

@@ -86,6 +86,11 @@ fn to_py(error: &SessionError) -> PyErr {
 /// the document opened with.
 type Validation = (Vec<String>, Vec<String>, usize);
 
+/// What `Session.edit` says a call made: its first version's number, its last version,
+/// what it touched (JSON text; `None` where it made more than one version) and the last
+/// version's validation.
+type EditMade = (u64, PyVersion, Option<String>, Validation);
+
 /// What a call runs with (`ooxml_core.CallContext`): who calls, a token that stops it,
 /// and how long it may run, in seconds. One may serve many calls.
 #[pyclass(frozen, name = "CallContext", module = "ooxml_core")]
@@ -309,9 +314,11 @@ impl PySession {
     }
 
     /// Run the editing tool `name` as [`call`](Self::call) does (no limit, no images):
-    /// returns the envelope's JSON text, the application's JSON text (`unported`), and the
-    /// versions the call's edits made -- `(first, last)`: the number of the version its
-    /// first edit made, and the version its last made, held -- or `None` where it changed
+    /// returns the envelope's JSON text, the application's JSON text (`unported`), and what
+    /// the call's edits made -- `(first, last, touched, validation)`: the number of the
+    /// version its first edit made, the version its last made (held), what it touched as
+    /// JSON text (`None` where it made more than one version) and the last version's
+    /// validation as [`validation`](Self::validation) gives it -- or `None` where it changed
     /// nothing. A host that numbers the document's steps takes the call's step from these,
     /// whatever other calls commit to the document meanwhile.
     #[pyo3(signature = (name, arguments, *, context = None))]
@@ -321,7 +328,7 @@ impl PySession {
         name: &str,
         arguments: String,
         context: Option<PyRef<'_, PyCallContext>>,
-    ) -> (String, String, Option<(u64, PyVersion)>) {
+    ) -> (String, String, Option<EditMade>) {
         let context = context_of(context.as_deref());
         let session = &self.inner;
         let (text, app, made) = py.detach(|| {
@@ -331,7 +338,12 @@ impl PySession {
             let app = serde_json::json!({"unported": result.unported()});
             (compact(&Value::Object(result.to_json())), compact(&app), made)
         });
-        (text, app, made.map(|m| (m.first, PyVersion { inner: m.last })))
+        let made = made.map(|m| {
+            let touched = m.touched.map(|t| Value::Array(t).to_string());
+            let validation = (m.validation.new, m.validation.fixed, m.validation.baseline);
+            (m.first, PyVersion { inner: m.last }, touched, validation)
+        });
+        (text, app, made)
     }
 
     /// Commit a version's touched parts (bytes, or `None` to remove the part) as one step:

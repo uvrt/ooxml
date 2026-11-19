@@ -128,7 +128,7 @@ impl Opened {
 }
 
 /// One `touched` entry as docx-agent's `tools/touched.py` writes it.
-fn touched_json(found: &ooxml_word_edit::touched::Touched) -> Value {
+pub(crate) fn touched_json(found: &ooxml_word_edit::touched::Touched) -> Value {
     let mut entry = Map::new();
     entry.insert("part".into(), Value::from(found.part.as_str()));
     if let Some(section) = &found.section {
