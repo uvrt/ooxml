@@ -130,9 +130,111 @@ def format_cases(document) -> list[dict]:
     return out + [tracked(case) for case in out]
 
 
+def _named(document, kind: str) -> list[str]:
+    return [s.name for s in document.styles if s.kind == kind and s.name]
+
+
+def _custom(document) -> list[str]:
+    """Custom styles nothing uses (purge's candidates), the first few."""
+    out = []
+    for style in document.styles:
+        if not style.name or style.default:
+            continue
+        node = document.styles._node(style.id)
+        if node is None or (node.get(f"{{{_W}}}customStyle") or "0") not in ("1", "true", "on"):
+            continue
+        if not document.styles.usage(style.name, style.kind)["content"]:
+            out.append(style.name)
+        if len(out) == 2:
+            break
+    return out
+
+
+_W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+
+
+def styles_cases(document) -> list[dict]:
+    """``word_styles``: listed and described; paragraph, character and table styles added
+    (formatting, shading, tab stops, regions); modified (a list level linked and unlinked,
+    regions, no change); removed (replaced, refused), purged; the default table style; the
+    language; the fields of other actions refused -- untracked and tracked."""
+    def styles(**arguments) -> dict:
+        return call("word_styles", **arguments)
+
+    paragraphs, characters, tables = (_named(document, k) for k in ("paragraph", "character", "table"))
+    out = [styles(action="list"), styles(action="list", kind="table"), styles(action="list", in_use_only=True)]
+    for name in paragraphs[:3] + characters[:1] + tables[:2] + ["Heading 1", "No Such Style"]:
+        out.append(styles(action="describe", name=name))
+    out += [
+        styles(action="add", name="Lane Body", based_on="Normal", next_style="Normal", bold=True, size=11,
+               color="accent1", alignment="justify", space_after=6, indent_first=-12, keep_with_next=True,
+               shading="accent1 lighter 80%", tabs=[{"position": 72, "alignment": "right", "leader": "dot"},
+                                                   {"alignment": "right"}]),
+        styles(action="add", name="Lane Mark", kind="character", italic=True, color="C00000", shading="FFFF00"),
+        styles(action="add", name="Lane Quote", based_on="Intense Quote", line_spacing=1.15, indent_left=18),
+        styles(action="add", name="Lane Tabs", kind="character", tabs=[{"position": 10}]),
+        styles(action="add", name=(paragraphs or ["Normal"])[0]),
+        styles(action="add", name="Lane Bad", based_on="No Such Style"),
+        styles(action="add", name="Lane Grid", kind="table", size=9, shading="D9E2F3", regions=[
+            {"region": "header_row", "shading": "1F3864", "color": "FFFFFF", "bold": True,
+             "borders": {"style": "single", "sides": ["bottom"], "color": "1F3864", "width": 1}},
+            {"region": "banded_rows", "shading": "F2F2F2"}, {"region": "first_column", "bold": True},
+            {"region": "top_left_cell", "borders": {"style": "none"}}]),
+        styles(action="add", name="Lane Bands", regions=[{"region": "banded_columns", "shading": "accent2 lighter 60%",
+                                                          "band_size": 2}, {"region": "total_row", "band_size": 3}]),
+    ]
+    for name in paragraphs[:2]:
+        out += [styles(action="modify", name=name, bold=True, size=12, shading="none"),
+                styles(action="modify", name=name, tabs=[]),
+                styles(action="modify", name=name, tabs=[{"position": 36, "alignment": "clear"}, {"position": 90}]),
+                styles(action="modify", name=name, numbering={"list": "none"}),
+                styles(action="modify", name=name, numbering={"list": "1"}),
+                styles(action="modify", name=name, numbering={"list": "1", "level": 1}),
+                styles(action="modify", name=name, numbering={"list": "999"}),
+                styles(action="modify", name=name, numbering={"list": "No Such Style"}),
+                styles(action="modify", name=name, numbering={"list": "none", "level": 0})]
+    listed = [s.name for s in document.styles if s.kind == "paragraph" and s.name
+              and document.styles.find(s.name, "paragraph") is not None
+              and __import__("docx_agent.edit.numbering", fromlist=["list_style"]).list_style(document, s.id)]
+    for name in listed[:2]:
+        if paragraphs:
+            out.append(styles(action="modify", name=paragraphs[0], numbering={"list": name, "level": 1}))
+        out.append(styles(action="modify", name=name, numbering={"list": "none"}))
+    for name in tables[:2]:
+        out += [styles(action="modify", name=name, regions=[{"region": "header_row", "bold": True, "italic": False}]),
+                styles(action="modify", name=name, regions=[{"region": "bottom_right_cell", "clear": True}]),
+                styles(action="modify", name=name, regions=[{"region": "header_row", "clear": True},
+                                                            {"region": "even_banded_rows", "shading": "none"}]),
+                styles(action="modify", name=name, shading="EDEDED", size=10)]
+    for name in characters[:1]:
+        out += [styles(action="modify", name=name, space_after=6), styles(action="modify", name=name, italic=True)]
+    out += [styles(action="modify", name=(paragraphs or ["Normal"])[0]),
+            styles(action="modify", name="No Such Style", bold=True)]
+    for name in _custom(document):
+        out.append(styles(action="remove", name=name))
+    for name in paragraphs[1:3]:
+        out += [styles(action="remove", name=name), styles(action="remove", name=name, replacement="Normal"),
+                styles(action="remove", name=name, replacement=name),
+                styles(action="remove", name=name, replacement="Quote")]
+    out += [styles(action="remove", name="Normal", replacement="Heading 1"), styles(action="remove", name="No Such"),
+            styles(action="purge_unused")]
+    for name in tables[:1] + ["Table Grid", "Grid Table 4 Accent 1", "No Such Table"]:
+        out.append(styles(action="set_default", name=name))
+    out.append(styles(action="set_default", name="Normal", kind="paragraph"))
+    out += [styles(action="set_language", language="fr-BE"), styles(action="set_language", language="nl"),
+            styles(action="set_language", language="xx-YY"), styles(action="set_language", language="en_us"),
+            styles(action="set_language", language="fr-Latn-BE")]
+    if len(paragraphs) > 1:
+        out.append(styles(action="set_language", language="de-DE", name=paragraphs[1]))
+    out += [styles(action="add", name="Lane X", language="fr-BE"), styles(action="add", name="Lane X",
+            numbering={"list": "1"}), styles(action="remove", name="Lane X", tabs=[]),
+            styles(action="describe", name="Normal", regions=[{"region": "header_row", "bold": True}])]
+    return out + [tracked(case) for case in out]
+
+
 def cases(document) -> list[dict]:
     """Every style case for ``document``."""
-    found = list_cases(document) + format_cases(document)
+    found = list_cases(document) + format_cases(document) + styles_cases(document)
     wanted = os.environ.get("STYLE_TOOLS")       # a comma list, to run some tools only
     found = [c for c in found if not wanted or c["tool"] in wanted.split(",")]
     per_tool = int(os.environ.get("STYLE_PER_TOOL") or 0)   # the first n of each tool's
