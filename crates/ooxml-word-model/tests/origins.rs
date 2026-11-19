@@ -131,10 +131,7 @@ fn a_cell_says_which_region_declared_its_fill_and_a_border_read_from_an_inside_l
     assert_eq!(fill.region_type(style).map(|t| &**t), Some("firstRow"));
     assert_eq!((fill.holder, fill.inside), (Holder::Cell, false));
     // The header row's first cell: its right side is inside the region (insideV).
-    let right = header
-        .of("tcBorders.right")
-        .copied()
-        .expect("no border origin");
+    let right = header.of("tcBorders.right").copied().expect("no border origin");
     assert!(right.inside);
     let left = header.of("tcBorders.left").copied();
     assert!(left.is_none(), "the left edge is the region's edge, which states none");
