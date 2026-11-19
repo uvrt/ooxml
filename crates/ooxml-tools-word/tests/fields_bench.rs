@@ -1,7 +1,8 @@
 //! `FIELDS_BENCH=<path to a .docx> cargo test --release -p ooxml-tools-word --test fields_bench -- --ignored
 //! --nocapture`: the field tools on a long document, each the best of three on a fresh editor (opening not
 //! counted), over one page engine kept for the document as a host keeps it (its first layout timed apart):
-//! before each call the engine has laid out the version the call starts from, as a host's kept layout has.
+//! before each call the engine has laid out the version the call starts from, as a host's kept layout has,
+//! and the fields have been listed once (the document's field scans, as a session keeps them).
 //! `FIELDS_CALLS=footer,one` (names: update, one, toc, footer) runs only those.
 //!
 //! Must not: run without the variable; it is a timing, not a test.
@@ -13,7 +14,7 @@ use ooxml_fonts::{Folder, Location, WordFontOptions};
 use ooxml_opc::Package;
 use ooxml_store::{Caller, Clock, StoreConfig};
 use ooxml_tools::{ToolArgs, ToolResult};
-use ooxml_tools_word::{word_fields, word_headers_footers, CallEditor, Editing, EnginePages};
+use ooxml_tools_word::{word_fields, word_headers_footers, CallEditor, Editing, EnginePages, WordFields};
 use ooxml_word_edit::{Editor, FieldLayout, LaidFields};
 use ooxml_word_pages::{DiskFonts, EngineBudgets, EngineOptions, FontSetup, PageEngine};
 use serde_json::{json, Value};
@@ -135,6 +136,9 @@ fn best<A: ToolArgs>(
             date: "2026-11-17T10:00:00Z",
             layout: Some(layout),
         };
+        // The document's field scans as a session keeps them between calls (not counted).
+        let (list, _) = WordFields::accept(json!({"doc": "d1", "action": "list"}), Some("docx")).unwrap();
+        assert!(word_fields(&list, &editing).to_json().contains_key("data"));
         let (args, _) = A::accept(arguments.clone(), Some("docx")).unwrap();
         let started = Instant::now();
         let reply = tool(&args, &editing);
@@ -262,9 +266,7 @@ fn page_field(bytes: &Arc<[u8]>, layout: &Timed) -> String {
         date: "2026-11-17T10:00:00Z",
         layout: Some(layout),
     };
-    let (args, _) =
-        <ooxml_tools_word::WordFields as ToolArgs>::accept(json!({"doc": "d1", "action": "list"}), Some("docx"))
-            .unwrap();
+    let (args, _) = <WordFields as ToolArgs>::accept(json!({"doc": "d1", "action": "list"}), Some("docx")).unwrap();
     let listed = Value::Object(word_fields(&args, &editing).to_json());
     let fields = listed["data"].as_array().cloned().unwrap_or_default();
     let keyword = |k: &str| fields.iter().find(|f| f["keyword"] == k);
