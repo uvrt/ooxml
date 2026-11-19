@@ -16,6 +16,10 @@ use ooxml_word_model::ids::{sequence_value, REACH};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::{Arc, Mutex, PoisonError};
 
+/// The key drawing numbers are drawn under (`Key::Seq`): two transactions drawing them
+/// are ordered by their commits, as two drawing from one seed are.
+pub const DRAWING_NUMBERS: &str = "\0drawing numbers";
+
 /// A seed's sequence values, computed as far as they were needed; one per document.
 #[derive(Debug, Default)]
 pub struct Sequences {
@@ -54,6 +58,9 @@ pub struct IdsChange {
     /// Ids no alias may name any more, after the renames (paragraphs a range edit joined
     /// away: docx-agent's `_aliases` filter in its range edits).
     pub forget_targets: Vec<String>,
+    /// The highest drawing number given now (`wp:docPr/@id`), where a draw gave one or a
+    /// part brought one above the version's ([`Ids::highest_drawing`]); 0 where neither.
+    pub highest_drawing: u64,
 }
 
 impl IdsChange {
@@ -65,6 +72,7 @@ impl IdsChange {
             && self.aliases.is_empty()
             && self.forget.is_empty()
             && self.forget_targets.is_empty()
+            && self.highest_drawing == 0
     }
 }
 
@@ -75,19 +83,45 @@ pub struct Ids {
     added: Arc<BTreeSet<u32>>,
     cursors: Arc<BTreeMap<String, usize>>,
     aliases: Arc<BTreeMap<String, String>>,
+    /// The highest drawing number any version had or a draw gave (docx-agent's ledger's
+    /// `highest_drawing`): every `wp:docPr/@id` written is at most this.
+    highest_drawing: u64,
     /// The first annotation id of the edit being applied (one above the largest in use
     /// when it began numbering): its revision records' ids count from here.
     annotations: Option<i64>,
 }
 
 impl Ids {
-    /// The ids of a document as opened: `values`, every one its parts hold.
+    /// The ids of a document as opened: `values`, every one its parts hold, and
+    /// `highest_drawing`, the highest drawing number they write.
     #[must_use]
-    pub fn opened(values: HashSet<u32>) -> Ids {
+    pub fn opened(values: HashSet<u32>, highest_drawing: u64) -> Ids {
         Ids {
             base: Arc::new(values),
+            highest_drawing,
             ..Ids::default()
         }
+    }
+
+    /// The highest drawing number any version had or a draw gave.
+    #[must_use]
+    pub fn highest_drawing(&self) -> u64 {
+        self.highest_drawing
+    }
+
+    /// `count` new drawing numbers (docx-agent's `_next_drawing_id` and importer's
+    /// `_drawing_ids` for a number in use): each one past every number the document has
+    /// and had (a drawing's number is never another drawing's); and the change that
+    /// records them.
+    #[must_use]
+    pub fn draw_drawings(&self, count: usize) -> (Vec<u64>, IdsChange) {
+        let first = self.highest_drawing.saturating_add(1);
+        let out: Vec<u64> = (0..count as u64).map(|k| first.saturating_add(k)).collect();
+        let change = IdsChange {
+            highest_drawing: out.last().copied().unwrap_or(0),
+            ..IdsChange::default()
+        };
+        (out, change)
     }
 
     /// Whether `value` is in the pool.
@@ -137,6 +171,7 @@ impl Ids {
 
     /// Add what `change` adds.
     pub fn apply(&mut self, change: &IdsChange) {
+        self.highest_drawing = self.highest_drawing.max(change.highest_drawing);
         if !change.values.is_empty() {
             Arc::make_mut(&mut self.added).extend(change.values.iter().copied());
         }
@@ -174,6 +209,7 @@ impl Ids {
     /// to the document, not to a version: an undo or redo keeps them, so an id given is
     /// never given again and an old id still names the block it was renamed to).
     pub fn carry(&mut self, head: &Ids) {
+        self.highest_drawing = self.highest_drawing.max(head.highest_drawing);
         if !Arc::ptr_eq(&self.added, &head.added) {
             let mut added = (*self.added).clone();
             added.extend(head.added.iter().copied());
@@ -256,7 +292,7 @@ mod tests {
     fn draws_continue_after_the_last_value_held() {
         let sequences = Sequences::default();
         let second = sequence_value("word/document.xml", 1);
-        let ids = Ids::opened([second].into_iter().collect());
+        let ids = Ids::opened([second].into_iter().collect(), 0);
         let (made, change) = ids.draw("word/document.xml", 1, &sequences);
         assert_eq!(made, vec![format!("{:08X}", sequence_value("word/document.xml", 2))]);
         let mut next = ids.clone();

@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import os
 
-from word_structure_cases import TRACKING, _words, fonts_of
+from word_structure_cases import TRACKING, ToolCases, _words, fonts_of
+
+CASES = ToolCases()
 
 
 def call(tool: str, **arguments) -> dict:
@@ -33,6 +35,7 @@ def _listed(document) -> list[str]:
     return out
 
 
+@CASES
 def list_cases(document) -> list[dict]:
     """``word_lists``: paragraphs added to bullet and numbered lists (one, a span, a table,
     at a level), taken out (in no list, numbered by their style, forced), moved to a
@@ -75,6 +78,7 @@ def list_cases(document) -> list[dict]:
     return out + [tracked(case) for case in out]
 
 
+@CASES
 def format_cases(document) -> list[dict]:
     """``word_format``: run and paragraph formatting on paragraphs, ranges, spans and tables;
     clearing; styles; text found; a sample's look; keeps; refusals -- untracked and tracked."""
@@ -153,6 +157,7 @@ def _custom(document) -> list[str]:
 _W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 
 
+@CASES
 def styles_cases(document) -> list[dict]:
     """``word_styles``: listed and described; paragraph, character and table styles added
     (formatting, shading, tab stops, regions); modified (a list level linked and unlinked,
@@ -232,6 +237,7 @@ def styles_cases(document) -> list[dict]:
     return out + [tracked(case) for case in out]
 
 
+@CASES
 def template_cases(document) -> list[dict]:
     """``word_template`` (lane P4d5): Convert with its reflow, both sides laid out with the
     same fonts (a document already in mode 15 is a no-op) -- untracked and tracked (it is
@@ -240,6 +246,7 @@ def template_cases(document) -> list[dict]:
     return [case, tracked(case)]
 
 
+@CASES
 def compare_cases(document) -> list[dict]:
     """``word_compare_blocks`` (lane P4d7): tables compared with the first table, body
     paragraphs with the first paragraph and with one stating direct formatting, a cell's
@@ -276,6 +283,7 @@ def compare_cases(document) -> list[dict]:
     return out
 
 
+@CASES
 def follow_cases(document) -> list[dict]:
     """``word_follow_sample`` (lane P4d8): later tables following the first (and the last
     following the first of the document opened again), a cell address and a paragraph in a
@@ -315,10 +323,22 @@ def follow_cases(document) -> list[dict]:
 _W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
 
+@CASES
+def design_cases(document) -> list[dict]:
+    """``word_design_facts`` (lane P4d10): the default call, each kind alone, the declared
+    styles from a later page (``c3``), and a cursor no page gave."""
+    out = [call("word_design_facts")]
+    kinds = ["styles", "table_styles", "table_frames", "sections", "theme", "patterns", "declared_styles"]
+    out += [call("word_design_facts", include=[kind]) for kind in kinds]
+    out.append(call("word_design_facts", include=["theme", "declared_styles"]))
+    out.append(call("word_design_facts", cursor="c3"))
+    out.append(call("word_design_facts", cursor="x1"))
+    return out
+
+
 def cases(document) -> list[dict]:
     """Every style case for ``document``."""
-    found = (list_cases(document) + format_cases(document) + styles_cases(document) + template_cases(document)
-             + compare_cases(document) + follow_cases(document))
+    found = CASES.of(document)
     wanted = os.environ.get("STYLE_TOOLS")       # a comma list, to run some tools only
     found = [c for c in found if not wanted or c["tool"] in wanted.split(",")]
     per_tool = int(os.environ.get("STYLE_PER_TOOL") or 0)   # the first n of each tool's

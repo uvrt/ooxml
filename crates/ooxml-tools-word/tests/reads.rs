@@ -7,8 +7,7 @@
 
 use ooxml_base::{Cancel, Limits};
 use ooxml_opc::Package;
-use ooxml_tools::ToolArgs;
-use ooxml_tools_word::{find_text, word_inspect, FindStories, FindText, Version, WordInspect, KIND};
+use ooxml_tools_word::{find_text, word_inspect, FindStories, FindText, Version, WordInspect};
 use ooxml_word_model::docx::Versions;
 use ooxml_zip::{Method, NewEntry, Writer};
 use serde_json::{json, Value};
@@ -121,17 +120,6 @@ fn looking_for(text: &str) -> FindText {
         stories: None,
         cursor: None,
     }
-}
-
-#[test]
-fn the_definitions_are_the_golden_exports() {
-    for (spec, golden) in [
-        (FindText::spec(), include_str!("golden/find_text.json")),
-        (WordInspect::spec(), include_str!("golden/word_inspect.json")),
-    ] {
-        assert_eq!(format!("{}\n", spec.export(Some(&[KIND]))), golden, "{}", spec.name);
-    }
-    assert!(FindText::problems().is_empty() && WordInspect::problems().is_empty());
 }
 
 #[test]

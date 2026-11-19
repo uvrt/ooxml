@@ -1,26 +1,32 @@
-//! The structure tools' cases of `word-edits` (`op: "structure"`): `word_links` (and the
-//! other structure tools as they are ported) called with JSON arguments on a document as
+//! The tool cases of `word-edits` that take their arguments as the session does (`op`
+//! `structure`, `objects`, `style`): a tool called with JSON arguments on a document as
 //! opened -- its arguments taken as the tool's intent rules take them -- each reply as the
 //! tool writes it, every part whose content changed, the archive's part order, `touched`,
-//! the validation delta, the problems and the next ids, for
-//! `python/word_edits_diff.py --structure` to compare with docx-agent's toolbox.
+//! the validation delta, the problems and the next ids, for `python/word_edits_diff.py
+//! --structure`, `--objects` and `--style` to compare with docx-agent's toolbox.
+//!
+//! A tool the session registers runs as [`Registry::standard`] holds it
+//! ([`ooxml_session::Tool::run_outside`]), so a newly registered tool needs nothing here;
+//! [`unregistered`] runs the ported tools the session does not serve yet.
 //!
 //! Must not: be used by any library; it is a test instrument.
 
 use crate::edits::{Monotonic, Unlimited};
 use ooxml_base::{Cancel, Limits};
 use ooxml_opc::Package;
+use ooxml_session::Registry;
 use ooxml_store::{Caller, StoreConfig};
 use ooxml_tools::{ToolArgs, ToolResult};
 use ooxml_tools_word::{
-    word_comments, word_fields, word_headers_footers, word_links, word_move, word_notes, word_sections, CallEditor,
-    Editing, EnginePages, WordComments, WordFields, WordHeadersFooters, WordLinks, WordMove, WordNotes, WordSections,
+    word_headers_footers, word_links, word_move, word_notes, word_sections, CallEditor, Editing, EnginePages, Others,
+    Version, WordHeadersFooters, WordLinks, WordMove, WordNotes, WordSections,
 };
 use ooxml_word_edit::touched::{touched, Touched};
 use ooxml_word_edit::validate::{problems, Delta};
 use ooxml_word_edit::{Editor, Tracking, WordDoc};
+use ooxml_word_model::docx::Versions;
 use serde_json::{json, Map, Value};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 struct Never;
 
@@ -30,29 +36,65 @@ impl Cancel for Never {
     }
 }
 
-/// One structure tool case on a freshly opened document.
+/// One tool case on a freshly opened document.
 ///
 /// # Errors
-/// A message when the document cannot be opened.
+/// A message when the document cannot be opened, or no tool is named so.
 pub fn case(bytes: &Arc<[u8]>, case: &Value) -> Result<Value, String> {
     tool_case(bytes, case, |tool, arguments, editing| {
-        Some(match tool {
-            "word_links" => run(arguments, |args: &WordLinks| word_links(args, editing)),
-            "word_notes" => run(arguments, |args: &WordNotes| word_notes(args, editing)),
-            "word_comments" => run(arguments, |args: &WordComments| word_comments(args, editing)),
-            "word_move" => run(arguments, |args: &WordMove| word_move(args, editing)),
-            "word_fields" => run(arguments, |args: &WordFields| word_fields(args, editing)),
-            "word_sections" => run(arguments, |args: &WordSections| word_sections(args, editing)),
-            "word_headers_footers" => run(arguments, |args: &WordHeadersFooters| {
-                word_headers_footers(args, editing)
-            }),
-            _ => return None,
-        })
+        registered(tool, arguments, editing).or_else(|| unregistered(tool, arguments, editing))
     })
 }
 
+/// The tool the session registers as `tool`, run on the document as opened (`None`: no
+/// such tool): a reading tool reads it as `case.docx`, version 1.
+fn registered(tool: &str, arguments: &Value, editing: &Editing<'_>) -> Option<ToolResult<Value>> {
+    static REGISTRY: OnceLock<Registry> = OnceLock::new();
+    let tool = REGISTRY.get_or_init(Registry::standard).named(tool)?;
+    let versions = Versions::new();
+    let version = Version {
+        name: "case.docx",
+        package: editing.opened.package(),
+        number: 1,
+        versions: &versions,
+        placer: None,
+        others: editing.others,
+    };
+    Some(tool.run_outside(arguments, editing, &version))
+}
+
+/// The ported tools the session does not register yet (each leaves this list when it is
+/// registered).
+fn unregistered(tool: &str, arguments: &Value, editing: &Editing<'_>) -> Option<ToolResult<Value>> {
+    Some(match tool {
+        "word_links" => run(arguments, |args: &WordLinks| word_links(args, editing)),
+        "word_notes" => run(arguments, |args: &WordNotes| word_notes(args, editing)),
+        "word_move" => run(arguments, |args: &WordMove| word_move(args, editing)),
+        "word_sections" => run(arguments, |args: &WordSections| word_sections(args, editing)),
+        "word_headers_footers" => run(arguments, |args: &WordHeadersFooters| {
+            word_headers_footers(args, editing)
+        }),
+        _ => return None,
+    })
+}
+
+/// `d2`, which a call may name: the document opened again (`reference_copy`) or the file
+/// `reference_file`.
+fn other_package(bytes: &Arc<[u8]>, case: &Value) -> Option<Package> {
+    let other: Option<Arc<[u8]>> = match case.get("reference_file").and_then(Value::as_str) {
+        Some(path) => std::fs::read(path).ok().map(Arc::from),
+        None => case
+            .get("reference_copy")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+            .then(|| Arc::clone(bytes)),
+    };
+    other.and_then(|b| Package::open(b, &Limits::default()).ok())
+}
+
 /// One tool case on a freshly opened document, the tool's reply given by `reply` (`None`:
-/// no such tool): the reply and what the document became.
+/// no such tool): the reply and what the document became. `d2`, which a call may name, is
+/// the document opened again (`reference_copy`) or the file `reference_file`.
 ///
 /// # Errors
 /// A message when the document cannot be opened, or the tool is not one `reply` knows.
@@ -81,6 +123,22 @@ pub(crate) fn tool_case(
         .and_then(Value::as_str)
         .unwrap_or("2026-11-17T10:00:00Z")
         .to_owned();
+    let copy = other_package(bytes, case);
+    let copy_versions = Versions::new();
+    let others: Vec<(&str, Version<'_>)> = copy
+        .iter()
+        .map(|package| {
+            let version = Version {
+                name: "copy.docx",
+                package,
+                number: 1,
+                versions: &copy_versions,
+                placer: None,
+                others: Others::default(),
+            };
+            ("d2", version)
+        })
+        .collect();
     let editing = Editing {
         editor: &CallEditor::new(&editor),
         caller: &caller,
@@ -90,7 +148,7 @@ pub(crate) fn tool_case(
         cancel: &Never,
         date: &date,
         layout: layout.as_ref().map(|l| l as &dyn ooxml_word_edit::FieldLayout),
-        others: ooxml_tools_word::Others::default(),
+        others: Others::new(&others),
     };
     let arguments = case.get("arguments").cloned().unwrap_or(Value::Object(Map::new()));
     let tool = case.get("tool").and_then(Value::as_str).unwrap_or("");

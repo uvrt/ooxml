@@ -436,18 +436,20 @@ impl LinkToPrevious {
         sink.read_everything();
         let docx = sink.docx()?;
         let found = find_section(sink.doc(), &docx, &self.section)?;
-        let canonical = found.section.id.clone();
         let (_, probe) = sect_work(&*sink, &found)?;
         let Some(rid) = own_reference(&probe, probe.root(), &self.which, &self.kind)
             .and_then(|n| probe.get(n, Some(R), "id").map(str::to_owned))
         else {
             return Ok(SectionEdited {
-                id: Some(canonical),
+                id: Some(super::canonical(sink.doc(), &found, &self.section)),
                 ..SectionEdited::default()
             });
         };
         let story = reference_part(sink.doc(), &docx, &rid).and_then(|p| docx.part(&p).map(|s| (p, s.story.clone())));
         let renamed = stamp_document(&mut *sink, &docx)?;
+        // the section by the id it has once stamped, as docx-agent reports it
+        let stamped = find_section(sink.doc(), &*sink.docx()?, &self.section)?;
+        let canonical = super::canonical(sink.doc(), &stamped, &self.section);
         let (main, mut work) = sect_work(&*sink, &found)?;
         let sect = work.root();
         if let Some(node) = own_reference(&work, sect, &self.which, &self.kind) {

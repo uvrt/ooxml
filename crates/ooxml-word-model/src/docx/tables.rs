@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 mod labels;
-pub use labels::collapse_space;
+pub use labels::{collapse_space, no_cell_text};
 
 /// A cell element with its place in its part.
 type Placed = (Arc<Element>, Box<[u32]>);
