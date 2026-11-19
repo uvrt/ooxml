@@ -18,7 +18,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 /// Content-control ids are kept within this (docx-agent's `% 2_000_000_000 + 1`).
-const CONTROL_RANGE: i64 = 2_000_000_000;
+pub(crate) const CONTROL_RANGE: i64 = 2_000_000_000;
 
 /// Give every drawing in `element`, a copy of the document's own content (each number it
 /// carries is in use), a new number: past every one the document has and had, in document
@@ -93,6 +93,6 @@ pub(crate) fn renumber_controls(sink: &mut EditSink<'_, '_>, work: &mut Work, el
 
 /// A whole number as Python's `int` reads a string Word writes: surrounding white space
 /// allowed, a sign, ASCII digits.
-fn python_int(text: &str) -> Option<i64> {
+pub(crate) fn python_int(text: &str) -> Option<i64> {
     text.trim().parse().ok()
 }

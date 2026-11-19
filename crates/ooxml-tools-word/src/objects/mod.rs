@@ -11,6 +11,7 @@
 
 mod cell_fills;
 mod controls;
+mod drawings;
 mod drawings_args;
 mod edit_table;
 mod edit_table_args;
@@ -20,6 +21,7 @@ mod set_cells;
 mod table_view;
 
 pub use controls::word_controls;
+pub use drawings::word_drawings;
 pub use drawings_args::{Against, ControlAction, ControlType, DrawingAction, WordControls, WordDrawings, Wrap, ZOrder};
 pub use edit_table::word_edit_table;
 pub use edit_table_args::{CellArg, KeyPair, Loose, Position, Side, TableAction, WordEditTable};

@@ -19,6 +19,7 @@ mod insert;
 mod remove;
 
 pub use fill::{FillControl, Filling};
+pub(crate) use insert::hoist;
 pub use insert::{ControlKind, InsertControl};
 pub use remove::RemoveControl;
 

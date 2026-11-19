@@ -9,6 +9,7 @@
 //! Must not: write but through the sink.
 
 use super::{rewrite, ControlEdited, InParagraph, Rewrite, CONTENT_TRACKED};
+use crate::imported::{python_int, CONTROL_RANGE};
 use crate::names::{W, W14};
 use crate::policy::RevisionPolicy;
 use crate::ranges::renamed_id;
@@ -24,8 +25,6 @@ use ooxml_word_model::docx::{child_val, Docx};
 use ooxml_word_model::ids::sequence_value;
 use std::collections::HashSet;
 
-/// Content-control numbers are kept within this (docx-agent's `% 2_000_000_000 + 1`).
-const CONTROL_RANGE: i64 = 2_000_000_000;
 /// Word's check box glyphs (MS Gothic) as it writes a new one.
 const CHECKED: &str = "2612";
 const UNCHECKED: &str = "2610";
@@ -309,7 +308,7 @@ fn next_number(docx: &Docx) -> i64 {
                 .element
                 .find(Some(W), "sdtPr")
                 .and_then(|p| child_val(p, "id"))
-                .and_then(|v| v.trim().parse::<i64>().ok());
+                .and_then(python_int);
             used.extend(value);
         }
     }

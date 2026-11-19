@@ -135,21 +135,27 @@ pub(crate) fn sync(sink: &mut EditSink<'_, '_>) -> Result<()> {
 /// its snapshot's when it is the same element (untouched, wherever its block went). When
 /// the edit added or removed no box, one only stamped is its snapshot's too: the box in its
 /// place first, else the first one not yet taken with the same content (the box of a moved
-/// block, which docx-agent knows by the element's identity). When the edit added or removed
-/// boxes, a box not the very same element counts as changed, as docx-agent's does when an
-/// edit gives a box a new element.
+/// block, which docx-agent knows by the element's identity). When the edit added boxes (a
+/// text box inserted), a box only stamped is the first snapshot box not yet taken with the
+/// same content. When it removed boxes, a box not the very same element counts as changed,
+/// as docx-agent's does when an edit gives a box a new element.
 fn unchanged_boxes(before: &[Arc<Element>], now: &[(Vec<u32>, Arc<Element>)]) -> Vec<bool> {
     let mut taken = vec![false; before.len()];
     let mut kept: Vec<bool> = now
         .iter()
         .map(|(_, holder)| take(&mut taken, before, 0..before.len(), |was| Arc::ptr_eq(was, holder)))
         .collect();
-    if before.len() != now.len() {
+    if before.len() > now.len() {
         return kept;
     }
+    let added = now.len() > before.len();
     for (k, ((_, holder), kept)) in now.iter().zip(kept.iter_mut()).enumerate() {
         if !*kept {
-            let order = std::iter::once(k).chain((0..before.len()).filter(move |&j| j != k));
+            // with boxes added, the snapshot's boxes in order (a new box shifts the places)
+            let first = (!added).then_some(k);
+            let order = first
+                .into_iter()
+                .chain((0..before.len()).filter(move |&j| Some(j) != first));
             *kept = take(&mut taken, before, order, |was| unchanged_box(was, holder));
         }
     }

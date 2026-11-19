@@ -45,6 +45,7 @@ mod controls;
 mod delete;
 mod delete_write;
 mod doc;
+mod drawings;
 mod editor;
 mod error;
 mod fields;
@@ -102,6 +103,7 @@ pub use comments::{CommentEdit, CommentEdited, CommentEdits, EditCommentText};
 pub use controls::{ControlEdited, ControlKind, FillControl, Filling, InsertControl, RemoveControl};
 pub use delete::{BlockDeleted, DeleteBlock};
 pub use doc::{Change, Draw, DrawFrom, Key, ModelError, Shared, WordDoc};
+pub use drawings::{DrawingEdited, DrawingValues, FloatDrawing, InlineDrawing, InsertShape, SetDrawing, ZOrder};
 pub use editor::{EditTiming, Edited, Editor};
 pub use error::{EditError, Result};
 pub use fields::{
