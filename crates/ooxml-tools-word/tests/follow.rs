@@ -135,3 +135,51 @@ fn copies_follow_as_docx_agent_makes_them_follow() {
         assert_eq!(have["document"], want["document"], "{call}");
     }
 }
+
+#[test]
+#[ignore = "a timing on a long document: FOLLOW_BENCH=<docx> cargo test --release -- --ignored"]
+fn follow_on_a_long_document() {
+    let Ok(path) = std::env::var("FOLLOW_BENCH") else {
+        return;
+    };
+    let bytes: Arc<[u8]> = Arc::from(std::fs::read(path).unwrap());
+    let open = || {
+        let package = Package::open(Arc::clone(&bytes), &Limits::default()).unwrap();
+        Editor::open(package, StoreConfig::default(), Arc::new(Still), Arc::new(Unlimited)).unwrap()
+    };
+    let docx = open().store().snapshot().doc().docx().unwrap();
+    let body = docx.body().unwrap();
+    let tables: Vec<String> = body.ids.tables().iter().take(11).map(|t| t.id).collect();
+    let paragraphs: Vec<String> = body.ids.paragraphs().iter().take(51).map(|p| p.id).collect();
+    for (what, blocks) in [("10 tables", &tables), ("50 paragraphs", &paragraphs)] {
+        let Some((sample, copies)) = blocks.split_first() else {
+            continue;
+        };
+        let mut times = Vec::new();
+        for _ in 0..3 {
+            let editor = open();
+            editor.store().snapshot().doc().docx().unwrap();
+            let opened = editor.store().snapshot().doc().clone();
+            let caller = Caller::anonymous();
+            let editing = Editing {
+                editor: &CallEditor::new(&editor),
+                caller: &caller,
+                opened: &opened,
+                tracking: None,
+                doc: "d1",
+                cancel: &Never,
+                date: "2026-11-17T10:00:00Z",
+                layout: None,
+                others: Others::default(),
+            };
+            let arguments = json!({"doc": "d1", "sample": {"block": sample}, "copies": copies});
+            let (args, _) = WordFollowSample::accept(arguments, Some("docx")).unwrap();
+            let start = std::time::Instant::now();
+            let reply = word_follow_sample(&args, &editing);
+            times.push(start.elapsed().as_secs_f64() * 1000.0);
+            assert!(reply.to_json().contains_key("data"));
+        }
+        let best = times.iter().copied().fold(f64::MAX, f64::min);
+        println!("follow {what}: {best:.1} ms (best of 3; the version read before)");
+    }
+}
