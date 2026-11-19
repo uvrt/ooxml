@@ -15,8 +15,9 @@ use ooxml_store::{Caller, Clock, Seq, Snapshot, StoreConfig};
 use ooxml_store::{Command, Txn};
 use ooxml_word_edit::find::Literal;
 use ooxml_word_edit::{
-    DeleteBlock, DeleteText, EditError, Editor, InsertMarkdown, InsertParagraph, InsertText, Keep, MarkdownOptions,
-    ReplaceText, RevisionPolicy, SetCells, SetParagraphStyle, SetStyledText, SetText, Tracking, WordDoc, WriteMap,
+    CellWrite, DeleteBlock, DeleteText, EditError, Editor, InsertMarkdown, InsertParagraph, InsertText, Keep,
+    MarkdownOptions, ReplaceText, RevisionPolicy, SetCells, SetParagraphStyle, SetStyledText, SetText, Tracking,
+    WordDoc, WriteMap,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -149,6 +150,20 @@ fn policy(rng: &mut Rng, writer: u64) -> RevisionPolicy {
     }
 }
 
+/// Two lines into a cell of the first table.
+fn cells(rng: &mut Rng, writer: u64) -> SetCells {
+    SetCells {
+        table: "t@body/0".to_owned(),
+        writes: vec![CellWrite::at(
+            rng.below(2),
+            rng.below(2),
+            format!("{}\n{}", WORDS[rng.below(WORDS.len())], WORDS[rng.below(4)]),
+        )],
+        stamping: false,
+        policy: policy(rng, writer),
+    }
+}
+
 /// A block deletion's target: a content control now and then (of `controls`), the first
 /// table now and then, else `target`.
 fn block_target(rng: &mut Rng, target: String, controls: &[String]) -> String {
@@ -200,15 +215,7 @@ fn edit(rng: &mut Rng, (targets, controls): (&[String], &[String]), writer: u64)
             style: None,
             policy: policy(rng, writer),
         }),
-        12 => Edit::Cells(SetCells {
-            table: "t@body/0".to_owned(),
-            writes: vec![(
-                rng.below(2),
-                rng.below(2),
-                format!("{}\n{}", WORDS[rng.below(WORDS.len())], WORDS[rng.below(4)]),
-            )],
-            policy: policy(rng, writer),
-        }),
+        12 => Edit::Cells(cells(rng, writer)),
         11 => Edit::Block(DeleteBlock {
             target: block_target(rng, target, controls),
             policy: policy(rng, writer),

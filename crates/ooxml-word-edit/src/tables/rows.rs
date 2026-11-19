@@ -167,7 +167,7 @@ const PROVENANCE: &str = "urn:uvrt:docx-agent:provenance:v1";
 
 /// Whether the document keeps a placement record for the table `key` (a custom XML item
 /// of [`PROVENANCE`], found by its root's namespace as docx-agent finds it).
-fn placed(doc: &WordDoc, key: &str) -> bool {
+pub(crate) fn placed(doc: &WordDoc, key: &str) -> bool {
     let package = doc.package();
     package
         .part_names()

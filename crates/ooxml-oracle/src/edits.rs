@@ -24,8 +24,9 @@ use ooxml_word_edit::find::{Literal, Pattern};
 use ooxml_word_edit::touched::Touched;
 use ooxml_word_edit::validate::problems;
 use ooxml_word_edit::{
-    DeleteBlock, DeleteText, EditError, Edited, Editor, InsertParagraph, InsertText, Keep, RangesEdited, ReplaceText,
-    Review, Reviewed, RevisionPolicy, Selection, SetCells, SetParagraphStyle, SetText, TextEdited, Tracking, WordDoc,
+    CellWrite, DeleteBlock, DeleteText, EditError, Edited, Editor, InsertParagraph, InsertText, Keep, RangesEdited,
+    ReplaceText, Review, Reviewed, RevisionPolicy, Selection, SetCells, SetParagraphStyle, SetText, TextEdited,
+    Tracking, WordDoc,
 };
 use serde_json::{json, Map, Value};
 use std::sync::Arc;
@@ -287,7 +288,7 @@ fn set_cells(editor: &Editor, caller: &Caller, package: &Package, case: &Value) 
                 .filter_map(|w| {
                     let row = usize::try_from(w.get(0)?.as_u64()?).ok()?;
                     let column = usize::try_from(w.get(1)?.as_u64()?).ok()?;
-                    Some((row, column, w.get(2)?.as_str()?.to_owned()))
+                    Some(CellWrite::at(row, column, w.get(2)?.as_str()?.to_owned()))
                 })
                 .collect()
         })
@@ -295,6 +296,7 @@ fn set_cells(editor: &Editor, caller: &Caller, package: &Package, case: &Value) 
     let command = SetCells {
         table: case.get("target").and_then(Value::as_str).unwrap_or("").to_owned(),
         writes,
+        stamping: false,
         policy: policy(case),
     };
     editor.run(caller, &command).map(|done| {

@@ -114,6 +114,38 @@ def _cells(table: str) -> list[dict]:
             edit("split", first=at(0, 0), columns=0)]
 
 
+def _set_cells(document, table: str) -> list[dict]:
+    def edit(cells, **arguments) -> dict:
+        return call("word_edit_table", table=table, action="set_cells", cells=cells, **arguments)
+
+    def text(row: int, col: int) -> str:
+        try:
+            return document.table(table).cell(row, col).text
+        except (IndexError, KeyError):
+            return "none"
+
+    def cell(row: int, col: int, value: str = "Alpha") -> dict:
+        return {"row": row, "col": col, "text": value}
+
+    return [edit([cell(0, 0)]), edit([cell(1, 1, "One\nTwo")]), edit([cell(0, 0, text(0, 0))]),
+            edit([cell(0, 1, "B"), cell(1, 0, "C"), cell(0, 1, "D")]), edit([cell(99, 0)]), edit([cell(0, 99)]),
+            edit([{"row_label": text(1, 0), "col": 1, "text": "By row"}]),
+            edit([{"row": 1, "col_label": text(0, 1), "text": "By column"}]),
+            edit([{"row_label": text(1, 0), "col_label": text(0, 0), "text": "Both"}]),
+            edit([cell(1, 0, "Lbl"), {"row_label": "Lbl", "col": 1, "text": "Found"}]),
+            edit([{"row_label": "No such row", "col": 0, "text": "x"}]), edit([{"col": 0, "text": "x"}]),
+            edit([{"row": 0, "text": "x"}]), edit([{"row": 0, "col": 0}]), edit([cell(0, 0), cell(0, 1, "Two")]),
+            edit([{"col": 1, "rows": "*", "text": "Yes"}]), edit([{"col": 0, "rows": "0..1", "text": "Top"}]),
+            edit([{"col": 1, "rows": "1", "text": "Yes"}]), edit([{"col": 1, "rows": "..1", "text": "No"}]),
+            edit([{"col": 1, "rows": "5..2", "text": "x"}]), edit([{"col": 1, "rows": "0..99", "text": "x"}]),
+            edit([{"col": 1, "rows": "x", "text": "x"}]), edit([{"row": 1, "col": 1, "rows": "*", "text": "x"}]),
+            edit([{"rows": "*", "text": "x"}]), edit([{"col": 99, "rows": "*", "text": "x"}]),
+            edit([{"col_label": text(0, 1), "rows": "*", "text": "Label fill"}]),
+            edit([{"col": 0, "rows": "1..", "text": "x"}, cell(0, 0, "Head")]),
+            edit([{**cell(0, 0, "Empty fields"), "from": "", "rows": "", "row_label": ""}]), edit(None), edit([]),
+            edit([cell(0, 0, "{{d:nothing/#1/a}}")]), edit([{"row": 0, "col": 0, "from": "d:nothing/#1/a"}])]
+
+
 def edit_table_cases(document) -> list[dict]:
     """``word_edit_table``: rows inserted (after, before, at the top, past the end) and
     deleted (the first, a middle one, none named, past the end); columns deleted (the first,
@@ -122,12 +154,15 @@ def edit_table_cases(document) -> list[dict]:
     rows copied (the last, the first below and above it, the second, past the end); cells
     merged (across, down, both, a rectangle grown, past the grid, already one, reversed, no
     last) and split (by default, across, down, both, into one, past the table, no first);
+    cells set (by place, in lines, as they are, by labels, a label an earlier cell wrote,
+    past the table, missing a place or text, one merged cell given two values, a column's
+    rows filled and the ranges refused, references left to the host);
     arguments
     of another action refused; strict mode's empty values taken as none -- untracked and
     tracked."""
     out = []
     for table in _tables(document)[:3]:
-        out += _rows(table) + _columns(table) + _cells(table)
+        out += _rows(table) + _columns(table) + _cells(table) + _set_cells(document, table)
     out += [call("word_edit_table", table="t:00000000", action="insert_row")]
     return out + [tracked(case) for case in out]
 

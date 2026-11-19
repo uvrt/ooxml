@@ -1,9 +1,11 @@
-//! Owns: [`SetCells`], a table's cells written in one pass as docx-agent's
-//! `Document._fill_cells` writes them (`word_edit_table`'s `set_cells`): each cell found by
-//! its grid place (a merged cell answering at every place it covers), its first
-//! paragraph's text set where it differs (formatting kept, unstamped), its other
-//! paragraphs deleted, each line after the first a paragraph after it -- in order, one
-//! edit.
+//! Owns: [`SetCells`], a table's cells written in one edit as docx-agent's
+//! `word_edit_table` writes them (`set_cells`): each cell found by its grid place (a merged
+//! cell answering at every place it covers) or by labels -- a row by its first cell's
+//! text, a column by the first row's, read as the earlier cells left them (`_locate`) --
+//! its first paragraph's text set where it differs (formatting kept), its other paragraphs
+//! deleted, each line after the first a paragraph after it -- in order. Unstamped, as
+//! `Document._fill_cells` writes them; stamped, as `_set_cell` writes them one by one (the
+//! document stamped first where it needs ids).
 //!
 //! Must not: write but through the sink and the commands it composes, or read outside
 //! what they record reading.
@@ -17,8 +19,9 @@ use crate::text::write::check_text;
 use crate::{EditError, Result};
 use ooxml_store::{Command, Txn};
 use ooxml_word_model::address::direct;
-use ooxml_word_model::docx::{at_path, Docx};
-use ooxml_word_model::ids::Entry;
+use ooxml_word_model::docx::tables::TableGrid;
+use ooxml_word_model::docx::{at_path, Docx, StoryPart};
+use ooxml_word_model::ids::{Entry, TableId};
 use ooxml_xml::{Element, Node};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -28,10 +31,47 @@ use std::sync::Arc;
 pub struct SetCells {
     /// The table (an id, an alias).
     pub table: String,
-    /// Each cell's grid row, grid column and text (`\n` between its paragraphs), in order.
-    pub writes: Vec<(usize, usize, String)>,
+    /// Each cell's place and text (`\n` between its paragraphs), in order.
+    pub writes: Vec<CellWrite>,
+    /// Each cell written as `_set_cell` writes it, the document stamped first where it
+    /// needs ids; else as `_fill_cells` writes them, unstamped.
+    pub stamping: bool,
     /// Untracked or tracked.
     pub policy: RevisionPolicy,
+}
+
+/// A cell's row or column for [`SetCells`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CellAxis {
+    /// The grid row or column, from 0.
+    At(usize),
+    /// A row by its first cell's text, a column by its first row's (white space collapsed).
+    Label(String),
+    /// Neither given: refused, at the field docx-agent's `need` names.
+    Missing,
+}
+
+/// One cell of a [`SetCells`]: where, and its text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CellWrite {
+    /// Its row.
+    pub row: CellAxis,
+    /// Its column.
+    pub column: CellAxis,
+    /// Its text, `\n` between paragraphs.
+    pub text: String,
+}
+
+impl CellWrite {
+    /// The cell at grid place `(row, column)`.
+    #[must_use]
+    pub fn at(row: usize, column: usize, text: String) -> CellWrite {
+        CellWrite {
+            row: CellAxis::At(row),
+            column: CellAxis::At(column),
+            text,
+        }
+    }
 }
 
 /// One edit a set_cells made.
@@ -63,8 +103,8 @@ struct Table {
     rows: Vec<Box<[u32]>>,
 }
 
-/// The table `target` names now.
-fn table(doc: &WordDoc, docx: &Docx, target: &str) -> Result<Table> {
+/// The table `target` names now, with its story.
+fn found_table<'d>(doc: &WordDoc, docx: &'d Docx, target: &str) -> Result<(&'d StoryPart, TableId)> {
     let followed = doc.ids().follow(target);
     let block = (followed != target)
         .then(|| direct(docx, &followed))
@@ -78,6 +118,12 @@ fn table(doc: &WordDoc, docx: &Docx, target: &str) -> Result<Table> {
         .tables()
         .get(k)
         .ok_or_else(|| EditError::Refused(format!("{target} is not a table")))?;
+    Ok((story, found))
+}
+
+/// The table `target` names now.
+fn table(doc: &WordDoc, docx: &Docx, target: &str) -> Result<Table> {
+    let (story, found) = found_table(doc, docx, target)?;
     Ok(Table {
         part: story.part.clone(),
         id: found.id.clone(),
@@ -194,6 +240,12 @@ impl Command<WordDoc> for SetCells {
         let mut sink = EditSink::new(tx, self.policy.clone());
         let docx = sink.docx()?;
         let found = table(sink.doc(), &docx, &self.table)?;
+        if crate::tables::placed(sink.doc(), &found.id) {
+            // docx-agent's `_Kept`: the cells written drop their columns from the record
+            return Err(EditError::Unsupported(
+                "word_edit_table set_cells in a table placed from a source (its record kept)".to_owned(),
+            ));
+        }
         sink.read(block_key(&found.part, &found.id));
         let tree = sink
             .doc()
@@ -204,24 +256,61 @@ impl Command<WordDoc> for SetCells {
             edits: Vec::new(),
             ids: Vec::new(),
         };
-        for (row, column, text) in &self.writes {
+        for write in &self.writes {
+            let (row, column) = locate(&sink, &self.table, write)?;
+            let Some((r, c)) = places.get(row).and_then(|l| l.get(column)).copied().flatten() else {
+                let docx = sink.docx()?;
+                let (story, now) = found_table(sink.doc(), &docx, &self.table)?;
+                return Err(EditError::Address(
+                    TableGrid::new(story, &now).no_cell(&now.id, row, column),
+                ));
+            };
             write_cell(
                 &mut sink,
                 &found,
                 &places,
-                (*row, *column),
-                (text, false),
+                (row, column),
+                (&write.text, self.stamping),
                 &mut out.edits,
             )?;
-            if let Some(Some((r, c))) = places.get(*row).and_then(|l| l.get(*column)) {
-                out.ids.push(format!("{}/c{r},{c}", found.id));
-            }
+            out.ids.push(format!("{}/c{r},{c}", found.id));
         }
         // docx-agent's edit, once it ends: text boxes synced, revision ids unique
         sink.space_written()?;
         crate::textbox::sync(&mut sink)?;
         crate::revision_ids::make_unique(&mut sink)?;
         Ok(out)
+    }
+}
+
+/// A write's grid place (docx-agent's `_locate`): its labels read on the table as the
+/// writes before it left it -- the row's in the first column, the column's in the first
+/// row.
+fn locate(sink: &EditSink<'_, '_>, target: &str, write: &CellWrite) -> Result<(usize, usize)> {
+    if let (CellAxis::At(row), CellAxis::At(column)) = (&write.row, &write.column) {
+        return Ok((*row, *column));
+    }
+    let docx = sink.docx()?;
+    let (story, found) = found_table(sink.doc(), &docx, target)?;
+    let grid = TableGrid::new(story, &found);
+    let row = match &write.row {
+        CellAxis::At(row) => *row,
+        CellAxis::Label(label) => grid.row_labelled(label).map_err(EditError::Address)?,
+        CellAxis::Missing => return Err(missing("cells[].row or row_label")),
+    };
+    let column = match &write.column {
+        CellAxis::At(column) => *column,
+        CellAxis::Label(label) => grid.column_labelled(0, label).map_err(EditError::Address)?,
+        CellAxis::Missing => return Err(missing("cells[].col or col_label")),
+    };
+    Ok((row, column))
+}
+
+/// docx-agent's `need`: `field` is required.
+fn missing(field: &str) -> EditError {
+    EditError::Argument {
+        field: field.to_owned(),
+        message: format!("{field} is required"),
     }
 }
 

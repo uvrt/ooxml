@@ -24,6 +24,15 @@ pub enum EditError {
     /// The target is not what the edit takes.
     #[error("{0}")]
     Refused(String),
+    /// An argument the edit cannot take as given, at the field it names (docx-agent's
+    /// `invalid_arguments` there).
+    #[error("{message}")]
+    Argument {
+        /// The argument, as the tool names it (`cells[].row or row_label`).
+        field: String,
+        /// What is wrong, and what to give.
+        message: String,
+    },
     /// A style edit refused, with the field it names and the options that would do.
     #[error("{0}")]
     Style(crate::styles::StyleRefusal),
