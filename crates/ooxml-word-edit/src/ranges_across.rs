@@ -10,11 +10,13 @@
 use crate::doc::{Draw, DrawFrom, Key};
 use crate::names::W14;
 use crate::ranges::{renamed_id, stretch, Plan, Written};
+use crate::set_text::{block_key, paragraph_has_annotations};
 use crate::sink::{annotation_draws, EditSink, Keep};
 use crate::stamping::w14_prefix;
 use crate::work::{Id, Work};
 use crate::{EditError, Result};
-use ooxml_xml::{Node, QName};
+use ooxml_word_model::docx::{at_path, Docx};
+use ooxml_xml::{Element, Node, QName};
 use std::sync::Arc;
 
 /// The place among the nodes [`Work::build_content`] makes of `child`, a child of `root`.
@@ -27,6 +29,33 @@ fn content_index(work: &Work, root: Id, child: Id) -> Option<u32> {
         at += 1 + usize::from(!work.tail(c).is_empty());
     }
     None
+}
+
+/// The keys the stretch at `paths` of `root` (renamed by stamping) is written under, made
+/// `nodes`: its paragraphs' blocks, and the annotation ids in use when it held revision
+/// records or does now (the ids a tracked edit numbers from, as `set_text` declares them).
+fn stretch_keys(
+    docx: &Docx,
+    part: &str,
+    (paths, root): (&[Box<[u32]>], &Arc<Element>),
+    nodes: &[Node],
+    renamed: &[(String, String)],
+) -> Vec<Key> {
+    let mut keys: Vec<Key> = paths
+        .iter()
+        .filter_map(|p| docx.part(part).and_then(|s| s.ids.paragraph_at(p)))
+        .map(|p| block_key(part, &renamed_id(renamed, &p.id)))
+        .collect();
+    let annotated = |n: &Node| matches!(n, Node::Element(e) if paragraph_has_annotations(e));
+    if nodes.iter().any(annotated)
+        || paths
+            .iter()
+            .filter_map(|p| at_path(root, p))
+            .any(|e| paragraph_has_annotations(e))
+    {
+        keys.push(Key::Annotations);
+    }
+    keys
 }
 
 /// Replace `plan`'s range across paragraphs and splice the stretch back.
@@ -89,15 +118,7 @@ pub(crate) fn write_across(
         }
     }
     let docx = sink.docx()?;
-    let keys: Vec<Key> = across
-        .paths
-        .iter()
-        .filter_map(|p| docx.part(&part).and_then(|s| s.ids.paragraph_at(p)))
-        .map(|p| Key::Block {
-            part: Arc::from(part.as_str()),
-            id: Arc::from(renamed_id(renamed, &p.id).as_str()),
-        })
-        .collect();
+    let keys = stretch_keys(&docx, &part, (&across.paths, tree.root()), &nodes, renamed);
     // docx-agent: aliases naming a paragraph the edit joined away go with it
     let gone: Vec<String> = paragraphs
         .iter()

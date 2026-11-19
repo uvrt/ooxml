@@ -12,7 +12,7 @@ mod document;
 pub(crate) use document::sections_json;
 mod package;
 
-pub(crate) use document::short;
+pub(crate) use document::{py_space, short};
 
 use crate::version::Version;
 use ooxml_base::{BaseError, Cancel};

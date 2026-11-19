@@ -10,7 +10,8 @@ use ooxml_derive::CacheBudget;
 use ooxml_opc::Package;
 use ooxml_store::{Caller, Clock, Command, StoreConfig};
 use ooxml_word_edit::{
-    CellValues, EditError, Editor, FormatTable, RevisionPolicy, TableFormat, TableValues, TableWidth, Tracking, WordDoc,
+    CellValues, EditError, EditTable, Editor, FormatTable, RevisionPolicy, TableChange, TableFormat, TableValues,
+    TableWidth, Tracking, WordDoc,
 };
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -103,11 +104,40 @@ fn object_edits_on_a_long_document() {
             RevisionPolicy::Untracked,
         ),
         ("format table, tracked", vec![whole], tracked.clone()),
-        ("format column cells, tracked", column, tracked),
+        ("format column cells, tracked", column, tracked.clone()),
     ] {
         let command = FormatTable {
             table: table.clone(),
             formats,
+            policy,
+        };
+        report(name, best(&bytes, &command));
+    }
+    for (name, change, policy) in [
+        (
+            "delete row",
+            TableChange::DeleteRow { index: 1 },
+            RevisionPolicy::Untracked,
+        ),
+        (
+            "delete row, tracked",
+            TableChange::DeleteRow { index: 1 },
+            tracked.clone(),
+        ),
+        (
+            "delete column",
+            TableChange::DeleteColumn { index: 0 },
+            RevisionPolicy::Untracked,
+        ),
+        (
+            "delete column, tracked",
+            TableChange::DeleteColumn { index: 0 },
+            tracked.clone(),
+        ),
+    ] {
+        let command = EditTable {
+            table: table.clone(),
+            change,
             policy,
         };
         report(name, best(&bytes, &command));

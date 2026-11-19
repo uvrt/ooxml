@@ -189,9 +189,10 @@ fn renumber(sink: &mut EditSink<'_, '_>, candidates: &[String]) -> Result<()> {
         let mut node_path = vec![0usize];
         node_path.extend(place.iter().map(|k| *k as usize));
         sink.read(Key::Annotations);
-        sink.set_head(
+        sink.set_head_keyed(
             &story,
             HeadPatch::new(NodePath(node_path), Arc::clone(element.head()), Arc::new(head)),
+            vec![Key::Part(Arc::from(story.as_str())), Key::Annotations],
         )?;
     }
     Ok(())

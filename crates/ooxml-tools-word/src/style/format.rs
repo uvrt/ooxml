@@ -1,0 +1,441 @@
+//! Owns: `word_format`'s handler (docx-agent's `tools/text.py`, `word_format`): the call's
+//! settings read as docx-agent splits them (run and paragraph settings in its order, a
+//! negative first-line indent a hanging one, `clear` as settings to remove), its refusals
+//! (nothing to format or set, a value both set and cleared, a style no document or Word
+//! has, a `like` of several paragraphs, `find` items not found once), the edits through the
+//! edit core's [`FormatEdit`], and the reply: what changed, the found ranges, what the
+//! look did, the outline's moves.
+//!
+//! Must not: change the document but through a command.
+
+use super::find::found_ranges;
+use super::format_args::{Cleared, WordFormat};
+use super::moves::moves;
+use crate::review::{edit_refusal, Editing};
+use crate::structure::common::{call, outcome, policy, Outcome};
+use ooxml_base::pyfmt::repr_str;
+use ooxml_tools::{ArgEnum, Refusal, ToolError, ToolResult, TryCall, WayOut};
+use ooxml_word_edit::{
+    known_style, paragraphs_of, EditError, FormatEdit, FormatPlan, FormatStep, Formatted, Like, ParagraphLook,
+    Property, Setting, Value as Set, WordDoc, KEEPS_BLOCKS, NOT_TAKEN,
+};
+use ooxml_word_model::docx::{style_kind, style_name, Docx};
+use serde_json::{json, Map, Value};
+
+impl From<FormatStep> for Outcome {
+    fn from(step: FormatStep) -> Self {
+        Outcome {
+            id: Some(step.id),
+            changed: step.changed,
+            created: Vec::new(),
+            removed: step.removed,
+            renamed: step.renamed,
+            warnings: step.warnings,
+        }
+    }
+}
+
+const SETTERS: [&str; 24] = [
+    "like",
+    "paragraph_style",
+    "character_style",
+    "bold",
+    "italic",
+    "underline",
+    "strike",
+    "size",
+    "font",
+    "color",
+    "highlight",
+    "alignment",
+    "space_before",
+    "space_after",
+    "line_spacing",
+    "indent_left",
+    "indent_right",
+    "indent_first",
+    "keep_with_next",
+    "keep_lines",
+    "page_break_before",
+    "keep_together",
+    "clear_direct",
+    "clear",
+];
+
+/// `word_format` (docx-agent's): styles, run and paragraph formatting on each target.
+#[must_use]
+pub fn word_format(args: &WordFormat, editing: &Editing<'_>) -> ToolResult<Value> {
+    if let Err(error) = crate::review::stopped(editing.cancel) {
+        return ToolResult::failed(error);
+    }
+    let again = call("word_format", &[("doc", json!(args.doc))]);
+    run(args, editing, &again).unwrap_or_else(ToolResult::failed)
+}
+
+fn invalid(message: String, field: &str, options: &[&str], again: &TryCall) -> ToolError {
+    let way = WayOut::names(options.iter().map(|s| (*s).to_owned())).unwrap_or_else(|| WayOut::call(again.clone()));
+    ToolError::refusal(Refusal::InvalidArguments, message, way).at(field)
+}
+
+fn run(args: &WordFormat, editing: &Editing<'_>, again: &TryCall) -> Result<ToolResult<Value>, ToolError> {
+    let targets = args.targets.clone().unwrap_or_default();
+    let finds = args.find.clone().unwrap_or_default();
+    if targets.is_empty() && finds.is_empty() {
+        if args.targets.is_none() && args.find.is_none() {
+            let message = "say what to format: targets (ids) or find (text)".to_owned();
+            return Err(invalid(message, "targets", &["targets", "find"], again));
+        }
+        return Ok(ToolResult::nothing_given("formatted", "targets"));
+    }
+    let given = given(args);
+    let clear = args.clear.clone().unwrap_or_default();
+    let both: Vec<&str> = clear
+        .iter()
+        .map(|c| ArgEnum::as_str(*c))
+        .filter(|c| given.contains(c))
+        .collect();
+    if !both.is_empty() {
+        let message = format!(
+            "{} both set and cleared: give a value or clear it, not both",
+            both.join(", ")
+        );
+        return Err(invalid(message, "clear", &[], again));
+    }
+    let (mut run, mut paragraph) = split(args);
+    for name in &clear {
+        cleared(*name, &mut run, &mut paragraph);
+    }
+    let head = editing.editor.store().snapshot();
+    let doc = head.doc();
+    let docx = doc
+        .docx()
+        .map_err(|e| ToolError::internal(e.to_string(), "word:model"))?;
+    let like = args.like.as_deref().filter(|l| !l.is_empty());
+    let look = like.map(|l| sample_look(doc, &docx, l, again)).transpose()?;
+    if !sets_anything(args, &run, &paragraph, look.is_some()) {
+        let message = "say what to set: a style, a run or a paragraph property".to_owned();
+        return Err(invalid(message, "", &SETTERS, again));
+    }
+    for (name, kind, field) in [
+        (&args.paragraph_style, "paragraph", "paragraph_style"),
+        (&args.character_style, "character", "character_style"),
+    ] {
+        if let Some(name) = name {
+            known(&docx, name, kind, field)?;
+        }
+    }
+    let found = found_ranges(doc, &finds, again)?;
+    let mut addresses = targets;
+    addresses.extend(found.iter().cloned());
+    let like_plan = look.clone().map(|look| Like {
+        look,
+        skip: explicit(args, &paragraph, &clear),
+    });
+    let plan = FormatPlan {
+        like: like_plan,
+        keep_together: args.keep_together,
+        clear_direct: args.clear_direct.unwrap_or(false),
+        paragraph_style: args.paragraph_style.clone(),
+        character_style: args.character_style.clone(),
+        paragraph,
+        run,
+    };
+    let command = FormatEdit {
+        targets: addresses.clone(),
+        plan,
+        cleared: !clear.is_empty(),
+        policy: policy(editing),
+    };
+    let done = editing.editor.run(editing.caller, &command).map_err(|e| {
+        // docx-agent names `targets` for a target holding no paragraphs or no blocks to keep
+        let field = match &e {
+            EditError::Address(a)
+                if a.message.ends_with("holds no paragraphs") || a.message.ends_with(KEEPS_BLOCKS) =>
+            {
+                "targets"
+            }
+            _ => "",
+        };
+        edit_refusal(e, field, again.clone())
+    })?;
+    Ok(reply(addresses.len(), &found, look.as_ref(), like, done.out))
+}
+
+/// Whether the call sets anything (docx-agent's test, a style named by an empty string
+/// setting nothing).
+fn sets_anything(args: &WordFormat, run: &[Setting], paragraph: &[Setting], look: bool) -> bool {
+    let named = |s: &Option<String>| s.as_deref().is_some_and(|s| !s.is_empty());
+    !run.is_empty()
+        || !paragraph.is_empty()
+        || named(&args.paragraph_style)
+        || named(&args.character_style)
+        || args.clear_direct.unwrap_or(false)
+        || args.keep_together.is_some()
+        || look
+}
+
+/// The names of the settings the call gives.
+fn given(args: &WordFormat) -> Vec<&'static str> {
+    let flags = [
+        ("bold", args.bold.is_some()),
+        ("italic", args.italic.is_some()),
+        ("underline", args.underline.is_some()),
+        ("strike", args.strike.is_some()),
+        ("size", args.size.is_some()),
+        ("font", args.font.is_some()),
+        ("color", args.color.is_some()),
+        ("highlight", args.highlight.is_some()),
+        ("alignment", args.alignment.is_some()),
+        ("space_before", args.space_before.is_some()),
+        ("space_after", args.space_after.is_some()),
+        ("line_spacing", args.line_spacing.is_some()),
+        ("indent_left", args.indent_left.is_some()),
+        ("indent_right", args.indent_right.is_some()),
+        ("indent_first", args.indent_first.is_some()),
+        ("keep_with_next", args.keep_with_next.is_some()),
+        ("keep_lines", args.keep_lines.is_some()),
+        ("page_break_before", args.page_break_before.is_some()),
+    ];
+    flags.into_iter().filter(|(_, on)| *on).map(|(n, _)| n).collect()
+}
+
+fn set(property: Property, value: Set) -> Setting {
+    Setting {
+        property,
+        value: Some(value),
+    }
+}
+
+/// docx-agent's `split_formatting`: the run settings and the paragraph settings, in its
+/// order.
+fn split(args: &WordFormat) -> (Vec<Setting>, Vec<Setting>) {
+    let mut run = Vec::new();
+    let flags = [
+        (Property::Bold, args.bold),
+        (Property::Italic, args.italic),
+        (Property::Underline, args.underline),
+        (Property::Strike, args.strike),
+    ];
+    run.extend(flags.into_iter().filter_map(|(p, v)| v.map(|v| set(p, Set::Flag(v)))));
+    run.extend(args.size.map(|v| set(Property::Size, Set::Number(v))));
+    run.extend(args.font.clone().map(|v| set(Property::Font, Set::Text(v))));
+    run.extend(args.color.clone().map(|v| set(Property::Color, Set::Text(v))));
+    if let Some(h) = &args.highlight {
+        run.push(Setting {
+            property: Property::Highlight,
+            value: (h != "none").then(|| Set::Text(h.clone())),
+        });
+    }
+    let mut paragraph = Vec::new();
+    paragraph.extend(
+        args.alignment
+            .map(|a| set(Property::Alignment, Set::Text(a.as_str().to_owned()))),
+    );
+    let numbers = [
+        (Property::SpaceBefore, args.space_before),
+        (Property::SpaceAfter, args.space_after),
+        (Property::LineSpacing, args.line_spacing),
+        (Property::IndentLeft, args.indent_left),
+        (Property::IndentRight, args.indent_right),
+    ];
+    paragraph.extend(
+        numbers
+            .into_iter()
+            .filter_map(|(p, v)| v.map(|v| set(p, Set::Number(v)))),
+    );
+    let flags = [
+        (Property::KeepWithNext, args.keep_with_next),
+        (Property::KeepTogether, args.keep_lines),
+        (Property::PageBreakBefore, args.page_break_before),
+    ];
+    paragraph.extend(flags.into_iter().filter_map(|(p, v)| v.map(|v| set(p, Set::Flag(v)))));
+    if let Some(first) = args.indent_first {
+        paragraph.push(if first >= 0.0 {
+            set(Property::FirstLine, Set::Number(first))
+        } else {
+            set(Property::Hanging, Set::Number(-first))
+        });
+    }
+    (run, paragraph)
+}
+
+/// `property` cleared: its setting's value removed in its place, or added last.
+fn put_cleared(settings: &mut Vec<Setting>, property: Property) {
+    match settings.iter_mut().find(|s| s.property == property) {
+        Some(found) => found.value = None,
+        None => settings.push(Setting { property, value: None }),
+    }
+}
+
+fn cleared(name: Cleared, run: &mut Vec<Setting>, paragraph: &mut Vec<Setting>) {
+    let property = match name {
+        Cleared::IndentFirst => {
+            put_cleared(paragraph, Property::FirstLine);
+            put_cleared(paragraph, Property::Hanging);
+            return;
+        }
+        Cleared::Bold => Property::Bold,
+        Cleared::Italic => Property::Italic,
+        Cleared::Underline => Property::Underline,
+        Cleared::Strike => Property::Strike,
+        Cleared::Size => Property::Size,
+        Cleared::Font => Property::Font,
+        Cleared::Color => Property::Color,
+        Cleared::Highlight => Property::Highlight,
+        Cleared::Alignment => Property::Alignment,
+        Cleared::SpaceBefore => Property::SpaceBefore,
+        Cleared::SpaceAfter => Property::SpaceAfter,
+        Cleared::LineSpacing => Property::LineSpacing,
+        Cleared::IndentLeft => Property::IndentLeft,
+        Cleared::IndentRight => Property::IndentRight,
+        Cleared::KeepWithNext => Property::KeepWithNext,
+        Cleared::KeepLines => Property::KeepTogether,
+        Cleared::PageBreakBefore => Property::PageBreakBefore,
+    };
+    put_cleared(if property.is_run() { run } else { paragraph }, property);
+}
+
+/// docx-agent's `_explicit`: the parts of the sample's look the call sets itself.
+fn explicit(args: &WordFormat, paragraph: &[Setting], clear: &[Cleared]) -> Vec<&'static str> {
+    let mut skip: Vec<&'static str> = Vec::new();
+    let mut add = |part: &'static str| {
+        if !skip.contains(&part) {
+            skip.push(part);
+        }
+    };
+    if args.paragraph_style.is_some() {
+        add("style");
+    }
+    for setting in paragraph {
+        match setting.property {
+            Property::KeepWithNext => add("keep_with_next"),
+            Property::KeepTogether => add("keep_lines"),
+            Property::PageBreakBefore => add("page_break_before"),
+            _ => {}
+        }
+    }
+    if args.keep_together.is_some() {
+        add("keep_lines");
+        add("keep_with_next");
+    }
+    for name in clear {
+        match name {
+            Cleared::KeepWithNext => add("keep_with_next"),
+            Cleared::KeepLines => add("keep_lines"),
+            Cleared::PageBreakBefore => add("page_break_before"),
+            _ => {}
+        }
+    }
+    skip
+}
+
+/// `not_found` with the document's styles of `kind` unless `name` names one (docx-agent's
+/// `known_style`).
+fn known(docx: &Docx, name: &str, kind: &str, field: &str) -> Result<(), ToolError> {
+    let Err(error) = known_style(docx, name, kind) else {
+        return Ok(());
+    };
+    let options: Vec<String> = docx
+        .styles()
+        .iter()
+        .filter(|s| style_kind(s) == kind)
+        .filter_map(|s| style_name(s).filter(|n| !n.is_empty()).map(str::to_owned))
+        .take(50)
+        .collect();
+    let message = match error {
+        EditError::Refused(m) => m,
+        other => other.to_string(),
+    };
+    let way = WayOut::names(options).unwrap_or_else(|| WayOut::call(call("word_format", &[])));
+    Err(ToolError::refusal(Refusal::NotFound, message, way).at(field))
+}
+
+/// The look of the paragraph `like` names (docx-agent's `_sample_look`): one paragraph,
+/// or a range, cell or span of one; several refused with them (rule 2).
+fn sample_look(doc: &WordDoc, docx: &Docx, like: &str, again: &TryCall) -> Result<ParagraphLook, ToolError> {
+    let found = paragraphs_of(doc, docx, like).map_err(|e| {
+        let message = match e {
+            EditError::Address(a) if a.message.ends_with("holds no paragraphs") => {
+                format!("like: {}", a.message)
+            }
+            EditError::Address(a) => format!(
+                "like {} names no paragraph ({}): give a paragraph id, p:<id>",
+                repr_str(like),
+                a.message
+            ),
+            other => format!("like: {other}"),
+        };
+        ToolError::refusal(Refusal::NotFound, message, WayOut::call(again.clone())).at("like")
+    })?;
+    let paragraphs: Vec<_> = found
+        .iter()
+        .filter_map(|(part, k)| docx.part(part)?.ids.paragraphs().get(*k))
+        .collect();
+    let [one] = paragraphs.as_slice() else {
+        let shown: Vec<String> = paragraphs.iter().take(50).map(|p| p.id.clone()).collect();
+        let first = shown.first().cloned().unwrap_or_default();
+        let message = format!(
+            "like names one paragraph to look like, and {like} holds {}: give one of them, e.g. like: {}",
+            paragraphs.len(),
+            repr_str(&first)
+        );
+        let way = WayOut::names(shown).unwrap_or_else(|| WayOut::call(again.clone()));
+        return Err(ToolError::refusal(Refusal::InvalidArguments, message, way).at("like"));
+    };
+    Ok(ParagraphLook::of(&one.id, &one.element))
+}
+
+/// The reply as docx-agent's `word_format` writes it.
+fn reply(
+    count: usize,
+    found: &[String],
+    look: Option<&ParagraphLook>,
+    like: Option<&str>,
+    out: Formatted,
+) -> ToolResult<Value> {
+    let any_changed = out.steps.iter().any(|s| s.changed);
+    let edits: Vec<Outcome> = out.steps.into_iter().map(Outcome::from).collect();
+    let mut data = Map::new();
+    if !found.is_empty() {
+        data.insert("ranges".into(), json!(found.iter().take(50).collect::<Vec<_>>()));
+    }
+    let mut nothing_set = false;
+    if let (Some(look), Some(done)) = (look, &out.like) {
+        let set: Map<String, Value> = done
+            .set
+            .iter()
+            .take(50)
+            .map(|(id, parts)| (id.clone(), json!(parts)))
+            .collect();
+        let mut alike = json!({"sample": look.sample, "set": set,
+            "alike": done.alike.iter().take(50).collect::<Vec<_>>(), "not_taken": NOT_TAKEN});
+        let left = done.set.len().saturating_sub(50) + done.alike.len().saturating_sub(50);
+        if left > 0 {
+            if let Some(map) = alike.as_object_mut() {
+                map.insert("left_out".into(), json!(left));
+            }
+        }
+        data.insert("like".into(), alike);
+        nothing_set = done.set.is_empty();
+    }
+    let data = (!data.is_empty()).then_some(Value::Object(data));
+    let mut result = outcome(&edits, format!("Formatted {count} target(s)"), data);
+    if let (Some(look), Some(like)) = (look, like) {
+        if look.sample != like {
+            result
+                .warnings
+                .push(format!("like {like} read as its paragraph {}", look.sample));
+        }
+        if nothing_set && !any_changed {
+            result.warnings.push(format!(
+                "every target already looks like {}: nothing changed",
+                look.sample
+            ));
+        }
+    }
+    if let Some((before, after)) = &out.outline {
+        let renamed: Vec<(String, String)> = edits.iter().flat_map(|e| e.renamed.iter().cloned()).collect();
+        result.warnings.extend(moves(before, after, &renamed, 5));
+    }
+    result
+}

@@ -83,6 +83,8 @@ fn twins(work: &Work, left: Id, right: Id) -> bool {
         && mergeable(work, left)
         && mergeable(work, right)
         && attributes(left) == attributes(right)
+        // the key a tracking edit gave each run is docx-agent's temporary attribute
+        && work.key(left) == work.key(right)
         && same_properties
 }
 
