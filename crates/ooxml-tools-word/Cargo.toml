@@ -22,6 +22,7 @@ serde_json.workspace = true
 [dev-dependencies]
 ooxml-zip.workspace = true
 ooxml-derive.workspace = true
+ooxml-fonts.workspace = true
 
 [lints]
 workspace = true

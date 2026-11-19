@@ -1,0 +1,168 @@
+//! `FIELDS_BENCH=<path to a .docx> cargo test --release -p ooxml-tools-word --test fields_bench -- --ignored
+//! --nocapture`: the field tools on a long document, each the best of three on a fresh editor (opening not
+//! counted), over one page engine kept for the document as a host keeps it (its first layout timed apart).
+//!
+//! Must not: run without the variable; it is a timing, not a test.
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
+
+use ooxml_base::{Cancel, Limits};
+use ooxml_derive::CacheBudget;
+use ooxml_fonts::{Folder, Location, WordFontOptions};
+use ooxml_opc::Package;
+use ooxml_store::{Caller, Clock, StoreConfig};
+use ooxml_tools::{ToolArgs, ToolResult};
+use ooxml_tools_word::{word_fields, word_headers_footers, Editing, EnginePages};
+use ooxml_word_edit::{Editor, FieldLayout};
+use ooxml_word_pages::{DiskFonts, EngineBudgets, EngineOptions, FontSetup, PageEngine};
+use serde_json::{json, Value};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+struct Never;
+impl Cancel for Never {
+    fn is_cancelled(&self) -> bool {
+        false
+    }
+}
+
+struct Monotonic(Instant);
+impl Clock for Monotonic {
+    fn monotonic(&self) -> Duration {
+        self.0.elapsed()
+    }
+}
+
+struct Unlimited;
+impl CacheBudget for Unlimited {
+    fn reserve(&self, _bytes: usize) -> bool {
+        true
+    }
+    fn release(&self, _bytes: usize) {}
+    fn used(&self) -> usize {
+        0
+    }
+}
+
+fn engine() -> PageEngine {
+    let folder = Folder {
+        location: Location::Folder,
+        path: concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../python/pptx2svg/packages/pptx2svg-fonts/src/pptx2svg_fonts/files"
+        )
+        .to_owned(),
+    };
+    let options = WordFontOptions {
+        substitutes: Vec::new(),
+        recorded_faces: true,
+        fallbacks: true,
+    };
+    let setup = Arc::new(FontSetup::new(Arc::new(DiskFonts), &[folder], options));
+    let budgets = EngineBudgets {
+        held: Arc::new(Unlimited),
+        paint: Arc::new(Unlimited),
+    };
+    PageEngine::new(setup, EngineOptions::default(), budgets)
+}
+
+fn editor(bytes: &Arc<[u8]>) -> Editor {
+    let package = Package::open(Arc::clone(bytes), &Limits::default()).unwrap();
+    Editor::open(
+        package,
+        StoreConfig::default(),
+        Arc::new(Monotonic(Instant::now())),
+        Arc::new(Unlimited),
+    )
+    .unwrap()
+}
+
+/// The best of three calls of `tool` with `arguments`, each on a fresh editor, and the last reply.
+fn best<A: ToolArgs>(
+    bytes: &Arc<[u8]>,
+    layout: &dyn FieldLayout,
+    arguments: &Value,
+    tool: impl Fn(&A, &Editing<'_>) -> ToolResult<Value>,
+) -> (Duration, Value) {
+    let mut out = (Duration::MAX, Value::Null);
+    for _ in 0..3 {
+        let editor = editor(bytes);
+        let opened = editor.store().snapshot().doc().clone();
+        let caller = Caller::anonymous();
+        let editing = Editing {
+            editor: &editor,
+            caller: &caller,
+            opened: &opened,
+            tracking: None,
+            doc: "d1",
+            cancel: &Never,
+            date: "2026-11-17T10:00:00Z",
+            layout: Some(layout),
+        };
+        let (args, _) = A::accept(arguments.clone(), Some("docx")).unwrap();
+        let started = Instant::now();
+        let reply = tool(&args, &editing);
+        let took = started.elapsed();
+        if took < out.0 {
+            out = (took, Value::Object(reply.to_json()));
+        }
+    }
+    out
+}
+
+#[test]
+#[ignore = "a timing on a long document: FIELDS_BENCH=<docx> cargo test --release -- --ignored"]
+fn field_tools_on_a_long_document() {
+    let Ok(path) = std::env::var("FIELDS_BENCH") else {
+        return;
+    };
+    let bytes: Arc<[u8]> = Arc::from(std::fs::read(path).unwrap());
+    let probe = editor(&bytes);
+    let docx = probe.store().snapshot().doc().docx().unwrap();
+    let ids: Vec<String> = docx
+        .body()
+        .unwrap()
+        .ids
+        .paragraphs()
+        .iter()
+        .filter(|p| p.path.len() == 2)
+        .map(|p| p.id.clone())
+        .collect();
+    let engine = Arc::new(Mutex::new(engine()));
+    let started = Instant::now();
+    let first = engine.lock().unwrap().lay_out(probe.store().snapshot().doc().package());
+    let pages = first.unwrap().map(|v| v.page_count());
+    println!(
+        "{} body paragraphs; first layout {:.1} ms ({pages:?} pages)",
+        ids.len(),
+        started.elapsed().as_secs_f64() * 1000.0
+    );
+    let layout = EnginePages::new(engine);
+    let report = |name: &str, (took, reply): (Duration, Value)| {
+        let summary = reply.get("summary").cloned().unwrap_or(Value::Null);
+        let warnings = reply.get("warnings").cloned().unwrap_or(Value::Null);
+        println!("{name}: {:.1} ms -- {summary} {warnings}", took.as_secs_f64() * 1000.0);
+    };
+    report(
+        "word_fields update",
+        best(&bytes, &layout, &json!({"doc": "d1", "action": "update"}), word_fields),
+    );
+    report(
+        "word_fields insert_toc",
+        best(
+            &bytes,
+            &layout,
+            &json!({"doc": "d1", "action": "insert_toc", "after": ids[10]}),
+            word_fields,
+        ),
+    );
+    report(
+        "word_headers_footers page_x_of_y",
+        best(
+            &bytes,
+            &layout,
+            &json!({"doc": "d1", "section": "s:1", "which": "footer", "action": "set", "text": "",
+                    "page_number": "page_x_of_y"}),
+            word_headers_footers,
+        ),
+    );
+}

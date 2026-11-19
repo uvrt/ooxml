@@ -751,6 +751,7 @@ version = "0.1.0"
 dependencies = [
  "ooxml-base",
  "ooxml-derive",
+ "ooxml-fonts",
  "ooxml-opc",
  "ooxml-store",
  "ooxml-tools",
