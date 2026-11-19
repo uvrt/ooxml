@@ -10,7 +10,7 @@
 //! paragraphs' own blocks, the ledger seeds it draws from.
 
 use crate::doc::{Draw, DrawFrom, Key, WordDoc};
-use crate::find::Pattern;
+use crate::find::{HoldsMatch, Pattern};
 use crate::names::{W14, W16DU};
 use crate::policy::RevisionPolicy;
 use crate::set_text::{find, paragraph_has_annotations, Found};
@@ -489,8 +489,13 @@ impl Command<WordDoc> for ReplaceText {
     fn prepare(&self, tx: &mut Txn<'_, WordDoc>) -> Result<RangesEdited> {
         let mut sink = EditSink::new(tx, self.policy.clone());
         let docx = sink.docx()?;
-        // every paragraph is read: a find depends on the whole document
-        sink.read_everything();
+        // a find within paragraphs depends on the paragraphs that hold a match (it reads the
+        // ones it matched by key, as it writes them); across paragraphs, on every paragraph
+        if self.across {
+            sink.read_everything();
+        } else {
+            sink.read_where(Arc::new(HoldsMatch::new(Arc::clone(&self.pattern))));
+        }
         let mut found = crate::find::matches(&docx, self.pattern.as_ref(), self.across)?;
         if let Some(count) = self.count {
             found.truncate(count);

@@ -83,6 +83,8 @@ pub struct Style {
     pub run: Props,
     /// A table style's regions by `w:type`, in document order (the last of a type wins).
     pub conditional: BTreeMap<Text, Region>,
+    /// Its position in the sheet's document order ([`StyleSheet::at`]).
+    pub position: u32,
     /// A table style's own `w:tblPr`, `w:trPr` and `w:tcPr`.
     pub table: Props,
     /// See `table`.
@@ -118,7 +120,7 @@ fn region(node: w::TblStylePr<'_>, colours: &ThemeColours) -> Region {
     }
 }
 
-fn style(element: w::Style<'_>, style_id: &str, colours: &ThemeColours) -> Style {
+fn style(element: w::Style<'_>, style_id: &str, position: u32, colours: &ThemeColours) -> Style {
     let (kind, kind_name) = StyleKind::of(element.kind());
     let mut conditional = BTreeMap::new();
     for node in element.conditional() {
@@ -138,6 +140,7 @@ fn style(element: w::Style<'_>, style_id: &str, colours: &ThemeColours) -> Style
         paragraph: paragraph_properties(element.paragraph().map(w::PPr::element), colours),
         run: run_properties(element.run().map(w::RPr::element), colours),
         conditional,
+        position,
         table: table_properties(element.table().map(w::TblPr::element), colours),
         table_row: table_properties(element.row().map(w::TrPr::element), colours),
         table_cell: table_properties(element.cell().map(w::TcPr::element), colours),
@@ -171,14 +174,23 @@ impl StyleSheet {
             if sheet.styles.contains_key(id) {
                 continue;
             }
+            let position = u32::try_from(sheet.order.len()).unwrap_or(u32::MAX);
             sheet.order.push(text(id));
-            sheet.styles.insert(text(id), Arc::new(style(element, id, colours)));
+            sheet
+                .styles
+                .insert(text(id), Arc::new(style(element, id, position, colours)));
         }
         sheet
     }
 
     /// The style `id`, if there is one.
     pub fn get(&self, id: &str) -> Option<&Arc<Style>> {
+        self.styles.get(id)
+    }
+
+    /// The style at `position` in document order ([`Style::position`]).
+    pub fn at(&self, position: u32) -> Option<&Arc<Style>> {
+        let id = self.order.get(usize::try_from(position).ok()?)?;
         self.styles.get(id)
     }
 

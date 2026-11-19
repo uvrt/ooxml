@@ -4,7 +4,8 @@
 //! Must not: publish anything; [`crate::Store`] commits a transaction.
 
 use crate::ids::IdAllocator;
-use crate::{DocModel, Error, IdSeq, KeySet, Snapshot, StoreError};
+use crate::{DocModel, Error, IdSeq, KeySet, ReadPredicate, Snapshot, StoreError};
+use std::sync::Arc;
 
 /// A transaction on a snapshot. Its working version is private and cheap (versions are
 /// persistent); its changes reach the document only when the store commits it.
@@ -12,6 +13,8 @@ pub struct Txn<'s, D: DocModel> {
     base: Snapshot<D>,
     work: D,
     reads: KeySet<D::Key>,
+    /// What it read by condition ([`Txn::read_where`]).
+    predicates: Vec<Arc<dyn ReadPredicate<D>>>,
     writes: KeySet<D::Key>,
     /// The written keys that are merges ([`DocModel::merged`]).
     merges: KeySet<D::Key>,
@@ -35,6 +38,7 @@ impl<'s, D: DocModel> Txn<'s, D> {
             base,
             work,
             reads: KeySet::new(),
+            predicates: Vec::new(),
             writes: KeySet::new(),
             merges: KeySet::new(),
             changes: Vec::new(),
@@ -61,6 +65,14 @@ impl<'s, D: DocModel> Txn<'s, D> {
     /// other commit came between its snapshot and its commit.
     pub fn read_everything(&mut self) {
         self.reads.insert_everything();
+    }
+
+    /// Record that the transaction depends on every key that meets `predicate` (a find over
+    /// every paragraph depends on the paragraphs that hold its text): it commits unless a key
+    /// written since its snapshot meets it on the head. The keys that met it on the snapshot
+    /// and that the outcome used must also be read by key ([`ReadPredicate`]'s contract).
+    pub fn read_where(&mut self, predicate: Arc<dyn ReadPredicate<D>>) {
+        self.predicates.push(predicate);
     }
 
     /// Apply `change` to the working version and add it to the change set.
@@ -118,6 +130,7 @@ impl<'s, D: DocModel> Txn<'s, D> {
             base: self.base,
             work: self.work,
             reads: self.reads,
+            predicates: self.predicates,
             writes: self.writes,
             merges: self.merges,
             changes: self.changes,
@@ -130,6 +143,7 @@ pub(crate) struct TxnParts<D: DocModel> {
     pub(crate) base: Snapshot<D>,
     pub(crate) work: D,
     pub(crate) reads: KeySet<D::Key>,
+    pub(crate) predicates: Vec<Arc<dyn ReadPredicate<D>>>,
     pub(crate) writes: KeySet<D::Key>,
     pub(crate) merges: KeySet<D::Key>,
     pub(crate) changes: Vec<D::Change>,

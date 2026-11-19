@@ -375,9 +375,11 @@ fn body_sections(before: &WordDoc, after: &WordDoc, docx: &Docx) -> Result<Optio
 type Stretch<'a> = [(usize, &'a Arc<Element>)];
 
 /// The places of the new body's blocks the change replaced, from the stretch of children
-/// that differs (the blocks before and after it are the same allocations): the blocks of
-/// the stretch that are not the old version's (by pointer, at its ends), compared within
-/// it by content without stamps; a removal counts at the block before it.
+/// that differs (the blocks before and after it are the same allocations). Within it the
+/// blocks both versions hold (the same allocation, in the same order) are untouched; only
+/// the pieces between them are compared, by content without stamps; a removal counts at the
+/// block before it. A change that rewrites scattered blocks so compares each one with what
+/// it replaced, never the whole body.
 fn changed_blocks(
     after: &WordDoc,
     new: &Body<'_>,
@@ -386,6 +388,91 @@ fn changed_blocks(
 ) -> BTreeSet<usize> {
     let facts = &after.shared().facts;
     let digest = |b: &Arc<Element>| facts.element(b).stampless;
+    let mut changed = BTreeSet::new();
+    // a removal at the stretch's first block counts at the block before the stretch
+    let before_stretch = || new.block_before(start).or_else(|| new.first_block());
+    for piece in pieces(old, now) {
+        let (a, b): (Vec<u64>, Vec<u64>) = (
+            old.get(piece.old.clone())
+                .unwrap_or_default()
+                .iter()
+                .map(|(_, e)| digest(e))
+                .collect(),
+            now.get(piece.new.clone())
+                .unwrap_or_default()
+                .iter()
+                .map(|(_, e)| digest(e))
+                .collect(),
+        );
+        let place = |j: usize| now.get(piece.new.start + j).map(|(k, _)| *k);
+        for op in opcodes(&a, &b) {
+            if op.tag == Tag::Equal {
+                continue;
+            }
+            if op.j2 > op.j1 {
+                changed.extend((op.j1..op.j2).filter_map(place));
+            } else {
+                // a removal counts at the block before it (the body's first block when none)
+                let at = match (piece.new.start + op.j1).checked_sub(1) {
+                    Some(j) => now.get(j).map(|(k, _)| *k),
+                    None => before_stretch(),
+                };
+                if let Some(k) = at {
+                    changed.insert(k);
+                }
+            }
+        }
+    }
+    changed
+}
+
+/// A piece of the stretch between two blocks both versions hold: its old blocks' and new
+/// blocks' indexes.
+struct Piece {
+    old: std::ops::Range<usize>,
+    new: std::ops::Range<usize>,
+}
+
+/// The pieces of `old` and `now` between the blocks both hold (the same allocation), in
+/// order; pieces where nothing differs are left out. When a block both hold moved (the
+/// blocks both hold are not in the same order), the one piece between the blocks the two
+/// share at their ends: a move is compared as docx-agent's diff of the whole stretch finds it.
+fn pieces(old: &Stretch<'_>, now: &Stretch<'_>) -> Vec<Piece> {
+    in_order(old, now).unwrap_or_else(|| vec![trimmed(old, now)])
+}
+
+/// [`pieces`] when the blocks both hold are in the same order; `None` when one moved.
+fn in_order(old: &Stretch<'_>, now: &Stretch<'_>) -> Option<Vec<Piece>> {
+    let at: HashMap<*const Element, usize> = old.iter().enumerate().map(|(i, (_, e))| (Arc::as_ptr(e), i)).collect();
+    let mut out = Vec::new();
+    let (mut i, mut j) = (0, 0);
+    for (k, (_, e)) in now.iter().enumerate() {
+        let Some(&found) = at.get(&Arc::as_ptr(e)) else {
+            continue;
+        };
+        if found < i {
+            return None; // held by both, but moved
+        }
+        if found > i || k > j {
+            out.push(Piece {
+                old: i..found,
+                new: j..k,
+            });
+        }
+        (i, j) = (found + 1, k + 1);
+    }
+    if i < old.len() || j < now.len() {
+        out.push(Piece {
+            old: i..old.len(),
+            new: j..now.len(),
+        });
+    }
+    Some(out)
+}
+
+/// The one piece between the blocks `old` and `now` share at their start and at their end
+/// (the same allocations).
+fn trimmed(old: &Stretch<'_>, now: &Stretch<'_>) -> Piece {
     let prefix = old
         .iter()
         .zip(now)
@@ -401,38 +488,10 @@ fn changed_blocks(
         .zip(new_rest.iter().rev())
         .take_while(|((_, a), (_, b))| Arc::ptr_eq(a, b))
         .count();
-    let middle = |blocks: &Stretch<'_>| -> Vec<u64> {
-        blocks
-            .get(..blocks.len() - suffix)
-            .unwrap_or_default()
-            .iter()
-            .map(|(_, b)| digest(b))
-            .collect()
-    };
-    let (a, b) = (middle(old_rest), middle(new_rest));
-    let place = |j: usize| new_rest.get(j).map(|(k, _)| *k);
-    let mut changed = BTreeSet::new();
-    for op in opcodes(&a, &b) {
-        if op.tag == Tag::Equal {
-            continue;
-        }
-        if op.j2 > op.j1 {
-            changed.extend((op.j1..op.j2).filter_map(place));
-        } else {
-            // a removal counts at the block before it (the body's first block when none)
-            let at = if op.j1 >= 1 {
-                place(op.j1 - 1)
-            } else if prefix >= 1 {
-                now.get(prefix - 1).map(|(k, _)| *k)
-            } else {
-                new.block_before(start).or_else(|| new.first_block())
-            };
-            if let Some(k) = at {
-                changed.insert(k);
-            }
-        }
+    Piece {
+        old: prefix..old.len() - suffix,
+        new: prefix..now.len() - suffix,
     }
-    changed
 }
 
 /// The heading sections holding the `changed` blocks (by place): from the heading at or

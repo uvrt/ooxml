@@ -1,5 +1,6 @@
 //! Owns: [`Store`], one document's versions: the lock-free head readers load, the commit
-//! (conflict detection by the keys a transaction read and wrote, redo, then a run under the
+//! (conflict detection by the keys a transaction read and wrote and by its reads by
+//! condition, checked on the head against the keys written since; redo, then a run under the
 //! commit lock), history operations, the id allocator and the reopen state.
 //!
 //! Must not: run anything inside the commit lock beyond the check, the rebase and replay of
@@ -14,8 +15,8 @@ use crate::stats::Counts;
 use crate::sync::{lock, HeadCell, Mutex};
 use crate::txn::TxnParts;
 use crate::{
-    Clock, Command, Counters, CountersError, DocModel, Error, HistoryOutcome, KeySet, Seq, Snapshot, StepInfo,
-    StoreStats, Txn, Version,
+    Clock, Command, Counters, CountersError, DocModel, Error, HistoryOutcome, KeySet, ReadPredicate, Seq, Snapshot,
+    StepInfo, StoreStats, Txn, Version,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -249,6 +250,17 @@ impl<D: DocModel> Store<D> {
         if head.written_since(parts.base.seq(), &depends) {
             return None;
         }
+        if !parts.predicates.is_empty() && head.seq() > parts.base.seq() {
+            // read by condition: a key written since that meets it on the head conflicts
+            let written = state.journal.written_since(parts.base.seq())?;
+            let keys = written.keys()?;
+            if keys
+                .iter()
+                .any(|key| parts.predicates.iter().any(|p| p.depends(head.doc(), key)))
+            {
+                return None;
+            }
+        }
         let (doc, changes) = if Arc::ptr_eq(&head, &parts.base) {
             (parts.work, parts.changes.into())
         } else {
@@ -262,7 +274,7 @@ impl<D: DocModel> Store<D> {
         };
         let body = Body {
             changes,
-            reads: parts.reads,
+            reads: history_reads(parts.reads, &parts.predicates),
             writes: parts.writes,
             caller: caller.0.clone(),
         };
@@ -308,7 +320,7 @@ impl<D: DocModel> Store<D> {
         }
         let body = Body {
             changes: parts.changes.into(),
-            reads: parts.reads,
+            reads: history_reads(parts.reads, &parts.predicates),
             writes: parts.writes,
             caller: caller.0.clone(),
         };
@@ -441,6 +453,17 @@ impl<D: DocModel> Store<D> {
         state.journal.push(seq, changes);
         let needed = state.history.oldest_reach();
         state.journal.trim(self.config.rebase_window, needed);
+    }
+}
+
+/// The reads a step keeps in the history: a read by condition counts there as a read of every
+/// key, so undo and redo find a step entangled exactly as they did before such reads (a
+/// condition is checked against the head only at commit).
+fn history_reads<D: DocModel>(reads: KeySet<D::Key>, predicates: &[Arc<dyn ReadPredicate<D>>]) -> KeySet<D::Key> {
+    if predicates.is_empty() {
+        reads
+    } else {
+        KeySet::Everything
     }
 }
 

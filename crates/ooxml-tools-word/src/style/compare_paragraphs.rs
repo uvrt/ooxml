@@ -10,8 +10,8 @@
 use super::compare::{difference, fix, Block, Difference, Groups, Para, Side};
 use super::compare_tables::round2;
 use crate::table_read::python_g;
+use ooxml_word_edit::pairing::{self, Signature};
 use ooxml_word_model::docx::at_path;
-use ooxml_word_model::docx::casefold;
 use ooxml_word_model::docx::find_path;
 use ooxml_word_model::docx::formatting::{EffectiveParagraph, EffectiveRun};
 use ooxml_word_model::docx::text::{paragraph_text, text_runs, View};
@@ -19,8 +19,6 @@ use ooxml_word_model::ids::W;
 use ooxml_xml::Element;
 use serde_json::{json, Map, Value};
 
-/// Two paragraphs' normalised texts at least this alike (`difflib`'s ratio) match by text.
-const TEXT_SIMILARITY: f64 = 0.8;
 /// The characters of a paragraph's text a missing or extra paragraph names.
 const TEXT_START: usize = 40;
 
@@ -70,24 +68,16 @@ pub(crate) struct Aligned {
     pub(crate) extra: Vec<usize>,
 }
 
-/// A paragraph's style name and its text, case and white space normalised.
-type Signature = (Option<String>, String);
-
-fn collapse(text: &str) -> String {
-    text.split(crate::describe::py_space)
-        .filter(|w| !w.is_empty())
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
 fn signature(side: &Side<'_>, paragraph: &Para) -> Signature {
-    let text = collapse(&paragraph_text(&paragraph.0, View::Current));
-    (paragraph_style(side, &paragraph.0), casefold(&text))
+    pairing::signature(
+        paragraph_style(side, &paragraph.0),
+        &paragraph_text(&paragraph.0, View::Current),
+    )
 }
 
 /// A missing or extra paragraph as reported: its style and the start of its text.
 pub(crate) fn described(side: &Side<'_>, paragraph: &Para) -> Map<String, Value> {
-    let text = collapse(&paragraph_text(&paragraph.0, View::Current));
+    let text = pairing::collapse(&paragraph_text(&paragraph.0, View::Current));
     let chars: Vec<char> = text.chars().collect();
     let text = if chars.len() > TEXT_START {
         let start: String = chars.iter().take(TEXT_START).collect();
@@ -101,91 +91,19 @@ pub(crate) fn described(side: &Side<'_>, paragraph: &Para) -> Map<String, Value>
     out
 }
 
-fn by_text(a: &str, b: &str) -> bool {
-    if a == b {
-        return true;
-    }
-    if a.is_empty() || b.is_empty() {
-        return false;
-    }
-    let (a, b): (Vec<char>, Vec<char>) = (a.chars().collect(), b.chars().collect());
-    ooxml_word_edit::text_ratio(&a, &b) >= TEXT_SIMILARITY
-}
-
-/// A cell's paragraphs paired with its reference cell's (the module's "Corresponding parts").
+/// A cell's paragraphs paired with its reference cell's (`ooxml_word_edit::pairing`).
 pub(crate) fn align(mine_side: &Side<'_>, paragraphs: &[Para], theirs_side: &Side<'_>, reference: &[Para]) -> Aligned {
-    let (m, n) = (paragraphs.len(), reference.len());
-    let zipped = || -> Vec<(Para, Para)> { paragraphs.iter().cloned().zip(reference.iter().cloned()).collect() };
-    if m == 1 && n == 1 {
-        return Aligned {
-            pairs: zipped(),
-            missing: Vec::new(),
-            extra: Vec::new(),
-        };
-    }
     let mine: Vec<Signature> = paragraphs.iter().map(|p| signature(mine_side, p)).collect();
     let theirs: Vec<Signature> = reference.iter().map(|p| signature(theirs_side, p)).collect();
-    let text: Vec<Vec<bool>> = mine
-        .iter()
-        .map(|a| theirs.iter().map(|b| by_text(&a.1, &b.1)).collect())
-        .collect();
-    let matches_text = |i: usize, j: usize| text.get(i).and_then(|row| row.get(j)).copied().unwrap_or(false);
-    // a pair matching by text outweighs any number matching by style alone
-    let weight = m + n + 1;
-    let score = |i: usize, j: usize| {
-        let style = mine.get(i).zip(theirs.get(j)).is_some_and(|(a, b)| a.0 == b.0);
-        weight * usize::from(matches_text(i, j)) + usize::from(style)
-    };
-    let mut best = vec![vec![0usize; n + 1]; m + 1];
-    let at = |best: &Vec<Vec<usize>>, i: usize, j: usize| best.get(i).and_then(|r| r.get(j)).copied().unwrap_or(0);
-    for i in (0..m).rev() {
-        for j in (0..n).rev() {
-            let s = score(i, j);
-            let taken = if s > 0 { s + at(&best, i + 1, j + 1) } else { 0 };
-            let value = at(&best, i + 1, j).max(at(&best, i, j + 1)).max(taken);
-            if let Some(cell) = best.get_mut(i).and_then(|r| r.get_mut(j)) {
-                *cell = value;
-            }
-        }
-    }
-    let mut aligned: Vec<(usize, usize)> = Vec::new();
-    let (mut i, mut j) = (0, 0);
-    while i < m && j < n {
-        let s = score(i, j);
-        if s > 0 && at(&best, i, j) == s + at(&best, i + 1, j + 1) {
-            aligned.push((i, j));
-            (i, j) = (i + 1, j + 1);
-        } else if at(&best, i, j) == at(&best, i, j + 1) {
-            j += 1;
-        } else {
-            i += 1;
-        }
-    }
-    if m == n && !aligned.iter().any(|(i, j)| i != j && matches_text(*i, *j)) {
-        return Aligned {
-            pairs: zipped(),
-            missing: Vec::new(),
-            extra: Vec::new(),
-        };
-    }
-    let mut paired: Vec<(usize, usize)> = Vec::new();
-    let mut previous: Option<usize> = None;
-    for i in 0..m {
-        if let Some((_, j)) = aligned.iter().find(|(a, _)| *a == i) {
-            previous = Some(*j);
-            paired.push((i, *j));
-        } else if let Some(j) = previous.filter(|j| mine.get(i).zip(theirs.get(*j)).is_some_and(|(a, b)| a.0 == b.0)) {
-            paired.push((i, j)); // a repeat of the pattern
-        }
-    }
-    let pairs = paired
-        .iter()
-        .filter_map(|(i, j)| paragraphs.get(*i).cloned().zip(reference.get(*j).cloned()))
-        .collect();
+    let found = pairing::align(&mine, &theirs);
     Aligned {
-        pairs,
-        missing: (0..n).filter(|j| !aligned.iter().any(|(_, b)| b == j)).collect(),
-        extra: (0..m).filter(|i| !paired.iter().any(|(a, _)| a == i)).collect(),
+        pairs: found
+            .pairs
+            .iter()
+            .filter_map(|(i, j)| paragraphs.get(*i).cloned().zip(reference.get(*j).cloned()))
+            .collect(),
+        missing: found.missing,
+        extra: found.extra,
     }
 }
 

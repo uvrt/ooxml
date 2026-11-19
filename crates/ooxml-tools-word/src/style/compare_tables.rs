@@ -10,6 +10,7 @@
 use super::compare::{difference, fix, Block, Difference, Groups, Para, Side};
 use super::compare_paragraphs::{align, described, paragraphs};
 use crate::table_read::{border, fill, grid_widths, own_rows, row_cells, width, Placed};
+use ooxml_word_edit::pairing;
 use ooxml_word_model::docx::find_path;
 use ooxml_word_model::ids::W;
 use ooxml_xml::Element;
@@ -79,7 +80,7 @@ pub(crate) fn tables(block: &Block<'_>, mine: &Side<'_>, source: &Block<'_>, the
             Value::Null,
         ));
     }
-    let mapping = row_map(rows.len(), reference_rows.len(), reference_header);
+    let mapping = pairing::row_map(rows.len(), reference_rows.len(), reference_header);
     let (grid, reference_grid) = (origins(&rows), origins(&reference_rows));
     out.extend(table_merges(block, &grid, &reference_grid, &mapping));
     out.extend(width_differences(block, &widths, &reference_widths));
@@ -107,26 +108,10 @@ pub(crate) fn round2(value: f64) -> f64 {
 fn header_rows(rows: &[Placed]) -> usize {
     rows.iter()
         .take_while(|row| {
-            find_path(&row.element, &["trPr", "tblHeader"]).is_some_and(|node| {
-                let value = node.attribute(Some(W), "val").filter(|v| !v.is_empty()).unwrap_or("1");
-                !matches!(value.to_lowercase().as_str(), "0" | "false" | "off")
-            })
+            find_path(&row.element, &["trPr", "tblHeader"])
+                .is_some_and(|node| pairing::is_header(node.attribute(Some(W), "val")))
         })
         .count()
-}
-
-/// Per row of a copy, the reference's row it corresponds to (the module's rule).
-fn row_map(rows: usize, reference_rows: usize, header: usize) -> Vec<usize> {
-    let body = reference_rows.saturating_sub(header);
-    (0..rows)
-        .map(|r| {
-            if r < header || body == 0 {
-                r.min(reference_rows.saturating_sub(1))
-            } else {
-                header + (r - header).min(body - 1)
-            }
-        })
-        .collect()
 }
 
 fn origins(rows: &[Placed]) -> Grid {

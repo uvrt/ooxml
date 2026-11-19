@@ -201,16 +201,31 @@ pub fn in_table<'d>(docx: &'d Docx, address: &str) -> Result<Option<InTable<'d>>
 }
 
 /// The refusal for a row's or cell's id where `wanted` (say "a block") is taken: its table
-/// would do; `None` for any other id.
+/// would do, or a cell's paragraphs; `None` for any other id, or a row or cell the table
+/// lacks.
 #[must_use]
 pub fn refuse_inside_table(docx: &Docx, address: &str, wanted: &str) -> Option<AddressError> {
     let found = in_table(docx, address).ok()??;
-    let table = found.part.ids.tables().get(found.table)?.id.clone();
+    let entry = found.part.ids.tables().get(found.table)?;
+    let table = entry.id.clone();
+    let (row_path, _) = entry.rows.get(found.row)?;
     Some(match found.column {
-        Some(_) => AddressError::invalid(
-            format!("{address} is a cell, not {wanted}: give its table {table}"),
-            vec![table],
-        ),
+        Some(column) => {
+            // a cell the table lacks is no cell: the address is refused as naming nothing
+            cell_at(crate::docx::at_path(found.part.root(), row_path)?, column)?;
+            let paragraphs: Vec<String> = cell_paragraphs(&found)
+                .into_iter()
+                .filter_map(|k| found.part.ids.paragraphs().get(k).map(|p| p.id))
+                .collect();
+            let first: Vec<&str> = paragraphs.iter().take(3).map(String::as_str).collect();
+            AddressError::invalid(
+                format!(
+                    "{address} is a cell, not {wanted}: give its table {table} or a paragraph in it ({})",
+                    first.join(", ")
+                ),
+                std::iter::once(table).chain(paragraphs).collect(),
+            )
+        }
         None => AddressError::invalid(
             format!("{address} is a row, not {wanted}: give its table {table}"),
             vec![table],

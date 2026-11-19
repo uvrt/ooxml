@@ -5,7 +5,8 @@
 //!
 //! Must not: choose a face per character (`crate::resolve::fonts`).
 
-use super::cascade::{flatten, merge, Part, Sources, LEGACY_DEFAULT_SIZE, LEGACY_UNSET_DEFAULT};
+use super::cascade::{flatten_traced, merge, Part, Sources, LEGACY_DEFAULT_SIZE, LEGACY_UNSET_DEFAULT};
+use super::origin::{Holder, Level, Origin, Trace};
 use crate::props::is_toggle;
 use crate::styles::StyleKind;
 use crate::value::{Key, Props, Text, Value};
@@ -76,8 +77,11 @@ fn non_toggles(props: &Props) -> Props {
         .collect()
 }
 
-fn style_levels(src: &Sources<'_>, input: &RunInput<'_>, defaults: &Props) -> Vec<Props> {
-    let mut levels = Vec::new();
+/// One style level of a run's resolution: what it declares and where each key came from.
+type Traced<T> = (Props, T);
+
+fn style_levels<T: Trace>(src: &Sources<'_>, input: &RunInput<'_>, defaults: &Props) -> Vec<Traced<T>> {
+    let mut levels: Vec<Traced<T>> = Vec::new();
     let table = input.table_style.and_then(|t| src.table_style(Some(t)));
     if let Some(id) = &table {
         let chain = src
@@ -85,16 +89,16 @@ fn style_levels(src: &Sources<'_>, input: &RunInput<'_>, defaults: &Props) -> Ve
             .map(|s| s.chain(Some(id), StyleKind::Table))
             .unwrap_or_default();
         let named = super::cascade::banded(&chain, input.conditions);
-        levels.push(flatten(&chain, Part::Run, &named));
+        levels.push(flatten_traced(&chain, Part::Run, &named, Level::TableStyle));
     }
     let style_id = src.paragraph_style(input.paragraph_style);
     let chain = src
         .styles
         .map(|s| s.chain(style_id.as_deref(), StyleKind::Paragraph))
         .unwrap_or_default();
-    let mut paragraph_level = flatten(&chain, Part::Run, &[]);
+    let (mut paragraph_level, from) = flatten_traced::<T>(&chain, Part::Run, &[], Level::ParagraphStyle);
     if table.as_deref().is_some_and(|id| legacy_table_size(src, id)) {
-        let table_level = levels.first().cloned().unwrap_or_default();
+        let table_level = levels.first().map(|l| l.0.clone()).unwrap_or_default();
         paragraph_level.retain(|k, v| {
             let gives_way = matches!(&**k, "sz" | "szCs")
                 && v.int() == Some(LEGACY_DEFAULT_SIZE)
@@ -104,13 +108,13 @@ fn style_levels(src: &Sources<'_>, input: &RunInput<'_>, defaults: &Props) -> Ve
             !gives_way
         });
     }
-    levels.push(paragraph_level);
+    levels.push((paragraph_level, from));
     if let Some(character) = input.character_style.filter(|c| !c.is_empty()) {
         let chain = src
             .styles
             .map(|s| s.chain(Some(character), StyleKind::Character))
             .unwrap_or_default();
-        let mut level = flatten(&chain, Part::Run, &[]);
+        let (mut level, from) = flatten_traced::<T>(&chain, Part::Run, &[], Level::CharacterStyle);
         let named = chain
             .last()
             .and_then(|s| s.name.as_deref())
@@ -119,31 +123,42 @@ fn style_levels(src: &Sources<'_>, input: &RunInput<'_>, defaults: &Props) -> Ve
         if input.toc_link && TOC_LINK_STYLES.contains(&named.as_str()) {
             level = toc_link_layer(&level);
         }
-        levels.push(level);
+        levels.push((level, from));
     }
     levels
 }
 
 /// A run's (or a mark's) properties through the whole hierarchy.
 pub fn resolve_run(src: &Sources<'_>, input: &RunInput<'_>) -> Props {
+    resolve_run_traced::<()>(src, input).0
+}
+
+/// [`resolve_run`], with where each value came from (a toggle's: the last level that
+/// declared it).
+pub fn resolve_run_traced<T: Trace>(src: &Sources<'_>, input: &RunInput<'_>) -> (Props, T) {
     let empty = Props::new();
     let defaults = src.styles.map_or(&empty, |s| &s.run_defaults);
-    let levels = style_levels(src, input, defaults);
+    let levels = style_levels::<T>(src, input, defaults);
+    let mut trace = T::default();
     let mut layer = non_toggles(defaults);
-    for level in &levels {
+    trace.declare(defaults, || Origin::at(Level::DocDefaults, Holder::Run));
+    for (level, from) in &levels {
         merge(&mut layer, &non_toggles(level));
+        trace.absorb(from, level);
     }
-    merge(&mut layer, &non_toggles(input.direct));
+    let direct = non_toggles(input.direct);
+    merge(&mut layer, &direct);
+    trace.declare(input.direct, || Origin::at(Level::Direct, Holder::Run));
     let declared: BTreeSet<&Key> = defaults
         .keys()
         .chain(input.direct.keys())
-        .chain(levels.iter().flat_map(|l| l.keys()))
+        .chain(levels.iter().flat_map(|l| l.0.keys()))
         .filter(|k| is_toggle(k))
         .collect();
     for k in declared {
         let base = defaults.get(k).is_some_and(Value::truthy);
         let mut value = base;
-        for level in &levels {
+        for (level, _) in &levels {
             if let Some(declared_value) = level.get(k) {
                 if declared_value.truthy() != base {
                     value = !value;
@@ -155,5 +170,5 @@ pub fn resolve_run(src: &Sources<'_>, input: &RunInput<'_>) -> Props {
         }
         layer.insert(k.clone(), Value::Bool(value));
     }
-    layer
+    (layer, trace)
 }
