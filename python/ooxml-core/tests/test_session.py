@@ -70,10 +70,9 @@ def test_refusals_are_replies_and_session_errors_are_exceptions():
     missing = call(session, "describe", {"doc": "d5"})
     assert missing["error"] == {"code": "not_found", "message": "no open document 'd5'", "field": "doc",
                                 "valid_options": ["d1"]}
-    assert call(session, "nope", {})["error"]["valid_options"] == [
-        "describe", "find_text", "read_batch", "replace_text", "word_changes", "word_comments", "word_compare_blocks",
-        "word_design_facts", "word_edit_table", "word_fields", "word_follow_sample", "word_format", "word_format_table", "word_inspect", "word_lists", "word_read",
-        "word_set_text", "word_set_tracking", "word_styles", "word_template"]
+    # every tool the session dispatches (the registry's, as tool_specs exports them), sorted
+    names = sorted(s["name"] for s in json.loads(ooxml_core.tool_specs("docx")))
+    assert call(session, "nope", {})["error"]["valid_options"] == names
     text, _, _ = session.call("describe", "{not json")
     assert json.loads(text)["error"]["code"] == "invalid_arguments"
     assert len(session.call("describe", json.dumps({"doc": doc}), limit=60)[0]) <= 60 + 100
@@ -109,11 +108,11 @@ def test_cancelled_and_late_calls_stop_with_timeout():
 
 def test_tool_specs_are_the_exports():
     specs = json.loads(ooxml_core.tool_specs("docx"))
-    assert [s["name"] for s in specs] == ["describe", "word_read", "word_inspect", "find_text", "word_set_tracking",
-                                          "word_changes", "word_comments", "word_set_text", "replace_text",
-                                          "word_format_table", "word_edit_table", "word_lists", "word_fields",
-                                          "word_format", "word_styles", "word_template", "word_compare_blocks",
-                                          "word_follow_sample", "word_design_facts", "read_batch"]
+    # the registry's tools in registration order (ooxml-session's tests/registry.rs holds each
+    # to its golden export): describe first, read_batch over the others last, each once
+    names = [s["name"] for s in specs]
+    assert names[0] == "describe" and names[-1] == "read_batch" and len(set(names)) == len(names)
+    assert {"word_read", "word_set_text"} <= set(names)
     assert specs == json.loads(ooxml_core.Session().tool_specs("docx"))
     assert json.loads(ooxml_core.tool_specs("pptx")) == []
     with pytest.raises(ValueError):

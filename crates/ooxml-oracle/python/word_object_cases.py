@@ -12,7 +12,9 @@ from __future__ import annotations
 
 import os
 
-from word_structure_cases import tracked
+from word_structure_cases import ToolCases, tracked
+
+CASES = ToolCases()
 
 
 def call(tool: str, **arguments) -> dict:
@@ -58,6 +60,7 @@ def _part_scopes(table: str) -> list[dict]:
             fmt("column", column=0, cant_split=True), fmt("cell", row=0, column=0)]
 
 
+@CASES
 def format_table_cases(document) -> list[dict]:
     """``word_format_table``: a table's style, width, alignment, shading, borders, header
     rows, look and breaking; a row's height and breaking; a column's width; cells of a row,
@@ -168,6 +171,7 @@ def _held_rows(document, most: int = 4) -> list[dict]:
     return out
 
 
+@CASES
 def edit_table_cases(document) -> list[dict]:
     """``word_edit_table``: rows inserted (after, before, at the top, past the end) and
     deleted (the first, a middle one, none named, past the end); columns deleted (the first,
@@ -193,7 +197,7 @@ def edit_table_cases(document) -> list[dict]:
 
 def cases(document) -> list[dict]:
     """Every object case for ``document``."""
-    found = format_table_cases(document) + edit_table_cases(document)
+    found = CASES.of(document)
     wanted = os.environ.get("OBJECT_TOOLS")       # a comma list, to run some tools only
     found = [c for c in found if not wanted or c["tool"] in wanted.split(",")]
     actions = os.environ.get("OBJECT_ACTIONS")    # a comma list of actions (word_edit_table's)

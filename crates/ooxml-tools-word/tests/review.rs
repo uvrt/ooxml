@@ -10,10 +10,10 @@ use ooxml_base::{Cancel, Limits};
 use ooxml_derive::CacheBudget;
 use ooxml_opc::Package;
 use ooxml_store::{Caller, Clock, StoreConfig};
-use ooxml_tools::{ToolArgs, ToolResult};
+use ooxml_tools::ToolResult;
 use ooxml_tools_word::{
     word_changes, word_comments, word_set_tracking, CallEditor, ChangeAction, ChangeDetail, CommentAction, CommentItem,
-    Editing, Tracked, WordChanges, WordComments, WordSetTracking, KIND,
+    Editing, Tracked, WordChanges, WordComments, WordSetTracking,
 };
 use ooxml_word_edit::{Editor, WordDoc};
 use ooxml_zip::{Method, NewEntry, Writer};
@@ -147,26 +147,6 @@ fn changes(action: ChangeAction) -> WordChanges {
 
 fn json(result: &ToolResult<Value>) -> Value {
     Value::Object(result.to_json())
-}
-
-#[test]
-fn the_definitions_are_the_golden_exports() {
-    for (spec, golden) in [
-        (WordSetTracking::spec(), include_str!("golden/word_set_tracking.json")),
-        (WordChanges::spec(), include_str!("golden/word_changes.json")),
-        (WordComments::spec(), include_str!("golden/word_comments.json")),
-        (
-            ooxml_tools_word::WordSetText::spec(),
-            include_str!("golden/word_set_text.json"),
-        ),
-        (
-            ooxml_tools_word::ReplaceText::spec(),
-            include_str!("golden/replace_text.json"),
-        ),
-    ] {
-        assert_eq!(format!("{}\n", spec.export(Some(&[KIND]))), golden, "{}", spec.name);
-    }
-    assert!(WordChanges::problems().is_empty() && WordComments::problems().is_empty());
 }
 
 #[test]

@@ -6,8 +6,17 @@
 //! struct and a handler function of the document's editor and what the session keeps of it
 //! ([`Editing`]: the caller, the version it was opened as, its tracking mode).
 //!
-//! Must not: run a handler outside a call the session dispatches, know providers, or know
-//! any tool's logic (the `ooxml-tools-*` crates hold the handlers).
+//! To add a tool, touch: its own files in its `ooxml-tools-*` crate (its module, named in
+//! its group's `mod.rs`; its arguments, description, tests and `tests/golden/<name>.json`),
+//! its entry in [`Registry::standard`], and its oracle cases (a function of its own marked
+//! `@CASES` in `ooxml-oracle/python/word_*_cases.py`). Every other view of the tool set
+//! derives from the registry: the session's tools and refusals, `tool_specs` for the Python
+//! adapters, the golden exports' test (`tests/registry.rs`) and the oracle's Rust side
+//! ([`Tool::run_outside`]).
+//!
+//! Must not: run a handler outside a call the session dispatches (but for a test
+//! instrument's document, [`Tool::run_outside`]), know providers, or know any tool's logic
+//! (the `ooxml-tools-*` crates hold the handlers).
 
 use crate::document::Word;
 use crate::session::Opened;
@@ -32,6 +41,30 @@ pub trait Tool: Send + Sync {
     /// [`Tool::spec`], on the document `call` names, stopping at a safe point when the
     /// call's cancellation says so. Never fails: a refusal is the result's error.
     fn run(&self, arguments: Map<String, Value>, call: &Call<'_>) -> ToolResult<Value>;
+
+    /// Run it on a Word document a test instrument opened outside a session (the oracle's
+    /// cases): `arguments` taken as meant for a Word document ([`ToolArgs::accept`]), the
+    /// notes on what was read as what first among the reply's warnings; a reading tool reads
+    /// `version`, an editing tool edits through `editing` (a tracking mode it sets is not
+    /// kept). Never fails: a refusal is the result's error.
+    fn run_outside(&self, arguments: &Value, editing: &Editing<'_>, version: &Version<'_>) -> ToolResult<Value>;
+}
+
+/// `handler`'s reply to `arguments` taken as meant for a Word document (a refusal of the
+/// arguments is the reply), the notes on what was read as what first among its warnings.
+fn accepted<T: ToolArgs>(arguments: &Value, handler: impl FnOnce(&T) -> ToolResult<Value>) -> ToolResult<Value> {
+    match T::accept(arguments.clone(), Some(DocKind::Docx.as_str())) {
+        Ok((args, notes)) => {
+            let mut reply = handler(&args);
+            if !notes.is_empty() {
+                let mut warnings = notes;
+                warnings.append(&mut reply.warnings);
+                reply.warnings = warnings;
+            }
+            reply
+        }
+        Err(error) => ToolResult::failed(error),
+    }
 }
 
 /// What a tool is handed: the document's version the call reads, who calls, the call's
@@ -129,6 +162,13 @@ impl<T: ToolArgs> Tool for ReadHandler<T> {
             Ok(done) => ToolResult::done(done),
             Err(error) => ToolResult::failed(error),
         }
+    }
+
+    fn run_outside(&self, arguments: &Value, editing: &Editing<'_>, version: &Version<'_>) -> ToolResult<Value> {
+        accepted(arguments, |args: &T| match (self.run)(args, version, editing.cancel) {
+            Ok(done) => ToolResult::done(done),
+            Err(error) => ToolResult::failed(error),
+        })
     }
 }
 
@@ -232,6 +272,13 @@ impl<T: ToolArgs> Tool for EditHandler<T> {
         *call.made.lock().unwrap_or_else(PoisonError::into_inner) = editor.made();
         result
     }
+
+    fn run_outside(&self, arguments: &Value, editing: &Editing<'_>, _: &Version<'_>) -> ToolResult<Value> {
+        accepted(arguments, |args: &T| match &self.run {
+            EditRun::Plain(run) => run(args, editing),
+            EditRun::Tracking(run) => run(args, editing).0,
+        })
+    }
 }
 
 /// The tools a session dispatches, in registration order.
@@ -258,12 +305,9 @@ impl Registry {
         Self::default()
     }
 
-    /// The tools ported so far: Word's `describe`, `word_read`, `word_inspect` and
-    /// `find_text`, and `read_batch` over them; its review tools `word_set_tracking`,
-    /// `word_changes` and `word_comments`; its text tools `word_set_text` and
-    /// `replace_text`; the object tools `word_format_table` and `word_edit_table`; its style tools `word_lists`,
-    /// `word_format`, `word_styles`, `word_template` and `word_follow_sample`, and
-    /// `word_compare_blocks` and `word_design_facts` (reading).
+    /// The tools ported so far, and `read_batch` over the reading ones: the one list of the
+    /// tools (a new tool adds its entry here, nowhere else). The order is the export's
+    /// (`describe` first).
     #[must_use]
     pub fn standard() -> Self {
         let mut registry = Self::empty();
