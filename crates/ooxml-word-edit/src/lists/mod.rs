@@ -14,6 +14,7 @@ mod paragraph;
 mod read;
 mod steps;
 
+pub(crate) use numbering::reap;
 pub use paragraph::LevelFormat;
 pub use read::{numbered_by_style, unnumbered_styles_like};
 
