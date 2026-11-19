@@ -1,5 +1,5 @@
 //! The style tools' cases of `word-edits` (`op: "style"`): `word_lists`, `word_format`,
-//! `word_compare_blocks`, `word_design_facts` (and the other style tools as they are ported) called with JSON arguments on a document as opened,
+//! `word_compare_blocks`, `word_follow_sample`, `word_design_facts` (and the other style tools as they are ported) called with JSON arguments on a document as opened,
 //! compared as the structure tools' cases are (`structure_tools::tool_case`), for
 //! `python/word_edits_diff.py --style` to compare with docx-agent's toolbox.
 //!
@@ -10,8 +10,9 @@ use ooxml_base::{Cancel, Limits};
 use ooxml_opc::Package;
 use ooxml_tools::ToolResult;
 use ooxml_tools_word::{
-    word_compare_blocks, word_design_facts, word_format, word_lists, word_styles, word_template, Others, Version,
-    WordCompareBlocks, WordDesignFacts, WordFormat, WordLists, WordStyles, WordTemplate,
+    word_compare_blocks, word_design_facts, word_follow_sample, word_format, word_lists, word_styles, word_template,
+    Editing, Others, Version, WordCompareBlocks, WordDesignFacts, WordFollowSample, WordFormat, WordLists, WordStyles,
+    WordTemplate,
 };
 use ooxml_word_model::docx::Versions;
 use serde_json::Value;
@@ -37,6 +38,9 @@ pub fn case(bytes: &Arc<[u8]>, case: &Value) -> Result<Value, String> {
         "word_compare_blocks" => Some(run(arguments, |args: &WordCompareBlocks| {
             compare(bytes, case, editing.opened.package(), args)
         })),
+        "word_follow_sample" => Some(run(arguments, |args: &WordFollowSample| {
+            follow(bytes, case, editing, args)
+        })),
         "word_design_facts" => Some(run(arguments, |args: &WordDesignFacts| {
             design(editing.opened.package(), args)
         })),
@@ -61,10 +65,9 @@ fn design(package: &Package, args: &WordDesignFacts) -> ToolResult<Value> {
     }
 }
 
-/// `word_compare_blocks` on the document as opened; `d2`, which the call may name, is the
-/// document opened again (`reference_copy`) or the file `reference_file`.
-fn compare(bytes: &Arc<[u8]>, case: &Value, package: &Package, args: &WordCompareBlocks) -> ToolResult<Value> {
-    let versions = (Versions::new(), Versions::new());
+/// `d2`, which a call may name: the document opened again (`reference_copy`) or the file
+/// `reference_file`.
+fn other_package(bytes: &Arc<[u8]>, case: &Value) -> Option<Package> {
     let other: Option<Arc<[u8]>> = match case.get("reference_file").and_then(Value::as_str) {
         Some(path) => std::fs::read(path).ok().map(Arc::from),
         None => case
@@ -73,7 +76,39 @@ fn compare(bytes: &Arc<[u8]>, case: &Value, package: &Package, args: &WordCompar
             .unwrap_or(false)
             .then(|| Arc::clone(bytes)),
     };
-    let copy = other.and_then(|b| Package::open(b, &Limits::default()).ok());
+    other.and_then(|b| Package::open(b, &Limits::default()).ok())
+}
+
+/// `word_follow_sample` on the document as opened, `d2` handed over as the session hands it.
+fn follow(bytes: &Arc<[u8]>, case: &Value, editing: &Editing<'_>, args: &WordFollowSample) -> ToolResult<Value> {
+    let versions = Versions::new();
+    let copy = other_package(bytes, case);
+    let others: Vec<(&str, Version<'_>)> = copy
+        .iter()
+        .map(|package| {
+            let version = Version {
+                name: "copy.docx",
+                package,
+                number: 1,
+                versions: &versions,
+                placer: None,
+                others: Others::default(),
+            };
+            ("d2", version)
+        })
+        .collect();
+    let editing = Editing {
+        others: Others::new(&others),
+        ..*editing
+    };
+    word_follow_sample(args, &editing)
+}
+
+/// `word_compare_blocks` on the document as opened; `d2`, which the call may name, is the
+/// document opened again (`reference_copy`) or the file `reference_file`.
+fn compare(bytes: &Arc<[u8]>, case: &Value, package: &Package, args: &WordCompareBlocks) -> ToolResult<Value> {
+    let versions = (Versions::new(), Versions::new());
+    let copy = other_package(bytes, case);
     let others: Vec<(&str, Version<'_>)> = copy
         .iter()
         .map(|package| {

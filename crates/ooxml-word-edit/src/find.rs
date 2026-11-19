@@ -4,14 +4,20 @@
 //! overlapping, empty ones left out -- and the [`Pattern`] a find is made with: plain text
 //! ([`Literal`]: case-sensitive or not, white space collapsed or not, as `re.escape`d text
 //! matches) or one the caller supplies (a Python regular expression, matched by the tool
-//! layer's translation: this crate holds no regex engine).
+//! layer's translation: this crate holds no regex engine); and [`HoldsMatch`], a find's read
+//! by condition (the blocks whose text it matches), checked at commit.
 //!
 //! Must not: change anything, or answer a pattern differently from Python's `re`.
 
+use crate::doc::{Key, WordDoc};
 use crate::text::diff::python_space;
 use crate::{EditError, Result};
-use ooxml_word_model::docx::Docx;
+use ooxml_store::ReadPredicate;
+use ooxml_word_model::docx::text::{paragraph_text, View};
+use ooxml_word_model::docx::{Docx, StoryPart};
+use ooxml_word_model::ids::Entry;
 use std::fmt::Debug;
+use std::sync::Arc;
 
 /// A find: where it matches a text, and what replaces each match.
 pub trait Pattern: Debug + Send + Sync {
@@ -130,6 +136,58 @@ impl Pattern for Literal {
     }
 }
 
+/// A find within each paragraph, read by condition (design section 5): its outcome depends
+/// on the blocks whose current text it matches, and the blocks it matched, which the edit
+/// reads by key. A block written since its snapshot conflicts only when a paragraph of it
+/// matches on the head; a story part written whole conflicts; nothing else does. (A find
+/// across paragraphs reads the whole document instead: a match may be made by a paragraph
+/// beside the one written.)
+#[derive(Debug)]
+pub(crate) struct HoldsMatch {
+    pattern: Arc<dyn Pattern>,
+}
+
+impl HoldsMatch {
+    /// The read of every paragraph `pattern` matches.
+    pub(crate) fn new(pattern: Arc<dyn Pattern>) -> HoldsMatch {
+        HoldsMatch { pattern }
+    }
+
+    /// Whether `text` holds a match (or the pattern cannot tell).
+    fn holds(&self, text: &str) -> bool {
+        self.pattern.may_match(text) && self.pattern.matches(text).map_or(true, |found| !found.is_empty())
+    }
+
+    /// Whether a paragraph of block `id` of `story` holds a match; a block the story does
+    /// not hold holds none.
+    fn block_holds(&self, story: &StoryPart, id: &str) -> bool {
+        let ids = &story.ids;
+        match ids.get(id) {
+            Some(Entry::Paragraph(k)) => ids
+                .paragraphs()
+                .get(k)
+                .is_some_and(|p| self.holds(&paragraph_text(&p.element, View::Current))),
+            Some(Entry::Table(k)) => ids.tables().get(k).is_some_and(|table| {
+                ids.paragraphs_within(&table.path)
+                    .iter()
+                    .any(|p| self.holds(&paragraph_text(&p.element, View::Current)))
+            }),
+            None => false,
+        }
+    }
+}
+
+impl ReadPredicate<WordDoc> for HoldsMatch {
+    fn depends(&self, head: &WordDoc, key: &Key) -> bool {
+        let Ok(docx) = head.docx() else { return true };
+        match key {
+            Key::Block { part, id } => docx.part(part).is_some_and(|story| self.block_holds(story, id)),
+            Key::Part(part) => docx.part(part).is_some(),
+            Key::Root(_) | Key::Seq(_) | Key::Annotations | Key::People => false,
+        }
+    }
+}
+
 /// A match: its first paragraph's id and offset, its last's, and its replacement.
 pub(crate) type Found = (String, usize, String, usize, String);
 
@@ -192,7 +250,7 @@ mod tests {
 
     use crate::text::paragraph_text;
     use crate::work::Work;
-    use crate::{Editor, RevisionPolicy, SetText, Tracking, WordDoc};
+    use crate::{DeleteBlock, Editor, InsertParagraph, RevisionPolicy, SetText, Tracking, WordDoc};
     use ooxml_base::Limits;
     use ooxml_derive::CacheBudget;
     use ooxml_opc::Package;
@@ -300,6 +358,72 @@ mod tests {
                     &format!("{}: after editing {target}", file.display()),
                 );
             }
+        }
+    }
+
+    /// Versions made by inserting, deleting and rewriting paragraphs, their texts read out of
+    /// order (each from whichever version read last, newer or older), equal each paragraph's
+    /// walk: chunks are shared only where every paragraph of them is held in order.
+    #[test]
+    fn kept_texts_read_out_of_order_equal_each_paragraphs_walk() {
+        let file = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../python/docx-agent/tests/fixtures/samplelib/sample-long.docx");
+        let bytes: Arc<[u8]> = Arc::from(std::fs::read(&file).unwrap());
+        let package = Package::open(bytes, &Limits::default()).unwrap();
+        let editor = Editor::open(
+            package,
+            StoreConfig::default(),
+            Arc::new(Monotonic(Instant::now())),
+            Arc::new(Unlimited),
+        )
+        .unwrap();
+        let ids: Vec<String> = {
+            let opened = editor.store().snapshot();
+            let docx = opened.doc().docx().unwrap();
+            docx.body().unwrap().ids.paragraphs().iter().map(|p| p.id).collect()
+        };
+        assert!(ids.len() > 110, "{}", ids.len());
+        let caller = Caller::anonymous();
+        let mut versions = vec![editor.store().snapshot()];
+        for (k, n) in [3usize, 70, 100, 12].into_iter().enumerate() {
+            let target = ids[n].clone();
+            let done = match k % 3 {
+                0 => editor
+                    .run(
+                        &caller,
+                        &InsertParagraph {
+                            anchor: target,
+                            after: true,
+                            text: format!("Inserted {k}"),
+                            style: None,
+                            policy: RevisionPolicy::Untracked,
+                        },
+                    )
+                    .map(|d| d.version),
+                1 => editor
+                    .run(
+                        &caller,
+                        &DeleteBlock {
+                            target,
+                            policy: RevisionPolicy::Untracked,
+                        },
+                    )
+                    .map(|d| d.version),
+                _ => editor
+                    .run(
+                        &caller,
+                        &SetText {
+                            target,
+                            text: format!("Rewritten {k}"),
+                            policy: RevisionPolicy::Untracked,
+                        },
+                    )
+                    .map(|d| d.version),
+            };
+            versions.push(done.unwrap());
+        }
+        for k in [4usize, 1, 3, 0, 2, 4] {
+            check(versions[k].doc(), &format!("version {k}"));
         }
     }
 }

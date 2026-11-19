@@ -10,10 +10,10 @@
 use ooxml_base::Limits;
 use ooxml_derive::CacheBudget;
 use ooxml_opc::Package;
-use ooxml_store::{Caller, Clock, Command, Seq, Snapshot, StoreConfig, Txn};
+use ooxml_store::{Caller, Clock, Command, KeySet, Seq, Snapshot, StoreConfig, Txn};
 use ooxml_word_edit::{
     AddBookmark, AddHyperlink, Day, DeleteNote, EditError, EditNote, Editor, InsertCaption, InsertField, InsertNote,
-    InsertSectionBreak, InsertText, MoveBlocks, Moving, NoteKind, RemoveBookmark, RevisionPolicy, SectionValues,
+    InsertSectionBreak, InsertText, Key, MoveBlocks, Moving, NoteKind, RemoveBookmark, RevisionPolicy, SectionValues,
     SetSection, SetStoryText, SetText, Tracking, UpdateFields, WordDoc,
 };
 use std::path::PathBuf;
@@ -361,4 +361,182 @@ fn sixty_seeds_of_eight_writers_structuring() {
         "60 seeds, 8 writers x 6 edits: {structure} structure edits committed; {conflicts} conflicts, \
          {exclusive} exclusive runs"
     );
+}
+
+/// An edit that, the first time it is prepared, waits after preparing until it is let go
+/// (another commit made in between, deterministically).
+struct Paused {
+    edit: Edit,
+    prepared: std::sync::mpsc::Sender<()>,
+    go: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
+    first: std::sync::atomic::AtomicBool,
+}
+
+impl Command<WordDoc> for Paused {
+    type Out = bool;
+    type Error = EditError;
+
+    fn validate(&self, doc: &WordDoc) -> Result<(), EditError> {
+        self.edit.validate(doc)
+    }
+
+    fn prepare(&self, tx: &mut Txn<'_, WordDoc>) -> Result<bool, EditError> {
+        let out = self.edit.prepare(tx)?;
+        if self.first.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            self.prepared.send(()).unwrap();
+            self.go.lock().unwrap().recv().unwrap();
+        }
+        Ok(out)
+    }
+}
+
+/// A step of the history: an edit, or the undo or redo of the step at that version.
+enum Step<'a> {
+    Edit(&'a Edit),
+    Undo(Seq),
+    Redo(Seq),
+}
+
+/// `step` run on `editor`: the version it made.
+fn run_step(editor: &Editor, step: &Step<'_>) -> Snapshot<WordDoc> {
+    match step {
+        Step::Edit(edit) => editor.store().run(&Caller::anonymous(), *edit).unwrap().version,
+        Step::Undo(seq) => editor.store().undo_step(*seq, &KeySet::new()).unwrap().version,
+        Step::Redo(seq) => editor.store().redo_step(*seq).unwrap().version,
+    }
+}
+
+/// `last` prepared on the fixture `name` as the steps `before` leave it, `between`
+/// committed before `last` commits; each version the same, byte for byte, as the steps run
+/// serially in that order make it.
+fn interleaved(name: &str, before: &[Step<'_>], between: &Step<'_>, last: &Edit) {
+    let bytes = fixture(name);
+    let (shared, serial) = (editor(&bytes), editor(&bytes));
+    for step in before {
+        assert_eq!(
+            written(run_step(&shared, step).doc()),
+            written(run_step(&serial, step).doc())
+        );
+    }
+    let (prepared, wait) = std::sync::mpsc::channel();
+    let (release, go) = std::sync::mpsc::channel();
+    let paused = Paused {
+        edit: last.clone(),
+        prepared,
+        go: std::sync::Mutex::new(go),
+        first: std::sync::atomic::AtomicBool::new(true),
+    };
+    let (first, second) = std::thread::scope(|scope| {
+        let handle = scope.spawn(|| shared.store().run(&Caller::named("last"), &paused));
+        wait.recv().unwrap();
+        let first = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run_step(&shared, between)));
+        release.send(()).unwrap();
+        (first.unwrap(), handle.join().unwrap().unwrap())
+    });
+    assert_eq!(
+        written(run_step(&serial, between).doc()),
+        written(first.doc()),
+        "the step between"
+    );
+    let replayed = serial.store().run(&Caller::anonymous(), last).unwrap();
+    assert_eq!(
+        written(replayed.version.doc()),
+        written(second.version.doc()),
+        "{last:?}"
+    );
+}
+
+fn tracked(author: &str) -> RevisionPolicy {
+    RevisionPolicy::Tracked(Tracking {
+        author: author.to_owned(),
+        date: "2026-11-17T10:00:00Z".to_owned(),
+    })
+}
+
+/// Seeds 344 and 349: the first tracked edit of the body declares `w16du` on its root; a
+/// whole-part rewrite for it, made after the paragraph's revision ids were drawn, kept the
+/// ids the snapshot gave (209/210) where a tracked note edit committed in between had
+/// taken them, and the serial order gives 211/212. The root's head is written instead.
+#[test]
+fn a_tracked_edit_rebased_past_another_keeps_the_ids_drawn_where_it_lands() {
+    // an untracked edit stamps the document first, as the seeds' earlier edits did
+    let stamp = Edit::Set(SetText {
+        target: "p:1A2B3C0B".to_owned(),
+        text: "Quarter and".to_owned(),
+        policy: RevisionPolicy::Untracked,
+    });
+    let note = Edit::Rewrite(EditNote {
+        note: "fn:1".to_owned(),
+        text: "beta alpha gamma Quarter".to_owned(),
+        policy: tracked("Writer 3"),
+    });
+    let set = Edit::Set(SetText {
+        target: "p:1A2B3C01".to_owned(),
+        text: "and alpha".to_owned(),
+        policy: tracked("Writer 0"),
+    });
+    interleaved(
+        "generated/ids-and-markup.docx",
+        &[Step::Edit(&stamp)],
+        &Step::Edit(&note),
+        &set,
+    );
+}
+
+/// History seed 209: a tracked edit prepared where the body's root declares `w16du` (a
+/// tracked edit's step, redone) declares nothing; the undo of that redo, committed in
+/// between, takes the declaration away, so the edit reads the root's head and is prepared
+/// again.
+#[test]
+fn a_tracked_edit_reads_the_root_declarations_it_relies_on() {
+    // an untracked edit stamps the document first, as the seed's earlier edits did
+    let stamp = Edit::Set(SetText {
+        target: "p@body/29".to_owned(),
+        text: "gamma 0".to_owned(),
+        policy: RevisionPolicy::Untracked,
+    });
+    let first = Edit::Set(SetText {
+        target: "p@body/0".to_owned(),
+        text: "alpha 3".to_owned(),
+        policy: tracked("Writer 3"),
+    });
+    let set = Edit::Set(SetText {
+        target: "p@body/5".to_owned(),
+        text: "alpha 5".to_owned(),
+        policy: tracked("Writer 5"),
+    });
+    interleaved(
+        "samplelib/sample-long.docx",
+        &[
+            Step::Edit(&stamp),
+            Step::Edit(&first),
+            Step::Undo(Seq(2)),
+            Step::Redo(Seq(2)),
+        ],
+        &Step::Undo(Seq(4)),
+        &set,
+    );
+}
+
+/// A tracked field's revision ids are drawn where it lands: it writes the annotation ids in
+/// use, so an edit that numbered ids past them where it was prepared is prepared again.
+#[test]
+fn a_tracked_field_writes_the_annotation_ids() {
+    let shared = editor(&fixture("generated/ids-and-markup.docx"));
+    let field = Edit::Field(InsertField {
+        at: "p:1A2B3C0E@0".to_owned(),
+        instruction: "DATE".to_owned(),
+        result: None,
+        simple: false,
+        policy: tracked("Writer 1"),
+        today: Day {
+            year: 2026,
+            month: 11,
+            day: 17,
+        },
+        layout: None,
+    });
+    let done = shared.store().run(&Caller::anonymous(), &field).unwrap();
+    assert!(done.changed);
+    assert!(done.writes.contains(&Key::Annotations));
 }

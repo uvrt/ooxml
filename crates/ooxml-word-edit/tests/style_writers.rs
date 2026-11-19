@@ -1,7 +1,8 @@
 //! The random multi-writer oracle for the style edits (lane P4d): writers on threads mix
 //! tracked and untracked `set_text` and `insert_text` with list edits (paragraphs added to
 //! lists, taken out, moved to a level, lists restarted and continued, a level formatted),
-//! style sheet edits and Word's Convert (the document opened in mode 14),
+//! style sheet edits, Word's Convert (the document opened in mode 14) and paragraphs made
+//! to follow a sample paragraph (`FollowSample`),
 //! through one document's store; replayed serially in commit order on the document as
 //! opened, every version is the same, byte for byte, as the concurrent run made it.
 // Tests may unwrap, panic and index (docs/architecture/README.md, section 2.5).
@@ -12,8 +13,9 @@ use ooxml_derive::CacheBudget;
 use ooxml_opc::Package;
 use ooxml_store::{Caller, Clock, Command, Seq, Snapshot, StoreConfig, Txn};
 use ooxml_word_edit::{
-    EditError, Editor, FormatEdit, FormatPlan, InsertText, LevelFormat, ListAction, ListEdit, Property, RevisionPolicy,
-    SetText, Setting, StyleAction, StyleEdit, StyleFormatting, Tracking, UpgradeToModern, Value, WordDoc,
+    EditError, Editor, FollowSample, FormatEdit, FormatPlan, InsertText, LevelFormat, ListAction, ListEdit, Property,
+    RevisionPolicy, SetText, Setting, StyleAction, StyleEdit, StyleFormatting, Tracking, UpgradeToModern, Value,
+    WordDoc,
 };
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -93,6 +95,7 @@ enum Edit {
     Format(FormatEdit),
     Style(StyleEdit),
     Template(UpgradeToModern),
+    Follow(FollowSample),
 }
 
 impl Command<WordDoc> for Edit {
@@ -107,6 +110,7 @@ impl Command<WordDoc> for Edit {
             Edit::Format(c) => c.validate(doc),
             Edit::Style(c) => c.validate(doc),
             Edit::Template(c) => c.validate(doc),
+            Edit::Follow(c) => c.validate(doc),
         }
     }
 
@@ -118,6 +122,7 @@ impl Command<WordDoc> for Edit {
             Edit::Format(c) => c.prepare(tx)?.steps.iter().any(|s| s.changed),
             Edit::Style(c) => c.prepare(tx)?.changed,
             Edit::Template(c) => c.prepare(tx)?.changed,
+            Edit::Follow(c) => c.prepare(tx)?.copies.iter().any(|c| c.changed()),
         })
     }
 }
@@ -164,7 +169,13 @@ fn edit(rng: &mut Rng, targets: &[String], writer: u64, n: usize) -> Edit {
     let target = targets[rng.below(targets.len())].clone();
     let other = targets[rng.below(targets.len())].clone();
     let words: Vec<&str> = (0..1 + rng.below(4)).map(|_| WORDS[rng.below(WORDS.len())]).collect();
-    match rng.below(9) {
+    match rng.below(10) {
+        9 => Edit::Follow(FollowSample {
+            sample: other.clone(),
+            copies: vec![target, targets[rng.below(targets.len())].clone()],
+            source: None,
+            policy: policy(rng, writer),
+        }),
         7 | 8 if rng.below(8) == 0 => Edit::Template(UpgradeToModern),
         7 | 8 => Edit::Style(StyleEdit {
             action: style_action(rng, writer, n),

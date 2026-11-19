@@ -262,8 +262,8 @@ impl Registry {
     /// `find_text`, and `read_batch` over them; its review tools `word_set_tracking`,
     /// `word_changes` and `word_comments`; its text tools `word_set_text` and
     /// `replace_text`; the object tools `word_format_table` and `word_edit_table`; its style tools `word_lists`,
-    /// `word_format`, `word_styles` and `word_template`, and `word_compare_blocks` and
-    /// `word_design_facts` (reading).
+    /// `word_format`, `word_styles`, `word_template` and `word_follow_sample`, and
+    /// `word_compare_blocks` and `word_design_facts` (reading).
     #[must_use]
     pub fn standard() -> Self {
         let mut registry = Self::empty();
@@ -334,6 +334,10 @@ impl Registry {
         registry.register(Arc::new(ReadHandler::<ooxml_tools_word::WordCompareBlocks>::new(
             &[DocKind::Docx],
             ooxml_tools_word::word_compare_blocks,
+        )));
+        registry.register(Arc::new(EditHandler::<ooxml_tools_word::WordFollowSample>::new(
+            &[DocKind::Docx],
+            ooxml_tools_word::word_follow_sample,
         )));
         registry.register(Arc::new(ReadHandler::<ooxml_tools_word::WordDesignFacts>::new(
             &[DocKind::Docx],

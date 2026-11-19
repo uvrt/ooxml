@@ -16,9 +16,9 @@ mod new_column;
 mod new_row;
 mod props;
 mod rows;
-mod shape;
+pub(crate) mod shape;
 mod split;
-mod tracker;
+pub(crate) mod tracker;
 
 pub(crate) use rows::placed;
 
@@ -235,10 +235,13 @@ impl Command<WordDoc> for FormatTable {
 }
 
 /// What the edits wrote, for the sink.
-struct Written {
-    numbered: Option<crate::sink::Numbered>,
-    dated: bool,
-    warnings: Vec<Vec<String>>,
+pub(crate) struct Written {
+    /// The revision ids the edits gave (tracked).
+    pub(crate) numbered: Option<crate::sink::Numbered>,
+    /// Whether a record carries a UTC date.
+    pub(crate) dated: bool,
+    /// Each edit's warnings.
+    pub(crate) warnings: Vec<Vec<String>>,
 }
 
 impl Written {
@@ -386,7 +389,13 @@ impl FormatTable {
 
 /// The table's copy put in place, with its revision ids drawn at commit, `w16du` declared
 /// where a record carries a UTC date, and the author among the people.
-fn write(sink: &mut EditSink<'_, '_>, found: &Found, id: &str, new: Arc<Element>, written: &Written) -> Result<()> {
+pub(crate) fn write(
+    sink: &mut EditSink<'_, '_>,
+    found: &Found,
+    id: &str,
+    new: Arc<Element>,
+    written: &Written,
+) -> Result<()> {
     let draws = written
         .numbered
         .map(|n| annotation_draws(&new, n, 0))

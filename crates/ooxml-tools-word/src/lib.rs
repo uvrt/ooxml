@@ -47,7 +47,7 @@ pub use structure::{
     SectionStart, StoryType, StyleMapping, Unmapped, Which, WordCopyFrom, WordFields, WordHeadersFooters, WordLinks,
     WordMove, WordNotes, WordSections,
 };
-pub use style::{word_compare_blocks, BlockIn, FollowReport, WordCompareBlocks, WordFollowSample};
+pub use style::{word_compare_blocks, word_follow_sample, BlockIn, FollowReport, WordCompareBlocks, WordFollowSample};
 pub use style::{word_design_facts, DesignKind, WordDesignFacts};
 pub use style::{word_format, Alignment, Cleared, FindExpect, FindItem, WordFormat};
 pub use style::{word_lists, Follow, ListKind, ListsAction, WordLists};

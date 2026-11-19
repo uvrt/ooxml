@@ -2,7 +2,8 @@
 //! (docs/architecture/README.md, sections 4-6; layer 0).
 //!
 //! Owns: immutable versions published through a lock-free head ([`Store::snapshot`]); the
-//! transaction ([`Txn`]) with its typed read and write sets and its change set; the commit
+//! transaction ([`Txn`]) with its typed read and write sets (and its reads by condition,
+//! [`ReadPredicate`]) and its change set; the commit
 //! (validate, prepare on a snapshot, commit in a short critical section with conflict
 //! detection -- a change set disjoint from the commits since its snapshot is rebased past
 //! theirs ([`DocModel::rebase`]) -- and redo, then a run under the commit lock after
@@ -29,6 +30,7 @@ mod ids;
 mod journal;
 mod keys;
 mod model;
+mod predicate;
 mod stamps;
 mod stats;
 mod store;
@@ -43,6 +45,7 @@ pub use history::{HistoryOutcome, StepInfo};
 pub use ids::{Counters, IdSeq};
 pub use keys::KeySet;
 pub use model::DocModel;
+pub use predicate::ReadPredicate;
 pub use stats::StoreStats;
 pub use store::{Caller, CommitTiming, Committed, Store, StoreConfig};
 pub use txn::{Savepoint, Txn};
