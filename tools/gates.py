@@ -10,6 +10,15 @@ shard of the documents at a time:
     python tools/gates.py diff --gate fixtures --mode styled --shard 2/4 --bin DIR --out DIR
     python tools/gates.py matrix --gates fixtures,corpus  # the differential jobs (JSON)
     python tools/gates.py summary DIR                     # the job summary's tables (Markdown)
+    python tools/gates.py cache-key                       # the reference cache's chain digest
+    python tools/gates.py cache-merge STORE FILE...       # kept results added to a store
+
+The reference cache (crates/ooxml-oracle/python/reference_cache.py): with ``--cache STORE``
+a ``diff`` of an edit mode uses docx-agent's results kept in STORE where their key (the code
+the reference runs, its environment, the document and the case) still holds, runs docx-agent
+for the rest and writes those to ``--out``'s reference-new.jsonl.gz; ``cache-merge`` adds
+them to the store.  Verdicts are the same as without it: a kept result whose comparison
+finds a difference is computed again in full.
 
 A ``diff`` writes the harness's log, its cases with differences (JSON lines) and a summary
 (JSON) into ``--out``.  It fails when a case differs and no entry of the known differences
@@ -114,6 +123,8 @@ def run_diff(args) -> int:
         if args.mode == "spacing":
             (out / "french").mkdir(exist_ok=True)    # --spacing's folder for the French copies
             command.insert(command.index("--spacing") + 1, str(out / "french"))
+        if args.cache:
+            command += ["--cache", args.cache, "--cache-new", str(out / "reference-new.jsonl.gz")]
         if args.per_tool and args.mode in PER_TOOL:
             env[PER_TOOL[args.mode]] = str(args.per_tool)
         elif args.per_tool:
@@ -137,6 +148,7 @@ def run_diff(args) -> int:
     summary = {"gate": args.gate, "mode": args.mode, "shard": args.shard, "documents": len(files),
                "cases": totals.get("cases", 0), "differences": len(unknown), "known": len(known),
                "unported": totals.get("unported", 0), "wall": round(wall, 1), "crashed": bool(crashed),
+               **({"kept": totals["kept"], "computed": totals["computed"]} if "kept" in totals else {}),
                "unknown": unknown[:50]}
     (out / "summary.json").write_text(json.dumps(summary, indent=1))
     print(json.dumps({k: v for k, v in summary.items() if k != "unknown"}))
@@ -145,6 +157,22 @@ def run_diff(args) -> int:
     if crashed:
         print(f"::error::{args.gate}/{args.mode} {args.shard}: the harness failed (log.txt)")
     return 1 if unknown or crashed else 0
+
+
+def run_cache_key(args) -> int:
+    """The reference cache's chain digest, as the edits harness computes it."""
+    done = subprocess.run([sys.executable, str(HARNESS / "reference_cache.py")], capture_output=True, text=True,
+                          check=True, cwd=ROOT, env={**os.environ, "DOCX_AGENT_RUST": "0", "PYTHONWARNINGS": "ignore"})
+    print(done.stdout.split()[-1])
+    return 0
+
+
+def run_cache_merge(args) -> int:
+    sys.path.insert(0, str(HARNESS))
+    from reference_cache import merge
+
+    print(merge(args.store, args.files), "results added")
+    return 0
 
 
 def run_corpus(args) -> int:
@@ -205,6 +233,9 @@ def run_summary(args) -> int:
                                                        "known": 0, "unported": 0, "wall": 0.0, "crashed": 0,
                                                        "unknown": []})
         row["shards"] += 1
+        for key in ("kept", "computed"):
+            if key in s:
+                row[key] = row.get(key, 0) + s[key]
         row["wall"] = max(row["wall"], s["wall"])
         row["crashed"] += s["crashed"]
         row["unknown"] += s["unknown"]
@@ -219,6 +250,10 @@ def run_summary(args) -> int:
                 flag = " (harness failed)" if r["crashed"] else ""
                 out.append(f"| {mode}{flag} | {r['shards']} | {r['documents']} | {r['cases']:,} | "
                            f"{r['differences']} | {r['known']} | {r['unported']} | {r['wall']:.0f} |")
+        cached = [f"{mode} {r['kept']:,} of {r['kept'] + r['computed']:,}" for (g, mode), r in rows.items()
+                  if g == gate and "kept" in r]
+        if cached:
+            out += ["", "docx-agent's results kept from earlier runs (reference cache): " + ", ".join(cached)]
         out.append("")
         for (g, mode), r in rows.items():
             for case in r["unknown"][:20] if g == gate else []:
@@ -240,6 +275,7 @@ def main(argv: list[str] | None = None) -> int:
     d.add_argument("--per-tool", type=int, default=0)
     d.add_argument("--bin", required=True, help="the folder of the release oracle binaries")
     d.add_argument("--out", required=True)
+    d.add_argument("--cache", help="the reference cache's store (edit modes; reference_cache.py)")
     c = sub.add_parser("corpus")
     c.add_argument("out")
     r = sub.add_parser("report")
@@ -253,9 +289,13 @@ def main(argv: list[str] | None = None) -> int:
     m.add_argument("--per-tool", default="")
     s = sub.add_parser("summary")
     s.add_argument("dir")
+    sub.add_parser("cache-key")
+    k = sub.add_parser("cache-merge")
+    k.add_argument("store")
+    k.add_argument("files", nargs="*")
     args = parser.parse_args(argv)
     return {"diff": run_diff, "corpus": run_corpus, "report": run_report, "matrix": run_matrix,
-            "summary": run_summary}[args.command](args)
+            "summary": run_summary, "cache-key": run_cache_key, "cache-merge": run_cache_merge}[args.command](args)
 
 
 if __name__ == "__main__":
