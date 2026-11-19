@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import functools
 import json
 import subprocess
 import sys
@@ -135,11 +136,17 @@ def check_ids(args) -> int:
         except Exception as error:  # noqa: BLE001
             print(f"{path}: python failed: {error}")
     rust = run_rust(args.rust, manifest)
-    return report(expected, {k: v.get("ids") for k, v in rust.items()}, ignore=("notes",))
+    return report(expected, {k: v.get("ids") for k, v in rust.items()}, ignore=("notes",), results=args.results)
 
 
-def report(expected: dict, rust: dict, ignore: tuple = ()) -> int:
+def report(expected: dict, rust: dict, ignore: tuple = (), results: str | None = None,
+           inputs: dict | None = None, counts: dict | None = None) -> int:
+    """Prints each case with differences and the totals; exits 1 when there is any.
+    ``results``: also a JSON-lines file of them for tools/gates.py -- one line per case with
+    differences (its file, case key, input from ``inputs`` and differences), then the totals
+    with ``counts`` (e.g. the cases left to the host)."""
     failed = 0
+    lines = []
     for key, want in expected.items():
         got = rust.get(key)
         want = {k: v for k, v in want.items() if k not in ignore}
@@ -150,7 +157,11 @@ def report(expected: dict, rust: dict, ignore: tuple = ()) -> int:
             print(f"{name}: {len(found)} differences")
             for line in found[:20]:
                 print("   ", line)
+            lines.append({"file": key[0], "case": key[1], "input": (inputs or {}).get(key), "differences": found})
     print(f"{len(expected)} cases, {failed} with differences")
+    if results:
+        totals = {"cases": len(expected), "failed": failed, **(counts or {})}
+        Path(results).write_text("".join(json.dumps(x) + "\n" for x in [*lines, {"totals": totals}]))
     return 1 if failed else 0
 
 
@@ -159,13 +170,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("what", choices=["ids", "describe", "read", "ranges", "inspect", "find", "batch"])
     parser.add_argument("--rust", required=True, help="the word-ids or word-reads binary")
     parser.add_argument("--tree", action="append", help="every .docx below this folder")
+    parser.add_argument("--results", help="also write the cases with differences here (JSON lines)")
     parser.add_argument("files", nargs="*")
     args = parser.parse_args(argv)
     if args.what == "ids":
         return check_ids(args)
     from word_reads_tools import check_tools
 
-    return check_tools(args, run_rust, report, files_of)
+    return check_tools(args, run_rust, functools.partial(report, results=args.results), files_of)
 
 
 if __name__ == "__main__":
