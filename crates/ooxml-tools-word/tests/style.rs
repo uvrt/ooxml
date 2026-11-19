@@ -9,7 +9,7 @@ use ooxml_derive::CacheBudget;
 use ooxml_opc::Package;
 use ooxml_store::{Caller, Clock, StoreConfig};
 use ooxml_tools::{ToolArgs, ToolResult};
-use ooxml_tools_word::{word_format, word_lists, Editing, WordFormat, WordLists, KIND};
+use ooxml_tools_word::{word_format, word_lists, word_styles, Editing, WordFormat, WordLists, WordStyles, KIND};
 use ooxml_word_edit::Editor;
 use ooxml_zip::{Method, NewEntry, Writer};
 use serde_json::{json, Value};
@@ -87,6 +87,8 @@ fn call<A: ToolArgs>(arguments: Value, tool: impl Fn(&A, &Editing<'_>) -> ToolRe
             tracking: None,
             doc: "d1",
             cancel: &Never,
+            date: "2026-11-17T10:00:00Z",
+            layout: None,
         };
         let (args, _) = A::accept(arguments, Some("docx")).unwrap();
         Value::Object(tool(&args, &editing).to_json())
@@ -104,6 +106,10 @@ fn the_definitions_are_the_golden_exports() {
     assert_eq!(
         format!("{}\n", WordFormat::spec().export(Some(&[KIND]))),
         include_str!("golden/word_format.json")
+    );
+    assert_eq!(
+        format!("{}\n", WordStyles::spec().export(Some(&[KIND]))),
+        include_str!("golden/word_styles.json")
     );
 }
 
@@ -222,4 +228,91 @@ fn text_found_more_than_once_is_refused_with_each_place() {
         word_format,
     );
     assert_eq!(reply["data"]["ranges"].as_array().map(Vec::len), Some(4), "{reply}");
+}
+
+fn styles(arguments: Value) -> (Value, Editor) {
+    call(arguments, word_styles)
+}
+
+fn sheet(editor: &Editor) -> String {
+    let head = editor.store().snapshot();
+    let tree = head.doc().tree("word/styles.xml").unwrap().unwrap();
+    String::from_utf8(tree.write()).unwrap()
+}
+
+#[test]
+fn a_paragraph_style_is_added_with_its_formatting_and_described() {
+    let (reply, editor) = styles(
+        json!({"doc": "d1", "action": "add", "name": "Lane Body", "based_on": "Normal",
+                                         "bold": true, "indent_first": -12, "tabs": [{"position": 72, "alignment": "right"}]}),
+    );
+    assert_eq!(reply["created"], json!(["style:LaneBody"]), "{reply}");
+    let xml = sheet(&editor);
+    assert!(xml.contains(r#"<w:style w:type="paragraph" w:customStyle="1" w:styleId="LaneBody"><w:name w:val="Lane Body"/><w:basedOn w:val="Normal"/><w:qFormat/><w:pPr><w:tabs><w:tab w:val="right" w:pos="1440"/></w:tabs><w:ind w:hanging="240"/></w:pPr><w:rPr><w:b/><w:bCs/></w:rPr></w:style>"#), "{xml}");
+}
+
+#[test]
+fn regions_without_a_kind_add_a_table_style_and_say_so() {
+    // rule 1: regions say a table style
+    let (reply, _) = styles(json!({"doc": "d1", "action": "add", "name": "Grid",
+                                    "regions": [{"region": "header_row", "bold": true}]}));
+    assert_eq!(
+        reply["warnings"][0],
+        json!("regions given: added as a table style (kind table)"),
+        "{reply}"
+    );
+    assert_eq!(reply["data"]["regions"]["header_row"], json!({"bold": true}));
+}
+
+#[test]
+fn a_used_style_is_refused_without_a_replacement_and_an_unknown_one_lists_the_styles() {
+    // rule 2: the refusal carries the way out
+    let (reply, _) = styles(json!({"doc": "d1", "action": "remove", "name": "Numbered"}));
+    assert_eq!(reply["error"]["code"], json!("refused"), "{reply}");
+    assert!(
+        reply["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("give replacement="),
+        "{reply}"
+    );
+    let (reply, _) = styles(json!({"doc": "d1", "action": "describe", "name": "Nothing"}));
+    assert_eq!(reply["error"]["code"], json!("not_found"));
+    assert_eq!(reply["error"]["valid_options"], json!(["Normal", "Numbered"]));
+}
+
+#[test]
+fn a_style_numbering_nothing_unlinked_is_said_not_changed() {
+    // rule 3: a no-op is said, not refused
+    let (reply, _) = styles(json!({"doc": "d1", "action": "add", "name": "Grid", "kind": "table"}));
+    assert!(reply.get("error").is_none(), "{reply}");
+    let (reply, _) = styles(json!({"doc": "d1", "action": "modify", "name": "Normal", "numbering": {"list": "none"}}));
+    assert_eq!(
+        reply["summary"],
+        json!("Modified style Normal: numbers nothing, left as it was"),
+        "{reply}"
+    );
+    assert_eq!(reply["changed"], json!([]));
+}
+
+#[test]
+fn a_style_is_linked_to_a_list_level_and_the_one_holding_it_said() {
+    let (reply, editor) =
+        styles(json!({"doc": "d1", "action": "modify", "name": "Normal", "numbering": {"list": "1"}}));
+    assert_eq!(
+        reply["summary"],
+        json!("Modified style Normal: linked to level 0 of list 1"),
+        "{reply}"
+    );
+    assert!(sheet(&editor).contains(r#"<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:pPr><w:numPr><w:numId w:val="1"/></w:numPr></w:pPr></w:style>"#));
+}
+
+#[test]
+fn the_document_language_is_set_and_reported() {
+    let (reply, _) = styles(json!({"doc": "d1", "action": "set_language", "language": "fr_be"}));
+    assert_eq!(reply["summary"], json!("The document: language fr-BE"), "{reply}");
+    assert_eq!(reply["data"]["default"], json!({"val": "fr-BE"}));
+    let (reply, _) = styles(json!({"doc": "d1", "action": "set_language", "language": "fr"}));
+    assert_eq!(reply["error"]["field"], json!("language"), "{reply}");
+    assert_eq!(reply["error"]["valid_options"][0], json!("fr-FR"));
 }

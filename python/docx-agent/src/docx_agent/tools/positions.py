@@ -63,6 +63,13 @@ def aliases(tool: str, kind: str, own: Mapping[str, Any], *, prefix: str = "",
     return out
 
 
+def alias(tool: str, kind: str, name: str, prefix: str = "") -> Callable[[Mapping[str, Any]], str | None]:
+    """The alias reading ``name`` (at ``prefix``) as the place ``tool`` of ``kind`` takes:
+    one of :func:`aliases`' (a tool defined in Rust exports it as ``place:<kind>``)."""
+    assert kind in KINDS, kind
+    return _alias(tool, kind, name, prefix)
+
+
 def _alias(tool: str, kind: str, name: str, prefix: str) -> Callable[[Mapping[str, Any]], str | None]:
     field = "after" if kind == "sides" else "at"
 

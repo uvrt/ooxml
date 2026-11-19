@@ -10,7 +10,7 @@ use ooxml_opc::Package;
 use ooxml_store::{Caller, Clock, Command, StoreConfig};
 use ooxml_word_edit::{
     EditError, Editor, FormatEdit, FormatPlan, LevelFormat, ListAction, ListEdit, Property, RevisionPolicy, Setting,
-    Tracking, Value, WordDoc,
+    StyleAction, StyleEdit, StyleFormatting, Tracking, Value, WordDoc,
 };
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -135,6 +135,7 @@ fn style_edits_on_a_long_document() {
     report("lists restart, 50 items after", on_list(ListAction::Restart(3)));
     report("lists format", on_list(format));
     format_edits(&bytes, &[middle, span], &tracked);
+    style_sheet_edits(&bytes);
 }
 
 /// `word_format`'s edits: one paragraph, tracked, a span; a style; keeps.
@@ -199,4 +200,80 @@ fn format_edits(bytes: &Arc<[u8]>, targets: &[String; 2], tracked: &RevisionPoli
         policy: RevisionPolicy::Untracked,
     };
     report("format, 100 paragraphs kept together", best(bytes, &kept));
+}
+
+/// `word_styles`' edits: a style's formatting, a style added, the most used custom
+/// paragraph style removed (every use pointed at Normal), the unused purged, the default
+/// table style, the document's language.
+fn style_sheet_edits(bytes: &Arc<[u8]>) {
+    let report = |name: &str, took: Duration| println!("{name}: {:.1} ms", took.as_secs_f64() * 1000.0);
+    let docx = editor(bytes).store().snapshot().doc().docx().unwrap();
+    let uses = ooxml_word_edit::content_uses(&docx);
+    let most = docx
+        .styles()
+        .iter()
+        .filter(|s| ooxml_word_model::docx::style_kind(s) == "paragraph")
+        .filter(|s| s.attribute(Some(ooxml_word_model::ids::W), "default").is_none())
+        .map(|s| ooxml_word_model::docx::style_id(s).to_owned())
+        .max_by_key(|id| uses.get(id).copied().unwrap_or(0))
+        .unwrap();
+    println!("styles: {} uses of {most}", uses.get(&most).copied().unwrap_or(0));
+    let style = |action: StyleAction| StyleEdit { action };
+    let bold = StyleFormatting {
+        run: vec![Setting {
+            property: Property::Bold,
+            value: Some(Value::Flag(true)),
+        }],
+        ..StyleFormatting::default()
+    };
+    let cases = [
+        (
+            "styles modify Normal",
+            StyleAction::Modify {
+                name: "Normal".into(),
+                kind: None,
+                numbering: None,
+                tabs: None,
+                regions: Vec::new(),
+                formatting: bold.clone(),
+            },
+        ),
+        (
+            "styles add",
+            StyleAction::Add {
+                name: "Bench Body".into(),
+                kind: "paragraph".into(),
+                based_on: Some("Normal".into()),
+                next_style: None,
+                tabs: None,
+                regions: Vec::new(),
+                formatting: bold,
+            },
+        ),
+        (
+            "styles remove, uses repointed",
+            StyleAction::Remove {
+                name: most,
+                kind: None,
+                replacement: Some("Normal".into()),
+            },
+        ),
+        ("styles purge_unused", StyleAction::PurgeUnused),
+        (
+            "styles set_default",
+            StyleAction::SetDefault {
+                name: "Table Grid".into(),
+            },
+        ),
+        (
+            "styles set_language",
+            StyleAction::SetLanguage {
+                language: "fr-BE".into(),
+                style: None,
+            },
+        ),
+    ];
+    for (name, action) in cases {
+        report(name, best(bytes, &style(action)));
+    }
 }

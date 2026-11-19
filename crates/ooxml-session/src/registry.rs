@@ -43,6 +43,8 @@ pub struct Call<'a> {
     pub(crate) cancel: &'a dyn Cancel,
     /// The revision date edits made now carry (the session's clock, to the minute).
     pub(crate) date: String,
+    /// The host's layout of the document's versions.
+    pub(crate) layout: Option<&'a dyn ooxml_word_edit::FieldLayout>,
 }
 
 impl Call<'_> {
@@ -185,6 +187,8 @@ impl<T: ToolArgs> Tool for EditHandler<T> {
             tracking,
             doc: &doc,
             cancel: call.cancel,
+            date: &call.date,
+            layout: call.layout,
         };
         match &self.run {
             EditRun::Plain(run) => run(&args, &editing),
@@ -226,7 +230,8 @@ impl Registry {
     /// The tools ported so far: Word's `describe`, `word_read`, `word_inspect` and
     /// `find_text`, and `read_batch` over them; its review tools `word_set_tracking`,
     /// `word_changes` and `word_comments`; its text tools `word_set_text` and
-    /// `replace_text`; the object tool `word_format_table`; its style tools `word_lists` and `word_format`.
+    /// `replace_text`; the object tool `word_format_table`; its style tools `word_lists`, `word_format`
+    /// and `word_styles`.
     #[must_use]
     pub fn standard() -> Self {
         let mut registry = Self::empty();
@@ -274,9 +279,17 @@ impl Registry {
             &[DocKind::Docx],
             ooxml_tools_word::word_lists,
         )));
+        registry.register(Arc::new(EditHandler::<ooxml_tools_word::WordFields>::new(
+            &[DocKind::Docx],
+            ooxml_tools_word::word_fields,
+        )));
         registry.register(Arc::new(EditHandler::<ooxml_tools_word::WordFormat>::new(
             &[DocKind::Docx],
             ooxml_tools_word::word_format,
+        )));
+        registry.register(Arc::new(EditHandler::<ooxml_tools_word::WordStyles>::new(
+            &[DocKind::Docx],
+            ooxml_tools_word::word_styles,
         )));
         registry
     }

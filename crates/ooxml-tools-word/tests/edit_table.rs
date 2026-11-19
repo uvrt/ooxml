@@ -109,6 +109,8 @@ fn edits(calls: &[Value]) -> Value {
         tracking: None,
         doc: "d1",
         cancel: &Never,
+        date: "2026-11-17T10:00:00Z",
+        layout: None,
     };
     let mut reply = Value::Null;
     for arguments in calls {

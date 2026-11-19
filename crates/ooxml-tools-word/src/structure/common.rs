@@ -22,6 +22,24 @@ pub(crate) struct Outcome {
     pub(crate) warnings: Vec<String>,
 }
 
+impl From<ooxml_word_edit::FieldEdited> for Outcome {
+    fn from(out: ooxml_word_edit::FieldEdited) -> Self {
+        Outcome {
+            id: out.id,
+            changed: out.changed,
+            created: out.created,
+            removed: Vec::new(),
+            renamed: out.renamed,
+            // docx-agent's `outcome` notes each of an edit's `unknown` after its warnings
+            warnings: out
+                .warnings
+                .into_iter()
+                .chain(out.unknown.iter().map(|u| format!("{u}: the layout cannot say")))
+                .collect(),
+        }
+    }
+}
+
 impl From<ooxml_word_edit::LinkEdited> for Outcome {
     fn from(out: ooxml_word_edit::LinkEdited) -> Self {
         Outcome {
