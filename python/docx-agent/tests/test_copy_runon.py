@@ -205,6 +205,7 @@ def test_word_lists_continue_joins_the_list_named(box):
     assert len(set(lists)) == 3
     result = box.dispatch(session, "word_lists", {"doc": doc, "targets": [last], "action": "continue",
                                                   "join": first})
+    document = session.entry(doc).document  # (the view as the served call left it)
     assert result.ok and document.list_of(last).num_id == lists[0]
     assert _numbers(session, doc, [last]) == [3]
     warned = box.dispatch(session, "word_lists", {"doc": doc, "targets": [last], "action": "level", "level": 0,

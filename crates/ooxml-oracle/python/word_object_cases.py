@@ -260,3 +260,65 @@ def cases(document) -> list[dict]:
                 kept.append(case)
         found = kept
     return found
+
+
+def _drawing_edits(target: str, inline: bool) -> list[dict]:
+    """A drawing moved, resized, floated, put in the line and set (each setting, and none)."""
+    def edit(action: str, **arguments) -> dict:
+        return call("word_drawings", action=action, target=target, **arguments)
+
+    out = [edit("resize", width=120), edit("resize", height=40), edit("resize", width=90, height=30),
+           edit("set", alt_text="A drawing for the oracle"), edit("set", alt_text=""), edit("set")]
+    if inline:
+        out += [edit("move", x=10, y=20), edit("set", wrap="square"), edit("inline"),
+                edit("float"), edit("float", wrap="tight", x=36, y=-12), edit("float", wrap="behind", align="center"),
+                edit("float", wrap="top_and_bottom", against="page", align="right", y=50),
+                edit("float", wrap="front", against="margin", x=-20)]
+    else:
+        out += [edit("move", x=10, y=20), edit("move", x=-30.5, y=0), edit("move", x=10),
+                edit("set", wrap="square"), edit("set", wrap="tight", z_order="front"),
+                edit("set", wrap="behind", z_order="back"), edit("set", wrap="top_and_bottom", x=5, y=6),
+                edit("set", z_order="forward"), edit("set", z_order="backward"), edit("set", wrap="front"),
+                edit("float"), edit("float", wrap="square", align="center"), edit("inline")]
+    return out
+
+
+@CASES
+def drawings_cases(document) -> list[dict]:
+    """``word_drawings``: the drawings listed; each drawing (a few) resized, moved, floated,
+    put in the line and set (wrapping, order, place, alt text; nothing to set refused); a
+    text box and shapes inserted at a position, a range and after text found once (sizes,
+    places, wrapping, text in lines; an unknown preset, a place in a text box, none or both
+    of at and find refused); a drawing that is not there -- untracked and tracked."""
+    def edit(action: str, **arguments) -> dict:
+        return call("word_drawings", action=action, **arguments)
+
+    out = [edit("list")]
+    found = document._all_drawings()
+    for _part, identifier, frame in found[:5]:
+        out += _drawing_edits(identifier, frame.tag.endswith("}inline"))
+    paragraphs = [b["id"] for b in document.blocks() if b["id"] and b["kind"] == "paragraph"]
+    if paragraphs:
+        first = paragraphs[0]
+        out += [edit("insert_text_box", at=f"{first}@0", text="Inside the box\nA second line"),
+                edit("insert_text_box", at=first, width=200, height=50, x=12, y=-6, wrap="tight"),
+                edit("insert_shape", at=f"{first}@0", preset="ellipse", text="Round"),
+                edit("insert_shape", at=f"{first}@0", preset="roundRect", wrap="behind", width=30),
+                edit("insert_shape", at=f"{first}@0", preset="triangle", wrap="top_and_bottom", text=""),
+                edit("insert_shape", at=f"{first}@0", wrap="square", ref="box"),
+                edit("insert_shape", at=f"{first}@0", preset="no-such-shape"),
+                edit("insert_text_box", at=f"{first}@9999"), edit("insert_shape"),
+                edit("insert_shape", at=first, find="x")]
+        words = document.paragraph(first).text.split()
+        if words:
+            out.append(edit("insert_text_box", find=words[0], text="After the word"))
+    boxes = [identifier for _part, identifier, frame in found
+             if frame.find(".//{http://schemas.openxmlformats.org/wordprocessingml/2006/main}txbxContent")
+             is not None]
+    if boxes:
+        inside = document.text_box_paragraphs(boxes[0])
+        if inside:
+            out.append(edit("insert_shape", at=f"{inside[0].id}@0"))
+    out += [edit("move", target="d:999999", x=1, y=1), edit("resize", target="d:999999", width=10),
+            edit("inline", target="d:999999"), edit("move"), edit("float", target="d:999999")]
+    return out + [tracked(case) for case in out]

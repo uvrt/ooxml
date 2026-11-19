@@ -170,6 +170,7 @@ def test_word_format_takes_a_cell_a_row_a_section_and_a_bookmark(box, session):
     table = document.tables()[0]
     ok(box, session, "word_format", doc=doc, targets=[f"{table.id}/c1,1"], bold=True)
     ok(box, session, "word_format", doc=doc, targets=["s:1", "bm:Spot"], italic=True)
+    document = session.entry(doc).document  # (the view as the served call left it)
     bold = {p.text for p in document.paragraphs() if p.runs and p.runs[0].effective.bold}
     italic = {p.text for p in document.paragraphs() if p.runs and p.runs[0].effective.italic}
     assert bold == {"right"}

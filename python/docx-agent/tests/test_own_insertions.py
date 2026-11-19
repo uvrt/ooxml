@@ -149,6 +149,7 @@ def test_a_later_call_formatting_ones_own_insertion_is_recorded_as_word_records_
     created = ok(box, session, "word_insert_markdown", doc=doc, at=f"after:{first}", markdown="New paragraph.")
     new = created.created[0] if created.created else document.paragraphs()[1].id
     ok(box, session, "word_format", doc=doc, targets=[new], alignment="center")
+    document = session.entry(doc).document  # (the view as the served call left it)
     assert _changes(document) == ["New paragraph."]
 
 
@@ -156,5 +157,6 @@ def test_formatting_existing_text_is_recorded_as_before(box):
     session, doc, document = _opened(box, _base("Existing text.", "Closing text."))
     ok(box, session, "word_insert_markdown", doc=doc, at="end", markdown="Appended.")
     ok(box, session, "word_format", doc=doc, targets=[document.paragraphs()[0].id], alignment="right")
+    document = session.entry(doc).document  # (the view as the served call left it)
     assert _changes(document) == ["Existing text."]
     assert re.search(r"<w:jc w:val=\"right\"/>", _xml(document))

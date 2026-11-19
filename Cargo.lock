@@ -784,6 +784,7 @@ version = "0.1.0"
 dependencies = [
  "ooxml-base",
  "ooxml-derive",
+ "ooxml-drawingml",
  "ooxml-markdown",
  "ooxml-opc",
  "ooxml-store",
