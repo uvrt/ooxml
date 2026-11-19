@@ -1,0 +1,1 @@
+Upgrade the document to Word's current compatibility mode, reporting the reflow. To save it as a template, save_document with format dotx.
