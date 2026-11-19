@@ -298,6 +298,16 @@ impl Default for Registry {
     }
 }
 
+/// A Word reading tool's entry.
+fn word_read<T: ToolArgs + 'static>(run: ReadFn<T>) -> Arc<dyn Tool> {
+    Arc::new(ReadHandler::<T>::new(&[DocKind::Docx], run))
+}
+
+/// A Word editing tool's entry.
+fn word_edit<T: ToolArgs + 'static>(run: EditFn<T>) -> Arc<dyn Tool> {
+    Arc::new(EditHandler::<T>::new(&[DocKind::Docx], run))
+}
+
 impl Registry {
     /// No tools.
     #[must_use]
@@ -311,97 +321,58 @@ impl Registry {
     #[must_use]
     pub fn standard() -> Self {
         let mut registry = Self::empty();
-        registry.register(Arc::new(ReadHandler::<ooxml_tools_word::Describe>::new(
-            &[DocKind::Docx],
-            ooxml_tools_word::describe,
-        )));
-        registry.register(Arc::new(ReadHandler::<ooxml_tools_word::WordRead>::new(
-            &[DocKind::Docx],
-            ooxml_tools_word::word_read,
-        )));
-        registry.register(Arc::new(ReadHandler::<ooxml_tools_word::WordInspect>::new(
-            &[DocKind::Docx],
+        registry.register(word_read::<ooxml_tools_word::Describe>(ooxml_tools_word::describe));
+        registry.register(word_read::<ooxml_tools_word::WordRead>(ooxml_tools_word::word_read));
+        registry.register(word_read::<ooxml_tools_word::WordInspect>(
             ooxml_tools_word::word_inspect,
-        )));
-        registry.register(Arc::new(ReadHandler::<ooxml_tools_word::FindText>::new(
-            &[DocKind::Docx],
-            ooxml_tools_word::find_text,
-        )));
+        ));
+        registry.register(word_read::<ooxml_tools_word::FindText>(ooxml_tools_word::find_text));
         registry.register(Arc::new(EditHandler::<ooxml_tools_word::WordSetTracking>::tracking(
             &[DocKind::Docx],
             ooxml_tools_word::word_set_tracking,
         )));
-        registry.register(Arc::new(EditHandler::<ooxml_tools_word::WordChanges>::new(
-            &[DocKind::Docx],
+        registry.register(word_edit::<ooxml_tools_word::WordChanges>(
             ooxml_tools_word::word_changes,
-        )));
-        registry.register(Arc::new(EditHandler::<ooxml_tools_word::WordComments>::new(
-            &[DocKind::Docx],
+        ));
+        registry.register(word_edit::<ooxml_tools_word::WordComments>(
             ooxml_tools_word::word_comments,
-        )));
-        registry.register_text();
-        registry.register(Arc::new(EditHandler::<ooxml_tools_word::WordFormatTable>::new(
-            &[DocKind::Docx],
-            ooxml_tools_word::word_format_table,
-        )));
-        registry.register(Arc::new(EditHandler::<ooxml_tools_word::WordEditTable>::new(
-            &[DocKind::Docx],
-            ooxml_tools_word::word_edit_table,
-        )));
-        registry.register(Arc::new(EditHandler::<ooxml_tools_word::WordLists>::new(
-            &[DocKind::Docx],
-            ooxml_tools_word::word_lists,
-        )));
-        registry.register(Arc::new(EditHandler::<ooxml_tools_word::WordFields>::new(
-            &[DocKind::Docx],
-            ooxml_tools_word::word_fields,
-        )));
-        registry.register(Arc::new(EditHandler::<ooxml_tools_word::WordFormat>::new(
-            &[DocKind::Docx],
-            ooxml_tools_word::word_format,
-        )));
-        registry.register(Arc::new(EditHandler::<ooxml_tools_word::WordStyles>::new(
-            &[DocKind::Docx],
-            ooxml_tools_word::word_styles,
-        )));
-        registry.register(Arc::new(EditHandler::<ooxml_tools_word::WordTemplate>::new(
-            &[DocKind::Docx],
-            ooxml_tools_word::word_template,
-        )));
-        registry.register(Arc::new(ReadHandler::<ooxml_tools_word::WordCompareBlocks>::new(
-            &[DocKind::Docx],
-            ooxml_tools_word::word_compare_blocks,
-        )));
-        registry.register(Arc::new(EditHandler::<ooxml_tools_word::WordFollowSample>::new(
-            &[DocKind::Docx],
-            ooxml_tools_word::word_follow_sample,
-        )));
-        registry.register(Arc::new(ReadHandler::<ooxml_tools_word::WordDesignFacts>::new(
-            &[DocKind::Docx],
-            ooxml_tools_word::word_design_facts,
-        )));
-        registry
-    }
-
-    /// Word's text tools: `word_set_text`, `replace_text`, `word_insert_text` and
-    /// `word_delete`.
-    fn register_text(&mut self) {
-        self.register(Arc::new(EditHandler::<ooxml_tools_word::WordSetText>::new(
-            &[DocKind::Docx],
+        ));
+        registry.register(word_edit::<ooxml_tools_word::WordSetText>(
             ooxml_tools_word::word_set_text,
-        )));
-        self.register(Arc::new(EditHandler::<ooxml_tools_word::ReplaceText>::new(
-            &[DocKind::Docx],
+        ));
+        registry.register(word_edit::<ooxml_tools_word::ReplaceText>(
             ooxml_tools_word::replace_text,
-        )));
-        self.register(Arc::new(EditHandler::<ooxml_tools_word::WordInsertText>::new(
-            &[DocKind::Docx],
+        ));
+        registry.register(word_edit::<ooxml_tools_word::WordInsertText>(
             ooxml_tools_word::word_insert_text,
-        )));
-        self.register(Arc::new(EditHandler::<ooxml_tools_word::WordDelete>::new(
-            &[DocKind::Docx],
-            ooxml_tools_word::word_delete,
-        )));
+        ));
+        registry.register(word_edit::<ooxml_tools_word::WordDelete>(ooxml_tools_word::word_delete));
+        registry.register(word_edit::<ooxml_tools_word::WordFormatTable>(
+            ooxml_tools_word::word_format_table,
+        ));
+        registry.register(word_edit::<ooxml_tools_word::WordEditTable>(
+            ooxml_tools_word::word_edit_table,
+        ));
+        registry.register(word_edit::<ooxml_tools_word::WordControls>(
+            ooxml_tools_word::word_controls,
+        ));
+        registry.register(word_edit::<ooxml_tools_word::WordLists>(ooxml_tools_word::word_lists));
+        registry.register(word_edit::<ooxml_tools_word::WordFields>(ooxml_tools_word::word_fields));
+        registry.register(word_edit::<ooxml_tools_word::WordFormat>(ooxml_tools_word::word_format));
+        registry.register(word_edit::<ooxml_tools_word::WordStyles>(ooxml_tools_word::word_styles));
+        registry.register(word_edit::<ooxml_tools_word::WordTemplate>(
+            ooxml_tools_word::word_template,
+        ));
+        registry.register(word_read::<ooxml_tools_word::WordCompareBlocks>(
+            ooxml_tools_word::word_compare_blocks,
+        ));
+        registry.register(word_edit::<ooxml_tools_word::WordFollowSample>(
+            ooxml_tools_word::word_follow_sample,
+        ));
+        registry.register(word_read::<ooxml_tools_word::WordDesignFacts>(
+            ooxml_tools_word::word_design_facts,
+        ));
+        registry
     }
 
     /// Add `tool`; a tool of the same name serving other kinds is kept beside it (a call

@@ -23,7 +23,8 @@
 //!   Convert to compatibility mode 15);
 //!   [`CommentEdits`] (resolving, reopening and deleting comments); [`FormatTable`] (a
 //!   table's, row's, column's and cell's formatting); [`FollowSample`] (copies made to follow
-//!   a revised sample);
+//!   a revised sample); [`InsertControl`], [`FillControl`] and [`RemoveControl`] (content
+//!   controls, a bound one's custom XML node written with its fill);
 //! - how a copy's rows and paragraphs correspond to its sample's ([`pairing`]);
 //! - validation per change ([`validate`]: facts memoised by content, docx-agent's rules)
 //!   and what a change touched ([`touched`]);
@@ -43,6 +44,7 @@ mod blocks;
 mod builtin;
 mod comments;
 mod control_delete;
+mod controls;
 mod delete;
 mod delete_blocks;
 mod delete_write;
@@ -102,6 +104,7 @@ mod work;
 
 pub use beside::{DeletePlaced, InsertBeside, Placed, Side, TextPlace};
 pub use comments::{CommentEdit, CommentEdited, CommentEdits, EditCommentText};
+pub use controls::{ControlEdited, ControlKind, FillControl, Filling, InsertControl, RemoveControl};
 pub use delete::{BlockDeleted, DeleteBlock};
 pub use delete_blocks::{blocks_named, BlocksDeleted, DeleteBlocks};
 pub use doc::{Change, Draw, DrawFrom, Key, ModelError, Shared, WordDoc};
