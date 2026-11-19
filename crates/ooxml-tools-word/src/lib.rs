@@ -55,7 +55,7 @@ pub use style::{
 pub use style::{word_template, TemplateAction, WordTemplate};
 pub use style::{BlockIn, FollowReport, WordCompareBlocks, WordFollowSample};
 pub use text::{replace_text, word_set_text, Expect, ReplaceStories, ReplaceText, SetTextItem, Unported, WordSetText};
-pub use version::Version;
+pub use version::{Others, Version};
 pub use word_inspect::{word_inspect, WordInspect};
 pub use word_read::{word_read, Story, View, WordRead};
 

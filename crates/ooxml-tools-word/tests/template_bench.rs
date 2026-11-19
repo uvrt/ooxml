@@ -114,6 +114,7 @@ fn convert_on_a_long_document() {
             cancel: &Never,
             date: "2026-11-17T10:00:00Z",
             layout: Some(&layout),
+            others: ooxml_tools_word::Others::default(),
         };
         let started = Instant::now();
         let reply = Value::Object(word_template(&args, &editing).to_json());

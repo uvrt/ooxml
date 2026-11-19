@@ -51,6 +51,8 @@ pub struct Editing<'a> {
     /// The layout of the document's versions, where the host keeps one (`word_fields`'
     /// results); `None`: a result that needs it is left to the host.
     pub layout: Option<&'a dyn FieldLayout>,
+    /// The other open documents the call names, each at the version pinned for the call.
+    pub others: crate::Others<'a>,
 }
 
 /// An edit's refusal as the tool's: an address refused with its way out, a refusal with
