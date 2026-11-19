@@ -18,14 +18,14 @@ use super::TableChanged;
 use crate::markdown::insert_content;
 use crate::marks::{insert_in_order, mark};
 use crate::names::{W, WP, WP14};
-use crate::stamping::wp14_prefix;
-use ooxml_xml::QName;
-use std::sync::Arc;
 use crate::review::xml::{find_path, make};
 use crate::sink::EditSink;
+use crate::stamping::wp14_prefix;
 use crate::validate::Orders;
 use crate::work::{Id, Work};
 use crate::{EditError, Result};
+use ooxml_xml::QName;
+use std::sync::Arc;
 
 /// Why a row is not copied (`_uncopyable`).
 pub(super) fn check_copy(work: &Work, id: &str, rows: &[Id], index: usize) -> Result<()> {

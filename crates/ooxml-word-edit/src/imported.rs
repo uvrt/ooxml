@@ -80,7 +80,11 @@ pub(crate) fn renumber_controls(sink: &mut EditSink<'_, '_>, work: &mut Work, el
             while taken.contains(&value) {
                 value = (value * 7 + 13) % CONTROL_RANGE + 1;
             }
-            work.set(node, Arc::new(QName::new(Some("w"), "val", Some(W))), &value.to_string());
+            work.set(
+                node,
+                Arc::new(QName::new(Some("w"), "val", Some(W))),
+                &value.to_string(),
+            );
         }
         taken.insert(value.abs());
     }
