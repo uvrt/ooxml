@@ -13,6 +13,7 @@
 //! control, or take a control that is not a block (the block resolver refuses it).
 
 use crate::blocks::resolve_block;
+use crate::controls::undisplace;
 use crate::delete::{declare, draws_of, editable, stretch_keys, stretch_paths, BlockDeleted};
 use crate::delete_write::track_delete_paragraph;
 use crate::doc::Key;
@@ -204,27 +205,4 @@ pub(crate) fn delete(sink: &mut EditSink<'_, '_>, target: &str) -> Result<BlockD
         part,
         warnings: vec![UNTRACKED.to_owned()],
     })
-}
-
-/// A comment or bookmark mark Word wrote beside a control says so
-/// (`w:displacedByCustomXml`, `next`/`prev`); with the control gone, a mark among `nodes`
-/// no longer beside one says nothing (docx-agent's `_undisplace`).
-fn undisplace(work: &mut Work, nodes: &[Id]) {
-    for &node in nodes {
-        let Some(side) = work.get(node, Some(W), "displacedByCustomXml").map(str::to_owned) else {
-            continue;
-        };
-        let Some(parent) = work.parent(node) else { continue };
-        let neighbour = if side == "next" {
-            work.next(node)
-        } else {
-            work.previous(node)
-        };
-        if neighbour.is_none() && side == "prev" && work.is(parent, W, "sdtContent") {
-            continue; // first in another control's content: still beside its start
-        }
-        if !neighbour.is_some_and(|n| work.is_any(n, W, &["sdt", "customXml"])) {
-            work.remove_attr(node, Some(W), "displacedByCustomXml");
-        }
-    }
 }

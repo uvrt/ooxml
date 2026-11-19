@@ -5,6 +5,7 @@
 mod common;
 
 mod compare;
+mod controls;
 mod describe;
 mod design;
 mod edit_table;
