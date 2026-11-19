@@ -118,7 +118,7 @@ def test_the_rust_definition_is_todays_byte_for_byte():
                                                   "word_set_tracking", "word_changes", "word_comments",
                                                   "word_set_text", "replace_text", "word_format_table",
                                                   "word_lists", "word_fields", "word_format", "word_styles",
-                                                  "read_batch"]
+                                                  "word_template", "read_batch"]
     assert json.loads(ooxml_core.tool_specs("docx"))[0] == json.loads(GOLDEN.read_text(encoding="utf-8"))
 
 
