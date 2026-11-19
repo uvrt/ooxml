@@ -1,5 +1,6 @@
 //! Owns: resolution -- from what each level declares to what Word applies: the cascade
-//! (`cascade`, `run`), tables (`table`), faces and sizes per character slot (`fonts`) --
+//! (`cascade`, `run`), tables (`table`), faces and sizes per character slot (`fonts`),
+//! where each resolved value came from (`origin`: the `*_traced` resolutions) --
 //! and [`Resolver`], which memoises resolved formats by their inputs (a document's
 //! thousands of paragraphs and runs have a few dozen distinct ones) for as long as the
 //! parts they resolve against are unchanged.
@@ -8,16 +9,21 @@
 
 mod cascade;
 mod fonts;
+mod origin;
 mod run;
 mod table;
 
-pub use cascade::{banded, merge, resolve_paragraph, ParagraphInput, Sources, AUTOSPACING_TWIPS};
+pub use cascade::{
+    banded, merge, resolve_paragraph, resolve_paragraph_traced, ParagraphInput, Sources, AUTOSPACING_TWIPS,
+};
 pub use fonts::{
     character_format, complex_script, slot_for, theme_face, CharacterFormat, Slot, APPLICATION_HALF_POINTS,
 };
-pub use run::{resolve_run, RunInput};
+pub use origin::{Holder, Level, Origin, Origins, Trace};
+pub use run::{resolve_run, resolve_run_traced, RunInput};
 pub use table::{
-    border_twips, drawn, edge_winner, fitted_grid, resolve_table, Edge, ResolvedCell, ResolvedRow, ResolvedTable, SIDES,
+    border_twips, drawn, edge_winner, fitted_grid, resolve_table, resolve_table_traced, Edge, ResolvedCell,
+    ResolvedRow, ResolvedTable, TableOrigins, SIDES,
 };
 
 use crate::document::{Context, ResolvedParagraph};

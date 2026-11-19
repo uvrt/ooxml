@@ -9,6 +9,7 @@
 //! Must not: size columns or rows (layout, L3).
 
 use super::cascade::{banded, Sources};
+use super::origin::{Holder, Level, Origin, Trace};
 use crate::model::Table;
 use crate::styles::{Style, StyleKind};
 use crate::value::{joined, key, Border, Props, Text, Value};
@@ -187,10 +188,57 @@ fn merged(
     at: Option<(&Regions<'_>, usize, usize)>,
     regions: bool,
 ) -> Props {
+    merged_traced::<()>(chain, attribute, direct, conditions, at, regions).0
+}
+
+impl Attribute {
+    fn holder(self) -> Holder {
+        match self {
+            Attribute::Table => Holder::Table,
+            Attribute::Row => Holder::Row,
+            Attribute::Cell => Holder::Cell,
+        }
+    }
+}
+
+/// A region's cell properties for one cell ([`region_borders`]), with each key's origin:
+/// a side read from an inside line says so.
+fn region_piece<T: Trace>(props: &Props, outer: Option<[bool; 4]>, origin: impl Fn() -> Origin) -> (Props, T) {
+    let mut trace = T::default();
+    let Some(outer) = outer else {
+        trace.declare(props, &origin);
+        return (props.clone(), trace);
+    };
+    let piece = region_borders(props, outer);
+    if !T::RECORDS {
+        return (piece, trace);
+    }
+    let origin = origin();
+    trace.declare(&piece, || origin);
+    for (side, on_edge) in SIDES.iter().zip(outer) {
+        if !on_edge && piece.contains_key(joined("tcBorders", side).as_ref()) {
+            trace.set(&joined("tcBorders", side), Origin { inside: true, ..origin });
+        }
+    }
+    (piece, trace)
+}
+
+fn merged_traced<T: Trace>(
+    chain: &[Arc<Style>],
+    attribute: Attribute,
+    direct: &Props,
+    conditions: &[Text],
+    at: Option<(&Regions<'_>, usize, usize)>,
+    regions: bool,
+) -> (Props, T) {
     let conditions = banded(chain, conditions);
+    let holder = attribute.holder();
     let mut out = Props::new();
+    let mut trace = T::default();
     for style in chain {
-        out.extend(part(style, attribute).iter().map(|(k, v)| (k.clone(), v.clone())));
+        let own = part(style, attribute);
+        out.extend(own.iter().map(|(k, v)| (k.clone(), v.clone())));
+        trace.declare(own, || Origin::style(Level::TableStyle, style, holder));
         if !regions {
             continue;
         }
@@ -199,15 +247,16 @@ fn merged(
                 continue;
             };
             let props = region_part(region, attribute);
-            let piece = match at {
-                Some((r, row, cell)) => region_borders(props, r.outer(row, cell, condition)),
-                None => props.clone(),
-            };
+            let outer = at.map(|(r, row, cell)| r.outer(row, cell, condition));
+            let origin = || Origin::region(Level::TableStyle, style, condition, holder);
+            let (piece, from) = region_piece::<T>(props, outer, origin);
+            trace.absorb(&from, &piece);
             out.extend(piece);
         }
     }
     out.extend(direct.iter().map(|(k, v)| (k.clone(), v.clone())));
-    out
+    trace.declare(direct, || Origin::at(Level::Direct, holder));
+    (out, trace)
 }
 
 fn margin(value: Option<&Value>) -> i64 {
@@ -384,13 +433,13 @@ impl Sources<'_> {
     }
 }
 
-fn resolve_row(
+fn resolve_row<T: Trace>(
     chain: &[Arc<Style>],
     table: &Table,
     r: usize,
     named: &[Vec<Vec<Text>>],
     properties: &Props,
-) -> ResolvedRow {
+) -> (ResolvedRow, Vec<T>) {
     let regions = Regions { named };
     let empty = Props::new();
     let row_direct = table.row_properties.get(r).unwrap_or(&empty);
@@ -405,6 +454,7 @@ fn resolve_row(
     let grid_after = int(&row_properties, "gridAfter").unwrap_or(0);
     let mut column = grid_before;
     let mut cells = Vec::new();
+    let mut traces = Vec::new();
     let count = table.rows.get(r).map_or(0, |row| row.len());
     for c in 0..count {
         let direct = table
@@ -414,7 +464,8 @@ fn resolve_row(
             .unwrap_or(&empty);
         let conditions = named.get(r).and_then(|row| row.get(c)).cloned().unwrap_or_default();
         let at = (!conditions.is_empty()).then_some((&regions, r, c));
-        let props = merged(chain, Attribute::Cell, direct, &conditions, at, true);
+        let (props, trace) = merged_traced::<T>(chain, Attribute::Cell, direct, &conditions, at, true);
+        traces.push(trace);
         let span = int(&props, "gridSpan").filter(|s| *s != 0).unwrap_or(1).max(1);
         let path = table
             .cell_paths
@@ -438,32 +489,48 @@ fn resolve_row(
         }));
         column += span;
     }
-    ResolvedRow {
+    let row = ResolvedRow {
         index: r,
         properties: row_properties,
         cells,
         grid_before,
         grid_after,
-    }
+    };
+    (row, traces)
+}
+
+/// Where a table's resolved values came from: its properties' and each cell's
+/// ([`ResolvedCell::properties`]), by row and cell.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TableOrigins<T> {
+    /// The table's properties'.
+    pub table: T,
+    /// Each cell's, by row and index.
+    pub cells: Vec<Vec<T>>,
 }
 
 /// A table's resolved formats.
 pub fn resolve_table(src: &Sources<'_>, table: &Table) -> ResolvedTable {
+    resolve_table_traced::<()>(src, table).0
+}
+
+/// [`resolve_table`], with where each value came from.
+pub fn resolve_table_traced<T: Trace>(src: &Sources<'_>, table: &Table) -> (ResolvedTable, TableOrigins<T>) {
     let style_id = src.table_style_of(table);
     let chain = src
         .styles
         .map(|s| s.chain(style_id.as_deref(), StyleKind::Table))
         .unwrap_or_default();
-    let properties = merged(&chain, Attribute::Table, &table.properties, &[], None, false);
+    let (properties, table_trace) = merged_traced::<T>(&chain, Attribute::Table, &table.properties, &[], None, false);
     let indent_stated = table.properties.contains_key("tblInd") || chain.iter().any(|s| s.table.contains_key("tblInd"));
     let named: Vec<Vec<Vec<Text>>> = table
         .conditions
         .iter()
         .map(|row| row.iter().map(|cell| banded(&chain, cell)).collect())
         .collect();
-    let mut rows: Vec<ResolvedRow> = (0..table.rows.len())
-        .map(|r| resolve_row(&chain, table, r, &named, &properties))
-        .collect();
+    let (mut rows, cell_traces): (Vec<ResolvedRow>, Vec<Vec<T>>) = (0..table.rows.len())
+        .map(|r| resolve_row::<T>(&chain, table, r, &named, &properties))
+        .unzip();
     let (grid, mismatched) = fitted_grid(&table.grid, &rows);
     let columns = if grid.is_empty() {
         rows.iter()
@@ -480,11 +547,16 @@ pub fn resolve_table(src: &Sources<'_>, table: &Table) -> ResolvedTable {
         }
         settle_edges(row);
     }
-    ResolvedTable {
+    let resolved = ResolvedTable {
         properties,
         rows,
         indent_stated,
         grid,
         mismatched,
-    }
+    };
+    let origins = TableOrigins {
+        table: table_trace,
+        cells: cell_traces,
+    };
+    (resolved, origins)
 }

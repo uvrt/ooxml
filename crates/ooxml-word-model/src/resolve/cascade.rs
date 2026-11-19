@@ -10,7 +10,8 @@
 //!
 //! Must not: memoise (`crate::resolve::Resolver` does), or read XML.
 
-use crate::numbering::{Level, Numbering};
+use super::origin::{Holder, Level, Origin, Trace};
+use crate::numbering::{Level as ListLevelDef, Numbering};
 
 use crate::settings::Settings;
 use crate::styles::{Style, StyleKind, StyleSheet};
@@ -90,6 +91,17 @@ pub enum Part {
     Run,
 }
 
+impl Part {
+    /// The properties element it reads.
+    #[must_use]
+    pub fn holder(self) -> Holder {
+        match self {
+            Part::Paragraph => Holder::Paragraph,
+            Part::Run => Holder::Run,
+        }
+    }
+}
+
 /// `conditions` with the band positions named against the table style chain: a row `n`
 /// rows into the banded ones is in `band1Horz` when `n / size` is even, `band2Horz` when
 /// odd (or negative); no size stated (or 0): no band.
@@ -129,32 +141,37 @@ pub fn banded(chain: &[Arc<Style>], conditions: &[crate::value::Text]) -> Vec<cr
 }
 
 /// One style level: its chain merged root first, each style's regions for `conditions`
-/// after its own properties.
-pub fn flatten(chain: &[Arc<Style>], part: Part, conditions: &[crate::value::Text]) -> Props {
+/// after its own properties; with where each key came from at `level`.
+pub fn flatten_traced<T: Trace>(
+    chain: &[Arc<Style>],
+    part: Part,
+    conditions: &[crate::value::Text],
+    level: Level,
+) -> (Props, T) {
+    let holder = part.holder();
     let mut layer = Props::new();
+    let mut trace = T::default();
     for style in chain {
-        merge(
-            &mut layer,
-            if part == Part::Paragraph {
-                &style.paragraph
-            } else {
-                &style.run
-            },
-        );
+        let own = if part == Part::Paragraph {
+            &style.paragraph
+        } else {
+            &style.run
+        };
+        merge(&mut layer, own);
+        trace.declare(own, || Origin::style(level, style, holder));
         for condition in conditions {
             if let Some(region) = style.conditional.get(condition) {
-                merge(
-                    &mut layer,
-                    if part == Part::Paragraph {
-                        &region.paragraph
-                    } else {
-                        &region.run
-                    },
-                );
+                let props = if part == Part::Paragraph {
+                    &region.paragraph
+                } else {
+                    &region.run
+                };
+                merge(&mut layer, props);
+                trace.declare(props, || Origin::region(level, style, condition, holder));
             }
         }
     }
-    layer
+    (layer, trace)
 }
 
 impl Sources<'_> {
@@ -185,20 +202,20 @@ impl Sources<'_> {
         self.styles.map(|s| s.chain(id, kind)).unwrap_or_default()
     }
 
-    fn level(&self, num_id: Option<i64>, ilvl: i64) -> Option<&Arc<Level>> {
+    fn level(&self, num_id: Option<i64>, ilvl: i64) -> Option<&Arc<ListLevelDef>> {
         self.numbering.level(num_id.filter(|n| *n != 0)?, ilvl)
     }
 
-    fn table_layer(
+    fn table_layer<T: Trace>(
         &self,
         input_table: Option<&str>,
         conditions: &[crate::value::Text],
         part: Part,
-    ) -> Option<(crate::value::Text, Props)> {
+    ) -> Option<(Props, T)> {
         let id = self.table_style(input_table)?;
         let chain = self.chain(Some(&id), StyleKind::Table);
         let named = banded(&chain, conditions);
-        Some((id, flatten(&chain, part, &named)))
+        Some(flatten_traced(&chain, part, &named, Level::TableStyle))
     }
 }
 
@@ -273,37 +290,57 @@ fn numbering_layer(
 
 /// A paragraph's own properties (`w:pPr`), through the whole hierarchy.
 pub fn resolve_paragraph(src: &Sources<'_>, input: &ParagraphInput<'_>) -> Props {
+    resolve_paragraph_traced::<()>(src, input).0
+}
+
+/// [`resolve_paragraph`], with where each value came from.
+pub fn resolve_paragraph_traced<T: Trace>(src: &Sources<'_>, input: &ParagraphInput<'_>) -> (Props, T) {
     let mut layer = Props::new();
+    let mut trace = T::default();
     if let Some(sheet) = src.styles {
         merge(&mut layer, &sheet.paragraph_defaults);
+        trace.declare(&sheet.paragraph_defaults, || {
+            Origin::at(Level::DocDefaults, Holder::Paragraph)
+        });
     }
-    if let Some((_, table)) = src.table_layer(input.table_style, input.conditions, Part::Paragraph) {
+    if let Some((table, from)) = src.table_layer::<T>(input.table_style, input.conditions, Part::Paragraph) {
         merge(&mut layer, &table);
+        trace.absorb(&from, &table);
     }
     let style_id = src.paragraph_style(input.style_id);
-    let style_layer = flatten(
+    let (style_layer, style_from) = flatten_traced::<T>(
         &src.chain(style_id.as_deref(), StyleKind::Paragraph),
         Part::Paragraph,
         &[],
+        Level::ParagraphStyle,
     );
     let (numbering, direct_numbering, state) = numbering_layer(src, style_id.as_deref(), &style_layer, input.direct);
+    let numbered = Origin::at(Level::Numbering, Holder::Paragraph);
     if !direct_numbering {
         merge(&mut layer, &numbering);
+        trace.declare(&numbering, || numbered);
     }
     merge(&mut layer, &style_layer);
+    trace.absorb(&style_from, &style_layer);
     if direct_numbering {
         merge(&mut layer, &numbering);
+        trace.declare(&numbering, || numbered);
     }
     merge(&mut layer, input.direct);
+    trace.declare(input.direct, || Origin::at(Level::Direct, Holder::Paragraph));
+    let mut set = |layer: &mut Props, k: &'static str, v: Value, origin: Origin| {
+        layer.insert(Key::Borrowed(k), v);
+        trace.set(&Key::Borrowed(k), origin);
+    };
     if state.single {
-        layer.insert(Key::Borrowed("numPr.ilvl"), Value::Int(0));
+        set(&mut layer, "numPr.ilvl", Value::Int(0), numbered);
     }
     if state.missing {
-        layer.insert(Key::Borrowed("ind.firstLine"), Value::Int(0));
-        layer.insert(Key::Borrowed("ind.hanging"), Value::Int(0));
+        set(&mut layer, "ind.firstLine", Value::Int(0), numbered);
+        set(&mut layer, "ind.hanging", Value::Int(0), numbered);
     }
     if state.unnumbered {
-        layer.insert(Key::Borrowed("numPr.numId"), Value::Int(0));
+        set(&mut layer, "numPr.numId", Value::Int(0), numbered);
     }
     if !src.settings.option("doNotUseHTMLParagraphAutoSpacing") {
         for (flag, side) in [
@@ -311,9 +348,14 @@ pub fn resolve_paragraph(src: &Sources<'_>, input: &ParagraphInput<'_>) -> Props
             ("spacing.afterAutospacing", "spacing.after"),
         ] {
             if layer.get(flag).is_some_and(Value::truthy) {
-                layer.insert(Key::Borrowed(side), Value::Int(AUTOSPACING_TWIPS));
+                set(
+                    &mut layer,
+                    side,
+                    Value::Int(AUTOSPACING_TWIPS),
+                    Origin::at(Level::Application, Holder::Paragraph),
+                );
             }
         }
     }
-    layer
+    (layer, trace)
 }
