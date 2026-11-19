@@ -18,7 +18,8 @@ use ooxml_xml::{Element, HeadPatch, Node, NodePath, QName};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
-const KINDS: &[&str] = &[
+/// Every revision record's local name (docx-agent's `REVISION_KINDS_ALL`).
+pub(crate) const KINDS: &[&str] = &[
     "ins",
     "del",
     "moveFrom",
