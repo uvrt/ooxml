@@ -1,13 +1,13 @@
 //! Owns: `word_headers_footers` (docx-agent's `tools/structure.py`,
 //! `word_headers_footers`): its definition and its edits through the edit core's story
-//! commands. A page number is a field (`word_fields`' port): not yet, said in `unported`.
+//! commands; a page number after the text, a field (`SetStoryNumbered`).
 //!
 //! Must not: change the document but through a command.
 
 use super::common::{call, outcome, policy, refused, Outcome};
 use crate::review::Editing;
-use ooxml_tools::{ArgEnum, Done, ToolArgs, ToolResult};
-use ooxml_word_edit::{LinkToPrevious, SetStoryText, UnlinkFromPrevious};
+use ooxml_tools::{ArgEnum, ToolArgs, ToolResult};
+use ooxml_word_edit::{LinkToPrevious, SetStoryNumbered, SetStoryText, StoryNumber, UnlinkFromPrevious};
 use serde_json::{json, Value};
 
 /// Which story.
@@ -207,12 +207,6 @@ fn set(args: &WordHeadersFooters, editing: &Editing<'_>, story: &Story) -> ToolR
     } = story;
     let (which, kind) = (*which, *kind);
     let editor = editing.editor;
-    if args.page_number.is_some_and(|p| p != PageNumber::None) {
-        let mut done = Done::new(String::new());
-        done.unported
-            .push("a page number in a header or footer (a field)".to_owned());
-        return ToolResult::done(done);
-    }
     let command = SetStoryText {
         section: section.clone(),
         which: which.to_owned(),
@@ -220,15 +214,48 @@ fn set(args: &WordHeadersFooters, editing: &Editing<'_>, story: &Story) -> ToolR
         text: args.text.clone().unwrap_or_default(),
         policy: policy(editing),
     };
-    match editor.run(editing.caller, &command) {
+    let summary = format!("Set the {kind} {which} of {section}");
+    let number = match args.page_number {
+        Some(PageNumber::AfterText) => Some(StoryNumber::Page),
+        Some(PageNumber::PageXOfY) => Some(StoryNumber::PageOfPages),
+        Some(PageNumber::None) | None => None,
+    };
+    let Some(number) = number else {
+        return match editor.run(editing.caller, &command) {
+            Ok(done) => {
+                let story = done.out.story.clone();
+                let steps: Vec<Outcome> = done.out.steps.into_iter().map(Outcome::from).collect();
+                outcome(&steps, summary, Some(json!({"story": story})))
+            }
+            Err(error) => refused(error, way.clone()),
+        };
+    };
+    let today = ooxml_word_edit::Day::parse(editing.date).unwrap_or(ooxml_word_edit::Day {
+        year: 1970,
+        month: 1,
+        day: 1,
+    });
+    let numbered = SetStoryNumbered {
+        text: command,
+        number,
+        today,
+        layout: editing.layout,
+    };
+    match editor.run(editing.caller, &numbered) {
         Ok(done) => {
-            let story = done.out.story.clone();
-            let steps: Vec<Outcome> = done.out.steps.into_iter().map(Outcome::from).collect();
-            outcome(
-                &steps,
-                format!("Set the {kind} {which} of {section}"),
-                Some(json!({"story": story})),
-            )
+            let out = done.out;
+            let story = out.story.story.clone();
+            let mut steps: Vec<Outcome> = out.story.steps.into_iter().map(Outcome::from).collect();
+            if let Some(typed) = out.typed {
+                steps.push(Outcome {
+                    id: typed.id,
+                    changed: true,
+                    renamed: typed.renamed,
+                    ..Outcome::default()
+                });
+            }
+            steps.extend(out.fields.into_iter().map(Outcome::from));
+            outcome(&steps, summary, Some(json!({"story": story})))
         }
         Err(error) => refused(error, way.clone()),
     }

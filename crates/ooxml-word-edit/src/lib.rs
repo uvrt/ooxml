@@ -41,6 +41,7 @@ mod delete_write;
 mod doc;
 mod editor;
 mod error;
+mod fields;
 pub mod find;
 mod format;
 mod inline;
@@ -92,6 +93,10 @@ pub use delete::{BlockDeleted, DeleteBlock};
 pub use doc::{Change, Draw, DrawFrom, Key, ModelError, Shared, WordDoc};
 pub use editor::{EditTiming, Edited, Editor};
 pub use error::{EditError, Result};
+pub use fields::{
+    fields, format_date, Day, FieldEdited, FieldInfo, FieldLayout, FieldPlace, InsertCaption, InsertCrossReference,
+    InsertField, InsertToc, LaidFields, PageShows, SetStoryNumbered, StoryNumber, StoryNumbered, Unknown, UpdateFields,
+};
 pub use format::{
     check as check_formatting, differs, known_style, occurrences, range_text, theme_color_name, FormatEdit, FormatPlan,
     FormatStep, Formatted, Like, LikeDone, Occurrence, ParagraphLook, Property, Setting, Value, KEEPS_BLOCKS,

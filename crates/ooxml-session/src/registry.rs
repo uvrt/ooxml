@@ -43,6 +43,8 @@ pub struct Call<'a> {
     pub(crate) cancel: &'a dyn Cancel,
     /// The revision date edits made now carry (the session's clock, to the minute).
     pub(crate) date: String,
+    /// The host's layout of the document's versions.
+    pub(crate) layout: Option<&'a dyn ooxml_word_edit::FieldLayout>,
 }
 
 impl Call<'_> {
@@ -185,6 +187,8 @@ impl<T: ToolArgs> Tool for EditHandler<T> {
             tracking,
             doc: &doc,
             cancel: call.cancel,
+            date: &call.date,
+            layout: call.layout,
         };
         match &self.run {
             EditRun::Plain(run) => run(&args, &editing),
@@ -274,6 +278,10 @@ impl Registry {
         registry.register(Arc::new(EditHandler::<ooxml_tools_word::WordLists>::new(
             &[DocKind::Docx],
             ooxml_tools_word::word_lists,
+        )));
+        registry.register(Arc::new(EditHandler::<ooxml_tools_word::WordFields>::new(
+            &[DocKind::Docx],
+            ooxml_tools_word::word_fields,
         )));
         registry.register(Arc::new(EditHandler::<ooxml_tools_word::WordFormat>::new(
             &[DocKind::Docx],

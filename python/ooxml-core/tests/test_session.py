@@ -71,9 +71,9 @@ def test_refusals_are_replies_and_session_errors_are_exceptions():
     assert missing["error"] == {"code": "not_found", "message": "no open document 'd5'", "field": "doc",
                                 "valid_options": ["d1"]}
     assert call(session, "nope", {})["error"]["valid_options"] == [
-        "describe", "find_text", "read_batch", "replace_text", "word_changes", "word_comments", "word_format",
-        "word_format_table", "word_inspect", "word_lists", "word_read", "word_set_text", "word_set_tracking",
-        "word_styles"]
+        "describe", "find_text", "read_batch", "replace_text", "word_changes", "word_comments", "word_fields",
+        "word_format", "word_format_table", "word_inspect", "word_lists", "word_read", "word_set_text",
+        "word_set_tracking", "word_styles"]
     text, _, _ = session.call("describe", "{not json")
     assert json.loads(text)["error"]["code"] == "invalid_arguments"
     assert len(session.call("describe", json.dumps({"doc": doc}), limit=60)[0]) <= 60 + 100
@@ -111,8 +111,8 @@ def test_tool_specs_are_the_exports():
     specs = json.loads(ooxml_core.tool_specs("docx"))
     assert [s["name"] for s in specs] == ["describe", "word_read", "word_inspect", "find_text", "word_set_tracking",
                                           "word_changes", "word_comments", "word_set_text", "replace_text",
-                                          "word_format_table", "word_lists", "word_format", "word_styles",
-                                          "read_batch"]
+                                          "word_format_table", "word_lists", "word_fields", "word_format",
+                                          "word_styles", "read_batch"]
     assert specs == json.loads(ooxml_core.Session().tool_specs("docx"))
     assert json.loads(ooxml_core.tool_specs("pptx")) == []
     with pytest.raises(ValueError):

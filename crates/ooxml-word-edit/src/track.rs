@@ -159,6 +159,28 @@ fn split_container(work: &mut Work, container: Id, index: usize, stamp: &mut Sta
     rest
 }
 
+/// Move a paragraph-level element (a hyperlink, a simple field) out of the revision
+/// containers it sits in, splitting each around it (docx-agent's
+/// `place_outside_revisions`): a `w:ins` or `w:del` holds runs, not such elements (Word
+/// drops a hyperlink it finds in one: measured).
+pub(crate) fn place_outside_revisions(work: &mut Work, node: Id, stamp: &mut Stamp) {
+    while let Some(parent) = work.parent(node).filter(|p| is_container(work, *p)) {
+        let index = work.index(node).unwrap_or(0);
+        let length = work.children(parent).len();
+        if 0 < index && index + 1 < length {
+            split_container(work, parent, index + 1, stamp);
+            work.add_next(parent, node);
+        } else if index == 0 {
+            work.add_previous(parent, node);
+        } else {
+            work.add_next(parent, node);
+        }
+        if !work.children(parent).iter().any(|c| work.is_element(*c)) {
+            work.remove(parent);
+        }
+    }
+}
+
 /// Track the insertion of run-level `nodes` at `parent[index]`.
 pub(crate) fn insert_nodes(work: &mut Work, mut parent: Id, mut index: usize, nodes: &[Id], stamp: &mut Stamp) {
     let owner_of = |work: &Work, p: Id| {
