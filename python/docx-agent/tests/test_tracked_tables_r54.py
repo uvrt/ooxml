@@ -119,6 +119,7 @@ def test_render_draws_a_tracked_column_deletion_as_accept_all_leaves_it(box):
     assert _svg(tracked) == _svg(accepted.to_bytes())
 
 
+@pytest.mark.usefixtures("python_owned")   # the application's own edit: not yet an owned document's step
 def test_an_inserted_cell_is_left_out_of_the_original_view(box):
     session, table = _opened(box)
     with session.lock(["d1"]) as [entry]:      # the application's own change

@@ -269,7 +269,9 @@ def _named(call: Any) -> Any:
     if owned is None:
         return call.document
     if owned.view_current and owned.version == entry.version:
-        return owned.document
+        # (The view as held: reading it through the entry would open the step of a call
+        # changing it meanwhile, in this call's thread.)
+        return owned.held
     return None
 
 

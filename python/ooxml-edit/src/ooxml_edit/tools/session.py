@@ -1511,10 +1511,6 @@ class Session:
             for entry in entries:
                 stack.enter_context(entry.lock)
                 held.append((entry, entry.version, stack.enter_context(entry.watch())))
-                if entry.owned:
-                    # Lane P2c5: what the application changes in an owned document's view is
-                    # its owner's step ("library"), as a Python tool's is.
-                    stack.enter_context(entry.batch())
             try:
                 yield entries
             finally:

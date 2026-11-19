@@ -227,6 +227,7 @@ def test_any_failure_in_the_layout_is_layout_failed(toolbox, monkeypatch):
     assert "IndexError" in rendered.error.message and rendered.error.valid_options == []
 
 
+@pytest.mark.usefixtures("python_owned")   # the application's own edit: not yet an owned document's step
 @pytest.mark.usefixtures("python_layout")  # lane L4: docx2svg's Python layout's failures and relaid causes
 def test_a_version_that_failed_fails_again_at_once_logged_once(toolbox, monkeypatch, caplog):
     from docx_agent.liveview import view
