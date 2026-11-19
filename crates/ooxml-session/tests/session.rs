@@ -182,6 +182,7 @@ fn refusals_carry_their_way_out() {
             "word_compare_blocks",
             "word_edit_table",
             "word_fields",
+            "word_follow_sample",
             "word_format",
             "word_format_table",
             "word_inspect",

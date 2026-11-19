@@ -366,7 +366,7 @@ fn removed_text(b: &Typed) -> String {
 }
 
 /// A clock for a preview's private store, whose timings nobody reads.
-struct Still;
+pub(crate) struct Still;
 
 impl Clock for Still {
     fn monotonic(&self) -> Duration {

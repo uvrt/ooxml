@@ -15,6 +15,7 @@ mod insertion;
 pub(crate) use insertion::insert_content;
 mod lists;
 mod parse;
+pub(crate) use parse::py_space;
 mod table;
 mod writer;
 
