@@ -12,6 +12,7 @@
 //! session does). Today's tool-name aliases and action hints need the toolbox: lane P0d.
 
 use crate::error::{Refusal, ToolError, TryCall, WayOut};
+use crate::places::Places;
 use crate::schema::Kind;
 use crate::spec::ToolSpec;
 use crate::validate::{example, is_empty, validate, CallError, Problem, Retry};
@@ -161,6 +162,9 @@ impl ToolSpec {
                     renamed(&mut arguments, name, &meant, "", notes)?;
                 }
             }
+            if let Some(field) = &places.items {
+                self.items_placed(&mut arguments, places, field, notes)?;
+            }
         }
         Ok(arguments)
     }
@@ -181,6 +185,31 @@ impl ToolSpec {
             map.insert(name.to_owned(), value.clone());
         }
         arguments
+    }
+
+    /// Each item of the array argument `field` with its places read as [`Places::meant`]
+    /// reads a call's (`items[0].after` read as `at`).
+    fn items_placed(
+        &self,
+        arguments: &mut Value,
+        places: &Places,
+        field: &str,
+        notes: &mut Vec<String>,
+    ) -> Result<(), ToolError> {
+        let Some(Value::Array(items)) = arguments.as_object_mut().and_then(|m| m.get_mut(field)) else {
+            return Ok(());
+        };
+        for (index, item) in items.iter_mut().enumerate() {
+            for name in &places.names {
+                let Some(map) = item.as_object().filter(|m| m.get(name).is_some_and(|v| !v.is_null())) else {
+                    continue;
+                };
+                if let Some(meant) = places.meant(&self.name, name, map)? {
+                    renamed(item, name, &meant, &format!("{field}[{index}]"), notes)?;
+                }
+            }
+        }
+        Ok(())
     }
 
     /// An array or object argument given as a string holding its JSON, parsed; inside such

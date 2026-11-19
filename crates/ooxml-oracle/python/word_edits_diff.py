@@ -370,7 +370,48 @@ def _text_tool_cases(document, targets: list[str]) -> list[dict]:
     tables = document._index(document.package.document_part()).tables
     if tables:
         out += [call("word_set_text", target=f"{tables[0].id}/c0,0", text="Cell text"),
-                call("word_set_text", target=tables[0].id, text="A table")]
+                call("word_set_text", target=tables[0].id, text="A table"),
+                call("word_set_text", target=f"{tables[0].id}/c0,0", text="Two\nlines **here**"),
+                call("word_delete", target=tables[0].id)]
+    return out + _insert_delete_cases(document, targets)
+
+
+def _insert_delete_cases(document, targets: list[str]) -> list[dict]:
+    """``word_insert_text`` and ``word_delete`` called as tools (``--text``): text beside a
+    paragraph, a range, a position and a word found once, several items, refs; text, a range,
+    a block and a span deleted, the space a deletion leaves doubled, a heading whose content
+    stays; and the refusals (no place, both forms, an address as ref, an at that is no side)."""
+    def call(tool, **arguments):
+        return {"op": "tool", "tool": tool, "arguments": {"doc": "d1", **arguments}}
+
+    out = [call("word_insert_text", text="x"), call("word_insert_text", text="x", items=[{"text": "y"}]),
+           call("word_insert_text", items=[]), call("word_insert_text", text="x", ref="p:00000001@0"),
+           call("word_insert_text", text="x", at="end"), call("word_insert_text", find="zz-nowhere-zz", text="x"),
+           call("word_delete"), call("word_delete", find="zz-nowhere-zz"), call("word_delete", target="p:7FFFFFFE")]
+    for target in targets:
+        text = document.paragraph(target).text
+        out += [call("word_insert_text", target=target, text=" added"),
+                call("word_insert_text", target=target, where="before", text="Start: ", ref="first"),
+                call("word_insert_text", at=f"{target}@0", text="«New» "),
+                call("word_insert_text", at=f"before:{target}", where="after", text="x"),
+                call("word_delete", target=target),
+                call("word_delete", target=target, force=True)]
+        if len(text) > 4:
+            out += [call("word_insert_text", at=f"after:{target}@1:3", text="--"),
+                    call("word_delete", target=f"{target}@1:3"),
+                    call("word_delete", target=f"{target}@0:2", collapse_space=True)]
+        words = [w for w in text.split() if w.isalpha() and len(w) > 3]
+        for word in words[:2]:
+            out += [call("word_insert_text", find=word, text=" (more)"),
+                    call("word_insert_text", find=word, where="before", text="very "),
+                    call("word_delete", find=word), call("word_delete", find=word, collapse_space=True),
+                    call("word_delete", find=word, target=target)]
+    if len(targets) > 1:
+        out += [call("word_insert_text", items=[{"target": targets[0], "text": "One "},
+                                                 {"at": f"{targets[-1]}@0", "text": "Two ", "ref": "two"}]),
+                call("word_insert_text", items=[{"target": targets[0], "text": "One"}, {"text": "Two"}]),
+                call("word_delete", target=f"{targets[0]}..{targets[1]}"),
+                call("word_delete", target=f"{targets[0]}..{targets[-1]}", force=True)]
     return out
 
 

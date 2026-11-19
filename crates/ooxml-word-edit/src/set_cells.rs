@@ -311,6 +311,7 @@ fn missing(field: &str) -> EditError {
     EditError::Argument {
         field: field.to_owned(),
         message: format!("{field} is required"),
+        options: Vec::new(),
     }
 }
 

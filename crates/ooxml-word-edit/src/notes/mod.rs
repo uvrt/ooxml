@@ -11,6 +11,7 @@
 mod change;
 mod edit;
 mod insert;
+mod moved;
 
 pub use change::{DeleteNote, MoveNote};
 pub use edit::EditNote;

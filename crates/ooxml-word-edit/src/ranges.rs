@@ -521,3 +521,18 @@ pub(crate) fn replace_range(sink: &mut EditSink<'_, '_>, address: &str, text: &s
     let plan = plan(sink.doc(), &docx, found, text)?;
     replace_ranges(sink, vec![plan], Keep::First)
 }
+
+/// The range `(first, last, start, end)` of `docx` (the sink's version) replaced by `text`,
+/// the first replaced character's formatting kept, as one write of an edit through `sink`.
+///
+/// # Errors
+/// The range's refusal.
+pub(crate) fn replace_place(
+    sink: &mut EditSink<'_, '_>,
+    docx: &Docx,
+    (first, last, start, end): (Found, Option<Found>, usize, usize),
+    text: &str,
+) -> Result<RangesEdited> {
+    let plan = plan(sink.doc(), docx, (first, last, start, end), text)?;
+    replace_ranges(sink, vec![plan], Keep::First)
+}

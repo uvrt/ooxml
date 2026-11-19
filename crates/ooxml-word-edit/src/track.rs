@@ -26,7 +26,7 @@ fn is_container(work: &Work, node: Id) -> bool {
 }
 
 /// The innermost revision container `node` is in, below its paragraph.
-fn revision_owner(work: &Work, node: Id) -> Option<Id> {
+pub(crate) fn revision_owner(work: &Work, node: Id) -> Option<Id> {
     let mut parent = work.parent(node);
     while let Some(p) = parent {
         if work.is(p, W, "p") {
