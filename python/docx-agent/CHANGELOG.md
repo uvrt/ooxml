@@ -1888,7 +1888,7 @@ revisions, 264 comments) with `tools/tracked_report_bench.py`.
   the validation delta (seconds on a long document) and the reflow -- run on the copy of
   the version it made, with the call's own layout engine, after the lock is let go; a
   change's reflow is measured from the bytes its version kept rather than serialized
-  again. On the made-up 60-page report with twelve builders and two layout workers (round
+  again. On the made-up 60-page report with twelve writers and two layout workers (round
   45 harness), the checks' wait for the lock fell from 5,138 s in all to 156 s. Results and
   bytes are 0.1.70's for the same calls one after another (tests/test_committed_reads.py
   compares every read and edit with the copies on and off; the harness's ordered run gives
@@ -2053,7 +2053,7 @@ revisions, 264 comments) with `tools/tracked_report_bench.py`.
   that role, with a note. Warnings say where a sample is in no list, or a bullet item stands
   for numbered ones. Python: `insert_markdown(..., like={1: "p:3", 2: "p:4"})`.
 - **`word_lists` `remove` on items numbered by a list of their own over a numbering style**
-  -- a builder removing a stray list's numbering, where `force` then takes every marker --
+  -- a writer removing a stray list's numbering, where `force` then takes every marker --
   now also names the `word_format` `like` call that joins the nearest earlier list at their
   level instead, keeping their marker and level.
 - With a replacement (`at: "replace:..."`, 0.1.66's kept settings), list items written
@@ -2243,9 +2243,9 @@ revisions, 264 comments) with `tools/tracked_report_bench.py`.
   newest kept whatever its size. At most 1.75 times the budget in all, plus the layouts the
   tasks running at that moment hold. The study's made-up documents, two workers, half a core
   of other load (on a machine busy with other work, so absolute times are high): six
-  builders 32.7 -> 18.2 s of CPU a document (worker CPU halved; documents per CPU-minute
-  1.84 -> 3.30), twelve builders 31.2 -> 17.7; one builder and the 11-writer report on one
-  document unchanged. Workers' largest resident memory with twelve builders 144 -> 250 MB.
+  writers 32.7 -> 18.2 s of CPU a document (worker CPU halved; documents per CPU-minute
+  1.84 -> 3.30), twelve writers 31.2 -> 17.7; one writer and the 11-writer report on one
+  document unchanged. Workers' largest resident memory with twelve writers 144 -> 250 MB.
 - With docx2svg 0.11.8, a document's first save (a settings part written again, revision
   ids) no longer lays it out whole, and `word_fields` writing the page count into a footer
   lays the document out whole with the body's measurements (where its headers and footers
@@ -3542,7 +3542,7 @@ Needs ooxml-edit 0.68.0 (`ooxml_edit.pictures`, the SVG recolouring shared with 
   `{"body", "table", "footnote", "endnote", "header", "footer", "caption"}` points
   (`docx_agent.edit.minimums`; `caption` is the Caption style's own) -- sets
   `Document.min_text_size`, which `check` reads when it is given no `min_size` (its layout
-  facts' `small_text`, each entry with its kind's `min` for a mapping) and the builders
+  facts' `small_text`, each entry with its kind's `min` for a mapping) and the tools that write content
   read too: `word_insert_markdown` and `word_edit_table` `set_cells` report `small_text`
   (and a warning) for the text they wrote that its styles make smaller. Unset (the
   default), nothing changes.
@@ -3940,7 +3940,7 @@ Needs ooxml-edit 0.68.0 (`ooxml_edit.pictures`, the SVG recolouring shared with 
   set`, a checkbox or drop-down `word_controls insert`, a header, footer or page number
   `word_headers_footers set`. A batch op may carry `comment`/`note` (N4), kept in the call
   log. Data and tests only: definitions and the strict set unchanged.
-- Several agents on one document (round 8, M1 and M2; ooxml-edit 0.46.0): a builder's, a
+- Several agents on one document (round 8, M1 and M2; ooxml-edit 0.46.0): a writer's, a
   reviewer's and an editor-in-chief's views of one shared session at once
   (`session.view(roles=..., context=...)`), each held to its own roles, in a batch too; the
   role line's accept sentence decided over the tools sent (`system_prompt(tools=...)`).

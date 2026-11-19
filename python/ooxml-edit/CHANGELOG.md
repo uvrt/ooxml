@@ -894,7 +894,7 @@ or redo, `save(entry)` for `Session.save`. docx-agent's is the Rust session.
 
 ## 0.78.0 -- unreleased
 - **`read_batch`: many reads in one call, each with its own budget** (production round 32,
-  R15). Builders read one record at a time, a model turn each, and put no reads in `batch`:
+  R15). Writers read one record at a time, a model turn each, and put no reads in `batch`:
   its description reads as an edit tool's, it changes documents (`mutates`), so a reader is
   not given it, and its reply shares one `max_result_chars`, so several large reads were cut
   as one. `shared.READ_BATCH` takes `ops` as `batch` does, every one a reading call of any
@@ -1556,7 +1556,7 @@ or redo, `save(entry)` for `Session.save`. docx-agent's is the Rust session.
   part it touched and it changed no part every page shares; otherwise -- and always in a
   format without scopes (Word documents: one body every change shares) -- it is refused
   as `entangled`, nothing changed, the message naming the later change, its version and
-  who made it ("t_add by agent=builder-2"), and saying to change it back with an edit or
+  who made it ("t_add by agent=writer-2"), and saying to change it back with an edit or
   have that caller undo first; `details.later` lists them (`version`, `tool`,
   `context`). `scope` narrows it to the caller's changes there; `steps` stop at the first
   refusal, with a warning. Redo follows the caller too: its own latest undo, refused while
@@ -1892,7 +1892,7 @@ or redo, `save(entry)` for `Session.save`. docx-agent's is the Rust session.
 ## 0.33.0 -- unreleased
 - Text facts (round 5, T4), at no cost in tool definitions: tables and charts kept where
   their values came from, text did not -- "Average 2.2 across 41 items" in a title had no
-  record of the 2.2, and builders expanded their own `{{...}}` placeholders before calling
+  record of the 2.2, and writers expanded their own `{{...}}` placeholders before calling
   the tools.
   - A *reference* in a text argument, `{{d:by_topic/door/mean}}` (dataset, row by key or
     `#3` by position, column; `{{t:checks/N-1/rating}}` in another open document, its row
@@ -1924,7 +1924,7 @@ or redo, `save(entry)` for `Session.save`. docx-agent's is the Rust session.
 
 ## 0.32.0 -- unreleased
 - A chart added with its look in one call (round 5, T2): styling one new chart took a
-  builder six turns (scale, data labels, series colours, size, text twice). `edit_chart`'s
+  writer six turns (scale, data labels, series colours, size, text twice). `edit_chart`'s
   `add` took the scale, gridlines, legend position, number format and frame already; now
   also:
   - `data_labels: true` -- `show_data_labels` on every series (their format follows the
@@ -1951,7 +1951,7 @@ or redo, `save(entry)` for `Session.save`. docx-agent's is the Rust session.
 
 ## 0.31.0 -- unreleased
 - A run of a dataset's rows as a source (round 5, T3), at no cost in tool definitions: a
-  builder who wanted rows 1-4 of a 42-row dataset on one slide had no way to name them.
+  writer who wanted rows 1-4 of a 42-row dataset on one slide had no way to name them.
   - `call.source("d:by_region/#9:#16")` gives rows 9 to 16 (from 1, the last included),
     `d:by_region/#9:` row 9 to the last, `d:by_region/#9` one row; a run given the other
     way round is the same rows. Each value keeps its sources; `Rows.address` is the run

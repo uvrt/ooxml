@@ -86,7 +86,7 @@ def _body(document: Document) -> list:
 
 
 def _edits():
-    """``(name, edit(document))``: edits of each kind a builder makes."""
+    """``(name, edit(document))``: edits of each kind a writer makes."""
 
     def text(document):
         _body(document)[4].set_text("A shorter paragraph now.")
@@ -393,7 +393,7 @@ def test_a_view_by_a_thread_holding_the_lock_lays_out_on_its_own(made, monkeypat
 
 
 def test_views_checks_and_edits_together_all_finish(made, monkeypatch):
-    """Builders at once: lone checks, read_batches, edits and the application's views and
+    """Writers at once: lone checks, read_batches, edits and the application's views and
     page drawing, a few rounds; every view consistent with the version it names."""
     _counted(monkeypatch, 0.1)
     with _toolbox() as box:

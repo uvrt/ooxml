@@ -162,7 +162,7 @@ def test_targets_join_the_samples_list_at_its_level_numbered_on(box, made):
 def test_a_nested_sample_gives_its_level_and_its_own_numbering_only_where_it_has_it(box, made):
     session, ids = made
     document = doc_of(session)
-    # A separate list of its own, as a builder's new items came out: another definition.
+    # A separate list of its own, as a writer's new items came out: another definition.
     stray = document.insert_paragraph("example three", after=ids["example2"]).id
     document.add_to_list(stray, "bullet", level=1, continue_previous=False)
     stray_num = document.list_of(stray).num_id

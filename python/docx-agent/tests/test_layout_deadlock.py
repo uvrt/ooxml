@@ -192,7 +192,7 @@ def test_lone_checks_and_a_fields_update_all_finish(made, started):
 
 
 def test_many_rounds_of_checks_reads_and_edits_all_finish(made, started):
-    """Nine callers at once, as a report's builders: lone checks, read_batches, inspects
+    """Nine callers at once, as a report's writers: lone checks, read_batches, inspects
     and edits, a few rounds."""
     box = _toolbox(workers=0)
     session = box.session()

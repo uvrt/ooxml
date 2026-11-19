@@ -1,7 +1,7 @@
 """The application's minimum text sizes, by kind of text (round 17, P6b).
 
 One setting, read by everything that judges or writes text size: ``check``'s layout facts
-(``small_text``, measured on the layout) and the builders' results (``word_insert_markdown``,
+(``small_text``, measured on the layout) and the results of the tools that write content (``word_insert_markdown``,
 ``word_edit_table``: the text they wrote that its styles make smaller, measured on the
 style cascade, as Word draws a paragraph -- no autofit).  The agent tool layer sets it from
 its format (``docx_format(min_text_size=...)``, :attr:`Document.min_text_size`); ``None`` --

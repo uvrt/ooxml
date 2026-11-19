@@ -789,8 +789,8 @@ class Document(TrackingOps, RevisionOps, TextOps, FormatOps, ListOps, LinkOps, P
     #: The application's minimum text size, points -- one number for every kind of text, or
     #: a mapping by kind, ``{"body": 10, "table": 9, "footnote": 8, "caption": 9}`` (a kind
     #: left out is not checked; :mod:`docx_agent.edit.minimums`): the agent tool layer's
-    #: ``check`` reports text drawn smaller (``small_text``), and the builders'
-    #: (``word_insert_markdown``, ``word_edit_table``) results the text they wrote that its
+    #: ``check`` reports text drawn smaller (``small_text``), and the results of the tools that write content
+    #: (``word_insert_markdown``, ``word_edit_table``) the text they wrote that its
     #: styles make smaller.  ``None`` (the default): no minimum.  The tool layer sets it from
     #: its format (``docx_format(min_text_size=10)``).
     min_text_size: "float | dict[str, float] | None" = None

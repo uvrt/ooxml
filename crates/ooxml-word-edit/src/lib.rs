@@ -37,6 +37,7 @@ mod block_checks;
 mod blocks;
 mod builtin;
 mod comments;
+mod control_delete;
 mod delete;
 mod delete_write;
 mod doc;

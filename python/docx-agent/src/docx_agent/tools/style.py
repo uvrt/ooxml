@@ -144,7 +144,7 @@ def _refuse_style_numbered(document: Any, paragraphs: list[Any]) -> None:
     joins = _joins(document, [p for ids in numbered.values() for p in ids])
     if joins:
         # Round 42, R47: items numbered by a list of their own over a numbering style --
-        # what a builder means by removing "their own" numbering is joining a list,
+        # what a writer means by removing "their own" numbering is joining a list,
         # keeping their marker and level: word_format like an item of it.
         message += ". To drop their own numbering and join an earlier list at their level instead, keeping a " \
                    "marker: " + "; ".join(f"word_format {json.dumps(call)}" for call in joins)

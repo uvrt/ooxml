@@ -110,7 +110,7 @@ the full core's 2,642); `read_batch` (ooxml-edit 0.78.0) reads many things in on
 blocks, formatting, a check -- each answered as alone, within its own size budget. The mixed tools offer only `list` (`word_styles` `describe` too), `edit_chart`
 only `read`; accepting or rejecting tracked changes is `accept`'s. A call outside the session's roles --
 in a `batch` too, op by op -- is refused naming the role it needs; a reviewer reports each
-finding with the call that would fix it, for a builder (`roles=["review", "edit"]`, or the
+finding with the call that would fix it, for a writer (`roles=["review", "edit"]`, or the
 default) to apply in one batch.
 
 Several agents on one document at once share one session -- the document, its undo
@@ -120,7 +120,7 @@ the handlers of the application's own tools as `call.caller`:
 
 ```python
 session = toolbox.session()                     # every role
-builder = session.view(roles=["review", "edit"], context={"agent": "builder-1"})
+writer = session.view(roles=["review", "edit"], context={"agent": "writer-1"})
 chief = session.view(roles=["review", "accept"], context={"agent": "chief-1"})
 toolbox.dispatch(chief, "word_set_text", args)  # refused: needs the edit role
 sent = toolbox.definitions("anthropic", roles=["review", "accept"])
