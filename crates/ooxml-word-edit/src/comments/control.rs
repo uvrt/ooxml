@@ -157,17 +157,7 @@ pub(super) fn mark_control(
     let end = make(work, "commentRangeEnd", &[("id", &id.to_string())]);
     let run = reference_run(work, id, reference, size);
     if inline {
-        let opens = work.parent(sdt) == Some(paragraph)
-            && work
-                .children(paragraph)
-                .iter()
-                .take_while(|c| **c != sdt)
-                .all(|c| !work.is_element(*c) || work.is(*c, W, "pPr"));
-        if opens {
-            place_before(work, paragraph, start);
-        } else {
-            work.add_previous(sdt, start);
-        }
+        place_start_in_line(work, sdt, paragraph, start);
         work.add_next(sdt, end);
         work.add_next(end, run);
     } else {
@@ -187,6 +177,22 @@ pub(super) fn mark_control(
         }
     }
     Ok(())
+}
+
+/// A comment's start before the control `sdt` in the line -- before its paragraph when
+/// the control opens it.
+fn place_start_in_line(work: &mut Work, sdt: Id, paragraph: Id, start: Id) {
+    let opens = work.parent(sdt) == Some(paragraph)
+        && work
+            .children(paragraph)
+            .iter()
+            .take_while(|c| **c != sdt)
+            .all(|c| !work.is_element(*c) || work.is(*c, W, "pPr"));
+    if opens {
+        place_before(work, paragraph, start);
+    } else {
+        work.add_previous(sdt, start);
+    }
 }
 
 /// The size of the text before `offset` of `paragraph` in `space`'s copy of `part`.

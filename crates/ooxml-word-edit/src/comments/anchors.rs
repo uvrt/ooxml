@@ -166,23 +166,7 @@ pub(super) fn mark(
         } => {
             let element = space.locate(&part, path).ok_or_else(gone)?;
             let work = space.get(&part).ok_or_else(gone)?;
-            let end_after = if *row {
-                let later = work
-                    .parent(element)
-                    .map(|p| work.children(p).to_vec())
-                    .unwrap_or_default()
-                    .into_iter()
-                    .skip_while(|c| *c != element)
-                    .skip(1)
-                    .any(|c| work.is(c, W, "tr"));
-                if later {
-                    element
-                } else {
-                    work.parent(element).ok_or_else(gone)?
-                }
-            } else {
-                element
-            };
+            let end_after = end_after(work, element, *row).ok_or_else(gone)?;
             let first = work.iter(element, W, &["p"]).first().copied();
             let following = following_paragraph(work, end_after);
             let Some(first) = first else {
@@ -209,6 +193,27 @@ pub(super) fn mark(
         Anchor::Control(_) => {}
     }
     Ok(())
+}
+
+/// What a comment on the table or row `element` ends after (`_add_block_comment`): a
+/// row's `w:tr` with rows after it, else the table's `w:tbl`.
+fn end_after(work: &Work, element: Id, row: bool) -> Option<Id> {
+    if !row {
+        return Some(element);
+    }
+    let later = work
+        .parent(element)
+        .map(|p| work.children(p).to_vec())
+        .unwrap_or_default()
+        .into_iter()
+        .skip_while(|c| *c != element)
+        .skip(1)
+        .any(|c| work.is(c, W, "tr"));
+    if later {
+        Some(element)
+    } else {
+        work.parent(element)
+    }
 }
 
 /// The size of the text before `offset` of the paragraph `paragraph` of `space`'s copy of

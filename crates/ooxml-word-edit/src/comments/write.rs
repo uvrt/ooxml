@@ -150,15 +150,7 @@ pub(super) fn complete(sink: &mut EditSink<'_, '_>, space: &mut Space, main: &st
         space.work(&doc, part)?;
     }
     let have_ex: HashSet<String> = entries_of(space, &extended, W15, "commentEx").into_iter().collect();
-    let mut have_ids: HashMap<String, Option<String>> = HashMap::new();
-    if let Some(work) = space.get(&ids) {
-        for e in work.children(work.root()) {
-            if work.is(*e, W16CID, "commentId") {
-                let para = work.get(*e, Some(W16CID), "paraId").unwrap_or("").to_uppercase();
-                have_ids.insert(para, work.get(*e, Some(W16CID), "durableId").map(str::to_owned));
-            }
-        }
-    }
+    let mut have_ids = durable_ids(space, &ids);
     let mut have_cex: HashSet<String> = match space.get(&extensible) {
         Some(work) => work
             .children(work.root())
@@ -224,6 +216,20 @@ pub(super) fn complete(sink: &mut EditSink<'_, '_>, space: &mut Space, main: &st
         space.mark_dirty(part);
     }
     Ok(())
+}
+
+/// Each `commentsIds` entry's durable id, by its upper-case `paraId`.
+fn durable_ids(space: &Space, ids: &str) -> HashMap<String, Option<String>> {
+    let mut out = HashMap::new();
+    if let Some(work) = space.get(ids) {
+        for e in work.children(work.root()) {
+            if work.is(*e, W16CID, "commentId") {
+                let para = work.get(*e, Some(W16CID), "paraId").unwrap_or("").to_uppercase();
+                out.insert(para, work.get(*e, Some(W16CID), "durableId").map(str::to_owned));
+            }
+        }
+    }
+    out
 }
 
 /// The upper-case `paraId`s of the `local` entries of `part` (none: no copy).

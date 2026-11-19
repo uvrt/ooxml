@@ -344,6 +344,19 @@ fn comments_are_resolved_and_deleted_with_their_replies() {
     );
 }
 
+/// An item of `add` (on `target`, ref `q`) or `reply` (to `comment`).
+fn new_item(target: Option<&str>, comment: Option<&str>, text: &str, resolve: Option<bool>) -> CommentItem {
+    CommentItem {
+        target: target.map(Into::into),
+        find: None,
+        within: None,
+        comment: comment.map(Into::into),
+        text: Some(text.into()),
+        resolve,
+        ref_name: target.map(|_| "q".into()),
+    }
+}
+
 #[test]
 fn comments_are_added_and_replied_to_with_their_parts() {
     let body = r#"<w:p w14:paraId="10000001"><w:r><w:t>Some text here</w:t></w:r></w:p>"#;
@@ -360,15 +373,7 @@ fn comments_are_added_and_replied_to_with_their_parts() {
     let added = json(&word_comments(
         &call(
             CommentAction::Add,
-            vec![CommentItem {
-                target: Some("p:10000001@5:9".into()),
-                find: None,
-                within: None,
-                comment: None,
-                text: Some("Why?".into()),
-                resolve: None,
-                ref_name: Some("q".into()),
-            }],
+            vec![new_item(Some("p:10000001@5:9"), None, "Why?", None)],
         ),
         &editing(&CallEditor::new(&editor), &opened, &caller),
     ));
@@ -397,15 +402,7 @@ fn comments_are_added_and_replied_to_with_their_parts() {
     let replied = json(&word_comments(
         &call(
             CommentAction::Reply,
-            vec![CommentItem {
-                target: None,
-                find: None,
-                within: None,
-                comment: Some(id.clone()),
-                text: Some("Because.".into()),
-                resolve: Some(true),
-                ref_name: None,
-            }],
+            vec![new_item(None, Some(&id), "Because.", Some(true))],
         ),
         &editing(&CallEditor::new(&editor), &opened, &caller),
     ));
