@@ -166,6 +166,19 @@ fn format_edits(bytes: &Arc<[u8]>, targets: &[String; 2], tracked: &RevisionPoli
         "format, 100 paragraphs",
         best(bytes, &bold(vec![span.clone()], &RevisionPolicy::Untracked)),
     );
+    let heading = |targets: Vec<String>| FormatEdit {
+        targets,
+        plan: FormatPlan {
+            paragraph_style: Some("Heading 2".into()),
+            ..FormatPlan::default()
+        },
+        cleared: false,
+        policy: RevisionPolicy::Untracked,
+    };
+    report(
+        "format, one paragraph to a heading style",
+        best(bytes, &heading(vec![middle.clone()])),
+    );
     let styled = FormatEdit {
         targets: vec![span.clone()],
         plan: FormatPlan {

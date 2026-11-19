@@ -15,6 +15,7 @@ mod edit;
 mod found;
 mod keeps;
 mod like;
+mod outline;
 mod values;
 
 pub use found::{occurrences, range_text, Occurrence};
@@ -30,9 +31,8 @@ use crate::{EditError, Result, WordDoc};
 use edit::{ParagraphOp, RangeOp, Run};
 use ooxml_store::{Command, Txn};
 use ooxml_word_model::address::{is_text_range, resolve, span_ends};
-use ooxml_word_model::docx::controls::controls;
 use ooxml_word_model::docx::numbering::{membership, Lists};
-use ooxml_word_model::docx::outline::{body_blocks, headings, Heading};
+use ooxml_word_model::docx::outline::Heading;
 use ooxml_word_model::docx::Docx;
 use ooxml_word_model::ids::Entry;
 use std::collections::BTreeSet;
@@ -133,10 +133,6 @@ fn keeps_blocks(doc: &WordDoc, docx: &Docx, address: &str) -> bool {
     !matches!(resolve(docx, &followed), Ok((_, Entry::Paragraph(_))))
 }
 
-fn outline(docx: &Docx) -> Vec<Heading> {
-    headings(&body_blocks(docx, &controls(docx)))
-}
-
 impl Command<WordDoc> for FormatEdit {
     type Out = Formatted;
     type Error = EditError;
@@ -155,7 +151,7 @@ impl Command<WordDoc> for FormatEdit {
             .iter()
             .map(|a| self.plan.keep_together.is_some() && keeps_blocks(sink.doc(), &docx, a))
             .collect();
-        let before = (self.plan.moves_outline() || self.cleared).then(|| outline(&docx));
+        let before = (self.plan.moves_outline() || self.cleared).then(|| outline::Outline::read(&docx));
         let colours = colour::ThemeColours::read(sink.doc(), &docx)?;
         let mut run = Run::new(&mut sink, colours);
         let mut out = Formatted::default();
@@ -170,7 +166,7 @@ impl Command<WordDoc> for FormatEdit {
             crate::revision_ids::make_unique(&mut sink)?;
         }
         if let Some(before) = before {
-            out.outline = Some((before, outline(&*sink.docx()?)));
+            out.outline = Some((before.headings(), before.after(&*sink.docx()?)));
         }
         Ok(out)
     }
@@ -188,6 +184,18 @@ pub fn known_style(docx: &Docx, name: &str, kind: &str) -> Result<String> {
 /// The paragraphs `address` holds now, as `(part, index)`.
 fn places(run: &Run<'_, '_, '_>, address: &str) -> Result<Vec<(String, usize)>> {
     let docx = run.sink.docx()?;
+    if is_text_range(address) {
+        // a range's ends followed where stamping renamed them (`Document.range`)
+        let span = Span::of(run.sink.doc(), &docx, &range(run.sink.doc(), &docx, address)?)?;
+        let story = docx
+            .part(&span.part)
+            .ok_or_else(|| EditError::NoPart(span.part.clone()))?;
+        return Ok(span
+            .paragraphs
+            .iter()
+            .filter_map(|p| story.ids.paragraph_at(&p.path).map(|q| (span.part.clone(), q.index)))
+            .collect());
+    }
     paragraphs_of(run.sink.doc(), &docx, address)
 }
 
@@ -224,8 +232,12 @@ fn target(
         }
     }
     if let Some(name) = &plan.paragraph_style {
+        let id = if paragraphs.is_empty() {
+            None
+        } else {
+            paragraph_style(run, name)?
+        };
         for (part, k) in &paragraphs {
-            let id = paragraph_style(run, name)?;
             steps.push(run.paragraph(part, *k, &ParagraphOp::Style(id.as_deref()))?);
         }
     }
@@ -333,11 +345,24 @@ fn on_range(run: &mut Run<'_, '_, '_>, address: &str, op: &RangeOp<'_>) -> Resul
     first.ok_or_else(|| EditError::Refused(format!("{id} holds no paragraphs")))
 }
 
+/// What a refusal to keep blocks together says they are (docx-agent's `_keep_blocks`).
+pub const KEEPS_BLOCKS: &str = "keep_together keeps the body's blocks: give a span p:A..t:B, a table or a section";
+
 /// Keep `address`'s blocks on one page, or release them (docx-agent's
 /// `keep_blocks_together`): one step, a no-op said in its warnings.
 fn keep_blocks(run: &mut Run<'_, '_, '_>, address: &str, on: bool) -> Result<FormatStep> {
     let docx = run.sink.docx()?;
-    let plan = keeps::keep_plan(run.sink.doc(), &docx, address, on)?;
+    let plan = keeps::keep_plan(run.sink.doc(), &docx, address, on).map_err(|e| {
+        let said = match e {
+            EditError::Refused(m) => m,
+            EditError::Address(a) => a.message,
+            other => other.to_string(),
+        };
+        EditError::Address(ooxml_word_model::address::AddressError::invalid(
+            format!("{address}: {said}; {KEEPS_BLOCKS}"),
+            Vec::new(),
+        ))
+    })?;
     let mut warnings = plan.warnings;
     if plan.changes.is_empty() {
         warnings.push(if on {

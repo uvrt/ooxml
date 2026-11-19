@@ -16,8 +16,8 @@ use crate::structure::common::{call, outcome, policy, Outcome};
 use ooxml_base::pyfmt::repr_str;
 use ooxml_tools::{ArgEnum, Refusal, ToolError, ToolResult, TryCall, WayOut};
 use ooxml_word_edit::{
-    known_style, paragraphs_of, FormatEdit, FormatPlan, FormatStep, Formatted, Like, ParagraphLook, Property, Setting,
-    Value as Set, WordDoc, NOT_TAKEN,
+    known_style, paragraphs_of, EditError, FormatEdit, FormatPlan, FormatStep, Formatted, Like, ParagraphLook,
+    Property, Setting, Value as Set, WordDoc, KEEPS_BLOCKS, NOT_TAKEN,
 };
 use ooxml_word_model::docx::{style_kind, style_name, Docx};
 use serde_json::{json, Map, Value};
@@ -146,10 +146,18 @@ fn run(args: &WordFormat, editing: &Editing<'_>, again: &TryCall) -> Result<Tool
         cleared: !clear.is_empty(),
         policy: policy(editing),
     };
-    let done = editing
-        .editor
-        .run(editing.caller, &command)
-        .map_err(|e| edit_refusal(e, "", again.clone()))?;
+    let done = editing.editor.run(editing.caller, &command).map_err(|e| {
+        // docx-agent names `targets` for a target holding no paragraphs or no blocks to keep
+        let field = match &e {
+            EditError::Address(a)
+                if a.message.ends_with("holds no paragraphs") || a.message.ends_with(KEEPS_BLOCKS) =>
+            {
+                "targets"
+            }
+            _ => "",
+        };
+        edit_refusal(e, field, again.clone())
+    })?;
     Ok(reply(addresses.len(), &found, look.as_ref(), like, done.out))
 }
 
@@ -335,7 +343,7 @@ fn known(docx: &Docx, name: &str, kind: &str, field: &str) -> Result<(), ToolErr
         .take(50)
         .collect();
     let message = match error {
-        ooxml_word_edit::EditError::Refused(m) => m,
+        EditError::Refused(m) => m,
         other => other.to_string(),
     };
     let way = WayOut::names(options).unwrap_or_else(|| WayOut::call(call("word_format", &[])));
@@ -347,10 +355,10 @@ fn known(docx: &Docx, name: &str, kind: &str, field: &str) -> Result<(), ToolErr
 fn sample_look(doc: &WordDoc, docx: &Docx, like: &str, again: &TryCall) -> Result<ParagraphLook, ToolError> {
     let found = paragraphs_of(doc, docx, like).map_err(|e| {
         let message = match e {
-            ooxml_word_edit::EditError::Address(a) if a.message.ends_with("holds no paragraphs") => {
+            EditError::Address(a) if a.message.ends_with("holds no paragraphs") => {
                 format!("like: {}", a.message)
             }
-            ooxml_word_edit::EditError::Address(a) => format!(
+            EditError::Address(a) => format!(
                 "like {} names no paragraph ({}): give a paragraph id, p:<id>",
                 repr_str(like),
                 a.message

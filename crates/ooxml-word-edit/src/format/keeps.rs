@@ -269,8 +269,16 @@ fn contained<'a>(parent: &'a Element, local: &str) -> Vec<(Vec<u32>, &'a Arc<Ele
     out
 }
 
+/// A table's rows as the layout reads them: a row deleted as a tracked change is gone.
 fn rows(table: &Element) -> Vec<(Vec<u32>, &Arc<Element>)> {
+    let deleted = |row: &Element| {
+        row.find(Some(W), "trPr")
+            .is_some_and(|p| p.find(Some(W), "del").is_some())
+    };
     contained(table, "tr")
+        .into_iter()
+        .filter(|(_, r)| !deleted(r))
+        .collect()
 }
 
 fn first_paragraph(container: &Element, place: &[u32]) -> Option<Vec<u32>> {

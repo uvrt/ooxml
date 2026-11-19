@@ -257,7 +257,11 @@ fn run(seed: u64, writers: u64, per_writer: usize) -> (u64, u64, usize) {
     let serial = editor(&bytes);
     for (at, command, version) in &records {
         let done = serial.run(&Caller::anonymous(), command).unwrap();
-        assert!(done.changed, "seed {seed}: {command:?} changed nothing serially");
+        // a format edit says it formatted its targets whether or not they changed (docx-agent)
+        assert!(
+            done.changed || matches!(command, Edit::Format(_)),
+            "seed {seed}: {command:?} changed nothing serially"
+        );
         assert_eq!(done.version.seq(), *at, "seed {seed}: commit order");
         assert_eq!(
             written(done.version.doc()),

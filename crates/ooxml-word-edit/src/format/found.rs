@@ -1,5 +1,6 @@
 //! Owns: the places a text occurs for `word_format`'s `find` (docx-agent's `Document.find`:
-//! each paragraph's current text alone, matches left to right; in the body, or in the
+//! each paragraph's current text alone, matches left to right; every story's as its body
+//! filter passes them, or in the
 //! paragraphs a `within` address holds) as ranges with their text and context
 //! ([`occurrences`]), and the text a range address holds ([`range_text`]).
 //!
@@ -44,7 +45,7 @@ pub fn occurrences(
                 .collect();
             (story.part.clone(), Some(ids))
         }
-        None => (docx.main.clone(), None),
+        None => (String::new(), None),
     };
     let pattern = Literal::new(text, case, collapse, "")?;
     let mut out = Vec::new();
@@ -58,16 +59,28 @@ pub fn occurrences(
         let Ok(span) = Span::of(doc, &docx, &found) else {
             continue;
         };
-        if span.part != part || scope.as_ref().is_some_and(|ids| !ids.contains(&found.start_id)) {
+        let id = range_id(&found);
+        let kept = match &scope {
+            Some(ids) => span.part == part && ids.contains(&found.start_id),
+            None => body_ok(&id),
+        };
+        if !kept {
             continue;
         }
         out.push(Occurrence {
-            id: range_id(&found),
+            id,
             text: span.text(),
             context: span.context(20),
         });
     }
     Ok(out)
+}
+
+/// Whether a match's range id passes docx-agent's body filter (`_story_ok(id, "body")`:
+/// only an id with a story path before its first `@` is another story's).
+fn body_ok(id: &str) -> bool {
+    let head = id.split('@').next().unwrap_or_default();
+    !head.contains('/') || id.starts_with("p@body/")
 }
 
 /// The text the range `address` names (a range, a paragraph, a cell...).
