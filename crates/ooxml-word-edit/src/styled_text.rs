@@ -152,10 +152,10 @@ impl Command<WordDoc> for SetStyledText {
         let docx = sink.docx()?;
         let plan = plan(sink.doc(), &docx, self)?;
         let out = set_one(&mut sink, self, &plan)?;
-        // the tool call's batch, once it ends: revision ids unique
+        // the tool call's batch, once it ends: the written text spaced, text boxes synced
+        // (stamping's paraIds too), revision ids unique
         if out.edits.iter().any(|e| e.changed) {
-            sink.space_written()?;
-            crate::revision_ids::make_unique(&mut sink)?;
+            crate::after::after_edit(&mut sink)?;
         }
         Ok(out)
     }
