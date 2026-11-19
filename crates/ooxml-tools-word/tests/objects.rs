@@ -6,14 +6,14 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
 
 use ooxml_tools::ToolArgs;
-use ooxml_tools_word::{WordControls, WordDrawings, WordEditTable, WordFormatTable, KIND};
+use ooxml_tools_word::{WordControls, WordDrawings, WordEditTable, KIND};
 use serde_json::json;
 
 #[test]
-fn the_definitions_are_the_golden_exports() {
+fn the_unregistered_definitions_are_the_golden_exports() {
+    // a tool the session registers is held to its golden export there (ooxml-session's
+    // tests/registry.rs)
     for (spec, golden) in [
-        (WordEditTable::spec(), include_str!("golden/word_edit_table.json")),
-        (WordFormatTable::spec(), include_str!("golden/word_format_table.json")),
         (WordDrawings::spec(), include_str!("golden/word_drawings.json")),
         (WordControls::spec(), include_str!("golden/word_controls.json")),
     ] {

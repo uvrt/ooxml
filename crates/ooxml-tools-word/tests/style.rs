@@ -10,8 +10,7 @@ use ooxml_opc::Package;
 use ooxml_store::{Caller, Clock, StoreConfig};
 use ooxml_tools::{ToolArgs, ToolResult};
 use ooxml_tools_word::{
-    word_format, word_lists, word_styles, word_template, CallEditor, Editing, WordCompareBlocks, WordDesignFacts,
-    WordFollowSample, WordFormat, WordLists, WordStyles, WordTemplate, KIND,
+    word_format, word_lists, word_styles, word_template, CallEditor, Editing, WordCompareBlocks, WordTemplate,
 };
 use ooxml_word_edit::{Editor, FieldLayout, LaidFields, PageReflow};
 use ooxml_zip::{Method, NewEntry, Writer};
@@ -98,39 +97,6 @@ fn call<A: ToolArgs>(arguments: Value, tool: impl Fn(&A, &Editing<'_>) -> ToolRe
         Value::Object(tool(&args, &editing).to_json())
     };
     (reply, editor)
-}
-
-#[test]
-fn the_definitions_are_the_golden_exports() {
-    let spec = WordLists::spec();
-    assert_eq!(
-        format!("{}\n", spec.export(Some(&[KIND]))),
-        include_str!("golden/word_lists.json")
-    );
-    assert_eq!(
-        format!("{}\n", WordFormat::spec().export(Some(&[KIND]))),
-        include_str!("golden/word_format.json")
-    );
-    assert_eq!(
-        format!("{}\n", WordStyles::spec().export(Some(&[KIND]))),
-        include_str!("golden/word_styles.json")
-    );
-    assert_eq!(
-        format!("{}\n", WordTemplate::spec().export(Some(&[KIND]))),
-        include_str!("golden/word_template.json")
-    );
-    assert_eq!(
-        format!("{}\n", WordCompareBlocks::spec().export(Some(&[KIND]))),
-        include_str!("golden/word_compare_blocks.json")
-    );
-    assert_eq!(
-        format!("{}\n", WordFollowSample::spec().export(Some(&[KIND]))),
-        include_str!("golden/word_follow_sample.json")
-    );
-    assert_eq!(
-        format!("{}\n", WordDesignFacts::spec().export(Some(&[KIND]))),
-        include_str!("golden/word_design_facts.json")
-    );
 }
 
 #[test]
