@@ -93,7 +93,7 @@ struct Generation {
     said: crate::page_said::PageMemo,
     /// The main part's root and its ids as the last version read them, which the next
     /// version's ids are found from (only what changed walked again).
-    ids: Option<(Arc<ooxml_xml::Element>, ooxml_word_model::ids::PartIds)>,
+    ids: Option<(Arc<ooxml_xml::Element>, Arc<ooxml_word_model::ids::PartIds>)>,
     /// What each page of the version summarised last digested to.
     summaries: crate::summary::SummaryMemo,
 }
@@ -406,9 +406,10 @@ impl PageEngine {
             decimal: self.decimal,
             others_changed,
         };
-        let (said, facts) = say(generation, &laid, drawings.as_ref(), &with);
+        let facts = carried_facts(previous.as_deref(), &laid);
+        let said = say(generation, &laid, drawings.as_ref(), &with, &facts);
         self.stats.pages_said = generation.said.stats();
-        let ids = Arc::new(block_ids(generation, package, &document.main_part));
+        let ids = version_ids(generation, package, &document.main_part);
         self.serial += 1;
         let version = Arc::new(LaidVersion {
             drawings,
@@ -657,22 +658,21 @@ impl PageEngine {
     }
 }
 
-/// The version's body blocks by id: the main part's ids found from the last version's
-/// (`PartIds::after`), its paths walked.
-fn block_ids(generation: &mut Generation, package: &Package, main: &str) -> crate::ids::BlockIds {
+/// The version's body ids: the main part's ids found from the last version's
+/// (`PartIds::after`), its blocks named when asked.
+fn version_ids(generation: &mut Generation, package: &Package, main: &str) -> crate::ids::VersionIds {
     let Ok(Some(tree)) = package.tree(main) else {
         generation.ids = None;
-        return crate::ids::BlockIds::default();
+        return crate::ids::VersionIds::default();
     };
     let root = Arc::clone(tree.root());
     let ids = match generation.ids.take() {
         Some((old, ids)) if Arc::ptr_eq(&old, &root) => ids,
-        Some((old, ids)) => ids.after(&old, &root),
-        None => ooxml_word_model::ids::PartIds::new("body", &root),
+        Some((old, ids)) => Arc::new(ids.after(&old, &root)),
+        None => Arc::new(ooxml_word_model::ids::PartIds::new("body", &root)),
     };
-    let found = crate::ids::BlockIds::of(&root, &ids);
-    generation.ids = Some((root, ids));
-    found
+    generation.ids = Some((Arc::clone(&root), Arc::clone(&ids)));
+    crate::ids::VersionIds::new(root, ids)
 }
 
 /// A version's pictures (its package less its text parts) and its drawings' painter.
@@ -699,18 +699,15 @@ struct SayWith<'a> {
     others_changed: bool,
 }
 
-/// What `laid` says (its warnings and approximations), and its facts where saying them
-/// made them; the pages the version before kept said again as they were.
+/// What `laid` says (its warnings and approximations), its facts made into `facts` where
+/// saying them needs them; the pages the version before kept said again as they were.
 fn say(
     generation: &mut Generation,
     laid: &ooxml_word_layout::DocumentLayout,
     drawings: Option<&WordDrawings>,
     with: &SayWith<'_>,
-) -> (
-    crate::warnings::Said,
-    std::sync::OnceLock<ooxml_word_layout::facts::LayoutFacts>,
-) {
-    let facts = std::sync::OnceLock::new();
+    facts: &std::sync::OnceLock<ooxml_word_layout::facts::LayoutFacts>,
+) -> crate::warnings::Said {
     if with.others_changed {
         // A part beside the main one changed (a chart's, a picture's, a story's): what a
         // kept page's drawings said may have changed with it.
@@ -725,15 +722,28 @@ fn say(
         decimal: with.decimal,
         text_paths: Vec::new(),
     };
-    let said = crate::warnings::said(
+    crate::warnings::said(
         &mut generation.model,
         laid,
         &mut painter,
         with.locale,
-        &facts,
+        facts,
         &mut generation.said,
-    );
-    (said, facts)
+    )
+}
+
+/// The facts of `laid`, made from the version it was laid out from where that one's were
+/// made (the pages it kept take theirs), else left to be made when first asked.
+fn carried_facts(
+    previous: Option<&LaidVersion>,
+    laid: &ooxml_word_layout::DocumentLayout,
+) -> std::sync::OnceLock<ooxml_word_layout::facts::LayoutFacts> {
+    match previous.and_then(|p| Some((&p.layout, p.facts.get()?))) {
+        Some((before, known)) => {
+            std::sync::OnceLock::from(ooxml_word_layout::facts::LayoutFacts::after(laid, before, known))
+        }
+        None => std::sync::OnceLock::new(),
+    }
 }
 
 /// A layout engine with no memos, measuring with `fonts`.

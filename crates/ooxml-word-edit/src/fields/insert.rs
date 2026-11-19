@@ -310,7 +310,7 @@ impl InsertField<'_> {
         let mut path = here.path.clone();
         path.extend(below);
         let docx = sink.docx()?;
-        let located = all_fields(&docx)
+        let located = all_fields(sink.doc(), &docx)
             .into_iter()
             .find(|l| l.part == here.part && l.found.begin == path)
             .ok_or_else(|| EditError::Path(here.part.clone()))?;

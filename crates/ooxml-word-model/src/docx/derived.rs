@@ -2,7 +2,9 @@
 //! for every call on that version: the lookups a Markdown reading starts from, each
 //! Markdown read made (by range, view and stories: the pages after the first, and a read
 //! again, take it as it is), and what a story's window reads keep (its blocks grouped in a
-//! view, and the list counters at places along it: `markdown::read::window`) -- with the
+//! view, and the list counters at places along it: `markdown::read::window`), and its
+//! sections (`super::sections::sections`, which a field's page and a table of contents
+//! read for every field) -- with the
 //! version before's, which a window read takes what is still true of from.
 //!
 //! Must not: be shared between versions (a new version's reading starts empty but for the
@@ -27,6 +29,7 @@ const READS_KEPT: usize = 16;
 #[derive(Debug, Default)]
 pub struct Derived {
     reading: OnceLock<Arc<Shared>>,
+    sections: OnceLock<Vec<super::sections::Section>>,
     markdown: Mutex<HashMap<MarkdownKey, Arc<String>>>,
     windows: Mutex<HashMap<WindowKey, Arc<Kept>>>,
     /// The version before's window readings.
@@ -59,6 +62,11 @@ impl Derived {
             earlier,
             ..Derived::default()
         }
+    }
+
+    /// The version's sections (`docx`'s), read once.
+    pub(crate) fn sections(&self, docx: &super::Docx) -> &[super::sections::Section] {
+        self.sections.get_or_init(|| super::sections::sections(docx))
     }
 
     /// The window readings of `key` this version keeps, or else the version before's (to
