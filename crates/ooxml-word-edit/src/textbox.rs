@@ -122,7 +122,12 @@ pub(crate) fn sync_all(sink: &mut EditSink<'_, '_>) -> Result<()> {
 
 /// The text box `holder` at `path` of `part` given its choice's content in its fallback,
 /// when the two differ; whether it was.
-fn sync_holder(sink: &mut EditSink<'_, '_>, part: &str, path: &[u32], holder: &Arc<Element>) -> Result<bool> {
+pub(crate) fn sync_holder(
+    sink: &mut EditSink<'_, '_>,
+    part: &str,
+    path: &[u32],
+    holder: &Arc<Element>,
+) -> Result<bool> {
     let (Some(choice), Some(fallback)) = (holder.find(Some(MC), "Choice"), holder.find(Some(MC), "Fallback")) else {
         return Ok(false);
     };

@@ -14,7 +14,8 @@
 //! - opening versions of one document, reusing what is unchanged ([`Model`],
 //!   [`WordDocument`]);
 //! - stable addressing: block ids, the id ledger and its `docx-ids.1.` state ([`ids`]);
-//! - a version as docx-agent's reading tools read it ([`docx`], [`parts`]).
+//! - a version as docx-agent's reading tools read it ([`docx`], [`parts`]);
+//! - the spacing around punctuation a text's language wants ([`typography`]).
 //!
 //! Must not: lay out pages or compute fields' values (`ooxml-word-layout`, L3), edit, or
 //! read another library's internals. Nothing here depends on an interpreter lock: every
@@ -44,6 +45,7 @@ pub mod resolve;
 pub mod settings;
 pub mod styles;
 pub mod theme;
+pub mod typography;
 pub mod value;
 #[rustfmt::skip]
 pub mod w;

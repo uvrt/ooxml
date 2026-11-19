@@ -108,6 +108,7 @@ pub(crate) fn split_before(work: &mut Work, atom: &Atom) -> bool {
         set_spaced_text(work, left, &head.iter().collect::<String>());
         work.add_previous(node, left);
         set_spaced_text(work, node, &rest.iter().collect::<String>());
+        work.split_marks(node, left, head.len());
         split = true;
     }
     let mut before = Vec::new();
@@ -393,8 +394,10 @@ fn join(work: &mut Work, left: Id, right: Id) {
     for child in work.children(left).to_vec() {
         if let Some(before) = previous.filter(|p| work.is(*p, W, "t") && work.is(child, W, "t")) {
             if same_attributes(work, before, child) {
+                let shift = work.text(before).chars().count();
                 let text = format!("{}{}", work.text(before), work.text(child));
                 set_spaced_text(work, before, &text);
+                work.join_marks(before, child, shift);
                 work.remove(child);
                 continue;
             }
