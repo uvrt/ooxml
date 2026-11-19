@@ -13,12 +13,9 @@
 //!
 //! Cells written without a source ([`super::set_cells`]).
 //!
-//! `from` given to another action than `set_cells` refused (rule 2: the action that takes
-//! it).
-//!
-//! Not ported yet, said in `unported` for the host to answer its own way: `sync` and
-//! `set_cells` `from` (a source's rows or one value: the session's datasets and other
-//! documents' rows); a table with pending tracked structure or a placement record.
+//! Not ported yet, said in `unported` for the host to answer its own way: `sync` and `from`
+//! (a source the dispatcher resolves: the session's datasets and other documents' rows); a
+//! table with pending tracked structure or a placement record.
 //!
 //! Must not: change the document but through the command.
 
@@ -130,22 +127,15 @@ fn check_sync_fields(args: &WordEditTable, retry: &TryCall) -> Result<(), ToolEr
     Ok(())
 }
 
-/// A `from` given: refused for another action than `set_cells`; for `set_cells` (a source's
-/// rows, or one value by reference: the session's datasets and other documents' rows) the
-/// host's. `None` without one.
-fn from_source(args: &WordEditTable, retry: &TryCall) -> Result<Option<ToolResult<Value>>, ToolError> {
-    if !args.from.as_deref().is_some_and(|f| !f.is_empty()) {
-        return Ok(None);
-    }
-    if args.action != TableAction::SetCells {
-        return Err(invalid(
-            format!("{} takes no from; from is for set_cells", args.action.as_str()),
-            "from",
-            &["set_cells"],
-            retry,
-        ));
-    }
-    Ok(Some(unported("word_edit_table set_cells from (sources)", retry)))
+/// A `from` given: the host's. The dispatcher resolves a source before the handler runs
+/// (an unknown dataset is its `not_found`, whatever the action), and the session's datasets
+/// and other documents' rows are not held here yet; docx-agent's handler then refuses it
+/// for another action than `set_cells`. `None` without one.
+fn from_source(args: &WordEditTable, retry: &TryCall) -> Option<ToolResult<Value>> {
+    args.from
+        .as_deref()
+        .is_some_and(|f| !f.is_empty())
+        .then(|| unported("word_edit_table from (sources)", retry))
 }
 
 /// Refuse what belongs to `from` given without it, and `grow` without a source.
@@ -189,7 +179,7 @@ fn run(args: &WordEditTable, editing: &Editing<'_>, retry: &TryCall) -> Result<T
         return Ok(unported("word_edit_table sync", retry));
     }
     check_sync_fields(args, retry)?;
-    if let Some(left) = from_source(args, retry)? {
+    if let Some(left) = from_source(args, retry) {
         return Ok(left);
     }
     check_arguments(args, retry)?;
