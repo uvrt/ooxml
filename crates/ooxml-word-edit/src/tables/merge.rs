@@ -507,16 +507,22 @@ fn merge_tracked(
             }
         }
     }
-    let Some(last_paragraph) = paragraphs(work, origin).last().copied() else {
-        return released;
-    };
+    if let Some(last_paragraph) = paragraphs(work, origin).last().copied() {
+        append_copies(work, last_paragraph, copies, stamp, orders);
+    }
+    released
+}
+
+/// A tracked merge's copies inserted after the first cell's last paragraph, as Word writes
+/// paragraphs typed there: each mark but the last inserted, the last carrying the old
+/// mark's properties.
+fn append_copies(work: &mut Work, last_paragraph: Id, copies: &[Id], stamp: &mut Stamp, orders: &Orders) {
     if copies.is_empty() {
-        return released;
+        return;
     }
     for copy in copies {
         insert_paragraph_content(work, *copy, stamp);
     }
-    // appended at the cell's end as Word writes a paragraph typed there
     let mut anchor = last_paragraph;
     for copy in copies {
         work.add_next(anchor, *copy);
@@ -533,5 +539,4 @@ fn merge_tracked(
     if let Some(final_copy) = copies.last() {
         record_paragraph_change(work, *final_copy, old, stamp, orders);
     }
-    released
 }

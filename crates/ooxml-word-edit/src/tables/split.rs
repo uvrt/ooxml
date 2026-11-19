@@ -579,14 +579,7 @@ pub(super) fn split_cell(
             new_cells.extend(made_cells);
         }
     }
-    let mut new_paragraphs: Vec<Id> = new_cells.iter().flat_map(|c| find_all(work, *c, "p")).collect();
-    for new_row in &new_rows {
-        for paragraph in work.iter(*new_row, W, &["p"]) {
-            if !new_paragraphs.contains(&paragraph) {
-                new_paragraphs.push(paragraph);
-            }
-        }
-    }
+    let new_paragraphs = paragraphs_made(work, &new_cells, &new_rows);
     let nodes: Vec<Id> = new_rows.iter().chain(new_paragraphs.iter()).copied().collect();
     let raws = stamp_new(sink, held, &nodes, "\0table")?;
     let written = under_policy(sink, |stamp| {
@@ -659,4 +652,17 @@ fn ids_of(sink: &EditSink<'_, '_>, held: &Held, raws: &[String]) -> Result<Vec<S
         .unwrap_or_default();
     found.sort_by_key(|f| f.0);
     Ok(found.into_iter().map(|f| f.1).collect())
+}
+
+/// The new cells' paragraphs, then any other paragraph of the new rows.
+fn paragraphs_made(work: &Work, new_cells: &[Id], new_rows: &[Id]) -> Vec<Id> {
+    let mut out: Vec<Id> = new_cells.iter().flat_map(|c| find_all(work, *c, "p")).collect();
+    for new_row in new_rows {
+        for paragraph in work.iter(*new_row, W, &["p"]) {
+            if !out.contains(&paragraph) {
+                out.push(paragraph);
+            }
+        }
+    }
+    out
 }
