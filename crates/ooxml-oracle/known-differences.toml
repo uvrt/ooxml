@@ -35,3 +35,19 @@ file = "generated/trial/template-saved-as-docx.docx"
 input = { tool = "word_fields", arguments = { action = "update" } }
 cause = """#84: docx-agent's session adds its TemplateOpened warning (the host's, not the tool's) \
 to an update that changes nothing."""
+
+# word_read (and its ranges) on the documents with charts and SmartArt: the Rust reads give a
+# drawing's kind and name, not yet docx-agent's chart and SmartArt summary.
+[[difference]]
+gate = "reads"
+mode = "read"
+file = "generated/charts/*.docx"
+cause = """Phase P3 (the chart model): docx_agent.rust.session's reads are equal to docx-agent's on \
+every fixture but drawings' chart and SmartArt summaries (tests/test_rust_word_read.py)."""
+
+[[difference]]
+gate = "reads"
+mode = "ranges"
+file = "generated/charts/*.docx"
+cause = """Phase P3 (the chart model): word_read of a range holding a chart or SmartArt, as for \
+mode read above."""
