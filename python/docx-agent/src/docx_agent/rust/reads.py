@@ -139,6 +139,9 @@ class Mirror:
         #: Part -> what the session's latest version has of it (:func:`_identities`).
         self.parts = parts
         self.versions: OrderedDict[int, Any] = OrderedDict()
+        #: Lane P2c10: the session's version -> the document's version number, for every
+        #: version kept (:meth:`keep`): what the session's record of retired ids is numbered by.
+        self.numbers: dict[int, int] = {}
         self.lock = threading.Lock()
         #: Lane P2c4: whether the session owns the document (:mod:`.owner`): its versions are
         #: kept here by the tool layer's numbers as the session makes them, never handed over.
@@ -157,6 +160,7 @@ class Mirror:
     def keep(self, number: int, version: Any) -> None:
         """Keep ``version`` (an ``ooxml_core.Version``) as the document's version ``number``."""
         self.versions[number] = version
+        self.numbers[version.number] = number
         self.versions.move_to_end(number)
         while len(self.versions) > KEPT:
             self.versions.popitem(last=False)

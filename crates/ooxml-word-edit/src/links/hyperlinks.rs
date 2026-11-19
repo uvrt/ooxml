@@ -249,7 +249,7 @@ impl Command<WordDoc> for AddHyperlink {
 
 impl AddHyperlink {
     /// The edit, through `sink`.
-    fn edit(&self, sink: &mut EditSink<'_, '_>) -> Result<LinkEdited> {
+    pub(crate) fn edit(&self, sink: &mut EditSink<'_, '_>) -> Result<LinkEdited> {
         let docx = sink.docx()?;
         if self.anchor.is_some() {
             sink.read_everything(); // the bookmark it goes to, wherever it is

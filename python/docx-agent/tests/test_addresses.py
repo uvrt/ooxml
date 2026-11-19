@@ -181,6 +181,7 @@ def test_word_delete_and_word_move_take_open_spans(box, session):
     ok(box, session, "word_move", doc=doc, blocks=f"..{ids['Alpha']}", after=ids["Delta"])
     assert [p.text.split()[0] for p in document.paragraphs() if p.text][-2:] == ["Opening", "Alpha"]
     ok(box, session, "word_delete", doc=doc, target=f"{ids['Delta']}..")
+    document = session.entry(doc).document       # (the view as the served call left it)
     assert [p.text.split()[0] for p in document.paragraphs() if p.text] == [
         "Bravo", "Name", "Value", "left", "right", "Charlie"]
 
@@ -190,7 +191,8 @@ def test_text_targets_take_a_cell_a_bookmark_and_a_paragraph(box, session):
     table = document.tables()[0]
     cell = f"{table.id}/c1,1"
     ok(box, session, "word_insert_text", doc=doc, target=cell, text=" side")
-    assert table.cell(1, 1).text == "right side"
+    document = session.entry(doc).document       # (the view as the served call left it)
+    assert document.tables()[0].cell(1, 1).text == "right side"
     ok(box, session, "word_comments", doc=doc, action="add", items=[{"target": cell, "text": "Check."}])
     assert document.comments()[0].anchor.text == "right side"
     ok(box, session, "word_notes", doc=doc, action="insert", at=ids["Alpha"], text="A note.")
@@ -298,9 +300,10 @@ def test_a_newline_split_applies_per_target_and_writes_a_cells_paragraphs(box, s
     result = ok(box, session, "word_set_text", doc=doc,                 items=[{"target": ids["Alpha"], "text": "A1\nA2"},
                        {"target": f"{table.id}/c1,1", "text": "R1\nR2"},
                        {"target": ids["Delta"], "text": "One line only"}])
+    document = session.entry(doc).document       # (the view as the served call left it)
     texts = [p.text for p in document.paragraphs()]
     assert texts[texts.index("A1") + 1] == "A2"
-    assert [p.text for p in table.cell(1, 1).paragraphs] == ["R1", "R2"]
+    assert [p.text for p in document.tables()[0].cell(1, 1).paragraphs] == ["R1", "R2"]
     assert "One line only" in texts and len(result.created) == 2
     again = ok(box, session, "word_set_text", doc=doc,                items=[{"target": f"{table.id}/c1,1", "text": "R1\nR2"}])
     assert again.created == [] and again.changed == []

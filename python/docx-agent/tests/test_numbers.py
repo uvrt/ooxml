@@ -94,15 +94,16 @@ def test_written_values_follow_their_text_and_go_when_it_changes(toolbox):
     document = session.entry("d1").document
     assert [f["at"] for f in document.text_facts()[target]] == [6, 19]
     ok(call(toolbox, session, "replace_text", doc="d1", find="Alpha", replace="Now Alpha", expect="one"))
-    assert [(f["text"], f["at"]) for f in document.text_facts()[target]] == [("3.5", 10), ("4", 23)]
+    assert [(f["text"], f["at"]) for f in session.entry("d1").document.text_facts()[target]] == [("3.5", 10), ("4", 23)]
     ok(call(toolbox, session, "replace_text", doc="d1", find="3.5", replace="3.6", expect="one"))
-    assert [f["text"] for f in document.text_facts()[target]] == ["4"]            # typed over: gone
+    assert [f["text"] for f in session.entry("d1").document.text_facts()[target]] == ["4"]            # typed over: gone
     found = numbers(toolbox, session)
     assert found["texts"][0]["unverified"][0]["text"] == "3.6"
     ok(call(toolbox, session, "undo", doc="d1"))                                    # one step back
+    document = session.entry("d1").document     # (the view as it is now: a held one is not live)
     assert [f["text"] for f in document.text_facts()[target]] == ["3.5", "4"]
     ok(call(toolbox, session, "word_set_text", doc="d1", target=target, text="Rewritten."))
-    assert target not in document.text_facts()                                     # the entry goes
+    assert target not in session.entry("d1").document.text_facts()                 # the entry goes
 
 
 def test_replace_everywhere_keeps_each_place(toolbox):

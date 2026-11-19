@@ -35,12 +35,14 @@ fn walk<'e>(element: &'e Element, parent: Option<&'e Element>, out: &mut Vec<(&'
     }
 }
 
-/// Whether `element` holds a footnote, endnote or comment reference.
-pub(crate) fn has_reference(element: &Element) -> bool {
+/// The footnote, endnote or comment reference `element` holds, by its local name: the first
+/// of those kinds, in that order, found anywhere in it (docx-agent's `_REFERENCES` loop).
+pub(crate) fn held_reference(element: &Element) -> Option<&'static str> {
     let mut all = Vec::new();
     walk(element, None, &mut all);
-    all.iter()
-        .any(|(e, _)| is(e, "footnoteReference") || is(e, "endnoteReference") || is(e, "commentReference"))
+    ["footnoteReference", "endnoteReference", "commentReference"]
+        .into_iter()
+        .find(|local| all.iter().any(|(e, _)| is(e, local)))
 }
 
 /// The elements at or below `element`, in document order, each with its place below

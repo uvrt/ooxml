@@ -48,6 +48,8 @@ from docx_agent.tools.touched import body_sections  # noqa: E402
 from lxml import etree  # noqa: E402
 from ooxml_edit.tools.savegate import compare_problems  # noqa: E402
 from ooxml_edit.xml import serialize  # noqa: E402
+from reference_cache import Store, compact  # noqa: E402
+from word_edits_compare import reply as _reply, settle as _compare  # noqa: E402
 from word_reads_diff import differences, files_of, report, run_rust  # noqa: E402
 import word_object_cases  # noqa: E402
 import word_structure_cases  # noqa: E402
@@ -368,7 +370,48 @@ def _text_tool_cases(document, targets: list[str]) -> list[dict]:
     tables = document._index(document.package.document_part()).tables
     if tables:
         out += [call("word_set_text", target=f"{tables[0].id}/c0,0", text="Cell text"),
-                call("word_set_text", target=tables[0].id, text="A table")]
+                call("word_set_text", target=tables[0].id, text="A table"),
+                call("word_set_text", target=f"{tables[0].id}/c0,0", text="Two\nlines **here**"),
+                call("word_delete", target=tables[0].id)]
+    return out + _insert_delete_cases(document, targets)
+
+
+def _insert_delete_cases(document, targets: list[str]) -> list[dict]:
+    """``word_insert_text`` and ``word_delete`` called as tools (``--text``): text beside a
+    paragraph, a range, a position and a word found once, several items, refs; text, a range,
+    a block and a span deleted, the space a deletion leaves doubled, a heading whose content
+    stays; and the refusals (no place, both forms, an address as ref, an at that is no side)."""
+    def call(tool, **arguments):
+        return {"op": "tool", "tool": tool, "arguments": {"doc": "d1", **arguments}}
+
+    out = [call("word_insert_text", text="x"), call("word_insert_text", text="x", items=[{"text": "y"}]),
+           call("word_insert_text", items=[]), call("word_insert_text", text="x", ref="p:00000001@0"),
+           call("word_insert_text", text="x", at="end"), call("word_insert_text", find="zz-nowhere-zz", text="x"),
+           call("word_delete"), call("word_delete", find="zz-nowhere-zz"), call("word_delete", target="p:7FFFFFFE")]
+    for target in targets:
+        text = document.paragraph(target).text
+        out += [call("word_insert_text", target=target, text=" added"),
+                call("word_insert_text", target=target, where="before", text="Start: ", ref="first"),
+                call("word_insert_text", at=f"{target}@0", text="«New» "),
+                call("word_insert_text", at=f"before:{target}", where="after", text="x"),
+                call("word_delete", target=target),
+                call("word_delete", target=target, force=True)]
+        if len(text) > 4:
+            out += [call("word_insert_text", at=f"after:{target}@1:3", text="--"),
+                    call("word_delete", target=f"{target}@1:3"),
+                    call("word_delete", target=f"{target}@0:2", collapse_space=True)]
+        words = [w for w in text.split() if w.isalpha() and len(w) > 3]
+        for word in words[:2]:
+            out += [call("word_insert_text", find=word, text=" (more)"),
+                    call("word_insert_text", find=word, where="before", text="very "),
+                    call("word_delete", find=word), call("word_delete", find=word, collapse_space=True),
+                    call("word_delete", find=word, target=target)]
+    if len(targets) > 1:
+        out += [call("word_insert_text", items=[{"target": targets[0], "text": "One "},
+                                                 {"at": f"{targets[-1]}@0", "text": "Two ", "ref": "two"}]),
+                call("word_insert_text", items=[{"target": targets[0], "text": "One"}, {"text": "Two"}]),
+                call("word_delete", target=f"{targets[0]}..{targets[1]}"),
+                call("word_delete", target=f"{targets[0]}..{targets[-1]}", force=True)]
     return out
 
 
@@ -383,16 +426,6 @@ def _toolbox():
 
         _TOOLBOX = Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS)
     return _TOOLBOX
-
-
-def _reply(reply: dict) -> dict:
-    """What a reply says that both sides must say alike: an error's code, message and
-    field (the way out is Rust's rule-2 addition); else the summary, data, ids and warnings."""
-    if reply.get("error"):
-        error = reply["error"]
-        return {"error": {k: error.get(k) for k in ("code", "message", "field")}}
-    return {k: reply.get(k) for k in ("summary", "data", "changed", "created", "removed", "renamed", "warnings",
-                                      "total", "next_cursor") if reply.get(k) not in (None, [], {})}
 
 
 def python_tool_case(data: bytes, case: dict) -> dict:
@@ -675,8 +708,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--paragraphs", action="store_true",
                         help="set_text in lines and insert_paragraph (only these, with --only-ops none)")
     parser.add_argument("--results", help="also write the cases with differences here (JSON lines)")
+    parser.add_argument("--cache", metavar="DIR", help="docx-agent's results kept by earlier runs (reference_cache.py)")
+    parser.add_argument("--cache-new", metavar="FILE", help="write the results this run computes here, to keep")
     parser.add_argument("files", nargs="*")
     args = parser.parse_args(argv)
+    store = Store(args.cache, args.cache_new, lambda a, b: not differences(a, b)) \
+        if args.cache or args.cache_new else None
+    kept: dict = {}         # the cases whose result is a kept one: what docx-agent needs to run them again
     expected: dict = {}
     inputs: dict = {}
     manifest = []
@@ -743,60 +781,46 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{path}: python failed: {error}")
             continue
         for k, case in enumerate(cases):
-            expected[(str(path), k)] = python_case(data, case, baseline)
+            found = store.get(data, case) if store else None
+            if found is None:
+                found = python_case(data, case, baseline)
+                if store:
+                    store.keep(data, case, found)
+            else:
+                kept[(str(path), k)] = (data, case, baseline)
+            expected[(str(path), k)] = found
             inputs[(str(path), k)] = {**case, "source": source}
         manifest.append({"file": str(path), "cases": cases})
     rust = run_rust(args.rust, manifest)
     got = {key: value.get("rust") for key, value in rust.items()}
-    rewritten = 0
-    unported = 0
+    counts = {"unported": 0, "rewritten": 0, None: 0, "again": 0}
     for key, want in expected.items():
         have = got.get(key)
-        if want.pop("structure", False) and isinstance(have, dict):
-            word_structure_cases.settle(want, have)
-        if isinstance(have, dict) and "reply" in have:
-            if have.get("unported"):
-                got[key] = want      # the host answers it its own way (Done::unported)
-                unported += 1
+        if key in kept:     # compared with the parts as digests; on a difference docx-agent runs it again
+            w = copy.deepcopy(want)
+            h, tag = _compare(w, compact(copy.deepcopy(have)))
+            if h is not None and not differences(w, h):
+                expected[key], got[key] = w, h
+                counts[tag] += 1
                 continue
-            have["reply"] = _reply(have["reply"])
-            have.pop("unported", None)
-            _shorten(want["parts"], have["parts"])
-            continue
-        written = want.pop("touched_as_written", None)
-        reserialized = want.pop("reserialized", [])
-        if isinstance(have, dict) and "parts" in have and "parts" in want:
-            for name in reserialized:
-                if name not in have["parts"]:
-                    want["parts"].pop(name, None)   # no change, only lxml's serialization
-                    if have.get("touched") == written:
-                        want["touched"] = written
-        if isinstance(have, dict) and "refused" in have and "refused" in want:
-            got[key] = want      # both refused: the messages are each side's own words
-        elif isinstance(have, dict) and "parts" in have and "parts" in want:
-            _shorten(want["parts"], have["parts"])
-            if have.get("touched") != want["touched"] and have.get("touched") == written:
-                rewritten += 1   # equal once the body before is as lxml writes it
-                want["touched"] = written
+            want = expected[key] = python_case(*kept[key])
+            counts["again"] += 1
+        got[key], tag = _compare(want, have)
+        counts[tag] += 1
+    unported, rewritten = counts["unported"], counts["rewritten"]
+    cache = {"kept": len(kept) - counts["again"], "computed": len(expected) - len(kept) + counts["again"]} \
+        if store else {}
+    if store:
+        store.close()
     if unported:
         print(f"{unported} cases the Rust tools left to the host (unported)")
     if rewritten:
         print(f"{rewritten} cases where docx-agent's touched counts blocks only re-serialized (equal "
               "once the body before is read as lxml writes it)")
     return report(expected, got, results=args.results, inputs=inputs,
-                  counts={"unported": unported, "rewritten": rewritten})
+                  counts={"unported": unported, "rewritten": rewritten, **cache})
 
 
-def _shorten(want: dict, have: dict, context: int = 160) -> None:
-    """Two parts that differ, cut to the stretch around their first difference."""
-    for name in set(want) & set(have):
-        a, b = want[name], have[name]
-        if a == b:
-            continue
-        at = next((k for k, (x, y) in enumerate(zip(a, b)) if x != y), min(len(a), len(b)))
-        start = max(0, at - context)
-        want[name] = f"@{at}: {a[start:at + context]}"
-        have[name] = f"@{at}: {b[start:at + context]}"
 
 
 if __name__ == "__main__":

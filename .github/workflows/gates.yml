@@ -13,6 +13,10 @@ name: Gates
 # A case with differences fails its job unless crates/ooxml-oracle/known-differences.toml
 # covers it (with its cause).  The job summary has a table per gate; each job's logs are
 # uploaded.  Bench timings are a shared runner's: reported, never failed on.
+# docx-agent's results are kept between runs (crates/ooxml-oracle/python/reference_cache.py):
+# each edit-mode job restores the store for the reference code it runs, computes only the
+# cases it lacks, and reference-cache adds those to the store.  A new dispatch with the same
+# inputs cancels the run before it.
 
 on:
   workflow_dispatch:
@@ -33,12 +37,14 @@ on:
         description: Every n-th document of each tree
         default: "1"
       shards:
+        # 3 (was 6) since the reference cache: a warm corpus job of 120 documents is about
+        # 100 s, a cold one (docx-agent's code changed) about twice a 6-shard one.
         description: Jobs per mode
-        default: "6"
+        default: "3"
 
 concurrency:
-  group: gates-${{ github.run_id }}
-  cancel-in-progress: false
+  group: gates-${{ inputs.ref }}-${{ inputs.gates }}-${{ inputs.modes }}-${{ inputs.per_tool }}-${{ inputs.every }}-${{ inputs.shards }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -121,6 +127,8 @@ jobs:
       (needs.corpus.result == 'success' || needs.corpus.result == 'skipped')
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    outputs:
+      chain: ${{ steps.chain.outputs.chain }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
@@ -147,6 +155,18 @@ jobs:
         with:
           name: corpus
           path: ${{ runner.temp }}/corpus
+      # The store of docx-agent's results for the reference code this checkout runs.
+      - name: Reference cache key
+        if: matrix.gate != 'reads'
+        id: chain
+        run: echo "chain=$(python tools/gates.py cache-key)" >> "$GITHUB_OUTPUT"
+      - name: Restore docx-agent's kept results
+        if: matrix.gate != 'reads'
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/reference
+          key: gates-reference-${{ steps.chain.outputs.chain }}-${{ github.run_id }}
+          restore-keys: gates-reference-${{ steps.chain.outputs.chain }}-
       - name: Differential
         env:
           GATE: ${{ matrix.gate }}
@@ -158,8 +178,11 @@ jobs:
           chmod +x "$RUNNER_TEMP"/oracles/*
           tree=()
           if [ "$GATE" = corpus ]; then tree=(--tree "$RUNNER_TEMP/corpus"); fi
+          cache=()
+          if [ "$GATE" != reads ]; then cache=(--cache "$RUNNER_TEMP/reference"); fi
           python tools/gates.py diff --gate "$GATE" --mode "$MODE" --shard "$SHARD" --per-tool "$PER_TOOL" \
-            --every "$EVERY" --bin "$RUNNER_TEMP/oracles" --out "$RUNNER_TEMP/out/$GATE-$MODE-${SHARD%/*}" "${tree[@]}"
+            --every "$EVERY" --bin "$RUNNER_TEMP/oracles" --out "$RUNNER_TEMP/out/$GATE-$MODE-${SHARD%/*}" \
+            "${tree[@]}" "${cache[@]}"
       - name: Name the logs
         if: always()
         id: name
@@ -175,10 +198,17 @@ jobs:
             ${{ runner.temp }}/out/*/results.jsonl
             ${{ runner.temp }}/out/*/summary.json
           retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: always() && matrix.gate != 'reads'
+        with:
+          name: reference-${{ steps.name.outputs.name }}
+          path: ${{ runner.temp }}/out/*/reference-new.jsonl.gz
+          if-no-files-found: ignore
+          retention-days: 1
 
   summary:
     needs: [plan, differential]
-    if: always() && needs.plan.outputs.matrix != ''
+    if: ${{ !cancelled() && needs.plan.outputs.matrix != '' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -190,6 +220,38 @@ jobs:
           path: ${{ runner.temp }}/diffs
       - name: Differentials
         run: python3 tools/gates.py summary "$RUNNER_TEMP/diffs" >> "$GITHUB_STEP_SUMMARY"
+
+  # The results the differential jobs computed, added to the store they restored (saved as a
+  # new cache entry; the next run restores the newest).
+  reference-cache:
+    needs: differential
+    if: ${{ !cancelled() && needs.differential.outputs.chain != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: reference-diff-*
+          path: ${{ runner.temp }}/new
+      - uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/reference
+          key: gates-reference-${{ needs.differential.outputs.chain }}-${{ github.run_id }}
+          restore-keys: gates-reference-${{ needs.differential.outputs.chain }}-
+      - name: Merge
+        id: merge
+        run: |
+          shopt -s globstar nullglob
+          added=$(python3 tools/gates.py cache-merge "$RUNNER_TEMP/reference" "$RUNNER_TEMP"/new/**/reference-new.jsonl.gz)
+          echo "$added; the store: $(du -h "$RUNNER_TEMP/reference" | cut -f1)" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "added=${added%% *}" >> "$GITHUB_OUTPUT"
+      - if: steps.merge.outputs.added != '0'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/reference
+          key: gates-reference-${{ needs.differential.outputs.chain }}-${{ github.run_id }}-${{ github.run_attempt }}
 
   seeds:
     needs: plan

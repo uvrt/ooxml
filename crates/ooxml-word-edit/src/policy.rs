@@ -85,6 +85,23 @@ impl Stamp {
         element
     }
 
+    /// A move's range marker (`w:moveFromRangeStart`, `w:moveToRangeStart`), detached: its
+    /// id, author, date and the move's `name`; no UTC date (as Word writes it).
+    pub(crate) fn make_named(&mut self, work: &mut Work, local: &str, name: &str) -> Id {
+        let element = work.new_element(work.qname(W, local, "w"));
+        let id = self.next_id();
+        for (attribute, value) in [
+            ("id", id.as_str()),
+            ("author", &self.tracking.author),
+            ("date", &self.tracking.date),
+            ("name", name),
+        ] {
+            let attribute = work.qname(W, attribute, "w");
+            work.set(element, attribute, value);
+        }
+        element
+    }
+
     /// The author every record carries.
     pub(crate) fn author(&self) -> &str {
         &self.tracking.author

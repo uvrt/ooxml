@@ -123,7 +123,7 @@ fn run(args: &WordMove, editing: &Editing<'_>, way: &TryCall) -> Result<ToolResu
             let edit = Outcome {
                 id: out.id.clone(),
                 changed: true,
-                created: Vec::new(),
+                created: out.created.clone(),
                 removed: Vec::new(),
                 renamed: out.renamed.clone(),
                 warnings: out.warnings.clone(),
@@ -134,21 +134,21 @@ fn run(args: &WordMove, editing: &Editing<'_>, way: &TryCall) -> Result<ToolResu
                     .find(|(old, _)| old == id)
                     .map_or_else(|| id.clone(), |(_, new)| new.clone())
             };
-            let extra: Vec<Outcome> = ids
-                .iter()
-                .map(|id| Outcome {
-                    id: Some(renamed(id)),
-                    changed: true,
-                    ..Outcome::default()
-                })
-                .collect();
-            let mut all = vec![edit];
-            all.extend(extra);
-            outcome(
-                &all,
+            let mut result = outcome(
+                &[edit],
                 format!("Moved {} block(s)", ids.len()),
                 Some(json!({"moved": ids})),
-            )
+            );
+            // docx-agent adds each block's id after the move to `changed` as it is, a copy
+            // a tracked move made too
+            if let ooxml_tools::Outcome::Done(done) = &mut result.outcome {
+                for id in ids.iter().map(renamed) {
+                    if !done.changed.contains(&id) {
+                        done.changed.push(id);
+                    }
+                }
+            }
+            result
         }
         Err(error) => refused(error, way.clone()),
     })

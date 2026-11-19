@@ -309,6 +309,29 @@ fn a_page_number_is_inserted_with_its_result() {
     assert_eq!((found[0].keyword.as_str(), found[0].result.as_str()), ("PAGE", "2"));
 }
 
+/// docx-agent writes a `HYPERLINK` field as Word saves one: its text inserted and made a
+/// `w:hyperlink` (`insert_hyperlink`); the reply names the link.
+#[test]
+fn a_hyperlink_field_is_written_as_a_hyperlink() {
+    let (reply, editor) = call(
+        json!({"doc": "d1", "action": "insert_field", "at": "p:10000002@0",
+               "instruction": "HYPERLINK \"https://example.com/\""}),
+        word_fields,
+    );
+    assert_eq!(reply["created"], json!(["hl:p:10000002/0"]), "{reply}");
+    let tree = editor
+        .store()
+        .snapshot()
+        .doc()
+        .tree("word/document.xml")
+        .unwrap()
+        .unwrap();
+    let xml = String::from_utf8(tree.write()).unwrap();
+    let link = &xml[xml.find("<w:hyperlink ").unwrap()..xml.find("</w:hyperlink>").unwrap()];
+    assert!(link.contains("<w:t>https://example.com/</w:t>"), "{link}");
+    assert!(!xml.contains("HYPERLINK"), "no field is written");
+}
+
 #[test]
 fn a_date_shows_the_calls_day_and_a_sequence_counts() {
     let (reply, editor) = call(

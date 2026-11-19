@@ -428,6 +428,7 @@ impl<D: DocModel> Store<D> {
         planned.doc.carry(head.doc());
         planned.doc.settle();
         let version = Arc::new(head.succeed(seq, planned.doc, &planned.writes));
+        let previous = Arc::clone(&head);
         self.head.store(Arc::clone(&version));
         let changes = planned.changes;
         let garbage = state
@@ -440,6 +441,7 @@ impl<D: DocModel> Store<D> {
         self.counts.committed(held);
         Ok(HistoryOutcome {
             version,
+            previous,
             step: planned.step,
             writes: planned.writes,
         })

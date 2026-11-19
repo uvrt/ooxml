@@ -1179,6 +1179,30 @@ def ledger_state(ledger: Ledger) -> tuple:
             dict(ledger.drawings_gone), ledger.highest_drawing, dict(ledger.replaced), dict(ledger.earlier))
 
 
+@dataclass
+class RetiredIds:
+    """The ids retired as a document's owner records them (lane P2c10: the Rust session, for
+    a document it owns), in a :class:`Ledger`'s terms: ``gone`` and ``drawings_gone`` map each
+    value to the version of the change that removed it, ``earlier`` says who made the changes
+    made before the document was saved and opened again (by version), and ``said`` who made
+    the others, in the owner's words, where the tool layer does not say it."""
+
+    gone: dict[int, int]
+    drawings_gone: dict[int, int]
+    earlier: dict[int, str | None]
+    said: dict[int, str]
+
+
+def with_retired(ledger: Ledger, retired: RetiredIds) -> Ledger:
+    """A copy of ``ledger`` whose retired ids are ``retired``'s (what :func:`export_state`
+    writes of a document whose owner records them)."""
+    out = copy_ledger(ledger)
+    out.gone = dict(retired.gone)
+    out.drawings_gone = dict(retired.drawings_gone)
+    out.earlier = dict(retired.earlier)
+    return out
+
+
 def copy_ledger(ledger: Ledger) -> Ledger:
     """A copy of ``ledger`` that changes apart from it (round 45: a read copy of a document's
     version, ``docx_agent.layout.read_copy``): every set and map copied, the pool with its

@@ -822,6 +822,10 @@ class Document(TrackingOps, RevisionOps, TextOps, FormatOps, ListOps, LinkOps, P
         #: its caller); ``None``: the version alone.  ``read_hint``: how to read the document
         #: again, in that error (the tools' ``word_read``; ``None``: ``to_markdown``).
         self.describe_step = None
+        #: Lane P2c10: the ids retired as the document's owner records them, for a document
+        #: an owner holds (``retired_ids() -> RetiredIds``: the Rust session's record);
+        #: ``None``: the ledger's.
+        self.retired_ids = None
         self.read_hint: str | None = None
         self._indexes: dict[str, PartIndex] = {}
         #: docx2svg's conversions of recent states, by their bytes' hash (layout.convert).
@@ -1597,9 +1601,19 @@ class Document(TrackingOps, RevisionOps, TextOps, FormatOps, ListOps, LinkOps, P
         each when docx-agent made them, four or five when Word did) and the ids Word wrote
         that edits replaced (ROADMAP.md, "Addressing and stable ids")."""
         self._note_ids()
-        return _ids.export_state(self._ledger, self._roots(), version=self.history.version,
+        retired = self._retired()
+        ledger, describe = self._ledger, self.describe_step
+        if isinstance(retired, _ids.RetiredIds):
+            ledger, describe = _ids.with_retired(ledger, retired), _describe_with(self, retired)
+        return _ids.export_state(ledger, self._roots(), version=self.history.version,
                                  last=self.history.last_version, aliases=self._aliases,
-                                 describe=self.describe_step)
+                                 describe=describe)
+
+    def _retired(self) -> "_ids.Ledger | _ids.RetiredIds":
+        """The ids retired and the changes that removed them: the owner's record where an
+        owner keeps one (:attr:`retired_ids`), else the ledger's."""
+        hook = self.retired_ids
+        return hook() if hook is not None else self._ledger
 
     def _restore_ids(self, state) -> None:
         """Take back :meth:`id_state`'s string, before anything is read or edited."""
@@ -1623,25 +1637,25 @@ class Document(TrackingOps, RevisionOps, TextOps, FormatOps, ListOps, LinkOps, P
         names nothing now; ``None`` for any other id."""
         if not isinstance(identifier, str):
             return None
-        ledger = self._ledger
+        retired = self._retired()
         found = _GONE_DRAWING.match(identifier)
-        if found is not None and ledger.drawings_gone:
+        if found is not None and retired.drawings_gone:
             number = int(found.group(1))
-            if number in ledger.drawings_gone:
-                version = ledger.drawings_gone[number]
-                return _ids.DeletedId(_deleted_message(self, found.group(0), version),
-                                      found.group(0), version, earlier=version in ledger.earlier)
-        if not ledger.gone:
+            if number in retired.drawings_gone:
+                version = retired.drawings_gone[number]
+                return _ids.DeletedId(_deleted_message(self, retired, found.group(0), version),
+                                      found.group(0), version, earlier=version in retired.earlier)
+        if not retired.gone:
             return None
         for match in _GONE_BLOCK.finditer(identifier):
             value = int(match.group("hex"), 16)
-            if value not in ledger.gone:
+            if value not in retired.gone:
                 continue
             named = match.group(0).lstrip("/")
-            version = ledger.gone[value]
-            replaced_by = ledger.replaced.get(value)
-            return _ids.DeletedId(_deleted_message(self, named, version, replaced_by, identifier),
-                                  named, version, replaced_by, earlier=version in ledger.earlier)
+            version = retired.gone[value]
+            replaced_by = self._ledger.replaced.get(value)
+            return _ids.DeletedId(_deleted_message(self, retired, named, version, replaced_by, identifier),
+                                  named, version, replaced_by, earlier=version in retired.earlier)
         return None
 
     def _note_replaced(self, old: list[str], new: list[str]) -> None:
@@ -3042,14 +3056,26 @@ _GONE_BLOCK = re.compile(r"(?:^|(?<=[/:.]))(?:[A-Za-z0-9_]+/)?(?:p|t|tr|s):(?P<h
 _GONE_DRAWING = re.compile(r"d:(\d+)(?![\d#])")
 
 
-def _deleted_message(document: "Document", named: str, version: int, replaced_by: str | None = None,
-                     identifier: str | None = None) -> str:
+def _describe_with(document: "Document", retired: "_ids.RetiredIds") -> Callable[[int], str | None]:
+    """``describe_step``, and where it says nothing, the owner's words for the change."""
+    def describe(version: int) -> str | None:
+        told = document.describe_step
+        return (told(version) if told is not None else None) or retired.said.get(version)
+
+    return describe
+
+
+def _deleted_message(document: "Document", retired: "_ids.Ledger | _ids.RetiredIds", named: str, version: int,
+                     replaced_by: str | None = None, identifier: str | None = None) -> str:
     """What naming a removed id says: which change removed it, and the way on (round 37).
     A change made before the document was saved and opened again with its id state is
-    described by the state's words, and says so (round 38)."""
-    earlier = document._ledger.earlier
+    described by the state's words, and says so (round 38).  ``retired``: the record the id
+    was found in (:meth:`Document._retired`)."""
+    earlier = retired.earlier
     if version in earlier:
         who = earlier[version]
+    elif isinstance(retired, _ids.RetiredIds):
+        who = _describe_with(document, retired)(version)
     else:
         describe = document.describe_step
         who = describe(version) if describe is not None else None

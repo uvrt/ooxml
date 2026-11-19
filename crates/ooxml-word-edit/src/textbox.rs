@@ -8,7 +8,7 @@
 //! Must not: look at blocks the edit did not replace (a text box in them did not change),
 //! or write but through the sink.
 
-use crate::names::{MC, W, W14, WP14};
+use crate::names::{MC, W, W14, WP, WP14};
 use crate::sink::EditSink;
 use crate::work::{scope_above, Work};
 use crate::{EditError, Result};
@@ -135,27 +135,33 @@ pub(crate) fn sync(sink: &mut EditSink<'_, '_>) -> Result<()> {
 /// its snapshot's when it is the same element (untouched, wherever its block went). When
 /// the edit added or removed no box, one only stamped is its snapshot's too: the box in its
 /// place first, else the first one not yet taken with the same content (the box of a moved
-/// block, which docx-agent knows by the element's identity). When the edit added boxes (a
-/// text box inserted), a box only stamped is the first snapshot box not yet taken with the
-/// same content. When it removed boxes, a box not the very same element counts as changed,
-/// as docx-agent's does when an edit gives a box a new element.
+/// block, which docx-agent knows by the element's identity). When the edit added or removed
+/// boxes, a box is its snapshot's when it is the same element or holds the same drawing
+/// (by number) with the same content; any other counts as changed, as docx-agent's does when
+/// an edit gives a box a new element (a moved block's copy among them).
 fn unchanged_boxes(before: &[Arc<Element>], now: &[(Vec<u32>, Arc<Element>)]) -> Vec<bool> {
     let mut taken = vec![false; before.len()];
     let mut kept: Vec<bool> = now
         .iter()
         .map(|(_, holder)| take(&mut taken, before, 0..before.len(), |was| Arc::ptr_eq(was, holder)))
         .collect();
-    if before.len() > now.len() {
+    if before.len() != now.len() {
+        // boxes added or removed: a box is its snapshot's by its drawing's number, unique
+        // in the document (a copy's drawings are numbered anew), its content unchanged
+        for ((_, holder), kept) in now.iter().zip(kept.iter_mut()) {
+            if !*kept {
+                let number = drawing_number(holder);
+                *kept = number.is_some()
+                    && take(&mut taken, before, 0..before.len(), |was| {
+                        drawing_number(was) == number && unchanged_box(was, holder)
+                    });
+            }
+        }
         return kept;
     }
-    let added = now.len() > before.len();
     for (k, ((_, holder), kept)) in now.iter().zip(kept.iter_mut()).enumerate() {
         if !*kept {
-            // with boxes added, the snapshot's boxes in order (a new box shifts the places)
-            let first = (!added).then_some(k);
-            let order = first
-                .into_iter()
-                .chain((0..before.len()).filter(move |&j| Some(j) != first));
+            let order = std::iter::once(k).chain((0..before.len()).filter(move |&j| j != k));
             *kept = take(&mut taken, before, order, |was| unchanged_box(was, holder));
         }
     }
@@ -273,6 +279,17 @@ fn same_but_ids(a: &Element, b: &Element) -> bool {
             (Node::Element(x), Node::Element(y)) => same_but_ids(x, y),
             _ => x.same(y),
         })
+}
+
+/// The number (`wp:docPr/@id`) of the drawing a box's choice holds.
+fn drawing_number(holder: &Element) -> Option<String> {
+    fn find(element: &Element) -> Option<String> {
+        if element.name().is(Some(WP), "docPr") {
+            return element.attribute(None, "id").map(str::to_owned);
+        }
+        element.child_elements().find_map(|c| find(c))
+    }
+    holder.find(Some(MC), "Choice").and_then(|choice| find(choice))
 }
 
 /// Whether the box `holder` holds what the snapshot's box `was` held, but for the ids

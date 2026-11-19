@@ -12,11 +12,13 @@
 //! - stamping blocks with durable ids before the first edit, and new text ids;
 //! - the commands: [`SetText`] (in lines: new paragraphs after it); [`InsertParagraph`];
 //!   [`SetParagraphStyle`] (built-in styles added as Word writes them); [`DeleteBlock`];
+//!   [`DeleteBlocks`] (`word_delete`'s blocks, the outline checked first);
 //!   [`SetCells`]; [`StyleSpans`] (character styles and emphasis over a paragraph's text);
 //!   [`SetStyledText`] (`word_set_text`'s item: text with inline emphasis);
 //!   [`InsertMarkdown`] (Markdown written as the document's own blocks);
 //!   [`InsertText`], [`DeleteText`] and [`ReplaceText`] (text within a
-//!   paragraph, docx-agent's `_replace_ranges`); [`Review`] (accepting and rejecting tracked
+//!   paragraph, docx-agent's `_replace_ranges`); [`InsertBeside`] and [`DeletePlaced`] (text
+//!   at a range or at the one place a text occurs, `word_insert_text`'s and `word_delete`'s); [`Review`] (accepting and rejecting tracked
 //!   changes, `word_changes`); [`SetWordTracking`] (Word's own Track Changes switch); [`UpgradeToModern`] (Word's
 //!   Convert to compatibility mode 15);
 //!   [`CommentEdits`] (resolving, reopening and deleting comments); [`FormatTable`] (a
@@ -36,6 +38,7 @@
 
 mod across;
 mod after;
+mod beside;
 mod block_checks;
 mod blocks;
 mod builtin;
@@ -43,6 +46,7 @@ mod comments;
 mod control_delete;
 mod controls;
 mod delete;
+mod delete_blocks;
 mod delete_write;
 mod doc;
 mod drawings;
@@ -52,6 +56,7 @@ mod fields;
 pub mod find;
 mod follow;
 mod format;
+mod ids_delta;
 mod imported;
 mod inline;
 mod links;
@@ -61,6 +66,7 @@ mod markdown;
 mod marks;
 mod merge;
 mod moving;
+mod moving_tracked;
 mod names;
 mod namespaces;
 mod new_part;
@@ -99,9 +105,11 @@ mod track;
 pub mod validate;
 mod work;
 
+pub use beside::{DeletePlaced, InsertBeside, Placed, Side, TextPlace};
 pub use comments::{CommentEdit, CommentEdited, CommentEdits, EditCommentText};
 pub use controls::{ControlEdited, ControlKind, FillControl, Filling, InsertControl, RemoveControl};
 pub use delete::{BlockDeleted, DeleteBlock};
+pub use delete_blocks::{blocks_named, BlocksDeleted, DeleteBlocks};
 pub use doc::{Change, Draw, DrawFrom, Key, ModelError, Shared, WordDoc};
 pub use drawings::{DrawingEdited, DrawingValues, FloatDrawing, InlineDrawing, InsertShape, SetDrawing, ZOrder};
 pub use editor::{EditTiming, Edited, Editor};
@@ -117,6 +125,7 @@ pub use format::{
     FormatStep, Formatted, Like, LikeDone, Occurrence, ParagraphLook, Property, Setting, Value, KEEPS_BLOCKS,
     NOT_TAKEN, PARTS,
 };
+pub use ids_delta::{ids_delta, IdsDelta};
 pub use links::{hyperlink_span, AddBookmark, AddHyperlink, LinkEdited, RemoveBookmark, RenameBookmark};
 pub use lists::{
     numbered_by_style, paragraphs_of, unnumbered_styles_like, LevelFormat, ListAction, ListEdit, ListStep, ListsEdited,

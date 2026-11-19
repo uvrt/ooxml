@@ -51,6 +51,12 @@ def opened(box):
     return session, doc, document
 
 
+def view(session, doc):
+    """The document as it is now: a served call makes its edit in the Rust session, and a
+    ``Document`` held from before it is not live (read it again through the entry)."""
+    return session.entry(doc).document
+
+
 def call(box, session, doc, **arguments):
     return box.dispatch(session, "word_set_text", {"doc": doc, **arguments})
 
@@ -144,8 +150,11 @@ def test_markup_states_the_emphasis_old_emphasis_goes_other_formatting_stays(box
     session, doc, document = opened
     target = body(document)[1].id
     # The old text has Strong on 4.0/5; give the rest a colour (direct formatting not emphasis).
-    document.range(f"{target}@0:12").format(color="C00000", bold=True)
+    ok_format = box.dispatch(session, "word_format", {"doc": doc, "targets": [f"{target}@0:12"],
+                                                      "color": "C00000", "bold": True})
+    assert ok_format.ok, ok_format.error and ok_format.error.to_json()
     ok(box, session, doc, target=target, text="The mean was 4.0/5 over the *year*.")
+    document = view(session, doc)
     look = runs(document, target)
     # 4.0/5 is unmarked now: no Strong; "The mean was" keeps its colour but not its bold.
     assert all(style is None for text, style, _, _ in look if "4.0/5" in text)
@@ -160,9 +169,11 @@ def test_plain_text_keeps_its_formatting_as_before(box, opened):
     target = body(document)[1].id
     result = ok(box, session, doc, target=target, text="The mean was 4.0/5 over the decade.")
     assert result.data is None
+    document = view(session, doc)
     assert [(t, s) for t, s, _, _ in runs(document, target) if s] == [("4.0/5", "Strong")]
     # A lone asterisk or an underscore is text, written as before.
     ok(box, session, doc, target=target, text="The mean was 4.0/5 * 2 over file_name.")
+    document = view(session, doc)
     assert document.paragraph(target).text == "The mean was 4.0/5 * 2 over file_name."
     assert [(t, s) for t, s, _, _ in runs(document, target) if s] == [("4.0/5", "Strong")]
 
@@ -172,10 +183,12 @@ def test_rule_1_a_style_beside_items_is_each_items_and_an_id_names_a_style(box, 
     first, second = body(document)[1].id, body(document)[2].id
     ok(box, session, doc, paragraph_style="Report Body",
        items=[{"target": first, "text": "One."}, {"target": second, "text": "Two.", "paragraph_style": ""}])
+    document = view(session, doc)
     assert {document.paragraph(first).style_name, document.paragraph(second).style_name} == {"Report Body"}
     style_id = document.styles.find("Report Body", "paragraph").id
     heading = body(document)[0].id
     ok(box, session, doc, target=heading, text="Results", paragraph_style=style_id)
+    document = view(session, doc)
     assert document.paragraph(heading).style_name == "Report Body"
 
 
@@ -194,6 +207,7 @@ def test_rule_2_an_unknown_style_is_refused_with_the_ones_there_are(box, opened)
     # Refused whole, nothing written; an earlier good item included.
     refused = call(box, session, doc, items=[{"target": target, "text": "Good."},
                                              {"target": target, "text": "x", "paragraph_style": "Nope"}])
+    document = view(session, doc)
     assert not refused.ok and document.paragraph(target).text == before
 
 
@@ -206,7 +220,7 @@ def test_rule_3_the_same_again_changes_nothing(box, opened):
     again = ok(box, session, doc, **arguments)
     assert again.changed == [] and any("already in Report Body" in w for w in again.warnings)
     assert again.data["styled"]            # what the runs are, said again
-    same_style = ok(box, session, doc, target=target, text=document.paragraph(target).text,
+    same_style = ok(box, session, doc, target=target, text=view(session, doc).paragraph(target).text,
                     paragraph_style="Report Body")
     assert same_style.changed == []
 
@@ -230,6 +244,7 @@ def test_rule_6_the_template_owns_the_styles_one_it_lacks_added_as_word_writes_i
     target = body(document)[0].id
     result = ok(box, session, doc, target=target, text="Plain **one**.")
     assert "style added: Strong, as Word writes it" in result.warnings
+    document = view(session, doc)
     strong = document.styles.find("Strong", "character")
     assert strong is not None and [(t, s) for t, s, _, _ in runs(document, target) if s] == [("one", strong.id)]
     # No warning when the style is there, or for a role the text does not use.
@@ -242,11 +257,13 @@ def test_lines_and_cells_take_the_style_and_the_emphasis(box, opened):
     target = body(document)[2].id
     result = ok(box, session, doc, target=target, paragraph_style="Report Body", text="One **a**\nTwo *b*")
     new = result.created[0]
+    document = view(session, doc)
     assert document.paragraph(new).style_name == "Report Body" == document.paragraph(target).style_name
     assert [r["range"] for r in result.data["styled"]] == [f"{target}@4:5", f"{new}@4:5"]
     table = document.tables()[0].id
     cell = f"{table}/c1,1"
     result = ok(box, session, doc, target=cell, text="**big** value\nsecond *line*")
+    document = view(session, doc)
     paragraphs = document.table(table).cell(1, 1).paragraphs
     assert [p.text for p in paragraphs] == ["big value", "second line"]
     assert [r["text"] for r in result.data["styled"]] == ["big", "line"]
@@ -257,6 +274,7 @@ def test_marks_beside_a_span_are_direct(box, opened):
     target = body(document)[1].id
     result = ok(box, session, doc, target=target, text="A [**b**]{Score Mark} c.")
     assert result.data["styled"] == [{"range": f"{target}@2:3", "text": "b", "style": "Score Mark", "bold": True}]
+    document = view(session, doc)
     mark = document.styles.find("Score Mark", "character").id
     assert ("b", mark, True, False) in runs(document, target)
 
@@ -266,6 +284,7 @@ def test_tracked_emphasis_is_a_formatting_revision_and_stays_valid(box, opened):
     assert box.dispatch(session, "word_set_tracking", {"doc": doc, "on": True, "author": "Writer"}).ok
     target = body(document)[1].id
     ok(box, session, doc, target=target, text="The mean was **4.0/5** over the *year*.")
+    document = view(session, doc)
     element = document._resolve(target)[1].element
     assert element.find(f".//{W}rPrChange") is not None
     assert document.validate() == []
@@ -281,7 +300,7 @@ def test_styled_text_lays_out_as_the_same_text_written_by_hand():
         target = body(document)[1].id
         assert toolbox.dispatch(session, "word_set_text", {"doc": doc, "target": target, "paragraph_style": "Report Body",
                                                            "text": "Mean **2.0/5**, below *3.0/5* in [May]{Score Mark}."}).ok
-        written = document.render_svg()
+        written = view(session, doc).render_svg()
     hand = Document.open(made())
     target = body(hand)[1].id
     hand.paragraph(target).set_style("Report Body")

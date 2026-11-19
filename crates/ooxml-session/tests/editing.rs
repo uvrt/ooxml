@@ -6,7 +6,9 @@
 
 use ooxml_base::context::{FaceData, FaceRequest, Timestamp};
 use ooxml_base::{BaseError, CacheBudget, Cancel, Clock, Context, FontSource, Limits, Locale, PartStore};
-use ooxml_session::{CallContext, Caller, DocId, DocKind, Session, SessionConfig, SessionError, Undone};
+use ooxml_session::{
+    CallContext, Caller, DocId, DocKind, HeldId, RetiredBy, Session, SessionConfig, SessionError, Undone,
+};
 use ooxml_zip::{Method, NewEntry, Writer};
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -241,6 +243,37 @@ fn bridged_calls_are_counted_by_tool() {
 }
 
 #[test]
+fn styled_text_is_written_and_values_by_reference_left_to_the_host() {
+    let s = session();
+    let d = s
+        .open(docx(&paragraph("22222222", "two word there")), DocKind::Docx, "a.docx")
+        .unwrap();
+    let context = as_caller("w1");
+    // what is not ported yet changes nothing and says so to the host
+    let by_reference = s.call(
+        "word_set_text",
+        json!({"doc": "d1", "target": "p:22222222", "text": "a {{d:1/#1/name}} word"}),
+        &context,
+    );
+    assert!(!by_reference.unported().is_empty());
+    assert!(!body_of(&s, &d).contains("name"));
+    // styled text is written, its runs listed
+    let styled = call(
+        &s,
+        "word_set_text",
+        json!({"doc": "d1", "target": "p:22222222", "text": "a **strong** word"}),
+        &context,
+    );
+    assert!(
+        styled["summary"]
+            .as_str()
+            .is_some_and(|t| t.ends_with("1 run(s) styled")),
+        "{styled}"
+    );
+    assert!(body_of(&s, &d).contains("strong"));
+}
+
+#[test]
 fn the_text_tools_edit_through_dispatch() {
     let s = session();
     let body = format!(
@@ -291,14 +324,6 @@ fn the_text_tools_edit_through_dispatch() {
     let span = Value::Object(span.to_json());
     assert_eq!(span["error"]["code"], json!("invalid_arguments"), "{span}");
     assert!(span["error"]["try_call"].is_object(), "{span}");
-    // what is not ported yet changes nothing and says so to the host
-    let styled = s.call(
-        "word_set_text",
-        json!({"doc": "d1", "target": "p:22222222", "text": "a **strong** word"}),
-        &context,
-    );
-    assert!(!styled.unported().is_empty());
-    assert!(!body_of(&s, &d).contains("strong"));
     // replace_text: one expected, two found: refused with each listed
     let two = call(
         &s,
@@ -355,4 +380,54 @@ fn a_version_names_the_parts_it_changed_since_another() {
         .map(String::from_utf8_lossy)
         .unwrap_or_default()
         .contains("one word"));
+}
+
+#[test]
+fn retired_ids_say_who_removed_them_and_an_undone_deletion_is_back() {
+    let s = session();
+    let body = format!(
+        "{}{}{}",
+        paragraph("11111111", "one"),
+        paragraph("22222222", "two"),
+        paragraph("33333333", "three")
+    );
+    let d = s.open(docx(&body), DocKind::Docx, "a.docx").unwrap();
+    let w1 = as_caller("w1");
+    let deleted = call(&s, "word_delete", json!({"doc": "d1", "target": "p:22222222"}), &w1);
+    assert!(deleted.get("error").is_none(), "{deleted}");
+    let retired = s.retired(&d).unwrap();
+    let [(HeldId::Block(0x2222_2222), RetiredBy::Step { seq, caller, tool })] = retired.as_slice() else {
+        panic!("{retired:?}");
+    };
+    assert_eq!((caller.as_deref(), tool.as_deref()), (Some("w1"), Some("word_delete")));
+    assert_eq!(Some(*seq), deleted["version"].as_u64());
+    // the bridge's update removes another, as its tool
+    s.bridge(
+        &d,
+        "word_move",
+        vec![(
+            "word/document.xml".to_owned(),
+            Some(Arc::from(document(&paragraph("11111111", "one")).as_bytes())),
+        )],
+        &as_caller("w2"),
+    )
+    .unwrap();
+    let retired = s.retired(&d).unwrap();
+    assert_eq!(retired.len(), 2, "{retired:?}");
+    assert!(
+        matches!(&retired[1], (HeldId::Block(0x3333_3333), RetiredBy::Step { tool: Some(t), .. }) if &**t == "word_move")
+    );
+    // undone, both are back; redone, the first is removed again by the call that removed it
+    assert_eq!(s.undo(&d, 2, &CallContext::default()).unwrap().count, 2);
+    assert!(s.retired(&d).unwrap().is_empty());
+    assert_eq!(s.redo(&d, 1, &CallContext::default()).unwrap().count, 1);
+    let retired = s.retired(&d).unwrap();
+    assert!(
+        matches!(retired.as_slice(), [(HeldId::Block(0x2222_2222), RetiredBy::Step { tool: Some(t), .. })] if &**t == "word_delete"),
+        "{retired:?}"
+    );
+    // a state's earlier deletions are given by the host and kept as given
+    s.seed_retired(&d, vec![(HeldId::Drawing(4), 3, Some("word_delete (agent=a)".into()))])
+        .unwrap();
+    assert_eq!(s.retired(&d).unwrap().len(), 2);
 }
