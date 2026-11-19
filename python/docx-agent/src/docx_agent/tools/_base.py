@@ -30,8 +30,9 @@ from ooxml_edit.tools import Result, ToolError, page_list, tool as _tool, valida
 from ooxml_edit.tools.worker import takes_affinity, takes_lane
 
 from ..rust import edits
-from ..rust.owner import owned_bytes, owned_validation
-from ..layout import (adopt, affinity, canon_of, known_summary, layout_key, summary_for, cache_key, convert_bytes, held_state, lay_out_bytes,
+from ..rust.owner import owned_validation
+from .laid import laid_before, seen_before, state_bytes
+from ..layout import (adopt, affinity, canon_of, layout_key, summary_for, convert_bytes, held_state, lay_out_bytes,
                       lay_out_unlocked, layout_options, remember_runner, twin, twin_of)
 
 #: A Word document of this many pages or fewer gets its reflow in every edit's checks.
@@ -138,11 +139,21 @@ class Engine:
 
 def engage(call: Any) -> None:
     """Point the call's Word documents' layouts at the toolbox's worker pool."""
-    timeout = call.limits.layout_timeout
-    pool = call.toolbox.pool
     for entry in call.entries.values():
         if entry.kind == "docx":
-            entry.document.converter = Engine.of(pool, timeout, entry.document)
+            engage_document(call, entry.document)
+
+
+def engage_document(call: Any, document: Any) -> None:
+    """Point ``document``'s layouts at the call's toolbox's worker pool."""
+    document.converter = Engine.of(call.toolbox.pool, call.limits.layout_timeout, document)
+
+
+def hand_to_checks(document: Any) -> None:
+    """Round 45: the engine a changing call's checks lay out with, wherever they run -- on
+    the read copy of the version it made, after a batch's reads let it go: the call's (as
+    :func:`engage` pointed it), kept on its document until the checks end."""
+    document._checks_engine = document.converter
 
 
 def release(entries: Iterable[Any]) -> None:
@@ -220,103 +231,6 @@ def update_fields_ahead(call: Any, ids: list[str] | None) -> bool:
         if entry.version == version:
             return True
     return False
-
-
-def seen_before(document: Any, data: bytes | None = None) -> Any:
-    """What a changing call's reflow is measured from: the summary of the layout of the
-    document's current state when it was laid out already -- here, or (round 38) in the
-    worker that made a check's facts -- else ``None``.  ``data``: the state's bytes, when
-    the caller has them (:func:`state_bytes`)."""
-    if not getattr(document, "_layout_summaries", None) and not getattr(document, "_layouts", None):
-        # Lane G: nothing laid out for the document (its checks answered elsewhere): no
-        # layout of its current state either, without writing its bytes out to look.
-        return None
-    options = layout_options(document, {})
-    for state in _states(document, data):
-        key = layout_key(state, options)
-        found = known_summary(document, key)
-        if found is not None:
-            return found
-        conversion = document._layouts.get(cache_key(state, options))
-        if conversion is not None:
-            return summary_for(document, key, conversion.layout)
-    return None
-
-
-def _states(document: Any, data: bytes | None) -> Iterator[bytes]:
-    """The bytes a layout of the document's current state may be keyed by: ``data`` (or its
-    own); lane P2c4: for a view of a document the Rust session owns, also as the session
-    writes the state (a read of a committed version lays out those) and as the view does (a
-    check after a Python step)."""
-    owned = owned_bytes(document)
-    if owned is None:
-        yield document.to_bytes() if data is None else data
-        return
-    seen: set[bytes] = set()
-    for state in (data, owned, None):
-        state = document.to_bytes() if state is None else state
-        if state not in seen:
-            seen.add(state)
-            yield state
-
-
-def laid_before(document: Any, version: int | None = None) -> Any:
-    """0.1.117: where a fields update read the layout of the document's current version (or
-    ``version``) from its Rust owner (:mod:`docx_agent.rust.fields`), what docx-agent's own
-    update would have kept of it for the reflow: its page count (always more than
-    :data:`REFLOW_PAGES`: the reflow says :data:`STALE`); else ``None``."""
-    from ..rust.fields import laid_count
-
-    count = laid_count(document, version)
-    return _Laid(count) if count is not None else None
-
-
-class _Laid:
-    """A layout's page count, as :func:`laid_before` knows it."""
-
-    def __init__(self, count: int) -> None:
-        self.count = count
-
-
-def state_bytes(call: Any) -> bytes | None:
-    """The bytes of the call's document as it is now, when the session has them already
-    (round 45): its version's snapshot (``DocumentEntry.snapshot``, kept when the change
-    before ended), as long as nothing changed the document since -- outside a batch, or
-    before any op of the batch changed it.  ``None``: serialize it (``to_bytes``)."""
-    entry = call.entry
-    kept = getattr(entry, "_snapshot", None)
-    if kept is None or kept[0] != entry.version or entry.doc_id in call.context.changed_at:
-        return None
-    # (0.117.0: a committed version's bytes are made when asked; not made here for this.)
-    return kept[1] if isinstance(kept[1], (bytes, bytearray)) else None
-
-
-def held_facts(call: Any, request: dict, *, unlocked: Any = None, timed: Any = None) -> Any:
-    """:func:`docx_agent.layout.check_facts` of the call's document, ``(facts, summary)``,
-    made in the worker holding its layouts -- with the call's lock let go where it may (a
-    read outside a batch, as before), and (round 59, R134) holding it -- a batch's read,
-    which never waits for another's layout in progress -- where a toolbox's workers hold
-    them (:func:`~docx_agent.layout.runner_of`).  ``None``: lay it out here, as before (a
-    batch's read of a document no worker lays out; a converter that cannot)."""
-    from ..layout import check_facts, runner_of
-
-    if not call.may_unlock and runner_of(call.document) is None:
-        return None
-    return check_facts(call.document, unlocked if unlocked is not None else call.unlocked, request, timed=timed)
-
-
-def cached_layout(document: Any, *, fetch: bool = True) -> Any:
-    """The layout of the document's current state if it was laid out already, else ``None``.
-    Round 38: laid out in the worker that made a check's facts, it is fetched from there
-    (nothing laid out again) -- ``fetch`` false: only whether it was (``True``)."""
-    options = layout_options(document, {})
-    data = owned_bytes(document) or document.to_bytes()
-    conversion = document._layouts.get(cache_key(data, options))
-    if conversion is not None:
-        return conversion.layout
-    if known_summary(document, layout_key(data, options)) is None:
-        return None
-    return document.layout() if fetch else True
 
 
 # -- tracking mode -----------------------------------------------------------------------------
@@ -509,6 +423,7 @@ def checks(entry: Any, touched: Sequence[Any]) -> dict[str, Any]:
         # No layout to compare in Python: after an edit the Rust session made, its checks.
         validated = owned_validation(entry)
         if validated is not None:
+            _relayout_owned(entry)
             return {"validate": validated, "reflow": None if before is None else STALE}
     document = entry.document
     handed = getattr(document, "_handed_engine", None)
@@ -531,6 +446,20 @@ def checks(entry: Any, touched: Sequence[Any]) -> dict[str, Any]:
         release([entry])
         document.__dict__.pop("_checks_engine", None)
     return out
+
+
+def _relayout_owned(entry: Any) -> None:
+    """:func:`checks` of a version the Rust session holds, its view not made current: the
+    relayout on commit (lane O) where a Python step engaged the engine, which is let go."""
+    from .owner import commit_relayout
+
+    held = entry.held
+    engine = held.converter if isinstance(held.converter, Engine) else None
+    try:
+        commit_relayout(entry, engine)
+    finally:
+        held.converter = None
+        held.__dict__.pop("_checks_engine", None)
 
 
 @contextmanager
@@ -561,7 +490,7 @@ def _reflow(document: Any, before: Any, out: dict[str, Any]) -> None:
         else:
             after = document.layout()
             now = summary_for(document, after.key if after.key is not None else layout_key(
-                owned_bytes(document) or document.to_bytes(), layout_options(document, {})), after)
+                document.to_bytes(), layout_options(document, {})), after)
         out["reflow"] = reflow_json(now.compare(before, canon_of(document)))
     except ToolError as error:
         out["reflow"] = f"{error.code}: {error.message}"
@@ -779,9 +708,7 @@ def wrap(handler: Callable[..., Any], *, mutates: bool, track: bool = True) -> C
                 if spaced and isinstance(returned, Result):
                     returned.warnings.append(SPACED.format(spaced))
                 keep = True  # the checks hook lays out after the call, then releases
-                # Round 45: the engine its checks lay out with, wherever they run -- on the
-                # read copy of the version it made, after a batch's reads let it go.
-                call.document._checks_engine = call.document.converter
+                hand_to_checks(call.document)
             else:
                 returned = handler(call, **arguments)
             return returned

@@ -56,6 +56,8 @@ class RustOwner:
             mirror.owned = True
             mirror.view_head = mirror.opened = mirror.session.head(mirror.doc)
             mirror.live = weakref.ref(document)
+        # One set of bytes per version: the view's are the session's (owned_bytes).
+        document.held_by(owned_bytes)
         return mirror
 
     def head(self, mirror: "reads.Mirror") -> Any:
@@ -77,10 +79,21 @@ class RustOwner:
 
     def bridge(self, mirror: "reads.Mirror", tool: str, caller: Mapping[str, Any] | None,
                parts: dict[str, bytes | None]) -> Any:
+        from ..layout import laid_mark, same_state
+
+        live = mirror.live()
+        # What the step laid out of its last state is keyed by the view's own bytes then:
+        # found under the session's bytes of the version too (only where it laid out).
+        laid = live is not None and laid_mark(live) != mirror.laid
+        own = live.package.to_bytes() if laid else None
         with mirror.lock:
             made = mirror.session.bridge(mirror.doc, tool, parts, context=context_of(caller))
             mirror.view_head = made
-            return made
+        if own is not None:
+            same_state(live, own, bytes(made.save()))
+        if live is not None:
+            mirror.laid = laid_mark(live)
+        return made
 
     def undo(self, mirror: "reads.Mirror") -> Any:
         return self._step(mirror, mirror.session.undo)
@@ -98,52 +111,58 @@ class RustOwner:
         """What makes the Python reader of ``head`` (the document's version ``number``) from
         its bytes: a ``Document`` of them numbered ``number``, with the ids the session gave
         and the renames it made since the document was opened, read through the session's
-        copy of the document (its reads find ``head`` by ``number``)."""
+        copy of the document (its reads find ``head`` by ``number``).  (No ``draft``: an owned
+        document's calls are not prepared on drafts, ooxml-edit's ``OwnedEntry``.)"""
         from ..edit.ids import copy_ledger
-        from ..layout import _LIVE_SETTINGS, _NOT_SETTINGS, _reader_class
+        from ..layout import reader_copy
 
         opened = mirror.opened
 
+        def ids_of(live: Any) -> Any:
+            def ids(copy: Any) -> None:
+                given, renamed = head.ids_since(opened)
+                follow(copy, {}, given, renamed, number, number)
+                if live.history.version == number:
+                    # The view is this version: what its ids were (deleted ones too) is the copy's.
+                    copy._ledger = copy_ledger(live._ledger)
+                    copy._aliases.update(live._aliases)
+
+            return ids
+
         def make(data: bytes) -> Any:
-            # As docx_agent.layout.read_copy makes a reader: the reader class, the view's
-            # settings, its layouts (through ``_live``), no engine of its own.
             live = mirror.live()
-            copy = _reader_class(type(live)).open(data, stamping=live.stamping)
-            given, renamed = head.ids_since(opened)
-            follow(copy, {}, given, renamed, number, number)
-            if live.history.version == number:
-                # The view is this version: what its ids were (deleted ones too) is the copy's.
-                copy._ledger = copy_ledger(live._ledger)
-                copy._aliases.update(live._aliases)
-            for name, value in vars(live).items():
-                if not name.startswith("_") and name not in _NOT_SETTINGS + _LIVE_SETTINGS:
-                    setattr(copy, name, value)
-            copy.__dict__["_live"] = live
-            copy.converter = None
-            copy.__dict__["_frozen"] = (copy.history.version, copy._state, data)
-            return copy
+            return reader_copy(live, data, ids_of(live))
 
         return make
 
     def keep(self, mirror: "reads.Mirror", number: int, head: Any) -> None:
+        from .check import owner_committed
+
         with mirror.lock:
             mirror.keep(number, head)
+        live = mirror.live()
+        if live is not None:
+            owner_committed(live, number)
 
     def save(self, mirror: "reads.Mirror") -> bytes:
         return bytes(mirror.session.save(mirror.doc))
 
     def close(self, mirror: "reads.Mirror") -> None:
+        live = mirror.live() if mirror.live is not None else None
+        if live is not None:
+            live.held_by(None)
         reads._close(mirror.session, mirror.doc)
 
 
 def owned_bytes(document: Any) -> bytes | None:
     """The bytes of the version a view of a document the session owns is, as the session
-    writes them -- what its versions are laid out from, so every layout of it is keyed by
-    them; ``None`` for any other document (its own ``to_bytes``)."""
+    writes them -- the view's ``to_bytes`` (``Document.held_by``), so every layout and copy of
+    a version is keyed by them; ``None`` for any other document, and once a Python step
+    changed the view (its own ``to_bytes``)."""
     mirror = document.__dict__.get("_rust_reads")
     if not isinstance(mirror, reads.Mirror) or not mirror.owned or mirror.view_head is None \
-            or document.history.in_batch:
-        return None             # (inside a Python step the view is ahead of the session)
+            or document.history.batch_changed:
+        return None             # (a Python step that changed the view: ahead of the session)
     return bytes(mirror.view_head.save())
 
 

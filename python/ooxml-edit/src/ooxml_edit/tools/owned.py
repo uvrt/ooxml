@@ -87,14 +87,17 @@ class OwnedHistory:
         """The owner's version numbered ``number`` (now: the latest), ``None`` when let go."""
         return self._heads.get(self._number if number is None else number)
 
-    def committed(self, head: Any) -> int:
-        """A step the owner made: its new head numbered, redo dropped."""
+    def committed(self, head: Any, view: Any = None) -> int:
+        """A step the owner made: its new head numbered, redo dropped; ``view``: the view
+        that made it (a Python step), numbered as the head before the owner keeps it."""
         self._undo.append(self._number)
         if len(self._undo) > DEPTH:
             del self._undo[0]
         self._redo.clear()
         self._last += 1
         self._number = self._last
+        if view is not None:
+            view.history.follow(self._number, self._last)
         self._keep(head)
         return self._number
 
@@ -204,14 +207,12 @@ class OwnedEntry(DocumentEntry):
     _view_change: Any = field(default=None, repr=False)
     _watches: list[OwnedChange] = field(default_factory=list, repr=False)
 
-    #: The view (set by the dataclass's ``document`` argument, through the setter).
-    _view = None
     owned = True
 
     def own(self, owner: Any, handle: Any) -> None:
         """The document (the one this entry was made with) is ``owner``'s, which holds it
         as ``handle`` (what its ``open`` gave)."""
-        document = self._view
+        document = self.held
         self.owner = owner
         self.handle = handle
         history = getattr(document, "history", None)
@@ -222,34 +223,34 @@ class OwnedEntry(DocumentEntry):
 
     # -- the view ---------------------------------------------------------------------------
 
-    @property  # type: ignore[override,misc]
+    @property
     def document(self) -> Any:
         """The view at the head, made current now if the head moved since it last was."""
         owned = self._owned
         if owned is not None and self._view_number != owned.version:
             with self.lock:     # (a read that came before the lock: no edit meanwhile)
                 if self._view_number != owned.version:
-                    self.owner.follow(self.handle, self._view, owned.head(), owned.version,
+                    self.owner.follow(self.handle, self.held, owned.head(), owned.version,
                                       owned.last_version)
                     self._view_number = owned.version
         if self.batch_depth and self._step is not None and self._view_change is None:
             self._open_view_step()
-        return self._view
+        return self.held
 
     @document.setter
     def document(self, value: Any) -> None:
-        self._view = value
+        self.held = value
 
     @property
     def view_current(self) -> bool:
         """Whether the view is the head's (reading it costs nothing now)."""
         return self._owned is None or self._view_number == self._owned.version
 
-    @property  # type: ignore[override]
+    @property
     def history(self) -> Any:
-        return self._owned if self._owned is not None else getattr(self._view, "history", None)
+        return self._owned if self._owned is not None else getattr(self.held, "history", None)
 
-    @property  # type: ignore[override]
+    @property
     def version(self) -> int:
         if self.pinned is not None:
             return self.pinned
@@ -266,7 +267,7 @@ class OwnedEntry(DocumentEntry):
     def _open_view_step(self) -> None:
         """The view's own batch and watch, opened the first time a call's step reads it: a
         Python tool's change is one step of the view's, made one step of the owner's."""
-        view, stack = self._view, self._step
+        view, stack = self.held, self._step
         assert stack is not None
         batch = getattr(view, "batch", None) or view.history.batch
         # (The watch first: it closes after the batch, which makes the step as it closes.)
@@ -309,13 +310,12 @@ class OwnedEntry(DocumentEntry):
             return
         if self.owner.head(self.handle).number != owned.head().number:
             raise OwnerDisagrees(f"{self.doc_id}: the owner's head moved during a Python step")
-        package = self._view.package
+        package = self.held.package
         parts = {part: (package.read(part) if package.has_part(part) else None)
                  for part in change.parts}
         head = self.owner.bridge(self.handle, owner.tool if owner is not None else "library",
                                  dict(owner.caller) if owner is not None else None, parts)
-        owned.committed(head)
-        self._view.history.follow(owned.version, owned.last_version)
+        owned.committed(head, self.held)
         self._view_number = owned.version
 
     def served(self, head: Any) -> None:
@@ -349,6 +349,8 @@ class OwnedEntry(DocumentEntry):
         """What ``change`` touched, as the owner says it between the heads it went from
         and to; by its parts where one of them was let go."""
         history = self._owned
+        if history is None:
+            return [{"part": part} for part in sorted(change.parts)]
         end = history.version if change.end is None else change.end
         before, after = history.head(change.start), history.head(end)
         if before is None or after is None:
@@ -391,7 +393,7 @@ class OwnedEntry(DocumentEntry):
 
     def release(self) -> None:
         super().release()
-        view_history = getattr(self._view, "history", None)
+        view_history = getattr(self.held, "history", None)
         if view_history is not None:
             view_history.clear()
         if self.owner is not None:

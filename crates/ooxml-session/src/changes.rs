@@ -27,7 +27,11 @@ impl Opened {
         let package = self.package();
         let mut out = Vec::with_capacity(names.len());
         for name in names {
-            let bytes = if package.has_part(&name) { package.read(&name)? } else { None };
+            let bytes = if package.has_part(&name) {
+                package.read(&name)?
+            } else {
+                None
+            };
             out.push((name, bytes));
         }
         Ok(out)
@@ -128,7 +132,10 @@ fn touched_json(found: &ooxml_word_edit::touched::Touched) -> Value {
     let mut entry = Map::new();
     entry.insert("part".into(), Value::from(found.part.as_str()));
     if let Some(section) = &found.section {
-        entry.insert("heading".into(), section.heading.as_deref().map_or(Value::Null, Value::from));
+        entry.insert(
+            "heading".into(),
+            section.heading.as_deref().map_or(Value::Null, Value::from),
+        );
         entry.insert("level".into(), Value::from(section.level));
         entry.insert("blocks".into(), Value::from(section.blocks.to_vec()));
     }

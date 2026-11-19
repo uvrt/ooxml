@@ -339,17 +339,12 @@ def layout_statistics(document: "Document") -> dict:
     """Pages and lines from docx2svg's layout of the state being saved, when it has been
     made (and laid the whole document out); nothing otherwise."""
     from ..layout import cache_key, layout_options
-    from ..rust.owner import owned_bytes
 
-    # Lane P2c4: a document the Rust session owns is laid out from the session's bytes (a
-    # read of a committed version) or from its view's own (a check after a Python step).
-    options = layout_options(document, {})
-    keys = [cache_key(data, options) for data in (owned_bytes(document), document.to_bytes()) if data]
-    conversion = next((document._layouts.get(k) for k in keys if document._layouts.get(k) is not None), None)
+    key = cache_key(document.to_bytes(), layout_options(document, {}))
+    conversion = document._layouts.get(key)
     if conversion is None:
         # Round 38: a check made its facts where the layout is held, and kept these.
-        kept = getattr(document, "_layout_stats", {})
-        stats = next((kept.get(k) for k in keys if kept.get(k)), None)
+        stats = getattr(document, "_layout_stats", {}).get(key)
         return dict(stats) if stats else {}
     layout = conversion.layout
     if layout.pages_known is None:

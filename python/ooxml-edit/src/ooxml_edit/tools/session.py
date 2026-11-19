@@ -527,7 +527,9 @@ class DocumentEntry:
     kind: str
     name: str
     source: str
-    document: Any
+    #: The document as the session holds it; calls read it as :attr:`document` (an owned
+    #: entry's is its view, made current when read: :class:`~.owned.OwnedEntry`).
+    held: Any
     size: int = 0
     #: The session's :attr:`~Session.font_dirs` (``None``: the renderers' own default),
     #: for a format's ``checks``, which get the entry alone.
@@ -611,6 +613,15 @@ class DocumentEntry:
     #: through the library) -- for what a read learns changed since its version
     #: (:meth:`changes_between`).  The history keeps the states they read.
     changes_kept: deque = field(default_factory=lambda: deque(maxlen=CHANGES_KEPT), repr=False)
+
+    @property
+    def document(self) -> Any:
+        """The document calls work on."""
+        return self.held
+
+    @document.setter
+    def document(self, value: Any) -> None:
+        self.held = value
 
     @property
     def history(self) -> Any:
@@ -878,7 +889,7 @@ class DocumentEntry:
         until the dispatcher applies its change to the document."""
         entry = DocumentEntry(
             doc_id=self.doc_id, kind=self.kind, name=self.name, source=self.source,
-            document=document, size=self.size, font_dirs=self.font_dirs, locale=self.locale,
+            held=document, size=self.size, font_dirs=self.font_dirs, locale=self.locale,
             baseline_problems=self.baseline_problems, tracking=committed.tracking,
             render_cache=LRU(1), check_cache=LRU(1), render_keys=LRU(16), font_keys=LRU(16),
             keys=dict(self.keys), refs=dict(committed.refs), owners=dict(committed.owners),
@@ -1122,7 +1133,7 @@ class Committed:
                     return None
                 entry = DocumentEntry(
                     doc_id=live.doc_id, kind=live.kind, name=live.name, source=live.source,
-                    document=document, size=live.size, font_dirs=live.font_dirs,
+                    held=document, size=live.size, font_dirs=live.font_dirs,
                     locale=live.locale, baseline_problems=live.baseline_problems,
                     tracking=self.tracking, render_cache=live.render_cache,
                     check_cache=live.check_cache, render_keys=live.render_keys,
@@ -1379,7 +1390,7 @@ class Session:
             handle = fmt.owner.open(document) if fmt.owner is not None else None
             made = DocumentEntry if handle is None else OwnedEntry
             self.documents[doc_id] = made(
-                doc_id=doc_id, kind=kind, name=name, source=source, document=document,
+                doc_id=doc_id, kind=kind, name=name, source=source, held=document,
                 size=size, baseline_problems=baseline, font_dirs=self.font_dirs,
                 locale=self.locale,
                 render_cache=LRU(self.limits.render_cache_size),

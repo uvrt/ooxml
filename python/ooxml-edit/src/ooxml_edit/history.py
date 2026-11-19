@@ -358,6 +358,13 @@ class History:
     def in_batch(self) -> bool:
         return self._batch_depth > 0
 
+    @property
+    def batch_changed(self) -> bool:
+        """Whether the open batch changed the content so far (lane P2c5: a view whose owner
+        holds its versions is ahead of the owner then); ``False`` outside a batch."""
+        snapshot = self._batch_snapshot
+        return self._batch_depth > 0 and snapshot is not None and self._package.snapshot() != snapshot
+
     def kept_bytes(self) -> int:
         """What the history's states hold, in bytes (round 58): every distinct piece of the
         parts its snapshots keep -- undo, redo and steps taken out -- counted once however

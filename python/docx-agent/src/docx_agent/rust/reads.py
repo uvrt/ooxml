@@ -150,6 +150,9 @@ class Mirror:
         self.live: Any = None
         #: The tracking mode the session edits the document under (:mod:`.edits`).
         self.tracking: dict[str, Any] | None = None
+        #: The view's :func:`docx_agent.layout.laid_mark` when its last Python step was
+        #: committed (:meth:`docx_agent.rust.owner.RustOwner.bridge`).
+        self.laid: tuple | None = None
 
     def keep(self, number: int, version: Any) -> None:
         """Keep ``version`` (an ``ooxml_core.Version``) as the document's version ``number``."""

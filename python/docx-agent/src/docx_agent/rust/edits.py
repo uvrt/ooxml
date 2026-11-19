@@ -113,16 +113,32 @@ def _tracking(mirror: "reads.Mirror", entry: Any, context: Any) -> None:
     mirror.tracking = wanted
 
 
-def _layout_before(call: Any, entry: Any) -> None:
+def _layout_before(call: Any, entry: Any) -> Any:
     """What the call's reflow is measured from, as docx-agent's wrapper takes it -- only where
-    the view is current (the version before the edit), so the Python document is not made
-    current for it."""
-    from ..tools._base import Before, laid_before, seen_before, state_bytes
+    the view is current (the version before the edit; ``entry.held``: read as it is, no step
+    of the view's opened for it); ``None`` where there is none."""
+    from ..tools._base import Before
+    from ..tools.laid import laid_before, seen_before, state_bytes
 
     if not entry.view_current:
+        return None
+    document = entry.held
+    before = seen_before(document, state_bytes(call)) or laid_before(document)
+    call.touch(Before(before))
+    return before
+
+
+def _hand_engine(call: Any, entry: Any, before: Any) -> None:
+    """Where the call's checks compare layouts (a layout before of at most ``REFLOW_PAGES``
+    pages), the toolbox's engine for them, as docx-agent's wrapper hands it after a Python
+    edit: the version the session made is laid out where the document's layouts are held.
+    Put on the view as it is (``entry.held``): the checks make it current, after the step."""
+    from ..tools._base import REFLOW_PAGES, engage_document, hand_to_checks
+
+    if before is None or before.count > REFLOW_PAGES:
         return
-    document = entry.document
-    call.touch(Before(seen_before(document, state_bytes(call)) or laid_before(document)))
+    engage_document(call, entry.held)
+    hand_to_checks(entry.held)
 
 
 def _run(call: Any, entry: Any, arguments: dict[str, Any]) -> Result:
@@ -156,8 +172,9 @@ def serve(call: Any, arguments: dict[str, Any], python: Callable[[], Any]) -> An
         why = _why_not(call, entry)
         if why is not None:
             raise _Fallback(why)
-        _layout_before(call, entry)
+        before = _layout_before(call, entry)
         result = _run(call, entry, arguments)
+        _hand_engine(call, entry, before)
     except _Fallback as why:
         with _COUNTS_LOCK:
             _FALLBACKS[(tool, str(why))] += 1

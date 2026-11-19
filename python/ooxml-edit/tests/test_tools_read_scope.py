@@ -105,7 +105,7 @@ def test_changes_no_longer_kept_warn(monkeypatch):
 
 
 def test_the_changes_between_two_versions_are_the_way_there():
-    entry = session_module.DocumentEntry(doc_id="d1", kind="pptx", name="x", source="app", document=None)
+    entry = session_module.DocumentEntry(doc_id="d1", kind="pptx", name="x", source="app", held=None)
     for before, after in [(0, 1), (1, 2), (2, 1), (1, 3)]:      # an undo back to 1, then a change
         entry.changes_kept.append((before, after, f"{before}>{after}"))
     assert entry.changes_between(1, 3) == ["1>3"]         # from the latest time at 1

@@ -2444,6 +2444,7 @@ class Toolbox:
                         result.checks = {**self._checks(session, entry, context), **own}
 
                     if after is None or not after.defer(session, primary, checked):
+                        _committed_for_checks(session, after, [primary])
                         checked(primary)
             if not result.ok:
                 result.datasets = []
@@ -2773,6 +2774,7 @@ class Toolbox:
         every = sorted([*docs, *read], key=doc_order)
         found: dict[str, dict[str, Any]] = dict(read)
         if after is None or not all(after.can_defer(session, entries[doc]) for doc in docs):
+            _committed_for_checks(session, after, [entries[doc] for doc in docs])
             found.update({doc: self._checks(session, entries[doc], context) for doc in docs})
             _set_checks(combined, {doc: found[doc] for doc in every})
             return
@@ -3894,6 +3896,16 @@ def _not_run(timeout: float, first: int, total: int, elapsed: float
         text += "; resend them as smaller batches"
     return text, data
 
+
+
+def _committed_for_checks(session: Session, after: "After | None", entries: Iterable[DocumentEntry]) -> None:
+    """Lane P2c5: where a changing call's checks run under its lock (an owned document's,
+    :meth:`After.can_defer`), its version committed first, as a deferred check's is (the
+    relayout on commit lays that version out); none outside a call that commits (no ``after``)."""
+    if after is None:
+        return
+    for entry in entries:
+        entry.commit(session.formats.get(entry.kind))
 
 class After:
     """A changing call's work after its change -- its checks -- run once its locks are let

@@ -29,6 +29,21 @@ from xlsx_agent.tools import FORMAT, GROUPS, TOOLS  # noqa: E402
 REGIONS = ["North", "South", "East", "West"]
 
 
+@pytest.fixture(autouse=True)
+def _report_held_by_the_tool_layer():
+    """The report's calls are prepared on drafts, which a Word document the Rust session owns
+    is not (docx-agent's owner): no Rust session for these tests, as docx-agent's own tests
+    of drafts run (its conftest ``python_owned``)."""
+    from docx_agent.rust import reads
+
+    reads.available()           # (the process's session made first: the one given back after)
+    before = reads.use_session(None)
+    try:
+        yield
+    finally:
+        reads.use_session(before)
+
+
 def book() -> bytes:
     sales = [[f"S-{i:03}", REGIONS[i % 4], f"P-{i % 5}", (i * 37) % 101 + 1] for i in range(40)]
     products = [[f"P-{k}", f"Part {k}"] for k in range(5)]
