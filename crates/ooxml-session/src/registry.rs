@@ -353,6 +353,9 @@ impl Registry {
         registry.register(word_edit::<ooxml_tools_word::WordEditTable>(
             ooxml_tools_word::word_edit_table,
         ));
+        registry.register(word_edit::<ooxml_tools_word::WordDrawings>(
+            ooxml_tools_word::word_drawings,
+        ));
         registry.register(word_edit::<ooxml_tools_word::WordControls>(
             ooxml_tools_word::word_controls,
         ));

@@ -14,6 +14,7 @@ mod compare;
 mod compare_args;
 mod compare_paragraphs;
 mod compare_tables;
+pub(crate) use compare_tables::round2;
 mod design;
 mod design_args;
 mod design_layout;

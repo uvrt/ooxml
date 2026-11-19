@@ -306,6 +306,14 @@ impl Work {
         self.declared(id, namespace, false).flatten().is_some()
     }
 
+    /// The namespace declarations the element `id` itself makes.
+    pub(crate) fn declarations(&self, id: Id) -> Vec<NamespaceDecl> {
+        match self.slot(id).map(|s| &s.kind) {
+            Some(Kind::Element { namespaces, .. }) => namespaces.clone(),
+            _ => Vec::new(),
+        }
+    }
+
     /// Declare `prefix` for `uri` on the element `id`.
     pub(crate) fn declare(&mut self, id: Id, prefix: &str, uri: &str) {
         if let Some(Kind::Element { namespaces, .. }) = self.slots.get_mut(id).map(|s| &mut s.kind) {
