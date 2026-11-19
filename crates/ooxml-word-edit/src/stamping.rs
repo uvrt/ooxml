@@ -261,3 +261,8 @@ pub(crate) fn with_attribute(head: &Head, name: &Name, value: &str) -> Head {
 pub(crate) fn w14_prefix(root: &Element, path: &[u32]) -> String {
     prefix_at(root, path, W14, "w14")
 }
+
+/// The prefix the element at `path` of `root` writes `wp14` attributes with.
+pub(crate) fn wp14_prefix(root: &Element, path: &[u32]) -> String {
+    prefix_at(root, path, WP14, "wp14")
+}

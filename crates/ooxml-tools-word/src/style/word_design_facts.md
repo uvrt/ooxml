@@ -1,0 +1,1 @@
+Measured design facts for template analysis, no verdicts: styles in use per role with usage and look, table styles by place (header, bands, label column), table frames, page grid per section, theme, repeated block shapes; or every declared style resolved.

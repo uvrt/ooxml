@@ -315,10 +315,22 @@ def follow_cases(document) -> list[dict]:
 _W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
 
+def design_cases(document) -> list[dict]:
+    """``word_design_facts`` (lane P4d10): the default call, each kind alone, the declared
+    styles from a later page (``c3``), and a cursor no page gave."""
+    out = [call("word_design_facts")]
+    kinds = ["styles", "table_styles", "table_frames", "sections", "theme", "patterns", "declared_styles"]
+    out += [call("word_design_facts", include=[kind]) for kind in kinds]
+    out.append(call("word_design_facts", include=["theme", "declared_styles"]))
+    out.append(call("word_design_facts", cursor="c3"))
+    out.append(call("word_design_facts", cursor="x1"))
+    return out
+
+
 def cases(document) -> list[dict]:
     """Every style case for ``document``."""
     found = (list_cases(document) + format_cases(document) + styles_cases(document) + template_cases(document)
-             + compare_cases(document) + follow_cases(document))
+             + compare_cases(document) + follow_cases(document) + design_cases(document))
     wanted = os.environ.get("STYLE_TOOLS")       # a comma list, to run some tools only
     found = [c for c in found if not wanted or c["tool"] in wanted.split(",")]
     per_tool = int(os.environ.get("STYLE_PER_TOOL") or 0)   # the first n of each tool's

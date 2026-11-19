@@ -72,7 +72,7 @@ def test_refusals_are_replies_and_session_errors_are_exceptions():
                                 "valid_options": ["d1"]}
     assert call(session, "nope", {})["error"]["valid_options"] == [
         "describe", "find_text", "read_batch", "replace_text", "word_changes", "word_comments", "word_compare_blocks",
-        "word_edit_table", "word_fields", "word_follow_sample", "word_format", "word_format_table", "word_inspect", "word_lists", "word_read",
+        "word_design_facts", "word_edit_table", "word_fields", "word_follow_sample", "word_format", "word_format_table", "word_inspect", "word_lists", "word_read",
         "word_set_text", "word_set_tracking", "word_styles", "word_template"]
     text, _, _ = session.call("describe", "{not json")
     assert json.loads(text)["error"]["code"] == "invalid_arguments"
@@ -113,7 +113,7 @@ def test_tool_specs_are_the_exports():
                                           "word_changes", "word_comments", "word_set_text", "replace_text",
                                           "word_format_table", "word_edit_table", "word_lists", "word_fields",
                                           "word_format", "word_styles", "word_template", "word_compare_blocks",
-                                          "word_follow_sample", "read_batch"]
+                                          "word_follow_sample", "word_design_facts", "read_batch"]
     assert specs == json.loads(ooxml_core.Session().tool_specs("docx"))
     assert json.loads(ooxml_core.tool_specs("pptx")) == []
     with pytest.raises(ValueError):
