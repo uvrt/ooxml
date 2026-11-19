@@ -45,6 +45,7 @@ mod check;
 pub mod cost;
 mod dates;
 mod difflib;
+pub mod documents;
 mod error;
 mod intent;
 mod places;

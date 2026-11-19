@@ -1,0 +1,1 @@
+Make copies of a sample table or paragraph follow the revised sample in one step: its widths, table, row, cell and paragraph formatting, styles, run formatting; each copy keeps its text, rows, columns and merges.
