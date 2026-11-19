@@ -20,6 +20,7 @@ its saved bytes are the session's.  :class:`RustOwner` is the format's
 
 from __future__ import annotations
 
+import functools
 import json
 import weakref
 from collections.abc import Mapping
@@ -58,6 +59,9 @@ class RustOwner:
             mirror.live = weakref.ref(document)
         # One set of bytes per version: the view's are the session's (owned_bytes).
         document.held_by(owned_bytes)
+        # The ids retired are the session's record (lane P2c10), from the state opened with on.
+        _seed_retired(mirror, document._ledger)
+        document.retired_ids = functools.partial(retired_ids, mirror)
         return mirror
 
     def head(self, mirror: "reads.Mirror") -> Any:
@@ -152,6 +156,38 @@ class RustOwner:
         if live is not None:
             live.held_by(None)
         reads._close(mirror.session, mirror.doc)
+
+
+def _seed_retired(mirror: "reads.Mirror", ledger: Any) -> None:
+    """Give the session the ids the state the document was opened with retired (round 38):
+    each with the version that removed it and who made it, as the state says them."""
+    rows = [("block", value, version, ledger.earlier.get(version)) for value, version in ledger.gone.items()]
+    rows += [("drawing", value, version, ledger.earlier.get(version))
+             for value, version in ledger.drawings_gone.items()]
+    if rows:
+        mirror.session.seed_retired(mirror.doc, rows)
+
+
+def retired_ids(mirror: "reads.Mirror") -> Any:
+    """The document's retired ids as the session records them (``Document.retired_ids``),
+    each session version numbered as the tool layer numbered it (:attr:`.reads.Mirror.numbers`;
+    one not numbered yet -- its call still ending -- is left out until it is)."""
+    from ..edit.ids import RetiredIds
+
+    out = RetiredIds({}, {}, {}, {})
+    numbers = mirror.numbers
+    for kind, value, seq, caller, tool, version, said in mirror.session.retired(mirror.doc):
+        if seq is not None:
+            version = numbers.get(seq)
+            if version is None:
+                continue
+            if tool:
+                context = ", ".join(f"{key}={value_}" for key, value_ in json.loads(caller).items()) if caller else ""
+                out.said[version] = f"{tool} ({context})" if context else tool
+        else:
+            out.earlier[version] = said
+        (out.gone if kind == "block" else out.drawings_gone)[value] = version
+    return out
 
 
 def owned_bytes(document: Any) -> bytes | None:

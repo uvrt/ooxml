@@ -57,6 +57,7 @@ mod fields;
 pub mod find;
 mod follow;
 mod format;
+mod ids_delta;
 mod imported;
 mod inline;
 mod links;
@@ -126,6 +127,7 @@ pub use format::{
     FormatStep, Formatted, Like, LikeDone, Occurrence, ParagraphLook, Property, Setting, Value, KEEPS_BLOCKS,
     NOT_TAKEN, PARTS,
 };
+pub use ids_delta::{ids_delta, IdsDelta};
 pub use links::{hyperlink_span, AddBookmark, AddHyperlink, LinkEdited, RemoveBookmark, RenameBookmark};
 pub use lists::{
     numbered_by_style, paragraphs_of, unnumbered_styles_like, LevelFormat, ListAction, ListEdit, ListStep, ListsEdited,

@@ -239,22 +239,42 @@ pub fn used_long_hex(roots: &[&Element]) -> HashSet<u32> {
     used
 }
 
+/// An id the ledger keeps: a paragraph's or row's paraId (as a value), or a drawing number.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum HeldId {
+    /// A paragraph's or row's `w14:paraId`.
+    Block(u32),
+    /// A drawing's `wp:docPr/@id`.
+    Drawing(u64),
+}
+
+/// The id `e` itself holds, if it is a paragraph or row with a paraId or a drawing's
+/// properties with a number.
+#[must_use]
+pub fn held_id(e: &Element) -> Option<HeldId> {
+    if e.name().is(Some(WP), "docPr") {
+        e.attribute(None, "id").and_then(digits).map(HeldId::Drawing)
+    } else if e.name().is(Some(W), "p") || e.name().is(Some(W), "tr") {
+        e.attribute(Some(W14), "paraId").and_then(hex_value).map(HeldId::Block)
+    } else {
+        None
+    }
+}
+
 /// Every paragraph's and row's paraId (as a value) and every drawing number in `roots`.
 #[must_use]
 pub fn block_and_drawing_ids(roots: &[&Element]) -> (HashSet<u32>, HashSet<u64>) {
     let mut blocks = HashSet::new();
     let mut drawings = HashSet::new();
     for root in roots {
-        visit(root, &mut |e| {
-            if e.name().is(Some(WP), "docPr") {
-                if let Some(n) = e.attribute(None, "id").and_then(digits) {
-                    drawings.insert(n);
-                }
-            } else if e.name().is(Some(W), "p") || e.name().is(Some(W), "tr") {
-                if let Some(v) = e.attribute(Some(W14), "paraId").and_then(hex_value) {
-                    blocks.insert(v);
-                }
+        visit(root, &mut |e| match held_id(e) {
+            Some(HeldId::Block(v)) => {
+                blocks.insert(v);
             }
+            Some(HeldId::Drawing(n)) => {
+                drawings.insert(n);
+            }
+            None => {}
         });
     }
     (blocks, drawings)
