@@ -15,7 +15,7 @@ mod fields;
 mod headers_footers;
 mod links;
 mod moving;
-mod notes;
+pub(crate) mod notes;
 mod sections;
 
 pub use copy_from::{CopyStyles, StyleMapping, Unmapped, WordCopyFrom};

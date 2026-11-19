@@ -12,7 +12,6 @@ use ooxml_word_model::docx::controls::controls;
 use ooxml_word_model::docx::{at_path, Docx};
 use ooxml_word_model::ids::{Entry, W};
 use ooxml_xml::{Element, Node};
-use std::sync::Arc;
 
 /// What a block is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,7 +66,7 @@ pub(crate) fn resolve_block(doc: &WordDoc, docx: &Docx, id: &str) -> Result<(Str
         let part = docx
             .part(&found.part)
             .ok_or_else(|| EditError::NoPart(found.part.clone()))?;
-        let level = control_level(part.root(), &found.path, &found.element);
+        let level = found.level(part);
         if level != "block" {
             let level = if level == "inline" { "line" } else { level };
             return Err(EditError::Refused(format!(
@@ -108,46 +107,6 @@ pub(crate) fn resolve_block(doc: &WordDoc, docx: &Docx, id: &str) -> Result<(Str
             ))
         }
     }
-}
-
-/// Where the control at `path` stands (docx-agent's `control_level`): `block`, `inline`,
-/// `row` or `cell`.
-fn control_level(root: &Arc<Element>, path: &[u32], sdt: &Element) -> &'static str {
-    let mut above = path.split_last().map_or(&[][..], |(_, p)| p);
-    let element_at = |p: &[u32]| if p.is_empty() { Some(root) } else { at_path(root, p) };
-    let mut parent = element_at(above);
-    while let Some(p) = parent.filter(|p| is_w(p, &["customXml", "sdtContent", "smartTag"])) {
-        let _ = p;
-        let Some((_, up)) = above.split_last() else {
-            parent = None;
-            break;
-        };
-        above = up;
-        parent = element_at(above);
-    }
-    match parent {
-        Some(p)
-            if is_w(
-                p,
-                &["p", "hyperlink", "ins", "del", "moveTo", "moveFrom", "fldSimple", "sdt"],
-            ) =>
-        {
-            let content = sdt.find(Some(W), "sdtContent");
-            let holds = content.is_some_and(|c| c.find(Some(W), "p").is_some() || c.find(Some(W), "tbl").is_some());
-            if holds {
-                "block"
-            } else {
-                "inline"
-            }
-        }
-        Some(p) if is_w(p, &["tbl"]) => "row",
-        Some(p) if is_w(p, &["tr"]) => "cell",
-        _ => "block",
-    }
-}
-
-fn is_w(element: &Element, locals: &[&str]) -> bool {
-    element.name().namespace() == Some(W) && locals.contains(&element.name().local())
 }
 
 /// The blocks `address` names, in document order, and their part (docx-agent's

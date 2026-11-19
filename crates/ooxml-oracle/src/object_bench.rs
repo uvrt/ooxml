@@ -1,6 +1,7 @@
 //! `word-objects-bench <document.docx> [table]`: what the object tools cost on a long
 //! document. Each call -- `word_edit_table`'s rows and columns inserted, copied and deleted (with their
-//! report of the file's text removed), cells merged and split, untracked and tracked -- runs as a whole tool call on a fresh
+//! report of the file's text removed), cells merged and split; `word_controls`' insert, fill, remove
+//! and list -- untracked and tracked -- runs as a whole tool call on a fresh
 //! editor of the document, on its middle body table (or `table`); the best of three wall
 //! times, as JSON. CPU for the whole run is the caller's to measure (`/usr/bin/time -l`).
 //!
@@ -11,7 +12,7 @@ use ooxml_base::{Cancel, Limits};
 use ooxml_opc::Package;
 use ooxml_store::{Caller, StoreConfig};
 use ooxml_tools::ArgType;
-use ooxml_tools_word::{word_edit_table, CallEditor, Editing, WordEditTable};
+use ooxml_tools_word::{word_controls, word_edit_table, CallEditor, Editing, WordControls, WordEditTable};
 use ooxml_word_edit::{Editor, Tracking};
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -25,11 +26,19 @@ impl Cancel for Never {
     }
 }
 
-/// The best of three runs of `arguments` on fresh editors of `bytes`: wall ms and summary.
-fn best(bytes: &Arc<[u8]>, arguments: &Value, tracking: Option<&Tracking>) -> Result<(f64, String), String> {
-    let args = WordEditTable::from_arg(arguments, "").map_err(|e| e.to_string())?;
+/// A tool call made on an editing context: its reply.
+type Call<'c> = &'c dyn Fn(&Editing<'_>) -> Value;
+
+/// The best of three runs of `timed` on fresh editors of `bytes`, each after the untimed
+/// `setup` calls: wall ms and the timed reply.
+fn best_of(
+    bytes: &Arc<[u8]>,
+    setup: &[Call<'_>],
+    timed: Call<'_>,
+    tracking: Option<&Tracking>,
+) -> Result<(f64, Value), String> {
     let mut times = Vec::new();
-    let mut summary = String::new();
+    let mut last = Value::Null;
     for _ in 0..3 {
         let package = Package::open(Arc::clone(bytes), &Limits::default()).map_err(|e| e.to_string())?;
         let editor = Editor::open(
@@ -53,13 +62,80 @@ fn best(bytes: &Arc<[u8]>, arguments: &Value, tracking: Option<&Tracking>) -> Re
             layout: None,
             others: ooxml_tools_word::Others::default(),
         };
+        for call in setup {
+            call(&editing);
+        }
         let started = Instant::now();
-        let reply = word_edit_table(&args, &editing).to_json();
+        last = timed(&editing);
         times.push((started.elapsed().as_secs_f64() * 1e6).round() / 1e3);
-        summary = reply.get("summary").and_then(Value::as_str).unwrap_or("").to_owned();
     }
     times.sort_by(f64::total_cmp);
-    Ok((times.first().copied().unwrap_or(0.0), summary))
+    Ok((times.first().copied().unwrap_or(0.0), last))
+}
+
+/// The best of three `word_edit_table` calls of `arguments`: wall ms and summary.
+fn best(bytes: &Arc<[u8]>, arguments: &Value, tracking: Option<&Tracking>) -> Result<(f64, String), String> {
+    let args = WordEditTable::from_arg(arguments, "").map_err(|e| e.to_string())?;
+    let (ms, reply) = best_of(
+        bytes,
+        &[],
+        &|editing| Value::Object(word_edit_table(&args, editing).to_json()),
+        tracking,
+    )?;
+    Ok((ms, summary_of(&reply)))
+}
+
+fn summary_of(reply: &Value) -> String {
+    reply.get("summary").and_then(Value::as_str).unwrap_or("").to_owned()
+}
+
+/// `word_controls`' actions on the document's middle body paragraph: a control inserted
+/// (text, check box), one filled and one removed after an untimed insertion, the list.
+fn controls(
+    bytes: &Arc<[u8]>,
+    paragraph: &str,
+    tracking: &Tracking,
+    out: &mut serde_json::Map<String, Value>,
+) -> Result<(), String> {
+    let call = |arguments: Value| -> Result<WordControls, String> {
+        let mut arguments = arguments;
+        if let Some(map) = arguments.as_object_mut() {
+            map.insert("doc".into(), json!("d1"));
+        }
+        WordControls::from_arg(&arguments, "").map_err(|e| e.to_string())
+    };
+    let insert = call(json!({"action": "insert", "at": format!("{paragraph}@0")}))?;
+    let checkbox = call(json!({"action": "insert", "at": format!("{paragraph}@0"), "type": "checkbox"}))?;
+    let list = call(json!({"action": "list"}))?;
+    let inserted = |editing: &Editing<'_>| Value::Object(word_controls(&insert, editing).to_json());
+    // the control the untimed insertion makes is the same in every fresh editor
+    let (_, made) = best_of(bytes, &[], &inserted, None)?;
+    let id = made
+        .pointer("/data/id")
+        .and_then(Value::as_str)
+        .unwrap_or("cc:0")
+        .to_owned();
+    let fill = call(json!({"action": "fill", "control": id, "value": "Filled in"}))?;
+    let remove = call(json!({"action": "remove", "control": id}))?;
+    let timed: [(&str, &[Call<'_>], &WordControls); 5] = [
+        ("controls insert", &[], &insert),
+        ("controls insert checkbox", &[], &checkbox),
+        ("controls fill", &[&inserted], &fill),
+        ("controls remove", &[&inserted], &remove),
+        ("controls list", &[&inserted], &list),
+    ];
+    for (name, setup, args) in timed {
+        for (label, tracked) in [(name.to_owned(), None), (format!("{name}, tracked"), Some(tracking))] {
+            let (ms, reply) = best_of(
+                bytes,
+                setup,
+                &|editing| Value::Object(word_controls(args, editing).to_json()),
+                tracked,
+            )?;
+            out.insert(label, json!({"ms": ms, "summary": summary_of(&reply)}));
+        }
+    }
+    Ok(())
 }
 
 /// Run over the arguments: one JSON object on stdout.
@@ -129,6 +205,13 @@ pub fn run(args: &[String]) -> Result<(), String> {
             let (ms, summary) = best(&bytes, &call, tracked)?;
             out.insert(name, json!({"ms": ms, "summary": summary}));
         }
+    }
+    let paragraphs: Vec<String> = docx
+        .body()
+        .map(|b| b.ids.paragraphs().iter().map(|p| p.id.clone()).collect())
+        .unwrap_or_default();
+    if let Some(paragraph) = paragraphs.get(paragraphs.len() / 2) {
+        controls(&bytes, paragraph, &tracking, &mut out)?;
     }
     let report = json!({"document": path, "tables": tables.len(), "table": table, "calls": out});
     println!("{report}");
