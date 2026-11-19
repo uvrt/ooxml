@@ -84,6 +84,7 @@ pub(crate) fn tracked_table(
             renamed,
             removed: removed_ids,
             part,
+            warnings: Vec::new(),
         });
     }
     let current = if gone.is_empty() {
@@ -96,6 +97,7 @@ pub(crate) fn tracked_table(
         renamed,
         removed,
         part,
+        warnings: Vec::new(),
     })
 }
 

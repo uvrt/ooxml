@@ -268,7 +268,11 @@ fn delete(editor: &Editor, caller: &Caller, package: &Package, case: &Value) -> 
     };
     editor.run(caller, &command).map(|done| {
         let out = &done.out;
-        let result = json!({"id": out.id, "renamed": renamed(&out.renamed), "removed": out.removed});
+        let result = if out.warnings.is_empty() {
+            json!({"id": out.id, "renamed": renamed(&out.renamed), "removed": out.removed})
+        } else {
+            json!({"id": out.id, "renamed": renamed(&out.renamed), "removed": out.removed, "warnings": out.warnings})
+        };
         report(package, &done, result)
     })
 }

@@ -2,7 +2,8 @@
 //! version of the document being edited, as docx-agent's `word_fields` reads its layout
 //! (`_page_field`, `_page_text`, `_style_reference`; the first page showing a header or
 //! footer, `rust/fields.py`'s `_story_page`) -- and [`Unknown`], what it answers where the
-//! layout cannot say.
+//! layout cannot say; and, through the same port, the reflow between two versions
+//! ([`PageReflow`], docx-agent's `Reflow`), which `word_template` reports.
 //!
 //! The edit core does not lay out (section 3: `ooxml-word-layout` is beside it, not below):
 //! the host hands a command an adapter over its page engine, which answers in the words a
@@ -63,7 +64,23 @@ pub trait LaidFields {
     fn pages(&self) -> Vec<PageShows>;
 }
 
-/// The layout of a document's versions, for the field updates of one call.
+/// What changed in the pages between two versions (docx-agent's `Reflow`, as its tools
+/// report it): pages by 1-based number.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PageReflow {
+    /// The pages whose drawing differs, among the pages both versions know.
+    pub changed: Vec<usize>,
+    /// The page count before and after.
+    pub page_count: (usize, usize),
+    /// Body blocks whose first page changed, by id: (before, after), in the order the
+    /// later version first draws them.
+    pub moved: Vec<(String, (usize, usize))>,
+    /// Pages past either version's last known page: not compared.
+    pub unknown: Vec<usize>,
+}
+
+/// The layout of a document's versions, for the field updates of one call, and the
+/// reflow an edit reports.
 pub trait FieldLayout: Send + Sync {
     /// `package` (a version of the document the call edits) laid out.
     ///
@@ -71,4 +88,15 @@ pub trait FieldLayout: Send + Sync {
     /// Why it was not laid out (a version the layout does not lay out yet): the update is
     /// left to the host.
     fn lay_out(&self, package: &Package) -> Result<Box<dyn LaidFields + '_>, String>;
+
+    /// Which pages of `after` differ from `before`'s (two versions of the document,
+    /// `after` made from `before`), ids as the versions' bytes name them.
+    ///
+    /// # Errors
+    /// Why the pages cannot be compared (a version the layout does not lay out, or a
+    /// layout that does not compare versions: the default).
+    fn reflow(&self, before: &Package, after: &Package) -> Result<PageReflow, String> {
+        let _ = (before, after);
+        Err("this layout does not compare versions".to_owned())
+    }
 }

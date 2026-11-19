@@ -41,7 +41,7 @@ NL_BE = Locale(decimal_separator=",", thousands_separator=".", date_order="dmy",
                language="nl-BE", list_separator=";")
 
 #: A made-up note in Markdown: two paragraphs, a bullet list with a nested level, a
-#: numbered list -- the shapes a builder retyped.
+#: numbered list -- the shapes a writer retyped.
 BODY = ("Opening paragraph with *emphasis* and 41 items.\n\nSecond paragraph.\n\n"
         "- first point\n- second point\n  - detail a\n  - detail b\n- third point\n\n"
         "1. step one\n2. step two")

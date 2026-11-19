@@ -219,7 +219,7 @@ empty `changed`...); one with a next page also has `next`, the same call with th
 changing op is refused alone (`refused`, field `tool`, `valid_options` `batch` and the
 tool: send it in `batch`), an unknown one names the reading tools, and the others still
 run. Its role is `review`: a reader is sent it -- `mutates` is false, so an application
-that gives a reader the tools that change nothing gives it this one -- and a builder too.
+that gives a reader the tools that change nothing gives it this one -- and a writer too.
 The shared prompt fragment names it where it is sent (`system_prompt(tools=...)` decides
 over the tools sent, as for the role line). It is not in `SESSION_TOOLS`: a library lists
 it in its tools when it offers it (the three agents do from their 0.1.37, 0.1.16 and 0.1.15).
@@ -1004,12 +1004,12 @@ tools = toolbox.definitions("anthropic", roles=["review", "resolve"])
 ```
 
 Four typical setups:
-- **Builder** -- `roles=None` (all) or `["review", "edit"]`: reads and changes the document;
+- **Writer** -- `roles=None` (all) or `["review", "edit"]`: reads and changes the document;
   without `resolve` it leaves the reviewers' threads as they are.
 - **First-pass reviewer** -- `["review"]`: reads, checks, compares and renders; reports each
-  finding with the call that would fix it (tool and arguments) for a builder to apply in one
+  finding with the call that would fix it (tool and arguments) for a writer to apply in one
   `batch`, and may add comments and replies; saves the commented copy.
-- **Second-pass reviewer** -- `["review", "resolve"]`: checks the builder's fixes, resolves
+- **Second-pass reviewer** -- `["review", "resolve"]`: checks the writer's fixes, resolves
   the threads they settle, reopens the others.
 - **Editor-in-chief** -- `["review", "accept"]` (with `"resolve"` to close the threads too):
   reads the tracked changes and accepts or rejects them, changing nothing else.
@@ -1061,10 +1061,10 @@ outputs -- and each gets a *view* of it with roles of its own:
 ```python
 session = toolbox.session()                          # every role: the most any agent gets
 reviewer = session.view(roles=["review"], context={"agent": "reviewer-1"})
-builder = session.view(roles=["review", "edit"], context={"agent": "builder-1"})
+writer = session.view(roles=["review", "edit"], context={"agent": "writer-1"})
 
 toolbox.dispatch(reviewer, "ppt_set_text", args)     # refused: needs the edit role
-toolbox.dispatch(builder, "ppt_set_text", args)      # runs, on the same deck
+toolbox.dispatch(writer, "ppt_set_text", args)      # runs, on the same deck
 toolbox.dispatch(session, "ppt_set_text", args, roles=["review"],
                  context={"agent": "reviewer-1"})    # the same, per call
 ```
@@ -1488,7 +1488,7 @@ slide on one deck, in parallel, can have one loop's undo revert another's edit. 
 out:
 
 - **Undo by caller** (0.50.0). Give each loop a view with a context of its own
-  (`session.view(roles=[...], context={"agent": "builder-3"})`). Its `undo` takes back its
+  (`session.view(roles=[...], context={"agent": "writer-3"})`). Its `undo` takes back its
   own latest change to the document, never another's:
   - the document's latest change, if it is that: a plain undo, exact;
   - else, in a format with undo scopes (decks), the change is taken out from under the
@@ -1497,7 +1497,7 @@ out:
   - else -- and always in a Word document, whose one body every change shares, so a later
     change may stand on any of it -- it is refused as `entangled`, nothing changed. The
     message names the later change, its version and who made it ("t_add by
-    agent=builder-2", "a change made outside the tools" for one made through the
+    agent=writer-2", "a change made outside the tools" for one made through the
     library's API), and says to change it back with an edit or have that caller undo
     first; `details.later` lists each later change in the way (`version`, `tool`,
     `context`).

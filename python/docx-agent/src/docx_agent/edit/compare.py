@@ -67,7 +67,7 @@ the reference's value: the row and column counts, a vertical merge, a table widt
 
 **Width tolerance.**  Word stores lengths in twentieths of a point (twips) and a width
 reaches a document by several routes -- typed in centimetres or inches, set in points by a
-tool, spread over a grid by a builder -- each rounding to whole twips (1 cm is 566.93 of
+tool, spread over a grid by a writer -- each rounding to whole twips (1 cm is 566.93 of
 them), so two widths meant to be the same can differ by a twip or two.  Half a point (10
 twips) absorbs that rounding and is well below what a reader can see on the page (0.67 px
 at 96 dpi); a column dragged by hand moves by more.

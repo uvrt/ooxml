@@ -96,17 +96,38 @@ def _columns(table: str) -> list[dict]:
             edit("insert_column", index=99)]
 
 
+def _cells(table: str) -> list[dict]:
+    def edit(action: str, **arguments) -> dict:
+        return call("word_edit_table", table=table, action=action, **arguments)
+
+    def at(row: int, col: int) -> dict:
+        return {"row": row, "col": col}
+
+    return [edit("merge", first=at(0, 0), last=at(0, 1)), edit("merge", first=at(0, 0), last=at(1, 0)),
+            edit("merge", first=at(0, 0), last=at(1, 1)), edit("merge", first=at(1, 0), last=at(2, 2)),
+            edit("merge", first=at(0, 1), last=at(0, 99)), edit("merge", first=at(0, 0), last=at(0, 0)),
+            edit("merge", first=at(1, 1), last=at(0, 0)), edit("merge", first=at(0, 0)),
+            edit("merge", first=at(0, 0), last=at(99, 0)), edit("split", first=at(0, 0)),
+            edit("split", first=at(0, 0), columns=3), edit("split", first=at(0, 1), rows=2),
+            edit("split", first=at(1, 0), rows=3, columns=2), edit("split", first=at(0, 0), rows=1, columns=1),
+            edit("split", first=at(99, 0)), edit("split", first=at(0, 99), rows=2), edit("split"),
+            edit("split", first=at(0, 0), columns=0)]
+
+
 def edit_table_cases(document) -> list[dict]:
     """``word_edit_table``: rows inserted (after, before, at the top, past the end) and
     deleted (the first, a middle one, none named, past the end); columns deleted (the first,
     the second, none named, past the end), each with the file's text it removes; columns
     inserted (after the last, after and before the first, before the second, past the end);
-    rows copied (the last, the first below and above it, the second, past the end); arguments
+    rows copied (the last, the first below and above it, the second, past the end); cells
+    merged (across, down, both, a rectangle grown, past the grid, already one, reversed, no
+    last) and split (by default, across, down, both, into one, past the table, no first);
+    arguments
     of another action refused; strict mode's empty values taken as none -- untracked and
     tracked."""
     out = []
     for table in _tables(document)[:3]:
-        out += _rows(table) + _columns(table)
+        out += _rows(table) + _columns(table) + _cells(table)
     out += [call("word_edit_table", table="t:00000000", action="insert_row")]
     return out + [tracked(case) for case in out]
 

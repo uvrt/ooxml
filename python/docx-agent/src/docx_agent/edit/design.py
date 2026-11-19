@@ -113,13 +113,13 @@ def design_facts(document: "Document", include=None, caps: dict | None = None) -
     limits = {**CAPS, **(caps or {})}
     out: dict[str, Any] = {}
     omitted: dict[str, int] = {}
-    builders = {"styles": _styles, "table_styles": _table_styles, "table_frames": _table_frames,
-                "sections": _sections, "patterns": _patterns, "declared_styles": _declared_styles}
+    collectors = {"styles": _styles, "table_styles": _table_styles, "table_frames": _table_frames,
+                  "sections": _sections, "patterns": _patterns, "declared_styles": _declared_styles}
     for kind in kinds:
         if kind == "theme":
             out["theme"] = _theme(document)
             continue
-        items = builders[kind](document)
+        items = collectors[kind](document)
         limit = limits[kind]
         if len(items) > limit:
             omitted[kind] = len(items) - limit

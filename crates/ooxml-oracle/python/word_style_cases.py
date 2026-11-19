@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import os
 
-from word_structure_cases import TRACKING, _words
+from word_structure_cases import TRACKING, _words, fonts_of
 
 
 def call(tool: str, **arguments) -> dict:
@@ -232,9 +232,17 @@ def styles_cases(document) -> list[dict]:
     return out + [tracked(case) for case in out]
 
 
+def template_cases(document) -> list[dict]:
+    """``word_template`` (lane P4d5): Convert with its reflow, both sides laid out with the
+    same fonts (a document already in mode 15 is a no-op) -- untracked and tracked (it is
+    never tracked)."""
+    case = {**call("word_template", action="upgrade_to_modern"), "fonts": fonts_of(document)}
+    return [case, tracked(case)]
+
+
 def cases(document) -> list[dict]:
     """Every style case for ``document``."""
-    found = list_cases(document) + format_cases(document) + styles_cases(document)
+    found = list_cases(document) + format_cases(document) + styles_cases(document) + template_cases(document)
     wanted = os.environ.get("STYLE_TOOLS")       # a comma list, to run some tools only
     found = [c for c in found if not wanted or c["tool"] in wanted.split(",")]
     per_tool = int(os.environ.get("STYLE_PER_TOOL") or 0)   # the first n of each tool's

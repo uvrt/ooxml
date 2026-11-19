@@ -2,7 +2,8 @@
 //! tracked and untracked `set_text` and `insert_text` (in body and cell paragraphs) and
 //! `set_cells` with tables formatted (`FormatTable`: a table's properties, a column's
 //! width, a row's height, cells' shading and borders) and rows inserted and deleted
-//! (`EditTable`: rows inserted, copied and deleted, columns inserted and deleted) through
+//! (`EditTable`: rows inserted, copied and deleted, columns inserted and deleted, cells
+//! merged and split) through
 //! one document's store;
 //! replayed serially in commit order on the document as opened, every version is the
 //! same, byte for byte, as the concurrent run made it.
@@ -177,7 +178,7 @@ fn edit(rng: &mut Rng, targets: &[String], tables: &[String], writer: u64) -> Ed
         }),
         8 | 9 => Edit::Rows(EditTable {
             table,
-            change: match rng.below(6) {
+            change: match rng.below(8) {
                 0 => TableChange::DeleteRow { index: rng.below(3) },
                 1 => TableChange::DeleteColumn { index: rng.below(2) },
                 2 => TableChange::InsertColumn {
@@ -187,6 +188,16 @@ fn edit(rng: &mut Rng, targets: &[String], tables: &[String], writer: u64) -> Ed
                 3 => TableChange::CopyRow {
                     index: (rng.below(2) == 0).then(|| rng.below(3)),
                     below: rng.below(2) == 0,
+                },
+                4 => TableChange::Merge {
+                    first: (rng.below(2), rng.below(2)),
+                    last: (1 + rng.below(2), 1 + rng.below(2)),
+                },
+                5 => TableChange::Split {
+                    row: rng.below(3),
+                    column: rng.below(2),
+                    rows: 1 + rng.below(2),
+                    columns: (rng.below(2) == 0).then(|| 1 + rng.below(2)),
                 },
                 _ => TableChange::InsertRow {
                     index: (rng.below(2) == 0).then(|| rng.below(3)),

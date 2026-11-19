@@ -185,7 +185,8 @@ fn refusals_carry_their_way_out() {
             "word_read",
             "word_set_text",
             "word_set_tracking",
-            "word_styles"
+            "word_styles",
+            "word_template"
         ])
     );
     let extra = call(&s, "describe", json!({"doc": "d1", "x": 1}));

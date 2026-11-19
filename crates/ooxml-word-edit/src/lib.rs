@@ -17,7 +17,8 @@
 //!   [`InsertMarkdown`] (Markdown written as the document's own blocks);
 //!   [`InsertText`], [`DeleteText`] and [`ReplaceText`] (text within a
 //!   paragraph, docx-agent's `_replace_ranges`); [`Review`] (accepting and rejecting tracked
-//!   changes, `word_changes`); [`SetWordTracking`] (Word's own Track Changes switch);
+//!   changes, `word_changes`); [`SetWordTracking`] (Word's own Track Changes switch); [`UpgradeToModern`] (Word's
+//!   Convert to compatibility mode 15);
 //!   [`CommentEdits`] (resolving, reopening and deleting comments); [`FormatTable`] (a
 //!   table's, row's, column's and cell's formatting);
 //! - validation per change ([`validate`]: facts memoised by content, docx-agent's rules)
@@ -36,6 +37,7 @@ mod block_checks;
 mod blocks;
 mod builtin;
 mod comments;
+mod control_delete;
 mod delete;
 mod delete_write;
 mod doc;
@@ -80,6 +82,7 @@ mod switch;
 mod table_delete;
 mod table_delete_write;
 mod tables;
+mod template;
 mod text;
 mod text_range;
 mod textbox;
@@ -95,7 +98,8 @@ pub use editor::{EditTiming, Edited, Editor};
 pub use error::{EditError, Result};
 pub use fields::{
     fields, format_date, Day, FieldEdited, FieldInfo, FieldLayout, FieldPlace, InsertCaption, InsertCrossReference,
-    InsertField, InsertToc, LaidFields, PageShows, SetStoryNumbered, StoryNumber, StoryNumbered, Unknown, UpdateFields,
+    InsertField, InsertToc, LaidFields, PageReflow, PageShows, SetStoryNumbered, StoryNumber, StoryNumbered, Unknown,
+    UpdateFields,
 };
 pub use format::{
     check as check_formatting, differs, known_style, occurrences, range_text, theme_color_name, FormatEdit, FormatPlan,
@@ -136,4 +140,5 @@ pub use tables::{
     pending_structure, CellValues, EditTable, FormatTable, Look, TableChange, TableChanged, TableEdit, TableFormat,
     TableFormatted, TableValues, TableWidth,
 };
+pub use template::{compatibility_mode, UpgradeToModern, Upgraded, DEFAULT_COMPATIBILITY_MODE, MODERN_MODE};
 pub use text_range::anchor;

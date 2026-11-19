@@ -136,7 +136,7 @@ tokens against the full core's 3,729); edit_chart offers only `read`, `ppt_manag
 only `find_by_title`. `read_batch` (ooxml-edit 0.78.0) reads many things in one call --
 slides, design facts, a check -- each answered as alone, within its own size budget. A call outside the session's roles -- in a `batch` too, op by op -- is
 refused naming the role it needs; a reviewer reports each finding with the call that would
-fix it, for a builder (`roles=["review", "edit"]`, or the default) to apply in one batch.
+fix it, for a writer (`roles=["review", "edit"]`, or the default) to apply in one batch.
 
 **Spacing in a review.** A reviewer judging gaps by eye passes the tight ones; `check` with
 `spacing` measures them. `{"doc": "d1", "slides": [1], "spacing": 8}` adds `spacing`, the
@@ -161,7 +161,7 @@ the application's own tools as `call.caller`:
 ```python
 session = toolbox.session()                     # every role
 reviewer = session.view(roles=["review"], context={"agent": "reviewer-1"})
-builder = session.view(roles=["review", "edit"], context={"agent": "builder-1"})
+writer = session.view(roles=["review", "edit"], context={"agent": "writer-1"})
 toolbox.dispatch(reviewer, "ppt_set_text", args)   # refused: needs the edit role
 sent = toolbox.definitions("anthropic", roles=["review"])
 system = toolbox.system_prompt(roles=["review"], tools=sent)   # the line follows `sent`

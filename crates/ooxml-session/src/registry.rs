@@ -236,7 +236,7 @@ impl Registry {
     /// `find_text`, and `read_batch` over them; its review tools `word_set_tracking`,
     /// `word_changes` and `word_comments`; its text tools `word_set_text` and
     /// `replace_text`; the object tools `word_format_table` and `word_edit_table`; its style tools `word_lists`,
-    /// `word_format` and `word_styles`.
+    /// `word_format`, `word_styles` and `word_template`.
     #[must_use]
     pub fn standard() -> Self {
         let mut registry = Self::empty();
@@ -299,6 +299,10 @@ impl Registry {
         registry.register(Arc::new(EditHandler::<ooxml_tools_word::WordStyles>::new(
             &[DocKind::Docx],
             ooxml_tools_word::word_styles,
+        )));
+        registry.register(Arc::new(EditHandler::<ooxml_tools_word::WordTemplate>::new(
+            &[DocKind::Docx],
+            ooxml_tools_word::word_template,
         )));
         registry
     }

@@ -42,6 +42,9 @@ pub struct Edited<O> {
     pub out: O,
     /// The version made (the one it ran on when it changed nothing).
     pub version: Snapshot<WordDoc>,
+    /// The version it was applied to (the head it was published after); `None` when it
+    /// changed nothing.
+    pub previous: Option<Snapshot<WordDoc>>,
     /// Whether it changed the document.
     pub changed: bool,
     /// What it touched, per part.
@@ -110,6 +113,7 @@ impl Editor {
             out: committed.out,
             changed: committed.changed,
             version: committed.version,
+            previous: committed.previous,
             touched,
             validation,
             attempts: committed.attempts,
