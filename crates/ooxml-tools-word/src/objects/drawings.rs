@@ -17,7 +17,7 @@ use ooxml_tools::{ArgEnum, Done, Refusal, ToolError, ToolResult, TryCall, WayOut
 use ooxml_word_edit::{
     DrawingEdited, DrawingValues, EditError, Edited, FloatDrawing, InlineDrawing, InsertShape, SetDrawing,
 };
-use ooxml_word_model::docx::drawings::{graphics, pictures, Drawing};
+use ooxml_word_model::docx::drawings::{drawing_kind, graphics, pictures, Drawing};
 use ooxml_word_model::ids::WP;
 use serde_json::{json, Map, Value};
 
@@ -278,7 +278,8 @@ fn listed(editing: &Editing<'_>, list: &TryCall) -> Result<ToolResult<Value>, To
         };
         let mut row = Map::new();
         row.insert("id".into(), json!(drawing.id));
-        row.insert("kind".into(), json!(drawing.kind));
+        // what the frame holds (a group holding a picture is listed among the pictures, as a group)
+        row.insert("kind".into(), json!(drawing_kind(&drawing.element)));
         row.insert("size".into(), json!([size("cx"), size("cy")]));
         row.insert("inline".into(), json!(drawing.element.name().is(Some(WP), "inline")));
         if let Some(alt) = drawing.alt_text().filter(|a| !a.is_empty()) {
