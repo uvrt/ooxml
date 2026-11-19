@@ -214,19 +214,29 @@ jobs:
       # tests ignored ones included.
       - name: Seeds
         run: |
-          set -o pipefail
           start=$(date +%s)
-          {
-            cargo test --locked --release -p ooxml-word-edit --test writers --test style_writers --test structure_writers \
-              --test review_writers --test object_writers --test history -- --ignored --nocapture &&
-            cargo test --locked --release -p ooxml-word-layout --test relayout -- --ignored --nocapture sixty_seeds &&
-            cargo test --locked --release -p ooxml-store -p ooxml-session -- --include-ignored --nocapture
-          } 2>&1 | tee "$RUNNER_TEMP/seeds.log"
-          status=$?
+          cargo test --locked --release -p ooxml-word-edit -p ooxml-word-layout -p ooxml-store -p ooxml-session --no-run
+          status=0
+          echo "| run | result | wall (s) |" > "$RUNNER_TEMP/seeds.md"
+          echo "|---|---|---:|" >> "$RUNNER_TEMP/seeds.md"
+          # Each run on its own: one failing still lets the others run.
+          run() {
+            local name=$1; shift
+            local at=$(date +%s)
+            if "$@" >> "$RUNNER_TEMP/seeds.log" 2>&1; then r=ok; else r=FAILED; status=1; fi
+            echo "| $name | $r | $(( $(date +%s) - at )) |" >> "$RUNNER_TEMP/seeds.md"
+          }
+          for t in writers style_writers structure_writers review_writers object_writers history; do
+            run "ooxml-word-edit $t" cargo test --locked --release -p ooxml-word-edit --test "$t" -- --ignored --nocapture
+          done
+          run "ooxml-word-layout relayout sixty_seeds" cargo test --locked --release -p ooxml-word-layout --test relayout -- --ignored --nocapture sixty_seeds
+          run "ooxml-store, ooxml-session" cargo test --locked --release -p ooxml-store -p ooxml-session -- --include-ignored --nocapture
           {
             echo "### seeds ($(( $(date +%s) - start )) s with the build)"
+            echo
+            cat "$RUNNER_TEMP/seeds.md"
             echo '```'
-            grep -E 'seeds|^test result|FAILED|panicked' "$RUNNER_TEMP/seeds.log" | head -80
+            grep -E 'seeds|^test result|FAILED|panicked|assertion' "$RUNNER_TEMP/seeds.log" | cut -c1-400 | head -80
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           exit $status
