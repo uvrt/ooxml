@@ -17,7 +17,8 @@ use crate::docx::{find_path, Docx};
 use crate::ids::W;
 use crate::props::{paragraph_properties, run_properties};
 use crate::resolve::{
-    character_format, complex_script, resolve_paragraph, resolve_run, slot_for, ParagraphInput, RunInput, Sources,
+    character_format, complex_script, resolve_paragraph, resolve_paragraph_traced, resolve_run, resolve_run_traced,
+    slot_for, Origins, ParagraphInput, RunInput, Sources,
 };
 use crate::value::{Props, Text, Value};
 use ooxml_base::{Digest, DigestKey};
@@ -104,6 +105,20 @@ pub struct EffectiveParagraph {
     pub outline_level: Option<i64>,
     /// What the cascade resolved.
     pub resolved: Arc<Props>,
+}
+
+/// What a paragraph of a style gets with no direct formatting, and a run in it with
+/// none, each value with where it came from ([`Formatting::style_look`]).
+#[derive(Debug, Clone)]
+pub struct StyleLook {
+    /// The paragraph's formatting.
+    pub paragraph: EffectiveParagraph,
+    /// Where each of its resolved values came from.
+    pub paragraph_origins: Origins,
+    /// The run's.
+    pub run: EffectiveRun,
+    /// Where each of its resolved values came from.
+    pub run_origins: Origins,
 }
 
 type RunKey = (Option<String>, Option<Cell>, Option<String>, Digest);
@@ -286,6 +301,43 @@ impl Formatting {
             made
         });
         effective_paragraph(resolved)
+    }
+
+    /// A style's look after inheritance (docx-agent's `effective.style_look`): what a
+    /// paragraph of the paragraph style `style` (`None`: the default) with no direct
+    /// formatting gets, in `cell` where given, and a run in it with none, in the character
+    /// style `character_style` where given -- with where each value came from. Not memoised:
+    /// a design reading asks it once per style and place.
+    #[must_use]
+    pub fn style_look(&self, style: Option<&str>, cell: Option<&Cell>, character_style: Option<&str>) -> StyleLook {
+        let direct = Props::new();
+        let sources = self.sources();
+        let (paragraph, paragraph_origins) = resolve_paragraph_traced::<Origins>(
+            &sources,
+            &ParagraphInput {
+                style_id: style,
+                table_style: cell.map(|c| &*c.style),
+                conditions: cell.map_or(&[], |c| &c.conditions),
+                direct: &direct,
+            },
+        );
+        let (run, run_origins) = resolve_run_traced::<Origins>(
+            &sources,
+            &RunInput {
+                paragraph_style: style,
+                table_style: cell.map(|c| &*c.style),
+                conditions: cell.map_or(&[], |c| &c.conditions),
+                character_style,
+                toc_link: false,
+                direct: &direct,
+            },
+        );
+        StyleLook {
+            paragraph: effective_paragraph(Arc::new(paragraph)),
+            paragraph_origins,
+            run: self.effective_run(Arc::new(run), 'a', character_style.map(str::to_owned)),
+            run_origins,
+        }
     }
 
     /// A paragraph's alignment as docx-agent names it.

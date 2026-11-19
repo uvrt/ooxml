@@ -136,6 +136,25 @@ impl<'a> Reader<'a> {
         level
     }
 
+    /// A body paragraph's heading level (1-9) as `#` reads it (docx-agent's
+    /// `_HeadingLevels`): the outline level it states (none for 9 or a bad value), else its
+    /// style's -- by the style map and its name, or the outline level its chain declares.
+    pub fn heading_level(&mut self, paragraph: &Element) -> Option<i64> {
+        if let Some(direct) = find_path(paragraph, &["pPr", "outlineLvl"]) {
+            let value = direct
+                .attribute(Some(W), "val")
+                .and_then(crate::xmlread::py_int)
+                .unwrap_or(9);
+            return (0..=8).contains(&value).then_some(value + 1);
+        }
+        let style_id = find_path(paragraph, &["pPr", "pStyle"])
+            .and_then(|s| s.attribute(Some(W), "val"))
+            .filter(|s| !s.is_empty());
+        let name = style_id.and_then(|id| self.style_name(Some(id)));
+        let outline = self.outline_level(style_id);
+        self.map.heading_level(name.as_deref(), outline)
+    }
+
     /// The label and running number of the next item of `listed` in `part` (a text box's
     /// paragraphs count apart).
     fn number(&mut self, part: &str, in_text_box: bool, listed: &Membership) -> (Option<String>, Option<i64>) {

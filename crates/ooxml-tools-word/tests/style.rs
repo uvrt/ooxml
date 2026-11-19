@@ -10,8 +10,8 @@ use ooxml_opc::Package;
 use ooxml_store::{Caller, Clock, StoreConfig};
 use ooxml_tools::{ToolArgs, ToolResult};
 use ooxml_tools_word::{
-    word_format, word_lists, word_styles, word_template, CallEditor, Editing, WordCompareBlocks, WordFollowSample,
-    WordFormat, WordLists, WordStyles, WordTemplate, KIND,
+    word_format, word_lists, word_styles, word_template, CallEditor, Editing, WordCompareBlocks, WordDesignFacts,
+    WordFollowSample, WordFormat, WordLists, WordStyles, WordTemplate, KIND,
 };
 use ooxml_word_edit::{Editor, FieldLayout, LaidFields, PageReflow};
 use ooxml_zip::{Method, NewEntry, Writer};
@@ -126,6 +126,10 @@ fn the_definitions_are_the_golden_exports() {
     assert_eq!(
         format!("{}\n", WordFollowSample::spec().export(Some(&[KIND]))),
         include_str!("golden/word_follow_sample.json")
+    );
+    assert_eq!(
+        format!("{}\n", WordDesignFacts::spec().export(Some(&[KIND]))),
+        include_str!("golden/word_design_facts.json")
     );
 }
 

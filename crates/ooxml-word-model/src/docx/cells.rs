@@ -1,8 +1,9 @@
 //! Owns: what the layout model reads of one top-level table ([`TableFacts`]), as
 //! docx-agent's `effective.table_model` asks docx2svg for a table alone: each of its
-//! paragraphs' cell (table style and regions) and each cell's resolved properties (its
-//! shading as drawn); and the layout model's structural path of an element of the table
-//! ([`model_path`]), by which the two are matched.
+//! paragraphs' cell (table style and regions), each cell's resolved properties (its
+//! shading as drawn) and the tables as the model reads them; and the layout model's
+//! structural path of an element of the table ([`model_path`]), by which the two are
+//! matched.
 //!
 //! Must not: read anything outside its table, or keep anything between versions.
 
@@ -26,6 +27,8 @@ pub struct TableFacts {
     paragraphs: HashMap<Text, Cell>,
     /// Each cell's resolved properties, by its model path.
     cells: HashMap<Text, Props>,
+    /// The table and the tables nested in its cells, in document order.
+    tables: Vec<Arc<Table>>,
 }
 
 impl TableFacts {
@@ -60,7 +63,8 @@ impl TableFacts {
         }
     }
 
-    fn table(&mut self, formatting: &Formatting, table: &Table) {
+    fn table(&mut self, formatting: &Formatting, table: &Arc<Table>) {
+        self.tables.push(Arc::clone(table));
         let resolved = resolve_table(&formatting.sources(), table);
         for row in resolved.rows {
             for cell in row.cells {
@@ -83,6 +87,13 @@ impl TableFacts {
     #[must_use]
     pub fn cell(&self, path: &str) -> Option<&Cell> {
         self.paragraphs.get(path)
+    }
+
+    /// The table and the tables nested in its cells as the layout model reads them, in
+    /// document order (a table before those in its cells).
+    #[must_use]
+    pub fn tables(&self) -> &[Arc<Table>] {
+        &self.tables
     }
 
     /// The resolved properties of the cell whose model path is `path`.
