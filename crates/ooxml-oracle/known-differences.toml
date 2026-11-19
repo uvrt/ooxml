@@ -1,0 +1,53 @@
+# Known differences between docx-agent and the Rust core in the heavy gates
+# (tools/gates.py, .github/workflows/gates.yml).  A gate fails on any case with differences
+# that no entry here covers.  An entry covers a case when its `mode` is the case's, and each of
+# the keys it gives matches:
+#   gate   fixtures, corpus or reads (any gate when left out);
+#   file   a glob on the document's path below the gate's tree (any document when left out);
+#   input  a subset of the case's input as the harness made it (word_edits_diff.py's case);
+#   case   the case's number within its document.
+# `cause` says why the difference is intended; an entry without one is refused.  Add an entry
+# only for a difference that is understood and meant, citing the pull request that found it.
+
+# #89: Markdown that is only a comment, untracked and tracked (28 cases on the fixtures).
+[[difference]]
+mode = "markdown"
+input = { op = "insert_markdown", markdown = "<!-- only a comment -->\n" }
+cause = """#89: docx-agent rolls the tree back, but its id pool and aliases keep what the stamping \
+drew; the Rust core changes nothing (tool rule 3: a no-op changes nothing). A docx-agent \
+leftover, not copied."""
+
+# #84: a SEQ field inserted in the document's text box, untracked and tracked.
+[[difference]]
+gate = "fixtures"
+mode = "structure"
+file = "generated/charts/chart-places.docx"
+input = { tool = "word_fields", arguments = { action = "insert_field", instruction = "SEQ Figure \\* ARABIC" } }
+cause = """#84: docx-agent's _write_result takes as the old result only runs with no w:r ancestor; \
+in a text box every run has one, so it writes the value as a new run beside the empty result run. \
+Rust writes the value into the result run, as docx-agent does everywhere outside a text box."""
+
+# #84: a fields update that changes nothing, on a template saved as .docx.
+[[difference]]
+gate = "fixtures"
+mode = "structure"
+file = "generated/trial/template-saved-as-docx.docx"
+input = { tool = "word_fields", arguments = { action = "update" } }
+cause = """#84: docx-agent's session adds its TemplateOpened warning (the host's, not the tool's) \
+to an update that changes nothing."""
+
+# word_read (and its ranges) on the documents with charts and SmartArt: the Rust reads give a
+# drawing's kind and name, not yet docx-agent's chart and SmartArt summary.
+[[difference]]
+gate = "reads"
+mode = "read"
+file = "generated/charts/*.docx"
+cause = """Phase P3 (the chart model): docx_agent.rust.session's reads are equal to docx-agent's on \
+every fixture but drawings' chart and SmartArt summaries (tests/test_rust_word_read.py)."""
+
+[[difference]]
+gate = "reads"
+mode = "ranges"
+file = "generated/charts/*.docx"
+cause = """Phase P3 (the chart model): word_read of a range holding a chart or SmartArt, as for \
+mode read above."""
