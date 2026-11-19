@@ -114,5 +114,8 @@ pub use sink::{EditSink, Keep, Numbered, TextWrite};
 pub use style_spans::{Span, SpansStyled, StyleSpans};
 pub use styled_text::{ItemEdit, SetStyledText, StyledRun, StyledTextSet};
 pub use switch::{tracks_changes, word_tracks_changes, SetWordTracking, WordTracking};
-pub use tables::{CellValues, FormatTable, Look, TableEdit, TableFormat, TableFormatted, TableValues, TableWidth};
+pub use tables::{
+    pending_structure, CellValues, EditTable, FormatTable, Look, TableChange, TableChanged, TableEdit, TableFormat,
+    TableFormatted, TableValues, TableWidth,
+};
 pub use text_range::anchor;
