@@ -302,7 +302,7 @@ jobs:
           bench() {
             local name=$1; shift
             local start=$(date +%s)
-            if "$@" > "$out/$name.txt" 2>&1; then r=ok; else r="failed ($?)"; status=1; fi
+            if timeout 1800 "$@" > "$out/$name.txt" 2>&1; then r=ok; else r="failed ($?; 124 is the 30-minute limit)"; status=1; fi
             echo "| $name | $r | $(( $(date +%s) - start )) |" >> "$out/table.md"
           }
           echo "| bench | result | wall (s) |" > "$out/table.md"
