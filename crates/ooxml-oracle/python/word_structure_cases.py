@@ -307,6 +307,28 @@ def field_cases(document) -> list[dict]:
     return [{**case, "fonts": fonts} for case in out]
 
 
+@CASES
+def hyperlink_field_cases(document) -> list[dict]:
+    """``word_fields`` insert_field ``HYPERLINK`` (lane P4b7), which docx-agent writes as Word
+    saves one, a ``w:hyperlink``: to an address, to a bookmark (``\\l``), and without text
+    (refused) -- untracked and tracked.  Registered last: the other tools' case numbers
+    stay."""
+    paragraphs = _words(document)
+    out = []
+    for pid, text in paragraphs[:2]:
+        out.append(call("word_fields", action="insert_field", at=f"{pid}@{min(2, len(text))}",
+                        instruction='HYPERLINK "https://example.com/a b"'))
+    if paragraphs:
+        pid, text = paragraphs[-1]
+        out.append(call("word_fields", action="insert_field", at=pid, instruction="HYPERLINK"))
+        for mark in document.bookmarks(hidden=True)[:1]:
+            out.append(call("word_fields", action="insert_field", at=f"{pid}@0",
+                            instruction=f'HYPERLINK "Go there" \\l "{mark.name}"'))
+    out += [tracked(case) for case in out]
+    fonts = fonts_of(document) if out else None
+    return [{**case, "fonts": fonts} for case in out]
+
+
 def cases(document) -> list[dict]:
     """Every structure case for ``document``."""
     found = CASES.of(document)
