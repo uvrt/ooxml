@@ -15,9 +15,8 @@ use ooxml_store::{Caller, Clock, Seq, Snapshot, StoreConfig};
 use ooxml_store::{Command, Txn};
 use ooxml_word_edit::find::Literal;
 use ooxml_word_edit::{
-    DeleteBlock, DeleteText, EditError, Editor, InsertParagraph, InsertText, Keep, ReplaceText, RevisionPolicy,
-    InsertMarkdown, MarkdownOptions, SetCells, SetParagraphStyle, SetStyledText, SetText, Tracking, WordDoc,
-    WriteMap,
+    DeleteBlock, DeleteText, EditError, Editor, InsertMarkdown, InsertParagraph, InsertText, Keep, MarkdownOptions,
+    ReplaceText, RevisionPolicy, SetCells, SetParagraphStyle, SetStyledText, SetText, Tracking, WordDoc, WriteMap,
 };
 use std::path::PathBuf;
 use std::sync::Arc;

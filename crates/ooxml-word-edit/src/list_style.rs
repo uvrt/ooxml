@@ -103,14 +103,21 @@ pub(crate) fn numbering_part(sink: &mut EditSink<'_, '_>, main: &str) -> Result<
 
 /// The numbering part's root now.
 fn numbering_root(sink: &EditSink<'_, '_>, part: &str) -> Result<Arc<Element>> {
-    let tree = sink.doc().tree(part)?.ok_or_else(|| EditError::NoPart(part.to_owned()))?;
+    let tree = sink
+        .doc()
+        .tree(part)?
+        .ok_or_else(|| EditError::NoPart(part.to_owned()))?;
     Ok(Arc::clone(tree.root()))
 }
 
 /// The id the next abstract definition takes: one past the largest.
 pub(crate) fn next_abstract_id(sink: &EditSink<'_, '_>, part: &str) -> Result<i64> {
     let root = numbering_root(sink, part)?;
-    Ok(numbers(&root, "abstractNum", "abstractNumId").into_iter().max().unwrap_or(-1) + 1)
+    Ok(numbers(&root, "abstractNum", "abstractNumId")
+        .into_iter()
+        .max()
+        .unwrap_or(-1)
+        + 1)
 }
 
 /// docx-agent's `_nsid` over the numbering part as it is now.
@@ -137,7 +144,12 @@ pub(crate) fn add_abstract(sink: &mut EditSink<'_, '_>, part: &str, node: Arc<El
 }
 
 /// A `w:{local}` element named with `prefix`, its `w:` attributes and children.
-pub(crate) fn w_element(prefix: Option<&str>, local: &str, attributes: &[(&str, String)], children: Vec<Node>) -> Element {
+pub(crate) fn w_element(
+    prefix: Option<&str>,
+    local: &str,
+    attributes: &[(&str, String)],
+    children: Vec<Node>,
+) -> Element {
     let name = |local: &str| Arc::new(QName::new(prefix, local, Some(W)));
     let attributes: Vec<Attribute> = attributes
         .iter()

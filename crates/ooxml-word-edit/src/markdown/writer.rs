@@ -113,7 +113,8 @@ impl<'m> Writer<'m> {
             None => {
                 let id = crate::builtin::ensure(sink, &name, kind)
                     .map_err(|e| EditError::Refused(format!("no {kind} style for {construct}: {e}")))?;
-                self.warnings.push(format!("style added: {name} ({id}), as Word writes it"));
+                self.warnings
+                    .push(format!("style added: {name} ({id}), as Word writes it"));
                 id
             }
         };
@@ -251,7 +252,11 @@ impl<'m> Writer<'m> {
         let body = text.strip_suffix('\n').unwrap_or(text);
         body.split('\n')
             .map(|line| {
-                let inline = if line.is_empty() { Vec::new() } else { vec![Inline::text(line)] };
+                let inline = if line.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![Inline::text(line)]
+                };
                 self.paragraph(sink, work, &inline, style.as_deref(), None)
             })
             .collect()
@@ -329,8 +334,7 @@ impl<'m> Writer<'m> {
             let name = work.qname(W, "anchor", "w");
             work.set(link, name, &super::percent_decode(anchor));
         } else {
-            let (package, rid) =
-                crate::new_part::add_external(sink.doc().package(), &self.part, HYPERLINK, href)?;
+            let (package, rid) = crate::new_part::add_external(sink.doc().package(), &self.part, HYPERLINK, href)?;
             if let Some(package) = package {
                 let rels = ooxml_opc::name::rels_for(&self.part);
                 if let Some(tree) = package.tree(&rels)? {
@@ -352,7 +356,13 @@ impl<'m> Writer<'m> {
         Ok(link)
     }
 
-    fn inline_item(&mut self, sink: &mut EditSink<'_, '_>, work: &mut Work, item: &Inline, link: bool) -> Result<Vec<Id>> {
+    fn inline_item(
+        &mut self,
+        sink: &mut EditSink<'_, '_>,
+        work: &mut Work,
+        item: &Inline,
+        link: bool,
+    ) -> Result<Vec<Id>> {
         Ok(match item {
             Inline::Text { text, marks, .. } => {
                 let text = valid_text(&text.replace('\n', " "));
@@ -493,7 +503,9 @@ fn stated_outline_level(docx: &ooxml_word_model::docx::Docx, style: &str) -> Opt
         }
         let node = docx.style(&id)?;
         if let Some(stated) = ooxml_word_model::docx::find_path(node, &["pPr", "outlineLvl"]) {
-            return stated.attribute(Some(W), "val").and_then(ooxml_word_model::xmlread::py_int);
+            return stated
+                .attribute(Some(W), "val")
+                .and_then(ooxml_word_model::xmlread::py_int);
         }
         current = ooxml_word_model::docx::child_val(node, "basedOn").map(str::to_owned);
     }

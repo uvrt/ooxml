@@ -5,20 +5,16 @@
 //!
 //! Must not: be used by any library; it is a test instrument.
 
+use ooxml_opc::Package;
 use ooxml_store::Caller;
-use ooxml_word_edit::{EditError, Edited, Editor, SetStyledText, StyledTextSet};
+use ooxml_word_edit::{EditError, Editor, SetStyledText};
 use serde_json::{json, Map, Value};
 
-/// Run the case; `report` makes the case's JSON of the edit and its result.
+/// Run the case on the document `package` opened; the case's JSON of the edit and its result.
 ///
 /// # Errors
 /// The edit's refusal.
-pub fn set_text_styled(
-    editor: &Editor,
-    caller: &Caller,
-    case: &Value,
-    report: impl Fn(&Edited<StyledTextSet>, Value) -> Value,
-) -> Result<Value, EditError> {
+pub fn set_text_styled(editor: &Editor, caller: &Caller, package: &Package, case: &Value) -> Result<Value, EditError> {
     let text = |key: &str| case.get(key).and_then(Value::as_str).unwrap_or("").to_owned();
     let command = SetStyledText {
         target: text("target"),
@@ -54,7 +50,7 @@ pub fn set_text_styled(
             })
             .collect();
         let result = json!({"edits": edits, "styled": styled, "notes": out.notes, "written": out.written});
-        report(&done, result)
+        crate::edits::report(package, &done, result)
     })
 }
 

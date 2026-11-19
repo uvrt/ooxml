@@ -5,20 +5,16 @@
 //!
 //! Must not: be used by any library; it is a test instrument.
 
+use ooxml_opc::Package;
 use ooxml_store::Caller;
-use ooxml_word_edit::{EditError, Edited, Editor, InsertMarkdown, MarkdownInserted, MarkdownOptions, WriteMap};
+use ooxml_word_edit::{EditError, Editor, InsertMarkdown, MarkdownOptions, WriteMap};
 use serde_json::{json, Value};
 
-/// Run the case; `report` makes the case's JSON of the edit and its result.
+/// Run the case on the document `package` opened; the case's JSON of the edit and its result.
 ///
 /// # Errors
 /// The edit's refusal.
-pub fn insert_markdown(
-    editor: &Editor,
-    caller: &Caller,
-    case: &Value,
-    report: impl Fn(&Edited<MarkdownInserted>, Value) -> Value,
-) -> Result<Value, EditError> {
+pub fn insert_markdown(editor: &Editor, caller: &Caller, package: &Package, case: &Value) -> Result<Value, EditError> {
     let text = |key: &str| case.get(key).and_then(Value::as_str).unwrap_or("").to_owned();
     let pairs: Vec<(String, Option<String>)> = case
         .get("style_map")
@@ -45,6 +41,6 @@ pub fn insert_markdown(
         let result = json!({"id": out.first, "changed": out.changed, "created": out.created,
                             "renamed": crate::edits::renamed(&out.renamed), "removed": out.removed,
                             "warnings": out.warnings, "blocks": out.blocks});
-        report(&done, result)
+        crate::edits::report(package, &done, result)
     })
 }

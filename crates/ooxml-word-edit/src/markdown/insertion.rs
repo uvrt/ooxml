@@ -50,13 +50,19 @@ fn lone_empty_paragraph(docx: &Docx) -> Option<(String, Vec<u32>)> {
     let body_part = docx.body()?;
     let root = body_part.root();
     let body = root.child_elements().find(|c| c.name().is(Some(W), "body"))?;
-    let blocks: Vec<&Arc<Element>> = body.child_elements().filter(|c| !c.name().is(Some(W), "sectPr")).collect();
+    let blocks: Vec<&Arc<Element>> = body
+        .child_elements()
+        .filter(|c| !c.name().is(Some(W), "sectPr"))
+        .collect();
     let [paragraph] = blocks.as_slice() else { return None };
     if !paragraph.name().is(Some(W), "p") || paragraph.child_elements().any(|c| !c.name().is(Some(W), "pPr")) {
         return None;
     }
     let properties = paragraph.child_elements().find(|c| c.name().is(Some(W), "pPr"));
-    if properties.is_some_and(|p| p.child_elements().any(|c| c.name().is(Some(W), "sectPr") || c.name().is(Some(W), "numPr"))) {
+    if properties.is_some_and(|p| {
+        p.child_elements()
+            .any(|c| c.name().is(Some(W), "sectPr") || c.name().is(Some(W), "numPr"))
+    }) {
         return None;
     }
     let entries = body_part.ids.paragraphs();
@@ -82,7 +88,7 @@ pub(crate) fn locate(doc: &WordDoc, docx: &Docx, at: &str, blocks: &[Block]) -> 
             story: "body".to_owned(),
             container: path.get(..1).unwrap_or_default().to_vec(),
             before: Some(index),
-            lone: Some((id, index)).filter(|_| !matches!(blocks.last(), Some(Block::Table(_)))),
+            lone: (!matches!(blocks.last(), Some(Block::Table(_)))).then_some((id, index)),
         });
     }
     let (kind, rest) = match at.split_once(':') {
@@ -114,7 +120,10 @@ fn end_of(docx: &Docx, story: &str) -> Result<Place> {
         .story(story)
         .ok_or_else(|| EditError::Refused(format!("no story {story:?}")))?;
     let root = found.root();
-    if ["footnotes", "endnotes", "comments"].iter().any(|l| root.name().is(Some(W), l)) {
+    if ["footnotes", "endnotes", "comments"]
+        .iter()
+        .any(|l| root.name().is(Some(W), l))
+    {
         return Err(EditError::Refused(format!(
             "{story} holds notes or comments: insert after one of their paragraphs"
         )));
@@ -163,7 +172,11 @@ fn stretch_of(container: &Element, before: Option<u32>) -> Option<(u32, u32)> {
 }
 
 /// Write the blocks at their place (`_insert`).
-pub(crate) fn insert(sink: &mut EditSink<'_, '_>, command: &InsertMarkdown, blocks: &[Block]) -> Result<MarkdownInserted> {
+pub(crate) fn insert(
+    sink: &mut EditSink<'_, '_>,
+    command: &InsertMarkdown,
+    blocks: &[Block],
+) -> Result<MarkdownInserted> {
     let docx = sink.docx()?;
     let place = locate(sink.doc(), &docx, &command.at, blocks)?;
     let renamed = stamp_document(sink, &docx)?;
@@ -175,9 +188,8 @@ pub(crate) fn insert(sink: &mut EditSink<'_, '_>, command: &InsertMarkdown, bloc
     } else {
         Arc::clone(ooxml_word_model::docx::at_path(tree.root(), &place.container).ok_or_else(path_error)?)
     };
-    let (from, to) = stretch_of(&container, place.before).ok_or_else(|| {
-        EditError::Unsupported("insert_markdown into an empty container".to_owned())
-    })?;
+    let (from, to) = stretch_of(&container, place.before)
+        .ok_or_else(|| EditError::Unsupported("insert_markdown into an empty container".to_owned()))?;
     let path = |k: u32| -> Box<[u32]> { place.container.iter().copied().chain([k]).collect() };
     let (mut work, held) = crate::ranges::stretch(tree.root(), &[path(from), path(to)]).ok_or_else(path_error)?;
     let child = |k: u32| held.get(k.checked_sub(from)? as usize).copied();
@@ -218,11 +230,42 @@ pub(crate) fn insert(sink: &mut EditSink<'_, '_>, command: &InsertMarkdown, bloc
     }
     close_tables(sink, &mut work, &mut writer, &mut elements)?;
     let starts_paragraph = elements.first().is_some_and(|e| work.is(*e, W, "p"));
-    let stamped = stamp(sink, &mut work, &place, &elements, continued.filter(|_| starts_paragraph))?;
+    let stamped = stamp(
+        sink,
+        &mut work,
+        &place,
+        &elements,
+        continued.filter(|_| starts_paragraph),
+    )?;
     let wrote = sink.track(&mut work, |work, stamp, orders| {
         track(work, &elements, stamp, orders, old_mark);
         Vec::new()
     })?;
+    commit(sink, &work, &place, (from, to), &stamped.0, &wrote)?;
+    let (created, top) = stamped;
+    Ok(MarkdownInserted {
+        first: created.first().cloned(),
+        changed: true,
+        created,
+        renamed,
+        removed,
+        warnings: writer.warnings,
+        blocks: top,
+    })
+}
+
+/// The stretch's new content spliced into the part, with the keys it read and wrote and
+/// the annotation ids drawn into it; the namespaces and people a tracked write needs.
+fn commit(
+    sink: &mut EditSink<'_, '_>,
+    work: &Work,
+    place: &Place,
+    (from, to): (u32, u32),
+    created: &[String],
+    wrote: &crate::sink::TextWrite,
+) -> Result<()> {
+    let part = place.part.clone();
+    let path_error = || EditError::Path(part.clone());
     let nodes = work.build_content(work.root()).ok_or_else(path_error)?;
     let mut draws = Vec::new();
     let stamped_docx = sink.docx()?;
@@ -237,8 +280,14 @@ pub(crate) fn insert(sink: &mut EditSink<'_, '_>, command: &InsertMarkdown, bloc
             }
         }
     }
-    keys.extend(stamped.0.iter().map(|id| block_key(&part, id)));
-    sink.splice_children(&part, (&place.container, from as usize, (to - from + 1) as usize), nodes, keys, draws)?;
+    keys.extend(created.iter().map(|id| block_key(&part, id)));
+    sink.splice_children(
+        &part,
+        (&place.container, from as usize, (to - from + 1) as usize),
+        nodes,
+        keys,
+        draws,
+    )?;
     if wrote.dated {
         sink.ensure_w14(&part, false, &[("w16du", W16DU)])?;
     }
@@ -247,16 +296,7 @@ pub(crate) fn insert(sink: &mut EditSink<'_, '_>, command: &InsertMarkdown, bloc
         let gave = wrote.annotations.is_some_and(|n| n.to > n.from);
         sink.people(gave.then_some(tracking.author.as_str()), Some(tracking.author.as_str()))?;
     }
-    let (created, top) = stamped;
-    Ok(MarkdownInserted {
-        first: created.first().cloned(),
-        changed: true,
-        created,
-        renamed,
-        removed,
-        warnings: writer.warnings,
-        blocks: top,
-    })
+    Ok(())
 }
 
 /// The block (or section properties) after `node`.
@@ -285,7 +325,12 @@ fn previous_block(work: &Work, node: Id) -> Option<Id> {
 
 /// No table beside one already there (a separator between), and a container ending in a
 /// paragraph after a table.
-fn close_tables(sink: &mut EditSink<'_, '_>, work: &mut Work, writer: &mut Writer<'_>, elements: &mut Vec<Id>) -> Result<()> {
+fn close_tables(
+    sink: &mut EditSink<'_, '_>,
+    work: &mut Work,
+    writer: &mut Writer<'_>,
+    elements: &mut Vec<Id>,
+) -> Result<()> {
     let table = |work: &Work, n: Option<Id>| n.is_some_and(|n| work.is(n, W, "tbl"));
     if let Some(&first) = elements.first() {
         if table(work, Some(first)) && table(work, previous_block(work, first)) {
@@ -326,7 +371,13 @@ fn stamp(
     let rows: usize = elements.iter().map(|e| work.iter(*e, W, &["tr"]).len()).sum();
     let paragraphs: usize = elements
         .iter()
-        .map(|e| if work.is(*e, W, "p") { 1 } else { work.iter(*e, W, &["p"]).len() })
+        .map(|e| {
+            if work.is(*e, W, "p") {
+                1
+            } else {
+                work.iter(*e, W, &["p"]).len()
+            }
+        })
         .sum();
     let row_ids = sink.draw(&format!("{part}\0row"), 2 * rows)?;
     let mut paragraph_ids: Vec<String> = continued.iter().flat_map(|(p, t)| [p.clone(), t.clone()]).collect();
@@ -335,7 +386,11 @@ fn stamp(
     let (mut rows, mut paragraphs) = (row_ids.into_iter(), paragraph_ids.into_iter());
     let tree = sink.doc().tree(part)?.ok_or_else(|| EditError::NoPart(part.clone()))?;
     let w14 = w14_prefix(tree.root(), &place.container);
-    let prefix = if place.story == "body" { String::new() } else { format!("{}/", place.story) };
+    let prefix = if place.story == "body" {
+        String::new()
+    } else {
+        format!("{}/", place.story)
+    };
     let set = |work: &mut Work, node: Id, ids: &mut dyn Iterator<Item = String>| -> Option<String> {
         let (para, text) = (ids.next()?, ids.next()?);
         work.set(node, Arc::new(QName::new(Some(&w14), "paraId", Some(W14))), &para);
@@ -358,7 +413,10 @@ fn stamp(
                 let id = set(work, node, &mut rows).ok_or_else(missing)?;
                 first_row.get_or_insert(id);
             } else {
-                nested.push(format!("{prefix}p:{}", set(work, node, &mut paragraphs).ok_or_else(missing)?));
+                nested.push(format!(
+                    "{prefix}p:{}",
+                    set(work, node, &mut paragraphs).ok_or_else(missing)?
+                ));
             }
         }
         let id = format!("{prefix}t:{}", first_row.unwrap_or_default());
@@ -431,7 +489,9 @@ fn track(work: &mut Work, elements: &[Id], stamp: &mut Stamp, orders: &Orders, o
             track_table(work, element, stamp, orders);
         }
     }
-    let (Some(&first), Some(&last)) = (elements.first(), elements.last()) else { return };
+    let (Some(&first), Some(&last)) = (elements.first(), elements.last()) else {
+        return;
+    };
     let last_in_container = work.is(last, W, "p") && {
         let mut at = work.next(last);
         let mut found = false;
@@ -447,7 +507,10 @@ fn track(work: &mut Work, elements: &[Id], stamp: &mut Stamp, orders: &Orders, o
     let previous = previous_block(work, first).filter(|p| {
         work.is(*p, W, "p")
             && mark_record(work, *p).is_none()
-            && work.find(*p, W, "pPr").and_then(|q| work.find(q, W, "sectPr")).is_none()
+            && work
+                .find(*p, W, "pPr")
+                .and_then(|q| work.find(q, W, "sectPr"))
+                .is_none()
     });
     let old = match (previous, old_mark) {
         (Some(previous), _) => {
@@ -465,7 +528,9 @@ fn track(work: &mut Work, elements: &[Id], stamp: &mut Stamp, orders: &Orders, o
 
 /// A paragraph's mark record removed, and its mark's `w:rPr` when that leaves it empty.
 fn drop_mark(work: &mut Work, paragraph: Id) {
-    let Some(record) = mark_record(work, paragraph) else { return };
+    let Some(record) = mark_record(work, paragraph) else {
+        return;
+    };
     let run_properties = work.parent(record);
     work.remove(record);
     if let Some(rp) = run_properties.filter(|r| work.children(*r).iter().all(|c| !work.is_element(*c))) {

@@ -30,7 +30,7 @@ const BULLETS: [(&str, &str, &str); 3] = [
     ("o", "Courier New", "04090003"),
     ("\u{f0a7}", "Wingdings", "04090005"),
 ];
-/// Word's own numbered list: per level, (format, justification, template code).
+/// Word's own numbered list: per level, (format, alignment, template code).
 const NUMBERS: [(&str, &str, &str); 3] = [
     ("decimal", "left", "0409000F"),
     ("lowerLetter", "left", "04090019"),
@@ -40,7 +40,13 @@ const WML: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 
 impl Writer<'_> {
     /// The paragraphs of `list` at `depth` and the blocks inside its items.
-    pub(crate) fn list(&mut self, sink: &mut EditSink<'_, '_>, work: &mut Work, list: &ListBlock, depth: i64) -> Result<Vec<Id>> {
+    pub(crate) fn list(
+        &mut self,
+        sink: &mut EditSink<'_, '_>,
+        work: &mut Work,
+        list: &ListBlock,
+        depth: i64,
+    ) -> Result<Vec<Id>> {
         let level = depth.min(MAX_LEVEL);
         let construct = if list.ordered { "ordered_list" } else { "bullet_list" };
         let style = self.style(sink, construct, depth + 1)?;
@@ -68,7 +74,14 @@ impl Writer<'_> {
                 let restarts = (list.ordered && list.start != 1) || counting.contains(&style_level);
                 counting.insert(style_level);
                 if restarts {
-                    num_id = Some(self.restart(sink, &docx, &lists, (abstract_id, style_num, style_level), list.start, style.as_deref())?);
+                    num_id = Some(self.restart(
+                        sink,
+                        &docx,
+                        &lists,
+                        (abstract_id, style_num, style_level),
+                        list.start,
+                        style.as_deref(),
+                    )?);
                     self.numbered = true;
                 }
             }
@@ -215,7 +228,9 @@ fn restarted_level(sink: &EditSink<'_, '_>, source: &Arc<Element>, start: i64, i
     if let Some(old) = work.find(properties, W, "ind") {
         work.remove(old);
     }
-    let copy = work.adopt(&Arc::new(ind.clone())).ok_or_else(|| crate::EditError::Path("numbering".into()))?;
+    let copy = work
+        .adopt(&Arc::new(ind.clone()))
+        .ok_or_else(|| crate::EditError::Path("numbering".into()))?;
     crate::marks::insert_in_order(&mut work, properties, copy, orders);
     work.build().ok_or_else(|| crate::EditError::Path("numbering".into()))
 }
@@ -242,20 +257,24 @@ fn copied_abstract(original: &Element, id: i64, nsid: &str) -> Arc<Element> {
 /// Word's own Bullets or Numbering definition (`builtin_abstract`), as XML.
 fn builtin_abstract(ordered: bool, abstract_id: i64, nsid: &str, template: &str) -> String {
     let mut levels = String::new();
-    for level in 0..9usize {
+    for (level, (&number, &bullet)) in NUMBERS.iter().cycle().zip(BULLETS.iter().cycle()).take(9).enumerate() {
         let indent = 720 * (level + 1);
         if ordered {
-            let (fmt, justification, code) = NUMBERS[level % 3];
-            let hanging = if justification == "right" { 180 } else { 360 };
+            let (fmt, jc, code) = number;
+            let hanging = if jc == "right" { 180 } else { 360 };
             levels.push_str(&format!(
                 "<w:lvl w:ilvl=\"{level}\" w:tplc=\"{code}\"><w:start w:val=\"1\"/><w:numFmt w:val=\"{fmt}\"/>\
-                 <w:lvlText w:val=\"%{}.\"/><w:lvlJc w:val=\"{justification}\"/>\
+                 <w:lvlText w:val=\"%{}.\"/><w:lvlJc w:val=\"{jc}\"/>\
                  <w:pPr><w:ind w:left=\"{indent}\" w:hanging=\"{hanging}\"/></w:pPr></w:lvl>",
                 level + 1
             ));
         } else {
-            let (char, font, code) = BULLETS[level % 3];
-            let cs = if font == "Courier New" { " w:cs=\"Courier New\"" } else { "" };
+            let (char, font, code) = bullet;
+            let cs = if font == "Courier New" {
+                " w:cs=\"Courier New\""
+            } else {
+                ""
+            };
             levels.push_str(&format!(
                 "<w:lvl w:ilvl=\"{level}\" w:tplc=\"{code}\"><w:start w:val=\"1\"/><w:numFmt w:val=\"bullet\"/>\
                  <w:lvlText w:val=\"{char}\"/><w:lvlJc w:val=\"left\"/>\
@@ -312,7 +331,10 @@ fn style_list(docx: &Docx, lists: &Lists, style: Option<&str>) -> Option<(i64, i
     let num_id = num_id.filter(|n| *n != 0 && lists.has(*n))?;
     lists.abstract_of(num_id).and_then(|a| lists.abstract_element(a))?;
     let lvl = lists.level(docx, num_id, level);
-    let tied = lvl.as_ref().and_then(|l| child_val(l, "pStyle")).filter(|v| !v.is_empty());
+    let tied = lvl
+        .as_ref()
+        .and_then(|l| child_val(l, "pStyle"))
+        .filter(|v| !v.is_empty());
     if tied.is_some_and(|t| Some(t) != holder.as_deref()) {
         return None;
     }
@@ -330,7 +352,8 @@ fn document_definition(docx: &Docx, lists: &Lists, ordered: bool) -> Option<i64>
         let mut stack = vec![story.root()];
         while let Some(element) = stack.pop() {
             if element.name().is(Some(W), "p") {
-                let found = find_path(element, &["pPr", "numPr", "numId"]).and_then(|n| int_of(n.attribute(Some(W), "val")));
+                let found =
+                    find_path(element, &["pPr", "numPr", "numId"]).and_then(|n| int_of(n.attribute(Some(W), "val")));
                 if let Some(a) = found.and_then(|n| lists.abstract_of(n)) {
                     match counts.iter_mut().find(|(k, _)| *k == a) {
                         Some(slot) => slot.1 += 1,
@@ -344,13 +367,19 @@ fn document_definition(docx: &Docx, lists: &Lists, ordered: bool) -> Option<i64>
     }
     counts.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
     counts.into_iter().map(|(a, _)| a).find(|&a| {
-        let Some(node) = lists.abstract_element(a) else { return false };
+        let Some(node) = lists.abstract_element(a) else {
+            return false;
+        };
         let has = |local: &str| node.child_elements().any(|c| c.name().is(Some(W), local));
         if has("styleLink") || has("numStyleLink") {
             return false;
         }
         let levels: Vec<_> = node.child_elements().filter(|c| c.name().is(Some(W), "lvl")).collect();
-        if levels.len() < 9 || levels.iter().any(|l| l.child_elements().any(|c| c.name().is(Some(W), "pStyle"))) {
+        if levels.len() < 9
+            || levels
+                .iter()
+                .any(|l| l.child_elements().any(|c| c.name().is(Some(W), "pStyle")))
+        {
             return false;
         }
         let formats: Vec<String> = levels

@@ -28,7 +28,10 @@ pub(crate) fn py_strip(text: &str) -> &str {
 /// An inline footnote (`^[text]`), which has no label to write it by.
 pub(crate) fn parse_model(text: &str) -> Result<Vec<Block>> {
     let (tokens, env) = ooxml_markdown::parse(text);
-    let mut reader = Reader { tokens: &tokens, env: &env };
+    let mut reader = Reader {
+        tokens: &tokens,
+        env: &env,
+    };
     Ok(reader.blocks(0, None)?.0)
 }
 
@@ -53,7 +56,11 @@ impl Reader<'_> {
             .and_then(|m| m.id)
             .and_then(|id| self.env.footnotes.get(id))
             .and_then(|f| f.label.clone())
-            .ok_or_else(|| EditError::Refused("an inline footnote (^[text]) is not inserted: write [^label] and its definition".to_owned()))
+            .ok_or_else(|| {
+                EditError::Refused(
+                    "an inline footnote (^[text]) is not inserted: write [^label] and its definition".to_owned(),
+                )
+            })
     }
 
     fn blocks(&mut self, mut i: usize, until: Option<Kind>) -> Result<(Vec<Block>, usize)> {
@@ -119,9 +126,16 @@ impl Reader<'_> {
     }
 
     fn list(&mut self, mut i: usize) -> Result<(ListBlock, usize)> {
-        let open = self.tokens.get(i).ok_or_else(|| EditError::Refused("a list ends early".to_owned()))?;
+        let open = self
+            .tokens
+            .get(i)
+            .ok_or_else(|| EditError::Refused("a list ends early".to_owned()))?;
         let ordered = open.kind == Kind::OrderedListOpen;
-        let close = if ordered { Kind::OrderedListClose } else { Kind::BulletListClose };
+        let close = if ordered {
+            Kind::OrderedListClose
+        } else {
+            Kind::BulletListClose
+        };
         let start = match open.attr("start") {
             Some(Value::Number(n)) if ordered => *n,
             Some(Value::Text(t)) if ordered => t.parse().unwrap_or(1),
@@ -347,7 +361,10 @@ mod tests {
     fn breaks_and_comments() {
         assert_eq!(breaks_only(" <br> <BR/>\n<br />\n"), 3);
         assert_eq!(breaks_only("<br> x"), 0);
-        assert_eq!(html_block("<!-- a --> <!--b-->\n"), vec![Block::Comment("a".into()), Block::Comment("b".into())]);
+        assert_eq!(
+            html_block("<!-- a --> <!--b-->\n"),
+            vec![Block::Comment("a".into()), Block::Comment("b".into())]
+        );
         assert_eq!(align_of("text-align:center"), Some("center".into()));
     }
 

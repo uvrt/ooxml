@@ -147,12 +147,8 @@ fn edit(bytes: &Arc<[u8]>, case: &Value) -> Result<Value, String> {
         "set_paragraph_style" => set_paragraph_style(&editor, &caller, &package, case),
         "delete" => delete(&editor, &caller, &package, case),
         "set_cells" => set_cells(&editor, &caller, &package, case),
-        "insert_markdown" => {
-            crate::edits_markdown::insert_markdown(&editor, &caller, case, |done, result| report(&package, done, result))
-        }
-        "set_text_styled" => {
-            crate::edits_styled::set_text_styled(&editor, &caller, case, |done, result| report(&package, done, result))
-        }
+        "insert_markdown" => crate::edits_markdown::insert_markdown(&editor, &caller, &package, case),
+        "set_text_styled" => crate::edits_styled::set_text_styled(&editor, &caller, &package, case),
         "replace" => {
             let pattern = match pattern(case, &text("find"), &text("text")) {
                 Ok(p) => p,
@@ -333,7 +329,7 @@ fn ranges_result(out: &RangesEdited) -> Value {
 }
 
 /// What a case reports.
-fn report<O>(opened: &Package, done: &Edited<O>, result: Value) -> Value {
+pub(crate) fn report<O>(opened: &Package, done: &Edited<O>, result: Value) -> Value {
     let doc: &WordDoc = done.version.doc();
     let mut parts = Map::new();
     for name in doc.package().part_names() {

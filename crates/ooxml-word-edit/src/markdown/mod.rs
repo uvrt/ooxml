@@ -104,7 +104,10 @@ impl InsertMarkdown {
             }
             let mut inline = Vec::new();
             writer::walk_inline(&blocks, &mut inline);
-            if let Some(Inline::Html(text)) = inline.iter().find(|i| matches!(i, Inline::Html(t) if !t.starts_with("<!--"))) {
+            if let Some(Inline::Html(text)) = inline
+                .iter()
+                .find(|i| matches!(i, Inline::Html(t) if !t.starts_with("<!--")))
+            {
                 return Err(html_refused(text));
             }
         }
@@ -122,7 +125,9 @@ impl InsertMarkdown {
 
 fn html_refused(text: &str) -> EditError {
     let shown: String = text.chars().take(60).collect();
-    EditError::Refused(format!("raw HTML is not inserted (html='text' keeps it as text): {shown:?}"))
+    EditError::Refused(format!(
+        "raw HTML is not inserted (html='text' keeps it as text): {shown:?}"
+    ))
 }
 
 /// Whether writing `block` makes any element.

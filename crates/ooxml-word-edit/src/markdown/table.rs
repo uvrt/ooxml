@@ -98,7 +98,11 @@ impl Writer<'_> {
     }
 
     /// A column's cells' paragraph style and direct `w:jc`.
-    fn cell_look(&mut self, sink: &mut EditSink<'_, '_>, align: Option<&str>) -> Result<(Option<String>, Option<String>)> {
+    fn cell_look(
+        &mut self,
+        sink: &mut EditSink<'_, '_>,
+        align: Option<&str>,
+    ) -> Result<(Option<String>, Option<String>)> {
         let Some(align) = align.filter(|a| matches!(*a, "center" | "right")) else {
             return Ok((self.style(sink, "table_cell", 0)?, align.map(str::to_owned)));
         };
@@ -185,7 +189,7 @@ pub(crate) fn table_style_in_use(docx: &Docx) -> Option<String> {
             stack.extend(children.into_iter().rev());
         }
     }
-    counts.sort_by(|a, b| b.1.cmp(&a.1));
+    counts.sort_by_key(|c| std::cmp::Reverse(c.1));
     counts.into_iter().map(|(id, _)| id).find(|id| {
         docx.styles()
             .iter()
