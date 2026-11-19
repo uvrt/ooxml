@@ -181,6 +181,7 @@ def test_word_delete_and_word_move_take_open_spans(box, session):
     ok(box, session, "word_move", doc=doc, blocks=f"..{ids['Alpha']}", after=ids["Delta"])
     assert [p.text.split()[0] for p in document.paragraphs() if p.text][-2:] == ["Opening", "Alpha"]
     ok(box, session, "word_delete", doc=doc, target=f"{ids['Delta']}..")
+    document = session.entry(doc).document       # (the view as the served call left it)
     assert [p.text.split()[0] for p in document.paragraphs() if p.text] == [
         "Bravo", "Name", "Value", "left", "right", "Charlie"]
 

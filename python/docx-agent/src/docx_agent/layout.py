@@ -2521,7 +2521,7 @@ _NOT_SETTINGS = ("package", "history", "converter", "typography_spaced")
 #: The settings a read copy reads from its document whenever asked, so one the application
 #: changes after the version was committed (a locale, a minimum text size) holds for reads
 #: of it too, as it did when reads held the document's lock.
-_LIVE_SETTINGS = ("font_dirs", "locale", "describe_step", "read_hint", "typography", "stamping",
+_LIVE_SETTINGS = ("font_dirs", "locale", "describe_step", "retired_ids", "read_hint", "typography", "stamping",
                   "min_text_size")
 _READER_CLASSES: dict = {}
 

@@ -7,7 +7,9 @@
 use crate::common::{Never, NoFonts, NoParts, Unlimited};
 use ooxml_base::context::Timestamp;
 use ooxml_base::{Clock, Context, Limits, Locale};
-use ooxml_session::{CallContext, Caller, DocId, DocKind, Session, SessionConfig, SessionError, Undone};
+use ooxml_session::{
+    CallContext, Caller, DocId, DocKind, HeldId, RetiredBy, Session, SessionConfig, SessionError, Undone,
+};
 use ooxml_zip::{Method, NewEntry, Writer};
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -348,4 +350,54 @@ fn a_version_names_the_parts_it_changed_since_another() {
         .map(String::from_utf8_lossy)
         .unwrap_or_default()
         .contains("one word"));
+}
+
+#[test]
+fn retired_ids_say_who_removed_them_and_an_undone_deletion_is_back() {
+    let s = session();
+    let body = format!(
+        "{}{}{}",
+        paragraph("11111111", "one"),
+        paragraph("22222222", "two"),
+        paragraph("33333333", "three")
+    );
+    let d = s.open(docx(&body), DocKind::Docx, "a.docx").unwrap();
+    let w1 = as_caller("w1");
+    let deleted = call(&s, "word_delete", json!({"doc": "d1", "target": "p:22222222"}), &w1);
+    assert!(deleted.get("error").is_none(), "{deleted}");
+    let retired = s.retired(&d).unwrap();
+    let [(HeldId::Block(0x2222_2222), RetiredBy::Step { seq, caller, tool })] = retired.as_slice() else {
+        panic!("{retired:?}");
+    };
+    assert_eq!((caller.as_deref(), tool.as_deref()), (Some("w1"), Some("word_delete")));
+    assert_eq!(Some(*seq), deleted["version"].as_u64());
+    // the bridge's update removes another, as its tool
+    s.bridge(
+        &d,
+        "word_move",
+        vec![(
+            "word/document.xml".to_owned(),
+            Some(Arc::from(document(&paragraph("11111111", "one")).as_bytes())),
+        )],
+        &as_caller("w2"),
+    )
+    .unwrap();
+    let retired = s.retired(&d).unwrap();
+    assert_eq!(retired.len(), 2, "{retired:?}");
+    assert!(
+        matches!(&retired[1], (HeldId::Block(0x3333_3333), RetiredBy::Step { tool: Some(t), .. }) if &**t == "word_move")
+    );
+    // undone, both are back; redone, the first is removed again by the call that removed it
+    assert_eq!(s.undo(&d, 2, &CallContext::default()).unwrap().count, 2);
+    assert!(s.retired(&d).unwrap().is_empty());
+    assert_eq!(s.redo(&d, 1, &CallContext::default()).unwrap().count, 1);
+    let retired = s.retired(&d).unwrap();
+    assert!(
+        matches!(retired.as_slice(), [(HeldId::Block(0x2222_2222), RetiredBy::Step { tool: Some(t), .. })] if &**t == "word_delete"),
+        "{retired:?}"
+    );
+    // a state's earlier deletions are given by the host and kept as given
+    s.seed_retired(&d, vec![(HeldId::Drawing(4), 3, Some("word_delete (agent=a)".into()))])
+        .unwrap();
+    assert_eq!(s.retired(&d).unwrap().len(), 2);
 }

@@ -5,10 +5,10 @@
 //!
 //! Must not: change how an edit runs, or outlive the call.
 
-use ooxml_store::{Caller, Command, Snapshot, Store};
+use ooxml_store::{Caller, Command, Seq, Snapshot, Store};
 use ooxml_word_edit::touched::Touched;
 use ooxml_word_edit::validate::{Delta, Problem};
-use ooxml_word_edit::{EditError, Edited, Editor, WordDoc};
+use ooxml_word_edit::{EditError, Edited, Editor, IdsDelta, WordDoc};
 use std::sync::{Mutex, PoisonError};
 
 /// The versions one call made: its first edit's and its last's (the same for one edit),
@@ -24,6 +24,8 @@ pub struct Made {
     pub touched: Vec<Touched>,
     /// The validation delta of `last`.
     pub validation: Delta,
+    /// The ids each changing edit removed and brought, by the version it made.
+    pub ids: Vec<(Seq, IdsDelta)>,
 }
 
 /// The document's editor for one call: its edits, and the versions they made.
@@ -54,12 +56,16 @@ impl<'a> CallEditor<'a> {
         let edited = self.editor.run(caller, command)?;
         if edited.changed {
             let mut made = self.made.lock().unwrap_or_else(PoisonError::into_inner);
-            let first = made.take().map_or_else(|| edited.version.clone(), |m| m.first);
+            let (first, mut ids) = made
+                .take()
+                .map_or_else(|| (edited.version.clone(), Vec::new()), |m| (m.first, m.ids));
+            ids.push((edited.version.seq(), edited.ids.clone()));
             *made = Some(Made {
                 first,
                 last: edited.version.clone(),
                 touched: edited.touched.clone(),
                 validation: edited.validation.clone(),
+                ids,
             });
         }
         Ok(edited)

@@ -17,7 +17,9 @@ pub use sha256::sha256;
 mod state;
 
 pub use index::{Entry, IdState, ParagraphId, PartIds, Path, TableId};
-pub use ledger::{block_and_drawing_ids, drawing_numbers, sequence_value, used_long_hex, IdPool, Ledger, REACH};
+pub use ledger::{
+    block_and_drawing_ids, drawing_numbers, held_id, sequence_value, used_long_hex, HeldId, IdPool, Ledger, REACH,
+};
 pub use state::{
     export_state, footprint, load_state, python_json, record_of, IdStateError, LoadedState, Versions, STATE_PREFIX,
 };

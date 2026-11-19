@@ -8,6 +8,7 @@
 //! store's port; run a command's effects outside its transaction.
 
 use crate::doc::WordDoc;
+use crate::ids_delta::{ids_delta, IdsDelta};
 use crate::touched::{touched, Touched};
 use crate::validate::{problems, Delta, Problem};
 use crate::{EditError, Result};
@@ -29,7 +30,7 @@ pub struct Editor {
 pub struct EditTiming {
     /// Validate, prepare and commit (the store's measure, redo and waiting included).
     pub commit: CommitTiming,
-    /// Working out what the change touched.
+    /// Working out what the change touched and the ids it retired.
     pub touched: Duration,
     /// The validation delta.
     pub validation: Duration,
@@ -49,6 +50,8 @@ pub struct Edited<O> {
     pub changed: bool,
     /// What it touched, per part.
     pub touched: Vec<Touched>,
+    /// The block ids and drawing numbers it removed and brought.
+    pub ids: IdsDelta,
     /// Its version's problems against those the document opened with.
     pub validation: Delta,
     /// How many times it was prepared.
@@ -102,9 +105,12 @@ impl Editor {
     {
         let committed = self.store.run(caller, command)?;
         let started = self.clock.monotonic();
-        let touched = match &committed.previous {
-            Some(previous) if committed.changed => touched(previous.doc(), committed.version.doc())?,
-            _ => Vec::new(),
+        let (touched, ids) = match &committed.previous {
+            Some(previous) if committed.changed => (
+                touched(previous.doc(), committed.version.doc())?,
+                ids_delta(previous.doc(), committed.version.doc())?,
+            ),
+            _ => (Vec::new(), IdsDelta::default()),
         };
         let found = self.clock.monotonic();
         let validation = Delta::of(&self.baseline, &problems(committed.version.doc())?);
@@ -115,6 +121,7 @@ impl Editor {
             version: committed.version,
             previous: committed.previous,
             touched,
+            ids,
             validation,
             attempts: committed.attempts,
             exclusive: committed.exclusive,

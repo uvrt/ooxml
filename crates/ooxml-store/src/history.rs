@@ -55,6 +55,8 @@ pub struct StepInfo<K: Ord> {
 pub struct HistoryOutcome<D: DocModel> {
     /// The version it made.
     pub version: Snapshot<D>,
+    /// The head it was made from.
+    pub previous: Snapshot<D>,
     /// The step undone or redone, by the version it made when committed.
     pub step: Seq,
     /// The keys it wrote.
