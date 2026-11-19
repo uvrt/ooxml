@@ -11,8 +11,8 @@ use crate::common::{editor, fixture, policy, written, Rng, WORDS};
 use ooxml_store::{Caller, Command, KeySet, Seq, Snapshot, Txn};
 use ooxml_word_edit::{
     AddBookmark, AddHyperlink, Day, DeleteNote, EditError, EditNote, Editor, InsertCaption, InsertField, InsertNote,
-    InsertSectionBreak, InsertText, Key, MoveBlocks, Moving, NoteKind, RemoveBookmark, RevisionPolicy, SectionValues,
-    SetSection, SetStoryText, SetText, Tracking, UpdateFields, WordDoc,
+    InsertSectionBreak, InsertText, Key, MoveBlocks, MoveNote, Moving, NoteKind, RemoveBookmark, RevisionPolicy,
+    SectionValues, SetSection, SetStoryText, SetText, Tracking, UpdateFields, WordDoc,
 };
 
 /// One edit of the mix.
@@ -460,4 +460,50 @@ fn a_tracked_field_writes_the_annotation_ids() {
     let done = shared.store().run(&Caller::anonymous(), &field).unwrap();
     assert!(done.changed);
     assert!(done.writes.contains(&Key::Annotations));
+}
+
+/// The footnotes part as written, and the body.
+fn notes_and_body(editor: &Editor) -> (String, String) {
+    let head = editor.store().snapshot();
+    let text = |part: &str| String::from_utf8(head.doc().tree(part).unwrap().unwrap().write()).unwrap();
+    (text("word/footnotes.xml"), text("word/document.xml"))
+}
+
+/// docx-agent's tracked `move_note`: a reference has one note, so the reference is deleted
+/// where it was and a copy of the note, numbered next, goes after it with a new reference
+/// at the new place, both insertions; one's own inserted reference goes outright, and the
+/// old note with it.
+#[test]
+fn a_note_moved_while_tracking_deletes_the_reference_and_inserts_a_copy() {
+    let editor = editor(&fixture("generated/ids-and-markup.docx"));
+    let moved = MoveNote {
+        note: "fn:1".to_owned(),
+        to: "p:1A2B3C02@1".to_owned(),
+        policy: tracked("Writer A"),
+    };
+    let done = editor.run(&Caller::anonymous(), &moved).unwrap();
+    assert_eq!(done.out.id.as_deref(), Some("fn:2"));
+    assert_eq!(done.out.created, ["fn:2"]);
+    let (notes, body) = notes_and_body(&editor);
+    assert!(notes.contains(r#"<w:footnote w:id="1">"#), "the note stays: {notes}");
+    let copy = &notes[notes.find(r#"<w:footnote w:id="2">"#).unwrap()..];
+    assert!(copy.contains("<w:ins "), "the copy's content inserted: {copy}");
+    assert!(body.contains(r#"<w:footnoteReference w:id="2"/>"#));
+    let deleted = &body[body.find("<w:del ").unwrap()..];
+    assert!(
+        deleted.contains(r#"<w:footnoteReference w:id="1"/>"#),
+        "the old reference deleted"
+    );
+    // moved again by its own author: the inserted reference goes outright, with its note
+    let again = MoveNote {
+        note: "fn:2".to_owned(),
+        to: "p:1A2B3C02@3".to_owned(),
+        policy: tracked("Writer A"),
+    };
+    let done = editor.run(&Caller::anonymous(), &again).unwrap();
+    assert_eq!(done.out.id.as_deref(), Some("fn:3"));
+    let (notes, body) = notes_and_body(&editor);
+    assert!(!notes.contains(r#"<w:footnote w:id="2">"#), "{notes}");
+    assert!(!body.contains(r#"<w:footnoteReference w:id="2"/>"#));
+    assert!(body.contains(r#"<w:footnoteReference w:id="3"/>"#));
 }
