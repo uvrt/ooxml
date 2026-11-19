@@ -12,9 +12,9 @@ use ooxml_derive::CacheBudget;
 use ooxml_opc::Package;
 use ooxml_store::{Caller, Clock, Command, Seq, Snapshot, StoreConfig, Txn};
 use ooxml_word_edit::{
-    AddBookmark, AddHyperlink, DeleteNote, EditError, EditNote, Editor, InsertNote, InsertSectionBreak, InsertText,
-    MoveBlocks, Moving, NoteKind, RemoveBookmark, RevisionPolicy, SectionValues, SetSection, SetStoryText, SetText,
-    Tracking, WordDoc,
+    AddBookmark, AddHyperlink, Day, DeleteNote, EditError, EditNote, Editor, InsertCaption, InsertField, InsertNote,
+    InsertSectionBreak, InsertText, MoveBlocks, Moving, NoteKind, RemoveBookmark, RevisionPolicy, SectionValues,
+    SetSection, SetStoryText, SetText, Tracking, UpdateFields, WordDoc,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -84,6 +84,9 @@ enum Edit {
     Break(InsertSectionBreak),
     Story(SetStoryText),
     Move(MoveBlocks),
+    Field(InsertField<'static>),
+    Caption(InsertCaption<'static>),
+    Update(UpdateFields<'static>),
 }
 
 impl Command<WordDoc> for Edit {
@@ -104,6 +107,9 @@ impl Command<WordDoc> for Edit {
             Edit::Break(c) => c.validate(doc),
             Edit::Story(c) => c.validate(doc),
             Edit::Move(c) => c.validate(doc),
+            Edit::Field(c) => c.validate(doc),
+            Edit::Caption(c) => c.validate(doc),
+            Edit::Update(c) => c.validate(doc),
         }
     }
 
@@ -121,6 +127,9 @@ impl Command<WordDoc> for Edit {
             Edit::Break(c) => c.prepare(tx)?.changed,
             Edit::Story(c) => c.prepare(tx).map(|_| true)?,
             Edit::Move(c) => c.prepare(tx)?.changed,
+            Edit::Field(c) => c.prepare(tx)?.changed,
+            Edit::Caption(c) => c.prepare(tx)?.changed,
+            Edit::Update(c) => c.prepare(tx)?.changed,
         })
     }
 }
@@ -145,7 +154,7 @@ fn edit(rng: &mut Rng, targets: &[String], writer: u64, n: usize) -> Edit {
     let words: Vec<&str> = (0..1 + rng.below(4)).map(|_| WORDS[rng.below(WORDS.len())]).collect();
     let name = format!("W{writer}N{n}");
     let note = format!("fn:{}", 1 + rng.below(3));
-    match rng.below(14) {
+    match rng.below(17) {
         0 | 1 => Edit::Set(SetText {
             target,
             text: words.join(" "),
@@ -209,11 +218,52 @@ fn edit(rng: &mut Rng, targets: &[String], writer: u64, n: usize) -> Edit {
             text: words.join(" "),
             policy: policy(rng, writer),
         }),
+        14..=16 => field_edit(rng, target, writer, &words),
         _ => Edit::Move(MoveBlocks {
             blocks: Moving::Blocks(target),
             after: Some(other),
             before: None,
             policy: RevisionPolicy::Untracked,
+        }),
+    }
+}
+
+/// A field edit of the mix: a field or caption inserted (its result counted through the
+/// document), or every result updated.
+fn field_edit(rng: &mut Rng, target: String, writer: u64, words: &[&str]) -> Edit {
+    let today = Day {
+        year: 2026,
+        month: 11,
+        day: 17,
+    };
+    match 14 + rng.below(3) {
+        14 => Edit::Field(InsertField {
+            at: format!("{target}@{}", rng.below(2)),
+            instruction: if rng.below(2) == 0 {
+                "SEQ Figure \\* ARABIC"
+            } else {
+                "DATE"
+            }
+            .to_owned(),
+            result: None,
+            simple: rng.below(2) == 0,
+            policy: policy(rng, writer),
+            today,
+            layout: None,
+        }),
+        15 => Edit::Caption(InsertCaption {
+            anchor: target,
+            after: rng.below(2) == 0,
+            label: "Figure".to_owned(),
+            text: words.join(" "),
+            policy: policy(rng, writer),
+            today,
+            layout: None,
+        }),
+        _ => Edit::Update(UpdateFields {
+            ids: None,
+            today,
+            layout: None,
         }),
     }
 }

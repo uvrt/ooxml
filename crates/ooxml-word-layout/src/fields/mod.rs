@@ -17,12 +17,11 @@
 //!
 //! Must not: draw a field.
 
-mod format;
 mod references;
 pub mod styleref;
 pub mod update;
 
-pub use format::{argument, field_text, format_value, number_text, switches, Uncomputable};
+pub use ooxml_word_model::fieldtext::{argument, field_text, format_value, number_text, switches, Uncomputable};
 pub use references::{cross_reference_problems, cross_references, Computed};
 
 use crate::engine::DocumentLayout;

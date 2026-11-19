@@ -54,6 +54,11 @@ impl BlockIds {
         self.by_path.get(path)
     }
 
+    /// Every block's path and id, in no order.
+    pub fn iter(&self) -> impl Iterator<Item = (&Text, &Text)> + '_ {
+        self.by_path.iter()
+    }
+
     /// How many blocks it names.
     pub fn len(&self) -> usize {
         self.by_path.len()

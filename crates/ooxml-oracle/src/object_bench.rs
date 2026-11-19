@@ -49,6 +49,8 @@ fn best(bytes: &Arc<[u8]>, arguments: &Value, tracking: Option<&Tracking>) -> Re
             tracking,
             doc: "d1",
             cancel: &Never,
+            date: "2026-11-17T10:00:00Z",
+            layout: None,
         };
         let started = Instant::now();
         let reply = word_edit_table(&args, &editing).to_json();
