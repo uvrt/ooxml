@@ -27,6 +27,10 @@ pub struct VersionIds {
     /// The main part's root and its ids, where it has a tree.
     part: Option<(Arc<Element>, Arc<PartIds>)>,
     all: OnceLock<BlockIds>,
+    /// Each body child's count among the body's children of its local name (from 1), made
+    /// when a path is first asked: a path is then found in time of its depth, not of its
+    /// place in the body.
+    body_counts: OnceLock<Vec<u32>>,
 }
 
 impl VersionIds {
@@ -35,6 +39,7 @@ impl VersionIds {
         VersionIds {
             part: Some((root, ids)),
             all: OnceLock::new(),
+            body_counts: OnceLock::new(),
         }
     }
 
@@ -55,7 +60,7 @@ impl VersionIds {
             None => None,
         };
         match place {
-            Some(place) => path_at(root, &place),
+            Some(place) => path_at(root, &place, &self.body_counts),
             // A row (its id is its table's): from every block's.
             None => self.all().iter().find(|(_, i)| ***i == *id).map(|(p, _)| p.clone()),
         }
@@ -69,31 +74,65 @@ impl VersionIds {
 
 /// The body path of the element at child indexes `place` below `root` (the body's own
 /// first): each step named by its local name and counted among its siblings of that name,
-/// as [`BlockIds::of`] names it.
-fn path_at(root: &Element, place: &[u32]) -> Option<Text> {
+/// as [`BlockIds::of`] names it; the body's children counted once into `body_counts`.
+fn path_at(root: &Element, place: &[u32], body_counts: &OnceLock<Vec<u32>>) -> Option<Text> {
     let (first, rest) = place.split_first()?;
     let mut node: &Element = root.children().get(*first as usize)?.as_element()?;
     if !node.name().is(Some(W), "body") {
         return None;
     }
     let mut path = String::from("w:body");
-    for step in rest {
+    for (depth, step) in rest.iter().enumerate() {
         let at = *step as usize;
         let children = node.children();
         let child: &Element = children.get(at)?.as_element()?;
         let local = child.name().local();
-        let count = 1 + children
-            .iter()
-            .take(at)
-            .filter_map(Node::as_element)
-            .filter(|e| e.name().local() == local && !e.name().is(Some(MC), "Fallback"))
-            .count();
+        let count = if depth == 0 {
+            *body_counts.get_or_init(|| counts(node)).get(at)?
+        } else {
+            count_before(node, at, local)
+        };
         path.push_str("/w:");
         path.push_str(local);
         path.push_str(&format!("[{count}]"));
         node = child;
     }
     Some(Text::from(path.as_str()))
+}
+
+/// Whether `e` is counted among its siblings of its name (an `mc:Fallback` is not).
+fn counted(e: &Element) -> bool {
+    !e.name().is(Some(MC), "Fallback")
+}
+
+/// The count of the child at `at` of `element` among its children named `local` (from 1).
+fn count_before(element: &Element, at: usize, local: &str) -> u32 {
+    let before = element
+        .children()
+        .iter()
+        .take(at)
+        .filter_map(Node::as_element)
+        .filter(|e| e.name().local() == local && counted(e))
+        .count();
+    u32::try_from(before + 1).unwrap_or(u32::MAX)
+}
+
+/// Each child's count among `element`'s children of its local name (from 1; 0 for what is
+/// not a counted element).
+fn counts(element: &Element) -> Vec<u32> {
+    let mut seen: HashMap<&str, u32> = HashMap::new();
+    element
+        .children()
+        .iter()
+        .map(|node| match node.as_element().filter(|e| counted(e)) {
+            Some(e) => {
+                let count = seen.entry(e.name().local()).or_insert(0);
+                *count += 1;
+                *count
+            }
+            None => 0,
+        })
+        .collect()
 }
 
 /// A version's body blocks' ids by path, and their paths by id.
@@ -194,6 +233,32 @@ impl Walk<'_> {
                 self.container(child, &here);
             }
             self.place.pop();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
+    use super::*;
+
+    #[test]
+    fn a_path_found_from_its_id_is_the_path_every_block_is_named_by() {
+        let w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+        let cell = "<w:tc><w:p/><w:p/></w:tc>";
+        let body = format!(
+            "<w:p/><w:tbl><w:tr>{cell}{cell}</w:tr><w:tr>{cell}</w:tr></w:tbl><w:p/>\n<w:sdt><w:sdtContent><w:p/></w:sdtContent></w:sdt><w:p/><w:tbl><w:tr>{cell}</w:tr></w:tbl>"
+        );
+        let xml = format!(r#"<w:document xmlns:w="{w}"><w:body>{body}<w:sectPr/></w:body></w:document>"#);
+        let tree = ooxml_xml::parse(xml.as_bytes(), &ooxml_base::Limits::default().xml).unwrap();
+        let root = Arc::clone(tree.root());
+        let ids = Arc::new(PartIds::new("body", &root));
+        let version = VersionIds::new(Arc::clone(&root), ids);
+        let named: Vec<(Text, Text)> = version.all().iter().map(|(p, i)| (p.clone(), i.clone())).collect();
+        assert!(named.len() > 10, "{named:?}");
+        let fresh = VersionIds::new(root, Arc::new(PartIds::new("body", tree.root())));
+        for (path, id) in &named {
+            assert_eq!(fresh.path_of(id).as_ref(), Some(path), "{id}");
         }
     }
 }
