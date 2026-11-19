@@ -291,6 +291,8 @@ jobs:
           cargo test --locked --release -p ooxml-word-edit --test integration --no-run
           cargo test --locked --release -p ooxml-tools-word --test integration --no-run
       # Each bench once, at most 30 minutes; a failing bench is reported and the others still run.
+      # The benches of one test program run one at a time (--test-threads 1), as their separate
+      # programs did, so no timing shares the runner with another.
       - name: Benches
         env:
           DOC: ${{ runner.temp }}/long/long-61.docx
@@ -312,8 +314,8 @@ jobs:
           echo "|---|---|---:|" >> "$out/table.md"
           bench word-edits-bench target/release/word-edits-bench "$DOC" 24 5
           bench word-objects-bench target/release/word-objects-bench "$DOC"
-          bench word-edit-benches cargo test --locked --release -p ooxml-word-edit --test integration -- --ignored --nocapture object_bench:: structure_bench:: style_bench::
-          bench tools-word-benches cargo test --locked --release -p ooxml-tools-word --test integration -- --ignored --nocapture template_bench:: fields_bench::
+          bench word-edit-benches cargo test --locked --release -p ooxml-word-edit --test integration -- --ignored --nocapture --test-threads 1 object_bench:: structure_bench:: style_bench::
+          bench tools-word-benches cargo test --locked --release -p ooxml-tools-word --test integration -- --ignored --nocapture --test-threads 1 template_bench:: fields_bench::
           bench docx-agent-24-writers python python/docx-agent/tools/writers_bench.py "$DOC" 24 5 rust
           {
             echo "### bench (a shared runner: timings are noisy and not compared with a laptop's)"
