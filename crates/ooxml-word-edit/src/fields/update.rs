@@ -101,7 +101,8 @@ pub(crate) fn settle(
     layout: Option<&dyn FieldLayout>,
     today: Day,
 ) -> Result<Vec<String>> {
-    let mut previous: Option<Vec<(String, String)>> = None;
+    // A pass that changes nothing has settled: the next would lay out the same version.
+    let mut previous: Option<Vec<(String, String)>> = Some(state(sink.doc(), &*sink.docx()?));
     let mut unknown = Vec::new();
     for _ in 0..PASSES {
         unknown = pass(sink, held, layout, today)?;
