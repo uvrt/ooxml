@@ -5,7 +5,7 @@
 
 use ooxml_base::context::{FaceData, FaceRequest, Timestamp};
 use ooxml_base::{BaseError, CacheBudget, Cancel, Clock, Context, FontSource, Limits, Locale, PartStore};
-use ooxml_session::{CallContext, Caller, CancelToken, DocKind, Session, SessionConfig, SessionError};
+use ooxml_session::{CallContext, Caller, CancelToken, DocKind, Registry, Session, SessionConfig, SessionError};
 use ooxml_zip::{Method, NewEntry, Writer};
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -170,31 +170,8 @@ fn refusals_carry_their_way_out() {
     assert_eq!(missing["error"]["valid_options"], json!(["d1"]));
     let tool = call(&s, "descibe", json!({"doc": "d1"}));
     assert_eq!(tool["error"]["code"], json!("invalid_arguments"));
-    assert_eq!(
-        tool["error"]["valid_options"],
-        json!([
-            "describe",
-            "find_text",
-            "read_batch",
-            "replace_text",
-            "word_changes",
-            "word_comments",
-            "word_compare_blocks",
-            "word_design_facts",
-            "word_edit_table",
-            "word_fields",
-            "word_follow_sample",
-            "word_format",
-            "word_format_table",
-            "word_inspect",
-            "word_lists",
-            "word_read",
-            "word_set_text",
-            "word_set_tracking",
-            "word_styles",
-            "word_template"
-        ])
-    );
+    // every tool the session dispatches, as the registry names them
+    assert_eq!(tool["error"]["valid_options"], json!(Registry::standard().names()));
     let extra = call(&s, "describe", json!({"doc": "d1", "x": 1}));
     assert_eq!(extra["error"]["field"], json!("x"));
     let not_json = call(&s, "describe", Value::String("{doc".into()));

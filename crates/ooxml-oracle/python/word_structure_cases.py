@@ -23,6 +23,23 @@ from ooxml_edit.xml import serialize
 
 
 TRACKING = {"author": "Writer A", "date": "2026-11-17T10:00:00Z"}
+
+
+class ToolCases(list):
+    """Each tool's case maker (a document's cases), in definition order: a tool's maker
+    registers itself with ``@CASES``, so a new tool adds its own function and edits no
+    shared list."""
+
+    def __call__(self, make):
+        self.append(make)
+        return make
+
+    def of(self, document) -> list[dict]:
+        """Every registered tool's cases for ``document``."""
+        return [case for make in self for case in make(document)]
+
+
+CASES = ToolCases()
 _NOW = datetime.datetime(2026, 11, 17, 10, 0, 0, tzinfo=datetime.timezone.utc)
 
 
@@ -47,6 +64,7 @@ def _words(document) -> list[tuple[str, str]]:
     return out
 
 
+@CASES
 def link_cases(document) -> list[dict]:
     """``word_links``: the list; bookmarks over a paragraph, a range, text found, a table, a
     span; hyperlinks to an address and to a bookmark; a bookmark renamed and removed; a
@@ -97,6 +115,7 @@ def link_cases(document) -> list[dict]:
     return out
 
 
+@CASES
 def note_cases(document) -> list[dict]:
     """``word_notes``: the list; footnotes and endnotes inserted at positions, at a range's
     end and after text found; each note edited, deleted and moved; refusals -- untracked
@@ -123,6 +142,7 @@ def note_cases(document) -> list[dict]:
     return out + [tracked(case) for case in out if case["arguments"]["action"] != "list"]
 
 
+@CASES
 def section_cases(document) -> list[dict]:
     """``word_sections``: the list; breaks inserted after and before blocks, at the end and
     by a side written in ``after``; each break removed; page setup set; refusals --
@@ -154,6 +174,7 @@ def section_cases(document) -> list[dict]:
     return out + [tracked(case) for case in out if case["arguments"]["action"] != "list"]
 
 
+@CASES
 def story_cases(document) -> list[dict]:
     """``word_headers_footers``: headers and footers set (one line, several, first-page,
     even), removed, linked and unlinked, on every section -- untracked and tracked."""
@@ -181,6 +202,7 @@ def story_cases(document) -> list[dict]:
     return out + [tracked(case) for case in out if case["arguments"]["action"] == "set"]
 
 
+@CASES
 def move_cases(document) -> list[dict]:
     """``word_move``: blocks and spans moved after and before blocks, to the end, a
     heading's section moved after another's; no-ops and refusals -- untracked and tracked."""
@@ -208,6 +230,7 @@ def move_cases(document) -> list[dict]:
     return out + [tracked(case) for case in out]
 
 
+@CASES
 def comment_cases(document) -> list[dict]:
     """``word_comments`` edit (lane P4b, P4a's deferred): each thread's comments and their
     replies rewritten, in one line and several; a comment that does not exist."""
@@ -234,6 +257,7 @@ def fonts_of(document) -> dict:
             "substitute": substitute}
 
 
+@CASES
 def field_cases(document) -> list[dict]:
     """``word_fields`` (lane P4b2): the list; fields inserted at positions, after text found
     and beside blocks (page numbers, SEQ, REF, DATE); dates; cross-references to text and
@@ -285,8 +309,7 @@ def field_cases(document) -> list[dict]:
 
 def cases(document) -> list[dict]:
     """Every structure case for ``document``."""
-    found = link_cases(document) + note_cases(document) + section_cases(document) + story_cases(document) \
-        + move_cases(document) + comment_cases(document) + field_cases(document)
+    found = CASES.of(document)
     wanted = os.environ.get("STRUCTURE_TOOLS")       # a comma list, to run some tools only
     found = [c for c in found if not wanted or c["tool"] in wanted.split(",")]
     per_tool = int(os.environ.get("STRUCTURE_PER_TOOL") or 0)   # the first n of each tool's
