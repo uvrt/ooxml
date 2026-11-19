@@ -640,6 +640,7 @@ dependencies = [
  "ooxml-store",
  "ooxml-tools",
  "ooxml-tools-word",
+ "ooxml-word-edit",
  "ooxml-word-layout",
  "ooxml-word-pages",
  "pyo3",
