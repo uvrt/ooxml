@@ -250,7 +250,7 @@ mod tests {
 
     use crate::text::paragraph_text;
     use crate::work::Work;
-    use crate::{Editor, RevisionPolicy, SetText, Tracking, WordDoc};
+    use crate::{DeleteBlock, Editor, InsertParagraph, RevisionPolicy, SetText, Tracking, WordDoc};
     use ooxml_base::Limits;
     use ooxml_derive::CacheBudget;
     use ooxml_opc::Package;
@@ -358,6 +358,63 @@ mod tests {
                     &format!("{}: after editing {target}", file.display()),
                 );
             }
+        }
+    }
+
+    /// Versions made by inserting, deleting and rewriting paragraphs, their texts read out of
+    /// order (each from whichever version read last, newer or older), equal each paragraph's
+    /// walk: chunks are shared only where every paragraph of them is held in order.
+    #[test]
+    fn kept_texts_read_out_of_order_equal_each_paragraphs_walk() {
+        let file = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../python/docx-agent/tests/fixtures/samplelib/sample-long.docx");
+        let bytes: Arc<[u8]> = Arc::from(std::fs::read(&file).unwrap());
+        let package = Package::open(bytes, &Limits::default()).unwrap();
+        let editor = Editor::open(
+            package,
+            StoreConfig::default(),
+            Arc::new(Monotonic(Instant::now())),
+            Arc::new(Unlimited),
+        )
+        .unwrap();
+        let ids: Vec<String> = {
+            let opened = editor.store().snapshot();
+            let docx = opened.doc().docx().unwrap();
+            docx.body().unwrap().ids.paragraphs().iter().map(|p| p.id).collect()
+        };
+        assert!(ids.len() > 110, "{}", ids.len());
+        let caller = Caller::anonymous();
+        let mut versions = vec![editor.store().snapshot()];
+        for (k, n) in [3usize, 70, 100, 12].into_iter().enumerate() {
+            let target = ids[n].clone();
+            let done = match k % 3 {
+                0 => editor
+                    .run(&caller, &InsertParagraph {
+                        anchor: target,
+                        after: true,
+                        text: format!("Inserted {k}"),
+                        style: None,
+                        policy: RevisionPolicy::Untracked,
+                    })
+                    .map(|d| d.version),
+                1 => editor
+                    .run(&caller, &DeleteBlock {
+                        target,
+                        policy: RevisionPolicy::Untracked,
+                    })
+                    .map(|d| d.version),
+                _ => editor
+                    .run(&caller, &SetText {
+                        target,
+                        text: format!("Rewritten {k}"),
+                        policy: RevisionPolicy::Untracked,
+                    })
+                    .map(|d| d.version),
+            };
+            versions.push(done.unwrap());
+        }
+        for k in [4usize, 1, 3, 0, 2, 4] {
+            check(versions[k].doc(), &format!("version {k}"));
         }
     }
 }
