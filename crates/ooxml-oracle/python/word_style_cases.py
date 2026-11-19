@@ -75,9 +75,64 @@ def list_cases(document) -> list[dict]:
     return out + [tracked(case) for case in out]
 
 
+def format_cases(document) -> list[dict]:
+    """``word_format``: run and paragraph formatting on paragraphs, ranges, spans and tables;
+    clearing; styles; text found; a sample's look; keeps; refusals -- untracked and tracked."""
+    out = []
+    words = _words(document)
+    pids = [pid for pid, _ in words]
+    listed = _listed(document)
+    for k, (pid, text) in enumerate(words[:4]):
+        cut = min(len(text), 4)
+        out += [call("word_format", targets=[pid], bold=True, size=13, color="accent1" if k % 2 else "C00000"),
+                call("word_format", targets=pid, alignment="center", space_before=6, bottom=3, line_spacing=1.15,
+                     indent_left=18, indent_first=-9 if k % 2 else 12, keep_with_next=True),
+                call("word_format", targets=[f"{pid}@0:{cut}"], italic=True, underline=True, highlight="yellow",
+                     font="Arial"),
+                call("word_format", targets=[pid], clear_direct=True),
+                call("word_format", targets=[pid], clear=["bold", "indent_first", "keep_with_next", "space_after"]),
+                call("word_format", targets=[pid], paragraph_style="Heading 2"),
+                call("word_format", targets=[f"{pid}@0:{cut}"], character_style="Strong", strike=False),
+                call("word_format", targets=[pid], character_style="Emphasis", highlight="none", keep_lines=True),
+                call("word_format", targets=[pid], keep_together=True)]
+        word = text.split()[0] if text.split() else ""
+        if word:
+            out += [call("word_format", find={"text": word}, bold=True),
+                    call("word_format", find=[{"text": word, "expect": "all", "within": pid}], italic=True),
+                    call("word_format", find=[{"text": word.upper() + "x", "within": pid}], italic=True),
+                    call("word_format", find=[{"text": word, "occurrence": 2}], italic=True)]
+    if len(pids) > 2:
+        out += [call("word_format", targets=[f"{pids[0]}..{pids[2]}"], keep_together=True),
+                call("word_format", targets=[f"{pids[0]}..{pids[2]}"], keep_together=False),
+                call("word_format", targets=[f"{pids[1]}@1..{pids[2]}@2"], bold=True),
+                call("word_format", targets=[pids[1], pids[2]], like=pids[0]),
+                call("word_format", targets=[pids[1]], like=pids[0], paragraph_style="Title", keep_with_next=False),
+                call("word_format", targets=[pids[0]], like=f"{pids[0]}..{pids[2]}")]
+    for pid in listed[:3]:
+        if pids:
+            out += [call("word_format", targets=[pids[0]], like=pid),
+                    call("word_format", targets=[pid], like=pids[0])]
+    tables = [b["id"] for b in document.blocks() if b["id"] and b["id"].startswith("t:")]
+    for table in tables[:2]:
+        out += [call("word_format", targets=[table], keep_together=True),
+                call("word_format", targets=[table], keep_together=False),
+                call("word_format", targets=[table], italic=True, space_after=0)]
+    out += [call("word_format", targets=pids[:1], paragraph_style="No Such Style"),
+            call("word_format", targets=pids[:1], character_style="Heading 1"),
+            call("word_format", targets=pids[:1], color="nope"),
+            call("word_format", targets=pids[:1]),
+            call("word_format", targets=pids[:1], bold=True, clear=["bold"]),
+            call("word_format", bold=True),
+            call("word_format", targets=[], bold=True),
+            call("word_format", targets=["p:00000000"], bold=True),
+            call("word_format", targets=["s:1"], keep_together=True),
+            call("word_format", targets=["s:1"], italic=True)]
+    return out + [tracked(case) for case in out]
+
+
 def cases(document) -> list[dict]:
     """Every style case for ``document``."""
-    found = list_cases(document)
+    found = list_cases(document) + format_cases(document)
     wanted = os.environ.get("STYLE_TOOLS")       # a comma list, to run some tools only
     found = [c for c in found if not wanted or c["tool"] in wanted.split(",")]
     per_tool = int(os.environ.get("STYLE_PER_TOOL") or 0)   # the first n of each tool's

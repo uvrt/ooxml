@@ -11,10 +11,12 @@ use ooxml_derive::CacheBudget;
 use ooxml_opc::Package;
 use ooxml_store::{Caller, Clock, Command, Seq, Snapshot, StoreConfig, Txn};
 use ooxml_word_edit::{
-    EditError, Editor, InsertText, LevelFormat, ListAction, ListEdit, RevisionPolicy, SetText, Tracking, WordDoc,
+    EditError, Editor, FormatEdit, FormatPlan, InsertText, LevelFormat, ListAction, ListEdit, Property, RevisionPolicy,
+    SetText, Setting, Tracking, Value, WordDoc,
 };
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Barrier};
 use std::time::{Duration, Instant};
 
 struct Monotonic(Instant);
@@ -72,6 +74,7 @@ enum Edit {
     Set(SetText),
     Insert(InsertText),
     List(ListEdit),
+    Format(FormatEdit),
 }
 
 impl Command<WordDoc> for Edit {
@@ -83,6 +86,7 @@ impl Command<WordDoc> for Edit {
             Edit::Set(c) => c.validate(doc),
             Edit::Insert(c) => c.validate(doc),
             Edit::List(c) => c.validate(doc),
+            Edit::Format(c) => c.validate(doc),
         }
     }
 
@@ -91,6 +95,7 @@ impl Command<WordDoc> for Edit {
             Edit::Set(c) => c.prepare(tx)?.changed,
             Edit::Insert(c) => c.prepare(tx).map(|_| true)?,
             Edit::List(c) => !c.prepare(tx)?.steps.is_empty(),
+            Edit::Format(c) => c.prepare(tx)?.steps.iter().any(|s| s.changed),
         })
     }
 }
@@ -137,7 +142,7 @@ fn edit(rng: &mut Rng, targets: &[String], writer: u64, _n: usize) -> Edit {
     let target = targets[rng.below(targets.len())].clone();
     let other = targets[rng.below(targets.len())].clone();
     let words: Vec<&str> = (0..1 + rng.below(4)).map(|_| WORDS[rng.below(WORDS.len())]).collect();
-    match rng.below(5) {
+    match rng.below(7) {
         0 => Edit::Set(SetText {
             target,
             text: words.join(" "),
@@ -146,6 +151,16 @@ fn edit(rng: &mut Rng, targets: &[String], writer: u64, _n: usize) -> Edit {
         1 => Edit::Insert(InsertText {
             at: format!("{target}@{}", rng.below(3)),
             text: format!("{} ", words.join(" ")),
+            policy: policy(rng, writer),
+        }),
+        5 | 6 => Edit::Format(FormatEdit {
+            targets: vec![if rng.below(2) == 0 {
+                target
+            } else {
+                format!("{target}@0:2")
+            }],
+            plan: plan(rng),
+            cleared: false,
             policy: policy(rng, writer),
         }),
         _ => Edit::List(ListEdit {
@@ -160,6 +175,36 @@ fn edit(rng: &mut Rng, targets: &[String], writer: u64, _n: usize) -> Edit {
     }
 }
 
+/// What a format edit sets: direct formatting, a style, keeps.
+fn plan(rng: &mut Rng) -> FormatPlan {
+    let flag = |property, on| Setting {
+        property,
+        value: Some(Value::Flag(on)),
+    };
+    match rng.below(4) {
+        0 => FormatPlan {
+            run: vec![flag(Property::Bold, rng.below(2) == 0), flag(Property::Italic, true)],
+            ..FormatPlan::default()
+        },
+        1 => FormatPlan {
+            paragraph_style: Some("Heading 2".to_owned()),
+            ..FormatPlan::default()
+        },
+        2 => FormatPlan {
+            paragraph: vec![flag(Property::KeepWithNext, true)],
+            run: vec![Setting {
+                property: Property::Size,
+                value: Some(Value::Number(13.0)),
+            }],
+            ..FormatPlan::default()
+        },
+        _ => FormatPlan {
+            clear_direct: true,
+            ..FormatPlan::default()
+        },
+    }
+}
+
 /// The parts a version writes, as bytes, in the archive's order.
 fn written(doc: &WordDoc) -> Vec<(String, Arc<[u8]>)> {
     doc.package()
@@ -170,6 +215,30 @@ fn written(doc: &WordDoc) -> Vec<(String, Arc<[u8]>)> {
             (name, bytes)
         })
         .collect()
+}
+
+/// Panics with the first part that differs and the text around its first difference.
+fn same(serial: &[(String, Arc<[u8]>)], concurrent: &[(String, Arc<[u8]>)], what: &str) {
+    let names = |parts: &[(String, Arc<[u8]>)]| parts.iter().map(|p| p.0.clone()).collect::<Vec<_>>();
+    assert_eq!(names(serial), names(concurrent), "{what}: the parts");
+    for ((name, left), (_, right)) in serial.iter().zip(concurrent) {
+        if left == right {
+            continue;
+        }
+        let at = left
+            .iter()
+            .zip(right.iter())
+            .position(|(a, b)| a != b)
+            .unwrap_or(left.len().min(right.len()));
+        let window = |bytes: &[u8]| {
+            String::from_utf8_lossy(&bytes[at.saturating_sub(300)..(at + 300).min(bytes.len())]).into_owned()
+        };
+        panic!(
+            "{what}: {name} differs at byte {at}\nserial:     {}\nconcurrent: {}",
+            window(left),
+            window(right)
+        );
+    }
 }
 
 fn run(seed: u64, writers: u64, per_writer: usize) -> (u64, u64, usize) {
@@ -213,17 +282,116 @@ fn run(seed: u64, writers: u64, per_writer: usize) -> (u64, u64, usize) {
     let serial = editor(&bytes);
     for (at, command, version) in &records {
         let done = serial.run(&Caller::anonymous(), command).unwrap();
-        assert!(done.changed, "seed {seed}: {command:?} changed nothing serially");
+        // a format edit says it formatted its targets whether or not they changed (docx-agent)
+        assert!(
+            done.changed || matches!(command, Edit::Format(_)),
+            "seed {seed}: {command:?} changed nothing serially"
+        );
         assert_eq!(done.version.seq(), *at, "seed {seed}: commit order");
-        assert_eq!(
-            written(done.version.doc()),
-            written(version.doc()),
-            "seed {seed}: the document at version {at} after {command:?}"
+        same(
+            &written(done.version.doc()),
+            &written(version.doc()),
+            &format!("seed {seed}: the document at version {at} after {command:?}"),
         );
     }
     let stats = shared.store().stats();
-    let lists = records.iter().filter(|r| matches!(r.1, Edit::List(_))).count();
+    let lists = records
+        .iter()
+        .filter(|r| matches!(r.1, Edit::List(_) | Edit::Format(_)))
+        .count();
     (stats.conflicts, stats.exclusive, lists)
+}
+
+/// An edit that, the first time it is prepared, waits after preparing for another writer
+/// to commit (`prepared`, then `committed`): it commits on a base older than the head.
+struct Overtaken<'a> {
+    edit: Edit,
+    first: AtomicBool,
+    prepared: &'a Barrier,
+    committed: &'a Barrier,
+}
+
+impl Command<WordDoc> for Overtaken<'_> {
+    type Out = bool;
+    type Error = EditError;
+
+    fn validate(&self, doc: &WordDoc) -> Result<(), EditError> {
+        self.edit.validate(doc)
+    }
+
+    fn prepare(&self, tx: &mut Txn<'_, WordDoc>) -> Result<bool, EditError> {
+        let out = self.edit.prepare(tx);
+        if self.first.swap(false, Ordering::SeqCst) {
+            self.prepared.wait();
+            self.committed.wait();
+        }
+        out
+    }
+}
+
+/// Seed 403's shape: a tracked `set_text` on a paragraph a tracked format edit gave a
+/// formatting change copies that change's id and numbers the copy above the ids in use,
+/// while a tracked insertion elsewhere commits first and draws the next id. The insertion
+/// declares the annotation ids it writes, so the `set_text` is prepared again and both
+/// orders give the serial document (the insertion once wrote its block's key alone: two
+/// revision records with one id).
+#[test]
+fn a_renumbered_copy_and_a_concurrent_tracked_insertion() {
+    let bytes = fixture("generated/lists-and-styles.docx");
+    let tracked = |writer: u64| {
+        RevisionPolicy::Tracked(Tracking {
+            author: format!("Writer {writer}"),
+            date: "2026-11-17T10:00:00Z".to_owned(),
+        })
+    };
+    let format = Edit::Format(FormatEdit {
+        targets: vec!["p:5A000002".to_owned()],
+        plan: FormatPlan {
+            run: vec![Setting {
+                property: Property::Italic,
+                value: Some(Value::Flag(true)),
+            }],
+            ..FormatPlan::default()
+        },
+        cleared: false,
+        policy: tracked(7),
+    });
+    let set = Edit::Set(SetText {
+        target: "p:5A000002".to_owned(),
+        text: "Quarter".to_owned(),
+        policy: tracked(7),
+    });
+    let insert = Edit::Insert(InsertText {
+        at: "p:5A00000E@1".to_owned(),
+        text: "and gamma ".to_owned(),
+        policy: tracked(1),
+    });
+    let shared = editor(&bytes);
+    assert!(shared.run(&Caller::anonymous(), &format).unwrap().changed);
+    let (prepared, committed) = (Barrier::new(2), Barrier::new(2));
+    let overtaken = Overtaken {
+        edit: set.clone(),
+        first: AtomicBool::new(true),
+        prepared: &prepared,
+        committed: &committed,
+    };
+    let (set_version, insert_version) = std::thread::scope(|scope| {
+        let setter = scope.spawn(|| shared.run(&Caller::named("writer 7"), &overtaken).unwrap().version);
+        prepared.wait();
+        let inserted = shared.run(&Caller::named("writer 1"), &insert).unwrap().version;
+        committed.wait();
+        (setter.join().unwrap(), inserted)
+    });
+    assert!(insert_version.seq() < set_version.seq(), "the insertion commits first");
+    let serial = editor(&bytes);
+    for command in [&format, &insert, &set] {
+        serial.run(&Caller::anonymous(), command).unwrap();
+    }
+    same(
+        &written(serial.store().snapshot().doc()),
+        &written(set_version.doc()),
+        "the set_text committed after the insertion",
+    );
 }
 
 #[test]
@@ -247,7 +415,7 @@ fn sixty_seeds_of_eight_writers_styling() {
         lists += s;
     }
     println!(
-        "60 seeds, 8 writers x 6 edits: {lists} list edits committed; {conflicts} conflicts, \
+        "60 seeds, 8 writers x 6 edits: {lists} list and format edits committed; {conflicts} conflicts, \
          {exclusive} exclusive runs"
     );
 }

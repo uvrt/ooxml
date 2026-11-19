@@ -15,8 +15,8 @@ use ooxml_store::{Caller, Clock, Seq, Snapshot, StoreConfig};
 use ooxml_store::{Command, Txn};
 use ooxml_word_edit::find::Literal;
 use ooxml_word_edit::{
-    DeleteBlock, DeleteText, EditError, Editor, InsertParagraph, InsertText, Keep, ReplaceText, RevisionPolicy,
-    SetCells, SetParagraphStyle, SetStyledText, SetText, Tracking, WordDoc,
+    DeleteBlock, DeleteText, EditError, Editor, InsertMarkdown, InsertParagraph, InsertText, Keep, MarkdownOptions,
+    ReplaceText, RevisionPolicy, SetCells, SetParagraphStyle, SetStyledText, SetText, Tracking, WordDoc, WriteMap,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -90,6 +90,7 @@ enum Edit {
     Block(DeleteBlock),
     Cells(SetCells),
     Styled(SetStyledText),
+    Markdown(InsertMarkdown),
 }
 
 impl Command<WordDoc> for Edit {
@@ -107,6 +108,7 @@ impl Command<WordDoc> for Edit {
             Edit::Block(c) => c.validate(doc),
             Edit::Cells(c) => c.validate(doc),
             Edit::Styled(c) => c.validate(doc),
+            Edit::Markdown(c) => c.validate(doc),
         }
     }
 
@@ -121,6 +123,7 @@ impl Command<WordDoc> for Edit {
             Edit::Block(c) => c.prepare(tx).map(|_| true)?,
             Edit::Cells(c) => c.prepare(tx).map(|_| true)?,
             Edit::Styled(c) => c.prepare(tx).map(|_| true)?,
+            Edit::Markdown(c) => c.prepare(tx)?.changed,
         })
     }
 }
@@ -149,7 +152,7 @@ fn policy(rng: &mut Rng, writer: u64) -> RevisionPolicy {
 /// A random common edit (positions within the first characters, so they stay in range).
 fn edit(rng: &mut Rng, targets: &[String], writer: u64) -> Edit {
     let target = targets[rng.below(targets.len())].clone();
-    match rng.below(14) {
+    match rng.below(15) {
         0..=3 => Edit::Set(command(rng, targets, writer)),
         13 => Edit::Styled(SetStyledText {
             target,
@@ -160,6 +163,21 @@ fn edit(rng: &mut Rng, targets: &[String], writer: u64) -> Edit {
                 WORDS[rng.below(4)]
             ),
             paragraph_style: None,
+            policy: policy(rng, writer),
+        }),
+        14 => Edit::Markdown(InsertMarkdown {
+            markdown: format!(
+                "## {}\n\n- {} *{}*\n- {}\n\n| {} |\n|---|\n| {} |\n",
+                WORDS[rng.below(WORDS.len())],
+                WORDS[rng.below(WORDS.len())],
+                WORDS[rng.below(4)],
+                WORDS[rng.below(WORDS.len())],
+                WORDS[rng.below(4)],
+                WORDS[rng.below(WORDS.len())]
+            ),
+            at: [format!("after:{target}"), format!("before:{target}"), "end".to_owned()][rng.below(3)].clone(),
+            style_map: WriteMap::default(),
+            options: MarkdownOptions::default(),
             policy: policy(rng, writer),
         }),
         8 => Edit::Paragraph(InsertParagraph {

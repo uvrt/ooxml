@@ -165,6 +165,9 @@ def _run(document, case: dict):
         return document.set_paragraph_style(case["target"], case.get("style"))
     if op == "set_text_styled":
         return _styled(document, case)
+    if op == "insert_markdown":
+        return document.insert_markdown(case["markdown"], at=case["target"], html=case.get("html", "refuse"),
+                                        emphasis=case.get("emphasis", "styles"), style_map=case.get("style_map"))
     if op == "delete":
         return document.delete_block(case["target"])
     if op == "set_cells":
@@ -209,6 +212,10 @@ def _result(case: dict, result) -> dict:
         edits, ids = result
         return {"ids": ids, "edits": [{"id": e.id, "renamed": dict(e.renamed), "created": list(e.created),
                                        "removed": list(e.removed)} for e in edits]}
+    if op == "insert_markdown":
+        return {"id": result.id, "changed": result.changed, "created": list(result.created),
+                "renamed": dict(result.renamed), "removed": list(result.removed),
+                "warnings": list(result.warnings), "blocks": list(result.blocks)}
     if op in ("set_text_paragraphs", "insert_paragraph"):
         return {"id": result.id, "changed": result.changed, "renamed": dict(result.renamed),
                 "created": list(result.created)}
@@ -447,6 +454,38 @@ def _styled_cases(document, targets: list[str]) -> list[dict]:
     return cases
 
 
+#: insert_markdown's cases (``--markdown``): (Markdown, where, options); ``{t}`` is a
+#: paragraph's id. Pictures and footnotes are not ported (the host writes them).
+_MARKDOWN = [
+    ("# Title\n\nSome *em*, **strong**, `code`, [a link](https://example.com/a) and [an anchor](#top%20x).\n\n"
+     "- one\n- two\n  - nested\n\n1. first\n2. second\n", "end", {}),
+    ("> quoted\n>\n> - in a quote\n\n```\ncode line\n\nmore\n```\n\n---\n\n: A caption\n", "after:{t}", {}),
+    ("| A | B |\n|:-:|--:|\n| 1 | 2 |\n| x |\n\nTable: numbers\n", "before:{t}", {}),
+    ("| a |\n|---|\n| 1 |\n\n| b |\n|---|\n| 2 |\n", "end", {}),
+    ("| | |\n|-|-|\n| no | header |\n", "{t}", {}),
+    ("<div>x</div>\n\ntext <span>y</span>\n", "end", {}),
+    ("<div>x</div>\n\ntext <span>y</span> <!-- c -->\n", "after:{t}", {"html": "text"}),
+    ("3. three\n4. four\n\n- b\n\n1. again\n", "after:{t}", {}),
+    ("# Head\n\nbody\n\n## Sub\n", "end", {"style_map": {"h1": "Title", "paragraph": "Body Text"}}),
+    ("***both*** ~~strike~~ line<br>break\nsoft\n", "after:{t}", {"emphasis": "direct"}),
+    ("<!-- only a comment -->\n", "end", {}),
+    ("Plain line\n", "end:nowhere", {}),
+]
+
+
+def _markdown_cases(document, targets: list[str]) -> list[dict]:
+    """``insert_markdown`` (``--markdown``): headings, emphasis, links, lists, quotes, code,
+    rules, captions, tables, raw HTML refused or kept, a style map, direct emphasis."""
+    target = targets[min(1, len(targets) - 1)] if targets else None
+    cases = []
+    for markdown, at, options in _MARKDOWN:
+        if "{t}" in at and target is None:
+            continue
+        cases.append({"op": "insert_markdown", "markdown": markdown, "target": at.replace("{t}", target or ""),
+                      **options})
+    return cases
+
+
 def _delete_cases(document, targets: list[str]) -> list[dict]:
     """Block deletions (``--delete``): each target paragraph, the paragraph before the last
     in the body, the first and last table, and a paragraph holding a bookmark or comment."""
@@ -556,6 +595,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--style", action="store_true", help="the style tools called as tools only")
     parser.add_argument("--cells", action="store_true", help="set_cells only")
     parser.add_argument("--styled", action="store_true", help="word_set_text's styled text only")
+    parser.add_argument("--markdown", action="store_true", help="insert_markdown only")
     parser.add_argument("--paragraphs", action="store_true",
                         help="set_text in lines and insert_paragraph (only these, with --only-ops none)")
     parser.add_argument("files", nargs="*")
@@ -583,13 +623,17 @@ def main(argv: list[str] | None = None) -> int:
                 cases = [{**case, "tracked": None} for case in found]
                 targets = []
             if not args.only_ops and not args.paragraphs and not args.delete and not args.cells and not args.styled \
+                    and not args.markdown \
                     and not (args.review or args.tools or args.structure or args.objects or args.style):
                 for target in targets:
                     text = document.paragraph(target).text
                     for new in _texts(text):
                         for tracked in (None, TRACKING):
                             cases.append({"target": target, "text": new, "tracked": tracked})
-            if args.styled:
+            if args.markdown:
+                cases = [{**case, "tracked": tracked} for case in _markdown_cases(document, targets)
+                         for tracked in (None, TRACKING)]
+            elif args.styled:
                 cases = [{**case, "tracked": tracked} for case in _styled_cases(document, targets)
                          for tracked in (None, TRACKING)]
             elif args.cells:
@@ -603,7 +647,7 @@ def main(argv: list[str] | None = None) -> int:
                     for tracked in (None, TRACKING):
                         cases.append({**case, "tracked": tracked})
             if (args.ops or args.only_ops) and not args.paragraphs and not args.delete and not args.cells \
-                    and not args.styled and not (args.review or args.tools):
+                    and not args.styled and not args.markdown and not (args.review or args.tools):
                 for case in _range_cases(document, targets):
                     for tracked in (None, TRACKING):
                         cases.append({**case, "tracked": tracked})

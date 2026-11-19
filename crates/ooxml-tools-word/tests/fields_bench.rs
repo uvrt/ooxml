@@ -75,7 +75,10 @@ impl FieldLayout for Timed {
     fn lay_out(&self, package: &Package) -> Result<Box<dyn LaidFields + '_>, String> {
         let started = Instant::now();
         let laid = self.inner.lay_out(package);
-        self.spent.lock().unwrap_or_else(PoisonError::into_inner).push(started.elapsed());
+        self.spent
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(started.elapsed());
         laid
     }
 }
@@ -84,7 +87,10 @@ impl Timed {
     /// The layouts since the last call, as "n layouts, x ms".
     fn take(&self) -> String {
         let spent = std::mem::take(&mut *self.spent.lock().unwrap_or_else(PoisonError::into_inner));
-        let each: Vec<String> = spent.iter().map(|d| format!("{:.0}", d.as_secs_f64() * 1000.0)).collect();
+        let each: Vec<String> = spent
+            .iter()
+            .map(|d| format!("{:.0}", d.as_secs_f64() * 1000.0))
+            .collect();
         format!("{} layouts [{}] ms", spent.len(), each.join(", "))
     }
 }

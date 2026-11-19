@@ -655,10 +655,18 @@ impl<'t, 's> EditSink<'t, 's> {
     /// # Errors
     /// When the change cannot be applied.
     pub fn set_head(&mut self, part: &str, patch: HeadPatch) -> Result<()> {
+        self.set_head_keyed(part, patch, vec![Key::Part(Arc::from(part))])
+    }
+
+    /// Change one element's head in place, writing `keys`.
+    ///
+    /// # Errors
+    /// When the change cannot be applied.
+    pub(crate) fn set_head_keyed(&mut self, part: &str, patch: HeadPatch, keys: Vec<Key>) -> Result<()> {
         self.write(Change::Head {
             part: Arc::from(part),
             patch,
-            keys: vec![Key::Part(Arc::from(part))].into(),
+            keys: keys.into(),
         })
     }
 

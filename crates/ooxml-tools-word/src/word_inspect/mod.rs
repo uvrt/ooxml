@@ -154,11 +154,11 @@ fn placer_of<'v>(args: &WordInspect, version: &Version<'v>) -> Result<Option<&'v
 fn unported(docx: &ooxml_word_model::docx::Docx, data: &Value) -> Vec<String> {
     let shared = ooxml_word_model::markdown::read::Shared::of(docx);
     let mut out = Vec::new();
-    let graphics = shared.graphics();
+    let graphics = shared.graphics(docx);
     if !graphics.is_empty() && holds_drawing(data, graphics) {
         out.push(crate::GRAPHICS.to_owned());
     }
-    if shared.cell_ends() {
+    if shared.cell_ends(docx) {
         out.push(crate::CELL_ENDS.to_owned());
     }
     out

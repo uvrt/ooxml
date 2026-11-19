@@ -75,6 +75,18 @@ impl Lists {
         self.abstracts.iter().find(|(k, _)| *k == id).map(|(_, e)| e)
     }
 
+    /// The abstract definition `id` (the last of that id in the part).
+    #[must_use]
+    pub fn abstract_element(&self, id: i64) -> Option<&Arc<Element>> {
+        self.abstract_node(Some(id))
+    }
+
+    /// The abstract definitions' ids, in the part's order.
+    #[must_use]
+    pub fn abstract_ids(&self) -> Vec<i64> {
+        self.abstracts.iter().map(|(k, _)| *k).collect()
+    }
+
     /// An instance's definition.
     #[must_use]
     pub fn abstract_of(&self, num_id: i64) -> Option<i64> {

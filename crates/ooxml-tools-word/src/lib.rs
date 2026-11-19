@@ -14,6 +14,7 @@
 mod describe;
 mod find_text;
 mod objects;
+mod originals;
 mod pages;
 mod paging;
 mod placements;
@@ -45,6 +46,7 @@ pub use structure::{
     SectionStart, StoryType, StyleMapping, Unmapped, Which, WordCopyFrom, WordFields, WordHeadersFooters, WordLinks,
     WordMove, WordNotes, WordSections,
 };
+pub use style::{word_format, Alignment, Cleared, FindExpect, FindItem, WordFormat};
 pub use style::{word_lists, Follow, ListKind, ListsAction, WordLists};
 pub use text::{replace_text, word_set_text, Expect, ReplaceStories, ReplaceText, SetTextItem, Unported, WordSetText};
 pub use version::Version;

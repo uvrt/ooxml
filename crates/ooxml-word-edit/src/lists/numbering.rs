@@ -209,19 +209,33 @@ fn add_abstract(sink: &mut EditSink<'_, '_>, main: &str, node: Arc<Element>) -> 
 /// # Errors
 /// When the numbering part is not XML.
 pub(crate) fn new_list(sink: &mut EditSink<'_, '_>, main: &str, kind: &str) -> Result<i64> {
+    let nums = match part_of(sink, main)? {
+        Some(part) => listed(root(sink, &part)?.as_ref(), "num", "numId").len(),
+        None => 0,
+    };
+    let abstract_id = add_builtin(sink, main, kind, |id| format!("{kind}\0{id}\0{nums}"))?;
+    add_num(sink, main, abstract_id, &[])
+}
+
+/// Word's own `bullet` or `number` definition added after the last one, numbered past
+/// them, its `w:nsid` and `w:tmpl` drawn from `seed` of its number (docx-agent's
+/// `builtin_abstract` and `add_abstract`); its number.
+///
+/// # Errors
+/// When the numbering part is not XML.
+pub(crate) fn add_builtin(
+    sink: &mut EditSink<'_, '_>,
+    main: &str,
+    kind: &str,
+    seed: impl FnOnce(i64) -> String,
+) -> Result<i64> {
     let part = part_of(sink, main)?;
-    let (abstracts, nums) = match &part {
-        Some(part) => {
-            let root = root(sink, part)?;
-            (
-                listed(&root, "abstractNum", "abstractNumId"),
-                listed(&root, "num", "numId"),
-            )
-        }
-        None => (Vec::new(), Vec::new()),
+    let abstracts = match &part {
+        Some(part) => listed(root(sink, part)?.as_ref(), "abstractNum", "abstractNumId"),
+        None => Vec::new(),
     };
     let abstract_id = abstracts.iter().map(|(n, _)| *n).max().unwrap_or(-1) + 1;
-    let seed = format!("{kind}\0{abstract_id}\0{}", nums.len());
+    let seed = seed(abstract_id);
     let used = used_nsids(sink, part.as_deref())?;
     let xml = builtin_abstract(
         kind,
@@ -230,7 +244,7 @@ pub(crate) fn new_list(sink: &mut EditSink<'_, '_>, main: &str, kind: &str) -> R
         &nsid(&format!("{seed}tmpl"), &used),
     );
     add_abstract(sink, main, parsed(&xml)?)?;
-    add_num(sink, main, abstract_id, &[])
+    Ok(abstract_id)
 }
 
 /// A new instance over `abstract_id` after the last one, `overrides` as `(level, start)`

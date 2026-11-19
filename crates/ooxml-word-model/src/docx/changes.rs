@@ -27,6 +27,14 @@ struct Arena {
 
 impl Arena {
     fn new(root: &Arc<Element>) -> Arena {
+        let mut arena = Arena::empty(root);
+        let mut path = Vec::new();
+        arena.walk(root, 0, &mut path);
+        arena
+    }
+
+    /// The root alone.
+    fn empty(root: &Arc<Element>) -> Arena {
         let mut arena = Arena {
             root: Arc::clone(root),
             nodes: vec![Arc::clone(root)],
@@ -35,22 +43,31 @@ impl Arena {
             paths: vec![Box::default()],
         };
         arena.by_path.insert(Box::default(), 0);
-        let mut path = Vec::new();
-        arena.walk(root, 0, &mut path);
         arena
+    }
+
+    /// `element` (a child of node `at`, at `path`) and everything below it.
+    fn add(&mut self, element: &Arc<Element>, at: usize, path: &mut Vec<u32>) {
+        let index = self.push(element, at, path);
+        self.walk(element, index, path);
+    }
+
+    /// `element` alone (a child of node `at`, at `path`): its index.
+    fn push(&mut self, element: &Arc<Element>, at: usize, path: &[u32]) -> usize {
+        let index = self.nodes.len();
+        self.nodes.push(Arc::clone(element));
+        self.parents.push(Some(at));
+        let boxed: Box<[u32]> = path.into();
+        self.paths.push(boxed.clone());
+        self.by_path.insert(boxed, index);
+        index
     }
 
     fn walk(&mut self, element: &Arc<Element>, at: usize, path: &mut Vec<u32>) {
         for (k, node) in element.children().iter().enumerate() {
             let Node::Element(child) = node else { continue };
             path.push(u32::try_from(k).unwrap_or(u32::MAX));
-            let index = self.nodes.len();
-            self.nodes.push(Arc::clone(child));
-            self.parents.push(Some(at));
-            let boxed: Box<[u32]> = path.clone().into_boxed_slice();
-            self.paths.push(boxed.clone());
-            self.by_path.insert(boxed, index);
-            self.walk(child, index, path);
+            self.add(child, at, path);
             path.pop();
         }
     }
@@ -231,7 +248,11 @@ struct Grouping<'r> {
 
 impl<'r> Grouping<'r> {
     fn new(root: &Arc<Element>, held: &'r [Record]) -> Grouping<'r> {
-        let arena = Arena::new(root);
+        Grouping::over(Arena::new(root), held)
+    }
+
+    /// The grouping of `held`, the records `arena` holds.
+    fn over(arena: Arena, held: &'r [Record]) -> Grouping<'r> {
         let at: Vec<usize> = held
             .iter()
             .map(|r| arena.by_path.get(&r.path).copied().unwrap_or(usize::MAX))
@@ -413,5 +434,7 @@ fn is_mark(arena: &Arena, k: usize) -> bool {
 
 mod describe;
 mod joins;
+mod window;
 
 pub use describe::{changes, LogicalChange, CHANGE_KINDS};
+pub use window::changes_holding;

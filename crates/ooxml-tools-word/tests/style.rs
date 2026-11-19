@@ -9,7 +9,7 @@ use ooxml_derive::CacheBudget;
 use ooxml_opc::Package;
 use ooxml_store::{Caller, Clock, StoreConfig};
 use ooxml_tools::{ToolArgs, ToolResult};
-use ooxml_tools_word::{word_lists, Editing, WordLists, KIND};
+use ooxml_tools_word::{word_format, word_lists, Editing, WordFormat, WordLists, KIND};
 use ooxml_word_edit::Editor;
 use ooxml_zip::{Method, NewEntry, Writer};
 use serde_json::{json, Value};
@@ -103,6 +103,10 @@ fn the_definitions_are_the_golden_exports() {
         format!("{}\n", spec.export(Some(&[KIND]))),
         include_str!("golden/word_lists.json")
     );
+    assert_eq!(
+        format!("{}\n", WordFormat::spec().export(Some(&[KIND]))),
+        include_str!("golden/word_format.json")
+    );
 }
 
 #[test]
@@ -146,4 +150,78 @@ fn a_style_numbered_paragraph_is_refused_with_the_styles_and_force() {
         word_lists,
     );
     assert_eq!(forced["data"][0]["list"], Value::Null);
+}
+
+/// The main part's XML after `editor`'s last edit.
+fn body(editor: &Editor) -> String {
+    let head = editor.store().snapshot();
+    let tree = head.doc().tree("word/document.xml").unwrap().unwrap();
+    String::from_utf8(tree.write()).unwrap()
+}
+
+#[test]
+fn a_paragraph_is_formatted_with_its_runs_and_mark() {
+    let (reply, editor) = call(
+        json!({"doc": "d1", "targets": "p:10000001", "bold": true, "size": 13, "space_before": 6}),
+        word_format,
+    );
+    assert_eq!(reply["summary"], json!("Formatted 1 target(s)"), "{reply}");
+    assert_eq!(reply["changed"], json!(["p:10000001"]));
+    let xml = body(&editor);
+    assert!(xml.contains(r#"<w:pPr><w:spacing w:before="120"/><w:rPr><w:b/><w:bCs/><w:sz w:val="26"/><w:szCs w:val="26"/></w:rPr></w:pPr><w:r><w:rPr><w:b/><w:bCs/><w:sz w:val="26"/><w:szCs w:val="26"/></w:rPr><w:t>Alpha</w:t>"#), "{xml}");
+}
+
+#[test]
+fn nothing_to_set_is_refused_with_what_can_be_set() {
+    let (reply, _) = call(json!({"doc": "d1", "targets": ["p:10000001"]}), word_format);
+    assert_eq!(reply["error"]["code"], json!("invalid_arguments"));
+    let options = reply["error"]["valid_options"].as_array().unwrap();
+    assert_eq!(options.first(), Some(&json!("like")));
+    assert_eq!(options.len(), 24);
+    let (reply, _) = call(
+        json!({"doc": "d1", "targets": ["p:10000001"], "bold": true, "clear": ["bold"]}),
+        word_format,
+    );
+    assert_eq!(reply["error"]["field"], json!("clear"));
+    assert!(reply["error"]["try_call"].is_object(), "{reply}");
+}
+
+#[test]
+fn a_paragraph_already_like_the_sample_is_said_not_changed() {
+    let (reply, _) = call(
+        json!({"doc": "d1", "targets": ["p:10000002"], "like": "p:10000001"}),
+        word_format,
+    );
+    assert_eq!(reply["changed"], json!([]), "{reply}");
+    assert_eq!(reply["data"]["like"]["alike"], json!(["p:10000002"]));
+    assert_eq!(
+        reply["warnings"],
+        json!(["every target already looks like p:10000001: nothing changed"])
+    );
+    let (reply, editor) = call(
+        json!({"doc": "d1", "targets": ["p:10000001"], "like": "p:10000003"}),
+        word_format,
+    );
+    assert_eq!(
+        reply["data"]["like"]["set"],
+        json!({"p:10000001": ["style"]}),
+        "{reply}"
+    );
+    assert!(body(&editor)
+        .contains(r#"<w:p w14:paraId="10000001" w14:textId="20000001"><w:pPr><w:pStyle w:val="Numbered"/></w:pPr>"#));
+}
+
+#[test]
+fn text_found_more_than_once_is_refused_with_each_place() {
+    let (reply, _) = call(json!({"doc": "d1", "find": {"text": "a"}, "italic": true}), word_format);
+    assert_eq!(reply["error"]["code"], json!("ambiguous"), "{reply}");
+    assert_eq!(
+        reply["error"]["valid_options"][0],
+        json!("occurrence 1: p:10000001@4:5 'Alph[a]'")
+    );
+    let (reply, _) = call(
+        json!({"doc": "d1", "find": {"text": "a", "expect": "all"}, "italic": true}),
+        word_format,
+    );
+    assert_eq!(reply["data"]["ranges"].as_array().map(Vec::len), Some(4), "{reply}");
 }

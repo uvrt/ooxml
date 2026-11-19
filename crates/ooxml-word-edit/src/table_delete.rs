@@ -140,7 +140,7 @@ fn delete_cell_mark(work: &mut Work, paragraph: Id, own: bool, stamp: &mut Stamp
 }
 
 /// Track the deletion of a paragraph's whole content; the relationship ids released.
-fn delete_content(work: &mut Work, paragraph: Id, stamp: &mut Stamp) -> Vec<String> {
+pub(crate) fn delete_content(work: &mut Work, paragraph: Id, stamp: &mut Stamp) -> Vec<String> {
     let runs = crate::text::runs(work, paragraph);
     crate::track::delete_runs(work, &runs, stamp)
 }
