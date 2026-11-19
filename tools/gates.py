@@ -112,8 +112,8 @@ def run_diff(args) -> int:
         command = [sys.executable, str(HARNESS / "word_edits_diff.py"), *EDIT_MODES[args.mode],
                    "--rust", str(Path(args.bin) / "word-edits")]
         if args.mode == "spacing":
-            command.append(str(out / "french"))      # --spacing's folder for the French copies
-            (out / "french").mkdir(exist_ok=True)
+            (out / "french").mkdir(exist_ok=True)    # --spacing's folder for the French copies
+            command.insert(command.index("--spacing") + 1, str(out / "french"))
         if args.per_tool and args.mode in PER_TOOL:
             env[PER_TOOL[args.mode]] = str(args.per_tool)
         elif args.per_tool:
