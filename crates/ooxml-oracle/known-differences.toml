@@ -17,22 +17,44 @@ cause = """#89: docx-agent rolls the tree back, but its id pool and aliases keep
 drew; the Rust core changes nothing (tool rule 3: a no-op changes nothing). A docx-agent \
 leftover, not copied."""
 
-# #84: a SEQ field inserted in the document's text box, untracked and tracked.
+# #84: a SEQ field inserted in the document's text box: case 173 untracked, 198 tracked.
 [[difference]]
 gate = "fixtures"
 mode = "structure"
 file = "generated/charts/chart-places.docx"
+case = 173
 input = { tool = "word_fields", arguments = { action = "insert_field", instruction = "SEQ Figure \\* ARABIC" } }
 cause = """#84: docx-agent's _write_result takes as the old result only runs with no w:r ancestor; \
 in a text box every run has one, so it writes the value as a new run beside the empty result run. \
 Rust writes the value into the result run, as docx-agent does everywhere outside a text box."""
 
-# #84: a fields update that changes nothing, on a template saved as .docx.
+[[difference]]
+gate = "fixtures"
+mode = "structure"
+file = "generated/charts/chart-places.docx"
+case = 198
+input = { tool = "word_fields", arguments = { action = "insert_field", instruction = "SEQ Figure \\* ARABIC" } }
+cause = """#84: docx-agent's _write_result takes as the old result only runs with no w:r ancestor; \
+in a text box every run has one, so it writes the value as a new run beside the empty result run. \
+Rust writes the value into the result run, as docx-agent does everywhere outside a text box."""
+
+# #84: a fields update that changes nothing, on a template saved as .docx: case 140 all
+# fields, 142 the footer's.
 [[difference]]
 gate = "fixtures"
 mode = "structure"
 file = "generated/trial/template-saved-as-docx.docx"
+case = 140
 input = { tool = "word_fields", arguments = { action = "update" } }
+cause = """#84: docx-agent's session adds its TemplateOpened warning (the host's, not the tool's) \
+to an update that changes nothing."""
+
+[[difference]]
+gate = "fixtures"
+mode = "structure"
+file = "generated/trial/template-saved-as-docx.docx"
+case = 142
+input = { tool = "word_fields", arguments = { action = "update", ids = ["fld:footer1/0"] } }
 cause = """#84: docx-agent's session adds its TemplateOpened warning (the host's, not the tool's) \
 to an update that changes nothing."""
 

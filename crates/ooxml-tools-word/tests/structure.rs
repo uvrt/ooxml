@@ -11,8 +11,8 @@ use ooxml_opc::Package;
 use ooxml_store::{Caller, Clock, StoreConfig};
 use ooxml_tools::{ToolArgs, ToolResult};
 use ooxml_tools_word::{
-    word_fields, word_links, word_notes, CallEditor, Editing, WordCopyFrom, WordFields, WordHeadersFooters, WordLinks,
-    WordMove, WordNotes, WordSections, KIND,
+    word_fields, word_links, word_notes, CallEditor, Editing, WordCopyFrom, WordHeadersFooters, WordLinks, WordMove,
+    WordNotes, WordSections, KIND,
 };
 use ooxml_word_edit::{Editor, FieldLayout, FieldPlace, LaidFields, PageShows, Unknown};
 use ooxml_zip::{Method, NewEntry, Writer};
@@ -147,7 +147,9 @@ fn call<A: ToolArgs>(arguments: Value, tool: impl Fn(&A, &Editing<'_>) -> ToolRe
 }
 
 #[test]
-fn the_definitions_are_the_golden_exports() {
+fn the_unregistered_definitions_are_the_golden_exports() {
+    // a tool the session registers is held to its golden export there (ooxml-session's
+    // tests/registry.rs)
     for (spec, golden) in [
         (WordMove::spec(), include_str!("golden/word_move.json")),
         (WordCopyFrom::spec(), include_str!("golden/word_copy_from.json")),
@@ -156,7 +158,6 @@ fn the_definitions_are_the_golden_exports() {
             WordHeadersFooters::spec(),
             include_str!("golden/word_headers_footers.json"),
         ),
-        (WordFields::spec(), include_str!("golden/word_fields.json")),
         (WordNotes::spec(), include_str!("golden/word_notes.json")),
         (WordLinks::spec(), include_str!("golden/word_links.json")),
     ] {

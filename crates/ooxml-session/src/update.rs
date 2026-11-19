@@ -95,9 +95,16 @@ impl Bridged for WordDoc {
             .filter(|v| !self.ids().contains(*v))
             .collect();
         values.sort_unstable();
-        (!values.is_empty()).then(|| {
+        // a drawing the parts bring raises the highest number given (never given again)
+        let highest = ooxml_word_model::ids::drawing_numbers(&roots)
+            .into_iter()
+            .max()
+            .filter(|n| *n > self.ids().highest_drawing())
+            .unwrap_or(0);
+        (!values.is_empty() || highest > 0).then(|| {
             Change::Ids(IdsChange {
                 values,
+                highest_drawing: highest,
                 ..IdsChange::default()
             })
         })

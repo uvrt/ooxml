@@ -111,9 +111,7 @@ pub(crate) fn policy(case: &Value) -> RevisionPolicy {
 fn tool_op(bytes: &Arc<[u8]>, case: &Value) -> Option<Result<Value, String>> {
     Some(match case.get("op").and_then(Value::as_str)? {
         "tool" => crate::review_tools::tool_case(bytes, case),
-        "objects" => crate::object_tools::case(bytes, case),
-        "structure" => crate::structure_tools::case(bytes, case),
-        "style" => crate::style_tools::case(bytes, case),
+        "structure" | "objects" | "style" => crate::structure_tools::case(bytes, case),
         _ => return None,
     })
 }

@@ -22,8 +22,8 @@ pub use fonts::{
 pub use origin::{Holder, Level, Origin, Origins, Trace};
 pub use run::{resolve_run, resolve_run_traced, RunInput};
 pub use table::{
-    border_twips, drawn, edge_winner, fitted_grid, resolve_table, resolve_table_traced, Edge, ResolvedCell,
-    ResolvedRow, ResolvedTable, TableOrigins, SIDES,
+    border_key, border_twips, drawn, edge_winner, fitted_grid, resolve_table, resolve_table_traced, second_wins, Edge,
+    ResolvedCell, ResolvedRow, ResolvedTable, TableOrigins, SIDES,
 };
 
 use crate::document::{Context, ResolvedParagraph};

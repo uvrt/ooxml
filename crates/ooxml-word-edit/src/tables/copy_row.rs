@@ -3,12 +3,12 @@
 //! (insertions kept, deletions and change records dropped) without its bookmarks,
 //! permission ranges and comments (they stay with the row copied), a cell merged down
 //! joining its merge where the copy lands inside it (`_join_merges`), placed beside the row,
-//! every paragraph and row id fresh; tracked, the copy one insertion (the row's, every
-//! paragraph mark's and run's).
+//! every paragraph, row and drawing id fresh, and a drawing's number and a content
+//! control's id as docx-agent's importer gives them ([`crate::imported`]); tracked, the copy
+//! one insertion (the row's, every paragraph mark's and run's).
 //!
-//! Must not: decide what a tool's arguments mean, or read past the table but for its ids.
-//! Rows holding drawings or content controls (whose ids an import gives) are not ported:
-//! they are refused as [`EditError::Unsupported`] for the host to answer its own way.
+//! Must not: decide what a tool's arguments mean, or read past the table but for its ids
+//! (and, for a row holding a content control, the ids of the document's controls).
 
 use super::new_column::stamp_new;
 use super::new_row::{merges_note, new_row_paragraph, vmerge};
@@ -17,15 +17,17 @@ use super::shape::{own_rows, row_cells};
 use super::TableChanged;
 use crate::markdown::insert_content;
 use crate::marks::{insert_in_order, mark};
-use crate::names::{W, WP};
+use crate::names::{W, WP, WP14};
 use crate::review::xml::{find_path, make};
 use crate::sink::EditSink;
+use crate::stamping::wp14_prefix;
 use crate::validate::Orders;
 use crate::work::{Id, Work};
 use crate::{EditError, Result};
+use ooxml_xml::QName;
+use std::sync::Arc;
 
-/// Why a row is not copied (`_uncopyable`), or `None`; `Unsupported` where docx-agent
-/// copies it through its importer.
+/// Why a row is not copied (`_uncopyable`).
 pub(super) fn check_copy(work: &Work, id: &str, rows: &[Id], index: usize) -> Result<()> {
     let Some(row) = rows.get(index).copied() else {
         return Err(EditError::Refused(format!(
@@ -46,12 +48,6 @@ pub(super) fn check_copy(work: &Work, id: &str, rows: &[Id], index: usize) -> Re
         return Err(EditError::Refused(format!(
             "row {index} of {id} {problem}: insert_row beside it, then set_cells the values"
         )));
-    }
-    let drawn = !work.iter(row, WP, &["inline", "anchor", "docPr"]).is_empty();
-    if drawn || !work.iter(row, W, &["sdtPr"]).is_empty() {
-        return Err(EditError::Unsupported(
-            "word_edit_table copy_row of a row holding a drawing or a content control".to_owned(),
-        ));
     }
     Ok(())
 }
@@ -176,6 +172,46 @@ fn join_merges(work: &mut Work, row: Id, after: Option<Id>, orders: &Orders) {
     }
 }
 
+/// A copied drawing's `wp14:anchorId` and `wp14:editId`, fresh (`_stamp`'s
+/// `part + "\0drawing"` sequence).
+fn stamp_drawing(sink: &mut EditSink<'_, '_>, held: &mut Held, node: Id) -> Result<()> {
+    let seed = format!("{}\0drawing", held.found.part);
+    let drawn = sink.draw(&seed, 2)?;
+    let prefix = wp14_prefix(&held.root, &held.found.path);
+    for (local, value) in ["anchorId", "editId"].into_iter().zip(&drawn) {
+        held.work
+            .set(node, Arc::new(QName::new(Some(&prefix), local, Some(WP14))), value);
+    }
+    Ok(())
+}
+
+/// The copy's ids, fresh (`_stamp`): the row's own and every nested row's under one seed,
+/// its paragraphs' under another, its drawings' anchor and edit ids under a third; the
+/// row's paraId and whether it holds a drawing.
+fn stamp_copy(sink: &mut EditSink<'_, '_>, held: &mut Held, row: Id) -> Result<(String, bool)> {
+    let mut drawn = String::new();
+    let mut drawings = false;
+    for node in held.work.descendants(row) {
+        if held.work.is_any(node, WP, &["inline", "anchor"]) {
+            stamp_drawing(sink, held, node)?;
+            drawings = true;
+            continue;
+        }
+        let seed = if held.work.is(node, W, "tr") {
+            "\0row"
+        } else if held.work.is(node, W, "p") {
+            ""
+        } else {
+            continue;
+        };
+        let raws = stamp_new(sink, held, &[node], seed)?;
+        if node == row {
+            drawn = raws.into_iter().next().unwrap_or_default();
+        }
+    }
+    Ok((drawn, drawings))
+}
+
 /// `copy_row`: a copy of row `index` with its content, below it unless `below` is false.
 pub(super) fn copy_row(
     sink: &mut EditSink<'_, '_>,
@@ -199,26 +235,14 @@ pub(super) fn copy_row(
         Some(source)
     };
     join_merges(work, row, after, orders);
+    crate::imported::renumber_drawings(sink, work, row)?;
+    crate::imported::renumber_controls(sink, work, row)?;
     if below {
         work.add_next(source, row);
     } else {
         work.add_previous(source, row);
     }
-    // the row's own ids and every nested row's under one seed, its paragraphs' under another
-    let mut drawn = String::new();
-    for node in held.work.descendants(row) {
-        let seed = if held.work.is(node, W, "tr") {
-            "\0row"
-        } else if held.work.is(node, W, "p") {
-            ""
-        } else {
-            continue;
-        };
-        let raws = stamp_new(sink, held, &[node], seed)?;
-        if node == row {
-            drawn = raws.into_iter().next().unwrap_or_default();
-        }
-    }
+    let (drawn, drawings) = stamp_copy(sink, held, row)?;
     let tracked = under_policy(sink, |stamp| {
         let Some(stamp) = stamp else { return Ok(()) };
         let work = &mut held.work;
@@ -244,7 +268,7 @@ pub(super) fn copy_row(
         .position(|r| *r == row)
         .and_then(|at| merges_note(&held.work, &own, at));
     put(sink, held, tracked)?;
-    sink.ensure_w14(&held.found.part, false, &[])?;
+    sink.ensure_w14(&held.found.part, drawings, &[])?;
     let story = if held.story == "body" {
         String::new()
     } else {

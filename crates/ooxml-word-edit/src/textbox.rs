@@ -102,9 +102,8 @@ fn span_boxes(old: &Arc<Element>, new: &Arc<Element>) -> SpanBoxes {
 
 /// After an edit: sync every text box of every story part, in the blocks the edit
 /// replaced, whose content is not the one the transaction's snapshot had -- the ids
-/// stamping gave it aside. The boxes of the stretch that changed are paired in order with
-/// the snapshot's when the edit added or removed none (an inserted paragraph shifts the
-/// blocks after it); otherwise every one not the snapshot's own is synced.
+/// stamping gave it aside (rule of #94: only a change of a box's content syncs its
+/// fallback; stamping it or moving its block does not).
 ///
 /// # Errors
 /// When a part is not XML.
@@ -121,20 +120,51 @@ pub(crate) fn sync(sink: &mut EditSink<'_, '_>) -> Result<()> {
             continue;
         }
         let (before, now) = span_boxes(old.root(), new.root());
-        let paired = before.len() == now.len();
-        for (k, (path, holder)) in now.into_iter().enumerate() {
-            let was = before.get(k).filter(|_| paired);
-            if was.is_some_and(|was| Arc::ptr_eq(was, &holder)) {
-                continue; // the same text box as before the edit
+        let kept = unchanged_boxes(&before, &now);
+        for ((path, holder), kept) in now.into_iter().zip(kept) {
+            if !kept {
+                sync_holder(sink, part, &path, &holder)?;
             }
-            let contents = was.and_then(choice_content).zip(choice_content(&holder));
-            if contents.is_some_and(|(was, now)| same_but_ids(&was, &now)) {
-                continue; // only stamped
-            }
-            sync_holder(sink, part, &path, &holder)?;
         }
     }
     Ok(())
+}
+
+/// Which of the changed stretch's boxes `now` are boxes of the snapshot's stretch `before`
+/// with their content unchanged, each snapshot box standing for one box at most. A box is
+/// its snapshot's when it is the same element (untouched, wherever its block went). When
+/// the edit added or removed no box, one only stamped is its snapshot's too: the box in its
+/// place first, else the first one not yet taken with the same content (the box of a moved
+/// block, which docx-agent knows by the element's identity). When the edit added or removed
+/// boxes, a box not the very same element counts as changed, as docx-agent's does when an
+/// edit gives a box a new element.
+fn unchanged_boxes(before: &[Arc<Element>], now: &[(Vec<u32>, Arc<Element>)]) -> Vec<bool> {
+    let mut taken = vec![false; before.len()];
+    let mut kept: Vec<bool> = now
+        .iter()
+        .map(|(_, holder)| take(&mut taken, before, 0..before.len(), |was| Arc::ptr_eq(was, holder)))
+        .collect();
+    if before.len() != now.len() {
+        return kept;
+    }
+    for (k, ((_, holder), kept)) in now.iter().zip(kept.iter_mut()).enumerate() {
+        if !*kept {
+            let order = std::iter::once(k).chain((0..before.len()).filter(move |&j| j != k));
+            *kept = take(&mut taken, before, order, |was| unchanged_box(was, holder));
+        }
+    }
+    kept
+}
+
+/// Take the first snapshot box of `order` not yet `taken` that `matches`; whether one was.
+fn take(
+    taken: &mut [bool],
+    before: &[Arc<Element>],
+    mut order: impl Iterator<Item = usize>,
+    matches: impl Fn(&Arc<Element>) -> bool,
+) -> bool {
+    let found = order.find(|&j| taken.get(j) == Some(&false) && before.get(j).is_some_and(&matches));
+    found.and_then(|j| taken.get_mut(j)).map(|t| *t = true).is_some()
 }
 
 /// Every text box of every story part whose fallback does not hold what its choice holds
@@ -237,6 +267,14 @@ fn same_but_ids(a: &Element, b: &Element) -> bool {
             (Node::Element(x), Node::Element(y)) => same_but_ids(x, y),
             _ => x.same(y),
         })
+}
+
+/// Whether the box `holder` holds what the snapshot's box `was` held, but for the ids
+/// stamping gave.
+fn unchanged_box(was: &Arc<Element>, holder: &Arc<Element>) -> bool {
+    choice_content(was)
+        .zip(choice_content(holder))
+        .is_some_and(|(was, now)| same_but_ids(&was, &now))
 }
 
 /// A text box's content as Word reads it (its choice's `w:txbxContent`).

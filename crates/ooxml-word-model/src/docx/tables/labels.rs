@@ -93,46 +93,57 @@ impl TableGrid<'_> {
     /// covers, the positions no cell covers; its cells' ids (the first 50) the options.
     #[must_use]
     pub fn no_cell(&self, table: &str, row: usize, column: usize) -> AddressError {
-        let columns = self.grid.iter().map(Vec::len).max().unwrap_or(0);
-        let mut spans: Vec<(Spot, Vec<Spot>)> = Vec::new();
-        let mut empty = Vec::new();
-        for (r, line) in self.grid.iter().enumerate() {
-            for c in 0..columns {
-                match line.get(c).copied().flatten() {
-                    None => empty.push(format!("({r}, {c})")),
-                    Some(origin) => match spans.iter_mut().find(|(o, _)| *o == origin) {
-                        Some((_, cells)) => cells.push((r, c)),
-                        None => spans.push((origin, vec![(r, c)])),
-                    },
-                }
-            }
-        }
-        let merged: Vec<String> = spans
-            .iter()
-            .filter(|(_, cells)| cells.len() > 1)
-            .filter_map(|(o, cells)| cells.last().map(|l| format!("({}, {})-({}, {})", o.0, o.1, l.0, l.1)))
-            .collect();
-        let last = |n: usize| i64::try_from(n).unwrap_or(i64::MAX) - 1;
-        let rows = self.grid.len();
-        let mut text = format!(
-            "{table} has no cell at ({row}, {column}): it has {rows} row(s) (0 to {}) and {columns} column(s) \
-             (0 to {}), counted from 0",
-            last(rows),
-            last(columns)
-        );
-        if !merged.is_empty() {
-            text.push_str("; merged: ");
-            text.push_str(&listed(&merged));
-            text.push_str(" (a merged cell's id is its first position's)");
-        }
-        if !empty.is_empty() {
-            text.push_str("; no cell at ");
-            text.push_str(&listed(&empty));
-        }
+        let text = no_cell_text(&self.grid, table, row, column);
         let mut ids = self.cell_ids(table);
         ids.truncate(50);
         AddressError::not_found(text, ids)
     }
+}
+
+/// `t:X has no cell at (1, 2)`, then what the table whose grid is `grid` (each position's
+/// cell as its first position, `None` where no cell covers it) has: its rows and columns,
+/// each merged cell with the positions it covers, the positions no cell covers
+/// (docx-agent's `no_cell_message`). The one wording of it, for the edit core's refusals
+/// too.
+#[must_use]
+pub fn no_cell_text(grid: &[Vec<Option<Spot>>], table: &str, row: usize, column: usize) -> String {
+    let columns = grid.iter().map(Vec::len).max().unwrap_or(0);
+    let mut spans: Vec<(Spot, Vec<Spot>)> = Vec::new();
+    let mut empty = Vec::new();
+    for (r, line) in grid.iter().enumerate() {
+        for c in 0..columns {
+            match line.get(c).copied().flatten() {
+                None => empty.push(format!("({r}, {c})")),
+                Some(origin) => match spans.iter_mut().find(|(o, _)| *o == origin) {
+                    Some((_, cells)) => cells.push((r, c)),
+                    None => spans.push((origin, vec![(r, c)])),
+                },
+            }
+        }
+    }
+    let merged: Vec<String> = spans
+        .iter()
+        .filter(|(_, cells)| cells.len() > 1)
+        .filter_map(|(o, cells)| cells.last().map(|l| format!("({}, {})-({}, {})", o.0, o.1, l.0, l.1)))
+        .collect();
+    let last = |n: usize| i64::try_from(n).unwrap_or(i64::MAX) - 1;
+    let rows = grid.len();
+    let mut text = format!(
+        "{table} has no cell at ({row}, {column}): it has {rows} row(s) (0 to {}) and {columns} column(s) \
+         (0 to {}), counted from 0",
+        last(rows),
+        last(columns)
+    );
+    if !merged.is_empty() {
+        text.push_str("; merged: ");
+        text.push_str(&listed(&merged));
+        text.push_str(" (a merged cell's id is its first position's)");
+    }
+    if !empty.is_empty() {
+        text.push_str("; no cell at ");
+        text.push_str(&listed(&empty));
+    }
+    text
 }
 
 /// The first ten of `items`, the rest counted.

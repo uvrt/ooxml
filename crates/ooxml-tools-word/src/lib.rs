@@ -30,32 +30,15 @@ mod word_read;
 
 pub use describe::{describe, Describe, DESCRIBED, NOT_DESCRIBED};
 pub use find_text::{find_text, FindStories, FindText};
-pub use objects::{
-    word_controls, word_edit_table, word_format_table, Across, Against, BorderStyle, CellArg, ControlAction,
-    ControlType, DrawingAction, HeightRule, KeyPair, Look, Loose, Position, Scope, Side, TableAction, Vertical,
-    WidthOf, WordControls, WordDrawings, WordEditTable, WordFormatTable, Wrap, ZOrder,
-};
 pub use pages::EnginePages;
 pub use placements::Placer;
-pub use review::{
-    word_changes, word_comments, word_set_tracking, CallEditor, ChangeAction, ChangeDetail, ChangeKind, CommentAction,
-    CommentItem, Editing, Made, Tracked, WordChanges, WordComments, WordSetTracking, COMMENT_WRITES,
-};
-pub use structure::{
-    word_fields, word_headers_footers, word_links, word_move, word_notes, word_sections, CopyStyles, FieldAction,
-    HeaderAction, LinkAction, Margins, NoteAction, NoteKind, Orientation, PageNumber, ReferenceKind, SectionAction,
-    SectionStart, StoryType, StyleMapping, Unmapped, Which, WordCopyFrom, WordFields, WordHeadersFooters, WordLinks,
-    WordMove, WordNotes, WordSections,
-};
-pub use style::{word_compare_blocks, word_follow_sample, BlockIn, FollowReport, WordCompareBlocks, WordFollowSample};
-pub use style::{word_format, Alignment, Cleared, FindExpect, FindItem, WordFormat};
-pub use style::{word_lists, Follow, ListKind, ListsAction, WordLists};
-pub use style::{
-    word_styles, RegionBorderStyle, RegionBordersArg, RegionItem, RegionName, RegionSide, StyleKind, StyleNumbering,
-    StylesAction, TabAlignment, TabItem, TabLeader, WordStyles,
-};
-pub use style::{word_template, TemplateAction, WordTemplate};
-pub use text::{replace_text, word_set_text, Expect, ReplaceStories, ReplaceText, SetTextItem, Unported, WordSetText};
+// A tool group's module exports its tools (`pub use` in its `mod.rs`); the crate exports
+// each group whole, so a new tool in a group is named only there.
+pub use objects::*;
+pub use review::*;
+pub use structure::*;
+pub use style::*;
+pub use text::*;
 pub use version::{Others, Version};
 pub use word_inspect::{word_inspect, WordInspect};
 pub use word_read::{word_read, Story, View, WordRead};

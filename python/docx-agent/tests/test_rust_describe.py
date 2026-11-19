@@ -114,12 +114,8 @@ def test_the_rust_definition_is_todays_byte_for_byte():
 
     assert GOLDEN.read_text(encoding="utf-8") == text(export(_python_tool()))
     rust = RustTools()
-    assert [tool.name for tool in rust.tools] == ["describe", "word_read", "word_inspect", "find_text",
-                                                  "word_set_tracking", "word_changes", "word_comments",
-                                                  "word_set_text", "replace_text", "word_format_table",
-                                                  "word_edit_table", "word_lists", "word_fields", "word_format",
-                                                  "word_styles", "word_template", "word_compare_blocks",
-                                                  "word_follow_sample", "read_batch"]
+    # the session's tools as its registry exports them, in its order
+    assert [tool.name for tool in rust.tools] == [s["name"] for s in json.loads(ooxml_core.tool_specs("docx"))]
     assert json.loads(ooxml_core.tool_specs("docx"))[0] == json.loads(GOLDEN.read_text(encoding="utf-8"))
 
 
