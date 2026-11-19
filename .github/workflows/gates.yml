@@ -15,6 +15,10 @@ name: Gates
 # uploaded.  Bench timings are a shared runner's: reported, never failed on.
 
 on:
+  # TEMPORARY (lane G1): registers the workflow so it can be dispatched from this branch
+  # before it is on main; with no inputs a pull request's run plans nothing.  Removed before merge.
+  pull_request:
+    paths: [.github/workflows/gates.yml]
   workflow_dispatch:
     inputs:
       ref:
