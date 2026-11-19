@@ -1,4 +1,4 @@
-//! The object tools' cases of `word-edits` (`op: "objects"`): `word_format_table` (and the
+//! The object tools' cases of `word-edits` (`op: "objects"`): `word_format_table`, `word_edit_table` (and the
 //! other object tools as they are ported) called with JSON arguments on a document as
 //! opened, reported as the structure tools' cases are, for
 //! `python/word_edits_diff.py --objects` to compare with docx-agent's toolbox.
@@ -6,7 +6,7 @@
 //! Must not: be used by any library; it is a test instrument.
 
 use crate::structure_tools::{run, tool_case};
-use ooxml_tools_word::{word_format_table, WordFormatTable};
+use ooxml_tools_word::{word_edit_table, word_format_table, WordEditTable, WordFormatTable};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -19,6 +19,7 @@ pub fn case(bytes: &Arc<[u8]>, case: &Value) -> Result<Value, String> {
         "word_format_table" => Some(run(arguments, |args: &WordFormatTable| {
             word_format_table(args, editing)
         })),
+        "word_edit_table" => Some(run(arguments, |args: &WordEditTable| word_edit_table(args, editing))),
         _ => None,
     })
 }

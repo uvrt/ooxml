@@ -26,12 +26,20 @@ fn text(text: &str) -> String {
 
 /// The table as an HTML block.
 pub fn table_html(reader: &mut Reader<'_>, table: &TableRecord) -> String {
-    let mut lines = vec![format!("<table data-id=\"{}\">", escape(&table.id))];
+    let mut lines = vec![if reader.ids {
+        format!("<table data-id=\"{}\">", escape(&table.id))
+    } else {
+        "<table>".to_owned()
+    }];
     for (k, line) in table.rows.iter().enumerate() {
         let tag = if k < table.header_rows { "th" } else { "td" };
         let mut cells = String::new();
         for cell in line {
-            let mut attributes = format!(" data-id=\"{}\"", escape(&cell.id));
+            let mut attributes = if reader.ids {
+                format!(" data-id=\"{}\"", escape(&cell.id))
+            } else {
+                String::new()
+            };
             if cell.row_span > 1 {
                 attributes.push_str(&format!(" rowspan=\"{}\"", cell.row_span));
             }
