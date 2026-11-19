@@ -32,6 +32,7 @@ use crate::{EditError, Result, WordDoc};
 use ooxml_store::{Command, Txn};
 use ooxml_word_model::docx::text::OBJECT;
 use ooxml_word_model::docx::{at_path, Docx};
+use ooxml_word_model::fieldtext::argument;
 use ooxml_xml::QName;
 use std::sync::Arc;
 
@@ -258,17 +259,70 @@ impl InsertField<'_> {
                 "a table of contents is inserted with insert_toc".to_owned(),
             ));
         }
-        if keyword == "HYPERLINK" {
-            return Err(EditError::Unsupported(
-                "a HYPERLINK field (written as a hyperlink)".to_owned(),
-            ));
+        if keyword == "HYPERLINK" && self.link_text().is_empty() {
+            return Err(EditError::Refused("a hyperlink needs text".to_owned()));
         }
         place(doc, &*doc.docx()?, &self.at, false).map(|_| ())
+    }
+
+    /// A `HYPERLINK` field's text: the result given, else its address.
+    fn link_text(&self) -> String {
+        self.result
+            .clone()
+            .filter(|r| !r.is_empty())
+            .or_else(|| argument(&self.instruction))
+            .unwrap_or_default()
+    }
+
+    /// A `HYPERLINK` field written as Word saves one (docx-agent's `insert_hyperlink`): its
+    /// text inserted at the place, then made a `w:hyperlink` to the field's address, or to
+    /// the bookmark its `\l` names. The result is the link's.
+    fn hyperlink(&self, sink: &mut EditSink<'_, '_>) -> Result<FieldEdited> {
+        let text = self.link_text();
+        let docx = sink.docx()?;
+        let here = place(sink.doc(), &docx, &self.at, false)?;
+        let inserted = crate::ranges::insert_text(&mut *sink, &format!("{}@{}", here.id, here.offset), &text)?;
+        let paragraph = inserted.id.clone().ok_or_else(|| EditError::Path(here.part.clone()))?;
+        let end = here.offset + text.chars().count();
+        let anchor = super::switches::switch(&self.instruction, 'l');
+        let link = crate::links::AddHyperlink {
+            range: format!("{paragraph}@{}:{end}", here.offset),
+            url: if anchor.is_some() {
+                None
+            } else {
+                argument(&self.instruction)
+            },
+            anchor,
+            policy: self.policy.clone(),
+        }
+        .edit(&mut *sink)?;
+        let mut renamed = inserted.renamed;
+        for (old, new) in link.renamed {
+            match renamed.iter_mut().find(|(o, _)| *o == old) {
+                Some(found) => found.1 = new,
+                None => renamed.push((old, new)),
+            }
+        }
+        Ok(FieldEdited {
+            id: link.id,
+            changed: true,
+            created: link.created,
+            renamed,
+            ..FieldEdited::default()
+        })
     }
 
     /// The edit, through `sink`.
     pub(crate) fn edit(&self, sink: &mut EditSink<'_, '_>) -> Result<FieldEdited> {
         self.check(sink.doc())?;
+        if self
+            .instruction
+            .split_whitespace()
+            .next()
+            .is_some_and(|k| k.eq_ignore_ascii_case("HYPERLINK"))
+        {
+            return self.hyperlink(sink);
+        }
         let docx = sink.docx()?;
         let here = place(sink.doc(), &docx, &self.at, false)?;
         sink.read(block_key(&here.part, &here.id));
