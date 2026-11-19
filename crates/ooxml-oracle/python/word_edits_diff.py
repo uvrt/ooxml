@@ -207,7 +207,8 @@ def _result(case: dict, result) -> dict:
     if op == "set_paragraph_style":
         return {"id": result.id, "renamed": dict(result.renamed)}
     if op == "delete":
-        return {"id": result.id, "renamed": dict(result.renamed), "removed": list(result.removed)}
+        return {"id": result.id, "renamed": dict(result.renamed), "removed": list(result.removed),
+                **({"warnings": list(result.warnings)} if result.warnings else {})}
     if op == "set_cells":
         edits, ids = result
         return {"ids": ids, "edits": [{"id": e.id, "renamed": dict(e.renamed), "created": list(e.created),
@@ -567,6 +568,12 @@ def _delete_cases(document, targets: list[str]) -> list[dict]:
                for n in entry.element.iter()):
             cases.append({"op": "delete", "target": entry.id})
             break
+    # content controls: the first three of the block level, the first of another (refused)
+    from docx_agent.edit.annotations import control_level
+
+    levels = [(i, control_level(e) == "block") for _, i, e in document._content_controls()]
+    cases += [{"op": "delete", "target": i} for i, block in levels if block][:3]
+    cases += [{"op": "delete", "target": i} for i, block in levels if not block][:1]
     return list({c["target"]: c for c in cases}.values())
 
 

@@ -207,7 +207,14 @@ impl Reader<'_> {
         for tc in &all {
             let span = usize::try_from(int_val(find_path(&tc.element, &["tcPr", "gridSpan"]), 1).max(1)).unwrap_or(1);
             if self.cell_hidden(&tc.element) {
-                gone_here.extend(column..column + span);
+                // one whose content is not deleted widens the cell before it, as Word's
+                // Accept All does (round 54, R110)
+                match line.last_mut() {
+                    Some(before) if self.view == View::Current && crate::docx::tables::content_kept(&tc.element) => {
+                        before.column_span += span;
+                    }
+                    _ => gone_here.extend(column..column + span),
+                }
             } else if let (true, Some(origin)) = (self.continues(&tc.element), grid.origins.get(&column).copied()) {
                 if let Some(cell) = grid.rows.get_mut(origin.0).and_then(|l| l.get_mut(origin.1)) {
                     cell.row_span += 1;

@@ -1,5 +1,5 @@
 //! Owns: [`DeleteBlock`], a paragraph or table deleted as docx-agent's `delete_block`
-//! deletes it. Refused before anything changes: a paragraph that ends a section, one
+//! deletes it (a block-level content control: [`crate::control_delete`]). Refused before anything changes: a paragraph that ends a section, one
 //! holding a note or comment reference (untracked, a block comment's references move on
 //! to the paragraph after it), one cutting a field, and a block whose container would be
 //! left without a paragraph to end on. Untracked -- or tracked, one's own insertion -- the
@@ -51,6 +51,9 @@ pub struct BlockDeleted {
     pub removed: Vec<String>,
     /// The block's part.
     pub part: String,
+    /// What the caller should know: a content control deleted tracked is removed
+    /// untracked (Word has no revision for a control).
+    pub warnings: Vec<String>,
 }
 
 /// The ids of the paragraphs inside a table, in document order.
@@ -176,6 +179,9 @@ impl Command<WordDoc> for DeleteBlock {
     type Error = EditError;
 
     fn validate(&self, doc: &WordDoc) -> Result<()> {
+        if crate::control_delete::is_control(&self.target) {
+            return crate::control_delete::check(doc, &self.target);
+        }
         let docx = doc.docx()?;
         let block = resolve(doc, &docx, &self.target)?;
         let tree = doc
@@ -200,11 +206,9 @@ impl Command<WordDoc> for DeleteBlock {
     }
 }
 
-/// The block `target` names: a paragraph or a table; a content control is not ported yet.
+/// The block `target` names: a paragraph or a table (a content control is
+/// [`crate::control_delete`]'s).
 fn resolve(doc: &WordDoc, docx: &Docx, target: &str) -> Result<Anchor> {
-    if target.starts_with("cc:") || target.starts_with("cc@") {
-        return Err(EditError::Unsupported(format!("deleting the content control {target}")));
-    }
     anchor(doc, docx, target)
 }
 

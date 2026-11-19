@@ -197,7 +197,10 @@ class Tool:
     group: str = CORE
     mutates: bool = False
     #: The arguments that name documents, in order; the first one present is the document
-    #: the call edits (its undo step and version).  Or a function of the arguments.
+    #: the call edits (its undo step and version).  A path into an object (``reference.doc``)
+    #: names another document only when it is given, not empty and not one named before:
+    #: such a ``doc`` defaults to the call's own (:func:`documents_named`).  Or a function of
+    #: the arguments.
     documents: Sequence[str] | Callable[[Mapping[str, Any]], list[str]] = ("doc",)
     #: Sets of optional arguments of which exactly one must be given.
     exactly_one: Sequence[Sequence[str]] = ()
@@ -485,8 +488,7 @@ class Tool:
     def doc_ids(self, arguments: Mapping[str, Any]) -> list[str]:
         if callable(self.documents):
             return list(self.documents(arguments))
-        return [arguments[name] for name in self.documents
-                if isinstance(arguments.get(name), str)]
+        return documents_named(self.documents, arguments)
 
     def handler_for(self, kind: str | None) -> Handler | None:
         return self.handlers.get(kind) or self.handlers.get(None)
@@ -669,9 +671,30 @@ def definition_problems(tool: Tool) -> list[str]:
         problems.append(f"route names {tool.route!r}, which is not a parameter")
     if not callable(tool.documents):
         for name in tool.documents:
-            if name in properties and properties[name].get("type") != "string":
+            if "." in name:
+                if not _path_exists(tool.schema, name) or "[]" in name:
+                    problems.append(f"document path {name!r} names no string in an object")
+            elif name in properties and properties[name].get("type") != "string":
                 problems.append(f"document argument {name!r} is not a string")
     return problems
+
+
+def documents_named(documents: Sequence[str], arguments: Mapping[str, Any]) -> list[str]:
+    """The documents a call's ``arguments`` name, by its tool's :attr:`Tool.documents`: an
+    argument's value when it is a string; a path's (``reference.doc``) when it is a string
+    neither empty nor named before (``""`` is a placeholder for the call's own document)."""
+    out: list[str] = []
+    for name in documents:
+        if "." not in name:
+            if isinstance(arguments.get(name), str):
+                out.append(arguments[name])
+            continue
+        value: Any = arguments
+        for part in name.split("."):
+            value = value.get(part) if isinstance(value, Mapping) else None
+        if isinstance(value, str) and value and value not in out:
+            out.append(value)
+    return out
 
 
 def _object_at(schema: Mapping[str, Any], parts: Sequence[str]) -> Mapping[str, Any] | None:

@@ -51,6 +51,8 @@ pub struct Editing<'a> {
     /// The layout of the document's versions, where the host keeps one (`word_fields`'
     /// results); `None`: a result that needs it is left to the host.
     pub layout: Option<&'a dyn FieldLayout>,
+    /// The other open documents the call names, each at the version pinned for the call.
+    pub others: crate::Others<'a>,
 }
 
 /// An edit's refusal as the tool's: an address refused with its way out, a refusal with
@@ -60,6 +62,9 @@ pub(crate) fn edit_refusal(error: EditError, field: &str, call: TryCall) -> Tool
         EditError::Address(e) => crate::refusal::address_refusal(e, field, call),
         EditError::Refused(m) | EditError::Text(m) | EditError::Span(m) => {
             ToolError::refusal(Refusal::Refused, m, WayOut::call(call)).at(field)
+        }
+        EditError::Argument { field, message } => {
+            ToolError::refusal(Refusal::InvalidArguments, message, WayOut::call(call)).at(field)
         }
         other => ToolError::internal(other.to_string(), "word:edit"),
     }

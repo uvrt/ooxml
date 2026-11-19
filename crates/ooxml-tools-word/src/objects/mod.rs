@@ -9,11 +9,13 @@
 //! Must not: hold sessions or documents by id, keep state between calls, or write the
 //! document but through a command.
 
+mod cell_fills;
 mod drawings_args;
 mod edit_table;
 mod edit_table_args;
 mod format_table;
 mod format_table_args;
+mod set_cells;
 mod table_view;
 
 pub use drawings_args::{Against, ControlAction, ControlType, DrawingAction, WordControls, WordDrawings, Wrap, ZOrder};

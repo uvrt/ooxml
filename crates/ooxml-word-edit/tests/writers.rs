@@ -15,8 +15,9 @@ use ooxml_store::{Caller, Clock, Seq, Snapshot, StoreConfig};
 use ooxml_store::{Command, Txn};
 use ooxml_word_edit::find::Literal;
 use ooxml_word_edit::{
-    DeleteBlock, DeleteText, EditError, Editor, InsertMarkdown, InsertParagraph, InsertText, Keep, MarkdownOptions,
-    ReplaceText, RevisionPolicy, SetCells, SetParagraphStyle, SetStyledText, SetText, Tracking, WordDoc, WriteMap,
+    CellWrite, DeleteBlock, DeleteText, EditError, Editor, InsertMarkdown, InsertParagraph, InsertText, Keep,
+    MarkdownOptions, ReplaceText, RevisionPolicy, SetCells, SetParagraphStyle, SetStyledText, SetText, Tracking,
+    WordDoc, WriteMap,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -149,8 +150,35 @@ fn policy(rng: &mut Rng, writer: u64) -> RevisionPolicy {
     }
 }
 
-/// A random common edit (positions within the first characters, so they stay in range).
-fn edit(rng: &mut Rng, targets: &[String], writer: u64) -> Edit {
+/// Two lines into a cell of the first table.
+fn cells(rng: &mut Rng, writer: u64) -> SetCells {
+    SetCells {
+        table: "t@body/0".to_owned(),
+        writes: vec![CellWrite::at(
+            rng.below(2),
+            rng.below(2),
+            format!("{}\n{}", WORDS[rng.below(WORDS.len())], WORDS[rng.below(4)]),
+        )],
+        stamping: false,
+        policy: policy(rng, writer),
+    }
+}
+
+/// A block deletion's target: a content control now and then (of `controls`), the first
+/// table now and then, else `target`.
+fn block_target(rng: &mut Rng, target: String, controls: &[String]) -> String {
+    if !controls.is_empty() && rng.below(3) == 0 {
+        controls[rng.below(controls.len())].clone()
+    } else if rng.below(4) == 0 {
+        "t@body/0".to_owned()
+    } else {
+        target
+    }
+}
+
+/// A random common edit (positions within the first characters, so they stay in range);
+/// a block deletion takes one of `controls` (content controls) now and then.
+fn edit(rng: &mut Rng, (targets, controls): (&[String], &[String]), writer: u64) -> Edit {
     let target = targets[rng.below(targets.len())].clone();
     match rng.below(15) {
         0..=3 => Edit::Set(command(rng, targets, writer)),
@@ -187,21 +215,9 @@ fn edit(rng: &mut Rng, targets: &[String], writer: u64) -> Edit {
             style: None,
             policy: policy(rng, writer),
         }),
-        12 => Edit::Cells(SetCells {
-            table: "t@body/0".to_owned(),
-            writes: vec![(
-                rng.below(2),
-                rng.below(2),
-                format!("{}\n{}", WORDS[rng.below(WORDS.len())], WORDS[rng.below(4)]),
-            )],
-            policy: policy(rng, writer),
-        }),
+        12 => Edit::Cells(cells(rng, writer)),
         11 => Edit::Block(DeleteBlock {
-            target: if rng.below(4) == 0 {
-                "t@body/0".to_owned()
-            } else {
-                target
-            },
+            target: block_target(rng, target, controls),
             policy: policy(rng, writer),
         }),
         10 => Edit::Style(SetParagraphStyle {
@@ -256,17 +272,21 @@ fn run_on(name: &str, seed: u64, writers: u64, per_writer: usize) -> (u64, u64) 
     let body = docx.body().unwrap();
     let mut targets: Vec<String> = body.ids.paragraphs().iter().map(|p| p.id.clone()).collect();
     targets.truncate(40);
+    let controls: Vec<String> = ooxml_word_model::docx::controls::controls(&docx)
+        .into_iter()
+        .map(|c| c.id)
+        .collect();
     let mut records: Vec<(Seq, Edit, Snapshot<WordDoc>)> = Vec::new();
     std::thread::scope(|scope| {
         let handles: Vec<_> = (0..writers)
             .map(|w| {
-                let (shared, targets) = (&shared, &targets);
+                let (shared, targets, controls) = (&shared, &targets, &controls);
                 scope.spawn(move || {
                     let mut rng = Rng(seed ^ (w + 1).wrapping_mul(0x9E37_79B9));
                     let caller = Caller::named(&format!("writer {w}"));
                     (0..per_writer)
                         .filter_map(|_| {
-                            let command = edit(&mut rng, targets, w);
+                            let command = edit(&mut rng, (targets, controls), w);
                             // a refusal (a range a concurrent edit shortened) changes nothing
                             let done = shared.run(&caller, &command).ok()?;
                             done.changed.then(|| (done.version.seq(), command, done.version))
@@ -306,6 +326,14 @@ fn concurrent_edits_equal_their_serial_order() {
         conflicts += run(seed, 4, 6).0;
     }
     assert!(conflicts > 0, "writers stamping one document should conflict");
+}
+
+#[test]
+fn concurrent_control_deletes_equal_their_serial_order() {
+    for seed in [31u64, 32, 33] {
+        run_on("generated/markdown/constructs.docx", seed, 4, 6);
+        run_on("generated/ids-and-markup.docx", seed, 4, 6);
+    }
 }
 
 #[test]
@@ -442,5 +470,14 @@ fn sixty_seeds_of_eight_writers() {
         exclusive += e;
     }
     println!("60 seeds, 8 writers x 6 edits: {conflicts} conflicts, {exclusive} exclusive runs");
+    let (mut c_conflicts, mut c_exclusive) = (0, 0);
+    for seed in 100..160u64 {
+        let (c, e) = run_on("generated/markdown/constructs.docx", seed, 8, 6);
+        c_conflicts += c;
+        c_exclusive += e;
+    }
+    println!(
+        "60 seeds with content controls, 8 writers x 6 edits: {c_conflicts} conflicts, {c_exclusive} exclusive runs"
+    );
     assert!(conflicts > 0);
 }

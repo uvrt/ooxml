@@ -32,6 +32,9 @@ use std::sync::Arc;
 /// # Errors
 /// The refusals of [`crate::delete::plan`].
 pub(crate) fn delete(sink: &mut EditSink<'_, '_>, target: &str) -> Result<BlockDeleted> {
+    if crate::control_delete::is_control(target) {
+        return crate::control_delete::delete(sink, target);
+    }
     let docx = sink.docx()?;
     let planned = plan(sink, &docx, target)?;
     let part = planned.block.part.clone();
@@ -126,6 +129,7 @@ fn outright(
         renamed,
         removed,
         part,
+        warnings: Vec::new(),
     })
 }
 
@@ -224,5 +228,6 @@ fn tracked(sink: &mut EditSink<'_, '_>, docx: &Docx, planned: &Planned, tracking
         renamed,
         removed: Vec::new(),
         part,
+        warnings: Vec::new(),
     })
 }

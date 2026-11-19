@@ -844,7 +844,7 @@ center, right, top, middle, bottom) and `to` (`shapes`, the default, `slide` or
 targets, or `content_area`) and an optional fixed `gap`. The content area is
 `Slide.content_area`: the layout's body placeholders, else the band under the title. Each
 is one undo step and returns the boxes. Grid and flow came back the same way (round 5,
-T5), as builders drew tile and card grids by hand, a box at a time: `grid` lays the targets
+T5), as writers drew tile and card grids by hand, a box at a time: `grid` lays the targets
 out in the order given, row by row, in `columns` (and optionally `rows`) equal cells of the
 `box` or the content area, `gap` apart (`gap_y` between rows, if different); each shape is
 sized to its cell and a picture keeps its aspect, centred in it (`edit.layout.grid` with

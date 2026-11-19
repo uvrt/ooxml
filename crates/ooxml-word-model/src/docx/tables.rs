@@ -4,7 +4,7 @@
 //! covers with its origin; the grid's column count (`w:tblGrid`); the rows accepting the
 //! tracked changes keeps, and the columns (`accepted_columns`, Word's Accept All: a
 //! deleted cell whose content is kept widens the cell before it, a grid column only removed
-//! cells cover goes); and a cell's text.
+//! cells cover goes); a cell's text; a cell found by labels (`labels`).
 //!
 //! Must not: change a table or resolve its formatting.
 
@@ -15,6 +15,9 @@ use crate::xmlread::py_int;
 use ooxml_xml::Element;
 use std::collections::HashMap;
 use std::sync::Arc;
+
+mod labels;
+pub use labels::collapse_space;
 
 /// A cell element with its place in its part.
 type Placed = (Arc<Element>, Box<[u32]>);
@@ -244,7 +247,7 @@ const SHOWN: [&str; 10] = [
 
 /// Whether a deleted cell keeps anything (docx-agent's `_content_kept`): content outside
 /// deletions and moves away, or a paragraph mark of its own not deleted.
-fn content_kept(cell: &Element) -> bool {
+pub(crate) fn content_kept(cell: &Element) -> bool {
     fn shown(node: &Element, deleted: bool) -> bool {
         node.child_elements().any(|e| {
             let gone = deleted || e.name().is(Some(W), "del") || e.name().is(Some(W), "moveFrom");

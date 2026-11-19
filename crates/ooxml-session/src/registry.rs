@@ -15,7 +15,7 @@ use crate::DocKind;
 use ooxml_base::Cancel;
 use ooxml_store::Caller;
 use ooxml_tools::{Done, Failure, ToolArgs, ToolError, ToolResult, ToolSpec};
-use ooxml_tools_word::{CallEditor, Editing, Made, Tracked, Version};
+use ooxml_tools_word::{CallEditor, Editing, Made, Others, Tracked, Version};
 use serde_json::{Map, Value};
 use std::marker::PhantomData;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -47,6 +47,9 @@ pub struct Call<'a> {
     pub(crate) made: &'a Mutex<Option<Made>>,
     /// The host's layout of the document's versions.
     pub(crate) layout: Option<&'a dyn ooxml_word_edit::FieldLayout>,
+    /// The other documents the call names (`ooxml_tools::documents`), by id, each at the
+    /// version pinned for the call when it was dispatched.
+    pub(crate) others: &'a [(String, Opened)],
 }
 
 impl Call<'_> {
@@ -60,6 +63,20 @@ impl Call<'_> {
     #[must_use]
     pub fn cancel(&self) -> &dyn Cancel {
         self.cancel
+    }
+
+    /// The other documents the call names, by id, at their pinned versions.
+    #[must_use]
+    pub fn others(&self) -> &[(String, Opened)] {
+        self.others
+    }
+
+    /// [`Call::others`] as a tool reads them.
+    fn other_versions(&self) -> Vec<(&str, Version<'_>)> {
+        self.others
+            .iter()
+            .map(|(id, o)| (id.as_str(), o.version_of()))
+            .collect()
     }
 }
 
@@ -100,7 +117,14 @@ impl<T: ToolArgs> Tool for ReadHandler<T> {
     fn run(&self, arguments: Map<String, Value>, call: &Call<'_>) -> ToolResult<Value> {
         let outcome = T::from_arg(&Value::Object(arguments), "")
             .map_err(|e| ToolError::internal(e.to_string(), &format!("{}:arguments", self.spec.name)))
-            .and_then(|args| (self.run)(&args, &call.doc.version_of(), call.cancel));
+            .and_then(|args| {
+                let others = call.other_versions();
+                let version = Version {
+                    others: Others::new(&others),
+                    ..call.doc.version_of()
+                };
+                (self.run)(&args, &version, call.cancel)
+            });
         match outcome {
             Ok(done) => ToolResult::done(done),
             Err(error) => ToolResult::failed(error),
@@ -183,6 +207,7 @@ impl<T: ToolArgs> Tool for EditHandler<T> {
         };
         let doc = call.doc.id().to_string();
         let editor = CallEditor::new(&word.editor);
+        let others = call.other_versions();
         let editing = Editing {
             editor: &editor,
             caller: call.caller,
@@ -192,6 +217,7 @@ impl<T: ToolArgs> Tool for EditHandler<T> {
             cancel: call.cancel,
             date: &call.date,
             layout: call.layout,
+            others: Others::new(&others),
         };
         let result = match &self.run {
             EditRun::Plain(run) => run(&args, &editing),
@@ -236,7 +262,7 @@ impl Registry {
     /// `find_text`, and `read_batch` over them; its review tools `word_set_tracking`,
     /// `word_changes` and `word_comments`; its text tools `word_set_text` and
     /// `replace_text`; the object tools `word_format_table` and `word_edit_table`; its style tools `word_lists`,
-    /// `word_format` and `word_styles`.
+    /// `word_format`, `word_styles` and `word_template`, and `word_compare_blocks` (reading).
     #[must_use]
     pub fn standard() -> Self {
         let mut registry = Self::empty();
@@ -299,6 +325,14 @@ impl Registry {
         registry.register(Arc::new(EditHandler::<ooxml_tools_word::WordStyles>::new(
             &[DocKind::Docx],
             ooxml_tools_word::word_styles,
+        )));
+        registry.register(Arc::new(EditHandler::<ooxml_tools_word::WordTemplate>::new(
+            &[DocKind::Docx],
+            ooxml_tools_word::word_template,
+        )));
+        registry.register(Arc::new(ReadHandler::<ooxml_tools_word::WordCompareBlocks>::new(
+            &[DocKind::Docx],
+            ooxml_tools_word::word_compare_blocks,
         )));
         registry
     }

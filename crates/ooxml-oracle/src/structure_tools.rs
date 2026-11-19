@@ -90,6 +90,7 @@ pub(crate) fn tool_case(
         cancel: &Never,
         date: &date,
         layout: layout.as_ref().map(|l| l as &dyn ooxml_word_edit::FieldLayout),
+        others: ooxml_tools_word::Others::default(),
     };
     let arguments = case.get("arguments").cloned().unwrap_or(Value::Object(Map::new()));
     let tool = case.get("tool").and_then(Value::as_str).unwrap_or("");

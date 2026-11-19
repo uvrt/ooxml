@@ -49,7 +49,7 @@ never their values.
 cells, regions, queries, traces, `describe`, each op answered as the call alone, within its
 own `max_result_chars`, the reply within 96,000 characters; what does not fit is listed in
 `not_returned`, with `resend`, the call that asks for it. It changes nothing, so a reader
-(`roles=["review"]`) has it; a builder reading record after record uses it too, rather
+(`roles=["review"]`) has it; a writer reading record after record uses it too, rather
 than a call per record. A change among its ops is refused, pointing at `batch`.
 
 `save_document`, `undo` and `batch` are the shared ones too (E1). A workbook's undo step is
@@ -186,7 +186,7 @@ toolbox with the deck or Word tools a reviewer keeps every reading workbook tool
 | any | `open_document`, `close_document`, `read_blob`, `batch`, `save_document` |
 Agents sharing one session (ooxml-edit 0.46.0) each work through a view of it,
 `session.view(roles=[...], context={...})`: the workbook and the datasets derived from it
-are the session's, so a deck builder's view uses the `d:` an analyst's view derived.
+are the session's, so a deck writer's view uses the `d:` an analyst's view derived.
 
 **The user's locale.** How text that looks like a number or a date is read (numbers stored
 as text), and the language of the language-dependent built-in number formats, is the

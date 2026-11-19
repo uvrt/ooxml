@@ -12,7 +12,7 @@ reopen and delete in ppt_comments' action enum).  Editing a comment's text is ev
 tool settles tracked changes: ``accept`` adds nothing (``["review", "accept"]`` is
 ``["review"]``'s definitions; ``["accept"]`` alone gets ppt_comments for its text edits,
 1,097).  ``["edit"]``: core 2,400, every definition 11,289.  Claude's strict set for a reviewer is ppt_comments and
-ppt_manage_slides (its find_by_title action alone); the default's and a builder's
+ppt_manage_slides (its find_by_title action alone); the default's and a writer's
 (``["review", "edit"]``) are unchanged.
 """
 
@@ -131,13 +131,13 @@ def test_a_reviewer_is_sent_the_review_tools_and_actions(toolbox):
     assert _sent(toolbox, ["review", "accept"], defer=False) == sent
 
 
-def test_a_builder_without_resolve_keeps_the_default_core_and_strict_set(toolbox):
+def test_a_writer_without_resolve_keeps_the_default_core_and_strict_set(toolbox):
     default = _sent(toolbox, None, defer=False)
-    builder = _sent(toolbox, ["review", "edit"], defer=False)
-    assert set(builder) == set(default)
-    assert {n for n, d in builder.items() if d["strict"]} == \
+    writer = _sent(toolbox, ["review", "edit"], defer=False)
+    assert set(writer) == set(default)
+    assert {n for n, d in writer.items() if d["strict"]} == \
         {n for n, d in default.items() if d["strict"]}
-    assert _enum(builder["ppt_comments"]) == ["list", "add", "reply", "edit"]
+    assert _enum(writer["ppt_comments"]) == ["list", "add", "reply", "edit"]
     assert [d["name"] for d in toolbox.definitions("anthropic", groups="core",
                                                    roles=["review", "edit"])] == \
         [d["name"] for d in toolbox.definitions("anthropic", groups="core")]
@@ -278,14 +278,14 @@ def test_every_role_by_default_runs_every_tool(toolbox):
 # -- several agents on one deck (ooxml-edit 0.46.0, round 8, M1 and M2) ------------------------
 
 
-def test_a_reviewer_view_and_a_builder_view_share_one_deck_at_once(toolbox):
+def test_a_reviewer_view_and_a_writer_view_share_one_deck_at_once(toolbox):
     """One session, every role; each agent a view of it with its own roles and context."""
     import threading
 
     session = _session(toolbox, None)
     reviewer = session.view(roles=["review"], context={"agent": "reviewer-1"})
-    builder = session.view(roles=["review", "edit"], context={"agent": "builder-1"})
-    assert reviewer.entry("d1") is builder.entry("d1") is session.entry("d1")
+    writer = session.view(roles=["review", "edit"], context={"agent": "writer-1"})
+    assert reviewer.entry("d1") is writer.entry("d1") is session.entry("d1")
     results = {}
 
     def review():
@@ -296,7 +296,7 @@ def test_a_reviewer_view_and_a_builder_view_share_one_deck_at_once(toolbox):
             "doc": "d1", "items": [{"target": "256.2", "text": "Mine"}]})
 
     def build():
-        results["text"] = toolbox.dispatch(builder, "ppt_set_text", {
+        results["text"] = toolbox.dispatch(writer, "ppt_set_text", {
             "doc": "d1", "items": [{"target": "256.2", "text": "Shorter"}]})
 
     threads = [threading.Thread(target=review), threading.Thread(target=build)]
@@ -308,18 +308,18 @@ def test_a_reviewer_view_and_a_builder_view_share_one_deck_at_once(toolbox):
     refused = results["refused"]
     assert refused.error.code == "refused" and refused.error.details == {
         "role": "edit", "roles": ["review"]}
-    # Both agents' work is in the one deck; the reviewer reads the builder's text.
+    # Both agents' work is in the one deck; the reviewer reads the writer's text.
     read = toolbox.dispatch(reviewer, "ppt_read_slides", {"doc": "d1", "detail": "outline",
                                                          "slides": ["s:256"]})
     assert read.ok and "Shorter" in str(read.data)
-    assert toolbox.dispatch(builder, "ppt_comments", {"doc": "d1", "action": "list"}).total == 1
-    # The builder may not resolve the reviewer's thread; the session's log names who did what.
-    resolve = toolbox.dispatch(builder, "ppt_comments", {
+    assert toolbox.dispatch(writer, "ppt_comments", {"doc": "d1", "action": "list"}).total == 1
+    # The writer may not resolve the reviewer's thread; the session's log names who did what.
+    resolve = toolbox.dispatch(writer, "ppt_comments", {
         "doc": "d1", "action": "resolve", "items": [{"comment": "$c1"}]})
     assert resolve.error.code == "refused" and "resolve role" in resolve.error.message
     agents = {(record.tool, record.context["agent"]) for record in session.log
               if record.context and record.ok}
-    assert {("ppt_comments", "reviewer-1"), ("ppt_set_text", "builder-1")} <= agents
+    assert {("ppt_comments", "reviewer-1"), ("ppt_set_text", "writer-1")} <= agents
     # A reviewer's batch is held to its view's roles.
     batch = toolbox.dispatch(reviewer, "batch", {"ops": [
         {"tool": "check", "arguments": {"doc": "d1"}},
@@ -367,7 +367,7 @@ def test_a_reviewer_reads_many_slides_in_one_read_batch(toolbox):
     assert session.entry("d1").version == 0 and not session.entry("d1").history.can_undo()
 
 
-def test_a_builder_s_change_in_a_read_batch_is_sent_to_batch(toolbox):
+def test_a_writer_s_change_in_a_read_batch_is_sent_to_batch(toolbox):
     session = _session(toolbox, None)
     result = toolbox.dispatch(session, "read_batch", {"ops": [
         {"tool": "ppt_set_text", "arguments": {

@@ -176,7 +176,7 @@ impl MoveBlocks {
                 )));
             }
             if block.kind == BlockKind::Control {
-                control_movable(&element, &id)?;
+                control_movable(&element, &id, "moving")?;
             }
             ids.push(id);
         }
@@ -184,18 +184,22 @@ impl MoveBlocks {
     }
 }
 
-/// Refuse to move a locked control or one holding a section break (`_control_movable`).
-fn control_movable(sdt: &Element, id: &str) -> Result<()> {
+/// Refuse to delete or move (`doing`) a locked control or one holding a section break
+/// (`_control_movable`).
+///
+/// # Errors
+/// [`EditError::Refused`] naming the lock or the section break.
+pub(crate) fn control_movable(sdt: &Element, id: &str, doing: &str) -> Result<()> {
     let lock = ooxml_word_model::docx::find_path(sdt, &["sdtPr", "lock"]).and_then(|l| l.attribute(Some(W), "val"));
     match lock {
         Some(value @ ("sdtLocked" | "sdtContentLocked")) => Err(EditError::Refused(format!(
-            "{id} is locked against deletion (w:lock {value}): moving it is refused"
+            "{id} is locked against deletion (w:lock {value}): {doing} it is refused"
         ))),
         Some("contentLocked") => Err(EditError::Refused(format!(
-            "{id}'s content is locked (w:lock contentLocked): moving it is refused"
+            "{id}'s content is locked (w:lock contentLocked): {doing} it is refused"
         ))),
         _ if holds_section_break(sdt) => Err(EditError::Refused(format!(
-            "{id} holds a section break; moving it would move or join sections"
+            "{id} holds a section break; {doing} it would move or join sections"
         ))),
         _ => Ok(()),
     }

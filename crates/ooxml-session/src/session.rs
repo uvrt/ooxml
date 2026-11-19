@@ -91,6 +91,7 @@ impl Opened {
             number: self.version(),
             versions: &self.versions,
             placer: self.placer.as_deref(),
+            others: ooxml_tools_word::Others::default(),
         }
     }
 }
@@ -107,6 +108,8 @@ pub(crate) struct CallState<'p> {
     opened: Option<Opened>,
     warnings: Vec<String>,
     pinned: Option<&'p mut Pinned>,
+    /// The other documents the call names, by id, at the versions pinned for it.
+    others: Vec<(String, Opened)>,
     placer: Option<Arc<dyn Placer>>,
     /// The versions an editing tool's edits made.
     made: Mutex<Option<Made>>,
@@ -467,6 +470,7 @@ impl Session {
             opened: None,
             warnings: Vec::new(),
             pinned,
+            others: Vec::new(),
             placer: context.placer.clone(),
             made: Mutex::new(None),
         };
@@ -542,6 +546,7 @@ impl Session {
             date: revision_date(self.context.clock.now()),
             made: &state.made,
             layout: context.layout.as_deref(),
+            others: &state.others,
         };
         tool.run(arguments, &call)
     }
@@ -560,6 +565,7 @@ impl Session {
         let Accepted { mut arguments, notes } = spec.accept(arguments)?;
         state.warnings.extend(notes);
         let doc = self.document_of(spec, &arguments, state.pinned.as_deref_mut())?;
+        state.others = self.others_of(spec, &arguments, &doc.id, state.pinned.as_deref_mut())?;
         let tool = self
             .registry
             .get(name, doc.kind)
@@ -636,11 +642,8 @@ impl Session {
         arguments: &Map<String, Value>,
         pinned: Option<&mut Pinned>,
     ) -> Result<Opened, ToolError> {
-        let given = spec
-            .documents
-            .iter()
-            .find_map(|name| arguments.get(name).and_then(Value::as_str));
-        let Some(given) = given else {
+        let named = ooxml_tools::documents::named(&spec.documents, arguments);
+        let Some(given) = named.first() else {
             return Err(ToolError::internal(
                 format!("{} names no document; the session serves only tools that do", spec.name),
                 "session:documents",
@@ -656,6 +659,42 @@ impl Session {
         let found = self.snapshot(&id).map_err(|e| e.to_tool_error())?;
         pinned.insert(id, found.clone());
         Ok(found)
+    }
+
+    /// The other documents a call names (after its own, each once), each at the version
+    /// `pinned` holds for it, else at its head (then pinned there): a document not open is
+    /// refused at the field that names it.
+    fn others_of(
+        &self,
+        spec: &ToolSpec,
+        arguments: &Map<String, Value>,
+        own: &DocId,
+        mut pinned: Option<&mut Pinned>,
+    ) -> Result<Vec<(String, Opened)>, ToolError> {
+        let mut out: Vec<(String, Opened)> = Vec::new();
+        for (field, given) in ooxml_tools::documents::named_at(&spec.documents, arguments)
+            .into_iter()
+            .skip(1)
+        {
+            if given == own.to_string() || out.iter().any(|(seen, _)| *seen == given) {
+                continue;
+            }
+            let refuse = |e: SessionError| e.to_tool_error().at(field);
+            let id = DocId::parse(&given).ok_or_else(|| refuse(self.not_open(&given)))?;
+            let found = match pinned.as_deref_mut() {
+                Some(pinned) => match pinned.get(&id) {
+                    Some(found) => found.clone(),
+                    None => {
+                        let found = self.snapshot(&id).map_err(refuse)?;
+                        pinned.insert(id, found.clone());
+                        found
+                    }
+                },
+                None => self.snapshot(&id).map_err(refuse)?,
+            };
+            out.push((given, found));
+        }
+        Ok(out)
     }
 
     fn not_served(&self, name: &str, kind: DocKind) -> ToolError {

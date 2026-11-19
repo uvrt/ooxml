@@ -1,6 +1,7 @@
 //! The random multi-writer oracle for the style edits (lane P4d): writers on threads mix
 //! tracked and untracked `set_text` and `insert_text` with list edits (paragraphs added to
 //! lists, taken out, moved to a level, lists restarted and continued, a level formatted),
+//! style sheet edits and Word's Convert (the document opened in mode 14),
 //! through one document's store; replayed serially in commit order on the document as
 //! opened, every version is the same, byte for byte, as the concurrent run made it.
 // Tests may unwrap, panic and index (docs/architecture/README.md, section 2.5).
@@ -12,7 +13,7 @@ use ooxml_opc::Package;
 use ooxml_store::{Caller, Clock, Command, Seq, Snapshot, StoreConfig, Txn};
 use ooxml_word_edit::{
     EditError, Editor, FormatEdit, FormatPlan, InsertText, LevelFormat, ListAction, ListEdit, Property, RevisionPolicy,
-    SetText, Setting, StyleAction, StyleEdit, StyleFormatting, Tracking, Value, WordDoc,
+    SetText, Setting, StyleAction, StyleEdit, StyleFormatting, Tracking, UpgradeToModern, Value, WordDoc,
 };
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -58,7 +59,22 @@ fn fixture(name: &str) -> Arc<[u8]> {
 }
 
 fn editor(bytes: &Arc<[u8]>) -> Editor {
+    open(Package::open(Arc::clone(bytes), &Limits::default()).unwrap())
+}
+
+/// The document of `bytes` in compatibility mode 14 with two legacy options, for Convert.
+fn legacy(bytes: &Arc<[u8]>) -> Editor {
     let package = Package::open(Arc::clone(bytes), &Limits::default()).unwrap();
+    let settings = String::from_utf8(package.read("word/settings.xml").unwrap().unwrap().to_vec()).unwrap();
+    let old = settings.replace(
+        r#"<w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/>"#,
+        r#"<w:compat><w:noLeading/><w:spaceForUL/><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="14"/>"#,
+    );
+    assert_ne!(old, settings, "the fixture is in mode 15");
+    open(package.with_bytes("word/settings.xml", Arc::from(old.into_bytes())))
+}
+
+fn open(package: Package) -> Editor {
     Editor::open(
         package,
         StoreConfig::default(),
@@ -76,6 +92,7 @@ enum Edit {
     List(ListEdit),
     Format(FormatEdit),
     Style(StyleEdit),
+    Template(UpgradeToModern),
 }
 
 impl Command<WordDoc> for Edit {
@@ -89,6 +106,7 @@ impl Command<WordDoc> for Edit {
             Edit::List(c) => c.validate(doc),
             Edit::Format(c) => c.validate(doc),
             Edit::Style(c) => c.validate(doc),
+            Edit::Template(c) => c.validate(doc),
         }
     }
 
@@ -99,6 +117,7 @@ impl Command<WordDoc> for Edit {
             Edit::List(c) => !c.prepare(tx)?.steps.is_empty(),
             Edit::Format(c) => c.prepare(tx)?.steps.iter().any(|s| s.changed),
             Edit::Style(c) => c.prepare(tx)?.changed,
+            Edit::Template(c) => c.prepare(tx)?.changed,
         })
     }
 }
@@ -146,6 +165,7 @@ fn edit(rng: &mut Rng, targets: &[String], writer: u64, n: usize) -> Edit {
     let other = targets[rng.below(targets.len())].clone();
     let words: Vec<&str> = (0..1 + rng.below(4)).map(|_| WORDS[rng.below(WORDS.len())]).collect();
     match rng.below(9) {
+        7 | 8 if rng.below(8) == 0 => Edit::Template(UpgradeToModern),
         7 | 8 => Edit::Style(StyleEdit {
             action: style_action(rng, writer, n),
         }),
@@ -295,9 +315,9 @@ fn same(serial: &[(String, Arc<[u8]>)], concurrent: &[(String, Arc<[u8]>)], what
     }
 }
 
-fn run(seed: u64, writers: u64, per_writer: usize) -> (u64, u64, usize) {
+fn run(seed: u64, writers: u64, per_writer: usize) -> (u64, u64, usize, usize) {
     let bytes = fixture("generated/lists-and-styles.docx");
-    let shared = editor(&bytes);
+    let shared = legacy(&bytes);
     let docx = shared.store().snapshot().doc().docx().unwrap();
     let targets: Vec<String> = docx
         .body()
@@ -333,7 +353,7 @@ fn run(seed: u64, writers: u64, per_writer: usize) -> (u64, u64, usize) {
         }
     });
     records.sort_by_key(|r| r.0);
-    let serial = editor(&bytes);
+    let serial = legacy(&bytes);
     for (at, command, version) in &records {
         let done = serial.run(&Caller::anonymous(), command).unwrap();
         // a format edit says it formatted its targets whether or not they changed (docx-agent)
@@ -353,7 +373,8 @@ fn run(seed: u64, writers: u64, per_writer: usize) -> (u64, u64, usize) {
         .iter()
         .filter(|r| matches!(r.1, Edit::List(_) | Edit::Format(_)))
         .count();
-    (stats.conflicts, stats.exclusive, lists)
+    let converted = records.iter().filter(|r| matches!(r.1, Edit::Template(_))).count();
+    (stats.conflicts, stats.exclusive, lists, converted)
 }
 
 /// An edit that, the first time it is prepared, waits after preparing for another writer
@@ -461,15 +482,16 @@ fn concurrent_list_edits_equal_their_serial_order() {
 #[test]
 #[ignore = "the end gate's long run: cargo test --release -- --ignored"]
 fn sixty_seeds_of_eight_writers_styling() {
-    let (mut conflicts, mut exclusive, mut lists) = (0, 0, 0);
+    let (mut conflicts, mut exclusive, mut lists, mut converted) = (0, 0, 0, 0);
     for seed in 400..460u64 {
-        let (c, e, s) = run(seed, 8, 6);
+        let (c, e, s, t) = run(seed, 8, 6);
         conflicts += c;
         exclusive += e;
         lists += s;
+        converted += t;
     }
     println!(
-        "60 seeds, 8 writers x 6 edits: {lists} list and format edits committed; {conflicts} conflicts, \
-         {exclusive} exclusive runs"
+        "60 seeds, 8 writers x 6 edits: {lists} list and format edits and {converted} conversions committed; \
+         {conflicts} conflicts, {exclusive} exclusive runs"
     );
 }

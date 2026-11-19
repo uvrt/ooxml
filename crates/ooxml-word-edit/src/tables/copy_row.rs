@@ -107,7 +107,7 @@ fn current_view(work: &mut Work, element: Id) {
 }
 
 /// `node`'s run, or `node` alone where its run holds more (`_drop_run_of`).
-fn drop_run_of(work: &mut Work, node: Id) {
+pub(super) fn drop_run_of(work: &mut Work, node: Id) {
     let run = work.parent(node).filter(|r| work.is(*r, W, "r"));
     let alone = run.is_some_and(|r| {
         work.children(r)

@@ -57,6 +57,34 @@ pub fn paragraph_text(paragraph: &Element, view: View) -> String {
     state.out
 }
 
+/// The runs that hold the paragraph's text in `view`, in document order, each with its place
+/// below the paragraph, its first character (of any kind: a tab, an object) and how many
+/// characters of `w:t` it holds (docx-agent's `walk(...).atoms` of kind `text`, counted per
+/// run); a run holding none is left out.
+#[must_use]
+pub fn text_runs(paragraph: &Element, view: View) -> Vec<TextRun> {
+    let mut state = Walk::new(view, None);
+    state.runs = Some(Vec::new());
+    container(paragraph, &mut state);
+    state
+        .runs
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|r| r.text > 0)
+        .collect()
+}
+
+/// A run of a paragraph's text ([`text_runs`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TextRun {
+    /// Its place below the paragraph.
+    pub path: Box<[u32]>,
+    /// Its first character in the view.
+    pub first: char,
+    /// How many characters of `w:t` it holds in the view.
+    pub text: usize,
+}
+
 /// How many characters of the paragraph's text in `view` stand before the element at
 /// `marker` (its place below the paragraph): docx-agent's `_offset_of`, where a bookmark or
 /// comment marker stands in its paragraph's text.
@@ -78,6 +106,8 @@ struct Walk<'m> {
     marker: Option<&'m [u32]>,
     /// Characters whose element stands before the marker in document order.
     before: usize,
+    /// The runs written so far, when asked for ([`text_runs`]).
+    runs: Option<Vec<TextRun>>,
 }
 
 impl<'m> Walk<'m> {
@@ -89,6 +119,7 @@ impl<'m> Walk<'m> {
             path: Vec::new(),
             marker,
             before: 0,
+            runs: None,
         }
     }
 
@@ -179,6 +210,9 @@ fn run(run: &Element, state: &mut Walk<'_>) {
             continue;
         }
         if let Some(c) = character(child, state.view) {
+            if let Some(runs) = state.runs.as_mut() {
+                count(runs, &state.path, &c, name.is(Some(W), "t"));
+            }
             state.path.push(step(k));
             match c {
                 Char::One(c) => state.push(c.encode_utf8(&mut [0; 4])),
@@ -186,6 +220,25 @@ fn run(run: &Element, state: &mut Walk<'_>) {
             }
             state.path.pop();
         }
+    }
+}
+
+/// `c`, written in the run at `path`, counted in `runs` (`text`: a `w:t`'s characters).
+fn count(runs: &mut Vec<TextRun>, path: &[u32], c: &Char, text: bool) {
+    let (first, length) = match c {
+        Char::One(c) => (Some(*c), 1),
+        Char::Text(t) => (t.chars().next(), t.chars().count()),
+    };
+    let Some(first) = first else { return };
+    if runs.last().is_none_or(|r| *r.path != *path) {
+        runs.push(TextRun {
+            path: path.into(),
+            first,
+            text: 0,
+        });
+    }
+    if let (true, Some(last)) = (text, runs.last_mut()) {
+        last.text += length;
     }
 }
 

@@ -214,10 +214,10 @@ def review(toolbox, session, doc, pages, house_rules, model_call):
   through the tools; one more pass at most.
 - **An agent with tools reads in one call.** `read_batch` (ooxml-edit 0.78.0) changes
   nothing (`mutates` is false) and is the `review` role's: give it to a read-only agent with
-  the other reading tools, and to builders. Many reads -- `describe`, ranges of
+  the other reading tools, and to writers. Many reads -- `describe`, ranges of
   `word_read`, `word_inspect`, a `check` -- go in one call, each answered as alone within its
   own `max_result_chars`, the reply within 96,000 characters; what did not fit is listed
-  with the call that asks for it. Production builders made 40-90 reads a run, a model turn
+  with the call that asks for it. Production writers made 40-90 reads a run, a model turn
   each, before it.
 - In trial 3 every Word run scored 10 without a review pass; the pass earns its cost on
   documents that go outside the company, or where your house rules are detailed.

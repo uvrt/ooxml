@@ -8,13 +8,18 @@
 //! A row or column deleted says what of the file's own text it took out of the final view
 //! ([`crate::originals`]).
 //!
-//! Not ported yet, said in `unported` for the host to answer its own way: `set_cells`,
-//! `sync`, `from`, `merge` and `split`; a row holding a drawing or a control copied; a
-//! table with pending tracked structure or a placement record.
+//! Cells merged or split, a merge already made answered as changing nothing (rule 3), a
+//! split past a cell's span refused with the split that keeps the grid (rule 2).
+//!
+//! Cells written without a source ([`super::set_cells`]).
+//!
+//! Not ported yet, said in `unported` for the host to answer its own way: `sync`, `from`;
+//! a row holding a drawing or a control copied; a table with pending tracked structure or
+//! a placement record.
 //!
 //! Must not: change the document but through the command.
 
-use super::edit_table_args::{Side, TableAction, WordEditTable};
+use super::edit_table_args::{Position, Side, TableAction, WordEditTable};
 use super::table_view::{table_view, TableView};
 use crate::originals::{add, Watch};
 use crate::review::{needed, Editing};
@@ -33,7 +38,7 @@ impl From<TableChanged> for Outcome {
     fn from(edit: TableChanged) -> Self {
         Outcome {
             id: edit.id,
-            changed: true,
+            changed: !edit.unchanged,
             created: edit.created,
             removed: edit.removed,
             renamed: edit.renamed,
@@ -69,7 +74,7 @@ fn invalid(message: String, field: &str, options: &[&str], retry: &TryCall) -> T
     ToolError::refusal(Refusal::InvalidArguments, message, way_out).at(field)
 }
 
-fn unported(what: &str, retry: &TryCall) -> ToolResult<Value> {
+pub(super) fn unported(what: &str, retry: &TryCall) -> ToolResult<Value> {
     refused(EditError::Unsupported(what.to_owned()), retry.clone())
 }
 
@@ -152,16 +157,17 @@ fn run(args: &WordEditTable, editing: &Editing<'_>, retry: &TryCall) -> Result<T
         }
         Err(error) => return Err(error),
     };
-    match args.action {
-        TableAction::Sync => return Ok(unported("word_edit_table sync", retry)),
-        TableAction::SetCells => return Ok(unported("word_edit_table set_cells", retry)),
-        _ => {}
+    if args.action == TableAction::Sync {
+        return Ok(unported("word_edit_table sync", retry));
     }
     if args.from.as_deref().is_some_and(|f| !f.is_empty()) {
         // docx-agent reads a `from` before it refuses it for another action
         return Ok(unported("word_edit_table from (sources)", retry));
     }
     check_arguments(args, retry)?;
+    if args.action == TableAction::SetCells {
+        return super::set_cells::set_cells(args, editing, &docx, &view, retry);
+    }
     let below = args.side != Some(Side::Before);
     let index = |value: Option<i64>| value.map(|v| usize::try_from(v).unwrap_or(usize::MAX));
     let change = match args.action {
@@ -205,9 +211,98 @@ fn run(args: &WordEditTable, editing: &Editing<'_>, retry: &TryCall) -> Result<T
                 }
             }
         }
+        TableAction::Merge | TableAction::Split => match cells_change(args, &view, retry)? {
+            Some(change) => change,
+            None => {
+                return Ok(unported(
+                    "word_edit_table merge and split positions in a table as accepted (pending tracked structure)",
+                    retry,
+                ))
+            }
+        },
         other => return Ok(unported(&format!("word_edit_table {}", other.as_str()), retry)),
     };
     Ok(finish(args, editing, &view, change, retry))
+}
+
+/// A merge's or split's change (`_corner`: positions as the table is, with no pending
+/// tracked structure); `None` where the table's accepted view counts otherwise.
+fn cells_change(args: &WordEditTable, view: &TableView, retry: &TryCall) -> Result<Option<TableChange>, ToolError> {
+    let place = |p: &Position| {
+        (
+            usize::try_from(p.row).unwrap_or(usize::MAX),
+            usize::try_from(p.col).unwrap_or(usize::MAX),
+        )
+    };
+    let count = |n: i64| usize::try_from(n).unwrap_or(usize::MAX);
+    if args.action == TableAction::Merge {
+        let first = args.first.as_ref().ok_or_else(|| needed("first", "", retry.clone()))?;
+        let last = args.last.as_ref().ok_or_else(|| needed("last", "", retry.clone()))?;
+        if view.pending() {
+            return Ok(None);
+        }
+        return Ok(Some(TableChange::Merge {
+            first: place(first),
+            last: place(last),
+        }));
+    }
+    let first = args
+        .first
+        .as_ref()
+        .ok_or_else(|| needed("first", " (the cell to split)", retry.clone()))?;
+    if view.pending() {
+        return Ok(None);
+    }
+    let (row, column) = place(first);
+    let columns = args.columns.filter(|c| *c != 0).map(count);
+    no_split_past_span(args, view, first, columns)?;
+    Ok(Some(TableChange::Split {
+        row,
+        column,
+        rows: args.rows.map_or(1, count),
+        columns,
+    }))
+}
+
+/// A cell over several grid columns split into more cells than it spans, refused
+/// (`_no_split_past_span`, round 57): Word would add grid columns, changing every other
+/// row's cells; into 2 up to its span keeps the grid.
+fn no_split_past_span(
+    args: &WordEditTable,
+    view: &TableView,
+    at: &Position,
+    columns: Option<usize>,
+) -> Result<(), ToolError> {
+    let Some(columns) = columns else { return Ok(()) };
+    let row = usize::try_from(at.row).unwrap_or(usize::MAX);
+    let column = usize::try_from(at.col).unwrap_or(usize::MAX);
+    let Some((_, span)) = view
+        .row_cells(row)
+        .into_iter()
+        .find(|(start, span)| *start <= column && column < start + span)
+    else {
+        return Ok(());
+    };
+    if span < 2 || columns <= span {
+        return Ok(());
+    }
+    let keeps: Vec<usize> = (2..=span).collect();
+    let listed: Vec<String> = keeps.iter().map(ToString::to_string).collect();
+    let message = format!(
+        "cell ({}, {}) of {} spans {span} grid columns: a split into {columns} would add grid columns, changing \
+         every other row's cells (Word's Split Cells does that); into {} keeps the grid ({span}: a cell per column). \
+         For {columns}, split into {span}, then split one of the new cells",
+        at.row,
+        at.col,
+        view.table.id,
+        listed.join(", ")
+    );
+    let options = WayOut::options(keeps.iter().map(|k| json!(k)).collect()).unwrap_or_else(|| WayOut::one(json!(span)));
+    let call = json!({"tool": "word_edit_table", "arguments": {"doc": args.doc, "table": view.table.id,
+        "action": "split", "first": {"row": at.row, "col": at.col}, "columns": span}});
+    Err(ToolError::refusal(Refusal::Refused, message, options)
+        .at("columns")
+        .with_detail("call", call))
 }
 
 /// A column position against the table (docx-agent's `_Accepted.to_grid`).
@@ -248,7 +343,11 @@ fn watch<'a>(editing: &Editing<'_>, now: &'a WordDoc, view: &TableView, change: 
     match change {
         TableChange::DeleteRow { index } => watch.row(&docx, &view.part, &view.table, index),
         TableChange::DeleteColumn { index } => watch.column(&docx, &view.part, &view.table, index),
-        TableChange::InsertRow { .. } | TableChange::CopyRow { .. } | TableChange::InsertColumn { .. } => return None,
+        TableChange::InsertRow { .. }
+        | TableChange::CopyRow { .. }
+        | TableChange::InsertColumn { .. }
+        | TableChange::Merge { .. }
+        | TableChange::Split { .. } => return None,
     }
     Some(watch)
 }
@@ -278,14 +377,22 @@ fn finish(
         Err(error) => return refused(error, retry.clone()),
     };
     let now = done.out.table.clone();
+    // round 55 (R115, rule 3): a merge already made changes nothing
+    let unchanged = done.out.unchanged && matches!(change, TableChange::Merge { .. });
     let head = editing.editor.store().snapshot();
     let data = head
         .doc()
         .docx()
         .ok()
-        .and_then(|docx| table_json(&docx, &now, head.doc(), retry));
+        .and_then(|docx| table_json(&docx, &now, head.doc(), true, retry));
     let summary = format!("{} on {table}", args.action.as_str());
     let mut result = outcome(&[Outcome::from(done.out)], summary, data);
+    if unchanged {
+        result.warnings.insert(
+            0,
+            "nothing changed: the cells are merged already (a pending tracked merge counts as made)".to_owned(),
+        );
+    }
     if let Some(watched) = &mut watched {
         add(&mut result, watched.report(head.doc(), editing.doc));
     }
@@ -303,7 +410,7 @@ fn finish(
         ));
     }
     if let ooxml_tools::Outcome::Done(found) = &mut result.outcome {
-        if !found.changed.contains(&now) {
+        if !unchanged && !found.changed.contains(&now) {
             found.changed.push(now.clone());
         }
         if now != table {
@@ -346,8 +453,15 @@ fn uncopied(args: &WordEditTable, view: &TableView, message: String, change: Tab
         .with_detail("calls", json!([first, fill]))
 }
 
-/// The table's id, size as accepted and text as plain Markdown (docx-agent's `table_json`).
-fn table_json(docx: &Docx, id: &str, doc: &ooxml_word_edit::WordDoc, retry: &TryCall) -> Option<Value> {
+/// The table's id, size as accepted and (`markdown`) text as plain Markdown (docx-agent's
+/// `table_json`).
+pub(super) fn table_json(
+    docx: &Docx,
+    id: &str,
+    doc: &ooxml_word_edit::WordDoc,
+    markdown: bool,
+    retry: &TryCall,
+) -> Option<Value> {
     let view = table_view(doc, docx, id, retry).ok()?;
     let deleted = deleted_rows(&view.table);
     let kept = kept_columns(docx, &view);
@@ -362,10 +476,12 @@ fn table_json(docx: &Docx, id: &str, doc: &ooxml_word_edit::WordDoc, retry: &Try
     if !deleted.is_empty() {
         data.insert("rows_deleted_pending".into(), json!(deleted));
     }
-    data.insert(
-        "markdown".into(),
-        json!(to_plain_markdown(docx, Some(&view.table.id)).ok()?),
-    );
+    if markdown {
+        data.insert(
+            "markdown".into(),
+            json!(to_plain_markdown(docx, Some(&view.table.id)).ok()?),
+        );
+    }
     Some(Value::Object(data))
 }
 

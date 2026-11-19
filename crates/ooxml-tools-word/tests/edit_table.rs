@@ -1,7 +1,12 @@
 //! `word_edit_table`'s handlers on a made-up document, for the tool design rules they
-//! touch: a column inserted, a row copied (what it leaves on the row copied said), and a
-//! refusal carrying its way out (rule 2: a column past the last names the columns; a row
-//! not copied gives the calls that add a row like it and fill it). Their equality with
+//! touch: a column inserted, a row copied (what it leaves on the row copied said), cells
+//! merged and split, a merge already made changing nothing (rule 3), and a refusal
+//! carrying its way out (rule 2: a column past the last names the columns; a row not
+//! copied gives the calls that add a row like it and fill it; a split past a cell's span
+//! gives the splits that keep the grid); cells set by labels an earlier cell wrote, a
+//! column's rows filled and said by range and counts (rule 4), a label or place not there
+//! refused with the rows or the table's shape, one merged cell given two values refused
+//! with the split (rule 2). Their equality with
 //! docx-agent is `crates/ooxml-oracle/python/word_edits_diff.py --objects`'s.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
 
@@ -91,6 +96,12 @@ fn package() -> Package {
 
 /// `word_edit_table` called with `arguments` (and `doc`, `table`) on a fresh document.
 fn edit(arguments: Value) -> Value {
+    edits(&[arguments])
+}
+
+/// `word_edit_table` called with each of `calls` in turn on a fresh document; the last
+/// reply.
+fn edits(calls: &[Value]) -> Value {
     let editor = Editor::open(package(), StoreConfig::default(), Arc::new(Still), Arc::new(Unlimited)).unwrap();
     let opened = editor.store().snapshot().doc().clone();
     let caller = Caller::anonymous();
@@ -103,12 +114,17 @@ fn edit(arguments: Value) -> Value {
         cancel: &Never,
         date: "2026-11-17T10:00:00Z",
         layout: None,
+        others: ooxml_tools_word::Others::default(),
     };
-    let mut arguments = arguments;
-    arguments["doc"] = json!("d1");
-    arguments["table"] = json!("t:00000A00");
-    let (args, _) = WordEditTable::accept(arguments, Some("docx")).unwrap();
-    Value::Object(word_edit_table(&args, &editing).to_json())
+    let mut reply = Value::Null;
+    for arguments in calls {
+        let mut arguments = arguments.clone();
+        arguments["doc"] = json!("d1");
+        arguments["table"] = json!("t:00000A00");
+        let (args, _) = WordEditTable::accept(arguments, Some("docx")).unwrap();
+        reply = Value::Object(word_edit_table(&args, &editing).to_json());
+    }
+    reply
 }
 
 #[test]
@@ -140,4 +156,122 @@ fn a_row_not_copied_gives_the_calls_that_add_one_like_it() {
     let calls = &reply["error"]["details"]["calls"];
     assert_eq!(calls[0]["arguments"]["action"], "insert_row", "{reply}");
     assert_eq!(calls[1]["arguments"]["cells"][0]["row"], 3, "{reply}");
+}
+
+#[test]
+fn cells_merged_across_are_one_cell() {
+    let reply = edit(json!({"action": "merge", "first": {"row": 0, "col": 0}, "last": {"row": 0, "col": 1}}));
+    assert_eq!(reply["changed"], json!(["t:00000A00"]), "{reply}");
+    assert!(reply["data"]["markdown"].to_string().contains("colspan"), "{reply}");
+}
+
+#[test]
+fn a_merge_already_made_changes_nothing() {
+    let reply = edit(json!({"action": "merge", "first": {"row": 1, "col": 1}, "last": {"row": 1, "col": 1}}));
+    assert!(reply["warnings"][0].to_string().contains("nothing changed"), "{reply}");
+    assert!(reply.get("changed").is_none_or(|c| c == &json!([])), "{reply}");
+}
+
+#[test]
+fn a_cell_split_down_adds_a_row_and_across_a_column() {
+    // two columns by default, as Word's dialog offers
+    let reply = edit(json!({"action": "split", "first": {"row": 0, "col": 0}, "rows": 2}));
+    assert_eq!(
+        (reply["data"]["rows"].clone(), reply["data"]["columns"].clone()),
+        (json!(4), json!(3)),
+        "{reply}"
+    );
+    assert_eq!(reply["created"].as_array().map(Vec::len), Some(4), "{reply}");
+}
+
+#[test]
+fn a_split_past_a_cells_span_gives_the_splits_that_keep_the_grid() {
+    let merge = json!({"action": "merge", "first": {"row": 0, "col": 0}, "last": {"row": 0, "col": 1}});
+    let reply = edits(&[
+        merge,
+        json!({"action": "split", "first": {"row": 0, "col": 0}, "columns": 3}),
+    ]);
+    assert_eq!(reply["error"]["code"], "refused", "{reply}");
+    assert_eq!(reply["error"]["valid_options"], json!([2]), "{reply}");
+    assert_eq!(reply["error"]["details"]["call"]["arguments"]["columns"], 2, "{reply}");
+}
+
+#[test]
+fn cells_set_by_labels_read_what_earlier_cells_wrote() {
+    let reply = edit(json!({"action": "set_cells", "cells": [
+        {"row": 1, "col": 0, "text": "Renamed"},
+        {"row_label": "Renamed", "col_label": "a", "text": "Found"},
+    ]}));
+    let markdown = reply["data"]["markdown"].to_string();
+    assert!(markdown.contains("Renamed") && markdown.contains("Found"), "{reply}");
+}
+
+#[test]
+fn a_label_matching_no_row_is_refused_with_the_rows() {
+    let reply = edit(json!({"action": "set_cells", "cells": [{"row_label": "Nowhere", "col": 0, "text": "x"}]}));
+    assert_eq!(reply["error"]["code"], "not_found", "{reply}");
+    // the third row's first cell holds a footnote reference, shown as an object mark
+    assert_eq!(
+        reply["error"]["valid_options"],
+        json!(["A", "B", "C\u{fffc}"]),
+        "{reply}"
+    );
+}
+
+#[test]
+fn a_cell_past_the_table_is_refused_with_its_shape() {
+    let reply = edit(json!({"action": "set_cells", "cells": [{"row": 9, "col": 0, "text": "x"}]}));
+    assert_eq!(reply["error"]["code"], "not_found", "{reply}");
+    assert!(
+        reply["error"]["message"].to_string().contains("3 row(s) (0 to 2)"),
+        "{reply}"
+    );
+}
+
+#[test]
+fn a_column_filled_is_said_by_its_range_and_counts() {
+    // the default look has a header row: '*' leaves row 0 out
+    let reply = edit(json!({"action": "set_cells", "cells": [{"col": 1, "rows": "*", "text": "b"}]}));
+    assert_eq!(
+        reply["data"]["filled"],
+        json!([{"entry": 0, "col": 1, "rows": "1..2", "cells": 2, "changed": 1, "header_rows": 1}]),
+        "{reply}"
+    );
+    assert_eq!(reply["changed"], json!(["t:00000A00"]), "{reply}");
+    assert!(reply["data"].get("markdown").is_none(), "{reply}");
+}
+
+#[test]
+fn a_fill_past_the_last_row_gives_the_rows_there_are() {
+    let reply = edit(json!({"action": "set_cells", "cells": [{"col": 1, "rows": "1..7", "text": "x"}]}));
+    assert_eq!(reply["error"]["code"], "not_found", "{reply}");
+    assert_eq!(reply["error"]["valid_options"], json!(["*", "1..2"]), "{reply}");
+}
+
+#[test]
+fn two_values_for_one_merged_cell_are_refused_with_the_split() {
+    let merge = json!({"action": "merge", "first": {"row": 0, "col": 0}, "last": {"row": 0, "col": 1}});
+    let reply = edits(&[
+        merge,
+        json!({"action": "set_cells", "cells": [{"row": 0, "col": 0, "text": "x"}, {"row": 0, "col": 1, "text": "y"}]}),
+    ]);
+    assert_eq!(reply["error"]["code"], "refused", "{reply}");
+    let split = &reply["error"]["details"]["merged"][0]["split"]["arguments"];
+    assert_eq!(
+        (split["rows"].clone(), split["columns"].clone()),
+        (json!(1), json!(2)),
+        "{reply}"
+    );
+}
+
+#[test]
+fn a_value_by_reference_is_left_to_the_host() {
+    let reply = edit(json!({"action": "set_cells", "cells": [{"row": 0, "col": 0, "from": "d:x/#1/a"}]}));
+    // `unported` is the host's to read: the reply changes nothing and says nothing
+    assert_eq!(
+        (reply["ok"].clone(), reply["summary"].clone()),
+        (json!(true), json!("")),
+        "{reply}"
+    );
+    assert_eq!(reply["changed"], json!([]), "{reply}");
 }

@@ -67,7 +67,7 @@ def docx_format(*, min_text_size: "float | dict[str, float] | None" = None, asse
     tool; ``deck_format``'s counterpart:
 
     ``min_text_size`` (points): ``check`` reports ``small_text``, the text drawn smaller
-    (its layout facts, as ``min_size`` does), and the builders -- ``word_insert_markdown``
+    (its layout facts, as ``min_size`` does), and the tools that write content -- ``word_insert_markdown``
     and ``word_edit_table`` -- the text they wrote that its styles make smaller.  One number
     is the minimum for all text; a mapping sets it per kind -- ``body``, ``table`` (text in a
     table cell), ``footnote``, ``endnote``, ``header``, ``footer``, ``caption`` (a
