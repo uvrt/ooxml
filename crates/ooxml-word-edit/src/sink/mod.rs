@@ -133,6 +133,12 @@ impl<'t, 's> EditSink<'t, 's> {
         self.tx.read_everything();
     }
 
+    /// Record that the edit depends on every key `predicate` names on the head
+    /// ([`ooxml_store::Txn::read_where`]).
+    pub(crate) fn read_where(&mut self, predicate: Arc<dyn ooxml_store::ReadPredicate<WordDoc>>) {
+        self.tx.read_where(predicate);
+    }
+
     /// Record that the edit depends on `key`.
     pub fn read(&mut self, key: Key) {
         self.tx.read(key);

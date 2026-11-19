@@ -4,14 +4,20 @@
 //! overlapping, empty ones left out -- and the [`Pattern`] a find is made with: plain text
 //! ([`Literal`]: case-sensitive or not, white space collapsed or not, as `re.escape`d text
 //! matches) or one the caller supplies (a Python regular expression, matched by the tool
-//! layer's translation: this crate holds no regex engine).
+//! layer's translation: this crate holds no regex engine); and [`HoldsMatch`], a find's read
+//! by condition (the blocks whose text it matches), checked at commit.
 //!
 //! Must not: change anything, or answer a pattern differently from Python's `re`.
 
+use crate::doc::{Key, WordDoc};
 use crate::text::diff::python_space;
 use crate::{EditError, Result};
-use ooxml_word_model::docx::Docx;
+use ooxml_store::ReadPredicate;
+use ooxml_word_model::docx::text::{paragraph_text, View};
+use ooxml_word_model::docx::{Docx, StoryPart};
+use ooxml_word_model::ids::Entry;
 use std::fmt::Debug;
+use std::sync::Arc;
 
 /// A find: where it matches a text, and what replaces each match.
 pub trait Pattern: Debug + Send + Sync {
@@ -127,6 +133,58 @@ impl Pattern for Literal {
             }
         }
         Ok(out)
+    }
+}
+
+/// A find within each paragraph, read by condition (design section 5): its outcome depends
+/// on the blocks whose current text it matches, and the blocks it matched, which the edit
+/// reads by key. A block written since its snapshot conflicts only when a paragraph of it
+/// matches on the head; a story part written whole conflicts; nothing else does. (A find
+/// across paragraphs reads the whole document instead: a match may be made by a paragraph
+/// beside the one written.)
+#[derive(Debug)]
+pub(crate) struct HoldsMatch {
+    pattern: Arc<dyn Pattern>,
+}
+
+impl HoldsMatch {
+    /// The read of every paragraph `pattern` matches.
+    pub(crate) fn new(pattern: Arc<dyn Pattern>) -> HoldsMatch {
+        HoldsMatch { pattern }
+    }
+
+    /// Whether `text` holds a match (or the pattern cannot tell).
+    fn holds(&self, text: &str) -> bool {
+        self.pattern.may_match(text) && self.pattern.matches(text).map_or(true, |found| !found.is_empty())
+    }
+
+    /// Whether a paragraph of block `id` of `story` holds a match; a block the story does
+    /// not hold holds none.
+    fn block_holds(&self, story: &StoryPart, id: &str) -> bool {
+        let ids = &story.ids;
+        match ids.get(id) {
+            Some(Entry::Paragraph(k)) => ids
+                .paragraphs()
+                .get(k)
+                .is_some_and(|p| self.holds(&paragraph_text(&p.element, View::Current))),
+            Some(Entry::Table(k)) => ids.tables().get(k).is_some_and(|table| {
+                ids.paragraphs_within(&table.path)
+                    .iter()
+                    .any(|p| self.holds(&paragraph_text(&p.element, View::Current)))
+            }),
+            None => false,
+        }
+    }
+}
+
+impl ReadPredicate<WordDoc> for HoldsMatch {
+    fn depends(&self, head: &WordDoc, key: &Key) -> bool {
+        let Ok(docx) = head.docx() else { return true };
+        match key {
+            Key::Block { part, id } => docx.part(part).is_some_and(|story| self.block_holds(story, id)),
+            Key::Part(part) => docx.part(part).is_some(),
+            Key::Root(_) | Key::Seq(_) | Key::Annotations | Key::People => false,
+        }
     }
 }
 

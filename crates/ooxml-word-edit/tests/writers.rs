@@ -226,7 +226,8 @@ fn edit(rng: &mut Rng, targets: &[String], writer: u64) -> Edit {
         _ => Edit::Replace(ReplaceText {
             pattern: Arc::new(Literal::new(WORDS[rng.below(6)], rng.below(2) == 0, false, "omega").unwrap()),
             across: false,
-            count: Some(1),
+            // the first match, or every one (a find read by condition: design section 5)
+            count: (rng.below(2) == 0).then_some(1),
             keep: Keep::First,
             policy: policy(rng, writer),
         }),
