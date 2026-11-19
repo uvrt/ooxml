@@ -51,6 +51,11 @@ pub enum TableChange {
         /// The row, from 0.
         index: usize,
     },
+    /// Grid column `index` deleted.
+    DeleteColumn {
+        /// The grid column, from 0.
+        index: usize,
+    },
 }
 
 /// Change a table's rows: one edit, one step.
@@ -155,6 +160,9 @@ impl EditTable {
         let index = match self.change {
             TableChange::InsertRow { index, .. } => index.unwrap_or(rows.len().saturating_sub(1)),
             TableChange::DeleteRow { index } => index,
+            TableChange::DeleteColumn { index } => {
+                return super::columns::check_column(&work, &found.id, index).map(|()| index)
+            }
         };
         let Some(row) = rows.get(index).copied() else {
             return Err(EditError::Refused(format!("{} has no row {index}", found.id)));
@@ -194,15 +202,44 @@ impl Command<WordDoc> for EditTable {
 }
 
 /// The table being changed: its copy, where it is, and what its rows were.
-struct Held {
-    found: Found,
-    work: Work,
+pub(super) struct Held {
+    pub(super) found: Found,
+    pub(super) work: Work,
     /// The table's id once stamped.
-    id: String,
+    pub(super) id: String,
+    /// The table as stamped, before the edit.
+    pub(super) table: Arc<Element>,
     /// The table's place in its part's tree.
     root: Arc<Element>,
     /// The story's name.
     story: String,
+}
+
+impl Held {
+    /// Where `node` of the unchanged copy stands in its part (a copy's children are the
+    /// element's but its text).
+    pub(super) fn path_of(&self, node: Id) -> Option<Vec<u32>> {
+        let mut chain = Vec::new();
+        let mut at = node;
+        while let Some(parent) = self.work.parent(at) {
+            chain.push(self.work.children(parent).iter().position(|c| *c == at)?);
+            at = parent;
+        }
+        let mut path = self.found.path.clone();
+        let mut element = &self.table;
+        for k in chain.into_iter().rev() {
+            let (place, child) = element
+                .children()
+                .iter()
+                .enumerate()
+                .filter(|(_, n)| !matches!(n, Node::Text(_)))
+                .nth(k)?;
+            path.push(u32::try_from(place).ok()?);
+            let Node::Element(child) = child else { return None };
+            element = child;
+        }
+        Some(path)
+    }
 }
 
 impl EditTable {
@@ -234,6 +271,7 @@ impl EditTable {
             found,
             work,
             id,
+            table: Arc::clone(element),
             root: Arc::clone(tree.root()),
             story,
         };
@@ -242,6 +280,7 @@ impl EditTable {
         let mut out = match self.change {
             TableChange::InsertRow { below, plain, .. } => insert_row(sink, &mut held, index, below, plain, orders)?,
             TableChange::DeleteRow { .. } => delete_row(sink, &mut held, &docx, index, old_row, orders)?,
+            TableChange::DeleteColumn { .. } => super::columns::delete_column(sink, &mut held, &docx, index, orders)?,
         };
         out.renamed = renamed;
         out.table = sink
@@ -254,7 +293,7 @@ impl EditTable {
 }
 
 /// Run `write` under the policy: through a [`Stamp`] when tracked.
-fn under_policy(
+pub(super) fn under_policy(
     sink: &mut EditSink<'_, '_>,
     write: impl FnOnce(Option<&mut Stamp>) -> Result<()>,
 ) -> Result<Option<(crate::sink::Numbered, bool)>> {
@@ -268,7 +307,11 @@ fn under_policy(
 }
 
 /// The table's copy put in place.
-fn put(sink: &mut EditSink<'_, '_>, held: &Held, tracked: Option<(crate::sink::Numbered, bool)>) -> Result<()> {
+pub(super) fn put(
+    sink: &mut EditSink<'_, '_>,
+    held: &Held,
+    tracked: Option<(crate::sink::Numbered, bool)>,
+) -> Result<()> {
     let new = held
         .work
         .build()

@@ -8,6 +8,7 @@
 //! Must not: write but through the sink, or decide what a tool's arguments mean (the tool
 //! does).
 
+mod columns;
 mod new_row;
 mod props;
 mod rows;

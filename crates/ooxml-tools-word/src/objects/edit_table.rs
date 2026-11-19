@@ -4,27 +4,29 @@
 //! ids, the table's id after it (renamed where a row at the top changed), and the table as
 //! `table_json` gives it (its size as accepted and its text as plain Markdown).
 //!
+//! A row or column deleted says what of the file's own text it took out of the final view
+//! ([`crate::originals`]).
+//!
 //! Not ported yet, said in `unported` for the host to answer its own way: `set_cells`,
-//! `sync`, `from`, `copy_row`, `delete_row` (its report of the file's text removed), the
-//! columns, `merge` and `split`; a table with pending tracked structure or a placement
-//! record.
+//! `sync`, `from`, `copy_row`, `insert_column`, `merge` and `split`; a table with pending
+//! tracked structure or a placement record.
 //!
 //! Must not: change the document but through the command.
 
 use super::edit_table_args::{Side, TableAction, WordEditTable};
 use super::table_view::{table_view, TableView};
-use crate::review::Editing;
+use crate::originals::{add, Watch};
+use crate::review::{needed, Editing};
 use crate::structure::common::{call, outcome, policy, refused, Outcome};
 use ooxml_base::pyfmt::repr_str;
 use ooxml_tools::{ArgEnum, ErrorCode, Refusal, ToolError, ToolResult, TryCall, WayOut};
+use ooxml_word_edit::WordDoc;
 use ooxml_word_edit::{EditError, EditTable, TableChange, TableChanged};
+use ooxml_word_model::docx::tables::TableGrid;
 use ooxml_word_model::docx::{find_path, Docx};
 use ooxml_word_model::ids::{TableId, W};
 use ooxml_word_model::markdown::to_plain_markdown;
 use serde_json::{json, Map, Value};
-
-/// What `unported` says of a deletion, until its report of the file's text removed is.
-const DELETES: &str = "word_edit_table delete_row and delete_column (the report of the file's text removed)";
 
 impl From<TableChanged> for Outcome {
     fn from(edit: TableChanged) -> Self {
@@ -152,9 +154,6 @@ fn run(args: &WordEditTable, editing: &Editing<'_>, retry: &TryCall) -> Result<T
     match args.action {
         TableAction::Sync => return Ok(unported("word_edit_table sync", retry)),
         TableAction::SetCells => return Ok(unported("word_edit_table set_cells", retry)),
-        // the report of the file's own text a deletion takes out of the final view
-        // (docx-agent's `tools/originals.py`) is not ported yet
-        TableAction::DeleteRow => return Ok(unported(DELETES, retry)),
         _ => {}
     }
     if args.from.as_deref().is_some_and(|f| !f.is_empty()) {
@@ -170,9 +169,68 @@ fn run(args: &WordEditTable, editing: &Editing<'_>, retry: &TryCall) -> Result<T
             below,
             plain: true,
         },
+        TableAction::DeleteRow => TableChange::DeleteRow {
+            index: index(Some(args.index.ok_or_else(|| needed("index", "", retry.clone()))?)).unwrap_or(usize::MAX),
+        },
+        TableAction::DeleteColumn => {
+            let given = args.index.ok_or_else(|| needed("index", "", retry.clone()))?;
+            match column(&view, &kept_columns(&docx, &view), given, retry) {
+                Column::Grid(index) => TableChange::DeleteColumn { index },
+                Column::Off(error) => return Err(error),
+                Column::Accepted => {
+                    return Ok(unported(
+                        "word_edit_table column positions in a table as accepted (a grid column no cell covers)",
+                        retry,
+                    ))
+                }
+            }
+        }
         other => return Ok(unported(&format!("word_edit_table {}", other.as_str()), retry)),
     };
     Ok(finish(args, editing, &view, change, retry))
+}
+
+/// A column position against the table (docx-agent's `_Accepted.to_grid`).
+enum Column {
+    Grid(usize),
+    Off(ToolError),
+    /// The table's columns as accepted differ from its grid's.
+    Accepted,
+}
+
+fn column(view: &TableView, kept: &[usize], given: i64, retry: &TryCall) -> Column {
+    let count = view.column_count();
+    if kept != (0..count).collect::<Vec<_>>() {
+        return Column::Accepted;
+    }
+    match usize::try_from(given).ok().filter(|c| *c < count) {
+        Some(index) => Column::Grid(index),
+        None => Column::Off(
+            ToolError::refusal(
+                Refusal::NotFound,
+                format!(
+                    "index {given}: {} has columns 0 to {}",
+                    view.table.id,
+                    i64::try_from(count).unwrap_or(0) - 1
+                ),
+                WayOut::names((0..count.min(50)).map(|c| c.to_string())).unwrap_or_else(|| WayOut::call(retry.clone())),
+            )
+            .at("index"),
+        ),
+    }
+}
+
+/// The watch on the file's text a deletion takes out of the final view.
+fn watch<'a>(editing: &Editing<'_>, now: &'a WordDoc, view: &TableView, change: TableChange) -> Option<Watch<'a>> {
+    let opened = editing.opened.docx().ok()?;
+    let docx = now.docx().ok()?;
+    let mut watch = Watch::new(opened, now);
+    match change {
+        TableChange::DeleteRow { index } => watch.row(&docx, &view.part, &view.table, index),
+        TableChange::DeleteColumn { index } => watch.column(&docx, &view.part, &view.table, index),
+        TableChange::InsertRow { .. } => return None,
+    }
+    Some(watch)
 }
 
 /// Run the change as one command and reply as `_edit_table` does.
@@ -184,6 +242,9 @@ fn finish(
     retry: &TryCall,
 ) -> ToolResult<Value> {
     let table = view.table.id.clone();
+    let off_before = view.off_grid();
+    let before = editing.editor.store().snapshot();
+    let mut watched = watch(editing, before.doc(), view, change);
     let command = EditTable {
         table: args.table.clone(),
         change,
@@ -202,6 +263,22 @@ fn finish(
         .and_then(|docx| table_json(&docx, &now, head.doc(), retry));
     let summary = format!("{} on {table}", args.action.as_str());
     let mut result = outcome(&[Outcome::from(done.out)], summary, data);
+    if let Some(watched) = &mut watched {
+        add(&mut result, watched.report(head.doc(), editing.doc));
+    }
+    let off_now = head
+        .doc()
+        .docx()
+        .ok()
+        .and_then(|docx| table_view(head.doc(), &docx, &now, retry).ok())
+        .is_some_and(|v| v.off_grid());
+    if !off_before && off_now {
+        // round 58 (R128): the call is not kept for check's `made_by` yet (the session's)
+        result.warnings.push(format!(
+            "{now} is off its grid now (a row's cells do not reach across its columns: check's \
+             table_grid_mismatch); this call made it so (undo reverses it)"
+        ));
+    }
     if let ooxml_tools::Outcome::Done(found) = &mut result.outcome {
         if !found.changed.contains(&now) {
             found.changed.push(now.clone());
@@ -220,10 +297,15 @@ fn finish(
 fn table_json(docx: &Docx, id: &str, doc: &ooxml_word_edit::WordDoc, retry: &TryCall) -> Option<Value> {
     let view = table_view(doc, docx, id, retry).ok()?;
     let deleted = deleted_rows(&view.table);
+    let kept = kept_columns(docx, &view);
     let mut data = Map::new();
     data.insert("id".into(), json!(view.table.id));
     data.insert("rows".into(), json!(view.table.rows.len() - deleted.len()));
-    data.insert("columns".into(), json!(view.column_count()));
+    data.insert("columns".into(), json!(kept.len()));
+    let pending: Vec<usize> = (0..view.column_count()).filter(|c| !kept.contains(c)).collect();
+    if !pending.is_empty() {
+        data.insert("columns_deleted_pending".into(), json!(pending));
+    }
     if !deleted.is_empty() {
         data.insert("rows_deleted_pending".into(), json!(deleted));
     }
@@ -232,6 +314,14 @@ fn table_json(docx: &Docx, id: &str, doc: &ooxml_word_edit::WordDoc, retry: &Try
         json!(to_plain_markdown(docx, Some(&view.table.id)).ok()?),
     );
     Some(Value::Object(data))
+}
+
+/// The grid columns accepting the table's tracked changes keeps (`accepted_columns`).
+fn kept_columns(docx: &Docx, view: &TableView) -> Vec<usize> {
+    docx.part(&view.part).map_or_else(
+        || (0..view.column_count()).collect(),
+        |part| TableGrid::new(part, &view.table).kept_columns(),
+    )
 }
 
 /// The rows deleted as a tracked change (`w:trPr/w:del`), by place.

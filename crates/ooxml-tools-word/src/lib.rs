@@ -14,6 +14,7 @@
 mod describe;
 mod find_text;
 mod objects;
+mod originals;
 mod paging;
 mod placements;
 mod refusal;
