@@ -125,6 +125,15 @@ impl FieldLayout for TwoPages {
 
 /// `tool` called with `arguments` on a fresh copy of the made-up document.
 fn call<A: ToolArgs>(arguments: Value, tool: impl Fn(&A, &Editing<'_>) -> ToolResult<Value>) -> (Value, Editor) {
+    call_tracking(arguments, None, tool)
+}
+
+/// [`call`] with the host's tracking mode.
+fn call_tracking<A: ToolArgs>(
+    arguments: Value,
+    tracking: Option<&ooxml_word_edit::Tracking>,
+    tool: impl Fn(&A, &Editing<'_>) -> ToolResult<Value>,
+) -> (Value, Editor) {
     let editor = Editor::open(package(), StoreConfig::default(), Arc::new(Still), Arc::new(Unlimited)).unwrap();
     let opened = editor.store().snapshot().doc().clone();
     let caller = Caller::anonymous();
@@ -133,7 +142,7 @@ fn call<A: ToolArgs>(arguments: Value, tool: impl Fn(&A, &Editing<'_>) -> ToolRe
             editor: &CallEditor::new(&editor),
             caller: &caller,
             opened: &opened,
-            tracking: None,
+            tracking,
             doc: "d1",
             cancel: &Never,
             date: "2026-11-17T10:00:00Z",
@@ -206,6 +215,45 @@ fn a_bookmark_and_a_hyperlink_are_made_and_listed() {
         word_links,
     );
     assert_eq!(reply["created"], json!(["hl:p:10000002/0"]));
+}
+
+/// docx-agent's `_add_hyperlink_tracked`: the range's runs deleted, a new link after them
+/// holding their copies in an insertion; the paragraph's textId drawn again.
+#[test]
+fn a_hyperlink_made_while_tracking_deletes_and_inserts_the_range() {
+    let tracking = ooxml_word_edit::Tracking {
+        author: "Writer A".to_owned(),
+        date: "2026-11-17T10:00:00Z".to_owned(),
+    };
+    let (reply, editor) = call_tracking(
+        json!({"doc": "d1", "action": "add_hyperlink", "target": "p:10000002@0:5", "url": "https://example.com/"}),
+        Some(&tracking),
+        word_links,
+    );
+    assert_eq!(reply["created"], json!(["hl:p:10000002/0"]), "{reply}");
+    let tree = editor
+        .store()
+        .snapshot()
+        .doc()
+        .tree("word/document.xml")
+        .unwrap()
+        .unwrap();
+    let xml = String::from_utf8(tree.write()).unwrap();
+    let paragraph = &xml[xml.find(r#"w14:paraId="10000002""#).unwrap()..];
+    let deleted = paragraph.find("<w:del ").unwrap();
+    let link = paragraph.find("<w:hyperlink ").unwrap();
+    assert!(deleted < link, "the range deleted, then the link: {paragraph}");
+    assert!(paragraph[deleted..link].contains("<w:delText>Delta</w:delText>"));
+    let inside = &paragraph[link..paragraph.find("</w:hyperlink>").unwrap()];
+    assert!(
+        inside.contains(r#"<w:ins w:id="#) && inside.contains(r#"w:author="Writer A""#),
+        "{inside}"
+    );
+    assert!(inside.contains(r#"<w:rStyle w:val="Hyperlink"/>"#) && inside.contains("<w:t>Delta</w:t>"));
+    assert!(
+        !paragraph.starts_with(r#"w14:paraId="10000002" w14:textId="20000002""#),
+        "textId drawn again"
+    );
 }
 
 #[test]
