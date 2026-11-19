@@ -241,6 +241,7 @@ impl AddHyperlink {
             .iter()
             .position(|l| *l == link)
             .unwrap_or(0);
+        sink.keep_written(&part, &work);
         let new = work.build().ok_or_else(|| EditError::Path(part.clone()))?;
         sink.replace(&part, &paragraph.path, new, vec![block_key(&part, &new_id)])?;
         let made = format!("hl:{new_id}/{index}");

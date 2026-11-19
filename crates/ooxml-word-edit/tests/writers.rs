@@ -75,7 +75,7 @@ fn editor(bytes: &Arc<[u8]>) -> Editor {
 }
 
 const WORDS: &[&str] = &[
-    "alpha", "beta", "gamma", "delta", "epsilon", "report", "Quarter", "\t", "and",
+    "alpha", "beta", "gamma", "delta", "epsilon", "report", "Quarter", "\t", "and", "fin :", "«oui»", "quoi?",
 ];
 
 /// One of the common edits.

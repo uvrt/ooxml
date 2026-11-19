@@ -46,10 +46,10 @@ pub(crate) fn write_across(
     let tree = sink.doc().tree(&part)?.ok_or_else(|| EditError::NoPart(part.clone()))?;
     let path_error = || EditError::Path(part.clone());
     let (mut work, paragraphs) = stretch(tree.root(), &across.paths).ok_or_else(path_error)?;
-    let (Some(&first), Some(&last)) = (paragraphs.first(), paragraphs.last()) else {
-        return Err(path_error());
-    };
+    let (&first, &last) = paragraphs.first().zip(paragraphs.last()).ok_or_else(path_error)?;
+    sink.load_written(&part, &mut work);
     let wrote = sink.replace_across(&mut work, &paragraphs, (plan.start, plan.end), &plan.text, keep)?;
+    sink.keep_written(&part, &work);
     let root = work.root();
     let nodes = work.build_content(root).ok_or_else(path_error)?;
     let mut draws = Vec::new();

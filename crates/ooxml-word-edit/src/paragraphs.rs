@@ -219,6 +219,7 @@ pub(crate) fn insert_paragraph(
         work.add_previous(anchor_node, paragraph);
     }
     let wrote = sink.new_paragraph(&mut work, paragraph, last)?;
+    sink.keep_written(&part, &work);
     let nodes = work.build_content(work.root()).ok_or_else(path_error)?;
     let mut draws = Vec::new();
     let mut annotated = false;
@@ -272,7 +273,8 @@ impl Command<WordDoc> for InsertParagraph {
     fn prepare(&self, tx: &mut Txn<'_, WordDoc>) -> Result<ParagraphInserted> {
         let mut sink = EditSink::new(tx, self.policy.clone());
         let out = insert_paragraph(&mut sink, &self.anchor, (self.after, &self.text, self.style.as_deref()))?;
-        // docx-agent's batch, once it ends: revision ids unique
+        // docx-agent's batch, once it ends: the written text spaced, revision ids unique
+        sink.space_written()?;
         crate::revision_ids::make_unique(&mut sink)?;
         Ok(out)
     }
@@ -373,6 +375,7 @@ pub(crate) fn set_lines(sink: &mut EditSink<'_, '_>, target: &str, text: &str) -
     // docx-agent's batch, once it ends: revision ids unique (text boxes are synced by an
     // edit standing alone only)
     if out.changed && is_lines(text) {
+        sink.space_written()?;
         crate::revision_ids::make_unique(sink)?;
     }
     Ok(out)

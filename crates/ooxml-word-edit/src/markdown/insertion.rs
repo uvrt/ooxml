@@ -266,6 +266,7 @@ fn commit(
 ) -> Result<()> {
     let part = place.part.clone();
     let path_error = || EditError::Path(part.clone());
+    sink.keep_written(&part, work);
     let nodes = work.build_content(work.root()).ok_or_else(path_error)?;
     let mut draws = Vec::new();
     let stamped_docx = sink.docx()?;
