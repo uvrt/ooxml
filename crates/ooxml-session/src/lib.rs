@@ -45,5 +45,5 @@ pub use memory::{Account, MemoryBudget};
 pub use model::{ModelError, PackageDoc, PartChange, PartContent};
 pub use ooxml_store::Caller;
 pub use registry::{Call, EditFn, EditHandler, ReadHandler, Registry, Tool, TrackingFn};
-pub use session::{Opened, Session, SessionConfig, SessionStats};
+pub use session::{CallMade, Opened, Session, SessionConfig, SessionStats};
 pub use update::{PartUpdate, Updated};

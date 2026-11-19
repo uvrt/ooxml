@@ -9,7 +9,7 @@ use ooxml_derive::CacheBudget;
 use ooxml_opc::Package;
 use ooxml_store::{Caller, Clock, StoreConfig};
 use ooxml_tools::{ToolArgs, ToolResult};
-use ooxml_tools_word::{word_format, word_lists, Editing, WordFormat, WordLists, KIND};
+use ooxml_tools_word::{word_format, word_lists, CallEditor, Editing, WordFormat, WordLists, KIND};
 use ooxml_word_edit::Editor;
 use ooxml_zip::{Method, NewEntry, Writer};
 use serde_json::{json, Value};
@@ -81,7 +81,7 @@ fn call<A: ToolArgs>(arguments: Value, tool: impl Fn(&A, &Editing<'_>) -> ToolRe
     let caller = Caller::anonymous();
     let reply = {
         let editing = Editing {
-            editor: &editor,
+            editor: &CallEditor::new(&editor),
             caller: &caller,
             opened: &opened,
             tracking: None,

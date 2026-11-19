@@ -1,12 +1,18 @@
 """docx-agent's editing tools answered by the Rust session that owns the document (phase P2;
-lane P2c4: the session is the only owner, :mod:`.owner`).
+lane P2c4: the session is the only owner, :mod:`.owner`; lane P2c6: side by side).
 
 A tool with a Rust editing handler (:data:`SERVED`: ``word_set_text``, ``replace_text``, and
 each one ported after them) runs there, ahead of docx-agent's handler and its wrapper
 (:func:`docx_agent.tools._base.wrap`): the call's arguments, its ``$name`` refs resolved, go to
-``Session.call`` with the call's caller and the document's tracking mode; the session's
-version is the call's step (:meth:`~ooxml_edit.tools.owned.OwnedEntry.served`), its reply the
-result, its ``touched`` the result's.  The Python view of the document is not read.
+``Session.edit`` with the call's caller and the document's tracking mode; the versions the
+call's edits made are the call's step (:meth:`~ooxml_edit.tools.owned.OwnedEntry.served`,
+numbered in the order the session made them), its reply the result.  The Python view of the
+document is not read.
+
+Such a call runs without the document's lock (:func:`serve_owned`, the format's ``serve``:
+:mod:`ooxml_edit.tools.served`), beside the others the session serves -- the session prepares
+each edit on a snapshot and commits it in a short section of its own.  Where its checks
+compare layouts (Python lays them out) it runs under the lock (:func:`serve`).
 
 The Python handler answers instead -- on the view, committed through the bridge, counted by
 tool and reason (:func:`fallbacks`, ``edit_fallbacks{tool,reason}``), never silently -- where
@@ -25,6 +31,7 @@ from collections import Counter
 from typing import Any, Callable
 
 from ooxml_edit.tools import Result
+from ooxml_edit.tools.session import StepOwner
 from ooxml_edit.tools.session import utc_now
 
 from . import reads
@@ -99,33 +106,36 @@ def _why_not(call: Any, entry: Any) -> str | None:
     return None
 
 
-def _tracking(mirror: "reads.Mirror", entry: Any, context: Any) -> None:
-    """The session's tracking mode of the document made the call's (``entry.tracking``)."""
-    wanted = entry.tracking or None
-    if mirror.tracking == wanted:
-        return
-    arguments: dict[str, Any] = {"doc": mirror.doc, "on": bool(wanted)}
-    if wanted and wanted.get("author"):
-        arguments["author"] = wanted["author"]
-    reply, _images, _app = mirror.session.call("word_set_tracking", json.dumps(arguments), context=context)
-    if json.loads(reply).get("error") is not None:
-        raise _Fallback("tracking")
-    mirror.tracking = wanted
+def _tracking(call: Any, entry: Any, context: Any, counted: bool) -> None:
+    """The session's tracking mode of the document made the call's (``entry.tracking``); a
+    version that made (the settings written) is a step of its own, ``word_set_tracking``'s."""
+    mirror = entry.handle
+    with mirror.lock:
+        wanted = entry.tracking or None
+        if mirror.tracking == wanted:
+            return
+        arguments: dict[str, Any] = {"doc": mirror.doc, "on": bool(wanted)}
+        if wanted and wanted.get("author"):
+            arguments["author"] = wanted["author"]
+        reply, _app, made = mirror.session.edit("word_set_tracking", json.dumps(arguments), context=context)
+        if made is None and json.loads(reply).get("error") is not None:
+            raise _Fallback("tracking")
+        mirror.tracking = wanted
+    if made is not None:
+        first, head = made
+        entry.served(first, head, StepOwner(dict(call.caller), "word_set_tracking"), counted=counted)
 
 
 def _layout_before(call: Any, entry: Any) -> Any:
     """What the call's reflow is measured from, as docx-agent's wrapper takes it -- only where
     the view is current (the version before the edit; ``entry.held``: read as it is, no step
     of the view's opened for it); ``None`` where there is none."""
-    from ..tools._base import Before
     from ..tools.laid import laid_before, seen_before, state_bytes
 
     if not entry.view_current:
         return None
     document = entry.held
-    before = seen_before(document, state_bytes(call)) or laid_before(document)
-    call.touch(Before(before))
-    return before
+    return seen_before(document, state_bytes(call)) or laid_before(document)
 
 
 def _hand_engine(call: Any, entry: Any, before: Any) -> None:
@@ -133,54 +143,120 @@ def _hand_engine(call: Any, entry: Any, before: Any) -> None:
     pages), the toolbox's engine for them, as docx-agent's wrapper hands it after a Python
     edit: the version the session made is laid out where the document's layouts are held.
     Put on the view as it is (``entry.held``): the checks make it current, after the step."""
-    from ..tools._base import REFLOW_PAGES, engage_document, hand_to_checks
+    from ..tools._base import engage_document, hand_to_checks
 
-    if before is None or before.count > REFLOW_PAGES:
+    if not _compares(before):
         return
     engage_document(call, entry.held)
     hand_to_checks(entry.held)
 
 
-def _run(call: Any, entry: Any, arguments: dict[str, Any]) -> Result:
+def _compares(before: Any) -> bool:
+    """Whether a call's checks compare layouts, from ``before`` (Python lays them out)."""
+    from ..tools._base import REFLOW_PAGES
+
+    return before is not None and before.count <= REFLOW_PAGES
+
+
+def _edit(call: Any, entry: Any, arguments: dict[str, Any], counted: bool) -> tuple[Result, Any]:
+    """The call's edit made by the session: its result, and the versions it made (``(first,
+    head)``, ``None`` where it changed nothing).  ``counted``: as for
+    :meth:`~ooxml_edit.tools.owned.OwnedEntry.served`."""
     mirror = entry.handle
     tool = call.tool.name
     context = context_of(call.caller)
-    with mirror.lock:
-        _tracking(mirror, entry, context)
-        given = {"doc": mirror.doc, **{k: v for k, v in SERVED[tool](call, arguments).items()
-                                       if v is not None}}
-        reply, _images, app = mirror.session.call(tool, json.dumps(given), context=context)
-        envelope = json.loads(reply)
-        error = envelope.get("error")
-        if error is not None:
-            raise _Fallback(f"refusal: {error.get('code')}")
-        application = json.loads(app)
-        unported = application.get("unported") or []
-        if unported:
-            raise _Fallback(unported[0])
-        head = mirror.session.head(mirror.doc)
-    entry.served(head)
-    return _result(envelope)
+    _tracking(call, entry, context, counted)
+    given = {"doc": mirror.doc, **{k: v for k, v in SERVED[tool](call, arguments).items()
+                                   if v is not None}}
+    reply, app, made = mirror.session.edit(tool, json.dumps(given), context=context)
+    envelope = json.loads(reply)
+    error = envelope.get("error")
+    unported = json.loads(app).get("unported") or []
+    if made is None and error is not None:
+        raise _Fallback(f"refusal: {error.get('code')}")
+    if made is None and unported:
+        raise _Fallback(unported[0])
+    return _result(envelope), made
+
+
+def _count(tool: str, why: str | None) -> None:
+    with _COUNTS_LOCK:
+        if why is None:
+            _SERVED[tool] += 1
+        else:
+            _FALLBACKS[(tool, why)] += 1
+
+
+class Made:
+    """A check's marker (:attr:`~ooxml_edit.tools.served.Served.touched`): the version a
+    call the session served made, whose validation its checks report."""
+
+    def __init__(self, head: Any) -> None:
+        self.head = head
+
+
+def serve_owned(call: Any, arguments: dict[str, Any]) -> Any:
+    """The format's ``serve`` (lane P2c6): the call's edit made by the session beside the
+    others it serves, without the document's lock (:mod:`ooxml_edit.tools.served`).  ``None``
+    where the call's checks compare layouts (Python lays them out, under the lock: the
+    session edits there); a ``Declined`` where the Python handler answers (counted)."""
+    from ooxml_edit.tools.served import Declined, Served
+
+    entry = owned_entry(call)
+    if entry is None:
+        return None
+    tool = call.tool.name
+    why = _why_not(call, entry)
+    current = entry.view_current
+    if why is None:
+        before = _layout_before(call, entry)
+        if _compares(before):
+            return None
+        try:
+            result, made = _edit(call, entry, arguments, counted=True)
+        except _Fallback as fallback:
+            why = str(fallback)
+    if why is not None:
+        _count(tool, why)
+        return Declined(why)
+    _count(tool, None)
+    touched: list[Any] = [_before(before)] if current else []
+    if made is None:
+        return Served(result, None, None, touched)
+    return Served(result, made[0], made[1], [*touched, Made(made[1])])
+
+
+def _before(layout: Any) -> Any:
+    from ..tools._base import Before
+
+    return Before(layout)
 
 
 def serve(call: Any, arguments: dict[str, Any], python: Callable[[], Any]) -> Any:
-    """The call's edit made by the Rust session, or ``python()``'s where the session does not
-    answer as it yet (counted, with why).  Only for a call :func:`owned_entry` names."""
+    """Under the document's lock: the call's edit made by the session, or ``python()``'s where
+    the session does not answer as it yet (counted, with why).  Only for a call
+    :func:`owned_entry` names.  A call the session was tried for without the lock
+    (:attr:`~ooxml_edit.tools.dispatch.Call.owner_declined`) goes to ``python()`` at once."""
     entry = owned_entry(call)
     tool = call.tool.name
+    if call.owner_declined:
+        return python()
     try:
         why = _why_not(call, entry)
         if why is not None:
             raise _Fallback(why)
         before = _layout_before(call, entry)
-        result = _run(call, entry, arguments)
+        if entry.view_current:
+            call.touch(_before(before))
+        with entry.serving():
+            result, made = _edit(call, entry, arguments, counted=False)
+            if made is not None:
+                entry.served(*made)
         _hand_engine(call, entry, before)
-    except _Fallback as why:
-        with _COUNTS_LOCK:
-            _FALLBACKS[(tool, str(why))] += 1
+    except _Fallback as fallback:
+        _count(tool, str(fallback))
         return python()
-    with _COUNTS_LOCK:
-        _SERVED[tool] += 1
+    _count(tool, None)
     return result
 
 

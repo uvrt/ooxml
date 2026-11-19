@@ -35,8 +35,8 @@ pub use objects::{
 };
 pub use placements::Placer;
 pub use review::{
-    word_changes, word_comments, word_set_tracking, ChangeAction, ChangeDetail, ChangeKind, CommentAction, CommentItem,
-    Editing, Tracked, WordChanges, WordComments, WordSetTracking, COMMENT_WRITES,
+    word_changes, word_comments, word_set_tracking, CallEditor, ChangeAction, ChangeDetail, ChangeKind, CommentAction,
+    CommentItem, Editing, Made, Tracked, WordChanges, WordComments, WordSetTracking, COMMENT_WRITES,
 };
 pub use structure::{
     word_headers_footers, word_links, word_move, word_notes, word_sections, CopyStyles, FieldAction, HeaderAction,

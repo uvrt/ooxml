@@ -166,14 +166,17 @@ def owned_bytes(document: Any) -> bytes | None:
     return bytes(mirror.view_head.save())
 
 
-def owned_validation(entry: Any) -> dict[str, Any] | None:
+def owned_validation(entry: Any, made: Any = None) -> dict[str, Any] | None:
     """The validation delta of a document the session owns whose view is not current (after
-    a call the session served): the session's, against the problems it opened with; ``None``
-    where the Python checks answer (the view is current, so reading it costs nothing)."""
+    a call the session served): the session's, against the problems it opened with -- of
+    ``made`` (the version the call made, lane P2c6: other calls may have committed since),
+    else of the head; ``None`` where the Python checks answer (no version made by the call,
+    and the view is current, so reading it costs nothing)."""
     mirror = getattr(entry, "handle", None)
-    if not isinstance(mirror, reads.Mirror) or entry.view_current:
+    if not isinstance(mirror, reads.Mirror) or (made is None and entry.view_current):
         return None
-    found = mirror.session.validation(mirror.doc)
+    found = (mirror.session.validation(mirror.doc) if made is None
+             else mirror.session.validation(mirror.doc, at=made))
     if found is None:
         return None
     new, fixed, baseline = found

@@ -576,6 +576,12 @@ All are under 0.1 % of the edit budgets.
 - Reads of an owned document find the session's version by the entry's number (`Mirror.versions`), without the view; an address naming an id is left to the session, whose refusal goes to the Python path.
 - Owned documents take no block drafts (section 5's transactions replace them).
 
+**As built (lane P2c6: served calls side by side).**
+- A call the session serves runs without the tool layer's document lock (`ooxml_edit.tools.served`, the format's `DocumentFormat.serve`: docx-agent's `rust.edits.serve_owned`). It holds the document's gate (`ooxml_edit.tools.gate.Gate`) shared, beside the other served calls, while the session prepares its edit on a snapshot and commits it (section 5). Every holder of the document's lock holds the gate alone (`GatedLock`): a bridged tool's step, an undo or redo, the application's own changes; so a bridge never commits over a concurrent Rust edit, and is never rebased.
+- `Session::edit` (Python `Session.edit`) answers a call with the versions its own edits made (`CallMade`: its first's number, its last held), recorded per call by the handlers' editor (`ooxml_tools_word::CallEditor`); a changing call's reply version is its last. `OwnedHistory.served` numbers steps in the order the session made them (a call that ends first waits, under the history's own short lock, for the steps before its own), and counts each as the dispatcher counts a change under the lock: its parts, its owner, its refs, the committed version for reads.
+- The checks of a served call run after it, with nothing held: the session's validation of the version the call made (`Session.validation(doc, at=version)`). A call whose checks compare layouts (Python lays them out) is served under the lock instead.
+- Finds read each story part's paragraph texts kept per version (`ooxml_word_model::docx::PartTexts`, `StoryPart::texts`): a version takes the text of every paragraph it shares with the last version that read them, so `find_text`, `replace_text` and the edit core's finds walk only the paragraphs that changed.
+
 **Library API.**
 - `docx_agent.Document`, `pptx_agent` and `xlsx_agent` become handles. Methods that take and return plain values keep their signatures.
 - APIs that expose lxml (`.element`, `package.tree()`, `History`) warn for two releases and are then removed, each with a CHANGELOG note naming the replacement.

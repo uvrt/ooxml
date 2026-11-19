@@ -28,10 +28,12 @@ pub mod revisions;
 pub mod sections;
 pub mod tables;
 pub mod text;
+mod texts;
 mod versions;
 mod walk;
 
 pub use derived::Derived;
+pub use texts::PartTexts;
 pub use versions::Versions;
 
 pub use walk::{at_path, live_paths, Found};
@@ -61,6 +63,10 @@ pub struct StoryPart {
     /// The facts of the part's version before, where they were read: the blocks this one
     /// shares with it are taken from them.
     earlier: Option<Arc<PartFacts>>,
+    texts: OnceLock<Arc<PartTexts>>,
+    /// The paragraph texts of the latest earlier version of the part that read them: the
+    /// paragraphs this one shares with it are taken from them.
+    earlier_texts: Option<Arc<PartTexts>>,
 }
 
 impl StoryPart {
@@ -82,6 +88,8 @@ impl StoryPart {
             ids,
             facts: OnceLock::new(),
             earlier: earlier.and_then(|e| e.facts.get().cloned()),
+            texts: OnceLock::new(),
+            earlier_texts: earlier.and_then(|e| e.texts.get().or(e.earlier_texts.as_ref()).cloned()),
         }
     }
 
@@ -89,6 +97,12 @@ impl StoryPart {
     #[must_use]
     pub fn root(&self) -> &Arc<Element> {
         self.tree.root()
+    }
+
+    /// Each paragraph's text in the current view ([`PartTexts`]), read once.
+    pub fn texts(&self) -> &Arc<PartTexts> {
+        self.texts
+            .get_or_init(|| Arc::new(PartTexts::read(&self.ids, self.earlier_texts.as_deref())))
     }
 
     /// What the document-wide lookups read of the part ([`PartFacts`]), read once.

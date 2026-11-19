@@ -30,6 +30,7 @@ from ooxml_edit.tools import Result, ToolError, page_list, tool as _tool, valida
 from ooxml_edit.tools.worker import takes_affinity, takes_lane
 
 from ..rust import edits
+from ..rust.edits import Made
 from ..rust.owner import owned_validation
 from .laid import laid_before, seen_before, state_bytes
 from ..layout import (adopt, affinity, canon_of, layout_key, summary_for, convert_bytes, held_state, lay_out_bytes,
@@ -420,8 +421,10 @@ def checks(entry: Any, touched: Sequence[Any]) -> dict[str, Any]:
     compared."""
     before = next((t.layout for t in touched if isinstance(t, Before)), None)
     if before is None or before.count > REFLOW_PAGES:
-        # No layout to compare in Python: after an edit the Rust session made, its checks.
-        validated = owned_validation(entry)
+        # No layout to compare in Python: after an edit the Rust session made, its checks
+        # (of the version the call made, where it ran beside others: lane P2c6).
+        made = next((t.head for t in touched if isinstance(t, Made)), None)
+        validated = owned_validation(entry, made)
         if validated is not None:
             _relayout_owned(entry)
             return {"validate": validated, "reflow": None if before is None else STALE}

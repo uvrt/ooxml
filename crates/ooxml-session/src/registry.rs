@@ -15,10 +15,10 @@ use crate::DocKind;
 use ooxml_base::Cancel;
 use ooxml_store::Caller;
 use ooxml_tools::{Done, Failure, ToolArgs, ToolError, ToolResult, ToolSpec};
-use ooxml_tools_word::{Editing, Tracked, Version};
+use ooxml_tools_word::{CallEditor, Editing, Made, Tracked, Version};
 use serde_json::{Map, Value};
 use std::marker::PhantomData;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 /// A tool as the session dispatches it.
 pub trait Tool: Send + Sync {
@@ -43,6 +43,8 @@ pub struct Call<'a> {
     pub(crate) cancel: &'a dyn Cancel,
     /// The revision date edits made now carry (the session's clock, to the minute).
     pub(crate) date: String,
+    /// The versions the call's edits made (an editing tool's: [`CallEditor::made`]).
+    pub(crate) made: &'a Mutex<Option<Made>>,
 }
 
 impl Call<'_> {
@@ -178,15 +180,16 @@ impl<T: ToolArgs> Tool for EditHandler<T> {
             ooxml_word_edit::RevisionPolicy::Untracked => None,
         };
         let doc = call.doc.id().to_string();
+        let editor = CallEditor::new(&word.editor);
         let editing = Editing {
-            editor: &word.editor,
+            editor: &editor,
             caller: call.caller,
             opened: word.opened.doc(),
             tracking,
             doc: &doc,
             cancel: call.cancel,
         };
-        match &self.run {
+        let result = match &self.run {
             EditRun::Plain(run) => run(&args, &editing),
             EditRun::Tracking(run) => {
                 let (result, mode) = run(&args, &editing);
@@ -195,7 +198,9 @@ impl<T: ToolArgs> Tool for EditHandler<T> {
                 }
                 result
             }
-        }
+        };
+        *call.made.lock().unwrap_or_else(PoisonError::into_inner) = editor.made();
+        result
     }
 }
 

@@ -12,8 +12,8 @@ use ooxml_opc::Package;
 use ooxml_store::{Caller, Clock, StoreConfig};
 use ooxml_tools::{ToolArgs, ToolResult};
 use ooxml_tools_word::{
-    word_changes, word_comments, word_set_tracking, ChangeAction, ChangeDetail, CommentAction, CommentItem, Editing,
-    Tracked, WordChanges, WordComments, WordSetTracking, KIND,
+    word_changes, word_comments, word_set_tracking, CallEditor, ChangeAction, ChangeDetail, CommentAction, CommentItem,
+    Editing, Tracked, WordChanges, WordComments, WordSetTracking, KIND,
 };
 use ooxml_word_edit::{Editor, WordDoc};
 use ooxml_zip::{Method, NewEntry, Writer};
@@ -117,7 +117,7 @@ fn editor(package: Package) -> (Editor, WordDoc) {
     (editor, opened)
 }
 
-fn editing<'a>(editor: &'a Editor, opened: &'a WordDoc, caller: &'a Caller) -> Editing<'a> {
+fn editing<'a>(editor: &'a CallEditor<'a>, opened: &'a WordDoc, caller: &'a Caller) -> Editing<'a> {
     Editing {
         editor,
         caller,
@@ -172,7 +172,7 @@ fn changes_are_listed_grouped_and_as_records() {
     let caller = Caller::anonymous();
     let result = json(&word_changes(
         &changes(ChangeAction::List),
-        &editing(&editor, &opened, &caller),
+        &editing(&CallEditor::new(&editor), &opened, &caller),
     ));
     assert_eq!(result["summary"], "2 change(s)");
     assert_eq!(result["data"][0]["kind"], "replacement");
@@ -180,7 +180,10 @@ fn changes_are_listed_grouped_and_as_records() {
     assert_eq!(result["data"][0]["records"], serde_json::json!(["rev:1", "rev:2"]));
     let mut records = changes(ChangeAction::List);
     records.detail = Some(ChangeDetail::Records);
-    let result = json(&word_changes(&records, &editing(&editor, &opened, &caller)));
+    let result = json(&word_changes(
+        &records,
+        &editing(&CallEditor::new(&editor), &opened, &caller),
+    ));
     assert_eq!(result["summary"], "3 record(s)");
     assert_eq!(result["data"][2]["paragraph"], "p:10000002");
 }
@@ -191,13 +194,16 @@ fn accepting_by_author_settles_only_theirs_and_says_what_is_left() {
     let caller = Caller::anonymous();
     let mut call = changes(ChangeAction::Accept);
     call.author = Some("A".into());
-    let result = json(&word_changes(&call, &editing(&editor, &opened, &caller)));
+    let result = json(&word_changes(
+        &call,
+        &editing(&CallEditor::new(&editor), &opened, &caller),
+    ));
     assert_eq!(result["summary"], "Accepted 2 revision record(s)");
     assert_eq!(result["data"]["changes_left"], 1);
     assert_eq!(result["data"]["left_by_author"], serde_json::json!({"B": 1}));
     let left = json(&word_changes(
         &changes(ChangeAction::List),
-        &editing(&editor, &opened, &caller),
+        &editing(&CallEditor::new(&editor), &opened, &caller),
     ));
     assert_eq!(left["data"][0]["author"], "B");
 }
@@ -209,7 +215,10 @@ fn a_preview_changes_nothing() {
     let mut call = changes(ChangeAction::Preview);
     call.all = Some(true);
     let before = editor.store().snapshot().seq();
-    let result = json(&word_changes(&call, &editing(&editor, &opened, &caller)));
+    let result = json(&word_changes(
+        &call,
+        &editing(&CallEditor::new(&editor), &opened, &caller),
+    ));
     assert!(result["summary"]
         .as_str()
         .unwrap()
@@ -224,7 +233,7 @@ fn refusals_carry_the_way_out() {
     let caller = Caller::anonymous();
     let result = json(&word_changes(
         &changes(ChangeAction::Accept),
-        &editing(&editor, &opened, &caller),
+        &editing(&CallEditor::new(&editor), &opened, &caller),
     ));
     assert_eq!(result["error"]["code"], "invalid_arguments");
     assert!(result["error"]["valid_options"]
@@ -232,14 +241,20 @@ fn refusals_carry_the_way_out() {
         .is_some_and(|o| o.len() == 5));
     let mut call = changes(ChangeAction::Reject);
     call.ids = Some(vec!["rev:99".into()]);
-    let result = json(&word_changes(&call, &editing(&editor, &opened, &caller)));
+    let result = json(&word_changes(
+        &call,
+        &editing(&CallEditor::new(&editor), &opened, &caller),
+    ));
     assert_eq!(result["error"]["code"], "not_found");
     assert!(result["error"]["valid_options"]
         .as_array()
         .is_some_and(|o| !o.is_empty()));
     let mut call = changes(ChangeAction::List);
     call.all = Some(true);
-    let result = json(&word_changes(&call, &editing(&editor, &opened, &caller)));
+    let result = json(&word_changes(
+        &call,
+        &editing(&CallEditor::new(&editor), &opened, &caller),
+    ));
     assert_eq!(result["error"]["field"], "all");
 }
 
@@ -253,11 +268,11 @@ fn tracking_is_handed_back_and_words_switch_set_once() {
         author: Some("Reviewer".into()),
         word_switch: Some(true),
     };
-    let (result, mode) = word_set_tracking(&call, &editing(&editor, &opened, &caller));
+    let (result, mode) = word_set_tracking(&call, &editing(&CallEditor::new(&editor), &opened, &caller));
     assert_eq!(mode, Some(Tracked::On("Reviewer".into())));
     assert_eq!(json(&result)["data"]["word_switch"], true);
     let seq = editor.store().snapshot().seq();
-    let (again, _) = word_set_tracking(&call, &editing(&editor, &opened, &caller));
+    let (again, _) = word_set_tracking(&call, &editing(&CallEditor::new(&editor), &opened, &caller));
     assert_eq!(json(&again)["summary"], "Tracking on, as Reviewer; Word's switch on");
     assert_eq!(
         editor.store().snapshot().seq(),
@@ -269,7 +284,7 @@ fn tracking_is_handed_back_and_words_switch_set_once() {
         word_switch: None,
         ..call
     };
-    let (refused, mode) = word_set_tracking(&missing, &editing(&editor, &opened, &caller));
+    let (refused, mode) = word_set_tracking(&missing, &editing(&CallEditor::new(&editor), &opened, &caller));
     assert_eq!(mode, None);
     assert_eq!(json(&refused)["error"]["field"], "author");
 }
@@ -307,13 +322,13 @@ fn comments_are_resolved_and_deleted_with_their_replies() {
     };
     let listed = json(&word_comments(
         &call(CommentAction::List, None),
-        &editing(&editor, &opened, &caller),
+        &editing(&CallEditor::new(&editor), &opened, &caller),
     ));
     assert_eq!(listed["summary"], "1 thread(s)");
     assert_eq!(listed["data"][0]["replies"][0]["text"], "Agreed");
     let resolved = json(&word_comments(
         &call(CommentAction::Resolve, Some(vec![item("c#1")])),
-        &editing(&editor, &opened, &caller),
+        &editing(&CallEditor::new(&editor), &opened, &caller),
     ));
     assert_eq!(
         resolved["changed"],
@@ -322,12 +337,12 @@ fn comments_are_resolved_and_deleted_with_their_replies() {
     );
     let deleted = json(&word_comments(
         &call(CommentAction::Delete, Some(vec![item("c#0")])),
-        &editing(&editor, &opened, &caller),
+        &editing(&CallEditor::new(&editor), &opened, &caller),
     ));
     assert_eq!(deleted["removed"], serde_json::json!(["c#0", "c#1"]));
     let empty = json(&word_comments(
         &call(CommentAction::Delete, Some(Vec::new())),
-        &editing(&editor, &opened, &caller),
+        &editing(&CallEditor::new(&editor), &opened, &caller),
     ));
     assert_eq!(
         empty["summary"], "Nothing changed: items is empty",

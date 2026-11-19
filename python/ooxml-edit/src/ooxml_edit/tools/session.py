@@ -399,6 +399,11 @@ class DocumentFormat:
     #: no copy of its own, only a view made current when Python reads it (:mod:`.owned`, which
     #: says what the object does).  ``None``: the document the tool layer holds is the document.
     owner: Any = None
+    #: Lane P2c6: the changing calls the owner edits with itself, run side by side without the
+    #: document's lock (:mod:`.served`): ``serve(call, arguments) -> Served | None``, called
+    #: within :meth:`~.owned.OwnedEntry.serving`; ``None``: the call runs as any other (the
+    #: owner changed nothing).
+    serve: Callable[..., Any] | None = None
 
 
 #: :attr:`DocumentEntry.render_keys` and :attr:`DocumentEntry.font_keys`, in entries.

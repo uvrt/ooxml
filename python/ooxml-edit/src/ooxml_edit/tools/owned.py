@@ -42,11 +42,13 @@ Must not: keep a copy of the document beside the owner's, or read the view on a 
 from __future__ import annotations
 
 import contextvars
+import threading
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field
 from typing import Any, Iterator
 
 from ..history import Step
+from .gate import Gate, GatedLock
 from .session import Committed, DocumentEntry, StepOwner
 
 #: The steps kept for undo, as the owner keeps them (``ooxml_core.Session``'s depth).
@@ -76,6 +78,10 @@ class OwnedHistory:
         self._undo: list[int] = []
         self._redo: list[int] = []
         self._heads: dict[int, Any] = {version: head}
+        #: Steps are numbered under it, in the order the owner made them (lane P2c6).
+        self._cond = threading.Condition()
+        #: The calls the owner is serving now (:meth:`serving`).
+        self._serving = 0
 
     @property
     def version(self) -> int:
@@ -93,9 +99,49 @@ class OwnedHistory:
         """The owner's version numbered ``number`` (now: the latest), ``None`` when let go."""
         return self._heads.get(self._number if number is None else number)
 
+    @contextmanager
+    def serving(self) -> Iterator[None]:
+        """A call the owner serves (its edit made side by side with others', lane P2c6),
+        from before its edit until its step is numbered (:meth:`served`) or it made none."""
+        with self._cond:
+            self._serving += 1
+        try:
+            yield
+        finally:
+            with self._cond:
+                self._serving -= 1
+                self._cond.notify_all()
+
+    def served(self, first: int, head: Any, then: Any = None) -> tuple[int, int]:
+        """The step a served call made -- the owner's versions ``first`` (its number) to
+        ``head`` -- numbered once every version before ``first`` is: steps are numbered in
+        the order the owner made them, whatever order their calls end in.  ``then(number,
+        before)`` runs as it is numbered (what is counted per step, in that order).  The
+        step's number and the number before it.  Within :meth:`serving`."""
+        with self._cond:
+            while True:
+                at = self._heads[self._number].number
+                if at + 1 == first:
+                    break
+                if at + 1 > first or self._serving <= 1:
+                    # (No other call in flight could number the versions between.)
+                    raise OwnerDisagrees(f"{self._entry.doc_id}: a served step from the owner's "
+                                         f"version {first} where the history is at {at}")
+                self._cond.wait()
+            before = self._number
+            number = self.committed(head)
+            if then is not None:
+                then(number, before)
+            self._cond.notify_all()
+            return number, before
+
     def committed(self, head: Any, view: Any = None) -> int:
         """A step the owner made: its new head numbered, redo dropped; ``view``: the view
         that made it (a Python step), numbered as the head before the owner keeps it."""
+        with self._cond:
+            return self._committed(head, view)
+
+    def _committed(self, head: Any, view: Any) -> int:
         self._undo.append(self._number)
         if len(self._undo) > DEPTH:
             del self._undo[0]
@@ -129,10 +175,12 @@ class OwnedHistory:
         return self._redo[-1] if self._redo else None
 
     def undo(self) -> bool:
-        return self._move(self._entry.owner.undo, self._undo, self._redo)
+        with self._cond:
+            return self._move(self._entry.owner.undo, self._undo, self._redo)
 
     def redo(self) -> bool:
-        return self._move(self._entry.owner.redo, self._redo, self._undo)
+        with self._cond:
+            return self._move(self._entry.owner.redo, self._redo, self._undo)
 
     def _move(self, step: Any, source: list[int], target: list[int]) -> bool:
         head = step(self._entry.handle)
@@ -206,6 +254,8 @@ class OwnedEntry(DocumentEntry):
 
     owner: Any = field(default=None, repr=False)
     handle: Any = field(default=None, repr=False)
+    #: Held shared by each call the owner serves, alone with the document's lock (:meth:`own`).
+    gate: Gate = field(default_factory=Gate, repr=False)
     batch_depth: int = field(default=0, repr=False)
     _view_number: int | None = field(default=None, repr=False)
     _owned: OwnedHistory | None = field(default=None, repr=False)
@@ -217,7 +267,9 @@ class OwnedEntry(DocumentEntry):
 
     def own(self, owner: Any, handle: Any) -> None:
         """The document (the one this entry was made with) is ``owner``'s, which holds it
-        as ``handle`` (what its ``open`` gave)."""
+        as ``handle`` (what its ``open`` gave).  Its lock holds its :attr:`gate` alone
+        (:mod:`.gate`): the calls the owner serves hold it side by side."""
+        self.lock = GatedLock(self.gate)
         document = self.held
         self.owner = owner
         self.handle = handle
@@ -329,11 +381,35 @@ class OwnedEntry(DocumentEntry):
         owned.committed(head, self.held)
         self._view_number = owned.version
 
-    def served(self, head: Any) -> None:
-        """A call the owner served made ``head``: the call's step."""
+    @contextmanager
+    def serving(self) -> Iterator[None]:
+        """A call the owner serves, from before its edit to its step (:meth:`served`)."""
         assert self._owned is not None
-        if head.number != self._owned.head().number:
-            self._owned.committed(head)
+        with self._owned.serving():
+            yield
+
+    def served(self, first: int, head: Any, owner: StepOwner | None = None,
+               counted: bool = False) -> tuple[int, int]:
+        """A call the owner served made its versions ``first`` (the owner's number) to
+        ``head``: the call's step, numbered in the order the owner made it (within
+        :meth:`serving`).  ``counted``: the call ran without the document's lock (lane P2c6),
+        so the step is counted here as it is numbered -- the change and its parts, the
+        step's owner, the refs, the committed version for reads -- which the dispatcher
+        does under the lock otherwise.  The step's number and the number before it."""
+        assert self._owned is not None
+
+        def count(number: int, before: int) -> None:
+            change = OwnedChange(self)
+            change.start, change.end = before, number
+            self.keep_change(before, change)
+            self.note_change(change.parts, before)
+            if owner is not None:
+                self.owners[number] = owner
+                self.own_undos = [undo for undo in self.own_undos if undo.kind != "plain"]
+            self.ref_states.setdefault(number, dict(self.refs))
+            self.commit(None)
+
+        return self._owned.served(first, head, count if counted else None)
 
     @contextmanager
     def savepoint(self, start: Any = None) -> Iterator[bool]:

@@ -115,6 +115,19 @@ impl PyCallContext {
     }
 }
 
+/// A call that panicked, as its failure.
+fn panicked(name: &str, panic: &(dyn std::any::Any + Send)) -> ToolResult<Value> {
+    let what = panic
+        .downcast_ref::<&str>()
+        .map(|s| (*s).to_owned())
+        .or_else(|| panic.downcast_ref::<String>().cloned())
+        .unwrap_or_default();
+    ToolResult::failed(ToolError::internal(
+        format!("the call panicked: {what}"),
+        &format!("call:{name}"),
+    ))
+}
+
 fn context_of(context: Option<&PyCallContext>) -> CallContext {
     context.map(|c| c.inner.clone()).unwrap_or_default()
 }
@@ -284,17 +297,7 @@ impl PySession {
         let session = &self.inner;
         let text = py.detach(|| {
             let run = || session.call(name, Value::String(arguments), &context);
-            let result = catch_unwind(AssertUnwindSafe(run)).unwrap_or_else(|panic| {
-                let what = panic
-                    .downcast_ref::<&str>()
-                    .map(|s| (*s).to_owned())
-                    .or_else(|| panic.downcast_ref::<String>().cloned())
-                    .unwrap_or_default();
-                ToolResult::failed(ToolError::internal(
-                    format!("the call panicked: {what}"),
-                    &format!("call:{name}"),
-                ))
-            });
+            let result = catch_unwind(AssertUnwindSafe(run)).unwrap_or_else(|panic| panicked(name, &*panic));
             let app = serde_json::json!({"unported": result.unported()});
             let text = match limit {
                 Some(limit) => result.to_text(Some(limit)),
@@ -303,6 +306,32 @@ impl PySession {
             (text, compact(&app))
         });
         (text.0, Vec::new(), text.1)
+    }
+
+    /// Run the editing tool `name` as [`call`](Self::call) does (no limit, no images):
+    /// returns the envelope's JSON text, the application's JSON text (`unported`), and the
+    /// versions the call's edits made -- `(first, last)`: the number of the version its
+    /// first edit made, and the version its last made, held -- or `None` where it changed
+    /// nothing. A host that numbers the document's steps takes the call's step from these,
+    /// whatever other calls commit to the document meanwhile.
+    #[pyo3(signature = (name, arguments, *, context = None))]
+    fn edit(
+        &self,
+        py: Python<'_>,
+        name: &str,
+        arguments: String,
+        context: Option<PyRef<'_, PyCallContext>>,
+    ) -> (String, String, Option<(u64, PyVersion)>) {
+        let context = context_of(context.as_deref());
+        let session = &self.inner;
+        let (text, app, made) = py.detach(|| {
+            let run = || session.edit(name, Value::String(arguments), &context);
+            let (result, made) =
+                catch_unwind(AssertUnwindSafe(run)).unwrap_or_else(|panic| (panicked(name, &*panic), None));
+            let app = serde_json::json!({"unported": result.unported()});
+            (compact(&Value::Object(result.to_json())), compact(&app), made)
+        });
+        (text, app, made.map(|m| (m.first, PyVersion { inner: m.last })))
     }
 
     /// Commit a version's touched parts (bytes, or `None` to remove the part) as one step:
@@ -401,10 +430,18 @@ impl PySession {
     /// What the save gate compares for a Word document: `(new, fixed, baseline)`, the
     /// problems now that it did not open with, those it opened with that are gone, and how
     /// many it opened with; `None` for another kind.
-    fn validation(&self, py: Python<'_>, doc: &str) -> PyResult<Option<Validation>> {
+    /// `at`: of that version (a `Version` of the document) instead of the head.
+    #[pyo3(signature = (doc, *, at = None))]
+    fn validation(&self, py: Python<'_>, doc: &str, at: Option<PyRef<'_, PyVersion>>) -> PyResult<Option<Validation>> {
         let id = doc_id(doc, &self.inner)?;
         let session = &self.inner;
-        let delta = py.detach(|| session.validation(&id)).map_err(|e| to_py(&e))?;
+        let at = at.map(|v| v.inner.clone());
+        let delta = py
+            .detach(|| match &at {
+                Some(at) => session.validation_at(at),
+                None => session.validation(&id),
+            })
+            .map_err(|e| to_py(&e))?;
         Ok(delta.map(|d| (d.new, d.fixed, d.baseline)))
     }
 

@@ -562,6 +562,20 @@ impl<'a> Paragraphs<'a> {
         self.ids.paragraph_in(&at, k)
     }
 
+    /// Every paragraph's element, in document order: what [`Paragraphs::iter`] gives,
+    /// without making each one's id.
+    pub fn elements(&self) -> impl Iterator<Item = &'a Arc<Element>> + 'a {
+        self.ids.located().flat_map(|at| {
+            let body = at.body;
+            body.paragraphs.iter().filter_map(move |k| {
+                body.blocks
+                    .get(*k as usize)
+                    .filter(|b| b.kind == Kind::P)
+                    .map(|b| &b.element)
+            })
+        })
+    }
+
     /// Every paragraph, in document order.
     pub fn iter(&self) -> impl Iterator<Item = ParagraphId> + 'a {
         let ids = self.ids;

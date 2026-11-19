@@ -11,7 +11,7 @@ use ooxml_base::{Cancel, Limits};
 use ooxml_opc::Package;
 use ooxml_store::{Caller, StoreConfig};
 use ooxml_tools::ArgType;
-use ooxml_tools_word::{word_edit_table, Editing, WordEditTable};
+use ooxml_tools_word::{word_edit_table, CallEditor, Editing, WordEditTable};
 use ooxml_word_edit::{Editor, Tracking};
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -43,7 +43,7 @@ fn best(bytes: &Arc<[u8]>, arguments: &Value, tracking: Option<&Tracking>) -> Re
         opened.docx().map_err(|e| e.to_string())?;
         let caller = Caller::anonymous();
         let editing = Editing {
-            editor: &editor,
+            editor: &CallEditor::new(&editor),
             caller: &caller,
             opened: &opened,
             tracking,
