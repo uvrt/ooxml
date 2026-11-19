@@ -5,10 +5,10 @@
 //! paragraph; a block already where it would go stays (no change); and a heading's section
 //! as `section_blocks` reads it ([`section_blocks`]).
 //!
-//! Tracked, docx-agent writes Word's move form (`w:moveFrom`/`w:moveTo` and their ranges)
-//! or a deletion and an insertion: not ported yet ([`EditError::Unsupported`]), but for a
-//! content control or a block holding a note or comment reference, which move untracked
-//! (said in a warning) as docx-agent moves them.
+//! Tracked, a block moves as Word records a move (`w:moveFrom`/`w:moveTo` and their ranges)
+//! or as a deletion and an insertion ([`crate::moving_tracked`]). A content control and a
+//! block holding a note or comment reference move untracked (said in a warning), and one's
+//! own insertion moves untracked, as docx-agent moves them.
 //!
 //! Must not: write but through the sink.
 
@@ -59,6 +59,8 @@ pub struct BlocksMoved {
     pub changed: bool,
     /// Each block's id after the move, in order.
     pub moved: Vec<String>,
+    /// The copies a tracked move made (each the moved block's id from then on).
+    pub created: Vec<String>,
     /// Ids renamed, old to new.
     pub renamed: Vec<(String, String)>,
     /// What moved otherwise than asked.
@@ -213,7 +215,7 @@ fn holds_section_break(element: &Element) -> bool {
 
 /// Whether `element` (in `work`) can go: its container keeps a paragraph to end on
 /// (`_check_container_survives`).
-fn survives(work: &Work, element: Id, outside: &Outside) -> Result<()> {
+pub(crate) fn survives(work: &Work, element: Id, outside: &Outside) -> Result<()> {
     let mut container = work.parent(element);
     while let Some(c) = container.filter(|c| work.is_any(*c, W, &["sdtContent", "sdt", "customXml"])) {
         container = work.parent(c);
@@ -251,12 +253,12 @@ fn survives(work: &Work, element: Id, outside: &Outside) -> Result<()> {
 
 /// The blocks of a stretch's parent outside the stretch: whether the last after it is a
 /// table (`None`: none after it), and whether any stands before it.
-struct Outside {
-    after: Option<bool>,
-    before: bool,
+pub(crate) struct Outside {
+    pub(crate) after: Option<bool>,
+    pub(crate) before: bool,
 }
 
-fn outside_blocks(root: &Arc<Element>, parent: &[u32], (from, to): (u32, u32)) -> Outside {
+pub(crate) fn outside_blocks(root: &Arc<Element>, parent: &[u32], (from, to): (u32, u32)) -> Outside {
     let holder = if parent.is_empty() {
         Some(root)
     } else {
@@ -335,6 +337,49 @@ fn holds_reference(element: &Element) -> bool {
             ))
             || holds_reference(c)
     })
+}
+
+/// Whether each block moves tracked, and the warnings (by place) of those that do not.
+type TrackedBlocks = (Vec<bool>, Vec<(usize, String)>);
+
+impl MoveBlocks {
+    /// Under tracking, whether each block moves tracked, and the warnings of those that
+    /// move untracked although tracking is on (by their place): a content control (Word
+    /// has no revision for one) and a block holding a note or comment reference (a copy
+    /// would repeat it); one's own insertion moves untracked, said nowhere, as
+    /// docx-agent's `move_block` moves it.
+    fn tracked_blocks(&self, docx: &Docx, part: &str, blocks: &[BlockAt]) -> Result<TrackedBlocks> {
+        let mut tracked = vec![false; blocks.len()];
+        let mut warnings = Vec::new();
+        let RevisionPolicy::Tracked(tracking) = &self.policy else {
+            return Ok((tracked, warnings));
+        };
+        for (k, block) in blocks.iter().enumerate() {
+            let element = element_at(docx, part, block).ok_or_else(|| EditError::Path(part.to_owned()))?;
+            if block.kind == BlockKind::Control {
+                warnings.push((
+                    k,
+                    "is a content control: Word has no revision for a control, so it moved untracked".to_owned(),
+                ));
+            } else if holds_reference(&element) {
+                warnings.push((k, "holds a note or comment reference: moved untracked".to_owned()));
+            } else if let Some(flag) = tracked.get_mut(k) {
+                *flag = !own_insertion(&element, &tracking.author);
+            }
+        }
+        Ok((tracked, warnings))
+    }
+}
+
+/// Whether a block is wholly an insertion by `author` (`_own_insertion`): a paragraph whose
+/// mark and every run are, a table whose every row is.
+fn own_insertion(element: &Arc<Element>, author: &str) -> bool {
+    let work = Work::of(element, Vec::new());
+    if element.name().is(Some(W), "tbl") {
+        crate::table_delete::own_table(&work, work.root(), author)
+    } else {
+        crate::delete::own_insertion(&work, work.root(), author)
+    }
 }
 
 /// A stretch arranged: its work, its parent's place and its first and last child's index.
@@ -418,28 +463,12 @@ impl MoveBlocks {
                 id: ids.first().cloned(),
                 changed: false,
                 moved: ids,
+                created: Vec::new(),
                 renamed: Vec::new(),
                 warnings: Vec::new(),
             });
         }
-        let mut warnings: Vec<(usize, String)> = Vec::new();
-        if matches!(self.policy, RevisionPolicy::Tracked(_)) {
-            for (k, block) in blocks.iter().enumerate() {
-                let element = element_at(&docx, &part, block).ok_or_else(|| EditError::Path(part.clone()))?;
-                if block.kind == BlockKind::Control {
-                    warnings.push((
-                        k,
-                        "is a content control: Word has no revision for a control, so it moved untracked".to_owned(),
-                    ));
-                } else if holds_reference(&element) {
-                    warnings.push((k, "holds a note or comment reference: moved untracked".to_owned()));
-                } else {
-                    return Err(EditError::Unsupported(
-                        "a block moved while tracking changes".to_owned(),
-                    ));
-                }
-            }
-        }
+        let (tracked, warnings) = self.tracked_blocks(&docx, &part, &blocks)?;
         let renamed = stamp_document(sink, &docx)?;
         // docx-agent moves the blocks one by one, the first stamping the document: a later
         // block's warning names it by its stamped id
@@ -455,6 +484,27 @@ impl MoveBlocks {
                 format!("{id} {said}")
             })
             .collect();
+        if let (RevisionPolicy::Tracked(tracking), true) = (&self.policy, tracked.contains(&true)) {
+            let stamped: Vec<String> = ids.iter().map(|id| crate::ranges::renamed_id(&renamed, id)).collect();
+            let story = docx.part(&part).map_or_else(|| "body".to_owned(), |s| s.story.clone());
+            let plan = crate::moving_tracked::Planned {
+                part: &part,
+                story: &story,
+                blocks: &blocks,
+                ids: &stamped,
+                tracked: &tracked,
+                anchor: &anchor,
+            };
+            let done = self.move_tracked(sink, tracking, &plan, renamed)?;
+            return Ok(BlocksMoved {
+                id: done.moved.first().cloned(),
+                changed: true,
+                moved: done.moved,
+                created: done.created,
+                renamed: done.renamed,
+                warnings,
+            });
+        }
         let docx = sink.docx()?;
         let tree = sink.doc().tree(&part)?.ok_or_else(|| EditError::NoPart(part.clone()))?;
         let (work, parent, stretch) = self
@@ -471,6 +521,7 @@ impl MoveBlocks {
             id: moved.first().cloned(),
             changed: true,
             moved,
+            created: Vec::new(),
             renamed,
             warnings,
         })

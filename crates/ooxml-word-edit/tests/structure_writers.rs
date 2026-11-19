@@ -223,7 +223,7 @@ fn edit(rng: &mut Rng, targets: &[String], writer: u64, n: usize) -> Edit {
             blocks: Moving::Blocks(target),
             after: Some(other),
             before: None,
-            policy: RevisionPolicy::Untracked,
+            policy: policy(rng, writer),
         }),
     }
 }
@@ -585,4 +585,40 @@ fn a_note_moved_while_tracking_deletes_the_reference_and_inserts_a_copy() {
     assert!(!notes.contains(r#"<w:footnote w:id="2">"#), "{notes}");
     assert!(!body.contains(r#"<w:footnoteReference w:id="2"/>"#));
     assert!(body.contains(r#"<w:footnoteReference w:id="3"/>"#));
+}
+
+/// docx-agent's tracked `move_block`: the paragraph stays where it was in `w:moveFrom`, a
+/// copy with ids of its own goes where it moves in `w:moveTo`, both between named ranges;
+/// the copy's id is the block's from then on.
+#[test]
+fn a_paragraph_moved_while_tracking_takes_words_move_form() {
+    let editor = editor(&fixture("generated/ids-and-markup.docx"));
+    let moved = MoveBlocks {
+        blocks: Moving::Blocks("p:1A2B3C02".to_owned()),
+        after: Some("p:1A2B3C0D".to_owned()),
+        before: None,
+        policy: tracked("Writer A"),
+    };
+    let done = editor.run(&Caller::anonymous(), &moved).unwrap();
+    let copy = done.out.created.first().cloned().unwrap();
+    assert_eq!(done.out.moved, std::slice::from_ref(&copy));
+    assert!(done.out.renamed.contains(&("p:1A2B3C02".to_owned(), copy.clone())));
+    let (_, body) = notes_and_body(&editor);
+    let from = body.find("<w:moveFromRangeStart ").unwrap();
+    let to = body.find("<w:moveToRangeStart ").unwrap();
+    assert!(from < to, "moved down the body");
+    let name = |at: usize| {
+        body[at..]
+            .split("w:name=\"")
+            .nth(1)
+            .unwrap()
+            .split('"')
+            .next()
+            .unwrap()
+            .to_owned()
+    };
+    assert_eq!(name(from), name(to), "both ends named alike");
+    assert!(body[to..].starts_with("<w:moveToRangeStart ") && body.contains("<w:moveTo "));
+    let paragraph = format!(r#"w14:paraId="{}""#, copy.trim_start_matches("p:"));
+    assert!(body.contains(&paragraph), "the copy holds its id");
 }
