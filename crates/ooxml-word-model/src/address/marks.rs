@@ -2,6 +2,9 @@
 //! `_marker_place`, `_marker_range`): a bookmark by name, its range, and the range between
 //! any two markers (a comment's) in a view, with its text.
 //!
+//! [`Bookmarks`] holds every bookmark by name, for a caller that looks many up in one
+//! version (a field update's `REF`s and `PAGEREF`s): one walk, not one per name.
+//!
 //! Must not: resolve block ids (the resolver does) or change the document.
 
 use super::syntax::RangeText;
@@ -11,6 +14,7 @@ use crate::docx::{Docx, StoryPart};
 use crate::ids::{Entry, W};
 use ooxml_base::pyfmt::repr_str;
 use ooxml_xml::{Element, Node};
+use std::collections::{HashMap, HashSet};
 
 /// A bookmark: its name as written, its part, and its markers' places there.
 #[derive(Debug, Clone)]
@@ -30,6 +34,7 @@ pub struct Bookmark<'d> {
 #[must_use]
 pub fn bookmark_markers(docx: &Docx) -> Vec<Bookmark<'_>> {
     let mut out: Vec<Bookmark<'_>> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
     for part in &docx.parts {
         let mut starts = Vec::new();
         let mut ends: Vec<(String, Box<[u32]>)> = Vec::new();
@@ -40,11 +45,16 @@ pub fn bookmark_markers(docx: &Docx) -> Vec<Bookmark<'_>> {
                 ends.push((attr(e, "id"), path.to_vec().into_boxed_slice()));
             }
         });
+        // The last end of each id, as the walk back from the last one finds it.
+        let mut last_end: HashMap<&str, &[u32]> = HashMap::new();
+        for (id, path) in &ends {
+            last_end.insert(id.as_str(), path);
+        }
         for (name, id, start) in starts {
-            if out.iter().any(|b| b.name == name) {
+            if !seen.insert(name.clone()) {
                 continue;
             }
-            let end = ends.iter().rev().find(|(e, _)| *e == id).map(|(_, p)| p.clone());
+            let end = last_end.get(id.as_str()).map(|p| Box::<[u32]>::from(*p));
             out.push(Bookmark { name, part, start, end });
         }
     }
@@ -71,16 +81,43 @@ fn every(root: &Element, path: &mut Vec<u32>, visit: &mut dyn FnMut(&Element, &[
 /// # Errors
 /// `not_found` naming it.
 pub fn bookmark<'d>(docx: &'d Docx, name: &str) -> Result<Bookmark<'d>, AddressError> {
-    let name = name.strip_prefix("bm:").unwrap_or(name);
-    let markers = bookmark_markers(docx);
-    let wanted = crate::docx::casefold(name);
-    let position = markers
-        .iter()
-        .position(|b| b.name == name)
-        .or_else(|| markers.iter().position(|b| crate::docx::casefold(&b.name) == wanted));
-    match position {
-        Some(k) => Ok(markers.into_iter().nth(k).ok_or_else(|| no_bookmark(name))?),
-        None => Err(no_bookmark(name)),
+    Bookmarks::of(docx).get(name).cloned()
+}
+
+/// Every bookmark of a version by name, found as [`bookmark`] finds one.
+#[derive(Debug, Clone)]
+pub struct Bookmarks<'d> {
+    markers: Vec<Bookmark<'d>>,
+    exact: HashMap<String, usize>,
+    folded: HashMap<String, usize>,
+}
+
+impl<'d> Bookmarks<'d> {
+    /// `docx`'s bookmarks.
+    #[must_use]
+    pub fn of(docx: &'d Docx) -> Bookmarks<'d> {
+        let markers = bookmark_markers(docx);
+        let mut exact = HashMap::new();
+        let mut folded = HashMap::new();
+        for (k, marker) in markers.iter().enumerate() {
+            exact.entry(marker.name.clone()).or_insert(k);
+            folded.entry(crate::docx::casefold(&marker.name)).or_insert(k);
+        }
+        Bookmarks { markers, exact, folded }
+    }
+
+    /// The bookmark `name` names (`bm:` optional; matched in any case where no name is
+    /// equal).
+    ///
+    /// # Errors
+    /// `not_found` naming it.
+    pub fn get(&self, name: &str) -> Result<&Bookmark<'d>, AddressError> {
+        let name = name.strip_prefix("bm:").unwrap_or(name);
+        self.exact
+            .get(name)
+            .or_else(|| self.folded.get(&crate::docx::casefold(name)))
+            .and_then(|&k| self.markers.get(k))
+            .ok_or_else(|| no_bookmark(name))
     }
 }
 

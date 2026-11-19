@@ -12,10 +12,10 @@ use ooxml_opc::Package;
 use ooxml_store::{Caller, Clock, StoreConfig};
 use ooxml_tools::{ToolArgs, ToolResult};
 use ooxml_tools_word::{word_fields, word_headers_footers, Editing, EnginePages};
-use ooxml_word_edit::{Editor, FieldLayout};
+use ooxml_word_edit::{Editor, FieldLayout, LaidFields};
 use ooxml_word_pages::{DiskFonts, EngineBudgets, EngineOptions, FontSetup, PageEngine};
 use serde_json::{json, Value};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 struct Never;
@@ -63,6 +63,30 @@ fn engine() -> PageEngine {
         paint: Arc::new(Unlimited),
     };
     PageEngine::new(setup, EngineOptions::default(), budgets)
+}
+
+/// The port, its layouts counted and timed (what a call spends laying out).
+struct Timed {
+    inner: EnginePages,
+    spent: Mutex<Vec<Duration>>,
+}
+
+impl FieldLayout for Timed {
+    fn lay_out(&self, package: &Package) -> Result<Box<dyn LaidFields + '_>, String> {
+        let started = Instant::now();
+        let laid = self.inner.lay_out(package);
+        self.spent.lock().unwrap_or_else(PoisonError::into_inner).push(started.elapsed());
+        laid
+    }
+}
+
+impl Timed {
+    /// The layouts since the last call, as "n layouts, x ms".
+    fn take(&self) -> String {
+        let spent = std::mem::take(&mut *self.spent.lock().unwrap_or_else(PoisonError::into_inner));
+        let each: Vec<String> = spent.iter().map(|d| format!("{:.0}", d.as_secs_f64() * 1000.0)).collect();
+        format!("{} layouts [{}] ms", spent.len(), each.join(", "))
+    }
 }
 
 fn editor(bytes: &Arc<[u8]>) -> Editor {
@@ -136,11 +160,18 @@ fn field_tools_on_a_long_document() {
         ids.len(),
         started.elapsed().as_secs_f64() * 1000.0
     );
-    let layout = EnginePages::new(engine);
+    let layout = Timed {
+        inner: EnginePages::new(engine),
+        spent: Mutex::new(Vec::new()),
+    };
     let report = |name: &str, (took, reply): (Duration, Value)| {
         let summary = reply.get("summary").cloned().unwrap_or(Value::Null);
         let warnings = reply.get("warnings").cloned().unwrap_or(Value::Null);
-        println!("{name}: {:.1} ms -- {summary} {warnings}", took.as_secs_f64() * 1000.0);
+        println!(
+            "{name}: {:.1} ms -- {summary} {warnings}; over three runs {}",
+            took.as_secs_f64() * 1000.0,
+            layout.take()
+        );
     };
     report(
         "word_fields update",

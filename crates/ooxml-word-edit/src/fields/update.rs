@@ -25,6 +25,7 @@ use crate::sink::EditSink;
 use crate::work::{scope_above, Work};
 use crate::{EditError, Result, WordDoc};
 use ooxml_store::{Command, Txn};
+use ooxml_word_model::address::marks::Bookmarks;
 use ooxml_word_model::docx::{at_path, Docx};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -201,12 +202,14 @@ fn pass(
     let mut batch: Vec<(Located, String)> = Vec::new();
     let mut docx = sink.docx()?;
     let mut now: HashMap<Known, Located> = identified(&docx, held).into_iter().collect();
+    let mut marks = Bookmarks::of(&docx);
     for known in order {
         let Some(located) = now.get(&known).cloned() else {
             continue;
         };
         if located.found.keyword() == "TOC" {
             apply(sink, &std::mem::take(&mut batch))?;
+            drop(marks);
             docx = sink.docx()?;
             let fresh = identified(&docx, held).into_iter().find(|(i, _)| *i == known);
             let laid = pass
@@ -218,9 +221,10 @@ fn pass(
             }
             docx = sink.docx()?;
             now = identified(&docx, held).into_iter().collect();
+            marks = Bookmarks::of(&docx);
             continue;
         }
-        match value(sink.doc(), &docx, &located, pass.laid.as_deref(), pass.today) {
+        match value(sink.doc(), (&docx, &marks), &located, pass.laid.as_deref(), pass.today) {
             Ok(Some(text)) => batch.push((located, text)),
             Ok(None) => {}
             Err(_) => unknown.push(located.id()),
