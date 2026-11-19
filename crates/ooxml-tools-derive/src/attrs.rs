@@ -28,6 +28,8 @@ pub struct ToolAttrs {
     pub place_own: Vec<LitStr>,
     /// `place_find`: it takes `find` itself.
     pub place_find: bool,
+    /// `paths_first("from", ...)`: holding paths listed before the others.
+    pub paths_first: Vec<LitStr>,
 }
 
 /// One modifier of a field's property, in the order written: a call on `ooxml_tools::support::Field`.
@@ -114,6 +116,7 @@ pub fn tool_attrs(attrs: &[Attribute]) -> syn::Result<Option<ToolAttrs>> {
             "exactly_one" => out.exactly_one.push(string_list(&meta)?),
             "places" => out.places = Some(meta.value()?.parse()?),
             "place_own" => out.place_own = string_list(&meta)?,
+            "paths_first" => out.paths_first = string_list(&meta)?,
             "place_find" => out.place_find = flag(&meta)?,
             "mutates" | "strict" | "batchable" | "read_batchable" | "retry_key" => {
                 let value = flag(&meta)?;
@@ -181,7 +184,7 @@ fn field_attr(meta: &ParseNestedMeta, out: &mut FieldAttrs) -> syn::Result<()> {
             Modifier::Bound(key, value, float)
         }
         "min_length" | "max_length" | "min_items" | "max_items" => Modifier::Count(key, meta.value()?.parse()?),
-        "alias" => Modifier::Str(key, meta.value()?.parse()?),
+        "alias" | "names_as" => Modifier::Str(key, meta.value()?.parse()?),
         "format" => Modifier::Format(meta.value()?.parse()?),
         "default" => Modifier::Value(key, meta.value()?.parse()?),
         "value_alias" | "kind_description" => match string_list(meta)?.as_slice() {

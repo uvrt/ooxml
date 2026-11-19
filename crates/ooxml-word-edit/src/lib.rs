@@ -18,7 +18,8 @@
 //!   [`InsertText`], [`DeleteText`] and [`ReplaceText`] (text within a
 //!   paragraph, docx-agent's `_replace_ranges`); [`Review`] (accepting and rejecting tracked
 //!   changes, `word_changes`); [`SetWordTracking`] (Word's own Track Changes switch);
-//!   [`CommentEdits`] (resolving, reopening and deleting comments);
+//!   [`CommentEdits`] (resolving, reopening and deleting comments); [`FormatTable`] (a
+//!   table's, row's, column's and cell's formatting);
 //! - validation per change ([`validate`]: facts memoised by content, docx-agent's rules)
 //!   and what a change touched ([`touched`]);
 //! - [`Editor`], which runs a command through the store and reports its result with
@@ -44,6 +45,7 @@ pub mod find;
 mod inline;
 mod links;
 mod list_style;
+mod lists;
 mod markdown;
 mod marks;
 mod merge;
@@ -73,6 +75,7 @@ mod styled_text;
 mod switch;
 mod table_delete;
 mod table_delete_write;
+mod tables;
 mod text;
 mod text_range;
 mod textbox;
@@ -87,6 +90,9 @@ pub use doc::{Change, Draw, DrawFrom, Key, ModelError, Shared, WordDoc};
 pub use editor::{EditTiming, Edited, Editor};
 pub use error::{EditError, Result};
 pub use links::{hyperlink_span, AddBookmark, AddHyperlink, LinkEdited, RemoveBookmark, RenameBookmark};
+pub use lists::{
+    numbered_by_style, paragraphs_of, unnumbered_styles_like, LevelFormat, ListAction, ListEdit, ListStep, ListsEdited,
+};
 pub use markdown::{InsertMarkdown, MarkdownInserted, Options as MarkdownOptions, WriteMap};
 pub use moving::{section_blocks, BlocksMoved, MoveBlocks, Moving};
 pub use notes::{DeleteNote, EditNote, InsertNote, MoveNote, NoteEdited, NoteKind};
@@ -106,4 +112,8 @@ pub use sink::{EditSink, Keep, Numbered, TextWrite};
 pub use style_spans::{Span, SpansStyled, StyleSpans};
 pub use styled_text::{ItemEdit, SetStyledText, StyledRun, StyledTextSet};
 pub use switch::{tracks_changes, word_tracks_changes, SetWordTracking, WordTracking};
+pub use tables::{
+    pending_structure, CellValues, EditTable, FormatTable, Look, TableChange, TableChanged, TableEdit, TableFormat,
+    TableFormatted, TableValues, TableWidth,
+};
 pub use text_range::anchor;

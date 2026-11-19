@@ -10,7 +10,7 @@
 //! Must not: write but through the writer and the sink.
 
 use super::writer::{properties, Writer};
-use crate::list_style::{add_abstract, add_num, next_abstract_id, nsid_for, numbering_part, parsed};
+use crate::lists::numbering::{add_builtin, add_num, add_restart, copy_abstract, part_of};
 use crate::names::W;
 use crate::review::xml::make;
 use crate::sink::EditSink;
@@ -19,25 +19,9 @@ use crate::Result;
 use ooxml_word_model::docx::numbering::Lists;
 use ooxml_word_model::docx::{child_val, find_path, Docx};
 use ooxml_word_model::markdown::model::{Block, ListBlock};
-use ooxml_xml::Element;
-use std::sync::Arc;
 
 /// The deepest list level.
 const MAX_LEVEL: i64 = 8;
-/// Word's own bullet list: per level, (character, font, template code).
-const BULLETS: [(&str, &str, &str); 3] = [
-    ("\u{f0b7}", "Symbol", "04090001"),
-    ("o", "Courier New", "04090003"),
-    ("\u{f0a7}", "Wingdings", "04090005"),
-];
-/// Word's own numbered list: per level, (format, alignment, template code).
-const NUMBERS: [(&str, &str, &str); 3] = [
-    ("decimal", "left", "0409000F"),
-    ("lowerLetter", "left", "04090019"),
-    ("lowerRoman", "right", "0409001B"),
-];
-const WML: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
-
 impl Writer<'_> {
     /// The paragraphs of `list` at `depth` and the blocks inside its items.
     pub(crate) fn list(
@@ -62,9 +46,8 @@ impl Writer<'_> {
         match by_style {
             None => {
                 let abstract_id = self.abstract_for(sink, list.ordered)?;
-                let part = numbering_part(sink, &main)?;
-                let start = list.ordered.then_some((level, list.start, None));
-                num_id = Some(add_num(sink, &part, abstract_id, start)?);
+                let start: &[(i64, i64)] = if list.ordered { &[(level, list.start)] } else { &[] };
+                num_id = Some(add_num(sink, &main, abstract_id, start)?);
             }
             Some((style_num, style_level)) => {
                 let abstract_id = lists.abstract_of(style_num);
@@ -74,14 +57,8 @@ impl Writer<'_> {
                 let restarts = (list.ordered && list.start != 1) || counting.contains(&style_level);
                 counting.insert(style_level);
                 if restarts {
-                    num_id = Some(self.restart(
-                        sink,
-                        &docx,
-                        &lists,
-                        (abstract_id, style_num, style_level),
-                        list.start,
-                        style.as_deref(),
-                    )?);
+                    let restarted = (abstract_id.unwrap_or_default(), style_num, style_level);
+                    num_id = Some(add_restart(sink, &main, restarted, list.start, style.as_deref())?);
                     self.numbered = true;
                 }
             }
@@ -130,163 +107,24 @@ impl Writer<'_> {
         let main = docx.main.clone();
         let lists = Lists::read(&docx);
         let source = document_definition(&docx, &lists, ordered);
-        let part = numbering_part(sink, &main)?;
-        let abstract_id = next_abstract_id(sink, &part)?;
-        let node = match source.and_then(|s| lists.abstract_element(s).map(|e| (s, Arc::clone(e)))) {
-            Some((source, original)) => {
-                // `copy_abstract`: an id and a w:nsid of its own
-                let value = nsid_for(sink, &part, &format!("copy\0{source}\0{abstract_id}"))?;
-                copied_abstract(&original, abstract_id, &value)
+        let abstract_id = match source {
+            Some(source) => {
+                let part = part_of(sink, &main)?.ok_or_else(|| crate::EditError::NoPart("numbering".to_owned()))?;
+                copy_abstract(sink, &main, &part, source)?
             }
             None => {
                 let kind = if ordered { "number" } else { "bullet" };
-                let seed = format!("markdown\0{kind}\0{abstract_id}");
-                let nsid = nsid_for(sink, &part, &format!("{seed}nsid"))?;
-                let template = nsid_for(sink, &part, &format!("{seed}tmpl"))?;
-                parsed(&builtin_abstract(ordered, abstract_id, &nsid, &template))?
+                add_builtin(sink, &main, kind, |id| format!("markdown\0{kind}\0{id}"))?
             }
         };
-        add_abstract(sink, &part, node)?;
         self.abstracts.insert(ordered, abstract_id);
         Ok(abstract_id)
-    }
-
-    /// `add_restart`: an instance over the style's definition restarting `level` at
-    /// `start`; where the style's indent differs from the level's, the whole level in the
-    /// override with the style's indent.
-    fn restart(
-        &mut self,
-        sink: &mut EditSink<'_, '_>,
-        docx: &Docx,
-        lists: &Lists,
-        (abstract_id, num_id, level): (Option<i64>, i64, i64),
-        start: i64,
-        style: Option<&str>,
-    ) -> Result<i64> {
-        let part = numbering_part(sink, &docx.main)?;
-        let abstract_id = abstract_id.unwrap_or_default();
-        let style_ind = super::table::style_indent(docx, style);
-        let level_ind = lists
-            .level(docx, num_id, level)
-            .and_then(|l| find_path(&l, &["pPr", "ind"]).cloned());
-        let differs = matches!((&style_ind, &level_ind), (Some(s), Some(l)) if indent_form(s) != indent_form(l));
-        let source = lists
-            .abstract_element(lists.canonical(Some(abstract_id)).unwrap_or(abstract_id))
-            .and_then(|a| {
-                a.child_elements()
-                    .find(|l| l.name().is(Some(W), "lvl") && int_of(l.attribute(Some(W), "ilvl")) == Some(level))
-                    .cloned()
-            });
-        let lvl = match (differs, source, style_ind) {
-            (true, Some(source), Some(ind)) => Some(restarted_level(sink, &source, start, &ind)?),
-            _ => None,
-        };
-        add_num(sink, &part, abstract_id, Some((level, start, lvl)))
     }
 }
 
 /// Python's `int` of an attribute.
 fn int_of(value: Option<&str>) -> Option<i64> {
     ooxml_word_model::xmlread::py_int(value?)
-}
-
-/// An indent's `(left, hanging - firstLine)` in twips.
-fn indent_form(node: &Element) -> (i64, i64) {
-    let twips = |names: &[&str]| {
-        names
-            .iter()
-            .find_map(|n| int_of(node.attribute(Some(W), n)))
-            .unwrap_or(0)
-    };
-    (twips(&["left", "start"]), twips(&["hanging"]) - twips(&["firstLine"]))
-}
-
-/// A copy of `source` (a `w:lvl`) starting at `start`, its indent `ind`.
-fn restarted_level(sink: &EditSink<'_, '_>, source: &Arc<Element>, start: i64, ind: &Element) -> Result<Arc<Element>> {
-    let shared = sink.doc().shared_handle();
-    let orders = shared.facts.orders();
-    let mut work = Work::of(source, Vec::new());
-    let root = work.root();
-    let first = match work.find(root, W, "start") {
-        Some(found) => found,
-        None => {
-            let node = make(&mut work, "start", &[]);
-            work.insert(root, 0, node);
-            node
-        }
-    };
-    let val = work.qname(W, "val", "w");
-    work.set(first, val, &start.to_string());
-    let properties = match work.find(root, W, "pPr") {
-        Some(found) => found,
-        None => {
-            let node = make(&mut work, "pPr", &[]);
-            crate::marks::insert_in_order(&mut work, root, node, orders);
-            node
-        }
-    };
-    if let Some(old) = work.find(properties, W, "ind") {
-        work.remove(old);
-    }
-    let copy = work
-        .adopt(&Arc::new(ind.clone()))
-        .ok_or_else(|| crate::EditError::Path("numbering".into()))?;
-    crate::marks::insert_in_order(&mut work, properties, copy, orders);
-    work.build().ok_or_else(|| crate::EditError::Path("numbering".into()))
-}
-
-/// A copy of an abstract definition with the id `id` and the `w:nsid` `nsid`.
-fn copied_abstract(original: &Element, id: i64, nsid: &str) -> Arc<Element> {
-    let mut work = Work::of(&Arc::new(original.clone()), Vec::new());
-    let root = work.root();
-    let name = work.qname(W, "abstractNumId", "w");
-    work.set(root, name, &id.to_string());
-    let node = match work.find(root, W, "nsid") {
-        Some(found) => found,
-        None => {
-            let node = make(&mut work, "nsid", &[]);
-            work.insert(root, 0, node);
-            node
-        }
-    };
-    let val = work.qname(W, "val", "w");
-    work.set(node, val, nsid);
-    work.build().unwrap_or_else(|| Arc::new(original.clone()))
-}
-
-/// Word's own Bullets or Numbering definition (`builtin_abstract`), as XML.
-fn builtin_abstract(ordered: bool, abstract_id: i64, nsid: &str, template: &str) -> String {
-    let mut levels = String::new();
-    for (level, (&number, &bullet)) in NUMBERS.iter().cycle().zip(BULLETS.iter().cycle()).take(9).enumerate() {
-        let indent = 720 * (level + 1);
-        if ordered {
-            let (fmt, jc, code) = number;
-            let hanging = if jc == "right" { 180 } else { 360 };
-            levels.push_str(&format!(
-                "<w:lvl w:ilvl=\"{level}\" w:tplc=\"{code}\"><w:start w:val=\"1\"/><w:numFmt w:val=\"{fmt}\"/>\
-                 <w:lvlText w:val=\"%{}.\"/><w:lvlJc w:val=\"{jc}\"/>\
-                 <w:pPr><w:ind w:left=\"{indent}\" w:hanging=\"{hanging}\"/></w:pPr></w:lvl>",
-                level + 1
-            ));
-        } else {
-            let (char, font, code) = bullet;
-            let cs = if font == "Courier New" {
-                " w:cs=\"Courier New\""
-            } else {
-                ""
-            };
-            levels.push_str(&format!(
-                "<w:lvl w:ilvl=\"{level}\" w:tplc=\"{code}\"><w:start w:val=\"1\"/><w:numFmt w:val=\"bullet\"/>\
-                 <w:lvlText w:val=\"{char}\"/><w:lvlJc w:val=\"left\"/>\
-                 <w:pPr><w:ind w:left=\"{indent}\" w:hanging=\"360\"/></w:pPr>\
-                 <w:rPr><w:rFonts w:ascii=\"{font}\" w:hAnsi=\"{font}\"{cs} w:hint=\"default\"/></w:rPr></w:lvl>"
-            ));
-        }
-    }
-    format!(
-        "<w:abstractNum xmlns:w=\"{WML}\" w:abstractNumId=\"{abstract_id}\"><w:nsid w:val=\"{nsid}\"/>\
-         <w:multiLevelType w:val=\"hybridMultilevel\"/><w:tmpl w:val=\"{template}\"/>{levels}</w:abstractNum>"
-    )
 }
 
 /// `set_numbering`: the paragraph's own `w:numPr` (after its style).

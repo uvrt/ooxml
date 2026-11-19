@@ -40,6 +40,17 @@ pub enum Stories {
     All,
 }
 
+/// The document (or `range` of it) as plain Markdown, without the id comments (docx-agent's
+/// `to_markdown(..., ids=False)`), in the final view of the body: what an edit's reply
+/// shows of what it made. Not kept: a reply reads it once.
+///
+/// # Errors
+/// A [`RangeError`] when `range` names nothing or is malformed.
+pub fn to_plain_markdown(docx: &Docx, range: Option<&str>) -> Result<String, RangeError> {
+    let blocks = read::project(docx, range, ViewName::Final, Stories::Body, false)?;
+    Ok(render::render(&blocks))
+}
+
 /// The document (or `range` of it) as Markdown, kept with the version for the calls after.
 ///
 /// # Errors
@@ -52,7 +63,7 @@ pub fn to_markdown(
 ) -> Result<Arc<String>, RangeError> {
     let key = (range.map(str::to_owned), view, stories);
     docx.memo().markdown(key, || {
-        let blocks = read::project(docx, range, view, stories)?;
+        let blocks = read::project(docx, range, view, stories, true)?;
         Ok(render::render(&blocks))
     })
 }

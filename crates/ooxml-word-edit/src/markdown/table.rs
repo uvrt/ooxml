@@ -12,7 +12,7 @@ use crate::review::xml::make;
 use crate::sink::EditSink;
 use crate::work::{Id, Work};
 use crate::Result;
-use ooxml_word_model::docx::{child_val, find_path, style_id, style_kind, Docx};
+use ooxml_word_model::docx::{child_val, style_id, style_kind, Docx};
 use ooxml_word_model::markdown::model::{Inline, Table};
 use ooxml_xml::Element;
 
@@ -195,21 +195,4 @@ pub(crate) fn table_style_in_use(docx: &Docx) -> Option<String> {
             .iter()
             .any(|s| style_id(s) == id && style_kind(s) == "table")
     })
-}
-
-/// The style's `w:pPr/w:ind` through its `basedOn` chain.
-pub(crate) fn style_indent(docx: &Docx, style: Option<&str>) -> Option<Element> {
-    let mut current = style.map(str::to_owned);
-    let mut seen = std::collections::HashSet::new();
-    while let Some(id) = current.take() {
-        if !seen.insert(id.clone()) {
-            break;
-        }
-        let node = docx.style(&id)?;
-        if let Some(found) = find_path(node, &["pPr", "ind"]) {
-            return Some(found.clone());
-        }
-        current = child_val(node, "basedOn").map(str::to_owned);
-    }
-    None
 }
