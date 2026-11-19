@@ -15,8 +15,9 @@ use ooxml_store::{Caller, Clock, Seq, Snapshot, StoreConfig};
 use ooxml_store::{Command, Txn};
 use ooxml_word_edit::find::Literal;
 use ooxml_word_edit::{
-    DeleteBlock, DeleteText, EditError, Editor, InsertMarkdown, InsertParagraph, InsertText, Keep, MarkdownOptions,
-    ReplaceText, RevisionPolicy, SetCells, SetParagraphStyle, SetStyledText, SetText, Tracking, WordDoc, WriteMap,
+    CellWrite, DeleteBlock, DeleteText, EditError, Editor, InsertMarkdown, InsertParagraph, InsertText, Keep,
+    MarkdownOptions, ReplaceText, RevisionPolicy, SetCells, SetParagraphStyle, SetStyledText, SetText, Tracking,
+    WordDoc, WriteMap,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -150,6 +151,20 @@ fn policy(rng: &mut Rng, writer: u64) -> RevisionPolicy {
 }
 
 /// A random common edit (positions within the first characters, so they stay in range).
+/// Two lines into a cell of the first table.
+fn cells(rng: &mut Rng, writer: u64) -> SetCells {
+    SetCells {
+        table: "t@body/0".to_owned(),
+        writes: vec![CellWrite::at(
+            rng.below(2),
+            rng.below(2),
+            format!("{}\n{}", WORDS[rng.below(WORDS.len())], WORDS[rng.below(4)]),
+        )],
+        stamping: false,
+        policy: policy(rng, writer),
+    }
+}
+
 fn edit(rng: &mut Rng, targets: &[String], writer: u64) -> Edit {
     let target = targets[rng.below(targets.len())].clone();
     match rng.below(15) {
@@ -187,15 +202,7 @@ fn edit(rng: &mut Rng, targets: &[String], writer: u64) -> Edit {
             style: None,
             policy: policy(rng, writer),
         }),
-        12 => Edit::Cells(SetCells {
-            table: "t@body/0".to_owned(),
-            writes: vec![(
-                rng.below(2),
-                rng.below(2),
-                format!("{}\n{}", WORDS[rng.below(WORDS.len())], WORDS[rng.below(4)]),
-            )],
-            policy: policy(rng, writer),
-        }),
+        12 => Edit::Cells(cells(rng, writer)),
         11 => Edit::Block(DeleteBlock {
             target: if rng.below(4) == 0 {
                 "t@body/0".to_owned()

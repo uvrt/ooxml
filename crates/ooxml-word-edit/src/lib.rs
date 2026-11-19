@@ -119,7 +119,7 @@ pub use sections::{
     InsertSectionBreak, LinkToPrevious, RemoveSectionBreak, SectionEdited, SectionValues, SetSection, SetStoryText,
     StoryEdited, UnlinkFromPrevious,
 };
-pub use set_cells::{CellEdit, CellsSet, SetCells};
+pub use set_cells::{CellAxis, CellEdit, CellWrite, CellsSet, SetCells};
 pub use set_text::{SetText, TextEdited};
 pub use sink::{EditSink, Keep, Numbered, TextWrite};
 pub use style_spans::{Span, SpansStyled, StyleSpans};

@@ -20,6 +20,8 @@ mod shape;
 mod split;
 mod tracker;
 
+pub(crate) use rows::placed;
+
 pub use props::{CellValues, Look, TableValues, TableWidth};
 pub use rows::{pending_structure, EditTable, TableChange, TableChanged};
 
