@@ -433,10 +433,16 @@ struct Piece {
     new: std::ops::Range<usize>,
 }
 
-/// The pieces of `old` and `now` between the blocks both hold (the same allocation), taken
-/// in order: each new block found among the old ones after the last such block is one.
-/// Pieces where nothing differs are left out.
+/// The pieces of `old` and `now` between the blocks both hold (the same allocation), in
+/// order; pieces where nothing differs are left out. When a block both hold moved (the
+/// blocks both hold are not in the same order), the one piece between the blocks the two
+/// share at their ends: a move is compared as docx-agent's diff of the whole stretch finds it.
 fn pieces(old: &Stretch<'_>, now: &Stretch<'_>) -> Vec<Piece> {
+    in_order(old, now).unwrap_or_else(|| vec![trimmed(old, now)])
+}
+
+/// [`pieces`] when the blocks both hold are in the same order; `None` when one moved.
+fn in_order(old: &Stretch<'_>, now: &Stretch<'_>) -> Option<Vec<Piece>> {
     let at: HashMap<*const Element, usize> = old.iter().enumerate().map(|(i, (_, e))| (Arc::as_ptr(e), i)).collect();
     let mut out = Vec::new();
     let (mut i, mut j) = (0, 0);
@@ -445,7 +451,7 @@ fn pieces(old: &Stretch<'_>, now: &Stretch<'_>) -> Vec<Piece> {
             continue;
         };
         if found < i {
-            continue; // held by both, but moved: compared within its piece
+            return None; // held by both, but moved
         }
         if found > i || k > j {
             out.push(Piece {
@@ -461,7 +467,31 @@ fn pieces(old: &Stretch<'_>, now: &Stretch<'_>) -> Vec<Piece> {
             new: j..now.len(),
         });
     }
-    out
+    Some(out)
+}
+
+/// The one piece between the blocks `old` and `now` share at their start and at their end
+/// (the same allocations).
+fn trimmed(old: &Stretch<'_>, now: &Stretch<'_>) -> Piece {
+    let prefix = old
+        .iter()
+        .zip(now)
+        .take_while(|((_, a), (_, b))| Arc::ptr_eq(a, b))
+        .count();
+    let (old_rest, new_rest) = (
+        old.get(prefix..).unwrap_or_default(),
+        now.get(prefix..).unwrap_or_default(),
+    );
+    let suffix = old_rest
+        .iter()
+        .rev()
+        .zip(new_rest.iter().rev())
+        .take_while(|((_, a), (_, b))| Arc::ptr_eq(a, b))
+        .count();
+    Piece {
+        old: prefix..old.len() - suffix,
+        new: prefix..now.len() - suffix,
+    }
 }
 
 /// The heading sections holding the `changed` blocks (by place): from the heading at or
