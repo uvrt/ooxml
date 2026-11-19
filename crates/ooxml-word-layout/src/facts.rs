@@ -268,8 +268,8 @@ impl LayoutFacts {
 
     /// The facts of `layout`, laid out again from `before`, whose facts are `known`: a page
     /// it kept as `before` laid it out -- the very same laid page, drawing the very same
-    /// flow items, with the same number, story and frame, its section's margins the same,
-    /// the body's paragraphs at the same paths -- takes its facts from `known`; the rest
+    /// flow items, with the same number and story, its frame made of the same section
+    /// properties and header and footer heights, the body's paragraphs at the same paths -- takes its facts from `known`; the rest
     /// are made. Equal to [`LayoutFacts::of`] (an edit pays for the pages it moved).
     pub fn after(layout: &DocumentLayout, before: &DocumentLayout, known: &LayoutFacts) -> LayoutFacts {
         let same_paths = layout.mode15 == before.mode15 && layout.line_paths() == before.line_paths();
@@ -365,8 +365,7 @@ fn kept_page(layout: &DocumentLayout, before: &DocumentLayout, known: &LayoutFac
             .lines
             .iter()
             .any(|l| matches!(l.source, LineSource::Opening { .. }))
-        && same_margins(layout, before, info.section)
-        && crate::geometry::page_frame(layout, page, info.section, info) == Some(facts.frame)
+        && same_frame(layout, before, page, info)
         && laid
             .lines
             .iter()
@@ -383,12 +382,20 @@ fn laid_arc(layout: &DocumentLayout, page: usize) -> Option<&std::sync::Arc<crat
     pages.get(k).filter(|p| p.page == page)
 }
 
-/// Whether section `section` has the same margins in both layouts (its columns' edges).
-fn same_margins(layout: &DocumentLayout, before: &DocumentLayout, section: usize) -> bool {
-    match (layout.sections.get(section), before.sections.get(section)) {
-        (Some(a), Some(b)) => a.props.margins == b.props.margins,
+/// Whether page `page` (`info`) has the same frame in both layouts: what it is made of --
+/// its section's properties and its header's and footer's heights -- is the same.
+fn same_frame(layout: &DocumentLayout, before: &DocumentLayout, page: usize, info: &PageInfo) -> bool {
+    use crate::stories::StoryHeights;
+    let section = info.section;
+    let props = match (layout.sections.get(section), before.sections.get(section)) {
+        (Some(a), Some(b)) => std::sync::Arc::ptr_eq(&a.props, &b.props) || a.props == b.props,
         _ => false,
-    }
+    };
+    let heights = |l: &DocumentLayout| match l.page_stories.get(&page) {
+        Some(own) => *own,
+        None => l.stories.heights(section, info.story),
+    };
+    props && heights(layout) == heights(before)
 }
 
 /// Whether two flow items are the very same item.

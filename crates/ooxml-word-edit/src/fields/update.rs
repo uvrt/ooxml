@@ -102,11 +102,11 @@ pub(crate) fn settle(
     today: Day,
 ) -> Result<Vec<String>> {
     // A pass that changes nothing has settled: the next would lay out the same version.
-    let mut previous: Option<Vec<(String, String)>> = Some(state(sink.doc(), &*sink.docx()?));
+    let mut previous: Option<Vec<(String, String)>> = Some(state(sink.doc(), &*sink.docx()?, held));
     let mut unknown = Vec::new();
     for _ in 0..PASSES {
         unknown = pass(sink, held, layout, today)?;
-        let state: Vec<(String, String)> = state(sink.doc(), &*sink.docx()?);
+        let state: Vec<(String, String)> = state(sink.doc(), &*sink.docx()?, held);
         if previous.as_ref() == Some(&state) {
             return Ok(unknown);
         }
@@ -138,11 +138,16 @@ pub(crate) fn pass_on(
     }
 }
 
-/// Every field's instruction and result.
-fn state(doc: &WordDoc, docx: &Docx) -> Vec<(String, String)> {
-    all_fields(doc, docx)
+/// The instruction and result of each field `held` (as passes know them): what a pass
+/// changes. A field not held is written by no pass, and one a table of contents being
+/// rebuilt holds aside is in that table's result, so the document's fields are as they
+/// were exactly when these are.
+fn state(doc: &WordDoc, docx: &Docx, held: &[Known]) -> Vec<(String, String)> {
+    let wanted: HashSet<&Known> = held.iter().collect();
+    identified(doc, docx, held)
         .into_iter()
-        .map(|l| {
+        .filter(|(known, _)| wanted.contains(known))
+        .map(|(_, l)| {
             let text = docx
                 .part(&l.part)
                 .map_or_else(String::new, |p| result_text(p.root(), &l.found));
