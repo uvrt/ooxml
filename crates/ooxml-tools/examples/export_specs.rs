@@ -3,7 +3,7 @@
 //! `cargo run -p ooxml-tools --example export_specs`.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
 
-#[path = "../tests/ported/mod.rs"]
+#[path = "../tests/integration/ported/mod.rs"]
 mod ported;
 
 use std::path::PathBuf;

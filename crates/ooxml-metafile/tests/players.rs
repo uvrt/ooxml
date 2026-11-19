@@ -1,5 +1,5 @@
 //! The players on small made-up files, against what ooxml-common draws of the same bytes
-//! (the full differential is ooxml-oracle's: `tests/metafile_cases.rs`).
+//! (the full differential is ooxml-oracle's: `tests/integration/metafile_cases.rs`).
 
 use ooxml_metafile::{dib, draw, is_metafile, MetafileLimits, Options};
 

@@ -5,7 +5,7 @@ ooxml-common's scene goldens (``tests/test_goldens.py``) draw two kinds of input
 slides frozen as JSON under ``tests/fixtures/scenes/`` -- which the Rust test reads where
 they are -- and the scenes ``tests/handmade_scene.py`` builds in Python. This writes the
 second kind in the first's form (``goldens.to_data``: each dataclass a dict led by its class
-name, exact numbers), so ``cargo test``'s ``tests/scene_goldens.rs`` can draw them where
+name, exact numbers), so ``cargo test``'s ``tests/integration/scene_goldens.rs`` can draw them where
 Python is not installed::
 
     PYTHONPATH=python/ooxml-common/src:python/ooxml-common/tests \\
