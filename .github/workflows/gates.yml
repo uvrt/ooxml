@@ -287,7 +287,7 @@ jobs:
           cargo build --locked --release -p ooxml-oracle --bin word-edits-bench --bin word-objects-bench
           cargo test --locked --release -p ooxml-word-edit --test object_bench --test structure_bench --test style_bench --no-run
           cargo test --locked --release -p ooxml-tools-word --test template_bench --test fields_bench --no-run
-      # Each bench once; a failing bench is reported and the others still run.
+      # Each bench once, at most 30 minutes; a failing bench is reported and the others still run.
       - name: Benches
         env:
           DOC: ${{ runner.temp }}/long/long-61.docx
