@@ -6,6 +6,7 @@
 //! Must not: write blocks (the block writer does), or change the document.
 
 use super::blocks::Writer;
+use crate::table_read::{border, points, width};
 use ooxml_word_model::address::resolve::{in_table, marker_range, range_text};
 use ooxml_word_model::docx::comments::comments as comment_records;
 use ooxml_word_model::docx::revisions::{records as revision_records, Record as Revision, KINDS};
@@ -424,67 +425,4 @@ fn start_of(row: &Arc<Element>, column: usize) -> Option<usize> {
         .into_iter()
         .find(|(_, s, span)| (*s..s + span).contains(&column))
         .map(|(_, s, _)| s)
-}
-
-fn points(value: Option<&str>) -> Value {
-    value
-        .and_then(|v| v.trim().parse::<i64>().ok())
-        .and_then(|v| serde_json::Number::from_f64(v as f64 / 20.0))
-        .map_or(Value::Null, Value::Number)
-}
-
-fn border(node: &Element) -> Value {
-    let mut out = Map::new();
-    out.insert("style".into(), attribute(node, "val"));
-    let int = |local: &str| {
-        node.attribute(Some(W), local)
-            .map(|v| v.trim().parse::<i64>().unwrap_or(0))
-    };
-    if let Some(size) = int("sz") {
-        out.insert("size".into(), json!(size as f64 / 8.0));
-    }
-    if node.attribute(Some(W), "color").is_some() {
-        out.insert("color".into(), attribute(node, "color"));
-    }
-    if let Some(space) = int("space") {
-        out.insert("space".into(), json!(space));
-    }
-    if node.attribute(Some(W), "themeColor").is_some() {
-        out.insert("theme_color".into(), attribute(node, "themeColor"));
-    }
-    Value::Object(out)
-}
-
-/// A width as docx-agent reads it: `auto`, `n%` or points.
-fn width(node: Option<&Element>) -> Value {
-    let Some(node) = node else { return Value::Null };
-    let kind = node
-        .attribute(Some(W), "type")
-        .filter(|k| !k.is_empty())
-        .unwrap_or("dxa");
-    let raw = node.attribute(Some(W), "w").filter(|w| !w.is_empty()).unwrap_or("0");
-    match kind {
-        "auto" => Value::from("auto"),
-        "nil" => Value::Null,
-        "pct" => {
-            let text = raw.trim_end_matches('%');
-            let value = if raw.ends_with('%') {
-                text.parse::<f64>().ok()
-            } else {
-                text.parse::<i64>().ok().map(|v| v as f64 / 50.0)
-            };
-            value.map_or(Value::Null, |v| Value::from(format!("{}%", python_g(v))))
-        }
-        _ => points(Some(raw)),
-    }
-}
-
-/// Python's `{:g}` for the values a width in percent takes.
-fn python_g(value: f64) -> String {
-    if value.fract() == 0.0 && value.abs() < 1e16 {
-        format!("{}", value as i64)
-    } else {
-        let text = format!("{value:.6}");
-        text.trim_end_matches('0').trim_end_matches('.').to_owned()
-    }
 }

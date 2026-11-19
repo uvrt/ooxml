@@ -240,9 +240,49 @@ def template_cases(document) -> list[dict]:
     return [case, tracked(case)]
 
 
+def compare_cases(document) -> list[dict]:
+    """``word_compare_blocks`` (lane P4d7): tables compared with the first table, body
+    paragraphs with the first paragraph and with one stating direct formatting, a cell's
+    paragraph, blocks of two kinds, ids that name nothing; the same against the document
+    opened again (``reference_copy``: it is ``d2``), and a page past the end."""
+    blocks = [b for b in document.blocks() if b["id"]]
+    tables = [b["id"] for b in blocks if b["kind"] == "table"][:6]
+    paragraphs = [b["id"] for b in blocks if b["kind"] != "table"][:30]
+    out = []
+
+    def compare(blocks: list[str], reference: str, copy: bool = False, **more) -> None:
+        ref = {"doc": "d2", "block": reference} if copy else {"block": reference}
+        out.append({**call("word_compare_blocks", blocks=blocks, reference=ref, **more),
+                    **({"reference_copy": True} if copy else {})})
+
+    if tables:
+        compare(tables, tables[0])
+        compare(tables[::-1], tables[-1], copy=True)
+        cell = [p for p in document._index(document.package.document_part()).paragraphs
+                if p.id not in paragraphs][:3]
+        if cell and paragraphs:
+            compare([c.id for c in cell], paragraphs[0])
+    if paragraphs:
+        compare(paragraphs, paragraphs[0])
+        stated = [p for p in paragraphs if document._resolve(p)[1].element.find(f"{_W}pPr") is not None]
+        if stated:
+            compare(paragraphs, stated[-1], copy=True)
+        if tables:
+            compare(paragraphs[:2] + tables[:1], tables[0])
+    compare(["p:NOSUCH0"], (paragraphs or tables or ["p:NOSUCH1"])[0])
+    compare((paragraphs or ["p:NOSUCH0"])[:1], "t:NOSUCH2")
+    if paragraphs:
+        compare(paragraphs[:1], paragraphs[0], cursor="c5")
+    return out
+
+
+_W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+
+
 def cases(document) -> list[dict]:
     """Every style case for ``document``."""
-    found = list_cases(document) + format_cases(document) + styles_cases(document) + template_cases(document)
+    found = (list_cases(document) + format_cases(document) + styles_cases(document) + template_cases(document)
+             + compare_cases(document))
     wanted = os.environ.get("STYLE_TOOLS")       # a comma list, to run some tools only
     found = [c for c in found if not wanted or c["tool"] in wanted.split(",")]
     per_tool = int(os.environ.get("STYLE_PER_TOOL") or 0)   # the first n of each tool's

@@ -9,20 +9,22 @@ use ooxml_word_model::address::AddressError;
 
 /// `error` refused at `field`, `call` the call that would work.
 pub(crate) fn address_refusal(error: AddressError, field: &str, call: TryCall) -> ToolError {
+    address_refused(error, call).at(field)
+}
+
+/// [`address_refusal`] at no field: where today's tool names none (an address its handler
+/// resolves, not its arguments' validation).
+pub(crate) fn address_refused(error: AddressError, call: TryCall) -> ToolError {
     let code = match error.code {
         "not_found" => Refusal::NotFound,
         "refused" => Refusal::Refused,
         "ambiguous" => Refusal::Ambiguous,
-        "unit" => {
-            return ToolError::failure(Failure::Unit, error.message)
-                .with_way_out(WayOut::call(call))
-                .at(field)
-        }
+        "unit" => return ToolError::failure(Failure::Unit, error.message).with_way_out(WayOut::call(call)),
         _ => Refusal::InvalidArguments,
     };
     let way_out = match WayOut::names(error.options) {
         Some(options) => options.and_call(call),
         None => WayOut::call(call),
     };
-    ToolError::refusal(code, error.message, way_out).at(field)
+    ToolError::refusal(code, error.message, way_out)
 }

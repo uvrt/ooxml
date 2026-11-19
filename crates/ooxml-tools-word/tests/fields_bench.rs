@@ -127,6 +127,7 @@ fn best<A: ToolArgs>(
             cancel: &Never,
             date: "2026-11-17T10:00:00Z",
             layout: Some(layout),
+            others: ooxml_tools_word::Others::default(),
         };
         let (args, _) = A::accept(arguments.clone(), Some("docx")).unwrap();
         let started = Instant::now();

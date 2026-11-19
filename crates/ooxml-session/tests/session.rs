@@ -56,7 +56,11 @@ impl Clock for Ticking {
 }
 
 fn session() -> Session {
-    let context = Context {
+    Session::new(SessionConfig::default(), session_context())
+}
+
+fn session_context() -> Context {
+    Context {
         fonts: Arc::new(NoFonts),
         parts: Arc::new(NoParts),
         clock: Arc::new(Ticking::default()),
@@ -64,8 +68,7 @@ fn session() -> Session {
         cancel: Arc::new(Never),
         limits: Limits::default(),
         locale: Locale::default(),
-    };
-    Session::new(SessionConfig::default(), context)
+    }
 }
 
 const W: &str = r#"xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main""#;
@@ -176,6 +179,7 @@ fn refusals_carry_their_way_out() {
             "replace_text",
             "word_changes",
             "word_comments",
+            "word_compare_blocks",
             "word_edit_table",
             "word_fields",
             "word_format",
@@ -527,4 +531,59 @@ fn a_window_read_counts_lists_from_its_marks_across_versions() {
             .to_json(),
     );
     assert_eq!(whole["data"], json!(span(&v2, 260, 260)));
+}
+
+/// A reading tool that answers which other documents it was handed, at which versions.
+fn others_seen(
+    args: &ooxml_tools_word::WordCompareBlocks,
+    version: &ooxml_tools_word::Version<'_>,
+    _: &dyn Cancel,
+) -> Result<ooxml_tools::Done<Value>, ooxml_tools::ToolError> {
+    let id = args.reference.doc.clone().unwrap_or_default();
+    let seen = version.others.get(&id).map(|v| (v.name, v.number));
+    let mut done = ooxml_tools::Done::new("seen");
+    done.data = Some(json!({"other": seen}));
+    Ok(done)
+}
+
+#[test]
+fn a_call_is_handed_the_other_documents_it_names_pinned() {
+    let mut registry = ooxml_session::Registry::empty();
+    registry.register(Arc::new(ooxml_session::ReadHandler::<
+        ooxml_tools_word::WordCompareBlocks,
+    >::new(&[DocKind::Docx], others_seen)));
+    let s = Session::with_registry(SessionConfig::default(), session_context(), registry);
+    s.open(Arc::from(docx()), DocKind::Docx, "a.docx").unwrap();
+    let d2 = s.open(Arc::from(docx()), DocKind::Docx, "b.docx").unwrap();
+    let context = CallContext::default();
+    let two = format!("<w:document {W}><w:body><w:sdt/><w:sdt/></w:body></w:document>");
+    let (_, first) = s.commit(&d2, vec![put("word/document.xml", &two)], &context).unwrap();
+    s.update(
+        &d2,
+        vec![put("word/document.xml", &two.replace("<w:sdt/>", "<w:sdt/><w:sdt/>"))],
+        &context,
+    )
+    .unwrap();
+    let asked =
+        |reference: &str| json!({"doc": "d1", "blocks": ["p:1"], "reference": {"doc": reference, "block": "p:2"}});
+    // the head, unless the call's context pins the other document's version
+    assert_eq!(
+        call(&s, "word_compare_blocks", asked("d2"))["data"]["other"],
+        json!(["b.docx", 2])
+    );
+    let at = CallContext {
+        at: vec![first],
+        ..CallContext::default()
+    };
+    let read = Value::Object(s.call("word_compare_blocks", asked("d2"), &at).to_json());
+    assert_eq!(read["data"]["other"], json!(["b.docx", 1]));
+    // its own document is not another
+    assert_eq!(
+        call(&s, "word_compare_blocks", asked("d1"))["data"]["other"],
+        Value::Null
+    );
+    let refused = call(&s, "word_compare_blocks", asked("d9"));
+    assert_eq!(refused["error"]["code"], json!("not_found"));
+    assert_eq!(refused["error"]["field"], json!("reference.doc"));
+    assert_eq!(refused["error"]["valid_options"], json!(["d1", "d2"]));
 }

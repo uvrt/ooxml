@@ -92,6 +92,7 @@ fn call<A: ToolArgs>(arguments: Value, tool: impl Fn(&A, &Editing<'_>) -> ToolRe
             cancel: &Never,
             date: "2026-11-17T10:00:00Z",
             layout: None,
+            others: ooxml_tools_word::Others::default(),
         };
         let (args, _) = A::accept(arguments, Some("docx")).unwrap();
         Value::Object(tool(&args, &editing).to_json())
@@ -385,6 +386,7 @@ fn template(editor: &Editor, layout: Option<&dyn FieldLayout>) -> ToolResult<Val
         cancel: &Never,
         date: "2026-11-17T10:00:00Z",
         layout,
+        others: ooxml_tools_word::Others::default(),
     };
     let (args, _) = WordTemplate::accept(json!({"doc": "d1", "action": "upgrade_to_modern"}), Some("docx")).unwrap();
     word_template(&args, &editing)

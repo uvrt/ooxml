@@ -51,6 +51,7 @@ pub fn tool_case(bytes: &Arc<[u8]>, case: &Value) -> Result<Value, String> {
         cancel: &Never,
         date: "2026-11-17T10:00:00Z",
         layout: None,
+        others: ooxml_tools_word::Others::default(),
     };
     let arguments = case.get("arguments").cloned().unwrap_or(Value::Object(Map::new()));
     let tool = case.get("tool").and_then(Value::as_str).unwrap_or("");

@@ -127,6 +127,7 @@ fn editing<'a>(editor: &'a CallEditor<'a>, opened: &'a WordDoc, caller: &'a Call
         cancel: &Never,
         date: "2026-11-17T10:00:00Z",
         layout: None,
+        others: ooxml_tools_word::Others::default(),
     }
 }
 
