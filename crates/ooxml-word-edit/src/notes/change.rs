@@ -4,8 +4,8 @@
 //! it was one's own insertion, which goes outright with its note; a move puts a copy of the
 //! reference, in its run's formatting, at the new place and takes the old one out.
 //!
-//! A tracked move (docx-agent deletes the reference and inserts a copy of the note) is not
-//! ported yet ([`EditError::Unsupported`]).
+//! A tracked move (a reference has one note: the reference deleted, a copy of the note
+//! inserted) is [`super::moved`]'s.
 //!
 //! Must not: write but through the sink.
 
@@ -84,14 +84,15 @@ fn descend(work: &Work, element: &Arc<Element>, below: &[u32]) -> Option<Id> {
 }
 
 /// A paragraph made editable: its place, the work and the node at `below`.
-struct Editable {
-    part: String,
-    path: Vec<u32>,
-    work: Work,
-    node: Id,
+pub(super) struct Editable {
+    pub(super) part: String,
+    pub(super) path: Vec<u32>,
+    pub(super) work: Work,
+    pub(super) node: Id,
 }
 
-fn editable(sink: &EditSink<'_, '_>, part: &str, reference: &[u32]) -> Result<Editable> {
+/// The paragraph holding the element at `reference` of `part`, made editable.
+pub(super) fn editable(sink: &EditSink<'_, '_>, part: &str, reference: &[u32]) -> Result<Editable> {
     let tree = sink
         .doc()
         .tree(part)?
@@ -110,7 +111,7 @@ fn editable(sink: &EditSink<'_, '_>, part: &str, reference: &[u32]) -> Result<Ed
 }
 
 /// The paragraph written back, its textId drawn again when `renew`.
-fn write_back(
+pub(super) fn write_back(
     sink: &mut EditSink<'_, '_>,
     edited: &Editable,
     numbered: Option<crate::sink::Numbered>,
@@ -196,9 +197,11 @@ impl DeleteNote {
             if dated {
                 sink.ensure_w14(part, false, &[("w16du", W16DU)])?;
             }
+            // the people listed as docx-agent's stamp lists them, before the note goes: its
+            // own records still name the author
+            sink.people(Some(&tracking.author), Some(&tracking.author))?;
             if gone {
                 remove_note(&mut *sink, &self.note)?;
-                sink.people(Some(&tracking.author), Some(&tracking.author))?;
                 return Ok(NoteEdited {
                     id: None,
                     removed: vec![self.note.clone()],
@@ -206,7 +209,6 @@ impl DeleteNote {
                     created: Vec::new(),
                 });
             }
-            sink.people(Some(&tracking.author), Some(&tracking.author))?;
             return Ok(NoteEdited {
                 id: Some(self.note.clone()),
                 renamed,
@@ -271,8 +273,8 @@ impl MoveNote {
             return Err(EditError::Refused(format!("{} has no reference to move", self.note)));
         }
         let (paragraph, offset) = place(sink.doc(), &docx, &self.to)?;
-        if matches!(self.policy, RevisionPolicy::Tracked(_)) {
-            return Err(EditError::Unsupported("a note moved while tracking changes".to_owned()));
+        if let RevisionPolicy::Tracked(tracking) = &self.policy {
+            return self.edit_tracked(sink, tracking.clone(), &paragraph, offset);
         }
         let renamed = stamp_document(&mut *sink, &docx)?;
         let docx = sink.docx()?;
@@ -283,20 +285,7 @@ impl MoveNote {
         let mut new = if same {
             None
         } else {
-            let tree = sink
-                .doc()
-                .tree(&paragraph.part)?
-                .ok_or_else(|| EditError::NoPart(paragraph.part.clone()))?;
-            let element =
-                at_path(tree.root(), &paragraph.path).ok_or_else(|| EditError::Path(paragraph.part.clone()))?;
-            let work = Work::of(element, scope_above(tree.root(), &paragraph.path));
-            let root = work.root();
-            Some(Editable {
-                part: paragraph.part.clone(),
-                path: paragraph.path.to_vec(),
-                work,
-                node: root,
-            })
+            Some(paragraph_editable(&*sink, &paragraph.part, &paragraph.path)?)
         };
         let old_node = old.node;
         let properties = old.work.parent(old_node).and_then(|run| old.work.find(run, W, "rPr"));
@@ -333,9 +322,32 @@ impl MoveNote {
     }
 }
 
+/// The paragraph at `path` of `part` made editable, its root the node.
+pub(super) fn paragraph_editable(sink: &EditSink<'_, '_>, part: &str, path: &[u32]) -> Result<Editable> {
+    let tree = sink
+        .doc()
+        .tree(part)?
+        .ok_or_else(|| EditError::NoPart(part.to_owned()))?;
+    let element = at_path(tree.root(), path).ok_or_else(|| EditError::Path(part.to_owned()))?;
+    let work = Work::of(element, scope_above(tree.root(), path));
+    let root = work.root();
+    Ok(Editable {
+        part: part.to_owned(),
+        path: path.to_vec(),
+        work,
+        node: root,
+    })
+}
+
 /// A reference's copy put in a run of its own at `offset` of `paragraph`, in the old
-/// run's formatting (`properties`) where it had any.
-fn put_reference(work: &mut Work, paragraph: Id, offset: usize, reference: Id, properties: Option<Id>) -> Result<()> {
+/// run's formatting (`properties`) where it had any: the run.
+pub(super) fn put_reference(
+    work: &mut Work,
+    paragraph: Id,
+    offset: usize,
+    reference: Id,
+    properties: Option<Id>,
+) -> Result<Id> {
     let run = crate::inline::new_run(work, paragraph, offset, &[reference])?;
     if let Some(properties) = properties {
         if let Some(existing) = work.find(run, W, "rPr") {
@@ -343,10 +355,10 @@ fn put_reference(work: &mut Work, paragraph: Id, offset: usize, reference: Id, p
         }
         work.insert(run, 0, properties);
     }
-    Ok(())
+    Ok(run)
 }
 
 /// `node` of `from` copied into `into` (detached).
-fn import(into: &mut Work, from: &Work, node: Id) -> Option<Id> {
+pub(super) fn import(into: &mut Work, from: &Work, node: Id) -> Option<Id> {
     into.adopt(&from.build_element(node)?)
 }
