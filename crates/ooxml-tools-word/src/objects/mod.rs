@@ -20,5 +20,5 @@ pub use drawings_args::{Against, ControlAction, ControlType, DrawingAction, Word
 pub use edit_table::word_edit_table;
 pub use edit_table_args::{CellArg, KeyPair, Loose, Position, Side, TableAction, WordEditTable};
 pub use format_table::word_format_table;
-pub(crate) use table_view::{read_look, LOOK_NAMES};
 pub use format_table_args::{Across, BorderStyle, HeightRule, Look, Scope, Vertical, WidthOf, WordFormatTable};
+pub(crate) use table_view::{read_look, LOOK_NAMES};

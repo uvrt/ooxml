@@ -105,7 +105,9 @@ impl Sheet {
     /// # Errors
     /// When the copy is gone (never: it is made on open).
     pub(crate) fn work<'s>(&self, space: &'s mut Space) -> Result<&'s mut Work> {
-        space.get_mut(&self.part).ok_or_else(|| EditError::NoPart(self.part.clone()))
+        space
+            .get_mut(&self.part)
+            .ok_or_else(|| EditError::NoPart(self.part.clone()))
     }
 
     /// The copy, read only.
@@ -113,7 +115,9 @@ impl Sheet {
     /// # Errors
     /// As [`Sheet::work`].
     pub(crate) fn view<'s>(&self, space: &'s Space) -> Result<&'s Work> {
-        space.get(&self.part).ok_or_else(|| EditError::NoPart(self.part.clone()))
+        space
+            .get(&self.part)
+            .ok_or_else(|| EditError::NoPart(self.part.clone()))
     }
 }
 
@@ -168,13 +172,15 @@ pub(crate) fn find(work: &Work, root: Id, name: &str, kind: Option<&str>) -> Opt
         &|s| s.id == name,
         &|s| casefold(&s.id) == wanted,
     ];
-    tests
-        .iter()
-        .find_map(|test| styles.iter().find(|s| test(s)).cloned())
+    tests.iter().find_map(|test| styles.iter().find(|s| test(s)).cloned())
 }
 
 /// [`find`] on a version's style sheet: the `w:style` `name` names.
-pub(crate) fn find_in(docx: &ooxml_word_model::docx::Docx, name: &str, kind: Option<&str>) -> Option<Arc<ooxml_xml::Element>> {
+pub(crate) fn find_in(
+    docx: &ooxml_word_model::docx::Docx,
+    name: &str,
+    kind: Option<&str>,
+) -> Option<Arc<ooxml_xml::Element>> {
     use ooxml_word_model::docx::{style_id, style_kind, style_name};
     let styles: Vec<&Arc<ooxml_xml::Element>> = docx
         .styles()

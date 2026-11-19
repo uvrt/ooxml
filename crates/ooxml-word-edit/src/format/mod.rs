@@ -18,10 +18,10 @@ mod like;
 mod outline;
 mod values;
 
+pub(crate) use colour::ThemeColours;
 pub use found::{occurrences, range_text, Occurrence};
 pub use like::{differs, ParagraphLook, NOT_TAKEN, PARTS};
 pub use values::{check, theme_color_name, Property, Setting, Value};
-pub(crate) use colour::ThemeColours;
 pub(crate) use values::{properties_of, set_child, write_paragraph, write_run};
 
 use crate::lists::paragraphs_of;

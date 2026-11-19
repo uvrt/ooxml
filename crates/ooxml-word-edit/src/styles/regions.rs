@@ -7,9 +7,9 @@
 //!
 //! Must not: decide which tables show a region (their look is theirs).
 
+use super::invalid;
 use super::shading::{attributes, set_shd};
 use super::sheet::{make, Sheet};
-use super::invalid;
 use crate::format::{properties_of, set_child, write_paragraph, write_run, Property, Setting, Value};
 use crate::names::W;
 use crate::validate::Orders;
@@ -63,8 +63,18 @@ const ALIASES: &[(&str, &str)] = &[
 
 /// The order a style's regions are written in (Word's own table styles' order).
 const ORDER: &[&str] = &[
-    "firstRow", "lastRow", "firstCol", "lastCol", "band1Vert", "band2Vert", "band1Horz", "band2Horz", "neCell",
-    "nwCell", "seCell", "swCell",
+    "firstRow",
+    "lastRow",
+    "firstCol",
+    "lastCol",
+    "band1Vert",
+    "band2Vert",
+    "band1Horz",
+    "band2Horz",
+    "neCell",
+    "nwCell",
+    "seCell",
+    "swCell",
 ];
 
 /// A border's sides as the tools name them, and their elements.
@@ -174,7 +184,10 @@ fn region_name(given: &str) -> Result<(&'static str, Option<String>)> {
             region_names(),
         ));
     };
-    let name = KINDS.iter().find(|(n, _)| *n == found).map_or("whole_table", |(n, _)| *n);
+    let name = KINDS
+        .iter()
+        .find(|(n, _)| *n == found)
+        .map_or("whole_table", |(n, _)| *n);
     Ok((name, Some(format!("region {} read as {name}", repr_str(given)))))
 }
 
@@ -274,7 +287,8 @@ fn kind_of(region: &str) -> Option<&'static str> {
 }
 
 fn rank(kind: Option<&str>) -> usize {
-    kind.and_then(|k| ORDER.iter().position(|o| *o == k)).unwrap_or(ORDER.len())
+    kind.and_then(|k| ORDER.iter().position(|o| *o == k))
+        .unwrap_or(ORDER.len())
 }
 
 /// The style's `w:tblStylePr` of `kind` (`None`: the style itself), made in Word's order.
@@ -286,7 +300,11 @@ fn style_part(work: &mut Work, node: Id, kind: Option<&str>, create: bool, order
         .copied()
         .filter(|c| work.is(*c, W, "tblStylePr"))
         .collect();
-    if let Some(found) = parts.iter().copied().find(|p| work.get(*p, Some(W), "type") == Some(kind)) {
+    if let Some(found) = parts
+        .iter()
+        .copied()
+        .find(|p| work.get(*p, Some(W), "type") == Some(kind))
+    {
         return Some(found);
     }
     if !create {
@@ -446,9 +464,17 @@ fn write_borders(
     given: Option<&RegionBorders>,
     orders: &Orders,
 ) {
-    let (outer, inner) = if kind.is_none() { ("tblPr", "tblBorders") } else { ("tcPr", "tcBorders") };
-    let Some(outer) = child(work, part, outer, true, orders) else { return };
-    let Some(holder) = child(work, outer, inner, true, orders) else { return };
+    let (outer, inner) = if kind.is_none() {
+        ("tblPr", "tblBorders")
+    } else {
+        ("tcPr", "tcBorders")
+    };
+    let Some(outer) = child(work, part, outer, true, orders) else {
+        return;
+    };
+    let Some(holder) = child(work, outer, inner, true, orders) else {
+        return;
+    };
     let color = given.and_then(|b| b.color.as_deref());
     let width = given.and_then(|b| b.width);
     for (side, local) in BORDER_SIDES {
@@ -466,7 +492,12 @@ fn write_borders(
             make(
                 work,
                 local,
-                &[("val", style), ("sz", &size.to_string()), ("space", "0"), ("color", &colour)],
+                &[
+                    ("val", style),
+                    ("sz", &size.to_string()),
+                    ("space", "0"),
+                    ("color", &colour),
+                ],
             )
         };
         match work.find(holder, W, local) {

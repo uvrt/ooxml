@@ -105,7 +105,9 @@ pub(crate) fn attributes(value: &str, colours: &ThemeColours) -> Result<Shd> {
         }
     }
     let fill = match colours.value(name) {
-        Some(base) => ooxml_word_model::theme::word_theme_tint(&base, tint.as_deref(), shade.as_deref()).unwrap_or(base),
+        Some(base) => {
+            ooxml_word_model::theme::word_theme_tint(&base, tint.as_deref(), shade.as_deref()).unwrap_or(base)
+        }
         None => "auto".to_owned(),
     };
     Ok(vec![

@@ -140,7 +140,9 @@ pub(crate) fn defined_levels(space: &Space, sheet: &Sheet, numbers: Option<&Numb
     let (Some(styles), Some(n)) = (space.get(&sheet.part), numbers) else {
         return Vec::new();
     };
-    let Some(work) = space.get(&n.part) else { return Vec::new() };
+    let Some(work) = space.get(&n.part) else {
+        return Vec::new();
+    };
     let Some(definition) = definition_of(styles, sheet.root, work, n.root, num_id) else {
         return Vec::new();
     };
@@ -177,7 +179,9 @@ pub(crate) fn style_list(space: &Space, sheet: &Sheet, numbers: Option<&Numbers>
     let mut seen: Vec<String> = Vec::new();
     let (mut num_id, mut level, mut holder) = (None, None, None);
     while let Some(at) = current.take().filter(|c| !c.is_empty() && !seen.contains(c)) {
-        let Some(node) = last_by_id(styles, sheet.root, &at) else { break };
+        let Some(node) = last_by_id(styles, sheet.root, &at) else {
+            break;
+        };
         let numbering = styles.find(node, W, "pPr").and_then(|p| styles.find(p, W, "numPr"));
         if let Some(numbering) = numbering {
             if num_id.is_none() {
@@ -266,13 +270,22 @@ fn numbers_work<'s>(space: &'s mut Space, numbers: &Numbers) -> Result<&'s mut W
 ///
 /// # Errors
 /// When the list has no such level.
-pub(crate) fn link(space: &mut Space, sheet: &Sheet, numbers: &Numbers, id: &str, (num_id, level): (i64, i64)) -> Result<Vec<String>> {
+pub(crate) fn link(
+    space: &mut Space,
+    sheet: &Sheet,
+    numbers: &Numbers,
+    id: &str,
+    (num_id, level): (i64, i64),
+) -> Result<Vec<String>> {
     let no_level = || EditError::Refused(format!("list {num_id} has no level {level}"));
     let (definition, levels) = {
         let styles = sheet.view(space)?;
         let work = space.get(&numbers.part).ok_or_else(no_level)?;
         let definition = definition_of(styles, sheet.root, work, numbers.root, num_id).ok_or_else(no_level)?;
-        (definition, definition_levels(styles, sheet.root, work, numbers.root, definition))
+        (
+            definition,
+            definition_levels(styles, sheet.root, work, numbers.root, definition),
+        )
     };
     if !defined_levels(space, sheet, Some(numbers), num_id).contains(&level) {
         return Err(no_level());
@@ -334,7 +347,6 @@ pub(crate) fn link(space: &mut Space, sheet: &Sheet, numbers: &Numbers, id: &str
     if let Some(indent) = work.find(properties, W, "ind") {
         work.remove(indent);
     }
-    space.mark_dirty(&numbers.part);
     Ok(unlinked)
 }
 
@@ -353,7 +365,10 @@ pub(crate) fn unlink(space: &mut Space, sheet: &Sheet, numbers: Option<&Numbers>
             let mut out = Vec::new();
             for (_, definition) in abstracts(work, n.root) {
                 for (_, lvl) in definition_levels(styles, sheet.root, work, n.root, definition) {
-                    if let Some(tied) = work.find(lvl, W, "pStyle").filter(|t| work.get(*t, Some(W), "val") == Some(id)) {
+                    if let Some(tied) = work
+                        .find(lvl, W, "pStyle")
+                        .filter(|t| work.get(*t, Some(W), "val") == Some(id))
+                    {
                         out.push(tied);
                     }
                 }
@@ -388,18 +403,15 @@ pub(crate) fn unlink(space: &mut Space, sheet: &Sheet, numbers: Option<&Numbers>
             changed = true;
         }
     }
-    if linked {
-        if let Some(n) = numbers {
-            space.mark_dirty(&n.part);
-        }
-    }
     Ok(linked || changed)
 }
 
 /// The paragraph styles numbered with style `id`'s `w:numPr` through their `basedOn`
 /// chain (`inheriting_styles`), by id.
 pub(crate) fn inheriting(space: &Space, sheet: &Sheet, numbers: Option<&Numbers>, id: &str) -> Vec<String> {
-    let Some(styles) = space.get(&sheet.part) else { return Vec::new() };
+    let Some(styles) = space.get(&sheet.part) else {
+        return Vec::new();
+    };
     // docx-agent's dict of styles by id: the last of an id, in the first one's place
     let mut by_id: Vec<(String, Id)> = Vec::new();
     for node in children(styles, sheet.root, "style") {
@@ -417,7 +429,9 @@ pub(crate) fn inheriting(space: &Space, sheet: &Sheet, numbers: Option<&Numbers>
         let mut seen: Vec<String> = Vec::new();
         let mut current = Some(other.clone());
         while let Some(at) = current.clone().filter(|c| !c.is_empty() && !seen.contains(c)) {
-            let Some((_, n)) = by_id.iter().find(|(k, _)| *k == at) else { break };
+            let Some((_, n)) = by_id.iter().find(|(k, _)| *k == at) else {
+                break;
+            };
             seen.push(at);
             if own_num_id(styles, *n).is_some() {
                 break;

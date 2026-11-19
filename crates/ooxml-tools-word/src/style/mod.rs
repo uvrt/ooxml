@@ -22,6 +22,6 @@ pub use format_args::{Alignment, Cleared, FindExpect, FindItem, WordFormat};
 pub use lists::{word_lists, Follow, ListKind, ListsAction, WordLists};
 pub use styles::word_styles;
 pub use styles_args::{
-    RegionSide, RegionBorderStyle, RegionBordersArg, RegionItem, RegionName, StyleKind, StyleNumbering, StylesAction,
+    RegionBorderStyle, RegionBordersArg, RegionItem, RegionName, RegionSide, StyleKind, StyleNumbering, StylesAction,
     TabAlignment, TabItem, TabLeader, WordStyles,
 };

@@ -25,8 +25,8 @@ mod tabs;
 
 pub use language::{languages, word_tag, Languages, WORD_TAG_SLOTS};
 pub use read::{
-    content_uses, declared, find_style, looks_needed, read_paragraph, read_regions, read_run, read_tabs, style_link, table_default, usage,
-    Declared, ReadStop, Region, StyleLink, Usage, LOOK_OF, REGIONS,
+    content_uses, declared, find_style, looks_needed, read_paragraph, read_regions, read_run, read_tabs, style_link,
+    table_default, usage, Declared, ReadStop, Region, StyleLink, Usage, LOOK_OF, REGIONS,
 };
 pub use regions::{RegionBorders, RegionValues, BORDER_SIDES, BORDER_STYLES};
 pub use shading::read_shading;
@@ -282,8 +282,9 @@ impl Command<WordDoc> for StyleEdit {
                 language::set_language(&mut sink, &mut space, language, style.as_deref())?
             }
         };
-        // the parts changed, and those docx-agent writes again unchanged (marked dirty)
-        space.finish(&mut sink)?;
+        // the parts whose XML changed (docx-agent writes the style sheet again unchanged
+        // where it marks it dirty; that is lxml's serialization, not a change)
+        space.finish_changed(&mut sink)?;
         Ok(step)
     }
 }

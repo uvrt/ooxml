@@ -240,8 +240,10 @@ fn sheet(editor: &Editor) -> String {
 
 #[test]
 fn a_paragraph_style_is_added_with_its_formatting_and_described() {
-    let (reply, editor) = styles(json!({"doc": "d1", "action": "add", "name": "Lane Body", "based_on": "Normal",
-                                         "bold": true, "indent_first": -12, "tabs": [{"position": 72, "alignment": "right"}]}));
+    let (reply, editor) = styles(
+        json!({"doc": "d1", "action": "add", "name": "Lane Body", "based_on": "Normal",
+                                         "bold": true, "indent_first": -12, "tabs": [{"position": 72, "alignment": "right"}]}),
+    );
     assert_eq!(reply["created"], json!(["style:LaneBody"]), "{reply}");
     let xml = sheet(&editor);
     assert!(xml.contains(r#"<w:style w:type="paragraph" w:customStyle="1" w:styleId="LaneBody"><w:name w:val="Lane Body"/><w:basedOn w:val="Normal"/><w:qFormat/><w:pPr><w:tabs><w:tab w:val="right" w:pos="1440"/></w:tabs><w:ind w:hanging="240"/></w:pPr><w:rPr><w:b/><w:bCs/></w:rPr></w:style>"#), "{xml}");
@@ -252,7 +254,11 @@ fn regions_without_a_kind_add_a_table_style_and_say_so() {
     // rule 1: regions say a table style
     let (reply, _) = styles(json!({"doc": "d1", "action": "add", "name": "Grid",
                                     "regions": [{"region": "header_row", "bold": true}]}));
-    assert_eq!(reply["warnings"][0], json!("regions given: added as a table style (kind table)"), "{reply}");
+    assert_eq!(
+        reply["warnings"][0],
+        json!("regions given: added as a table style (kind table)"),
+        "{reply}"
+    );
     assert_eq!(reply["data"]["regions"]["header_row"], json!({"bold": true}));
 }
 
@@ -261,7 +267,13 @@ fn a_used_style_is_refused_without_a_replacement_and_an_unknown_one_lists_the_st
     // rule 2: the refusal carries the way out
     let (reply, _) = styles(json!({"doc": "d1", "action": "remove", "name": "Numbered"}));
     assert_eq!(reply["error"]["code"], json!("refused"), "{reply}");
-    assert!(reply["error"]["message"].as_str().unwrap().contains("give replacement="), "{reply}");
+    assert!(
+        reply["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("give replacement="),
+        "{reply}"
+    );
     let (reply, _) = styles(json!({"doc": "d1", "action": "describe", "name": "Nothing"}));
     assert_eq!(reply["error"]["code"], json!("not_found"));
     assert_eq!(reply["error"]["valid_options"], json!(["Normal", "Numbered"]));
@@ -273,14 +285,23 @@ fn a_style_numbering_nothing_unlinked_is_said_not_changed() {
     let (reply, _) = styles(json!({"doc": "d1", "action": "add", "name": "Grid", "kind": "table"}));
     assert!(reply.get("error").is_none(), "{reply}");
     let (reply, _) = styles(json!({"doc": "d1", "action": "modify", "name": "Normal", "numbering": {"list": "none"}}));
-    assert_eq!(reply["summary"], json!("Modified style Normal: numbers nothing, left as it was"), "{reply}");
+    assert_eq!(
+        reply["summary"],
+        json!("Modified style Normal: numbers nothing, left as it was"),
+        "{reply}"
+    );
     assert_eq!(reply["changed"], json!([]));
 }
 
 #[test]
 fn a_style_is_linked_to_a_list_level_and_the_one_holding_it_said() {
-    let (reply, editor) = styles(json!({"doc": "d1", "action": "modify", "name": "Normal", "numbering": {"list": "1"}}));
-    assert_eq!(reply["summary"], json!("Modified style Normal: linked to level 0 of list 1"), "{reply}");
+    let (reply, editor) =
+        styles(json!({"doc": "d1", "action": "modify", "name": "Normal", "numbering": {"list": "1"}}));
+    assert_eq!(
+        reply["summary"],
+        json!("Modified style Normal: linked to level 0 of list 1"),
+        "{reply}"
+    );
     assert!(sheet(&editor).contains(r#"<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:pPr><w:numPr><w:numId w:val="1"/></w:numPr></w:pPr></w:style>"#));
 }
 

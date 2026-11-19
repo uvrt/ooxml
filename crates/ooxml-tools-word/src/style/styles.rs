@@ -58,7 +58,10 @@ pub fn word_styles(args: &WordStyles, editing: &Editing<'_>) -> ToolResult<Value
     if let Err(error) = crate::review::stopped(editing.cancel) {
         return ToolResult::failed(error);
     }
-    let again = call("word_styles", &[("doc", json!(args.doc)), ("action", json!(args.action.as_str()))]);
+    let again = call(
+        "word_styles",
+        &[("doc", json!(args.doc)), ("action", json!(args.action.as_str()))],
+    );
     run(args, editing, &again).unwrap_or_else(ToolResult::failed)
 }
 
@@ -98,7 +101,8 @@ fn refusal(error: EditError, docx: &Docx, kind: Option<&str>, again: &TryCall) -
         (StyleRefusalKind::Invalid, field) => {
             let field = field.unwrap_or_else(|| "regions".to_owned());
             let cap = if field == "language" { 30 } else { 50 };
-            let way = WayOut::names(refused.options.into_iter().take(cap)).unwrap_or_else(|| WayOut::call(again.clone()));
+            let way =
+                WayOut::names(refused.options.into_iter().take(cap)).unwrap_or_else(|| WayOut::call(again.clone()));
             ToolError::refusal(Refusal::InvalidArguments, refused.message, way).at(&field)
         }
     }
@@ -131,9 +135,8 @@ fn run(args: &WordStyles, editing: &Editing<'_>, again: &TryCall) -> Result<Tool
     let (name, regions) = fields(args, again)?;
     match action {
         StylesAction::Describe => {
-            let style = ooxml_word_edit::find_style(&docx, name, kind).ok_or_else(|| {
-                not_found(&docx, kind, name, again)
-            })?;
+            let style =
+                ooxml_word_edit::find_style(&docx, name, kind).ok_or_else(|| not_found(&docx, kind, name, again))?;
             let data = describe(&docx, &style).map_err(|e| refusal(e, &docx, kind, again))?;
             return Ok(ToolResult::done(ooxml_tools::Done {
                 data: Some(data),
@@ -183,11 +186,21 @@ fn fields<'a>(args: &'a WordStyles, again: &TryCall) -> Result<(&'a str, Vec<Reg
     }
     let name = need(args.name.as_deref(), "name", again)?;
     if args.numbering.is_some() && action != StylesAction::Modify {
-        return Err(invalid(format!("numbering is modify's: {name_of} takes none"), "numbering", &[], again));
+        return Err(invalid(
+            format!("numbering is modify's: {name_of} takes none"),
+            "numbering",
+            &[],
+            again,
+        ));
     }
     let shaping = matches!(action, StylesAction::Add | StylesAction::Modify);
     if args.tabs.is_some() && !shaping {
-        return Err(invalid(format!("tabs is add's and modify's: {name_of} takes none"), "tabs", &[], again));
+        return Err(invalid(
+            format!("tabs is add's and modify's: {name_of} takes none"),
+            "tabs",
+            &[],
+            again,
+        ));
     }
     let regions: Vec<RegionValues> = args.regions.iter().flatten().map(region).collect();
     if !regions.is_empty() && !shaping {
@@ -274,12 +287,15 @@ fn list(args: &WordStyles, docx: &Docx) -> ToolResult<Value> {
         }
         if args.in_use_only == Some(true) {
             // the uses of the style its name finds, as docx-agent counts them
-            let counted = docx.find_style(name, style_kind(style)).map_or(style_id(style), |s| style_id(s));
+            let counted = docx
+                .find_style(name, style_kind(style))
+                .map_or(style_id(style), |s| style_id(s));
             if counts.get(counted).copied().unwrap_or(0) == 0 {
                 continue;
             }
         }
-        let based_on = style.find(Some(ooxml_word_model::ids::W), "basedOn")
+        let based_on = style
+            .find(Some(ooxml_word_model::ids::W), "basedOn")
             .and_then(|b| b.attribute(Some(ooxml_word_model::ids::W), "val"));
         let mut row = json!({"name": name, "kind": style_kind(style), "based_on": based_on});
         if chosen.as_ref().is_some_and(|c| style_id(c) == style_id(style)) {
@@ -495,7 +511,10 @@ fn formatting(args: &WordStyles) -> StyleFormatting {
     run.extend(args.font.clone().map(|v| set(Property::Font, Set::Text(v))));
     run.extend(args.color.clone().map(|v| set(Property::Color, Set::Text(v))));
     let mut paragraph = Vec::new();
-    paragraph.extend(args.alignment.map(|a| set(Property::Alignment, Set::Text(a.as_str().to_owned()))));
+    paragraph.extend(
+        args.alignment
+            .map(|a| set(Property::Alignment, Set::Text(a.as_str().to_owned()))),
+    );
     for (property, value) in [
         (Property::SpaceBefore, args.space_before),
         (Property::SpaceAfter, args.space_after),

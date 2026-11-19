@@ -420,7 +420,10 @@ fn last_node<'d>(docx: &'d Docx, id: &str) -> Option<&'d Arc<Element>> {
 }
 
 fn own_num_id(style: &Element) -> Option<&Arc<Element>> {
-    child(child(child(Some(style), "pPr").map(|p| &**p), "numPr").map(|n| &**n), "numId")
+    child(
+        child(child(Some(style), "pPr").map(|p| &**p), "numPr").map(|n| &**n),
+        "numId",
+    )
 }
 
 /// How style `id` numbers its paragraphs, `None` when it numbers nothing.
@@ -478,10 +481,7 @@ fn count_in(element: &Element, locals: &[&str], id: &str) -> usize {
             && locals.contains(&element.name().local())
             && attr(element, "val") == Some(id),
     );
-    own + element
-        .child_elements()
-        .map(|c| count_in(c, locals, id))
-        .sum::<usize>()
+    own + element.child_elements().map(|c| count_in(c, locals, id)).sum::<usize>()
 }
 
 /// Where style `id` is used (`Styles.usage`).

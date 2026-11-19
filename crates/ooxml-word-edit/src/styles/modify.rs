@@ -60,11 +60,20 @@ pub(crate) fn open_numbers(sink: &mut EditSink<'_, '_>, space: &mut Space) -> Re
 ///
 /// # Errors
 /// [`EditError::Style`] naming `numbering.list` or `numbering.level`.
-pub(crate) fn list_level(space: &Space, sheet: &Sheet, numbers: Option<&Numbers>, list: &str, level: i64) -> Result<(i64, i64)> {
+pub(crate) fn list_level(
+    space: &Space,
+    sheet: &Sheet,
+    numbers: Option<&Numbers>,
+    list: &str,
+    level: i64,
+) -> Result<(i64, i64)> {
     let at = |message: String, field: &str| invalid(message, Some(field), Vec::new());
     if !(0..LEVELS).contains(&level) {
         return Err(at(
-            format!("numbering level is 0 to {} (the first level is 0), not {level}", LEVELS - 1),
+            format!(
+                "numbering level is 0 to {} (the first level is 0), not {level}",
+                LEVELS - 1
+            ),
             "numbering.level",
         ));
     }
@@ -101,7 +110,11 @@ pub(crate) fn list_level(space: &Space, sheet: &Sheet, numbers: Option<&Numbers>
         let mut sorted = known.clone();
         sorted.sort_unstable();
         let listed: Vec<String> = sorted.iter().map(i64::to_string).collect();
-        let listed = if listed.is_empty() { "none".to_owned() } else { listed.join(", ") };
+        let listed = if listed.is_empty() {
+            "none".to_owned()
+        } else {
+            listed.join(", ")
+        };
         return Err(at(
             format!("the document has no list {num_id}: its lists are {listed}"),
             "numbering.list",
@@ -110,7 +123,11 @@ pub(crate) fn list_level(space: &Space, sheet: &Sheet, numbers: Option<&Numbers>
     let levels = link::defined_levels(space, sheet, numbers, num_id);
     if !levels.contains(&level) {
         let listed: Vec<String> = levels.iter().map(i64::to_string).collect();
-        let listed = if listed.is_empty() { "none".to_owned() } else { listed.join(", ") };
+        let listed = if listed.is_empty() {
+            "none".to_owned()
+        } else {
+            listed.join(", ")
+        };
         return Err(at(
             format!("list {num_id} has no level {level}: its levels are {listed}"),
             "numbering.level",
@@ -172,7 +189,9 @@ pub(crate) fn modify(sink: &mut EditSink<'_, '_>, space: &mut Space, change: &Ch
     let mut changed = true;
     match (change.numbering, link) {
         (Some(_), Some(level)) => {
-            let numbers = numbers.as_ref().ok_or_else(|| refused(format!("the document has no list {}", level.0)))?;
+            let numbers = numbers
+                .as_ref()
+                .ok_or_else(|| refused(format!("the document has no list {}", level.0)))?;
             warnings.extend(linked(sink, space, &sheet, numbers, &style, level)?);
         }
         (Some(ListLevel::Unlink), _) if !link::unlink(space, &sheet, numbers.as_ref(), &style.id)? => {
@@ -192,7 +211,6 @@ pub(crate) fn modify(sink: &mut EditSink<'_, '_>, space: &mut Space, change: &Ch
             }
         }
     }
-    space.mark_dirty(&sheet.part);
     Ok(StyleStep {
         changed,
         warnings,
@@ -305,7 +323,6 @@ fn modify_table(space: &mut Space, sheet: &Sheet, style: &sheet::Entry, change: 
     let before = work.build_element(style.node);
     let mut warnings = table_formatting(work, sheet, style.node, change.formatting, &items, notes)?;
     let changed = work.build_element(style.node) != before;
-    space.mark_dirty(&sheet.part);
     if !changed {
         warnings.push(format!(
             "{} already has this formatting: left as it was",

@@ -110,7 +110,10 @@ pub(crate) fn add(sink: &mut EditSink<'_, '_>, space: &mut Space, new: &NewStyle
     }
     check(&formatting.paragraph)?;
     let base = new.based_on.map(|b| builtin::ensure(sink, b, new.kind)).transpose()?;
-    let following = new.next_style.map(|n| builtin::ensure(sink, n, "paragraph")).transpose()?;
+    let following = new
+        .next_style
+        .map(|n| builtin::ensure(sink, n, "paragraph"))
+        .transpose()?;
     let sheet = open_sheet(sink, space)?;
     let shd = match &formatting.shading {
         Some(Some(value)) => Some(attributes(value, &sheet.colours)?),

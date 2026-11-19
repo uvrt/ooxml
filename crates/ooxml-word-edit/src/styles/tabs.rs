@@ -61,7 +61,11 @@ fn names(table: &[(&str, &str)]) -> String {
 pub(crate) fn points(twips: i64) -> String {
     let text = format!("{:.2}", twips as f64 / 20.0);
     let text = text.trim_end_matches('0').trim_end_matches('.');
-    if text == "-0" { "0".to_owned() } else { text.to_owned() }
+    if text == "-0" {
+        "0".to_owned()
+    } else {
+        text.to_owned()
+    }
 }
 
 /// A section's width between its margins and gutter, twips (`Section.text_width`);
@@ -172,7 +176,11 @@ pub(crate) fn stops(
             let mut held: Vec<i64> = inherited.to_vec();
             held.sort_unstable();
             let held: Vec<String> = held.iter().map(|t| points(*t)).collect();
-            let held = if held.is_empty() { "none".to_owned() } else { held.join(", ") };
+            let held = if held.is_empty() {
+                "none".to_owned()
+            } else {
+                held.join(", ")
+            };
             warnings.push(format!(
                 "the style inherits no tab stop at {} pt to clear (it inherits: {held})",
                 points(twips)
@@ -216,7 +224,9 @@ pub(crate) fn inherited(work: &Work, root: Id, id: &str) -> Vec<i64> {
     use super::sheet::{by_id, child_val};
     let mut chain = Vec::new();
     let mut seen = vec![id.to_owned()];
-    let mut based = by_id(work, root, id).and_then(|n| child_val(work, n, "basedOn")).map(str::to_owned);
+    let mut based = by_id(work, root, id)
+        .and_then(|n| child_val(work, n, "basedOn"))
+        .map(str::to_owned);
     while let Some(next) = based.take().filter(|b| !seen.contains(b)) {
         let Some(current) = by_id(work, root, &next) else { break };
         seen.push(next);
@@ -230,7 +240,10 @@ pub(crate) fn inherited(work: &Work, root: Id, id: &str) -> Vec<i64> {
             if !work.is(tab, W, "tab") {
                 continue;
             }
-            let Some(position) = work.get(tab, Some(W), "pos").and_then(ooxml_word_model::xmlread::py_int) else {
+            let Some(position) = work
+                .get(tab, Some(W), "pos")
+                .and_then(ooxml_word_model::xmlread::py_int)
+            else {
                 continue;
             };
             out.retain(|p| *p != position);

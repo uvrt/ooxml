@@ -12,11 +12,11 @@ use super::read::{content_parts, CONTENT_REFERENCES};
 use super::sheet::{self, on, style_references, Sheet, REL_STYLES};
 use super::{not_found, StyleStep};
 use crate::builtin;
+use crate::doc::Key;
 use crate::names::W;
 use crate::review::space::Space;
 use crate::set_text::block_key;
 use crate::sink::EditSink;
-use crate::doc::Key;
 use crate::work::Work;
 use crate::{EditError, Result};
 use ooxml_base::pyfmt::repr_str;
@@ -126,7 +126,8 @@ fn repoint(sink: &mut EditSink<'_, '_>, id: &str, target: &str) -> Result<()> {
         }
         for (at, key, rests) in groups {
             let tree = sink.doc().tree(&part)?.ok_or_else(|| EditError::NoPart(part.clone()))?;
-            let element = ooxml_word_model::docx::at_path(tree.root(), &at).ok_or_else(|| EditError::Path(part.clone()))?;
+            let element =
+                ooxml_word_model::docx::at_path(tree.root(), &at).ok_or_else(|| EditError::Path(part.clone()))?;
             let rests: Vec<&[u32]> = rests.iter().map(Vec::as_slice).collect();
             let new = with_vals(element, &rests, target);
             if at.is_empty() {

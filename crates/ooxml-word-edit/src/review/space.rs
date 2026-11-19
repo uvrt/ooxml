@@ -161,11 +161,27 @@ impl Space {
     /// # Errors
     /// When a part cannot be put.
     pub(crate) fn finish(&self, sink: &mut EditSink<'_, '_>) -> Result<()> {
+        self.put_back(sink, false)
+    }
+
+    /// Put back only the parts whose XML changed: a copy edited back to what it was, or
+    /// marked dirty, is left as the version has it.
+    ///
+    /// # Errors
+    /// When a part cannot be put.
+    pub(crate) fn finish_changed(&self, sink: &mut EditSink<'_, '_>) -> Result<()> {
+        self.put_back(sink, true)
+    }
+
+    fn put_back(&self, sink: &mut EditSink<'_, '_>, changed_only: bool) -> Result<()> {
         for (part, copy) in &self.copies {
             if !copy.work.changed() && !self.dirty.contains(part) {
                 continue;
             }
             let root: Arc<Element> = copy.work.build().ok_or_else(|| EditError::Path(part.clone()))?;
+            if changed_only && *root == **copy.tree.root() {
+                continue;
+            }
             sink.put(part, copy.tree.with_root(root))?;
         }
         Ok(())

@@ -53,7 +53,10 @@ fn region(name: &str, region: &Region) -> Value {
         out.insert("borders".to_owned(), Value::Object(borders));
     }
     if name == "whole_table_part" {
-        out.insert("note".to_owned(), json!("w:tblStylePr wholeTable: Word draws it nowhere"));
+        out.insert(
+            "note".to_owned(),
+            json!("w:tblStylePr wholeTable: Word draws it nowhere"),
+        );
     }
     if let Some(size) = region.band_size {
         out.insert("band_size".to_owned(), json!(size));
@@ -100,7 +103,12 @@ pub(crate) fn looks_off(docx: &Docx, id: &str) -> Vec<Value> {
                 continue;
             }
             let look = read_look(properties.and_then(|p| p.find(Some(W), "tblLook")).map(|l| &**l));
-            let on: Vec<&str> = LOOK_NAMES.iter().zip(look).filter(|(_, on)| *on).map(|(n, _)| *n).collect();
+            let on: Vec<&str> = LOOK_NAMES
+                .iter()
+                .zip(look)
+                .filter(|(_, on)| *on)
+                .map(|(n, _)| *n)
+                .collect();
             let off: Vec<&str> = wanted.iter().copied().filter(|n| !on.contains(n)).collect();
             if off.is_empty() {
                 continue;
@@ -132,7 +140,12 @@ pub(crate) fn look_warnings(docx: &Docx, name: &str) -> Vec<String> {
         .iter()
         .take(5)
         .map(|e| {
-            let offs: Vec<&str> = e["off"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+            let offs: Vec<&str> = e["off"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .collect();
             format!("{} has {} off", e["table"].as_str().unwrap_or(""), offs.join(", "))
         })
         .collect();
@@ -162,9 +175,7 @@ pub(crate) fn describe(docx: &Docx, style: &Arc<Element>) -> Result<Value, EditE
     let id = style_id(style);
     let kind = style_kind(style);
     let name = style_name(style);
-    let based_on = style
-        .find(Some(W), "basedOn")
-        .and_then(|b| b.attribute(Some(W), "val"));
+    let based_on = style.find(Some(W), "basedOn").and_then(|b| b.attribute(Some(W), "val"));
     let mut data = Map::new();
     data.insert("name".to_owned(), json!(name));
     data.insert("kind".to_owned(), json!(kind));
@@ -206,11 +217,12 @@ pub(crate) fn describe(docx: &Docx, style: &Arc<Element>) -> Result<Value, EditE
         data.insert("default".to_owned(), json!(true));
     }
     // docx-agent counts the uses of the style its name finds
-    let counted = name
-        .and_then(|n| docx.find_style(n, kind))
-        .map_or(id, |s| style_id(s));
+    let counted = name.and_then(|n| docx.find_style(n, kind)).map_or(id, |s| style_id(s));
     let used = usage(docx, counted)?;
-    data.insert("usage".to_owned(), json!({"content": used.content, "styles": used.styles}));
+    data.insert(
+        "usage".to_owned(),
+        json!({"content": used.content, "styles": used.styles}),
+    );
     Ok(Value::Object(data))
 }
 
@@ -226,7 +238,10 @@ fn describe_regions(docx: &Docx, node: &Element, data: &mut Map<String, Value>) 
     data.insert("shown_with_look".to_owned(), json!(looks));
     let off = looks_off(docx, style_id(node));
     if !off.is_empty() {
-        data.insert("tables_with_look_off".to_owned(), json!(off.iter().take(10).collect::<Vec<_>>()));
+        data.insert(
+            "tables_with_look_off".to_owned(),
+            json!(off.iter().take(10).collect::<Vec<_>>()),
+        );
         if off.len() > 10 {
             data.insert("tables_with_look_off_left_out".to_owned(), json!(off.len() - 10));
         }

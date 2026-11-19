@@ -111,7 +111,10 @@ pub fn word_tag(language: &str) -> Result<(&'static str, &'static str, Option<St
     let given = language.trim();
     if given.is_empty() {
         return Err(language_error(
-            format!("language is a tag such as 'fr-BE', 'nl-BE' or 'en-US', not {}", repr_str(language)),
+            format!(
+                "language is a tag such as 'fr-BE', 'nl-BE' or 'en-US', not {}",
+                repr_str(language)
+            ),
             COMMON.iter().map(|t| (*t).to_owned()).collect(),
         ));
     }
@@ -258,8 +261,7 @@ fn own_languages(root: &Element, slot: &str) -> Vec<(String, &'static str)> {
     if let Some(d) = &default {
         out.push((d.clone(), "default"));
     }
-    let own = normal(root)
-        .and_then(|n| slot_of(&attributes_of(own_lang(n).map(|l| &**l)), slot).map(str::to_owned));
+    let own = normal(root).and_then(|n| slot_of(&attributes_of(own_lang(n).map(|l| &**l)), slot).map(str::to_owned));
     if let Some(own) = own.filter(|o| !same(Some(o), default.as_deref())) {
         out.push((own, "Normal"));
     }
@@ -462,16 +464,28 @@ pub(crate) fn set_language(
             "the document has no style sheet (styles.xml) to hold its default language".to_owned(),
         ));
     };
-    let styles_tree = sink.doc().tree(&sheet.part)?.ok_or_else(|| EditError::NoPart(sheet.part.clone()))?;
+    let styles_tree = sink
+        .doc()
+        .tree(&sheet.part)?
+        .ok_or_else(|| EditError::NoPart(sheet.part.clone()))?;
     let own_set = own_languages(styles_tree.root(), slot);
     let old: Vec<String> = own_set.iter().map(|(t, _)| t.clone()).collect();
     let mut warnings: Vec<String> = note.into_iter().collect();
-    let (mut changed, kept) = write_styles(sheet.work(space)?, &sheet, (slot, tag), &old, named_id.as_deref(), default);
+    let (mut changed, kept) = write_styles(
+        sheet.work(space)?,
+        &sheet,
+        (slot, tag),
+        &old,
+        named_id.as_deref(),
+        default,
+    );
     if default {
         let part = super::default::settings_part(sink)?;
         sink.read(Key::Part(Arc::from(part.as_str())));
         let held = sink.doc().clone();
-        let work = space.work(&held, &part)?.ok_or_else(|| EditError::NoPart(part.clone()))?;
+        let work = space
+            .work(&held, &part)?
+            .ok_or_else(|| EditError::NoPart(part.clone()))?;
         let root = work.root();
         let theme = child_or_made(work, root, "themeFontLang", true, sheet.orders());
         if work.get(theme, Some(W), slot) != Some(tag) {
@@ -481,7 +495,9 @@ pub(crate) fn set_language(
     }
     let mut own_runs: Vec<(String, usize)> = Vec::new();
     for lang in run_langs(&docx) {
-        let Some(value) = lang.attribute(Some(W), slot) else { continue };
+        let Some(value) = lang.attribute(Some(W), slot) else {
+            continue;
+        };
         if !same(Some(value), Some(tag)) {
             match own_runs.iter_mut().find(|(t, _)| t == value) {
                 Some(slot) => slot.1 += 1,
@@ -505,7 +521,6 @@ pub(crate) fn set_language(
             ..StyleStep::default()
         });
     }
-    space.mark_dirty(&sheet.part);
     Ok(StyleStep {
         warnings,
         ..StyleStep::of(None)
@@ -550,7 +565,10 @@ fn said(
         } else {
             String::new()
         };
-        out.push(format!("styles keeping their own language: {}{more}", listed.join(", ")));
+        out.push(format!(
+            "styles keeping their own language: {}{more}",
+            listed.join(", ")
+        ));
     }
     if !own_runs.is_empty() {
         let stale: usize = own_runs
@@ -566,7 +584,10 @@ fn said(
         } else {
             String::new()
         };
-        out.push(format!("runs keeping their own language tag: {}{tail}", listed.join(", ")));
+        out.push(format!(
+            "runs keeping their own language tag: {}{tail}",
+            listed.join(", ")
+        ));
     }
     out
 }
