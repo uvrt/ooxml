@@ -55,6 +55,17 @@ fn package(body: &str, comments: Option<(&str, &str)>) -> Package {
     let mut rels = format!(r#"<Relationship Id="rId1" Type="{R}settings" Target="settings.xml"/>"#);
     let mut parts = vec![
         (
+            "[Content_Types].xml".to_owned(),
+            concat!(
+                r#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">"#,
+                r#"<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>"#,
+                r#"<Default Extension="xml" ContentType="application/xml"/>"#,
+                r#"<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>"#,
+                r#"</Types>"#
+            )
+            .to_owned(),
+        ),
+        (
             "_rels/.rels".to_owned(),
             format!(
                 r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="{R}officeDocument" Target="word/document.xml"/></Relationships>"#
@@ -331,4 +342,78 @@ fn comments_are_resolved_and_deleted_with_their_replies() {
         empty["summary"], "Nothing changed: items is empty",
         "an empty list is no error (rule 3)"
     );
+}
+
+#[test]
+fn comments_are_added_and_replied_to_with_their_parts() {
+    let body = r#"<w:p w14:paraId="10000001"><w:r><w:t>Some text here</w:t></w:r></w:p>"#;
+    let (editor, opened) = editor(package(body, None));
+    let caller = Caller::anonymous();
+    let call = |action, items| WordComments {
+        doc: "d1".into(),
+        action,
+        items: Some(items),
+        author: Some("Reviewer".into()),
+        open_only: None,
+        cursor: None,
+    };
+    let added = json(&word_comments(
+        &call(
+            CommentAction::Add,
+            vec![CommentItem {
+                target: Some("p:10000001@5:9".into()),
+                find: None,
+                within: None,
+                comment: None,
+                text: Some("Why?".into()),
+                resolve: None,
+                ref_name: Some("q".into()),
+            }],
+        ),
+        &editing(&CallEditor::new(&editor), &opened, &caller),
+    ));
+    let id = added["data"]["comments"][0].as_str().unwrap_or_else(|| panic!("{added}")).to_owned();
+    assert!(id.starts_with("c:"), "{added}");
+    assert_eq!(added["created"], serde_json::json!([id]));
+    let head = editor.store().snapshot();
+    let package = head.doc().package();
+    for part in ["word/comments.xml", "word/commentsExtended.xml", "word/commentsIds.xml", "word/commentsExtensible.xml", "word/people.xml"] {
+        assert!(package.has_part(part), "{part} made");
+    }
+    let document = String::from_utf8(package.read("word/document.xml").unwrap().unwrap().to_vec()).unwrap();
+    assert!(
+        document.contains(r#"<w:t xml:space="preserve">Some </w:t></w:r><w:commentRangeStart w:id="0"/>"#),
+        "the range starts at the fifth character: {document}"
+    );
+    let replied = json(&word_comments(
+        &call(
+            CommentAction::Reply,
+            vec![CommentItem {
+                target: None,
+                find: None,
+                within: None,
+                comment: Some(id.clone()),
+                text: Some("Because.".into()),
+                resolve: Some(true),
+                ref_name: None,
+            }],
+        ),
+        &editing(&CallEditor::new(&editor), &opened, &caller),
+    ));
+    assert_eq!(replied["changed"], serde_json::json!([id]), "the thread resolved: {replied}");
+    let listed = json(&word_comments(
+        &WordComments {
+            doc: "d1".into(),
+            action: CommentAction::List,
+            items: None,
+            author: None,
+            open_only: None,
+            cursor: None,
+        },
+        &editing(&CallEditor::new(&editor), &opened, &caller),
+    ));
+    assert_eq!(listed["data"][0]["done"], true);
+    assert_eq!(listed["data"][0]["on"]["text"], "text");
+    assert_eq!(listed["data"][0]["replies"][0]["text"], "Because.");
+    assert_eq!(listed["data"][0]["author"], "Reviewer");
 }

@@ -60,6 +60,17 @@ to an update that changes nothing."""
 
 # word_read (and its ranges) on the documents with charts and SmartArt: the Rust reads give a
 # drawing's kind and name, not yet docx-agent's chart and SmartArt summary.
+# P4b8: a comment on a row the table holds inside a row content control.
+[[difference]]
+gate = "fixtures"
+mode = "structure"
+file = "generated/controls.docx"
+input = { tool = "word_comments", arguments = { action = "add", items = [{ target = "t:7B000001/r1", text = "On the last row" }] } }
+cause = """P4b8: docx-agent's Table.rows counts the row inside the row content control, its table \
+entry's rows do not, so _add_block_comment fails with an internal IndexError ("list index out \
+of range"). Rust finds no such row either and refuses the address as text, naming the forms it \
+takes."""
+
 [[difference]]
 gate = "reads"
 mode = "read"

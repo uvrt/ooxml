@@ -34,7 +34,8 @@ pub(super) struct Control {
 /// The content control `identifier` names (`cc:...`, `cc@...`).
 ///
 /// # Errors
-/// `not_found`, naming the document's controls, when it has no such control.
+/// `invalid_arguments` (docx-agent's `AddressError`), naming the document's controls, when
+/// it has no such control.
 pub(super) fn control(docx: &Docx, identifier: &str) -> Result<Control> {
     let all = controls(docx);
     if let Some(found) = all.iter().find(|c| c.id == identifier) {
@@ -55,7 +56,7 @@ pub(super) fn control(docx: &Docx, identifier: &str) -> Result<Control> {
         };
         format!("{}{more}", known.iter().take(20).cloned().collect::<Vec<_>>().join(", "))
     };
-    Err(EditError::Address(AddressError::not_found(
+    Err(EditError::Address(AddressError::invalid(
         format!(
             "no content control {}: the document's are {listed}",
             ooxml_base::pyfmt::repr_str(identifier)

@@ -11,7 +11,7 @@ use super::comments::{try_call, CommentAction, CommentItem, WordComments};
 use super::{edit_refusal, Editing};
 use crate::structure::common::{find_once, one_of, outcome, Outcome};
 use ooxml_tools::{Done, ToolError, ToolResult};
-use ooxml_word_edit::{AddComments, CommentWrite, Who};
+use ooxml_word_edit::{AddComments, CommentMade, CommentWrite, Who};
 use serde_json::{json, Value};
 
 /// What `unported` says of text found within a block or span.
@@ -23,51 +23,13 @@ pub(crate) fn write(
     editing: &Editing<'_>,
     items: &[CommentItem],
 ) -> Result<ToolResult<Value>, ToolError> {
-    let call = try_call(args);
     let mut list = args.clone();
     list.action = CommentAction::List;
     list.items = None;
-    let mut writes = Vec::with_capacity(items.len());
-    for item in items {
-        if args.action == CommentAction::Add {
-            let text = item
-                .text
-                .as_ref()
-                .ok_or_else(|| super::needed("items[].text", "", call.clone()))?;
-            let found = one_of(
-                &[("find", item.find.is_some()), ("target", item.target.is_some())],
-                &call,
-            )? == "find";
-            if found && item.within.is_some() {
-                let mut done = Done::new(String::new());
-                done.unported.push(NOT_YET.to_owned());
-                return Ok(ToolResult::done(done));
-            }
-            let place = match (&item.find, &item.target) {
-                (Some(text), _) if found => find_once(editing, text, &call)?,
-                (_, Some(target)) => target.clone(),
-                _ => String::new(),
-            };
-            writes.push(CommentWrite::Add {
-                place,
-                text: text.clone(),
-            });
-        } else {
-            let comment = item
-                .comment
-                .as_ref()
-                .ok_or_else(|| super::needed("items[].comment", "", try_call(&list)))?;
-            let text = item
-                .text
-                .as_ref()
-                .ok_or_else(|| super::needed("items[].text", "", try_call(&list)))?;
-            writes.push(CommentWrite::Reply {
-                comment: comment.clone(),
-                text: text.clone(),
-                resolve: item.resolve == Some(true),
-            });
-        }
-    }
+    let writes = match planned(args, editing, items, &list)? {
+        Ok(writes) => writes,
+        Err(unported) => return Ok(unported),
+    };
     // docx-agent's `author_of`: the one given, else the tracking author
     let author = args
         .author
@@ -82,10 +44,68 @@ pub(crate) fn write(
         .editor
         .run(editing.caller, &command)
         .map_err(|e| edit_refusal(e, "", try_call(&list)))?;
+    Ok(reply(args, items, done.out))
+}
+
+/// Each item's write, its arguments checked as docx-agent checks them; `Err`: the reply
+/// leaving the call to the host.
+fn planned(
+    args: &WordComments,
+    editing: &Editing<'_>,
+    items: &[CommentItem],
+    list: &WordComments,
+) -> Result<Result<Vec<CommentWrite>, ToolResult<Value>>, ToolError> {
+    let call = try_call(args);
+    let mut writes = Vec::with_capacity(items.len());
+    for item in items {
+        if args.action == CommentAction::Add {
+            let text = item
+                .text
+                .as_ref()
+                .ok_or_else(|| super::needed("items[].text", "", call.clone()))?;
+            let found = one_of(
+                &[("find", item.find.is_some()), ("target", item.target.is_some())],
+                &call,
+            )? == "find";
+            if found && item.within.is_some() {
+                let mut done = Done::new(String::new());
+                done.unported.push(NOT_YET.to_owned());
+                return Ok(Err(ToolResult::done(done)));
+            }
+            let place = match (&item.find, &item.target) {
+                (Some(text), _) if found => find_once(editing, text, &call)?,
+                (_, Some(target)) => target.clone(),
+                _ => String::new(),
+            };
+            writes.push(CommentWrite::Add {
+                place,
+                text: text.clone(),
+            });
+        } else {
+            let comment = item
+                .comment
+                .as_ref()
+                .ok_or_else(|| super::needed("items[].comment", "", try_call(list)))?;
+            let text = item
+                .text
+                .as_ref()
+                .ok_or_else(|| super::needed("items[].text", "", try_call(list)))?;
+            writes.push(CommentWrite::Reply {
+                comment: comment.clone(),
+                text: text.clone(),
+                resolve: item.resolve == Some(true),
+            });
+        }
+    }
+    Ok(Ok(writes))
+}
+
+/// The reply, as docx-agent's `outcome` writes it of the comments made.
+fn reply(args: &WordComments, items: &[CommentItem], out: Vec<CommentMade>) -> ToolResult<Value> {
     let mut edits = Vec::new();
     let mut made = Vec::new();
     let mut refs = Vec::new();
-    for (item, out) in items.iter().zip(done.out) {
+    for (item, out) in items.iter().zip(out) {
         made.push(out.id.clone());
         if let Some(name) = item.ref_name.as_ref().filter(|n| !n.is_empty()) {
             refs.push((name.clone(), out.id.clone()));
@@ -114,5 +134,5 @@ pub(crate) fn write(
     if let ooxml_tools::Outcome::Done(reply) = &mut result.outcome {
         reply.refs = refs;
     }
-    Ok(result)
+    result
 }
