@@ -218,6 +218,7 @@ impl Command<WordDoc> for SetCells {
             }
         }
         // docx-agent's edit, once it ends: text boxes synced, revision ids unique
+        sink.space_written()?;
         crate::textbox::sync(&mut sink)?;
         crate::revision_ids::make_unique(&mut sink)?;
         Ok(out)

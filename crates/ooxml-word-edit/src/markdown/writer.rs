@@ -13,7 +13,7 @@ use super::Options;
 use crate::names::{R, W};
 use crate::review::xml::make;
 use crate::sink::EditSink;
-use crate::text::write::make_run;
+use crate::text::write::{make_run, make_run_as};
 use crate::work::{Id, Work};
 use crate::{EditError, Result};
 use ooxml_word_model::docx::{style_id, style_kind, style_name};
@@ -44,6 +44,8 @@ pub(crate) struct Writer<'m> {
     pub(crate) tables: Vec<(Id, Vec<i64>)>,
     /// Relationships parts changed (hyperlinks), to put once the edit's nodes are built.
     pub(crate) linked: bool,
+    /// Writing a code block: its text keeps its spacing (not marked written).
+    verbatim: bool,
 }
 
 impl<'m> Writer<'m> {
@@ -62,6 +64,7 @@ impl<'m> Writer<'m> {
             in_list: 0,
             tables: Vec::new(),
             linked: false,
+            verbatim: false,
         }
     }
 
@@ -250,7 +253,9 @@ impl<'m> Writer<'m> {
     fn code(&mut self, sink: &mut EditSink<'_, '_>, work: &mut Work, text: &str) -> Result<Vec<Id>> {
         let style = self.style(sink, "code_block", 0)?;
         let body = text.strip_suffix('\n').unwrap_or(text);
-        body.split('\n')
+        self.verbatim = true; // code keeps its spacing
+        let made = body
+            .split('\n')
             .map(|line| {
                 let inline = if line.is_empty() {
                     Vec::new()
@@ -259,7 +264,9 @@ impl<'m> Writer<'m> {
                 };
                 self.paragraph(sink, work, &inline, style.as_deref(), None)
             })
-            .collect()
+            .collect();
+        self.verbatim = false;
+        made
     }
 
     /// A paragraph of `inline` in `style`, aligned `align`.
@@ -369,8 +376,9 @@ impl<'m> Writer<'m> {
                 if text.is_empty() {
                     return Ok(Vec::new());
                 }
+                let verbatim = self.verbatim || marks.contains(&Mark::Code);
                 let properties = self.run_properties(sink, work, marks, link)?;
-                vec![make_run(work, &text, properties)]
+                vec![make_run_as(work, &text, properties, verbatim)]
             }
             Inline::Html(text) => vec![make_run(work, &valid_text(&text.replace('\n', " ")), None)],
             Inline::Break => {

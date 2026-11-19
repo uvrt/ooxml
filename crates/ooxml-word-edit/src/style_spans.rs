@@ -75,6 +75,7 @@ impl Command<WordDoc> for StyleSpans {
         let mut sink = EditSink::new(tx, self.policy.clone());
         let out = style_spans(&mut sink, &self.target, &self.spans)?;
         // docx-agent's edit, once it ends: text boxes synced, revision ids unique
+        sink.space_written()?;
         crate::textbox::sync(&mut sink)?;
         crate::revision_ids::make_unique(&mut sink)?;
         Ok(out)
@@ -132,6 +133,7 @@ pub(crate) fn style_spans(sink: &mut EditSink<'_, '_>, target: &str, spans: &[Sp
         .ok_or_else(|| EditError::NoPart(found.part.clone()))?;
     let element = at_path(tree.root(), &found.path).ok_or_else(|| EditError::Path(found.part.clone()))?;
     let mut work = Work::of(element, scope_above(tree.root(), &found.path));
+    sink.load_written(&found.part, Some(&found.path), &mut work);
     let paragraph = work.root();
     let tracker = sink.watch_properties(&mut work, &[paragraph]);
     let shared = sink.doc().shared_handle();
@@ -160,6 +162,7 @@ pub(crate) fn style_spans(sink: &mut EditSink<'_, '_>, target: &str, spans: &[Sp
     }
     prune(&mut work, paragraph);
     let wrote = sink.properties_changed(&mut work, tracker)?;
+    sink.keep_written(&found.part, Some(&found.path), &work);
     let new = work.build().ok_or_else(|| EditError::Path(found.part.clone()))?;
     if *new != **element {
         let draws = wrote
