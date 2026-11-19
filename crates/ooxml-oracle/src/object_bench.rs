@@ -106,8 +106,17 @@ pub fn run(args: &[String]) -> Result<(), String> {
             json!({"first": {"row": 0, "col": 0}, "last": {"row": 1, "col": 1}}),
         ),
         ("split", json!({"first": {"row": 1, "col": 0}, "rows": 2, "columns": 2})),
+        (
+            "set_cells",
+            json!({"cells": [{"row": 0, "col": 0, "text": "Set\nin lines"}, {"row": 1, "col": 1, "text": "x"}]}),
+        ),
+        (
+            "set_cells a column",
+            json!({"action": "set_cells", "cells": [{"col": 0, "rows": "*", "text": "Filled"}]}),
+        ),
     ];
     for (action, arguments) in calls {
+        // the action named, unless the arguments give it (two calls of one action)
         let mut call = json!({"doc": "d1", "table": table, "action": action});
         if let (Some(call), Some(arguments)) = (call.as_object_mut(), arguments.as_object()) {
             call.extend(arguments.clone());
