@@ -539,7 +539,11 @@ impl DocModel for WordDoc {
                     into.insert(Key::Seq(Arc::from(seed.as_str())));
                 }
             }
-            Change::Number => {}
+            // numbering revision records adds annotation ids: a transaction that read the
+            // ids in use (to number past them where it is prepared) conflicts with it
+            Change::Number => {
+                into.insert(Key::Annotations);
+            }
         }
     }
 
@@ -572,6 +576,11 @@ impl DocModel for WordDoc {
                 for key in keys.iter() {
                     into.insert(key.clone());
                 }
+            }
+            // ids numbered from the version the change lands on: two edits numbering their
+            // revision records give the serial result in either commit order
+            Change::Number => {
+                into.insert(Key::Annotations);
             }
             _ => {}
         }

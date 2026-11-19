@@ -682,6 +682,17 @@ impl<'t, 's> EditSink<'t, 's> {
     /// # Errors
     /// When the change cannot be applied.
     pub fn put(&mut self, part: &str, tree: ooxml_xml::Tree) -> Result<()> {
+        // the tree holds the values this edit drew into the part as the version it was
+        // prepared on gives them; applied to a newer head, those draws give other values
+        // and the put would overwrite them: such an edit commits only where it was prepared
+        let drawn = self
+            .tx
+            .changes()
+            .iter()
+            .any(|c| matches!(c, Change::Splice { part: p, draws, .. } if **p == *part && !draws.is_empty()));
+        if drawn {
+            self.tx.read_everything();
+        }
         self.write(Change::Put {
             part: Arc::from(part),
             tree,
@@ -701,13 +712,17 @@ impl<'t, 's> EditSink<'t, 's> {
         let Some((head, declared)) = ensured_head(root, drawings, extra) else {
             return Ok(());
         };
+        let head = Arc::new(head);
         if declared {
             // lxml declares them with a cleanup of the whole part: declarations below that
-            // repeat one in scope go
-            let new = Arc::new(Element::from_head(Arc::new(head), root.children().clone()));
-            return self.put(part, tree.with_root(crate::namespaces::cleaned(&new)));
+            // repeat one in scope go (the part rewritten only when one does)
+            let new = Arc::new(Element::from_head(Arc::clone(&head), root.children().clone()));
+            let cleaned = crate::namespaces::cleaned(&new);
+            if !Arc::ptr_eq(&cleaned, &new) {
+                return self.put(part, tree.with_root(cleaned));
+            }
         }
-        let patch = HeadPatch::new(NodePath::root(), Arc::clone(root.head()), Arc::new(head));
+        let patch = HeadPatch::new(NodePath::root(), Arc::clone(root.head()), head);
         self.write(Change::Head {
             part: Arc::from(part),
             patch,
