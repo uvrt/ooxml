@@ -48,8 +48,12 @@ def _plain_paragraphs(document: Document, minimum: int = 12) -> list:
     for paragraph in document.paragraphs():
         atoms = _text.atoms(paragraph._element)
         words = [w for w in paragraph.text.split() if len(w.strip(".,;:()")) >= 4]
+        # a content control is not plain text: Word has no revision for its wrapper, so a
+        # tracked edit across it cannot accept to the untracked one
+        controls = paragraph._element.find(".//{http://schemas.openxmlformats.org/wordprocessingml/2006/main}sdt")
         if (len(atoms) >= minimum and words and all(a.field is None and a.char != _text.OBJECT for a in atoms)
-                and not paragraph.ends_section and paragraph._element.getparent().tag.endswith("body")):
+                and controls is None and not paragraph.ends_section
+                and paragraph._element.getparent().tag.endswith("body")):
             out.append(paragraph)
     return out
 
