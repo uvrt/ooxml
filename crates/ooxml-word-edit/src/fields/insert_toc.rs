@@ -136,24 +136,24 @@ impl InsertToc<'_> {
         let instruction = self.instruction();
         let begin = put_field(sink, &main, &holder, &instruction)?;
         let docx = sink.docx()?;
-        let toc = all_fields(&docx)
+        let toc = all_fields(sink.doc(), &docx)
             .into_iter()
             .find(|l| l.part == main && l.found.begin == begin)
             .ok_or_else(|| EditError::Path(main.clone()))?;
-        let known = (main.clone(), position(&docx, &toc));
+        let known = (main.clone(), position(sink.doc(), &docx, &toc));
         let unknown = settle(&mut *sink, std::slice::from_ref(&known), self.layout, self.today)?;
         let docx = sink.docx()?;
-        let toc = find_toc(&docx, &main, &holder)?;
+        let toc = find_toc(sink.doc(), &docx, &main, &holder)?;
         if let RevisionPolicy::Tracked(tracking) = sink.policy().clone() {
             track_toc(sink, &toc, tracking, holder.own)?;
         }
         let docx = sink.docx()?;
-        let toc = find_toc(&docx, &main, &holder)?;
+        let toc = find_toc(sink.doc(), &docx, &main, &holder)?;
         if !holder.own {
             renew_text_id(sink, &toc)?;
         }
         let docx = sink.docx()?;
-        let toc = find_toc(&docx, &main, &holder)?;
+        let toc = find_toc(sink.doc(), &docx, &main, &holder)?;
         let id = toc.id();
         let part = docx.part(&main).ok_or_else(|| EditError::NoPart(main.clone()))?;
         let mut places = toc_paragraphs(part.root(), &toc);
@@ -172,15 +172,15 @@ impl InsertToc<'_> {
             created,
             renamed,
             unknown,
-            warnings: empty_tocs(&docx, Some(std::slice::from_ref(&id))),
+            warnings: empty_tocs(sink.doc(), &docx, Some(std::slice::from_ref(&id))),
             ..FieldEdited::default()
         })
     }
 }
 
 /// The field's place among its part's fields (what the passes know it as).
-fn position(docx: &ooxml_word_model::docx::Docx, toc: &Located) -> usize {
-    all_fields(docx)
+fn position(doc: &WordDoc, docx: &ooxml_word_model::docx::Docx, toc: &Located) -> usize {
+    all_fields(doc, docx)
         .iter()
         .filter(|l| l.part == toc.part)
         .take_while(|l| l.found.begin != toc.found.begin)
@@ -189,7 +189,7 @@ fn position(docx: &ooxml_word_model::docx::Docx, toc: &Located) -> usize {
 
 /// The table of contents whose end is in the holder paragraph (its end is kept by every
 /// rebuild; for its own new paragraph, the last whose end is there).
-fn find_toc(docx: &ooxml_word_model::docx::Docx, main: &str, holder: &Holder) -> Result<Located> {
+fn find_toc(doc: &WordDoc, docx: &ooxml_word_model::docx::Docx, main: &str, holder: &Holder) -> Result<Located> {
     let part = docx.part(main).ok_or_else(|| EditError::NoPart(main.to_owned()))?;
     let id = &holder.id;
     let path = part
@@ -199,7 +199,7 @@ fn find_toc(docx: &ooxml_word_model::docx::Docx, main: &str, holder: &Holder) ->
         .find(|p| p.id == *id)
         .map(|p| p.path.to_vec())
         .ok_or_else(|| EditError::Path(main.to_owned()))?;
-    all_fields(docx)
+    all_fields(doc, docx)
         .into_iter()
         .filter(|l| l.part == main && l.found.keyword() == "TOC")
         .filter(|l| l.found.end.as_ref().and_then(|e| paragraph_of(part.root(), e)).as_ref() == Some(&path))

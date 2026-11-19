@@ -2,7 +2,7 @@
 //! port): each drawing slot's graphic painted in its box as docx2svg's `_draw_graphic`
 //! paints it -- pictures, shapes and groups ([`shapes`]), charts ([`chart`]), SmartArt
 //! ([`diagram`]) -- its resources added to the page's, its markup written as `svg._float`
-//! writes a floating drawing's group ([`write`]); and what docx2svg says of it (`drawing-*`,
+//! writes a floating drawing's group ([`write`](mod@write)); and what docx2svg says of it (`drawing-*`,
 //! `chart-*`, `diagram-*` warnings, its messages, in the order met).
 //!
 //! A drawing's text boxes are found here ([`WordDrawings::text_frames`], [`text_boxes`]);

@@ -28,6 +28,7 @@
 #![forbid(unsafe_code)]
 
 mod causes;
+mod digests;
 mod disk;
 mod drawing_said;
 pub mod drawings;
