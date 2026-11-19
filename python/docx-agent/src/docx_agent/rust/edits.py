@@ -2,7 +2,7 @@
 lane P2c4: the session is the only owner, :mod:`.owner`; lane P2c6: side by side).
 
 A tool with a Rust editing handler (:data:`SERVED`: ``word_set_text``, ``replace_text``,
-``word_insert_text``, and each one ported after them) runs there, ahead of docx-agent's handler and its wrapper
+``word_insert_text``, ``word_delete``, and each one ported after them) runs there, ahead of docx-agent's handler and its wrapper
 (:func:`docx_agent.tools._base.wrap`): the call's arguments, its ``$name`` refs resolved, go to
 ``Session.edit`` with the call's caller and the document's tracking mode; the versions the
 call's edits made are the call's step (:meth:`~ooxml_edit.tools.owned.OwnedEntry.served`,
@@ -85,11 +85,18 @@ def _insert_text(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
                 for item in items]}
 
 
+def _delete(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+    return {"find": arguments.get("find"), "within": reads._refs(call, arguments.get("within")),
+            "target": reads._refs(call, arguments.get("target")),
+            "collapse_space": arguments.get("collapse_space"), "force": arguments.get("force")}
+
+
 #: The tools the session edits with, and each one's arguments as the session takes them.
 SERVED: dict[str, Callable[[Any, dict[str, Any]], dict[str, Any]]] = {
     "word_set_text": _set_text,
     "replace_text": _replace_text,
     "word_insert_text": _insert_text,
+    "word_delete": _delete,
 }
 
 
