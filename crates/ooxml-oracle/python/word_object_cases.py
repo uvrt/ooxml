@@ -223,7 +223,7 @@ def controls_cases(document) -> list[dict]:
         first = paragraphs[0]
         out += [edit("insert", at=f"{first}@0"), edit("insert", at=f"{first}@0:2", type="rich-text"),
                 edit("insert", at=first, type="drop-down", items=["One", "Two"], title="Pick", tag="pick"),
-                edit("insert", at=f"{first}@1", type="combo-box", items=["a", "b"]),
+                edit("insert", at=f"{first}@0", type="combo-box", items=["a", "b"]),
                 edit("insert", at=f"{first}@0", type="date"), edit("insert", at=f"{first}@0", type="checkbox"),
                 edit("insert", at=f"{first}@0", type="drop-down"),
                 edit("insert", at=f"{first}@9999", tag="past the text"),
