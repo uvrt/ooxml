@@ -163,6 +163,14 @@ fn the_definitions_are_the_golden_exports() {
             ooxml_tools_word::ReplaceText::spec(),
             include_str!("golden/replace_text.json"),
         ),
+        (
+            ooxml_tools_word::WordInsertText::spec(),
+            include_str!("golden/word_insert_text.json"),
+        ),
+        (
+            ooxml_tools_word::WordDelete::spec(),
+            include_str!("golden/word_delete.json"),
+        ),
     ] {
         assert_eq!(format!("{}\n", spec.export(Some(&[KIND]))), golden, "{}", spec.name);
     }

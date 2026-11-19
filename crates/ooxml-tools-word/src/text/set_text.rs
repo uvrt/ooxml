@@ -1,19 +1,26 @@
 //! Owns: `word_set_text` (docx-agent's `word_set_text`): whole paragraphs' text rewritten
-//! -- a paragraph's, or a cell's first paragraph's; with `\n`, a paragraph's later lines new
-//! paragraphs after it -- every item one [`SetText`] in one atomic batch (one history
-//! step: an item refused refuses the call, and nothing changes); the reply as docx-agent's
-//! `outcome` makes it.
+//! -- a paragraph's, or a cell's; with `\n`, a paragraph's later lines new paragraphs after
+//! it -- in a paragraph style where asked, `**strong**`, `*emphasis*` and
+//! `[text]{Character style}` written in character styles: every item one
+//! [`SetStyledText`] in one atomic batch (one history step: an item refused refuses the
+//! call, and nothing changes); the reply as docx-agent's `outcome` makes it, with the styled
+//! runs (`data.styled`) and the notes.
 //!
 //! Must not: write the document but through the command, or answer a call it does not
 //! port otherwise than by saying so ([`Unported`]).
 
-use super::{by_reference, merge_renamed, text_unported, Unported};
+use super::{by_reference, Unported};
+use crate::describe::short;
 use crate::review::{edit_refusal, needed};
+use crate::structure::common::{outcome, Outcome};
 use crate::Editing;
 use ooxml_store::Batch;
-use ooxml_tools::{Done, Refusal, ToolArgs, ToolError, ToolResult, TryCall, WayOut};
-use ooxml_word_edit::{SetText, TextEdited};
-use serde_json::{Map, Value};
+use ooxml_tools::{Refusal, ToolArgs, ToolError, ToolResult, TryCall, WayOut};
+use ooxml_word_edit::{SetStyledText, StyledRun, StyledTextSet};
+use serde_json::{json, Map, Value};
+
+/// How many styled runs a reply lists (rule 4); the rest are counted.
+const STYLED_CAP: usize = 40;
 
 /// One paragraph's new text.
 #[derive(ToolArgs, Debug, Clone, PartialEq, Eq)]
@@ -96,11 +103,11 @@ fn run(args: &WordSetText, editing: &Editing<'_>) -> Result<ToolResult<Value>, T
             vec![(target, text.clone(), args.paragraph_style.clone(), String::new())]
         }
     };
-    if let Some(unported) = work
+    if work
         .iter()
-        .find_map(|(target, text, style, _)| unported(target, text, style.as_ref()))
+        .any(|(target, text, ..)| by_reference(target) || text.contains("{{"))
     {
-        return Ok(unported.reply());
+        return Ok(Unported::Reference.reply());
     }
     if let Some((target, _, _, prefix)) = work.iter().find(|(target, ..)| target.contains("..")) {
         return Err(ToolError::refusal(
@@ -115,9 +122,10 @@ fn run(args: &WordSetText, editing: &Editing<'_>) -> Result<ToolResult<Value>, T
     let policy = editing.policy();
     let ops = work
         .iter()
-        .map(|(target, text, ..)| SetText {
+        .map(|(target, text, style, _)| SetStyledText {
             target: target.clone(),
             text: text.clone(),
+            paragraph_style: style.clone(),
             policy: policy.clone(),
         })
         .collect();
@@ -126,61 +134,70 @@ fn run(args: &WordSetText, editing: &Editing<'_>) -> Result<ToolResult<Value>, T
         .editor
         .run(editing.caller, &Batch::atomic(ops))
         .map_err(|e| edit_refusal(e, "", try_call(args)))?;
-    let edits: Vec<TextEdited> = done.out.into_iter().filter_map(Result::ok).collect();
-    Ok(ToolResult::done(reply(work.len(), &edits)))
+    let items: Vec<StyledTextSet> = done.out.into_iter().filter_map(Result::ok).collect();
+    Ok(reply(work.len(), items))
 }
 
-/// What of an item is not ported: a ref, a paragraph style, styled or spaced text, an
-/// address other than a paragraph's or (one line) a cell's.
-fn unported(target: &str, text: &str, style: Option<&String>) -> Option<Unported> {
-    if by_reference(target) {
-        return Some(Unported::Reference);
+/// The reply, as docx-agent's `outcome` makes it of the items' edits, with the styled
+/// runs (the first [`STYLED_CAP`]) and the notes.
+fn reply(paragraphs: usize, items: Vec<StyledTextSet>) -> ToolResult<Value> {
+    let mut edits = Vec::new();
+    let mut styled: Vec<StyledRun> = Vec::new();
+    let mut notes: Vec<String> = Vec::new();
+    for item in items {
+        edits.extend(item.edits.into_iter().map(|e| Outcome {
+            id: e.id,
+            changed: e.changed,
+            created: e.created,
+            removed: e.removed,
+            renamed: e.renamed,
+            warnings: Vec::new(),
+        }));
+        styled.extend(item.styled);
+        notes.extend(item.notes);
     }
-    if let Some(found) = text_unported(text) {
-        return Some(found);
-    }
-    if style.is_some() {
-        return Some(Unported::ParagraphStyle);
-    }
-    let paragraph = target.starts_with("p:") && !target.contains('@') && !target.contains("..");
-    let lines = text.contains('\n') || text.contains('\r');
-    if paragraph || (cell(target) && !lines) || target.contains("..") {
-        return None;
-    }
-    Some(Unported::Form)
-}
-
-/// Whether `target` is a cell's address, `t:X/c<row>,<col>`.
-fn cell(target: &str) -> bool {
-    let Some((table, place)) = target.split_once("/c") else {
-        return false;
-    };
-    let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
-    table.starts_with("t:")
-        && !table.contains('/')
-        && place.split_once(',').is_some_and(|(r, c)| digits(r) && digits(c))
-}
-
-/// The reply, as docx-agent's `outcome` makes it of the edits.
-fn reply(paragraphs: usize, edits: &[TextEdited]) -> Done<Value> {
     let made: usize = edits.iter().map(|e| e.created.len()).sum();
     let mut summary = format!("Set the text of {paragraphs} paragraph(s)");
     if made > 0 {
         summary.push_str(&format!(", {made} new after them"));
     }
-    let mut done = Done::new(summary);
-    for edit in edits {
-        for id in &edit.created {
-            if !done.created.contains(id) {
-                done.created.push(id.clone());
-            }
+    let mut data = None;
+    if !styled.is_empty() {
+        summary.push_str(&format!("; {} run(s) styled", styled.len()));
+        let listed: Vec<Value> = styled.iter().take(STYLED_CAP).map(styled_run).collect();
+        let mut out = Map::new();
+        out.insert("styled".into(), Value::Array(listed));
+        if styled.len() > STYLED_CAP {
+            let left = styled.len() - STYLED_CAP;
+            out.insert("left_out".into(), json!(left));
+            notes.push(format!(
+                "{left} more styled run(s) not listed: word_read the paragraphs with detail to see each run's style"
+            ));
         }
-        if edit.changed && !done.created.contains(&edit.id) && !done.changed.contains(&edit.id) {
-            done.changed.push(edit.id.clone());
-        }
-        merge_renamed(&mut done.renamed, &edit.renamed);
+        data = Some(Value::Object(out));
     }
-    done
+    let mut result = outcome(&edits, summary, data);
+    for note in notes {
+        if !result.warnings.contains(&note) {
+            result.warnings.push(note);
+        }
+    }
+    result
+}
+
+/// A styled run as the reply lists it: range, text (cut), style, direct emphasis.
+fn styled_run(styled: &StyledRun) -> Value {
+    let mut entry = Map::new();
+    entry.insert("range".into(), json!(styled.range));
+    entry.insert("text".into(), json!(short(&styled.text, 40)));
+    entry.insert("style".into(), json!(styled.style));
+    if styled.bold {
+        entry.insert("bold".into(), json!(true));
+    }
+    if styled.italic {
+        entry.insert("italic".into(), json!(true));
+    }
+    Value::Object(entry)
 }
 
 /// `word_set_text` called with `args`.

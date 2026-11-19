@@ -292,13 +292,27 @@ fn the_text_tools_edit_through_dispatch() {
     assert_eq!(span["error"]["code"], json!("invalid_arguments"), "{span}");
     assert!(span["error"]["try_call"].is_object(), "{span}");
     // what is not ported yet changes nothing and says so to the host
-    let styled = s.call(
+    let by_reference = s.call(
+        "word_set_text",
+        json!({"doc": "d1", "target": "p:22222222", "text": "a {{d:1/#1/name}} word"}),
+        &context,
+    );
+    assert!(!by_reference.unported().is_empty());
+    assert!(!body_of(&s, &d).contains("name"));
+    // styled text is written, its runs listed
+    let styled = call(
+        &s,
         "word_set_text",
         json!({"doc": "d1", "target": "p:22222222", "text": "a **strong** word"}),
         &context,
     );
-    assert!(!styled.unported().is_empty());
-    assert!(!body_of(&s, &d).contains("strong"));
+    assert!(
+        styled["summary"]
+            .as_str()
+            .is_some_and(|t| t.ends_with("1 run(s) styled")),
+        "{styled}"
+    );
+    assert!(body_of(&s, &d).contains("strong"));
     // replace_text: one expected, two found: refused with each listed
     let two = call(
         &s,

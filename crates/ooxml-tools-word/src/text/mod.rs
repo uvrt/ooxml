@@ -1,5 +1,6 @@
 //! Word's text tools (docx-agent's `tools/text.py` and the shared `replace_text`):
-//! `word_set_text` and `replace_text`, over the edit core's commands.
+//! `word_set_text`, `replace_text`, `word_insert_text` and `word_delete`, over the edit
+//! core's commands.
 //!
 //! Owns: the tools' definitions (descriptions beside them), their handlers -- each call's
 //! edits one command through the editor (one history step), written under the document's
@@ -9,9 +10,13 @@
 //! Must not: hold sessions or documents by id, keep state between calls, or write the
 //! document but through a command.
 
+mod delete;
+mod insert_text;
 mod replace_text;
 mod set_text;
 
+pub use delete::{word_delete, WordDelete};
+pub use insert_text::{word_insert_text, InsertItem, Where, WordInsertText};
 pub use replace_text::{replace_text, Expect, ReplaceStories, ReplaceText};
 pub use set_text::{word_set_text, SetTextItem, WordSetText};
 

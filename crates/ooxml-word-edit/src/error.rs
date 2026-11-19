@@ -32,6 +32,9 @@ pub enum EditError {
         field: String,
         /// What is wrong, and what to give.
         message: String,
+        /// The values that would do, where there is a set of them (none: the call itself
+        /// is the way out).
+        options: Vec<String>,
     },
     /// A style edit refused, with the field it names and the options that would do.
     #[error("{0}")]

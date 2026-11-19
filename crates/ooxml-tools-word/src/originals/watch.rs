@@ -13,7 +13,9 @@ use crate::describe::short;
 use ooxml_base::pyfmt::repr_str;
 use ooxml_tools::{Outcome, ToolResult};
 use ooxml_word_edit::WordDoc;
+use ooxml_word_model::address::resolve::resolve;
 use ooxml_word_model::docx::changes::changes_holding;
+use ooxml_word_model::docx::controls::controls;
 use ooxml_word_model::docx::{at_path, find_path, Docx, StoryPart};
 use ooxml_word_model::ids::{Entry, TableId, W};
 use ooxml_xml::{Element, Node};
@@ -87,6 +89,36 @@ impl<'a> Watch<'a> {
             anchor: (first.id.clone(), first.path.len().saturating_sub(path.len())),
             text,
         });
+    }
+
+    /// A block deleted, named `id` on `docx` (the version before the edit; an alias
+    /// followed as `followed`): a paragraph, a table's cells, or a block-level control's
+    /// paragraphs (docx-agent's `Watch.block`).
+    pub(crate) fn block(&mut self, docx: &Docx, id: &str, followed: &str) {
+        if let Some(control) = controls(docx).into_iter().find(|c| c.id == id) {
+            let Some(story) = docx.part(&control.part) else { return };
+            for paragraph in story.ids.paragraphs_within(&control.path) {
+                self.unit(story, paragraph.id.clone(), &paragraph.path);
+            }
+            return;
+        }
+        let Ok((story, entry)) = resolve(docx, followed) else {
+            return;
+        };
+        match entry {
+            Entry::Paragraph(n) => {
+                if let Some(paragraph) = story.ids.paragraphs().get(n) {
+                    self.unit(story, paragraph.id.clone(), &paragraph.path);
+                }
+            }
+            Entry::Table(n) => {
+                if let Some(table) = story.ids.tables().get(n) {
+                    for index in 0..table.rows.len() {
+                        self.row(docx, &story.part, &table, index);
+                    }
+                }
+            }
+        }
     }
 
     /// Row `index` of `table` (on `docx`, the version before the edit): its cells.

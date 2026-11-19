@@ -55,7 +55,10 @@ pub use style::{
     StylesAction, TabAlignment, TabItem, TabLeader, WordStyles,
 };
 pub use style::{word_template, TemplateAction, WordTemplate};
-pub use text::{replace_text, word_set_text, Expect, ReplaceStories, ReplaceText, SetTextItem, Unported, WordSetText};
+pub use text::{
+    replace_text, word_delete, word_insert_text, word_set_text, Expect, InsertItem, ReplaceStories, ReplaceText,
+    SetTextItem, Unported, Where, WordDelete, WordInsertText, WordSetText,
+};
 pub use version::{Others, Version};
 pub use word_inspect::{word_inspect, WordInspect};
 pub use word_read::{word_read, Story, View, WordRead};

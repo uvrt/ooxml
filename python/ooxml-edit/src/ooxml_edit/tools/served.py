@@ -78,6 +78,8 @@ def serve_unlocked(toolbox: "Toolbox", session: Session, tool: "Tool", arguments
         version = entry.version
         given = toolbox._with_refs(tool, dict(arguments), entries, entry, context, read)
         call = Call(toolbox, session, tool, given, entries, entry, context)
+        # a ref name another caller's ref has is refused before anything is made
+        call._own_refs_first(given)
         given = toolbox._with_facts(tool, given, call)
         with entry.serving():
             served = serve(call, given)

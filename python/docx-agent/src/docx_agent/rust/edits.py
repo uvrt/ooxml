@@ -1,8 +1,8 @@
 """docx-agent's editing tools answered by the Rust session that owns the document (phase P2;
 lane P2c4: the session is the only owner, :mod:`.owner`; lane P2c6: side by side).
 
-A tool with a Rust editing handler (:data:`SERVED`: ``word_set_text``, ``replace_text``, and
-each one ported after them) runs there, ahead of docx-agent's handler and its wrapper
+A tool with a Rust editing handler (:data:`SERVED`: ``word_set_text``, ``replace_text``,
+``word_insert_text``, ``word_delete``, and each one ported after them) runs there, ahead of docx-agent's handler and its wrapper
 (:func:`docx_agent.tools._base.wrap`): the call's arguments, its ``$name`` refs resolved, go to
 ``Session.edit`` with the call's caller and the document's tracking mode; the versions the
 call's edits made are the call's step (:meth:`~ooxml_edit.tools.owned.OwnedEntry.served`,
@@ -17,7 +17,7 @@ compare layouts (Python lays them out) it runs under the lock (:func:`serve`).
 The Python handler answers instead -- on the view, committed through the bridge, counted by
 tool and reason (:func:`fallbacks`, ``edit_fallbacks{tool,reason}``), never silently -- where
 the session does not answer as it yet: an op of a ``batch`` (one step), a call on a draft,
-values written by reference, a refusal (the session's carries its own way out, tool rule 2,
+values written by reference, a ref name that would be folded, a refusal (the session's carries its own way out, tool rule 2,
 which today's does not), a session given its own clock (the Rust session dates revisions by
 the system's), and what the session says it leaves to the host (its ``unported``: styled text,
 French spacing, regex, ...).  The Rust handler changes nothing in each of those.
@@ -31,6 +31,7 @@ from collections import Counter
 from typing import Any, Callable
 
 from ooxml_edit.tools import Result
+from ooxml_edit.tools.session import REF
 from ooxml_edit.tools.session import StepOwner
 from ooxml_edit.tools.session import utc_now
 
@@ -74,11 +75,36 @@ def _replace_text(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
             "stories": arguments.get("stories", "body")}
 
 
+def _insert_text(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+    items = arguments.get("items")
+    return {**{k: arguments.get(k) for k in ("find", "where", "at", "text", "ref")},
+            "target": reads._refs(call, arguments.get("target")),
+            "within": reads._refs(call, arguments.get("within")),
+            "items": None if items is None else [
+                {**item, "target": reads._refs(call, item.get("target"))} if isinstance(item, dict) else item
+                for item in items]}
+
+
+def _delete(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+    return {"find": arguments.get("find"), "within": reads._refs(call, arguments.get("within")),
+            "target": reads._refs(call, arguments.get("target")),
+            "collapse_space": arguments.get("collapse_space"), "force": arguments.get("force")}
+
+
 #: The tools the session edits with, and each one's arguments as the session takes them.
 SERVED: dict[str, Callable[[Any, dict[str, Any]], dict[str, Any]]] = {
     "word_set_text": _set_text,
     "replace_text": _replace_text,
+    "word_insert_text": _insert_text,
+    "word_delete": _delete,
 }
+
+
+def _ref_names(arguments: dict[str, Any]) -> list[str]:
+    """The ref names a call gives (``ref``, ``items[].ref``)."""
+    items = arguments.get("items") if isinstance(arguments.get("items"), list) else []
+    names = [arguments.get("ref"), *(item.get("ref") for item in items if isinstance(item, dict))]
+    return [name for name in names if isinstance(name, str) and name]
 
 
 class _Fallback(Exception):
@@ -93,9 +119,12 @@ def owned_entry(call: Any) -> Any:
     return entry
 
 
-def _why_not(call: Any, entry: Any) -> str | None:
+def _why_not(call: Any, entry: Any, arguments: dict[str, Any]) -> str | None:
     if entry.live is not None or entry.pinned is not None:
         return "a draft"
+    if any(not REF.match(name) for name in _ref_names(arguments)):
+        # folded with a warning, or refused, by the tool layer as the Python handler names it
+        return "a ref name to fold"
     if call.in_batch:
         return "batch op"
     if getattr(call, "facts", None):
@@ -176,7 +205,11 @@ def _edit(call: Any, entry: Any, arguments: dict[str, Any], counted: bool) -> tu
         raise _Fallback(f"refusal: {error.get('code')}")
     if made is None and unported:
         raise _Fallback(unported[0])
-    return _result(envelope), made
+    result = _result(envelope)
+    for name, address in (envelope.get("refs") or {}).items():
+        call.define_ref(name, address)        # the call's refs, as docx-agent's remember
+        result.refs[name] = address
+    return result, made
 
 
 def _count(tool: str, why: str | None) -> None:
@@ -209,7 +242,7 @@ def serve_owned(call: Any, arguments: dict[str, Any]) -> Any:
     if entry is None:
         return None
     tool = call.tool.name
-    why = _why_not(call, entry)
+    why = _why_not(call, entry, arguments)
     current = entry.view_current
     if why is None:
         before = _layout_before(call, entry)
@@ -247,7 +280,7 @@ def serve(call: Any, arguments: dict[str, Any], python: Callable[[], Any]) -> An
     if call.owner_declined:
         return python()
     try:
-        why = _why_not(call, entry)
+        why = _why_not(call, entry, arguments)
         if why is not None:
             raise _Fallback(why)
         before = _layout_before(call, entry)

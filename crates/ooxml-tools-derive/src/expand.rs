@@ -172,12 +172,13 @@ fn tool_impl(ident: &syn::Ident, attrs: &ToolAttrs) -> syn::Result<TokenStream> 
         let kind = format_ident!("{}", place_kind(places)?);
         let own = &attrs.place_own;
         let find = attrs.place_find;
+        let items = attrs.place_items.as_ref().map(|field| quote! { .in_items(#field) });
         settings.push(quote! {
             spec.places = ::std::option::Option::Some(::ooxml_tools::Places::new(
                 ::ooxml_tools::PlaceKind::#kind,
                 &[#(#own),*],
                 #find,
-            ));
+            )#items);
         });
     }
     Ok(quote! {
