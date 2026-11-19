@@ -623,23 +623,13 @@ def word_design_facts(call: Any, doc: str, include: list[str] | None = None, cur
 COMPARE_PAGE = 60
 
 
-def _compared_documents(arguments: Any) -> list[str]:
-    """``doc`` and, when it names another, the reference's (or the sample's) document."""
-    out = [arguments["doc"]] if isinstance(arguments.get("doc"), str) else []
-    reference = arguments.get("reference", arguments.get("sample"))
-    other = reference.get("doc") if isinstance(reference, dict) else None
-    if isinstance(other, str) and other and other not in out:   # "" a placeholder: doc
-        out.append(other)
-    return out
-
-
 @word_tool("word_compare_blocks", "Compare tables or paragraphs with a reference block (a sample, here or in another open document): rows, merges, widths, styles, shading, borders, direct formatting; each difference with fix calls. Measures only.",
            {"doc": DOC,
             "blocks": array(string(), "Blocks to compare, t:... or p:....", min_items=1),
             "reference": obj({"doc": string("Its document. Default doc.", optional=True),
                               "block": string("Its block.")}, "The block with the expected values."),
             "cursor": string("next_cursor of the previous page.", optional=True)},
-           refs=('blocks[]',), group="word_style", documents=_compared_documents)
+           refs=('blocks[]',), group="word_style", documents=("doc", "reference.doc"))
 def word_compare_blocks(call: Any, doc: str, blocks: list[str], reference: dict,
                         cursor: str | None = None) -> Result:
     """:meth:`Document.compare_blocks <docx_agent.Document.compare_blocks>`, paged by
@@ -670,7 +660,7 @@ def word_compare_blocks(call: Any, doc: str, blocks: list[str], reference: dict,
             "preview": boolean("Report what would change, change nothing.", optional=True),
             "report": string("actionable: leave out the copies' own (kind own), counted.",
                              enum=["all", "actionable"], optional=True)},
-           refs=('copies[]',), group="word_style", mutates=True, documents=_compared_documents,
+           refs=('copies[]',), group="word_style", mutates=True, documents=("doc", "sample.doc"),
            reads=lambda arguments: bool(arguments.get("preview")))
 def word_follow_sample(call: Any, doc: str, sample: dict, copies: list[str], preview: bool = False,
                        report: str = "all") -> Result:
