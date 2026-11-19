@@ -17,6 +17,7 @@ mod steps;
 pub(crate) use numbering::reap;
 pub use paragraph::LevelFormat;
 pub use read::{numbered_by_style, unnumbered_styles_like};
+pub(crate) use read::style_list as style_list_of;
 
 use crate::policy::RevisionPolicy;
 use crate::stamping::stamp_document;
