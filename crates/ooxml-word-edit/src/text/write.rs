@@ -141,15 +141,24 @@ pub(crate) fn apply(
         if !changed {
             continue;
         }
+        // which characters the edit wrote: the inserted ones, and kept ones it wrote already
         let mut text = String::new();
+        let mut mask = Vec::new();
         for k in &indices {
-            text.extend(before.get(k).into_iter().flatten().copied());
-            if !deleted.contains(k) {
-                text.extend(items.get(*k).map(|a| a.ch));
+            for piece in before.get(k).into_iter().flatten() {
+                text.push_str(piece);
+                mask.extend(piece.chars().map(|_| true));
             }
-            text.extend(after.get(k).into_iter().flatten().copied());
+            if let Some(atom) = items.get(*k).filter(|_| !deleted.contains(k)) {
+                text.push(atom.ch);
+                mask.push(work.marked(node, atom.offset));
+            }
+            for piece in after.get(k).into_iter().flatten() {
+                text.push_str(piece);
+                mask.extend(piece.chars().map(|_| true));
+            }
         }
-        replace_text_node(work, node, &text);
+        replace_text_node(work, node, &text, &|k| mask.get(k).copied().unwrap_or(false));
         touched.push(indices.first().and_then(|k| items.get(*k)).and_then(|a| a.run));
     }
     for k in deleted {
@@ -179,20 +188,42 @@ pub(crate) fn apply(
     }
 }
 
-/// Replace a `w:t` with the elements that spell `text`, in the same run.
-pub(crate) fn replace_text_node(work: &mut Work, node: Id, text: &str) {
-    for element in spell(work, text, Some(node)) {
+/// Replace a `w:t` with the elements that spell `text`, in the same run; `written` says
+/// which of its characters the edit wrote.
+pub(crate) fn replace_text_node(work: &mut Work, node: Id, text: &str, written: &dyn Fn(usize) -> bool) {
+    for element in spell_marked(work, text, Some(node), written) {
         work.add_previous(node, element);
     }
     work.remove(node);
 }
 
 /// The elements that spell `text`: `w:t` for plain stretches (with `template`'s attributes,
-/// when given), `w:tab`, `w:br`... for the special characters.
+/// when given), `w:tab`, `w:br`... for the special characters; every character marked
+/// written (the language's spacing looks at it, [`crate::spacing`]).
 pub(crate) fn spell(work: &mut Work, text: &str, template: Option<Id>) -> Vec<Id> {
+    spell_marked(work, text, template, &|_| true)
+}
+
+/// [`spell`], marking written the characters `written` says (by place in `text`):
+/// docx-agent's `_spell` with `written`.
+pub(crate) fn spell_marked(
+    work: &mut Work,
+    text: &str,
+    template: Option<Id>,
+    written: &dyn Fn(usize) -> bool,
+) -> Vec<Id> {
     let mut out = Vec::new();
     let mut plain = String::new();
-    for ch in text.chars() {
+    let mut marks = Vec::new();
+    let flush = |work: &mut Work, plain: &mut String, marks: &mut Vec<usize>, out: &mut Vec<Id>| {
+        if !plain.is_empty() {
+            let node = text_element(work, plain, template);
+            work.mark(node, marks.drain(..));
+            out.push(node);
+            plain.clear();
+        }
+    };
+    for (k, ch) in text.chars().enumerate() {
         let special = match ch {
             '\t' => Some(("tab", None)),
             LINE_BREAK => Some(("br", None)),
@@ -202,13 +233,13 @@ pub(crate) fn spell(work: &mut Work, text: &str, template: Option<Id>) -> Vec<Id
             _ => None,
         };
         let Some((local, kind)) = special else {
+            if written(k) {
+                marks.push(plain.chars().count());
+            }
             plain.push(ch);
             continue;
         };
-        if !plain.is_empty() {
-            out.push(text_element(work, &plain, template));
-            plain.clear();
-        }
+        flush(work, &mut plain, &mut marks, &mut out);
         let element = work.new_element(work.qname(W, local, "w"));
         if let Some(kind) = kind {
             let name = work.qname(W, "type", "w");
@@ -216,9 +247,7 @@ pub(crate) fn spell(work: &mut Work, text: &str, template: Option<Id>) -> Vec<Id
         }
         out.push(element);
     }
-    if !plain.is_empty() {
-        out.push(text_element(work, &plain, template));
-    }
+    flush(work, &mut plain, &mut marks, &mut out);
     out
 }
 
@@ -264,11 +293,17 @@ pub(crate) fn run_properties_for(work: &mut Work, paragraph: Id, reference: Opti
 
 /// A run of `text` with `properties` (detached).
 pub(crate) fn make_run(work: &mut Work, text: &str, properties: Option<Id>) -> Id {
+    make_run_as(work, text, properties, false)
+}
+
+/// [`make_run`]; `verbatim` text (code) is not marked written, so it keeps its spacing
+/// (docx-agent's `make_run(verbatim=)`).
+pub(crate) fn make_run_as(work: &mut Work, text: &str, properties: Option<Id>, verbatim: bool) -> Id {
     let run = work.new_element(work.qname(W, "r", "w"));
     if let Some(properties) = properties {
         work.append(run, properties);
     }
-    for element in spell(work, text, None) {
+    for element in spell_marked(work, text, None, &|_| !verbatim) {
         work.append(run, element);
     }
     run

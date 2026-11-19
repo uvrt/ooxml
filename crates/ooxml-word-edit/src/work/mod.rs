@@ -10,7 +10,11 @@
 //! Must not: outlive its edit, reach outside the subtree it was made from (the namespace
 //! declarations in scope above it are given, read only), or know any Word rule.
 
+mod compare;
+mod marks;
+
 use ooxml_xml::{Atom, Attribute, Element, Name, NamespaceDecl, Node, Pi, QName};
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 /// A node of a [`Work`] tree.
@@ -53,6 +57,9 @@ pub(crate) struct Work {
     root: Id,
     /// Namespace declarations in scope above the root, outermost first.
     scope: Vec<NamespaceDecl>,
+    /// The characters of each node's text the edit wrote ([`Work::mark`]), by place in
+    /// that text; a copy of a node does not carry them (docx-agent's recorder, by node).
+    marks: BTreeMap<Id, BTreeSet<usize>>,
 }
 
 impl Work {
@@ -62,6 +69,7 @@ impl Work {
             slots: Vec::new(),
             root: 0,
             scope,
+            marks: BTreeMap::new(),
         };
         work.root = work.read(&Node::Element(Arc::clone(element)), None).unwrap_or(0);
         work
@@ -686,58 +694,6 @@ impl Work {
             }
         }
         Some(out)
-    }
-
-    /// Whether two elements are the same XML as canonical serialisation compares them
-    /// (lxml's c14n): names and attributes by namespace (attributes in any order), text,
-    /// and children in order with their tails; prefixes do not matter.
-    pub(crate) fn same_xml(&self, a: Id, b: Id) -> bool {
-        let (Some(x), Some(y)) = (self.slot(a), self.slot(b)) else {
-            return false;
-        };
-        match (&x.kind, &y.kind) {
-            (
-                Kind::Element {
-                    name: n1,
-                    attributes: a1,
-                    text: t1,
-                    ..
-                },
-                Kind::Element {
-                    name: n2,
-                    attributes: a2,
-                    text: t2,
-                    ..
-                },
-            ) => {
-                let key = |attrs: &[Attribute]| {
-                    let mut v: Vec<(Option<String>, String, String)> = attrs
-                        .iter()
-                        .map(|t| {
-                            (
-                                t.name.namespace().map(str::to_owned),
-                                t.name.local().to_owned(),
-                                t.value.to_string(),
-                            )
-                        })
-                        .collect();
-                    v.sort();
-                    v
-                };
-                n1.namespace() == n2.namespace()
-                    && n1.local() == n2.local()
-                    && t1 == t2
-                    && key(a1) == key(a2)
-                    && x.children.len() == y.children.len()
-                    && x.children
-                        .iter()
-                        .zip(&y.children)
-                        .all(|(c, d)| self.tail(*c) == self.tail(*d) && self.same_xml(*c, *d))
-            }
-            (Kind::Comment(c), Kind::Comment(d)) | (Kind::Entity(c), Kind::Entity(d)) => c == d,
-            (Kind::Pi(c), Kind::Pi(d)) => c == d,
-            _ => false,
-        }
     }
 
     fn build_node(&self, id: Id) -> Option<Node> {

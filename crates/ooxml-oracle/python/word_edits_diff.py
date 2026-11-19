@@ -454,6 +454,73 @@ def _styled_cases(document, targets: list[str]) -> list[dict]:
     return cases
 
 
+#: Text in French, written by every text edit (``--spacing``): marks with and without a
+#: space before them, guillemets, marks between words, code.
+_FRENCH = ["Bonjour : le monde ! Il a dit «oui» ; fin?", "Quoi?! « déjà» et 12:30, x?y.", "Tab\tpuis : fin !"]
+
+
+def _spacing_cases(document, targets: list[str]) -> list[dict]:
+    """The spacing written text takes in French (``--spacing``, on documents ``_french``
+    made French): set_text, in lines, insert_text, replace, insert_paragraph, styled text,
+    Markdown (code keeps its spacing)."""
+    cases: list[dict] = []
+    for target in targets:
+        text = document.paragraph(target).text
+        for french in _FRENCH:
+            cases.append({"target": target, "text": french})
+        cases.append({"op": "set_text_paragraphs", "target": target, "text": "Premier : un\nSecond !"})
+        cases.append({"op": "insert_text", "target": f"{target}@{len(text)}", "text": " : ajouté !"})
+        cases.append({"op": "insert_text", "target": f"{target}@0", "text": "«Début» ?"})
+        cases.append({"op": "insert_paragraph", "target": target, "text": "Nouveau : «x»!", "after": True})
+        cases.append({"op": "set_text_styled", "target": target, "text": "Un **mot** : *fin* !"})
+        words = [w for w in text.split() if w.isalpha()]
+        if words:
+            cases.append({"op": "replace", "find": words[0], "text": words[0] + " :", "keep": "characters"})
+            cases.append({"op": "replace", "find": words[0], "text": "«" + words[0] + "»"})
+    target = targets[0] if targets else None
+    if target is not None:
+        cases.append({"op": "insert_markdown", "markdown": "# Titre : un\n\nTexte « cité » ; `code : x`!\n\n"
+                      "```\nbloc : code !\n```\n\n| A | B |\n|---|---|\n| x : y | «z» |\n",
+                      "target": f"after:{target}"})
+    tables = document._index(document.package.document_part()).tables
+    if tables:
+        cases.append({"op": "set_cells", "target": tables[0].id, "writes": [[0, 0, "Cellule : un !"]]})
+    return cases
+
+
+def _french(data: bytes) -> bytes:
+    """``data`` in French: every ``w:lang`` of its Word parts ``fr-FR``, and the styles'
+    defaults too (added where they state none)."""
+    from lxml import etree as _etree
+
+    w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+    out = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(data)) as source, zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as target:
+        for info in source.infolist():
+            body = source.read(info.filename)
+            if info.filename.startswith("word/") and info.filename.endswith(".xml"):
+                root = _etree.fromstring(body, _etree.XMLParser(huge_tree=True))
+                for lang in root.iter(f"{{{w}}}lang"):
+                    lang.set(f"{{{w}}}val", "fr-FR")
+                if root.tag == f"{{{w}}}styles":
+                    defaults = root.find(f"{{{w}}}docDefaults")
+                    if defaults is None:
+                        defaults = _etree.Element(f"{{{w}}}docDefaults")
+                        root.insert(0, defaults)
+                    holder = defaults.find(f"{{{w}}}rPrDefault")
+                    if holder is None:
+                        holder = _etree.SubElement(defaults, f"{{{w}}}rPrDefault")
+                        defaults.insert(0, holder)
+                    rpr = holder.find(f"{{{w}}}rPr")
+                    if rpr is None:
+                        rpr = _etree.SubElement(holder, f"{{{w}}}rPr")
+                    if rpr.find(f"{{{w}}}lang") is None:
+                        _etree.SubElement(rpr, f"{{{w}}}lang").set(f"{{{w}}}val", "fr-FR")
+                body = _etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
+            target.writestr(info, body)
+    return out.getvalue()
+
+
 #: insert_markdown's cases (``--markdown``): (Markdown, where, options); ``{t}`` is a
 #: paragraph's id. Pictures and footnotes are not ported (the host writes them).
 _MARKDOWN = [
@@ -596,6 +663,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--cells", action="store_true", help="set_cells only")
     parser.add_argument("--styled", action="store_true", help="word_set_text's styled text only")
     parser.add_argument("--markdown", action="store_true", help="insert_markdown only")
+    parser.add_argument("--spacing", metavar="DIR",
+                        help="the text edits on French copies of the documents, written into DIR")
     parser.add_argument("--paragraphs", action="store_true",
                         help="set_text in lines and insert_paragraph (only these, with --only-ops none)")
     parser.add_argument("files", nargs="*")
@@ -604,6 +673,10 @@ def main(argv: list[str] | None = None) -> int:
     manifest = []
     for path in files_of(args):
         data = path.read_bytes()
+        if args.spacing:
+            data = _french(data)
+            path = Path(args.spacing) / f"{len(manifest):04d}-{path.name}"
+            path.write_bytes(data)
         try:
             document = Document.open(data)
             baseline = _validate.check(document.package)
@@ -623,14 +696,17 @@ def main(argv: list[str] | None = None) -> int:
                 cases = [{**case, "tracked": None} for case in found]
                 targets = []
             if not args.only_ops and not args.paragraphs and not args.delete and not args.cells and not args.styled \
-                    and not args.markdown \
+                    and not args.markdown and not args.spacing \
                     and not (args.review or args.tools or args.structure or args.objects or args.style):
                 for target in targets:
                     text = document.paragraph(target).text
                     for new in _texts(text):
                         for tracked in (None, TRACKING):
                             cases.append({"target": target, "text": new, "tracked": tracked})
-            if args.markdown:
+            if args.spacing:
+                cases = [{**case, "tracked": tracked} for case in _spacing_cases(document, targets)
+                         for tracked in (None, TRACKING)]
+            elif args.markdown:
                 cases = [{**case, "tracked": tracked} for case in _markdown_cases(document, targets)
                          for tracked in (None, TRACKING)]
             elif args.styled:
@@ -647,7 +723,7 @@ def main(argv: list[str] | None = None) -> int:
                     for tracked in (None, TRACKING):
                         cases.append({**case, "tracked": tracked})
             if (args.ops or args.only_ops) and not args.paragraphs and not args.delete and not args.cells \
-                    and not args.styled and not args.markdown and not (args.review or args.tools):
+                    and not args.styled and not args.markdown and not args.spacing and not (args.review or args.tools):
                 for case in _range_cases(document, targets):
                     for tracked in (None, TRACKING):
                         cases.append({**case, "tracked": tracked})
