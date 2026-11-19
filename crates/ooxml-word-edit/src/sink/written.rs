@@ -22,9 +22,12 @@ use std::sync::Arc;
 /// The relationship type of the styles part.
 const REL_STYLES: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles";
 
-/// The paragraphs of `work` with their `w14:paraId`, those of a text box's fallback left
-/// out (a copy of its choice's, synced when the edit ends).
-fn paragraphs(work: &Work) -> Vec<(Id, String)> {
+/// The paragraphs of `work` by their stable place: their `w14:paraId`, or for the root
+/// (read from `at` in its part) without one, `@` and its path -- those of a text box's
+/// fallback left out (a copy of its choice's, synced when the edit ends). A paragraph
+/// without an id is one a table filled in one pass writes unstamped; nothing moves it
+/// within the edit.
+fn paragraphs(work: &Work, at: Option<&[u32]>) -> Vec<(Id, String)> {
     let root = work.root();
     std::iter::once(root)
         .chain(work.descendants(root))
@@ -39,27 +42,38 @@ fn paragraphs(work: &Work) -> Vec<(Id, String)> {
             }
             true
         })
-        .filter_map(|n| work.get(n, Some(W14), "paraId").map(|id| (n, id.to_owned())))
+        .filter_map(|n| match work.get(n, Some(W14), "paraId") {
+            Some(id) => Some((n, id.to_owned())),
+            None => at.filter(|_| n == root).map(|path| (n, path_place(path))),
+        })
         .collect()
 }
 
+/// The place of the paragraph at `path` that has no id.
+fn path_place(path: &[u32]) -> String {
+    let steps: Vec<String> = path.iter().map(u32::to_string).collect();
+    format!("@{}", steps.join("/"))
+}
+
 impl EditSink<'_, '_> {
-    /// Mark written in `work` (read from `part`) what the edit wrote in its paragraphs
+    /// Mark written in `work` (read from `at` in `part`, where it is a paragraph) what the edit wrote in its paragraphs
     /// earlier, so a write there carries it along.
-    pub(crate) fn load_written(&self, part: &str, work: &mut Work) {
+    pub(crate) fn load_written(&mut self, part: &str, at: Option<&[u32]>, work: &mut Work) {
         if !self.written.in_part(part) {
             return;
         }
-        for (paragraph, id) in paragraphs(work) {
+        for (paragraph, id) in paragraphs(work, at) {
             if let Some(places) = self.written.of(part, &id).cloned() {
                 mark_places(work, paragraph, &places);
+                self.written.loaded(part, &id);
             }
         }
     }
 
     /// Record what `work` (about to replace its place in `part`) marks written, in place of
-    /// what was recorded of its paragraphs.
-    pub(crate) fn keep_written(&mut self, part: &str, work: &Work) {
+    /// what was recorded of its paragraphs that hold marks or were loaded into it; a
+    /// paragraph recorded but not loaded (a neighbour the work holds) keeps its record.
+    pub(crate) fn keep_written(&mut self, part: &str, at: Option<&[u32]>, work: &Work) {
         let recorded = self.written.in_part(part);
         if !work.has_marks() && !recorded {
             return;
@@ -75,8 +89,9 @@ impl EditSink<'_, '_> {
                 at
             })
             .collect();
-        for (paragraph, id) in paragraphs(work) {
-            if holding.contains(&paragraph) || (recorded && self.written.of(part, &id).is_some()) {
+        for (paragraph, id) in paragraphs(work, at) {
+            let loaded = recorded && self.written.take_loaded(part, &id);
+            if holding.contains(&paragraph) || loaded {
                 self.written.set(part, &id, marked_places(work, paragraph));
             }
         }
@@ -106,13 +121,18 @@ impl EditSink<'_, '_> {
             } else {
                 format!("{}/", story.story)
             };
-            let id = format!("{prefix}p:{raw}");
-            let Some(Entry::Paragraph(n)) = story.ids.get(&id) else {
-                continue;
+            let found = match raw.strip_prefix('@') {
+                Some(path) => {
+                    let path: Vec<u32> = path.split('/').filter_map(|k| k.parse().ok()).collect();
+                    story.ids.paragraph_at(&path)
+                }
+                None => match story.ids.get(&format!("{prefix}p:{raw}")) {
+                    Some(Entry::Paragraph(n)) => story.ids.paragraphs().get(n),
+                    _ => None,
+                },
             };
-            let Some(found) = story.ids.paragraphs().get(n) else {
-                continue;
-            };
+            let Some(found) = found else { continue };
+            let id = found.id.clone();
             if !has_marks(&found.element.text_content()) {
                 continue;
             }

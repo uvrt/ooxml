@@ -28,6 +28,8 @@ use std::sync::Arc;
 #[derive(Debug, Default, Clone)]
 pub(crate) struct Written {
     places: BTreeMap<(Arc<str>, String), BTreeSet<usize>>,
+    /// The paragraphs whose places were put on a work not handed back yet.
+    loaded: BTreeSet<(Arc<str>, String)>,
 }
 
 impl Written {
@@ -54,6 +56,17 @@ impl Written {
         } else {
             self.places.insert(key, places);
         }
+    }
+
+    /// The places of the paragraph `id` of `part` were put on a work.
+    pub(crate) fn loaded(&mut self, part: &str, id: &str) {
+        self.loaded.insert((Arc::from(part), id.to_owned()));
+    }
+
+    /// Whether the places of the paragraph `id` of `part` were put on a work, which now
+    /// hands them back (forgotten).
+    pub(crate) fn take_loaded(&mut self, part: &str, id: &str) -> bool {
+        self.loaded.remove(&(Arc::from(part), id.to_owned()))
     }
 
     /// Every paragraph recorded, by part and id.

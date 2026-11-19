@@ -381,7 +381,7 @@ fn write_paragraph(
     let tree = sink.doc().tree(&part)?.ok_or_else(|| EditError::NoPart(part.clone()))?;
     let element = at_path(tree.root(), &path).ok_or_else(|| EditError::Path(part.clone()))?;
     let mut work = Work::of(element, scope_above(tree.root(), &path));
-    sink.load_written(&part, &mut work);
+    sink.load_written(&part, Some(&path), &mut work);
     let mut numbered: Option<Numbered> = None;
     let mut written = Written {
         part: part.clone(),
@@ -398,7 +398,7 @@ fn write_paragraph(
             numbered = Some(numbered.map_or(n, |m| Numbered { to: n.to, ..m }));
         }
     }
-    sink.keep_written(&part, &work);
+    sink.keep_written(&part, Some(&path), &work);
     let new = work.build().ok_or_else(|| EditError::Path(part.clone()))?;
     let mut draws = numbered.map(|n| annotation_draws(&new, n, 0)).unwrap_or_default();
     // docx-agent renews the text id of each range's paragraph, once per range

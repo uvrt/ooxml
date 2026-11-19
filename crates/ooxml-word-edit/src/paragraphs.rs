@@ -219,7 +219,7 @@ pub(crate) fn insert_paragraph(
         work.add_previous(anchor_node, paragraph);
     }
     let wrote = sink.new_paragraph(&mut work, paragraph, last)?;
-    sink.keep_written(&part, &work);
+    sink.keep_written(&part, None, &work);
     let nodes = work.build_content(work.root()).ok_or_else(path_error)?;
     let mut draws = Vec::new();
     let mut annotated = false;

@@ -205,7 +205,7 @@ fn new_story_part(sink: &mut EditSink<'_, '_>, which: &str, mut work: Work) -> R
             work.set(node, Arc::new(QName::new(Some("w14"), local, Some(W14))), value);
         }
     }
-    sink.keep_written(&part, &work);
+    sink.keep_written(&part, None, &work);
     let built = work.build().ok_or_else(|| EditError::Path(part.clone()))?;
     let head = crate::sink::ensured_head(&built, false, &[]);
     let built = match head {

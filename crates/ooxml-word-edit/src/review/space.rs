@@ -165,7 +165,7 @@ impl Space {
             if !copy.work.changed() && !self.dirty.contains(part) {
                 continue;
             }
-            sink.keep_written(part, &copy.work);
+            sink.keep_written(part, None, &copy.work);
             let root: Arc<Element> = copy.work.build().ok_or_else(|| EditError::Path(part.clone()))?;
             sink.put(part, copy.tree.with_root(root))?;
         }
