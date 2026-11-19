@@ -588,6 +588,13 @@ All are under 0.1 % of the edit budgets.
 - The checks of a served call run after it, with nothing held: the session's validation of the version the call made (`Session.validation(doc, at=version)`). A call whose checks compare layouts (Python lays them out) is served under the lock instead.
 - Finds read each story part's paragraph texts kept per version (`ooxml_word_model::docx::PartTexts`, `StoryPart::texts`): a version takes the text of every paragraph it shares with the last version that read them, so `find_text`, `replace_text` and the edit core's finds walk only the paragraphs that changed.
 
+**As built (lane P2c8: the ported tools served, group 1).**
+- `word_insert_text` and `word_delete` are Rust tools (`ooxml-tools-word`'s `text`), their definitions today's byte for byte (a placing tool's items take the places its own fields do: `Places::in_items`, `#[tool(place_items = "items")]`). docx-agent's `SERVED` holds them beside `word_set_text` and `replace_text`.
+- A place found as the one place a text occurs is found on the transaction's own version (`ooxml_word_edit::InsertBeside`, `DeletePlaced`, `TextPlace::Once`), read by condition as `replace_text`'s finds are; the items of one call run in turn in one atomic batch, so each finds the text the ones before left.
+- Whole blocks go through `DeleteBlocks`: the outline is checked first (a heading whose content stays is refused, with its range and `force` as the ways out, `EditError::Argument`'s options); it reads the styles part, and the whole document only when a heading it deletes leaves blocks under another. The file's original text the blocks held is reported as `word_edit_table`'s deletions report it (`Watch::block`).
+- `word_set_text` writes every item through `SetStyledText`: styled text, a paragraph style, a cell in lines and French spacing are the session's; only values or addresses by reference stay with the host.
+- Still the host's: a find `within` a block or span, a picture (`d:`), a heading's range without its end, a ref name the tool layer would fold.
+
 **As built (lane P4d7: calls that name other documents).**
 - A tool's declared documents rule (`ooxml_tools::documents`, `named_at`) names the call's own document first; the session pins every other open document it names like the call's own (the version the context or batch holds, else the head; no lock: versions are immutable) and hands them over in `Call::others`, which read handlers see as `Version::others` and editing handlers as `Editing::others` (`Others::get` by id). A named document that is not open is refused at the field naming it (`reference.doc`). `word_compare_blocks` is the first tool to read one.
 

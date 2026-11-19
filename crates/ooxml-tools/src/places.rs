@@ -80,6 +80,8 @@ pub struct Places {
     pub kind: PlaceKind,
     /// The names read as its own field, in [`NAMES`]' order.
     pub names: Vec<String>,
+    /// The array field whose items are places too (`items`: `items[].after`), if any.
+    pub items: Option<String>,
 }
 
 impl Places {
@@ -92,7 +94,29 @@ impl Places {
             .filter(|name| !own.contains(name) && !(find && **name == "find"))
             .map(|name| (*name).to_owned())
             .collect();
-        Places { kind, names }
+        Places {
+            kind,
+            names,
+            items: None,
+        }
+    }
+
+    /// These places, read in each item of the array field `field` too.
+    #[must_use]
+    pub fn in_items(mut self, field: &str) -> Places {
+        self.items = Some(field.to_owned());
+        self
+    }
+
+    /// The aliases these places export, each with the name it is written at: the names,
+    /// then the items' (`items[].after`).
+    #[must_use]
+    pub fn alias_keys(&self) -> Vec<String> {
+        let mut out = self.names.clone();
+        if let Some(items) = &self.items {
+            out.extend(self.names.iter().map(|name| format!("{items}[].{name}")));
+        }
+        out
     }
 
     /// What `name`, given in `node` (the call's arguments) to `tool`, is read as: the

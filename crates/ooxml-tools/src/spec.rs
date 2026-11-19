@@ -283,7 +283,7 @@ impl ToolSpec {
         if let Some(places) = &self.places {
             // a function in today's `Tool.aliases`: written as the kind of place it reads
             let read = Value::from(format!("place:{}", places.kind.name()));
-            aliases.extend(places.names.iter().map(|name| (name.clone(), read.clone())));
+            aliases.extend(places.alias_keys().into_iter().map(|name| (name, read.clone())));
         }
         out.insert("aliases".into(), Value::Object(aliases));
         let defaults = self.defaults().into_iter().map(|(n, v)| (n.to_owned(), v.clone()));
