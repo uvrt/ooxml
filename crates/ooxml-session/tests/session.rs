@@ -180,6 +180,7 @@ fn refusals_carry_their_way_out() {
             "word_changes",
             "word_comments",
             "word_compare_blocks",
+            "word_design_facts",
             "word_edit_table",
             "word_fields",
             "word_format",
