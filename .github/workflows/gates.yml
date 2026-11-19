@@ -37,8 +37,10 @@ on:
         description: Every n-th document of each tree
         default: "1"
       shards:
+        # 3 (was 6) since the reference cache: a warm corpus job of 120 documents is about
+        # 100 s, a cold one (docx-agent's code changed) about twice a 6-shard one.
         description: Jobs per mode
-        default: "6"
+        default: "3"
 
 concurrency:
   group: gates-${{ inputs.ref }}-${{ inputs.gates }}-${{ inputs.modes }}-${{ inputs.per_tool }}-${{ inputs.every }}-${{ inputs.shards }}

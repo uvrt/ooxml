@@ -285,7 +285,7 @@ def main(argv: list[str] | None = None) -> int:
     m = sub.add_parser("matrix")
     m.add_argument("--gates", required=True)
     m.add_argument("--modes", default="all")
-    m.add_argument("--shards", type=int, default=6)
+    m.add_argument("--shards", type=int, default=3)
     m.add_argument("--per-tool", default="")
     s = sub.add_parser("summary")
     s.add_argument("dir")
