@@ -66,7 +66,7 @@ pub struct ToolSpec {
     /// The arguments' schema.
     pub arguments: ObjectNode,
     /// A placing tool's place: the names other placing tools give a place, read as its own
-    /// ([`crate::places`]).
+    /// ([`Places`]).
     pub places: Option<Places>,
     /// Paths of [`ToolSpec::paths`] listed before the others, in this order, as today's
     /// tool declares them (`sources=("from", "cells[].from")`).
