@@ -81,6 +81,9 @@ def known_entries(path: Path = KNOWN) -> list[dict]:
     for entry in entries:
         if not entry.get("cause") or not entry.get("mode"):
             raise SystemExit(f"{path}: every known difference needs a mode and a cause: {entry}")
+        if "case" in entry:
+            # a case's number changes with the run's sampling and with each case maker added
+            raise SystemExit(f"{path}: a known difference names its case by input, not by number: {entry}")
     return entries
 
 
@@ -99,8 +102,6 @@ def covering(entries: list[dict], gate: str, mode: str, relative: str, case) -> 
         if not fnmatch.fnmatch(relative, entry.get("file", "*")):
             continue
         if "input" in entry and not _contains(case.get("input"), entry["input"]):
-            continue
-        if "case" in entry and entry["case"] != case.get("case"):
             continue
         return entry
     return None
