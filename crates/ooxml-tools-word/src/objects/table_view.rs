@@ -19,6 +19,8 @@ use std::sync::Arc;
 
 /// A table found on a version.
 pub(crate) struct TableView {
+    /// Its part.
+    pub(crate) part: String,
     /// The table.
     pub(crate) table: TableId,
     /// Per row, per grid position: the origin `(row, column)` of the cell there.
@@ -57,7 +59,11 @@ pub(crate) fn table_view(doc: &WordDoc, docx: &Docx, identifier: &str, call: &Tr
                 .get(k)
                 .ok_or_else(|| refuse(format!("no table {identifier}"), vec![]))?;
             let grid = grid(&table);
-            Ok(TableView { table, grid })
+            Ok(TableView {
+                part: story.part.clone(),
+                table,
+                grid,
+            })
         }
         Entry::Paragraph(k) => {
             let paragraph = story.ids.paragraphs().get(k);
@@ -161,6 +167,29 @@ impl TableView {
     /// The cell origin at `(row, column)`.
     pub(crate) fn origin(&self, row: usize, column: usize) -> Option<(usize, usize)> {
         self.grid.get(row)?.get(column).copied().flatten()
+    }
+
+    /// Whether a row's cells, with `w:gridBefore` and `w:gridAfter`, do not reach exactly
+    /// across the grid (`_off_grid`: check's `table_grid_mismatch`).
+    pub(crate) fn off_grid(&self) -> bool {
+        let count = self.column_count();
+        self.table.rows.iter().any(|(path, _)| {
+            let Some(row) = ooxml_word_model::docx::at_path(
+                &self.table.element,
+                path.get(self.table.path.len()..).unwrap_or_default(),
+            ) else {
+                return false;
+            };
+            let skips = val(row, &["trPr", "gridBefore"]).unwrap_or(0) + val(row, &["trPr", "gridAfter"]).unwrap_or(0);
+            let mut found = Vec::new();
+            cells(row, &mut found);
+            let reach = skips
+                + found
+                    .iter()
+                    .map(|c| val(c, &["tcPr", "gridSpan"]).unwrap_or(1).max(1))
+                    .sum::<i64>();
+            usize::try_from(reach).ok() != Some(count)
+        })
     }
 
     /// Whether the table holds tracked structure -- a row or cell deleted, cells merged, a

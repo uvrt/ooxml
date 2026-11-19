@@ -42,6 +42,7 @@ mod doc;
 mod editor;
 mod error;
 pub mod find;
+mod format;
 mod inline;
 mod links;
 mod list_style;
@@ -90,6 +91,11 @@ pub use delete::{BlockDeleted, DeleteBlock};
 pub use doc::{Change, Draw, DrawFrom, Key, ModelError, Shared, WordDoc};
 pub use editor::{EditTiming, Edited, Editor};
 pub use error::{EditError, Result};
+pub use format::{
+    check as check_formatting, differs, known_style, occurrences, range_text, theme_color_name, FormatEdit, FormatPlan,
+    FormatStep, Formatted, Like, LikeDone, Occurrence, ParagraphLook, Property, Setting, Value, KEEPS_BLOCKS,
+    NOT_TAKEN, PARTS,
+};
 pub use links::{hyperlink_span, AddBookmark, AddHyperlink, LinkEdited, RemoveBookmark, RenameBookmark};
 pub use lists::{
     numbered_by_style, paragraphs_of, unnumbered_styles_like, LevelFormat, ListAction, ListEdit, ListStep, ListsEdited,

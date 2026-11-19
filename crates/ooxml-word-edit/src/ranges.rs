@@ -13,7 +13,7 @@ use crate::doc::{Draw, DrawFrom, Key, WordDoc};
 use crate::find::Pattern;
 use crate::names::{W14, W16DU};
 use crate::policy::RevisionPolicy;
-use crate::set_text::{find, Found};
+use crate::set_text::{find, paragraph_has_annotations, Found};
 use crate::sink::{annotation_draws, EditSink, Keep, Numbered};
 use crate::stamping::{stamp_document, w14_prefix};
 use crate::text::{atoms, write::check_text};
@@ -414,10 +414,12 @@ fn write_paragraph(
         }
     }
     let id = renamed_id(renamed, &head.found.id);
-    let keys = vec![Key::Block {
-        part: Arc::from(part.as_str()),
-        id: Arc::from(id.as_str()),
-    }];
+    let mut keys = vec![crate::set_text::block_key(&part, &id)];
+    // the revision ids it gives, or takes away, are the annotation ids in use, which a
+    // tracked edit numbers from (and an edit renumbering a repeated id reads)
+    if paragraph_has_annotations(element) || paragraph_has_annotations(&new) {
+        keys.push(Key::Annotations);
+    }
     sink.replace_drawing(&part, &path, new, keys, draws)?;
     Ok(Some(written))
 }
