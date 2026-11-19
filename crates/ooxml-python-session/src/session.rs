@@ -188,12 +188,15 @@ impl PyVersion {
     /// The ids this version gave that `before` had not, and its renames that `before`
     /// lacks: ``(values, {old id: id now})`` -- what a view of the document kept beside the
     /// session takes to give no id twice and follow renamed ids, without reading a part.
-    fn ids_since(&self, py: Python<'_>, before: PyRef<'_, PyVersion>) -> PyResult<(Vec<u32>, Vec<(String, String)>)> {
+    fn ids_since(&self, py: Python<'_>, before: PyRef<'_, PyVersion>) -> PyResult<IdsSince> {
         let (now, then) = (&self.inner, &before.inner);
         let found = py.detach(|| now.ids_since(then)).map_err(|e| to_py(&e))?;
         Ok((found.given, found.renamed))
     }
 }
+
+/// What `Version.ids_since` answers: the id values given, and the renames (old id, id now).
+type IdsSince = (Vec<u32>, Vec<(String, String)>);
 
 /// What `Session.call` answers: the reply's JSON text, its images, and what only the
 /// application reads (JSON text).
