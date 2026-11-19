@@ -47,11 +47,12 @@ fn laid(found: Result<Result<Arc<LaidVersion>, Fallback>, PagesError>) -> Result
     }
 }
 
-/// `package` laid out by `engine` and summarised (while its layout is the engine's last).
-fn summarised(engine: &mut PageEngine, package: &Package) -> Result<Arc<Summary>, String> {
+/// `package` laid out and its pages summarised as docx-agent compares two layouts
+/// (`DocumentLayout.compare`: every line of text a page draws, its text boxes' too).
+fn summarised(engine: &mut PageEngine, package: &Package) -> Result<Summary, String> {
     let version = laid(engine.lay_out(package))?;
     engine
-        .summary(&version)
+        .contents(&version)
         .ok_or_else(|| "the version laid out is not the engine's".to_owned())
 }
 

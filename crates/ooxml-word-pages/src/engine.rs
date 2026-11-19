@@ -18,6 +18,7 @@
 //! last version laid out.
 
 use crate::causes::{context_cause, part_reason, whole_cause, RelaidCause};
+use crate::digests::Lines;
 use crate::drawing_said::DrawingWarnings;
 use crate::drawings::WordDrawings;
 use crate::error::{Fallback, PagesError};
@@ -539,67 +540,21 @@ impl PageEngine {
     /// what tells two versions' pages apart without a reader reading them.
     pub fn page_digests(&mut self, version: &LaidVersion, page: usize) -> Option<PageDigests> {
         let paint = self.painted_page(version, page, false)?;
-        let digest = |value: &dyn std::fmt::Debug| ooxml_base::Digest::of(KEY, format!("{value:?}").as_bytes());
-        // What docx-agent's summary digests (`_page_digest`, `_line_digest`): what is drawn
-        // and where, never the paths it is drawn for (an edit before a page moves them).
-        let rules: Vec<_> = paint
-            .rules
-            .iter()
-            .map(|r| (r.kind, r.x, r.y, r.width, r.height, &r.color, &r.style))
-            .collect();
-        let pictures: Vec<_> = paint
-            .pictures
-            .iter()
-            .map(|p| (&p.relationship, &p.part, p.x, p.y, p.width, p.height))
-            .collect();
-        let drawings: Vec<_> = paint
-            .drawings
-            .iter()
-            .map(|d| (d.x, d.y, d.width, d.height, d.layer, d.story.as_ref().map(|s| s.0)))
-            .collect();
-        let frame = (paint.geometry.frame.width_px, paint.geometry.frame.height_px);
-        let rest = digest(&(frame, rules, pictures, drawings));
-        let lines = paint
-            .lines
-            .iter()
-            .map(|line| {
-                let spans: Vec<_> = line
-                    .spans
-                    .iter()
-                    .map(|s| {
-                        (
-                            &s.chars,
-                            &s.xs,
-                            s.y,
-                            s.end,
-                            &s.face,
-                            s.bold,
-                            s.italic,
-                            s.half_points,
-                            &s.color,
-                            &s.underline,
-                            (
-                                s.strike,
-                                s.double_strike,
-                                s.highlight,
-                                &s.shading,
-                                s.kind,
-                                &s.vertical_align,
-                            ),
-                        )
-                    })
-                    .collect();
-                let drawn = digest(&(
-                    line.story.as_ref().map(|s| s.0),
-                    line.baseline,
-                    line.top,
-                    line.pitch,
-                    spans,
-                ));
-                (line.path.to_string(), line.story.clone(), drawn)
-            })
-            .collect();
-        Some(PageDigests { rest, lines })
+        Some(crate::digests::digests(&paint, KEY, Lines::Page))
+    }
+
+    /// `version`'s pages compared as the layouts themselves are (docx-agent's
+    /// `DocumentLayout.compare`, over `Page.text_lines`): its summary with every line of
+    /// text a page draws, its text boxes' too; made whole, never kept.
+    pub fn contents(&mut self, version: &LaidVersion) -> Option<crate::summary::Summary> {
+        let mut pages = Vec::with_capacity(version.layout.page_count());
+        for page in 0..version.layout.page_count() {
+            let paint = self.painted_page(version, page, false)?;
+            let digests = crate::digests::digests(&paint, KEY, Lines::WithTextBoxes);
+            pages.push(Arc::new(crate::summary::page_summary(digests, version)));
+        }
+        let known = pages.len();
+        Some(crate::summary::Summary { pages, known })
     }
 
     /// Page `page` of `version`'s lines' text, as a check reads it ([`crate::line_text`]):
