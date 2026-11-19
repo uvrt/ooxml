@@ -20,7 +20,9 @@
 //!   changes, `word_changes`); [`SetWordTracking`] (Word's own Track Changes switch); [`UpgradeToModern`] (Word's
 //!   Convert to compatibility mode 15);
 //!   [`CommentEdits`] (resolving, reopening and deleting comments); [`FormatTable`] (a
-//!   table's, row's, column's and cell's formatting);
+//!   table's, row's, column's and cell's formatting); [`FollowSample`] (copies made to follow
+//!   a revised sample);
+//! - how a copy's rows and paragraphs correspond to its sample's ([`pairing`]);
 //! - validation per change ([`validate`]: facts memoised by content, docx-agent's rules)
 //!   and what a change touched ([`touched`]);
 //! - [`Editor`], which runs a command through the store and reports its result with
@@ -45,6 +47,7 @@ mod editor;
 mod error;
 mod fields;
 pub mod find;
+mod follow;
 mod format;
 mod inline;
 mod links;
@@ -58,6 +61,7 @@ mod names;
 mod namespaces;
 mod new_part;
 mod notes;
+pub mod pairing;
 mod paragraph_style;
 mod paragraphs;
 mod people;
@@ -101,6 +105,7 @@ pub use fields::{
     InsertField, InsertToc, LaidFields, PageReflow, PageShows, SetStoryNumbered, StoryNumber, StoryNumbered, Unknown,
     UpdateFields,
 };
+pub use follow::{CopyFollowed, FollowSample, Followed};
 pub use format::{
     check as check_formatting, differs, known_style, occurrences, range_text, theme_color_name, FormatEdit, FormatPlan,
     FormatStep, Formatted, Like, LikeDone, Occurrence, ParagraphLook, Property, Setting, Value, KEEPS_BLOCKS,

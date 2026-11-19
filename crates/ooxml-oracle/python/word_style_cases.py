@@ -276,13 +276,49 @@ def compare_cases(document) -> list[dict]:
     return out
 
 
+def follow_cases(document) -> list[dict]:
+    """``word_follow_sample`` (lane P4d8): later tables following the first (and the last
+    following the first of the document opened again), a cell address and a paragraph in a
+    table naming their table, the sample among its copies, a copy named twice, body
+    paragraphs following one stating direct formatting, a previewed and an actionable
+    report; refusals (a sample or a copy naming nothing) -- untracked and tracked."""
+    blocks = [b for b in document.blocks() if b["id"]]
+    tables = [b["id"] for b in blocks if b["kind"] == "table"][:6]
+    paragraphs = [b["id"] for b in blocks if b["kind"] != "table"][:30]
+    out = []
+
+    def follow(sample: str, copies: list[str], copy: bool = False, **more) -> None:
+        ref = {"doc": "d2", "block": sample} if copy else {"block": sample}
+        case = {**call("word_follow_sample", sample=ref, copies=copies, **more),
+                **({"reference_copy": True} if copy else {})}
+        out.extend([case, tracked(case)])
+
+    if len(tables) > 1:
+        follow(tables[0], tables[1:])
+        follow(tables[0], tables[-1:], copy=True)
+        follow(tables[-1], [tables[0], tables[0], tables[-1]], preview=True)
+        follow(tables[0], tables[1:2], report="actionable")
+        cell = [p for p in document._index(document.package.document_part()).paragraphs if p.id not in paragraphs][:1]
+        follow(f"{tables[0]}/c1,1", [c.id for c in cell] + [f"{tables[-1]}/r1"])
+    if len(paragraphs) > 1:
+        stated = [p for p in paragraphs if document._resolve(p)[1].element.find(f"{_W}pPr") is not None]
+        sample = (stated or paragraphs)[-1]
+        follow(sample, [p for p in paragraphs[:8] if p != sample])
+        follow(sample, paragraphs[:4], copy=True)
+        if tables:
+            follow(sample, tables[:1] + paragraphs[:1])
+    follow((tables or paragraphs or ["t:NOSUCH0"])[0], ["t:NOSUCH1"])
+    follow("t:NOSUCH2", (tables or paragraphs or ["p:NOSUCH3"])[:1])
+    return out
+
+
 _W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
 
 def cases(document) -> list[dict]:
     """Every style case for ``document``."""
     found = (list_cases(document) + format_cases(document) + styles_cases(document) + template_cases(document)
-             + compare_cases(document))
+             + compare_cases(document) + follow_cases(document))
     wanted = os.environ.get("STYLE_TOOLS")       # a comma list, to run some tools only
     found = [c for c in found if not wanted or c["tool"] in wanted.split(",")]
     per_tool = int(os.environ.get("STYLE_PER_TOOL") or 0)   # the first n of each tool's

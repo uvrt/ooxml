@@ -120,7 +120,7 @@ pub(crate) fn attributes(value: &str, colours: &ThemeColours) -> Result<Shd> {
     ])
 }
 
-/// `properties`' shading in [`attributes`]' words (docx-agent's `read_shading`): `RRGGBB`,
+/// `properties`' shading in the words a shading is given in (docx-agent's `read_shading`): `RRGGBB`,
 /// or a theme colour with `lighter` / `darker` and a percentage; `None` for none.
 #[must_use]
 pub fn read_shading(properties: Option<&Element>) -> Option<String> {
