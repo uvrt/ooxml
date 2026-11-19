@@ -154,10 +154,15 @@ pub(crate) fn look_warnings(docx: &Docx, name: &str) -> Vec<String> {
     } else {
         String::new()
     };
-    let mut fix = first["fix"].clone();
-    if let Some(map) = fix.as_object_mut() {
-        map.remove("tool");
-    }
+    // the fix's call less its tool, its keys in order
+    let fix: serde_json::Map<String, Value> = first["fix"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter(|(k, _)| *k != "tool")
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    let fix = Value::Object(fix);
     vec![format!(
         "{} table(s) in {} do not show a region it formats ({}{more}): a region shows where the table's look turns it on -- word_format_table {}",
         off.len(),

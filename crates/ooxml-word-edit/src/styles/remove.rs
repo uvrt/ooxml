@@ -5,17 +5,15 @@
 //! to it goes; never a default style), and `purge_unused` (the custom styles nothing uses,
 //! a linked pair together, until none is left).
 //!
-//! Must not: write a story's block but under its key: a use repointed is its block's
-//! change (the innermost paragraph or table holding it).
+//! Must not: write a part with uses but whole: the uses of a style are the whole
+//! document's, and the edit reads all of it.
 
 use super::read::{content_parts, CONTENT_REFERENCES};
 use super::sheet::{self, on, style_references, Sheet, REL_STYLES};
 use super::{not_found, StyleStep};
 use crate::builtin;
-use crate::doc::Key;
 use crate::names::W;
 use crate::review::space::Space;
-use crate::set_text::block_key;
 use crate::sink::EditSink;
 use crate::work::Work;
 use crate::{EditError, Result};
@@ -74,20 +72,30 @@ pub(crate) fn uses(sink: &mut EditSink<'_, '_>, space: &Space, id: &str) -> Resu
 
 /// `element` with `w:val` of the element at each of `at` (relative paths) set to `value`.
 fn with_vals(element: &Arc<Element>, at: &[&[u32]], value: &str) -> Arc<Element> {
-    let mut children: Vec<Node> = element.children().iter().cloned().collect();
-    for (k, child) in children.iter_mut().enumerate() {
-        let below: Vec<&[u32]> = at
-            .iter()
-            .filter_map(|p| p.split_first())
-            .filter(|(first, _)| **first as usize == k)
-            .map(|(_, rest)| rest)
-            .collect();
-        if let (false, Node::Element(e)) = (below.is_empty(), &*child) {
-            *child = Node::Element(with_vals(e, &below, value));
+    // the paths below each child, grouped once
+    let mut below: std::collections::BTreeMap<usize, Vec<&[u32]>> = std::collections::BTreeMap::new();
+    let mut here = false;
+    for path in at {
+        match path.split_first() {
+            Some((first, rest)) => below.entry(*first as usize).or_default().push(rest),
+            None => here = true,
         }
     }
-    let mut out = element.with_children(ooxml_xml::Children::from_vec(children));
-    if at.iter().any(|p| p.is_empty()) {
+    let mut out = if below.is_empty() {
+        Element::clone(element)
+    } else {
+        let mut children: Vec<Node> = element.children().iter().cloned().collect();
+        for (k, paths) in &below {
+            if let Some(Node::Element(e)) = children.get(*k) {
+                let new = with_vals(e, paths, value);
+                if let Some(slot) = children.get_mut(*k) {
+                    *slot = Node::Element(new);
+                }
+            }
+        }
+        element.with_children(ooxml_xml::Children::from_vec(children))
+    };
+    if here {
         let prefix = element.name().prefix().map(str::to_owned);
         let name: ooxml_xml::Name = Arc::new(ooxml_xml::QName::new(prefix.as_deref(), "val", Some(W)));
         out = out.with_head(crate::stamping::with_attribute(element.head(), &name, value));
@@ -95,8 +103,9 @@ fn with_vals(element: &Arc<Element>, at: &[&[u32]], value: &str) -> Arc<Element>
     Arc::new(out)
 }
 
-/// Every use of style `id` in the content pointed at `target`, each block's change under
-/// its key.
+/// Every use of style `id` in the content pointed at `target`: each part with uses
+/// rebuilt once and put whole (a concurrent change to it then cannot be moved past this
+/// one: the edit runs again on the version after it).
 fn repoint(sink: &mut EditSink<'_, '_>, id: &str, target: &str) -> Result<()> {
     let docx = sink.docx()?;
     let styles = ooxml_word_model::parts::related(sink.doc().package(), &docx.main, REL_STYLES)?;
@@ -106,36 +115,12 @@ fn repoint(sink: &mut EditSink<'_, '_>, id: &str, target: &str) -> Result<()> {
         };
         let mut found = Vec::new();
         paths(tree.root(), id, &mut Vec::new(), &mut found);
-        // each use under the innermost block holding it (a story's), else itself
-        let story = docx.part(&part);
-        let mut groups: Vec<(Vec<u32>, Key, Vec<Vec<u32>>)> = Vec::new();
-        for path in found {
-            let block = story.and_then(|s| {
-                (1..=path.len()).rev().find_map(|n| {
-                    let prefix = path.get(..n)?;
-                    let entry = s.ids.at(prefix)?;
-                    s.ids.id_of(entry).map(|i| (prefix.to_vec(), block_key(&part, &i)))
-                })
-            });
-            let (at, key) = block.unwrap_or_else(|| (path.clone(), Key::Part(Arc::from(part.as_str()))));
-            let rest = path.get(at.len()..).unwrap_or(&[]).to_vec();
-            match groups.iter_mut().find(|(p, _, _)| *p == at) {
-                Some(group) => group.2.push(rest),
-                None => groups.push((at, key, vec![rest])),
-            }
+        if found.is_empty() {
+            continue;
         }
-        for (at, key, rests) in groups {
-            let tree = sink.doc().tree(&part)?.ok_or_else(|| EditError::NoPart(part.clone()))?;
-            let element =
-                ooxml_word_model::docx::at_path(tree.root(), &at).ok_or_else(|| EditError::Path(part.clone()))?;
-            let rests: Vec<&[u32]> = rests.iter().map(Vec::as_slice).collect();
-            let new = with_vals(element, &rests, target);
-            if at.is_empty() {
-                sink.put(&part, tree.with_root(new))?;
-            } else {
-                sink.replace(&part, &at, new, vec![key])?;
-            }
-        }
+        let at: Vec<&[u32]> = found.iter().map(Vec::as_slice).collect();
+        let root = with_vals(tree.root(), &at, target);
+        sink.put(&part, tree.with_root(root))?;
     }
     Ok(())
 }
