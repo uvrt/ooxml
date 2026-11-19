@@ -154,6 +154,7 @@ impl Command<WordDoc> for SetStyledText {
         let out = set_one(&mut sink, self, &plan)?;
         // the tool call's batch, once it ends: revision ids unique
         if out.edits.iter().any(|e| e.changed) {
+            sink.space_written()?;
             crate::revision_ids::make_unique(&mut sink)?;
         }
         Ok(out)

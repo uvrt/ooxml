@@ -155,6 +155,7 @@ impl Command<WordDoc> for SetText {
         let out = write_text(&mut sink, &self.target, &self.text)?;
         if out.changed {
             // docx-agent's edit, once it ends: text boxes synced, revision ids unique
+            sink.space_written()?;
             crate::textbox::sync(&mut sink)?;
             crate::revision_ids::make_unique(&mut sink)?;
         }
@@ -212,6 +213,7 @@ pub(crate) fn write_text_as(
         .ok_or_else(|| EditError::NoPart(found.part.clone()))?;
     let element = at_path(tree.root(), &found.path).ok_or_else(|| EditError::Path(found.part.clone()))?;
     work = Work::of(element, scope_above(tree.root(), &found.path));
+    sink.load_written(&found.part, Some(&found.path), &mut work);
     let wrote = sink.set_paragraph_text(&mut work, text)?;
     // a paragraph stamped before gets a new text id, drawn where the change is applied
     let mut draws = Vec::new();
@@ -224,6 +226,7 @@ pub(crate) fn write_text_as(
             attribute: Arc::new(QName::new(Some(&prefix), "textId", Some(W14))),
         });
     }
+    sink.keep_written(&found.part, Some(&found.path), &work);
     let new = work.build().ok_or_else(|| EditError::Path(found.part.clone()))?;
     if let Some(numbered) = wrote.annotations {
         draws.extend(crate::sink::annotation_draws(&new, numbered, 0));

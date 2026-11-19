@@ -266,6 +266,7 @@ fn commit(
 ) -> Result<()> {
     let part = place.part.clone();
     let path_error = || EditError::Path(part.clone());
+    sink.keep_written(&part, None, work);
     let nodes = work.build_content(work.root()).ok_or_else(path_error)?;
     let mut draws = Vec::new();
     let stamped_docx = sink.docx()?;
@@ -429,7 +430,7 @@ fn stamp(
 
 /// A new paragraph's runs inside `w:ins`: at paragraph level one per stretch, inside a
 /// hyperlink within it (`_insert_content`).
-fn insert_content(work: &mut Work, paragraph: Id, stamp: &mut Stamp) {
+pub(crate) fn insert_content(work: &mut Work, paragraph: Id, stamp: &mut Stamp) {
     let mut current: Option<Id> = None;
     let children: Vec<Id> = work.children(paragraph).to_vec();
     for child in children {
