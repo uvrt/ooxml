@@ -13,7 +13,7 @@ use crate::describe::short;
 use ooxml_base::pyfmt::repr_str;
 use ooxml_tools::{Outcome, ToolResult};
 use ooxml_word_edit::WordDoc;
-use ooxml_word_model::docx::changes::changes;
+use ooxml_word_model::docx::changes::change_groups;
 use ooxml_word_model::docx::revisions::records;
 use ooxml_word_model::docx::{at_path, find_path, Docx, StoryPart};
 use ooxml_word_model::ids::{Entry, TableId, W};
@@ -243,10 +243,11 @@ fn changes_of(docx: &Docx, originals: &mut Originals<'_>, held: &[(String, Vec<u
         .filter(|r| wanted.contains(&(r.part.clone(), r.path.to_vec())))
         .map(|r| r.id)
         .collect();
-    changes(docx)
-        .iter()
-        .filter(|c| c.records.iter().any(|r| ids.contains(r)))
-        .map(|c| c.id().to_owned())
+    // a listed change's id is its first record's
+    change_groups(docx)
+        .into_iter()
+        .filter(|g| g.iter().any(|r| ids.contains(r)))
+        .filter_map(|g| g.into_iter().next())
         .collect()
 }
 

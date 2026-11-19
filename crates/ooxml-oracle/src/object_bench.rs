@@ -1,6 +1,6 @@
 //! `word-objects-bench <document.docx> [table]`: what the object tools cost on a long
-//! document. Each call -- `word_edit_table`'s row and column deletions (with their report of
-//! the file's text removed), untracked and tracked -- runs as a whole tool call on a fresh
+//! document. Each call -- `word_edit_table`'s row inserted, and row and column deletions (with their
+//! report of the file's text removed), untracked and tracked -- runs as a whole tool call on a fresh
 //! editor of the document, on its middle body table (or `table`); the best of three wall
 //! times, as JSON. CPU for the whole run is the caller's to measure (`/usr/bin/time -l`).
 //!
@@ -93,7 +93,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
         date: "2026-11-19T10:00:00Z".into(),
     };
     let mut out = serde_json::Map::new();
-    for (action, index) in [("delete_row", 1), ("delete_column", 0)] {
+    for (action, index) in [("insert_row", 1), ("delete_row", 1), ("delete_column", 0)] {
         let call = json!({"doc": "d1", "table": table, "action": action, "index": index});
         for (name, tracked) in [
             (action.to_owned(), None),
