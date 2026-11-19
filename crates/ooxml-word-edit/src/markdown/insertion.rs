@@ -429,7 +429,7 @@ fn stamp(
 
 /// A new paragraph's runs inside `w:ins`: at paragraph level one per stretch, inside a
 /// hyperlink within it (`_insert_content`).
-fn insert_content(work: &mut Work, paragraph: Id, stamp: &mut Stamp) {
+pub(crate) fn insert_content(work: &mut Work, paragraph: Id, stamp: &mut Stamp) {
     let mut current: Option<Id> = None;
     let children: Vec<Id> = work.children(paragraph).to_vec();
     for child in children {
