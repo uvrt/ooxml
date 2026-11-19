@@ -41,6 +41,7 @@ mod delete_write;
 mod doc;
 mod editor;
 mod error;
+mod fields;
 pub mod find;
 mod format;
 mod inline;
@@ -74,6 +75,7 @@ mod spacing;
 mod stamping;
 mod style_spans;
 mod styled_text;
+mod styles;
 mod switch;
 mod table_delete;
 mod table_delete_write;
@@ -91,6 +93,10 @@ pub use delete::{BlockDeleted, DeleteBlock};
 pub use doc::{Change, Draw, DrawFrom, Key, ModelError, Shared, WordDoc};
 pub use editor::{EditTiming, Edited, Editor};
 pub use error::{EditError, Result};
+pub use fields::{
+    fields, format_date, Day, FieldEdited, FieldInfo, FieldLayout, FieldPlace, InsertCaption, InsertCrossReference,
+    InsertField, InsertToc, LaidFields, PageShows, SetStoryNumbered, StoryNumber, StoryNumbered, Unknown, UpdateFields,
+};
 pub use format::{
     check as check_formatting, differs, known_style, occurrences, range_text, theme_color_name, FormatEdit, FormatPlan,
     FormatStep, Formatted, Like, LikeDone, Occurrence, ParagraphLook, Property, Setting, Value, KEEPS_BLOCKS,
@@ -118,6 +124,13 @@ pub use set_text::{SetText, TextEdited};
 pub use sink::{EditSink, Keep, Numbered, TextWrite};
 pub use style_spans::{Span, SpansStyled, StyleSpans};
 pub use styled_text::{ItemEdit, SetStyledText, StyledRun, StyledTextSet};
+pub use styles::{
+    content_uses, declared, find_style, languages, looks_needed, read_paragraph, read_regions, read_run, read_shading,
+    read_tabs, style_link, table_default, usage, word_tag, Declared, Languages, ListLevel, ReadStop, Region,
+    RegionBorders, RegionValues, StyleAction, StyleEdit, StyleFormatting, StyleLink, StyleRefusal, StyleRefusalKind,
+    StyleStep, TabStop, Usage, BORDER_SIDES, BORDER_STYLES, LOOK_OF, REGIONS, TAB_ALIGNMENTS, TAB_LEADERS,
+    WORD_TAG_SLOTS,
+};
 pub use switch::{tracks_changes, word_tracks_changes, SetWordTracking, WordTracking};
 pub use tables::{
     pending_structure, CellValues, EditTable, FormatTable, Look, TableChange, TableChanged, TableEdit, TableFormat,

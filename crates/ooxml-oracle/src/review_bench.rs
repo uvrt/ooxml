@@ -12,7 +12,7 @@ use ooxml_base::{Cancel, Limits};
 use ooxml_opc::Package;
 use ooxml_store::{Caller, StoreConfig};
 use ooxml_tools::ArgType;
-use ooxml_tools_word::{word_changes, Editing, WordChanges};
+use ooxml_tools_word::{word_changes, CallEditor, Editing, WordChanges};
 use ooxml_word_edit::{Editor, RevisionPolicy, SetText, Tracking, WordDoc};
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -52,12 +52,14 @@ fn best(doc: &WordDoc, arguments: &Value) -> Result<(f64, String), String> {
         let opened = editor.store().snapshot().doc().clone();
         let caller = Caller::anonymous();
         let editing = Editing {
-            editor: &editor,
+            editor: &CallEditor::new(&editor),
             caller: &caller,
             opened: &opened,
             tracking: None,
             doc: "d1",
             cancel: &Never,
+            date: "2026-11-17T10:00:00Z",
+            layout: None,
         };
         let started = Instant::now();
         let reply = word_changes(&args, &editing);

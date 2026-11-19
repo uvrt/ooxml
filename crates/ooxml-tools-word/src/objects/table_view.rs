@@ -192,6 +192,31 @@ impl TableView {
         })
     }
 
+    /// Row `row`'s cells as (first grid column, span) (docx-agent's `_row_cells`); none
+    /// past the last row.
+    pub(crate) fn row_cells(&self, row: usize) -> Vec<(usize, usize)> {
+        let Some(element) = self.table.rows.get(row).and_then(|(path, _)| {
+            ooxml_word_model::docx::at_path(
+                &self.table.element,
+                path.get(self.table.path.len()..).unwrap_or_default(),
+            )
+        }) else {
+            return Vec::new();
+        };
+        let mut column = usize::try_from(val(element, &["trPr", "gridBefore"]).unwrap_or(0)).unwrap_or(0);
+        let mut found = Vec::new();
+        cells(element, &mut found);
+        found
+            .iter()
+            .map(|cell| {
+                let span = usize::try_from(val(cell, &["tcPr", "gridSpan"]).unwrap_or(1).max(1)).unwrap_or(1);
+                let placed = (column, span);
+                column += span;
+                placed
+            })
+            .collect()
+    }
+
     /// Whether the table holds tracked structure -- a row or cell deleted, cells merged, a
     /// paragraph mark deleted -- that its accepted view counts otherwise (docx-agent's
     /// `_Accepted`, not ported yet).
@@ -234,7 +259,7 @@ pub(crate) fn regions_off(docx: &Docx, table: &TableId) -> Option<String> {
 }
 
 /// The look options as the tool names them, in `LOOK_NAMES`' order.
-const LOOK_NAMES: [&str; 6] = [
+pub(crate) const LOOK_NAMES: [&str; 6] = [
     "header_row",
     "first_column",
     "banded_rows",
@@ -254,7 +279,7 @@ const LOOK_BITS: [(&str, u32, bool); 6] = [
 
 /// `w:tblLook` as the options it switches on, in `LOOK_NAMES`' order (`read_look`): the
 /// default look (header row, first column, banded rows) where there is none.
-fn read_look(node: Option<&Element>) -> [bool; 6] {
+pub(crate) fn read_look(node: Option<&Element>) -> [bool; 6] {
     let Some(node) = node else {
         return [true, true, true, false, false, false];
     };

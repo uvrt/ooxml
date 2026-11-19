@@ -18,11 +18,14 @@ use serde_json::{Map, Value};
 /// One paragraph's new text.
 #[derive(ToolArgs, Debug, Clone, PartialEq, Eq)]
 pub struct SetTextItem {
-    /// Paragraph, or table cell t:X/c<row>,<col>.
-    #[arg(refs)]
+    /// Paragraph, or table cell `t:X/c<row>,<col>`.
+    #[arg(refs, description = "Paragraph, or table cell t:X/c<row>,<col>.")]
     pub target: String,
-    /// The whole new text; \n starts a paragraph; **strong**, *emphasis*, [text]{Character style}.
-    #[arg(facts)]
+    /// The whole new text; \n starts a paragraph; **strong**, *emphasis*, `[text]{Character style}`.
+    #[arg(
+        facts,
+        description = "The whole new text; \\n starts a paragraph; **strong**, *emphasis*, [text]{Character style}."
+    )]
     pub text: String,
     /// Paragraph style for it (name or id).
     pub paragraph_style: Option<String>,
@@ -34,8 +37,8 @@ pub struct SetTextItem {
 pub struct WordSetText {
     /// Document id.
     pub doc: String,
-    /// Paragraph, or table cell t:X/c<row>,<col>.
-    #[arg(refs)]
+    /// Paragraph, or table cell `t:X/c<row>,<col>`.
+    #[arg(refs, description = "Paragraph, or table cell t:X/c<row>,<col>.")]
     pub target: Option<String>,
     /// The whole new text, as items' text.
     #[arg(facts)]

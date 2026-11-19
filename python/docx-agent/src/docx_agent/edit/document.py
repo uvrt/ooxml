@@ -18,7 +18,7 @@ import os
 import re
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, BinaryIO, Iterator
+from typing import TYPE_CHECKING, Any, BinaryIO, Callable, Iterator
 
 from lxml import etree
 from ooxml_edit.history import History
@@ -970,8 +970,26 @@ class Document(TrackingOps, RevisionOps, TextOps, FormatOps, ListOps, LinkOps, P
 
     def to_bytes(self) -> bytes:
         """The document as ``.docx`` bytes, as :meth:`save` would write them (less the
-        refreshed statistics)."""
+        refreshed statistics); for a view of versions an owner holds (:meth:`held_by`), the
+        bytes of the version it is as the owner writes them."""
+        saved = self.__dict__.get("_held_by")
+        if saved is not None:
+            data = saved(self)
+            if data is not None:
+                return data
         return self.package.to_bytes()
+
+    def held_by(self, saved: "Callable[[Document], bytes | None] | None") -> None:
+        """Make this document the view of versions an owner outside it holds (docx-agent's
+        Rust session, :mod:`docx_agent.rust.owner`): ``saved(document)`` is the bytes of the
+        version the view is, as the owner writes them, or ``None`` while the view is ahead
+        of the owner (a Python step changed it).  :meth:`to_bytes` is then those bytes, so a
+        version's layouts, copies and checks are keyed by one set of bytes whoever made
+        them.  ``None``: the document's own bytes again."""
+        if saved is None:
+            self.__dict__.pop("_held_by", None)
+        else:
+            self.__dict__["_held_by"] = saved
 
     def design_facts(self, include=None, *, caps: dict | None = None) -> dict:
         """Measured design facts for analysing a template, no verdicts

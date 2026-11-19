@@ -15,9 +15,11 @@
 //!   [`WordDocument`]);
 //! - stable addressing: block ids, the id ledger and its `docx-ids.1.` state ([`ids`]);
 //! - a version as docx-agent's reading tools read it ([`docx`], [`parts`]);
+//! - a field's text from a number (its format and switches) and a `SEQ` counted, which the
+//!   layout draws and an edit's field update writes alike ([`fieldtext`]).
 //! - the spacing around punctuation a text's language wants ([`typography`]).
 //!
-//! Must not: lay out pages or compute fields' values (`ooxml-word-layout`, L3), edit, or
+//! Must not: lay out pages or find the page a field shows (`ooxml-word-layout`, L3), edit, or
 //! read another library's internals. Nothing here depends on an interpreter lock: every
 //! value is immutable and `Send + Sync`; a [`Model`] is owned by one task at a time.
 //!
@@ -31,6 +33,7 @@ mod digest;
 pub mod document;
 pub mod docx;
 mod error;
+pub mod fieldtext;
 pub mod ids;
 mod imagemeta;
 pub mod labels;

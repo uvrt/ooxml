@@ -16,7 +16,6 @@ use ooxml_tools::pyfmt::repr;
 use ooxml_tools::{ArgEnum, Done, IntOrStr, Refusal, ToolArgs, ToolError, ToolResult, TryCall, WayOut};
 use ooxml_word_edit::find::Literal;
 use ooxml_word_edit::{Keep, ReplaceText as Replace};
-use ooxml_word_model::docx::text::{paragraph_text, View};
 use ooxml_word_model::docx::Docx;
 use serde_json::{json, Map, Value};
 use std::sync::Arc;
@@ -179,8 +178,14 @@ fn found(docx: &Docx, args: &ReplaceText) -> (Vec<Match>, usize) {
     let mut all = 0;
     let mut matches = Vec::new();
     for part in &docx.parts {
-        for entry in part.ids.paragraphs().iter() {
-            let text: Vec<char> = paragraph_text(&entry.element, View::Current).chars().collect();
+        for (k, line) in part.texts().iter().enumerate() {
+            if !line.contains(args.find.as_str()) {
+                continue;
+            }
+            let Some(entry) = part.ids.paragraphs().get(k) else {
+                continue;
+            };
+            let text: Vec<char> = line.chars().collect();
             for start in literal_matches(&text, &needle) {
                 all += 1;
                 let address = format!("{}@{start}:{}", entry.id, start + needle.len());

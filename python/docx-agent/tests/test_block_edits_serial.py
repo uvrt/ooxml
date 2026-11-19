@@ -10,7 +10,8 @@ import pytest
 
 import block_stress
 
-pytestmark = pytest.mark.any_faces
+# Calls prepared on drafts: documents the tool layer holds itself (conftest.python_owned).
+pytestmark = [pytest.mark.any_faces, pytest.mark.usefixtures("python_owned")]
 
 
 @pytest.mark.parametrize("seed, first_fill", [(0, False), (1, True)])

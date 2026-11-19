@@ -249,6 +249,22 @@ TOOL_HINTS = {
     "word_upgrade": "word_template upgrade_to_modern",
 }
 
+def _owner() -> Any:
+    """Lane P2c4: the Rust session as the owner of the format's documents (it takes none
+    where ``ooxml_core`` has no session: the tool layer then holds the document itself)."""
+    from ..rust.owner import OWNER
+
+    return OWNER
+
+
+def _serve(call: Any, arguments: dict[str, Any]) -> Any:
+    """Lane P2c6: a change the Rust session makes beside the others it makes, without the
+    document's lock (:func:`docx_agent.rust.edits.serve_owned`)."""
+    from ..rust.edits import serve_owned
+
+    return serve_owned(call, arguments)
+
+
 FORMAT = DocumentFormat(
     kind=KIND, open=open_docx, detect=detect, problems=problems, problem_key=problem_key,
     warnings=(AuthoringWarning, UntrackedChartEdit, DiagramDrawingDropped, ChartDataWarning),
@@ -257,4 +273,5 @@ FORMAT = DocumentFormat(
     read_provenance=read_provenance, restored=restored, own_facts=dict(OWN_REFUSED),
     tool_hints=TOOL_HINTS, warm_up=warm_up, touched=touched, number_texts=number_texts,
     scale_values=scale_values, state=id_state, open_with_state=open_docx_with_state,
-    read_copy=read_copy, blocks=BLOCKS, read_version=read_version, closed=release_document)
+    read_copy=read_copy, blocks=BLOCKS, read_version=read_version, closed=release_document, owner=_owner(),
+    serve=_serve)

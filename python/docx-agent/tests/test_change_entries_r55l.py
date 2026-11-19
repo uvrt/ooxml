@@ -167,7 +167,8 @@ def _shared_ids(box):
     ok(box, session, "word_set_tracking", doc="d1", on=True, author=ME)
     ok(box, session, "replace_text", doc="d1", find="one", replace="uno")
     ok(box, session, "replace_text", doc="d1", find="two", replace="dos")
-    document = session.entry("d1").document
+    # (The ids rewritten on a document of its bytes: the session's own is its to change.)
+    document = Document.open(session.entry("d1").document.to_bytes())
     part = document.package.document_part()
     for record in document.package.tree(part).iter(_W + "ins", _W + "del"):
         record.set(_W + "id", "95")

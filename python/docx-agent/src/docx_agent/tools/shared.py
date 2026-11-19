@@ -30,7 +30,8 @@ from .render import RENDERER
 from . import keep_trials
 from .keep_trials import left_out
 from .scoped import compare_copies, problems_in_scope, range_pages
-from ._base import (Timing, cached_layout, held_facts, outcome, page, reflow_json, remember, resolve, short,
+from .laid import cached_layout, held_facts
+from ._base import (Timing, outcome, page, reflow_json, remember, resolve, short,
                     validate_delta, wrap)
 
 KIND = "docx"
@@ -165,7 +166,7 @@ def _coverage(call: Any) -> dict[str, Any]:
     """How much of the document docx2svg could lay out (``coverage_facts``): a check
     that passed on a complete layout is told from one that could not see everything.
     Round 58: read where the layout is held (:func:`check_facts`), as ``check``'s are --
-    in a batch too since round 59 (:func:`~._base.held_facts`); laid out here only where
+    in a batch too since round 59 (:func:`~.laid.held_facts`); laid out here only where
     the document has no such worker."""
     try:
         made = held_facts(call, dict(BARE_REQUEST))

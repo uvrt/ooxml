@@ -176,13 +176,16 @@ fn refusals_carry_their_way_out() {
             "replace_text",
             "word_changes",
             "word_comments",
+            "word_edit_table",
+            "word_fields",
             "word_format",
             "word_format_table",
             "word_inspect",
             "word_lists",
             "word_read",
             "word_set_text",
-            "word_set_tracking"
+            "word_set_tracking",
+            "word_styles"
         ])
     );
     let extra = call(&s, "describe", json!({"doc": "d1", "x": 1}));

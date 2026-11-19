@@ -1,11 +1,11 @@
 //! Owns: validation per change (design sections 5 and 7): docx-agent's problems of a
-//! version ([`problems`], its `validate.py` `check`) read from the version's [`Tally`] --
-//! each block's facts memoised by content ([`ElementFacts`], one walk of the block, kept
+//! version ([`problems`], its `validate.py` `check`) read from the version's `Tally` --
+//! each block's facts memoised by content (`ElementFacts`, one walk of the block, kept
 //! while the block is unchanged), held in persistent per-part trees and whole-document
 //! counts that a new version takes from the previous one and changes by its changed
 //! blocks; the delta against a baseline as the save gate compares it ([`Delta`]); the
-//! largest annotation id in use ([`annotation_ceiling`]), which tracked edits number their
-//! revisions from; and who still has revisions or comments ([`author_in_use`]).
+//! largest annotation id in use (`annotation_ceiling`), which tracked edits number their
+//! revisions from; and who still has revisions or comments (`author_in_use`).
 //!
 //! No block's XML is read again and no version folds every block. The full check from
 //! scratch ([`full_problems`]) is the test oracle.

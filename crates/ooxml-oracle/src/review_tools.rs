@@ -12,8 +12,8 @@ use ooxml_opc::Package;
 use ooxml_store::{Caller, StoreConfig};
 use ooxml_tools::{ArgType, ToolArgs};
 use ooxml_tools_word::{
-    replace_text, word_changes, word_comments, word_set_text, word_set_tracking, Editing, ReplaceText, WordChanges,
-    WordComments, WordSetText, WordSetTracking,
+    replace_text, word_changes, word_comments, word_set_text, word_set_tracking, CallEditor, Editing, ReplaceText,
+    WordChanges, WordComments, WordSetText, WordSetTracking,
 };
 use ooxml_word_edit::Editor;
 use serde_json::{json, Map, Value};
@@ -43,12 +43,14 @@ pub fn tool_case(bytes: &Arc<[u8]>, case: &Value) -> Result<Value, String> {
     let opened = editor.store().snapshot().doc().clone();
     let caller = Caller::anonymous();
     let editing = Editing {
-        editor: &editor,
+        editor: &CallEditor::new(&editor),
         caller: &caller,
         opened: &opened,
         tracking: None,
         doc: "d1",
         cancel: &Never,
+        date: "2026-11-17T10:00:00Z",
+        layout: None,
     };
     let arguments = case.get("arguments").cloned().unwrap_or(Value::Object(Map::new()));
     let tool = case.get("tool").and_then(Value::as_str).unwrap_or("");

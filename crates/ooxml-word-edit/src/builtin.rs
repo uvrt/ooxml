@@ -202,16 +202,18 @@ fn w_val(element: &Element) -> ooxml_xml::Name {
 /// [`resolve`]'s refusals; when a part is not XML.
 pub(crate) fn ensure(sink: &mut EditSink<'_, '_>, name: &str, kind: &str) -> Result<String> {
     let docx = sink.docx()?;
+    let main = docx.main.clone();
+    let found = ooxml_word_model::parts::related(sink.doc().package(), &main, REL_STYLES)?;
+    // the edit depends on the style being there (or not): a style removed meanwhile is
+    // a conflict, not a reference to nothing
+    if let Some(part) = &found {
+        sink.read(Key::Part(Arc::from(part.as_str())));
+    }
     if let Some(found) = docx.find_style(name, kind) {
         return Ok(style_id(found).to_owned());
     }
     resolve(&docx, name, kind)?;
     let planned = plan(&docx, name, kind).unwrap_or_default();
-    let main = docx.main.clone();
-    let found = ooxml_word_model::parts::related(sink.doc().package(), &main, REL_STYLES)?;
-    if let Some(part) = &found {
-        sink.read(Key::Part(Arc::from(part.as_str())));
-    }
     let ids: Vec<(String, String)> = planned.iter().map(|(c, id, _)| (casefold(c), id.clone())).collect();
     let target = |reference: &str| -> Option<String> {
         let wanted = casefold(reference);
@@ -232,16 +234,9 @@ pub(crate) fn ensure(sink: &mut EditSink<'_, '_>, name: &str, kind: &str) -> Res
         }
         nodes.push(Node::Element(node));
     }
-    // docx-agent's `_create_styles_part`, when the first style is appended
     let part = match found {
         Some(part) => part,
-        None => sink.new_part(
-            &main,
-            ("word/styles.xml", "word/styles{n}.xml"),
-            crate::new_part::word_root("styles"),
-            STYLES_TYPE,
-            REL_STYLES,
-        )?,
+        None => styles_part(sink)?,
     };
     let tree = sink.doc().tree(&part)?.ok_or_else(|| EditError::NoPart(part.clone()))?;
     let at = tree.root().children().len();
@@ -253,4 +248,24 @@ pub(crate) fn ensure(sink: &mut EditSink<'_, '_>, name: &str, kind: &str) -> Res
         Vec::new(),
     )?;
     Ok(planned.first().map(|(_, id, _)| id.clone()).unwrap_or_default())
+}
+
+/// The styles part, made when the document has none (docx-agent's `_create_styles_part`,
+/// when the first style is appended).
+///
+/// # Errors
+/// When a part cannot be added.
+pub(crate) fn styles_part(sink: &mut EditSink<'_, '_>) -> Result<String> {
+    let docx = sink.docx()?;
+    let main = docx.main.clone();
+    if let Some(part) = ooxml_word_model::parts::related(sink.doc().package(), &main, REL_STYLES)? {
+        return Ok(part);
+    }
+    sink.new_part(
+        &main,
+        ("word/styles.xml", "word/styles{n}.xml"),
+        crate::new_part::word_root("styles"),
+        STYLES_TYPE,
+        REL_STYLES,
+    )
 }

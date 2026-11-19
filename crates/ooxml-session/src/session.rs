@@ -15,12 +15,12 @@ use ooxml_base::{Cancel, Context};
 use ooxml_opc::Package;
 use ooxml_store::{StoreConfig, StoreStats};
 use ooxml_tools::{Accepted, Refusal, ToolError, ToolResult, ToolSpec, WayOut};
-use ooxml_tools_word::{Placer, Version};
+use ooxml_tools_word::{Made, Placer, Version};
 use ooxml_word_model::docx::Versions;
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, PoisonError, RwLock};
+use std::sync::{Arc, Mutex, PoisonError, RwLock};
 
 /// A session's configuration, a value given when it is made.
 #[derive(Debug, Clone, Copy, Default)]
@@ -108,6 +108,23 @@ pub(crate) struct CallState<'p> {
     warnings: Vec<String>,
     pinned: Option<&'p mut Pinned>,
     placer: Option<Arc<dyn Placer>>,
+    /// The versions an editing tool's edits made.
+    made: Mutex<Option<Made>>,
+}
+
+/// The versions one changing call made ([`Session::edit`]): its first edit's number and its
+/// last edit's version, held -- the call's own, whatever other calls committed meanwhile.
+#[derive(Clone)]
+pub struct CallMade {
+    /// The number of the version its first edit made.
+    pub first: u64,
+    /// The version its last edit made.
+    pub last: Opened,
+    /// What the call's edit touched (`touched` entries), where it made one version (else
+    /// `None`: [`Opened::touched_since`] the version before `first` says).
+    pub touched: Option<Vec<Value>>,
+    /// The validation delta of `last` against the problems the document opened with.
+    pub validation: ooxml_word_edit::validate::Delta,
 }
 
 /// The versions `context` names, by document.
@@ -245,6 +262,18 @@ impl Session {
         let document = self.document(id)?;
         match (document.word(), document.head()) {
             (Some(word), At::Word(version)) => Ok(Some(word.validation(&version)?)),
+            _ => Ok(None),
+        }
+    }
+
+    /// [`Session::validation`] of the version `at` (one a call made, say) instead of the head.
+    ///
+    /// # Errors
+    /// [`SessionError::NotOpen`]; the edit core's when the version cannot be read.
+    pub fn validation_at(&self, at: &Opened) -> Result<Option<ooxml_word_edit::validate::Delta>, SessionError> {
+        let document = self.document(&at.id)?;
+        match (document.word(), &at.version) {
+            (Some(word), At::Word(version)) => Ok(Some(word.validation(version)?)),
             _ => Ok(None),
         }
     }
@@ -400,6 +429,14 @@ impl Session {
         result
     }
 
+    /// Run the editing tool `name` as [`Session::call`] does, and the versions its edits
+    /// made (`None` where it changed nothing): the call's step, as a host that numbers the
+    /// document's steps takes it while other calls commit to the document concurrently.
+    pub fn edit(&self, name: &str, arguments: Value, context: &CallContext) -> (ToolResult<Value>, Option<CallMade>) {
+        let mut pinned = pinned_by(context);
+        self.run_one(name, arguments, context, "", Some(&mut pinned))
+    }
+
     /// One call; `within` names the batch it runs in (`""`: none), whose refusals name it and
     /// whose op's argument errors are fielded under `arguments`; `pinned`, the versions the
     /// batch reads (each document at the version its first op read, as today's batch holds
@@ -412,6 +449,18 @@ impl Session {
         within: &str,
         pinned: Option<&mut Pinned>,
     ) -> ToolResult<Value> {
+        self.run_one(name, arguments, context, within, pinned).0
+    }
+
+    /// [`Session::call_one`], and the versions the call's edits made.
+    fn run_one(
+        &self,
+        name: &str,
+        arguments: Value,
+        context: &CallContext,
+        within: &str,
+        pinned: Option<&mut Pinned>,
+    ) -> (ToolResult<Value>, Option<CallMade>) {
         self.counts.calls.fetch_add(1, Ordering::Relaxed);
         let cancel = CallCancel::new(context, &*self.context.cancel, &*self.context.clock);
         let mut state = CallState {
@@ -419,6 +468,7 @@ impl Session {
             warnings: Vec::new(),
             pinned,
             placer: context.placer.clone(),
+            made: Mutex::new(None),
         };
         let mut result = if within.is_empty() {
             self.dispatch(name, arguments, context, &cancel, &mut state)
@@ -432,19 +482,39 @@ impl Session {
             }
         }
         let CallState {
-            opened, mut warnings, ..
+            opened,
+            mut warnings,
+            made,
+            ..
         } = state;
+        let made = made.into_inner().unwrap_or_else(PoisonError::into_inner);
+        let mut call_made = None;
         if let Some(opened) = opened {
             result.doc = Some(opened.id.to_string());
-            // a changing call's version is the head it left; a reading call's, the one read
+            // a changing call's version is the last it made (else the head it left); a
+            // reading call's, the one read
             let mutates = self.registry.named(name).is_some_and(|t| t.spec().flags.mutates);
-            let head = || self.document(&opened.id).ok().map(|d| d.head().seq());
-            result.version = Some(if mutates { head() } else { None }.unwrap_or_else(|| opened.version()));
+            let document = self.document(&opened.id).ok();
+            call_made = made.zip(document.as_ref()).map(|(made, document)| {
+                let one = made.first.seq() == made.last.seq();
+                CallMade {
+                    first: made.first.seq().0,
+                    touched: one.then(|| made.touched.iter().map(crate::changes::touched_json).collect()),
+                    validation: made.validation,
+                    last: Self::opened(&opened.id, document, At::Word(made.last)),
+                }
+            });
+            let head = || document.as_ref().map(|d| d.head().seq());
+            let left = call_made.as_ref().map(|m| m.last.version());
+            result.version = Some(
+                left.or_else(|| if mutates { head() } else { None })
+                    .unwrap_or_else(|| opened.version()),
+            );
         }
         warnings.append(&mut result.warnings);
         result.warnings = warnings;
         result.app.tool = name.to_owned();
-        result
+        (result, call_made)
     }
 
     fn dispatch(
@@ -470,6 +540,8 @@ impl Session {
             caller: &context.caller,
             cancel,
             date: revision_date(self.context.clock.now()),
+            made: &state.made,
+            layout: context.layout.as_deref(),
         };
         tool.run(arguments, &call)
     }

@@ -1,6 +1,6 @@
 //! `word-objects-bench <document.docx> [table]`: what the object tools cost on a long
-//! document. Each call -- `word_edit_table`'s row inserted, and row and column deletions (with their
-//! report of the file's text removed), untracked and tracked -- runs as a whole tool call on a fresh
+//! document. Each call -- `word_edit_table`'s rows and columns inserted, copied and deleted (with their
+//! report of the file's text removed), cells merged and split, untracked and tracked -- runs as a whole tool call on a fresh
 //! editor of the document, on its middle body table (or `table`); the best of three wall
 //! times, as JSON. CPU for the whole run is the caller's to measure (`/usr/bin/time -l`).
 //!
@@ -11,7 +11,7 @@ use ooxml_base::{Cancel, Limits};
 use ooxml_opc::Package;
 use ooxml_store::{Caller, StoreConfig};
 use ooxml_tools::ArgType;
-use ooxml_tools_word::{word_edit_table, Editing, WordEditTable};
+use ooxml_tools_word::{word_edit_table, CallEditor, Editing, WordEditTable};
 use ooxml_word_edit::{Editor, Tracking};
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -43,12 +43,14 @@ fn best(bytes: &Arc<[u8]>, arguments: &Value, tracking: Option<&Tracking>) -> Re
         opened.docx().map_err(|e| e.to_string())?;
         let caller = Caller::anonymous();
         let editing = Editing {
-            editor: &editor,
+            editor: &CallEditor::new(&editor),
             caller: &caller,
             opened: &opened,
             tracking,
             doc: "d1",
             cancel: &Never,
+            date: "2026-11-17T10:00:00Z",
+            layout: None,
         };
         let started = Instant::now();
         let reply = word_edit_table(&args, &editing).to_json();
@@ -93,8 +95,23 @@ pub fn run(args: &[String]) -> Result<(), String> {
         date: "2026-11-19T10:00:00Z".into(),
     };
     let mut out = serde_json::Map::new();
-    for (action, index) in [("insert_row", 1), ("delete_row", 1), ("delete_column", 0)] {
-        let call = json!({"doc": "d1", "table": table, "action": action, "index": index});
+    let calls = [
+        ("insert_row", json!({"index": 1})),
+        ("delete_row", json!({"index": 1})),
+        ("delete_column", json!({"index": 0})),
+        ("insert_column", json!({"index": 0})),
+        ("copy_row", json!({"index": 1})),
+        (
+            "merge",
+            json!({"first": {"row": 0, "col": 0}, "last": {"row": 1, "col": 1}}),
+        ),
+        ("split", json!({"first": {"row": 1, "col": 0}, "rows": 2, "columns": 2})),
+    ];
+    for (action, arguments) in calls {
+        let mut call = json!({"doc": "d1", "table": table, "action": action});
+        if let (Some(call), Some(arguments)) = (call.as_object_mut(), arguments.as_object()) {
+            call.extend(arguments.clone());
+        }
         for (name, tracked) in [
             (action.to_owned(), None),
             (format!("{action}, tracked"), Some(&tracking)),
