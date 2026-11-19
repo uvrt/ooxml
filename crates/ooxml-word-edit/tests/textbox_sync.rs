@@ -11,7 +11,7 @@ use ooxml_base::Limits;
 use ooxml_derive::CacheBudget;
 use ooxml_opc::Package;
 use ooxml_store::{Caller, Clock, StoreConfig};
-use ooxml_word_edit::{Editor, InsertParagraph, RevisionPolicy, SetStyledText, SetText};
+use ooxml_word_edit::{Editor, InsertParagraph, MoveBlocks, Moving, RevisionPolicy, SetStyledText, SetText};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -249,4 +249,24 @@ fn styled_text_in_the_box_syncs_the_fallback() {
         .iter()
         .any(|e| e.changed));
     assert_synced(&editor);
+}
+
+/// chart-places.docx case 148: the block holding the text box moved before the first
+/// block (an untracked move, so as many boxes as before in the stretch that changed, in
+/// another order) takes its box along with its content unchanged; stamping gives the box's
+/// paragraphs ids, but its fallback stays as it was, as docx-agent keeps it (#94).
+#[test]
+fn a_text_box_moved_with_its_block_is_not_synced() {
+    let editor = editor();
+    let fallback = contents(&editor)[1].clone();
+    let moved = MoveBlocks {
+        blocks: Moving::Blocks("p@body/4".to_owned()),
+        after: None,
+        before: Some("p@body/0".to_owned()),
+        policy: RevisionPolicy::Untracked,
+    };
+    assert!(editor.run(&Caller::anonymous(), &moved).unwrap().changed);
+    let now = contents(&editor);
+    assert!(now[0].contains("w14:paraId"), "the box's paragraphs are stamped");
+    assert_eq!(now[1], fallback);
 }
