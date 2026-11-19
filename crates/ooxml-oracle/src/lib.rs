@@ -28,6 +28,7 @@ pub mod dml;
 pub mod drawing;
 pub mod edits;
 pub mod edits_bench;
+pub mod edits_markdown;
 pub mod edits_styled;
 pub mod export;
 mod export_parts;

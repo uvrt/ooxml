@@ -14,6 +14,7 @@
 //!   [`SetParagraphStyle`] (built-in styles added as Word writes them); [`DeleteBlock`];
 //!   [`SetCells`]; [`StyleSpans`] (character styles and emphasis over a paragraph's text);
 //!   [`SetStyledText`] (`word_set_text`'s item: text with inline emphasis);
+//!   [`InsertMarkdown`] (Markdown written as the document's own blocks);
 //!   [`InsertText`], [`DeleteText`] and [`ReplaceText`] (text within a
 //!   paragraph, docx-agent's `_replace_ranges`); [`Review`] (accepting and rejecting tracked
 //!   changes, `word_changes`); [`SetWordTracking`] (Word's own Track Changes switch);
@@ -45,6 +46,7 @@ mod inline;
 mod links;
 mod list_style;
 mod lists;
+mod markdown;
 mod marks;
 mod merge;
 mod moving;
@@ -91,6 +93,7 @@ pub use links::{hyperlink_span, AddBookmark, AddHyperlink, LinkEdited, RemoveBoo
 pub use lists::{
     numbered_by_style, paragraphs_of, unnumbered_styles_like, LevelFormat, ListAction, ListEdit, ListStep, ListsEdited,
 };
+pub use markdown::{InsertMarkdown, MarkdownInserted, Options as MarkdownOptions, WriteMap};
 pub use moving::{section_blocks, BlocksMoved, MoveBlocks, Moving};
 pub use notes::{DeleteNote, EditNote, InsertNote, MoveNote, NoteEdited, NoteKind};
 pub use paragraph_style::{SetParagraphStyle, StyleSet};
