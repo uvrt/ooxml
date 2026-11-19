@@ -667,12 +667,15 @@ def main(argv: list[str] | None = None) -> int:
                         help="the text edits on French copies of the documents, written into DIR")
     parser.add_argument("--paragraphs", action="store_true",
                         help="set_text in lines and insert_paragraph (only these, with --only-ops none)")
+    parser.add_argument("--results", help="also write the cases with differences here (JSON lines)")
     parser.add_argument("files", nargs="*")
     args = parser.parse_args(argv)
     expected: dict = {}
+    inputs: dict = {}
     manifest = []
     for path in files_of(args):
         data = path.read_bytes()
+        source = str(path)
         if args.spacing:
             data = _french(data)
             path = Path(args.spacing) / f"{len(manifest):04d}-{path.name}"
@@ -734,6 +737,7 @@ def main(argv: list[str] | None = None) -> int:
             continue
         for k, case in enumerate(cases):
             expected[(str(path), k)] = python_case(data, case, baseline)
+            inputs[(str(path), k)] = {**case, "source": source}
         manifest.append({"file": str(path), "cases": cases})
     rust = run_rust(args.rust, manifest)
     got = {key: value.get("rust") for key, value in rust.items()}
@@ -772,7 +776,8 @@ def main(argv: list[str] | None = None) -> int:
     if rewritten:
         print(f"{rewritten} cases where docx-agent's touched counts blocks only re-serialized (equal "
               "once the body before is read as lxml writes it)")
-    return report(expected, got)
+    return report(expected, got, results=args.results, inputs=inputs,
+                  counts={"unported": unported, "rewritten": rewritten})
 
 
 def _shorten(want: dict, have: dict, context: int = 160) -> None:
