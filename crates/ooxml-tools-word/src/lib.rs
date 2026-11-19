@@ -22,6 +22,7 @@ mod refusal;
 mod review;
 mod structure;
 mod style;
+mod table_read;
 mod text;
 mod version;
 mod word_inspect;
@@ -46,6 +47,7 @@ pub use structure::{
     SectionStart, StoryType, StyleMapping, Unmapped, Which, WordCopyFrom, WordFields, WordHeadersFooters, WordLinks,
     WordMove, WordNotes, WordSections,
 };
+pub use style::{word_compare_blocks, BlockIn, FollowReport, WordCompareBlocks, WordFollowSample};
 pub use style::{word_format, Alignment, Cleared, FindExpect, FindItem, WordFormat};
 pub use style::{word_lists, Follow, ListKind, ListsAction, WordLists};
 pub use style::{
@@ -53,7 +55,6 @@ pub use style::{
     StylesAction, TabAlignment, TabItem, TabLeader, WordStyles,
 };
 pub use style::{word_template, TemplateAction, WordTemplate};
-pub use style::{BlockIn, FollowReport, WordCompareBlocks, WordFollowSample};
 pub use text::{replace_text, word_set_text, Expect, ReplaceStories, ReplaceText, SetTextItem, Unported, WordSetText};
 pub use version::{Others, Version};
 pub use word_inspect::{word_inspect, WordInspect};

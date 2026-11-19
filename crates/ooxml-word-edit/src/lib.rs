@@ -141,4 +141,5 @@ pub use tables::{
     TableFormatted, TableValues, TableWidth,
 };
 pub use template::{compatibility_mode, UpgradeToModern, Upgraded, DEFAULT_COMPATIBILITY_MODE, MODERN_MODE};
+pub use text::diff::ratio as text_ratio;
 pub use text_range::anchor;
