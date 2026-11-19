@@ -1,5 +1,6 @@
 //! Word's text tools (docx-agent's `tools/text.py` and the shared `replace_text`):
-//! `word_set_text` and `replace_text`, over the edit core's commands.
+//! `word_set_text`, `replace_text`, `word_insert_text` and `word_delete`, over the edit
+//! core's commands.
 //!
 //! Owns: the tools' definitions (descriptions beside them), their handlers -- each call's
 //! edits one command through the editor (one history step), written under the document's
@@ -9,9 +10,13 @@
 //! Must not: hold sessions or documents by id, keep state between calls, or write the
 //! document but through a command.
 
+mod delete;
+mod insert_text;
 mod replace_text;
 mod set_text;
 
+pub use delete::{word_delete, WordDelete};
+pub use insert_text::{word_insert_text, InsertItem, Where, WordInsertText};
 pub use replace_text::{replace_text, Expect, ReplaceStories, ReplaceText};
 pub use set_text::{word_set_text, SetTextItem, WordSetText};
 
@@ -25,8 +30,6 @@ use serde_json::Value;
 pub enum Unported {
     /// Text with `**strong**`, `*emphasis*`, `[text]{Style}` or escapes (lane P2b3).
     Styled,
-    /// Text a language's spacing may change (`: ; ! ?` and guillemets; lane P2b3).
-    Spacing,
     /// A value written by reference (`{{d:...}}`) or a `$ref` address: the host's.
     Reference,
     /// A paragraph style set with the text.
@@ -41,7 +44,6 @@ impl Unported {
     pub fn reason(self) -> &'static str {
         match self {
             Unported::Styled => "styled text (strong, emphasis, character styles)",
-            Unported::Spacing => "a language's spacing of the text written",
             Unported::Reference => "values or addresses by reference",
             Unported::ParagraphStyle => "a paragraph style set with the text",
             Unported::Form => "an address form or option not ported",
@@ -64,9 +66,6 @@ pub(crate) fn text_unported(text: &str) -> Option<Unported> {
     }
     if text.contains('*') || text.contains('\\') || text.contains("]{") {
         return Some(Unported::Styled);
-    }
-    if text.chars().any(|c| matches!(c, ':' | ';' | '!' | '?' | '«' | '»')) {
-        return Some(Unported::Spacing);
     }
     None
 }

@@ -271,3 +271,29 @@ pub(crate) fn track_new_paragraph(work: &mut Work, paragraph: Id, last: bool, st
     }
     mark(work, paragraph, "ins", stamp, orders);
 }
+
+/// A copied paragraph's content made plain (`_clear_revisions`): its insertions unwrapped,
+/// its deletions and moved-away text removed, its records dropped.
+pub(crate) fn clear_revisions(work: &mut Work, paragraph: Id) {
+    for node in work.iter(paragraph, W, &["del", "moveFrom"]) {
+        if work.parent(node).is_some_and(|p| !work.is(p, W, "rPr")) {
+            work.remove(node);
+        }
+    }
+    for node in work.iter(paragraph, W, &["ins", "moveTo"]) {
+        let Some(parent) = work.parent(node) else { continue };
+        if work.is(parent, W, "rPr") {
+            work.remove(node);
+            continue;
+        }
+        for child in work.children(node).to_vec() {
+            work.add_previous(node, child);
+        }
+        work.remove(node);
+    }
+    for local in [&["rPrChange", "pPrChange"][..], &["del", "moveFrom"][..]] {
+        for node in work.iter(paragraph, W, local) {
+            work.remove(node);
+        }
+    }
+}

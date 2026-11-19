@@ -343,6 +343,10 @@ impl Registry {
         registry.register(word_edit::<ooxml_tools_word::ReplaceText>(
             ooxml_tools_word::replace_text,
         ));
+        registry.register(word_edit::<ooxml_tools_word::WordInsertText>(
+            ooxml_tools_word::word_insert_text,
+        ));
+        registry.register(word_edit::<ooxml_tools_word::WordDelete>(ooxml_tools_word::word_delete));
         registry.register(word_edit::<ooxml_tools_word::WordFormatTable>(
             ooxml_tools_word::word_format_table,
         ));

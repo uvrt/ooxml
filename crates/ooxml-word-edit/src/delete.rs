@@ -13,7 +13,7 @@
 //! annotation ids when tracked.
 
 use crate::block_checks::{
-    block_references, check_container_survives, ends_section, has_lonely_markers, has_reference, neighbour_path,
+    block_references, check_container_survives, ends_section, has_lonely_markers, held_reference, neighbour_path,
 };
 use crate::doc::{Key, WordDoc};
 use crate::marks::mark_record;
@@ -86,9 +86,9 @@ fn check(root: &Arc<Element>, block: &Anchor, element: &Element, tracked: bool) 
             )));
         }
         let references = if tracked { None } else { block_references(root, element) };
-        if references.is_none() && has_reference(element) {
+        if let Some(local) = references.is_none().then(|| held_reference(element)).flatten() {
             return Err(EditError::Refused(format!(
-                "{} holds a note or comment reference; deleting it would orphan the note or comment",
+                "{} holds a {local}; deleting it would orphan the note or comment",
                 block.id
             )));
         }

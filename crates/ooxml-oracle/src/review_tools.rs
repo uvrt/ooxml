@@ -1,5 +1,5 @@
 //! The tool cases of `word-edits` (`op: "tool"`): `word_set_tracking`, `word_changes`,
-//! `word_comments`, `word_set_text` and `replace_text` called with JSON arguments on a document as opened,
+//! `word_comments`, `word_set_text`, `replace_text`, `word_insert_text` and `word_delete` called with JSON arguments on a document as opened,
 //! each reply as the tool writes it (`to_json`) and every part whose content changed (its
 //! bytes as the package writes them), for `python/word_edits_diff.py --tools` to compare
 //! with docx-agent's toolbox.
@@ -12,8 +12,9 @@ use ooxml_opc::Package;
 use ooxml_store::{Caller, StoreConfig};
 use ooxml_tools::{ArgType, ToolArgs};
 use ooxml_tools_word::{
-    replace_text, word_changes, word_comments, word_set_text, word_set_tracking, CallEditor, Editing, ReplaceText,
-    WordChanges, WordComments, WordSetText, WordSetTracking,
+    replace_text, word_changes, word_comments, word_delete, word_insert_text, word_set_text, word_set_tracking,
+    CallEditor, Editing, ReplaceText, WordChanges, WordComments, WordDelete, WordInsertText, WordSetText,
+    WordSetTracking,
 };
 use ooxml_word_edit::Editor;
 use serde_json::{json, Map, Value};
@@ -59,32 +60,7 @@ pub fn tool_case(bytes: &Arc<[u8]>, case: &Value) -> Result<Value, String> {
         Ok(taken) => taken,
         Err(reply) => return Ok(reply),
     };
-    let mut reply = match tool {
-        "word_changes" => word_changes(
-            &WordChanges::from_arg(&arguments, "").map_err(|e| e.to_string())?,
-            &editing,
-        ),
-        "word_comments" => word_comments(
-            &WordComments::from_arg(&arguments, "").map_err(|e| e.to_string())?,
-            &editing,
-        ),
-        "word_set_tracking" => {
-            word_set_tracking(
-                &WordSetTracking::from_arg(&arguments, "").map_err(|e| e.to_string())?,
-                &editing,
-            )
-            .0
-        }
-        "word_set_text" => word_set_text(
-            &WordSetText::from_arg(&arguments, "").map_err(|e| e.to_string())?,
-            &editing,
-        ),
-        "replace_text" => replace_text(
-            &ReplaceText::from_arg(&arguments, "").map_err(|e| e.to_string())?,
-            &editing,
-        ),
-        other => return Err(format!("no tool {other}")),
-    };
+    let mut reply = run(tool, &arguments, &editing)?;
     notes.append(&mut reply.warnings);
     reply.warnings = notes;
     let head = editor.store().snapshot();
@@ -111,12 +87,52 @@ pub fn tool_case(bytes: &Arc<[u8]>, case: &Value) -> Result<Value, String> {
     }))
 }
 
+/// `tool`'s handler run with `arguments` (taken as meant).
+fn run(tool: &str, arguments: &Value, editing: &Editing<'_>) -> Result<ooxml_tools::ToolResult<Value>, String> {
+    Ok(match tool {
+        "word_changes" => word_changes(
+            &WordChanges::from_arg(arguments, "").map_err(|e| e.to_string())?,
+            editing,
+        ),
+        "word_comments" => word_comments(
+            &WordComments::from_arg(arguments, "").map_err(|e| e.to_string())?,
+            editing,
+        ),
+        "word_set_tracking" => {
+            word_set_tracking(
+                &WordSetTracking::from_arg(arguments, "").map_err(|e| e.to_string())?,
+                editing,
+            )
+            .0
+        }
+        "word_set_text" => word_set_text(
+            &WordSetText::from_arg(arguments, "").map_err(|e| e.to_string())?,
+            editing,
+        ),
+        "replace_text" => replace_text(
+            &ReplaceText::from_arg(arguments, "").map_err(|e| e.to_string())?,
+            editing,
+        ),
+        "word_insert_text" => word_insert_text(
+            &WordInsertText::from_arg(arguments, "").map_err(|e| e.to_string())?,
+            editing,
+        ),
+        "word_delete" => word_delete(
+            &WordDelete::from_arg(arguments, "").map_err(|e| e.to_string())?,
+            editing,
+        ),
+        other => return Err(format!("no tool {other}")),
+    })
+}
+
 /// The text tools' arguments taken as meant, as the session takes them (defaults filled),
 /// with the notes saying so; a refusal as the case's reply.
 fn accepted(tool: &str, arguments: Value) -> Result<(Value, Vec<String>), Value> {
     let spec = match tool {
         "word_set_text" => WordSetText::spec(),
         "replace_text" => ReplaceText::spec(),
+        "word_insert_text" => WordInsertText::spec(),
+        "word_delete" => WordDelete::spec(),
         _ => return Ok((arguments, Vec::new())),
     };
     match spec.accept(arguments) {

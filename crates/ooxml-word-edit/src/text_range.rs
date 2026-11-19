@@ -285,7 +285,20 @@ pub(crate) fn range_id(range: &RangeText) -> String {
 pub fn anchor(doc: &WordDoc, text: &str) -> Result<String> {
     let docx = doc.docx()?;
     let pattern = crate::find::Literal::new(text, true, false, "")?;
-    let found = crate::find::matches(&docx, &pattern, false)?;
+    anchor_range(doc, &docx, &pattern, text).map(|r| range_id(&r))
+}
+
+/// [`anchor`]'s range, found by `pattern` (`text`'s literal) in `docx`, a version of `doc`.
+///
+/// # Errors
+/// As [`anchor`]'s.
+pub(crate) fn anchor_range(
+    doc: &WordDoc,
+    docx: &Docx,
+    pattern: &crate::find::Literal,
+    text: &str,
+) -> Result<RangeText> {
+    let found = crate::find::matches(docx, pattern, false)?;
     let ranges: Vec<RangeText> = found
         .into_iter()
         .map(|(start_id, start, end_id, end, _)| RangeText {
@@ -301,12 +314,12 @@ pub fn anchor(doc: &WordDoc, text: &str) -> Result<String> {
             format!("{wanted} occurs nowhere"),
             Vec::new(),
         ))),
-        [one] => Ok(range_id(one)),
+        [one] => Ok(one.clone()),
         many => {
             let described: Vec<String> = many
                 .iter()
                 .map(|r| {
-                    let context = Span::of(doc, &docx, r).map(|s| s.context(20)).unwrap_or_default();
+                    let context = Span::of(doc, docx, r).map(|s| s.context(20)).unwrap_or_default();
                     format!("{} {}", range_id(r), repr_str(&context))
                 })
                 .collect();

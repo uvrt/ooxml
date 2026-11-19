@@ -64,8 +64,16 @@ pub(crate) fn edit_refusal(error: EditError, field: &str, call: TryCall) -> Tool
         EditError::Refused(m) | EditError::Text(m) | EditError::Span(m) => {
             ToolError::refusal(Refusal::Refused, m, WayOut::call(call)).at(field)
         }
-        EditError::Argument { field, message } => {
-            ToolError::refusal(Refusal::InvalidArguments, message, WayOut::call(call)).at(field)
+        EditError::Argument {
+            field,
+            message,
+            options,
+        } => {
+            let way_out = match WayOut::names(options) {
+                Some(names) => names.and_call(call),
+                None => WayOut::call(call),
+            };
+            ToolError::refusal(Refusal::InvalidArguments, message, way_out).at(field)
         }
         other => ToolError::internal(other.to_string(), "word:edit"),
     }

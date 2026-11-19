@@ -45,7 +45,7 @@ import contextvars
 import threading
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator, Mapping
 
 from ..history import Step
 from .gate import Gate, GatedLock
@@ -94,6 +94,12 @@ class OwnedHistory:
     @property
     def in_batch(self) -> bool:
         return self._entry.batch_depth > 0
+
+    def at_head(self, then: Callable[[], None]) -> None:
+        """``then()`` with no step numbered meanwhile (what is kept per version, by a call
+        that made no step)."""
+        with self._cond:
+            then()
 
     def head(self, number: int | None = None) -> Any:
         """The owner's version numbered ``number`` (now: the latest), ``None`` when let go."""
@@ -389,13 +395,14 @@ class OwnedEntry(DocumentEntry):
             yield
 
     def served(self, first: int, head: Any, owner: StepOwner | None = None,
-               counted: bool = False) -> tuple[int, int]:
+               counted: bool = False, refs: Mapping[str, str] | None = None) -> tuple[int, int]:
         """A call the owner served made its versions ``first`` (the owner's number) to
         ``head``: the call's step, numbered in the order the owner made it (within
         :meth:`serving`).  ``counted``: the call ran without the document's lock (lane P2c6),
         so the step is counted here as it is numbered -- the change and its parts, the
-        step's owner, the refs, the committed version for reads -- which the dispatcher
-        does under the lock otherwise.  The step's number and the number before it."""
+        step's owner, the refs the call defined (``refs``, owned by ``owner``'s caller), the
+        committed version for reads -- which the dispatcher does under the lock otherwise.
+        The step's number and the number before it."""
         assert self._owned is not None
 
         def count(number: int, before: int) -> None:
@@ -406,10 +413,19 @@ class OwnedEntry(DocumentEntry):
             if owner is not None:
                 self.owners[number] = owner
                 self.own_undos = [undo for undo in self.own_undos if undo.kind != "plain"]
+            if refs:
+                self.keep_refs(dict(refs), owner.caller if owner is not None else None)
             self.ref_states.setdefault(number, dict(self.refs))
             self.commit(None)
 
         return self._owned.served(first, head, count if counted else None)
+
+    def served_refs(self, refs: Mapping[str, str], caller: Mapping[str, Any]) -> None:
+        """The refs a served call that made no step defined (``caller``'s), kept under the
+        version they name -- in the owner's order, as a step's are (:meth:`served`)."""
+        assert self._owned is not None
+        if refs:
+            self._owned.at_head(lambda: self.keep_refs(dict(refs), caller))
 
     @contextmanager
     def savepoint(self, start: Any = None) -> Iterator[bool]:

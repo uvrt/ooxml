@@ -28,6 +28,8 @@ pub struct ToolAttrs {
     pub place_own: Vec<LitStr>,
     /// `place_find`: it takes `find` itself.
     pub place_find: bool,
+    /// `place_items = "items"`: the array field whose items are places too.
+    pub place_items: Option<LitStr>,
     /// `paths_first("from", ...)`: holding paths listed before the others.
     pub paths_first: Vec<LitStr>,
 }
@@ -118,6 +120,7 @@ pub fn tool_attrs(attrs: &[Attribute]) -> syn::Result<Option<ToolAttrs>> {
             "place_own" => out.place_own = string_list(&meta)?,
             "paths_first" => out.paths_first = string_list(&meta)?,
             "place_find" => out.place_find = flag(&meta)?,
+            "place_items" => out.place_items = Some(meta.value()?.parse()?),
             "mutates" | "strict" | "batchable" | "read_batchable" | "retry_key" => {
                 let value = flag(&meta)?;
                 out.flags.push((key, value));
