@@ -4,6 +4,7 @@
 | --- | --- |
 | `ids-and-markup.docx` | `3df20ba9fcbe5badf9bb7a950ae80652b244b8484da665dccab7afd1a24d74df` |
 | `mode14.docx` | `77be777abae6193af48cb3c970c7a4c67a2a3a4a1c147acc569c89a7fc7240cc` |
+| `controls.docx` | `6454c1d84d488720eddacdd76b8200f1065e5f6fa03f22cebecbbe7db067b0d3` |
 | `lists-and-styles.docx` | `94c56b4994c7f50480d634cbf099d808c7ded428b5a8c254bd289fd3567fabaf` |
 
 Written by `tools/make_fixtures.py` in this repository, deterministically (running it
@@ -18,6 +19,12 @@ block-level content controls, an insertion, a deletion and a move by another aut
 bookmark across two paragraphs, tabs, breaks, a symbol and the special hyphens, a table
 with a horizontal and a vertical merge, a header, a footer, a footnote and a comment.
 `mode14.docx` is three paragraphs in compatibility mode 14.
+`controls.docx` (mode 15) holds a content control of every kind as Word 365 writes them --
+plain text showing its placeholder, rich text with a title and a tag, a drop-down list whose
+items' display texts and values differ, a combo box holding text of its own, a date, a checked
+check box, content- and control-locked ones, one holding a tracked insertion, a data-bound one
+with its custom XML part, a block-level one of two paragraphs with a bookmark displaced around
+it, one in a table cell, one around a table row and one in the header -- for `word_controls`.
 `lists-and-styles.docx` (mode 15) is what E1's edits work on: a template localised to Dutch
 (the style ids Dutch Word writes -- `Standaard`, `Kop1`, `Zwaar` -- with their English
 names), numbered lists over one abstract definition (one restarted), a list a paragraph

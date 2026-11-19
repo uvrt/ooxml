@@ -6,7 +6,9 @@
 //! Must not: be used by any library; it is a test instrument.
 
 use crate::structure_tools::{run, tool_case};
-use ooxml_tools_word::{word_edit_table, word_format_table, WordEditTable, WordFormatTable};
+use ooxml_tools_word::{
+    word_controls, word_edit_table, word_format_table, WordControls, WordEditTable, WordFormatTable,
+};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -20,6 +22,7 @@ pub fn case(bytes: &Arc<[u8]>, case: &Value) -> Result<Value, String> {
             word_format_table(args, editing)
         })),
         "word_edit_table" => Some(run(arguments, |args: &WordEditTable| word_edit_table(args, editing))),
+        "word_controls" => Some(run(arguments, |args: &WordControls| word_controls(args, editing))),
         _ => None,
     })
 }

@@ -261,7 +261,7 @@ impl Registry {
     /// The tools ported so far: Word's `describe`, `word_read`, `word_inspect` and
     /// `find_text`, and `read_batch` over them; its review tools `word_set_tracking`,
     /// `word_changes` and `word_comments`; its text tools `word_set_text` and
-    /// `replace_text`; the object tools `word_format_table` and `word_edit_table`; its style tools `word_lists`,
+    /// `replace_text`; the object tools `word_format_table`, `word_edit_table` and `word_controls`; its style tools `word_lists`,
     /// `word_format`, `word_styles`, `word_template` and `word_follow_sample`, and
     /// `word_compare_blocks` (reading).
     #[must_use]
@@ -310,6 +310,10 @@ impl Registry {
         registry.register(Arc::new(EditHandler::<ooxml_tools_word::WordEditTable>::new(
             &[DocKind::Docx],
             ooxml_tools_word::word_edit_table,
+        )));
+        registry.register(Arc::new(EditHandler::<ooxml_tools_word::WordControls>::new(
+            &[DocKind::Docx],
+            ooxml_tools_word::word_controls,
         )));
         registry.register(Arc::new(EditHandler::<ooxml_tools_word::WordLists>::new(
             &[DocKind::Docx],

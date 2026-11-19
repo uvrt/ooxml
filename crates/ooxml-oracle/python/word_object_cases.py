@@ -167,9 +167,52 @@ def edit_table_cases(document) -> list[dict]:
     return out + [tracked(case) for case in out]
 
 
+def _control_values(kind: str) -> list[str]:
+    """Values a control of ``kind`` is filled with: each kind's own, and ones it refuses."""
+    if kind == "checkbox":
+        return ["true", "no", "Checked"]
+    if kind == "date":
+        return ["2026-03-05", "2024-02-29T10:00", "2026-02-30", "not a date"]
+    if kind in ("drop-down", "combo-box"):
+        return ["Two", "b", "Something else"]
+    return ["Filled", "", "Line one\nLine two", "Tab\there"]
+
+
+def controls_cases(document) -> list[dict]:
+    """``word_controls``: the controls listed; one of each kind inserted at a position, a
+    range, inside a control and after text found once (with a title and a tag; a list
+    without items, a position past the text, none or both of at and find refused); each
+    control filled with its kind's values (several lines, a choice by text or value, a
+    date in its picture, a check box's state; refusals) and removed; a control that is not
+    there -- untracked and tracked."""
+    def edit(action: str, **arguments) -> dict:
+        return call("word_controls", action=action, **arguments)
+
+    out = [edit("list")]
+    paragraphs = [b["id"] for b in document.blocks() if b["id"] and b["kind"] == "paragraph"]
+    if paragraphs:
+        first = paragraphs[0]
+        out += [edit("insert", at=f"{first}@0"), edit("insert", at=f"{first}@0:2", type="rich-text"),
+                edit("insert", at=first, type="drop-down", items=["One", "Two"], title="Pick", tag="pick"),
+                edit("insert", at=f"{first}@1", type="combo-box", items=["a", "b"]),
+                edit("insert", at=f"{first}@0", type="date"), edit("insert", at=f"{first}@0", type="checkbox"),
+                edit("insert", at=f"{first}@0", type="drop-down"),
+                edit("insert", at=f"{first}@9999", tag="past the text"),
+                edit("insert"), edit("insert", at=first, find="x")]
+        words = document.paragraph(first).text.split()
+        if words:
+            out.append(edit("insert", find=words[0], type="text", title="After"))
+    for control in document.content_controls()[:16]:
+        out += [edit("fill", control=control.id, value=value) for value in _control_values(control.kind)]
+        out += [edit("remove", control=control.id), edit("insert", at=f"{control.id}")]
+    out += [edit("fill", control="cc:999999", value="x"), edit("remove", control="cc:999999"), edit("fill"),
+            edit("remove"), edit("fill", control="cc:999999")]
+    return out + [tracked(case) for case in out]
+
+
 def cases(document) -> list[dict]:
     """Every object case for ``document``."""
-    found = format_table_cases(document) + edit_table_cases(document)
+    found = format_table_cases(document) + edit_table_cases(document) + controls_cases(document)
     wanted = os.environ.get("OBJECT_TOOLS")       # a comma list, to run some tools only
     found = [c for c in found if not wanted or c["tool"] in wanted.split(",")]
     actions = os.environ.get("OBJECT_ACTIONS")    # a comma list of actions (word_edit_table's)

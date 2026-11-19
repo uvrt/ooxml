@@ -51,3 +51,13 @@ mode = "ranges"
 file = "generated/charts/*.docx"
 cause = """Phase P3 (the chart model): word_read of a range holding a chart or SmartArt, as for \
 mode read above."""
+
+# word_controls insert at a position past its paragraph's text, untracked and tracked (one per
+# document with a paragraph; the case's tag marks it).
+[[difference]]
+mode = "objects"
+input = { tool = "word_controls", arguments = { action = "insert", tag = "past the text" } }
+cause = """docx-agent's insert_control takes the position unchecked and fails inside new_run with \
+Python's IndexError ('list index out of range', not_found); the Rust core refuses the position, \
+saying how many characters the paragraph has (as word_notes refuses one). A docx-agent crash, \
+not copied."""

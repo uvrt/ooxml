@@ -18,6 +18,15 @@ purpose:
     a few paragraphs with paraIds in compatibility mode 14, to hold edits to a document
     below mode 15 (which an edit must never upgrade).
 
+``controls.docx`` (compatibility mode 15)
+    content controls of every kind as Word 365 writes them: plain text showing its
+    placeholder, rich text with a title and a tag, a drop-down list (items whose display
+    text and value differ), a combo box holding text of its own, a date in its picture, a
+    checked check box, content-locked and control-locked ones, one holding a tracked
+    insertion, a data-bound one (its custom XML part), a block-level one of two paragraphs
+    with a bookmark displaced around it, one in a table cell, one around a table row, and
+    one in the header.
+
 ``lists-and-styles.docx`` (compatibility mode 15)
     what E1's edits work on: a template localised to Dutch (``Kop1`` is "heading 1",
     ``Standaard`` is Normal, ``Zwaar`` is Strong), numbered lists over one abstract
@@ -168,6 +177,84 @@ def ids_and_markup() -> dict[str, str]:
         "word/footer1.xml": footer,
         "word/footnotes.xml": footnotes,
         "word/comments.xml": comments,
+    }
+
+
+def sdt(properties: str, content: str, end: bool = False) -> str:
+    """A content control: ``w:sdtPr`` holding ``properties``, then ``content``."""
+    return (f"<w:sdt><w:sdtPr>{properties}</w:sdtPr>" + ("<w:sdtEndPr/>" if end else "")
+            + f"<w:sdtContent>{content}</w:sdtContent></w:sdt>")
+
+
+GOTHIC = '<w:rFonts w:ascii="MS Gothic" w:eastAsia="MS Gothic" w:hAnsi="MS Gothic" w:hint="eastAsia"/>'
+CHECKBOX = ('<w14:checkbox><w14:checked w14:val="1"/><w14:checkedState w14:val="2612" w14:font="MS Gothic"/>'
+            '<w14:uncheckedState w14:val="2610" w14:font="MS Gothic"/></w14:checkbox>')
+STORE = "{5C1A2B3D-0000-4000-8000-00000000C0DE}"
+
+
+def controls() -> dict[str, str]:
+    """Every kind of content control, as Word 365 writes them, and where they stand."""
+    items = ('<w:listItem w:displayText="One" w:value="a"/><w:listItem w:displayText="Two" w:value="b"/>'
+             '<w:listItem w:displayText="Three" w:value="c"/>')
+    body = "".join([
+        p("Content controls", "7A000001", style="Heading1"),
+        p(inner=r("Name: ") + sdt('<w:rPr><w:rStyle w:val="PlaceholderText"/></w:rPr><w:id w:val="301"/>'
+                                  '<w:showingPlcHdr/><w:text/>',
+                                  r("Click or tap here to enter text.", '<w:rStyle w:val="PlaceholderText"/>'), True)
+          + r("."), para="7A000002"),
+        p(inner=r("Notes: ") + sdt('<w:alias w:val="Notes"/><w:tag w:val="notes"/><w:id w:val="302"/><w:richText/>',
+                                   r("Bold", "<w:b/>") + r(" and plain")), para="7A000003"),
+        p(inner=r("Choice: ") + sdt(f'<w:id w:val="303"/><w:dropDownList>{items}</w:dropDownList>', r("One")),
+          para="7A000004"),
+        p(inner=r("Colour: ") + sdt('<w:id w:val="304"/><w:comboBox><w:listItem w:displayText="Red" w:value="Red"/>'
+                                    '<w:listItem w:displayText="Green" w:value="Green"/></w:comboBox>', r("Blue")),
+          para="7A000005"),
+        p(inner=r("Date: ") + sdt('<w:id w:val="305"/><w:date w:fullDate="2026-01-15T00:00:00Z">'
+                                  '<w:dateFormat w:val="d MMMM yyyy"/><w:lid w:val="en-GB"/>'
+                                  '<w:storeMappedDataAs w:val="dateTime"/><w:calendar w:val="gregorian"/></w:date>',
+                                  r("15 January 2026")), para="7A000006"),
+        p(inner=r("Done: ") + sdt(f'<w:rPr>{GOTHIC}</w:rPr><w:id w:val="306"/>{CHECKBOX}',
+                                  r("\u2612", GOTHIC), True), para="7A000007"),
+        p(inner=r("Locked: ") + sdt('<w:id w:val="307"/><w:lock w:val="contentLocked"/><w:text/>', r("Fixed"))
+          + r(" and ") + sdt('<w:id w:val="308"/><w:lock w:val="sdtLocked"/><w:text/>', r("Kept")), para="7A000008"),
+        p(inner=r("Reviewed: ") + sdt('<w:id w:val="309"/><w:text/>',
+                                      f'<w:ins w:id="401" {AUTHOR}>' + r("Inserted words") + "</w:ins>"),
+          para="7A000009"),
+        p(inner=r("Bound: ") + sdt(f'<w:id w:val="310"/><w:dataBinding w:prefixMappings="xmlns:ns0=\'urn:fixture\'" '
+                                   f'w:xpath="/ns0:root[1]/ns0:client[1]" w:storeItemID="{STORE}"/><w:text/>',
+                                   r("Acme")), para="7A00000A"),
+        '<w:bookmarkStart w:id="20" w:name="around" w:displacedByCustomXml="next"/>'
+        + sdt('<w:alias w:val="Summary"/><w:id w:val="311"/><w:richText/>',
+              p("First paragraph inside.", "7A00000B") + p("Second paragraph inside.", "7A00000C"))
+        + '<w:bookmarkEnd w:id="20" w:displacedByCustomXml="prev"/>',
+        '<w:tbl><w:tblPr><w:tblStyle w:val="TableGrid"/><w:tblW w:w="0" w:type="auto"/></w:tblPr>'
+        '<w:tblGrid><w:gridCol w:w="4500"/><w:gridCol w:w="4500"/></w:tblGrid>'
+        '<w:tr w14:paraId="7B000001" w14:textId="77777777"><w:tc><w:tcPr><w:tcW w:w="4500" w:type="dxa"/></w:tcPr>'
+        + p("Item", "7B000002") + '</w:tc><w:tc><w:tcPr><w:tcW w:w="4500" w:type="dxa"/></w:tcPr>'
+        + p(inner=sdt('<w:id w:val="312"/><w:text/>', r("In a cell")), para="7B000003") + '</w:tc></w:tr>'
+        + sdt('<w:id w:val="313"/><w:richText/>',
+              '<w:tr w14:paraId="7B000004" w14:textId="77777777"><w:tc><w:tcPr><w:tcW w:w="4500" w:type="dxa"/>'
+              '</w:tcPr>' + p("Row in a control", "7B000005") + '</w:tc><w:tc><w:tcPr><w:tcW w:w="4500" '
+              'w:type="dxa"/></w:tcPr>' + p("Second cell", "7B000006") + '</w:tc></w:tr>')
+        + '</w:tbl>',
+        p("After the controls.", "7A00000D"),
+        '<w:sectPr><w:headerReference w:type="default" r:id="rIdHeader"/><w:pgSz w:w="11906" w:h="16838"/>'
+        '<w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="708" w:footer="708" '
+        'w:gutter="0"/></w:sectPr>',
+    ])
+    header = (f"{DECL}<w:hdr {NS}>" + p(inner=r("Client ") + sdt('<w:id w:val="314"/><w:text/>', r("Header name")),
+                                        para="7C000001", style="Header") + "</w:hdr>")
+    item = f'{DECL}<ns0:root xmlns:ns0="urn:fixture"><ns0:client>Acme</ns0:client></ns0:root>'
+    props = (f'{DECL}<ds:datastoreItem ds:itemID="{STORE}" '
+             'xmlns:ds="http://schemas.openxmlformats.org/officeDocument/2006/customXml">'
+             '<ds:schemaRefs/></ds:datastoreItem>')
+    return {
+        "word/document.xml": f"{DECL}<w:document {NS}><w:body>{body}</w:body></w:document>",
+        "word/header1.xml": header,
+        "customXml/item1.xml": item,
+        "customXml/itemProps1.xml": props,
+        "customXml/_rels/item1.xml.rels": relationships([
+            ("rId1", REL + "customXmlProps", "itemProps1.xml", False)]),
     }
 
 
@@ -458,6 +545,30 @@ def main() -> None:
         "word/media/image1.png": png(),
     }
     print(write("lists-and-styles.docx", parts))
+
+    story = controls()
+    parts = {
+        "[Content_Types].xml": content_types({
+            "word/document.xml": WML + ".document.main+xml",
+            "word/styles.xml": WML + ".styles+xml",
+            "word/settings.xml": WML + ".settings+xml",
+            "word/header1.xml": WML + ".header+xml",
+            "customXml/itemProps1.xml": "application/vnd.openxmlformats-officedocument.customXmlProperties+xml",
+        }),
+        "_rels/.rels": relationships([("rId1", REL + "officeDocument", "word/document.xml", False)]),
+        "word/_rels/document.xml.rels": relationships([
+            ("rIdStyles", REL + "styles", "styles.xml", False),
+            ("rIdSettings", REL + "settings", "settings.xml", False),
+            ("rIdHeader", REL + "header", "header1.xml", False),
+            ("rIdCustom", REL + "customXml", "../customXml/item1.xml", False),
+        ]),
+        **story,
+        "word/styles.xml": styles().replace(
+            "</w:styles>", '<w:style w:type="character" w:styleId="PlaceholderText"><w:name w:val="Placeholder Text"/>'
+            '<w:basedOn w:val="DefaultParagraphFont"/><w:rPr><w:color w:val="666666"/></w:rPr></w:style></w:styles>'),
+        "word/settings.xml": settings(15),
+    }
+    print(write("controls.docx", parts))
 
 
 if __name__ == "__main__":

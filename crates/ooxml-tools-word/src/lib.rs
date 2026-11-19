@@ -31,9 +31,9 @@ mod word_read;
 pub use describe::{describe, Describe, DESCRIBED, NOT_DESCRIBED};
 pub use find_text::{find_text, FindStories, FindText};
 pub use objects::{
-    word_edit_table, word_format_table, Across, Against, BorderStyle, CellArg, ControlAction, ControlType,
-    DrawingAction, HeightRule, KeyPair, Look, Loose, Position, Scope, Side, TableAction, Vertical, WidthOf,
-    WordControls, WordDrawings, WordEditTable, WordFormatTable, Wrap, ZOrder,
+    word_controls, word_edit_table, word_format_table, Across, Against, BorderStyle, CellArg, ControlAction,
+    ControlType, DrawingAction, HeightRule, KeyPair, Look, Loose, Position, Scope, Side, TableAction, Vertical,
+    WidthOf, WordControls, WordDrawings, WordEditTable, WordFormatTable, Wrap, ZOrder,
 };
 pub use pages::EnginePages;
 pub use placements::Placer;
