@@ -12,7 +12,7 @@ use crate::set_text::block_key;
 use crate::spacing::{mark_places, marked_places, space_paragraph, Context};
 use crate::work::{scope_above, Id, Work};
 use crate::Result;
-use ooxml_word_model::docx::at_path;
+use ooxml_word_model::docx::{at_path, StoryPart};
 use ooxml_word_model::ids::Entry;
 use ooxml_word_model::typography::{has_marks, Cascade};
 use ooxml_xml::Element;
@@ -109,6 +109,7 @@ impl EditSink<'_, '_> {
         let docx = self.docx()?;
         let mut cascade: Option<Cascade> = None;
         let mut made = 0;
+        let mut changed: Vec<(String, Vec<u32>)> = Vec::new();
         let recorded: Vec<(String, String)> = self
             .written
             .paragraphs()
@@ -116,30 +117,20 @@ impl EditSink<'_, '_> {
             .collect();
         for (part, raw) in recorded {
             let Some(story) = docx.part(&part) else { continue };
-            let prefix = if story.story == "body" {
-                String::new()
-            } else {
-                format!("{}/", story.story)
-            };
-            let found = match raw.strip_prefix('@') {
-                Some(path) => {
-                    let path: Vec<u32> = path.split('/').filter_map(|k| k.parse().ok()).collect();
-                    story.ids.paragraph_at(&path)
-                }
-                None => match story.ids.get(&format!("{prefix}p:{raw}")) {
-                    Some(Entry::Paragraph(n)) => story.ids.paragraphs().get(n),
-                    _ => None,
-                },
-            };
-            let Some(found) = found else { continue };
-            let id = found.id.clone();
+            let Some(found) = locate(story, &raw) else { continue };
             if !has_marks(&found.element.text_content()) {
                 continue;
             }
             let Some(places) = self.written.of(&part, &raw).cloned() else {
                 continue;
             };
-            let root = story.tree.root();
+            // the tree as spaced so far (a paragraph holding a text box spaced before it):
+            // spacing moves nothing, so the place found stays
+            let Some(tree) = self.doc().tree(&part)? else { continue };
+            let root = tree.root();
+            let Some(element) = at_path(root, &found.path) else {
+                continue;
+            };
             let cascade = match &mut cascade {
                 Some(c) => &*c,
                 None => &*cascade.insert(Cascade::new(docx.styles(), self.doc_defaults(&docx)?)),
@@ -148,14 +139,29 @@ impl EditSink<'_, '_> {
                 cascade,
                 table: table_of(root, &found.path),
             };
-            let mut work = Work::of(&found.element, scope_above(root, &found.path));
+            let mut work = Work::of(element, scope_above(root, &found.path));
             let spaced = space_paragraph(&mut work, &places, &context);
             if spaced == 0 {
                 continue;
             }
             made += spaced;
             let new = work.build().ok_or_else(|| crate::EditError::Path(part.clone()))?;
-            self.replace(&part, &found.path, new, vec![block_key(&part, &id)])?;
+            self.replace(&part, &found.path, new, vec![found.key])?;
+            changed.push((part, found.path));
+        }
+        // a text box's: its fallback holds the same (docx-agent syncs the boxes around each
+        // paragraph it spaced, innermost first)
+        for (part, path) in changed {
+            for k in (0..path.len()).rev() {
+                let Some(tree) = self.doc().tree(&part)? else { break };
+                let above = path.get(..k).unwrap_or_default();
+                let Some(holder) = at_path(tree.root(), above).filter(|h| h.name().is(Some(MC), "AlternateContent"))
+                else {
+                    continue;
+                };
+                let holder = Arc::clone(holder);
+                crate::textbox::sync_holder(self, &part, above, &holder)?;
+            }
         }
         Ok(made)
     }
@@ -175,6 +181,81 @@ impl EditSink<'_, '_> {
                 .cloned()
         }))
     }
+}
+
+/// A recorded paragraph found in the working version: its path, its element and the key
+/// it is written under.
+struct Located {
+    path: Vec<u32>,
+    element: Arc<Element>,
+    key: crate::doc::Key,
+}
+
+/// The paragraph of `story` recorded as `raw` (a `w14:paraId`, or `@` and a path): through
+/// the part's id index, else -- a paragraph in a text box -- the first with that paraId in
+/// the part outside a fallback, written under its nearest indexed ancestor's key (else the
+/// part's); one recorded by path, the paragraph there.
+fn locate(story: &StoryPart, raw: &str) -> Option<Located> {
+    let found = match raw.strip_prefix('@') {
+        Some(path) => {
+            let path: Vec<u32> = path.split('/').filter_map(|k| k.parse().ok()).collect();
+            story.ids.paragraph_at(&path)
+        }
+        None => {
+            let prefix = if story.story == "body" {
+                String::new()
+            } else {
+                format!("{}/", story.story)
+            };
+            match story.ids.get(&format!("{prefix}p:{raw}")) {
+                Some(Entry::Paragraph(n)) => story.ids.paragraphs().get(n),
+                _ => None,
+            }
+        }
+    };
+    if let Some(found) = found {
+        return Some(Located {
+            path: found.path.to_vec(),
+            element: found.element,
+            key: block_key(&story.part, &found.id),
+        });
+    }
+    let root = story.tree.root();
+    let (path, element) = match raw.strip_prefix('@') {
+        Some(path) => {
+            let path: Vec<u32> = path.split('/').filter_map(|k| k.parse().ok()).collect();
+            let element = at_path(root, &path).filter(|e| e.name().is(Some(W), "p"))?;
+            (path, Arc::clone(element))
+        }
+        None => by_para_id(root, raw, &mut Vec::new())?,
+    };
+    let key = (0..path.len())
+        .rev()
+        .find_map(|k| story.ids.paragraph_at(path.get(..k)?))
+        .map_or_else(
+            || crate::doc::Key::Part(Arc::from(story.part.as_str())),
+            |p| block_key(&story.part, &p.id),
+        );
+    Some(Located { path, element, key })
+}
+
+/// The first `w:p` below `element` whose `w14:paraId` is `raw`, outside `mc:Fallback`.
+fn by_para_id(element: &Arc<Element>, raw: &str, path: &mut Vec<u32>) -> Option<(Vec<u32>, Arc<Element>)> {
+    for (k, node) in element.children().iter().enumerate() {
+        let Some(child) = node.as_element() else { continue };
+        if child.name().is(Some(MC), "Fallback") {
+            continue;
+        }
+        path.push(u32::try_from(k).ok()?);
+        if child.name().is(Some(W), "p") && child.attribute(Some(W14), "paraId") == Some(raw) {
+            return Some((path.clone(), Arc::clone(child)));
+        }
+        if let Some(found) = by_para_id(child, raw, path) {
+            return Some(found);
+        }
+        path.pop();
+    }
+    None
 }
 
 /// `Some` with the `w:tblPr` of the innermost table above the element at `path` of `root`
