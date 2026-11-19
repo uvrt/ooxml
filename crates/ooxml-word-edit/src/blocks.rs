@@ -5,7 +5,6 @@
 //!
 //! Must not: change anything.
 
-use crate::set_text::find;
 use crate::{EditError, Result, WordDoc};
 use ooxml_word_model::address::{expand_heading, resolve, span_ends, AddressError, SPAN_SYNTAX};
 use ooxml_word_model::docx::controls::controls;
@@ -56,6 +55,15 @@ pub(crate) fn kind_of(element: &Element) -> Option<BlockKind> {
 /// # Errors
 /// The address's refusal; a control that is not a block.
 pub(crate) fn resolve_block(doc: &WordDoc, docx: &Docx, id: &str) -> Result<(String, BlockAt)> {
+    resolve_block_with(doc.ids(), docx, id)
+}
+
+/// [`resolve_block`] in a document whose renames are `ids`' (another document's: none
+/// known).
+///
+/// # Errors
+/// As [`resolve_block`].
+pub(crate) fn resolve_block_with(ids: &crate::Ids, docx: &Docx, id: &str) -> Result<(String, BlockAt)> {
     if id.starts_with("cc:") || id.starts_with("cc@") {
         let found = controls(docx).into_iter().find(|c| c.id == id).ok_or_else(|| {
             EditError::Address(AddressError::not_found(
@@ -79,11 +87,11 @@ pub(crate) fn resolve_block(doc: &WordDoc, docx: &Docx, id: &str) -> Result<(Str
         };
         return Ok((found.part, block));
     }
-    let followed = doc.ids().follow(id);
+    let followed = ids.follow(id);
     let (story, entry) = resolve(docx, &followed).map_err(EditError::Address)?;
     match entry {
         Entry::Paragraph(_) => {
-            let found = find(doc, docx, id)?;
+            let found = crate::set_text::find_with(ids, docx, id)?;
             Ok((
                 found.part,
                 BlockAt {

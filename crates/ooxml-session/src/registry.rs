@@ -372,6 +372,9 @@ impl Registry {
         registry.register(word_read::<ooxml_tools_word::WordDesignFacts>(
             ooxml_tools_word::word_design_facts,
         ));
+        registry.register(word_edit::<ooxml_tools_word::WordCopyFrom>(
+            ooxml_tools_word::word_copy_from,
+        ));
         registry
     }
 

@@ -566,9 +566,22 @@ impl Work {
     /// `copy.deepcopy`). A copy of a subtree that did not change shares its green nodes.
     pub(crate) fn deep_copy(&mut self, id: Id) -> Id {
         let copy = self.copy_subtree(id);
-        // lxml's copy is a document of its own: a namespace its names use that nothing in
-        // it declares is declared on the copy (where it is inserted, a declaration its new
-        // place has already goes)
+        self.declare_used(copy);
+        copy
+    }
+
+    /// `element` (another document's) read into this work as lxml copies it: detached,
+    /// declaring on itself the namespaces its names use (`copy.deepcopy`).
+    pub(crate) fn adopt_copy(&mut self, element: &Arc<Element>) -> Option<Id> {
+        let copy = self.adopt(element)?;
+        self.declare_used(copy);
+        Some(copy)
+    }
+
+    /// lxml's copy is a document of its own: a namespace the names of `copy` (detached)
+    /// use that nothing in it declares is declared on it, in the order first used (where
+    /// it is inserted, a declaration its new place has already goes).
+    fn declare_used(&mut self, copy: Id) {
         let mut declared: Vec<Atom> = Vec::new();
         let mut used: Vec<(Option<String>, Atom)> = Vec::new();
         for node in self.descendants(copy) {
@@ -608,7 +621,6 @@ impl Work {
             }
             self.touch(copy);
         }
-        copy
     }
 
     /// A detached copy of `id` and everything below it, its tail included.

@@ -1,7 +1,6 @@
 //! Owns: where insert_markdown's blocks go and how they are put there (docx-agent's
-//! `_locate`, `_lone_empty_paragraph`, `_insert`, `Writer.stamp`, `Writer.track`): the
-//! container and the place in it, a body that is one empty paragraph typed into, the
-//! stretch of the container the edit reads (the blocks beside the place), separators and a
+//! `_lone_empty_paragraph`, `_insert`, `Writer.stamp`, `Writer.track`): a body that is one
+//! empty paragraph typed into (the place itself is [`crate::placing`]'s), separators and a
 //! closing paragraph, paraIds and textIds drawn in document order (rows from their own
 //! sequence), and the insertion tracked as one revision group in Word's typing form.
 //!
@@ -9,12 +8,11 @@
 
 use super::writer::Writer;
 use super::{InsertMarkdown, MarkdownInserted};
-use crate::doc::Key;
 use crate::marks::{clean_properties, insert_in_order, mark, mark_record, pass_mark};
-use crate::names::{W, W14, W16DU};
+use crate::names::{W, W14};
+use crate::placing::{Place, Stretch, BLOCKS};
 use crate::policy::{RevisionPolicy, Stamp};
-use crate::set_text::{block_key, paragraph_has_annotations};
-use crate::sink::{annotation_draws, EditSink};
+use crate::sink::EditSink;
 use crate::stamping::{stamp_document, w14_prefix};
 use crate::validate::Orders;
 use crate::work::{Id, Work};
@@ -22,26 +20,14 @@ use crate::{EditError, Result, WordDoc};
 use ooxml_word_model::docx::Docx;
 use ooxml_word_model::ids::valid_long_hex;
 use ooxml_word_model::markdown::model::Block;
-use ooxml_xml::{Element, Node, QName};
+use ooxml_xml::{Element, QName};
 use std::sync::Arc;
 
-/// The block elements a container holds.
-const BLOCKS: [&str; 4] = ["p", "tbl", "sdt", "customXml"];
-
-/// Where the blocks go.
-pub(crate) struct Place {
-    part: String,
-    story: String,
-    /// The container's path from the part's root.
-    container: Vec<u32>,
-    /// The child (node index) they go before; none: the end.
-    before: Option<u32>,
-    /// The body's one empty paragraph typed into: its id and node index.
+/// Where the blocks go, and the body's one empty paragraph typed into (its id and node
+/// index).
+pub(crate) struct Located {
+    place: Place,
     lone: Option<(String, u32)>,
-}
-
-fn is_block(e: &Element) -> bool {
-    e.name().namespace() == Some(W) && BLOCKS.contains(&e.name().local())
 }
 
 /// `_lone_empty_paragraph`: the id of the body's only block when it is an empty paragraph
@@ -75,7 +61,7 @@ fn lone_empty_paragraph(docx: &Docx) -> Option<(String, Vec<u32>)> {
 ///
 /// # Errors
 /// A place that does not exist, `replace:` (not ported yet), a story of notes or comments.
-pub(crate) fn locate(doc: &WordDoc, docx: &Docx, at: &str, blocks: &[Block]) -> Result<Place> {
+pub(crate) fn locate(doc: &WordDoc, docx: &Docx, at: &str, blocks: &[Block]) -> Result<Located> {
     let lone = if matches!(at, "end" | "end:body") && !matches!(blocks.first(), Some(Block::Table(_))) {
         lone_empty_paragraph(docx)
     } else {
@@ -83,92 +69,20 @@ pub(crate) fn locate(doc: &WordDoc, docx: &Docx, at: &str, blocks: &[Block]) -> 
     };
     if let Some((id, path)) = lone {
         let index = path.last().copied().unwrap_or_default();
-        return Ok(Place {
-            part: docx.main.clone(),
-            story: "body".to_owned(),
-            container: path.get(..1).unwrap_or_default().to_vec(),
-            before: Some(index),
+        return Ok(Located {
+            place: Place {
+                part: docx.main.clone(),
+                story: "body".to_owned(),
+                container: path.get(..1).unwrap_or_default().to_vec(),
+                before: Some(index),
+            },
             lone: (!matches!(blocks.last(), Some(Block::Table(_)))).then_some((id, index)),
         });
     }
-    let (kind, rest) = match at.split_once(':') {
-        Some((k, r)) if matches!(k, "after" | "before" | "replace" | "end") => (k, r),
-        _ if at == "end" => ("end", ""),
-        _ => ("after", at),
-    };
-    match kind {
-        "end" => end_of(docx, if rest.is_empty() { "body" } else { rest }),
-        "replace" => Err(EditError::Unsupported("insert_markdown at replace:".to_owned())),
-        _ => {
-            let (part, found) = crate::blocks::resolve_block(doc, docx, rest)?;
-            let story = docx.part(&part).map(|p| p.story.clone()).unwrap_or_default();
-            let (&index, container) = found.path.split_last().ok_or_else(|| EditError::Path(part.clone()))?;
-            Ok(Place {
-                part,
-                story,
-                container: container.to_vec(),
-                before: Some(if kind == "after" { index + 1 } else { index }),
-                lone: None,
-            })
-        }
-    }
-}
-
-/// A story's end: before a body's final section properties.
-fn end_of(docx: &Docx, story: &str) -> Result<Place> {
-    let found = docx
-        .story(story)
-        .ok_or_else(|| EditError::Refused(format!("no story {story:?}")))?;
-    let root = found.root();
-    if ["footnotes", "endnotes", "comments"]
-        .iter()
-        .any(|l| root.name().is(Some(W), l))
-    {
-        return Err(EditError::Refused(format!(
-            "{story} holds notes or comments: insert after one of their paragraphs"
-        )));
-    }
-    let body = root
-        .children()
-        .iter()
-        .position(|n| matches!(n, Node::Element(e) if e.name().is(Some(W), "body")));
-    let (container, element) = match body.and_then(|k| Some((k, root.children().get(k)?))) {
-        Some((k, Node::Element(e))) => (vec![u32::try_from(k).unwrap_or_default()], e),
-        _ => (Vec::new(), root),
-    };
-    let section = element
-        .children()
-        .iter()
-        .position(|n| matches!(n, Node::Element(e) if e.name().is(Some(W), "sectPr")))
-        .filter(|_| element.name().is(Some(W), "body"));
-    Ok(Place {
-        part: found.part.clone(),
-        story: story.to_owned(),
-        container,
-        before: section.map(|k| u32::try_from(k).unwrap_or_default()),
+    Ok(Located {
+        place: crate::placing::locate(doc, docx, at, "insert_markdown")?,
         lone: None,
     })
-}
-
-/// The container's element and the stretch `(from, to)` of its children the edit holds:
-/// from the block before the place to the block (or section properties) after it.
-fn stretch_of(container: &Element, before: Option<u32>) -> Option<(u32, u32)> {
-    let children = container.children();
-    let len = u32::try_from(children.len()).ok()?;
-    let at = before.unwrap_or(len).min(len);
-    let element = |k: u32| match children.get(k as usize) {
-        Some(Node::Element(e)) => Some(e),
-        _ => None,
-    };
-    let previous = (0..at).rev().find(|k| element(*k).is_some_and(|e| is_block(e)));
-    let next = (at..len).find(|k| element(*k).is_some_and(|e| is_block(e) || e.name().is(Some(W), "sectPr")));
-    let from = match previous {
-        Some(p) => p,
-        None if next.is_none() && at == len => at.checked_sub(1)?,
-        None => at,
-    };
-    let to = next.unwrap_or_else(|| at.saturating_sub(1).max(from));
-    (from <= to && to < len).then_some((from, to))
 }
 
 /// Write the blocks at their place (`_insert`).
@@ -178,25 +92,15 @@ pub(crate) fn insert(
     blocks: &[Block],
 ) -> Result<MarkdownInserted> {
     let docx = sink.docx()?;
-    let place = locate(sink.doc(), &docx, &command.at, blocks)?;
+    let Located { place, lone } = locate(sink.doc(), &docx, &command.at, blocks)?;
     let renamed = stamp_document(sink, &docx)?;
     let part = place.part.clone();
-    let tree = sink.doc().tree(&part)?.ok_or_else(|| EditError::NoPart(part.clone()))?;
-    let path_error = || EditError::Path(part.clone());
-    let container = if place.container.is_empty() {
-        Arc::clone(tree.root())
-    } else {
-        Arc::clone(ooxml_word_model::docx::at_path(tree.root(), &place.container).ok_or_else(path_error)?)
-    };
-    let (from, to) = stretch_of(&container, place.before)
-        .ok_or_else(|| EditError::Unsupported("insert_markdown into an empty container".to_owned()))?;
-    let path = |k: u32| -> Box<[u32]> { place.container.iter().copied().chain([k]).collect() };
-    let (mut work, held) = crate::ranges::stretch(tree.root(), &[path(from), path(to)]).ok_or_else(path_error)?;
-    let child = |k: u32| held.get(k.checked_sub(from)? as usize).copied();
-    let anchor = place.before.and_then(child);
+    let mut stretch = Stretch::open(sink, &place, "insert_markdown")?;
+    let anchor = stretch.anchor(&place);
+    let lone = lone.and_then(|(id, k)| Some((id, stretch.child(k)?)));
+    let work = &mut stretch.work;
     let tracked = matches!(sink.policy(), RevisionPolicy::Tracked(_));
     let mut removed = Vec::new();
-    let lone = place.lone.as_ref().and_then(|(id, k)| Some((id.clone(), child(*k)?)));
     let continued = lone
         .as_ref()
         .and_then(|(_, node)| {
@@ -209,13 +113,13 @@ pub(crate) fn insert(
     let mut insert_before = anchor;
     if let (Some((id, node)), true) = (&lone, tracked) {
         let properties = work.find(*node, W, "pPr");
-        old_mark = Some(clean_properties(&mut work, properties, *node));
-        insert_before = next_block(&work, *node);
+        old_mark = Some(clean_properties(work, properties, *node));
+        insert_before = next_block(work, *node);
         work.remove(*node);
         removed.push(id.clone());
     }
     let mut writer = Writer::new(&part, &command.style_map, command.options.clone());
-    let mut elements = writer.blocks(sink, &mut work, blocks)?;
+    let mut elements = writer.blocks(sink, work, blocks)?;
     let root = work.root();
     for element in &elements {
         match insert_before {
@@ -228,20 +132,14 @@ pub(crate) fn insert(
         removed.push(id.clone());
         sink.forget_aliases(std::slice::from_ref(id))?;
     }
-    close_tables(sink, &mut work, &mut writer, &mut elements)?;
+    close_tables(sink, work, &mut writer, &mut elements)?;
     let starts_paragraph = elements.first().is_some_and(|e| work.is(*e, W, "p"));
-    let stamped = stamp(
-        sink,
-        &mut work,
-        &place,
-        &elements,
-        continued.filter(|_| starts_paragraph),
-    )?;
-    let wrote = sink.track(&mut work, |work, stamp, orders| {
+    let stamped = stamp(sink, work, &place, &elements, continued.filter(|_| starts_paragraph))?;
+    let wrote = sink.track(work, |work, stamp, orders| {
         track(work, &elements, stamp, orders, old_mark);
         Vec::new()
     })?;
-    commit(sink, &work, &place, (from, to), &stamped.0, &wrote)?;
+    crate::placing::commit(sink, &stretch, &place, &stamped.0, &wrote, false)?;
     let (created, top) = stamped;
     Ok(MarkdownInserted {
         first: created.first().cloned(),
@@ -252,52 +150,6 @@ pub(crate) fn insert(
         warnings: writer.warnings,
         blocks: top,
     })
-}
-
-/// The stretch's new content spliced into the part, with the keys it read and wrote and
-/// the annotation ids drawn into it; the namespaces and people a tracked write needs.
-fn commit(
-    sink: &mut EditSink<'_, '_>,
-    work: &Work,
-    place: &Place,
-    (from, to): (u32, u32),
-    created: &[String],
-    wrote: &crate::sink::TextWrite,
-) -> Result<()> {
-    let part = place.part.clone();
-    let path_error = || EditError::Path(part.clone());
-    sink.keep_written(&part, None, work);
-    let nodes = work.build_content(work.root()).ok_or_else(path_error)?;
-    let mut draws = Vec::new();
-    let stamped_docx = sink.docx()?;
-    let mut keys = crate::delete::stretch_keys(&stamped_docx, &part, &place.container, (from, to));
-    for (k, node) in nodes.iter().enumerate() {
-        if let Node::Element(e) = node {
-            if paragraph_has_annotations(e) && !keys.contains(&Key::Annotations) {
-                keys.push(Key::Annotations);
-            }
-            if let (Some(numbered), Ok(k)) = (wrote.annotations, u32::try_from(k)) {
-                draws.extend(annotation_draws(e, numbered, k));
-            }
-        }
-    }
-    keys.extend(created.iter().map(|id| block_key(&part, id)));
-    sink.splice_children(
-        &part,
-        (&place.container, from as usize, (to - from + 1) as usize),
-        nodes,
-        keys,
-        draws,
-    )?;
-    if wrote.dated {
-        sink.ensure_w14(&part, false, &[("w16du", W16DU)])?;
-    }
-    sink.ensure_w14(&part, false, &[])?;
-    if let RevisionPolicy::Tracked(tracking) = sink.policy().clone() {
-        let gave = wrote.annotations.is_some_and(|n| n.to > n.from);
-        sink.people(gave.then_some(tracking.author.as_str()), Some(tracking.author.as_str()))?;
-    }
-    Ok(())
 }
 
 /// The block (or section properties) after `node`.
