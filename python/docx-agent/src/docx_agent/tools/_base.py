@@ -30,7 +30,7 @@ from ooxml_edit.tools import Result, ToolError, page_list, tool as _tool, valida
 from ooxml_edit.tools.worker import takes_affinity, takes_lane
 
 from ..rust import edits
-from ..rust.owner import owned_checks
+from ..rust.owner import owned_validation
 from ..layout import (adopt, affinity, canon_of, known_summary, layout_key, summary_for, cache_key, convert_bytes, held_state, lay_out_bytes,
                       lay_out_unlocked, layout_options, remember_runner, twin, twin_of)
 
@@ -483,17 +483,20 @@ def checks(entry: Any, touched: Sequence[Any]) -> dict[str, Any]:
     when opened, and the reflow -- the pages the change touched, from the layout before (when
     it was laid out) and after, for a document of :data:`REFLOW_PAGES` pages or fewer
     (``"stale: call check"`` beyond).  Lane P2c4: after an edit the Rust session made, the
-    session's (:func:`docx_agent.rust.owner.owned_checks`)."""
-    owned = owned_checks(entry)
-    if owned is not None:
-        return owned
+    session's validation (:func:`docx_agent.rust.owner.owned_validation`) where no layout is
+    compared."""
+    before = next((t.layout for t in touched if isinstance(t, Before)), None)
+    if before is None or before.count > REFLOW_PAGES:
+        # No layout to compare in Python: after an edit the Rust session made, its checks.
+        validated = owned_validation(entry)
+        if validated is not None:
+            return {"validate": validated, "reflow": None if before is None else STALE}
     document = entry.document
     handed = getattr(document, "_handed_engine", None)
     if handed is not None and not isinstance(document.converter, Engine):
         # Round 45: on the read copy of the version the change made, the lock let go: the
         # change's own engine (docx_agent.layout.read_copy).
         document.converter = handed
-    before = next((t.layout for t in touched if isinstance(t, Before)), None)
     timing = next((t for t in touched if isinstance(t, Timing)), None) or Timing()
     if before is None or before.count > REFLOW_PAGES:
         # Lane O: while the document's checks ask, its new version is laid out at once.

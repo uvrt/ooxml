@@ -2,12 +2,13 @@
 //! ([`Opened::changed_since`]): what a host that keeps a copy of the document beside the
 //! session (the bridge's lazily made view, section 13) takes to follow an edit made here, and
 //! their names alone ([`Opened::parts_changed_since`]), and the ids given and renamed since
-//! ([`Opened::ids_since`]).
+//! ([`Opened::ids_since`]), and what it touched ([`Opened::touched_since`]).
 //!
 //! Must not: read a part both versions share (decided by identity, `PartVersion::same`), or
 //! change either version.
 
 use crate::{Opened, SessionError};
+use serde_json::{Map, Value};
 use std::sync::Arc;
 
 /// A part's bytes at the later version, or `None` where that version has no such part.
@@ -96,4 +97,40 @@ pub struct IdsSince {
     pub given: Vec<u32>,
     /// Renames made since: an old id and the id it names now.
     pub renamed: Vec<(String, String)>,
+}
+
+impl Opened {
+    /// What changed from `before` to this version, as docx-agent's `Result.touched` says it:
+    /// each part whose content differs, and for the body the heading sections holding the
+    /// blocks that changed (`ooxml_word_edit::touched`, found from the change, no other block
+    /// read). Empty for a document that is not a Word document.
+    ///
+    /// # Errors
+    /// [`SessionError::NotOpen`] when `before` is a version of another document; an edit
+    /// error when a changed part cannot be read.
+    pub fn touched_since(&self, before: &Opened) -> Result<Vec<Value>, SessionError> {
+        if before.id() != self.id() {
+            return Err(SessionError::NotOpen {
+                id: before.id().to_string(),
+                open: vec![self.id().to_string()],
+            });
+        }
+        let (Some(now), Some(then)) = (self.word(), before.word()) else {
+            return Ok(Vec::new());
+        };
+        let found = ooxml_word_edit::touched::touched(then, now)?;
+        Ok(found.iter().map(touched_json).collect())
+    }
+}
+
+/// One `touched` entry as docx-agent's `tools/touched.py` writes it.
+fn touched_json(found: &ooxml_word_edit::touched::Touched) -> Value {
+    let mut entry = Map::new();
+    entry.insert("part".into(), Value::from(found.part.as_str()));
+    if let Some(section) = &found.section {
+        entry.insert("heading".into(), section.heading.as_deref().map_or(Value::Null, Value::from));
+        entry.insert("level".into(), Value::from(section.level));
+        entry.insert("blocks".into(), Value::from(section.blocks.to_vec()));
+    }
+    Value::Object(entry)
 }

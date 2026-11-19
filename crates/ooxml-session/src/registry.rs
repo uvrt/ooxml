@@ -186,8 +186,7 @@ impl<T: ToolArgs> Tool for EditHandler<T> {
             doc: &doc,
             cancel: call.cancel,
         };
-        let before = word.editor.store().snapshot();
-        let mut result = match &self.run {
+        match &self.run {
             EditRun::Plain(run) => run(&args, &editing),
             EditRun::Tracking(run) => {
                 let (result, mode) = run(&args, &editing);
@@ -196,30 +195,8 @@ impl<T: ToolArgs> Tool for EditHandler<T> {
                 }
                 result
             }
-        };
-        let after = word.editor.store().snapshot();
-        if after.seq() != before.seq() {
-            // What the call changed, from the change itself (the parts it wrote, the body
-            // blocks it replaced): the application's `touched`, read from no other block.
-            match ooxml_word_edit::touched::touched(before.doc(), after.doc()) {
-                Ok(found) => result.app.touched = found.iter().map(touched_json).collect(),
-                Err(e) => return ToolResult::failed(ToolError::internal(e.to_string(), "word:touched")),
-            }
         }
-        result
     }
-}
-
-/// One `touched` entry as docx-agent's `tools/touched.py` writes it.
-fn touched_json(found: &ooxml_word_edit::touched::Touched) -> Value {
-    let mut entry = Map::new();
-    entry.insert("part".into(), Value::from(found.part.as_str()));
-    if let Some(section) = &found.section {
-        entry.insert("heading".into(), section.heading.as_deref().map_or(Value::Null, Value::from));
-        entry.insert("level".into(), Value::from(section.level));
-        entry.insert("blocks".into(), Value::from(section.blocks.to_vec()));
-    }
-    Value::Object(entry)
 }
 
 /// The tools a session dispatches, in registration order.

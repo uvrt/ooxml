@@ -1552,6 +1552,8 @@ class Toolbox:
                             # start (keep_settled): a toolbox's document changes between calls
                             # only through the history, or marked dirty.
                             for entry in locked:
+                                if entry.owned:
+                                    continue    # (lane P2c4: its versions are the owner's)
                                 scope = getattr(getattr(entry.document, "package", None), "serializing", None)
                                 if scope is not None and entry.pinned is None:
                                     serializing.enter_context(scope(keep_settled=True))
@@ -1749,7 +1751,7 @@ class Toolbox:
         fmt = session.formats.get(entry.kind)
         hook = getattr(fmt, "blocks", None)
         if hook is None or getattr(fmt, "read_copy", None) is None or entry.pinned is not None \
-                or not entry.draftable:
+                or entry.owned:
             return None
         try:
             admitted = self._admitted(hook, tool, clean, entry.kind, entry.doc_id, roles,

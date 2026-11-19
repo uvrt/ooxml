@@ -113,6 +113,18 @@ def _tracking(mirror: "reads.Mirror", entry: Any, context: Any) -> None:
     mirror.tracking = wanted
 
 
+def _layout_before(call: Any, entry: Any) -> None:
+    """What the call's reflow is measured from, as docx-agent's wrapper takes it -- only where
+    the view is current (the version before the edit), so the Python document is not made
+    current for it."""
+    from ..tools._base import Before, laid_before, seen_before, state_bytes
+
+    if not entry.view_current:
+        return
+    document = entry.document
+    call.touch(Before(seen_before(document, state_bytes(call)) or laid_before(document)))
+
+
 def _run(call: Any, entry: Any, arguments: dict[str, Any]) -> Result:
     mirror = entry.handle
     tool = call.tool.name
@@ -131,7 +143,7 @@ def _run(call: Any, entry: Any, arguments: dict[str, Any]) -> Result:
         if unported:
             raise _Fallback(unported[0])
         head = mirror.session.head(mirror.doc)
-    entry.served(head, application.get("touched") or [])
+    entry.served(head)
     return _result(envelope)
 
 
@@ -144,6 +156,7 @@ def serve(call: Any, arguments: dict[str, Any], python: Callable[[], Any]) -> An
         why = _why_not(call, entry)
         if why is not None:
             raise _Fallback(why)
+        _layout_before(call, entry)
         result = _run(call, entry, arguments)
     except _Fallback as why:
         with _COUNTS_LOCK:

@@ -250,12 +250,11 @@ TOOL_HINTS = {
 }
 
 def _owner() -> Any:
-    """Lane P2c4: the Rust session as the owner of the format's documents (``None`` where
-    ``ooxml_core`` has no session: the tool layer then holds the document itself)."""
-    from ..rust import reads
+    """Lane P2c4: the Rust session as the owner of the format's documents (it takes none
+    where ``ooxml_core`` has no session: the tool layer then holds the document itself)."""
     from ..rust.owner import OWNER
 
-    return OWNER if reads.available() else None
+    return OWNER
 
 
 FORMAT = DocumentFormat(

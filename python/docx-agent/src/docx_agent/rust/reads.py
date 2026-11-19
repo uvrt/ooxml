@@ -143,8 +143,11 @@ class Mirror:
         #: Lane P2c4: whether the session owns the document (:mod:`.owner`): its versions are
         #: kept here by the tool layer's numbers as the session makes them, never handed over.
         self.owned = False
-        #: The session's version the owned document's Python view is (:mod:`.view`).
+        #: The session's version the owned document's Python view is (:mod:`.view`), the
+        #: one it was opened as, and the view (a weak reference: the entry holds it).
         self.view_head: Any = None
+        self.opened: Any = None
+        self.live: Any = None
         #: The tracking mode the session edits the document under (:mod:`.edits`).
         self.tracking: dict[str, Any] | None = None
 
@@ -255,12 +258,24 @@ class _Fallback(Exception):
 
 def _named(call: Any) -> Any:
     """The document whose ids an address of the call names: the call's; for one the session
-    owns, its view where it is current, else none -- the session follows its renames and
-    refuses a deleted id itself, and a refusal is answered by the Python path."""
+    owns (or a read of a version of it), its view where that is current at the call's
+    version, else none -- the session follows its renames and refuses a deleted id itself,
+    and a refusal is answered by the Python path."""
     entry = call.entry
-    if isinstance(getattr(entry, "handle", None), Mirror) and not entry.view_current:
-        return None
-    return call.document
+    owned = _owned(entry)
+    if owned is None:
+        return call.document
+    if owned.view_current and owned.version == entry.version:
+        return owned.document
+    return None
+
+
+def _owned(entry: Any) -> Any:
+    """The entry the session owns that ``entry`` is, or reads a committed version of."""
+    for found in (entry, getattr(entry, "live", None)):
+        if isinstance(getattr(found, "handle", None), Mirror):
+            return found
+    return None
 
 
 def _renamed_or_deleted(document: Any, *texts: Any) -> bool:
@@ -301,7 +316,7 @@ def _owned_version(call: Any) -> tuple["Mirror | None", Any]:
     """Lane P2c4: the session's version a call on a document the session owns reads (the
     entry's version now), found without the Python view; ``(None, None)`` otherwise."""
     entry = call.entry
-    mirror = getattr(entry, "handle", None)
+    mirror = getattr(_owned(entry), "handle", None)
     if not isinstance(mirror, Mirror):
         return None, None
     with mirror.lock:

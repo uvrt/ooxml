@@ -1,16 +1,18 @@
 """Documents whose owner is a store outside the tool layer (lane P2c4): a format's
-:attr:`~.session.DocumentFormat.owner` -- docx-agent's Rust session -- keeps the document's
+:attr:`~.session.DocumentFormat.owner` (a library's native session) keeps the document's
 versions, its steps, its ids and its saved bytes; the tool layer keeps no working copy of
 its own.
 
 **What the owner is.**  An object with these methods, each given the handle
 :meth:`open` returned (the owner's per-document state):
 
-- ``open(document) -> handle``: hold ``document`` (as opened, its bytes and ids) from now on;
+- ``open(document) -> handle | None``: hold ``document`` (as opened, its bytes and ids) from
+  now on; ``None``: the owner does not take it (the tool layer then holds it itself);
 - ``head(handle) -> head``: the document's latest version, a value whose ``number`` is the
   owner's own count of its versions (a new one for every version it makes);
 - ``parts_between(handle, before, after) -> Iterable[str]``: the parts whose content differs
-  between two heads;
+  between two heads, and ``touched(handle, before, after) -> list[dict]``: what changed
+  between them in the format's own addresses (``DocumentFormat.touched``'s entries);
 - ``follow(handle, document, head, number, last)``: bring ``document`` -- the view -- to
   ``head``, numbered ``number`` (``last``: the highest number given), its ids too;
 - ``bridge(handle, tool, caller, parts) -> head``: commit the parts a Python tool changed in
@@ -18,6 +20,8 @@ its own.
 - ``undo(handle) -> head | None`` and ``redo(handle) -> head | None``: one step of the
   document's history, ``None`` when there is none (refused: ``ValueError``);
 - ``keep(handle, number, head)``: the head is the document's version ``number`` (reads find it);
+- ``reader(handle, head, number) -> make``: what makes a Python reader of the version ``head``
+  (numbered ``number``) from its bytes, for the reads of a committed version (``head.save()``);
 - ``save(handle) -> bytes`` and ``close(handle)``.
 
 **The view.**  :attr:`OwnedEntry.document` is a Python document of the format, made current
@@ -42,7 +46,7 @@ from dataclasses import dataclass, field
 from typing import Any, Iterator
 
 from ..history import Step
-from .session import DocumentEntry, StepOwner
+from .session import Committed, DocumentEntry, StepOwner
 
 #: The steps kept for undo, as the owner keeps them (``ooxml_core.Session``'s depth).
 DEPTH = 50
@@ -150,15 +154,14 @@ class OwnedHistory:
 
 class OwnedChange:
     """What an owned document's content did while :meth:`OwnedEntry.watch` was open: the
-    parts between the heads before and after (asked of the owner), what the call that
-    changed it said it touched (a served call, :meth:`OwnedEntry.served`), and -- where a
-    Python tool changed the view -- the view's own :class:`~ooxml_edit.history.Change`."""
+    parts between the heads before and after and what changed in them (asked of the owner),
+    and -- where a Python tool changed the view -- the view's own
+    :class:`~ooxml_edit.history.Change`."""
 
     def __init__(self, entry: "OwnedEntry") -> None:
         self._entry = entry
         self.start = entry.version
         self.end: int | None = None
-        self.touched: list[dict[str, Any]] | None = None
         self.view: Any = None
         self._parts: frozenset[str] | None = None
 
@@ -202,14 +205,15 @@ class OwnedEntry(DocumentEntry):
     _watches: list[OwnedChange] = field(default_factory=list, repr=False)
 
     #: The view (set by the dataclass's ``document`` argument, through the setter).
-    _view: Any = None
-    draftable = False
+    _view = None
+    owned = True
 
-    def own(self, owner: Any) -> None:
-        """Give the document (the one this entry was made with) to ``owner``."""
+    def own(self, owner: Any, handle: Any) -> None:
+        """The document (the one this entry was made with) is ``owner``'s, which holds it
+        as ``handle`` (what its ``open`` gave)."""
         document = self._view
         self.owner = owner
-        self.handle = owner.open(document)
+        self.handle = handle
         history = getattr(document, "history", None)
         version = getattr(history, "version", 0)
         last = getattr(history, "last_version", version)
@@ -222,10 +226,12 @@ class OwnedEntry(DocumentEntry):
     def document(self) -> Any:
         """The view at the head, made current now if the head moved since it last was."""
         owned = self._owned
-        if owned is not None and self._view_number != owned.version and self.pinned is None:
-            self.owner.follow(self.handle, self._view, owned.head(), owned.version,
-                              owned.last_version)
-            self._view_number = owned.version
+        if owned is not None and self._view_number != owned.version:
+            with self.lock:     # (a read that came before the lock: no edit meanwhile)
+                if self._view_number != owned.version:
+                    self.owner.follow(self.handle, self._view, owned.head(), owned.version,
+                                      owned.last_version)
+                    self._view_number = owned.version
         if self.batch_depth and self._step is not None and self._view_change is None:
             self._open_view_step()
         return self._view
@@ -263,8 +269,9 @@ class OwnedEntry(DocumentEntry):
         view, stack = self._view, self._step
         assert stack is not None
         batch = getattr(view, "batch", None) or view.history.batch
-        stack.enter_context(batch())
+        # (The watch first: it closes after the batch, which makes the step as it closes.)
         self._view_change = stack.enter_context(view.history.watch())
+        stack.enter_context(batch())
         for watch in self._watches:
             watch.view = self._view_change
 
@@ -311,14 +318,11 @@ class OwnedEntry(DocumentEntry):
         self._view.history.follow(owned.version, owned.last_version)
         self._view_number = owned.version
 
-    def served(self, head: Any, touched: list[dict[str, Any]]) -> None:
-        """A call the owner served made ``head``, touching ``touched``: the call's step."""
+    def served(self, head: Any) -> None:
+        """A call the owner served made ``head``: the call's step."""
         assert self._owned is not None
-        if head.number == self._owned.head().number:
-            return
-        self._owned.committed(head)
-        for watch in self._watches:
-            watch.touched = [*(watch.touched or []), *touched]
+        if head.number != self._owned.head().number:
+            self._owned.committed(head)
 
     @contextmanager
     def savepoint(self, start: Any = None) -> Iterator[bool]:
@@ -342,17 +346,38 @@ class OwnedEntry(DocumentEntry):
         return None
 
     def touched_of(self, change: Any, fmt: Any) -> list[dict[str, Any]]:
-        if getattr(change, "touched", None) is not None:
-            return list(change.touched)
-        view = getattr(change, "view", None)
-        if view is None or fmt is None or fmt.touched is None:
+        """What ``change`` touched, as the owner says it between the heads it went from
+        and to; by its parts where one of them was let go."""
+        history = self._owned
+        end = history.version if change.end is None else change.end
+        before, after = history.head(change.start), history.head(end)
+        if before is None or after is None:
             return [{"part": part} for part in sorted(change.parts)]
-        return list(fmt.touched(self._view, view))
+        return list(self.owner.touched(self.handle, before, after))
 
     # -- versions for others ----------------------------------------------------------------
 
     def commit(self, fmt: Any) -> None:
-        """Reads find each version in the owner (``keep``), so nothing is copied here."""
+        """Keep this version as the committed one for reads that do not wait for the edit
+        after it (:meth:`~.session.DocumentEntry.reader`): the owner's version, its bytes and
+        its Python reader made only when a read first asks (the owner's ``reader``)."""
+        owned = self._owned
+        committed = self.committed
+        version = self.version
+        if owned is None:
+            return
+        if committed is not None and committed.version == version:
+            if committed.refs != self.refs or (committed.tracking or None) != (self.tracking or None):
+                self.committed = committed.with_refs(
+                    dict(self.refs), dict(self.ref_states.get(version, self.refs)),
+                    dict(self.ref_owners), tracking=self.tracking)
+                self._told()
+            return
+        head = owned.head()
+        self.committed = Committed(version, head.save, self.owner.reader(self.handle, head, version),
+                                   dict(self.refs), dict(self.ref_states.get(version, self.refs)),
+                                   tracking=self.tracking, owners=dict(self.owners),
+                                   seq=self.change_seq, ref_owners=dict(self.ref_owners))
         self._told()
 
     def snapshot(self) -> bytes:

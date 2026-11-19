@@ -168,6 +168,23 @@ impl PyVersion {
         py.detach(|| now.parts_changed_since(then)).map_err(|e| to_py(&e))
     }
 
+    /// The document's bytes at this version (untouched entries copied raw): what a reader of
+    /// a version the host committed earlier is made from.
+    fn save<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
+        let version = &self.inner;
+        let bytes = py
+            .detach(|| version.package().save())
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        Ok(PyBytes::new(py, &bytes))
+    }
+
+    /// What changed since `before`, as docx-agent's ``Result.touched`` entries (JSON text).
+    fn touched_since(&self, py: Python<'_>, before: PyRef<'_, PyVersion>) -> PyResult<String> {
+        let (now, then) = (&self.inner, &before.inner);
+        let found = py.detach(|| now.touched_since(then)).map_err(|e| to_py(&e))?;
+        Ok(Value::Array(found).to_string())
+    }
+
     /// The ids this version gave that `before` had not, and its renames that `before`
     /// lacks: ``(values, {old id: id now})`` -- what a view of the document kept beside the
     /// session takes to give no id twice and follow renamed ids, without reading a part.
@@ -240,8 +257,7 @@ impl PySession {
     /// JSON text -- the whole envelope, or within `limit` characters as the model is sent
     /// it --, the images beside it (bytes), and what only the application reads, as JSON
     /// text: `unported`, what of the answer is not yet given as the Python tool gives it
-    /// (a list of reasons), and `touched`, what a changing call changed (docx-agent's
-    /// `Result.touched` entries). Never raises for the call's own failure:
+    /// (a list of reasons). Never raises for the call's own failure:
     /// that is the reply's `error`, with its way out. `at`: the versions the call reads
     /// (`Version`s; a document not among them is read at its head). `placer`: where it may
     /// ask where blocks are laid out -- called with the blocks asked as JSON text (a list,
@@ -276,7 +292,7 @@ impl PySession {
                     &format!("call:{name}"),
                 ))
             });
-            let app = serde_json::json!({"unported": result.unported(), "touched": result.app.touched});
+            let app = serde_json::json!({"unported": result.unported()});
             let text = match limit {
                 Some(limit) => result.to_text(Some(limit)),
                 None => compact(&Value::Object(result.to_json())),

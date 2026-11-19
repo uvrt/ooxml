@@ -626,9 +626,9 @@ class DocumentEntry:
             return history.version
         return self._own_version
 
-    #: Lane P2c4: whether a changing call may run on a draft of the document (round 45);
-    #: a document its format's owner holds (:mod:`.owned`) runs each call on the owner.
-    draftable = True
+    #: Lane P2c4: whether the format's owner holds the document (:mod:`.owned`): no call runs
+    #: on a draft of it (round 45), and its view is not read where nothing needs it.
+    owned = False
 
     def step_target(self, direction: str) -> Any:
         """What makes one plain undo or redo (``direction``): the document's own, else its
@@ -1375,7 +1375,9 @@ class Session:
             else:
                 self._free_id(doc_id)
                 self._given_ids.add(doc_id)
-            made = DocumentEntry if fmt.owner is None else OwnedEntry
+            # Lane P2c4: the format's owner holds it from now on, where it takes it.
+            handle = fmt.owner.open(document) if fmt.owner is not None else None
+            made = DocumentEntry if handle is None else OwnedEntry
             self.documents[doc_id] = made(
                 doc_id=doc_id, kind=kind, name=name, source=source, document=document,
                 size=size, baseline_problems=baseline, font_dirs=self.font_dirs,
@@ -1384,7 +1386,7 @@ class Session:
                 check_cache=LRU(self.limits.check_cache_size))
             entry = self.documents[doc_id]
             if isinstance(entry, OwnedEntry):
-                entry.own(fmt.owner)
+                entry.own(fmt.owner, handle)
             entry.ref_states[entry.version] = {}
             entry.change_version = entry.version
             if fmt.problems:

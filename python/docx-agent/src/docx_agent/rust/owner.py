@@ -14,13 +14,14 @@ its saved bytes are the session's.  :class:`RustOwner` is the format's
   the parts it changed are committed through ``Session.bridge`` as the step of that tool and
   caller (``bridge_calls{tool}``);
 - undo and redo are the session's (``Session.undo``/``redo``); the save is the session's bytes;
-- a changing call's checks read the session's validation (:func:`owned_checks`) unless the
-  view is current anyway.
+- a changing call's checks read the session's validation (:func:`owned_validation`) unless
+  the view is current anyway or a layout is compared.
 """
 
 from __future__ import annotations
 
 import json
+import weakref
 from collections.abc import Mapping
 from typing import Any
 
@@ -47,14 +48,14 @@ class RustOwner:
     """The Rust session as the owner of docx-agent's documents in a toolbox session; its
     handle per document is the :class:`~.reads.Mirror` the reads use."""
 
-    def open(self, document: Any) -> "reads.Mirror":
+    def open(self, document: Any) -> "reads.Mirror | None":
         mirror = reads.mirror_of(document)
         if mirror is None:
-            raise RuntimeError("docx-agent's documents are owned by ooxml_core's session, "
-                               "which this build has not")
+            return None             # no session (ooxml_core without one, or reads set to none)
         with mirror.lock:
             mirror.owned = True
-            mirror.view_head = mirror.session.head(mirror.doc)
+            mirror.view_head = mirror.opened = mirror.session.head(mirror.doc)
+            mirror.live = weakref.ref(document)
         return mirror
 
     def head(self, mirror: "reads.Mirror") -> Any:
@@ -62,6 +63,9 @@ class RustOwner:
 
     def parts_between(self, mirror: "reads.Mirror", before: Any, after: Any) -> list[str]:
         return after.parts_changed_since(before)
+
+    def touched(self, mirror: "reads.Mirror", before: Any, after: Any) -> list[dict[str, Any]]:
+        return json.loads(after.touched_since(before))
 
     def follow(self, mirror: "reads.Mirror", document: Any, head: Any, number: int, last: int) -> None:
         with mirror.lock:
@@ -90,6 +94,30 @@ class RustOwner:
             done, _version = step(mirror.doc, 1)
             return mirror.session.head(mirror.doc) if done else None
 
+    def reader(self, mirror: "reads.Mirror", head: Any, number: int) -> Any:
+        """What makes the Python reader of ``head`` (the document's version ``number``) from
+        its bytes: a ``Document`` of them numbered ``number``, with the ids the session gave
+        and the renames it made since the document was opened, read through the session's
+        copy of the document (its reads find ``head`` by ``number``)."""
+        from ..edit.ids import copy_ledger
+        from ..tools.format import open_docx
+
+        opened = mirror.opened
+
+        def make(data: bytes) -> Any:
+            copy = open_docx(data)
+            live = mirror.live()
+            given, renamed = head.ids_since(opened)
+            follow(copy, {}, given, renamed, number, number)
+            if live is not None and live.history.version == number:
+                # The view is this version: what its ids were (deleted ones too) is the copy's.
+                copy._ledger = copy_ledger(live._ledger)
+                copy._aliases.update(live._aliases)
+            copy.__dict__["_live"] = live
+            return copy
+
+        return make
+
     def keep(self, mirror: "reads.Mirror", number: int, head: Any) -> None:
         with mirror.lock:
             mirror.keep(number, head)
@@ -101,11 +129,10 @@ class RustOwner:
         reads._close(mirror.session, mirror.doc)
 
 
-def owned_checks(entry: Any) -> dict[str, Any] | None:
-    """A changing call's checks on a document the session owns whose view is not current
-    (a call the session served): the session's validation against the problems the document
-    opened with, and no reflow (no layout before it is known here); ``None`` where the
-    Python checks answer (the view is current, so reading it costs nothing)."""
+def owned_validation(entry: Any) -> dict[str, Any] | None:
+    """The validation delta of a document the session owns whose view is not current (after
+    a call the session served): the session's, against the problems it opened with; ``None``
+    where the Python checks answer (the view is current, so reading it costs nothing)."""
     mirror = getattr(entry, "handle", None)
     if not isinstance(mirror, reads.Mirror) or entry.view_current:
         return None
@@ -113,7 +140,7 @@ def owned_checks(entry: Any) -> dict[str, Any] | None:
     if found is None:
         return None
     new, fixed, baseline = found
-    return {"validate": {"new": list(new), "fixed": list(fixed), "baseline": baseline}, "reflow": None}
+    return {"new": list(new), "fixed": list(fixed), "baseline": baseline}
 
 
 OWNER = RustOwner()
