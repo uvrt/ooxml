@@ -33,8 +33,8 @@ pub struct LaidVersion {
     /// Its number among the versions its engine laid out: what its pages' paint is kept
     /// under.
     pub(crate) serial: u64,
-    /// Its body blocks by the tool's ids.
-    pub(crate) ids: Arc<crate::ids::BlockIds>,
+    /// Its body blocks by the tool's ids, named when asked.
+    pub(crate) ids: crate::ids::VersionIds,
     /// Its summary, made once when first asked (its engine paints the pages it needs).
     pub(crate) summary: OnceLock<Arc<crate::summary::Summary>>,
 }
@@ -52,12 +52,18 @@ impl LaidVersion {
     /// The id of the paragraph, table or row at body path `path` (`w:body/w:p[3]`), as the
     /// tool names it in this version's bytes.
     pub fn id_of(&self, path: &str) -> Option<&str> {
-        self.ids.get(path).map(|id| &**id)
+        self.ids.all().get(path).map(|id| &**id)
     }
 
-    /// Its body blocks by the tool's ids.
+    /// Its body blocks by the tool's ids (every block named, once, when first asked).
     pub fn block_ids(&self) -> &crate::ids::BlockIds {
-        &self.ids
+        self.ids.all()
+    }
+
+    /// The body path (`w:body/w:p[3]`) of the paragraph, table or row the tool's id `id`
+    /// names in this version, found from the id alone.
+    pub fn path_of(&self, id: &str) -> Option<Text> {
+        self.ids.path_of(id)
     }
 
     /// The layout.

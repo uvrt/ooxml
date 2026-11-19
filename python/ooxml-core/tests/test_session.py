@@ -71,8 +71,8 @@ def test_refusals_are_replies_and_session_errors_are_exceptions():
     assert missing["error"] == {"code": "not_found", "message": "no open document 'd5'", "field": "doc",
                                 "valid_options": ["d1"]}
     assert call(session, "nope", {})["error"]["valid_options"] == [
-        "describe", "find_text", "read_batch", "replace_text", "word_changes", "word_comments", "word_edit_table",
-        "word_fields", "word_format", "word_format_table", "word_inspect", "word_lists", "word_read",
+        "describe", "find_text", "read_batch", "replace_text", "word_changes", "word_comments", "word_compare_blocks",
+        "word_edit_table", "word_fields", "word_format", "word_format_table", "word_inspect", "word_lists", "word_read",
         "word_set_text", "word_set_tracking", "word_styles", "word_template"]
     text, _, _ = session.call("describe", "{not json")
     assert json.loads(text)["error"]["code"] == "invalid_arguments"
@@ -112,7 +112,8 @@ def test_tool_specs_are_the_exports():
     assert [s["name"] for s in specs] == ["describe", "word_read", "word_inspect", "find_text", "word_set_tracking",
                                           "word_changes", "word_comments", "word_set_text", "replace_text",
                                           "word_format_table", "word_edit_table", "word_lists", "word_fields",
-                                          "word_format", "word_styles", "word_template", "read_batch"]
+                                          "word_format", "word_styles", "word_template", "word_compare_blocks",
+                                          "read_batch"]
     assert specs == json.loads(ooxml_core.Session().tool_specs("docx"))
     assert json.loads(ooxml_core.tool_specs("pptx")) == []
     with pytest.raises(ValueError):
@@ -180,3 +181,35 @@ def test_bridged_calls_are_counted():
     assert version.number == 1
     assert session.bridge_calls() == [("word_format", 1)]
     assert call(session, "describe", {"doc": doc})["data"]["controls"] == 2
+
+
+def page_docx(result: str) -> bytes:
+    """A one-paragraph document: "Page " and a `PAGE` field whose cached result is `result`."""
+    run = '<w:r><w:fldChar w:fldCharType="{}"/></w:r>'
+    body = (f'<w:p><w:r><w:t xml:space="preserve">Page </w:t></w:r>{run.format("begin")}'
+            '<w:r><w:instrText xml:space="preserve"> PAGE </w:instrText></w:r>'
+            f'{run.format("separate")}<w:r><w:t>{result}</w:t></w:r>{run.format("end")}</w:p>')
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("_rels/.rels", '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/'
+                         'relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/'
+                         'officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>'
+                         "</Relationships>")
+        archive.writestr("word/document.xml", f"<w:document {_W}><w:body>{body}</w:body></w:document>")
+    return out.getvalue()
+
+
+def test_a_field_update_lays_out_with_the_hosts_engine():
+    """``layout=``: the host's page engine for the document, which ``word_fields`` lays the
+    versions it updates out with; without it a page number is left to the host."""
+    from pathlib import Path
+
+    files = Path(__file__).resolve().parents[2] / "pptx2svg/packages/pptx2svg-fonts/src/pptx2svg_fonts/files"
+    pages = ooxml_core.WordPages(ooxml_core.WordFonts([("folder", str(files))]))
+    session = ooxml_core.Session()
+    doc = session.open(page_docx("9"), name="a.docx")
+    left = call(session, "word_fields", {"doc": doc, "action": "update"})
+    assert call(session, "word_fields", {"doc": doc, "action": "list"})["data"][0]["result"] == "9", left
+    reply = call(session, "word_fields", {"doc": doc, "action": "update"}, layout=pages)
+    assert reply["ok"], reply
+    assert call(session, "word_fields", {"doc": doc, "action": "list"})["data"][0]["result"] == "1"

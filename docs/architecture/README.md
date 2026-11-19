@@ -588,6 +588,9 @@ All are under 0.1 % of the edit budgets.
 - The checks of a served call run after it, with nothing held: the session's validation of the version the call made (`Session.validation(doc, at=version)`). A call whose checks compare layouts (Python lays them out) is served under the lock instead.
 - Finds read each story part's paragraph texts kept per version (`ooxml_word_model::docx::PartTexts`, `StoryPart::texts`): a version takes the text of every paragraph it shares with the last version that read them, so `find_text`, `replace_text` and the edit core's finds walk only the paragraphs that changed.
 
+**As built (lane P4d7: calls that name other documents).**
+- A tool's declared documents rule (`ooxml_tools::documents`, `named_at`) names the call's own document first; the session pins every other open document it names like the call's own (the version the context or batch holds, else the head; no lock: versions are immutable) and hands them over in `Call::others`, which read handlers see as `Version::others` and editing handlers as `Editing::others` (`Others::get` by id). A named document that is not open is refused at the field naming it (`reference.doc`). `word_compare_blocks` is the first tool to read one.
+
 **Library API.**
 - `docx_agent.Document`, `pptx_agent` and `xlsx_agent` become handles. Methods that take and return plain values keep their signatures.
 - APIs that expose lxml (`.element`, `package.tree()`, `History`) warn for two releases and are then removed, each with a CHANGELOG note naming the replacement.

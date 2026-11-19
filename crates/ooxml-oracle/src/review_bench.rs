@@ -60,6 +60,7 @@ fn best(doc: &WordDoc, arguments: &Value) -> Result<(f64, String), String> {
             cancel: &Never,
             date: "2026-11-17T10:00:00Z",
             layout: None,
+            others: ooxml_tools_word::Others::default(),
         };
         let started = Instant::now();
         let reply = word_changes(&args, &editing);

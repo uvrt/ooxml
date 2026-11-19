@@ -1,0 +1,1 @@
+Compare tables or paragraphs with a reference block (a sample, here or in another open document): rows, merges, widths, styles, shading, borders, direct formatting; each difference with fix calls. Measures only.

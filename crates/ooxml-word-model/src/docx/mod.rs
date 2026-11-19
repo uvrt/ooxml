@@ -142,6 +142,12 @@ pub struct Docx {
 }
 
 impl Docx {
+    /// Its sections in order (as [`sections::sections`] reads them), read once per version.
+    #[must_use]
+    pub fn sections(&self) -> &[sections::Section] {
+        self.derived.sections(self)
+    }
+
     /// Read `package`.
     ///
     /// # Errors

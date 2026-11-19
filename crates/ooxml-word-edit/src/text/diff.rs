@@ -3,7 +3,7 @@
 //! ([`opcodes`]: the same longest matches, found in the same order, joined the same way),
 //! and docx-agent's two foldings of it: [`coarse`] (characters; short coincidental matches
 //! folded into the change around them) and [`by_words`] (a tracked replacement's stretches
-//! at word boundaries).
+//! at word boundaries); and its [`ratio`], how alike two texts are.
 //!
 //! Must not: be used to find what a change touched (the change set says that); this is the
 //! edit's own rule for where new characters go.
@@ -113,6 +113,18 @@ impl<'s, T: Eq + Hash> Matcher<'s, T> {
         out.push((la, lb, 0));
         out
     }
+}
+
+/// `difflib.SequenceMatcher(None, a, b, autojunk=False).ratio()`: twice the characters
+/// the matching blocks hold over both lengths (1 for two empty sequences).
+#[must_use]
+pub fn ratio<T: Eq + Hash>(a: &[T], b: &[T]) -> f64 {
+    let length = a.len() + b.len();
+    if length == 0 {
+        return 1.0;
+    }
+    let matches: usize = Matcher::new(a, b).matching_blocks().iter().map(|(_, _, k)| k).sum();
+    2.0 * matches as f64 / length as f64
 }
 
 /// `difflib.SequenceMatcher(None, a, b, autojunk=False).get_opcodes()`, replace, delete

@@ -203,7 +203,7 @@ pub(crate) fn place_of(docx: &Docx, located: &Located, laid: &dyn LaidFields) ->
     } else {
         return None;
     };
-    let sections = ooxml_word_model::docx::sections::sections(docx);
+    let sections = docx.sections();
     let mut shown: HashMap<(usize, &'static str), Option<String>> = HashMap::new();
     for (k, page) in laid.pages().into_iter().enumerate() {
         if page.blank {
@@ -211,7 +211,7 @@ pub(crate) fn place_of(docx: &Docx, located: &Located, laid: &dyn LaidFields) ->
         }
         let found = shown
             .entry((page.section, page.kind))
-            .or_insert_with(|| section_story(docx, &sections, page.section, which, page.kind));
+            .or_insert_with(|| section_story(docx, sections, page.section, which, page.kind));
         if found.as_deref() == Some(story.as_str()) {
             return Some(Placed::Page(k));
         }

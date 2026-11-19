@@ -16,8 +16,8 @@ use ooxml_derive::CacheBudget;
 use ooxml_opc::Package;
 use ooxml_store::{Caller, Clock, Command, Seq, Snapshot, StoreConfig, Txn};
 use ooxml_word_edit::{
-    CellValues, EditError, EditTable, Editor, FormatTable, InsertText, RevisionPolicy, SetCells, SetText, TableChange,
-    TableFormat, TableValues, TableWidth, Tracking, WordDoc,
+    CellValues, CellWrite, EditError, EditTable, Editor, FormatTable, InsertText, RevisionPolicy, SetCells, SetText,
+    TableChange, TableFormat, TableValues, TableWidth, Tracking, WordDoc,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -173,7 +173,8 @@ fn edit(rng: &mut Rng, targets: &[String], tables: &[String], writer: u64) -> Ed
         }),
         3 => Edit::Cells(SetCells {
             table,
-            writes: vec![(rng.below(3), rng.below(3), words.join(" "))],
+            writes: vec![CellWrite::at(rng.below(3), rng.below(3), words.join(" "))],
+            stamping: false,
             policy: policy(rng, writer),
         }),
         8 | 9 => Edit::Rows(EditTable {

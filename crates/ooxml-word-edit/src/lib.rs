@@ -123,7 +123,7 @@ pub use sections::{
     InsertSectionBreak, LinkToPrevious, RemoveSectionBreak, SectionEdited, SectionValues, SetSection, SetStoryText,
     StoryEdited, UnlinkFromPrevious,
 };
-pub use set_cells::{CellEdit, CellsSet, SetCells};
+pub use set_cells::{CellAxis, CellEdit, CellWrite, CellsSet, SetCells};
 pub use set_text::{SetText, TextEdited};
 pub use sink::{EditSink, Keep, Numbered, TextWrite};
 pub use style_spans::{Span, SpansStyled, StyleSpans};
@@ -141,4 +141,5 @@ pub use tables::{
     TableFormatted, TableValues, TableWidth,
 };
 pub use template::{compatibility_mode, UpgradeToModern, Upgraded, DEFAULT_COMPATIBILITY_MODE, MODERN_MODE};
+pub use text::diff::ratio as text_ratio;
 pub use text_range::anchor;

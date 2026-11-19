@@ -11,9 +11,11 @@
 //! Cells merged or split, a merge already made answered as changing nothing (rule 3), a
 //! split past a cell's span refused with the split that keeps the grid (rule 2).
 //!
-//! Not ported yet, said in `unported` for the host to answer its own way: `set_cells`,
-//! `sync`, `from`; a row holding a drawing or a control copied; a table with pending
-//! tracked structure or a placement record.
+//! Cells written without a source ([`super::set_cells`]).
+//!
+//! Not ported yet, said in `unported` for the host to answer its own way: `sync`, `from`;
+//! a row holding a drawing or a control copied; a table with pending tracked structure or
+//! a placement record.
 //!
 //! Must not: change the document but through the command.
 
@@ -72,7 +74,7 @@ fn invalid(message: String, field: &str, options: &[&str], retry: &TryCall) -> T
     ToolError::refusal(Refusal::InvalidArguments, message, way_out).at(field)
 }
 
-fn unported(what: &str, retry: &TryCall) -> ToolResult<Value> {
+pub(super) fn unported(what: &str, retry: &TryCall) -> ToolResult<Value> {
     refused(EditError::Unsupported(what.to_owned()), retry.clone())
 }
 
@@ -155,16 +157,17 @@ fn run(args: &WordEditTable, editing: &Editing<'_>, retry: &TryCall) -> Result<T
         }
         Err(error) => return Err(error),
     };
-    match args.action {
-        TableAction::Sync => return Ok(unported("word_edit_table sync", retry)),
-        TableAction::SetCells => return Ok(unported("word_edit_table set_cells", retry)),
-        _ => {}
+    if args.action == TableAction::Sync {
+        return Ok(unported("word_edit_table sync", retry));
     }
     if args.from.as_deref().is_some_and(|f| !f.is_empty()) {
         // docx-agent reads a `from` before it refuses it for another action
         return Ok(unported("word_edit_table from (sources)", retry));
     }
     check_arguments(args, retry)?;
+    if args.action == TableAction::SetCells {
+        return super::set_cells::set_cells(args, editing, &docx, &view, retry);
+    }
     let below = args.side != Some(Side::Before);
     let index = |value: Option<i64>| value.map(|v| usize::try_from(v).unwrap_or(usize::MAX));
     let change = match args.action {
@@ -381,7 +384,7 @@ fn finish(
         .doc()
         .docx()
         .ok()
-        .and_then(|docx| table_json(&docx, &now, head.doc(), retry));
+        .and_then(|docx| table_json(&docx, &now, head.doc(), true, retry));
     let summary = format!("{} on {table}", args.action.as_str());
     let mut result = outcome(&[Outcome::from(done.out)], summary, data);
     if unchanged {
@@ -450,8 +453,15 @@ fn uncopied(args: &WordEditTable, view: &TableView, message: String, change: Tab
         .with_detail("calls", json!([first, fill]))
 }
 
-/// The table's id, size as accepted and text as plain Markdown (docx-agent's `table_json`).
-fn table_json(docx: &Docx, id: &str, doc: &ooxml_word_edit::WordDoc, retry: &TryCall) -> Option<Value> {
+/// The table's id, size as accepted and (`markdown`) text as plain Markdown (docx-agent's
+/// `table_json`).
+pub(super) fn table_json(
+    docx: &Docx,
+    id: &str,
+    doc: &ooxml_word_edit::WordDoc,
+    markdown: bool,
+    retry: &TryCall,
+) -> Option<Value> {
     let view = table_view(doc, docx, id, retry).ok()?;
     let deleted = deleted_rows(&view.table);
     let kept = kept_columns(docx, &view);
@@ -466,10 +476,12 @@ fn table_json(docx: &Docx, id: &str, doc: &ooxml_word_edit::WordDoc, retry: &Try
     if !deleted.is_empty() {
         data.insert("rows_deleted_pending".into(), json!(deleted));
     }
-    data.insert(
-        "markdown".into(),
-        json!(to_plain_markdown(docx, Some(&view.table.id)).ok()?),
-    );
+    if markdown {
+        data.insert(
+            "markdown".into(),
+            json!(to_plain_markdown(docx, Some(&view.table.id)).ok()?),
+        );
+    }
     Some(Value::Object(data))
 }
 

@@ -83,6 +83,7 @@ fn find(args: &FindText) -> Result<Value, Value> {
         number: 1,
         versions: &versions,
         placer: None,
+        others: ooxml_tools_word::Others::default(),
     };
     find_text(args, &version, &Never)
         .map(|d| json!({"summary": d.summary, "data": d.data, "next": d.next_cursor, "total": d.total}))
@@ -98,6 +99,7 @@ fn inspect(target: &str, layout: Option<bool>) -> Result<Value, Value> {
         number: 1,
         versions: &versions,
         placer: None,
+        others: ooxml_tools_word::Others::default(),
     };
     let args = WordInspect {
         doc: "d1".into(),

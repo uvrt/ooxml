@@ -138,6 +138,7 @@ fn call<A: ToolArgs>(arguments: Value, tool: impl Fn(&A, &Editing<'_>) -> ToolRe
             cancel: &Never,
             date: "2026-11-17T10:00:00Z",
             layout: Some(&TwoPages),
+            others: ooxml_tools_word::Others::default(),
         };
         let (args, _) = A::accept(arguments, Some("docx")).unwrap();
         Value::Object(tool(&args, &editing).to_json())

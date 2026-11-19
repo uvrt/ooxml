@@ -10,8 +10,8 @@ use ooxml_opc::Package;
 use ooxml_store::{Caller, Clock, StoreConfig};
 use ooxml_tools::{ToolArgs, ToolResult};
 use ooxml_tools_word::{
-    word_format, word_lists, word_styles, word_template, CallEditor, Editing, WordFormat, WordLists, WordStyles,
-    WordTemplate, KIND,
+    word_format, word_lists, word_styles, word_template, CallEditor, Editing, WordCompareBlocks, WordFollowSample,
+    WordFormat, WordLists, WordStyles, WordTemplate, KIND,
 };
 use ooxml_word_edit::{Editor, FieldLayout, LaidFields, PageReflow};
 use ooxml_zip::{Method, NewEntry, Writer};
@@ -92,6 +92,7 @@ fn call<A: ToolArgs>(arguments: Value, tool: impl Fn(&A, &Editing<'_>) -> ToolRe
             cancel: &Never,
             date: "2026-11-17T10:00:00Z",
             layout: None,
+            others: ooxml_tools_word::Others::default(),
         };
         let (args, _) = A::accept(arguments, Some("docx")).unwrap();
         Value::Object(tool(&args, &editing).to_json())
@@ -118,6 +119,27 @@ fn the_definitions_are_the_golden_exports() {
         format!("{}\n", WordTemplate::spec().export(Some(&[KIND]))),
         include_str!("golden/word_template.json")
     );
+    assert_eq!(
+        format!("{}\n", WordCompareBlocks::spec().export(Some(&[KIND]))),
+        include_str!("golden/word_compare_blocks.json")
+    );
+    assert_eq!(
+        format!("{}\n", WordFollowSample::spec().export(Some(&[KIND]))),
+        include_str!("golden/word_follow_sample.json")
+    );
+}
+
+#[test]
+fn a_reference_in_another_document_is_one_of_the_calls_documents() {
+    let spec = WordCompareBlocks::spec();
+    let call = |reference: Value| {
+        let arguments = json!({"doc": "d1", "blocks": ["t:1"], "reference": reference});
+        ooxml_tools::documents::named(&spec.documents, arguments.as_object().unwrap())
+    };
+    assert_eq!(call(json!({"block": "t:2"})), ["d1"]);
+    assert_eq!(call(json!({"doc": "", "block": "t:2"})), ["d1"]);
+    assert_eq!(call(json!({"doc": "d2", "block": "t:2"})), ["d1", "d2"]);
+    assert!(spec.problems().is_empty(), "{:?}", spec.problems());
 }
 
 #[test]
@@ -364,6 +386,7 @@ fn template(editor: &Editor, layout: Option<&dyn FieldLayout>) -> ToolResult<Val
         cancel: &Never,
         date: "2026-11-17T10:00:00Z",
         layout,
+        others: ooxml_tools_word::Others::default(),
     };
     let (args, _) = WordTemplate::accept(json!({"doc": "d1", "action": "upgrade_to_modern"}), Some("docx")).unwrap();
     word_template(&args, &editing)

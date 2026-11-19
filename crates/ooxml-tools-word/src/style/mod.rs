@@ -1,6 +1,7 @@
 //! Word's style tools (docx-agent's `tools/style.py` and `word_format` of `tools/text.py`):
 //! `word_lists`, `word_format`, `word_styles` and `word_template`, over the edit core
-//! (`ooxml-word-edit`).
+//! (`ooxml-word-edit`); `word_compare_blocks`, a reading tool; the definition of
+//! `word_follow_sample`.
 //!
 //! Owns: the tools' definitions (descriptions beside them) and their handlers: a function
 //! of the typed arguments and an [`crate::Editing`], whose edits run as one command each
@@ -9,6 +10,10 @@
 //! Must not: hold sessions or documents by id, keep state between calls, or write the
 //! document but through a command.
 
+mod compare;
+mod compare_args;
+mod compare_paragraphs;
+mod compare_tables;
 mod find;
 mod format;
 mod format_args;
@@ -19,6 +24,8 @@ mod styles;
 mod styles_args;
 mod template;
 
+pub use compare::word_compare_blocks;
+pub use compare_args::{BlockIn, FollowReport, WordCompareBlocks, WordFollowSample};
 pub use format::word_format;
 pub use format_args::{Alignment, Cleared, FindExpect, FindItem, WordFormat};
 pub use lists::{word_lists, Follow, ListKind, ListsAction, WordLists};
