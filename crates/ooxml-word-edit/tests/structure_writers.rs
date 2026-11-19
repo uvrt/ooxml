@@ -10,7 +10,7 @@
 use ooxml_base::Limits;
 use ooxml_derive::CacheBudget;
 use ooxml_opc::Package;
-use ooxml_store::{Caller, Clock, Command, Committed, Seq, Snapshot, StoreConfig, Txn};
+use ooxml_store::{Caller, Clock, Command, KeySet, Seq, Snapshot, StoreConfig, Txn};
 use ooxml_word_edit::{
     AddBookmark, AddHyperlink, Day, DeleteNote, EditError, EditNote, Editor, InsertCaption, InsertField, InsertNote,
     InsertSectionBreak, InsertText, Key, MoveBlocks, Moving, NoteKind, RemoveBookmark, RevisionPolicy, SectionValues,
@@ -390,17 +390,33 @@ impl Command<WordDoc> for Paused {
     }
 }
 
-type Done = Committed<WordDoc, bool>;
+/// A step of the history: an edit, or the undo or redo of the step at that version.
+enum Step<'a> {
+    Edit(&'a Edit),
+    Undo(Seq),
+    Redo(Seq),
+}
 
-/// `last` prepared on the document as `before` leaves it, `between` committed before
-/// `last` commits; each version the same, byte for byte, as the edits run serially in that
-/// order make it.
-fn interleaved(before: &[Edit], between: &Edit, last: &Edit) -> (Done, Done) {
-    let bytes = fixture("generated/ids-and-markup.docx");
+/// `step` run on `editor`: the version it made.
+fn run_step(editor: &Editor, step: &Step<'_>) -> Snapshot<WordDoc> {
+    match step {
+        Step::Edit(edit) => editor.store().run(&Caller::anonymous(), *edit).unwrap().version,
+        Step::Undo(seq) => editor.store().undo_step(*seq, &KeySet::new()).unwrap().version,
+        Step::Redo(seq) => editor.store().redo_step(*seq).unwrap().version,
+    }
+}
+
+/// `last` prepared on the fixture `name` as the steps `before` leave it, `between`
+/// committed before `last` commits; each version the same, byte for byte, as the steps run
+/// serially in that order make it.
+fn interleaved(name: &str, before: &[Step<'_>], between: &Step<'_>, last: &Edit) {
+    let bytes = fixture(name);
     let (shared, serial) = (editor(&bytes), editor(&bytes));
-    for edit in before {
-        assert!(shared.store().run(&Caller::anonymous(), edit).unwrap().changed);
-        assert!(serial.store().run(&Caller::anonymous(), edit).unwrap().changed);
+    for step in before {
+        assert_eq!(
+            written(run_step(&shared, step).doc()),
+            written(run_step(&serial, step).doc())
+        );
     }
     let (prepared, wait) = std::sync::mpsc::channel();
     let (release, go) = std::sync::mpsc::channel();
@@ -413,23 +429,21 @@ fn interleaved(before: &[Edit], between: &Edit, last: &Edit) -> (Done, Done) {
     let (first, second) = std::thread::scope(|scope| {
         let handle = scope.spawn(|| shared.store().run(&Caller::named("last"), &paused));
         wait.recv().unwrap();
-        let first = shared.store().run(&Caller::named("between"), between);
+        let first = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run_step(&shared, between)));
         release.send(()).unwrap();
         (first.unwrap(), handle.join().unwrap().unwrap())
     });
-    assert!(
-        second.attempts == 1,
-        "{last:?} is applied past {between:?}, not prepared again"
+    assert_eq!(
+        written(run_step(&serial, between).doc()),
+        written(first.doc()),
+        "the step between"
     );
-    for (command, done) in [(between, &first), (last, &second)] {
-        let replayed = serial.store().run(&Caller::anonymous(), command).unwrap();
-        assert_eq!(
-            written(replayed.version.doc()),
-            written(done.version.doc()),
-            "{command:?}"
-        );
-    }
-    (first, second)
+    let replayed = serial.store().run(&Caller::anonymous(), last).unwrap();
+    assert_eq!(
+        written(replayed.version.doc()),
+        written(second.version.doc()),
+        "{last:?}"
+    );
 }
 
 fn tracked(author: &str) -> RevisionPolicy {
@@ -445,6 +459,12 @@ fn tracked(author: &str) -> RevisionPolicy {
 /// taken them, and the serial order gives 211/212. The root's head is written instead.
 #[test]
 fn a_tracked_edit_rebased_past_another_keeps_the_ids_drawn_where_it_lands() {
+    // an untracked edit stamps the document first, as the seeds' earlier edits did
+    let stamp = Edit::Set(SetText {
+        target: "p:1A2B3C0B".to_owned(),
+        text: "Quarter and".to_owned(),
+        policy: RevisionPolicy::Untracked,
+    });
     let note = Edit::Rewrite(EditNote {
         note: "fn:1".to_owned(),
         text: "beta alpha gamma Quarter".to_owned(),
@@ -455,13 +475,47 @@ fn a_tracked_edit_rebased_past_another_keeps_the_ids_drawn_where_it_lands() {
         text: "and alpha".to_owned(),
         policy: tracked("Writer 0"),
     });
-    // an untracked edit stamps the document first, as the seeds' earlier edits did
+    interleaved(
+        "generated/ids-and-markup.docx",
+        &[Step::Edit(&stamp)],
+        &Step::Edit(&note),
+        &set,
+    );
+}
+
+/// History seed 209: a tracked edit prepared where the body's root declares `w16du` (a
+/// tracked edit's step, redone) declares nothing; the undo of that redo, committed in
+/// between, takes the declaration away, so the edit reads the root's head and is prepared
+/// again.
+#[test]
+fn a_tracked_edit_reads_the_root_declarations_it_relies_on() {
+    // an untracked edit stamps the document first, as the seed's earlier edits did
     let stamp = Edit::Set(SetText {
-        target: "p:1A2B3C0B".to_owned(),
-        text: "Quarter and".to_owned(),
+        target: "p@body/29".to_owned(),
+        text: "gamma 0".to_owned(),
         policy: RevisionPolicy::Untracked,
     });
-    interleaved(&[stamp], &note, &set);
+    let first = Edit::Set(SetText {
+        target: "p@body/0".to_owned(),
+        text: "alpha 3".to_owned(),
+        policy: tracked("Writer 3"),
+    });
+    let set = Edit::Set(SetText {
+        target: "p@body/5".to_owned(),
+        text: "alpha 5".to_owned(),
+        policy: tracked("Writer 5"),
+    });
+    interleaved(
+        "samplelib/sample-long.docx",
+        &[
+            Step::Edit(&stamp),
+            Step::Edit(&first),
+            Step::Undo(Seq(2)),
+            Step::Redo(Seq(2)),
+        ],
+        &Step::Undo(Seq(4)),
+        &set,
+    );
 }
 
 /// A tracked field's revision ids are drawn where it lands: it writes the annotation ids in

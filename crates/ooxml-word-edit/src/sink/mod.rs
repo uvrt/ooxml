@@ -708,6 +708,8 @@ impl<'t, 's> EditSink<'t, 's> {
         let Some(tree) = self.tx.doc().tree(part)? else {
             return Ok(());
         };
+        // what the root declares decides what is written (nothing, when it declares them)
+        self.tx.read(Key::Root(Arc::from(part)));
         let root = tree.root();
         let Some((head, declared)) = ensured_head(root, drawings, extra) else {
             return Ok(());
