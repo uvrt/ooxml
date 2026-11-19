@@ -1515,11 +1515,10 @@ class Toolbox:
                 others: list[str] = []
                 # Lane P2c6: a change its document's owner serves runs beside the others it
                 # serves, without the document's lock (served.py).
-                outcome = (None if reads_only or reading else
-                           serve_unlocked(self, session, tool, clean, doc_ids, roles, caller, turn))
-                declined = isinstance(outcome, Declined)
-                if declined:
-                    outcome = None
+                served = (None if reads_only or reading else
+                          serve_unlocked(self, session, tool, clean, doc_ids, roles, caller, turn))
+                declined = isinstance(served, Declined)
+                outcome = None if served is None or isinstance(served, Declined) else served
                 drafted = (None if reads_only or outcome is not None else
                            self._block_entry(session, tool, clean, doc_ids, reading, roles,
                                              counted, editing, others))

@@ -1,7 +1,7 @@
 """Changing calls a document's owner serves itself, side by side (lane P2c6).
 
 A document an owner holds (:class:`~.owned.OwnedEntry`) whose format edits with the owner
-(:attr:`~.session.DocumentFormat.serve`: docx-agent's tools the Rust session edits with)
+(:attr:`~.session.DocumentFormat.serve`: the tools a library's native session edits with)
 runs such a call without the document's lock: the call holds the document's
 :class:`~.gate.Gate` shared, beside the others the owner serves, while the owner makes its
 edit (prepared on a snapshot, committed in a short section of the owner's own) and its step
@@ -21,11 +21,11 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence
 
 from .owned import OwnedEntry
 from .results import Result
-from .session import Session, StepOwner
+from .session import DocumentEntry, Session, StepOwner
 
 if TYPE_CHECKING:
     from .dispatch import Toolbox, _Turn
@@ -58,17 +58,17 @@ class Declined:
 
 def serve_unlocked(toolbox: "Toolbox", session: Session, tool: "Tool", arguments: dict[str, Any],
                    doc_ids: Sequence[str], roles: Sequence[str], caller: Mapping[str, Any],
-                   turn: "_Turn | None") -> tuple[Result, dict[str, Any], OwnedEntry] | Declined | None:
+                   turn: "_Turn | None") -> tuple[Result, dict[str, DocumentEntry], DocumentEntry] | Declined | None:
     """The call, served by its document's owner without the document's lock (the module's
     notes); else it runs as any other call (nothing was changed): :class:`Declined` where the
     owner was tried, ``None`` where it was not."""
     from .dispatch import Call, _context
 
-    entry = _served_entry(session, tool, arguments, doc_ids)
-    if entry is None:
+    found = _served_entry(session, tool, arguments, doc_ids)
+    if found is None:
         return None
-    fmt = session.formats[entry.kind]
-    entries: dict[str, Any] = {entry.doc_id: entry}
+    entry, serve = found
+    entries: dict[str, DocumentEntry] = {entry.doc_id: entry}
     context = _context(roles, caller)
     read: list[str] = []
     with entry.gate.shared():
@@ -77,7 +77,7 @@ def serve_unlocked(toolbox: "Toolbox", session: Session, tool: "Tool", arguments
         call = Call(toolbox, session, tool, given, entries, entry, context)
         given = toolbox._with_facts(tool, given, call)
         with entry.serving():
-            served = fmt.serve(call, given)
+            served = serve(call, given)
             if not isinstance(served, Served):
                 return served
             if served.first is None:            # (it changed nothing: no step)
@@ -99,21 +99,23 @@ def serve_unlocked(toolbox: "Toolbox", session: Session, tool: "Tool", arguments
 
 
 def _served_entry(session: Session, tool: "Tool", arguments: Mapping[str, Any],
-                  doc_ids: Sequence[str]) -> OwnedEntry | None:
-    """The call's document when its owner may serve the call without the lock."""
+                  doc_ids: Sequence[str]) -> tuple[OwnedEntry, Callable[..., Any]] | None:
+    """The call's document when its owner may serve the call without the lock, and its
+    format's ``serve``."""
     if tool.composite or len(doc_ids) != 1 or not tool.changes(arguments):
         return None
     entry = session.documents.get(doc_ids[0])
     if not isinstance(entry, OwnedEntry) or entry.owner is None:
         return None
     fmt = session.formats.get(entry.kind)
-    if fmt is None or fmt.serve is None or entry.live is not None or entry.pinned is not None:
+    serve = fmt.serve if fmt is not None else None
+    if serve is None or entry.live is not None or entry.pinned is not None:
         return None
     if tool.ahead_for(entry.kind) is not None or (tool.retry_key and isinstance(arguments.get("key"), str)):
         return None
     if tool.facts and "{{" in json.dumps(arguments, default=str):
         return None     # (values written by reference read other documents: under the lock)
-    return entry
+    return entry, serve
 
 
 __all__ = ["Declined", "Served", "serve_unlocked"]
