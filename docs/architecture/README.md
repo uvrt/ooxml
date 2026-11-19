@@ -375,6 +375,12 @@ trait Command: Send {
 - Whole-document rules are kept incrementally (§7).
 - The full validation is a test oracle only.
 
+**As built (lane P2c7: reads by condition).**
+- A transaction may read by condition (`ooxml_store::ReadPredicate`, `Txn::read_where`) as well as by key: at commit, the keys written since its snapshot (the journal's change sets, `DocModel::written`) conflict only where the condition holds on the head. The keys that met it on the snapshot and that the outcome used must be read by key too, so one that stops meeting it is a conflict through them. The history keeps such a read as a read of every key, so undo and redo find steps entangled as before.
+- `replace_text` within paragraphs reads the paragraphs that hold a match (`HoldsMatch`: a written block whose paragraphs match on the head, or a story part written whole) and its matches by key; across paragraphs it still reads the whole document. Writers editing other paragraphs no longer make it conflict and run exclusively.
+- `touched` cuts the changed stretch of the body at the blocks both versions hold (the same allocation, in order) and compares only the pieces between them, so an edit that rewrites scattered blocks (a removed style's uses repointed) no longer diffs the whole body.
+- A part's paragraph texts (`PartTexts`) are kept in chunks of up to 64 lines, shared by every version that holds the same paragraphs there in order: a find after an edit reads the changed chunks and a pointer per other chunk, not a line per paragraph.
+
 ---
 
 ## 6. Concurrency model
