@@ -1,9 +1,10 @@
 """A long made-up report from a short one: make_report.py's chapters repeated, renumbered and
 cut to CHAPTERS, then opened and saved through docx-agent's tools (which stamp the copies'
-paragraph ids) with the fields updated (the contents list every chapter).  The 3k-page
-benches' document (gates.yml): ``make_report.py base.docx 6`` then ``grow_report.py base.docx
-out.docx 61`` -- chapter 1's "Items in full" comes back in chapters 7, 13, ... 61, about
-3,000 pages.  NOUPDATE=1 in the environment: no fields update.
+paragraph ids); its fields as the base left them (the contents list the base's chapters:
+UPDATE=1 in the environment updates them, which in Python at 3,000 pages takes over half an
+hour).  The 3k-page benches' document (gates.yml): ``make_report.py base.docx 6`` then
+``grow_report.py base.docx out.docx 61`` -- chapter 1's "Items in full" comes back in chapters
+7, 13, ... 61, about 3,000 pages.
 
     python grow_report.py base.docx out.docx CHAPTERS
 """
@@ -62,7 +63,7 @@ def repackaged(data: bytes, count: int) -> bytes:
 
 
 def saved(data: bytes, update: bool) -> bytes:
-    """``data`` opened and saved through docx-agent's tools, its fields updated."""
+    """``data`` opened and saved through docx-agent's tools, its fields updated if ``update``."""
     from ooxml_edit.tools import Toolbox
     from ooxml_edit.tools.limits import Limits
 
@@ -82,7 +83,7 @@ def saved(data: bytes, update: bool) -> bytes:
 def main() -> None:
     base, path, count = sys.argv[1], sys.argv[2], int(sys.argv[3])
     with open(base, "rb") as handle:
-        data = saved(repackaged(handle.read(), count), update=not os.environ.get("NOUPDATE"))
+        data = saved(repackaged(handle.read(), count), update=bool(os.environ.get("UPDATE")))
     with open(path, "wb") as handle:
         handle.write(data)
     print(json.dumps({"bytes": len(data), "chapters": count}))
