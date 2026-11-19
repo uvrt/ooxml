@@ -393,8 +393,16 @@ fn changed_blocks(
     let before_stretch = || new.block_before(start).or_else(|| new.first_block());
     for piece in pieces(old, now) {
         let (a, b): (Vec<u64>, Vec<u64>) = (
-            old.get(piece.old.clone()).unwrap_or_default().iter().map(|(_, e)| digest(e)).collect(),
-            now.get(piece.new.clone()).unwrap_or_default().iter().map(|(_, e)| digest(e)).collect(),
+            old.get(piece.old.clone())
+                .unwrap_or_default()
+                .iter()
+                .map(|(_, e)| digest(e))
+                .collect(),
+            now.get(piece.new.clone())
+                .unwrap_or_default()
+                .iter()
+                .map(|(_, e)| digest(e))
+                .collect(),
         );
         let place = |j: usize| now.get(piece.new.start + j).map(|(k, _)| *k);
         for op in opcodes(&a, &b) {
@@ -433,17 +441,25 @@ fn pieces(old: &Stretch<'_>, now: &Stretch<'_>) -> Vec<Piece> {
     let mut out = Vec::new();
     let (mut i, mut j) = (0, 0);
     for (k, (_, e)) in now.iter().enumerate() {
-        let Some(&found) = at.get(&Arc::as_ptr(e)) else { continue };
+        let Some(&found) = at.get(&Arc::as_ptr(e)) else {
+            continue;
+        };
         if found < i {
             continue; // held by both, but moved: compared within its piece
         }
         if found > i || k > j {
-            out.push(Piece { old: i..found, new: j..k });
+            out.push(Piece {
+                old: i..found,
+                new: j..k,
+            });
         }
         (i, j) = (found + 1, k + 1);
     }
     if i < old.len() || j < now.len() {
-        out.push(Piece { old: i..old.len(), new: j..now.len() });
+        out.push(Piece {
+            old: i..old.len(),
+            new: j..now.len(),
+        });
     }
     out
 }

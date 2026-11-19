@@ -389,26 +389,35 @@ mod tests {
             let target = ids[n].clone();
             let done = match k % 3 {
                 0 => editor
-                    .run(&caller, &InsertParagraph {
-                        anchor: target,
-                        after: true,
-                        text: format!("Inserted {k}"),
-                        style: None,
-                        policy: RevisionPolicy::Untracked,
-                    })
+                    .run(
+                        &caller,
+                        &InsertParagraph {
+                            anchor: target,
+                            after: true,
+                            text: format!("Inserted {k}"),
+                            style: None,
+                            policy: RevisionPolicy::Untracked,
+                        },
+                    )
                     .map(|d| d.version),
                 1 => editor
-                    .run(&caller, &DeleteBlock {
-                        target,
-                        policy: RevisionPolicy::Untracked,
-                    })
+                    .run(
+                        &caller,
+                        &DeleteBlock {
+                            target,
+                            policy: RevisionPolicy::Untracked,
+                        },
+                    )
                     .map(|d| d.version),
                 _ => editor
-                    .run(&caller, &SetText {
-                        target,
-                        text: format!("Rewritten {k}"),
-                        policy: RevisionPolicy::Untracked,
-                    })
+                    .run(
+                        &caller,
+                        &SetText {
+                            target,
+                            text: format!("Rewritten {k}"),
+                            policy: RevisionPolicy::Untracked,
+                        },
+                    )
                     .map(|d| d.version),
             };
             versions.push(done.unwrap());

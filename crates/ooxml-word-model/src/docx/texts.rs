@@ -108,9 +108,10 @@ impl PartTexts {
                 out.push(chunk);
                 continue;
             }
-            let text = at
-                .and_then(|n| earlier?.line(n))
-                .map_or_else(|| Arc::from(paragraph_text(element, View::Current)), |line| Arc::clone(&line.text));
+            let text = at.and_then(|n| earlier?.line(n)).map_or_else(
+                || Arc::from(paragraph_text(element, View::Current)),
+                |line| Arc::clone(&line.text),
+            );
             fresh.push(Line {
                 element: Arc::clone(element),
                 text,

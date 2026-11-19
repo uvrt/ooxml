@@ -96,7 +96,9 @@ fn serial(first: &[(u32, i64)]) -> Cells {
 fn a_commit_of_cells_not_holding_the_value_is_no_conflict() {
     let store = store();
     let meanwhile = vec![(0, 5), (2, 2)];
-    let done = store.run(&Caller::named("finder"), &replace(&store, meanwhile.clone())).unwrap();
+    let done = store
+        .run(&Caller::named("finder"), &replace(&store, meanwhile.clone()))
+        .unwrap();
     assert_eq!(done.attempts, 1);
     assert_eq!(done.out, 3);
     assert_eq!(store.stats().conflicts, 0);
@@ -107,7 +109,9 @@ fn a_commit_of_cells_not_holding_the_value_is_no_conflict() {
 fn a_cell_written_to_hold_the_value_is_a_conflict() {
     let store = store();
     let meanwhile = vec![(0, 1)];
-    let done = store.run(&Caller::named("finder"), &replace(&store, meanwhile.clone())).unwrap();
+    let done = store
+        .run(&Caller::named("finder"), &replace(&store, meanwhile.clone()))
+        .unwrap();
     assert_eq!(done.attempts, 2);
     assert_eq!(done.out, 4);
     assert_eq!(store.stats().conflicts, 1);
@@ -118,7 +122,9 @@ fn a_cell_written_to_hold_the_value_is_a_conflict() {
 fn a_matched_cell_written_since_is_a_conflict() {
     let store = store();
     let meanwhile = vec![(1, 4)];
-    let done = store.run(&Caller::named("finder"), &replace(&store, meanwhile.clone())).unwrap();
+    let done = store
+        .run(&Caller::named("finder"), &replace(&store, meanwhile.clone()))
+        .unwrap();
     assert_eq!(done.attempts, 2);
     assert_eq!(done.out, 2);
     assert_eq!(*store.snapshot().doc(), serial(&meanwhile));
@@ -127,7 +133,9 @@ fn a_matched_cell_written_since_is_a_conflict() {
 #[test]
 fn the_history_keeps_a_read_by_condition_as_a_read_of_everything() {
     let store = store();
-    store.run(&Caller::named("finder"), &replace(&store, vec![(0, 5)])).unwrap();
+    store
+        .run(&Caller::named("finder"), &replace(&store, vec![(0, 5)]))
+        .unwrap();
     let steps = store.steps();
     let finder = steps.iter().find(|s| s.caller.as_deref() == Some("finder")).unwrap();
     assert_eq!(finder.reads, KeySet::Everything);
