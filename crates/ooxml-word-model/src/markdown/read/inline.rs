@@ -171,7 +171,12 @@ impl<'r, 'a> Walk<'r, 'a> {
     }
 
     fn inline_control(&mut self, node: &Placed) {
-        let found = self.reader.shared.controls.get(&self.key(&node.path)).cloned();
+        let found = self
+            .reader
+            .shared
+            .controls(self.reader.docx)
+            .get(&self.key(&node.path))
+            .cloned();
         let kind = control_kind(&node.element);
         self.record.detail.controls.push((found.clone(), kind));
         let id = found.unwrap_or_else(|| "None".to_owned());
@@ -195,7 +200,7 @@ impl<'r, 'a> Walk<'r, 'a> {
         } else {
             self.reader.view != View::Current
         };
-        let found = self.reader.shared.revisions.get(&self.key(&node.path)).cloned();
+        let found = self.reader.revision_id(&self.record.part, &node.path);
         if !self.record.detail.revisions.contains(&found) {
             self.record.detail.revisions.push(found.clone());
         }
@@ -227,7 +232,7 @@ impl<'r, 'a> Walk<'r, 'a> {
 
     fn bookmark(&mut self, node: &Element) {
         let name = node.attribute(Some(W), "name").unwrap_or("");
-        if name.is_empty() || (name.starts_with('_') && !self.reader.shared.anchors.contains(name)) {
+        if name.is_empty() || (name.starts_with('_') && !self.reader.shared.anchors(self.reader.docx).contains(name)) {
             return;
         }
         self.record.detail.bookmarks.push(format!("bm:{name}"));
@@ -326,10 +331,7 @@ impl<'r, 'a> Walk<'r, 'a> {
         {
             let found = self
                 .reader
-                .shared
-                .revisions
-                .get(&self.key(&[&run.path[..], &k].concat()))
-                .cloned();
+                .revision_id(&self.record.part, &[&run.path[..], &k].concat());
             if !self.record.detail.revisions.contains(&found) {
                 self.record.detail.revisions.push(found);
             }
@@ -340,10 +342,7 @@ impl<'r, 'a> Walk<'r, 'a> {
             {
                 let id = self
                     .reader
-                    .shared
-                    .revisions
-                    .get(&self.key(&[&run.path[..], &k].concat()))
-                    .cloned()
+                    .revision_id(&self.record.part, &[&run.path[..], &k].concat())
                     .unwrap_or_default();
                 let author = change.attribute(Some(W), "author").unwrap_or("");
                 self.record
@@ -501,7 +500,7 @@ impl<'r, 'a> Walk<'r, 'a> {
             "footnoteReference" | "endnoteReference" => {
                 let prefix = if local == "footnoteReference" { "fn" } else { "en" };
                 let id = e.attribute(Some(W), "id").unwrap_or("None").to_owned();
-                if let Some(found) = self.reader.shared.notes.get(&(prefix.to_owned(), id)) {
+                if let Some(found) = self.reader.shared.notes(self.reader.docx).get(&(prefix.to_owned(), id)) {
                     out.push(Piece::Note(found.clone()));
                 }
             }
@@ -511,7 +510,7 @@ impl<'r, 'a> Walk<'r, 'a> {
     }
 
     fn comment_reference(&mut self, w_id: &str) {
-        let Some(record) = self.reader.shared.comments.get(w_id).cloned() else {
+        let Some(record) = self.reader.shared.comments(self.reader.docx).get(w_id).cloned() else {
             return;
         };
         self.record.detail.comments.push(record.id.clone());
@@ -556,12 +555,12 @@ impl<'r, 'a> Walk<'r, 'a> {
             let alt = doc_pr.and_then(|d| d.attribute(None, "descr")).unwrap_or("").to_owned();
             self.record.detail.drawings.push(drawing_record(
                 &frame.element,
-                self.reader.shared.pictures.get(&key).cloned(),
-                self.reader.shared.drawings.get(&key).cloned(),
+                self.reader.shared.pictures(self.reader.docx).get(&key).cloned(),
+                self.reader.shared.drawings(self.reader.docx).get(&key).cloned(),
                 name.clone(),
                 alt.clone(),
             ));
-            if let Some(id) = self.reader.shared.pictures.get(&key).cloned() {
+            if let Some(id) = self.reader.shared.pictures(self.reader.docx).get(&key).cloned() {
                 self.record.inline.push(Inline::Image {
                     alt,
                     src: id,
@@ -573,7 +572,7 @@ impl<'r, 'a> Walk<'r, 'a> {
             let id = self
                 .reader
                 .shared
-                .drawings
+                .drawings(self.reader.docx)
                 .get(&key)
                 .cloned()
                 .unwrap_or_else(|| "None".to_owned());

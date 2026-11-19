@@ -93,7 +93,13 @@ pub fn run(args: &[String]) -> Result<(), String> {
         date: "2026-11-19T10:00:00Z".into(),
     };
     let mut out = serde_json::Map::new();
-    for (action, index) in [("insert_row", 1), ("delete_row", 1), ("delete_column", 0)] {
+    for (action, index) in [
+        ("insert_row", 1),
+        ("delete_row", 1),
+        ("delete_column", 0),
+        ("insert_column", 0),
+        ("copy_row", 1),
+    ] {
         let call = json!({"doc": "d1", "table": table, "action": action, "index": index});
         for (name, tracked) in [
             (action.to_owned(), None),

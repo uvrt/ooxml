@@ -192,7 +192,7 @@ fn reshape(work: &mut Work, table: Id, plan: &Plan, widths: &[i64], index: usize
         } else {
             ("gridAfter", "wAfter")
         };
-        skip(work, *row, (grid, measure), width, orders);
+        skip(work, *row, (grid, measure), -1, (width >= 0).then_some(width), orders);
     }
     let mut left = widths.to_vec();
     if index < left.len() {
@@ -261,9 +261,16 @@ fn narrow(work: &mut Work, cell: Id, width: i64) {
     }
 }
 
-/// A row's `w:gridBefore`/`w:gridAfter` one column fewer, its `w:wBefore`/`w:wAfter` less
-/// `width` (`_skip` with a delta of -1).
-fn skip(work: &mut Work, row: Id, (grid, measure): (&str, &str), width: i64, orders: &Orders) {
+/// A row's `w:gridBefore`/`w:gridAfter` grown (or shrunk) by `delta` columns, its
+/// `w:wBefore`/`w:wAfter` by as many columns' `width` where one is given (`_skip`).
+pub(super) fn skip(
+    work: &mut Work,
+    row: Id,
+    (grid, measure): (&str, &str),
+    delta: i64,
+    width: Option<i64>,
+    orders: &Orders,
+) {
     let properties = match work.find(row, W, "trPr") {
         Some(p) => p,
         None => {
@@ -273,7 +280,7 @@ fn skip(work: &mut Work, row: Id, (grid, measure): (&str, &str), width: i64, ord
         }
     };
     let node = work.find(properties, W, grid);
-    let value = (int(work, node, "val", 0) - 1).max(0);
+    let value = (int(work, node, "val", 0) + delta).max(0);
     if let Some(node) = node {
         work.remove(node);
     }
@@ -281,9 +288,9 @@ fn skip(work: &mut Work, row: Id, (grid, measure): (&str, &str), width: i64, ord
     if value > 0 {
         let made = make(work, grid, &[("val", &value.to_string())]);
         insert_in_order(work, properties, made, orders);
-        if let Some(measured) = measured {
-            if work.get(measured, Some(W), "type").is_none_or(|t| t == "dxa") && width >= 0 {
-                let now = (int(work, Some(measured), "w", 0) - width).max(0);
+        if let (Some(measured), Some(width)) = (measured, width) {
+            if work.get(measured, Some(W), "type").is_none_or(|t| t == "dxa") {
+                let now = (int(work, Some(measured), "w", 0) + delta * width).max(0);
                 set_attr(work, measured, "w", &now.to_string());
             }
         }

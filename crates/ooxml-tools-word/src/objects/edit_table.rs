@@ -1,6 +1,7 @@
 //! Owns: `word_edit_table`'s handler (docx-agent's `tools/objects.py`, `_edit_table`): its
 //! arguments read as docx-agent reads them (what belongs to `sync` or to `from` refused
-//! elsewhere, rule 2), a row inserted as one command, and the reply: the edit's
+//! elsewhere, rule 2), a row inserted or copied or a column inserted as one command (a
+//! row not copied refused with the calls that add one like it), and the reply: the edit's
 //! ids, the table's id after it (renamed where a row at the top changed), and the table as
 //! `table_json` gives it (its size as accepted and its text as plain Markdown).
 //!
@@ -8,8 +9,8 @@
 //! ([`crate::originals`]).
 //!
 //! Not ported yet, said in `unported` for the host to answer its own way: `set_cells`,
-//! `sync`, `from`, `copy_row`, `insert_column`, `merge` and `split`; a table with pending
-//! tracked structure or a placement record.
+//! `sync`, `from`, `merge` and `split`; a row holding a drawing or a control copied; a
+//! table with pending tracked structure or a placement record.
 //!
 //! Must not: change the document but through the command.
 
@@ -185,6 +186,25 @@ fn run(args: &WordEditTable, editing: &Editing<'_>, retry: &TryCall) -> Result<T
                 }
             }
         }
+        TableAction::CopyRow => TableChange::CopyRow {
+            index: index(args.index),
+            below,
+        },
+        TableAction::InsertColumn => {
+            // beside the column named, as accepted (the last by default)
+            let kept = kept_columns(&docx, &view);
+            let given = args.index.unwrap_or_else(|| i64::try_from(kept.len()).unwrap_or(0) - 1);
+            match column(&view, &kept, given, retry) {
+                Column::Grid(index) => TableChange::InsertColumn { index, right: below },
+                Column::Off(error) => return Err(error),
+                Column::Accepted => {
+                    return Ok(unported(
+                        "word_edit_table column positions in a table as accepted (a grid column no cell covers)",
+                        retry,
+                    ))
+                }
+            }
+        }
         other => return Ok(unported(&format!("word_edit_table {}", other.as_str()), retry)),
     };
     Ok(finish(args, editing, &view, change, retry))
@@ -228,7 +248,7 @@ fn watch<'a>(editing: &Editing<'_>, now: &'a WordDoc, view: &TableView, change: 
     match change {
         TableChange::DeleteRow { index } => watch.row(&docx, &view.part, &view.table, index),
         TableChange::DeleteColumn { index } => watch.column(&docx, &view.part, &view.table, index),
-        TableChange::InsertRow { .. } => return None,
+        TableChange::InsertRow { .. } | TableChange::CopyRow { .. } | TableChange::InsertColumn { .. } => return None,
     }
     Some(watch)
 }
@@ -252,6 +272,9 @@ fn finish(
     };
     let done = match editing.editor.run(editing.caller, &command) {
         Ok(done) => done,
+        Err(EditError::Refused(message)) if matches!(change, TableChange::CopyRow { .. }) => {
+            return ToolResult::failed(uncopied(args, view, message, change));
+        }
         Err(error) => return refused(error, retry.clone()),
     };
     let now = done.out.table.clone();
@@ -291,6 +314,36 @@ fn finish(
         }
     }
     result
+}
+
+/// A row `copy_row` does not copy, refused with the calls that add a row like it and fill
+/// it (docx-agent's `_copy_row`, rule 2).
+fn uncopied(args: &WordEditTable, view: &TableView, message: String, change: TableChange) -> ToolError {
+    let TableChange::CopyRow { index, below } = change else {
+        return ToolError::internal(message, "word:edit_table");
+    };
+    let at = index.map_or_else(
+        || i64::try_from(view.table.rows.len()).unwrap_or(0) - 1,
+        |i| i64::try_from(i).unwrap_or(i64::MAX),
+    );
+    let side = if below { "after" } else { "before" };
+    let insert = call(
+        "word_edit_table",
+        &[
+            ("doc", json!(args.doc)),
+            ("table", json!(args.table)),
+            ("action", json!("insert_row")),
+            ("index", json!(at)),
+            ("side", json!(side)),
+        ],
+    );
+    let fill = json!({"tool": "word_edit_table", "arguments": {"doc": args.doc, "table": args.table,
+        "action": "set_cells", "cells": [{"row": if below { at + 1 } else { at }, "col": 0, "text": "..."}]}});
+    let first = json!({"tool": "word_edit_table", "arguments": {"doc": args.doc, "table": args.table,
+        "action": "insert_row", "index": at, "side": side}});
+    ToolError::refusal(Refusal::Refused, message, WayOut::call(insert))
+        .at("index")
+        .with_detail("calls", json!([first, fill]))
 }
 
 /// The table's id, size as accepted and text as plain Markdown (docx-agent's `table_json`).

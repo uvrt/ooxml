@@ -3,7 +3,7 @@
 //! record made -- the blocks before the part wanted only counted for their list items
 //! (the one thing a block's reading takes from the blocks before it, as docx-agent's
 //! `Reader.block` counts them), the part wanted read into records, the blocks after it not
-//! read at all.
+//! read at all. A window that numbers no list item counts nothing before it.
 //!
 //! What a window read finds is kept with the version ([`Kept`], `docx::Derived`): the
 //! grouping, and the list counters before every [`MARK_EVERY`]th group counted, so the
@@ -15,6 +15,7 @@
 //! Must not: render, or read records of blocks outside the window.
 
 use super::{Item2, Placed, Reader, Record};
+use crate::docx::numbering::membership;
 use crate::docx::StoryPart;
 use crate::ids::W;
 use crate::labels::Counters;
@@ -180,16 +181,23 @@ impl Reader<'_> {
     pub fn read_window(&mut self, groups: Groups, wanted: RangeInclusive<usize>) -> Vec<Record> {
         let (start, end) = (*wanted.start(), *wanted.end());
         let key = (groups.part.clone(), self.view_name);
+        let numbered = self.numbers_any(&groups.part, groups.groups.get(start..=end).unwrap_or_default());
         let kept = self.docx.memo().window(&key).filter(|(_, own)| *own).map(|(k, _)| k);
         let mut marks: Vec<Mark> = kept.as_ref().map(|k| k.marks.clone()).unwrap_or_default();
-        let from = marks.iter().rev().find(|(k, _)| *k <= start).cloned();
+        let from = marks
+            .iter()
+            .rev()
+            .find(|(k, _)| *k <= start)
+            .cloned()
+            .filter(|_| numbered);
         if let Some((_, counters)) = &from {
             self.counters.retain(|(p, _), _| *p != groups.part);
             for (in_box, c) in counters {
                 self.counters.insert((groups.part.clone(), *in_box), c.clone());
             }
         }
-        let first = from.map_or(0, |(k, _)| k);
+        // the blocks before count for nothing where the window numbers no list item
+        let first = if numbered { from.map_or(0, |(k, _)| k) } else { start };
         let known = marks.last().map_or(0, |(k, _)| *k);
         let Groups { part, groups, .. } = groups;
         let mut out = Vec::new();
@@ -235,6 +243,43 @@ impl Reader<'_> {
             }
         }
         out
+    }
+
+    /// Whether reading `groups` of `part` may number a list item: a paragraph in them (in a
+    /// cell, a text box, or joined into a table's first cell too) that is a list's member,
+    /// as it stands or as the view shows it. Where none is, the counters the blocks before
+    /// leave are never read.
+    fn numbers_any(&self, part: &str, groups: &[Item2]) -> bool {
+        let mut roots: Vec<&Arc<Element>> = Vec::new();
+        for group in groups {
+            match group {
+                Item2::P(elements) => roots.extend(elements.iter().map(|p| &p.element)),
+                Item2::Tbl(t) => {
+                    roots.push(&t.element);
+                    if let Some(joined) = self.into.get(&(part.to_owned(), t.path.clone())) {
+                        roots.extend(joined.iter().map(|p| &p.element));
+                    }
+                }
+                Item2::Marker(_) => {}
+            }
+        }
+        let mut stack = roots;
+        while let Some(element) = stack.pop() {
+            if element.name().is(Some(W), "p") && self.listed(element) {
+                return true;
+            }
+            stack.extend(element.child_elements());
+        }
+        false
+    }
+
+    /// Whether `paragraph`, as it stands or as the view shows it, is a list's member.
+    fn listed(&self, paragraph: &Arc<Element>) -> bool {
+        let lists = &self.shared.lists;
+        let member = |p: &Element| {
+            membership(self.docx, lists, p).is_some_and(|l| l.format.as_deref().is_some_and(|f| f != "none"))
+        };
+        member(paragraph) || member(&self.as_viewed(paragraph))
     }
 
     /// The list counters of `part` now, by whether in a text box.

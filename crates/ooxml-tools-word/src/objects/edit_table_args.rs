@@ -62,8 +62,12 @@ pub struct CellArg {
     /// Lines are paragraphs.
     #[arg(facts)]
     pub text: Option<String>,
-    /// Or one value: d:<id>/#12/<column>, :0.0 to round.
-    #[arg(rename = "from", sources)]
+    /// Or one value: `d:<id>/#12/<column>`, :0.0 to round.
+    #[arg(
+        rename = "from",
+        sources,
+        description = "Or one value: d:<id>/#12/<column>, :0.0 to round."
+    )]
     pub from: Option<String>,
     /// Or a column's rows: 1..40, or * (all but header rows).
     pub rows: Option<String>,
@@ -107,8 +111,12 @@ pub struct WordEditTable {
     pub action: TableAction,
     /// set_cells: the cells.
     pub cells: Option<Vec<CellArg>>,
-    /// set_cells, sync: rows of d:<id> or t:<table>, from row index.
-    #[arg(rename = "from", sources)]
+    /// set_cells, sync: rows of `d:<id>` or `t:<table>`, from row index.
+    #[arg(
+        rename = "from",
+        sources,
+        description = "set_cells, sync: rows of d:<id> or t:<table>, from row index."
+    )]
     pub from: Option<String>,
     /// from's columns, in order (sync: per table column, default by labels). Default all.
     pub from_columns: Option<Vec<String>>,

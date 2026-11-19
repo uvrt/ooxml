@@ -206,7 +206,7 @@ impl<'a> Reader<'a> {
                 let marker = Marker {
                     id: self
                         .shared
-                        .controls
+                        .controls(self.docx)
                         .get(&(part.to_owned(), placed.path.clone()))
                         .cloned()
                         .unwrap_or_default(),
@@ -446,16 +446,26 @@ impl<'a> Reader<'a> {
         Arc::new(shadow)
     }
 
+    /// The id of the revision record at `path` of `part`. A read without the id comments
+    /// names no record (nothing it writes shows one), so it looks none up: a plain read of a
+    /// few blocks never numbers the document's records.
+    pub(super) fn revision_id(&self, part: &str, path: &[u32]) -> Option<String> {
+        if !self.ids {
+            return None;
+        }
+        let key = (part.to_owned(), Box::<[u32]>::from(path));
+        self.shared.revisions(self.docx).get(&key).cloned()
+    }
+
     /// A paragraph mark's own insertion or deletion; a paragraph-properties change.
     fn mark_revision(&self, record: &mut ParagraphRecord, element: &Placed) {
         let Some((k, ppr)) = child_at(&element.element, "pPr") else {
             return;
         };
-        let key = |path: Vec<u32>| (record.part.clone(), path.into_boxed_slice());
         // The records `word_inspect` lists: the first properties change, then the mark's own.
         let base = [&element.path[..], &[k]].concat();
         if let Some((j, _)) = child_at(&ppr, "pPrChange") {
-            let id = self.shared.revisions.get(&key([&base[..], &[j]].concat())).cloned();
+            let id = self.revision_id(&record.part, &[&base[..], &[j]].concat());
             record.detail.revisions.push(id);
         }
         if let Some((j, mark)) = child_at(&ppr, "rPr") {
@@ -465,11 +475,7 @@ impl<'a> Reader<'a> {
                     .iter()
                     .any(|t| child.name().is(Some(W), t))
                 {
-                    let id = self
-                        .shared
-                        .revisions
-                        .get(&key([&base[..], &[j, index(m)]].concat()))
-                        .cloned();
+                    let id = self.revision_id(&record.part, &[&base[..], &[j, index(m)]].concat());
                     record.detail.revisions.push(id);
                 }
             }
@@ -478,12 +484,7 @@ impl<'a> Reader<'a> {
             let Node::Element(child) = node else { continue };
             let path = [&element.path[..], &[k, index(j)]].concat();
             if child.name().is(Some(W), "pPrChange") && self.view == View::Markup {
-                let id = self
-                    .shared
-                    .revisions
-                    .get(&key(path.clone()))
-                    .cloned()
-                    .unwrap_or_default();
+                let id = self.revision_id(&record.part, &path).unwrap_or_default();
                 let author = child.attribute(Some(W), "author").unwrap_or("");
                 record
                     .changes
@@ -498,10 +499,7 @@ impl<'a> Reader<'a> {
                         continue;
                     }
                     let id = self
-                        .shared
-                        .revisions
-                        .get(&key([&path[..], &[index(m)]].concat()))
-                        .cloned()
+                        .revision_id(&record.part, &[&path[..], &[index(m)]].concat())
                         .unwrap_or_default();
                     let sign = if inserted { "++" } else { "--" };
                     record.inline.push(Inline::Critic(format!("{{{sign}\u{b6}{sign}}}")));

@@ -1,5 +1,5 @@
 //! Owns: the document-wide lookups every reading of a version starts from ([`Shared`],
-//! read once per version and kept with it): the styles, numbering and theme formatting
+//! each read once per version, on first use, and kept with it): the styles, numbering and theme formatting
 //! resolves against, the lists, the ids of controls, revision records, pictures and
 //! drawings by their place, every note with its id (`fn:1`, `en:2`) by its reference's
 //! kind and `w:id`, the comments by `w:id`, and the bookmark names internal hyperlinks
@@ -20,38 +20,40 @@ use crate::ids::TableId;
 use crate::ids::W;
 use ooxml_xml::Node;
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 /// An element's key: its part and its place there.
 type Key = (String, Box<[u32]>);
 
-/// The document-wide lookups of one version.
+/// The document-wide lookups of one version. What formatting resolves against and the lists
+/// are read with it; every other lookup on first use (with the version it was made for), so
+/// a read of a few blocks that name no control, record, drawing, bookmark, note or comment
+/// walks nothing else of the document.
 pub struct Shared {
     /// What formatting resolves against.
     pub(super) formatting: Formatting,
     /// The lists.
     pub(super) lists: Lists,
     /// Content controls' ids by place.
-    pub(super) controls: HashMap<Key, String>,
+    controls: OnceLock<HashMap<Key, String>>,
     /// Revision records' ids by place.
-    pub(super) revisions: HashMap<Key, String>,
+    revisions: OnceLock<HashMap<Key, String>>,
     /// Pictures' ids by place.
-    pub(super) pictures: HashMap<Key, String>,
-    /// Drawings' ids by place.
-    pub(super) drawings: HashMap<Key, String>,
+    pictures: OnceLock<HashMap<Key, String>>,
+    /// Drawings' ids by place, and those whose summary is a chart's or a SmartArt
+    /// diagram's (one, or a group holding one): docx-agent writes one, the core does not
+    /// yet (phase P3).
+    drawings: OnceLock<(HashMap<Key, String>, Vec<String>)>,
     /// Notes' ids by `(fn|en, w:id)`.
-    pub(super) notes: HashMap<(String, String), String>,
+    notes: OnceLock<HashMap<(String, String), String>>,
     /// Bookmarks internal hyperlinks point at.
-    pub(super) anchors: HashSet<String>,
+    anchors: OnceLock<HashSet<String>>,
     /// Comments by `w:id`.
-    pub(super) comments: HashMap<String, Comment>,
+    comments: OnceLock<HashMap<String, Comment>>,
     /// What the layout model reads of each top-level table read so far, by part and place.
     tables: Mutex<HashMap<Key, Arc<TableFacts>>>,
-    /// The drawings whose one-line summary is a chart's or a SmartArt diagram's (one, or a
-    /// group holding one): docx-agent writes one, the core does not yet (phase P3).
-    graphics: Vec<String>,
     /// Whether a table cell's end is one Accept All takes away ([`PartFacts::cell_ends`]).
-    cell_ends: bool,
+    cell_ends: OnceLock<bool>,
 }
 
 impl std::fmt::Debug for Shared {
@@ -60,48 +62,103 @@ impl std::fmt::Debug for Shared {
     }
 }
 
+/// An element's key in its part.
+fn key(part: &str, path: &[u32]) -> Key {
+    (part.to_owned(), Box::<[u32]>::from(path))
+}
+
 impl Shared {
-    /// The lookups of `docx`'s version, read once and kept with it.
+    /// The lookups of `docx`'s version, kept with it.
     #[must_use]
     pub fn of(docx: &Docx) -> Arc<Shared> {
         docx.memo().reading(|| Shared::read(docx))
     }
 
-    /// The lookups of `docx`.
+    /// The lookups of `docx`: what formatting resolves against and the lists read now, the
+    /// rest on first use.
     #[must_use]
     pub fn read(docx: &Docx) -> Shared {
-        let key = |part: &str, path: &[u32]| (part.to_owned(), Box::<[u32]>::from(path));
-        let drawings = all_drawings(docx);
         Shared {
             formatting: Formatting::read(docx),
             lists: Lists::read(docx),
-            controls: controls(docx)
+            controls: OnceLock::new(),
+            revisions: OnceLock::new(),
+            pictures: OnceLock::new(),
+            drawings: OnceLock::new(),
+            notes: OnceLock::new(),
+            anchors: OnceLock::new(),
+            comments: OnceLock::new(),
+            tables: Mutex::new(HashMap::new()),
+            cell_ends: OnceLock::new(),
+        }
+    }
+
+    /// Content controls' ids by place (of `docx`, the version these lookups are of).
+    pub(super) fn controls(&self, docx: &Docx) -> &HashMap<Key, String> {
+        self.controls.get_or_init(|| {
+            controls(docx)
                 .into_iter()
                 .map(|c| (key(&c.part, &c.path), c.id))
-                .collect(),
-            revisions: revision_records(docx)
+                .collect()
+        })
+    }
+
+    /// Revision records' ids by place.
+    pub(super) fn revisions(&self, docx: &Docx) -> &HashMap<Key, String> {
+        self.revisions.get_or_init(|| {
+            revision_records(docx)
                 .into_iter()
                 .map(|r| (key(&r.part, &r.path), r.id))
-                .collect(),
-            pictures: pictures(docx)
+                .collect()
+        })
+    }
+
+    /// Pictures' ids by place.
+    pub(super) fn pictures(&self, docx: &Docx) -> &HashMap<Key, String> {
+        self.pictures.get_or_init(|| {
+            pictures(docx)
                 .into_iter()
                 .map(|d| (key(&d.part, &d.path), d.id))
-                .collect(),
-            graphics: drawings
+                .collect()
+        })
+    }
+
+    /// Drawings' ids by place.
+    pub(super) fn drawings(&self, docx: &Docx) -> &HashMap<Key, String> {
+        &self.drawings_read(docx).0
+    }
+
+    fn drawings_read(&self, docx: &Docx) -> &(HashMap<Key, String>, Vec<String>) {
+        self.drawings.get_or_init(|| {
+            let drawings = all_drawings(docx);
+            let graphics = drawings
                 .iter()
                 .filter(|d| summarised(d))
                 .map(|d| d.id.clone())
-                .collect(),
-            drawings: drawings.into_iter().map(|d| (key(&d.part, &d.path), d.id)).collect(),
-            cell_ends: docx.parts.iter().any(|p| p.facts().cell_ends()),
-            notes: notes_of(docx),
-            anchors: anchors(docx),
-            comments: comments(docx)
+                .collect();
+            let by_place = drawings.into_iter().map(|d| (key(&d.part, &d.path), d.id)).collect();
+            (by_place, graphics)
+        })
+    }
+
+    /// Notes' ids by `(fn|en, w:id)`.
+    pub(super) fn notes(&self, docx: &Docx) -> &HashMap<(String, String), String> {
+        self.notes.get_or_init(|| notes_of(docx))
+    }
+
+    /// Bookmarks internal hyperlinks point at.
+    pub(super) fn anchors(&self, docx: &Docx) -> &HashSet<String> {
+        self.anchors.get_or_init(|| anchors(docx))
+    }
+
+    /// Comments by `w:id`.
+    pub(super) fn comments(&self, docx: &Docx) -> &HashMap<String, Comment> {
+        self.comments.get_or_init(|| {
+            comments(docx)
                 .into_iter()
                 .filter_map(|c| c.w_id.clone().map(|w| (w, c)))
-                .collect(),
-            tables: Mutex::new(HashMap::new()),
-        }
+                .collect()
+        })
     }
 
     /// What the layout model reads of the table `table` of `part`, read once.
@@ -124,18 +181,21 @@ impl Shared {
         &self.formatting
     }
 
-    /// The drawings whose summary docx-agent writes from the chart model (a chart, a
-    /// SmartArt diagram, a group holding one), which the core does not read yet (phase P3).
+    /// The drawings of `docx` (the version these lookups are of) whose summary docx-agent
+    /// writes from the chart model (a chart, a SmartArt diagram, a group holding one), which
+    /// the core does not read yet (phase P3).
     #[must_use]
-    pub fn graphics(&self) -> &[String] {
-        &self.graphics
+    pub fn graphics(&self, docx: &Docx) -> &[String] {
+        &self.drawings_read(docx).1
     }
 
-    /// Whether a table cell's end is one Accept All takes away: docx-agent's final view joins
-    /// the next cell's text in, the core's does not yet.
+    /// Whether a table cell's end of `docx` is one Accept All takes away: docx-agent's final
+    /// view joins the next cell's text in, the core's does not yet.
     #[must_use]
-    pub fn cell_ends(&self) -> bool {
-        self.cell_ends
+    pub fn cell_ends(&self, docx: &Docx) -> bool {
+        *self
+            .cell_ends
+            .get_or_init(|| docx.parts.iter().any(|p| p.facts().cell_ends()))
     }
 }
 

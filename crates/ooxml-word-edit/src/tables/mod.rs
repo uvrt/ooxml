@@ -9,6 +9,8 @@
 //! does).
 
 mod columns;
+mod copy_row;
+mod new_column;
 mod new_row;
 mod props;
 mod rows;
@@ -285,6 +287,7 @@ impl FormatTable {
                 warnings: self.apply(&mut work, None, &style_ids, room, orders),
             },
         };
+        sink.keep_written(&found.part, None, &work);
         let new = work.build().ok_or_else(|| EditError::Path(found.part.clone()))?;
         let docx = sink.docx()?;
         let id = docx

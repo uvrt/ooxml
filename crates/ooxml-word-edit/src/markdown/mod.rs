@@ -12,6 +12,7 @@
 //! Must not: write but through the sink, or know a tool's JSON.
 
 mod insertion;
+pub(crate) use insertion::insert_content;
 mod lists;
 mod parse;
 mod table;
