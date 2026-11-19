@@ -19,8 +19,8 @@ tool and reason (:func:`fallbacks`, ``edit_fallbacks{tool,reason}``), never sile
 the session does not answer as it yet: an op of a ``batch`` (one step), a call on a draft,
 values written by reference, a ref name that would be folded, a refusal (the session's carries its own way out, tool rule 2,
 which today's does not), a session given its own clock (the Rust session dates revisions by
-the system's), and what the session says it leaves to the host (its ``unported``: styled text,
-French spacing, regex, ...).  The Rust handler changes nothing in each of those.
+the system's), and what the session says it leaves to the host (its ``unported``: a find
+within a block, a picture, regex, ...).  The Rust handler changes nothing in each of those.
 """
 
 from __future__ import annotations

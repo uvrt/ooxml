@@ -30,8 +30,6 @@ use serde_json::Value;
 pub enum Unported {
     /// Text with `**strong**`, `*emphasis*`, `[text]{Style}` or escapes (lane P2b3).
     Styled,
-    /// Text a language's spacing may change (`: ; ! ?` and guillemets; lane P2b3).
-    Spacing,
     /// A value written by reference (`{{d:...}}`) or a `$ref` address: the host's.
     Reference,
     /// A paragraph style set with the text.
@@ -46,7 +44,6 @@ impl Unported {
     pub fn reason(self) -> &'static str {
         match self {
             Unported::Styled => "styled text (strong, emphasis, character styles)",
-            Unported::Spacing => "a language's spacing of the text written",
             Unported::Reference => "values or addresses by reference",
             Unported::ParagraphStyle => "a paragraph style set with the text",
             Unported::Form => "an address form or option not ported",
@@ -69,9 +66,6 @@ pub(crate) fn text_unported(text: &str) -> Option<Unported> {
     }
     if text.contains('*') || text.contains('\\') || text.contains("]{") {
         return Some(Unported::Styled);
-    }
-    if text.chars().any(|c| matches!(c, ':' | ';' | '!' | '?' | '«' | '»')) {
-        return Some(Unported::Spacing);
     }
     None
 }

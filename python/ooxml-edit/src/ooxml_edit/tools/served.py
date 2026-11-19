@@ -85,11 +85,13 @@ def serve_unlocked(toolbox: "Toolbox", session: Session, tool: "Tool", arguments
             served = serve(call, given)
             if not isinstance(served, Served):
                 return served
+            refs = context.refs.get(entry.doc_id, {})
             if served.first is None:            # (it changed nothing: no step)
                 number, before = entry.version, None
+                entry.served_refs(refs, context.caller)
             else:
                 number, before = entry.served(served.first, served.head,
-                                              StepOwner(dict(caller), tool.name), counted=True)
+                                              StepOwner(dict(caller), tool.name), counted=True, refs=refs)
     result = served.result
     result.warnings[:0] = tool.ignored_for(entry.kind, given) + read
     result.version = number
