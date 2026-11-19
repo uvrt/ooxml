@@ -8,6 +8,10 @@
 //! model writes them (`read::Steps`). The walk goes through every element but a
 //! paragraph's content and `mc:Fallback` (as the ids do).
 //!
+//! A version holds its main part's ids and tree ([`VersionIds`]): one block's path is found
+//! from its id when asked, every block's ([`BlockIds`]) only when a reader asks for them all
+//! -- a version laid out names nothing it is not asked for.
+//!
 //! Must not: stamp or change an id, follow an alias (the caller holds those), or read
 //! anything but the main part's tree.
 
@@ -15,7 +19,82 @@ use ooxml_word_model::ids::{Entry, PartIds, MC, W};
 use ooxml_word_model::value::Text;
 use ooxml_xml::{Element, Node};
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
+
+/// A version's main part ids, its blocks named when asked.
+#[derive(Debug, Default)]
+pub struct VersionIds {
+    /// The main part's root and its ids, where it has a tree.
+    part: Option<(Arc<Element>, Arc<PartIds>)>,
+    all: OnceLock<BlockIds>,
+}
+
+impl VersionIds {
+    /// The ids `ids` of the main part whose root is `root`.
+    pub(crate) fn new(root: Arc<Element>, ids: Arc<PartIds>) -> VersionIds {
+        VersionIds {
+            part: Some((root, ids)),
+            all: OnceLock::new(),
+        }
+    }
+
+    /// Every body block's id by path, made once when first asked for.
+    pub fn all(&self) -> &BlockIds {
+        self.all.get_or_init(|| match &self.part {
+            Some((root, ids)) => BlockIds::of(root, ids),
+            None => BlockIds::default(),
+        })
+    }
+
+    /// The body path (`w:body/w:p[3]`) of the paragraph, table or row the id `id` names.
+    pub fn path_of(&self, id: &str) -> Option<Text> {
+        let (root, ids) = self.part.as_ref()?;
+        let place = match ids.get(id) {
+            Some(Entry::Paragraph(k)) => ids.paragraphs().get(k).map(|p| p.path),
+            Some(Entry::Table(k)) => ids.tables().get(k).map(|t| t.path),
+            None => None,
+        };
+        match place {
+            Some(place) => path_at(root, &place),
+            // A row (its id is its table's): from every block's.
+            None => self.all().iter().find(|(_, i)| ***i == *id).map(|(p, _)| p.clone()),
+        }
+    }
+
+    /// What it holds beyond the version's tree, bytes, roughly.
+    pub fn weight(&self) -> usize {
+        self.all.get().map_or(0, BlockIds::weight)
+    }
+}
+
+/// The body path of the element at child indexes `place` below `root` (the body's own
+/// first): each step named by its local name and counted among its siblings of that name,
+/// as [`BlockIds::of`] names it.
+fn path_at(root: &Element, place: &[u32]) -> Option<Text> {
+    let (first, rest) = place.split_first()?;
+    let mut node: &Element = root.children().get(*first as usize)?.as_element()?;
+    if !node.name().is(Some(W), "body") {
+        return None;
+    }
+    let mut path = String::from("w:body");
+    for step in rest {
+        let at = *step as usize;
+        let children = node.children();
+        let child: &Element = children.get(at)?.as_element()?;
+        let local = child.name().local();
+        let count = 1 + children
+            .iter()
+            .take(at)
+            .filter_map(Node::as_element)
+            .filter(|e| e.name().local() == local && !e.name().is(Some(MC), "Fallback"))
+            .count();
+        path.push_str("/w:");
+        path.push_str(local);
+        path.push_str(&format!("[{count}]"));
+        node = child;
+    }
+    Some(Text::from(path.as_str()))
+}
 
 /// A version's body blocks' ids by path, and their paths by id.
 #[derive(Debug, Clone, Default)]

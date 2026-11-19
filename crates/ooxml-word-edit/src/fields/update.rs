@@ -59,12 +59,12 @@ impl std::fmt::Debug for UpdateFields<'_> {
 type Known = (String, usize);
 
 /// The fields of `docx` by what passes know them as, given which tables of contents are rebuilt.
-fn identified(docx: &Docx, held: &[Known]) -> Vec<(Known, Located)> {
+fn identified(doc: &WordDoc, docx: &Docx, held: &[Known]) -> Vec<(Known, Located)> {
     let mut out = Vec::new();
     let mut part = String::new();
     let mut ordinal = 0;
     let mut aside: Vec<usize> = Vec::new();
-    for located in all_fields(docx) {
+    for located in all_fields(doc, docx) {
         if located.part != part {
             part.clone_from(&located.part);
             ordinal = 0;
@@ -105,7 +105,7 @@ pub(crate) fn settle(
     let mut unknown = Vec::new();
     for _ in 0..PASSES {
         unknown = pass(sink, held, layout, today)?;
-        let state: Vec<(String, String)> = state(&*sink.docx()?);
+        let state: Vec<(String, String)> = state(sink.doc(), &*sink.docx()?);
         if previous.as_ref() == Some(&state) {
             return Ok(unknown);
         }
@@ -127,7 +127,7 @@ pub(crate) fn pass_on(
     today: Day,
 ) -> Result<Vec<String>> {
     let docx = sink.docx()?;
-    let known = identified(&docx, &[])
+    let known = identified(sink.doc(), &docx, &[])
         .into_iter()
         .find(|(_, l)| l.part == located.part && l.found.begin == located.found.begin)
         .map(|(i, _)| i);
@@ -138,8 +138,8 @@ pub(crate) fn pass_on(
 }
 
 /// Every field's instruction and result.
-fn state(docx: &Docx) -> Vec<(String, String)> {
-    all_fields(docx)
+fn state(doc: &WordDoc, docx: &Docx) -> Vec<(String, String)> {
+    all_fields(doc, docx)
         .into_iter()
         .map(|l| {
             let text = docx
@@ -160,7 +160,7 @@ fn pass(
 ) -> Result<Vec<String>> {
     let docx = sink.docx()?;
     let held_set: HashSet<&Known> = held.iter().collect();
-    let fields = identified(&docx, held);
+    let fields = identified(sink.doc(), &docx, held);
     let current: Vec<&Located> = fields
         .iter()
         .filter(|(i, _)| held_set.contains(i))
@@ -185,7 +185,7 @@ fn pass(
     };
     let pass = Pass { laid, today };
     let mut unknown = Vec::new();
-    let sequences = sequence_values(&all_fields(&docx));
+    let sequences = sequence_values(&all_fields(sink.doc(), &docx));
     let mut writes = Vec::new();
     for located in current.iter().filter(|l| l.found.keyword() == "SEQ") {
         match sequences.get(&(located.part.clone(), located.found.number)) {
@@ -201,7 +201,7 @@ fn pass(
         .collect();
     let mut batch: Vec<(Located, String)> = Vec::new();
     let mut docx = sink.docx()?;
-    let mut now: HashMap<Known, Located> = identified(&docx, held).into_iter().collect();
+    let mut now: HashMap<Known, Located> = identified(sink.doc(), &docx, held).into_iter().collect();
     let mut marks = Bookmarks::of(&docx);
     for known in order {
         let Some(located) = now.get(&known).cloned() else {
@@ -211,7 +211,9 @@ fn pass(
             apply(sink, &std::mem::take(&mut batch))?;
             drop(marks);
             docx = sink.docx()?;
-            let fresh = identified(&docx, held).into_iter().find(|(i, _)| *i == known);
+            let fresh = identified(sink.doc(), &docx, held)
+                .into_iter()
+                .find(|(i, _)| *i == known);
             let laid = pass
                 .laid
                 .as_deref()
@@ -220,7 +222,7 @@ fn pass(
                 super::toc::rebuild(sink, &toc, laid, &mut unknown)?;
             }
             docx = sink.docx()?;
-            now = identified(&docx, held).into_iter().collect();
+            now = identified(sink.doc(), &docx, held).into_iter().collect();
             marks = Bookmarks::of(&docx);
             continue;
         }
@@ -332,9 +334,9 @@ fn write_paragraph(
 
 /// The warnings for the tables of contents (of `ids`, else every one) that list nothing
 /// (`_empty_tocs`).
-pub(crate) fn empty_tocs(docx: &Docx, ids: Option<&[String]>) -> Vec<String> {
+pub(crate) fn empty_tocs(doc: &WordDoc, docx: &Docx, ids: Option<&[String]>) -> Vec<String> {
     let mut out = Vec::new();
-    for located in all_fields(docx) {
+    for located in all_fields(doc, docx) {
         let id = located.id();
         if located.found.keyword() != "TOC" || ids.is_some_and(|ids| !ids.contains(&id)) {
             continue;
@@ -353,8 +355,8 @@ pub(crate) fn empty_tocs(docx: &Docx, ids: Option<&[String]>) -> Vec<String> {
 }
 
 /// Every field's result by id.
-fn results(docx: &Docx) -> Vec<(String, String)> {
-    all_fields(docx)
+fn results(doc: &WordDoc, docx: &Docx) -> Vec<(String, String)> {
+    all_fields(doc, docx)
         .into_iter()
         .map(|l| {
             let text = docx
@@ -370,24 +372,24 @@ impl Command<WordDoc> for UpdateFields<'_> {
     type Error = EditError;
 
     fn validate(&self, doc: &WordDoc) -> Result<()> {
-        self.held(&*doc.docx()?).map(|_| ())
+        self.held(doc, &*doc.docx()?).map(|_| ())
     }
 
     fn prepare(&self, tx: &mut Txn<'_, WordDoc>) -> Result<FieldEdited> {
         let mut sink = EditSink::new(tx, RevisionPolicy::Untracked);
         sink.read_everything();
         let docx = sink.docx()?;
-        let before = results(&docx);
-        let held = self.held(&docx)?;
+        let before = results(sink.doc(), &docx);
+        let held = self.held(sink.doc(), &docx)?;
         let unknown = settle(&mut sink, &held, self.layout, self.today)?;
         let docx = sink.docx()?;
-        let after = results(&docx);
+        let after = results(sink.doc(), &docx);
         let count = after
             .iter()
             .filter(|(id, text)| !before.iter().any(|(i, t)| i == id && t == text))
             .count();
         let mut warnings: Vec<String> = unknown.iter().map(|u| format!("{u}: the layout cannot say")).collect();
-        warnings.extend(empty_tocs(&docx, self.ids.as_deref()));
+        warnings.extend(empty_tocs(sink.doc(), &docx, self.ids.as_deref()));
         crate::after::after_edit(&mut sink)?;
         Ok(FieldEdited {
             changed: count > 0 || !unknown.is_empty(),
@@ -402,8 +404,8 @@ impl Command<WordDoc> for UpdateFields<'_> {
 impl UpdateFields<'_> {
     /// What the passes know the fields to update as (as [`identified`] names them once these
     /// are held).
-    fn held(&self, docx: &Docx) -> Result<Vec<Known>> {
-        let everything = all_fields(docx);
+    fn held(&self, doc: &WordDoc, docx: &Docx) -> Result<Vec<Known>> {
+        let everything = all_fields(doc, docx);
         if let Some(ids) = &self.ids {
             let mut missing: Vec<&str> = ids
                 .iter()

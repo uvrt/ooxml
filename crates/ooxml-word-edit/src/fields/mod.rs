@@ -11,7 +11,7 @@ mod caption;
 mod insert;
 mod insert_toc;
 mod pages;
-mod scan;
+pub(crate) mod scan;
 mod story;
 mod switches;
 mod toc;
@@ -70,7 +70,7 @@ pub struct FieldInfo {
 pub fn fields(doc: &WordDoc) -> Result<Vec<FieldInfo>> {
     let docx = doc.docx()?;
     let mut out = Vec::new();
-    for located in scan::all_fields(&docx) {
+    for located in scan::all_fields(doc, &docx) {
         let Some(part) = docx.part(&located.part) else { continue };
         let root = part.root();
         let paragraph = scan::paragraph_of(root, &located.found.begin)

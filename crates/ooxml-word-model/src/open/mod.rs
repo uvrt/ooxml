@@ -2,7 +2,8 @@
 //! [`WordDocument`] and, for every later version, reusing what is unchanged -- a part whose
 //! tree is the same (shared, or equal by digest) is not read again; a top-level body element
 //! whose content, the fields open at it and the theme's colours are the same is taken as it
-//! was read (docx2svg's `KeptBlocks`, round 41); resolved formats stay memoised while the
+//! was read (docx2svg's `KeptBlocks`, round 41), an element the version before shares not
+//! digested again; resolved formats stay memoised while the
 //! styles, numbering, settings and theme are unchanged; and the body's list labels are
 //! brought up to date by the blocks that changed, in O(log n) each.
 //!
@@ -108,6 +109,33 @@ impl PartDigests {
     }
 }
 
+/// The content digests of the last version's top-level body elements, by the element
+/// (its pointer, the element held): an element the next version shares is not digested
+/// again (an edit's tree shares what it did not change).
+#[derive(Default)]
+struct ElementDigests {
+    last: HashMap<usize, (Arc<Element>, Digest)>,
+    now: HashMap<usize, (Arc<Element>, Digest)>,
+}
+
+impl ElementDigests {
+    /// `element`'s content digest, kept for the next version.
+    fn of(&mut self, key: DigestKey, element: &Arc<Element>) -> Digest {
+        let at = Arc::as_ptr(element) as usize;
+        let d = match self.last.get(&at) {
+            Some((kept, d)) if Arc::ptr_eq(kept, element) => *d,
+            _ => digest::element(key, element),
+        };
+        self.now.insert(at, (Arc::clone(element), d));
+        d
+    }
+
+    /// The version's elements digested: the next version is taken from them.
+    fn finish(&mut self) {
+        self.last = std::mem::take(&mut self.now);
+    }
+}
+
 /// The parts a version's blocks are read and resolved against.
 struct Parts {
     main: String,
@@ -124,6 +152,7 @@ pub struct Model {
     key: DigestKey,
     budget: Arc<dyn CacheBudget>,
     digests: PartDigests,
+    bodies: ElementDigests,
     context: Option<(Digest, Context)>,
     elements: Memo<Digest, Kept<BodyElement>>,
     stories: Memo<Digest, Kept<StoryRead>>,
@@ -189,6 +218,7 @@ impl Model {
         Model {
             key,
             digests: PartDigests::default(),
+            bodies: ElementDigests::default(),
             context: None,
             elements: Memo::new(Arc::clone(&budget)),
             stories: Memo::new(Arc::clone(&budget)),
@@ -276,10 +306,10 @@ impl Model {
 /// The key of a top-level body element's reading: its content, the fields open at it,
 /// the theme's colours, and its place unless it is a paragraph (a table's cells' paths
 /// start with its own).
-fn element_key(key: DigestKey, colours: Digest, node: &Element, fields: &Fields, place: Option<&str>) -> Digest {
+fn element_key(key: DigestKey, colours: Digest, content: Digest, fields: &Fields, place: Option<&str>) -> Digest {
     let mut d = Digester::new(key);
     d.field(&colours.0);
-    d.field(&digest::element(key, node).0);
+    d.field(&content.0);
     for open in fields.open_state() {
         d.field(&[
             u8::from(open.part == crate::read::fields::Part::Result),
@@ -335,7 +365,8 @@ impl Model {
                 continue;
             }
             count += 1;
-            let key = element_key(self.key, colours_d, node, &fields, (name != "p").then_some(&*here));
+            let content = self.bodies.of(self.key, node);
+            let key = element_key(self.key, colours_d, content, &fields, (name != "p").then_some(&*here));
             if let Some(Kept(kept)) = self.elements.get(&key) {
                 fields.cached.extend(kept.cached.iter().cloned());
                 if name == "p" {
@@ -356,6 +387,7 @@ impl Model {
                 self.elements.insert(key, Kept(Arc::new(element)));
             }
         }
+        self.bodies.finish();
         self.stats.elements = count;
         self.stats.elements_read = read;
         (out, std::mem::take(&mut fields.cached), Some(body))

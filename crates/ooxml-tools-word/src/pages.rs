@@ -1,7 +1,7 @@
 //! Owns: [`EnginePages`], the edit core's [`FieldLayout`] port over a Word page engine
 //! (`ooxml-word-pages`): a version laid out from the one the engine laid out last, its page
 //! numbers read as a field update reads them (`ooxml_word_layout::fields::update`), places
-//! named by the tool's block ids.
+//! named by the tool's block ids (each found from its id when asked).
 //!
 //! The host that keeps a document's engine (its fonts, its budgets) hands it in; the
 //! engine is locked while it lays out a version, never while a page number is read.
@@ -12,9 +12,9 @@ use ooxml_opc::Package;
 use ooxml_word_edit::{FieldLayout, FieldPlace, LaidFields, PageShows, Unknown};
 use ooxml_word_layout::facts::LayoutFacts;
 use ooxml_word_layout::fields::update::PageNumbers;
+use ooxml_word_model::value::Text;
 use ooxml_word_pages::{LaidVersion, PageEngine};
 use std::borrow::Borrow;
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
 /// The edit core's layout port over a page engine.
@@ -59,27 +59,21 @@ impl Borrow<LayoutFacts> for Facts {
     }
 }
 
-/// One version laid out: its page numbers and its blocks' paths by id.
+/// One version laid out: its page numbers, its blocks' paths found by id.
 struct Laid {
+    version: Arc<LaidVersion>,
     numbers: PageNumbers<Facts>,
-    paths: HashMap<String, String>,
 }
 
 impl Laid {
     fn new(version: Arc<LaidVersion>) -> Laid {
-        let paths = version
-            .block_ids()
-            .iter()
-            .map(|(path, id)| (id.to_string(), path.to_string()))
-            .collect();
         let numbers = PageNumbers::new(version.layout(), Facts(Arc::clone(&version)));
-        Laid { numbers, paths }
+        Laid { version, numbers }
     }
 
-    fn path(&self, id: &str) -> Result<&str, Unknown> {
-        self.paths
-            .get(id)
-            .map(String::as_str)
+    fn path(&self, id: &str) -> Result<Text, Unknown> {
+        self.version
+            .path_of(id)
             .ok_or_else(|| Unknown(format!("{id} is not laid out")))
     }
 }
@@ -93,7 +87,7 @@ impl LaidFields for Laid {
         match at {
             FieldPlace::Body(id) => self
                 .numbers
-                .page_field(instruction, keyword, self.path(id)?)
+                .page_field(instruction, keyword, &self.path(id)?)
                 .map_err(unknown),
             FieldPlace::Page(page) => self.numbers.page_field_at(instruction, keyword, page).map_err(unknown),
         }
@@ -103,7 +97,7 @@ impl LaidFields for Laid {
         match at {
             FieldPlace::Body(id) => self
                 .numbers
-                .page_reference(instruction, self.path(id)?)
+                .page_reference(instruction, &self.path(id)?)
                 .map_err(unknown),
             FieldPlace::Page(page) => Err(Unknown(format!("a reference to page {page}"))),
         }

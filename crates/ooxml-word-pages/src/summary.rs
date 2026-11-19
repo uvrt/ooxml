@@ -200,7 +200,11 @@ pub(crate) fn page_summary(digests: crate::engine::PageDigests, version: &crate:
         .map(|(path, story, drawn)| {
             let body = story.is_none() && !STORIES.iter().any(|p| path.starts_with(p));
             SummaryLine {
-                id: if body { version.ids.get(&path).cloned() } else { None },
+                id: if body {
+                    version.ids.all().get(&path).cloned()
+                } else {
+                    None
+                },
                 path: Text::from(path.as_str()),
                 body,
                 drawn,

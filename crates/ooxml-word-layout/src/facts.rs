@@ -176,7 +176,7 @@ pub fn block_keys(path: &str) -> Vec<String> {
 
 /// The paths of what a drawn line can be of: the body's paragraphs (cells included), its
 /// top-level blocks, and the endnotes' continuation separator (made once per layout).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct LinePaths {
     paragraphs: Vec<Text>,
     opening: Option<Text>,
@@ -259,15 +259,33 @@ impl LayoutFacts {
         let pages = (0..layout.page_count())
             .filter_map(|k| PageFacts::of(layout, k))
             .collect();
-        let stopped = layout
-            .pagination
-            .stopped
-            .as_ref()
-            .and_then(|s| layout.flow.items.get(s.item))
-            .map(FlowItem::body);
         LayoutFacts {
             pages,
-            stopped,
+            stopped: stopped(layout),
+            keeps: keeps(layout),
+        }
+    }
+
+    /// The facts of `layout`, laid out again from `before`, whose facts are `known`: a page
+    /// it kept as `before` laid it out -- the very same laid page, drawing the very same
+    /// flow items, with the same number, story and frame, its section's margins the same,
+    /// the body's paragraphs at the same paths -- takes its facts from `known`; the rest
+    /// are made. Equal to [`LayoutFacts::of`] (an edit pays for the pages it moved).
+    pub fn after(layout: &DocumentLayout, before: &DocumentLayout, known: &LayoutFacts) -> LayoutFacts {
+        let same_paths = layout.mode15 == before.mode15 && layout.line_paths() == before.line_paths();
+        let pages = (0..layout.page_count())
+            .filter_map(|k| {
+                let kept = if same_paths {
+                    kept_page(layout, before, known, k)
+                } else {
+                    None
+                };
+                kept.or_else(|| PageFacts::of(layout, k))
+            })
+            .collect();
+        LayoutFacts {
+            pages,
+            stopped: stopped(layout),
             keeps: keeps(layout),
         }
     }
@@ -319,6 +337,68 @@ impl LayoutFacts {
             .filter(|p| p.blocks.iter().any(|b| &**b == key))
             .map(|p| p.page)
             .collect()
+    }
+}
+
+/// The top-level body block `layout` stopped at, if it did.
+fn stopped(layout: &DocumentLayout) -> Option<usize> {
+    layout
+        .pagination
+        .stopped
+        .as_ref()
+        .and_then(|s| layout.flow.items.get(s.item))
+        .map(FlowItem::body)
+}
+
+/// Page `page`'s facts as `known` (`before`'s) holds them, where `layout` kept the page as
+/// `before` laid it out (see [`LayoutFacts::after`]); the paths of the body's paragraphs
+/// are the caller's to have compared.
+fn kept_page(layout: &DocumentLayout, before: &DocumentLayout, known: &LayoutFacts, page: usize) -> Option<PageFacts> {
+    let laid = laid_arc(layout, page)?;
+    let old = laid_arc(before, page)?;
+    let facts = known.pages.get(page).filter(|f| f.page == page)?;
+    let info = layout.pagination.info.get(page)?;
+    let same = std::sync::Arc::ptr_eq(laid, old)
+        && before.pagination.info.get(page) == Some(info)
+        && facts.info == *info
+        && !facts
+            .lines
+            .iter()
+            .any(|l| matches!(l.source, LineSource::Opening { .. }))
+        && same_margins(layout, before, info.section)
+        && crate::geometry::page_frame(layout, page, info.section, info) == Some(facts.frame)
+        && laid
+            .lines
+            .iter()
+            .map(|l| l.item)
+            .chain(laid.rows.iter().map(|r| r.item))
+            .all(|item| same_flow_item(layout.flow.items.get(item), before.flow.items.get(item)));
+    same.then(|| facts.clone())
+}
+
+/// Page `page`'s laid page, shared.
+fn laid_arc(layout: &DocumentLayout, page: usize) -> Option<&std::sync::Arc<crate::paginate::LaidPage>> {
+    let pages = &layout.pagination.pages;
+    let k = pages.partition_point(|p| p.page < page);
+    pages.get(k).filter(|p| p.page == page)
+}
+
+/// Whether section `section` has the same margins in both layouts (its columns' edges).
+fn same_margins(layout: &DocumentLayout, before: &DocumentLayout, section: usize) -> bool {
+    match (layout.sections.get(section), before.sections.get(section)) {
+        (Some(a), Some(b)) => a.props.margins == b.props.margins,
+        _ => false,
+    }
+}
+
+/// Whether two flow items are the very same item.
+fn same_flow_item(a: Option<&FlowItem>, b: Option<&FlowItem>) -> bool {
+    use std::sync::Arc;
+    match (a, b) {
+        (Some(FlowItem::Para(x)), Some(FlowItem::Para(y))) => Arc::ptr_eq(x, y),
+        (Some(FlowItem::Table(x)), Some(FlowItem::Table(y))) => Arc::ptr_eq(x, y),
+        (Some(FlowItem::Stop(x)), Some(FlowItem::Stop(y))) => Arc::ptr_eq(x, y),
+        _ => false,
     }
 }
 
