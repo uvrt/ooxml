@@ -1,18 +1,18 @@
 //! Owns: keeping a text box's VML fallback with its drawing's content, as docx-agent does
 //! after every edit (`Document._sync_text_boxes`, `drawings.sync_text_box`): a text box
-//! (`mc:AlternateContent`) whose choice's content an edit changed -- its text, or the ids
-//! stamping gave its paragraphs -- gets the same content in its fallback, paraIds and all,
-//! as Word writes it.
+//! (`mc:AlternateContent`) whose choice's content an edit changed gets the same content in
+//! its fallback, paraIds and all, as Word writes it. The ids stamping gives (paraId,
+//! textId, anchorId, editId) are no change on their own: Word reads `mc:Choice` and writes
+//! the fallback again on saving, and older readers ignore them.
 //!
 //! Must not: look at blocks the edit did not replace (a text box in them did not change),
 //! or write but through the sink.
 
-use crate::names::{MC, W};
+use crate::names::{MC, W, W14, WP14};
 use crate::sink::EditSink;
 use crate::work::{scope_above, Work};
 use crate::{EditError, Result};
 use ooxml_xml::{Element, Node};
-use std::collections::HashSet;
 use std::sync::Arc;
 
 /// The first `w:txbxContent` at or below `element`, in document order.
@@ -36,22 +36,24 @@ fn holders(element: &Arc<Element>, path: &mut Vec<u32>, out: &mut Vec<(Vec<u32>,
     }
 }
 
+/// A story part's block holder (the main part's body, another part's root) and its path.
+fn story_blocks(root: &Arc<Element>) -> (Vec<u32>, Arc<Element>) {
+    root.children()
+        .iter()
+        .enumerate()
+        .find_map(|(k, n)| {
+            let e = n.as_element().filter(|e| e.name().is(Some(W), "body"))?;
+            Some((vec![u32::try_from(k).ok()?], Arc::clone(e)))
+        })
+        .unwrap_or_else(|| (Vec::new(), Arc::clone(root)))
+}
+
 /// The top-level blocks of a story part (the main part's body's children, another
 /// part's root's) that are not the snapshot's: each one's path and the snapshot's block
 /// it took the place of (none for one inserted). Found from the stretch of children that
 /// differs (pointer comparisons), so the blocks the edit did not touch are not visited.
 pub(crate) fn changed_blocks(old: &Arc<Element>, new: &Arc<Element>) -> Vec<(Vec<u32>, Option<Arc<Element>>)> {
-    let holder = |root: &Arc<Element>| -> (Vec<u32>, Arc<Element>) {
-        root.children()
-            .iter()
-            .enumerate()
-            .find_map(|(k, n)| {
-                let e = n.as_element().filter(|e| e.name().is(Some(W), "body"))?;
-                Some((vec![u32::try_from(k).ok()?], Arc::clone(e)))
-            })
-            .unwrap_or_else(|| (Vec::new(), Arc::clone(root)))
-    };
-    let ((base, old), (_, new)) = (holder(old), holder(new));
+    let ((base, old), (_, new)) = (story_blocks(old), story_blocks(new));
     let Some((start, old_end, new_end)) = old.children().changed_span(new.children()) else {
         return Vec::new();
     };
@@ -71,8 +73,38 @@ pub(crate) fn changed_blocks(old: &Arc<Element>, new: &Arc<Element>) -> Vec<(Vec
     out
 }
 
+/// The text boxes of the stretch of a story part's blocks that differs from the
+/// snapshot's: the snapshot's, in order, and the working version's, in order with their
+/// paths.
+type SpanBoxes = (Vec<Arc<Element>>, Vec<(Vec<u32>, Arc<Element>)>);
+
+fn span_boxes(old: &Arc<Element>, new: &Arc<Element>) -> SpanBoxes {
+    let ((base, old), (_, new)) = (story_blocks(old), story_blocks(new));
+    let Some((start, old_end, new_end)) = old.children().changed_span(new.children()) else {
+        return (Vec::new(), Vec::new());
+    };
+    let mut before = Vec::new();
+    for node in old.children().iter().skip(start).take(old_end - start) {
+        if let Node::Element(block) = node {
+            holders(block, &mut Vec::new(), &mut before);
+        }
+    }
+    let mut now = Vec::new();
+    for (k, node) in new.children().iter().enumerate().skip(start).take(new_end - start) {
+        if let Node::Element(block) = node {
+            let mut path = base.clone();
+            path.push(u32::try_from(k).unwrap_or(u32::MAX));
+            holders(block, &mut path, &mut now);
+        }
+    }
+    (before.into_iter().map(|(_, h)| h).collect(), now)
+}
+
 /// After an edit: sync every text box of every story part, in the blocks the edit
-/// replaced, whose content is not the one the transaction's snapshot had.
+/// replaced, whose content is not the one the transaction's snapshot had -- the ids
+/// stamping gave it aside. The boxes of the stretch that changed are paired in order with
+/// the snapshot's when the edit added or removed none (an inserted paragraph shifts the
+/// blocks after it); otherwise every one not the snapshot's own is synced.
 ///
 /// # Errors
 /// When a part is not XML.
@@ -88,8 +120,18 @@ pub(crate) fn sync(sink: &mut EditSink<'_, '_>) -> Result<()> {
         if old.ptr_eq(&new) {
             continue;
         }
-        for (block, before) in changed_blocks(old.root(), new.root()) {
-            sync_block(sink, part, &block, before.as_ref())?;
+        let (before, now) = span_boxes(old.root(), new.root());
+        let paired = before.len() == now.len();
+        for (k, (path, holder)) in now.into_iter().enumerate() {
+            let was = before.get(k).filter(|_| paired);
+            if was.is_some_and(|was| Arc::ptr_eq(was, &holder)) {
+                continue; // the same text box as before the edit
+            }
+            let contents = was.and_then(choice_content).zip(choice_content(&holder));
+            if contents.is_some_and(|(was, now)| same_but_ids(&was, &now)) {
+                continue; // only stamped
+            }
+            sync_holder(sink, part, &path, &holder)?;
         }
     }
     Ok(())
@@ -161,27 +203,43 @@ pub(crate) fn sync_holder(
     Ok(true)
 }
 
-fn sync_block(sink: &mut EditSink<'_, '_>, part: &str, block: &[u32], old: Option<&Arc<Element>>) -> Result<()> {
-    let before: HashSet<usize> = old.map_or_else(HashSet::new, |old| {
-        let mut found = Vec::new();
-        holders(old, &mut Vec::new(), &mut found);
-        found.iter().map(|(_, h)| Arc::as_ptr(h) as usize).collect()
-    });
-    {
-        let Some(tree) = sink.doc().tree(part)? else {
-            return Ok(());
-        };
-        let Some(element) = ooxml_word_model::docx::at_path(tree.root(), block) else {
-            return Ok(());
-        };
-        let mut found = Vec::new();
-        holders(element, &mut block.to_vec(), &mut found);
-        for (path, holder) in found {
-            if before.contains(&(Arc::as_ptr(&holder) as usize)) {
-                continue; // the same text box as before the edit
-            }
-            sync_holder(sink, part, &path, &holder)?;
-        }
+/// Whether an attribute is an id stamping gives.
+fn stamped_id(attribute: &ooxml_xml::Attribute) -> bool {
+    let name = &attribute.name;
+    (name.namespace() == Some(W14) && matches!(name.local(), "paraId" | "textId"))
+        || (name.namespace() == Some(WP14) && matches!(name.local(), "anchorId" | "editId"))
+}
+
+/// Whether two elements hold the same but for the ids stamping gives (and namespace
+/// declarations, which stamping adds for them).
+fn same_but_ids(a: &Element, b: &Element) -> bool {
+    if std::ptr::eq(a, b) {
+        return true;
     }
-    Ok(())
+    let attributes = |e: &Element| -> Vec<(Option<String>, String, String)> {
+        e.attributes()
+            .iter()
+            .filter(|a| !stamped_id(a))
+            .map(|a| {
+                (
+                    a.name.namespace().map(str::to_owned),
+                    a.name.local().to_owned(),
+                    a.value.to_string(),
+                )
+            })
+            .collect()
+    };
+    a.name().namespace() == b.name().namespace()
+        && a.name().local() == b.name().local()
+        && attributes(a) == attributes(b)
+        && a.children().len() == b.children().len()
+        && a.children().iter().zip(b.children().iter()).all(|(x, y)| match (x, y) {
+            (Node::Element(x), Node::Element(y)) => same_but_ids(x, y),
+            _ => x.same(y),
+        })
+}
+
+/// A text box's content as Word reads it (its choice's `w:txbxContent`).
+fn choice_content(holder: &Arc<Element>) -> Option<Arc<Element>> {
+    first_content(holder.find(Some(MC), "Choice")?)
 }
