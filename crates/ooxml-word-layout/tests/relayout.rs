@@ -11,7 +11,7 @@
 //! row, a note, a drawing, a paragraph or table inserted or deleted, the header), each
 //! version laid out again from the one before and
 //! laid out whole in a fresh engine and model: the pages, their numbers and the fields'
-//! values are equal. Fixed seeds here; `many_seeds` (ignored) runs many.
+//! values are equal, and so are the facts taken from the version before's. Fixed seeds here; `many_seeds` (ignored) runs many.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
 
 mod support;
@@ -633,6 +633,10 @@ fn check(seed: u64, versions: usize) -> Seen {
             "seed {seed} version {version}"
         );
         let at = format!("seed {seed} version {version}");
+        assert!(
+            LayoutFacts::after(&relaid, &previous, &LayoutFacts::of(&previous)) == LayoutFacts::of(&whole),
+            "{at}: the facts taken from the version before differ"
+        );
         outputs_equal(
             &at,
             (&mut kept, &mut kept_model, &relaid),

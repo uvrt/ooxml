@@ -202,7 +202,7 @@ fn style_has_tabs(docx: &Docx, id: &str) -> bool {
 /// The width between the margins (and gutter) of the section the body block at `path` is
 /// in, in twips (`Section.text_width`); [`DEFAULT_WIDTH`] where it says none.
 fn text_width(docx: &Docx, path: &[u32]) -> i64 {
-    let sections = ooxml_word_model::docx::sections::sections(docx);
+    let sections = docx.sections();
     let section = sections.iter().find(|s| path <= &*s.path);
     let int = |node: Option<&Element>, local: &str| {
         node.and_then(|n| n.attribute(Some(W), local))

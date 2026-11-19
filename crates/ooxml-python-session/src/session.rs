@@ -283,8 +283,11 @@ impl PySession {
     /// (`Version`s; a document not among them is read at its head). `placer`: where it may
     /// ask where blocks are laid out -- called with the blocks asked as JSON text (a list,
     /// each an id then the ids it joins), it answers each one's `placements` or `unknown`
-    /// as JSON text (a list of objects), or `None` where it cannot.
-    #[pyo3(signature = (name, arguments, *, context = None, limit = None, at = None, placer = None))]
+    /// as JSON text (a list of objects), or `None` where it cannot. `layout`: the document's
+    /// page engine (a `WordPages`, the host's kept one), which an edit whose results come
+    /// from the pages (`word_fields`, a header's page number) lays its versions out with,
+    /// each from the one it laid out last; `None`: such a result is left to the host.
+    #[pyo3(signature = (name, arguments, *, context = None, limit = None, at = None, placer = None, layout = None))]
     #[allow(clippy::too_many_arguments)]
     fn call(
         &self,
@@ -295,10 +298,12 @@ impl PySession {
         limit: Option<usize>,
         at: Option<Vec<PyRef<'_, PyVersion>>>,
         placer: Option<Py<PyAny>>,
+        layout: Option<PyRef<'_, crate::layout::PyWordPages>>,
     ) -> Reply {
         let mut context = context_of(context.as_deref());
         context.at = at.iter().flatten().map(|v| v.inner.clone()).collect();
         context.placer = placer.map(|p| Arc::new(PyPlacer(p)) as Arc<dyn Placer>);
+        context.layout = layout.map(|pages| Arc::new(pages.port()) as Arc<dyn ooxml_word_edit::FieldLayout>);
         let session = &self.inner;
         let text = py.detach(|| {
             let run = || session.call(name, Value::String(arguments), &context);

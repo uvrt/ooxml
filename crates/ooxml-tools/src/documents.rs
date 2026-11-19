@@ -4,7 +4,7 @@
 //! `doc` that defaults to the call's own, so it names another document only when it is given,
 //! not empty (`""`, a placeholder) and not one named before.
 //!
-//! Owns: [`named`] (the documents a call's arguments name) and [`path_problem`] (whether a
+//! Owns: [`named`] and [`named_at`] (the documents a call's arguments name) and [`path_problem`] (whether a
 //! declared path names a string inside an object).
 //!
 //! Must not: know which documents are open, or read anything but the call's arguments and
@@ -17,11 +17,18 @@ use serde_json::{Map, Value};
 /// is a string; a path's when it is a string neither empty nor named before.
 #[must_use]
 pub fn named(documents: &[String], arguments: &Map<String, Value>) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
+    named_at(documents, arguments).into_iter().map(|(_, id)| id).collect()
+}
+
+/// [`named`], each with the declared name (argument or path) that names it: the field a
+/// refusal of that document points at.
+#[must_use]
+pub fn named_at<'d>(documents: &'d [String], arguments: &Map<String, Value>) -> Vec<(&'d str, String)> {
+    let mut out: Vec<(&str, String)> = Vec::new();
     for name in documents {
         if !name.contains('.') {
             if let Some(value) = arguments.get(name).and_then(Value::as_str) {
-                out.push(value.to_owned());
+                out.push((name, value.to_owned()));
             }
             continue;
         }
@@ -29,8 +36,8 @@ pub fn named(documents: &[String], arguments: &Map<String, Value>) -> Vec<String
         let first = parts.next().and_then(|part| arguments.get(part));
         let value = parts.try_fold(first, |node, part| Some(node.and_then(|n| n.get(part))));
         if let Some(value) = value.flatten().and_then(Value::as_str) {
-            if !value.is_empty() && !out.iter().any(|seen| seen == value) {
-                out.push(value.to_owned());
+            if !value.is_empty() && !out.iter().any(|(_, seen)| seen == value) {
+                out.push((name, value.to_owned()));
             }
         }
     }
@@ -57,7 +64,7 @@ pub fn path_problem(root: &ObjectNode, name: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::named;
+    use super::{named, named_at};
     use serde_json::{json, Map, Value};
 
     fn names(list: &[&str]) -> Vec<String> {
@@ -80,6 +87,11 @@ mod tests {
         assert_eq!(call(json!({"doc": "d1", "block": "p:1"})), ["d1"]);
         assert_eq!(call(json!({"doc": "d2", "block": "p:1"})), ["d1", "d2"]);
         assert_eq!(call(json!("p:1")), ["d1"]);
+        let at = named_at(
+            &declared,
+            &map(json!({"doc": "d1", "reference": {"doc": "d2", "block": "p:1"}})),
+        );
+        assert_eq!(at, [("doc", "d1".to_owned()), ("reference.doc", "d2".to_owned())]);
     }
 
     #[test]

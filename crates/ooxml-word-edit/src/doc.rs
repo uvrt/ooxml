@@ -214,6 +214,8 @@ pub struct Shared {
     pub(crate) sequences: Sequences,
     /// Per-block facts, memoised by content.
     pub(crate) facts: Facts,
+    /// Per-block fields, memoised by content.
+    pub(crate) fields: crate::fields::scan::FieldScans,
 }
 
 /// A Word document at one version.
@@ -244,6 +246,7 @@ impl WordDoc {
             tally: Arc::new(Mutex::new(Lazy::Pending(None))),
             shared: Arc::new(Shared {
                 sequences: Sequences::default(),
+                fields: crate::fields::scan::FieldScans::new(Arc::clone(&budget)),
                 facts: Facts::new(budget),
             }),
         })

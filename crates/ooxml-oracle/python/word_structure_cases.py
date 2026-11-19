@@ -306,6 +306,9 @@ def python_case(data: bytes, case: dict, baseline: list, toolbox, reply_of, part
     """One case through docx-agent's toolbox: the reply and what the document became."""
     session = toolbox.session(clock=lambda: _NOW)
     doc = session.open(data, name="case.docx")
+    if case.get("reference_copy") or case.get("reference_file"):     # d2, which the call names
+        other = open(case["reference_file"], "rb").read() if case.get("reference_file") else data
+        session.open(other, name="copy.docx")
     if case.get("tracked"):
         session.entry(doc).tracking = {"on": True, "author": case["tracked"]["author"]}
     arguments = {**case["arguments"], "doc": doc}

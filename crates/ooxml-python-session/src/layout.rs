@@ -123,6 +123,13 @@ fn laid_or_raise(engine: &Arc<Mutex<PageEngine>>, laid: Laid) -> PyResult<PyLaid
     }
 }
 
+impl PyWordPages {
+    /// The edit core's layout port over this engine (a call's `layout`).
+    pub(crate) fn port(&self) -> ooxml_tools_word::EnginePages {
+        ooxml_tools_word::EnginePages::new(Arc::clone(&self.engine))
+    }
+}
+
 #[pymethods]
 impl PyWordPages {
     /// An engine laying out with `fonts`, under `locale` (a BCP 47 tag), lining decimal
