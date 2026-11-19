@@ -1,7 +1,8 @@
 //! `word-objects-bench <document.docx> [table]`: what the object tools cost on a long
 //! document. Each call -- `word_edit_table`'s rows and columns inserted, copied and deleted (with their
 //! report of the file's text removed), cells merged and split; `word_controls`' insert, fill, remove
-//! and list -- untracked and tracked -- runs as a whole tool call on a fresh
+//! and list; `word_drawings`' text box and shape inserted, a drawing moved, resized and set, and
+//! the list -- untracked and tracked -- runs as a whole tool call on a fresh
 //! editor of the document, on its middle body table (or `table`); the best of three wall
 //! times, as JSON. CPU for the whole run is the caller's to measure (`/usr/bin/time -l`).
 //!
@@ -12,7 +13,9 @@ use ooxml_base::{Cancel, Limits};
 use ooxml_opc::Package;
 use ooxml_store::{Caller, StoreConfig};
 use ooxml_tools::ArgType;
-use ooxml_tools_word::{word_controls, word_edit_table, CallEditor, Editing, WordControls, WordEditTable};
+use ooxml_tools_word::{
+    word_controls, word_drawings, word_edit_table, CallEditor, Editing, WordControls, WordDrawings, WordEditTable,
+};
 use ooxml_word_edit::{Editor, Tracking};
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -138,6 +141,59 @@ fn controls(
     Ok(())
 }
 
+/// `word_drawings`' actions on the document's middle body paragraph: a text box and a
+/// shape inserted, the text box moved, resized, set (wrapping and order) after an untimed
+/// insertion, the list.
+fn drawings(
+    bytes: &Arc<[u8]>,
+    paragraph: &str,
+    tracking: &Tracking,
+    out: &mut serde_json::Map<String, Value>,
+) -> Result<(), String> {
+    let call = |arguments: Value| -> Result<WordDrawings, String> {
+        let mut arguments = arguments;
+        if let Some(map) = arguments.as_object_mut() {
+            map.insert("doc".into(), json!("d1"));
+        }
+        WordDrawings::from_arg(&arguments, "").map_err(|e| e.to_string())
+    };
+    let at = format!("{paragraph}@0");
+    let text_box = call(json!({"action": "insert_text_box", "at": at, "text": "In the box\nSecond line"}))?;
+    let shape = call(json!({"action": "insert_shape", "at": at, "preset": "ellipse", "text": "Round"}))?;
+    let list = call(json!({"action": "list"}))?;
+    let inserted = |editing: &Editing<'_>| Value::Object(word_drawings(&text_box, editing).to_json());
+    // the drawing the untimed insertion makes is the same in every fresh editor
+    let (_, made) = best_of(bytes, &[], &inserted, None)?;
+    let id = made
+        .pointer("/data/id")
+        .and_then(Value::as_str)
+        .unwrap_or("d:0")
+        .to_owned();
+    let moved = call(json!({"action": "move", "target": id, "x": 20, "y": 10}))?;
+    let resized = call(json!({"action": "resize", "target": id, "width": 200}))?;
+    let set = call(json!({"action": "set", "target": id, "wrap": "tight", "z_order": "front"}))?;
+    let timed: [(&str, &[Call<'_>], &WordDrawings); 6] = [
+        ("drawings insert_text_box", &[], &text_box),
+        ("drawings insert_shape", &[], &shape),
+        ("drawings move", &[&inserted], &moved),
+        ("drawings resize", &[&inserted], &resized),
+        ("drawings set", &[&inserted], &set),
+        ("drawings list", &[&inserted], &list),
+    ];
+    for (name, setup, args) in timed {
+        for (label, tracked) in [(name.to_owned(), None), (format!("{name}, tracked"), Some(tracking))] {
+            let (ms, reply) = best_of(
+                bytes,
+                setup,
+                &|editing| Value::Object(word_drawings(args, editing).to_json()),
+                tracked,
+            )?;
+            out.insert(label, json!({"ms": ms, "summary": summary_of(&reply)}));
+        }
+    }
+    Ok(())
+}
+
 /// Run over the arguments: one JSON object on stdout.
 ///
 /// # Errors
@@ -212,6 +268,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
         .unwrap_or_default();
     if let Some(paragraph) = paragraphs.get(paragraphs.len() / 2) {
         controls(&bytes, paragraph, &tracking, &mut out)?;
+        drawings(&bytes, paragraph, &tracking, &mut out)?;
     }
     let report = json!({"document": path, "tables": tables.len(), "table": table, "calls": out});
     println!("{report}");

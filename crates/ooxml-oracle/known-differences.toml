@@ -83,3 +83,49 @@ cause = """docx-agent's insert_control takes the position unchecked and fails in
 Python's IndexError ('list index out of range', not_found); the Rust core refuses the position, \
 saying how many characters the paragraph has (as word_notes refuses one). A docx-agent crash, \
 not copied."""
+
+# P4c10: word_drawings float and inline of a frame in a part whose root does not declare
+# the wordprocessingDrawing namespace (docx-agent's own Markdown writer declares it on each
+# frame): 10 cases a fixture, untracked and tracked.
+[[difference]]
+mode = "objects"
+file = "generated/markdown/constructs.docx"
+input = { tool = "word_drawings", arguments = { action = "float" } }
+cause = """P4c10: docx-agent makes the new wp:anchor or wp:inline detached, so lxml names its \
+namespace ns0 (and wp14 ns1) and the frame's children ns0:...; the Rust core keeps the \
+frame's own declarations of wp and wp14 on the new frame, so it and its children keep wp:. \
+Both are the same XML; Word reads either."""
+
+[[difference]]
+mode = "objects"
+file = "generated/markdown/constructs.docx"
+input = { tool = "word_drawings", arguments = { action = "inline" } }
+cause = """P4c10: as the float entry above: docx-agent's ns0/ns1 prefixes on the new wp:inline."""
+
+[[difference]]
+mode = "objects"
+file = "generated/lists-and-styles.docx"
+input = { tool = "word_drawings", arguments = { action = "float" } }
+cause = """P4c10: as the constructs.docx float entry above: docx-agent's ns0 prefix on the new wp:anchor."""
+
+# P4c10: a set that leaves the frame as it was (square wrapping on a frame wrapped square,
+# one step back or forward with no drawing there) in a fixture lxml did not write.
+[[difference]]
+mode = "objects"
+file = "generated/markdown/constructs.docx"
+input = { tool = "word_drawings", arguments = { action = "set", wrap = "square" } }
+cause = """P4c10: the frame is as it was; docx-agent writes the part again as lxml writes it \
+(constructs.docx was not written by lxml), and touched names the heading sections whose \
+frames lxml writes again; the Rust core's touched names the part only (no block changed)."""
+
+[[difference]]
+mode = "objects"
+file = "generated/markdown/constructs.docx"
+input = { tool = "word_drawings", arguments = { action = "set", z_order = "backward" } }
+cause = """P4c10: as the set wrap square entry above: no drawing below, the frame keeps its order."""
+
+[[difference]]
+mode = "objects"
+file = "generated/markdown/constructs.docx"
+input = { tool = "word_drawings", arguments = { action = "set", z_order = "forward" } }
+cause = """P4c10: as the set wrap square entry above: no drawing above, the frame keeps its order."""

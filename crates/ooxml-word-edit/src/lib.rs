@@ -49,6 +49,7 @@ mod delete;
 mod delete_blocks;
 mod delete_write;
 mod doc;
+mod drawings;
 mod editor;
 mod error;
 mod fields;
@@ -110,6 +111,7 @@ pub use controls::{ControlEdited, ControlKind, FillControl, Filling, InsertContr
 pub use delete::{BlockDeleted, DeleteBlock};
 pub use delete_blocks::{blocks_named, BlocksDeleted, DeleteBlocks};
 pub use doc::{Change, Draw, DrawFrom, Key, ModelError, Shared, WordDoc};
+pub use drawings::{DrawingEdited, DrawingValues, FloatDrawing, InlineDrawing, InsertShape, SetDrawing, ZOrder};
 pub use editor::{EditTiming, Edited, Editor};
 pub use error::{EditError, Result};
 pub use fields::{
