@@ -23,6 +23,7 @@ mod shading;
 mod sheet;
 mod tabs;
 
+pub(crate) use default::settings_part;
 pub use language::{languages, word_tag, Languages, WORD_TAG_SLOTS};
 pub use read::{
     content_uses, declared, find_style, looks_needed, read_paragraph, read_regions, read_run, read_tabs, style_link,

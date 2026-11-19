@@ -171,7 +171,7 @@ def recorder() -> Recorder | None:
 
 
 def record_all(element: Element) -> None:
-    """Every ``w:t`` under ``element`` written by the call (text a builder serialised and
+    """Every ``w:t`` under ``element`` written by the call (text a writer serialised and
     parsed again, which drops what was recorded)."""
     record = _RECORDER.get()
     if record is not None:

@@ -52,6 +52,8 @@ pub use style::{
     word_styles, RegionBorderStyle, RegionBordersArg, RegionItem, RegionName, RegionSide, StyleKind, StyleNumbering,
     StylesAction, TabAlignment, TabItem, TabLeader, WordStyles,
 };
+pub use style::{word_template, TemplateAction, WordTemplate};
+pub use style::{BlockIn, FollowReport, WordCompareBlocks, WordFollowSample};
 pub use text::{replace_text, word_set_text, Expect, ReplaceStories, ReplaceText, SetTextItem, Unported, WordSetText};
 pub use version::Version;
 pub use word_inspect::{word_inspect, WordInspect};

@@ -10,9 +10,10 @@ use ooxml_opc::Package;
 use ooxml_store::{Caller, Clock, StoreConfig};
 use ooxml_tools::{ToolArgs, ToolResult};
 use ooxml_tools_word::{
-    word_format, word_lists, word_styles, CallEditor, Editing, WordFormat, WordLists, WordStyles, KIND,
+    word_format, word_lists, word_styles, word_template, CallEditor, Editing, WordCompareBlocks, WordFollowSample,
+    WordFormat, WordLists, WordStyles, WordTemplate, KIND,
 };
-use ooxml_word_edit::Editor;
+use ooxml_word_edit::{Editor, FieldLayout, LaidFields, PageReflow};
 use ooxml_zip::{Method, NewEntry, Writer};
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -113,6 +114,31 @@ fn the_definitions_are_the_golden_exports() {
         format!("{}\n", WordStyles::spec().export(Some(&[KIND]))),
         include_str!("golden/word_styles.json")
     );
+    assert_eq!(
+        format!("{}\n", WordTemplate::spec().export(Some(&[KIND]))),
+        include_str!("golden/word_template.json")
+    );
+    assert_eq!(
+        format!("{}\n", WordCompareBlocks::spec().export(Some(&[KIND]))),
+        include_str!("golden/word_compare_blocks.json")
+    );
+    assert_eq!(
+        format!("{}\n", WordFollowSample::spec().export(Some(&[KIND]))),
+        include_str!("golden/word_follow_sample.json")
+    );
+}
+
+#[test]
+fn a_reference_in_another_document_is_one_of_the_calls_documents() {
+    let spec = WordCompareBlocks::spec();
+    let call = |reference: Value| {
+        let arguments = json!({"doc": "d1", "blocks": ["t:1"], "reference": reference});
+        ooxml_tools::documents::named(&spec.documents, arguments.as_object().unwrap())
+    };
+    assert_eq!(call(json!({"block": "t:2"})), ["d1"]);
+    assert_eq!(call(json!({"doc": "", "block": "t:2"})), ["d1"]);
+    assert_eq!(call(json!({"doc": "d2", "block": "t:2"})), ["d1", "d2"]);
+    assert!(spec.problems().is_empty(), "{:?}", spec.problems());
 }
 
 #[test]
@@ -317,4 +343,100 @@ fn the_document_language_is_set_and_reported() {
     let (reply, _) = styles(json!({"doc": "d1", "action": "set_language", "language": "fr"}));
     assert_eq!(reply["error"]["field"], json!("language"), "{reply}");
     assert_eq!(reply["error"]["valid_options"][0], json!("fr-FR"));
+}
+
+/// A layout whose versions are one page each, and whose reflow says the first page changed
+/// and one block moved; counting the reflows asked.
+#[derive(Default)]
+struct OnePage {
+    asked: std::sync::atomic::AtomicUsize,
+}
+
+impl FieldLayout for OnePage {
+    fn lay_out(&self, _package: &Package) -> Result<Box<dyn LaidFields + '_>, String> {
+        Err("not needed".to_owned())
+    }
+
+    fn reflow(&self, before: &Package, after: &Package) -> Result<PageReflow, String> {
+        self.asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        assert!(
+            before.part_names().len() < after.part_names().len(),
+            "the settings part is new"
+        );
+        Ok(PageReflow {
+            changed: vec![1],
+            page_count: (1, 2),
+            moved: vec![("p:10000003".to_owned(), (1, 2))],
+            unknown: Vec::new(),
+        })
+    }
+}
+
+/// `word_template` called on `editor` with `layout`.
+fn template(editor: &Editor, layout: Option<&dyn FieldLayout>) -> ToolResult<Value> {
+    let opened = editor.store().snapshot().doc().clone();
+    let caller = Caller::anonymous();
+    let editing = Editing {
+        editor: &CallEditor::new(editor),
+        caller: &caller,
+        opened: &opened,
+        tracking: None,
+        doc: "d1",
+        cancel: &Never,
+        date: "2026-11-17T10:00:00Z",
+        layout,
+    };
+    let (args, _) = WordTemplate::accept(json!({"doc": "d1", "action": "upgrade_to_modern"}), Some("docx")).unwrap();
+    word_template(&args, &editing)
+}
+
+fn settings(editor: &Editor) -> String {
+    let head = editor.store().snapshot();
+    let bytes = head.doc().package().read("word/settings.xml").unwrap().unwrap();
+    String::from_utf8(bytes.to_vec()).unwrap()
+}
+
+#[test]
+fn convert_writes_mode_fifteen_and_reports_the_reflow_then_is_a_no_op() {
+    let editor = Editor::open(package(), StoreConfig::default(), Arc::new(Still), Arc::new(Unlimited)).unwrap();
+    let layout = OnePage::default();
+    let reply = Value::Object(template(&editor, Some(&layout)).to_json());
+    assert_eq!(reply["summary"], json!("Compatibility mode 15"), "{reply}");
+    assert_eq!(
+        reply["data"],
+        json!({"mode": 15, "reflow": {"changed": [1], "pages": [1, 2], "moved": {"p:10000003": [1, 2]}}})
+    );
+    assert!(settings(&editor).ends_with(concat!(
+        r#"<w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/>"#,
+        r#"<w:compatSetting w:name="overrideTableStyleFontSizeAndJustification" w:uri="http://schemas.microsoft.com/office/word" w:val="1"/>"#,
+        r#"<w:compatSetting w:name="enableOpenTypeFeatures" w:uri="http://schemas.microsoft.com/office/word" w:val="1"/>"#,
+        r#"<w:compatSetting w:name="doNotFlipMirrorIndents" w:uri="http://schemas.microsoft.com/office/word" w:val="1"/>"#,
+        r#"<w:compatSetting w:name="differentiateMultirowTableHeaders" w:uri="http://schemas.microsoft.com/office/word" w:val="1"/>"#,
+        r#"<w:compatSetting w:name="useWord2013TrackBottomHyphenation" w:uri="http://schemas.microsoft.com/office/word" w:val="0"/>"#,
+        "</w:compat></w:settings>"
+    )));
+    // rule 3: a document already in mode 15 is said, not refused, and not laid out
+    let reply = Value::Object(template(&editor, Some(&layout)).to_json());
+    assert_eq!(reply["summary"], json!("Compatibility mode 15"), "{reply}");
+    assert_eq!(reply["data"], json!({"mode": 15, "reflow": null}));
+    assert_eq!(reply["changed"], json!([]));
+    assert_eq!(layout.asked.load(std::sync::atomic::Ordering::SeqCst), 1);
+}
+
+#[test]
+fn convert_without_the_layout_is_left_to_the_host() {
+    let editor = Editor::open(package(), StoreConfig::default(), Arc::new(Still), Arc::new(Unlimited)).unwrap();
+    let result = template(&editor, None);
+    assert_eq!(result.unported(), ["the reflow without the layout"]);
+    assert!(
+        editor
+            .store()
+            .snapshot()
+            .doc()
+            .package()
+            .read("word/settings.xml")
+            .unwrap()
+            .is_none(),
+        "nothing committed"
+    );
 }

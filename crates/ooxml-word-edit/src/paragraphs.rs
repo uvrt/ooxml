@@ -273,9 +273,9 @@ impl Command<WordDoc> for InsertParagraph {
     fn prepare(&self, tx: &mut Txn<'_, WordDoc>) -> Result<ParagraphInserted> {
         let mut sink = EditSink::new(tx, self.policy.clone());
         let out = insert_paragraph(&mut sink, &self.anchor, (self.after, &self.text, self.style.as_deref()))?;
-        // docx-agent's batch, once it ends: the written text spaced, revision ids unique
-        sink.space_written()?;
-        crate::revision_ids::make_unique(&mut sink)?;
+        // docx-agent's edit, once it ends: the written text spaced, text boxes whose
+        // content changed synced, revision ids unique
+        crate::after::after_edit(&mut sink)?;
         Ok(out)
     }
 }
@@ -372,11 +372,10 @@ fn already_lines(sink: &mut EditSink<'_, '_>, docx: &Docx, part: &str, path: &[u
 /// not a paragraph or ends a section.
 pub(crate) fn set_lines(sink: &mut EditSink<'_, '_>, target: &str, text: &str) -> Result<TextEdited> {
     let out = set_lines_in(sink, target, text)?;
-    // docx-agent's batch, once it ends: revision ids unique (text boxes are synced by an
-    // edit standing alone only)
+    // docx-agent's batch, once it ends: the written text spaced, text boxes whose
+    // content changed synced, revision ids unique
     if out.changed && is_lines(text) {
-        sink.space_written()?;
-        crate::revision_ids::make_unique(sink)?;
+        crate::after::after_edit(sink)?;
     }
     Ok(out)
 }

@@ -37,7 +37,7 @@ The full history is the [merged pull requests](https://github.com/uvrt/pptx2svg/
   was imported by the first call from `pptx2svg.render.shape`, an alias module that replaces
   itself in `sys.modules` with ooxml-common's; two threads making that first import at once
   could hand the second the stand-in, and it failed with `cannot import name '_row_heights'`
-  (seen with six deck builders measuring tables at once, once the measuring got fast). It
+  (seen with six deck writers measuring tables at once, once the measuring got fast). It
   is imported with pptx2svg now (`tests/test_threads.py`).
 
 ## 0.3.7 -- unreleased

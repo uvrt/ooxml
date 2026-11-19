@@ -58,7 +58,8 @@ pub struct ToolSpec {
     pub priority: Option<i64>,
     /// For a tool that names no document: the argument whose value is the document kind.
     pub route: Option<String>,
-    /// The arguments that name documents, in order.
+    /// The arguments that name documents, in order, or paths into an object whose `doc`
+    /// defaults to the call's own ([`crate::documents`]).
     pub documents: Vec<String>,
     /// Sets of optional arguments of which exactly one must be given.
     pub exactly_one: Vec<Vec<String>>,

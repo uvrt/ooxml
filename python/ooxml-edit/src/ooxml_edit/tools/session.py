@@ -514,7 +514,7 @@ class StepOwner:
     tool: str
 
     def describe(self) -> str:
-        """The caller in words: ``t_add by agent=builder-2``."""
+        """The caller in words: ``t_add by agent=writer-2``."""
         if not self.caller:
             return f"{self.tool} (a call with no caller context)"
         return f"{self.tool} by " + ", ".join(f"{key}={value}"

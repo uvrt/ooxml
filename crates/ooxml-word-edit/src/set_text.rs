@@ -154,10 +154,8 @@ impl Command<WordDoc> for SetText {
         }
         let out = write_text(&mut sink, &self.target, &self.text)?;
         if out.changed {
-            // docx-agent's edit, once it ends: text boxes synced, revision ids unique
-            sink.space_written()?;
-            crate::textbox::sync(&mut sink)?;
-            crate::revision_ids::make_unique(&mut sink)?;
+            // docx-agent's edit, once it ends: text spaced, text boxes synced, revision ids unique
+            crate::after::after_edit(&mut sink)?;
         }
         Ok(out)
     }

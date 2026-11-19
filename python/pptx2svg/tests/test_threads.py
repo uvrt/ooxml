@@ -92,7 +92,7 @@ def test_table_rows_from_threads_in_a_fresh_interpreter():
     table layout it reaches through ``pptx2svg.render.shape`` -- an alias module, which
     replaces itself in ``sys.modules`` with ooxml-common's -- is imported with pptx2svg,
     not by the first call, so no thread is handed the stand-in (``cannot import name
-    '_row_heights'``, seen with six builders measuring tables at once)."""
+    '_row_heights'``, seen with six writers measuring tables at once)."""
     import subprocess
     import sys
 

@@ -151,7 +151,9 @@ impl ToolSpec {
             out.push(format!("route names {route:?}, which is not a parameter"));
         }
         for name in &self.documents {
-            if self
+            if name.contains('.') {
+                out.extend(crate::documents::path_problem(&self.arguments, name));
+            } else if self
                 .arguments
                 .property(name)
                 .is_some_and(|p| p.schema.type_name() != "string")

@@ -80,20 +80,20 @@ snapshot commit; the development history before it is summarised here.
     question; a table's rows are measured on a copy of the path to its empty paragraphs
     instead of a deep copy of the table.
   The same facts, views, renders and validation byte for byte: every tool result, live view
-  and the saved deck of the made-up builds (1 and 6 builders, 2 decks each), and per slide
+  and the saved deck of the made-up builds (1 and 6 writers, 2 decks each), and per slide
   the facts, live views, agent view and validation of the local corpus (579 decks, 3,040
   slides); `tests/test_resolved.py`.
 - Measured (made-up 25-slide builds from a template: duplicate, fill, live view of each slide,
   a check every 4 slides, a check of all, 8 slides rendered, a save; 2 layout workers, half a
   core of other load on a 4-core Mac that other work was loading too, so latencies are
-  loose): with 6 builders, 31.5 to 34.4 CPU-seconds per deck before, 8.9 after (1.7 to 1.9
+  loose): with 6 writers, 31.5 to 34.4 CPU-seconds per deck before, 8.9 after (1.7 to 1.9
   decks per CPU-minute, 6.7 after); the main process 23 to 25 CPU-s per deck, 5.3 after, and
   no longer bound to one core (0.45 to 0.57 of one); the workers 8.2 to 9.0, 3.6 after; median
-  latency 212 to 318 s, 47 to 63 s. With 1 builder, 34.0 CPU-s per deck, 10.6 after. Per
+  latency 212 to 318 s, 47 to 63 s. With 1 writer, 34.0 CPU-s per deck, 10.6 after. Per
   deck in the main process: 165 conversions, 3,059 slides parsed and 173 zips written before;
   165 conversions, 91 slides parsed and resolved (74 more taken from the cache) and 8 zips
   (the check snapshots and the save) after. Memory: the cache of resolved slides holds about
-  56 KB a slide (512 at most, about 30 MB), the validation one a few MB; at 6 builders the
+  56 KB a slide (512 at most, about 30 MB), the validation one a few MB; at 6 writers the
   main process peaked at 172 MB (154 before), a worker at 126 MB (102).
 - Tokens: no tool definition changed (offline delta 0).
 
@@ -721,7 +721,7 @@ snapshot commit; the development history before it is summarised here.
   the guard 12,930 -> 12,940; a reviewer's core 2,212 -> 2,220 (guard 2,215 -> 2,225),
   every definition 4,460 -> 4,469 (guard 4,465 -> 4,475). The strict set is unchanged.
 - Several agents on one deck (round 8, M1 and M2; ooxml-edit 0.46.0): a reviewer's and a
-  builder's views of one shared session at once (`session.view(roles=..., context=...)`),
+  writer's views of one shared session at once (`session.view(roles=..., context=...)`),
   each held to its own roles, in a batch too; a reviewer's prompt with the role line
   decided over the tools sent (`system_prompt(tools=...)`). Tests and the tools README
   only: no deck tool or definition changed.
@@ -1126,7 +1126,7 @@ snapshot commit; the development history before it is summarised here.
 
 - Figures in text keep their source (round 5, T4; ooxml-edit 0.33.0). Tables and charts
   kept where their values came from, text did not: a card saying "Average 2.2 across 41
-  items" had no record of the 2.2, and builders expanded their own placeholders first.
+  items" had no record of the 2.2, and writers expanded their own placeholders first.
   - `ppt_set_text` (text and runs), `ppt_add_shape`, `ppt_add_table`'s `data`,
     `ppt_edit_table`'s `set_cells` and `replace_text`'s `replace` take references,
     `{{d:by_topic/door/mean}}` or `{{t:checks/N-1/rating}}`, `:0.0` after one to round:
@@ -1149,7 +1149,7 @@ snapshot commit; the development history before it is summarised here.
     every definition 12,465; guards as they were); the strict set is unchanged.
 
 - A chart added with its look in one call (round 5, T2; ooxml-edit 0.32.0). Styling one
-  new chart took a builder six turns. `edit_chart`'s `add`, which took the frame (`box`),
+  new chart took a writer six turns. `edit_chart`'s `add`, which took the frame (`box`),
   scale, gridlines, legend position and number format already, also takes `data_labels:
   true`, `colors` (each series' colour in order, a pie's slices'; filled, lined or as
   markers as each kind is drawn) and `style` with `part` (the text: font, size, bold,
@@ -1179,7 +1179,7 @@ snapshot commit; the development history before it is summarised here.
     (12,387 -> 12,403; the guard 12,390 -> 12,405). The strict set is unchanged.
 
 - Tile and card grids in one call (round 5, T5; the user brought grid back as a
-  `ppt_arrange` action, TOOLS-ROADMAP D13 amended). Builders drew grids by hand -- one
+  `ppt_arrange` action, TOOLS-ROADMAP D13 amended). Writers drew grids by hand -- one
   of 41 tiles -- computing every box, the main source of their layout mistakes.
   - `ppt_arrange` `action: "grid"`: the targets, in the order given, row by row in
     `columns` cells across (rows follow, or `rows`), `gap` points apart (`gap_y` between
@@ -1199,7 +1199,7 @@ snapshot commit; the development history before it is summarised here.
     `ppt_arrange` add 162 estimated tokens to every definition (12,225 -> 12,387; the
     guard 12,230 -> 12,390), none to the core (3,526). The strict set is unchanged.
 - A long table continued on the next slides, and fewer rows of a source (round 5, T3;
-  ooxml-edit 0.31.0, xlsx-agent's row ranges). A builder wanted rows 1-4 of a 42-row
+  ooxml-edit 0.31.0, xlsx-agent's row ranges). A writer wanted rows 1-4 of a 42-row
   table on one slide: `rows: 5` was refused ("from needs 42") and a row range was not an
   address.
   - `from` takes a row range: `t:items/#1:#9` (rows 1 to 9, from 1, the last included;

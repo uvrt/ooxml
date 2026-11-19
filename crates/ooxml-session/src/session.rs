@@ -636,11 +636,8 @@ impl Session {
         arguments: &Map<String, Value>,
         pinned: Option<&mut Pinned>,
     ) -> Result<Opened, ToolError> {
-        let given = spec
-            .documents
-            .iter()
-            .find_map(|name| arguments.get(name).and_then(Value::as_str));
-        let Some(given) = given else {
+        let named = ooxml_tools::documents::named(&spec.documents, arguments);
+        let Some(given) = named.first() else {
             return Err(ToolError::internal(
                 format!("{} names no document; the session serves only tools that do", spec.name),
                 "session:documents",
