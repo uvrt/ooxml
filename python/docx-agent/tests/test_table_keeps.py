@@ -265,9 +265,11 @@ def test_keep_with_next_false_releases_a_last_row_keeping_alone(box, session, ar
     table = document.tables()[0].id
     last = document.table(table).cell(2, 0).paragraphs[0].id
     ok(box, session, "word_format", doc=d, targets=[last], keep_with_next=True)
+    document = session.entry(d).document       # (the view as the served call left it)
     table = document.tables()[0].id
     assert _keeps(document, table) == [None, None, True]
     result = ok(box, session, "word_format_table", doc=d, table=table, scope="table", **arguments)
+    document = session.entry(d).document
     table = document.tables()[0].id
     assert _keeps(document, table) == [None, None, None]
     assert result.summary.startswith("Formatted") and result.changed
