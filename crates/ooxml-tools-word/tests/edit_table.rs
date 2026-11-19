@@ -101,6 +101,8 @@ fn edit(arguments: Value) -> Value {
         tracking: None,
         doc: "d1",
         cancel: &Never,
+        date: "2026-11-17T10:00:00Z",
+        layout: None,
     };
     let mut arguments = arguments;
     arguments["doc"] = json!("d1");

@@ -170,6 +170,14 @@ def story_cases(document) -> list[dict]:
                     call("word_headers_footers", section=section, which=which, action="unlink"),
                     call("word_headers_footers", section=section, which=which, action="unlink", type="even")]
     out.append(call("word_headers_footers", section="s:42", which="header", action="set", text="x"))
+    fonts = fonts_of(document)
+    for section in [s.id for s in document.sections()][:2]:
+        out += [{**call("word_headers_footers", section=section, which="footer", action="set", text="Title",
+                        page_number="page_x_of_y"), "fonts": fonts},
+                {**call("word_headers_footers", section=section, which="header", action="set", text="",
+                        page_number="after_text"), "fonts": fonts},
+                {**call("word_headers_footers", section=section, which="footer", action="set", type="first",
+                        text="A ", page_number="page_x_of_y"), "fonts": fonts}]
     return out + [tracked(case) for case in out if case["arguments"]["action"] == "set"]
 
 
@@ -213,10 +221,72 @@ def comment_cases(document) -> list[dict]:
     return out
 
 
+def fonts_of(document) -> dict:
+    """The fonts docx-agent lays ``document`` out with, as docx2svg hands them to the Rust
+    layout (``ooxml_core.WordFonts``): the Rust side lays out with the same."""
+    import docx2svg
+    from docx2svg.rust import _fonts_key
+    from docx_agent.layout import layout_options
+
+    options = docx2svg.ConvertOptions(**layout_options(document, {}))
+    folders, substitutes, substitute = _fonts_key(options)
+    return {"folders": [list(f) for f in folders], "substitutes": [list(s) for s in substitutes],
+            "substitute": substitute}
+
+
+def field_cases(document) -> list[dict]:
+    """``word_fields`` (lane P4b2): the list; fields inserted at positions, after text found
+    and beside blocks (page numbers, SEQ, REF, DATE); dates; cross-references to text and
+    page; captions; tables of contents; every result updated, some, and a field that does
+    not exist -- untracked and tracked."""
+    fonts = fonts_of(document)
+    out = [call("word_fields", action="list")]
+    paragraphs = _words(document)
+    for pid, text in paragraphs[:3]:
+        out += [call("word_fields", action="insert_field", at=f"{pid}@{min(2, len(text))}", instruction="PAGE"),
+                call("word_fields", action="insert_field", at=pid, instruction="NUMPAGES"),
+                call("word_fields", action="insert_field", at=f"{pid}@0", instruction="SEQ Figure \\* ARABIC"),
+                call("word_fields", action="insert_date", at=f"{pid}@{len(text)}"),
+                call("word_fields", action="insert_field", find=text.split()[0], instruction="SECTIONPAGES")]
+    if paragraphs:
+        pid, text = paragraphs[0]
+        out += [call("word_fields", action="insert_field", after=pid, instruction="PAGE"),
+                call("word_fields", action="insert_field", before=pid, instruction="PAGE"),
+                call("word_fields", action="insert_field", at=pid, instruction="TOC"),
+                call("word_fields", action="insert_field", at=pid),
+                call("word_fields", action="insert_field", at=f"{pid}@{len(text) + 4}", instruction="PAGE"),
+                call("word_fields", action="insert_cross_reference", at=pid, bookmark="NoSuch"),
+                call("word_fields", action="insert_caption", after=pid, label="Table", text=": Results"),
+                call("word_fields", action="insert_caption", before=pid),
+                call("word_fields", action="insert_caption", after=pid, label="1x"),
+                call("word_fields", action="insert_toc", after=pid),
+                call("word_fields", action="insert_toc", before=pid, levels="1-2"),
+                call("word_fields", action="insert_toc", after=pid, levels="3-1")]
+    for mark in document.bookmarks(hidden=True)[:2]:
+        if paragraphs:
+            pid = paragraphs[-1][0]
+            out += [call("word_fields", action="insert_cross_reference", at=f"{pid}@1", bookmark=mark.name),
+                    call("word_fields", action="insert_cross_reference", at=pid, bookmark=mark.name, kind="page"),
+                    call("word_fields", action="insert_field", at=pid, instruction=f"REF {mark.name} \\h")]
+    blocks = [b["id"] for b in document.blocks() if b["id"]]
+    tables = [b for b in blocks if b.startswith("t:")]
+    for table in tables[:1]:
+        out.append(call("word_fields", action="insert_caption", before=table, label="Table"))
+    if blocks:
+        out.append(call("word_fields", action="insert_toc", after="end"))
+    ids = [f.id for f in document.fields()]
+    out += [call("word_fields", action="update"),
+            call("word_fields", action="update", ids=["fld:body/999"])]
+    if ids:
+        out.append(call("word_fields", action="update", ids=ids[:2]))
+    out += [tracked(case) for case in out if case["arguments"]["action"] not in ("list", "update")]
+    return [{**case, "fonts": fonts} for case in out]
+
+
 def cases(document) -> list[dict]:
     """Every structure case for ``document``."""
     found = link_cases(document) + note_cases(document) + section_cases(document) + story_cases(document) \
-        + move_cases(document) + comment_cases(document)
+        + move_cases(document) + comment_cases(document) + field_cases(document)
     wanted = os.environ.get("STRUCTURE_TOOLS")       # a comma list, to run some tools only
     found = [c for c in found if not wanted or c["tool"] in wanted.split(",")]
     per_tool = int(os.environ.get("STRUCTURE_PER_TOOL") or 0)   # the first n of each tool's
@@ -301,6 +371,11 @@ def settle(want: dict, have: dict) -> None:
         written = [t for t in written if t.get("part") not in gone or "heading" in t]
     if have.get("touched") != want.get("touched") and have.get("touched") == written:
         want["touched"] = written
+    # An update's timing is the application's alone (section 9).
+    for side in (want, have):
+        data = (side.get("reply") or {}).get("data")
+        if isinstance(data, dict):
+            data.pop("timing", None)
     # A refused call changes nothing on either side, but docx-agent's id pool keeps the ids
     # its stamping drew before the refusal (the edit is rolled back, the pool is not).
     if (want.get("reply") or {}).get("error") and (have.get("reply") or {}).get("error") \

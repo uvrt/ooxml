@@ -27,7 +27,7 @@ pub use tracking::{word_set_tracking, Tracked, WordSetTracking};
 use ooxml_base::Cancel;
 use ooxml_store::Caller;
 use ooxml_tools::{Failure, Refusal, ToolError, TryCall, WayOut};
-use ooxml_word_edit::{EditError, Tracking, WordDoc};
+use ooxml_word_edit::{EditError, FieldLayout, Tracking, WordDoc};
 
 /// What an editing tool is handed: the document's editor and what the host keeps of it.
 pub struct Editing<'a> {
@@ -45,6 +45,12 @@ pub struct Editing<'a> {
     pub doc: &'a str,
     /// The call's cancellation.
     pub cancel: &'a dyn Cancel,
+    /// The call's time as the session's clock reads it (ISO 8601): the day a `DATE` field
+    /// shows.
+    pub date: &'a str,
+    /// The layout of the document's versions, where the host keeps one (`word_fields`'
+    /// results); `None`: a result that needs it is left to the host.
+    pub layout: Option<&'a dyn FieldLayout>,
 }
 
 /// An edit's refusal as the tool's: an address refused with its way out, a refusal with

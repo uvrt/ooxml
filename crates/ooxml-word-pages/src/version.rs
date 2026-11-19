@@ -55,6 +55,11 @@ impl LaidVersion {
         self.ids.get(path).map(|id| &**id)
     }
 
+    /// Its body blocks by the tool's ids.
+    pub fn block_ids(&self) -> &crate::ids::BlockIds {
+        &self.ids
+    }
+
     /// The layout.
     pub fn layout(&self) -> &DocumentLayout {
         &self.layout

@@ -541,6 +541,7 @@ impl Session {
             cancel,
             date: revision_date(self.context.clock.now()),
             made: &state.made,
+            layout: context.layout.as_deref(),
         };
         tool.run(arguments, &call)
     }

@@ -1,10 +1,14 @@
 //! Owns: what a page-number field draws for a number (docx2svg's `fields.field_text`,
 //! `number_text`, `format_value`, `switches`, `_picture`): a page's number in its
 //! section's `w:pgNumType/@w:fmt` or by the instruction's `\*` and `\#` switches, and the
-//! case switches; and a field instruction's first argument (`_argument`).
+//! case switches; a field instruction's first argument (`_argument`); and a `SEQ` field
+//! counted ([`sequence`]). The layout draws with these and an edit's field update writes
+//! them: one owner for both.
 //!
-//! Must not: find a page or a bookmark (`crate::fields` does), or compute a value in the
-//! application's language (that is drawn as Word cached it).
+//! Must not: find a page or a bookmark (the layout and the edit core do), or compute a
+//! value in the application's language (that is drawn as Word cached it).
+
+pub mod sequence;
 
 /// Why a field's text cannot be computed from the file.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
