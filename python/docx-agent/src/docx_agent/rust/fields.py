@@ -311,7 +311,7 @@ _LAID_KEPT = 8
 def note_laid(document: Any, version: int, count: int) -> None:
     """Version ``version`` of ``document`` was laid out (``count`` pages) for a fields
     update: its next change's reflow says so, as when docx-agent's own update laid it out
-    and kept the layout (:func:`docx_agent.tools._base.laid_before`)."""
+    and kept the layout (:func:`docx_agent.tools.laid.laid_before`)."""
     from ..tools._base import REFLOW_PAGES
 
     if count <= REFLOW_PAGES:

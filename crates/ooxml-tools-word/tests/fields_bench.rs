@@ -11,7 +11,7 @@ use ooxml_fonts::{Folder, Location, WordFontOptions};
 use ooxml_opc::Package;
 use ooxml_store::{Caller, Clock, StoreConfig};
 use ooxml_tools::{ToolArgs, ToolResult};
-use ooxml_tools_word::{word_fields, word_headers_footers, Editing, EnginePages};
+use ooxml_tools_word::{word_fields, word_headers_footers, CallEditor, Editing, EnginePages};
 use ooxml_word_edit::{Editor, FieldLayout, LaidFields};
 use ooxml_word_pages::{DiskFonts, EngineBudgets, EngineOptions, FontSetup, PageEngine};
 use serde_json::{json, Value};
@@ -119,7 +119,7 @@ fn best<A: ToolArgs>(
         let opened = editor.store().snapshot().doc().clone();
         let caller = Caller::anonymous();
         let editing = Editing {
-            editor: &editor,
+            editor: &CallEditor::new(&editor),
             caller: &caller,
             opened: &opened,
             tracking: None,

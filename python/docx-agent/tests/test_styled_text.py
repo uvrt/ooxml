@@ -118,6 +118,7 @@ def test_style_and_emphasis_in_one_call_with_the_runs_said(box, opened):
     target = body(document)[1].id
     result = ok(box, session, doc, items=[{"target": target, "paragraph_style": "Report Body",
                                            "text": "The mean was **2.0/5**, below *3.0/5* in [March]{Score Mark}."}])
+    document = session.entry(doc).document         # (the view, made current)
     paragraph = document.paragraph(target)
     assert paragraph.style_name == "Report Body"
     assert paragraph.text == "The mean was 2.0/5, below 3.0/5 in March."
@@ -134,6 +135,7 @@ def test_style_and_emphasis_in_one_call_with_the_runs_said(box, opened):
     assert "styled" in result.summary
     # One undo step for the style, the text and the emphasis.
     ok_undo = box.dispatch(session, "undo", {"doc": doc})
+    document = session.entry(doc).document
     assert ok_undo.ok and document.paragraph(target).text == "The mean was 4.0/5 over the year."
     assert document.paragraph(target).style_name == "Normal"
 

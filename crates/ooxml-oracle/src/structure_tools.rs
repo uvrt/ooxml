@@ -13,8 +13,8 @@ use ooxml_opc::Package;
 use ooxml_store::{Caller, StoreConfig};
 use ooxml_tools::{ToolArgs, ToolResult};
 use ooxml_tools_word::{
-    word_comments, word_fields, word_headers_footers, word_links, word_move, word_notes, word_sections, Editing,
-    EnginePages, WordComments, WordFields, WordHeadersFooters, WordLinks, WordMove, WordNotes, WordSections,
+    word_comments, word_fields, word_headers_footers, word_links, word_move, word_notes, word_sections, CallEditor,
+    Editing, EnginePages, WordComments, WordFields, WordHeadersFooters, WordLinks, WordMove, WordNotes, WordSections,
 };
 use ooxml_word_edit::touched::{touched, Touched};
 use ooxml_word_edit::validate::{problems, Delta};
@@ -82,7 +82,7 @@ pub(crate) fn tool_case(
         .unwrap_or("2026-11-17T10:00:00Z")
         .to_owned();
     let editing = Editing {
-        editor: &editor,
+        editor: &CallEditor::new(&editor),
         caller: &caller,
         opened: &opened,
         tracking: tracking.as_ref(),

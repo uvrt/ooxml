@@ -14,7 +14,8 @@ from typing import Any
 from ooxml_edit.tools import Result, ToolError, boolean, page_text, string
 
 from ..markdown.read import _TYPED_NUMBER
-from ._base import held_facts, resolve, short, tool_names, word_tool
+from .laid import held_facts
+from ._base import resolve, short, tool_names, word_tool
 
 DOC = string("Document id.")
 _AUTHOR = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}author"
@@ -55,7 +56,7 @@ def _pages(call: Any) -> Any:
     number: a long document's whole layout read into this process for each version kept
     hundreds of megabytes per version here.  Laid out here only where the document has no
     such worker (a converter of the old protocol, a layout kept as its pickle) -- in a batch
-    too since round 59 (:func:`~._base.held_facts`)."""
+    too since round 59 (:func:`~.laid.held_facts`)."""
     from ..layout import BARE_REQUEST
 
     try:

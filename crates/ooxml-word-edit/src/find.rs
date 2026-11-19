@@ -9,8 +9,6 @@
 //! Must not: change anything, or answer a pattern differently from Python's `re`.
 
 use crate::text::diff::python_space;
-use crate::text::paragraph_text;
-use crate::work::Work;
 use crate::{EditError, Result};
 use ooxml_word_model::docx::Docx;
 use std::fmt::Debug;
@@ -23,6 +21,13 @@ pub trait Pattern: Debug + Send + Sync {
     /// # Errors
     /// A message when the pattern cannot be matched as Python would.
     fn matches(&self, text: &str) -> std::result::Result<Vec<(usize, usize, String)>, String>;
+
+    /// Whether `text` may hold a match: `false` only where it surely holds none (a quick
+    /// test a find runs before [`Pattern::matches`]).
+    fn may_match(&self, text: &str) -> bool {
+        let _ = text;
+        true
+    }
 }
 
 /// Plain text, as `re.escape(text)` (or, with white space collapsed, its words joined by
@@ -32,6 +37,8 @@ pub struct Literal {
     words: Vec<Vec<char>>,
     case: bool,
     with: String,
+    /// The first word as text, where case matters: every match holds it as it is.
+    first: Option<String>,
 }
 
 impl Literal {
@@ -49,10 +56,15 @@ impl Literal {
         if text.is_empty() || words.is_empty() || words.iter().all(Vec::is_empty) {
             return Err(EditError::Refused("nothing to find".to_owned()));
         }
+        let first = words
+            .first()
+            .filter(|_| case)
+            .map(|word| word.iter().collect::<String>());
         Ok(Literal {
             words,
             case,
             with: with.to_owned(),
+            first,
         })
     }
 
@@ -97,6 +109,10 @@ fn split_python(text: &str) -> Vec<String> {
 }
 
 impl Pattern for Literal {
+    fn may_match(&self, text: &str) -> bool {
+        self.first.as_deref().is_none_or(|first| text.contains(first))
+    }
+
     fn matches(&self, text: &str) -> std::result::Result<Vec<(usize, usize, String)>, String> {
         let chars: Vec<char> = text.chars().collect();
         let mut out = Vec::new();
@@ -123,27 +139,29 @@ pub(crate) fn matches(docx: &Docx, pattern: &dyn Pattern, across: bool) -> Resul
     let refuse = |e: String| EditError::Refused(e);
     let mut out = Vec::new();
     for story in &docx.parts {
-        let paragraphs: Vec<(String, String)> = story
-            .ids
-            .paragraphs()
-            .iter()
-            .map(|p| {
-                let work = Work::of(&p.element, Vec::new());
-                (p.id, paragraph_text(&work, work.root()))
-            })
-            .collect();
+        // each paragraph's text as the version keeps it (read once per version)
+        let texts = story.texts();
+        let id_of = |k: usize| story.ids.paragraphs().get(k).map(|p| p.id);
         if !across {
-            for (id, text) in &paragraphs {
-                for (a, b, with) in pattern.matches(text).map_err(refuse)? {
+            for (k, text) in texts.iter().enumerate() {
+                if !pattern.may_match(text) {
+                    continue;
+                }
+                let found = pattern.matches(text).map_err(refuse)?;
+                if found.is_empty() {
+                    continue;
+                }
+                let Some(id) = id_of(k) else { continue };
+                for (a, b, with) in found {
                     out.push((id.clone(), a, id.clone(), b, with));
                 }
             }
             continue;
         }
-        let mut starts = Vec::with_capacity(paragraphs.len());
+        let mut starts = Vec::with_capacity(texts.len());
         let mut joined = String::new();
         let mut position = 0;
-        for (k, (_, text)) in paragraphs.iter().enumerate() {
+        for (k, text) in texts.iter().enumerate() {
             if k > 0 {
                 joined.push('\n');
             }
@@ -155,13 +173,133 @@ pub(crate) fn matches(docx: &Docx, pattern: &dyn Pattern, across: bool) -> Resul
         let locate = |offset: usize| starts.partition_point(|s| *s <= offset).saturating_sub(1);
         for (a, b, with) in pattern.matches(&joined).map_err(refuse)? {
             let (p, q) = (locate(a), locate(b));
-            let (Some((first, _)), Some((last, _)), Some(sp), Some(sq)) =
-                (paragraphs.get(p), paragraphs.get(q), starts.get(p), starts.get(q))
+            let (Some(first), Some(last), Some(sp), Some(sq)) = (id_of(p), id_of(q), starts.get(p), starts.get(q))
             else {
                 continue;
             };
-            out.push((first.clone(), a - sp, last.clone(), b - sq, with));
+            out.push((first, a - sp, last, b - sq, with));
         }
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    //! The paragraph texts a find reads (the version's kept texts, `StoryPart::texts`) equal
+    //! the edit core's own walk of each paragraph, on every docx-agent fixture, as opened and
+    //! after edits (where the texts are taken from the version before's).
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
+
+    use crate::text::paragraph_text;
+    use crate::work::Work;
+    use crate::{Editor, RevisionPolicy, SetText, Tracking, WordDoc};
+    use ooxml_base::Limits;
+    use ooxml_derive::CacheBudget;
+    use ooxml_opc::Package;
+    use ooxml_store::{Caller, Clock, StoreConfig};
+    use ooxml_word_model::docx::text::{paragraph_text as model_text, View};
+    use std::path::{Path, PathBuf};
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
+
+    struct Monotonic(Instant);
+
+    impl Clock for Monotonic {
+        fn monotonic(&self) -> Duration {
+            self.0.elapsed()
+        }
+    }
+
+    struct Unlimited;
+
+    impl CacheBudget for Unlimited {
+        fn reserve(&self, _bytes: usize) -> bool {
+            true
+        }
+        fn release(&self, _bytes: usize) {}
+        fn used(&self) -> usize {
+            0
+        }
+    }
+
+    fn fixtures(dir: &Path, out: &mut Vec<PathBuf>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                fixtures(&path, out);
+            } else if path.extension().is_some_and(|e| e == "docx") {
+                out.push(path);
+            }
+        }
+    }
+
+    fn check(doc: &WordDoc, what: &str) {
+        let docx = doc.docx().unwrap();
+        for part in &docx.parts {
+            let texts = part.texts();
+            assert_eq!(texts.len(), part.ids.paragraphs().len(), "{what}: {}", part.part);
+            for (k, paragraph) in part.ids.paragraphs().iter().enumerate() {
+                let work = Work::of(&paragraph.element, Vec::new());
+                let kept = texts.get(k).unwrap();
+                assert_eq!(kept, paragraph_text(&work, work.root()), "{what}: {}", paragraph.id);
+                assert_eq!(
+                    kept,
+                    model_text(&paragraph.element, View::Current),
+                    "{what}: {}",
+                    paragraph.id
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn kept_texts_equal_each_paragraphs_walk_on_every_fixture() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../python/docx-agent/tests/fixtures");
+        let mut files = Vec::new();
+        fixtures(&root, &mut files);
+        files.sort();
+        assert!(files.len() > 10);
+        for file in files {
+            let bytes: Arc<[u8]> = Arc::from(std::fs::read(&file).unwrap());
+            let package = Package::open(bytes, &Limits::default()).unwrap();
+            let Ok(editor) = Editor::open(
+                package,
+                StoreConfig::default(),
+                Arc::new(Monotonic(Instant::now())),
+                Arc::new(Unlimited),
+            ) else {
+                continue;
+            };
+            let opened = editor.store().snapshot();
+            check(opened.doc(), &format!("{}: as opened", file.display()));
+            let docx = opened.doc().docx().unwrap();
+            let targets: Vec<String> = docx
+                .parts
+                .iter()
+                .filter_map(|p| p.ids.paragraphs().iter().next().map(|q| q.id))
+                .collect();
+            for (k, target) in targets.iter().enumerate() {
+                let policy = if k % 2 == 0 {
+                    RevisionPolicy::Tracked(Tracking {
+                        author: "Writer A".to_owned(),
+                        date: "2026-11-17T10:00:00Z".to_owned(),
+                    })
+                } else {
+                    RevisionPolicy::Untracked
+                };
+                let command = SetText {
+                    target: target.clone(),
+                    text: format!("Edited {k}: a sentence"),
+                    policy,
+                };
+                let Ok(done) = editor.run(&Caller::anonymous(), &command) else {
+                    continue;
+                };
+                check(
+                    done.version.doc(),
+                    &format!("{}: after editing {target}", file.display()),
+                );
+            }
+        }
+    }
 }

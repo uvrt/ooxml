@@ -24,7 +24,8 @@ from docx_agent.tools import FORMAT, GROUPS, TOOLS
 
 import block_stress
 
-pytestmark = pytest.mark.any_faces
+# Calls prepared on drafts: documents the tool layer holds itself (conftest.python_owned).
+pytestmark = [pytest.mark.any_faces, pytest.mark.usefixtures("python_owned")]
 
 
 class Grid:

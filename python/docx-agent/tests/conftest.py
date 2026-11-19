@@ -280,3 +280,19 @@ def python_layout(monkeypatch):
     from docx_agent import pages
 
     monkeypatch.setattr(pages, "available", lambda: False)
+
+
+@pytest.fixture
+def python_owned():
+    """Documents the tool layer holds itself, as it holds one the Rust session does not own
+    (lane P2c5): no Rust session for the test (``docx_agent.rust.reads.use_session(None)``).
+    For the tests of what only that path does -- calls prepared on drafts (``block_edits``),
+    which an owned document's calls are not (ooxml-edit's ``OwnedEntry``)."""
+    from docx_agent.rust import reads
+
+    reads.available()           # (the process's session made first: the one given back after)
+    before = reads.use_session(None)
+    try:
+        yield
+    finally:
+        reads.use_session(before)

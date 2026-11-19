@@ -18,7 +18,8 @@ from ..markdown import model as m
 from ..markdown.stylemap import StyleMap
 from ..markdown.write import insert_blocks
 from . import positions
-from ._base import cached_layout, need, note_small_text, one_of, outcome, remember, resolve, short, word_tool
+from .laid import cached_layout
+from ._base import need, note_small_text, one_of, outcome, remember, resolve, short, word_tool
 from .originals import Watch
 from .originals import add as add_original
 from .table_data import (DATE_FORMAT, FROM_COLUMNS, HEADER, MAX_COLUMNS, MAX_ROWS, fits, no_source,

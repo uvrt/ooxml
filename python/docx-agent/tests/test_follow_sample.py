@@ -214,7 +214,7 @@ def test_from_another_document_its_styles_by_name(box):
     assert document.styles.find("Part text") is None
     assert document.validate() == []
     _ok(box, session, "undo", doc=d2)
-    assert document.styles.find("Caption", "paragraph") is None
+    assert session.entry(d2).document.styles.find("Caption", "paragraph") is None
 
 
 def test_in_a_batch_and_by_reference(box):

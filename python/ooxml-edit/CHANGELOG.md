@@ -6,6 +6,17 @@ earlier ones were never tagged.
 
 ## 0.124.1 -- unreleased
 
+Phase P2, lane P2c4: `DocumentFormat.owner` holds a format's documents outright
+(`ooxml_edit.tools.owned`): an `OwnedEntry`'s version, steps (`OwnedHistory`), undo and redo
+and snapshot are the owner's, and its `document` is a view made current when read.
+`History.follow` numbers such a view. `DocumentEntry.step_target`, `touched_of` and
+`draftable` are the hooks the tool layer calls; one caller's own undo moved to `.ownundo`.
+
+Phase P2, lane P2c3: `DocumentFormat.owner`, the store that owns a format's documents (their
+versions, history and saved bytes) with the tool layer's document as its working copy:
+`committed(entry)` at each commit, `followed(entry, direction, count, caller)` after an undo
+or redo, `save(entry)` for `Session.save`. docx-agent's is the Rust session.
+
 - **A renderer may lay a whole document out in the caller's process**
   (`Renderer.lays_out_here(data, font_dirs, locale, state)`, default `False`): where it
   says so, `lay_out_views` runs there, the document's lock let go as for a worker, and only
