@@ -6,7 +6,8 @@
 //!
 //! Must not: write but through the block deletion's writer, or read outside what it records
 //! reading: the blocks it deletes, the styles part (a paragraph's level), and the whole
-//! document when a heading it deletes leaves blocks under another.
+//! document when a heading it deletes leaves blocks under another. The outline is built only
+//! when a block it deletes is a heading.
 
 use crate::blocks::{blocks_of, BlockKind};
 use crate::delete::BlockDeleted;
@@ -20,8 +21,10 @@ use crate::{EditError, Result};
 use ooxml_base::pyfmt::repr_str;
 use ooxml_store::{Command, Txn};
 use ooxml_word_model::docx::controls::controls;
-use ooxml_word_model::docx::outline::{body_blocks, headings, Heading};
+use ooxml_word_model::address::resolve::resolve;
+use ooxml_word_model::docx::outline::{body_blocks, headings, Heading, OutlineLevels};
 use ooxml_word_model::docx::Docx;
+use ooxml_word_model::ids::Entry;
 use ooxml_word_model::parts::related;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -130,6 +133,10 @@ fn headings_kept(sink: &mut EditSink<'_, '_>, docx: &Docx, ids: &[String], force
     if let Some(part) = related(sink.doc().package(), &docx.main, REL_STYLES)? {
         sink.read(Key::Part(Arc::from(part.as_str())));
     }
+    if !any_heading(docx, &canonical) {
+        // no heading goes: the outline decides nothing, and is not read
+        return Ok(Vec::new());
+    }
     let blocks = body_blocks(docx, &controls(docx));
     let found = headings(&blocks);
     let gone: HashSet<&str> = canonical.iter().map(String::as_str).collect();
@@ -187,6 +194,24 @@ fn headings_kept(sink: &mut EditSink<'_, '_>, docx: &Docx, ids: &[String], force
         field: "target".to_owned(),
         message,
         options,
+    })
+}
+
+/// Whether one of `ids` is a heading: a paragraph of the body's top level with an outline
+/// level, its own or its style chain's (what [`headings`] finds), read for those paragraphs
+/// alone.
+fn any_heading(docx: &Docx, ids: &[String]) -> bool {
+    let levels = OutlineLevels::new(docx);
+    ids.iter().any(|id| match resolve(docx, id) {
+        Ok((part, Entry::Paragraph(k))) => {
+            part.part == docx.main
+                && part
+                    .ids
+                    .paragraphs()
+                    .get(k)
+                    .is_some_and(|p| p.path.len() == 2 && levels.effective(&p.element).is_some())
+        }
+        _ => false,
     })
 }
 
