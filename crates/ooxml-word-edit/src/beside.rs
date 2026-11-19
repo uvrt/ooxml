@@ -92,6 +92,17 @@ fn located(sink: &mut EditSink<'_, '_>, docx: &Docx, place: &TextPlace) -> Resul
     }
 }
 
+/// `found` by its paragraphs' ids now (an address written before the stamping as the id
+/// it has).
+fn current(found: &RangeText, first: &Found, last: &Found) -> RangeText {
+    RangeText {
+        start_id: first.id.clone(),
+        start: found.start,
+        end_id: last.id.clone(),
+        end: found.end,
+    }
+}
+
 /// The range's text and its first and last paragraphs.
 fn spanned(doc: &WordDoc, docx: &Docx, found: &RangeText) -> Result<(String, Found, Found)> {
     let span = Span::of(doc, docx, found)?;
@@ -113,13 +124,14 @@ impl Command<WordDoc> for InsertBeside {
         let docx = sink.docx()?;
         let found = located(&mut sink, &docx, &self.place)?;
         let (text, first, last) = spanned(sink.doc(), &docx, &found)?;
+        let now = current(&found, &first, &last);
         let at = match self.side {
             Side::Before => (first, None, found.start, found.start),
             Side::After => (last, None, found.end, found.end),
         };
         let edited = replace_place(&mut sink, &docx, at, &self.text)?;
         Ok(Placed {
-            range: range_id(&found),
+            range: range_id(&now),
             text,
             edited,
         })
@@ -139,6 +151,7 @@ impl Command<WordDoc> for DeletePlaced {
         let docx = sink.docx()?;
         let found = located(&mut sink, &docx, &self.place)?;
         let (text, first, last) = spanned(sink.doc(), &docx, &found)?;
+        let now = current(&found, &first, &last);
         let single = found.start_id == found.end_id || first.path == last.path;
         let (start, end) = if self.collapse_space && single {
             collapsed_space(&first, found.start, found.end)
@@ -148,7 +161,7 @@ impl Command<WordDoc> for DeletePlaced {
         let last = (!single).then_some(last);
         let edited = replace_place(&mut sink, &docx, (first, last, start, end), "")?;
         Ok(Placed {
-            range: range_id(&found),
+            range: range_id(&now),
             text,
             edited,
         })

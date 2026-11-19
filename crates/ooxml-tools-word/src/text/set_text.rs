@@ -17,6 +17,8 @@ use crate::Editing;
 use ooxml_store::Batch;
 use ooxml_tools::{Refusal, ToolArgs, ToolError, ToolResult, TryCall, WayOut};
 use ooxml_word_edit::{SetStyledText, StyledRun, StyledTextSet};
+use ooxml_word_model::address::resolve::resolve;
+use ooxml_word_model::ids::Entry;
 use serde_json::{json, Map, Value};
 
 /// How many styled runs a reply lists (rule 4); the rest are counted.
@@ -119,6 +121,14 @@ fn run(args: &WordSetText, editing: &Editing<'_>) -> Result<ToolResult<Value>, T
         )
         .at(format!("{prefix}target")));
     }
+    if let Some((target, prefix)) = table_named(editing, &work) {
+        return Err(ToolError::refusal(
+            Refusal::InvalidArguments,
+            format!("{target} is a table: word_set_text writes a paragraph or a cell (t:X/c<row>,<col>)"),
+            WayOut::call(try_call(args)),
+        )
+        .at(format!("{prefix}target")));
+    }
     let policy = editing.policy();
     let ops = work
         .iter()
@@ -136,6 +146,20 @@ fn run(args: &WordSetText, editing: &Editing<'_>) -> Result<ToolResult<Value>, T
         .map_err(|e| edit_refusal(e, "", try_call(args)))?;
     let items: Vec<StyledTextSet> = done.out.into_iter().filter_map(Result::ok).collect();
     Ok(reply(work.len(), items))
+}
+
+/// The first item whose target names a table (on the head: what an address names is no
+/// edit's to change), with its field's prefix.
+fn table_named<'w>(
+    editing: &Editing<'_>,
+    work: &'w [(String, String, Option<String>, String)],
+) -> Option<(&'w str, &'w str)> {
+    let head = editing.editor.store().snapshot();
+    let docx = head.doc().docx().ok()?;
+    work.iter().find_map(|(target, _, _, prefix)| {
+        let followed = head.doc().ids().follow(target);
+        matches!(resolve(&docx, &followed), Ok((_, Entry::Table(_)))).then_some((target.as_str(), prefix.as_str()))
+    })
 }
 
 /// The reply, as docx-agent's `outcome` makes it of the items' edits, with the styled
