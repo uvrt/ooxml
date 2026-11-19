@@ -562,7 +562,7 @@ def reflow_json(reflow: Any) -> dict[str, Any]:
     return data
 
 
-# -- small text a builder wrote (round 17, P6b) -------------------------------------------------
+# -- small text a writer wrote (round 17, P6b) -------------------------------------------------
 
 
 def note_small_text(call: Any, result: Result, blocks: Sequence[str]) -> Result:
