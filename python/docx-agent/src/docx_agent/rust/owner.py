@@ -100,20 +100,27 @@ class RustOwner:
         and the renames it made since the document was opened, read through the session's
         copy of the document (its reads find ``head`` by ``number``)."""
         from ..edit.ids import copy_ledger
-        from ..tools.format import open_docx
+        from ..layout import _LIVE_SETTINGS, _NOT_SETTINGS, _reader_class
 
         opened = mirror.opened
 
         def make(data: bytes) -> Any:
-            copy = open_docx(data)
+            # As docx_agent.layout.read_copy makes a reader: the reader class, the view's
+            # settings, its layouts (through ``_live``), no engine of its own.
             live = mirror.live()
+            copy = _reader_class(type(live)).open(data, stamping=live.stamping)
             given, renamed = head.ids_since(opened)
             follow(copy, {}, given, renamed, number, number)
-            if live is not None and live.history.version == number:
+            if live.history.version == number:
                 # The view is this version: what its ids were (deleted ones too) is the copy's.
                 copy._ledger = copy_ledger(live._ledger)
                 copy._aliases.update(live._aliases)
+            for name, value in vars(live).items():
+                if not name.startswith("_") and name not in _NOT_SETTINGS + _LIVE_SETTINGS:
+                    setattr(copy, name, value)
             copy.__dict__["_live"] = live
+            copy.converter = None
+            copy.__dict__["_frozen"] = (copy.history.version, copy._state, data)
             return copy
 
         return make
@@ -127,6 +134,17 @@ class RustOwner:
 
     def close(self, mirror: "reads.Mirror") -> None:
         reads._close(mirror.session, mirror.doc)
+
+
+def owned_bytes(document: Any) -> bytes | None:
+    """The bytes of the version a view of a document the session owns is, as the session
+    writes them -- what its versions are laid out from, so every layout of it is keyed by
+    them; ``None`` for any other document (its own ``to_bytes``)."""
+    mirror = document.__dict__.get("_rust_reads")
+    if not isinstance(mirror, reads.Mirror) or not mirror.owned or mirror.view_head is None \
+            or document.history.in_batch:
+        return None             # (inside a Python step the view is ahead of the session)
+    return bytes(mirror.view_head.save())
 
 
 def owned_validation(entry: Any) -> dict[str, Any] | None:

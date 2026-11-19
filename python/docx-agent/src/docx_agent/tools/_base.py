@@ -30,7 +30,7 @@ from ooxml_edit.tools import Result, ToolError, page_list, tool as _tool, valida
 from ooxml_edit.tools.worker import takes_affinity, takes_lane
 
 from ..rust import edits
-from ..rust.owner import owned_validation
+from ..rust.owner import owned_bytes, owned_validation
 from ..layout import (adopt, affinity, canon_of, known_summary, layout_key, summary_for, cache_key, convert_bytes, held_state, lay_out_bytes,
                       lay_out_unlocked, layout_options, remember_runner, twin, twin_of)
 
@@ -232,13 +232,32 @@ def seen_before(document: Any, data: bytes | None = None) -> Any:
         # layout of its current state either, without writing its bytes out to look.
         return None
     options = layout_options(document, {})
-    data = document.to_bytes() if data is None else data
-    key = layout_key(data, options)
-    found = known_summary(document, key)
-    if found is not None:
-        return found
-    conversion = document._layouts.get(cache_key(data, options))
-    return summary_for(document, key, conversion.layout) if conversion is not None else None
+    for state in _states(document, data):
+        key = layout_key(state, options)
+        found = known_summary(document, key)
+        if found is not None:
+            return found
+        conversion = document._layouts.get(cache_key(state, options))
+        if conversion is not None:
+            return summary_for(document, key, conversion.layout)
+    return None
+
+
+def _states(document: Any, data: bytes | None) -> Iterator[bytes]:
+    """The bytes a layout of the document's current state may be keyed by: ``data`` (or its
+    own); lane P2c4: for a view of a document the Rust session owns, also as the session
+    writes the state (a read of a committed version lays out those) and as the view does (a
+    check after a Python step)."""
+    owned = owned_bytes(document)
+    if owned is None:
+        yield document.to_bytes() if data is None else data
+        return
+    seen: set[bytes] = set()
+    for state in (data, owned, None):
+        state = document.to_bytes() if state is None else state
+        if state not in seen:
+            seen.add(state)
+            yield state
 
 
 def laid_before(document: Any, version: int | None = None) -> Any:
@@ -291,7 +310,7 @@ def cached_layout(document: Any, *, fetch: bool = True) -> Any:
     Round 38: laid out in the worker that made a check's facts, it is fetched from there
     (nothing laid out again) -- ``fetch`` false: only whether it was (``True``)."""
     options = layout_options(document, {})
-    data = document.to_bytes()
+    data = owned_bytes(document) or document.to_bytes()
     conversion = document._layouts.get(cache_key(data, options))
     if conversion is not None:
         return conversion.layout
@@ -542,7 +561,7 @@ def _reflow(document: Any, before: Any, out: dict[str, Any]) -> None:
         else:
             after = document.layout()
             now = summary_for(document, after.key if after.key is not None else layout_key(
-                document.to_bytes(), layout_options(document, {})), after)
+                owned_bytes(document) or document.to_bytes(), layout_options(document, {})), after)
         out["reflow"] = reflow_json(now.compare(before, canon_of(document)))
     except ToolError as error:
         out["reflow"] = f"{error.code}: {error.message}"
