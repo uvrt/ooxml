@@ -4,7 +4,7 @@
 //! overlapping, empty ones left out -- and the [`Pattern`] a find is made with: plain text
 //! ([`Literal`]: case-sensitive or not, white space collapsed or not, as `re.escape`d text
 //! matches) or one the caller supplies (a Python regular expression, matched by the tool
-//! layer's translation: this crate holds no regex engine); and [`HoldsMatch`], a find's read
+//! layer's translation: this crate holds no regex engine); and `HoldsMatch`, a find's read
 //! by condition (the blocks whose text it matches), checked at commit.
 //!
 //! Must not: change anything, or answer a pattern differently from Python's `re`.

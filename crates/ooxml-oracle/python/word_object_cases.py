@@ -146,12 +146,35 @@ def _set_cells(document, table: str) -> list[dict]:
             edit([cell(0, 0, "{{d:nothing/#1/a}}")]), edit([{"row": 0, "col": 0, "from": "d:nothing/#1/a"}])]
 
 
+_HELD = ("{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}docPr",
+         "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}sdtPr")
+
+
+def _held_rows(document, most: int = 4) -> list[dict]:
+    """Rows holding a drawing or a content control, copied below and above (their drawing
+    numbers and control ids given as docx-agent's importer gives them): at most ``most``."""
+    out: list[dict] = []
+    for table in _tables(document):
+        try:
+            _part, entry = document._resolve(table)
+        except KeyError:
+            continue
+        for index, (row, *_rest) in enumerate(getattr(entry, "rows", ())):
+            if len(out) >= 2 * most:
+                return out
+            if any(True for _ in row.iter(*_HELD)):
+                for side in ("after", "before"):
+                    out.append(call("word_edit_table", table=table, action="copy_row", index=index, side=side))
+    return out
+
+
 def edit_table_cases(document) -> list[dict]:
     """``word_edit_table``: rows inserted (after, before, at the top, past the end) and
     deleted (the first, a middle one, none named, past the end); columns deleted (the first,
     the second, none named, past the end), each with the file's text it removes; columns
     inserted (after the last, after and before the first, before the second, past the end);
-    rows copied (the last, the first below and above it, the second, past the end); cells
+    rows copied (the last, the first below and above it, the second, past the end, rows
+    holding a drawing or a content control); cells
     merged (across, down, both, a rectangle grown, past the grid, already one, reversed, no
     last) and split (by default, across, down, both, into one, past the table, no first);
     cells set (by place, in lines, as they are, by labels, a label an earlier cell wrote,
@@ -163,6 +186,7 @@ def edit_table_cases(document) -> list[dict]:
     out = []
     for table in _tables(document)[:3]:
         out += _rows(table) + _columns(table) + _cells(table) + _set_cells(document, table)
+    out += _held_rows(document)
     out += [call("word_edit_table", table="t:00000000", action="insert_row")]
     return out + [tracked(case) for case in out]
 

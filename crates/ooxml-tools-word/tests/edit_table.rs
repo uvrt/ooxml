@@ -6,7 +6,8 @@
 //! gives the splits that keep the grid); cells set by labels an earlier cell wrote, a
 //! column's rows filled and said by range and counts (rule 4), a label or place not there
 //! refused with the rows or the table's shape, one merged cell given two values refused
-//! with the split (rule 2). Their equality with
+//! with the split (rule 2); a row holding a drawing and a content control copied with new
+//! numbers. Their equality with
 //! docx-agent is `crates/ooxml-oracle/python/word_edits_diff.py --objects`'s.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
 
@@ -48,6 +49,7 @@ impl CacheBudget for Unlimited {
 }
 
 const W: &str = r#"xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml""#;
+const DRAWN: &str = r#" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:wp14="http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing""#;
 const R: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/";
 
 fn cell(text: &str, id: u32) -> String {
@@ -79,6 +81,11 @@ fn package() -> Package {
         ("_rels/.rels".to_owned(), format!(r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="{R}officeDocument" Target="word/document.xml"/></Relationships>"#)),
         ("word/document.xml".to_owned(), format!("<w:document {W}><w:body>{body}</w:body></w:document>")),
     ];
+    package_of(parts)
+}
+
+/// A package of `parts` as named.
+fn package_of(parts: [(String, String); 3]) -> Package {
     let mut w = Writer::new();
     for (name, data) in parts {
         let entry = NewEntry {
@@ -102,7 +109,13 @@ fn edit(arguments: Value) -> Value {
 /// `word_edit_table` called with each of `calls` in turn on a fresh document; the last
 /// reply.
 fn edits(calls: &[Value]) -> Value {
-    let editor = Editor::open(package(), StoreConfig::default(), Arc::new(Still), Arc::new(Unlimited)).unwrap();
+    edits_on(package(), calls).0
+}
+
+/// `word_edit_table` called with each of `calls` in turn on `package`; the last reply and
+/// the body part as it is after them.
+fn edits_on(package: Package, calls: &[Value]) -> (Value, String) {
+    let editor = Editor::open(package, StoreConfig::default(), Arc::new(Still), Arc::new(Unlimited)).unwrap();
     let opened = editor.store().snapshot().doc().clone();
     let caller = Caller::anonymous();
     let editing = Editing {
@@ -124,7 +137,9 @@ fn edits(calls: &[Value]) -> Value {
         let (args, _) = WordEditTable::accept(arguments, Some("docx")).unwrap();
         reply = Value::Object(word_edit_table(&args, &editing).to_json());
     }
-    reply
+    let snapshot = editor.store().snapshot();
+    let tree = snapshot.doc().tree("word/document.xml").unwrap().unwrap();
+    (reply, String::from_utf8(tree.write()).unwrap())
 }
 
 #[test]
@@ -274,4 +289,42 @@ fn a_value_by_reference_is_left_to_the_host() {
         "{reply}"
     );
     assert_eq!(reply["changed"], json!([]), "{reply}");
+}
+
+/// A made-up document whose first row holds a drawing (number 5) and a content control
+/// (id -7), and whose paragraph after the table holds a drawing numbered 9.
+fn drawn_package() -> Package {
+    let inline = |number: u32, anchor: &str| {
+        format!(
+            r#"<w:r><w:drawing><wp:inline wp14:anchorId="{anchor}" wp14:editId="{anchor}"><wp:extent cx="10" cy="10"/><wp:docPr id="{number}" name="Picture {number}"/></wp:inline></w:drawing></w:r>"#
+        )
+    };
+    let body = format!(
+        concat!(
+            r#"<w:tbl><w:tblPr><w:tblW w:w="4000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/></w:tblGrid>"#,
+            r#"<w:tr w14:paraId="00000A00" w14:textId="70000A00"><w:tc><w:p w14:paraId="00000A01" w14:textId="70000A01">{}</w:p></w:tc>"#,
+            r#"<w:tc><w:sdt><w:sdtPr><w:id w:val="-7"/></w:sdtPr><w:sdtContent><w:p w14:paraId="00000A02" w14:textId="70000A02"><w:r><w:t>a</w:t></w:r></w:p></w:sdtContent></w:sdt></w:tc></w:tr>"#,
+            r#"</w:tbl><w:p w14:paraId="00000D01" w14:textId="70000D01">{}</w:p>"#
+        ),
+        inline(5, "1A2B3C4D"),
+        inline(9, "2A2B3C4E"),
+    );
+    package_of([
+        ("[Content_Types].xml".to_owned(), r#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#.to_owned()),
+        ("_rels/.rels".to_owned(), format!(r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="{R}officeDocument" Target="word/document.xml"/></Relationships>"#)),
+        ("word/document.xml".to_owned(), format!("<w:document {W}{DRAWN}><w:body>{body}</w:body></w:document>")),
+    ])
+}
+
+#[test]
+fn a_row_with_a_drawing_and_a_control_copied_takes_new_numbers() {
+    let (reply, body) = edits_on(drawn_package(), &[json!({"action": "copy_row", "index": 0})]);
+    assert_eq!(reply["ok"], json!(true), "{reply}");
+    // past every drawing number the document has, the control's id fresh, the drawing's ids too
+    assert!(body.contains(r#"<wp:docPr id="10""#), "{body}");
+    assert_eq!(body.matches(r#"<wp:docPr id="5""#).count(), 1, "{body}");
+    assert_eq!(body.matches(r#"<w:id w:val="-7"/>"#).count(), 1, "{body}");
+    assert_eq!(body.matches("<w:id w:val=").count(), 2, "{body}");
+    assert_eq!(body.matches(r#"wp14:anchorId="1A2B3C4D""#).count(), 1, "{body}");
+    assert_eq!(body.matches(r#"wp14:editId="1A2B3C4D""#).count(), 1, "{body}");
 }
