@@ -121,13 +121,15 @@ def test_render_draws_a_tracked_column_deletion_as_accept_all_leaves_it(box):
 
 def test_an_inserted_cell_is_left_out_of_the_original_view(box):
     session, table = _opened(box)
-    document = _document(session)
-    part = document.package.document_part()
-    cell = next(document.package.tree(part).iter(_W + "tc"))
-    properties = cell.find(_W + "tcPr")
-    properties.append(etree.Element(_W + "cellIns", {_W + "id": "900", _W + "author": ME,
-                                                      _W + "date": "2026-11-12T09:00:00Z"}))
-    document.package.mark_dirty(part)
+    with session.lock(["d1"]) as [entry]:      # the application's own change
+        document = entry.document
+        part = document.package.document_part()
+        cell = next(document.package.tree(part).iter(_W + "tc"))
+        properties = cell.find(_W + "tcPr")
+        with document.batch():
+            properties.append(etree.Element(_W + "cellIns", {_W + "id": "900", _W + "author": ME,
+                                                              _W + "date": "2026-11-12T09:00:00Z"}))
+            document.package.mark_dirty(part)
     reopened = Document.open(document.to_bytes())
     assert "Area" not in reopened.to_markdown(view="original", ids=False)
     assert "Area" in reopened.to_markdown(view="final", ids=False)

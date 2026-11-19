@@ -41,6 +41,7 @@ Must not: keep a copy of the document beside the owner's, or read the view on a 
 
 from __future__ import annotations
 
+import threading
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field
 from typing import Any, Iterator
@@ -204,6 +205,8 @@ class OwnedEntry(DocumentEntry):
     _view_number: int | None = field(default=None, repr=False)
     _owned: OwnedHistory | None = field(default=None, repr=False)
     _step: ExitStack | None = field(default=None, repr=False)
+    #: The thread of the call whose step is open (only its reads of the view open the view's).
+    _step_thread: int | None = field(default=None, repr=False)
     _view_change: Any = field(default=None, repr=False)
     _watches: list[OwnedChange] = field(default_factory=list, repr=False)
 
@@ -233,7 +236,8 @@ class OwnedEntry(DocumentEntry):
                     self.owner.follow(self.handle, self.held, owned.head(), owned.version,
                                       owned.last_version)
                     self._view_number = owned.version
-        if self.batch_depth and self._step is not None and self._view_change is None:
+        if self.batch_depth and self._step is not None and self._view_change is None \
+                and self._step_thread == threading.get_ident():
             self._open_view_step()
         return self.held
 
@@ -289,7 +293,7 @@ class OwnedEntry(DocumentEntry):
                 yield
             else:
                 with ExitStack() as stack:
-                    self._step = stack
+                    self._step, self._step_thread = stack, threading.get_ident()
                     yield
                 # The view's batch closed (its step made, as the format makes one) and its
                 # watch with it: what it changed is the owner's to commit.
@@ -298,7 +302,7 @@ class OwnedEntry(DocumentEntry):
         finally:
             self.batch_depth -= 1
             if outer:
-                self._step = None
+                self._step = self._step_thread = None
                 self._view_change = None
         if owner is not None and self.version != before:
             self.owners[self.version] = owner
