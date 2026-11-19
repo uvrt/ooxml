@@ -567,3 +567,43 @@ fn a_summary_made_from_the_one_before_is_the_one_made_whole_and_says_what_change
         .iter()
         .all(|l| l.id.as_deref().is_some_and(|id| id.starts_with('p'))));
 }
+
+/// A text box floating beside its paragraph, holding `text`.
+fn text_box(text: &str) -> String {
+    let shape = floating_shape(r#"<a:noFill/>"#, "");
+    shape.replace(
+        "<wps:bodyPr/>",
+        &format!(r#"<wps:txbx><w:txbxContent><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:txbxContent></wps:txbx><wps:bodyPr/>"#),
+    )
+}
+
+#[test]
+fn the_layouts_compared_read_their_text_boxes_lines_and_the_summary_does_not() {
+    let mut engine = engine();
+    let before = engine
+        .lay_out_bytes(Arc::from(package(&text_box("Before"))))
+        .unwrap()
+        .unwrap();
+    let (summary, contents) = (engine.summary(&before).unwrap(), engine.contents(&before).unwrap());
+    assert!(
+        contents.pages[0].lines.len() > summary.pages[0].lines.len(),
+        "the text box's line"
+    );
+    let after = engine
+        .lay_out_bytes(Arc::from(package(&text_box("Behind"))))
+        .unwrap()
+        .unwrap();
+    let aliases = std::collections::HashMap::new();
+    // docx-agent's layout summary (`Page.lines`) does not see a text box's text change;
+    // its comparison of the layouts (`Page.text_lines`, word_template's reflow) does
+    assert!(engine
+        .summary(&after)
+        .unwrap()
+        .compare(&summary, &aliases)
+        .changed
+        .is_empty());
+    assert_eq!(
+        engine.contents(&after).unwrap().compare(&contents, &aliases).changed,
+        vec![1]
+    );
+}
