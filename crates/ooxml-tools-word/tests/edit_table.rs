@@ -170,14 +170,21 @@ fn a_merge_already_made_changes_nothing() {
 fn a_cell_split_down_adds_a_row_and_across_a_column() {
     // two columns by default, as Word's dialog offers
     let reply = edit(json!({"action": "split", "first": {"row": 0, "col": 0}, "rows": 2}));
-    assert_eq!((reply["data"]["rows"].clone(), reply["data"]["columns"].clone()), (json!(4), json!(3)), "{reply}");
+    assert_eq!(
+        (reply["data"]["rows"].clone(), reply["data"]["columns"].clone()),
+        (json!(4), json!(3)),
+        "{reply}"
+    );
     assert_eq!(reply["created"].as_array().map(Vec::len), Some(4), "{reply}");
 }
 
 #[test]
 fn a_split_past_a_cells_span_gives_the_splits_that_keep_the_grid() {
     let merge = json!({"action": "merge", "first": {"row": 0, "col": 0}, "last": {"row": 0, "col": 1}});
-    let reply = edits(&[merge, json!({"action": "split", "first": {"row": 0, "col": 0}, "columns": 3})]);
+    let reply = edits(&[
+        merge,
+        json!({"action": "split", "first": {"row": 0, "col": 0}, "columns": 3}),
+    ]);
     assert_eq!(reply["error"]["code"], "refused", "{reply}");
     assert_eq!(reply["error"]["valid_options"], json!([2]), "{reply}");
     assert_eq!(reply["error"]["details"]["call"]["arguments"]["columns"], 2, "{reply}");

@@ -85,7 +85,8 @@ fn no_cell_message(work: &Work, rows: &[Id], id: &str, row: usize, column: usize
     let mut grid: Vec<Vec<Option<Spot>>> = Vec::new();
     let mut origins: HashMap<usize, Spot> = HashMap::new();
     for (r, element) in rows.iter().enumerate() {
-        let before = usize::try_from(int(work, find_path(work, *element, &["trPr", "gridBefore"]), "val", 0)).unwrap_or(0);
+        let before =
+            usize::try_from(int(work, find_path(work, *element, &["trPr", "gridBefore"]), "val", 0)).unwrap_or(0);
         let mut line = vec![None; before];
         for placed in row_cells(work, *element) {
             let continues = vmerge(work, placed.cell).as_deref() == Some("continue");
@@ -138,7 +139,10 @@ fn no_cell_message(work: &Work, rows: &[Id], id: &str, row: usize, column: usize
         }
     };
     if !merged.is_empty() {
-        text += &format!("; merged: {} (a merged cell's id is its first position's)", listed(&merged));
+        text += &format!(
+            "; merged: {} (a merged cell's id is its first position's)",
+            listed(&merged)
+        );
     }
     if !empty.is_empty() {
         text += &format!("; no cell at {}", listed(&empty));
@@ -179,7 +183,14 @@ fn merge_node(work: &mut Work, merge: &str) -> Id {
 
 /// A new cell with `cell`'s properties (no span, merge or records but those given),
 /// holding an empty paragraph like its first (`_new_cell_like`).
-fn new_cell_like(work: &mut Work, cell: Id, span: usize, width: Option<i64>, merge: Option<&str>, orders: &Orders) -> Id {
+fn new_cell_like(
+    work: &mut Work,
+    cell: Id,
+    span: usize,
+    width: Option<i64>,
+    merge: Option<&str>,
+    orders: &Orders,
+) -> Id {
     let found = work.find(cell, W, "tcPr");
     let properties = clean_cell_properties(work, found);
     for local in ["gridSpan", "vMerge", "hMerge"] {
@@ -235,7 +246,10 @@ fn properties_of(work: &mut Work, cell: Id) -> Id {
 
 /// The cell of `row` starting at grid column `start`.
 fn cell_at(work: &Work, row: Option<&Id>, start: usize) -> Option<Id> {
-    row_cells(work, *row?).into_iter().find(|p| p.start == start).map(|p| p.cell)
+    row_cells(work, *row?)
+        .into_iter()
+        .find(|p| p.start == start)
+        .map(|p| p.cell)
 }
 
 /// Python's `round` of `a / b`: to the nearest, a half to the even.
@@ -262,12 +276,22 @@ fn regrid(work: &mut Work, lines: &[i64], new: &[i64], orders: &Orders) -> Resul
     }
     let index: HashMap<i64, usize> = new.iter().enumerate().map(|(k, x)| (*x, k)).collect();
     let at = |x: &i64| i64::try_from(index.get(x).copied().unwrap_or(0)).unwrap_or(0);
-    let widths: Vec<i64> = new.windows(2).map(|w| w.get(1).copied().unwrap_or(0) - w.first().copied().unwrap_or(0)).collect();
+    let widths: Vec<i64> = new
+        .windows(2)
+        .map(|w| w.get(1).copied().unwrap_or(0) - w.first().copied().unwrap_or(0))
+        .collect();
     set_grid(work, table, &widths, orders);
     for (row, left, placed, right) in positions {
         let (before, after) = skips(work, row);
         if before > 0 {
-            skip(work, row, ("gridBefore", "wBefore"), at(&left) - signed(before), None, orders);
+            skip(
+                work,
+                row,
+                ("gridBefore", "wBefore"),
+                at(&left) - signed(before),
+                None,
+                orders,
+            );
         }
         for (cell, a, b) in &placed {
             let properties = properties_of(work, *cell);
@@ -285,7 +309,14 @@ fn regrid(work: &mut Work, lines: &[i64], new: &[i64], orders: &Orders) -> Resul
         }
         if after > 0 {
             let last = placed.last().map_or(left, |p| p.2);
-            skip(work, row, ("gridAfter", "wAfter"), (at(&right) - at(&last)) - signed(after), None, orders);
+            skip(
+                work,
+                row,
+                ("gridAfter", "wAfter"),
+                (at(&right) - at(&last)) - signed(after),
+                None,
+                orders,
+            );
         }
     }
     Ok(())
@@ -333,7 +364,12 @@ fn split_across(
             uneven = Some((span, sizes.clone()));
         }
         cuts = (1..n)
-            .map(|k| lines.get(start + sizes.iter().take(k).sum::<usize>()).copied().ok_or_else(off_grid))
+            .map(|k| {
+                lines
+                    .get(start + sizes.iter().take(k).sum::<usize>())
+                    .copied()
+                    .ok_or_else(off_grid)
+            })
             .collect::<Result<_>>()?;
     }
     let mut new_lines: Vec<i64> = lines.iter().chain(cuts.iter()).copied().collect();
@@ -345,14 +381,24 @@ fn split_across(
     }
     let index: HashMap<i64, usize> = lines.iter().enumerate().map(|(k, x)| (*x, k)).collect();
     let at = |x: i64| index.get(&x).copied().unwrap_or(0);
-    let edges: Vec<i64> = std::iter::once(x0).chain(cuts.iter().copied()).chain(std::iter::once(x1)).collect();
+    let edges: Vec<i64> = std::iter::once(x0)
+        .chain(cuts.iter().copied())
+        .chain(std::iter::once(x1))
+        .collect();
     let piece = |k: usize| {
-        let (a, b) = (edges.get(k).copied().unwrap_or(x1), edges.get(k + 1).copied().unwrap_or(x1));
+        let (a, b) = (
+            edges.get(k).copied().unwrap_or(x1),
+            edges.get(k + 1).copied().unwrap_or(x1),
+        );
         (at(b).saturating_sub(at(a)), b - a)
     };
     let mut made = Vec::new();
     for r in top..=bottom {
-        let member = if r == top { Some(cell) } else { cell_at(work, rows.get(r), at(x0)) };
+        let member = if r == top {
+            Some(cell)
+        } else {
+            cell_at(work, rows.get(r), at(x0))
+        };
         let Some(member) = member else { continue };
         let merge = if bottom > top { vmerge(work, member) } else { None };
         let properties = properties_of(work, member);
@@ -372,7 +418,13 @@ fn split_across(
 
 /// The new rows below a cell's merge, each with a plain cell under it and every other cell
 /// of the row merged down into it.
-fn rows_below(work: &mut Work, last: Id, (start, span): (usize, usize), count: usize, orders: &Orders) -> (Vec<Id>, Vec<Id>) {
+fn rows_below(
+    work: &mut Work,
+    last: Id,
+    (start, span): (usize, usize),
+    count: usize,
+    orders: &Orders,
+) -> (Vec<Id>, Vec<Id>) {
     let (mut made_rows, mut made_cells) = (Vec::new(), Vec::new());
     let mut anchor = last;
     for _ in 0..count {
@@ -446,7 +498,9 @@ fn split_down(work: &mut Work, head: Id, m: usize, orders: &Orders) -> Result<(V
     for k in 0..m {
         let size = g / m + usize::from(k < g % m);
         for j in 0..size {
-            let Some(cell) = cell_at(work, rows.get(r + j), placed.start) else { continue };
+            let Some(cell) = cell_at(work, rows.get(r + j), placed.start) else {
+                continue;
+            };
             let merge = match (size, j) {
                 (1, _) => None,
                 (_, 0) => Some("restart"),
@@ -466,7 +520,12 @@ pub(super) fn split_cell(
     split: Split,
     orders: &Orders,
 ) -> Result<TableChanged> {
-    let Split { row, column, rows, columns } = split;
+    let Split {
+        row,
+        column,
+        rows,
+        columns,
+    } = split;
     let work = &mut held.work;
     let table = work.root();
     let tracker = matches!(sink.policy(), RevisionPolicy::Tracked(_)).then(|| TableTracker::new(work, table, true));
@@ -499,7 +558,12 @@ pub(super) fn split_cell(
     }
     let top_row = before.get(top).copied();
     let mut heads = vec![cell];
-    heads.extend(new_cells.iter().copied().filter(|c| ancestor(work, *c, "tr") == top_row));
+    heads.extend(
+        new_cells
+            .iter()
+            .copied()
+            .filter(|c| ancestor(work, *c, "tr") == top_row),
+    );
     let mut new_rows = Vec::new();
     if rows > 1 {
         let ordered: Vec<Id> = top_row

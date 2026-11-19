@@ -196,7 +196,10 @@ impl TableView {
     /// past the last row.
     pub(crate) fn row_cells(&self, row: usize) -> Vec<(usize, usize)> {
         let Some(element) = self.table.rows.get(row).and_then(|(path, _)| {
-            ooxml_word_model::docx::at_path(&self.table.element, path.get(self.table.path.len()..).unwrap_or_default())
+            ooxml_word_model::docx::at_path(
+                &self.table.element,
+                path.get(self.table.path.len()..).unwrap_or_default(),
+            )
         }) else {
             return Vec::new();
         };

@@ -121,8 +121,8 @@ pub(super) fn rectangle(work: &Work, first: Position, last: Position) -> Result<
             .into_iter()
             .filter(|p| c1 <= p.start && p.start <= c2)
             .collect();
-        let fills = inside.first().is_some_and(|p| p.start == c1)
-            && inside.last().is_some_and(|p| p.start + p.span - 1 == c2);
+        let fills =
+            inside.first().is_some_and(|p| p.start == c1) && inside.last().is_some_and(|p| p.start + p.span - 1 == c2);
         if !fills {
             return Err(EditError::Refused(format!(
                 "row {r} does not fill the cells from column {c1} to {c2}"
@@ -283,7 +283,9 @@ fn paragraphs(work: &Work, cell: Id) -> Vec<Id> {
 fn merge_plain(work: &mut Work, plan: &[Vec<Placed>], origin: Id, orders: &Orders) -> Vec<Id> {
     let mut moved: Vec<(Id, bool)> = Vec::new();
     for (k, row) in plan.iter().enumerate() {
-        let Some(lead) = row.first().map(|p| p.cell) else { continue };
+        let Some(lead) = row.first().map(|p| p.cell) else {
+            continue;
+        };
         let properties = merged_properties(work, row, orders);
         if plan.len() > 1 {
             let attributes: &[(&str, &str)] = if k == 0 { &[("val", "restart")] } else { &[] };
@@ -374,7 +376,10 @@ fn whole_comments(work: &Work, paragraph: Id) -> Vec<String> {
 /// comment reaching outside stays, its reference left out of the copy.
 fn move_references(work: &mut Work, original: Id, copy: Id) {
     let whole = whole_comments(work, original);
-    let held = |work: &Work, node: Id| work.get(node, Some(W), "id").is_some_and(|i| whole.iter().any(|w| w == i));
+    let held = |work: &Work, node: Id| {
+        work.get(node, Some(W), "id")
+            .is_some_and(|i| whole.iter().any(|w| w == i))
+    };
     for node in work.iter(copy, W, &["commentReference"]) {
         if !held(work, node) {
             super::copy_row::drop_run_of(work, node);
@@ -382,9 +387,13 @@ fn move_references(work: &mut Work, original: Id, copy: Id) {
     }
     let mut moved = work.iter(original, W, &["footnoteReference", "endnoteReference"]);
     moved.extend(
-        work.iter(original, W, &["commentReference", "commentRangeStart", "commentRangeEnd"])
-            .into_iter()
-            .filter(|n| held(work, *n)),
+        work.iter(
+            original,
+            W,
+            &["commentReference", "commentRangeStart", "commentRangeEnd"],
+        )
+        .into_iter()
+        .filter(|n| held(work, *n)),
     );
     for node in moved {
         if work.is_any(node, W, &["commentRangeStart", "commentRangeEnd"]) {
@@ -442,7 +451,9 @@ fn merge_tracked(
 ) -> Vec<String> {
     let mut released = Vec::new();
     for (k, row) in plan.iter().enumerate() {
-        let Some(lead) = row.first().map(|p| p.cell) else { continue };
+        let Some(lead) = row.first().map(|p| p.cell) else {
+            continue;
+        };
         if plan.len() > 1 {
             let properties = match work.find(lead, W, "tcPr") {
                 Some(p) => p,
@@ -459,7 +470,12 @@ fn merge_tracked(
             let record = stamp.make(work, "cellMerge");
             set_attr(work, record, "vMerge", if k == 0 { "rest" } else { "cont" });
             if let Some(had) = had {
-                set_attr(work, record, "vMergeOrig", if had == "restart" { "rest" } else { "cont" });
+                set_attr(
+                    work,
+                    record,
+                    "vMergeOrig",
+                    if had == "restart" { "rest" } else { "cont" },
+                );
             }
             insert_in_order(work, properties, record, orders);
         }

@@ -264,7 +264,12 @@ fn cells_change(args: &WordEditTable, view: &TableView, retry: &TryCall) -> Resu
 /// A cell over several grid columns split into more cells than it spans, refused
 /// (`_no_split_past_span`, round 57): Word would add grid columns, changing every other
 /// row's cells; into 2 up to its span keeps the grid.
-fn no_split_past_span(args: &WordEditTable, view: &TableView, at: &Position, columns: Option<usize>) -> Result<(), ToolError> {
+fn no_split_past_span(
+    args: &WordEditTable,
+    view: &TableView,
+    at: &Position,
+    columns: Option<usize>,
+) -> Result<(), ToolError> {
     let Some(columns) = columns else { return Ok(()) };
     let row = usize::try_from(at.row).unwrap_or(usize::MAX);
     let column = usize::try_from(at.col).unwrap_or(usize::MAX);
@@ -289,8 +294,7 @@ fn no_split_past_span(args: &WordEditTable, view: &TableView, at: &Position, col
         view.table.id,
         listed.join(", ")
     );
-    let options = WayOut::options(keeps.iter().map(|k| json!(k)).collect())
-        .unwrap_or_else(|| WayOut::one(json!(span)));
+    let options = WayOut::options(keeps.iter().map(|k| json!(k)).collect()).unwrap_or_else(|| WayOut::one(json!(span)));
     let call = json!({"tool": "word_edit_table", "arguments": {"doc": args.doc, "table": view.table.id,
         "action": "split", "first": {"row": at.row, "col": at.col}, "columns": span}});
     Err(ToolError::refusal(Refusal::Refused, message, options)

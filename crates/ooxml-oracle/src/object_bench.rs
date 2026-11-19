@@ -99,7 +99,10 @@ pub fn run(args: &[String]) -> Result<(), String> {
         ("delete_column", json!({"index": 0})),
         ("insert_column", json!({"index": 0})),
         ("copy_row", json!({"index": 1})),
-        ("merge", json!({"first": {"row": 0, "col": 0}, "last": {"row": 1, "col": 1}})),
+        (
+            "merge",
+            json!({"first": {"row": 0, "col": 0}, "last": {"row": 1, "col": 1}}),
+        ),
         ("split", json!({"first": {"row": 1, "col": 0}, "rows": 2, "columns": 2})),
     ];
     for (action, arguments) in calls {
