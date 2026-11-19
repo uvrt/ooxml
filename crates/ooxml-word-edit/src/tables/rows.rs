@@ -4,7 +4,10 @@
 //! ([`super::new_row`]) with fresh ids and, tracked, its insertion recorded; a row deleted
 //! with a merge down it starts carried on from the row below (tracked: as Word records a
 //! divided merge), its markers rehomed and relationships released, or, tracked, deleted as
-//! Word deletes rows ([`crate::table_delete`]).
+//! Word deletes rows ([`crate::table_delete`]). The other changes of [`TableChange`] --
+//! columns inserted and deleted, a row copied, cells merged and split -- are dispatched to
+//! their modules from here; a merge already made and a split into one cell write nothing,
+//! not even the document's ids.
 //!
 //! Must not: decide what a tool's arguments mean, or read past the table but for its
 //! ids and its part's relationships. Tables with pending tracked structure, and rows
@@ -71,6 +74,26 @@ pub enum TableChange {
         /// The grid column, from 0.
         index: usize,
     },
+    /// The cells from `first` to `last` (row, grid column; inclusive) merged into one, the
+    /// rectangle grown to take in every cell it touches whole.
+    Merge {
+        /// The top left position.
+        first: (usize, usize),
+        /// The bottom right position.
+        last: (usize, usize),
+    },
+    /// The cell over `(row, column)` split into `rows` x `columns` cells (`columns` by
+    /// default the cell's grid columns where it spans several, else 2).
+    Split {
+        /// The row, from 0.
+        row: usize,
+        /// The grid column, from 0.
+        column: usize,
+        /// Into how many rows.
+        rows: usize,
+        /// Into how many columns.
+        columns: Option<usize>,
+    },
 }
 
 /// Change a table's rows: one edit, one step.
@@ -99,6 +122,8 @@ pub struct TableChanged {
     pub renamed: Vec<(String, String)>,
     /// What it did that the caller did not ask for.
     pub warnings: Vec<String>,
+    /// Nothing changed (the cells merged already, a split into one cell).
+    pub unchanged: bool,
 }
 
 /// Whether `table` holds tracked structure -- a row or cell deleted or inserted, cells
@@ -182,6 +207,13 @@ impl EditTable {
             TableChange::DeleteColumn { index } => {
                 return super::columns::check_column(&work, &found.id, index).map(|()| index)
             }
+            TableChange::Merge { first, last } => return super::merge::rectangle(&work, first, last).map(|_| 0),
+            TableChange::Split {
+                row,
+                column,
+                rows,
+                columns,
+            } => return super::split::plan_split(&work, &found.id, (row, column), rows, columns).map(|_| 0),
             TableChange::InsertColumn { index, .. } => {
                 return if index < super::shape::grid_widths(&work, work.root()).len() {
                     Ok(index)
@@ -269,10 +301,47 @@ impl Held {
 }
 
 impl EditTable {
+    /// What a merge already made or a split into one cell answers: nothing written, not
+    /// even the document's ids stamped (docx-agent returns before it prepares).
+    fn unchanged(&self, found: &Found) -> Result<Option<TableChanged>> {
+        let work = Work::of(&found.element, Vec::new());
+        let warnings = match self.change {
+            TableChange::Merge { first, last } => {
+                let rectangle = super::merge::rectangle(&work, first, last)?;
+                if !super::merge::merged_already(&work, &rectangle.plan) {
+                    return Ok(None);
+                }
+                super::merge::grown_note(&rectangle, first, last).into_iter().collect()
+            }
+            TableChange::Split {
+                row,
+                column,
+                rows,
+                columns,
+            } => {
+                if super::split::plan_split(&work, &found.id, (row, column), rows, columns)?.is_some() {
+                    return Ok(None);
+                }
+                Vec::new()
+            }
+            _ => return Ok(None),
+        };
+        Ok(Some(TableChanged {
+            id: Some(found.id.clone()),
+            table: found.id.clone(),
+            warnings,
+            unchanged: true,
+            ..TableChanged::default()
+        }))
+    }
+
     fn edit(&self, sink: &mut EditSink<'_, '_>) -> Result<TableChanged> {
         let docx = sink.docx()?;
         let found = find_table(sink.doc(), &docx, &self.table)?;
         let index = self.check(sink.doc(), &found)?;
+        if let Some(unchanged) = self.unchanged(&found)? {
+            return Ok(unchanged);
+        }
         // the row's id as it was named before stamping (docx-agent's `entry.rows`)
         let old_row = docx
             .part(&found.part)
@@ -310,6 +379,23 @@ impl EditTable {
             TableChange::CopyRow { below, .. } => super::copy_row::copy_row(sink, &mut held, index, below, orders)?,
             TableChange::InsertColumn { right, .. } => {
                 super::new_column::insert_column(sink, &mut held, index, right, orders)?
+            }
+            TableChange::Merge { first, last } => super::merge::merge_cells(sink, &mut held, first, last, orders)?,
+            TableChange::Split {
+                row,
+                column,
+                rows,
+                columns,
+            } => {
+                let columns = super::split::plan_split(&held.work, &held.id, (row, column), rows, columns)?
+                    .ok_or_else(|| EditError::Path(held.found.part.clone()))?;
+                let split = super::split::Split {
+                    row,
+                    column,
+                    rows,
+                    columns,
+                };
+                super::split::split_cell(sink, &mut held, split, orders)?
             }
         };
         out.renamed = renamed;
@@ -541,7 +627,7 @@ fn paragraph_places(element: &Element, at: &mut Vec<u32>, out: &mut Vec<Vec<u32>
 
 /// Each cell whose vertical merge a tracked edit changed: the new merge as a
 /// `w:cellMerge` (`_merges_as_cell_merges`), the form Word records a divided merge in.
-fn merges_as_cell_merges(work: &mut Work, tracker: &TableTracker, stamp: &mut Stamp, orders: &Orders) {
+pub(super) fn merges_as_cell_merges(work: &mut Work, tracker: &TableTracker, stamp: &mut Stamp, orders: &Orders) {
     let short = |v: &str| if v == "restart" { "rest" } else { "cont" };
     for &(cell, old) in tracker.cells() {
         if work.parent(cell).is_none() {

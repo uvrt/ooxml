@@ -1,7 +1,9 @@
 //! `word_edit_table`'s handlers on a made-up document, for the tool design rules they
-//! touch: a column inserted, a row copied (what it leaves on the row copied said), and a
-//! refusal carrying its way out (rule 2: a column past the last names the columns; a row
-//! not copied gives the calls that add a row like it and fill it). Their equality with
+//! touch: a column inserted, a row copied (what it leaves on the row copied said), cells
+//! merged and split, a merge already made changing nothing (rule 3), and a refusal
+//! carrying its way out (rule 2: a column past the last names the columns; a row not
+//! copied gives the calls that add a row like it and fill it; a split past a cell's span
+//! gives the splits that keep the grid). Their equality with
 //! docx-agent is `crates/ooxml-oracle/python/word_edits_diff.py --objects`'s.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
 
@@ -91,6 +93,12 @@ fn package() -> Package {
 
 /// `word_edit_table` called with `arguments` (and `doc`, `table`) on a fresh document.
 fn edit(arguments: Value) -> Value {
+    edits(&[arguments])
+}
+
+/// `word_edit_table` called with each of `calls` in turn on a fresh document; the last
+/// reply.
+fn edits(calls: &[Value]) -> Value {
     let editor = Editor::open(package(), StoreConfig::default(), Arc::new(Still), Arc::new(Unlimited)).unwrap();
     let opened = editor.store().snapshot().doc().clone();
     let caller = Caller::anonymous();
@@ -102,11 +110,15 @@ fn edit(arguments: Value) -> Value {
         doc: "d1",
         cancel: &Never,
     };
-    let mut arguments = arguments;
-    arguments["doc"] = json!("d1");
-    arguments["table"] = json!("t:00000A00");
-    let (args, _) = WordEditTable::accept(arguments, Some("docx")).unwrap();
-    Value::Object(word_edit_table(&args, &editing).to_json())
+    let mut reply = Value::Null;
+    for arguments in calls {
+        let mut arguments = arguments.clone();
+        arguments["doc"] = json!("d1");
+        arguments["table"] = json!("t:00000A00");
+        let (args, _) = WordEditTable::accept(arguments, Some("docx")).unwrap();
+        reply = Value::Object(word_edit_table(&args, &editing).to_json());
+    }
+    reply
 }
 
 #[test]
@@ -138,4 +150,35 @@ fn a_row_not_copied_gives_the_calls_that_add_one_like_it() {
     let calls = &reply["error"]["details"]["calls"];
     assert_eq!(calls[0]["arguments"]["action"], "insert_row", "{reply}");
     assert_eq!(calls[1]["arguments"]["cells"][0]["row"], 3, "{reply}");
+}
+
+#[test]
+fn cells_merged_across_are_one_cell() {
+    let reply = edit(json!({"action": "merge", "first": {"row": 0, "col": 0}, "last": {"row": 0, "col": 1}}));
+    assert_eq!(reply["changed"], json!(["t:00000A00"]), "{reply}");
+    assert!(reply["data"]["markdown"].to_string().contains("colspan"), "{reply}");
+}
+
+#[test]
+fn a_merge_already_made_changes_nothing() {
+    let reply = edit(json!({"action": "merge", "first": {"row": 1, "col": 1}, "last": {"row": 1, "col": 1}}));
+    assert!(reply["warnings"][0].to_string().contains("nothing changed"), "{reply}");
+    assert!(reply.get("changed").is_none_or(|c| c == &json!([])), "{reply}");
+}
+
+#[test]
+fn a_cell_split_down_adds_a_row_and_across_a_column() {
+    // two columns by default, as Word's dialog offers
+    let reply = edit(json!({"action": "split", "first": {"row": 0, "col": 0}, "rows": 2}));
+    assert_eq!((reply["data"]["rows"].clone(), reply["data"]["columns"].clone()), (json!(4), json!(3)), "{reply}");
+    assert_eq!(reply["created"].as_array().map(Vec::len), Some(4), "{reply}");
+}
+
+#[test]
+fn a_split_past_a_cells_span_gives_the_splits_that_keep_the_grid() {
+    let merge = json!({"action": "merge", "first": {"row": 0, "col": 0}, "last": {"row": 0, "col": 1}});
+    let reply = edits(&[merge, json!({"action": "split", "first": {"row": 0, "col": 0}, "columns": 3})]);
+    assert_eq!(reply["error"]["code"], "refused", "{reply}");
+    assert_eq!(reply["error"]["valid_options"], json!([2]), "{reply}");
+    assert_eq!(reply["error"]["details"]["call"]["arguments"]["columns"], 2, "{reply}");
 }

@@ -244,7 +244,7 @@ const SHOWN: [&str; 10] = [
 
 /// Whether a deleted cell keeps anything (docx-agent's `_content_kept`): content outside
 /// deletions and moves away, or a paragraph mark of its own not deleted.
-fn content_kept(cell: &Element) -> bool {
+pub(crate) fn content_kept(cell: &Element) -> bool {
     fn shown(node: &Element, deleted: bool) -> bool {
         node.child_elements().any(|e| {
             let gone = deleted || e.name().is(Some(W), "del") || e.name().is(Some(W), "moveFrom");
