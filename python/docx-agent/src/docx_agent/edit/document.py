@@ -1868,7 +1868,8 @@ class Document(TrackingOps, RevisionOps, TextOps, FormatOps, ListOps, LinkOps, P
                 sync_text_box(holder)
 
     def _text_box_snapshot(self) -> list[tuple[str, Element, bytes]]:
-        """Every text box's content as Word reads it (the ``mc:Choice``), before an edit."""
+        """Every text box's content as Word reads it (the ``mc:Choice``), before an edit, as
+        :func:`_box_content` compares it."""
         from .drawings import _MC
 
         out = []
@@ -1877,13 +1878,15 @@ class Document(TrackingOps, RevisionOps, TextOps, FormatOps, ListOps, LinkOps, P
                 choice = holder.find(_MC + "Choice")
                 content = next(choice.iter(_W + "txbxContent"), None) if choice is not None else None
                 if content is not None:
-                    out.append((part, holder, etree.tostring(content)))
+                    out.append((part, holder, _box_content(content)))
         return out
 
-    def _sync_text_boxes(self, before: list[tuple[str, Element, bytes]]) -> None:
+    def _sync_text_boxes(self, before: list[tuple[str, Element, bytes]] | None) -> None:
         """After an edit: every text box whose content changed gets the same content in its
         VML fallback, as Word writes a text box (paraIds and all; a revision record copied
-        gets an id of its own afterwards)."""
+        gets an id of its own afterwards).  Lane P2b6: the ids stamping gives are no change
+        on their own (:func:`_box_content`): Word reads ``mc:Choice`` and writes the fallback
+        again on saving, and older readers ignore them.  ``None``: every box."""
         from .drawings import _MC, sync_text_box
 
         known = {id(holder): data for _, holder, data in before} if before is not None else {}
@@ -1892,7 +1895,7 @@ class Document(TrackingOps, RevisionOps, TextOps, FormatOps, ListOps, LinkOps, P
             for holder in self.package.tree(part).iter(_MC + "AlternateContent"):
                 choice = holder.find(_MC + "Choice")
                 content = next(choice.iter(_W + "txbxContent"), None) if choice is not None else None
-                if content is None or (before is not None and known.get(id(holder)) == etree.tostring(content)):
+                if content is None or (before is not None and known.get(id(holder)) == _box_content(content)):
                     continue
                 changed = sync_text_box(holder) or changed
             if changed:
@@ -2755,8 +2758,7 @@ class Document(TrackingOps, RevisionOps, TextOps, FormatOps, ListOps, LinkOps, P
                 # batch ends, as an edit's own does (every tool call is a batch).
                 before = self._revision_id_counts() if outermost else None
                 # Lane P2c2: a text box an edit inside changed gets its VML fallback synced
-                # when the batch ends, after the edits' stamping, as a lone edit's is (every
-                # tool call is a batch; the Rust session syncs it so too).
+                # when the batch ends, as a lone edit's is (every tool call is a batch).
                 boxes = self._text_box_snapshot() if outermost else None
                 yield
                 if recording is not None:
@@ -3221,6 +3223,22 @@ def _fields_balanced(paragraph: Element) -> bool:
 
 _MARKERS = frozenset(_RANGE_PAIRS) | frozenset(_RANGE_ENDS)
 _BLOCK_TAGS = frozenset({W_P, W_TBL, _W + "sdt", _W + "customXml", _W + "altChunk"})
+
+
+_STAMPED_IDS = (_ids.PARA_ID, _ids.TEXT_ID, _ids.ANCHOR_ID, _ids.EDIT_ID)
+
+
+def _box_content(content: Element) -> bytes:
+    """A text box's content as compared before and after an edit: without the durable ids
+    stamping gives (paraId, textId, anchorId, editId) and the namespace declarations nothing
+    left uses, so stamping alone is no change -- whenever in the edit or batch it ran."""
+    plain = copy.deepcopy(content)
+    for node in plain.iter(tag=etree.Element):
+        for name in _STAMPED_IDS:
+            if name in node.attrib:
+                del node.attrib[name]
+    etree.cleanup_namespaces(plain)  # w14/wp14 declared once stamped: not content either
+    return etree.tostring(plain)
 
 
 def _control_movable(entry: ControlBlock, doing: str) -> None:

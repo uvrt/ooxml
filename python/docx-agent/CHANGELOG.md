@@ -45,7 +45,12 @@ be made again is bounded by one memory budget per process.
 - **Fixed: a text box's VML fallback after a tool call** (lane P2c2). A tool call is a
   batch, and a batch did not sync the fallback of a text box an edit inside changed, as a
   lone edit does: the fallback kept the old text and got no paraIds. A batch now syncs it
-  when it ends, after the edits' stamping, as the Rust session does.
+  when it ends, as the Rust session does.
+- **Changed: the ids stamping gives are no change to a text box** (lane P2b6). A lone edit
+  or a batch syncs a text box's VML fallback only when the box's content changed; the
+  paraIds, textIds, anchorIds and editIds stamping gave its paragraphs and drawings, alone,
+  leave the fallback as it was (Word reads `mc:Choice` and writes the fallback again on
+  saving; older readers ignore these ids). The Rust core's commands keep the same rule.
 - **Fixed: a deadlock when a document is collected during a layout** (seen on 3.15t). A
   document's finalizers forgot its engines, layouts and Rust owners themselves; the collector
   can run them anywhere, also inside `pages.lay_out` on the thread that held the engines'
