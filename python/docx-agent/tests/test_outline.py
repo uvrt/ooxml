@@ -185,6 +185,7 @@ def test_the_tools_take_a_heading_range(box):
     checked = ok(box, session, "check", doc=doc, include=["validate"], range=[first])
     assert checked.ok
     ok(box, session, "word_format", doc=doc, targets=[first], keep_with_next=True)
+    document = session.entry(doc).document  # (the view as the served call left it)
     assert all(document.paragraph(p).keep_with_next for p in (ids["First part"], ids["Detail"]))
     assert not document.paragraph(ids["Second part"]).keep_with_next
     ok(box, session, "word_move", doc=doc, blocks="h:" + ids["Second part"], before=ids["First part"])
@@ -268,6 +269,7 @@ def test_unnumbering_a_style_numbered_paragraph_is_refused_with_styles_that_fit(
     assert "Normal" in error["valid_options"] and error["valid_options"][-1] == "force"
     assert opened_document.list_of(words) is not None                        # nothing changed
     ok(box, session, "word_lists", doc=doc, targets=[words], action="remove", force=True)
+    opened_document = session.entry(doc).document  # (the view as the served call left it)
     assert opened_document.list_of(words) is None
 
 
