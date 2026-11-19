@@ -6,13 +6,17 @@
 //! texts instead of walking every paragraph again (`find_text`, `replace_text`, the edit
 //! core's finds).
 //!
+//! [`KeptTexts`] holds, for one document, each part's texts as the latest version that read
+//! them left them: shared by all its versions, so a version reads from them whatever the
+//! versions between it and that one read.
+//!
 //! Must not: keep anything a part's tree does not determine, or a text of any other view.
 
 use crate::docx::text::{paragraph_text, View};
 use crate::ids::PartIds;
 use ooxml_xml::Element;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 /// One paragraph: its element (held, so its pointer is never another's) and its text.
 #[derive(Debug, Clone)]
@@ -94,5 +98,31 @@ impl PartTexts {
     /// Every paragraph's text, in document order.
     pub fn iter(&self) -> impl Iterator<Item = &str> {
         self.lines.iter().map(|line| &*line.text)
+    }
+}
+
+/// One document's latest paragraph texts per story part, shared by its versions.
+#[derive(Debug, Default)]
+pub struct KeptTexts {
+    parts: Mutex<HashMap<String, Arc<PartTexts>>>,
+}
+
+impl KeptTexts {
+    /// The texts of `part` that a version of it read last.
+    #[must_use]
+    pub fn latest(&self, part: &str) -> Option<Arc<PartTexts>> {
+        self.parts
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(part)
+            .cloned()
+    }
+
+    /// Keep `texts` as `part`'s latest.
+    pub fn keep(&self, part: &str, texts: &Arc<PartTexts>) {
+        self.parts
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(part.to_owned(), Arc::clone(texts));
     }
 }

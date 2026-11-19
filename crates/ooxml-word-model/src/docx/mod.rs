@@ -33,7 +33,7 @@ mod versions;
 mod walk;
 
 pub use derived::Derived;
-pub use texts::PartTexts;
+pub use texts::{KeptTexts, PartTexts};
 pub use versions::Versions;
 
 pub use walk::{at_path, live_paths, Found};
@@ -64,9 +64,9 @@ pub struct StoryPart {
     /// shares with it are taken from them.
     earlier: Option<Arc<PartFacts>>,
     texts: OnceLock<Arc<PartTexts>>,
-    /// The paragraph texts of the latest earlier version of the part that read them: the
-    /// paragraphs this one shares with it are taken from them.
-    earlier_texts: Option<Arc<PartTexts>>,
+    /// The document's latest paragraph texts: the paragraphs this version shares with the
+    /// version that read them are taken from them.
+    kept: Arc<KeptTexts>,
 }
 
 impl StoryPart {
@@ -74,7 +74,13 @@ impl StoryPart {
     /// part of the same story in a version before (its ids and facts are taken for every
     /// block the two share).
     #[must_use]
-    pub fn new(part: String, story: String, tree: Tree, earlier: Option<&StoryPart>) -> StoryPart {
+    pub fn new(
+        part: String,
+        story: String,
+        tree: Tree,
+        earlier: Option<&StoryPart>,
+        kept: &Arc<KeptTexts>,
+    ) -> StoryPart {
         // a part changed by a path copy (or handed over and shared again with the version
         // before): only what changed is walked again
         let ids = match earlier {
@@ -89,7 +95,7 @@ impl StoryPart {
             facts: OnceLock::new(),
             earlier: earlier.and_then(|e| e.facts.get().cloned()),
             texts: OnceLock::new(),
-            earlier_texts: earlier.and_then(|e| e.texts.get().or(e.earlier_texts.as_ref()).cloned()),
+            kept: Arc::clone(kept),
         }
     }
 
@@ -101,8 +107,11 @@ impl StoryPart {
 
     /// Each paragraph's text in the current view ([`PartTexts`]), read once.
     pub fn texts(&self) -> &Arc<PartTexts> {
-        self.texts
-            .get_or_init(|| Arc::new(PartTexts::read(&self.ids, self.earlier_texts.as_deref())))
+        self.texts.get_or_init(|| {
+            let made = Arc::new(PartTexts::read(&self.ids, self.kept.latest(&self.part).as_deref()));
+            self.kept.keep(&self.part, &made);
+            made
+        })
     }
 
     /// What the document-wide lookups read of the part ([`PartFacts`]), read once.
@@ -128,6 +137,8 @@ pub struct Docx {
     style_order: Vec<Arc<Element>>,
     /// What is read from this version once, for every call on it.
     derived: Derived,
+    /// The document's latest paragraph texts, shared with its other versions.
+    kept: Arc<KeptTexts>,
 }
 
 impl Docx {
@@ -148,6 +159,7 @@ impl Docx {
         let main = main_part(package)?.ok_or_else(|| WordError::NoMainPart(String::new()))?;
         let mut names = vec![main.clone()];
         names.extend(story_parts(package, &main)?);
+        let latest = before.map_or_else(|| Arc::new(KeptTexts::default()), |b| Arc::clone(&b.kept));
         let mut parts = Vec::with_capacity(names.len());
         for part in names {
             let Some(tree) = package.tree(&part)? else { continue };
@@ -162,7 +174,13 @@ impl Docx {
             let earlier = before
                 .and_then(|b| b.parts.iter().find(|p| p.part == part))
                 .filter(|p| p.story == story);
-            parts.push(Arc::new(StoryPart::new(part, story, tree, earlier.map(|e| &**e))));
+            parts.push(Arc::new(StoryPart::new(
+                part,
+                story,
+                tree,
+                earlier.map(|e| &**e),
+                &latest,
+            )));
         }
         let (styles, style_order) = read_styles(package, &main)?;
         Ok(Docx {
@@ -172,6 +190,7 @@ impl Docx {
             styles,
             style_order,
             derived: Derived::after(before.map(|b| &b.derived)),
+            kept: latest,
         })
     }
 
