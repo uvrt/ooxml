@@ -20,7 +20,7 @@ mod order;
 mod rules;
 mod tally;
 
-pub(crate) use facts::ElementFacts;
+pub(crate) use facts::{python_int, ElementFacts};
 pub(crate) use order::Orders;
 pub(crate) use tally::Tally;
 

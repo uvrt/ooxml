@@ -1,7 +1,8 @@
 //! Owns: [`EnginePages`], the edit core's [`FieldLayout`] port over a Word page engine
 //! (`ooxml-word-pages`): a version laid out from the one the engine laid out last, its page
 //! numbers read as a field update reads them (`ooxml_word_layout::fields::update`), places
-//! named by the tool's block ids.
+//! named by the tool's block ids; and the reflow between two versions, each summarised
+//! as docx-agent's `LayoutSummary` is (`ooxml_word_pages::summary`).
 //!
 //! The host that keeps a document's engine (its fonts, its budgets) hands it in; the
 //! engine is locked while it lays out a version, never while a page number is read.
@@ -9,10 +10,11 @@
 //! Must not: hold anything but the engine, or lay out but through it.
 
 use ooxml_opc::Package;
-use ooxml_word_edit::{FieldLayout, FieldPlace, LaidFields, PageShows, Unknown};
+use ooxml_word_edit::{FieldLayout, FieldPlace, LaidFields, PageReflow, PageShows, Unknown};
 use ooxml_word_layout::facts::LayoutFacts;
 use ooxml_word_layout::fields::update::PageNumbers;
-use ooxml_word_pages::{LaidVersion, PageEngine};
+use ooxml_word_pages::summary::Summary;
+use ooxml_word_pages::{Fallback, LaidVersion, PageEngine, PagesError};
 use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -36,17 +38,44 @@ impl EnginePages {
     }
 }
 
+/// A version laid out, or why not, in the port's words.
+fn laid(found: Result<Result<Arc<LaidVersion>, Fallback>, PagesError>) -> Result<Arc<LaidVersion>, String> {
+    match found {
+        Ok(Ok(version)) => Ok(version),
+        Ok(Err(fallback)) => Err(format!("{} at {}", fallback.reason, fallback.at)),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+/// `package` laid out by `engine` and summarised (while its layout is the engine's last).
+fn summarised(engine: &mut PageEngine, package: &Package) -> Result<Arc<Summary>, String> {
+    let version = laid(engine.lay_out(package))?;
+    engine
+        .summary(&version)
+        .ok_or_else(|| "the version laid out is not the engine's".to_owned())
+}
+
 impl FieldLayout for EnginePages {
     fn lay_out(&self, package: &Package) -> Result<Box<dyn LaidFields + '_>, String> {
-        let laid = {
+        let found = {
             let mut engine = self.engine.lock().unwrap_or_else(PoisonError::into_inner);
             engine.lay_out(package)
         };
-        match laid {
-            Ok(Ok(version)) => Ok(Box::new(Laid::new(version))),
-            Ok(Err(fallback)) => Err(format!("{} at {}", fallback.reason, fallback.at)),
-            Err(error) => Err(error.to_string()),
-        }
+        Ok(Box::new(Laid::new(laid(found)?)))
+    }
+
+    fn reflow(&self, before: &Package, after: &Package) -> Result<PageReflow, String> {
+        let (was, now) = {
+            let mut engine = self.engine.lock().unwrap_or_else(PoisonError::into_inner);
+            (summarised(&mut engine, before)?, summarised(&mut engine, after)?)
+        };
+        let found = now.compare(&was, &HashMap::new());
+        Ok(PageReflow {
+            changed: found.changed,
+            page_count: found.page_count,
+            moved: found.moved,
+            unknown: found.unknown,
+        })
     }
 }
 
