@@ -8,7 +8,6 @@
 //! Must not: write a document.
 
 use crate::{EditError, Result};
-use ooxml_markdown::env::Env;
 use ooxml_markdown::{Kind, Token, Value};
 use ooxml_word_model::markdown::model::{Block, Inline, ListBlock, Mark, Marks, Table};
 
@@ -27,17 +26,13 @@ pub(crate) fn py_strip(text: &str) -> &str {
 /// # Errors
 /// An inline footnote (`^[text]`), which has no label to write it by.
 pub(crate) fn parse_model(text: &str) -> Result<Vec<Block>> {
-    let (tokens, env) = ooxml_markdown::parse(text);
-    let mut reader = Reader {
-        tokens: &tokens,
-        env: &env,
-    };
+    let (tokens, _) = ooxml_markdown::parse(text);
+    let mut reader = Reader { tokens: &tokens };
     Ok(reader.blocks(0, None)?.0)
 }
 
 struct Reader<'a> {
     tokens: &'a [Token],
-    env: &'a Env,
 }
 
 impl Reader<'_> {
@@ -49,18 +44,14 @@ impl Reader<'_> {
         self.tokens.get(i).and_then(|t| t.children.as_deref()).unwrap_or(&[])
     }
 
-    fn label(&self, token: &Token) -> Result<String> {
-        token
-            .meta
-            .as_ref()
-            .and_then(|m| m.id)
-            .and_then(|id| self.env.footnotes.get(id))
-            .and_then(|f| f.label.clone())
-            .ok_or_else(|| {
-                EditError::Refused(
-                    "an inline footnote (^[text]) is not inserted: write [^label] and its definition".to_owned(),
-                )
-            })
+    /// A footnote reference's label, as its token carries it (the footnotes' list is the
+    /// parse's own: its tail takes it to write the definitions).
+    fn label(token: &Token) -> Result<String> {
+        token.meta.as_ref().and_then(|m| m.label.clone()).ok_or_else(|| {
+            EditError::Refused(
+                "an inline footnote (^[text]) is not inserted: write [^label] and its definition".to_owned(),
+            )
+        })
     }
 
     fn blocks(&mut self, mut i: usize, until: Option<Kind>) -> Result<(Vec<Block>, usize)> {
@@ -112,7 +103,7 @@ impl Reader<'_> {
                 Kind::FootnoteBlockOpen => {
                     i += 1;
                     while let Some(open) = self.tokens.get(i).filter(|t| t.kind != Kind::FootnoteBlockClose) {
-                        let label = self.label(open)?;
+                        let label = Self::label(open)?;
                         let (inner, next) = self.blocks(i + 1, Some(Kind::FootnoteClose))?;
                         out.push(Block::Footnote(label, inner));
                         i = next;
@@ -260,7 +251,7 @@ impl Reader<'_> {
                         href: href.cloned(),
                     });
                 }
-                Kind::FootnoteRef => items.push(Inline::NoteRef(self.label(token)?)),
+                Kind::FootnoteRef => items.push(Inline::NoteRef(Self::label(token)?)),
                 _ => {}
             }
         }

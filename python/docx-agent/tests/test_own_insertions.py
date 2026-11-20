@@ -77,6 +77,7 @@ def test_sections_appended_at_the_end_record_one_property_change_as_word_does(bo
     session, doc, document = _opened(box, _base("Existing text."))
     for k in range(6):
         ok(box, session, "word_insert_markdown", doc=doc, at="end", markdown=f"## Part {k}\n\n- item {k}")
+    document = session.entry(doc).document      # (read after the calls: a held Document is not live)
     # Before round 50: one w:pPrChange per call, each on a paragraph the call inserted.
     assert _changes(document) == ["item 5"]
     paragraphs = document.paragraphs()
@@ -97,6 +98,7 @@ def test_appended_sections_reject_to_the_original_and_accept_to_the_text(box):
     session, doc, document = _opened(box, _base("Existing text."))
     for k in range(3):
         ok(box, session, "word_insert_markdown", doc=doc, at="end", markdown=f"## Part {k}\n\n1. step {k}")
+    document = session.entry(doc).document      # (read after the calls: a held Document is not live)
     accepted = Document.open(document.to_bytes())
     accepted.accept_all()
     assert [p.text for p in accepted.paragraphs()] == ["Existing text.", "Part 0", "step 0", "Part 1", "step 1",

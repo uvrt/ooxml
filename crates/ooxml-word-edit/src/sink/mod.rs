@@ -10,6 +10,8 @@
 
 mod heads;
 mod kept;
+mod media;
+mod numbering;
 mod written;
 
 pub(crate) use heads::{annotation_draws, ensured_head};
@@ -19,7 +21,6 @@ use crate::policy::{RevisionPolicy, Stamp};
 use crate::props::PropertyTracker;
 use crate::text::write;
 use crate::track;
-use crate::validate::annotation_ceiling;
 use crate::work::Work;
 use crate::{EditError, Result};
 use ooxml_store::Txn;
@@ -68,8 +69,8 @@ pub enum Keep {
 pub struct EditSink<'t, 's> {
     tx: &'t mut Txn<'s, WordDoc>,
     policy: RevisionPolicy,
-    /// The first revision id of this edit and the next it gives, once it began numbering.
-    numbered: Option<(i64, i64)>,
+    /// How this edit numbers its revision records ([`numbering`]).
+    numbered: numbering::Numbering,
     /// The text the edit wrote, by place ([`crate::spacing`]).
     written: crate::spacing::Written,
 }
@@ -80,7 +81,7 @@ impl<'t, 's> EditSink<'t, 's> {
         EditSink {
             tx,
             policy,
-            numbered: None,
+            numbered: numbering::Numbering::default(),
             written: crate::spacing::Written::default(),
         }
     }
@@ -146,6 +147,9 @@ impl<'t, 's> EditSink<'t, 's> {
     }
 
     fn write(&mut self, change: Change) -> Result<()> {
+        if let Change::Splice { draws, .. } = &change {
+            self.numbered.written(draws);
+        }
         self.tx.write(change).map_err(EditError::from)
     }
 
@@ -155,6 +159,11 @@ impl<'t, 's> EditSink<'t, 's> {
     /// # Errors
     /// When the change cannot be applied.
     pub fn draw(&mut self, seed: &str, count: usize) -> Result<Vec<String>> {
+        if count == 0 {
+            // nothing drawn: the sequence neither read nor written (no conflict with a
+            // writer drawing from it)
+            return Ok(Vec::new());
+        }
         self.tx.read(Key::Seq(Arc::from(seed)));
         let (values, change) = self.tx.doc().ids().draw(seed, count, &self.tx.doc().shared().sequences);
         self.write(Change::Ids(change))?;
@@ -216,84 +225,6 @@ impl<'t, 's> EditSink<'t, 's> {
             forget_targets: ids.to_vec(),
             ..Default::default()
         }))
-    }
-
-    /// One above the largest annotation id in use in any story of the working version: the
-    /// first of the stand-in ids an edit numbers its revision records with, drawn again
-    /// where the change is applied ([`crate::DrawFrom::Annotation`]), so revision ids
-    /// are no conflict between transactions.
-    ///
-    /// # Errors
-    /// When a story part is not XML.
-    pub fn next_annotation_id(&mut self) -> Result<i64> {
-        if let Some((_, next)) = self.numbered {
-            return Ok(next);
-        }
-        let first = annotation_ceiling(self.tx.doc())? + 1;
-        self.write(Change::Number)?;
-        self.numbered = Some((first, first));
-        Ok(first)
-    }
-
-    /// One annotation id for a range marker this edit writes (a bookmark's, a comment's):
-    /// its value on this version and its offset from the edit's first id, for a
-    /// [`Draw`] that numbers it again where the change is applied.
-    ///
-    /// # Errors
-    /// When a story part is not XML.
-    pub(crate) fn marker_id(&mut self) -> Result<(i64, u32)> {
-        let value = self.next_annotation_id()?;
-        let base = self.numbered.map_or(value, |(base, _)| base);
-        self.numbered = Some((base, value + 1));
-        let offset =
-            u32::try_from(value - base).map_err(|_| EditError::Refused("too many annotation ids".to_owned()))?;
-        Ok((value, offset))
-    }
-
-    /// Revision records an edit of its own writes (`write` given the [`Stamp`]), numbered
-    /// on from this edit's last id; the ids it gave, and whether a record carries a UTC
-    /// date.
-    ///
-    /// # Errors
-    /// `write`'s, or when a story part is not XML.
-    pub(crate) fn stamped<R>(
-        &mut self,
-        tracking: crate::policy::Tracking,
-        write: impl FnOnce(&mut Stamp) -> Result<R>,
-    ) -> Result<(R, Numbered, bool)> {
-        let from = self.next_annotation_id()?;
-        let mut stamp = Stamp::new(tracking, from);
-        let out = write(&mut stamp)?;
-        let base = self.numbered.map_or(from, |(base, _)| base);
-        self.numbered = Some((base, stamp.next()));
-        let numbered = Numbered {
-            base,
-            from,
-            to: stamp.next(),
-        };
-        Ok((out, numbered, stamp.dated))
-    }
-
-    /// A tracked write through a [`Stamp`] numbering on from this edit's last id.
-    fn tracked(
-        &mut self,
-        tracking: crate::policy::Tracking,
-        write: impl FnOnce(&mut Stamp) -> Result<Vec<String>>,
-    ) -> Result<(Vec<String>, bool, Numbered)> {
-        let from = self.next_annotation_id()?;
-        let mut stamp = Stamp::new(tracking, from);
-        let released = write(&mut stamp)?;
-        let base = self.numbered.map_or(from, |(base, _)| base);
-        self.numbered = Some((base, stamp.next()));
-        Ok((
-            released,
-            stamp.dated,
-            Numbered {
-                base,
-                from,
-                to: stamp.next(),
-            },
-        ))
     }
 
     /// Replace a range across `paragraphs` (in order, children of `work`'s root) -- from

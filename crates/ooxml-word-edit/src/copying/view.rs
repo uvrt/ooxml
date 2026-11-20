@@ -1,8 +1,8 @@
 //! Owns: a copied block made the source's current view, as docx-agent's importer makes it
 //! (`_current_view`, and `bring`'s first steps): insertions kept, deletions dropped, the
 //! records of changes dropped, a paragraph's section break and a control's data binding
-//! left out; and what the copy holds that this port leaves to the host (lists,
-//! relationships, notes, comments, bookmarks, drawings, controls).
+//! left out; and what the copy holds that this port leaves to the host (relationships,
+//! notes, comments, bookmarks, drawings, controls).
 //!
 //! Must not: read the documents; it works on the copy alone.
 
@@ -70,8 +70,7 @@ pub(crate) fn current_view(work: &mut Work, element: Id) {
 
 /// What in the copies this port leaves to the host, if anything: the first kind found.
 pub(crate) fn left_to_host(work: &Work, elements: &[Id]) -> Option<&'static str> {
-    let kinds: [(&str, &[&str], &'static str); 6] = [
-        (W, &["numPr"], "a copied list"),
+    let kinds: [(&str, &[&str], &'static str); 5] = [
         (W, &["footnoteReference", "endnoteReference"], "a copied note"),
         (
             W,

@@ -134,6 +134,11 @@ pub struct Intent {
     /// here can only mean, unless that one is given too (`columns: ["region", "total"]`
     /// read as `from_columns`; today's `names_as`), with a note.
     pub names_as: Option<String>,
+    /// Argument names a model may write for this one that are not read as it: refused as
+    /// unknown, the refusal naming this one (today's `markdown_from`, a function in
+    /// `Tool.aliases` that refuses: reading it as `from` was retired, reading it as the
+    /// nearest name would mean something else).
+    pub refused_aliases: Vec<String>,
     /// For a required property: the safe value a call that leaves it out is read as, with
     /// a note. It stays required in the schema, so a strict decoder sends it.
     pub default: Option<Value>,

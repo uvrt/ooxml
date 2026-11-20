@@ -10,15 +10,19 @@
 //! and [`UnmappedPolicy`] say ([`styles`], [`flatten`], with the cascade they read in
 //! [`cascade`] and the themes in [`theme`]).
 //!
+//! The lists the copies number with are brought as new lists here, or continue the list
+//! before the place ([`ListPolicy`], [`lists`]).
+//!
 //! Not ported yet ([`EditError::Unsupported`]: the host copies such blocks its own way):
-//! the copy tracked, `replace:`, and copies holding lists, relationships (pictures,
-//! hyperlinks to addresses), notes, comments, bookmarks, drawings or content controls.
+//! the copy tracked, `replace:`, and copies holding relationships (pictures, hyperlinks to
+//! addresses), notes, comments, bookmarks, drawings or content controls.
 //!
 //! Must not: write but through the sink, or know a tool's JSON.
 
 mod canonical;
 mod cascade;
 mod flatten;
+mod lists;
 mod source;
 mod stamp;
 mod styles;
@@ -82,6 +86,16 @@ pub enum UnmappedPolicy {
     Body,
 }
 
+/// Which list a copied list paragraph goes into.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ListPolicy {
+    /// A new list of its own (Word's paste).
+    #[default]
+    Separate,
+    /// The list before the place, where its first level counts as the copied one's.
+    Continue,
+}
+
 /// Blocks copied here from a source document.
 #[derive(Debug, Clone)]
 pub struct CopyBlocks {
@@ -100,6 +114,8 @@ pub struct CopyBlocks {
     pub style_map: Vec<(String, String)>,
     /// What a style neither mapped nor here becomes.
     pub unmapped: UnmappedPolicy,
+    /// Which list copied list paragraphs go into.
+    pub lists: ListPolicy,
 }
 
 /// What a copy did.
@@ -177,6 +193,7 @@ impl CopyBlocks {
                 .map(|(from, to)| (ooxml_word_model::docx::casefold(from), to.clone()))
                 .collect(),
             unmapped: self.unmapped,
+            lists: self.lists,
         }
     }
 
@@ -209,7 +226,7 @@ impl CopyBlocks {
         let mut stretch = Stretch::open(sink, &place, "copy_from")?;
         let anchor = stretch.anchor(&place);
         let mut space = Space::default();
-        let mut styles = styles::Styles::new(sink, source, self.policies())?;
+        let mut styles = styles::Styles::new(sink, source, self.policies(), &place)?;
         let work = &mut stretch.work;
         let mut elements = Vec::with_capacity(selected.blocks.len());
         for (_, element) in &selected.blocks {
@@ -224,6 +241,9 @@ impl CopyBlocks {
         }
         for &element in &elements {
             styles.bring(sink, &mut space, work, element)?;
+        }
+        for &element in &elements {
+            styles.bring_lists(sink, &mut space, work, element)?;
         }
         let root = work.root();
         for &element in &elements {
