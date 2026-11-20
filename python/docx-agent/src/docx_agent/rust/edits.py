@@ -4,7 +4,8 @@ lane P2c4: the session is the only owner, :mod:`.owner`; lane P2c6: side by side
 A tool with a Rust editing handler (:data:`SERVED`: ``word_set_text``, ``replace_text``,
 ``word_insert_text``, ``word_delete``, ``word_format``, ``word_lists``, ``word_format_table``,
 ``word_styles``, ``word_follow_sample``, ``word_insert_markdown``, ``word_fields``,
-``word_headers_footers``, ``word_template``, and each one ported after them)
+``word_headers_footers``, ``word_template``, ``word_move``, ``word_sections``, ``word_notes``,
+``word_links``, and each one ported after them)
 runs there, ahead of docx-agent's handler and its wrapper
 (:func:`docx_agent.tools._base.wrap`): the call's arguments, its ``$name`` refs resolved, go to
 ``Session.edit`` with the call's caller and the document's tracking mode; the versions the
@@ -190,6 +191,35 @@ def _template(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
     return _own(arguments)
 
 
+def _sided(call: Any, value: Any) -> Any:
+    """A place that may say its side (``before:X``, ``after:X``; docx-agent's ``_place``)
+    with its ``$name`` refs resolved."""
+    if isinstance(value, str):
+        for side in ("after:", "before:"):
+            if value.startswith(side):
+                return side + reads._refs(call, value[len(side):])
+    return reads._refs(call, value)
+
+
+def _move(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+    return {**_own(arguments), "after": _sided(call, arguments.get("after")),
+            **{k: reads._refs(call, arguments.get(k)) for k in ("section_heading", "blocks", "before",
+                                                                 "after_section")}}
+
+
+def _sections(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+    return {**_own(arguments), "after": _sided(call, arguments.get("after")),
+            **{k: reads._refs(call, arguments.get(k)) for k in ("before", "section")}}
+
+
+def _notes(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+    return {**_own(arguments), **{k: reads._refs(call, arguments.get(k)) for k in ("at", "note")}}
+
+
+def _links(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+    return {**_own(arguments), "target": reads._refs(call, arguments.get("target"))}
+
+
 #: The tools the session edits with, and each one's arguments as the session takes them.
 SERVED: dict[str, Callable[[Any, dict[str, Any]], dict[str, Any]]] = {
     "word_set_text": _set_text,
@@ -205,6 +235,10 @@ SERVED: dict[str, Callable[[Any, dict[str, Any]], dict[str, Any]]] = {
     "word_fields": _fields,
     "word_headers_footers": _headers_footers,
     "word_template": _template,
+    "word_move": _move,
+    "word_sections": _sections,
+    "word_notes": _notes,
+    "word_links": _links,
 }
 
 #: The served tools whose edits read the document's pages (a field's result, a header's page

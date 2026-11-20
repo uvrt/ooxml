@@ -9,7 +9,8 @@ shard of the documents at a time:
     python tools/gates.py report OUT 6 61                 # the 3k document: make_report 6, grown to 61 chapters
     python tools/gates.py diff --gate fixtures --mode styled --shard 2/4 --bin DIR --out DIR
     python tools/gates.py matrix --gates fixtures,corpus  # the differential jobs (JSON)
-    python tools/gates.py plan [--changed FILE]...        # the modes a branch can affect (modes=auto)
+    python tools/gates.py plan [--changed FILE]...        # the modes and fixtures a branch can affect (auto)
+    python tools/gates.py fixtures --fixtures auto        # the fixtures a branch runs (all, or a comma list)
     python tools/gates.py summary DIR                     # the job summary's tables (Markdown)
     python tools/gates.py cache-key                       # the reference cache's chain digest
     python tools/gates.py cache-merge STORE FILE...       # kept results added to a store
@@ -32,6 +33,12 @@ the Rust code and docx-agent's count for every mode, a harness's case maker for 
 modes, notes and the packages and crates the gates do not run for none, and anything not
 named for every mode.  No change at all (the ref is main) is every mode too.
 
+Fixtures ``auto`` (``--fixtures``; the dispatch's default for a branch): the fixtures and
+reads gates run only the fixture documents holding the Word features the branch's changes
+touch, plus a fixed set of canaries (tools/gates_fixtures.py); a change to a foundation (the
+XML writer, the package, the store, the session, the layout, the harness) or to a path naming
+no feature runs them all.  ``all`` runs every fixture (the nightly run on main).
+
 Sampling: ``--every N`` takes every N-th document; ``--per-tool N`` the first N cases of each
 tool for the tool modes (structure, objects, style: the harnesses' *_PER_TOOL) and the first N
 cases per document for the others (the harness's ``--limit``).  0 is all.
@@ -48,6 +55,9 @@ import sys
 import time
 import tomllib
 from pathlib import Path
+
+import gates_fixtures
+import gates_hunks
 
 ROOT = Path(__file__).resolve().parents[1]
 HARNESS = ROOT / "crates" / "ooxml-oracle" / "python"
@@ -98,10 +108,12 @@ NOT_GATES = (".github/", "tools/", "docs/")
 CRATE_TEST_FOLDERS = ("tests", "benches", "examples")
 
 
-def documents(tree: Path, every: int, shard: tuple[int, int]) -> list[Path]:
+def documents(tree: Path, every: int, shard: tuple[int, int], only: list[str] | None = None) -> list[Path]:
     """Shard K of N of every ``every``-th document below ``tree`` (sorted, as the harnesses
-    read a tree)."""
+    read a tree); ``only``: those of these names (relative to ``tree``) alone."""
     files = [f for f in sorted(tree.rglob("*.docx")) if not f.name.startswith("~$")]
+    if only is not None:
+        files = [f for f in files if str(f.relative_to(tree)) in set(only)]
     files = files[::max(every, 1)]
     k, n = shard
     return [f for i, f in enumerate(files) if i % n == k - 1]
@@ -143,7 +155,11 @@ def run_diff(args) -> int:
     out.mkdir(parents=True, exist_ok=True)
     tree = Path(args.tree) if args.tree else TREES[args.gate]
     k, n = (int(x) for x in args.shard.split("/"))
-    files = documents(tree, args.every, (k, n))
+    only = None
+    if args.gate in TREES and not args.tree:
+        chosen = fixture_selection(args.fixtures, args.base)
+        only = None if chosen == gates_fixtures.ALL else chosen
+    files = documents(tree, args.every, (k, n), only)
     results = out / "results.jsonl"
     env = {**os.environ, "DOCX_AGENT_RUST": "0", "PYTHONWARNINGS": "ignore"}
     if args.mode in READ_MODES:
@@ -303,10 +319,39 @@ def auto_modes(changed: list[str]) -> tuple[list[str], bool]:
     return [m for m in EDIT_MODES if m in effects], READS in effects
 
 
+def auto_fixtures(changed: list[str], diff=None) -> list[str] | str:
+    """The fixtures a branch changing ``changed`` runs (tools/gates_fixtures.py), or ALL; no
+    change at all is every fixture.  ``diff``: the changed lines (gates_hunks.Diff)."""
+    if not changed:
+        return gates_fixtures.ALL
+    crates = oracle_crates()
+    return gates_fixtures.select([path for path in changed if gate_effects(path, crates)], diff=diff)
+
+
+def fixture_selection(value: str, base: str = "origin/main") -> list[str] | str:
+    """``--fixtures``: ``all``, ``auto`` (auto_fixtures of the changes since ``base``) or a
+    comma list of names relative to the fixtures folder."""
+    if value in ("", gates_fixtures.ALL):
+        return gates_fixtures.ALL
+    if value == "auto":
+        return auto_fixtures(changed_files(base), gates_hunks.Diff(base))
+    return [name.strip() for name in value.split(",") if name.strip()]
+
+
 def run_plan(args) -> int:
     changed = args.changed if args.changed is not None else changed_files(args.base)
     modes, reads = auto_modes(changed)
-    print(f"{len(changed)} changed files; modes: {','.join(modes) or '(none)'}; reads: {'yes' if reads else 'no'}")
+    chosen = auto_fixtures(changed, None if args.changed is not None else gates_hunks.Diff(args.base))
+    fixtures = "all" if chosen == gates_fixtures.ALL else f"{len(chosen)}: {','.join(chosen)}"
+    print(f"{len(changed)} changed files; modes: {','.join(modes) or '(none)'}; reads: {'yes' if reads else 'no'}; "
+          f"fixtures: {fixtures}")
+    return 0
+
+
+def run_fixtures(args) -> int:
+    """The fixtures selection as ``diff --fixtures`` takes it: ``all`` or a comma list."""
+    chosen = fixture_selection(args.fixtures, args.base)
+    print(gates_fixtures.ALL if chosen == gates_fixtures.ALL else ",".join(chosen))
     return 0
 
 
@@ -392,6 +437,8 @@ def main(argv: list[str] | None = None) -> int:
     d.add_argument("--bin", required=True, help="the folder of the release oracle binaries")
     d.add_argument("--out", required=True)
     d.add_argument("--cache", help="the reference cache's store (edit modes; reference_cache.py)")
+    d.add_argument("--fixtures", default="all", help="fixtures and reads: all, auto or a comma list of fixtures")
+    d.add_argument("--base", default="origin/main", help="--fixtures auto: the changes since this one's merge base")
     c = sub.add_parser("corpus")
     c.add_argument("out")
     r = sub.add_parser("report")
@@ -407,6 +454,9 @@ def main(argv: list[str] | None = None) -> int:
     pl = sub.add_parser("plan", help="the modes a branch can affect (modes auto)")
     pl.add_argument("--changed", action="append", help="a changed path (repeat); default: git diff BASE...HEAD")
     pl.add_argument("--base", default="origin/main")
+    f = sub.add_parser("fixtures", help="the fixtures a branch runs (all or a comma list)")
+    f.add_argument("--fixtures", default="auto")
+    f.add_argument("--base", default="origin/main")
     s = sub.add_parser("summary")
     s.add_argument("dir")
     sub.add_parser("cache-key")
@@ -415,7 +465,7 @@ def main(argv: list[str] | None = None) -> int:
     k.add_argument("files", nargs="*")
     args = parser.parse_args(argv)
     return {"diff": run_diff, "corpus": run_corpus, "report": run_report, "matrix": run_matrix,
-            "summary": run_summary, "plan": run_plan, "cache-key": run_cache_key, "cache-merge": run_cache_merge}[args.command](args)
+            "summary": run_summary, "plan": run_plan, "fixtures": run_fixtures, "cache-key": run_cache_key, "cache-merge": run_cache_merge}[args.command](args)
 
 
 if __name__ == "__main__":

@@ -84,6 +84,29 @@ impl EditSink<'_, '_> {
         Ok((value, offset))
     }
 
+    /// `count` annotation ids for range markers this edit writes one after another, as
+    /// [`EditSink::marker_id`] would give them one write at a time (each one above the
+    /// last): taken together, so the document's largest id is read once, not again after
+    /// each write. None (and no numbering begun) for `count` 0.
+    ///
+    /// # Errors
+    /// When a story part is not XML, or the ids run past what an offset holds.
+    pub(crate) fn marker_ids(&mut self, count: usize) -> Result<Vec<(i64, u32)>> {
+        if count == 0 {
+            return Ok(Vec::new());
+        }
+        let too_many = || EditError::Refused("too many annotation ids".to_owned());
+        let first = self.next_annotation_id()?;
+        let next = i64::try_from(count)
+            .ok()
+            .and_then(|n| first.checked_add(n))
+            .ok_or_else(too_many)?;
+        let numbered = self.given(first, next);
+        (first..next)
+            .map(|value| Ok((value, u32::try_from(value - numbered.base).map_err(|_| too_many())?)))
+            .collect()
+    }
+
     /// Revision records an edit of its own writes (`write` given the [`Stamp`]), numbered
     /// on from this edit's next id; the ids it gave, and whether a record carries a UTC
     /// date.
