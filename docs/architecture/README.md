@@ -604,6 +604,9 @@ All are under 0.1 % of the edit budgets.
 - `word_move`, `word_sections`, `word_notes` and `word_links` are registered in the session and served; their declared targets reach the session with their refs resolved by the tool layer, a side's (`before:$x`) by `rust.edits`.
 - `word_compare_blocks` and `word_design_facts` are answered by the session (`rust.reads.serve`). A reading call that names another document (`others`: the argument paths of its tool's documents after the first, `reference.doc`) has that document named as the session names it and its version pinned beside the call's own (`Session.call(at=[...])`, read as `Call::others`); a document in another session, or not a committed version, leaves the call to the host.
 
+**As built (lane P2c14: the host's blobs).**
+- `Session.edit` takes `blobs=`: a Python object with `blob(handle)` (`(name, mime, bytes)` or `None`) and `listed()`, adapted as `ooxml_tools_word::Blobs` (`PyBlobs`, called with the interpreter lock taken back, as a placer is); a blob's bytes are copied once, when the tool asks for it. docx-agent hands its session's blobs to the served tools that read them (`rust.edits.BLOBS`: `word_drawings`, whose insert_picture is served; a catalogue asset is the host's).
+
 **As built (lane P4d7: calls that name other documents).**
 - A tool's declared documents rule (`ooxml_tools::documents`, `named_at`) names the call's own document first; the session pins every other open document it names like the call's own (the version the context or batch holds, else the head; no lock: versions are immutable) and hands them over in `Call::others`, which read handlers see as `Version::others` and editing handlers as `Editing::others` (`Others::get` by id). A named document that is not open is refused at the field naming it (`reference.doc`). `word_compare_blocks` is the first tool to read one.
 
