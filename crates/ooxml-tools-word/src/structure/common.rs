@@ -130,8 +130,18 @@ pub(crate) fn one_of(given: &[(&str, bool)], call: &TryCall) -> Result<String, T
 /// The range id of the one place `find` occurs in the document now (docx-agent's
 /// `find_range` without `within`).
 pub(crate) fn find_once(editing: &Editing<'_>, find: &str, call: &TryCall) -> Result<String, ToolError> {
+    find_once_within(editing, find, None, call)
+}
+
+/// [`find_once`] in the paragraphs `within` holds, when given (docx-agent's `find_range`).
+pub(crate) fn find_once_within(
+    editing: &Editing<'_>,
+    find: &str,
+    within: Option<&str>,
+    call: &TryCall,
+) -> Result<String, ToolError> {
     let head = editing.editor.store().snapshot();
-    ooxml_word_edit::anchor(head.doc(), find).map_err(|e| edit_refusal(e, "", call.clone()))
+    ooxml_word_edit::anchor(head.doc(), find, within).map_err(|e| edit_refusal(e, "", call.clone()))
 }
 
 /// The policy an edit runs by: tracked as the host's author, or untracked.
