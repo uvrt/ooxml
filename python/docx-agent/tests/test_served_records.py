@@ -244,3 +244,53 @@ def test_the_session_reads_the_records_as_docx_agent_does(toolbox, request, fixt
             document.owned_records = hook
         assert ours == theirs, (fixture, step)
     session.close(doc)
+
+
+# -- the one command without the after-edit steps that could need them (lane P2d1 audit) ---------
+
+
+def _comments(call: object, arguments: dict) -> dict:
+    from docx_agent.rust.reads import _refs
+
+    return {**{k: v for k, v in arguments.items() if k != "doc"},
+            "items": [{**item, "comment": _refs(call, item.get("comment"))} for item in arguments.get("items") or []]}
+
+
+def _deleted_comment(toolbox, data: bytes, tracked: bool) -> tuple[bool, dict[str, bytes]]:
+    session = toolbox.session()
+    doc = session.open(data, name="boxed.docx")
+    entry = session.entry(doc)
+    if not isinstance(entry, OwnedEntry):
+        pytest.skip("no Rust session to own the document")
+    if tracked:
+        assert toolbox.dispatch(session, "word_set_tracking", {"doc": doc, "on": True, "author": "Reviewer"}).ok
+    before = sum(edits.served().values())
+    comment = entry.document.comments()[0].id
+    assert toolbox.dispatch(session, "word_comments", {"doc": doc, "action": "delete",
+                                                       "items": [{"comment": comment}]}).ok
+    served = sum(edits.served().values()) > before
+    with zipfile.ZipFile(io.BytesIO(entry.document.to_bytes())) as package:
+        parts = {name: package.read(name) for name in package.namelist()}
+    session.close(doc)
+    return served, parts
+
+
+@pytest.mark.parametrize("tracked", [False, True], ids=["untracked", "tracked"])
+def test_a_comment_in_a_text_box_deleted_served_is_docx_agents(toolbox, tracked, monkeypatch):
+    """CommentEdits runs no text-box sync: a comment anchored in a text box (its markers in the
+    DrawingML box and in its VML fallback) deleted by the session leaves what docx-agent's
+    handler leaves -- the fallback in step."""
+    document = Document.open((GENERATED / "charts" / "chart-places.docx").read_bytes())
+    document.add_comment("p@body/2", "Note on the box", author="Reviewer")
+    data = document.to_bytes()
+    with zipfile.ZipFile(io.BytesIO(data)) as package:
+        assert package.read("word/document.xml").count(b"commentRangeStart") == 2
+    monkeypatch.setitem(edits.SERVED, "word_comments", _comments)
+    served, ours = _deleted_comment(toolbox, data, tracked)
+    assert served
+    monkeypatch.setattr(edits, "SERVED", {})
+    _, theirs = _deleted_comment(toolbox, data, tracked)
+    assert b"commentRangeStart" not in ours["word/document.xml"]
+    assert sorted(ours) == sorted(theirs)
+    for name in theirs:
+        assert ours[name] == theirs[name], name
