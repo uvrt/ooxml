@@ -464,7 +464,11 @@ fn a_copy_takes_the_other_style_policies() {
             .read("word/document.xml")
             .unwrap()
             .unwrap();
-        assert_eq!(String::from_utf8_lossy(&body).matches("Delta epsilon").count(), 2, "{styles}");
+        assert_eq!(
+            String::from_utf8_lossy(&body).matches("Delta epsilon").count(),
+            2,
+            "{styles}"
+        );
     }
 }
 
