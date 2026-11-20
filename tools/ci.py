@@ -300,7 +300,7 @@ WORD_MODEL_CRATES = ("ooxml-oracle", "ooxml-base", "ooxml-xml", "ooxml-zip", "oo
                      "ooxml-drawingml", "ooxml-scene", "ooxml-metafile", "ooxml-word-layout", "ooxml-numfmt",
                      "ooxml-chart", "ooxml-render", "ooxml-tools", "ooxml-tools-derive", "ooxml-tools-word",
                       "ooxml-raster", "ooxml-style-names", "ooxml-word-pages", "ooxml-session", "ooxml-store",
-                      "ooxml-word-edit", "ooxml-markdown")
+                      "ooxml-word-edit", "ooxml-markdown", "ooxml-sheets")
 
 
 #: rust.yml's jobs that run on a pull request only when it changes their own paths (or
