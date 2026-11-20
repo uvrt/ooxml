@@ -1,6 +1,5 @@
 //! A1 references and chart formulas, read as ooxml-edit's `sheets/workbook.py` reads them
 //! (each expected value is what its `Cell.parse`, `Area.parse` and `parse_formula` give).
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
 
 use ooxml_sheets::{column_index, column_letters, parse_formula, AddressError, Area, Cell, MAX_COLUMN};
 
@@ -28,6 +27,8 @@ fn columns() {
 #[test]
 fn cells_and_areas() {
     assert_eq!(Cell::parse(" $b$2 ").unwrap(), cell(2, 2));
+    // Row 0 is read, not refused: ooxml-edit's Cell.parse (and so parse_formula) takes any one
+    // to seven digits as the row, and gives Cell(row=0, column=1) here.
     assert_eq!(Cell::parse("A0").unwrap(), cell(0, 1));
     assert_eq!(cell(2, 28).reference().unwrap(), "AB2");
     assert_eq!(Cell::parse("XFE1"), Err(AddressError::PastLastColumn("XFE1".into())));

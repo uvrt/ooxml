@@ -1,7 +1,6 @@
 //! A made-up workbook read as ooxml-edit's `Workbook` reads it: sheets by name, every kind of
 //! cell value, rows and cells without `r`, shared strings plain and rich; the expected values
 //! are what `ooxml_edit.sheets.workbook` gives on the same parts.
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
 
 use ooxml_opc::Limits;
 use ooxml_sheets::{Cell, SheetsError, Value, Workbook};
