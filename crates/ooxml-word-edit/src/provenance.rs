@@ -8,9 +8,9 @@
 //! (`_prune_provenance` as it ends); and the item, its properties and its relationship go
 //! together when no entry is left.
 //!
-//! Reads: the main part's relationships (where the item is) and the item; the paragraphs
-//! the entries name are not read as keys -- an edit that changes one writes it, and its own
-//! follow-up then writes the item, which a concurrent follow-up read.
+//! Reads: by condition, the item the main part's relationships name ([`ItemNamed`]); the
+//! item; the paragraphs the entries name are not read as keys -- an edit that changes one
+//! writes it, and its own follow-up then writes the item, which a concurrent follow-up read.
 //!
 //! Must not: write an entry (docx-agent's tools that place values do), or run but once per
 //! command, after it ([`Followed`]).
@@ -20,7 +20,7 @@ use crate::policy::RevisionPolicy;
 use crate::sink::EditSink;
 use crate::{EditError, Result};
 use ooxml_opc::name::rels_for;
-use ooxml_store::{Command, Txn};
+use ooxml_store::{Command, ReadPredicate, Txn};
 use ooxml_word_model::docx::provenance::{
     self as records, dumps, entry_text, facts, kind_of, target_in_file, text_paragraph, Kind, TextEntry, NS,
     REL_CUSTOM_XML,
@@ -51,6 +51,34 @@ impl<C: Command<WordDoc, Error = EditError>> Command<WordDoc> for Followed<'_, C
     }
 }
 
+/// Which part is the records' item, read by condition (design section 5): the follow-up
+/// depends on the main part's relationships only through the item they name, so a
+/// relationship added meanwhile (a notes part, a hyperlink, a picture) conflicts only when
+/// the item the head's relationships name is another.
+#[derive(Debug)]
+struct ItemNamed {
+    /// The main part's relationships part.
+    rels: Arc<str>,
+    /// The item they named where the edit read them.
+    item: Option<String>,
+}
+
+impl ReadPredicate<WordDoc> for ItemNamed {
+    fn depends(&self, head: &WordDoc, key: &Key) -> bool {
+        match key {
+            Key::Part(part) if *part == self.rels => {
+                let named = head.docx().ok().and_then(|docx| records::item(&docx).ok());
+                named.is_none_or(|item| item != self.item)
+            }
+            _ => false,
+        }
+    }
+
+    fn history_keys(&self) -> Option<Vec<Key>> {
+        Some(vec![Key::Part(Arc::clone(&self.rels))])
+    }
+}
+
 /// What becomes of one entry.
 enum Fate {
     Kept,
@@ -74,8 +102,12 @@ struct Versions<'v> {
 /// When the main part's relationships or a story part are not XML.
 pub(crate) fn follow(sink: &mut EditSink<'_, '_>) -> Result<()> {
     let now = sink.docx()?;
-    sink.read(Key::Part(Arc::from(rels_for(&now.main))));
-    let Some(item) = records::item(&now)? else {
+    let found = records::item(&now)?;
+    sink.read_where(Arc::new(ItemNamed {
+        rels: Arc::from(rels_for(&now.main)),
+        item: found.clone(),
+    }));
+    let Some(item) = found else {
         return Ok(());
     };
     sink.read(Key::Part(Arc::from(item.as_str())));
