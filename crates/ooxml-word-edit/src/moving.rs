@@ -13,7 +13,7 @@
 //! Must not: write but through the sink.
 
 use crate::blocks::{blocks_of, resolve_block, BlockAt, BlockKind};
-use crate::delete::editable;
+use crate::delete::{editable_opening, Opening};
 use crate::names::W;
 use crate::policy::RevisionPolicy;
 use crate::sink::EditSink;
@@ -406,7 +406,9 @@ impl MoveBlocks {
         paths.push(anchor.path.clone());
         let wanted: Vec<&[u32]> = paths.iter().map(Vec::as_slice).collect();
         let path_error = || EditError::Path(part.to_owned());
-        let (mut work, parent, stretch, nodes) = editable(root, &paths, &wanted).ok_or_else(path_error)?;
+        // the blocks and the target are read whole, the stretch between passed sealed
+        let (mut work, parent, stretch, nodes) =
+            editable_opening(root, &paths, &wanted, Opening::Ends).ok_or_else(path_error)?;
         let outside = outside_blocks(root, &parent, stretch);
         let (&target, moving) = nodes.split_last().ok_or_else(path_error)?;
         let after = self.after.is_some();

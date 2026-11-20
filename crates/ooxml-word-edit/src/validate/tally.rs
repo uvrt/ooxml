@@ -284,7 +284,10 @@ impl Reader<'_> {
         let mut items = old.items.clone();
         let (_, ranks) = self.ranks(Some(now));
         // the last run first: the places before it are still the old version's
-        for run in ooxml_xml::changed_runs(was.children(), now.children()).into_iter().rev() {
+        for run in ooxml_xml::changed_runs(was.children(), now.children())
+            .into_iter()
+            .rev()
+        {
             let (start, old_end) = (run.old.start, run.old.end);
             for k in start..old_end {
                 if let Some(item) = old.items.get(k) {

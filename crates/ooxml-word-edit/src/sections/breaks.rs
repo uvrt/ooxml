@@ -12,7 +12,7 @@
 use super::setup::{apply, kinds, record_change, SectionValues};
 use super::SectionEdited;
 use crate::blocks::resolve_block;
-use crate::delete::editable;
+use crate::delete::{editable_opening, Opening};
 use crate::doc::Key;
 use crate::names::{W, W14, W16DU};
 use crate::policy::RevisionPolicy;
@@ -181,7 +181,9 @@ impl InsertSectionBreak {
         let paths = [anchor_path.clone(), sect_path.clone()];
         let wanted: [&[u32]; 2] = [&anchor_path, &sect_path];
         let path_error = || EditError::Path(main.clone());
-        let (mut work, parent, stretch, found) = editable(root, &paths, &wanted).ok_or_else(path_error)?;
+        // the anchor, its neighbours and the section's end read whole; the body between sealed
+        let (mut work, parent, stretch, found) =
+            editable_opening(root, &paths, &wanted, Opening::Ends).ok_or_else(path_error)?;
         let (&anchor, &sect) = (
             found.first().ok_or_else(path_error)?,
             found.get(1).ok_or_else(path_error)?,
