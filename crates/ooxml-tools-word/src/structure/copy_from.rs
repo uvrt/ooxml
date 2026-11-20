@@ -13,8 +13,8 @@ use crate::review::Editing;
 use ooxml_tools::pyfmt::repr_str;
 use ooxml_tools::{ArgEnum, Done, Refusal, ToolArgs, ToolError, ToolResult, TryCall, WayOut};
 use ooxml_word_edit::{
-    section_blocks, section_blocks_in, BookmarkPolicy, CopyBlocks, CopyRange, CopySource, EditError, Ids, ListPolicy,
-    StylePolicy, UnmappedPolicy,
+    section_blocks, section_blocks_in, BookmarkPolicy, CopyBlocks, CopyRange, CopySource, ListPolicy, StylePolicy,
+    UnmappedPolicy,
 };
 use serde_json::{json, Map, Value};
 
@@ -120,20 +120,20 @@ fn run(args: &WordCopyFrom, editing: &Editing<'_>, way: &TryCall) -> Result<Tool
             .others
             .get(&args.source_doc)
             .ok_or_else(|| not_open(&args.source_doc, &args.doc))?;
-        CopySource::Other(other.docx()?)
+        match other.word {
+            Some(word) => CopySource::Other(Box::new(word.clone())),
+            None => return Ok(unported("a source the session holds only as a package")),
+        }
     };
     let edit_refusal = |e| crate::review::edit_refusal(e, "", way.clone());
     let range = match (&args.section_heading, &args.range) {
         (Some(heading), _) => {
             let found = match &source {
                 CopySource::Own => section_blocks(editing.editor.store().snapshot().doc(), heading),
-                CopySource::Other(docx) => section_blocks_in(&Ids::default(), docx, heading),
+                CopySource::Other(other) => other.docx().and_then(|d| section_blocks_in(other.ids(), &d, heading)),
             };
             match found {
                 Ok(ids) => CopyRange::Ids(ids),
-                Err(EditError::Address(_)) if matches!(source, CopySource::Other(_)) => {
-                    return Ok(unported("a source heading the source's session may have renamed"));
-                }
                 Err(error) => return Err(edit_refusal(error)),
             }
         }

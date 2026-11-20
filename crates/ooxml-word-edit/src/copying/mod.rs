@@ -22,7 +22,7 @@
 //! block-level control a top-level block of its own in the reply.
 //!
 //! Not ported yet ([`EditError::Unsupported`]: the host copies such blocks its own way):
-//! the copy tracked, `replace:`, a note holding a comment, a comment holding a drawing.
+//! the copy tracked, `replace:`.
 //!
 //! Must not: write but through the sink, or know a tool's JSON.
 
@@ -49,7 +49,7 @@ use crate::set_text::block_key;
 use crate::sink::{EditSink, TextWrite};
 use crate::stamping::stamp_document;
 use crate::work::{Id, Work};
-use crate::{EditError, Ids, Result, WordDoc};
+use crate::{EditError, Result, WordDoc};
 use ooxml_store::{Command, Txn};
 use ooxml_word_model::docx::controls::controls;
 use ooxml_word_model::docx::Docx;
@@ -74,8 +74,9 @@ const NOTED: [&str; 7] = [
 pub enum CopySource {
     /// This document, as it is when the copy begins.
     Own,
-    /// Another open document, at the version the call holds.
-    Other(Arc<Docx>),
+    /// Another open document, at the version the call holds (its addresses resolved by its
+    /// renames).
+    Other(Box<WordDoc>),
 }
 
 /// The source blocks.
@@ -181,7 +182,7 @@ impl Command<WordDoc> for CopyBlocks {
     fn validate(&self, doc: &WordDoc) -> Result<()> {
         let source = match &self.source {
             CopySource::Own => doc.docx()?,
-            CopySource::Other(docx) => Arc::clone(docx),
+            CopySource::Other(other) => other.docx()?,
         };
         self.select(doc, &source)?;
         let docx = doc.docx()?;
@@ -196,7 +197,7 @@ impl Command<WordDoc> for CopyBlocks {
         let mut sink = EditSink::new(tx, self.policy.clone());
         let source = match &self.source {
             CopySource::Own => sink.docx()?,
-            CopySource::Other(docx) => Arc::clone(docx),
+            CopySource::Other(other) => other.docx()?,
         };
         let out = self.copy(&mut sink, &source)?;
         crate::after::after_edit(&mut sink)?;
@@ -236,18 +237,13 @@ impl CopyBlocks {
         }
     }
 
-    /// The source blocks: in this document by its renames; in another by its ids as they
-    /// are (one it does not know may be one its session renamed: the host's to answer).
+    /// The source blocks, by the renames of the document they are in.
     fn select(&self, doc: &WordDoc, source: &Docx) -> Result<Selected> {
-        match &self.source {
-            CopySource::Own => source::select(doc.ids(), source, &self.range),
-            CopySource::Other(_) => source::select(&Ids::default(), source, &self.range).map_err(|e| match e {
-                EditError::Address(_) => {
-                    EditError::Unsupported("a source block the source's session may have renamed".to_owned())
-                }
-                other => other,
-            }),
-        }
+        let ids = match &self.source {
+            CopySource::Own => doc.ids(),
+            CopySource::Other(other) => other.ids(),
+        };
+        source::select(ids, source, &self.range)
     }
 
     fn copy(&self, sink: &mut EditSink<'_, '_>, source: &Arc<Docx>) -> Result<BlocksCopied> {

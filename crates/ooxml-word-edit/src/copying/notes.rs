@@ -7,12 +7,13 @@
 //! note given new ids. A reference to a note the source lacks stays as it is; references
 //! of a kind the source has no part for are dropped.
 //!
-//! A note holding a comment is left to the host.
+//! As docx-agent's, a note's comment markers are copied as they are (`_notes` does not
+//! bring comments).
 //!
 //! Must not: write a notes part but through the copy's [`Space`].
 
 use super::content::Bringer;
-use super::view::{holds, records_view};
+use super::view::records_view;
 use crate::names::{W, W14, WP};
 use crate::notes::{ensure_notes_part, next_number, NoteKind};
 use crate::review::space::Space;
@@ -41,8 +42,7 @@ pub(super) struct NotesCopied {
 /// notes parts, held in `stories`.
 ///
 /// # Errors
-/// [`EditError::Unsupported`] for a note left to the host; what bringing its content
-/// refuses; a part that is not XML.
+/// What bringing its content refuses; a part that is not XML.
 pub(super) fn bring(
     sink: &mut EditSink<'_, '_>,
     bringer: &mut Bringer<'_>,
@@ -93,9 +93,6 @@ pub(super) fn bring(
                 .collect();
             for &child in &content {
                 records_view(into, child);
-            }
-            if let Some(what) = left_to_host(into, &content) {
-                return Err(EditError::Unsupported(what.to_owned()));
             }
             bringer.content(sink, into, &content, (&source_part, &part))?;
             bringer.bookmarks(sink, into, &content)?;
@@ -175,10 +172,4 @@ fn source_notes(source: &Docx, kind: NoteKind) -> Result<Option<(String, ById)>>
         .map(|n| (n.attribute(Some(W), "id").unwrap_or("").to_owned(), Arc::clone(n)))
         .collect();
     Ok(Some((part, notes)))
-}
-
-/// What in a copied note's content this port leaves to the host, if anything.
-fn left_to_host(work: &Work, content: &[Id]) -> Option<&'static str> {
-    let comments = ["commentRangeStart", "commentRangeEnd", "commentReference"];
-    holds(work, content, &comments).then_some("a copied note holding a comment")
 }

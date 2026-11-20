@@ -60,6 +60,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
             versions,
             placer: None,
             others: ooxml_tools_word::Others::default(),
+            word: None,
         };
         let reply = if tool == "read_batch" {
             batch(&arguments, file, name)

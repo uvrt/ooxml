@@ -93,6 +93,7 @@ impl Opened {
             versions: &self.versions,
             placer: self.placer.as_deref(),
             others: ooxml_tools_word::Others::default(),
+            word: self.word(),
         }
     }
 }

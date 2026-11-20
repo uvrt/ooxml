@@ -59,6 +59,7 @@ fn registered(tool: &str, arguments: &Value, editing: &Editing<'_>) -> Option<To
         versions: &versions,
         placer: None,
         others: editing.others,
+        word: Some(editing.opened),
     };
     Some(tool.run_outside(arguments, editing, &version))
 }
@@ -79,8 +80,9 @@ fn unregistered(tool: &str, arguments: &Value, editing: &Editing<'_>) -> Option<
 }
 
 /// `d2`, which a call may name: the document opened again (`reference_copy`) or the file
-/// `reference_file`.
-fn other_package(bytes: &Arc<[u8]>, case: &Value) -> Option<Package> {
+/// `reference_file`; its package, and the document as a session opens one (its ids
+/// stamped, their renames kept) where it opens.
+fn other_document(bytes: &Arc<[u8]>, case: &Value) -> Option<(Package, Option<WordDoc>)> {
     let other: Option<Arc<[u8]>> = match case.get("reference_file").and_then(Value::as_str) {
         Some(path) => std::fs::read(path).ok().map(Arc::from),
         None => case
@@ -89,7 +91,30 @@ fn other_package(bytes: &Arc<[u8]>, case: &Value) -> Option<Package> {
             .unwrap_or(false)
             .then(|| Arc::clone(bytes)),
     };
-    other.and_then(|b| Package::open(b, &Limits::default()).ok())
+    let package = other.and_then(|b| Package::open(b, &Limits::default()).ok())?;
+    let word = WordDoc::open(package.clone(), Arc::new(Unlimited)).ok();
+    Some((package, word))
+}
+
+/// `d2` (where the case has one) as a call that names it is handed it.
+fn d2_versions<'a>(
+    copy: Option<&'a (Package, Option<WordDoc>)>,
+    versions: &'a Versions,
+) -> Vec<(&'static str, Version<'a>)> {
+    copy.iter()
+        .map(|(package, word)| {
+            let version = Version {
+                name: "copy.docx",
+                package,
+                number: 1,
+                versions,
+                placer: None,
+                others: Others::default(),
+                word: word.as_ref(),
+            };
+            ("d2", version)
+        })
+        .collect()
 }
 
 /// One tool case on a freshly opened document, the tool's reply given by `reply` (`None`:
@@ -123,22 +148,9 @@ pub(crate) fn tool_case(
         .and_then(Value::as_str)
         .unwrap_or("2026-11-17T10:00:00Z");
     let blobs = case_blobs(case);
-    let copy = other_package(bytes, case);
+    let copy = other_document(bytes, case);
     let copy_versions = Versions::new();
-    let others: Vec<(&str, Version<'_>)> = copy
-        .iter()
-        .map(|package| {
-            let version = Version {
-                name: "copy.docx",
-                package,
-                number: 1,
-                versions: &copy_versions,
-                placer: None,
-                others: Others::default(),
-            };
-            ("d2", version)
-        })
-        .collect();
+    let others = d2_versions(copy.as_ref(), &copy_versions);
     let editing = Editing {
         editor: &CallEditor::new(&editor),
         caller: &caller,

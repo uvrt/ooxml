@@ -63,6 +63,7 @@ fn follow(mut arguments: Value) -> Value {
         versions: &versions,
         placer: None,
         others: Others::default(),
+        word: None,
     };
     let others = [("d2", other)];
     let editing = Editing {
