@@ -6,6 +6,7 @@
 | `mode14.docx` | `77be777abae6193af48cb3c970c7a4c67a2a3a4a1c147acc569c89a7fc7240cc` |
 | `controls.docx` | `fc2f42cc7f052802a23f82f3fa25d0d39c65bf54c7f8db674aba0042d23934b4` |
 | `lists-and-styles.docx` | `94c56b4994c7f50480d634cbf099d808c7ded428b5a8c254bd289fd3567fabaf` |
+| `review-follow.docx` | `f1529b0e8f0887f2730fbcff81336e96ba0e45046b4aba65ce51976c2fa2367b` |
 
 Written by `tools/make_fixtures.py` in this repository, deterministically (running it
 again writes the same bytes), every part by hand: the styles are a handful written there,
@@ -31,3 +32,8 @@ names), numbered lists over one abstract definition (one restarted), a list a pa
 style gives, an unused list instance, formatting that changes mid-word with runs split by
 rsids and a proofing mark, an external and an internal hyperlink, a bookmark, and an inline
 picture -- a 4x4 one-colour PNG written by the same script.
+`review-follow.docx` (mode 15) is what a review settles beyond its records: data-bound
+controls (text, a drop-down list, a date whose node lacks its time) showing tracked changes,
+and a table with tracked cell insertions that a comment describing them ("Tracked structural
+change: ...", as docx-agent wrote before its round 57) is anchored in, beside an ordinary
+comment -- for `word_changes`.
