@@ -516,20 +516,7 @@ impl MoveBlocks {
         };
         let (tracked, warnings) = self.tracked_blocks(&docx, &part, &blocks)?;
         let renamed = stamp_document(sink, &docx)?;
-        // docx-agent moves the blocks one by one, the first stamping the document: a later
-        // block's warning names it by its stamped id
-        let warnings: Vec<String> = warnings
-            .into_iter()
-            .map(|(k, said)| {
-                let id = ids.get(k).cloned().unwrap_or_default();
-                let id = if k == 0 {
-                    id
-                } else {
-                    crate::ranges::renamed_id(&renamed, &id)
-                };
-                format!("{id} {said}")
-            })
-            .collect();
+        let warnings = named_warnings(warnings, &ids, &renamed);
         if let (RevisionPolicy::Tracked(tracking), true) = (&self.policy, tracked.contains(&true)) {
             let stamped: Vec<String> = ids.iter().map(|id| crate::ranges::renamed_id(&renamed, id)).collect();
             let story = docx.part(&part).map_or_else(|| "body".to_owned(), |s| s.story.clone());
@@ -582,4 +569,21 @@ impl MoveBlocks {
             warnings,
         })
     }
+}
+
+/// Each block's warning, named by the block's id: docx-agent moves the blocks one by one,
+/// the first stamping the document, so a later block's warning names it by its stamped id.
+fn named_warnings(warnings: Vec<(usize, String)>, ids: &[String], renamed: &[(String, String)]) -> Vec<String> {
+    warnings
+        .into_iter()
+        .map(|(k, said)| {
+            let id = ids.get(k).cloned().unwrap_or_default();
+            let id = if k == 0 {
+                id
+            } else {
+                crate::ranges::renamed_id(renamed, &id)
+            };
+            format!("{id} {said}")
+        })
+        .collect()
 }
