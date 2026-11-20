@@ -65,7 +65,12 @@ pub(crate) struct Found {
 /// The paragraph `target` names now: an alias followed while its target exists; a cell's
 /// first paragraph.
 pub(crate) fn find(doc: &WordDoc, docx: &Docx, target: &str) -> Result<Found> {
-    let followed = doc.ids().follow(target);
+    find_with(doc.ids(), docx, target)
+}
+
+/// [`find`] in a document whose renames are `ids`' (another document's: none known).
+pub(crate) fn find_with(ids: &crate::Ids, docx: &Docx, target: &str) -> Result<Found> {
+    let followed = ids.follow(target);
     let block = (followed != target)
         .then(|| direct(docx, &followed))
         .flatten()

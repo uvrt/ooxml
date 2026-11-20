@@ -95,14 +95,15 @@ impl<'a> Watch<'a> {
     /// followed as `followed`): a paragraph, a table's cells, or a block-level control's
     /// paragraphs (docx-agent's `Watch.block`).
     pub(crate) fn block(&mut self, docx: &Docx, id: &str, followed: &str) {
-        if let Some(control) = controls(docx).into_iter().find(|c| c.id == id) {
-            let Some(story) = docx.part(&control.part) else { return };
-            for paragraph in story.ids.paragraphs_within(&control.path) {
-                self.unit(story, paragraph.id.clone(), &paragraph.path);
-            }
-            return;
-        }
+        // a paragraph's or table's id first: the controls are read (the whole document) only
+        // for an id that names neither (a control's id is of another form)
         let Ok((story, entry)) = resolve(docx, followed) else {
+            if let Some(control) = controls(docx).into_iter().find(|c| c.id == id) {
+                let Some(story) = docx.part(&control.part) else { return };
+                for paragraph in story.ids.paragraphs_within(&control.path) {
+                    self.unit(story, paragraph.id.clone(), &paragraph.path);
+                }
+            }
             return;
         };
         match entry {

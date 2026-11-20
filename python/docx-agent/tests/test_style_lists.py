@@ -253,7 +253,9 @@ def test_the_lists_tool_restarts_and_continues_style_numbered_items():
         listed = [b["id"] for b in document.blocks() if b["kind"] == "paragraph" and document.list_of(b["id"])]
         restarted = box.dispatch(session, "word_lists", {"doc": doc, "targets": [listed[1]], "action": "restart"})
         assert restarted.ok, restarted.to_json()
+        document = session.entry(doc).document      # (the view as the served call left it)
         assert labels(document, listed) == ["1.", "1.", "2."]
         continued = box.dispatch(session, "word_lists", {"doc": doc, "targets": [listed[1]], "action": "continue"})
         assert continued.ok, continued.to_json()
+        document = session.entry(doc).document      # (the view as the served call left it)
         assert labels(document, listed) == ["1.", "2.", "3."] and own_numbering(document, listed[1]) is None

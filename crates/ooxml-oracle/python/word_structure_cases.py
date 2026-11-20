@@ -14,7 +14,9 @@ import copy
 import os
 import datetime
 import json
+from pathlib import Path
 
+from docx_agent import Document
 from docx_agent import validate as _validate
 from docx_agent.edit import ids as _ids
 from lxml import etree
@@ -327,6 +329,68 @@ def hyperlink_field_cases(document) -> list[dict]:
     out += [tracked(case) for case in out]
     fonts = fonts_of(document) if out else None
     return [{**case, "fonts": fonts} for case in out]
+
+
+#: The other document ``word_copy_from``'s cases copy from (styles and lists of its own).
+_COPY_SOURCE = Path(__file__).resolve().parents[3] / "python" / "docx-agent" / "tests" / "fixtures" / "generated" \
+    / "trial" / "safety-bulletin.docx"
+
+
+@CASES
+def copy_cases(document) -> list[dict]:
+    """``word_copy_from`` (lane P4f1): blocks of the document opened again (``d2``) copied to
+    the end, after and before blocks, a span, a table, a heading's section; blocks of this
+    document copied beside themselves; blocks of another document whose styles differ;
+    refusals and what is left to the host -- untracked, and tracked.  Registered last: the
+    other tools' case numbers stay."""
+    blocks = [b["id"] for b in document.blocks() if b["id"]]
+    headings = [b["id"] for b in document.blocks() if b.get("level")]
+    tables = [b for b in blocks if b.startswith("t:")]
+    copy = {"reference_copy": True}
+
+    def from_d2(**arguments) -> dict:
+        return {**call("word_copy_from", source_doc="d2", **arguments), **copy}
+
+    # A copy goes nowhere right after the block it copies: docx-agent's touched aligns the
+    # blocks by content (difflib), and would take the original for the one inserted there.
+    out = []
+    for block in blocks[:3]:
+        if block != blocks[-1]:
+            out += [from_d2(range=block, at="end"),
+                    from_d2(range=block, at=f"after:{blocks[-1]}"),
+                    call("word_copy_from", source_doc="d1", range=block, at=blocks[-1])]
+        out.append(from_d2(range=block, at=f"before:{blocks[0]}"))
+    for table in tables[:2]:
+        out += [from_d2(range=table, at=f"before:{blocks[0]}")]
+        if table != blocks[-1]:
+            out.append(from_d2(range=table, at="end"))
+    if len(blocks) > 4:
+        out += [from_d2(range=f"{blocks[0]}..{blocks[2]}", at=f"after:{blocks[4]}"),
+                from_d2(range=f"{blocks[2]}..{blocks[0]}", at="end", ref="copied"),
+                call("word_copy_from", source_doc="d1", range=f"{blocks[1]}..{blocks[2]}", at=f"before:{blocks[0]}")]
+    for heading in headings[:2]:
+        out += [from_d2(section_heading=heading, at="end"),
+                call("word_copy_from", source_doc="d1", section_heading=heading, at=blocks[-1])]
+    if blocks:
+        out += [from_d2(range="p:00000000", at="end"),
+                from_d2(range=blocks[0], at="after:p:00000000"),
+                from_d2(range=blocks[0], at="end:footnotes"),
+                from_d2(range=blocks[0], at="end", ref="after:x"),
+                from_d2(section_heading=blocks[0], at="end"),
+                from_d2(range=blocks[0], at="end", styles="keep_source"),
+                from_d2(range=blocks[0], at="end", style_map=[{"source": "Normal", "destination": "Normal"}]),
+                from_d2(range=f"{blocks[0]}..p:00000000", at="end")]
+    if _COPY_SOURCE.exists() and blocks:
+        source = Document.open(_COPY_SOURCE.read_bytes())
+        theirs = [b["id"] for b in source.blocks() if b["id"]]
+        their_headings = [b["id"] for b in source.blocks() if b.get("level")]
+        other = {"reference_file": str(_COPY_SOURCE)}
+        for block in theirs[:6]:
+            out.append({**call("word_copy_from", source_doc="d2", range=block, at="end"), **other})
+        for heading in their_headings[:2]:
+            out.append({**call("word_copy_from", source_doc="d2", section_heading=heading, at=f"after:{blocks[0]}"),
+                        **other})
+    return out + [tracked(case) for case in out]
 
 
 def cases(document) -> list[dict]:

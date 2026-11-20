@@ -6,6 +6,8 @@ pub(crate) use ooxml_word_model::ids::{MC, W, W14, WP, WP14};
 
 /// Office relationships (`r:id`, `r:embed`).
 pub(crate) const R: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+/// VML's Office namespace (`o:relid`).
+pub(crate) const O: &str = "urn:schemas-microsoft-com:office:office";
 /// Office math.
 pub(crate) const M: &str = "http://schemas.openxmlformats.org/officeDocument/2006/math";
 /// Word 2023's revision dates (`w16du:dateUtc`).

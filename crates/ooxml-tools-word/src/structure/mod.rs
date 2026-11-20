@@ -18,7 +18,7 @@ mod moving;
 pub(crate) mod notes;
 mod sections;
 
-pub use copy_from::{CopyStyles, StyleMapping, Unmapped, WordCopyFrom};
+pub use copy_from::{word_copy_from, CopyStyles, StyleMapping, Unmapped, WordCopyFrom};
 pub use fields::{word_fields, FieldAction, ReferenceKind, WordFields};
 pub use headers_footers::{word_headers_footers, HeaderAction, PageNumber, StoryType, Which, WordHeadersFooters};
 pub use links::{word_links, LinkAction, WordLinks};
