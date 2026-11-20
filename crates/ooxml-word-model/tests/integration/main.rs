@@ -9,3 +9,4 @@ mod changes;
 mod marks;
 mod model;
 mod origins;
+mod story_paths;

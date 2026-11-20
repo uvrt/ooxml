@@ -5,11 +5,12 @@
 //!
 //! Must not: write anything.
 
-use super::pages::{FieldPlace, LaidFields, Unknown};
-use super::scan::{paragraph_of, Located, Marks};
+use super::pages::{FieldPlace, FieldRun, LaidFields, Unknown};
+use super::scan::{instruction_run, paragraph_of, Located, Marks};
 use crate::text_range::Span;
 use crate::WordDoc;
 use ooxml_word_model::address::bookmark_range;
+use ooxml_word_model::docx::cells::story_model_path;
 use ooxml_word_model::docx::sections::section_story;
 use ooxml_word_model::docx::text::OBJECT;
 use ooxml_word_model::docx::Docx;
@@ -262,6 +263,19 @@ pub(crate) fn value(
             let at = bookmark_place(doc, docx, marks, &name).ok_or_else(|| unknown("no bookmark"))?;
             let laid = laid.ok_or_else(|| unknown("no layout"))?;
             laid.page_reference(&found.instruction, FieldPlace::Body(&at)).map(Some)
+        }
+        "STYLEREF" => {
+            let laid = laid.ok_or_else(|| unknown("no layout"))?;
+            let at = place_of(docx, located, laid).ok_or_else(|| unknown("not on a page"))?;
+            let root = docx.part(&located.part).ok_or_else(|| unknown("no part"))?.root();
+            let path = instruction_run(root, found)
+                .and_then(|run| story_model_path(root, &run))
+                .ok_or_else(|| unknown("no instruction run"))?;
+            let run = FieldRun {
+                part: &located.part,
+                path: &path,
+            };
+            laid.style_reference(&found.instruction, at.place(), run).map(Some)
         }
         "REF" => {
             let Some(name) = argument(&found.instruction) else {

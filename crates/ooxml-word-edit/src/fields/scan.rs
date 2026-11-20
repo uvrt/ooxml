@@ -416,6 +416,30 @@ pub(crate) fn run_of(root: &Arc<Element>, path: &[u32]) -> Vec<u32> {
     }
 }
 
+/// The path of the run a field's text is drawn for (`_style_reference`'s target): a simple
+/// field's `w:fldSimple`, a complex one's run holding its instruction's first piece (the
+/// first `w:instrText` after its begin and before its separator, else its end); `None`
+/// where it has none.
+pub(crate) fn instruction_run(root: &Arc<Element>, found: &Found) -> Option<Vec<u32>> {
+    if found.simple {
+        return Some(found.begin.clone());
+    }
+    let stop = found.separate.as_ref().or(found.end.as_ref())?;
+    let mut first = None;
+    between(
+        root,
+        &mut Vec::new(),
+        false,
+        (&found.begin, stop),
+        &mut |node, path, _, _| {
+            if first.is_none() && node.name().is(Some(W), "instrText") {
+                first = Some(path.to_vec());
+            }
+        },
+    );
+    first.map(|path| run_of(root, &path))
+}
+
 /// Whether `a` comes before `b` in document order (an ancestor before what it holds).
 pub(crate) fn before(a: &[u32], b: &[u32]) -> bool {
     a < b

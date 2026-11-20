@@ -105,8 +105,8 @@ struct Pass<'p> {
 /// layout could not say (by id), with a note when the results did not settle.
 ///
 /// # Errors
-/// [`EditError::Unsupported`] where a field needs the layout and there is none, or for a
-/// field whose result is not ported yet.
+/// [`EditError::Unsupported`] where a field needs the layout and there is none, or the
+/// layout does not lay the version out.
 pub(crate) fn settle(
     sink: &mut EditSink<'_, '_>,
     held: &[Known],
@@ -179,9 +179,6 @@ fn pass(
     let docx = sink.docx()?;
     let fields = identified(sink.doc(), &docx, held);
     let current: Vec<&Located> = fields.iter().map(|(_, l)| l).collect();
-    if current.iter().any(|l| l.found.keyword() == "STYLEREF") {
-        return Err(EditError::Unsupported("a STYLEREF field's update".to_owned()));
-    }
     let needs = current.iter().any(|l| LAID_OUT.contains(&l.found.keyword().as_str()));
     let laid = match (needs, layout) {
         (false, _) => None,
