@@ -304,30 +304,17 @@ pub(crate) fn editable(root: &Arc<Element>, paths: &[Vec<u32>], wanted: &[&[u32]
     Some((work, parent, (from, to), found))
 }
 
-/// The keys of the blocks in the part's stretch `from..=to` of the parent at `parent`.
-pub(crate) fn stretch_keys(docx: &Docx, part: &str, parent: &[u32], (from, to): (u32, u32)) -> Vec<Key> {
+/// The keys of the blocks in the part's stretch `from..=to` of the parent at `parent`
+/// (its paragraphs, then its tables), read from the index's segments there alone.
+pub(crate) fn stretch_keys(docx: &Docx, part: &str, parent: &[u32], stretch: (u32, u32)) -> Vec<Key> {
     let Some(story) = docx.part(part) else {
         return Vec::new();
     };
-    let inside = |p: &[u32]| {
-        p.len() > parent.len() && p.starts_with(parent) && p.get(parent.len()).is_some_and(|k| (from..=to).contains(k))
-    };
-    let mut keys: Vec<Key> = story
-        .ids
-        .paragraphs()
-        .iter()
-        .filter(|p| inside(&p.path))
-        .map(|p| block_key(part, &p.id))
-        .collect();
-    keys.extend(
-        story
-            .ids
-            .tables()
-            .iter()
-            .filter(|t| inside(&t.path))
-            .map(|t| block_key(part, &t.id)),
-    );
-    keys
+    let (paragraphs, tables) = story.ids.within_stretch(parent, stretch);
+    let paragraphs = paragraphs.iter().map(|p| block_key(part, &p.id));
+    paragraphs
+        .chain(tables.iter().map(|t| block_key(part, &t.id)))
+        .collect()
 }
 
 /// The stamping's renames but those of the blocks that went.

@@ -160,25 +160,16 @@ pub fn body_blocks(docx: &Docx, controls: &[Control]) -> Vec<Block> {
     for (k, node) in body.children().iter().enumerate() {
         let Node::Element(node) = node else { continue };
         let path = [body_index, u32::try_from(k).unwrap_or(u32::MAX)];
-        let name = node.name();
-        let (mut id, mut level, mut breaks) = (None, None, 0);
-        if name.is(Some(W), "p") || name.is(Some(W), "tbl") {
-            id = entry_id(body_part, &path);
-            if name.is(Some(W), "p") {
-                level = levels.effective(node);
-                breaks = usize::from(find_path(node, &["pPr", "sectPr"]).is_some());
-            }
-        } else if name.is(Some(W), "sdt") || name.is(Some(W), "customXml") {
-            if name.is(Some(W), "sdt") {
-                id = controls
-                    .iter()
-                    .find(|c| c.part == body_part.part && *c.path == path)
-                    .map(|c| c.id.clone());
-            }
-            breaks = paragraph_breaks(node);
-        } else {
+        let Some((id, level)) = block_of(body_part, &path, node, &levels, || controls) else {
             continue;
-        }
+        };
+        let breaks = if node.name().is(Some(W), "p") {
+            usize::from(find_path(node, &["pPr", "sectPr"]).is_some())
+        } else if node.name().is(Some(W), "tbl") {
+            0
+        } else {
+            paragraph_breaks(node)
+        };
         out.push(Block {
             id,
             level,
@@ -188,6 +179,108 @@ pub fn body_blocks(docx: &Docx, controls: &[Control]) -> Vec<Block> {
         section += breaks;
     }
     out
+}
+
+/// A body child's id and level when it is a top-level block (a paragraph, a table, a
+/// block-level control or custom XML); `None` for any other child. The controls are asked
+/// for only for a control.
+fn block_of<'c>(
+    part: &StoryPart,
+    path: &[u32],
+    node: &Element,
+    levels: &OutlineLevels<'_>,
+    controls: impl FnOnce() -> &'c [Control],
+) -> Option<(Option<String>, Option<i64>)> {
+    let name = node.name();
+    if name.is(Some(W), "p") {
+        Some((entry_id(part, path), levels.effective(node)))
+    } else if name.is(Some(W), "tbl") {
+        Some((entry_id(part, path), None))
+    } else if name.is(Some(W), "sdt") {
+        let control = controls().iter().find(|c| c.part == part.part && *c.path == *path);
+        Some((control.map(|c| c.id.clone()), None))
+    } else {
+        name.is(Some(W), "customXml").then_some((None, None))
+    }
+}
+
+/// A top-level block of the body as a [`BodyWalk`] reads it.
+#[derive(Debug, Clone)]
+pub struct Step {
+    /// Its place among the body's children.
+    pub child: usize,
+    /// Its id (`None` for custom XML).
+    pub id: Option<String>,
+    /// Its outline level, for a paragraph that is a heading.
+    pub level: Option<i64>,
+    /// The element.
+    pub element: Arc<Element>,
+}
+
+/// The body's top-level blocks read one at a time from a place (what [`body_blocks`]
+/// lists, sections aside), so that a heading's range is read from the heading to its end
+/// alone; the controls are read at the first control met.
+pub struct BodyWalk<'a> {
+    part: &'a StoryPart,
+    body_index: u32,
+    body: &'a Arc<Element>,
+    levels: OutlineLevels<'a>,
+    docx: &'a Docx,
+    controls: std::cell::OnceCell<Vec<Control>>,
+}
+
+impl<'a> BodyWalk<'a> {
+    /// The walk of `docx`'s body; `None` without one.
+    #[must_use]
+    pub fn new(docx: &'a Docx) -> Option<BodyWalk<'a>> {
+        let part = docx.body()?;
+        let (body_index, body) = child_of(part.root(), "body")?;
+        Some(BodyWalk {
+            part,
+            body_index,
+            body,
+            levels: OutlineLevels::new(docx),
+            docx,
+            controls: std::cell::OnceCell::new(),
+        })
+    }
+
+    /// The body's place in its part's root.
+    #[must_use]
+    pub fn body_index(&self) -> u32 {
+        self.body_index
+    }
+
+    /// The block at the body's child `child`; `None` for a child that is not one.
+    #[must_use]
+    pub fn at(&self, child: usize) -> Option<Step> {
+        let Node::Element(node) = self.body.children().get(child)? else {
+            return None;
+        };
+        let path = [self.body_index, u32::try_from(child).ok()?];
+        let controls = || {
+            self.controls
+                .get_or_init(|| crate::docx::controls::controls(self.docx))
+                .as_slice()
+        };
+        let (id, level) = block_of(self.part, &path, node, &self.levels, controls)?;
+        Some(Step {
+            child,
+            id,
+            level,
+            element: Arc::clone(node),
+        })
+    }
+
+    /// The blocks after the body's child `child`, in order.
+    pub fn after(&self, child: usize) -> impl Iterator<Item = Step> + '_ {
+        (child + 1..self.body.children().len()).filter_map(|k| self.at(k))
+    }
+
+    /// The blocks before the body's child `child`, nearest first.
+    pub fn before(&self, child: usize) -> impl Iterator<Item = Step> + '_ {
+        (0..child).rev().filter_map(|k| self.at(k))
+    }
 }
 
 /// The body's headings with their ranges, in order.

@@ -47,7 +47,7 @@ def _rels(*items: tuple[str, str, str]) -> str:
 
 
 def made_up() -> bytes:
-    """The made-up document of ``crates/ooxml-tools-word/tests/describe.rs``, with content
+    """The made-up document of ``crates/ooxml-tools-word/tests/integration/describe.rs``, with content
     types so that today's library opens it."""
     overrides = {"/word/document.xml": _CT + "document.main+xml",
                  "/word/settings.xml": _CT + "settings+xml",
