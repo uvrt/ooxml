@@ -1,4 +1,7 @@
 name: Gates
+# Each run's title names its ref, gates and modes (`gh run list --workflow gates.yml --json
+# displayTitle`), so a lane finds its own run among several queued at once.
+run-name: Gates ${{ inputs.ref }} [${{ inputs.gates }} / ${{ inputs.modes }}]
 
 # The heavy gates a lane runs before its pull request is done, on GitHub's Linux runners and on
 # demand only (never on push, not a required check):
