@@ -2,7 +2,8 @@
 //! problems it opened with, and the run of a command through it: validate and prepare on a
 //! snapshot, commit (rebased past concurrent commits, prepared again on a conflict), then
 //! the result from the change and the version after it ([`Edited`]): what it touched and
-//! the validation delta (design section 5, "Results").
+//! the validation delta (design section 5, "Results"); every command followed by the
+//! records of placed values kept in the document ([`crate::provenance`]).
 //!
 //! Must not: hold anything but the store and the baseline; read the clock but through the
 //! store's port; run a command's effects outside its transaction.
@@ -119,7 +120,8 @@ impl Editor {
     where
         C: Command<WordDoc, Error = EditError>,
     {
-        let committed = self.store.run(caller, command)?;
+        // docx-agent's records of placed values follow every edit, in its own step
+        let committed = self.store.run(caller, &crate::provenance::Followed(command))?;
         let started = self.clock.monotonic();
         let (touched, ids) = match &committed.previous {
             Some(previous) if committed.changed => (

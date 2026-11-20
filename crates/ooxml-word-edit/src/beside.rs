@@ -87,7 +87,7 @@ fn located(sink: &mut EditSink<'_, '_>, docx: &Docx, place: &TextPlace) -> Resul
             // the outcome depends on the paragraphs that hold a match: a write that makes
             // one match, or stop matching, conflicts
             sink.read_where(Arc::new(HoldsMatch::new(condition)));
-            anchor_range(sink.doc(), docx, &pattern, text)
+            anchor_range(sink.doc(), docx, (&pattern, text), None)
         }
     }
 }
