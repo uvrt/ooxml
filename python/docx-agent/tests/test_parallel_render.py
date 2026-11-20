@@ -269,6 +269,7 @@ def test_a_version_laid_out_whole_says_why_in_the_documents_ids():
         document = session.entry(d).document
         second = next(p.id for p in document.paragraphs() if p.text.startswith("Page 2 "))
         _ok(box, session, "word_sections", doc=d, action="insert_break", after=second, start="nextPage")
+        document = session.entry(d).document  # (the view as the served call left it)
         broken = _ok(box, session, "render", doc=d, pages=[1], width=300)
     relaid = broken.data["relaid"]
     assert relaid["reason"] == "sections"

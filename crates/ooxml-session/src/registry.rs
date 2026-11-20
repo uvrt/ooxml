@@ -400,6 +400,12 @@ impl Registry {
         registry.register(word_edit::<ooxml_tools_word::WordCopyFrom>(
             ooxml_tools_word::word_copy_from,
         ));
+        registry.register(word_edit::<ooxml_tools_word::WordMove>(ooxml_tools_word::word_move));
+        registry.register(word_edit::<ooxml_tools_word::WordSections>(
+            ooxml_tools_word::word_sections,
+        ));
+        registry.register(word_edit::<ooxml_tools_word::WordNotes>(ooxml_tools_word::word_notes));
+        registry.register(word_edit::<ooxml_tools_word::WordLinks>(ooxml_tools_word::word_links));
         registry.register(word_read::<ooxml_tools_word::Check>(ooxml_tools_word::check));
         registry
     }
