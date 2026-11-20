@@ -2,8 +2,7 @@
 ``word_reads_diff.py``: docx-agent's toolbox against the Rust tools (``word-reads``), case by
 case.  ``describe``'s fields the Rust core does not give yet
 (``ooxml_tools_word::NOT_DESCRIBED``) and the application-only ``memory`` are left out of the
-comparison, as is a drawing's SmartArt JSON in ``word_inspect`` (the diagram's data model,
-not read by the Rust core yet); every other field must be equal.
+comparison; every other field must be equal.
 
 The addressed cases (``ranges``, ``inspect``, ``find``, ``batch``) are made per document from
 what it holds: its first, a middle and its last body paragraph, a span of five blocks, its
@@ -113,21 +112,10 @@ def python_replies(toolbox, path, what: str) -> dict:
     return out
 
 
-def _without_graphics(data):
-    """``data`` without a drawing's SmartArt JSON (the diagram's data model)."""
-    if isinstance(data, list):
-        return [_without_graphics(item) for item in data]
-    if isinstance(data, dict):
-        return {k: _without_graphics(v) for k, v in data.items() if k != "diagram"}
-    return data
-
-
 def comparable(tool: str, reply: dict) -> dict:
     if reply.get("error") is not None:
         return {"error": {"code": reply["error"].get("code"), "message": reply["error"].get("message")}}
     data = reply.get("data")
-    if tool == "word_inspect":
-        data = _without_graphics(data)
     if tool == "read_batch":
         data = {**data, "ops": [{k: v for k, v in op.items() if k not in ("doc", "version")}
                                 for op in data.get("ops", [])]}
