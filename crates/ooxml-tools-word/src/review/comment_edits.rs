@@ -1,7 +1,6 @@
 //! Owns: `word_comments`' edit actions (docx-agent's `word_comments`): `resolve`, `reopen`
 //! and `delete` run as one [`CommentEdits`] command, `edit` as one [`EditCommentText`];
-//! `add` and `reply` are not ported yet (they write the reference's size and the modern
-//! comment parts' entries), and say so in `unported` for the host to answer its own way.
+//! `add` and `reply` as one `AddComments` ([`super::comment_writes`]).
 //!
 //! Must not: change a comment but through a command.
 
@@ -10,9 +9,6 @@ use super::Editing;
 use ooxml_tools::{Done, Refusal, ToolError, ToolResult, WayOut};
 use ooxml_word_edit::{CommentEdit, CommentEdits, EditCommentText};
 use serde_json::Value;
-
-/// What `unported` says of a comment's `add`, `reply` or `edit`.
-pub const COMMENT_WRITES: &str = "comment add and reply (the reference's size and the comment parts' entries)";
 
 /// An edit action.
 pub(crate) fn act(args: &WordComments, editing: &Editing<'_>) -> Result<ToolResult<Value>, ToolError> {
@@ -30,18 +26,13 @@ pub(crate) fn act(args: &WordComments, editing: &Editing<'_>) -> Result<ToolResu
     if items.is_empty() {
         return Ok(ToolResult::nothing_given("changed", "items"));
     }
-    if args.action == CommentAction::Edit {
-        return edit_text(args, editing, items);
-    }
     let edit = match args.action {
         CommentAction::Resolve => CommentEdit::Resolve,
         CommentAction::Reopen => CommentEdit::Reopen,
         CommentAction::Delete => CommentEdit::Delete,
-        _ => {
-            let mut done = Done::new(String::new());
-            done.unported.push(COMMENT_WRITES.to_owned());
-            return Ok(ToolResult::done(done));
-        }
+        CommentAction::Add | CommentAction::Reply => return super::comment_writes::write(args, editing, items),
+        CommentAction::Edit => return edit_text(args, editing, items),
+        CommentAction::List => return super::comments::list(args, editing).map(ToolResult::done),
     };
     let mut ids = Vec::new();
     for item in items {

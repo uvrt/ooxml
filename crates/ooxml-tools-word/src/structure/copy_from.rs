@@ -3,8 +3,8 @@
 //! document (as it was before the call) or another open one, its blocks a range or a
 //! heading's section, the reply naming the blocks made and each source id's copy.
 //!
-//! Left to the host (`unported`): the policies other than `use_destination`, a style map,
-//! `unmapped: body`, a place given by reference, and what the edit core does not port yet.
+//! Left to the host (`unported`): a place given by reference, and what the edit core does
+//! not port yet.
 //!
 //! Must not: change the document but through a command.
 
@@ -12,7 +12,9 @@ use super::common::{blocks_ref_as_place, call, is_place, name_blocks, outcome, p
 use crate::review::Editing;
 use ooxml_tools::pyfmt::repr_str;
 use ooxml_tools::{ArgEnum, Done, Refusal, ToolArgs, ToolError, ToolResult, TryCall, WayOut};
-use ooxml_word_edit::{section_blocks, section_blocks_in, CopyBlocks, CopyRange, CopySource, EditError, Ids};
+use ooxml_word_edit::{
+    section_blocks, section_blocks_in, CopyBlocks, CopyRange, CopySource, EditError, Ids, StylePolicy, UnmappedPolicy,
+};
 use serde_json::{json, Map, Value};
 
 /// How many of the source ids and their copies' the reply lists.
@@ -110,12 +112,6 @@ fn run(args: &WordCopyFrom, editing: &Editing<'_>, way: &TryCall) -> Result<Tool
     if args.at.contains('$') {
         return Ok(unported("copy_from at a place by reference"));
     }
-    if args.styles.is_some_and(|s| s != CopyStyles::UseDestination) {
-        return Ok(unported("copy_from styles other than use_destination"));
-    }
-    if args.style_map.as_ref().is_some_and(|m| !m.is_empty()) || args.unmapped == Some(Unmapped::Body) {
-        return Ok(unported("copy_from with a style map"));
-    }
     let source = if args.source_doc == args.doc {
         CopySource::Own
     } else {
@@ -148,6 +144,21 @@ fn run(args: &WordCopyFrom, editing: &Editing<'_>, way: &TryCall) -> Result<Tool
         range,
         at: args.at.clone(),
         policy: policy(editing),
+        styles: match args.styles {
+            None | Some(CopyStyles::UseDestination) => StylePolicy::UseDestination,
+            Some(CopyStyles::KeepSource) => StylePolicy::KeepSource,
+            Some(CopyStyles::Merge) => StylePolicy::Merge,
+        },
+        style_map: args
+            .style_map
+            .iter()
+            .flatten()
+            .map(|m| (m.source.clone(), m.destination.clone()))
+            .collect(),
+        unmapped: match args.unmapped {
+            Some(Unmapped::Body) => UnmappedPolicy::Body,
+            None | Some(Unmapped::Import) => UnmappedPolicy::Import,
+        },
     };
     Ok(match editing.editor.run(editing.caller, &command) {
         Ok(done) => reply(args, done.out),

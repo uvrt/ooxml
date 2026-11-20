@@ -103,7 +103,7 @@ impl Command<WordDoc> for EditCommentText {
 }
 
 /// A comment's paragraph as docx-agent writes it (`_comment_paragraphs`).
-fn comment_paragraph(
+pub(super) fn comment_paragraph(
     work: &mut Work,
     holder: Id,
     (para, text): (&str, &str),
