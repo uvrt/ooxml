@@ -78,6 +78,24 @@ def format_table_cases(document) -> list[dict]:
     return out + [tracked(case) for case in out]
 
 
+@CASES
+def table_keep_cases(document) -> list[dict]:
+    """``word_format_table``'s keeps: ``keep_together`` and ``keep_with_next`` on and off,
+    alone and together, with a row's breaking or a table's shading beside them, on each of
+    the first eight tables -- untracked and tracked."""
+    def fmt(table: str, **arguments) -> dict:
+        return call("word_format_table", table=table, scope="table", **arguments)
+
+    out = []
+    for table in _tables(document)[:8]:
+        out += [fmt(table, keep_together=False), fmt(table, keep_with_next=True), fmt(table, keep_with_next=False),
+                fmt(table, keep_together=False, keep_with_next=False), fmt(table, keep_together=True),
+                fmt(table, keep_together=True, keep_with_next=True),
+                fmt(table, keep_together=True, keep_with_next=False),
+                fmt(table, keep_with_next=False, cant_split=True), fmt(table, keep_together=False, shading="FFF2CC")]
+    return out + [tracked(case) for case in out]
+
+
 def _rows(table: str) -> list[dict]:
     def edit(action: str, **arguments) -> dict:
         return call("word_edit_table", table=table, action=action, **arguments)
