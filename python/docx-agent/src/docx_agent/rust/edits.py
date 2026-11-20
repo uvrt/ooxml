@@ -8,7 +8,8 @@ A tool with a Rust editing handler (:data:`SERVED`: ``word_set_text``, ``replace
 ``word_links``, ``word_drawings``, and each one ported after them)
 runs there, ahead of docx-agent's handler and its wrapper
 (:func:`docx_agent.tools._base.wrap`): the call's arguments, its ``$name`` refs resolved, go to
-``Session.edit`` with the call's caller and the document's tracking mode; the versions the
+``Session.edit`` with the call's caller, its date (the session clock's, to the second: lane
+P2e1) and the document's tracking mode; the versions the
 call's edits made are the call's step (:meth:`~ooxml_edit.tools.owned.OwnedEntry.served`,
 numbered in the order the session made them), its reply the result.  The Python view of the
 document is not read.
@@ -22,8 +23,7 @@ The Python handler answers instead -- on the view, committed through the bridge,
 tool and reason (:func:`fallbacks`, ``edit_fallbacks{tool,reason}``), never silently -- where
 the session does not answer as it yet: an op of a ``batch`` (one step), a call on a draft,
 values written by reference in a tool that does not keep them yet (:data:`KEEPS_WRITTEN`), a
-ref name that would be folded, a session given its own clock (the Rust session dates
-revisions by the system's), and what the session says it leaves to the host (its
+ref name that would be folded, and what the session says it leaves to the host (its
 ``unported``: a find within a block, a picture, regex, ...).  The Rust handler changes nothing
 in each of those.
 
@@ -33,6 +33,7 @@ words, with its way out (:mod:`.refusals`).
 
 from __future__ import annotations
 
+import datetime as _dt
 import functools
 import json
 import threading
@@ -43,7 +44,6 @@ from typing import Any, Callable
 from ooxml_edit.tools import Result, ToolError
 from ooxml_edit.tools.session import REF
 from ooxml_edit.tools.session import StepOwner
-from ooxml_edit.tools.session import utc_now
 
 from . import reads
 from .owner import context_of, options, retired_ids
@@ -299,6 +299,15 @@ def _written(call: Any) -> str | None:
                         "record": f.record, "brief": f.brief()} for f in facts])
 
 
+def _date(call: Any) -> str:
+    """The moment the call's writes are dated by (a revision's, a comment's): the session's
+    clock, UTC, to the second -- as docx-agent's handlers date them (lane P2e1)."""
+    moment = call.now()
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=_dt.timezone.utc)
+    return moment.astimezone(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def _ref_names(arguments: dict[str, Any]) -> list[str]:
     """The ref names a call gives (``ref``, ``items[].ref``)."""
     items = arguments.get("items") if isinstance(arguments.get("items"), list) else []
@@ -328,9 +337,6 @@ def _why_not(call: Any, entry: Any, arguments: dict[str, Any]) -> str | None:
         return "batch op"
     if getattr(call, "facts", None) and call.tool.name not in KEEPS_WRITTEN:
         return "values by reference"
-    if getattr(call.session, "clock", utc_now) is not utc_now:
-        # Revisions are dated by the session's clock: the Rust session's is the system's.
-        return "the session's own clock"
     return None
 
 
@@ -445,7 +451,7 @@ def _edit(call: Any, entry: Any, arguments: dict[str, Any], counted: bool) -> tu
     :meth:`~ooxml_edit.tools.owned.OwnedEntry.served`."""
     mirror = entry.handle
     tool = call.tool.name
-    context = context_of(call.caller)
+    context = context_of(call.caller, _date(call))
     _tracking(call, entry, context, counted)
     given = {"doc": mirror.doc, **{k: v for k, v in SERVED[tool](call, arguments).items()
                                    if v is not None}}

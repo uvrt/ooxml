@@ -589,7 +589,10 @@ impl Session {
             word: document.as_deref().and_then(Document::word),
             caller: &context.caller,
             cancel,
-            date: revision_date(self.context.clock.now()),
+            date: context
+                .date
+                .clone()
+                .unwrap_or_else(|| revision_date(self.context.clock.now())),
             made: &state.made,
             layout: context.layout.as_deref(),
             blobs: context.blobs.as_deref(),

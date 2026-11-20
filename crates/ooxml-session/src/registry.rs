@@ -74,7 +74,7 @@ pub struct Call<'a> {
     pub(crate) word: Option<&'a Word>,
     pub(crate) caller: &'a Caller,
     pub(crate) cancel: &'a dyn Cancel,
-    /// The revision date edits made now carry (the session's clock, to the minute).
+    /// The date edits made now carry (the host's, else the session's clock; to the second).
     pub(crate) date: String,
     /// The versions the call's edits made (an editing tool's: [`CallEditor::made`]).
     pub(crate) made: &'a Mutex<Option<Made>>,

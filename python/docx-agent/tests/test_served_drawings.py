@@ -1,6 +1,6 @@
 """Lane P2c14: ``word_drawings`` served by the Rust session, an inserted picture's bytes
 asked of the host's blobs (``CallOptions(blobs=...)``); its replies as docx-agent's own
-handler gives them (a session with its own clock is answered by the Python handler).
+handler gives them (a session with the Rust session off is answered by the Python handler).
 Made-up documents and pictures only."""
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ from docx_agent.rust import edits
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
 from ooxml_edit.tools import Toolbox
 from ooxml_edit.tools.owned import OwnedEntry
+from python_handler import python_session
 
 CLOCK = lambda: dt.datetime(2026, 11, 20, 9, 0, tzinfo=dt.timezone.utc)  # noqa: E731
 
@@ -47,8 +48,11 @@ def report() -> bytes:
 
 
 def _calls(toolbox, data: bytes, served: bool) -> list:
-    session = toolbox.session() if served else toolbox.session(clock=CLOCK)
-    doc = session.open(data, "report.docx")
+    if served:
+        session = toolbox.session(clock=CLOCK)
+        doc = session.open(data, "report.docx")
+    else:
+        session, doc = python_session(toolbox, data, "report.docx", clock=CLOCK)
     if served and not isinstance(session.entry(doc), OwnedEntry):
         pytest.skip("no Rust session to own the document")
     image = session.add_blob(png(), "logo.png")
