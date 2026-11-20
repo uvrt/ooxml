@@ -90,19 +90,8 @@ fn edits_on(package: Package, calls: &[Value]) -> (Value, String) {
     let editor = Editor::open(package, StoreConfig::default(), Arc::new(Still), Arc::new(Unlimited)).unwrap();
     let opened = editor.store().snapshot().doc().clone();
     let caller = Caller::anonymous();
-    let editing = Editing {
-        editor: &CallEditor::new(&editor),
-        caller: &caller,
-        opened: &opened,
-        tracking: None,
-        doc: "d1",
-        cancel: &Never,
-        date: "2026-11-17T10:00:00Z",
-        layout: None,
-        others: ooxml_tools_word::Others::default(),
-        blobs: None,
-        written: &[],
-    };
+    let call_editor = CallEditor::new(&editor);
+    let editing = Editing::new(&call_editor, &caller, &opened, "d1", &Never, "2026-11-17T10:00:00Z");
     let mut reply = Value::Null;
     for arguments in calls {
         let mut arguments = arguments.clone();

@@ -109,19 +109,10 @@ fn call_tracking<A: ToolArgs>(
     let opened = editor.store().snapshot().doc().clone();
     let caller = Caller::anonymous();
     let reply = {
-        let editing = Editing {
-            editor: &CallEditor::new(&editor),
-            caller: &caller,
-            opened: &opened,
-            tracking,
-            doc: "d1",
-            cancel: &Never,
-            date: "2026-11-17T10:00:00Z",
-            layout: Some(&TwoPages),
-            others: ooxml_tools_word::Others::default(),
-            blobs: None,
-            written: &[],
-        };
+        let call_editor = CallEditor::new(&editor);
+        let editing = Editing::new(&call_editor, &caller, &opened, "d1", &Never, "2026-11-17T10:00:00Z")
+            .with_tracking(tracking)
+            .with_layout(Some(&TwoPages));
         let (args, _) = A::accept(arguments, Some("docx")).unwrap();
         Value::Object(tool(&args, &editing).to_json())
     };

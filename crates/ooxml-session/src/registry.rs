@@ -252,19 +252,12 @@ impl<T: ToolArgs> Tool for EditHandler<T> {
         let doc = call.doc.id().to_string();
         let editor = CallEditor::new(&word.editor);
         let others = call.other_versions();
-        let editing = Editing {
-            editor: &editor,
-            caller: call.caller,
-            opened: word.opened.doc(),
-            tracking,
-            doc: &doc,
-            cancel: call.cancel,
-            date: &call.date,
-            layout: call.layout,
-            others: Others::new(&others),
-            blobs: call.blobs,
-            written: call.written,
-        };
+        let editing = Editing::new(&editor, call.caller, word.opened.doc(), &doc, call.cancel, &call.date)
+            .with_tracking(tracking)
+            .with_layout(call.layout)
+            .with_others(Others::new(&others))
+            .with_blobs(call.blobs)
+            .with_written(call.written);
         let result = match &self.run {
             EditRun::Plain(run) => run(&args, &editing),
             EditRun::Tracking(run) => {

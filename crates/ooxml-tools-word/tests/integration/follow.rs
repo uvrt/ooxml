@@ -65,19 +65,10 @@ fn follow(mut arguments: Value) -> Value {
         others: Others::default(),
     };
     let others = [("d2", other)];
-    let editing = Editing {
-        editor: &CallEditor::new(&editor),
-        caller: &caller,
-        opened: &opened,
-        tracking: tracking.as_ref(),
-        doc: "d1",
-        cancel: &Never,
-        date: "2026-11-17T10:00:00Z",
-        layout: None,
-        others: Others::new(&others),
-        blobs: None,
-        written: &[],
-    };
+    let call_editor = CallEditor::new(&editor);
+    let editing = Editing::new(&call_editor, &caller, &opened, "d1", &Never, "2026-11-17T10:00:00Z")
+        .with_tracking(tracking.as_ref())
+        .with_others(Others::new(&others));
     let (args, _) = WordFollowSample::accept(arguments, Some("docx")).unwrap();
     let reply = Value::Object(word_follow_sample(&args, &editing).to_json());
     let head = editor.store().snapshot();
@@ -134,19 +125,8 @@ fn follow_on_a_long_document() {
             editor.store().snapshot().doc().docx().unwrap();
             let opened = editor.store().snapshot().doc().clone();
             let caller = Caller::anonymous();
-            let editing = Editing {
-                editor: &CallEditor::new(&editor),
-                caller: &caller,
-                opened: &opened,
-                tracking: None,
-                doc: "d1",
-                cancel: &Never,
-                date: "2026-11-17T10:00:00Z",
-                layout: None,
-                others: Others::default(),
-                blobs: None,
-                written: &[],
-            };
+            let call_editor = CallEditor::new(&editor);
+            let editing = Editing::new(&call_editor, &caller, &opened, "d1", &Never, "2026-11-17T10:00:00Z");
             let arguments = json!({"doc": "d1", "sample": {"block": sample}, "copies": copies});
             let (args, _) = WordFollowSample::accept(arguments, Some("docx")).unwrap();
             let start = std::time::Instant::now();

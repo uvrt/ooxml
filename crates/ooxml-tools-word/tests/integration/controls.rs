@@ -30,19 +30,9 @@ fn calls(calls: &[Value], author: Option<&str>) -> (Vec<Value>, String) {
         author: a.to_owned(),
         date: "2026-11-17T10:00:00Z".to_owned(),
     });
-    let editing = Editing {
-        editor: &CallEditor::new(&editor),
-        caller: &caller,
-        opened: &opened,
-        tracking: tracking.as_ref(),
-        doc: "d1",
-        cancel: &Never,
-        date: "2026-11-17T10:00:00Z",
-        layout: None,
-        others: ooxml_tools_word::Others::default(),
-        blobs: None,
-        written: &[],
-    };
+    let call_editor = CallEditor::new(&editor);
+    let editing = Editing::new(&call_editor, &caller, &opened, "d1", &Never, "2026-11-17T10:00:00Z")
+        .with_tracking(tracking.as_ref());
     let mut replies = Vec::new();
     for arguments in calls {
         let mut arguments = arguments.clone();

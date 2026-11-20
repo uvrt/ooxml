@@ -144,19 +144,12 @@ pub(crate) fn tool_case(
             ("d2", version)
         })
         .collect();
-    let editing = Editing {
-        editor: &CallEditor::new(&editor),
-        caller: &caller,
-        opened: &opened,
-        tracking: tracking.as_ref(),
-        doc: "d1",
-        cancel: &Never,
-        date,
-        layout: layout.as_ref().map(|l| l as &dyn ooxml_word_edit::FieldLayout),
-        others: Others::new(&others),
-        blobs: Some(&blobs),
-        written: &[],
-    };
+    let call_editor = CallEditor::new(&editor);
+    let editing = Editing::new(&call_editor, &caller, &opened, "d1", &Never, date)
+        .with_tracking(tracking.as_ref())
+        .with_layout(layout.as_ref().map(|l| l as &dyn ooxml_word_edit::FieldLayout))
+        .with_others(Others::new(&others))
+        .with_blobs(Some(&blobs));
     let arguments = case.get("arguments").cloned().unwrap_or(Value::Object(Map::new()));
     let tool = case.get("tool").and_then(Value::as_str).unwrap_or("");
     let reply = reply(tool, &arguments, &editing).ok_or_else(|| format!("no tool {tool}"))?;

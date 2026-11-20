@@ -55,19 +55,10 @@ fn best_of(
         opened.docx().map_err(|e| e.to_string())?;
         let caller = Caller::anonymous();
         let blobs = picture_blobs();
-        let editing = Editing {
-            editor: &CallEditor::new(&editor),
-            caller: &caller,
-            opened: &opened,
-            tracking,
-            doc: "d1",
-            cancel: &Never,
-            date: "2026-11-17T10:00:00Z",
-            layout: None,
-            others: ooxml_tools_word::Others::default(),
-            blobs: Some(&blobs),
-            written: &[],
-        };
+        let call_editor = CallEditor::new(&editor);
+        let editing = Editing::new(&call_editor, &caller, &opened, "d1", &Never, "2026-11-17T10:00:00Z")
+            .with_tracking(tracking)
+            .with_blobs(Some(&blobs));
         for call in setup {
             call(&editing);
         }

@@ -78,19 +78,9 @@ fn best<A: ToolArgs>(
         assert!(matches!(warm, Ok(Ok(_))), "the opened version is laid out");
         let before = layout.engine.lock().unwrap().stats();
         let caller = Caller::anonymous();
-        let editing = Editing {
-            editor: &CallEditor::new(&editor),
-            caller: &caller,
-            opened: &opened,
-            tracking: None,
-            doc: "d1",
-            cancel: &Never,
-            date: "2026-11-17T10:00:00Z",
-            layout: Some(layout),
-            others: ooxml_tools_word::Others::default(),
-            blobs: None,
-            written: &[],
-        };
+        let call_editor = CallEditor::new(&editor);
+        let editing = Editing::new(&call_editor, &caller, &opened, "d1", &Never, "2026-11-17T10:00:00Z")
+            .with_layout(Some(layout));
         // The document's field scans as a session keeps them between calls (not counted).
         let (list, _) = WordFields::accept(json!({"doc": "d1", "action": "list"}), Some("docx")).unwrap();
         assert!(word_fields(&list, &editing).to_json().contains_key("data"));
@@ -211,19 +201,9 @@ fn page_field(bytes: &Arc<[u8]>, layout: &Timed) -> String {
     let editor = editor(bytes);
     let opened = editor.store().snapshot().doc().clone();
     let caller = Caller::anonymous();
-    let editing = Editing {
-        editor: &CallEditor::new(&editor),
-        caller: &caller,
-        opened: &opened,
-        tracking: None,
-        doc: "d1",
-        cancel: &Never,
-        date: "2026-11-17T10:00:00Z",
-        layout: Some(layout),
-        others: ooxml_tools_word::Others::default(),
-        blobs: None,
-        written: &[],
-    };
+    let call_editor = CallEditor::new(&editor);
+    let editing =
+        Editing::new(&call_editor, &caller, &opened, "d1", &Never, "2026-11-17T10:00:00Z").with_layout(Some(layout));
     let (args, _) = <WordFields as ToolArgs>::accept(json!({"doc": "d1", "action": "list"}), Some("docx")).unwrap();
     let listed = Value::Object(word_fields(&args, &editing).to_json());
     let fields = listed["data"].as_array().cloned().unwrap_or_default();

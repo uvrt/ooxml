@@ -102,19 +102,7 @@ fn editor(package: Package) -> (Editor, WordDoc) {
 }
 
 fn editing<'a>(editor: &'a CallEditor<'a>, opened: &'a WordDoc, caller: &'a Caller) -> Editing<'a> {
-    Editing {
-        editor,
-        caller,
-        opened,
-        tracking: None,
-        doc: "d1",
-        cancel: &Never,
-        date: "2026-11-17T10:00:00Z",
-        layout: None,
-        others: ooxml_tools_word::Others::default(),
-        blobs: None,
-        written: &[],
-    }
+    Editing::new(editor, caller, opened, "d1", &Never, "2026-11-17T10:00:00Z")
 }
 
 fn changes(action: ChangeAction) -> WordChanges {

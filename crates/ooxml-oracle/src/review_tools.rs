@@ -43,19 +43,8 @@ pub fn tool_case(bytes: &Arc<[u8]>, case: &Value) -> Result<Value, String> {
     .map_err(|e| e.to_string())?;
     let opened = editor.store().snapshot().doc().clone();
     let caller = Caller::anonymous();
-    let editing = Editing {
-        editor: &CallEditor::new(&editor),
-        caller: &caller,
-        opened: &opened,
-        tracking: None,
-        doc: "d1",
-        cancel: &Never,
-        date: "2026-11-17T10:00:00Z",
-        layout: None,
-        others: ooxml_tools_word::Others::default(),
-        blobs: None,
-        written: &[],
-    };
+    let call_editor = CallEditor::new(&editor);
+    let editing = Editing::new(&call_editor, &caller, &opened, "d1", &Never, "2026-11-17T10:00:00Z");
     let arguments = case.get("arguments").cloned().unwrap_or(Value::Object(Map::new()));
     let tool = case.get("tool").and_then(Value::as_str).unwrap_or("");
     let (arguments, mut notes) = match accepted(tool, arguments) {
