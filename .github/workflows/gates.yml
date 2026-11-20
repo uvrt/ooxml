@@ -11,7 +11,9 @@ run-name: Gates ${{ inputs.ref || 'main' }} [${{ inputs.gates || 'fixtures,corpu
 #   gh run watch --repo uvrt/ooxml $(gh run list --repo uvrt/ooxml --workflow gates.yml --limit 1 --json databaseId -q '.[0].databaseId')
 # - fixtures, corpus: crates/ooxml-oracle/python/word_edits_diff.py's modes, docx-agent (pure
 #   Python) against the release `word-edits`, on docx-agent's fixtures and on the documents
-#   docx2svg's tools/make_*.py make; each mode in `shards` jobs (tools/gates.py);
+#   docx2svg's tools/make_*.py make; each mode in `shards` jobs, or with shards `auto` (the
+#   default) as tools/gates_jobs.py sizes them: when the reference cache holds a store for the
+#   checkout (warm) one job per mode, the small modes of a gate sharing one; when cold three;
 # - reads: word_reads_diff.py's checks on the fixtures (`word-ids`, `word-reads`);
 # - seeds: the multi-writer seed runs (`--ignored`) in release;
 # - bench: the 3k-page benches on a made-up report generated here (tools/gates.py report).
@@ -49,17 +51,17 @@ on:
         description: "The fixtures for fixtures and reads (auto: those holding the features the branch's changes touch, and the canaries -- tools/gates_fixtures.py; all; or a comma list)"
         default: auto
       shards:
-        # 3 (was 6) since the reference cache: a warm corpus job of 120 documents is about
-        # 100 s, a cold one (docx-agent's code changed) about twice a 6-shard one.
-        description: Jobs per mode
-        default: "3"
+        # auto: the plan job looks the reference cache's store up (warm: one shard a mode, the
+        # gate's small modes in one job; cold: 3) -- tools/gates_jobs.py; a number wins.
+        description: "Jobs per mode (auto: 1 and small modes bundled when the reference cache is warm, 3 when cold)"
+        default: auto
   # Nightly on main: every fixture and the corpus, every mode, at the commit main is at when
   # the run starts (the summary names it, so a failure is bisected between two nightlies).
   schedule:
     - cron: "0 2 * * *"
 
 concurrency:
-  group: gates-${{ inputs.ref || 'main' }}-${{ inputs.gates || 'fixtures,corpus' }}-${{ inputs.modes || 'all' }}-${{ inputs.per_tool }}-${{ inputs.every || '1' }}-${{ inputs.shards || '3' }}-${{ inputs.fixtures || 'all' }}
+  group: gates-${{ inputs.ref || 'main' }}-${{ inputs.gates || 'fixtures,corpus' }}-${{ inputs.modes || 'all' }}-${{ inputs.per_tool }}-${{ inputs.every || '1' }}-${{ inputs.shards || 'auto' }}-${{ inputs.fixtures || 'all' }}
   cancel-in-progress: true
 
 env:
@@ -83,11 +85,36 @@ jobs:
         with:
           ref: ${{ inputs.ref || 'main' }}
           fetch-depth: 0
+      # Warm or cold: whether the reference cache holds a store for the reference code this
+      # checkout runs (its key computed as the differential jobs compute it).  Only for the edit
+      # gates with shards auto.
+      - id: lookup
+        env:
+          GATES: ${{ inputs.gates || 'fixtures,corpus' }}
+          SHARDS: ${{ inputs.shards || 'auto' }}
+        run: |
+          lookup=false
+          if [ "$SHARDS" = auto ]; then case ",$GATES," in *,fixtures,*|*,corpus,*) lookup=true;; esac; fi
+          echo "lookup=$lookup" >> "$GITHUB_OUTPUT"
+      - if: steps.lookup.outputs.lookup == 'true'
+        uses: ./.github/actions/gates-reference
+      - if: steps.lookup.outputs.lookup == 'true'
+        id: chain
+        run: echo "chain=$(python tools/gates.py cache-key)" >> "$GITHUB_OUTPUT"
+      - if: steps.lookup.outputs.lookup == 'true'
+        id: store
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/reference
+          key: gates-reference-${{ steps.chain.outputs.chain }}-${{ github.run_id }}
+          restore-keys: gates-reference-${{ steps.chain.outputs.chain }}-
+          lookup-only: true
       - id: plan
         env:
           GATES: ${{ inputs.gates || 'fixtures,corpus' }}
           MODES: ${{ inputs.modes || 'all' }}
-          SHARDS: ${{ inputs.shards || '3' }}
+          SHARDS: ${{ inputs.shards || 'auto' }}
+          STORE: ${{ steps.store.outputs.cache-matched-key }}
           PER_TOOL: ${{ inputs.per_tool }}
           REF: ${{ inputs.ref || 'main' }}
           EVERY: ${{ inputs.every || '1' }}
@@ -95,12 +122,16 @@ jobs:
         run: |
           fixtures=$(python3 tools/gates.py fixtures --fixtures "$FIXTURES")
           echo "fixtures=$fixtures" >> "$GITHUB_OUTPUT"
-          matrix=$(python3 tools/gates.py matrix --gates "$GATES" --modes "$MODES" --shards "$SHARDS" --per-tool "$PER_TOOL" 2> plan.txt)
+          warm=()
+          if [ -n "$STORE" ]; then warm=(--warm); fi
+          matrix=$(python3 tools/gates.py matrix --gates "$GATES" --modes "$MODES" --shards "$SHARDS" --per-tool "$PER_TOOL" \
+            --every "$EVERY" --fixtures "$fixtures" "${warm[@]}" 2> plan.txt)
           cat plan.txt
+          echo "matrix: $matrix"
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           echo "corpus=$(case "$matrix" in *'"gate": "corpus"'*) echo true;; *) echo false;; esac)" >> "$GITHUB_OUTPUT"
-          echo "ref $REF at $(git rev-parse HEAD); gates $GATES; modes $MODES $(cat plan.txt); per_tool '${PER_TOOL}'; every $EVERY; shards $SHARDS; fixtures $FIXTURES: $fixtures" >> "$GITHUB_STEP_SUMMARY"
+          echo "ref $REF at $(git rev-parse HEAD); gates $GATES; modes $MODES $(cat plan.txt); per_tool '${PER_TOOL}'; every $EVERY; shards $SHARDS; reference store ${STORE:-none}; fixtures $FIXTURES: $fixtures" >> "$GITHUB_STEP_SUMMARY"
 
   # The release oracle binaries, once per run.
   oracles:
@@ -147,8 +178,10 @@ jobs:
           path: ${{ runner.temp }}/corpus/
           retention-days: 3
 
+  # One job of tools/gates_jobs.py's: a gate's modes (one, or a bundle run one after another)
+  # in one shard; each mode's results in its own folder of the job's logs.
   differential:
-    name: ${{ matrix.gate }} ${{ matrix.mode }} ${{ matrix.shard }}
+    name: ${{ matrix.gate }} ${{ matrix.modes }} ${{ matrix.shard }}
     needs: [plan, oracles, corpus]
     if: >-
       always() && needs.plan.outputs.matrix != '' && needs.oracles.result == 'success' &&
@@ -164,15 +197,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.plan.outputs.sha }}
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
       # docx-agent is the reference: pure Python, so not ooxml-core (DOCX_AGENT_RUST=0 too).
-      - name: Install
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install ./python/ooxml-common ./python/ooxml-edit "./python/docx2svg[measure]" markdown-it-py mdit-py-plugins
-          python -m pip install --no-deps ./python/docx-agent
+      - uses: ./.github/actions/gates-reference
       - uses: ./.github/actions/substitute-fonts
       - uses: actions/download-artifact@v4
         with:
@@ -198,7 +224,7 @@ jobs:
       - name: Differential
         env:
           GATE: ${{ matrix.gate }}
-          MODE: ${{ matrix.mode }}
+          MODES: ${{ matrix.modes }}
           SHARD: ${{ matrix.shard }}
           PER_TOOL: ${{ matrix.per_tool }}
           EVERY: ${{ inputs.every || '1' }}
@@ -209,15 +235,23 @@ jobs:
           if [ "$GATE" = corpus ]; then tree=(--tree "$RUNNER_TEMP/corpus"); fi
           cache=()
           if [ "$GATE" != reads ]; then cache=(--cache "$RUNNER_TEMP/reference"); fi
-          python tools/gates.py diff --gate "$GATE" --mode "$MODE" --shard "$SHARD" --per-tool "$PER_TOOL" \
-            --every "$EVERY" --bin "$RUNNER_TEMP/oracles" --out "$RUNNER_TEMP/out/$GATE-$MODE-${SHARD%/*}" \
-            --fixtures "$FIXTURES" "${tree[@]}" "${cache[@]}"
+          # Each mode on its own: one failing still lets the others run.
+          status=0
+          for mode in ${MODES//,/ }; do
+            echo "::group::$GATE $mode $SHARD"
+            python tools/gates.py diff --gate "$GATE" --mode "$mode" --shard "$SHARD" --per-tool "$PER_TOOL" \
+              --every "$EVERY" --bin "$RUNNER_TEMP/oracles" --out "$RUNNER_TEMP/out/$GATE-$mode-${SHARD%/*}" \
+              --fixtures "$FIXTURES" "${tree[@]}" "${cache[@]}" || status=1
+            echo "::endgroup::"
+          done
+          exit $status
       - name: Name the logs
         if: always()
         id: name
         env:
           SHARD: ${{ matrix.shard }}
-        run: echo "name=diff-${{ matrix.gate }}-${{ matrix.mode }}-${SHARD%/*}" >> "$GITHUB_OUTPUT"
+          LABEL: ${{ matrix.label }}
+        run: echo "name=diff-${{ matrix.gate }}-${LABEL}-${SHARD%/*}" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -254,6 +288,12 @@ jobs:
         run: |
           echo "Every job ran $REF at $SHA." >> "$GITHUB_STEP_SUMMARY"
           python3 tools/gates.py summary "$RUNNER_TEMP/diffs" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "<details><summary>The warm modes' times (tools/gates_durations.json: python tools/gates.py durations DIR --write)</summary>"
+            echo; echo '```json'
+            python3 tools/gates.py durations "$RUNNER_TEMP/diffs"
+            echo '```'; echo "</details>"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # The results the differential jobs computed, added to the store they restored (saved as a
   # new cache entry; the next run restores the newest).

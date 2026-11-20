@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import gates  # noqa: E402
 import gates_fixtures  # noqa: E402
 import gates_hunks  # noqa: E402
+import gates_jobs  # noqa: E402
 
 CHART_PLACES = "generated/charts/chart-places.docx"
 SEQ = {"op": "structure", "tool": "word_fields",
@@ -236,6 +237,101 @@ class ChangedLines(unittest.TestCase):
         self.assertEqual(set(self.select({served: (base, head)})), self.features("tables", "styles"))
         self.assertEqual(self.select({served: (base, head.replace("SERVED = {", "X = 2\nSERVED = {"))}),
                          gates_fixtures.ALL)
+
+
+class JobPlan(unittest.TestCase):
+    """gates.py matrix: shards and bundles (tools/gates_jobs.py)."""
+
+    SMALL = {"set_text": 60.0, "ops": 70.0, "cells": 5.0}
+
+    def jobs(self, modes, estimates, *, gate="fixtures", warm=True, shards=None) -> list[tuple[str, str]]:
+        return [(j["modes"], j["shard"]) for j in gates_jobs.gate_jobs(gate, modes, warm=warm, shards=shards,
+                                                                        estimates=estimates)]
+
+    def test_cold_is_three_shards_a_mode(self) -> None:
+        self.assertEqual(self.jobs(["set_text", "structure"], self.SMALL, warm=False),
+                         [("set_text", "1/3"), ("set_text", "2/3"), ("set_text", "3/3"),
+                          ("structure", "1/3"), ("structure", "2/3"), ("structure", "3/3")])
+
+    def test_warm_bundles_the_small_modes(self) -> None:
+        estimates = {**self.SMALL, "structure": 600.0}
+        self.assertEqual(self.jobs(["set_text", "structure", "ops", "cells"], estimates),
+                         [("set_text,ops,cells", "1/1"), ("structure", "1/1")])
+
+    def test_a_slow_warm_mode_gets_shards(self) -> None:
+        slow = 2.5 * gates_jobs.SHARD_TARGET
+        self.assertEqual(self.jobs(["objects"], {"objects": slow}), [("objects", "1/3"), ("objects", "2/3"),
+                                                                      ("objects", "3/3")])
+
+    def test_a_mode_with_no_time_runs_alone(self) -> None:
+        self.assertEqual(self.jobs(["set_text", "review"], self.SMALL), [("set_text", "1/1"), ("review", "1/1")])
+
+    def test_a_full_bundle_starts_another(self) -> None:
+        under = gates_jobs.BUNDLE_UNDER - 1
+        modes = [f"m{i}" for i in range(gates_jobs.BUNDLE_LIMIT // under + 1)]
+        jobs = self.jobs(modes, dict.fromkeys(modes, float(under)))
+        self.assertEqual(len(jobs), 2)
+        self.assertEqual(sorted(m for modes, _ in jobs for m in modes.split(",")), sorted(modes))
+
+    def test_explicit_shards_win(self) -> None:
+        self.assertEqual(self.jobs(["set_text", "ops"], self.SMALL, shards=2),
+                         [("set_text", "1/2"), ("set_text", "2/2"), ("ops", "1/2"), ("ops", "2/2")])
+
+    def test_the_reads_never_wait_for_the_cache(self) -> None:
+        self.assertEqual(self.jobs(["ids", "find"], {"ids": 5.0, "find": 11.0}, gate="reads", warm=False),
+                         [("ids,find", "1/1")])
+
+    def test_a_time_scales_with_the_fixtures_picked(self) -> None:
+        durations = {"fixtures": {"structure": {"seconds": 280.0, "documents": 28}}, "corpus": {"text": {"seconds": 9}}}
+        self.assertEqual(gates_jobs.estimate(durations, "fixtures", "structure", 7), 70.0)
+        self.assertEqual(gates_jobs.estimate(durations, "corpus", "text", None), 9.0)
+        self.assertIsNone(gates_jobs.estimate(durations, "corpus", "style", None))
+
+    def test_the_recorded_times_name_real_modes(self) -> None:
+        durations = gates_jobs.load_durations()
+        self.assertEqual(set(durations), {"fixtures", "corpus", "reads"})
+        for gate, modes in durations.items():
+            self.assertLessEqual(set(modes), set(gates.READ_MODES if gate == "reads" else gates.EDIT_MODES), gate)
+            self.assertTrue(all(m["seconds"] >= 0 for m in modes.values()))
+
+    def test_matrix_labels_and_names_are_unique(self) -> None:
+        import contextlib
+        import io
+        import json
+
+        for warm in ([], ["--warm"]):
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+                gates.main(["matrix", "--gates", "fixtures,corpus,reads", "--modes", "all", *warm])
+            jobs = json.loads(out.getvalue())["include"]
+            names = [(j["gate"], j["label"], j["shard"]) for j in jobs]
+            self.assertEqual(len(names), len(set(names)))
+            ran = sorted((j["gate"], m) for j in jobs for m in j["modes"].split(",") if j["shard"].startswith("1/"))
+            self.assertEqual(ran, sorted([*((g, m) for g in ("fixtures", "corpus") for m in gates.EDIT_MODES),
+                                          *(("reads", m) for m in gates.READ_MODES)]))
+            self.assertTrue(all(j["per_tool"] == ("10" if j["gate"] == "corpus" else "0") for j in jobs))
+            if warm:
+                self.assertLess(len(jobs), 30)
+
+    def summary(self, mode="set_text", shard="1/1", **over) -> dict:
+        return {"gate": "fixtures", "mode": mode, "shard": shard, "every": 1, "per_tool": 0, "documents": 14,
+                "cases": 100, "computed": 2, "kept": 98, "wall": 30.0, "crashed": False, **over}
+
+    def test_warm_times_add_the_shards_up(self) -> None:
+        found = gates_jobs.warm_durations([self.summary(shard="1/2"), self.summary(shard="2/2", wall=20.0)],
+                                          {"fixtures": 0})
+        self.assertEqual(found, {"fixtures": {"set_text": {"seconds": 50.0, "documents": 28}}})
+
+    def test_cold_sampled_or_partial_runs_record_nothing(self) -> None:
+        for summaries in ([self.summary(computed=50)], [self.summary(every=2)], [self.summary(per_tool=3)],
+                          [self.summary(shard="1/2")], [self.summary(crashed=True)]):
+            self.assertEqual(gates_jobs.warm_durations(summaries, {"fixtures": 0}), {}, summaries)
+
+    def test_new_times_replace_old_ones(self) -> None:
+        old = {"fixtures": {"ops": {"seconds": 1}, "cells": {"seconds": 2}}}
+        new = {"fixtures": {"ops": {"seconds": 3}}, "reads": {"ids": {"seconds": 4}}}
+        self.assertEqual(gates_jobs.merged(old, new), {"fixtures": {"cells": {"seconds": 2}, "ops": {"seconds": 3}},
+                                                       "reads": {"ids": {"seconds": 4}}})
 
 
 if __name__ == "__main__":

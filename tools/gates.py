@@ -8,12 +8,13 @@ shard of the documents at a time:
     python tools/gates.py corpus OUT                      # docx2svg's tools/make_*.py, each in OUT/<name>
     python tools/gates.py report OUT 6 61                 # the 3k document: make_report 6, grown to 61 chapters
     python tools/gates.py diff --gate fixtures --mode styled --shard 2/4 --bin DIR --out DIR
-    python tools/gates.py matrix --gates fixtures,corpus  # the differential jobs (JSON)
+    python tools/gates.py matrix --gates fixtures,corpus --warm  # the differential jobs (JSON; tools/gates_jobs.py)
     python tools/gates.py plan [--changed FILE]...        # the modes and fixtures a branch can affect (auto)
     python tools/gates.py fixtures --fixtures auto        # the fixtures a branch runs (all, or a comma list)
     python tools/gates.py summary DIR                     # the job summary's tables (Markdown)
     python tools/gates.py cache-key                       # the reference cache's chain digest
     python tools/gates.py cache-merge STORE FILE...       # kept results added to a store
+    python tools/gates.py durations DIR [--write]         # a run's warm times per mode (tools/gates_durations.json)
 
 The reference cache (crates/ooxml-oracle/python/reference_cache.py): with ``--cache STORE``
 a ``diff`` of an edit mode uses docx-agent's results kept in STORE where their key (the code
@@ -58,6 +59,7 @@ from pathlib import Path
 
 import gates_fixtures
 import gates_hunks
+import gates_jobs
 
 ROOT = Path(__file__).resolve().parents[1]
 HARNESS = ROOT / "crates" / "ooxml-oracle" / "python"
@@ -193,7 +195,8 @@ def run_diff(args) -> int:
                                               "cause": entry and entry["cause"],
                                               **({"errors": case["errors"]} if case.get("errors") else {})})
     crashed = done is not None and done.returncode not in (0, 1) or (files and not totals)
-    summary = {"gate": args.gate, "mode": args.mode, "shard": args.shard, "documents": len(files),
+    summary = {"gate": args.gate, "mode": args.mode, "shard": args.shard, "every": args.every,
+               "per_tool": args.per_tool, "documents": len(files),
                "cases": totals.get("cases", 0), "differences": len(unknown), "known": len(known),
                "unported": totals.get("unported", 0), "wall": round(wall, 1), "crashed": bool(crashed),
                **({"kept": totals["kept"], "computed": totals["computed"]} if "kept" in totals else {}),
@@ -354,9 +357,23 @@ def run_fixtures(args) -> int:
     return 0
 
 
+def default_per_tool(gate: str) -> int:
+    """A gate's cases per tool when the run gives none (0: all)."""
+    return CORPUS_PER_TOOL if gate == "corpus" else 0
+
+
+def planned_documents(args) -> int:
+    """The documents one mode of the fixtures and reads gates runs: the fixtures picked
+    (``--fixtures``), every ``--every``-th."""
+    chosen = fixture_selection(args.fixtures, args.base)
+    return len(documents(FIXTURES, args.every, (1, 1), None if chosen == gates_fixtures.ALL else chosen))
+
+
 def run_matrix(args) -> int:
-    """The differential jobs' matrix (JSON) for the gates asked for: each gate's modes, each
-    in ``shards`` shards; the corpus's default sampling where none is given."""
+    """The differential jobs' matrix (JSON) for the gates asked for: each gate's modes in
+    shards and bundles (tools/gates_jobs.py: ``--warm`` when the reference cache holds a
+    store for this checkout, ``--shards N`` to fix the shards); the corpus's default
+    sampling where none is given."""
     gates = [g.strip() for g in args.gates.split(",") if g.strip()]
     reads = True
     if args.modes == "auto":
@@ -369,17 +386,35 @@ def run_matrix(args) -> int:
     unknown = [m for m in modes if m not in EDIT_MODES]
     if unknown:
         raise SystemExit(f"unknown modes {unknown}; the modes: {', '.join(EDIT_MODES)}")
+    shards = int(args.shards) if args.shards not in ("", "auto") else None
+    durations = gates_jobs.load_durations()
+    fixtures = planned_documents(args) if shards is None and any(g in TREES for g in gates) else None
     include = []
     for gate in gates:
         if gate not in ("fixtures", "corpus", "reads") or gate == "reads" and not reads:
             continue
-        per_tool = args.per_tool if args.per_tool != "" else str(CORPUS_PER_TOOL if gate == "corpus" else 0)
-        for mode in (READ_MODES if gate == "reads" else modes):
-            for k in range(1, args.shards + 1):
-                include.append({"gate": gate, "mode": mode, "shard": f"{k}/{args.shards}", "per_tool": per_tool})
+        per_tool = args.per_tool if args.per_tool != "" else str(default_per_tool(gate))
+        gate_modes = list(READ_MODES if gate == "reads" else modes)
+        count = fixtures if gate in TREES else None     # the corpus: as recorded
+        estimates = {mode: gates_jobs.estimate(durations, gate, mode, count) for mode in gate_modes}
+        jobs = gates_jobs.gate_jobs(gate, gate_modes, warm=args.warm, shards=shards, estimates=estimates)
+        include += [{**job, "per_tool": per_tool} for job in jobs]
     if len(include) > 256:
         raise SystemExit(f"{len(include)} jobs: GitHub's matrix takes 256; fewer shards or modes")
+    shape = f"shards {shards}" if shards else "warm" if args.warm else "cold"
+    print(f"{len(include)} differential jobs ({shape})", file=sys.stderr)
     print(json.dumps({"include": include}) if include else "")
+    return 0
+
+
+def run_durations(args) -> int:
+    """A run's warm times per mode (from its downloaded ``diff-*`` logs) as JSON; with
+    ``--write`` merged into tools/gates_durations.json."""
+    summaries = [json.loads(p.read_text()) for p in sorted(Path(args.dir).rglob("summary.json"))]
+    found = gates_jobs.warm_durations(summaries, {g: default_per_tool(g) for g in ("fixtures", "corpus", "reads")})
+    print(json.dumps(found, indent=1))
+    if args.write:
+        gates_jobs.write_durations(found)
     return 0
 
 
@@ -448,8 +483,11 @@ def main(argv: list[str] | None = None) -> int:
     m.add_argument("--gates", required=True)
     m.add_argument("--modes", default="auto", help="all, auto or a comma list")
     m.add_argument("--base", default="origin/main", help="modes auto: the changes since this one's merge base")
-    m.add_argument("--shards", type=int, default=3)
+    m.add_argument("--shards", default="auto", help="jobs per mode; auto: tools/gates_jobs.py")
+    m.add_argument("--warm", action="store_true", help="the reference cache holds a store for this checkout")
     m.add_argument("--per-tool", default="")
+    m.add_argument("--every", type=int, default=1)
+    m.add_argument("--fixtures", default="all", help="fixtures and reads: all, auto or a comma list (job sizes)")
     pl = sub.add_parser("plan", help="the modes a branch can affect (modes auto)")
     pl.add_argument("--changed", action="append", help="a changed path (repeat); default: git diff BASE...HEAD")
     pl.add_argument("--base", default="origin/main")
@@ -459,12 +497,16 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("summary")
     s.add_argument("dir")
     sub.add_parser("cache-key")
+    du = sub.add_parser("durations", help="a run's warm times per mode (from its diff-* logs)")
+    du.add_argument("dir")
+    du.add_argument("--write", action="store_true", help="merge them into tools/gates_durations.json")
     k = sub.add_parser("cache-merge")
     k.add_argument("store")
     k.add_argument("files", nargs="*")
     args = parser.parse_args(argv)
     return {"diff": run_diff, "corpus": run_corpus, "report": run_report, "matrix": run_matrix,
-            "summary": run_summary, "plan": run_plan, "fixtures": run_fixtures, "cache-key": run_cache_key, "cache-merge": run_cache_merge}[args.command](args)
+            "summary": run_summary, "plan": run_plan, "fixtures": run_fixtures, "cache-key": run_cache_key, "cache-merge": run_cache_merge,
+            "durations": run_durations}[args.command](args)
 
 
 if __name__ == "__main__":
