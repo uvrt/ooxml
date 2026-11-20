@@ -7,6 +7,7 @@
 
 use ooxml_word_model::docx::cells::model_path;
 use ooxml_word_model::docx::formatting::{Cell, EffectiveParagraph, EffectiveRun};
+use ooxml_word_model::docx::graphics::chart_json;
 use ooxml_word_model::docx::Docx;
 use ooxml_word_model::ids::W;
 use ooxml_word_model::markdown::read::{
@@ -567,10 +568,22 @@ fn drawing(d: &ooxml_word_model::markdown::read::DrawingRecord) -> Value {
     out.insert("name".into(), opt(d.name.as_deref()));
     out.insert("alt".into(), Value::from(d.alt.as_str()));
     out.insert("floating".into(), Value::Bool(d.floating));
+    if let Some(chart) = &d.chart {
+        out.insert("chart".into(), chart_json(chart));
+    }
     if let Some(members) = &d.members {
         let members: Vec<Value> = members
             .iter()
-            .map(|(id, kind, name)| json!({"id": id, "kind": kind, "name": name}))
+            .map(|m| {
+                let mut one = Map::new();
+                one.insert("id".into(), Value::from(m.id.as_str()));
+                one.insert("kind".into(), Value::from(m.kind));
+                one.insert("name".into(), opt(m.name.as_deref()));
+                if let Some(chart) = &m.chart {
+                    one.insert("chart".into(), chart_json(chart));
+                }
+                Value::Object(one)
+            })
             .collect();
         out.insert("members".into(), Value::Array(members));
     }
