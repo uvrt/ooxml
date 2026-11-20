@@ -4,6 +4,8 @@
 //! Owns:
 //! - the chart model, a `c:chartSpace` as data plus styling ([`model`]), and its reader
 //!   ([`read`]);
+//! - a chart's data and labels as an editor shows them, and their one-line summary
+//!   ([`data`]);
 //! - where Word and PowerPoint differ ([`rules`]);
 //! - the layout, lowered to drawable elements ([`layout`]);
 //! - Python's number writing and arithmetic where the layout's text, paths and positions
@@ -14,6 +16,7 @@
 //! nothing here depends on an interpreter lock.
 #![forbid(unsafe_code)]
 
+pub mod data;
 pub mod layout;
 pub mod model;
 pub mod pyfmt;

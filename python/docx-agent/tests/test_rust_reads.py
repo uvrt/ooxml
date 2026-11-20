@@ -3,8 +3,8 @@ against today's.
 
 The Rust definitions (``crates/ooxml-tools-word/tests/golden``) equal today's byte for byte,
 and the replies of ``ooxml_core.Session.call`` equal today's on every fixture: ``word_inspect``
-of the body and of a cell, a table, a span and a missing id (a drawing's chart and SmartArt
-JSON aside: the chart model is phase P3's), ``find_text`` of a letter in the body and in
+of the body and of a cell, a table, a span and a missing id (a drawing's SmartArt JSON
+aside: the diagram's data model is not read by the Rust core yet), ``find_text`` of a letter in the body and in
 every story, ``read_batch`` of several reads with a failing one among them.
 """
 from __future__ import annotations
@@ -60,7 +60,7 @@ def _without_graphics(data):
     if isinstance(data, list):
         return [_without_graphics(item) for item in data]
     if isinstance(data, dict):
-        return {k: _without_graphics(v) for k, v in data.items() if k not in ("chart", "diagram")}
+        return {k: _without_graphics(v) for k, v in data.items() if k != "diagram"}
     return data
 
 
