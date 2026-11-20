@@ -112,6 +112,7 @@ fn editing<'a>(editor: &'a CallEditor<'a>, opened: &'a WordDoc, caller: &'a Call
         date: "2026-11-17T10:00:00Z",
         layout: None,
         others: ooxml_tools_word::Others::default(),
+        blobs: None,
     }
 }
 
@@ -399,4 +400,56 @@ fn comments_are_added_and_replied_to_with_their_parts() {
     assert_eq!(listed["data"][0]["on"]["text"], "text");
     assert_eq!(listed["data"][0]["replies"][0]["text"], "Because.");
     assert_eq!(listed["data"][0]["author"], "Reviewer");
+}
+
+#[test]
+fn text_is_found_within_the_paragraphs_an_address_holds() {
+    let body = concat!(
+        r#"<w:p w14:paraId="10000001"><w:r><w:t>A note on cats</w:t></w:r></w:p>"#,
+        r#"<w:p w14:paraId="10000002"><w:r><w:t>More on cats</w:t></w:r></w:p>"#
+    );
+    let (editor, opened) = editor(package(body, None));
+    let caller = Caller::anonymous();
+    let add = |find: &str, within: &str| WordComments {
+        doc: "d1".into(),
+        action: CommentAction::Add,
+        items: Some(vec![CommentItem {
+            target: None,
+            find: Some(find.into()),
+            within: Some(within.into()),
+            comment: None,
+            text: Some("Why?".into()),
+            resolve: None,
+            ref_name: None,
+        }]),
+        author: None,
+        open_only: None,
+        cursor: None,
+    };
+    // "cats" occurs twice in the body, once in the second paragraph (a range's whole paragraph)
+    let added = json(&word_comments(
+        &add("cats", "p:10000002@0:4"),
+        &editing(&CallEditor::new(&editor), &opened, &caller),
+    ));
+    assert!(added["data"]["comments"][0].is_string(), "{added}");
+    let listed = json(&word_comments(
+        &WordComments {
+            doc: "d1".into(),
+            action: CommentAction::List,
+            items: None,
+            author: None,
+            open_only: None,
+            cursor: None,
+        },
+        &editing(&CallEditor::new(&editor), &opened, &caller),
+    ));
+    assert_eq!(listed["data"][0]["on"]["text"], "cats", "{listed}");
+    let nowhere = json(&word_comments(
+        &add("note", "p:10000002"),
+        &editing(&CallEditor::new(&editor), &opened, &caller),
+    ));
+    assert!(
+        nowhere.to_string().contains("'note' occurs nowhere in p:10000002"),
+        "{nowhere}"
+    );
 }

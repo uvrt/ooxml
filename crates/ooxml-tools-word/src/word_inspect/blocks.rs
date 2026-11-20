@@ -567,10 +567,22 @@ fn drawing(d: &ooxml_word_model::markdown::read::DrawingRecord) -> Value {
     out.insert("name".into(), opt(d.name.as_deref()));
     out.insert("alt".into(), Value::from(d.alt.as_str()));
     out.insert("floating".into(), Value::Bool(d.floating));
+    if let Some(graphic) = &d.graphic {
+        out.insert(graphic.names().0.into(), graphic.json());
+    }
     if let Some(members) = &d.members {
         let members: Vec<Value> = members
             .iter()
-            .map(|(id, kind, name)| json!({"id": id, "kind": kind, "name": name}))
+            .map(|m| {
+                let mut one = Map::new();
+                one.insert("id".into(), Value::from(m.id.as_str()));
+                one.insert("kind".into(), Value::from(m.kind));
+                one.insert("name".into(), opt(m.name.as_deref()));
+                if let Some(graphic) = &m.graphic {
+                    one.insert(graphic.names().0.into(), graphic.json());
+                }
+                Value::Object(one)
+            })
             .collect();
         out.insert("members".into(), Value::Array(members));
     }

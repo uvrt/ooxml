@@ -13,6 +13,7 @@ use crate::doc::{Key, WordDoc};
 use crate::text::diff::python_space;
 use crate::{EditError, Result};
 use ooxml_store::ReadPredicate;
+use ooxml_word_model::address::scope_paragraphs;
 use ooxml_word_model::docx::text::{paragraph_text, View};
 use ooxml_word_model::docx::{Docx, StoryPart};
 use ooxml_word_model::ids::Entry;
@@ -138,8 +139,8 @@ impl Pattern for Literal {
 
 /// A find within each paragraph, read by condition (design section 5): its outcome depends
 /// on the blocks whose current text it matches, and the blocks it matched, which the edit
-/// reads by key. A block written since its snapshot conflicts only when a paragraph of it
-/// matches on the head; a story part written whole conflicts; nothing else does. (A find
+/// reads by key. A block written since its snapshot, or a story part written whole,
+/// conflicts only when a paragraph of it matches on the head; nothing else does. (A find
 /// across paragraphs reads the whole document instead: a match may be made by a paragraph
 /// beside the one written.)
 #[derive(Debug)]
@@ -156,6 +157,12 @@ impl HoldsMatch {
     /// Whether `text` holds a match (or the pattern cannot tell).
     fn holds(&self, text: &str) -> bool {
         self.pattern.may_match(text) && self.pattern.matches(text).map_or(true, |found| !found.is_empty())
+    }
+
+    /// Whether a paragraph of `story`, written whole, holds a match (reading the part is
+    /// what the key costs).
+    fn part_holds(&self, story: &StoryPart) -> bool {
+        story.texts().iter().any(|text| self.holds(text))
     }
 
     /// Whether a paragraph of block `id` of `story` holds a match; a block the story does
@@ -182,7 +189,7 @@ impl ReadPredicate<WordDoc> for HoldsMatch {
         let Ok(docx) = head.docx() else { return true };
         match key {
             Key::Block { part, id } => docx.part(part).is_some_and(|story| self.block_holds(story, id)),
-            Key::Part(part) => docx.part(part).is_some(),
+            Key::Part(part) => docx.part(part).is_some_and(|story| self.part_holds(story)),
             Key::Root(_) | Key::Seq(_) | Key::Annotations | Key::People => false,
         }
     }
@@ -201,19 +208,7 @@ pub(crate) fn matches(docx: &Docx, pattern: &dyn Pattern, across: bool) -> Resul
         let texts = story.texts();
         let id_of = |k: usize| story.ids.paragraphs().get(k).map(|p| p.id);
         if !across {
-            for (k, text) in texts.iter().enumerate() {
-                if !pattern.may_match(text) {
-                    continue;
-                }
-                let found = pattern.matches(text).map_err(refuse)?;
-                if found.is_empty() {
-                    continue;
-                }
-                let Some(id) = id_of(k) else { continue };
-                for (a, b, with) in found {
-                    out.push((id.clone(), a, id.clone(), b, with));
-                }
-            }
+            paragraph_matches(story, pattern, 0..texts.len(), &mut out)?;
             continue;
         }
         let mut starts = Vec::with_capacity(texts.len());
@@ -238,6 +233,43 @@ pub(crate) fn matches(docx: &Docx, pattern: &dyn Pattern, across: bool) -> Resul
             out.push((first, a - sp, last, b - sq, with));
         }
     }
+    Ok(out)
+}
+
+/// Every match of `pattern` in the paragraphs of `story` at `places` (each paragraph's
+/// text alone), in order, added to `out`.
+fn paragraph_matches(
+    story: &StoryPart,
+    pattern: &dyn Pattern,
+    places: impl IntoIterator<Item = usize>,
+    out: &mut Vec<Found>,
+) -> Result<()> {
+    let texts = story.texts();
+    for k in places {
+        let Some(text) = texts.get(k).filter(|t| pattern.may_match(t)) else {
+            continue;
+        };
+        let found = pattern.matches(text).map_err(EditError::Refused)?;
+        let Some(id) = story.ids.paragraphs().get(k).map(|p| p.id) else {
+            continue;
+        };
+        for (a, b, with) in found {
+            out.push((id.clone(), a, id.clone(), b, with));
+        }
+    }
+    Ok(())
+}
+
+/// Every match of `pattern` in the paragraphs `within` holds (docx-agent's `_scope`: the
+/// whole paragraphs of a story, block, span, cell, section, bookmark or range), each
+/// paragraph's text alone, in document order; only those paragraphs are read.
+///
+/// # Errors
+/// `within`'s refusal, or the pattern's.
+pub(crate) fn matches_within(docx: &Docx, pattern: &dyn Pattern, within: &str) -> Result<Vec<Found>> {
+    let (story, places) = scope_paragraphs(docx, within).map_err(EditError::Address)?;
+    let mut out = Vec::new();
+    paragraph_matches(story, pattern, places, &mut out)?;
     Ok(out)
 }
 

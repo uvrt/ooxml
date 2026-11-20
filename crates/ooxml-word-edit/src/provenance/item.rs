@@ -1,19 +1,49 @@
 //! Owns: the records' custom XML item as an edit changes it ([`Draft`]): found and read
-//! through the sink (the main part's relationships and the item are the keys read), its
-//! entries kept, rewritten, dropped (with the text after them, as lxml's `remove` takes
-//! an element's tail) or added at the end, then written back -- or, when no entry is left,
+//! through the sink (the item the main part's relationships name, read by condition
+//! ([`ItemNamed`]), and the item itself), its entries kept, rewritten, dropped (with the
+//! text after them, as lxml's `remove` takes an element's tail) or added at the end, then
+//! written back -- or, when no entry is left,
 //! released with its relationship and properties (docx-agent's `_remove_provenance_item`).
 //!
 //! Must not: decide which entries go (the follow-ups do).
 
-use crate::doc::Key;
+use crate::doc::{Key, WordDoc};
 use crate::sink::EditSink;
 use crate::Result;
 use ooxml_opc::name::rels_for;
+use ooxml_store::ReadPredicate;
 use ooxml_word_model::docx::provenance::{self as records, NS, REL_CUSTOM_XML};
 use ooxml_word_model::docx::Docx;
 use ooxml_xml::{Attribute, Element, Node, QName, Tree};
 use std::sync::Arc;
+
+/// Which part is the records' item, read by condition (design section 5): the follow-ups
+/// depend on the main part's relationships only through the item they name, so a
+/// relationship added meanwhile (a notes part, a hyperlink, a picture) conflicts only when
+/// the item the head's relationships name is another.
+#[derive(Debug)]
+pub(super) struct ItemNamed {
+    /// The main part's relationships part.
+    rels: Arc<str>,
+    /// The item they named where the edit read them.
+    item: Option<String>,
+}
+
+impl ReadPredicate<WordDoc> for ItemNamed {
+    fn depends(&self, head: &WordDoc, key: &Key) -> bool {
+        match key {
+            Key::Part(part) if *part == self.rels => {
+                let named = head.docx().ok().and_then(|docx| records::item(&docx).ok());
+                named.is_none_or(|item| item != self.item)
+            }
+            _ => false,
+        }
+    }
+
+    fn history_keys(&self) -> Option<Vec<Key>> {
+        Some(vec![Key::Part(Arc::clone(&self.rels))])
+    }
+}
 
 /// What becomes of one entry.
 pub(super) enum Fate {
@@ -39,8 +69,12 @@ impl Draft {
     /// # Errors
     /// When the main part's relationships are not XML.
     pub(super) fn open(sink: &mut EditSink<'_, '_>, now: &Docx) -> Result<Option<Draft>> {
-        sink.read(Key::Part(Arc::from(rels_for(&now.main))));
-        let Some(name) = records::item(now)? else {
+        let found = records::item(now)?;
+        sink.read_where(Arc::new(ItemNamed {
+            rels: Arc::from(rels_for(&now.main)),
+            item: found.clone(),
+        }));
+        let Some(name) = found else {
             return Ok(None);
         };
         sink.read(Key::Part(Arc::from(name.as_str())));

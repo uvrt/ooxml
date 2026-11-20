@@ -198,8 +198,10 @@ impl DeleteNote {
                 sink.ensure_w14(part, false, &[("w16du", W16DU)])?;
             }
             // the people listed as docx-agent's stamp lists them, before the note goes: its
-            // own records still name the author
-            sink.people(Some(&tracking.author), Some(&tracking.author))?;
+            // own records still name the author; the author listed only when the stamp
+            // recorded something (one's own inserted reference goes outright, unrecorded)
+            let recorded = numbered.to > numbered.from;
+            sink.people(recorded.then_some(tracking.author.as_str()), Some(&tracking.author))?;
             if gone {
                 remove_note(&mut *sink, &self.note)?;
                 return Ok(NoteEdited {

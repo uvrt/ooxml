@@ -424,9 +424,18 @@ def checks(entry: Any, touched: Sequence[Any]) -> dict[str, Any]:
         # No layout to compare in Python: after an edit the Rust session made, its checks
         # (one served without the lock carries its version's own: lane P2c6).
         made = next((t for t in touched if isinstance(t, Made)), None)
-        validated = made.validation if made is not None else owned_validation(entry)
+        timed = next((t for t in touched if isinstance(t, Timing)), None) or Timing()
+        with timed.part("validate"):
+            validated = made.validation if made is not None else owned_validation(entry)
         if validated is not None:
-            _relayout_owned(entry)
+            if made is not None:
+                # Lane P2c13: served without the lock, the view not the call's -- the
+                # relayout with the call's own engine, nothing on the view to let go.
+                from .owner import commit_relayout
+
+                commit_relayout(entry, made.engine)
+            else:
+                _relayout_owned(entry)
             return {"validate": validated, "reflow": None if before is None else STALE}
     document = entry.document
     handed = getattr(document, "_handed_engine", None)
@@ -453,7 +462,8 @@ def checks(entry: Any, touched: Sequence[Any]) -> dict[str, Any]:
 
 def _relayout_owned(entry: Any) -> None:
     """:func:`checks` of a version the Rust session holds, its view not made current: the
-    relayout on commit (lane O) where a Python step engaged the engine, which is let go."""
+    relayout on commit (lane O) with the engine a Python step -- or a call the session served
+    under the lock (lane P2c13) -- engaged on the view, which is let go."""
     from .owner import commit_relayout
 
     held = entry.held
@@ -651,9 +661,12 @@ def word_tool(name: str, description: str, params: Mapping[str, Any], *, group: 
 
 
 def _engaged(work: Callable[..., Any]) -> Callable[..., Any]:
-    """``work`` with the layout engine, as a handler has it (:func:`wrap`)."""
+    """``work`` with the layout engine, as a handler has it (:func:`wrap`); not done where
+    the Rust session is asked first (lane P2c13: it lays out in Rust, as it edits)."""
     @functools.wraps(work)
     def run(call: Any, **arguments: Any) -> Any:
+        if call.changing and edits.will_serve(call, arguments):
+            return None
         engage(call)
         try:
             return work(call, **arguments)

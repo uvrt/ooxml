@@ -42,7 +42,8 @@ pub(crate) fn change_json(change: &LogicalChange) -> Value {
     Value::Object(data)
 }
 
-/// The paragraph ids a `within` covers.
+/// The paragraph ids a `within` covers; its refusal at no field, as today's tool names
+/// none.
 fn paragraphs_within(docx: &Docx, within: &str, args: &WordChanges) -> Result<BTreeSet<String>, ToolError> {
     let mut call = args.clone();
     call.within = None;
@@ -53,7 +54,7 @@ fn paragraphs_within(docx: &Docx, within: &str, args: &WordChanges) -> Result<BT
                 .filter_map(|k| part.ids.paragraphs().get(*k).map(|p| p.id))
                 .collect()
         })
-        .map_err(|e| crate::refusal::address_refusal(e, "within", try_call(&call)))
+        .map_err(|e| crate::refusal::address_refused(e, try_call(&call)))
 }
 
 /// `list`.
@@ -64,12 +65,19 @@ pub(crate) fn list(args: &WordChanges, editing: &Editing<'_>) -> Result<Done<Val
         .docx()
         .map_err(|e| ToolError::internal(e.to_string(), "word:model"))?;
     let records_wanted = args.detail == Some(ChangeDetail::Records);
+    // the paragraphs first, for either detail, as docx-agent's _list_changes reads them: a
+    // refusal is theirs
+    let inside = args
+        .within
+        .as_deref()
+        .map(|w| paragraphs_within(&docx, w, args))
+        .transpose()?;
     let items: Vec<Value> = if records_wanted {
         let within = match &args.within {
             Some(w) => Some(ooxml_word_edit::review::records_within(&docx, w).map_err(|e| {
                 let mut call = args.clone();
                 call.within = None;
-                super::edit_refusal(e, "within", try_call(&call))
+                super::edit_refusal(e, "", try_call(&call))
             })?),
             None => None,
         };
@@ -96,11 +104,6 @@ pub(crate) fn list(args: &WordChanges, editing: &Editing<'_>) -> Result<Done<Val
             })
             .collect()
     } else {
-        let inside = args
-            .within
-            .as_deref()
-            .map(|w| paragraphs_within(&docx, w, args))
-            .transpose()?;
         changes(&docx)
             .into_iter()
             .filter(|c| args.author.as_deref().is_none_or(|a| c.author.as_deref() == Some(a)))

@@ -20,7 +20,8 @@ mod window;
 pub use build::{build, project};
 pub use lookups::{note_elements, Shared};
 pub use records::{
-    CellRecord, Detail, DrawingRecord, Kind, Marker, ParagraphRecord, Placed, Record, RunRecord, TableRecord,
+    CellRecord, Detail, DrawingRecord, Kind, Marker, MemberRecord, ParagraphRecord, Placed, Record, RunRecord,
+    TableRecord,
 };
 pub use table::table_style;
 pub use window::{Groups, Kept};

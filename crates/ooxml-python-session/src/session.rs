@@ -14,6 +14,7 @@ use ooxml_session::{
 use ooxml_store::{Caller, StoreConfig};
 use ooxml_tools::{compact, ToolError, ToolResult};
 use ooxml_tools_word::Placer;
+use ooxml_word_edit::EarlierIds;
 use pyo3::exceptions::{PyKeyError, PyRuntimeError, PyTimeoutError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict};
@@ -227,6 +228,10 @@ impl PyVersion {
 /// What `Version.ids_since` answers: the id values given, and the renames (old id, id now).
 type IdsSince = (Vec<u32>, Vec<(String, String)>);
 
+/// A Word document's ids before it was saved, as a host's state keeps them:
+/// `(values, cursors, highest_drawing, drawings)` ([`EarlierIds`]).
+type StateIds = (Vec<u32>, Vec<(String, usize)>, u64, Vec<u64>);
+
 /// One retired id as `Session.retired` gives it: `(kind, value, seq, caller, tool, version,
 /// said)` -- `"block"` (a paraId's value) or `"drawing"`; a version this session made
 /// (`seq`, its caller's key and its tool) or, from a state the document was opened with, the
@@ -322,12 +327,26 @@ impl PySession {
     }
 
     /// Open a package's bytes as a document of `kind`, named `name`; returns its id (`d1`).
-    #[pyo3(signature = (data, *, kind = "docx", name = "document.docx"))]
-    fn open(&self, py: Python<'_>, data: &[u8], kind: &str, name: &str) -> PyResult<String> {
+    /// `ids`: a Word document's ids before it was saved, as the host's state of it keeps them
+    /// -- `(values, cursors, highest_drawing, drawings)`: every value its pool held, each
+    /// seed's cursor, the highest drawing number given, the drawing numbers retired -- so it
+    /// never gives a retired id or drawing number again.
+    #[pyo3(signature = (data, *, kind = "docx", name = "document.docx", ids = None))]
+    fn open(&self, py: Python<'_>, data: &[u8], kind: &str, name: &str, ids: Option<StateIds>) -> PyResult<String> {
         let kind = kind_of(kind)?;
         let bytes: Arc<[u8]> = Arc::from(data);
+        let earlier = ids.map_or_else(EarlierIds::default, |(values, cursors, highest_drawing, drawings)| {
+            EarlierIds {
+                values,
+                cursors,
+                highest_drawing,
+                drawings,
+            }
+        });
         let session = &self.inner;
-        let id = py.detach(|| session.open(bytes, kind, name)).map_err(|e| to_py(&e))?;
+        let id = py
+            .detach(|| session.open_with(bytes, kind, name, &earlier))
+            .map_err(|e| to_py(&e))?;
         Ok(id.to_string())
     }
 
@@ -382,16 +401,24 @@ impl PySession {
     /// JSON text (`None` where it made more than one version) and the last version's
     /// validation as [`validation`](Self::validation) gives it -- or `None` where it changed
     /// nothing. A host that numbers the document's steps takes the call's step from these,
-    /// whatever other calls commit to the document meanwhile.
-    #[pyo3(signature = (name, arguments, *, context = None))]
+    /// whatever other calls commit to the document meanwhile. `layout`: the document's page
+    /// engine, as for [`call`](Self::call) (`word_fields` update, a header's page number,
+    /// `word_template`'s reflow). `blobs`: the host's blobs, an object with `blob(handle)`
+    /// (`(name, mime, bytes)` or `None`) and `listed()` (`[(handle, name)]`), asked with the
+    /// interpreter lock taken back (`word_drawings` insert_picture).
+    #[pyo3(signature = (name, arguments, *, context = None, layout = None, blobs = None))]
     fn edit(
         &self,
         py: Python<'_>,
         name: &str,
         arguments: String,
         context: Option<PyRef<'_, PyCallContext>>,
+        layout: Option<PyRef<'_, crate::layout::PyWordPages>>,
+        blobs: Option<Py<PyAny>>,
     ) -> (String, String, Option<EditMade>) {
-        let context = context_of(context.as_deref());
+        let mut context = context_of(context.as_deref());
+        context.layout = layout.map(|pages| Arc::new(pages.port()) as Arc<dyn ooxml_word_edit::FieldLayout>);
+        context.blobs = blobs.map(|b| Arc::new(crate::adapters::PyBlobs(b)) as Arc<dyn ooxml_tools_word::Blobs>);
         let session = &self.inner;
         let (text, app, made) = py.detach(|| {
             let run = || session.edit(name, Value::String(arguments), &context);

@@ -80,6 +80,8 @@ pub struct Call<'a> {
     pub(crate) made: &'a Mutex<Option<Made>>,
     /// The host's layout of the document's versions.
     pub(crate) layout: Option<&'a dyn ooxml_word_edit::FieldLayout>,
+    /// The session's blobs, where the host hands them over.
+    pub(crate) blobs: Option<&'a dyn ooxml_tools_word::Blobs>,
     /// The other documents the call names (`ooxml_tools::documents`), by id, each at the
     /// version pinned for the call when it was dispatched.
     pub(crate) others: &'a [(String, Opened)],
@@ -258,6 +260,7 @@ impl<T: ToolArgs> Tool for EditHandler<T> {
             date: &call.date,
             layout: call.layout,
             others: Others::new(&others),
+            blobs: call.blobs,
         };
         let result = match &self.run {
             EditRun::Plain(run) => run(&args, &editing),
@@ -347,6 +350,9 @@ impl Registry {
             ooxml_tools_word::word_insert_text,
         ));
         registry.register(word_edit::<ooxml_tools_word::WordDelete>(ooxml_tools_word::word_delete));
+        registry.register(word_edit::<ooxml_tools_word::WordInsertMarkdown>(
+            ooxml_tools_word::word_insert_markdown,
+        ));
         registry.register(word_edit::<ooxml_tools_word::WordFormatTable>(
             ooxml_tools_word::word_format_table,
         ));
@@ -361,6 +367,9 @@ impl Registry {
         ));
         registry.register(word_edit::<ooxml_tools_word::WordLists>(ooxml_tools_word::word_lists));
         registry.register(word_edit::<ooxml_tools_word::WordFields>(ooxml_tools_word::word_fields));
+        registry.register(word_edit::<ooxml_tools_word::WordHeadersFooters>(
+            ooxml_tools_word::word_headers_footers,
+        ));
         registry.register(word_edit::<ooxml_tools_word::WordFormat>(ooxml_tools_word::word_format));
         registry.register(word_edit::<ooxml_tools_word::WordStyles>(ooxml_tools_word::word_styles));
         registry.register(word_edit::<ooxml_tools_word::WordTemplate>(
@@ -378,6 +387,12 @@ impl Registry {
         registry.register(word_edit::<ooxml_tools_word::WordCopyFrom>(
             ooxml_tools_word::word_copy_from,
         ));
+        registry.register(word_edit::<ooxml_tools_word::WordMove>(ooxml_tools_word::word_move));
+        registry.register(word_edit::<ooxml_tools_word::WordSections>(
+            ooxml_tools_word::word_sections,
+        ));
+        registry.register(word_edit::<ooxml_tools_word::WordNotes>(ooxml_tools_word::word_notes));
+        registry.register(word_edit::<ooxml_tools_word::WordLinks>(ooxml_tools_word::word_links));
         registry
     }
 

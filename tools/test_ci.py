@@ -51,9 +51,65 @@ class PlanTest(unittest.TestCase):
 
     def test_pull_request_affected_only(self) -> None:
         out = _plan("pull_request", ["python/pptx-agent/src/pptx_agent/x.py"])
-        self.assertEqual(out["packages"], ["pptx-agent", "xlsx-agent"])
-        self.assertEqual(set(_legs(out, "linux")), {"pptx-agent", "xlsx-agent"})
+        # xlsx-agent's tests install pptx-agent, but a pull request follows its pr_uses.
+        self.assertEqual(out["packages"], ["pptx-agent"])
+        self.assertEqual(set(_legs(out, "linux")), {"pptx-agent"})
         self.assertIs(out["rust"], False)
+
+    def test_xlsx_agent_on_a_pull_request(self) -> None:
+        cases = {
+            "python/xlsx-agent/src/xlsx_agent/x.py": True,
+            "python/ooxml-common/src/ooxml_common/x.py": True,
+            "python/ooxml-edit/src/ooxml_edit/x.py": True,
+            "python/ooxml-core/pyproject.toml": True,
+            "crates/python/src/lib.rs": True,
+            "crates/ooxml-python-session/src/lib.rs": True,
+            "Cargo.lock": True,
+            "crates/ooxml-word-edit/src/lib.rs": False,
+            "python/docx-agent/src/docx_agent/x.py": False,
+            "python/pptx-agent/src/pptx_agent/x.py": False,
+            "python/pptx2svg/src/pptx2svg/x.py": False,
+            "python/docx2svg/src/docx2svg/x.py": False,
+        }
+        for path, runs in cases.items():
+            self.assertEqual("xlsx-agent" in ci.affected([path]), runs, path)
+        # Main still runs it against every sibling it installs.
+        self.assertIn("xlsx-agent", _plan("push")["packages"])
+
+    def test_notes_build_only(self) -> None:
+        out = _plan("pull_request", ["python/docx-agent/CHANGELOG.md", "python/ooxml-common/ROADMAP.md"])
+        self.assertEqual(out["packages"], [])
+        self.assertIs(out["any"], False)
+        self.assertEqual([b["package"] for b in out["build"]["include"]], ["ooxml-common", "docx-agent"])
+        self.assertIs(out["any_build"], True)
+        for key in ("rust", "rust_module", "rust_wheels", *(f"rust_{job}" for job in ci.RUST_JOBS)):
+            self.assertIs(out[key], False, key)
+        # Notes with code: the suites and their builds as before.
+        out = _plan("pull_request", ["python/docx-agent/CHANGELOG.md", "python/docx-agent/src/docx_agent/x.py"])
+        self.assertEqual(out["packages"], ["docx-agent"])
+        self.assertEqual([b["package"] for b in out["build"]["include"]], ["docx-agent"])
+        # A package's README and docs are read by its tests: they select the suite.
+        self.assertEqual(ci.affected(["python/docx-agent/README.md"]), ["docx-agent"])
+        self.assertEqual(ci.affected(["python/docx-agent/docs/common-tasks.md"]), ["docx-agent"])
+
+    def test_docs_and_other_tools_run_nothing(self) -> None:
+        for changed in (["docs/architecture/README.md"], ["README.md"], [".github/workflows/gates.yml"],
+                        ["tools/gates.py", "tools/test_gates.py"], [".github/workflows/release.yml"],
+                        [".github/workflows/relayout-full.yml"]):
+            out = _plan("pull_request", changed)
+            self.assertIs(out["any"], False, changed)
+            self.assertIs(out["any_build"], False, changed)
+            for key in ("rust", "rust_module", "rust_wheels", "rust_fuzz_check",
+                        *(f"rust_{job}" for job in ci.RUST_JOBS)):
+                self.assertIs(out[key], False, (changed, key))
+
+    def test_test_workflows_run_everything(self) -> None:
+        for path in ci.RUN_ALL_PREFIXES:
+            out = _plan("pull_request", [path + ("x.yml" if path.endswith("/") else "")])
+            self.assertEqual(out["packages"], list(ci.PACKAGES), path)
+            for key in ("rust", "rust_module", "rust_wheels", "rust_fuzz_check"):
+                self.assertIs(out[key], True, (path, key))
+            self.assertEqual({job for job in ci.RUST_JOBS if out[f"rust_{job}"]}, set(ci.RUST_JOBS) - {"fuzz"})
 
     def test_push(self) -> None:
         out = _plan("push")
@@ -87,7 +143,7 @@ class PlanTest(unittest.TestCase):
 
     def test_free_threaded_legs_follow_the_path_filter(self) -> None:
         out = _plan("pull_request", ["python/pptx-agent/src/pptx_agent/x.py"])
-        self.assertEqual([leg["package"] for leg in out["ft"]["include"]], ["pptx-agent", "xlsx-agent"])
+        self.assertEqual([leg["package"] for leg in out["ft"]["include"]], ["pptx-agent"])
 
     def test_one_coverage_leg_per_package_every_event(self) -> None:
         for event in ("pull_request", "push", "schedule"):
@@ -199,7 +255,57 @@ class RustPlanTest(unittest.TestCase):
         # The Python module is not built from these: no package suite runs.
         self.assertEqual(ci.affected(["fuzz/fuzz_targets/zip_read.rs", "xtask/src/codegen.rs", "clippy.toml",
                                       "DEPENDENCIES.md", "deny.toml", "rustfmt.toml"]), [])
-        self.assertEqual(ci.affected(["crates/ooxml-store/src/lib.rs"]), ["docx-agent", "xlsx-agent"])
+        self.assertEqual(ci.affected(["crates/ooxml-store/src/lib.rs"]), ["docx-agent"])
+
+    def test_module_inputs(self) -> None:
+        inputs = ("crates/ooxml-store/src/lib.rs", "crates/ooxml-store/Cargo.toml", "crates/word/src/lib.rs",
+                  "crates/ooxml-text/build.rs", "crates/ooxml-text/data/x.bin", "python/ooxml-core/pyproject.toml",
+                  "Cargo.lock", ".cargo/config.toml")
+        others = ("crates/ooxml-store/tests/loom.rs", "crates/ooxml-word-edit/tests/integration/history.rs",
+                  "crates/ooxml-word-layout/benches/x.rs", "crates/ooxml-xml/examples/xml_contract.rs",
+                  "crates/ooxml-text/README.md", "crates/ooxml-oracle/src/lib.rs",
+                  "python/ooxml-core/tests/test_layout.py", "python/ooxml-core/CHANGELOG.md", "fuzz/Cargo.toml",
+                  "xtask/src/codegen.rs", "python/docx-agent/src/docx_agent/x.py")
+        for path in inputs:
+            self.assertIs(ci.module_input(path), True, path)
+        for path in others:
+            self.assertIs(ci.module_input(path), False, path)
+        # docx-agent's shards: the module's code, not its crates' tests.
+        self.assertEqual(ci.affected(["crates/ooxml-word-edit/tests/integration/history.rs"]), [])
+        out = _plan("pull_request", ["crates/ooxml-word-edit/tests/integration/history.rs"])
+        self.assertIs(out["rust"], True)
+        self.assertIs(out["rust_module"], False)
+        self.assertIs(out["rust_wheels"], False)
+
+    def test_differential_and_wheels(self) -> None:
+        cases = {  # path: (rust_module, rust_wheels)
+            "crates/ooxml-word-edit/src/lib.rs": (True, False),
+            "crates/ooxml-word-edit/Cargo.toml": (True, True),
+            "crates/ooxml-fonts/build.rs": (True, True),
+            "crates/python/src/lib.rs": (True, True),
+            "python/ooxml-core/pyproject.toml": (True, True),
+            "python/ooxml-core/tests/test_layout.py": (True, False),
+            "Cargo.lock": (True, True),
+            "python/docx-agent/src/docx_agent/x.py": (True, False),
+            "python/docx2svg/src/docx2svg/x.py": (True, False),
+            "python/pptx-agent/src/pptx_agent/x.py": (False, False),
+            "crates/ooxml-oracle/src/lib.rs": (False, False),
+            "xtask/src/codegen.rs": (False, False),
+        }
+        for path, (module, wheels) in cases.items():
+            out = _plan("pull_request", [path])
+            self.assertEqual((out["rust_module"], out["rust_wheels"]), (module, wheels), path)
+        for event in ("push", "schedule", "workflow_dispatch"):
+            out = _plan(event)
+            self.assertEqual((out["rust_module"], out["rust_wheels"], out["rust_fuzz_check"]), (True, True, False))
+
+    def test_fuzz_never_on_a_pull_request(self) -> None:
+        for path in ("fuzz/fuzz_targets/opc_open.rs", "crates/ooxml-opc/src/lib.rs", "Cargo.lock",
+                     ".github/workflows/rust.yml"):
+            out = _plan("pull_request", [path])
+            self.assertIs(out["rust_fuzz"], False, path)
+            self.assertIs(out["rust_fuzz_check"], True, path)
+        self.assertIs(_plan("pull_request", ["crates/ooxml-text/src/lib.rs"])["rust_fuzz_check"], False)
 
     def _jobs(self, event: str, changed: list[str] | None = None) -> set[str]:
         out = _plan(event, changed)
@@ -209,11 +315,11 @@ class RustPlanTest(unittest.TestCase):
         cases = {
             "python/pptx-agent/src/pptx_agent/x.py": set(),
             "crates/word/src/lib.rs": set(),
-            "fuzz/fuzz_targets/opc_open.rs": {"fuzz"},
-            "fuzz/Cargo.toml": {"fuzz", "deny"},
+            "fuzz/fuzz_targets/opc_open.rs": set(),
+            "fuzz/Cargo.toml": {"deny"},
             "crates/ooxml-store/src/lib.rs": {"loom", "word_model"},
             "crates/ooxml-store/Cargo.toml": {"loom", "deny", "word_model"},
-            "crates/ooxml-opc/src/lib.rs": {"fuzz", "oracles", "word_model"},
+            "crates/ooxml-opc/src/lib.rs": {"oracles", "word_model"},
             "crates/ooxml-text/src/lib.rs": {"word_model"},
             "crates/ooxml-oracle/python/word_model_diff.py": {"word_model"},
             "xtask/src/codegen.rs": {"word_model"},
@@ -221,9 +327,10 @@ class RustPlanTest(unittest.TestCase):
             "python/ooxml-edit/src/ooxml_edit/opc.py": {"oracles"},
             "python/ooxml-common/src/ooxml_common/x.py": {"oracles", "word_model"},
             "DEPENDENCIES.md": {"deny"},
-            "Cargo.lock": set(ci.RUST_JOBS),
-            "tools/rust_oracles.py": set(ci.RUST_JOBS),
-            ".github/workflows/rust.yml": set(ci.RUST_JOBS),
+            "Cargo.lock": set(ci.RUST_JOBS) - {"fuzz"},
+            "tools/rust_oracles.py": {"oracles"},
+            "tools/gates.py": set(),
+            ".github/workflows/rust.yml": set(ci.RUST_JOBS) - {"fuzz"},
         }
         for path, jobs in cases.items():
             self.assertEqual(self._jobs("pull_request", [path]), jobs, path)
@@ -234,10 +341,49 @@ class RustPlanTest(unittest.TestCase):
             self.assertEqual(self._jobs(event), set(ci.RUST_JOBS), event)
 
     @unittest.skipIf(sys.version_info < (3, 11), "tomllib")
+    def test_not_module_crates_are_outside_the_module(self) -> None:
+        import tomllib
+
+        folders = {tomllib.loads(path.read_text())["package"]["name"]: path.parent.name
+                   for path in (ci.ROOT / "crates").glob("*/Cargo.toml")}
+        found, todo = set(), ["python"]
+        while todo:
+            folder = todo.pop()
+            if folder in found:
+                continue
+            found.add(folder)
+            manifest = tomllib.loads((ci.ROOT / "crates" / folder / "Cargo.toml").read_text())
+            for table in ("dependencies", "build-dependencies"):
+                todo += [folders[dep] for dep in manifest.get(table, {}) if dep in folders]
+        for folder in ci.NOT_MODULE_CRATES:
+            self.assertTrue((ci.ROOT / "crates" / folder).is_dir(), folder)
+            self.assertNotIn(folder, found)
+        for prefix in ci.BINDING_PREFIXES:
+            self.assertTrue((ci.ROOT / prefix).is_dir(), prefix)
+
+    @unittest.skipIf(sys.version_info < (3, 11), "tomllib")
     def test_crate_lists_cover_their_dependencies(self) -> None:
         for job_crate, listed in (("ooxml-opc", ci.FUZZ_CRATES), ("ooxml-store", ci.LOOM_CRATES),
                                   ("ooxml-oracle", ci.WORD_MODEL_CRATES)):
             self.assertEqual(_workspace_deps(job_crate), set(listed), job_crate)
+
+
+class MainPushTest(unittest.TestCase):
+    """A push to main runs every package and job, but builds the wheels only when its changes
+    would on a pull request; the nightly and a manual run build them every time."""
+
+    def test_wheels_follow_the_change(self) -> None:
+        crate = ["crates/ooxml-word-edit/src/set_text.rs"]
+        out = _plan("push", crate)
+        self.assertFalse(out["rust_wheels"])
+        self.assertTrue(out["rust"] and out["rust_module"] and out["rust_word_model"])
+        self.assertEqual(out["packages"], list(ci.PACKAGES))
+        for changed in (["crates/python/src/lib.rs"], ["Cargo.lock"], ["crates/ooxml-word-edit/Cargo.toml"],
+                        [".github/workflows/rust-wheels.yml"]):
+            self.assertTrue(_plan("push", changed)["rust_wheels"], changed)
+        for event in ("schedule", "workflow_dispatch"):
+            self.assertTrue(_plan(event, crate)["rust_wheels"], event)
+        self.assertTrue(_plan("push")["rust_wheels"])
 
 
 if __name__ == "__main__":

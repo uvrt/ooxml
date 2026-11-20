@@ -10,11 +10,13 @@
 mod apply;
 mod blocks;
 mod cleanup;
+mod describing;
 mod edges;
 mod grid;
 mod part;
 pub(crate) mod space;
 mod step;
+mod within;
 pub(crate) mod xml;
 
 pub use blocks::{RemovedBlocks, RowGone, TableGone, Typed};
@@ -25,7 +27,7 @@ use crate::policy::RevisionPolicy;
 use crate::sink::EditSink;
 use crate::{EditError, Result};
 use ooxml_store::{Command, Txn};
-use ooxml_word_model::address::{scope_paragraphs, AddressError};
+use ooxml_word_model::address::{scope_paragraphs, span_ends, AddressError};
 use ooxml_word_model::docx::changes::{changes, LogicalChange};
 use ooxml_word_model::docx::revisions::records;
 use ooxml_word_model::docx::Docx;
@@ -147,17 +149,21 @@ pub fn wanted_records(docx: &Docx, ids: &[String]) -> Result<Vec<String>> {
 /// # Errors
 /// The address resolver's refusal.
 pub fn place_of(docx: &Docx, within: &str) -> Result<Place> {
+    // the records first, as docx-agent's _selection reads them first: a refusal is theirs
+    let records = records_within(docx, within)?;
     let (part, indexes) = scope_paragraphs(docx, within).map_err(EditError::Address)?;
     let ids: BTreeSet<String> = indexes
         .iter()
         .filter_map(|k| part.ids.paragraphs().get(*k).map(|p| p.id))
         .collect();
-    Ok((ids, records_within(docx, within)?))
+    Ok((ids, records))
 }
 
 /// The ids of the records a `within` holds (`_revisions_within`): a story's every record;
-/// a block's (paragraph or table) every record in it; else every record in the
-/// paragraphs the address covers.
+/// a table's by its volatile id (`t@...`) every record in it; text (an address with `@`:
+/// a range, a position, a paragraph's or cell's text) the records in it, by their
+/// paragraph and characters; a block's (paragraph or table) every record in it; else
+/// every record in the paragraphs the address covers.
 ///
 /// # Errors
 /// The address resolver's refusal.
@@ -168,6 +174,14 @@ pub fn records_within(docx: &Docx, within: &str) -> Result<BTreeSet<String>> {
             .filter(|r| r.part == story.part)
             .map(|r| r.id)
             .collect());
+    }
+    let volatile_table = within.starts_with("t@") && ooxml_word_model::address::direct(docx, within).is_some();
+    if within.contains('@') && !volatile_table {
+        return within::records_in_text(docx, records(docx), within);
+    }
+    if matches!(span_ends(within), Ok(Some(_))) {
+        // one block here, not a span: the resolver refuses it with the span's ends
+        ooxml_word_model::address::resolve(docx, within).map_err(EditError::Address)?;
     }
     let (part, indexes) = scope_paragraphs(docx, within).map_err(EditError::Address)?;
     let paths: Vec<Box<[u32]>> = indexes

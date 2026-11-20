@@ -2,11 +2,13 @@
 //! writes the reply (ids made, changed, removed and renamed, warnings), an edit's refusal
 //! as the tool's (an edit not ported yet said in `unported`, for the host to answer its own
 //! way), the arguments docx-agent's `need` and `one_of` ask for, text found once
-//! (`find_range`), and the edit policy of the host's tracking mode.
+//! (`find_range`), the edit policy of the host's tracking mode, and the `ref` of a tool
+//! making blocks (docx-agent's `named` and `name_blocks`).
 //!
 //! Must not: change the document but through a command.
 
 use crate::review::{edit_refusal, Editing};
+use ooxml_tools::pyfmt::repr_str;
 use ooxml_tools::{Done, Refusal, ToolError, ToolResult, TryCall, WayOut};
 use ooxml_word_edit::{EditError, RevisionPolicy, Tracking};
 use serde_json::{Map, Value};
@@ -130,8 +132,18 @@ pub(crate) fn one_of(given: &[(&str, bool)], call: &TryCall) -> Result<String, T
 /// The range id of the one place `find` occurs in the document now (docx-agent's
 /// `find_range` without `within`).
 pub(crate) fn find_once(editing: &Editing<'_>, find: &str, call: &TryCall) -> Result<String, ToolError> {
+    find_once_within(editing, find, None, call)
+}
+
+/// [`find_once`] in the paragraphs `within` holds, when given (docx-agent's `find_range`).
+pub(crate) fn find_once_within(
+    editing: &Editing<'_>,
+    find: &str,
+    within: Option<&str>,
+    call: &TryCall,
+) -> Result<String, ToolError> {
     let head = editing.editor.store().snapshot();
-    ooxml_word_edit::anchor(head.doc(), find).map_err(|e| edit_refusal(e, "", call.clone()))
+    ooxml_word_edit::anchor(head.doc(), find, within).map_err(|e| edit_refusal(e, "", call.clone()))
 }
 
 /// The policy an edit runs by: tracked as the host's author, or untracked.
@@ -149,5 +161,38 @@ pub(crate) fn call(tool: &str, arguments: &[(&str, Value)]) -> TryCall {
         tool: tool.to_owned(),
         arguments,
         fill: Vec::new(),
+    }
+}
+
+/// Whether a ref reads as an address or a place (docx-agent's `positions.is_place`).
+pub(crate) fn is_place(value: &str) -> bool {
+    value.contains([':', '@', '$']) || value.contains("..")
+}
+
+/// docx-agent's `named`: the `ref` of a tool making blocks refused where it holds an
+/// address -- it names the blocks made; the place is `at`.
+pub(crate) fn blocks_ref_as_place(name: &str, at: &str) -> ToolError {
+    let message = format!(
+        "ref {} is an address: ref names the blocks this call makes, for $name later; the place is at (now {}): \
+         write at: 'after:{name}' to place them after it",
+        repr_str(name),
+        repr_str(at)
+    );
+    let way = WayOut::names(["at"]).unwrap_or_else(|| WayOut::call(call("word_read", &[])));
+    ToolError::refusal(Refusal::InvalidArguments, message, way).at("ref")
+}
+
+/// docx-agent's `name_blocks`: `ref` (when given) naming the blocks made -- the one
+/// block's id, or the span from the first to the last.
+pub(crate) fn name_blocks(result: &mut ToolResult<Value>, ref_name: Option<&String>, blocks: &[String]) {
+    let named = match blocks {
+        [] => None,
+        [one] => Some(one.clone()),
+        [first, .., last] => Some(format!("{first}..{last}")),
+    };
+    if let (Some(name), Some(address), ooxml_tools::Outcome::Done(done)) =
+        (ref_name.filter(|n| !n.is_empty()), named, &mut result.outcome)
+    {
+        done.refs.push((name.clone(), address));
     }
 }

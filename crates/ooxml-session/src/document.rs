@@ -19,7 +19,7 @@ use ooxml_opc::Package;
 use ooxml_store::{Caller, Committed, Snapshot, Store, StoreConfig, StoreStats};
 use ooxml_tools_word::Tracked;
 use ooxml_word_edit::validate::Delta;
-use ooxml_word_edit::{Editor, RevisionPolicy, Tracking, WordDoc};
+use ooxml_word_edit::{EarlierIds, Editor, RevisionPolicy, Tracking, WordDoc};
 use ooxml_word_model::docx::Versions;
 use std::sync::{Arc, PoisonError, RwLock};
 
@@ -133,25 +133,30 @@ pub(crate) struct Document {
 }
 
 impl Document {
-    /// `package` opened as `kind`: a Word document read, its ids and the problems it
-    /// opened with found, its caches within the context's budget.
+    /// `package` opened as `kind`: a Word document read, its ids (with those it had before
+    /// it was saved, `earlier`) and the problems it opened with found, its caches within the
+    /// context's budget.
     pub(crate) fn open(
         package: Package,
         kind: DocKind,
         name: &str,
         config: StoreConfig,
         context: &Context,
+        earlier: &EarlierIds,
     ) -> Result<Document, SessionError> {
         let clock = Arc::new(StoreClock(Arc::clone(&context.clock)));
         let held = match kind {
             DocKind::Docx => {
                 let budget = Arc::new(Budget(Arc::clone(&context.budget)));
-                let editor = Editor::open(package, config, clock, budget)?;
+                let editor = Editor::open_with(package, config, clock, budget, earlier)?;
                 let opened = editor.store().snapshot();
-                // the paragraph texts every find reads, read once as the document opens:
-                // each later version reads only the paragraphs it changed
+                // the paragraph texts every find reads and the facts the document-wide
+                // lookups read (bookmarks, controls, revisions, frames), read once as the
+                // document opens: each later version reads only the blocks it changed, and
+                // no edit call pays for the first reading of a long part
                 for part in &opened.doc().docx()?.parts {
                     part.texts();
+                    part.facts();
                 }
                 Held::Word(Box::new(Word {
                     editor,

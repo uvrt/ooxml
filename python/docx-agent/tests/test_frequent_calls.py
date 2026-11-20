@@ -97,9 +97,9 @@ Table: a plain paragraph, no table beside it
 
 def test_a_caption_paragraph_is_written_in_the_caption_style(box):
     session, d = opened(box, Document.new())
-    document = session.entry(d).document
     result = ok(box, session, "word_insert_markdown", doc=d, at="end", markdown=CAPTIONED,
                 style_map=[{"element": "caption", "style": "Caption"}])
+    document = session.entry(d).document        # (read after the call: a held Document is not live)
     assert "style added: Caption (Caption), as Word writes it" in result.warnings
     body = [(p.text, p.style) for p in document.paragraphs() if p.id in result.data["blocks"]]
     assert body == [("Before the table.", None), ("Parts on the shelf", "Caption"),

@@ -78,7 +78,7 @@ pub(crate) fn unused_name(package: &Package, default: &str, template: &str) -> S
 
 /// Indent a new last child like its siblings, for parts written pretty-printed
 /// (ooxml-edit's `_match_tail`).
-fn match_tail(work: &mut Work, node: Id) {
+pub(crate) fn match_tail(work: &mut Work, node: Id) {
     let Some(previous) = work.previous(node) else { return };
     let tail = work.tail(previous).to_owned();
     if tail.is_empty() || !tail.trim().is_empty() {
@@ -118,6 +118,61 @@ fn declare_override(package: &Package, part: &str, content_type: &str) -> Result
 fn add_relationship(package: &Package, source: &str, target: &str, rel_type: &str) -> Result<Package, ModelError> {
     let relative = relative_to(target, directory(source));
     Ok(relate(package, source, rel_type, &relative, false)?.0)
+}
+
+/// A relationship of `rel_type` from `source` to the part `target`, as ooxml-edit's
+/// `add_relationship` makes one: an existing one of that type to that part reused. Returns
+/// the package made (`None`: none was added) and the relationship's id.
+///
+/// # Errors
+/// When the relationships part is not XML.
+pub(crate) fn add_internal(
+    package: &Package,
+    source: &str,
+    target: &str,
+    rel_type: &str,
+) -> Result<(Option<Package>, String), ModelError> {
+    let existing = package
+        .relationships(source)?
+        .iter()
+        .find(|r| r.rel_type == rel_type && !r.external && r.target_part.as_deref() == Some(target))
+        .map(|r| r.id.clone());
+    match existing {
+        Some(id) => Ok((None, id)),
+        None => {
+            let relative = relative_to(target, directory(source));
+            relate(package, source, rel_type, &relative, false).map(|(p, id)| (Some(p), id))
+        }
+    }
+}
+
+/// `part` of `content_type` declared as ooxml-edit's `add_part` declares a new part's type
+/// ([`crate::content_types::declare`]). `None`: nothing to declare.
+///
+/// # Errors
+/// When the content types are not XML.
+pub(crate) fn declare_type(package: &Package, part: &str, content_type: &str) -> Result<Option<Package>, ModelError> {
+    crate::content_types::declare(package, part, content_type)
+}
+
+/// ooxml-edit's `find_part_with_bytes`: a part below `folder` holding exactly `data`, the
+/// first in archive order; a part held as a tree (changed by an edit) is not one (sizes are
+/// compared before any bytes are read).
+///
+/// # Errors
+/// When a part cannot be read.
+pub(crate) fn part_with_bytes(package: &Package, data: &[u8], folder: &str) -> Result<Option<String>, ModelError> {
+    let prefix = format!("{}/", ooxml_opc::name::normalize(folder).trim_end_matches('/'));
+    let size = u64::try_from(data.len()).ok();
+    for name in package.part_names() {
+        if !name.starts_with(&prefix) || package.size(&name) != size {
+            continue;
+        }
+        if package.read(&name)?.is_some_and(|bytes| *bytes == *data) {
+            return Ok(Some(name));
+        }
+    }
+    Ok(None)
 }
 
 /// An external relationship from `source` to the address `target` of `rel_type`, as
@@ -208,7 +263,7 @@ fn relative_to(target: &str, base: &str) -> String {
 }
 
 /// Edit a small part (relationships, content types) in an editable copy.
-fn edit_part(package: &Package, part: &str, edit: impl FnOnce(&mut Work)) -> Result<Package, ModelError> {
+pub(crate) fn edit_part(package: &Package, part: &str, edit: impl FnOnce(&mut Work)) -> Result<Package, ModelError> {
     let tree = package.tree(part)?.ok_or_else(|| ModelError::NoPart(part.to_owned()))?;
     let mut work = Work::of(tree.root(), Vec::new());
     edit(&mut work);

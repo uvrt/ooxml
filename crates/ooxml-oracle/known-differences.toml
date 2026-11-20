@@ -4,7 +4,9 @@
 # the keys it gives matches:
 #   gate   fixtures, corpus or reads (any gate when left out);
 #   file   a glob on the document's path below the gate's tree (any document when left out);
-#   input  a subset of the case's input as the harness made it (word_edits_diff.py's case).
+#   input  a subset of the case's input as the harness made it (word_edits_diff.py's case);
+#   document  a condition on the case's document: { lacks_namespace = URI } -- the root of
+#          word/document.xml (or of `part` when given) does not declare that namespace.
 # A case's number within its document is no key: it changes with the run's sampling
 # (per_tool, every) and with every case maker added, so an entry names the case by its input.
 # `cause` says why the difference is intended; an entry without one is refused.  Add an entry
@@ -17,6 +19,22 @@ input = { op = "insert_markdown", markdown = "<!-- only a comment -->\n" }
 cause = """#89: docx-agent rolls the tree back, but its id pool and aliases keep what the stamping \
 drew; the Rust core changes nothing (tool rule 3: a no-op changes nothing). A docx-agent \
 leftover, not copied."""
+
+# Lane P2c12: the same as #89 through the tool -- Markdown that writes nothing (empty, or only a
+# comment).
+[[difference]]
+mode = "text"
+input = { tool = "word_insert_markdown", arguments = { markdown = "" } }
+cause = """#89 through word_insert_markdown: docx-agent rolls the tree back, but its id pool and \
+aliases keep what the stamping drew; the Rust core changes nothing (tool rule 3: a no-op changes \
+nothing). A docx-agent leftover, not copied."""
+
+[[difference]]
+mode = "text"
+input = { tool = "word_insert_markdown", arguments = { markdown = "<!-- only a comment -->\n" } }
+cause = """#89 through word_insert_markdown: docx-agent rolls the tree back, but its id pool and \
+aliases keep what the stamping drew; the Rust core changes nothing (tool rule 3: a no-op changes \
+nothing). A docx-agent leftover, not copied."""
 
 # #84: a SEQ field inserted in the document's text box, untracked and tracked (lane P4b8: by
 # input, not by case number).
@@ -61,20 +79,6 @@ entry's rows do not, so _add_block_comment fails with an internal IndexError ("l
 of range"). Rust finds no such row either and refuses the address as text, naming the forms it \
 takes."""
 
-[[difference]]
-gate = "reads"
-mode = "read"
-file = "generated/charts/*.docx"
-cause = """Phase P3 (the chart model): docx_agent.rust.session's reads are equal to docx-agent's on \
-every fixture but drawings' chart and SmartArt summaries (tests/test_rust_word_read.py)."""
-
-[[difference]]
-gate = "reads"
-mode = "ranges"
-file = "generated/charts/*.docx"
-cause = """Phase P3 (the chart model): word_read of a range holding a chart or SmartArt, as for \
-mode read above."""
-
 # word_controls insert at a position past its paragraph's text, untracked and tracked (one per
 # document with a paragraph; the case's tag marks it).
 [[difference]]
@@ -85,12 +89,14 @@ Python's IndexError ('list index out of range', not_found); the Rust core refuse
 saying how many characters the paragraph has (as word_notes refuses one). A docx-agent crash, \
 not copied."""
 
-# P4c10: word_drawings float and inline of a frame in a part whose root does not declare
-# the wordprocessingDrawing namespace (docx-agent's own Markdown writer declares it on each
-# frame): 10 cases a fixture, untracked and tracked.
+# P4c10, P4c11, M3: a frame floated or inlined (word_drawings float, inline), or a picture
+# inserted floated (insert_picture with a wrap; the cases give such a picture the alt text
+# below), in a document whose root does not declare the wordprocessingDrawing namespace
+# (docx-agent's own Markdown writer declares it on each frame instead).  One rule by that
+# condition, not an entry per fixture: every new fixture without the declaration has them.
 [[difference]]
 mode = "objects"
-file = "generated/markdown/constructs.docx"
+document = { lacks_namespace = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" }
 input = { tool = "word_drawings", arguments = { action = "float" } }
 cause = """P4c10: docx-agent makes the new wp:anchor or wp:inline detached, so lxml names its \
 namespace ns0 (and wp14 ns1) and the frame's children ns0:...; the Rust core keeps the \
@@ -99,15 +105,15 @@ Both are the same XML; Word reads either."""
 
 [[difference]]
 mode = "objects"
-file = "generated/markdown/constructs.docx"
+document = { lacks_namespace = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" }
 input = { tool = "word_drawings", arguments = { action = "inline" } }
 cause = """P4c10: as the float entry above: docx-agent's ns0/ns1 prefixes on the new wp:inline."""
 
 [[difference]]
 mode = "objects"
-file = "generated/lists-and-styles.docx"
-input = { tool = "word_drawings", arguments = { action = "float" } }
-cause = """P4c10: as the constructs.docx float entry above: docx-agent's ns0 prefix on the new wp:anchor."""
+document = { lacks_namespace = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" }
+input = { tool = "word_drawings", arguments = { action = "insert_picture", alt_text = "A floated picture for the oracle" } }
+cause = """P4c11: as the float entry above: docx-agent's float_drawing gives the new wp:anchor the ns0 prefix."""
 
 # P4c10: a set that leaves the frame as it was (square wrapping on a frame wrapped square,
 # one step back or forward with no drawing there) in a fixture lxml did not write.
@@ -130,3 +136,21 @@ mode = "objects"
 file = "generated/markdown/constructs.docx"
 input = { tool = "word_drawings", arguments = { action = "set", z_order = "forward" } }
 cause = """P4c10: as the set wrap square entry above: no drawing above, the frame keeps its order."""
+
+# Lane P2c15 (found in #146, lane P2c14): declared table styles in Word's Dark List and Colorful
+# List families (and their accents), where a case pages that far.
+[[difference]]
+mode = "style"
+input = { tool = "word_design_facts", arguments = { include = ["declared_styles"] } }
+cause = """#146: the Rust tool names the theme colour of a band cell's edge drawn by a \
+neighbouring place's border (the header row's bottom, w:themeColor="background1": \
+"single 2.25pt FFFFFF (background1)"); docx-agent labels only the colours of the place's own \
+conditions and leaves the label out. Every other value is the same. Rust's answer is the \
+accurate one; docx-agent's code is deleted at P4e (test_declared_styles asserts Rust's values)."""
+
+[[difference]]
+mode = "style"
+input = { tool = "word_design_facts", arguments = { include = ["theme", "declared_styles"] } }
+cause = """#146: as above -- the Rust tool names the theme colour (background1) of a band \
+cell's edge drawn by a neighbouring place's border; docx-agent leaves the label out. Rust's \
+answer is the accurate one; docx-agent's code is deleted at P4e."""

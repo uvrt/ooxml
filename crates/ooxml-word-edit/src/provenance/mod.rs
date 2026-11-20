@@ -8,9 +8,9 @@
 //! (`_prune_provenance` as it ends); and the item, its properties and its relationship go
 //! together when no entry is left.
 //!
-//! Reads: the main part's relationships (where the item is) and the item; the paragraphs
-//! the entries name are not read as keys -- an edit that changes one writes it, and its own
-//! follow-up then writes the item, which a concurrent follow-up read.
+//! Reads: by condition, the item the main part's relationships name ([`item::ItemNamed`]); the
+//! item; the paragraphs the entries name are not read as keys -- an edit that changes one
+//! writes it, and its own follow-up then writes the item, which a concurrent follow-up read.
 //!
 //! A review moves or drops the tables' records as well ([`follow_review`], run by the
 //! review itself before this).

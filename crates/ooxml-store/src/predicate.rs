@@ -21,4 +21,11 @@ pub trait ReadPredicate<D: DocModel>: Debug + Send + Sync {
     /// not known). Runs inside the commit lock, so it must cost what reading the one key
     /// costs.
     fn depends(&self, head: &D, key: &D::Key) -> bool;
+
+    /// The keys the condition stands for in the history, where it can name them: every key
+    /// whose write could change its answer (`None`: any key could). Undo and redo, which
+    /// cannot ask the condition again, find a step entangled through these.
+    fn history_keys(&self) -> Option<Vec<D::Key>> {
+        None
+    }
 }

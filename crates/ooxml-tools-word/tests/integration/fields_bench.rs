@@ -1,9 +1,12 @@
 //! `FIELDS_BENCH=<path to a .docx> cargo test --release -p ooxml-tools-word --test integration -- --ignored
 //! --nocapture fields_bench::`: the field tools on a long document, each the best of three on a fresh editor
-//! (opening not counted), over one page engine kept for the document as a host keeps it (its first layout timed
+//! (opening not counted; a call whose run takes over [`ONCE_PAST`] runs once, to keep the gates' bench within
+//! its 30-minute limit), over one page engine kept for the document as a host keeps it (its first layout timed
 //! apart): before each call the engine has laid out the version the call starts from, as a host's kept layout
 //! has, and the fields have been listed once (the document's field scans, as a session keeps them).
-//! `FIELDS_CALLS=footer,one` (names: update, one, toc, footer) runs only those.
+//! `FIELDS_CALLS=footer,one` (names: update, again, one, toc, footer) runs only those; `again` (asked by name
+//! only, to keep the gates' bench within its limit) is an update of every field after one
+//! has updated them (not counted).
 //!
 //! Must not: run without the variable; it is a timing, not a test.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
@@ -51,6 +54,10 @@ impl Timed {
     }
 }
 
+/// A run longer than this is not repeated: its best of three would not change the picture and
+/// three such runs of each slow call pass the gates' 30-minute limit.
+const ONCE_PAST: Duration = Duration::from_secs(20);
+
 fn editor(bytes: &Arc<[u8]>) -> Editor {
     let package = Package::open(Arc::clone(bytes), &Limits::default()).unwrap();
     Editor::open(
@@ -62,11 +69,22 @@ fn editor(bytes: &Arc<[u8]>) -> Editor {
     .unwrap()
 }
 
-/// The best of three calls of `tool` with `arguments`, each on a fresh editor whose opened
+/// The best of three calls of `tool` (one past [`ONCE_PAST`]) with `arguments`, each on a fresh editor whose opened
 /// version the engine has laid out (not counted), and the last reply.
 fn best<A: ToolArgs>(
     bytes: &Arc<[u8]>,
     layout: &Timed,
+    arguments: &Value,
+    tool: impl Fn(&A, &Editing<'_>) -> ToolResult<Value>,
+) -> (Duration, Value) {
+    best_after(bytes, layout, None, arguments, tool)
+}
+
+/// As [`best`], each call after `first` (an update) has run on the editor, not counted.
+fn best_after<A: ToolArgs>(
+    bytes: &Arc<[u8]>,
+    layout: &Timed,
+    first: Option<&Value>,
     arguments: &Value,
     tool: impl Fn(&A, &Editing<'_>) -> ToolResult<Value>,
 ) -> (Duration, Value) {
@@ -76,7 +94,6 @@ fn best<A: ToolArgs>(
         let opened = editor.store().snapshot().doc().clone();
         let warm = layout.engine.lock().unwrap().lay_out(opened.package());
         assert!(matches!(warm, Ok(Ok(_))), "the opened version is laid out");
-        let before = layout.engine.lock().unwrap().stats();
         let caller = Caller::anonymous();
         let editing = Editing {
             editor: &CallEditor::new(&editor),
@@ -88,10 +105,18 @@ fn best<A: ToolArgs>(
             date: "2026-11-17T10:00:00Z",
             layout: Some(layout),
             others: ooxml_tools_word::Others::default(),
+            blobs: None,
         };
         // The document's field scans as a session keeps them between calls (not counted).
         let (list, _) = WordFields::accept(json!({"doc": "d1", "action": "list"}), Some("docx")).unwrap();
         assert!(word_fields(&list, &editing).to_json().contains_key("data"));
+        if let Some(first) = first {
+            let kept = layout.spent.lock().unwrap().len();
+            let (update, _) = WordFields::accept(first.clone(), Some("docx")).unwrap();
+            assert!(word_fields(&update, &editing).to_json().contains_key("summary"));
+            layout.spent.lock().unwrap().truncate(kept);
+        }
+        let before = layout.engine.lock().unwrap().stats();
         let (args, _) = A::accept(arguments.clone(), Some("docx")).unwrap();
         let started = Instant::now();
         let reply = tool(&args, &editing);
@@ -107,6 +132,9 @@ fn best<A: ToolArgs>(
         );
         if took < out.0 {
             out = (took, Value::Object(reply.to_json()));
+        }
+        if took > ONCE_PAST {
+            break;
         }
     }
     out
@@ -153,7 +181,7 @@ fn run_calls(bytes: &Arc<[u8]>, layout: &Timed, ids: &[String]) {
         let summary = reply.get("summary").cloned().unwrap_or(Value::Null);
         let warnings = reply.get("warnings").cloned().unwrap_or(Value::Null);
         println!(
-            "{name}: {:.1} ms -- {summary} {warnings}; over three runs {}",
+            "{name}: {:.1} ms -- {summary} {warnings}; over the runs {}",
             took.as_secs_f64() * 1000.0,
             layout.take()
         );
@@ -164,6 +192,13 @@ fn run_calls(bytes: &Arc<[u8]>, layout: &Timed, ids: &[String]) {
         report(
             "word_fields update",
             best(bytes, layout, &json!({"doc": "d1", "action": "update"}), word_fields),
+        );
+    }
+    if wanted("again") {
+        let update = json!({"doc": "d1", "action": "update"});
+        report(
+            "word_fields update again",
+            best_after(bytes, layout, Some(&update), &update, word_fields),
         );
     }
     if wanted("one") {
@@ -219,6 +254,7 @@ fn page_field(bytes: &Arc<[u8]>, layout: &Timed) -> String {
         date: "2026-11-17T10:00:00Z",
         layout: Some(layout),
         others: ooxml_tools_word::Others::default(),
+        blobs: None,
     };
     let (args, _) = <WordFields as ToolArgs>::accept(json!({"doc": "d1", "action": "list"}), Some("docx")).unwrap();
     let listed = Value::Object(word_fields(&args, &editing).to_json());

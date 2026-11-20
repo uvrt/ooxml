@@ -7,7 +7,7 @@
 //! Must not: decide an edit (commands do, through the sink), read the clock, or hold global
 //! state: caches belong to the document ([`Shared`]).
 
-use crate::pool::{Ids, IdsChange, Sequences};
+use crate::pool::{EarlierIds, Ids, IdsChange, Sequences};
 use crate::validate::{Facts, Tally};
 use crate::EditError;
 use ooxml_derive::CacheBudget;
@@ -235,10 +235,22 @@ impl WordDoc {
     /// # Errors
     /// [`EditError`] when the package is not a Word document a reading can open.
     pub fn open(package: Package, budget: Arc<dyn CacheBudget>) -> Result<WordDoc, EditError> {
+        WordDoc::open_with(package, budget, &EarlierIds::default())
+    }
+
+    /// The document whose first version is `package`, opened again with the ids it had
+    /// before it was saved (`earlier`) beside those its parts hold.
+    ///
+    /// # Errors
+    /// As [`WordDoc::open`].
+    pub fn open_with(
+        package: Package,
+        budget: Arc<dyn CacheBudget>,
+        earlier: &EarlierIds,
+    ) -> Result<WordDoc, EditError> {
         let docx = Arc::new(Docx::open(&package)?);
         let roots: Vec<&ooxml_xml::Element> = docx.parts.iter().map(|p| &**p.root()).collect();
-        let highest = drawing_numbers(&roots).into_iter().max().unwrap_or(0);
-        let ids = Ids::opened(used_long_hex(&roots), highest);
+        let ids = Ids::opened(used_long_hex(&roots), drawing_numbers(&roots)).with_earlier(earlier);
         Ok(WordDoc {
             package,
             ids,
@@ -539,7 +551,7 @@ impl DocModel for WordDoc {
                 for (seed, _) in &added.cursors {
                     into.insert(Key::Seq(Arc::from(seed.as_str())));
                 }
-                if added.highest_drawing > 0 {
+                if added.highest_drawing > 0 || !added.drawings.is_empty() {
                     into.insert(Key::Seq(Arc::from(crate::pool::DRAWING_NUMBERS)));
                 }
             }

@@ -17,11 +17,13 @@ mod bound;
 mod fill;
 mod insert;
 mod remove;
+mod sync;
 
 pub use fill::{FillControl, Filling};
 pub(crate) use insert::hoist;
 pub use insert::{ControlKind, InsertControl};
 pub use remove::RemoveControl;
+pub(crate) use sync::sync_bound_controls;
 
 use crate::doc::{Draw, DrawFrom, Key};
 use crate::names::{W, W14, W16DU};

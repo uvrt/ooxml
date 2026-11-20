@@ -8,22 +8,28 @@ name: Free threading
 # RuntimeWarning); the suite then runs with PYTHON_GIL=0 and RuntimeWarning an error.  The
 # packages on lxml take lxml 7 (a pre-release for now), which leaves the GIL off.
 # tools/ci.py holds each package's flags.  The same path filter as ci.yml.
+# Nightly and manual runs only (a manual run can name a branch: `gh workflow run
+# freethreading.yml --ref <branch>`), and a pull request that changes this workflow or the
+# one it calls; not on a push to main (from 2026-11-20): the legs are about as many as
+# ci.yml's and not required, and GitHub runs a limited number of jobs at a time for the
+# whole repository, so main's pushes leave them to the nightly run.
 
 on:
-  push:
-    branches: [main]
   pull_request:
+    paths:
+      - .github/workflows/freethreading.yml
+      - .github/workflows/python-tests.yml
   workflow_dispatch:
   # Nightly, half an hour after ci.yml's.  Linux only on every event (tools/ci.py plan,
   # `ft`): the macOS runners are the scarce ones.
   schedule:
     - cron: "37 2 * * *"
 
-# As ci.yml: a newer push to a pull request or to main cancels the older push's run;
-# the nightly run and a manual run are never cancelled.
+# As ci.yml: a newer push to a pull request cancels the older push's run; the nightly run
+# and a manual run are never cancelled.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ (github.event_name == 'pull_request' || github.event_name == 'push') && github.event_name || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'pull_request' && github.event_name || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   plan:

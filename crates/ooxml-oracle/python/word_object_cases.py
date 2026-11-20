@@ -1,7 +1,7 @@
 """The object tools' cases for ``word_edits_diff.py --objects`` (lane P4c): the tools
 called through docx-agent's toolbox on a document as opened, compared with the Rust core's
 (``word-edits``, ``op: "objects"``) as the structure tools' cases are
-(:func:`word_structure_cases.python_case`: the reply, every changed part, the part order,
+(:func:`word_tool_reference.python_case`: the reply, every changed part, the part order,
 ``touched``, the validation delta, the problems and the next ids).
 
 Python's behaviour is not changed: this calls docx-agent's public and documented internal
@@ -11,8 +11,10 @@ functions only.
 from __future__ import annotations
 
 import os
+import struct
+import zlib
 
-from word_structure_cases import ToolCases, tracked
+from word_structure_cases import ToolCases, fonts_of, tracked
 
 CASES = ToolCases()
 
@@ -36,7 +38,12 @@ def _table_scope(table: str) -> list[dict]:
             fmt(borders="double", shading="FFF2CC"), fmt(header_rows=1), fmt(header_rows=0), fmt(header_rows=99),
             fmt(look=["header_row", "banded_rows"]), fmt(look=[]), fmt(look=["total_row", "last_column"]),
             fmt(style="Table Grid", look=["first_column"]), fmt(cant_split=True), fmt(cant_split=False),
-            fmt(width_of="body"), fmt(width_of="window", width=100), fmt(keep_together=True),
+            fmt(width_of="body"), fmt(width_of="body", width_percent=80), fmt(width_of="body", alignment="center"),
+            fmt(width_of="body", width_percent=50, alignment="right"), fmt(width_of="body", width_percent=0.01),
+            fmt(width_of="body", style="Table Grid", borders="single", cant_split=True),
+            fmt(width_of="window"), fmt(width_of="window", width=100), fmt(width_of="window", width_percent=80),
+            fmt(width_of="window", style="Table Grid"), fmt(width_of="window", borders="double", shading="DDEEFF"),
+            fmt(keep_together=True),
             fmt(keep_together=False, keep_with_next=True), fmt(), fmt(style="Table Grid", width=250,
                                                                      alignment="center", header_rows=1)]
 
@@ -73,6 +80,36 @@ def format_table_cases(document) -> list[dict]:
     out += [call("word_format_table", table="t:00000000", scope="table", shading="FFFFFF")]
     if paragraphs:
         out.append(call("word_format_table", table=paragraphs[0], scope="table", shading="FFFFFF"))
+    out = _laid(document, out)
+    return out + [tracked(case) for case in out]
+
+
+def _laid(document, out: list[dict]) -> list[dict]:
+    """``out`` with the fonts the layout reads on each case keeping a table together (its
+    taller-than-a-page warning reads the layout)."""
+    if not any(case["arguments"].get("keep_together") for case in out):
+        return out
+    fonts = fonts_of(document)
+    return [{**case, "fonts": fonts} if case["arguments"].get("keep_together") else case for case in out]
+
+
+@CASES
+def table_keep_cases(document) -> list[dict]:
+    """``word_format_table``'s keeps: ``keep_together`` and ``keep_with_next`` on and off,
+    alone and together, with a row's breaking or a table's shading beside them, on each of
+    the first eight tables -- untracked and tracked; ``keep_together`` on with the fonts the
+    layout reads (a table taller than a page is said so)."""
+    def fmt(table: str, **arguments) -> dict:
+        return call("word_format_table", table=table, scope="table", **arguments)
+
+    out = []
+    for table in _tables(document)[:8]:
+        out += [fmt(table, keep_together=False), fmt(table, keep_with_next=True), fmt(table, keep_with_next=False),
+                fmt(table, keep_together=False, keep_with_next=False), fmt(table, keep_together=True),
+                fmt(table, keep_together=True, keep_with_next=True),
+                fmt(table, keep_together=True, keep_with_next=False),
+                fmt(table, keep_with_next=False, cant_split=True), fmt(table, keep_together=False, shading="FFF2CC")]
+    out = _laid(document, out)
     return out + [tracked(case) for case in out]
 
 
@@ -322,3 +359,121 @@ def drawings_cases(document) -> list[dict]:
     out += [edit("move", target="d:999999", x=1, y=1), edit("resize", target="d:999999", width=10),
             edit("inline", target="d:999999"), edit("move"), edit("float", target="d:999999")]
     return out + [tracked(case) for case in out]
+
+
+def _chunk(kind: bytes, body: bytes) -> bytes:
+    return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body))
+
+
+def _png(width: int, height: int, per_metre: int | None = None) -> bytes:
+    """A black PNG, stating a density in pixels per metre when given."""
+    rows = b"".join(b"\0" + b"\0" * (width * 3) for _ in range(height))
+    out = b"\x89PNG\r\n\x1a\n" + _chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+    if per_metre:
+        out += _chunk(b"pHYs", struct.pack(">IIB", per_metre, per_metre, 1))
+    return out + _chunk(b"IDAT", zlib.compress(rows)) + _chunk(b"IEND", b"")
+
+
+def _jpeg(width: int, height: int, dpi: int) -> bytes:
+    """A JPEG's headers: JFIF stating ``dpi``, a baseline frame (nothing is decoded)."""
+    app0 = b"JFIF\0" + bytes([1, 1, 1]) + struct.pack(">HH", dpi, dpi) + b"\0\0"
+    sof = bytes([8]) + struct.pack(">HH", height, width) + bytes([1, 1, 0x11, 0])
+    return (b"\xff\xd8\xff\xe0" + struct.pack(">H", len(app0) + 2) + app0
+            + b"\xff\xc0" + struct.pack(">H", len(sof) + 2) + sof + b"\xff\xd9")
+
+
+def _gif(width: int, height: int) -> bytes:
+    return b"GIF89a" + struct.pack("<HH", width, height) + b"\0\0\0;"
+
+
+def _bmp(width: int, height: int, per_metre: int) -> bytes:
+    pixels = b"\0" * (((width * 3 + 3) // 4) * 4 * height)
+    header = struct.pack("<IiiHHIIiiII", 40, width, height, 1, 24, 0, len(pixels), per_metre, per_metre, 0, 0)
+    return b"BM" + struct.pack("<IHHI", 14 + len(header) + len(pixels), 0, 0, 54) + header + pixels
+
+
+_SVG = b'<svg xmlns="http://www.w3.org/2000/svg" width="20" height="10"><rect width="20" height="10"/></svg>'
+
+
+def _blob(data: bytes, name: str, mime: str) -> dict:
+    return {"name": name, "mime": mime, "hex": data.hex()}
+
+
+#: The pictures the cases insert, each the session's b1 in its case.
+_PICTURES = {"png": _blob(_png(40, 20), "a.png", "image/png"),
+             "png300": _blob(_png(30, 30, 11811), "b.png", "image/png"),
+             "jpeg": _blob(_jpeg(64, 48, 72), "c.jpg", "image/jpeg"),
+             "gif": _blob(_gif(10, 10), "d.gif", "image/gif"),
+             "bmp": _blob(_bmp(20, 10, 3780), "e.bmp", "image/bmp"),
+             "svg": _blob(_SVG, "f.svg", "image/svg+xml"),
+             "text": _blob(b"plain words", "g.txt", "text/plain"),
+             "headless": _blob(b"\x89PNG\r\n\x1a\n" + _chunk(b"IEND", b""), "h.png", "image/png")}
+
+
+def _media_bytes(document) -> bytes | None:
+    """The bytes of the document's first picture part, when small: inserted again, the part
+    is reused."""
+    for name in document.package.part_names:
+        if name.startswith("word/media/") and name.rsplit(".", 1)[-1] in ("png", "jpeg", "jpg", "gif"):
+            data = document.package.read(name)
+            return data if len(data) <= 64 * 1024 else None
+    return None
+
+
+#: The alt text of a picture the cases float (wrap given).
+FLOATED = "A floated picture for the oracle"
+
+
+@CASES
+def picture_cases(document) -> list[dict]:
+    """``word_drawings insert_picture``: a picture of each format (natural size, its stated
+    density or 96 dpi; a width keeping the aspect ratio) at a position, a range, after text
+    found once, in a cell, in a paragraph of its own after or before a block (aligned in the
+    line, or floating), floating with each wrap and place; the bytes of a picture already in
+    the document (its part reused); refusals (no image, a blob that is not there or not an
+    image, no alt text, a height, a place without wrap, a tint on a bitmap, a header that
+    gives no size, both or neither of at and find); an SVG left to the host -- untracked and
+    tracked."""
+    paragraphs = [b["id"] for b in document.blocks() if b["id"] and b["kind"] == "paragraph"]
+    if not paragraphs:
+        return []
+    first = paragraphs[0]
+
+    def put(picture: str = "png", **arguments) -> dict:
+        arguments = {"image": "b1", "alt_text": "A picture for the oracle", **arguments}
+        case = call("word_drawings", action="insert_picture",
+                    **{k: v for k, v in arguments.items() if v is not None})
+        return {**case, "blobs": [_PICTURES[picture]]}
+
+    def floated(**arguments) -> dict:
+        # its own alt text: known-differences.toml names the floated pictures by it
+        return put(alt_text=FLOATED, **arguments)
+
+    out = [put(at=f"{first}@0"), put(at=first, width=50), put("png300", at=f"{first}@0"),
+           put("jpeg", at=f"{first}@0", width=120.5), put("gif", at=f"{first}@0"), put("bmp", at=f"{first}@0"),
+           put(at=f"after:{first}"), put(at=f"before:{first}", width=30),
+           put(at=f"after:{first}", align="center"), floated(at=f"after:{first}", wrap="square", align="right"),
+           floated(at=f"{first}@0", wrap="square", x=10, y=5),
+           floated(at=f"{first}@0", wrap="behind", against="page", align="center"),
+           floated(at=f"{first}@0", wrap="tight"), floated(at=f"{first}@0", wrap="front", against="margin", y=-8),
+           put(at=f"{first}@0", alt_text="Line one\nline \"two\" & <three>"),
+           put(at=f"{first}@0", image=None), put(at=f"{first}@0", image="b9"), put("text", at=f"{first}@0"),
+           put(at=f"{first}@0", alt_text=None), put(at=f"{first}@0", height=40), put(at=f"{first}@0", x=10),
+           put(at=f"{first}@0", color="accent1"), put("svg", at=f"{first}@0"), put("headless", at=f"{first}@0"),
+           put(at=f"{first}@0", find="x"), put(), put(at=f"{first}@9999"), put(at="after:p:00000000"),
+           put(at=f"{first}@0", ref="pic")]
+    words = document.paragraph(first).text.split()
+    if words:
+        out.append(put(find=words[0], width=20))
+    tables = _tables(document)
+    if tables:
+        out += [put(at=f"{tables[0]}/c0,0"), put(at=f"after:{tables[0]}"), put(at=f"{tables[0]}/c99,0")]
+    existing = _media_bytes(document)
+    if existing is not None:
+        case = call("word_drawings", action="insert_picture", image="b1", at=f"{first}@0", alt_text="Again")
+        out.append({**case, "blobs": [_blob(existing, "again.png", _sniffed(existing))]})
+    return out + [tracked(case) for case in out]
+
+
+def _sniffed(data: bytes) -> str:
+    return "image/png" if data.startswith(b"\x89PNG") else "image/gif" if data.startswith(b"GIF") else "image/jpeg"
