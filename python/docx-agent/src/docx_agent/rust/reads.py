@@ -1,7 +1,8 @@
 """docx-agent's reading tools answered by the Rust session (phase P1, lane P1c): ``describe``,
 ``word_read``, ``word_inspect`` (``layout`` too), ``find_text``, ``word_compare_blocks`` and
 ``word_design_facts`` (lane P2c14) and, through them, the ops of ``read_batch``, each with the
-interpreter lock let go while Rust reads.
+interpreter lock let go while Rust reads; and (lane P5a) the checks of a document the session
+owns that read the document alone (:func:`serve_check`).
 
 **The versions.**  Python owns the document (until phase P2).  A reading call reads a
 committed version's read copy (ooxml-edit's ``DocumentFormat.read_copy``); the first one on
@@ -444,6 +445,23 @@ def serve(call: Any, tool: str, arguments: dict[str, Any],
         return python()
     _served(tool)
     return result
+
+
+def serve_check(call: Any, arguments: dict[str, Any]) -> Result | None:
+    """Lane P5a: ``check`` answered by the Rust session where it answers it whole -- the
+    facts read from the document alone (``validate``, ``fields``) of a document it owns,
+    outside a batch -- else ``None`` (counted, with why), and the handler goes on.  What
+    needs the layout, copies, a scale and the application's ``min_text_size`` (which asks
+    for layout facts) are the handler's still (the session says which: ``unported``)."""
+    owned = _owned(call.entry)
+    why = None
+    if owned is None:
+        why = "not owned"
+    elif call.in_batch:
+        why = "in a batch"
+    elif getattr(owned.held, "min_text_size", None) is not None:
+        why = "min_text_size"
+    return serve(call, "check", arguments, lambda: None, why_not=why)
 
 
 def _result(envelope: dict[str, Any]) -> Result:

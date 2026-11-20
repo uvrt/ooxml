@@ -74,7 +74,13 @@ def validation(entry: Any, fmt: Any, *, problems: Sequence[Any] | None = None,
                cache: bool = True, fresh: bool = False) -> dict[str, Any]:
     """What the save gate compares: the document's problems now (``problems`` when the
     caller found them already, else :func:`problems_now`) against its baseline, by the
-    format's ``problem_key`` (:func:`compare_problems`)."""
+    format's ``problem_key`` (:func:`compare_problems`) -- or the format's own comparison
+    where it keeps one (:attr:`DocumentFormat.validation`; not inside a batch, ``cache``
+    false)."""
+    if problems is None and cache and fmt is not None and fmt.validation is not None:
+        found = fmt.validation(entry)
+        if found is not None:
+            return found
     if problems is None:
         problems = problems_now(entry, fmt, cache=cache, fresh=fresh)
     key = fmt.problem_key if fmt is not None else str

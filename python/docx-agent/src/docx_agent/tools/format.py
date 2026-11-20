@@ -257,6 +257,14 @@ def _owner() -> Any:
     return OWNER
 
 
+def _validation(entry: Any) -> Any:
+    """Lane P5a: the session's comparison for a document it owns (the save gate's and
+    ``check``'s ``validation``), without the Python view."""
+    from ..rust.owner import session_validation
+
+    return session_validation(entry)
+
+
 def _serve(call: Any, arguments: dict[str, Any]) -> Any:
     """Lane P2c6: a change the Rust session makes beside the others it makes, without the
     document's lock (:func:`docx_agent.rust.edits.serve_owned`)."""
@@ -267,6 +275,7 @@ def _serve(call: Any, arguments: dict[str, Any]) -> Any:
 
 FORMAT = DocumentFormat(
     kind=KIND, open=open_docx, detect=detect, problems=problems, problem_key=problem_key,
+    validation=_validation,
     warnings=(AuthoringWarning, UntrackedChartEdit, DiagramDrawingDropped, ChartDataWarning),
     prompt=PROMPT, errors=ERRORS, summary=summary, checks=checks, strict_first=STRICT_FIRST,
     configure=configure, source_hint=source_hint, own_source=own_source, store_provenance=store_provenance,
