@@ -2,20 +2,17 @@
 //! arguments checked as docx-agent checks them, the text found once where `find` is given,
 //! and every item written in one [`AddComments`] command (one history step, all or none);
 //! the reply as docx-agent's `outcome` writes it, with the new comments (`data.comments`)
-//! and the refs naming them. Text found `within` a block or span is not ported yet: the
-//! host answers it its own way (`unported`).
+//! and the refs naming them; `find` looks in the paragraphs `within` holds when given
+//! (docx-agent's `find_range`).
 //!
 //! Must not: change a comment but through a command.
 
 use super::comments::{try_call, CommentAction, CommentItem, WordComments};
 use super::{edit_refusal, Editing};
-use crate::structure::common::{find_once, one_of, outcome, Outcome};
-use ooxml_tools::{Done, ToolError, ToolResult};
+use crate::structure::common::{find_once_within, one_of, outcome, Outcome};
+use ooxml_tools::{ToolError, ToolResult};
 use ooxml_word_edit::{AddComments, CommentMade, CommentWrite, Who};
 use serde_json::{json, Value};
-
-/// What `unported` says of text found within a block or span.
-const NOT_YET: &str = "a comment on text found within a block or span";
 
 /// `add` or `reply` of `items`.
 pub(crate) fn write(
@@ -26,10 +23,7 @@ pub(crate) fn write(
     let mut list = args.clone();
     list.action = CommentAction::List;
     list.items = None;
-    let writes = match planned(args, editing, items, &list)? {
-        Ok(writes) => writes,
-        Err(unported) => return Ok(unported),
-    };
+    let writes = planned(args, editing, items, &list)?;
     // docx-agent's `author_of`: the one given, else the tracking author
     let author = args
         .author
@@ -47,14 +41,13 @@ pub(crate) fn write(
     Ok(reply(args, items, done.out))
 }
 
-/// Each item's write, its arguments checked as docx-agent checks them; `Err`: the reply
-/// leaving the call to the host.
+/// Each item's write, its arguments checked as docx-agent checks them.
 fn planned(
     args: &WordComments,
     editing: &Editing<'_>,
     items: &[CommentItem],
     list: &WordComments,
-) -> Result<Result<Vec<CommentWrite>, ToolResult<Value>>, ToolError> {
+) -> Result<Vec<CommentWrite>, ToolError> {
     let call = try_call(args);
     let mut writes = Vec::with_capacity(items.len());
     for item in items {
@@ -67,13 +60,8 @@ fn planned(
                 &[("find", item.find.is_some()), ("target", item.target.is_some())],
                 &call,
             )? == "find";
-            if found && item.within.is_some() {
-                let mut done = Done::new(String::new());
-                done.unported.push(NOT_YET.to_owned());
-                return Ok(Err(ToolResult::done(done)));
-            }
             let place = match (&item.find, &item.target) {
-                (Some(text), _) if found => find_once(editing, text, &call)?,
+                (Some(text), _) if found => find_once_within(editing, text, item.within.as_deref(), &call)?,
                 (_, Some(target)) => target.clone(),
                 _ => String::new(),
             };
@@ -97,7 +85,7 @@ fn planned(
             });
         }
     }
-    Ok(Ok(writes))
+    Ok(writes)
 }
 
 /// The reply, as docx-agent's `outcome` writes it of the comments made.
