@@ -1,9 +1,12 @@
-"""``describe``, ``word_read``, ``word_inspect``, ``find_text`` and ``read_batch`` for
-``word_reads_diff.py``: docx-agent's toolbox against the Rust tools (``word-reads``), case by
-case.  ``describe``'s fields the Rust core does not give yet
+"""``describe``, ``word_read``, ``word_inspect``, ``find_text``, ``read_batch`` and ``check``
+for ``word_reads_diff.py``: docx-agent's toolbox against the Rust tools (``word-reads``), case
+by case.  ``describe``'s fields the Rust core does not give yet
 (``ooxml_tools_word::NOT_DESCRIBED``) and the application-only ``memory`` are left out of the
 comparison, as are a drawing's chart and SmartArt JSON in ``word_inspect`` (the chart model,
-phase P3); every other field must be equal.
+phase P3); so are ``check``'s seconds (``timing``: its parts' names are compared) and its
+``validation`` (the save gate's comparison, which the tool layer adds around either); every
+other field must be equal.  ``check``'s cases are the facts the Rust session gives whole
+(``validate``, ``fields``, ``app``); one it leaves to the host fails as ``unported``.
 
 The addressed cases (``ranges``, ``inspect``, ``find``, ``batch``) are made per document from
 what it holds: its first, a middle and its last body paragraph, a span of five blocks, its
@@ -20,6 +23,10 @@ NOT_DESCRIBED = {"pages", "problems"}
 #: word_read's cases: (name, arguments beyond doc).
 READS = (("final", {}), ("markup", {"view": "markup"}), ("original", {"view": "original"}),
          ("all", {"stories": "all"}))
+
+#: check's cases: (name, include).
+CHECKS = (("validate", ["validate"]), ("fields", ["fields"]),
+          ("validate fields app", ["validate", "fields", "app"]))
 
 
 def _toolbox():
@@ -78,6 +85,8 @@ def cases_of(path, what: str) -> list[tuple[str, str, dict]]:
         return [("describe", "describe", {})]
     if what == "read":
         return [(name, "word_read", arguments) for name, arguments in READS]
+    if what == "check":
+        return [(f"check {name}", "check", {"include": include}) for name, include in CHECKS]
     if what == "ranges":
         return [(f"read {t}", "word_read", {"range": t}) for t in targets(path)]
     if what == "inspect":
@@ -139,6 +148,10 @@ def comparable(tool: str, reply: dict) -> dict:
             op.pop("warnings", None)
     if tool == "describe":
         data = {k: v for k, v in data.items() if k not in NOT_DESCRIBED}
+    if tool == "check" and isinstance(data, dict):
+        data = {k: v for k, v in data.items() if k != "validation"}
+        if isinstance(data.get("timing"), dict):
+            data["timing"] = sorted(k for k in data["timing"] if k != "validation")
     out = {"summary": reply.get("summary"), "data": data}
     if tool in ("word_read", "find_text"):
         out["total"] = reply.get("total")

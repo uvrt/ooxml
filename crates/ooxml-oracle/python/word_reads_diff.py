@@ -11,6 +11,8 @@ Runs docx-agent and the Rust core on the same documents and compares, field by f
 * ``describe`` and ``read``: the tools' replies (``word-reads``, the Rust session's
   ``describe`` and ``word_read``) against docx-agent's toolbox, ``word_read`` in every view
   and for ``stories=all``.
+* ``ranges``, ``inspect``, ``find``, ``batch`` and ``check``: the addressed reads, the batch,
+  and ``check``'s facts read from the document alone (lane P5a; ``word_reads_tools.py``).
 
 Every difference is printed with its JSON path; the exit status is 1 when there is any.
 
@@ -167,7 +169,7 @@ def report(expected: dict, rust: dict, ignore: tuple = (), results: str | None =
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("what", choices=["ids", "describe", "read", "ranges", "inspect", "find", "batch"])
+    parser.add_argument("what", choices=["ids", "describe", "read", "ranges", "inspect", "find", "batch", "check"])
     parser.add_argument("--rust", required=True, help="the word-ids or word-reads binary")
     parser.add_argument("--tree", action="append", help="every .docx below this folder")
     parser.add_argument("--results", help="also write the cases with differences here (JSON lines)")

@@ -125,23 +125,36 @@ def test_validate_the_calls_checks_and_validation_agree(box):
 def test_the_problems_are_found_once_per_version(box, monkeypatch):
     session, outcomes, _ = _shelf(box)
     from docx_agent import revalidate
+    from docx_agent.rust import owner as rust_owner
+    from docx_agent.rust import reads
 
-    found = []
-    real = revalidate._find
+    found, asked = [], []
+    real, real_session = revalidate._find, rust_owner.session_validation
 
     def counted(*args, **kwargs):
         found.append(1)
         return real(*args, **kwargs)
 
+    def counted_session(entry):
+        answer = real_session(entry)
+        if answer is not None:
+            asked.append(1)
+        return answer
+
     # Lane G: the problems are found per change (docx_agent.revalidate._find), once a version.
     monkeypatch.setattr(revalidate, "_find", counted)
+    # Lane P5a: or compared by the Rust session that owns the document, the Python view left as it is.
+    monkeypatch.setattr(rust_owner, "session_validation", counted_session)
+    owned = reads._owned(session.entry("d1")) is not None
     _ok(box, session, "name_styles", doc="d1", paragraphs=",".join(outcomes))
-    assert len(found) == 1                                  # the call's checks
-    for asked in ([], ["validate"], ["layout"]):
-        _ok(box, session, "check", doc="d1", **({"include": asked} if asked else {}))
+    assert (len(found), bool(asked)) == ((0, True) if owned else (1, False))   # the call's checks
+    for asked_for in ([], ["validate"], ["layout"]):
+        _ok(box, session, "check", doc="d1", **({"include": asked_for} if asked_for else {}))
     assert len(found) == 1                                  # kept for the version
+    gate = len(asked)
     assert _save(box, session).error.code == "refused"
-    assert len(found) == 2                                  # the gate finds them afresh
+    # the gate finds them afresh: here, or in the session
+    assert (len(found), len(asked)) == ((1, gate + 1) if owned else (2, gate))
 
 
 def test_a_check_inside_a_batch_sees_the_batchs_own_edit(box):

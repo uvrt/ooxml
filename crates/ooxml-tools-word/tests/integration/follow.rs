@@ -62,6 +62,7 @@ fn follow(mut arguments: Value) -> Value {
         number: 1,
         versions: &versions,
         placer: None,
+        owned: None,
         others: Others::default(),
     };
     let others = [("d2", other)];
