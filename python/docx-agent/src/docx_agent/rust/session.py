@@ -105,7 +105,7 @@ def tool_of(export: Mapping[str, Any], kind: str = KIND) -> Tool:
 @dataclass
 class RustResult(Result):
     """A Rust call's reply as a :class:`Result`: :meth:`to_json` is the envelope Rust
-    wrote, key for key (``try_call`` included, which today's errors do not carry), so
+    wrote, key for key (``try_call`` included), so
     :meth:`Result.to_text` and the adapters send exactly it."""
 
     envelope: dict[str, Any] = field(default_factory=dict)
@@ -120,7 +120,7 @@ class RustResult(Result):
         if error is not None:
             fields["error"] = ToolError(error["code"], error["message"], field=error.get("field"),
                                         valid_options=error.get("valid_options"),
-                                        details=error.get("details"))
+                                        details=error.get("details"), try_call=error.get("try_call"))
             fields["summary"] = error["message"]
         return cls(ok=bool(envelope["ok"]), tool=tool, envelope=envelope, **fields)
 
