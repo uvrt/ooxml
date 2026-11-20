@@ -104,7 +104,7 @@ struct Table {
 }
 
 /// The table `target` names now, with its story.
-fn found_table<'d>(doc: &WordDoc, docx: &'d Docx, target: &str) -> Result<(&'d StoryPart, TableId)> {
+pub(crate) fn found_table<'d>(doc: &WordDoc, docx: &'d Docx, target: &str) -> Result<(&'d StoryPart, TableId)> {
     let followed = doc.ids().follow(target);
     let block = (followed != target)
         .then(|| direct(docx, &followed))

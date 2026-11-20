@@ -568,6 +568,7 @@ impl Session {
             date: revision_date(self.context.clock.now()),
             made: &state.made,
             layout: context.layout.as_deref(),
+            blobs: context.blobs.as_deref(),
             others: &state.others,
         };
         tool.run(arguments, &call)

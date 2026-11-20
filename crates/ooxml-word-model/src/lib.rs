@@ -35,7 +35,7 @@ pub mod docx;
 mod error;
 pub mod fieldtext;
 pub mod ids;
-mod imagemeta;
+pub mod imagemeta;
 pub mod labels;
 pub mod markdown;
 pub mod model;
