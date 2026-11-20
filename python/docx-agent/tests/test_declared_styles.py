@@ -85,9 +85,42 @@ def test_a_table_style_lists_its_parts_and_places_with_theme_colours():
     assert "single 0.5pt 156082 (accent1)" in header["borders"].values()
 
 
+#: Lane P2c14/P2c15: where the Rust session serves word_design_facts, it also names the theme
+#: colour of a band cell's edge drawn by a neighbouring place's border (the header row's
+#: bottom, ``w:themeColor="background1"``); docx-agent names only the colours of the place's own
+#: conditions.  Rust's is the accurate answer (known-differences.toml, mode style).  Per family
+#: of Word's table styles in ``sample-10pages.docx``: the border, and the places and edges that
+#: show it.
+NEIGHBOUR_DRAWN = {
+    "Dark List": ("single 2.25pt FFFFFF", {"band1": ["top,left"], "band2": ["left"]}),
+    "Colorful List": ("single 1.5pt FFFFFF",
+                      {"band1": ["top"], "first_column": ["top"], "last_column": ["top"]}),
+}
+
+
+def rust_labels(expected: list[dict]) -> list[dict]:
+    """docx-agent's declared styles with the theme labels the Rust session adds."""
+    out = json.loads(json.dumps(expected))
+    labelled = 0
+    for style in out:
+        family = next((f for f in NEIGHBOUR_DRAWN if style["name"].startswith(f)), None)
+        if family is None:
+            continue
+        border, places = NEIGHBOUR_DRAWN[family]
+        for place, edges in places.items():
+            for edge in edges:
+                borders = style["places"][place]["borders"]
+                assert borders[edge] == border, (style["name"], place, edge)
+                borders[edge] = f"{border} (background1)"
+        labelled += 1
+    assert labelled == 14       # Dark List and Colorful List, each with its six accents
+    return out
+
+
 def test_the_tool_pages_declared_styles_by_size():
     from ooxml_edit.tools import Toolbox
 
+    from docx_agent.rust import reads
     from docx_agent.tools import FORMAT, GROUPS, TOOLS
     from docx_agent.tools._base import tool_names
 
@@ -110,5 +143,9 @@ def test_the_tool_pages_declared_styles_by_size():
             cursor = result.next_cursor
             if cursor is None:
                 break
-    assert seen == tool_names(every, "look") and pages > 1     # keep_lines, as the tools say it
+    expected = tool_names(every, "look")     # keep_lines, as the tools say it
+    assert [(s["name"], s["type"]) for s in seen] == [(s["name"], s["type"]) for s in expected] and pages > 1
+    if reads.served().get("word_design_facts"):
+        expected = rust_labels(expected)
+    assert seen == expected
     assert result.summary.endswith(f"of {len(every)}")
