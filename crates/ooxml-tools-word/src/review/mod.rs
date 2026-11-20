@@ -57,6 +57,9 @@ pub struct Editing<'a> {
     /// The session's blobs, where the host hands them over (`word_drawings`' pictures);
     /// `None`: a call that reads one is left to the host.
     pub blobs: Option<&'a dyn crate::Blobs>,
+    /// The values the host wrote into the call's arguments for references (`{{d:...}}`),
+    /// which the call keeps on the paragraphs they went into; empty: none.
+    pub written: &'a [crate::Written],
 }
 
 /// An edit's refusal as the tool's: an address refused with its way out, a refusal with

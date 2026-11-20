@@ -792,6 +792,7 @@ dependencies = [
  "ooxml-word-model",
  "ooxml-xml",
  "ooxml-zip",
+ "serde_json",
  "thiserror",
 ]
 

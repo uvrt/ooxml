@@ -97,6 +97,23 @@ fn match_tail(work: &mut Work, node: Id) {
     }
 }
 
+/// `part` of `content_type` declared as ooxml-edit's `add_part` with `override=True`
+/// declares it: nothing when its extension's `Default` gives that type already, else an
+/// `Override`. `None`: nothing to declare.
+///
+/// # Errors
+/// When the content types are not XML.
+pub(crate) fn declare_type_override(
+    package: &Package,
+    part: &str,
+    content_type: &str,
+) -> Result<Option<Package>, ModelError> {
+    if package.content_types()?.of(part) == Some(content_type) {
+        return Ok(None);
+    }
+    declare_override(package, part, content_type).map(Some)
+}
+
 /// An `Override` declaring `part` of `content_type`, at the end of `[Content_Types].xml`.
 fn declare_override(package: &Package, part: &str, content_type: &str) -> Result<Package, ModelError> {
     edit_part(package, CONTENT_TYPES_PART, |work| {

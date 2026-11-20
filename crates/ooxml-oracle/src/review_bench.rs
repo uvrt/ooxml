@@ -62,6 +62,7 @@ fn best(doc: &WordDoc, arguments: &Value) -> Result<(f64, String), String> {
             layout: None,
             others: ooxml_tools_word::Others::default(),
             blobs: None,
+            written: &[],
         };
         let started = Instant::now();
         let reply = word_changes(&args, &editing);

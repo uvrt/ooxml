@@ -64,6 +64,7 @@ fn call<A: ToolArgs>(arguments: Value, tool: impl Fn(&A, &Editing<'_>) -> ToolRe
             layout: None,
             others: ooxml_tools_word::Others::default(),
             blobs: None,
+            written: &[],
         };
         let (args, _) = A::accept(arguments, Some("docx")).unwrap();
         Value::Object(tool(&args, &editing).to_json())
@@ -330,6 +331,7 @@ fn template(editor: &Editor, layout: Option<&dyn FieldLayout>) -> ToolResult<Val
         layout,
         others: ooxml_tools_word::Others::default(),
         blobs: None,
+        written: &[],
     };
     let (args, _) = WordTemplate::accept(json!({"doc": "d1", "action": "upgrade_to_modern"}), Some("docx")).unwrap();
     word_template(&args, &editing)

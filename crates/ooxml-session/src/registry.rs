@@ -82,6 +82,8 @@ pub struct Call<'a> {
     pub(crate) layout: Option<&'a dyn ooxml_word_edit::FieldLayout>,
     /// The session's blobs, where the host hands them over.
     pub(crate) blobs: Option<&'a dyn ooxml_tools_word::Blobs>,
+    /// The values the host wrote into the call's arguments for references.
+    pub(crate) written: &'a [ooxml_tools_word::Written],
     /// The other documents the call names (`ooxml_tools::documents`), by id, each at the
     /// version pinned for the call when it was dispatched.
     pub(crate) others: &'a [(String, Opened)],
@@ -261,6 +263,7 @@ impl<T: ToolArgs> Tool for EditHandler<T> {
             layout: call.layout,
             others: Others::new(&others),
             blobs: call.blobs,
+            written: call.written,
         };
         let result = match &self.run {
             EditRun::Plain(run) => run(&args, &editing),

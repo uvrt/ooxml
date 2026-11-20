@@ -66,6 +66,7 @@ fn best_of(
             layout: None,
             others: ooxml_tools_word::Others::default(),
             blobs: Some(&blobs),
+            written: &[],
         };
         for call in setup {
             call(&editing);

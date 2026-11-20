@@ -19,7 +19,7 @@ compare layouts (Python lays them out) it runs under the lock (:func:`serve`).
 The Python handler answers instead -- on the view, committed through the bridge, counted by
 tool and reason (:func:`fallbacks`, ``edit_fallbacks{tool,reason}``), never silently -- where
 the session does not answer as it yet: an op of a ``batch`` (one step), a call on a draft,
-values written by reference, a ref name that would be folded, a refusal (the session's carries its own way out, tool rule 2,
+values written by reference in a tool that does not keep them yet (:data:`KEEPS_WRITTEN`), a ref name that would be folded, a refusal (the session's carries its own way out, tool rule 2,
 which today's does not), a session given its own clock (the Rust session dates revisions by
 the system's), and what the session says it leaves to the host (its ``unported``: a find
 within a block, a picture, regex, ...).  The Rust handler changes nothing in each of those.
@@ -190,6 +190,22 @@ SERVED: dict[str, Callable[[Any, dict[str, Any]], dict[str, Any]]] = {
 }
 
 
+#: The tools whose Rust handler keeps the values written by reference on the paragraphs
+#: they went into (lane P2d2: the host's ``call.facts`` handed over, :func:`_written`);
+#: another served tool given one is answered by the Python handler.
+KEEPS_WRITTEN = frozenset({"word_set_text", "word_insert_text", "replace_text"})
+
+
+def _written(call: Any) -> str | None:
+    """The values the dispatcher wrote into the call's arguments for references
+    (``call.facts``), as ``Session.edit`` takes them; ``None`` without any."""
+    facts = getattr(call, "facts", None)
+    if not facts:
+        return None
+    return json.dumps([{"field": f.field, "start": f.start, "end": f.end, "text": f.text,
+                        "record": f.record, "brief": f.brief()} for f in facts])
+
+
 def _ref_names(arguments: dict[str, Any]) -> list[str]:
     """The ref names a call gives (``ref``, ``items[].ref``)."""
     items = arguments.get("items") if isinstance(arguments.get("items"), list) else []
@@ -217,7 +233,7 @@ def _why_not(call: Any, entry: Any, arguments: dict[str, Any]) -> str | None:
         return "a ref name to fold"
     if call.in_batch:
         return "batch op"
-    if getattr(call, "facts", None):
+    if getattr(call, "facts", None) and call.tool.name not in KEEPS_WRITTEN:
         return "values by reference"
     if getattr(call.session, "clock", utc_now) is not utc_now:
         # Revisions are dated by the session's clock: the Rust session's is the system's.
@@ -287,7 +303,7 @@ def _edit(call: Any, entry: Any, arguments: dict[str, Any], counted: bool) -> tu
     _tracking(call, entry, context, counted)
     given = {"doc": mirror.doc, **{k: v for k, v in SERVED[tool](call, arguments).items()
                                    if v is not None}}
-    reply, app, made = mirror.session.edit(tool, json.dumps(given), context=context)
+    reply, app, made = mirror.session.edit(tool, json.dumps(given), context=context, written=_written(call))
     envelope = json.loads(reply)
     error = envelope.get("error")
     unported = json.loads(app).get("unported") or []

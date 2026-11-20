@@ -397,16 +397,30 @@ impl PySession {
     /// JSON text (`None` where it made more than one version) and the last version's
     /// validation as [`validation`](Self::validation) gives it -- or `None` where it changed
     /// nothing. A host that numbers the document's steps takes the call's step from these,
-    /// whatever other calls commit to the document meanwhile.
-    #[pyo3(signature = (name, arguments, *, context = None))]
+    /// whatever other calls commit to the document meanwhile. `written`: the values the host
+    /// wrote into the arguments for references, as JSON text (`[{"field", "start", "end",
+    /// "text", "record", "brief"}]`, ooxml-edit's `call.facts`), which the call keeps on the
+    /// paragraphs they went into.
+    ///
+    /// # Errors
+    /// `ValueError` for `written` that is not such a list.
+    #[pyo3(signature = (name, arguments, *, context = None, written = None))]
     fn edit(
         &self,
         py: Python<'_>,
         name: &str,
         arguments: String,
         context: Option<PyRef<'_, PyCallContext>>,
-    ) -> (String, String, Option<EditMade>) {
-        let context = context_of(context.as_deref());
+        written: Option<&str>,
+    ) -> PyResult<(String, String, Option<EditMade>)> {
+        let mut context = context_of(context.as_deref());
+        if let Some(written) = written {
+            context.written = serde_json::from_str::<Value>(written)
+                .ok()
+                .as_ref()
+                .and_then(ooxml_tools_word::Written::list_from_json)
+                .ok_or_else(|| PyValueError::new_err("written is a JSON list of the values written by reference"))?;
+        }
         let session = &self.inner;
         let (text, app, made) = py.detach(|| {
             let run = || session.edit(name, Value::String(arguments), &context);
@@ -420,7 +434,7 @@ impl PySession {
             let validation = (m.validation.new, m.validation.fixed, m.validation.baseline);
             (m.first, PyVersion { inner: m.last }, touched, validation)
         });
-        (text, app, made)
+        Ok((text, app, made))
     }
 
     /// Commit a version's touched parts (bytes, or `None` to remove the part) as one step:

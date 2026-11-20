@@ -67,6 +67,7 @@ fn convert_on_a_long_document() {
             layout: Some(&layout),
             others: ooxml_tools_word::Others::default(),
             blobs: None,
+            written: &[],
         };
         let started = Instant::now();
         let reply = Value::Object(word_template(&args, &editing).to_json());

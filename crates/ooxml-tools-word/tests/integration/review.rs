@@ -113,6 +113,7 @@ fn editing<'a>(editor: &'a CallEditor<'a>, opened: &'a WordDoc, caller: &'a Call
         layout: None,
         others: ooxml_tools_word::Others::default(),
         blobs: None,
+        written: &[],
     }
 }
 

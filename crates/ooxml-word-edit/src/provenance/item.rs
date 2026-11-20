@@ -1,7 +1,8 @@
 //! Owns: the records' custom XML item as an edit changes it ([`Draft`]): found and read
 //! through the sink (the main part's relationships and the item are the keys read), its
 //! entries kept, rewritten, dropped (with the text after them, as lxml's `remove` takes
-//! an element's tail) or added at the end, then written back -- or, when no entry is left,
+//! an element's tail) or added at the end (the item made first where there is none,
+//! [`super::made`]), then written back -- or, when no entry is left,
 //! released with its relationship and properties (docx-agent's `_remove_provenance_item`).
 //!
 //! Must not: decide which entries go (the follow-ups do).
@@ -95,14 +96,37 @@ impl Draft {
         self.nodes.iter().filter_map(|n| n.as_element().filter(|e| is_entry(e)))
     }
 
-    /// The record `key`'s entry holds now: its text replaced where there is one, else a new
-    /// entry of `kind` at the end (docx-agent's `store_provenance` with a record).
+    /// The text of the first entry of `kind` keyed `key`, if there is one.
+    pub(super) fn text_of(&self, kind: &str, key: &str) -> Option<String> {
+        self.entries()
+            .find(|e| e.attribute(None, "key") == Some(key) && e.attribute(None, "kind") == Some(kind))
+            .map(|e| records::entry_text(e))
+    }
+
+    /// The entries of `kind` keyed `key` dropped.
+    pub(super) fn drop_entry(&mut self, kind: &str, key: &str) {
+        self.settle(|entry| {
+            if entry.attribute(None, "key") == Some(key) && entry.attribute(None, "kind") == Some(kind) {
+                Fate::Dropped
+            } else {
+                Fate::Kept
+            }
+        });
+    }
+
+    /// The record `key`'s entry holds now: its text replaced where there is one (and
+    /// differs), else a new entry of `kind` at the end (docx-agent's `store_provenance` with
+    /// a record).
     pub(super) fn store(&mut self, kind: &str, key: &str, text: &str) {
         let mut found = false;
         self.settle(|entry| {
             if !found && entry.attribute(None, "key") == Some(key) {
                 found = true;
-                Fate::Written(key.to_owned(), text.to_owned())
+                if records::entry_text(entry) == text {
+                    Fate::Kept
+                } else {
+                    Fate::Written(key.to_owned(), text.to_owned())
+                }
             } else {
                 Fate::Kept
             }

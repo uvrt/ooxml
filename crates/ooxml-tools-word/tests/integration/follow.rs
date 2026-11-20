@@ -76,6 +76,7 @@ fn follow(mut arguments: Value) -> Value {
         layout: None,
         others: Others::new(&others),
         blobs: None,
+        written: &[],
     };
     let (args, _) = WordFollowSample::accept(arguments, Some("docx")).unwrap();
     let reply = Value::Object(word_follow_sample(&args, &editing).to_json());
@@ -144,6 +145,7 @@ fn follow_on_a_long_document() {
                 layout: None,
                 others: Others::default(),
                 blobs: None,
+                written: &[],
             };
             let arguments = json!({"doc": "d1", "sample": {"block": sample}, "copies": copies});
             let (args, _) = WordFollowSample::accept(arguments, Some("docx")).unwrap();

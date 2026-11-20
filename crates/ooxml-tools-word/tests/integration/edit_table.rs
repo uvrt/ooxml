@@ -101,6 +101,7 @@ fn edits_on(package: Package, calls: &[Value]) -> (Value, String) {
         layout: None,
         others: ooxml_tools_word::Others::default(),
         blobs: None,
+        written: &[],
     };
     let mut reply = Value::Null;
     for arguments in calls {

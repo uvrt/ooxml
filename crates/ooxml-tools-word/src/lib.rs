@@ -28,6 +28,7 @@ mod text;
 mod version;
 mod word_inspect;
 mod word_read;
+mod written;
 
 pub use blobs::{Blob, BlobList, Blobs};
 pub use describe::{describe, Describe, DESCRIBED, NOT_DESCRIBED};
@@ -44,6 +45,7 @@ pub use text::*;
 pub use version::{Others, Version};
 pub use word_inspect::{word_inspect, WordInspect};
 pub use word_read::{word_read, Story, View, WordRead};
+pub use written::Written;
 
 /// What `unported` says of a reply holding a chart's or SmartArt diagram's summary or JSON,
 /// which docx-agent reads from the chart model (phase P3).
