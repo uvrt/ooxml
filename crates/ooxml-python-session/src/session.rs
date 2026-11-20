@@ -399,13 +399,16 @@ impl PySession {
     /// nothing. A host that numbers the document's steps takes the call's step from these,
     /// whatever other calls commit to the document meanwhile. `layout`: the document's page
     /// engine, as for [`call`](Self::call) (`word_fields` update, a header's page number,
-    /// `word_template`'s reflow). `written`: the values the host wrote into the arguments for
-    /// references, as JSON text (`[{"field", "start", "end", "text", "record", "brief"}]`,
-    /// ooxml-edit's `call.facts`), which the call keeps on the paragraphs they went into.
+    /// `word_template`'s reflow). `blobs`: the host's blobs, an object with `blob(handle)`
+    /// (`(name, mime, bytes)` or `None`) and `listed()` (`[(handle, name)]`), asked with the
+    /// interpreter lock taken back (`word_drawings` insert_picture). `written`: the values the
+    /// host wrote into the arguments for references, as JSON text (`[{"field", "start", "end",
+    /// "text", "record", "brief"}]`, ooxml-edit's `call.facts`), which the call keeps on the
+    /// paragraphs they went into.
     ///
     /// # Errors
     /// `ValueError` for `written` that is not such a list.
-    #[pyo3(signature = (name, arguments, *, context = None, layout = None, written = None))]
+    #[pyo3(signature = (name, arguments, *, context = None, layout = None, blobs = None, written = None))]
     fn edit(
         &self,
         py: Python<'_>,
@@ -413,10 +416,12 @@ impl PySession {
         arguments: String,
         context: Option<PyRef<'_, PyCallContext>>,
         layout: Option<PyRef<'_, crate::layout::PyWordPages>>,
+        blobs: Option<Py<PyAny>>,
         written: Option<&str>,
     ) -> PyResult<(String, String, Option<EditMade>)> {
         let mut context = context_of(context.as_deref());
         context.layout = layout.map(|pages| Arc::new(pages.port()) as Arc<dyn ooxml_word_edit::FieldLayout>);
+        context.blobs = blobs.map(|b| Arc::new(crate::adapters::PyBlobs(b)) as Arc<dyn ooxml_tools_word::Blobs>);
         if let Some(written) = written {
             context.written = serde_json::from_str::<Value>(written)
                 .ok()
