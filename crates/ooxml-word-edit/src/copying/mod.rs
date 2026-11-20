@@ -6,16 +6,23 @@
 //! ids kept where the document never had them ([`stamp`]); the reply maps each source id
 //! to its copy's.
 //!
+//! Styles come by name, mapped or flattened as the copy's [`StylePolicy`], `style_map`
+//! and [`UnmappedPolicy`] say ([`styles`], [`flatten`], with the cascade they read in
+//! [`cascade`] and the themes in [`theme`]).
+//!
 //! Not ported yet ([`EditError::Unsupported`]: the host copies such blocks its own way):
 //! the copy tracked, `replace:`, and copies holding lists, relationships (pictures,
-//! hyperlinks to addresses), notes, comments, bookmarks, drawings or content controls;
-//! the policies other than `use_destination`, and a style map, are the tool's to refuse.
+//! hyperlinks to addresses), notes, comments, bookmarks, drawings or content controls.
 //!
 //! Must not: write but through the sink, or know a tool's JSON.
 
+mod canonical;
+mod cascade;
+mod flatten;
 mod source;
 mod stamp;
 mod styles;
+mod theme;
 mod view;
 
 use crate::names::W;
@@ -50,6 +57,31 @@ pub enum CopyRange {
     Ids(Vec<String>),
 }
 
+/// Which styles copied blocks keep.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum StylePolicy {
+    /// This document's styles of the same names, the source's imported where it has none
+    /// (Word's default paste).
+    #[default]
+    UseDestination,
+    /// The default paragraph style, the source's look as direct formatting (Keep Source
+    /// Formatting).
+    KeepSource,
+    /// The default paragraph style, bold, italic and underline direct; a heading or list
+    /// item keeps a style of its kind (Merge Formatting, kept structure).
+    Merge,
+}
+
+/// What a source style neither mapped nor in this document by name becomes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum UnmappedPolicy {
+    /// Imported (Word's way).
+    #[default]
+    Import,
+    /// Word's built-in style of that name, else this document's body style.
+    Body,
+}
+
 /// Blocks copied here from a source document.
 #[derive(Debug, Clone)]
 pub struct CopyBlocks {
@@ -61,6 +93,13 @@ pub struct CopyBlocks {
     pub at: String,
     /// Untracked or tracked.
     pub policy: RevisionPolicy,
+    /// Which styles the copies keep.
+    pub styles: StylePolicy,
+    /// Source style name -> this document's style name (a later pair for the same name,
+    /// in any case, wins).
+    pub style_map: Vec<(String, String)>,
+    /// What a style neither mapped nor here becomes.
+    pub unmapped: UnmappedPolicy,
 }
 
 /// What a copy did.
@@ -128,6 +167,19 @@ fn destination(doc: &WordDoc, docx: &Docx, at: &str) -> Result<Place> {
 }
 
 impl CopyBlocks {
+    /// The style policies, the map's names casefolded.
+    fn policies(&self) -> styles::Policies {
+        styles::Policies {
+            styles: self.styles,
+            names: self
+                .style_map
+                .iter()
+                .map(|(from, to)| (ooxml_word_model::docx::casefold(from), to.clone()))
+                .collect(),
+            unmapped: self.unmapped,
+        }
+    }
+
     /// The source blocks: in this document by its renames; in another by its ids as they
     /// are (one it does not know may be one its session renamed: the host's to answer).
     fn select(&self, doc: &WordDoc, source: &Docx) -> Result<Selected> {
@@ -157,7 +209,7 @@ impl CopyBlocks {
         let mut stretch = Stretch::open(sink, &place, "copy_from")?;
         let anchor = stretch.anchor(&place);
         let mut space = Space::default();
-        let mut styles = styles::Styles::new(sink, source)?;
+        let mut styles = styles::Styles::new(sink, source, self.policies())?;
         let work = &mut stretch.work;
         let mut elements = Vec::with_capacity(selected.blocks.len());
         for (_, element) in &selected.blocks {

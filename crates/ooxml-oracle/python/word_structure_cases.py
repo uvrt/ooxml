@@ -388,7 +388,7 @@ _COPY_SOURCE = Path(__file__).resolve().parents[3] / "python" / "docx-agent" / "
 
 @CASES
 def copy_cases(document) -> list[dict]:
-    """``word_copy_from`` (lane P4f1): blocks of the document opened again (``d2``) copied to
+    """``word_copy_from`` (lanes P4f1, P4f2): blocks of the document opened again (``d2``) copied to
     the end, after and before blocks, a span, a table, a heading's section; blocks of this
     document copied beside themselves; blocks of another document whose styles differ;
     refusals and what is left to the host -- untracked, and tracked.  Registered last: the
@@ -440,6 +440,23 @@ def copy_cases(document) -> list[dict]:
         for heading in their_headings[:2]:
             out.append({**call("word_copy_from", source_doc="d2", section_heading=heading, at=f"after:{blocks[0]}"),
                         **other})
+        # Lane P4f2: the other style policies, a style map, unmapped styles as the body style.
+        for block in theirs[:6]:
+            for styles in ("keep_source", "merge"):
+                out.append({**call("word_copy_from", source_doc="d2", range=block, at="end", styles=styles), **other})
+        maps = ([{"source": "Bulletin Body", "destination": "Quote"}],
+                [{"source": "bulletin note", "destination": "Intense Quote"},
+                 {"source": "Heading 1", "destination": "Title"}],
+                [{"source": "Bulletin Body", "destination": "No Such Style"}])
+        for heading in their_headings[:2]:
+            out += [{**call("word_copy_from", source_doc="d2", section_heading=heading, at="end", **extra), **other}
+                    for extra in ({"styles": "merge"}, {"styles": "keep_source"}, {"unmapped": "body"},
+                                  {"style_map": maps[0]}, {"style_map": maps[1], "unmapped": "body"},
+                                  {"style_map": maps[1], "styles": "merge"}, {"style_map": maps[2]})]
+    for block in blocks[:3]:
+        if block != blocks[-1]:
+            out += [from_d2(range=block, at="end", styles="keep_source"),
+                    from_d2(range=block, at="end", styles="merge", unmapped="body")]
     return out + [tracked(case) for case in out]
 
 
