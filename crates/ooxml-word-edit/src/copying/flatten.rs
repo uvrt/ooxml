@@ -8,8 +8,8 @@
 //! item keeping a destination style of its kind instead (a built-in one added as Word
 //! writes it).
 //!
-//! Not ported yet ([`EditError::Unsupported`]): a paragraph a style's list would be
-//! written on.
+//! A paragraph's list stays: its own `w:numPr`, or the one its style's chain states,
+//! written on it (the copy's lists are brought after, [`super::lists`]).
 //!
 //! Must not: write but into the copies and through [`Styles`].
 
@@ -126,6 +126,27 @@ impl Styles<'_> {
         })
     }
 
+    /// A copy of the `w:numPr` the paragraph style `style`'s chain states last, its level
+    /// 0 written where it states none (detached, in `work`).
+    fn style_numbering(&self, work: &mut Work, style: Option<&str>) -> Result<Option<Id>> {
+        let chain = self.cascade.chain(style, "paragraph");
+        let Some(found) = chain
+            .iter()
+            .rev()
+            .find_map(|level| level.find(Some(W), "pPr").and_then(|p| p.find(Some(W), "numPr")))
+        else {
+            return Ok(None);
+        };
+        let numbering = work
+            .adopt_copy(found)
+            .ok_or_else(|| EditError::Path("numPr".to_owned()))?;
+        if work.find(numbering, W, "ilvl").is_none() {
+            let level = make(work, "ilvl", &[("val", "0")]);
+            work.insert(numbering, 0, level);
+        }
+        Ok(Some(numbering))
+    }
+
     /// Merge Formatting's heading or list item: it keeps a destination style of its kind
     /// (`_keeps_structure`).
     fn keeps_structure(
@@ -179,9 +200,12 @@ impl Styles<'_> {
             Ok(None) | Err(EditError::Refused(_)) => return Ok(false),
             Err(other) => return Err(other),
         };
-        let numbered = properties.and_then(|p| work.find(p, W, "numPr")).is_some();
-        if !numbered && listed && self.style_list(Some(&id)) {
-            return Err(EditError::Unsupported("a copied style's list".to_owned()));
+        if let Some(properties) = properties.filter(|p| work.find(*p, W, "numPr").is_none() && listed) {
+            // the list a style gave, written on the paragraph: a list whatever the
+            // destination style says
+            if let Some(numbering) = self.style_numbering(work, Some(&id))? {
+                insert_in_order(work, properties, numbering, self.orders());
+            }
         }
         work.set(node, Arc::new(QName::new(Some("w"), "val", Some(W))), &target);
         for run_style in work.iter(paragraph, W, &["rStyle"]) {
@@ -194,12 +218,15 @@ impl Styles<'_> {
     fn flatten(&self, work: &mut Work, paragraph: Id, base: &Base) -> Result<()> {
         let properties = work.find(paragraph, W, "pPr");
         let style = child_val(work, properties, "pStyle");
-        let numbered = properties.and_then(|p| work.find(p, W, "numPr")).is_some();
-        if numbered || self.style_list(style.as_deref()) {
-            return Err(EditError::Unsupported("a copied list".to_owned()));
-        }
+        let numbering = match properties.and_then(|p| work.find(p, W, "numPr")) {
+            Some(own) => Some(work.deep_copy(own)),
+            None => self.style_numbering(work, style.as_deref())?,
+        };
         let orders = self.orders();
         let new_properties = make(work, "pPr", &[]);
+        if let Some(numbering) = numbering {
+            insert_in_order(work, new_properties, numbering, orders);
+        }
         if !base.merge {
             let direct = properties.and_then(|p| work.build_element(p));
             for (tag, node) in self.cascade.paragraph(style.as_deref(), direct.as_deref()).iter() {
