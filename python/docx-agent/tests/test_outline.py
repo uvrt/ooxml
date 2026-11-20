@@ -189,8 +189,10 @@ def test_the_tools_take_a_heading_range(box):
     assert all(document.paragraph(p).keep_with_next for p in (ids["First part"], ids["Detail"]))
     assert not document.paragraph(ids["Second part"]).keep_with_next
     ok(box, session, "word_move", doc=doc, blocks="h:" + ids["Second part"], before=ids["First part"])
+    document = session.entry(doc).document  # (the view as the served call left it)
     assert [h["text"] for h in document.outline()][1:3] == ["Second part", "First part"]
     ok(box, session, "word_delete", doc=doc, target=first)
+    document = session.entry(doc).document  # (the view as the served call left it)
     assert [h["text"] for h in document.outline()] == ["Opening", "Second part", "Closing"]
     assert "Detail words." not in [p.text for p in document.paragraphs()]
 
