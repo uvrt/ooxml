@@ -13,7 +13,7 @@
 //! Must not: lay out (the [`FieldLayout`] port does), or write but through the sink.
 
 use super::pages::{FieldLayout, LaidFields};
-use super::scan::{all_fields, paragraph_of, result_text, Located};
+use super::scan::{all_fields, bookmarks, paragraph_of, result_text, same_result, Located};
 use super::toc::build::EMPTY_TOC;
 use super::values::{sequence_values, value, Day};
 use super::write::{locate, write_complex, write_simple, Complex};
@@ -25,7 +25,6 @@ use crate::sink::EditSink;
 use crate::work::{scope_above, Work};
 use crate::{EditError, Result, WordDoc};
 use ooxml_store::{Command, Txn};
-use ooxml_word_model::address::marks::Bookmarks;
 use ooxml_word_model::docx::{at_path, Docx};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -63,8 +62,8 @@ fn identified(doc: &WordDoc, docx: &Docx, held: &[Known]) -> Vec<(Known, Located
     let mut out = Vec::new();
     let mut part = String::new();
     let mut ordinal = 0;
-    let mut aside: Vec<usize> = Vec::new();
-    for located in all_fields(doc, docx) {
+    let mut aside: HashSet<usize> = HashSet::new();
+    for located in all_fields(doc, docx).iter() {
         if located.part != part {
             part.clone_from(&located.part);
             ordinal = 0;
@@ -78,7 +77,7 @@ fn identified(doc: &WordDoc, docx: &Docx, held: &[Known]) -> Vec<(Known, Located
         if located.found.keyword() == "TOC" && held.contains(&known) {
             aside.extend(located.found.nested.iter().copied());
         }
-        out.push((known, located));
+        out.push((known, located.clone()));
     }
     out
 }
@@ -208,7 +207,7 @@ fn pass(
     let mut batch: Vec<(Located, String)> = Vec::new();
     let mut docx = sink.docx()?;
     let mut now: HashMap<Known, Located> = identified(sink.doc(), &docx, held).into_iter().collect();
-    let mut marks = Bookmarks::of(&docx);
+    let mut marks = bookmarks(sink.doc(), &docx);
     for known in order {
         let Some(located) = now.get(&known).cloned() else {
             continue;
@@ -229,7 +228,7 @@ fn pass(
             }
             docx = sink.docx()?;
             now = identified(sink.doc(), &docx, held).into_iter().collect();
-            marks = Bookmarks::of(&docx);
+            marks = bookmarks(sink.doc(), &docx);
             continue;
         }
         match value(sink.doc(), (&docx, &marks), &located, pass.laid.as_deref(), pass.today) {
@@ -342,7 +341,7 @@ fn write_paragraph(
 /// (`_empty_tocs`).
 pub(crate) fn empty_tocs(doc: &WordDoc, docx: &Docx, ids: Option<&[String]>) -> Vec<String> {
     let mut out = Vec::new();
-    for located in all_fields(doc, docx) {
+    for located in all_fields(doc, docx).iter() {
         let id = located.id();
         if located.found.keyword() != "TOC" || ids.is_some_and(|ids| !ids.contains(&id)) {
             continue;
@@ -360,17 +359,39 @@ pub(crate) fn empty_tocs(doc: &WordDoc, docx: &Docx, ids: Option<&[String]>) -> 
     out
 }
 
-/// Every field's result by id.
-fn results(doc: &WordDoc, docx: &Docx) -> Vec<(String, String)> {
-    all_fields(doc, docx)
-        .into_iter()
-        .map(|l| {
-            let text = docx
-                .part(&l.part)
-                .map_or_else(String::new, |p| result_text(p.root(), &l.found));
-            (l.id(), text)
+/// How many fields of `after` (a version made from `before`) have an id `before` gives no
+/// field with the same result (`_update_fields`' count): a field whose result stands in the
+/// same elements of both versions is not read.
+fn changed_results(doc: &WordDoc, before: (&Docx, &[Located]), after: &Docx) -> usize {
+    let mut was: HashMap<String, Vec<&Located>> = HashMap::new();
+    for located in before.1 {
+        was.entry(located.id()).or_default().push(located);
+    }
+    let text = |docx: &Docx, l: &Located| {
+        docx.part(&l.part)
+            .map_or_else(String::new, |p| result_text(p.root(), &l.found))
+    };
+    all_fields(doc, after)
+        .iter()
+        .filter(|now| {
+            let Some(earlier) = was.get(&now.id()) else {
+                return true;
+            };
+            let roots = (before.0.part(&now.part), after.part(&now.part));
+            let mut text_now = None;
+            !earlier.iter().any(|then| {
+                if let (Some(old), Some(new)) = roots {
+                    if then.part == now.part
+                        && then.found == now.found
+                        && same_result(old.root(), new.root(), &now.found)
+                    {
+                        return true;
+                    }
+                }
+                text(before.0, then) == *text_now.get_or_insert_with(|| text(after, now))
+            })
         })
-        .collect()
+        .count()
 }
 
 impl Command<WordDoc> for UpdateFields<'_> {
@@ -384,16 +405,12 @@ impl Command<WordDoc> for UpdateFields<'_> {
     fn prepare(&self, tx: &mut Txn<'_, WordDoc>) -> Result<FieldEdited> {
         let mut sink = EditSink::new(tx, RevisionPolicy::Untracked);
         sink.read_everything();
-        let docx = sink.docx()?;
-        let before = results(sink.doc(), &docx);
-        let held = self.held(sink.doc(), &docx)?;
+        let before = sink.docx()?;
+        let fields_before = all_fields(sink.doc(), &before);
+        let held = self.held(sink.doc(), &before)?;
         let unknown = settle(&mut sink, &held, self.layout, self.today)?;
         let docx = sink.docx()?;
-        let after = results(sink.doc(), &docx);
-        let count = after
-            .iter()
-            .filter(|(id, text)| !before.iter().any(|(i, t)| i == id && t == text))
-            .count();
+        let count = changed_results(sink.doc(), (&before, &fields_before), &docx);
         let mut warnings: Vec<String> = unknown.iter().map(|u| format!("{u}: the layout cannot say")).collect();
         warnings.extend(empty_tocs(sink.doc(), &docx, self.ids.as_deref()));
         crate::after::after_edit(&mut sink)?;
@@ -427,8 +444,8 @@ impl UpdateFields<'_> {
         let mut held = Vec::new();
         let mut part = String::new();
         let mut ordinal = 0;
-        let mut aside: Vec<usize> = Vec::new();
-        for located in everything {
+        let mut aside: HashSet<usize> = HashSet::new();
+        for located in everything.iter() {
             if located.part != part {
                 part.clone_from(&located.part);
                 ordinal = 0;

@@ -3,7 +3,9 @@
 //! any two markers (a comment's) in a view, with its text.
 //!
 //! [`Bookmarks`] holds every bookmark by name, for a caller that looks many up in one
-//! version (a field update's `REF`s and `PAGEREF`s): one walk, not one per name.
+//! version (a field update's `REF`s and `PAGEREF`s): one walk, not one per name; the walk
+//! made of each block's markers ([`BlockMarks`]), which a caller may keep for a block while it
+//! is unchanged ([`bookmark_markers_with`]).
 //!
 //! Must not: resolve block ids (the resolver does) or change the document.
 
@@ -29,33 +31,103 @@ pub struct Bookmark<'d> {
     pub end: Option<Box<[u32]>>,
 }
 
+/// The bookmark markers of one block (a part root's child, or the body's): each start's name,
+/// id and place, each end's id and place, in document order, places from the block (the
+/// block itself at `[]`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BlockMarks {
+    starts: Vec<(String, String, Box<[u32]>)>,
+    ends: Vec<(String, Box<[u32]>)>,
+}
+
+impl BlockMarks {
+    /// The markers of `block` and of every element below it.
+    #[must_use]
+    pub fn of(block: &Element) -> BlockMarks {
+        let mut out = BlockMarks::default();
+        let mut visit = |e: &Element, path: &[u32]| {
+            if e.name().is(Some(W), "bookmarkStart") {
+                out.starts.push((attr(e, "name"), attr(e, "id"), path.into()));
+            } else if e.name().is(Some(W), "bookmarkEnd") {
+                out.ends.push((attr(e, "id"), path.into()));
+            }
+        };
+        visit(block, &[]);
+        every(block, &mut Vec::new(), &mut visit);
+        out
+    }
+
+    /// Its size in bytes, roughly (what a memo of it weighs).
+    #[must_use]
+    pub fn weight(&self) -> usize {
+        let path = |p: &[u32]| 16 + 4 * p.len();
+        64 + self
+            .starts
+            .iter()
+            .map(|(name, id, p)| 48 + name.len() + id.len() + path(p))
+            .sum::<usize>()
+            + self.ends.iter().map(|(id, p)| 24 + id.len() + path(p)).sum::<usize>()
+    }
+}
+
 /// Every bookmark's markers, name to (part, start, end), the first start of a name winning,
 /// in story and document order (docx-agent's `_bookmark_markers`).
 #[must_use]
 pub fn bookmark_markers(docx: &Docx) -> Vec<Bookmark<'_>> {
+    bookmark_markers_with(docx, &mut |block| std::sync::Arc::new(BlockMarks::of(block)))
+}
+
+/// As [`bookmark_markers`], each block's markers from `marks` (which may keep them while the
+/// block is unchanged: green elements are immutable).
+pub fn bookmark_markers_with<'d>(
+    docx: &'d Docx,
+    marks: &mut dyn FnMut(&std::sync::Arc<Element>) -> std::sync::Arc<BlockMarks>,
+) -> Vec<Bookmark<'d>> {
     let mut out: Vec<Bookmark<'_>> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
     for part in &docx.parts {
         let mut starts = Vec::new();
-        let mut ends: Vec<(String, Box<[u32]>)> = Vec::new();
-        every(part.root(), &mut Vec::new(), &mut |e, path| {
-            if e.name().is(Some(W), "bookmarkStart") {
-                starts.push((attr(e, "name"), attr(e, "id"), path.to_vec().into_boxed_slice()));
-            } else if e.name().is(Some(W), "bookmarkEnd") {
-                ends.push((attr(e, "id"), path.to_vec().into_boxed_slice()));
+        let mut ends: Vec<(&str, Box<[u32]>)> = Vec::new();
+        let mut held = Vec::new();
+        for (k, node) in part.root().children().iter().enumerate() {
+            let Node::Element(child) = node else { continue };
+            let k = u32::try_from(k).unwrap_or(u32::MAX);
+            if child.name().is(Some(W), "body") {
+                for (j, node) in child.children().iter().enumerate() {
+                    let Node::Element(block) = node else { continue };
+                    held.push((vec![k, u32::try_from(j).unwrap_or(u32::MAX)], marks(block)));
+                }
+            } else {
+                held.push((vec![k], marks(child)));
             }
-        });
+        }
+        let at = |above: &[u32], p: &[u32]| -> Box<[u32]> { [above, p].concat().into_boxed_slice() };
+        for (above, block) in &held {
+            starts.extend(
+                block
+                    .starts
+                    .iter()
+                    .map(|(name, id, p)| (name, id.as_str(), at(above, p))),
+            );
+            ends.extend(block.ends.iter().map(|(id, p)| (id.as_str(), at(above, p))));
+        }
         // The last end of each id, as the walk back from the last one finds it.
         let mut last_end: HashMap<&str, &[u32]> = HashMap::new();
         for (id, path) in &ends {
-            last_end.insert(id.as_str(), path);
+            last_end.insert(id, path);
         }
         for (name, id, start) in starts {
-            if !seen.insert(name.clone()) {
+            if seen.contains(name) {
                 continue;
             }
-            let end = last_end.get(id.as_str()).map(|p| Box::<[u32]>::from(*p));
-            out.push(Bookmark { name, part, start, end });
+            seen.insert(name.clone());
+            let end = last_end.get(id).map(|p| Box::<[u32]>::from(*p));
+            out.push(Bookmark {
+                name: name.clone(),
+                part,
+                start,
+                end,
+            });
         }
     }
     out
@@ -96,7 +168,12 @@ impl<'d> Bookmarks<'d> {
     /// `docx`'s bookmarks.
     #[must_use]
     pub fn of(docx: &'d Docx) -> Bookmarks<'d> {
-        let markers = bookmark_markers(docx);
+        Bookmarks::of_markers(bookmark_markers(docx))
+    }
+
+    /// The bookmarks `markers` (as [`bookmark_markers`] finds them) are.
+    #[must_use]
+    pub fn of_markers(markers: Vec<Bookmark<'d>>) -> Bookmarks<'d> {
         let mut exact = HashMap::new();
         let mut folded = HashMap::new();
         for (k, marker) in markers.iter().enumerate() {

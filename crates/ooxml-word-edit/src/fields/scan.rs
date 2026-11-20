@@ -3,14 +3,17 @@
 //! part's tree, its instruction and the fields nested in it, those inside a deletion left
 //! out; a field's id (`fld:<story>/<n>`, its place among its story's fields), the paragraph
 //! it begins in, its cached result as text (`_result_text`), and the document's fields in
-//! story order (`_all_fields`). A block's fields are scanned once while it is unchanged
-//! ([`FieldScans`], the document's).
+//! story order (`_all_fields`). A block's fields are scanned once while it is unchanged,
+//! and a version's fields once while its parts are ([`FieldScans`], the document's); the
+//! bookmarks the fields refer to, each block's markers read once while it is unchanged
+//! ([`bookmarks`]).
 //!
 //! Must not: change a field or compute its value.
 
 use crate::names::W;
 use crate::WordDoc;
 use ooxml_derive::{CacheBudget, Memo, Weigh};
+use ooxml_word_model::address::marks::{bookmark_markers_with, BlockMarks, Bookmarks};
 use ooxml_word_model::docx::text::leading_text;
 use ooxml_word_model::docx::{at_path, Docx};
 use ooxml_xml::{Element, Node};
@@ -92,9 +95,42 @@ impl Weigh for Held {
 
 /// The fields of one document's blocks (a part root's children, the body's), memoised by
 /// the block (an element's identity: green nodes are immutable): a version's scan walks
-/// only the blocks its edits made.
+/// only the blocks its edits made; and the last version's fields, by its parts' roots.
 pub struct FieldScans {
     blocks: Mutex<Memo<usize, Held>>,
+    last: Mutex<Option<Scanned>>,
+    marks: Mutex<Memo<usize, HeldMarks>>,
+}
+
+/// A memo entry of the bookmark markers: the block (held, so its address is not given to
+/// another) and its markers.
+#[derive(Clone)]
+struct HeldMarks {
+    element: Arc<Element>,
+    marks: Arc<BlockMarks>,
+}
+
+impl Weigh for HeldMarks {
+    fn weight(&self) -> usize {
+        self.marks.weight()
+    }
+}
+
+/// A version's fields, held with the story parts they were scanned from (each part's name,
+/// story and root: the roots held, so their addresses are not given to others).
+struct Scanned {
+    parts: Vec<(String, String, Arc<Element>)>,
+    fields: Arc<[Located]>,
+}
+
+impl Scanned {
+    /// Whether `docx` has these parts, each with the same root.
+    fn of(&self, docx: &Docx) -> bool {
+        self.parts.len() == docx.parts.len()
+            && self.parts.iter().zip(&docx.parts).all(|((part, story, root), now)| {
+                *part == now.part && *story == now.story && Arc::ptr_eq(root, now.root())
+            })
+    }
 }
 
 impl std::fmt::Debug for FieldScans {
@@ -108,7 +144,9 @@ impl FieldScans {
     #[must_use]
     pub fn new(budget: Arc<dyn CacheBudget>) -> FieldScans {
         FieldScans {
-            blocks: Mutex::new(Memo::new(budget)),
+            blocks: Mutex::new(Memo::new(Arc::clone(&budget))),
+            last: Mutex::new(None),
+            marks: Mutex::new(Memo::new(budget)),
         }
     }
 }
@@ -265,9 +303,13 @@ fn found(number: usize, simple: bool, instruction: &str, path: &[u32]) -> Found 
 }
 
 /// Every field of the document `docx` (a reading of `doc`), story by story in the
-/// reading's order.
-pub(crate) fn all_fields(doc: &WordDoc, docx: &Docx) -> Vec<Located> {
+/// reading's order; scanned once while its parts are the same.
+pub(crate) fn all_fields(doc: &WordDoc, docx: &Docx) -> Arc<[Located]> {
     let scans = &doc.shared().fields;
+    let mut last = scans.last.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some(known) = last.as_ref().filter(|l| l.of(docx)) {
+        return Arc::clone(&known.fields);
+    }
     let mut out = Vec::new();
     for part in &docx.parts {
         for found in scan(scans, part.root()) {
@@ -278,7 +320,38 @@ pub(crate) fn all_fields(doc: &WordDoc, docx: &Docx) -> Vec<Located> {
             });
         }
     }
-    out
+    let fields: Arc<[Located]> = Arc::from(out);
+    *last = Some(Scanned {
+        parts: docx
+            .parts
+            .iter()
+            .map(|p| (p.part.clone(), p.story.clone(), Arc::clone(p.root())))
+            .collect(),
+        fields: Arc::clone(&fields),
+    });
+    fields
+}
+
+/// The bookmarks of `docx` (a reading of `doc`), each block's markers read once while it is
+/// unchanged.
+pub(crate) fn bookmarks<'d>(doc: &WordDoc, docx: &'d Docx) -> Bookmarks<'d> {
+    let mut memo = doc.shared().fields.marks.lock().unwrap_or_else(PoisonError::into_inner);
+    let markers = bookmark_markers_with(docx, &mut |block| {
+        let key = Arc::as_ptr(block) as usize;
+        if let Some(held) = memo.get(&key).filter(|h| Arc::ptr_eq(&h.element, block)) {
+            return held.marks;
+        }
+        let marks = Arc::new(BlockMarks::of(block));
+        memo.insert(
+            key,
+            HeldMarks {
+                element: Arc::clone(block),
+                marks: Arc::clone(&marks),
+            },
+        );
+        marks
+    });
+    Bookmarks::of_markers(markers)
 }
 
 /// The path of the paragraph holding the node at `path` (its nearest `w:p` above it).
@@ -339,6 +412,61 @@ pub(crate) fn result_text(root: &Arc<Element>, found: &Found) -> String {
         },
     );
     out.trim_matches('\n').to_owned()
+}
+
+/// Whether the result of the field `found` (at the same paths in both parts) is read from
+/// the same elements of `old` and `new`: the elements `result_text` visits, below the
+/// deepest element holding both its separator's and its end's runs, and that element's
+/// ancestors' names (a deletion above it, a run).
+pub(crate) fn same_result(old: &Arc<Element>, new: &Arc<Element>, found: &Found) -> bool {
+    let (first, last) = if found.simple {
+        (found.begin.clone(), found.begin.clone())
+    } else {
+        let (Some(separate), Some(end)) = (&found.separate, &found.end) else {
+            return true;
+        };
+        let first = run_of(new, separate);
+        let last = run_of(new, end);
+        if run_of(old, separate) != first || run_of(old, end) != last {
+            return false;
+        }
+        (first, last)
+    };
+    let shared = first.iter().zip(&last).take_while(|(a, b)| a == b).count();
+    let depth = shared.min(first.len().min(last.len()).saturating_sub(1));
+    let (mut a, mut b) = (Arc::clone(old), Arc::clone(new));
+    for step in first.iter().take(depth) {
+        if Arc::ptr_eq(&a, &b) {
+            return true;
+        }
+        if a.name() != b.name() {
+            return false;
+        }
+        let child = |e: &Arc<Element>| e.children().get(*step as usize).and_then(|n| n.as_element()).cloned();
+        let (Some(x), Some(y)) = (child(&a), child(&b)) else {
+            return false;
+        };
+        a = x;
+        b = y;
+    }
+    if Arc::ptr_eq(&a, &b) {
+        return true;
+    }
+    if a.name() != b.name() {
+        return false;
+    }
+    let (Some(from), Some(to)) = (first.get(depth), last.get(depth)) else {
+        return false;
+    };
+    (*from..=*to).all(|k| {
+        let (x, y) = (a.children().get(k as usize), b.children().get(k as usize));
+        match (x, y) {
+            (Some(Node::Element(x)), Some(Node::Element(y))) => Arc::ptr_eq(x, y),
+            // `result_text` reads elements only
+            (Some(Node::Element(_)), _) | (_, Some(Node::Element(_))) => false,
+            _ => true,
+        }
+    })
 }
 
 /// Every `w:t`'s text below `element`, in order.
@@ -510,5 +638,27 @@ mod tests {
         let again = replaced(&edited, 0, block(4));
         assert_eq!(scan(&scans, &again), fresh(&again));
         assert_ne!(fresh(&again), first);
+    }
+
+    #[test]
+    fn a_result_read_from_the_same_elements_is_the_same_result() {
+        let root = root();
+        let block = |k: usize| {
+            Node::Element(Arc::clone(
+                root.find(Some(W), "body").unwrap().child_elements().nth(k).unwrap(),
+            ))
+        };
+        let fields = fresh(&root);
+        assert!(fields.iter().all(|f| same_result(&root, &root, f)));
+        // The PAGE's paragraph (body child 2, inside the REF) replaced: the REF and the PAGE
+        // are read anew; the first PAGE and the NUMPAGES in the cell are not.
+        let edited = replaced(&root, 2, block(0));
+        let same: Vec<bool> = fields.iter().map(|f| same_result(&root, &edited, f)).collect();
+        assert_eq!(same, vec![true, false, false, true]);
+        for (field, same) in fields.iter().zip(same) {
+            if same {
+                assert_eq!(result_text(&root, field), result_text(&edited, field));
+            }
+        }
     }
 }
