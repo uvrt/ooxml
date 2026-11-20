@@ -2,8 +2,9 @@
 //! records asked for, the document stamped first, each part's records expanded and
 //! applied ([`PartReview`]), joined paragraphs' ids aliased to the paragraph they went
 //! into, then the cleanups across parts (notes and comments whose references went, unused
-//! numbering, relationships released, text boxes' fallbacks, the people part) and what it
-//! removed ([`super::blocks`]).
+//! numbering, relationships released, text boxes' fallbacks, the people part, comments
+//! describing a structural table change left with none, data-bound controls' nodes) and
+//! what it removed ([`super::blocks`]).
 //!
 //! Must not: choose records (the command does) or write but through the sink.
 
@@ -301,15 +302,17 @@ fn clean(
         }
     }
     let mut drop_comment_parts = false;
-    if !gathered.dropped_comments.is_empty() {
-        let listed = comments(docx);
-        let mut gone = BTreeSet::new();
-        for w_id in &gathered.dropped_comments {
-            if let Some(c) = listed.iter().find(|c| c.w_id.as_deref() == Some(w_id.as_str())) {
-                delete(&doc, docx, space, &listed, &c.id.clone(), &mut gone)?;
-                drop_comment_parts |= none_left(&doc, docx, space)?;
-            }
+    let listed = comments(docx);
+    let mut gone = BTreeSet::new();
+    for w_id in &gathered.dropped_comments {
+        if let Some(c) = listed.iter().find(|c| c.w_id.as_deref() == Some(w_id.as_str())) {
+            delete(&doc, docx, space, &listed, &c.id.clone(), &mut gone)?;
+            drop_comment_parts |= none_left(&doc, docx, space)?;
         }
+    }
+    for id in super::describing::resolved(&doc, docx, space, &listed, &gone)? {
+        delete(&doc, docx, space, &listed, &id, &mut gone)?;
+        drop_comment_parts |= none_left(&doc, docx, space)?;
     }
     super::cleanup::reap_numbering(&doc, docx, space, before_nums)?;
     space.finish(sink)?;
@@ -326,7 +329,7 @@ fn clean(
     for author in authors {
         sink.people(None, Some(author))?;
     }
-    Ok(())
+    crate::controls::sync_bound_controls(sink)
 }
 
 /// The warning for a row's last cell's text moved out after the row.

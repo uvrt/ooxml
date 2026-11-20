@@ -10,6 +10,7 @@
 mod apply;
 mod blocks;
 mod cleanup;
+mod describing;
 mod edges;
 mod grid;
 mod part;
