@@ -2,12 +2,12 @@
 //! importer copies them (`_notes`, `_stamp_notes`): per kind, the references in document
 //! order, each given the next number of this document's notes part (made, with the other
 //! kind's, where it has none) and a copy of its note there -- the note's content as the
-//! source shows it now, with its styles, lists, relationships and drawing numbers brought
-//! like a block's -- and once the blocks are stamped, every paragraph and row of a copied
+//! source shows it now, with its styles, lists, relationships, bookmarks and drawing
+//! numbers brought like a block's -- and once the blocks are stamped, every paragraph and row of a copied
 //! note given new ids. A reference to a note the source lacks stays as it is; references
 //! of a kind the source has no part for are dropped.
 //!
-//! A note holding a bookmark, a content control or a comment is left to the host.
+//! A note holding a content control or a comment is left to the host.
 //!
 //! Must not: write a notes part but through the copy's [`Space`].
 
@@ -97,6 +97,7 @@ pub(super) fn bring(
                 return Err(EditError::Unsupported(what.to_owned()));
             }
             bringer.content(sink, into, &content, (&source_part, &part))?;
+            bringer.bookmarks(sink, into, &content)?;
             crate::imported::keep_or_renumber_drawings(sink, into, &content)?;
             let root = into.root();
             into.append(root, copy);
@@ -175,8 +176,7 @@ fn source_notes(source: &Docx, kind: NoteKind) -> Result<Option<(String, ById)>>
 
 /// What in a copied note's content this port leaves to the host, if anything.
 fn left_to_host(work: &Work, content: &[Id]) -> Option<&'static str> {
-    let kinds: [(&[&str], &'static str); 3] = [
-        (&["bookmarkStart", "bookmarkEnd"], "a copied note holding a bookmark"),
+    let kinds: [(&[&str], &'static str); 2] = [
         (&["sdt"], "a copied note holding a content control"),
         (
             &["commentRangeStart", "commentRangeEnd", "commentReference"],
