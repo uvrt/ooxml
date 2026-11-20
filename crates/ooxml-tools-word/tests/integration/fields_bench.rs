@@ -3,7 +3,8 @@
 //! (opening not counted), over one page engine kept for the document as a host keeps it (its first layout timed
 //! apart): before each call the engine has laid out the version the call starts from, as a host's kept layout
 //! has, and the fields have been listed once (the document's field scans, as a session keeps them).
-//! `FIELDS_CALLS=footer,one` (names: update, one, toc, footer) runs only those.
+//! `FIELDS_CALLS=footer,one` (names: update, again, one, toc, footer) runs only those; `again` is an update
+//! of every field after one has updated them (not counted).
 //!
 //! Must not: run without the variable; it is a timing, not a test.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
@@ -70,13 +71,23 @@ fn best<A: ToolArgs>(
     arguments: &Value,
     tool: impl Fn(&A, &Editing<'_>) -> ToolResult<Value>,
 ) -> (Duration, Value) {
+    best_after(bytes, layout, None, arguments, tool)
+}
+
+/// As [`best`], each call after `first` (an update) has run on the editor, not counted.
+fn best_after<A: ToolArgs>(
+    bytes: &Arc<[u8]>,
+    layout: &Timed,
+    first: Option<&Value>,
+    arguments: &Value,
+    tool: impl Fn(&A, &Editing<'_>) -> ToolResult<Value>,
+) -> (Duration, Value) {
     let mut out = (Duration::MAX, Value::Null);
     for _ in 0..3 {
         let editor = editor(bytes);
         let opened = editor.store().snapshot().doc().clone();
         let warm = layout.engine.lock().unwrap().lay_out(opened.package());
         assert!(matches!(warm, Ok(Ok(_))), "the opened version is laid out");
-        let before = layout.engine.lock().unwrap().stats();
         let caller = Caller::anonymous();
         let editing = Editing {
             editor: &CallEditor::new(&editor),
@@ -93,6 +104,13 @@ fn best<A: ToolArgs>(
         // The document's field scans as a session keeps them between calls (not counted).
         let (list, _) = WordFields::accept(json!({"doc": "d1", "action": "list"}), Some("docx")).unwrap();
         assert!(word_fields(&list, &editing).to_json().contains_key("data"));
+        if let Some(first) = first {
+            let kept = layout.spent.lock().unwrap().len();
+            let (update, _) = WordFields::accept(first.clone(), Some("docx")).unwrap();
+            assert!(word_fields(&update, &editing).to_json().contains_key("summary"));
+            layout.spent.lock().unwrap().truncate(kept);
+        }
+        let before = layout.engine.lock().unwrap().stats();
         let (args, _) = A::accept(arguments.clone(), Some("docx")).unwrap();
         let started = Instant::now();
         let reply = tool(&args, &editing);
@@ -159,12 +177,19 @@ fn run_calls(bytes: &Arc<[u8]>, layout: &Timed, ids: &[String]) {
             layout.take()
         );
     };
-    let calls = std::env::var("FIELDS_CALLS").unwrap_or_else(|_| "update,one,toc,footer".to_owned());
+    let calls = std::env::var("FIELDS_CALLS").unwrap_or_else(|_| "update,again,one,toc,footer".to_owned());
     let wanted = |name: &str| calls.split(',').any(|c| c == name);
     if wanted("update") {
         report(
             "word_fields update",
             best(bytes, layout, &json!({"doc": "d1", "action": "update"}), word_fields),
+        );
+    }
+    if wanted("again") {
+        let update = json!({"doc": "d1", "action": "update"});
+        report(
+            "word_fields update again",
+            best_after(bytes, layout, Some(&update), &update, word_fields),
         );
     }
     if wanted("one") {
