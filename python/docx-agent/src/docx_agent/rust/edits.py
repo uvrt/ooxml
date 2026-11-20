@@ -2,7 +2,8 @@
 lane P2c4: the session is the only owner, :mod:`.owner`; lane P2c6: side by side).
 
 A tool with a Rust editing handler (:data:`SERVED`: ``word_set_text``, ``replace_text``,
-``word_insert_text``, ``word_delete``, and each one ported after them) runs there, ahead of docx-agent's handler and its wrapper
+``word_insert_text``, ``word_delete``, ``word_format``, ``word_lists``, ``word_format_table``,
+``word_styles``, ``word_follow_sample``, and each one ported after them) runs there, ahead of docx-agent's handler and its wrapper
 (:func:`docx_agent.tools._base.wrap`): the call's arguments, its ``$name`` refs resolved, go to
 ``Session.edit`` with the call's caller and the document's tracking mode; the versions the
 call's edits made are the call's step (:meth:`~ooxml_edit.tools.owned.OwnedEntry.served`,
@@ -91,12 +92,65 @@ def _delete(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
             "collapse_space": arguments.get("collapse_space"), "force": arguments.get("force")}
 
 
+def _refs_in(call: Any, value: Any) -> Any:
+    """A list of addresses (or one) with its ``$name`` refs resolved."""
+    if isinstance(value, list):
+        return [reads._refs(call, item) for item in value]
+    return reads._refs(call, value)
+
+
+def _own(arguments: dict[str, Any]) -> dict[str, Any]:
+    """The call's arguments but its document (the session's id goes in its place)."""
+    return {k: v for k, v in arguments.items() if k != "doc"}
+
+
+def _format(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+    if arguments.get("keep_together"):
+        # Blocks kept together are measured against a page (Python lays them out).
+        raise _Fallback("keep_together")
+    find = arguments.get("find")
+    finds = find if isinstance(find, list) else None if find is None else [find]
+    return {**_own(arguments), "targets": _refs_in(call, arguments.get("targets")),
+            "like": reads._refs(call, arguments.get("like")),
+            "find": None if finds is None else [
+                {**item, "within": reads._refs(call, item.get("within"))} if isinstance(item, dict) else item
+                for item in finds]}
+
+
+def _lists(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+    return {**_own(arguments), "targets": _refs_in(call, arguments.get("targets")),
+            "join": reads._refs(call, arguments.get("join"))}
+
+
+def _format_table(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+    return {**_own(arguments), "table": reads._refs(call, arguments.get("table"))}
+
+
+def _styles(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+    return _own(arguments)
+
+
+def _follow_sample(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+    sample = arguments.get("sample")
+    if isinstance(sample, dict):
+        if sample.get("doc") not in (None, arguments.get("doc")):
+            # (the session names its documents its own way: the host's ids are not its)
+            raise _Fallback("a sample in another document")
+        sample = {"block": reads._refs(call, sample.get("block"))}
+    return {**_own(arguments), "sample": sample, "copies": _refs_in(call, arguments.get("copies"))}
+
+
 #: The tools the session edits with, and each one's arguments as the session takes them.
 SERVED: dict[str, Callable[[Any, dict[str, Any]], dict[str, Any]]] = {
     "word_set_text": _set_text,
     "replace_text": _replace_text,
     "word_insert_text": _insert_text,
     "word_delete": _delete,
+    "word_format": _format,
+    "word_lists": _lists,
+    "word_format_table": _format_table,
+    "word_styles": _styles,
+    "word_follow_sample": _follow_sample,
 }
 
 

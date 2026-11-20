@@ -11,7 +11,7 @@ use ooxml_opc::Package;
 use ooxml_store::{Caller, StoreConfig};
 use ooxml_tools::{ToolArgs, ToolResult};
 use ooxml_tools_word::{
-    word_fields, word_links, word_notes, CallEditor, Editing, WordCopyFrom, WordHeadersFooters, WordLinks, WordMove,
+    word_copy_from, word_fields, word_links, word_notes, CallEditor, Editing, WordHeadersFooters, WordLinks, WordMove,
     WordNotes, WordSections, KIND,
 };
 use ooxml_word_edit::{Editor, FieldLayout, FieldPlace, LaidFields, PageShows, Unknown};
@@ -132,7 +132,6 @@ fn the_unregistered_definitions_are_the_golden_exports() {
     // tests/integration/registry.rs)
     for (spec, golden) in [
         (WordMove::spec(), include_str!("../golden/word_move.json")),
-        (WordCopyFrom::spec(), include_str!("../golden/word_copy_from.json")),
         (WordSections::spec(), include_str!("../golden/word_sections.json")),
         (
             WordHeadersFooters::spec(),
@@ -368,4 +367,73 @@ fn an_update_with_nothing_to_change_is_no_change() {
     let (reply, _) = call(json!({"doc": "d1", "action": "update"}), word_fields);
     assert_eq!(reply["summary"], json!("Updated fields: 0 result(s) changed"));
     assert!(reply.get("changed").is_none_or(|c| c == &json!([])));
+}
+
+#[test]
+fn blocks_of_the_document_are_copied_with_fresh_ids() {
+    let (reply, editor) = call(
+        json!({"doc": "d1", "source_doc": "d1", "range": "p:10000002", "at": "end", "ref": "copy"}),
+        word_copy_from,
+    );
+    assert_eq!(reply["summary"], json!("Copied 1 block(s) from d1"), "{reply}");
+    let made = reply["data"]["blocks"][0].as_str().unwrap().to_owned();
+    assert_ne!(made, "p:10000002");
+    assert_eq!(reply["data"]["copied"], json!({"p:10000002": made}));
+    assert_eq!(reply["created"], json!([made]));
+    assert_eq!(reply["refs"], json!({"copy": made}));
+    let head = editor.store().snapshot();
+    let body = head.doc().package().read("word/document.xml").unwrap().unwrap();
+    let text = String::from_utf8_lossy(&body);
+    assert_eq!(text.matches("Delta epsilon").count(), 2);
+}
+
+#[test]
+fn what_the_copy_does_not_port_is_left_to_the_host() {
+    // a bookmark in the block, a tracked copy, another policy
+    for (arguments, tracking) in [
+        (
+            json!({"doc": "d1", "source_doc": "d1", "range": "p:10000001", "at": "end"}),
+            None,
+        ),
+        (
+            json!({"doc": "d1", "source_doc": "d1", "range": "p:10000002", "at": "end"}),
+            Some(()),
+        ),
+        (
+            json!({"doc": "d1", "source_doc": "d1", "range": "p:10000002", "at": "end", "styles": "merge"}),
+            None,
+        ),
+    ] {
+        let tracking = tracking.map(|()| ooxml_word_edit::Tracking {
+            author: "A".to_owned(),
+            date: "2026-11-17T10:00:00Z".to_owned(),
+        });
+        let (reply, editor) = call_tracking(arguments, tracking.as_ref(), word_copy_from);
+        assert!(reply.get("error").is_none(), "{reply}");
+        assert_eq!(editor.store().snapshot().doc().package().part_names().len(), 5);
+        let body = editor
+            .store()
+            .snapshot()
+            .doc()
+            .package()
+            .read("word/document.xml")
+            .unwrap()
+            .unwrap();
+        assert_eq!(String::from_utf8_lossy(&body).matches("Delta epsilon").count(), 1);
+    }
+}
+
+#[test]
+fn a_copy_refuses_a_ref_naming_a_place_and_an_unknown_block() {
+    let (reply, _) = call(
+        json!({"doc": "d1", "source_doc": "d1", "range": "p:10000002", "at": "end", "ref": "after:x"}),
+        word_copy_from,
+    );
+    assert_eq!(reply["error"]["code"], json!("invalid_arguments"), "{reply}");
+    assert_eq!(reply["error"]["field"], json!("ref"));
+    let (reply, _) = call(
+        json!({"doc": "d1", "source_doc": "d1", "range": "p:00000009", "at": "end"}),
+        word_copy_from,
+    );
+    assert_eq!(reply["error"]["code"], json!("not_found"), "{reply}");
 }
