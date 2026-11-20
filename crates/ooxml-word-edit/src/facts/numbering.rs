@@ -10,7 +10,7 @@
 use crate::lists::style_list_of;
 use crate::names::W;
 use crate::{EditError, Result, WordDoc};
-use ooxml_word_model::docx::numbering::{membership, Lists};
+use ooxml_word_model::docx::numbering::{membership, style_numbering, Lists};
 use ooxml_word_model::docx::Docx;
 use ooxml_word_model::xmlread::py_int;
 use ooxml_xml::Element;
@@ -54,16 +54,36 @@ pub fn numbering_skips_level(doc: &WordDoc) -> Result<Vec<SkippedLevel>> {
     let mut used: HashMap<*const Element, HashSet<i64>> = HashMap::new();
     let mut groups: Vec<(*const Element, SkippedLevel)> = Vec::new();
     let mut place: HashMap<(*const Element, i64, Option<String>), usize> = HashMap::new();
+    // Whether a style's chain numbers its paragraphs, once per style: a paragraph with no
+    // `w:numId` of its own under a style that numbers nothing is in no list (most of a long
+    // document), without asking `membership`.
+    let mut style_numbers: HashMap<Option<String>, bool> = HashMap::new();
+    let mut style_lists: HashMap<Option<String>, bool> = HashMap::new();
     for paragraph in body.ids.paragraphs().iter() {
+        let properties = paragraph.element.find(Some(W), "pPr");
+        let style_id = properties
+            .and_then(|p| p.find(Some(W), "pStyle"))
+            .and_then(|s| s.attribute(Some(W), "val"));
+        let direct = properties
+            .and_then(|p| p.find(Some(W), "numPr"))
+            .is_some_and(|n| n.find(Some(W), "numId").is_some());
+        if !direct {
+            let numbers = *style_numbers
+                .entry(style_id.map(str::to_owned))
+                .or_insert_with(|| style_numbering(&docx, style_id).0.is_some_and(|n| n != 0));
+            if !numbers {
+                continue;
+            }
+        }
         let Some(found) = membership(&docx, &lists, &paragraph.element) else {
             continue;
         };
-        let style_id = paragraph
-            .element
-            .find(Some(W), "pPr")
-            .and_then(|p| p.find(Some(W), "pStyle"))
-            .and_then(|s| s.attribute(Some(W), "val"));
-        if found.from_style && style_list_of(&docx, style_id).is_none() {
+        let mut tied = || {
+            *style_lists
+                .entry(style_id.map(str::to_owned))
+                .or_insert_with(|| style_list_of(&docx, style_id).is_none())
+        };
+        if found.from_style && tied() {
             continue;
         }
         let Some(definition) = lists.definition_of(&docx, found.num_id) else {
@@ -95,27 +115,36 @@ pub fn numbering_skips_level(doc: &WordDoc) -> Result<Vec<SkippedLevel>> {
             },
         ));
     }
-    let mut out = Vec::new();
-    for (definition, mut group) in groups {
-        let shown = shown_levels(group.label.as_deref().unwrap_or(""));
-        let none = HashSet::new();
-        let levels = used.get(&definition).unwrap_or(&none);
-        let unused: Vec<i64> = shown
-            .iter()
-            .copied()
-            .filter(|k| *k < group.level && !levels.contains(k))
-            .collect();
-        if unused.is_empty() {
-            continue;
-        }
-        // Where every level above is unused, each shows its start (measured: 1.1, 1.2).
-        if shown.iter().filter(|k| **k < group.level).all(|k| unused.contains(k)) {
-            group.shows = first_label(&docx, &lists, group.list, group.label.as_deref().unwrap_or(""), &shown);
-        }
-        group.unused_levels = unused;
-        out.push(group);
+    Ok(groups
+        .into_iter()
+        .filter_map(|(definition, group)| skipping(&docx, &lists, group, used.get(&definition)))
+        .collect())
+}
+
+/// `group` with the levels above it its label shows that no paragraph of its definition
+/// (`levels`, those used) is numbered at, and the number it shows where every level above
+/// is unused; `None` where it skips none.
+fn skipping(
+    docx: &Docx,
+    lists: &Lists,
+    mut group: SkippedLevel,
+    levels: Option<&HashSet<i64>>,
+) -> Option<SkippedLevel> {
+    let shown = shown_levels(group.label.as_deref().unwrap_or(""));
+    let unused: Vec<i64> = shown
+        .iter()
+        .copied()
+        .filter(|k| *k < group.level && !levels.is_some_and(|l| l.contains(k)))
+        .collect();
+    if unused.is_empty() {
+        return None;
     }
-    Ok(out)
+    // Where every level above is unused, each shows its start (measured: 1.1, 1.2).
+    if shown.iter().filter(|k| **k < group.level).all(|k| unused.contains(k)) {
+        group.shows = first_label(docx, lists, group.list, group.label.as_deref().unwrap_or(""), &shown);
+    }
+    group.unused_levels = unused;
+    Some(group)
 }
 
 /// Each style's name by its id (its id where it has no name; the last of an id).
