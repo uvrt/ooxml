@@ -5,10 +5,11 @@
 //! same edit writes the same bytes ([`Ids::draw`]); the sequences themselves, computed once
 //! per document ([`Sequences`]).
 //!
-//! A draw reads and writes its seed's key (`Key::Seq`): two transactions drawing from one
-//! seed conflict, and the later one draws again on the newer version, so values are those
-//! a serial run gives (design section 5's ledger, with the draw order fixed by the commit
-//! order).
+//! An edit draws stand-ins (`Change::Draw`, [`crate::Drawn`]): the values are drawn again
+//! where its change is applied, so two transactions drawing from one seed do not conflict
+//! and each gets what a serial run in commit order gives (design section 5's ledger, merged
+//! at commit). A stand-in written where no draw reaches is pinned: the edit reads its seed's
+//! key (`Key::Seq`), and conflicts with any draw from it since its snapshot.
 //!
 //! Must not: stamp a part (the sink does), read a package, or hold global state.
 

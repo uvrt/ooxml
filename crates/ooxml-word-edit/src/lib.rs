@@ -54,6 +54,7 @@ mod delete_blocks;
 mod delete_write;
 mod doc;
 mod drawings;
+mod drawn;
 mod editor;
 mod error;
 mod fields;
@@ -124,6 +125,7 @@ pub use drawings::{
     image_format, picture_size, written_size, DrawingEdited, DrawingValues, FloatDrawing, InlineDrawing, InsertPicture,
     InsertShape, SetDrawing, ZOrder,
 };
+pub use drawn::Drawn;
 pub use editor::{EditTiming, Edited, Editor};
 pub use error::{EditError, Result};
 pub use fields::{

@@ -273,6 +273,9 @@ impl<T: ToolArgs> Tool for EditHandler<T> {
             }
         };
         *call.made.lock().unwrap_or_else(PoisonError::into_inner) = editor.made();
+        // ids the edits drew as stand-ins, named as they were drawn where the edits landed
+        let mut result = result;
+        ooxml_tools_word::resolve_drawn(&mut result, &editor.moved());
         result
     }
 
