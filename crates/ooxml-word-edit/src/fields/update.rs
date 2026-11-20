@@ -396,7 +396,9 @@ fn changed_results(doc: &WordDoc, before: (&Docx, &[Located]), after: &Docx) -> 
     // By id (`fld:<story>/<number>`), its parts not written out.
     let mut was: HashMap<(&str, usize), Vec<&Located>> = HashMap::new();
     for located in before.1 {
-        was.entry((&located.story, located.found.number)).or_default().push(located);
+        was.entry((&located.story, located.found.number))
+            .or_default()
+            .push(located);
     }
     let text = |docx: &Docx, l: &Located| {
         docx.part(&l.part)
