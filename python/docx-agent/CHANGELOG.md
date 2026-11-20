@@ -12,6 +12,11 @@ Phase P2, lane P2c17: a call the Rust session answers names documents as the hos
 reply named the Rust session's id of the document (an undo call `{"doc": "d3"}` for the
 host's `d1`, a way-out call, a summary).
 
+Phase P2, lane P2d3: a value written by reference right beside a vulgar fraction or a Roman
+numeral is kept by the Rust session as docx-agent keeps it: the digit beside a value is
+Python's `str.isdigit`, exactly (`ooxml_base::pystr`, a table generated from CPython 3.12),
+no longer Rust's `char::is_numeric` (Python's `isnumeric`).
+
 Phase P2, lane P2d2: values written by reference are kept by the Rust session. A
 `word_set_text`, `word_insert_text` or `replace_text` call whose arguments hold references
 (`{{d:scores/Alpha/rating}}`) is served: the dispatcher's `call.facts` go to `Session.edit`

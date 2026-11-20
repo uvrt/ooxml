@@ -383,5 +383,45 @@ class JobPlan(unittest.TestCase):
                                                        "reads": {"ids": {"seconds": 4}}})
 
 
+class HarnessCommand(unittest.TestCase):
+    """gates.py diff: the harness command line each mode's harness parses."""
+
+    def args(self, mode: str):
+        import argparse
+
+        return argparse.Namespace(mode=mode, bin="/bin", cache=None, per_tool=0)
+
+    @staticmethod
+    def harness_parser(name: str):
+        """The harness's own argument parser, rebuilt from its main()'s add_argument calls
+        (their literal arguments): importing the harness needs docx-agent, and these tests
+        run on the standard library alone."""
+        import argparse
+        import ast
+
+        tree = ast.parse((gates.HARNESS / name).read_text())
+        main = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "main")
+        parser = argparse.ArgumentParser(exit_on_error=False)
+        for call in ast.walk(main):
+            if isinstance(call, ast.Call) and getattr(call.func, "attr", "") == "add_argument":
+                parser.add_argument(*(ast.literal_eval(a) for a in call.args),
+                                    **{k.arg: ast.literal_eval(k.value) for k in call.keywords
+                                       if k.arg not in ("type", "action") or isinstance(k.value, ast.Constant)})
+        return parser
+
+    def test_the_reads_harness_takes_its_files(self) -> None:
+        files = [Path("a.docx"), Path("b/c.docx")]
+        command, _ = gates.harness_command(self.args("ids"), Path("out"), Path("out/results.jsonl"), files)
+        self.assertEqual(command[2:5], ["ids", "a.docx", "b/c.docx"])    # right after the check
+        parsed = self.harness_parser("word_reads_diff.py").parse_args(command[2:])
+        self.assertEqual((parsed.what, parsed.files, parsed.results), ("ids", ["a.docx", "b/c.docx"],
+                                                                      "out/results.jsonl"))
+
+    def test_the_edits_harness_takes_its_files_last(self) -> None:
+        command, env = gates.harness_command(self.args("styled"), Path("out"), Path("r.jsonl"), [Path("a.docx")])
+        self.assertEqual(command[2:], ["--styled", "--rust", "/bin/word-edits", "--results", "r.jsonl", "a.docx"])
+        self.assertEqual(env, {})
+
+
 if __name__ == "__main__":
     unittest.main()

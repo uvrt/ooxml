@@ -16,6 +16,7 @@
 
 use crate::review::edit_refusal;
 use crate::Editing;
+use ooxml_base::pystr::is_digit;
 use ooxml_store::Snapshot;
 use ooxml_tools::{Done, Outcome, ToolError, ToolResult, TryCall};
 use ooxml_word_edit::WordDoc;
@@ -243,8 +244,8 @@ fn places(
     for (id, text) in paragraphs {
         for at in occurrences(text, &own) {
             let end = at + own.len();
-            let digit_before = at > 0 && text.get(at - 1).is_some_and(|c| py_digit(*c));
-            let digit_after = text.get(end).is_some_and(|c| py_digit(*c));
+            let digit_before = at > 0 && text.get(at - 1).is_some_and(|c| is_digit(*c));
+            let digit_after = text.get(end).is_some_and(|c| is_digit(*c));
             if digit_before || digit_after || taken.contains(&(id.clone(), at)) {
                 continue;
             }
@@ -418,12 +419,4 @@ fn common(a: &[char], b: &[char]) -> usize {
 /// separators.
 fn py_space(c: char) -> bool {
     c.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c)
-}
-
-/// Python's `str.isdigit` for one character, as near as the standard library reads it: a
-/// numeric character. (Python's leaves out the numeric characters that are no digit -- a
-/// vulgar fraction, a Roman numeral -- which this reads as digits: a value written right
-/// beside one is not kept there, where docx-agent keeps it.)
-fn py_digit(c: char) -> bool {
-    c.is_numeric()
 }
