@@ -7,7 +7,7 @@
 //! ([`FlowMaker::again`]).
 //!
 //! Must not: make an item differently than [`FlowMaker::build`] makes it: the result is
-//! the flow built from scratch (the relayout property in `tests/relayout.rs` checks the
+//! the flow built from scratch (the relayout property in `tests/integration/relayout.rs` checks the
 //! pages laid out from it).
 
 use super::{source, FlowItem, FlowMaker, ParaItem, StopItem, TableItem};
