@@ -66,6 +66,10 @@ pub struct CallContext {
     /// each the session's id of one: the call names its documents by these, and its reply
     /// names them so. Empty: by the session's ids.
     pub names: DocNames,
+    /// The values the host wrote into the call's arguments for references (`{{d:...}}`,
+    /// resolved against its datasets), which an editing call keeps on the paragraphs they
+    /// went into; empty: none.
+    pub written: Vec<ooxml_tools_word::Written>,
 }
 
 impl std::fmt::Debug for CallContext {

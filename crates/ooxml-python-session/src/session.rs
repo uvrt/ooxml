@@ -213,6 +213,15 @@ impl PyVersion {
         Ok(PyBytes::new(py, &bytes))
     }
 
+    /// The records of placed values this version keeps (JSON text, `Opened::records`): the
+    /// tables' and charts' records, the entries left out, the paragraphs' text facts and
+    /// labels; `None` for a document that is not a Word document.
+    fn records(&self, py: Python<'_>) -> PyResult<Option<String>> {
+        let version = &self.inner;
+        let found = py.detach(|| version.records()).map_err(|e| to_py(&e))?;
+        Ok(found.map(|v| v.to_string()))
+    }
+
     /// What changed since `before`, as docx-agent's ``Result.touched`` entries (JSON text).
     fn touched_since(&self, py: Python<'_>, before: PyRef<'_, PyVersion>) -> PyResult<String> {
         let (now, then) = (&self.inner, &before.inner);
@@ -415,10 +424,15 @@ impl PySession {
     /// engine, as for [`call`](Self::call) (`word_fields` update, a header's page number,
     /// `word_template`'s reflow). `blobs`: the host's blobs, an object with `blob(handle)`
     /// (`(name, mime, bytes)` or `None`) and `listed()` (`[(handle, name)]`), asked with the
-    /// interpreter lock taken back (`word_drawings` insert_picture). `names`: as for
-    /// [`call`](Self::call).
-    #[pyo3(signature = (name, arguments, *, context = None, layout = None, blobs = None, names = None))]
+    /// interpreter lock taken back (`word_drawings` insert_picture). `written`: the values the
+    /// host wrote into the arguments for references, as JSON text (`[{"field", "start", "end",
+    /// "text", "record", "brief"}]`, ooxml-edit's `call.facts`), which the call keeps on the
+    /// paragraphs they went into. `names`: as for [`call`](Self::call).
+    ///
+    /// # Errors
+    /// `ValueError` for `written` that is not such a list.
     #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (name, arguments, *, context = None, layout = None, blobs = None, written = None, names = None))]
     fn edit(
         &self,
         py: Python<'_>,
@@ -427,12 +441,20 @@ impl PySession {
         context: Option<PyRef<'_, PyCallContext>>,
         layout: Option<PyRef<'_, crate::layout::PyWordPages>>,
         blobs: Option<Py<PyAny>>,
+        written: Option<&str>,
         names: Option<BTreeMap<String, String>>,
-    ) -> (String, String, Option<EditMade>) {
+    ) -> PyResult<(String, String, Option<EditMade>)> {
         let mut context = context_of(context.as_deref());
         context.names = names_of(names);
         context.layout = layout.map(|pages| Arc::new(pages.port()) as Arc<dyn ooxml_word_edit::FieldLayout>);
         context.blobs = blobs.map(|b| Arc::new(crate::adapters::PyBlobs(b)) as Arc<dyn ooxml_tools_word::Blobs>);
+        if let Some(written) = written {
+            context.written = serde_json::from_str::<Value>(written)
+                .ok()
+                .as_ref()
+                .and_then(ooxml_tools_word::Written::list_from_json)
+                .ok_or_else(|| PyValueError::new_err("written is a JSON list of the values written by reference"))?;
+        }
         let session = &self.inner;
         let (text, app, made) = py.detach(|| {
             let run = || session.edit(name, Value::String(arguments), &context);
@@ -446,7 +468,7 @@ impl PySession {
             let validation = (m.validation.new, m.validation.fixed, m.validation.baseline);
             (m.first, PyVersion { inner: m.last }, touched, validation)
         });
-        (text, app, made)
+        Ok((text, app, made))
     }
 
     /// Commit a version's touched parts (bytes, or `None` to remove the part) as one step:

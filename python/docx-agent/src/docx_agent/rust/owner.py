@@ -62,6 +62,8 @@ class RustOwner:
         # The ids retired are the session's record (lane P2c10), from the state opened with on.
         _seed_retired(mirror, document._ledger)
         document.retired_ids = functools.partial(retired_ids, mirror)
+        # The records of placed values are read by the session too (lane P2d1).
+        document.owned_records = functools.partial(owned_records, mirror, weakref.ref(document))
         return mirror
 
     def head(self, mirror: "reads.Mirror") -> Any:
@@ -188,6 +190,19 @@ def retired_ids(mirror: "reads.Mirror") -> Any:
             out.earlier[version] = said
         (out.gone if kind == "block" else out.drawings_gone)[value] = version
     return out
+
+
+def owned_records(mirror: "reads.Mirror", document: Any) -> dict[str, Any] | None:
+    """The records of placed values of the version the view of a document the session owns
+    is, as the session reads them (``Version.records``: the tables' and charts' records, the
+    entries left out, the text facts and labels); ``None`` where the view is ahead of the
+    session (a Python step changed it) or not the session's."""
+    live = document()
+    head = mirror.view_head
+    if live is None or not mirror.owned or head is None or live.history.batch_changed:
+        return None
+    found = head.records()
+    return json.loads(found) if found is not None else None
 
 
 def owned_bytes(document: Any) -> bytes | None:

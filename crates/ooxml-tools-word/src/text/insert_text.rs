@@ -9,7 +9,7 @@
 use super::{by_reference, Unported};
 use crate::review::{edit_refusal, needed};
 use crate::structure::common::{one_of, outcome, Outcome};
-use crate::Editing;
+use crate::{written, Editing};
 use ooxml_base::pyfmt::repr_str;
 use ooxml_store::Batch;
 use ooxml_tools::{ArgEnum, Refusal, ToolArgs, ToolError, ToolResult, TryCall, WayOut};
@@ -155,7 +155,20 @@ fn run(args: &WordInsertText, editing: &Editing<'_>) -> Result<ToolResult<Value>
         .run(editing.caller, &Batch::atomic(ops))
         .map_err(|e| edit_refusal(e, "", call))?;
     let placed: Vec<Placed> = done.out.into_iter().filter_map(Result::ok).collect();
-    Ok(reply(placed, &work, &sides))
+    let result = reply(placed, &work, &sides);
+    let targets: Vec<&str> = work.iter().filter_map(|item| item.target.as_deref()).collect();
+    let argument = |field: &str| argument(args, field);
+    written::keep_written(editing, &result, &targets, &argument, &try_call(args))?;
+    Ok(result)
+}
+
+/// The text of the argument `field` names (`text`, `items[0].text`).
+fn argument(args: &WordInsertText, field: &str) -> Option<String> {
+    if field == "text" {
+        return args.text.clone();
+    }
+    let k: usize = field.strip_prefix("items[")?.strip_suffix("].text")?.parse().ok()?;
+    args.items.as_ref()?.get(k).map(|item| item.text.clone())
 }
 
 /// Item `k`'s side and place, its arguments checked as docx-agent checks them.
