@@ -149,12 +149,14 @@ pub fn wanted_records(docx: &Docx, ids: &[String]) -> Result<Vec<String>> {
 /// # Errors
 /// The address resolver's refusal.
 pub fn place_of(docx: &Docx, within: &str) -> Result<Place> {
+    // the records first, as docx-agent's _selection reads them first: a refusal is theirs
+    let records = records_within(docx, within)?;
     let (part, indexes) = scope_paragraphs(docx, within).map_err(EditError::Address)?;
     let ids: BTreeSet<String> = indexes
         .iter()
         .filter_map(|k| part.ids.paragraphs().get(*k).map(|p| p.id))
         .collect();
-    Ok((ids, records_within(docx, within)?))
+    Ok((ids, records))
 }
 
 /// The ids of the records a `within` holds (`_revisions_within`): a story's every record;
