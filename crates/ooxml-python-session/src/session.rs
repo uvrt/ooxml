@@ -408,6 +408,7 @@ impl PySession {
     ///
     /// # Errors
     /// `ValueError` for `written` that is not such a list.
+    #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (name, arguments, *, context = None, layout = None, blobs = None, written = None))]
     fn edit(
         &self,
