@@ -82,10 +82,7 @@ pub(crate) fn rebuild(
     };
     let docx = sink.docx()?;
     let tab = text_width(&docx, region.places.last().map_or(&[][..], |p| p)) - TAB_INSET;
-    let mut bookmarks = Vec::new();
-    for heading in &headings {
-        bookmarks.push(bookmark(sink, &part, &heading.paragraph.path)?);
-    }
+    let bookmarks = bookmarks(sink, &part, &headings)?;
     let pages = pages(&toc.id(), &headings, laid, unknown);
     let omit = omitted_levels(&instruction);
     let docx = sink.docx()?;
@@ -220,9 +217,67 @@ fn text_width(docx: &Docx, path: &[u32]) -> i64 {
     width - side("left") - side("right") - side("gutter")
 }
 
+/// Each heading's `_Toc` bookmark ([`bookmark`]), in order: the annotation ids of the new
+/// ones taken together for the headings that have none.
+fn bookmarks(sink: &mut EditSink<'_, '_>, part: &str, headings: &[select::Heading]) -> Result<Vec<String>> {
+    let tree = sink
+        .doc()
+        .tree(part)?
+        .ok_or_else(|| EditError::NoPart(part.to_owned()))?;
+    let unmarked = headings
+        .iter()
+        .filter(|h| at_path(tree.root(), &h.paragraph.path).is_some_and(|e| toc_names(e).is_empty()))
+        .count();
+    drop(tree);
+    let mut ids = sink.marker_ids(unmarked)?.into_iter();
+    let mut numbers = TocNumbers::default();
+    headings
+        .iter()
+        .map(|heading| bookmark(sink, part, &heading.paragraph.path, (&mut numbers, &mut ids)))
+        .collect()
+}
+
+/// The numbers of the `_Toc` bookmarks one rebuild makes: the document's largest is read
+/// once, at the first new one; each new one is then the largest, so the next is one above
+/// it (as docx-agent's `_toc_bookmark`, which reads the document's largest each time).
+#[derive(Default)]
+struct TocNumbers {
+    next: Option<i64>,
+}
+
+impl TocNumbers {
+    /// The next new bookmark's number, the document read for the largest only the first time.
+    ///
+    /// # Errors
+    /// When a story part is not XML.
+    fn take(&mut self, sink: &EditSink<'_, '_>) -> Result<i64> {
+        let number = match self.next {
+            Some(number) => number,
+            None => {
+                let docx = sink.docx()?;
+                docx.parts
+                    .iter()
+                    .flat_map(|p| toc_names(p.root()))
+                    .filter_map(|n| n.get(4..).and_then(|d| d.parse::<i64>().ok()))
+                    .fold(BOOKMARK_BASE, i64::max)
+                    + 1
+            }
+        };
+        self.next = Some(number + 1);
+        Ok(number)
+    }
+}
+
 /// The heading's `_Toc` bookmark at `path` of `part` (`_toc_bookmark`): one starting in it
-/// kept, else a new one round its text, numbered one above the document's largest.
-fn bookmark(sink: &mut EditSink<'_, '_>, part: &str, path: &[u32]) -> Result<String> {
+/// kept, else a new one round its text, numbered one above the document's largest
+/// ([`TocNumbers`]), its annotation id the next of `ids` (taken for the unmarked headings
+/// together, as one write after another would number them).
+fn bookmark(
+    sink: &mut EditSink<'_, '_>,
+    part: &str,
+    path: &[u32],
+    (numbers, ids): (&mut TocNumbers, &mut impl Iterator<Item = (i64, u32)>),
+) -> Result<String> {
     let tree = sink
         .doc()
         .tree(part)?
@@ -231,15 +286,10 @@ fn bookmark(sink: &mut EditSink<'_, '_>, part: &str, path: &[u32]) -> Result<Str
     if let Some(name) = toc_names(element).into_iter().next() {
         return Ok(name);
     }
-    let docx = sink.docx()?;
-    let largest = docx
-        .parts
-        .iter()
-        .flat_map(|p| toc_names(p.root()))
-        .filter_map(|n| n.get(4..).and_then(|d| d.parse::<i64>().ok()))
-        .fold(BOOKMARK_BASE, i64::max);
-    let name = format!("_Toc{}", largest + 1);
-    let (value, offset) = sink.marker_id()?;
+    let name = format!("_Toc{}", numbers.take(sink)?);
+    let (value, offset) = ids
+        .next()
+        .ok_or_else(|| EditError::Path(format!("{part}: a heading unmarked when the ids were taken")))?;
     let mut work = Work::of(element, scope_above(tree.root(), path));
     let paragraph = work.root();
     let id = value.to_string();

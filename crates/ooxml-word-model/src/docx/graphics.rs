@@ -1,29 +1,137 @@
-//! Owns: what a Word drawing's chart holds, as docx-agent reads it for `word_read` and
-//! `word_inspect` (`edit/charts.py`'s `chart_json` and `chart_summary`): the chart part its
-//! frame's first `c:chart` names through the frame's part's relationships, read into
-//! `ooxml_chart::data`, and that data as docx-agent's JSON.
+//! Owns: what a Word drawing's chart or SmartArt diagram holds, as docx-agent reads it for
+//! `word_read` and `word_inspect` (`edit/charts.py`'s `chart_json`, `diagram_json`,
+//! `chart_summary` and `diagram_summary`): the chart part a frame's first `c:chart` names,
+//! or the data and layout parts its first `dgm:relIds` names, through the frame's part's
+//! relationships; read into `ooxml_chart::data` or `ooxml_drawingml::diagram`; and each as
+//! docx-agent's JSON and one-line summary.
 //!
-//! Must not: change a chart, or read its embedded workbook; a chart whose part is missing or
-//! unreadable is no chart here (docx-agent's `None`), never an error.
+//! Must not: change a chart or diagram, or read a chart's embedded workbook or a diagram's
+//! cached drawing; one whose part is missing or unreadable is none here (docx-agent's
+//! `None`), never an error.
 
-use crate::docx::drawings::C;
+use crate::docx::drawings::{C, DGM};
 use crate::docx::Docx;
 use crate::w::NS_R;
 use ooxml_chart::data::{chart_data, ChartData, Point};
+use ooxml_drawingml::diagram::{diagram_nodes, diagram_summary, DiagramNode};
 use ooxml_xml::Element;
 use serde_json::{Map, Value};
+use std::sync::Arc;
+
+/// What a chart or SmartArt drawing holds.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Graphic {
+    /// A chart's data.
+    Chart(Arc<ChartData>),
+    /// A diagram's nodes.
+    Diagram(Arc<DiagramData>),
+}
+
+/// A SmartArt diagram as docx-agent reads it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiagramData {
+    /// Its layout part's `uniqueId`, where it has one.
+    pub layout: Option<String>,
+    /// Its nodes, depth first.
+    pub nodes: Vec<DiagramNode>,
+}
+
+impl Graphic {
+    /// What `frame` of the part `part` holds, where it is of `kind` (`chart`, `diagram`).
+    #[must_use]
+    pub fn of(docx: &Docx, part: &str, frame: &Element, kind: &str) -> Option<Graphic> {
+        match kind {
+            "chart" => chart_of(docx, part, frame).map(|c| Graphic::Chart(Arc::new(c))),
+            "diagram" => diagram_of(docx, part, frame).map(|d| Graphic::Diagram(Arc::new(d))),
+            _ => None,
+        }
+    }
+
+    /// The key docx-agent gives its JSON under, and the word its summary names it by.
+    #[must_use]
+    pub fn names(&self) -> (&'static str, &'static str) {
+        match self {
+            Graphic::Chart(_) => ("chart", "chart"),
+            Graphic::Diagram(_) => ("diagram", "smartart"),
+        }
+    }
+
+    /// Its one-line summary.
+    #[must_use]
+    pub fn summary(&self) -> String {
+        match self {
+            Graphic::Chart(c) => c.summary(),
+            Graphic::Diagram(d) => diagram_summary(&d.nodes),
+        }
+    }
+
+    /// Its JSON.
+    #[must_use]
+    pub fn json(&self) -> Value {
+        match self {
+            Graphic::Chart(c) => chart_json(c),
+            Graphic::Diagram(d) => diagram_json(d),
+        }
+    }
+}
+
+/// The part `part`'s relationship `id` names, where it is internal.
+fn related(docx: &Docx, part: &str, id: Option<&str>) -> Option<String> {
+    let id = id?;
+    crate::parts::relationships(&docx.package, part)
+        .ok()?
+        .into_iter()
+        .find(|r| r.id == id && !r.external)?
+        .target_part
+}
+
+/// The diagram `frame` of the part `part` holds: `None` where it names none, or its data
+/// part is missing or unreadable.
+#[must_use]
+pub fn diagram_of(docx: &Docx, part: &str, frame: &Element) -> Option<DiagramData> {
+    let node = crate::parts::descendants(frame, DGM, "relIds").into_iter().next()?;
+    let data = related(docx, part, node.attribute(Some(NS_R), "dm"))?;
+    let data = docx.package.tree(&data).ok()??;
+    let layout = match related(docx, part, node.attribute(Some(NS_R), "lo")) {
+        Some(name) => docx.package.tree(&name).ok()?,
+        None => None,
+    };
+    let layout = layout.and_then(|t| t.root().attribute(None, "uniqueId").map(str::to_owned));
+    Some(DiagramData {
+        layout,
+        nodes: diagram_nodes(data.root()).ok()?,
+    })
+}
+
+/// A diagram's JSON as docx-agent gives it (ooxml-edit's `diagram_model`): `layout` where
+/// there is one, then `nodes` (`id`, `lvl`, `t`).
+#[must_use]
+pub fn diagram_json(data: &DiagramData) -> Value {
+    let mut out = Map::new();
+    if let Some(layout) = &data.layout {
+        out.insert("layout".into(), Value::from(layout.as_str()));
+    }
+    let nodes = data
+        .nodes
+        .iter()
+        .map(|n| {
+            let mut one = Map::new();
+            one.insert("id".into(), n.id.as_deref().map_or(Value::Null, Value::from));
+            one.insert("lvl".into(), Value::from(n.level));
+            one.insert("t".into(), Value::from(n.text.as_str()));
+            Value::Object(one)
+        })
+        .collect();
+    out.insert("nodes".into(), Value::Array(nodes));
+    Value::Object(out)
+}
 
 /// The chart `frame` (a `wp:inline` or `wp:anchor`, or a group member) of the part `part`
 /// holds: `None` where it names none, or its part is missing or unreadable.
 #[must_use]
 pub fn chart_of(docx: &Docx, part: &str, frame: &Element) -> Option<ChartData> {
     let node = crate::parts::descendants(frame, C, "chart").into_iter().next()?;
-    let id = node.attribute(Some(NS_R), "id")?;
-    let relationships = crate::parts::relationships(&docx.package, part).ok()?;
-    let target = relationships
-        .into_iter()
-        .find(|r| r.id == id && !r.external)?
-        .target_part?;
+    let target = related(docx, part, node.attribute(Some(NS_R), "id"))?;
     let tree = docx.package.tree(&target).ok()??;
     chart_data(tree.root()).ok()
 }
