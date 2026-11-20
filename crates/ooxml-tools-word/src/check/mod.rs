@@ -80,25 +80,21 @@ pub fn check(args: &Check, version: &Version<'_>, cancel: &dyn Cancel) -> Result
             .last()
             .cloned();
         let stop = owned.layout_limit.map_or(cancel, |limit| limit.cancel);
-        let reflow = match layout.laid(version.package, stop) {
-            Ok(laid) => {
-                // `layout`: the time laying the version out, where the engine had not laid it
-                // out last
-                if !last.is_some_and(|last| Arc::ptr_eq(&last, &laid)) {
-                    timing.insert("layout".into(), seconds(started));
-                }
-                let started = Instant::now();
-                let facts = reflow_facts(layout, &laid, version, owned, args.pages.as_deref())?;
-                timing.insert("facts".into(), seconds(started));
-                facts
-            }
+        let laid = layout.laid(version.package, stop);
+        // `layout`: the time laying the version out, where the engine had not laid it out last
+        if !matches!((&last, &laid), (Some(last), Ok(laid)) if Arc::ptr_eq(last, laid)) {
+            timing.insert("layout".into(), seconds(started));
+        }
+        let started = Instant::now();
+        let found = laid.and_then(|laid| reflow_facts(layout, &laid, version, owned, args.pages.as_deref(), stop));
+        timing.insert("facts".into(), seconds(started));
+        let reflow = match found {
+            Ok(facts) => facts,
             Err(NotLaid::Other(_)) => return Ok(unported(CHECK_NOT_LAID_OUT)),
             Err(NotLaid::Stopped) => {
                 // The call's own stop ends it; the layout's limit passed is said, and the
                 // check goes on (docx-agent's `reflow.error`).
                 cancel.check().map_err(cancelled)?;
-                timing.insert("layout".into(), seconds(started));
-                timing.insert("facts".into(), Value::from(0.0));
                 timed_out(owned.layout_limit.map(|limit| limit.timeout))
             }
         };
@@ -155,15 +151,16 @@ fn served(args: &Check) -> Result<Vec<CheckInclude>, &'static str> {
 }
 
 /// `reflow`: the version's pages, coverage and first warnings, and the pages changed since
-/// the document's last check (which this one now is).
+/// the document's last check (which this one now is); its pages summarised until `cancel` says stop.
 fn reflow_facts(
     layout: &dyn crate::WordLayout,
     laid: &ooxml_word_pages::LaidVersion,
     version: &Version<'_>,
     owned: Owned<'_>,
     pages: Option<&[i64]>,
-) -> Result<Value, ToolError> {
-    let found = reflow::laid_facts(layout, laid).map_err(|e| ToolError::internal(e, "check:reflow"))?;
+    cancel: &dyn Cancel,
+) -> Result<Value, NotLaid> {
+    let found = reflow::laid_facts(layout, laid, cancel)?;
     let mut facts = found.facts;
     let last = owned.last_check.get();
     let aliases = owned.doc.ids().aliases();
