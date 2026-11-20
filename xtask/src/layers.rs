@@ -62,6 +62,8 @@ pub const MAP: &[(&str, Place)] = &[
     ("ooxml-word-pages", Place::Layer(3, 2)),
     // Word's edits: commands over the model, through the store (phase P2)
     ("ooxml-word-edit", Place::Layer(3, 1)),
+    // Workbooks read (a chart's embedded workbook first; the sheets phase builds on it)
+    ("ooxml-sheets", Place::Layer(3, 0)),
     ("ooxml-tools-derive", Place::Layer(4, 0)),
     ("ooxml-tools", Place::Layer(4, 1)),
     ("ooxml-tools-word", Place::Layer(4, 2)),

@@ -15,6 +15,11 @@ up), and keeps them as docx-agent's `_fields_placed` and `keep_written` do
 (`rust.edits.KEEPS_WRITTEN`, `rust.edits.Adapted`). `from` a table of rows stays with the
 Python handler.
 
+Phase P2, lane P2c17: a call the Rust session answers names documents as the host does
+(`Session.edit`/`Session.call` `names`): from the second session of a process on, a served
+reply named the Rust session's id of the document (an undo call `{"doc": "d3"}` for the
+host's `d1`, a way-out call, a summary).
+
 Phase P2, lane P2d3: a value written by reference right beside a vulgar fraction or a Roman
 numeral is kept by the Rust session as docx-agent keeps it: the digit beside a value is
 Python's `str.isdigit`, exactly (`ooxml_base::pystr`, a table generated from CPython 3.12),

@@ -434,6 +434,27 @@ def _tracking(call: Any, entry: Any, context: Any, counted: bool) -> None:
         entry.served(first, head, StepOwner(dict(call.caller), "word_set_tracking"), counted=counted)
 
 
+def _names(call: Any, entry: Any, arguments: dict[str, Any]) -> dict[str, str]:
+    """The host's names for the documents a call names, each the session's id of it
+    (``Session.edit``'s ``names``; lane P2c17): the arguments name documents as the host
+    does, and so does the reply (an undo or way-out call, a summary).  The Python handler
+    answers where another document named is not the session's as it is."""
+    mirror = entry.handle
+    names = {entry.doc_id: mirror.doc}
+    for doc in call.tool.doc_ids(arguments):
+        if doc in names:
+            continue
+        other = call.entries.get(doc)
+        if other is None or getattr(other, "owner", None) is None:
+            raise _Fallback("a document the session does not own")
+        if other.live is not None or other.pinned is not None:
+            raise _Fallback("a document with a draft")
+        if other.handle.session is not mirror.session:
+            raise _Fallback("a document in another session")
+        names[doc] = other.handle.doc
+    return names
+
+
 def _layout_before(call: Any, entry: Any) -> Any:
     """What the call's reflow is measured from, as docx-agent's wrapper takes it -- only where
     the view is current (the version before the edit; ``entry.held``: read as it is, no step
@@ -498,13 +519,14 @@ def _edit(call: Any, entry: Any, arguments: dict[str, Any], counted: bool) -> tu
     _tracking(call, entry, context, counted)
     adapted = SERVED[tool](call, arguments)
     written = adapted.written if isinstance(adapted, Adapted) else _written(call)
-    given = {"doc": mirror.doc, **{k: v for k, v in adapted.items() if v is not None}}
+    given = {**{k: v for k, v in adapted.items() if v is not None}, "doc": entry.doc_id}
+    names = _names(call, entry, arguments)
     layout = _layout(call, entry)
     timing = _timing(call, arguments)
     started = time.perf_counter()
     blobs = _Blobs(call.session) if tool in BLOBS else None
     reply, app, made = mirror.session.edit(tool, json.dumps(given), context=context, layout=layout, blobs=blobs,
-                                           written=written)
+                                           written=written, names=names)
     if timing is not None:
         timing.add("update", time.perf_counter() - started)
     envelope = json.loads(reply)
