@@ -3,8 +3,8 @@ against today's.
 
 The Rust definitions (``crates/ooxml-tools-word/tests/golden``) equal today's byte for byte,
 and the replies of ``ooxml_core.Session.call`` equal today's on every fixture: ``word_inspect``
-of the body and of a cell, a table, a span and a missing id (a drawing's SmartArt JSON
-aside: the diagram's data model is not read by the Rust core yet), ``find_text`` of a letter in the body and in
+of the body and of a cell, a table, a span and a missing id (a drawing's chart and SmartArt
+JSON included), ``find_text`` of a letter in the body and in
 every story, ``read_batch`` of several reads with a failing one among them.
 """
 from __future__ import annotations
@@ -56,14 +56,6 @@ def test_the_rust_definitions_are_todays_byte_for_byte(name):
     assert json.loads(golden)["schema"] in [s["schema"] for s in specs if s["name"] == name]
 
 
-def _without_graphics(data):
-    if isinstance(data, list):
-        return [_without_graphics(item) for item in data]
-    if isinstance(data, dict):
-        return {k: _without_graphics(v) for k, v in data.items() if k != "diagram"}
-    return data
-
-
 def _targets(data: bytes) -> list[str]:
     document = Document.open(data)
     out = ["body", "p:0BADF00D"]
@@ -90,7 +82,7 @@ def _calls(data: bytes) -> list[tuple[str, dict]]:
 def _comparable(tool: str, reply: dict) -> dict:
     if reply.get("error") is not None:
         return {"code": reply["error"]["code"], "message": reply["error"]["message"]}
-    data = _without_graphics(reply.get("data"))
+    data = reply.get("data")
     if tool == "read_batch":
         data = {**data, "ops": [_comparable(op["tool"], {**op, "data": op.get("data")}) for op in data["ops"]]}
     return {"summary": reply.get("summary"), "data": data, "next_cursor": reply.get("next_cursor"),

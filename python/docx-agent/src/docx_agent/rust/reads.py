@@ -25,8 +25,8 @@ and never silently: ``ooxml_core`` without a session; a document that is not a c
 version's read copy (a batch's reads of its own changes); limits other than the defaults the
 Rust paging uses; an address naming an id this session renamed or deleted (the ledger and
 the aliases are Python's until P2); a regular expression Rust does not match as Python does;
-and what Rust says it does not give as Python does yet (its ``unported``: a SmartArt
-diagram's summary, Accept All's cell ends).  A refusal goes to the Python
+and what Rust says it does not give as Python does yet (its ``unported``: Accept All's cell
+ends).  A refusal goes to the Python
 path too: Rust's carries its own way out (``valid_options``, ``field``, ``try_call``, tool
 rule 2), which today's does not, so the reply stays today's.
 """

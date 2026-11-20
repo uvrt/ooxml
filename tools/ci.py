@@ -11,14 +11,17 @@ differences live here and nowhere else:
         every package that depends on one of them (``uses``, or ``pr_uses``, below); a change
         to a package's notes (NOTES) builds it without running its suite; a change to the test
         workflows or to this script (RUN_ALL_PREFIXES) runs everything.  A push to main, the
-        nightly run and a manual run take all.
+        nightly run and a manual run take all, but for rust.yml's wheels: a push to main builds
+        them only when its changes (the merge's, against main before it) would on a pull
+        request (``wheels_affected``); the nightly run, a manual run and release.yml build them
+        every time.
         Which Pythons each OS runs depends on the event (LEGS below): production runs
         CPython 3.15 (moving to 3.15t), development runs on macOS and macOS runners are
         scarce, so a pull request and a push to main run Linux and Windows on the newest
         Python and no macOS; the nightly and a manual run add every older Python on Linux
         and the newest on macOS.
-        The free-threaded legs (`ft`, freethreading.yml) run on Linux only: main, nightly and
-        manual runs, and a pull request that changes freethreading.yml.
+        The free-threaded legs (`ft`, freethreading.yml) run on Linux only: nightly and manual
+        runs, and a pull request that changes freethreading.yml.
     python tools/ci.py affected FILE...
         The packages those changed files select, one per line (for a quick look by hand).
     python tools/ci.py install PACKAGE [--free-threading]
@@ -414,6 +417,8 @@ def _sharded(leg: dict[str, str | bool | int]) -> list[dict[str, str | bool | in
 
 def plan(event: str, changed: list[str] | None) -> dict[str, str]:
     every = event != "pull_request" or changed is None     # every package and every job
+    # rust.yml's wheels: a push to main filters as a pull request does (release.yml builds them).
+    wheels = event not in ("pull_request", "push") or changed is None or wheels_affected(changed)
     names = list(PACKAGES) if every else affected(changed)
     builds = list(PACKAGES) if every else built(changed)
     legs = LEGS.get(event, FULL_LEGS)
@@ -438,7 +443,7 @@ def plan(event: str, changed: list[str] | None) -> dict[str, str]:
         "rust": every or rust_affected(changed),
         # rust.yml's differential and rust-check; its wheels.
         "rust_module": every or rust_module_affected(changed),
-        "rust_wheels": every or wheels_affected(changed),
+        "rust_wheels": wheels,
         # rust.yml's path-filtered jobs (RUST_JOBS): rust_fuzz, rust_loom, ...
         **{f"rust_{job}": rust_job_runs(job, event, changed) for job in RUST_JOBS},
         # A pull request that changes the fuzz targets' paths: the `rust` job builds them.
@@ -661,7 +666,8 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     p = sub.add_parser("plan")
     p.add_argument("--event", default=os.environ.get("GITHUB_EVENT_NAME", "pull_request"))
-    p.add_argument("--changed", action="append", help="a changed path (repeat); default: git diff HEAD^1 HEAD")
+    p.add_argument("--changed", action="append",
+                   help="a changed path (repeat); default on a pull request and a push: git diff HEAD^1 HEAD")
     a = sub.add_parser("affected")
     a.add_argument("files", nargs="+")
     sh = sub.add_parser("shard")
@@ -689,8 +695,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "plan":
         changed = args.changed
-        if changed is None and args.event == "pull_request":
-            # A pull request's checkout is its merge commit: the first parent is the base.
+        if changed is None and args.event in ("pull_request", "push"):
+            # A pull request's checkout is its merge commit, and a push to main is a pull
+            # request's merge (main takes merges only): the first parent is the base.
             diff = subprocess.run(["git", "diff", "--name-only", "HEAD^1", "HEAD"], cwd=ROOT,
                                   capture_output=True, text=True, check=True)
             changed = [line for line in diff.stdout.splitlines() if line]

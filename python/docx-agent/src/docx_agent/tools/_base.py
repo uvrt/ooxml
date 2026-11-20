@@ -428,7 +428,14 @@ def checks(entry: Any, touched: Sequence[Any]) -> dict[str, Any]:
         with timed.part("validate"):
             validated = made.validation if made is not None else owned_validation(entry)
         if validated is not None:
-            _relayout_owned(entry)
+            if made is not None:
+                # Lane P2c13: served without the lock, the view not the call's -- the
+                # relayout with the call's own engine, nothing on the view to let go.
+                from .owner import commit_relayout
+
+                commit_relayout(entry, made.engine)
+            else:
+                _relayout_owned(entry)
             return {"validate": validated, "reflow": None if before is None else STALE}
     document = entry.document
     handed = getattr(document, "_handed_engine", None)
@@ -455,7 +462,8 @@ def checks(entry: Any, touched: Sequence[Any]) -> dict[str, Any]:
 
 def _relayout_owned(entry: Any) -> None:
     """:func:`checks` of a version the Rust session holds, its view not made current: the
-    relayout on commit (lane O) where a Python step engaged the engine, which is let go."""
+    relayout on commit (lane O) with the engine a Python step -- or a call the session served
+    under the lock (lane P2c13) -- engaged on the view, which is let go."""
     from .owner import commit_relayout
 
     held = entry.held
