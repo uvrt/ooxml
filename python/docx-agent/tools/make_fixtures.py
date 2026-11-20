@@ -40,6 +40,11 @@ purpose:
     (text, a drop-down list, a date whose node lacks its time), and a table with tracked
     cell insertions that a comment describing them is anchored in, beside an ordinary
     comment.
+``own-tracked-note.docx`` (compatibility mode 15)
+    a footnote of three paragraphs, it and its reference tracked insertions by the
+    differential harness's own author ("Writer A"): a tracked edit of the note deletes those
+    insertions outright, and the edit's new records reuse their ids as docx-agent numbers
+    them.
 
 Deterministic: the zip entries carry a fixed timestamp, so running this again writes the
 same bytes.
@@ -339,6 +344,42 @@ def review_follow() -> dict[str, str]:
         "customXml/_rels/item1.xml.rels": relationships([
             ("rId1", REL + "customXmlProps", "itemProps1.xml", False)]),
     }
+
+
+#: The author and date of the harness's tracked edits (word_edits_diff.py's TRACKING).
+WRITER = 'w:author="Writer A" w:date="2026-11-17T10:00:00Z"'
+
+
+def own_tracked_note() -> dict[str, str]:
+    """A footnote of three paragraphs, it and its reference inserted as tracked changes by
+    the harness's own author: editing it tracked deletes those insertions outright."""
+    body = "".join([
+        p("A note of one's own", "7F100001", style="Heading1"),
+        p(inner=r("The claim") + f'<w:ins w:id="509" {WRITER}><w:r><w:rPr><w:rStyle w:val="FootnoteReference"/>'
+          '</w:rPr><w:footnoteReference w:id="1"/></w:r></w:ins>' + r(" stands here."), para="7F100002"),
+        p("After the note.", "7F100003"),
+        '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" '
+        'w:left="1440" w:header="708" w:footer="708" w:gutter="0"/></w:sectPr>',
+    ])
+
+    def noted(para: str, mark: int | None, record: int, inner: str) -> str:
+        marked = f'<w:rPr><w:ins w:id="{mark}" {WRITER}/></w:rPr>' if mark is not None else ""
+        return (f'<w:p w14:paraId="{para}" w14:textId="77777777"><w:pPr><w:pStyle w:val="FootnoteText"/>{marked}'
+                f'</w:pPr><w:ins w:id="{record}" {WRITER}>{inner}</w:ins></w:p>')
+
+    footnotes = (
+        f"{DECL}<w:footnotes {NS}>"
+        '<w:footnote w:type="separator" w:id="-1">' + p(inner='<w:r><w:separator/></w:r>', para="7F100101")
+        + '</w:footnote><w:footnote w:type="continuationSeparator" w:id="0">'
+        + p(inner='<w:r><w:continuationSeparator/></w:r>', para="7F100102") + '</w:footnote><w:footnote w:id="1">'
+        + noted("7F100103", 511, 510, '<w:r><w:rPr><w:rStyle w:val="FootnoteReference"/></w:rPr><w:footnoteRef/>'
+                '</w:r>' + r(" First"))
+        + noted("7F100104", 513, 512, r("Second")) + noted("7F100105", None, 514, r("Third"))
+        + "</w:footnote></w:footnotes>"
+    )
+    return {"word/document.xml": f"{DECL}<w:document {NS}><w:body>{body}</w:body></w:document>",
+            "word/footnotes.xml": footnotes}
+
 
 def styles() -> str:
     def style(kind: str, sid: str, name: str, extra: str = "", based: str | None = "Normal",
@@ -673,6 +714,26 @@ def main() -> None:
         "word/settings.xml": settings(15),
     }
     print(write("review-follow.docx", parts))
+
+    story = own_tracked_note()
+    parts = {
+        "[Content_Types].xml": content_types({
+            "word/document.xml": WML + ".document.main+xml",
+            "word/styles.xml": WML + ".styles+xml",
+            "word/settings.xml": WML + ".settings+xml",
+            "word/footnotes.xml": WML + ".footnotes+xml",
+        }),
+        "_rels/.rels": relationships([("rId1", REL + "officeDocument", "word/document.xml", False)]),
+        "word/_rels/document.xml.rels": relationships([
+            ("rIdStyles", REL + "styles", "styles.xml", False),
+            ("rIdSettings", REL + "settings", "settings.xml", False),
+            ("rIdFootnotes", REL + "footnotes", "footnotes.xml", False),
+        ]),
+        **story,
+        "word/styles.xml": styles(),
+        "word/settings.xml": settings(15, notes=True),
+    }
+    print(write("own-tracked-note.docx", parts))
 
 
 if __name__ == "__main__":
