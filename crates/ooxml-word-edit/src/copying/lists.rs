@@ -82,7 +82,13 @@ impl Styles<'_> {
     ///
     /// # Errors
     /// What [`Styles::num`] refuses or leaves to the host.
-    pub(crate) fn bring_lists(&mut self, sink: &mut EditSink<'_, '_>, space: &mut Space, work: &mut Work, element: Id) -> Result<()> {
+    pub(crate) fn bring_lists(
+        &mut self,
+        sink: &mut EditSink<'_, '_>,
+        space: &mut Space,
+        work: &mut Work,
+        element: Id,
+    ) -> Result<()> {
         for node in work.iter(element, W, &["numId"]) {
             if !work.parent(node).is_some_and(|p| work.is(p, W, "numPr")) {
                 continue;
@@ -102,7 +108,13 @@ impl Styles<'_> {
     ///
     /// # Errors
     /// What [`Styles::num`] refuses or leaves to the host.
-    pub(super) fn style_lists(&mut self, sink: &mut EditSink<'_, '_>, space: &mut Space, work: &mut Work, copy: Id) -> Result<()> {
+    pub(super) fn style_lists(
+        &mut self,
+        sink: &mut EditSink<'_, '_>,
+        space: &mut Space,
+        work: &mut Work,
+        copy: Id,
+    ) -> Result<()> {
         for node in work.iter(copy, W, &["numId"]) {
             let value = work.get(node, Some(W), "val").map(str::to_owned);
             let mapped = self.num(sink, space, number(value.as_deref())?)?.to_string();
@@ -144,9 +156,15 @@ impl Styles<'_> {
         }
         let new_abstract = self.abstract_definition(sink, space, abstract_id)?;
         let mut overrides = Vec::new();
-        for over in instance.child_elements().filter(|o| o.name().is(Some(W), "lvlOverride")) {
+        for over in instance
+            .child_elements()
+            .filter(|o| o.name().is(Some(W), "lvlOverride"))
+        {
             let (work, copy) = detached_copy(over)?;
-            overrides.push(work.build_element(copy).ok_or_else(|| EditError::Path("numbering".to_owned()))?);
+            overrides.push(
+                work.build_element(copy)
+                    .ok_or_else(|| EditError::Path("numbering".to_owned()))?,
+            );
         }
         let new_num = numbering::add_num_copying(sink, &main, new_abstract, overrides)?;
         self.lists.nums.insert(num_id, new_num);
@@ -184,7 +202,8 @@ impl Styles<'_> {
         let (mut work, node) = match original {
             Some(original) => detached_copy(&original)?,
             None => {
-                let made = crate::list_style::parsed(&numbering::builtin_abstract("number", new_id, "00000001", "00000001"))?;
+                let made =
+                    crate::list_style::parsed(&numbering::builtin_abstract("number", new_id, "00000001", "00000001"))?;
                 let work = Work::of(&made, Vec::new());
                 let root = work.root();
                 (work, root)
@@ -210,10 +229,16 @@ impl Styles<'_> {
         }
         self.lists.abstracts.insert(abstract_id, new_id);
         for link in work.iter(node, W, &["styleLink", "numStyleLink", "pStyle"]) {
-            let kind = if work.is(link, W, "pStyle") { "paragraph" } else { "numbering" };
+            let kind = if work.is(link, W, "pStyle") {
+                "paragraph"
+            } else {
+                "numbering"
+            };
             self.point(sink, space, &mut work, link, kind)?;
         }
-        let built = work.build_element(node).ok_or_else(|| EditError::Path("numbering".to_owned()))?;
+        let built = work
+            .build_element(node)
+            .ok_or_else(|| EditError::Path("numbering".to_owned()))?;
         numbering::add_abstract(sink, &main, built)?;
         Ok(new_id)
     }

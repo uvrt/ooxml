@@ -10,9 +10,10 @@
 use crate::common::{editor, fixture, policy, written, Rng, WORDS};
 use ooxml_store::{Caller, Command, KeySet, Seq, Snapshot, Txn};
 use ooxml_word_edit::{
-    AddBookmark, AddHyperlink, CopyBlocks, CopyRange, CopySource, Day, DeleteNote, EditError, EditNote, Editor, InsertCaption, InsertField, InsertNote,
-    InsertSectionBreak, InsertText, Key, ListPolicy, MoveBlocks, MoveNote, Moving, NoteKind, RemoveBookmark, RevisionPolicy,
-    SectionValues, SetSection, SetStoryText, SetText, StylePolicy, Tracking, UnmappedPolicy, UpdateFields, WordDoc,
+    AddBookmark, AddHyperlink, CopyBlocks, CopyRange, CopySource, Day, DeleteNote, EditError, EditNote, Editor,
+    InsertCaption, InsertField, InsertNote, InsertSectionBreak, InsertText, Key, ListPolicy, MoveBlocks, MoveNote,
+    Moving, NoteKind, RemoveBookmark, RevisionPolicy, SectionValues, SetSection, SetStoryText, SetText, StylePolicy,
+    Tracking, UnmappedPolicy, UpdateFields, WordDoc,
 };
 
 /// One edit of the mix.
@@ -569,7 +570,10 @@ fn a_copied_list_item_starts_a_list_or_continues_the_one_before_it() {
         let body = text("word/document.xml");
         let at = body.find(&format!("w14:paraId=\"{made}\"")).unwrap();
         let copy = &body[at..at + body[at..].find("</w:p>").unwrap()];
-        assert!(copy.contains(&format!("<w:numId w:val=\"{num_id}\"/>")), "{lists:?}: {copy}");
+        assert!(
+            copy.contains(&format!("<w:numId w:val=\"{num_id}\"/>")),
+            "{lists:?}: {copy}"
+        );
         assert_eq!(text("word/numbering.xml").matches("<w:num ").count(), nums, "{lists:?}");
     }
 }

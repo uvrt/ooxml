@@ -19,8 +19,8 @@
 
 use super::canonical::canonical;
 use super::cascade::{tag_of, Formatting, Props, Tag};
-use super::theme::{theme_part, Themes};
 use super::lists::ListMaps;
+use super::theme::{theme_part, Themes};
 use super::{ListPolicy, StylePolicy, UnmappedPolicy};
 use crate::doc::{Key, Shared};
 use crate::names::W;

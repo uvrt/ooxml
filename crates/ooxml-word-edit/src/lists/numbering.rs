@@ -9,8 +9,8 @@
 
 use crate::doc::Key;
 use crate::list_style::parsed;
-use crate::namespaces::strip_redundant;
 use crate::names::W;
+use crate::namespaces::strip_redundant;
 use crate::sink::EditSink;
 use crate::work::{scope_above, Id, Work};
 use crate::{EditError, Result};
