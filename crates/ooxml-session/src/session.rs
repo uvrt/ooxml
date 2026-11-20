@@ -293,25 +293,13 @@ impl Session {
         }
     }
 
-    /// What the document's last check with `reflow` saw (`since_last_check` is measured
-    /// from it); `None` for none, or a document of another kind.
+    /// What the Word document's last check with `reflow` saw (`since_last_check` is
+    /// measured from it), read and kept by a host's own checks too; `None` for another kind.
     ///
     /// # Errors
     /// [`SessionError::NotOpen`].
-    pub fn last_check(&self, id: &DocId) -> Result<Option<ooxml_tools_word::Seen>, SessionError> {
-        Ok(self.document(id)?.word().and_then(|word| word.last_check.get()))
-    }
-
-    /// Keep `seen` as what the document's last check saw: a host's own check, for the
-    /// session's next one (`None`: forget it). Nothing for a document of another kind.
-    ///
-    /// # Errors
-    /// [`SessionError::NotOpen`].
-    pub fn set_last_check(&self, id: &DocId, seen: Option<ooxml_tools_word::Seen>) -> Result<(), SessionError> {
-        if let Some(word) = self.document(id)?.word() {
-            word.last_check.set(seen);
-        }
-        Ok(())
+    pub fn last_check(&self, id: &DocId) -> Result<Option<Arc<ooxml_tools_word::LastCheck>>, SessionError> {
+        Ok(self.document(id)?.word().map(|word| Arc::clone(&word.last_check)))
     }
 
     /// [`Session::validation`] of the version `at` (one a call made, say) instead of the head.

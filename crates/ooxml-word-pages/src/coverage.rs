@@ -118,39 +118,90 @@ fn measured_with(used: &str, missing: &'static str) -> String {
     }
 }
 
+/// The faces of `found` laid out with another, in the order first looked up, and those
+/// missing, sorted.
+fn graded(found: &ooxml_word_layout::faces::Coverage) -> (Vec<Substituted>, Vec<String>) {
+    let mut substituted = Vec::new();
+    let mut missing = Vec::new();
+    for family in &found.order {
+        match found.grades.get(family) {
+            Some(Grade::Substituted(s)) => substituted.push(Substituted {
+                family: family.clone(),
+                substitute: s.substitute.clone(),
+                metric_compatible: s.same_metrics,
+                kind: match s.kind {
+                    SubstitutionKind::Named => "named",
+                    SubstitutionKind::Default => "default",
+                    SubstitutionKind::Generic => "generic",
+                },
+                class: s.class.map(ooxml_fonts::FaceClass::name),
+            }),
+            Some(Grade::Recorded) => substituted.push(Substituted {
+                family: family.clone(),
+                substitute: RECORDED.to_owned(),
+                metric_compatible: true,
+                kind: "named",
+                class: None,
+            }),
+            Some(Grade::Missing) => missing.push(family.clone()),
+            _ => {}
+        }
+    }
+    missing.sort();
+    (substituted, missing)
+}
+
+/// Each glyph measured with another face: `(family, character, face used)`, in the order met.
+fn fallbacks(found: &ooxml_word_layout::faces::Coverage) -> Vec<(String, char, String)> {
+    found
+        .fallback_order
+        .iter()
+        .filter_map(|key| Some((key.0.clone(), key.1, found.glyph_fallbacks.get(key)?.clone())))
+        .collect()
+}
+
+/// docx2svg's warning per face and face used (`font-glyph-fallback`), in the order first met.
+fn fallback_warnings(fallbacks: &[(String, char, String)]) -> Vec<LayoutWarning> {
+    let mut grouped: Vec<((&str, &str), Vec<char>)> = Vec::new();
+    for (family, c, used) in fallbacks {
+        let key = (family.as_str(), used.as_str());
+        match grouped.iter_mut().find(|(k, _)| *k == key) {
+            Some((_, chars)) => chars.push(*c),
+            None => grouped.push((key, vec![*c])),
+        }
+    }
+    grouped
+        .into_iter()
+        .map(|((family, used), chars)| {
+            let first = chars.first().copied().unwrap_or(' ');
+            let more = if chars.len() > 1 {
+                format!(" and {} more character(s)", chars.len() - 1)
+            } else {
+                String::new()
+            };
+            LayoutWarning {
+                code: "font-glyph-fallback".to_owned(),
+                message: format!(
+                    "{} has no glyph for {} (U+{:04X}){more}: measured with {}, as an approximation (Word's \
+                     own font fallback is not measured)",
+                    repr(family),
+                    repr(&first.to_string()),
+                    u32::from(first),
+                    measured_with(used, "its missing glyph (.notdef)"),
+                ),
+                page: None,
+            }
+        })
+        .collect()
+}
+
 impl PageEngine {
     /// `version`'s coverage; `None` where it is not of this engine's generation. Where two
     /// or more faces are substituted, every page is painted (not kept) to read the order
     /// the body's lines draw them in, as docx2svg does.
     pub fn coverage(&mut self, version: &LaidVersion) -> Option<Coverage> {
         let found = version.glyphs().coverage();
-        let mut substituted = Vec::new();
-        let mut missing = Vec::new();
-        for family in &found.order {
-            match found.grades.get(family) {
-                Some(Grade::Substituted(s)) => substituted.push(Substituted {
-                    family: family.clone(),
-                    substitute: s.substitute.clone(),
-                    metric_compatible: s.same_metrics,
-                    kind: match s.kind {
-                        SubstitutionKind::Named => "named",
-                        SubstitutionKind::Default => "default",
-                        SubstitutionKind::Generic => "generic",
-                    },
-                    class: s.class.map(ooxml_fonts::FaceClass::name),
-                }),
-                Some(Grade::Recorded) => substituted.push(Substituted {
-                    family: family.clone(),
-                    substitute: RECORDED.to_owned(),
-                    metric_compatible: true,
-                    kind: "named",
-                    class: None,
-                }),
-                Some(Grade::Missing) => missing.push(family.clone()),
-                _ => {}
-            }
-        }
-        missing.sort();
+        let (mut substituted, missing) = graded(&found);
         if substituted.len() >= 2 {
             let faces = self.body_faces(version)?;
             let (mut first, rest): (Vec<_>, Vec<_>) = substituted
@@ -176,38 +227,8 @@ impl PageEngine {
             message: s.message(),
             page: None,
         }));
-        let fallbacks: Vec<(&String, char, &String)> = found
-            .fallback_order
-            .iter()
-            .filter_map(|key| Some((&key.0, key.1, found.glyph_fallbacks.get(key)?)))
-            .collect();
-        let mut grouped: Vec<((&String, &String), Vec<char>)> = Vec::new();
-        for (family, c, used) in &fallbacks {
-            match grouped.iter_mut().find(|(k, _)| *k == (*family, *used)) {
-                Some((_, chars)) => chars.push(*c),
-                None => grouped.push(((family, used), vec![*c])),
-            }
-        }
-        for ((family, used), chars) in &grouped {
-            let first = chars.first().copied().unwrap_or(' ');
-            let more = if chars.len() > 1 {
-                format!(" and {} more character(s)", chars.len() - 1)
-            } else {
-                String::new()
-            };
-            warnings.push(LayoutWarning {
-                code: "font-glyph-fallback".to_owned(),
-                message: format!(
-                    "{} has no glyph for {} (U+{:04X}){more}: measured with {}, as an approximation (Word's \
-                     own font fallback is not measured)",
-                    repr(family),
-                    repr(&first.to_string()),
-                    u32::from(first),
-                    measured_with(used, "its missing glyph (.notdef)"),
-                ),
-                page: None,
-            });
-        }
+        let fallbacks = fallbacks(&found);
+        warnings.extend(fallback_warnings(&fallbacks));
         let said = version.said();
         let mut approximations = said.approximations.clone();
         approximations.extend(fallbacks.iter().map(|(family, c, used)| Approximation {

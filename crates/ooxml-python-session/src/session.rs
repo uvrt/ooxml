@@ -535,8 +535,8 @@ impl PySession {
     /// `None`.
     fn last_check(&self, doc: &str) -> PyResult<Option<(Option<u64>, crate::summary::PyLayoutSummary)>> {
         let id = doc_id(doc, &self.inner)?;
-        let seen = self.inner.last_check(&id).map_err(|e| to_py(&e))?;
-        Ok(seen.map(|seen| (seen.version, crate::summary::PyLayoutSummary { inner: seen.summary })))
+        let kept = self.inner.last_check(&id).map_err(|e| to_py(&e))?;
+        Ok(kept.and_then(|kept| kept.get()).map(|seen| (seen.version, crate::summary::PyLayoutSummary { inner: seen.summary })))
     }
 
     /// Keep `summary` (a `LayoutSummary` of the document's engine) as what the document's
@@ -554,7 +554,10 @@ impl PySession {
             version: at.map(|v| v.inner.version()),
             summary: Arc::clone(&summary.inner),
         });
-        self.inner.set_last_check(&id, seen).map_err(|e| to_py(&e))
+        if let Some(kept) = self.inner.last_check(&id).map_err(|e| to_py(&e))? {
+            kept.set(seen);
+        }
+        Ok(())
     }
 
     /// Undo up to `steps` calls (with a caller in `context`, only its own, while its latest
