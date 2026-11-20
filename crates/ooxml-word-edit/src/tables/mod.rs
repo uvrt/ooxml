@@ -28,6 +28,7 @@ pub use props::{CellValues, Look, TableValues, TableWidth};
 pub use rows::{pending_structure, EditTable, TableChange, TableChanged};
 
 use crate::doc::Key;
+use crate::fields::{FieldLayout, Unknown};
 use crate::names::{W, W16DU};
 use crate::policy::{RevisionPolicy, Stamp};
 use crate::props::PropertyTracker;
@@ -86,14 +87,29 @@ pub enum TableFormat {
 }
 
 /// Format a table: its edits in order, one step.
-#[derive(Debug, Clone)]
-pub struct FormatTable {
+#[derive(Clone)]
+pub struct FormatTable<'l> {
     /// The table (an id, an alias).
     pub table: String,
     /// The edits.
     pub formats: Vec<TableFormat>,
     /// Untracked or tracked.
     pub policy: RevisionPolicy,
+    /// The layout of the document's versions: a body table kept together
+    /// ([`TableFormat::Keeps`], `keep_together` on) is laid out after the edits, for the
+    /// pages it is drawn on ([`TableFormatted::pages`]); without one, that is
+    /// [`EditError::Unsupported`].
+    pub layout: Option<&'l dyn FieldLayout>,
+}
+
+impl std::fmt::Debug for FormatTable<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FormatTable")
+            .field("table", &self.table)
+            .field("formats", &self.formats)
+            .field("policy", &self.policy)
+            .finish_non_exhaustive()
+    }
 }
 
 /// What one edit of a [`FormatTable`] did, as docx-agent's `EditResult` says it.
@@ -114,6 +130,10 @@ pub struct TableEdit {
 pub struct TableFormatted {
     /// The edits.
     pub edits: Vec<TableEdit>,
+    /// A body table kept together: the 0-based pages it is drawn on after the edits, or why
+    /// the layout cannot say (docx-agent's `_taller_than_page` reads them); `None` where not
+    /// asked, or the table is not the body's.
+    pub pages: Option<std::result::Result<Vec<usize>, Unknown>>,
 }
 
 /// A table found: its part, its place there and its id.
@@ -190,7 +210,7 @@ fn room_for(doc: &WordDoc, docx: &Docx, found: &Found) -> i64 {
     }
 }
 
-impl FormatTable {
+impl FormatTable<'_> {
     /// Each edit's arguments against the table as it is (docx-agent's checks before an
     /// edit); `id` the table's id then.
     fn check(&self, docx: &Docx, found: &Found) -> Result<()> {
@@ -229,7 +249,7 @@ impl FormatTable {
     }
 }
 
-impl Command<WordDoc> for FormatTable {
+impl Command<WordDoc> for FormatTable<'_> {
     type Out = TableFormatted;
     type Error = EditError;
 
@@ -241,8 +261,20 @@ impl Command<WordDoc> for FormatTable {
 
     fn prepare(&self, tx: &mut Txn<'_, WordDoc>) -> Result<TableFormatted> {
         let mut sink = EditSink::new(tx, self.policy.clone());
-        let out = self.edit(&mut sink)?;
+        let mut out = self.edit(&mut sink)?;
         crate::after::after_edit(&mut sink)?;
+        let kept = self.formats.iter().any(|f| {
+            matches!(
+                f,
+                TableFormat::Keeps {
+                    keep_together: Some(true),
+                    ..
+                }
+            )
+        });
+        if kept {
+            out.pages = keeps::table_pages(&sink, self.layout, &self.table)?;
+        }
         Ok(out)
     }
 }
@@ -268,7 +300,7 @@ impl Written {
     }
 }
 
-impl FormatTable {
+impl FormatTable<'_> {
     /// The edits, through `sink`.
     fn edit(&self, sink: &mut EditSink<'_, '_>) -> Result<TableFormatted> {
         let docx = sink.docx()?;
@@ -292,7 +324,10 @@ impl FormatTable {
                 renamed: Vec::new(),
                 warnings: p.write.warnings,
             });
-            return Ok(TableFormatted { edits: edits.collect() });
+            return Ok(TableFormatted {
+                edits: edits.collect(),
+                pages: None,
+            });
         }
         let renamed = stamp_document(&mut *sink, &docx)?;
         let (docx, found) = if renamed.is_empty() {
@@ -349,7 +384,7 @@ impl FormatTable {
             write(sink, &found, &id, new, &written)?;
         }
         let edits = self.outcomes(written.warnings, &plans, &id, &renamed);
-        Ok(TableFormatted { edits })
+        Ok(TableFormatted { edits, pages: None })
     }
 
     /// Each edit's outcome: the table's id after them, the renames (the first edit's), its
@@ -477,7 +512,7 @@ pub(crate) struct KeepPlan {
     released: bool,
 }
 
-impl FormatTable {
+impl FormatTable<'_> {
     /// Each keep format's plan, in the formats' places (`None` for the others), against
     /// the table at `found`.
     fn keep_plans(&self, docx: &Docx, found: &Found) -> Result<Vec<Option<KeepPlan>>> {
