@@ -345,7 +345,7 @@ jobs:
     needs: plan
     if: needs.plan.outputs.bench == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 240
     steps:
       - uses: actions/checkout@v4
         with:
@@ -386,7 +386,7 @@ jobs:
           cargo build --locked --release -p ooxml-oracle --bin word-edits-bench --bin word-objects-bench
           cargo test --locked --release -p ooxml-word-edit --test integration --no-run
           cargo test --locked --release -p ooxml-tools-word --test integration --no-run
-      # Each bench once, at most 30 minutes; a failing bench is reported and the others still run.
+      # Each bench once, within its own limit (bench NAME LIMIT ...); a failing bench is reported and the others still run.
       # The benches of one test program run one at a time (--test-threads 1), as their separate
       # programs did, so no timing shares the runner with another.
       - name: Benches
@@ -400,19 +400,23 @@ jobs:
         run: |
           out="$RUNNER_TEMP/bench"; mkdir -p "$out"
           status=0
+          # bench NAME LIMIT COMMAND...: LIMIT seconds for this bench alone.
           bench() {
-            local name=$1; shift
+            local name=$1 limit=$2; shift 2
             local start=$(date +%s)
-            if timeout 1800 "$@" > "$out/$name.txt" 2>&1; then r=ok; else r="failed ($?; 124 is the 30-minute limit)"; status=1; fi
+            if timeout "$limit" "$@" > "$out/$name.txt" 2>&1; then r=ok; else r="failed ($?; 124 is the ${limit} s limit)"; status=1; fi
             echo "| $name | $r | $(( $(date +%s) - start )) |" >> "$out/table.md"
           }
           echo "| bench | result | wall (s) |" > "$out/table.md"
           echo "|---|---|---:|" >> "$out/table.md"
-          bench word-edits-bench target/release/word-edits-bench "$DOC" 24 5
-          bench word-objects-bench target/release/word-objects-bench "$DOC"
-          bench word-edit-benches cargo test --locked --release -p ooxml-word-edit --test integration -- --ignored --nocapture --test-threads 1 object_bench:: structure_bench:: style_bench::
-          bench tools-word-benches cargo test --locked --release -p ooxml-tools-word --test integration -- --ignored --nocapture --test-threads 1 template_bench:: fields_bench::
-          bench docx-agent-24-writers python python/docx-agent/tools/writers_bench.py "$DOC" 24 5 rust
+          bench word-edits-bench 1800 target/release/word-edits-bench "$DOC" 24 5
+          bench word-objects-bench 1800 target/release/word-objects-bench "$DOC"
+          bench word-edit-benches 1800 cargo test --locked --release -p ooxml-word-edit --test integration -- --ignored --nocapture --test-threads 1 object_bench:: structure_bench:: style_bench::
+          # template and fields each alone (together they took 1,555 s on one run and passed 1,800
+          # on a runner about a quarter slower): 2,700 s each.
+          bench tools-word-template-bench 2700 cargo test --locked --release -p ooxml-tools-word --test integration -- --ignored --nocapture --test-threads 1 template_bench::
+          bench tools-word-fields-bench 2700 cargo test --locked --release -p ooxml-tools-word --test integration -- --ignored --nocapture --test-threads 1 fields_bench::
+          bench docx-agent-24-writers 1800 python python/docx-agent/tools/writers_bench.py "$DOC" 24 5 rust
           {
             echo "### bench (a shared runner: timings are noisy and not compared with a laptop's)"
             echo
