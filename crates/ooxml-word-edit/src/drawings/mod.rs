@@ -12,10 +12,12 @@
 //! z-order heights every story holds.
 
 mod frame;
+mod picture;
 mod settings;
 mod shape;
 
 pub use frame::{FloatDrawing, InlineDrawing, SetDrawing};
+pub use picture::{image_format, picture_size, written_size, InsertPicture};
 pub use settings::{DrawingValues, ZOrder};
 pub use shape::InsertShape;
 

@@ -187,7 +187,7 @@ fn field_attr(meta: &ParseNestedMeta, out: &mut FieldAttrs) -> syn::Result<()> {
             Modifier::Bound(key, value, float)
         }
         "min_length" | "max_length" | "min_items" | "max_items" => Modifier::Count(key, meta.value()?.parse()?),
-        "alias" | "names_as" => Modifier::Str(key, meta.value()?.parse()?),
+        "alias" | "names_as" | "refused_alias" => Modifier::Str(key, meta.value()?.parse()?),
         "format" => Modifier::Format(meta.value()?.parse()?),
         "default" => Modifier::Value(key, meta.value()?.parse()?),
         "value_alias" | "kind_description" => match string_list(meta)?.as_slice() {

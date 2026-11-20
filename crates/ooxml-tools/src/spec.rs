@@ -280,6 +280,12 @@ impl ToolSpec {
                 aliases.insert(property.name.clone(), Value::from(format!("names:{name}")));
             }
         }
+        for property in self.arguments.properties() {
+            for alias in &property.intent.refused_aliases {
+                // a function in today's `Tool.aliases` that refuses: written as the name it gives
+                aliases.insert(alias.clone(), Value::from(format!("refused:{}", property.name)));
+            }
+        }
         if let Some(places) = &self.places {
             // a function in today's `Tool.aliases`: written as the kind of place it reads
             let read = Value::from(format!("place:{}", places.kind.name()));

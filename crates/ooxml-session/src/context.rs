@@ -58,6 +58,9 @@ pub struct CallContext {
     /// The host's layout of the documents' versions, which an edit whose results come from
     /// the pages reads (`word_fields`); `None`: such a result is left to the host.
     pub layout: Option<Arc<dyn ooxml_word_edit::FieldLayout>>,
+    /// The session's blobs as the host keeps them (an inserted picture's bytes); `None`: a
+    /// call that reads one is left to the host.
+    pub blobs: Option<Arc<dyn ooxml_tools_word::Blobs>>,
 }
 
 impl std::fmt::Debug for CallContext {
