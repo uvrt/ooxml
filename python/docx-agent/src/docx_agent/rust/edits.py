@@ -5,7 +5,7 @@ A tool with a Rust editing handler (:data:`SERVED`: ``word_set_text``, ``replace
 ``word_insert_text``, ``word_delete``, ``word_format``, ``word_lists``, ``word_format_table``,
 ``word_styles``, ``word_follow_sample``, ``word_insert_markdown``, ``word_fields``,
 ``word_headers_footers``, ``word_template``, ``word_move``, ``word_sections``, ``word_notes``,
-``word_links``, and each one ported after them)
+``word_links``, ``word_drawings``, and each one ported after them)
 runs there, ahead of docx-agent's handler and its wrapper
 (:func:`docx_agent.tools._base.wrap`): the call's arguments, its ``$name`` refs resolved, go to
 ``Session.edit`` with the call's caller and the document's tracking mode; the versions the
@@ -220,6 +220,32 @@ def _links(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
     return {**_own(arguments), "target": reads._refs(call, arguments.get("target"))}
 
 
+def _drawings(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+    if arguments.get("asset") is not None:
+        # The application's asset catalogue is the host's (ooxml_edit.tools.assets).
+        raise _Fallback("a catalogue asset")
+    return {**_own(arguments), "target": reads._refs(call, arguments.get("target")),
+            "at": _sided(call, arguments.get("at"))}
+
+
+class _Blobs:
+    """The session's blobs as ``Session.edit(blobs=...)`` asks them (lane P2c14): Rust calls
+    back with the interpreter lock taken back, for the blob a call names."""
+
+    def __init__(self, session: Any) -> None:
+        self.session = session
+
+    def blob(self, handle: str) -> tuple[str, str, bytes] | None:
+        try:
+            found = self.session.blob(handle)
+        except Exception:  # noqa: BLE001 -- no such blob: the tool refuses, listing them
+            return None
+        return found.name, found.mime, bytes(found.data)
+
+    def listed(self) -> list[tuple[str, str]]:
+        return [(b["handle"], b["name"]) for b in self.session.describe()["blobs"]]
+
+
 #: The tools the session edits with, and each one's arguments as the session takes them.
 SERVED: dict[str, Callable[[Any, dict[str, Any]], dict[str, Any]]] = {
     "word_set_text": _set_text,
@@ -239,7 +265,11 @@ SERVED: dict[str, Callable[[Any, dict[str, Any]], dict[str, Any]]] = {
     "word_sections": _sections,
     "word_notes": _notes,
     "word_links": _links,
+    "word_drawings": _drawings,
 }
+
+#: The served tools that read the session's blobs (an inserted picture's bytes).
+BLOBS = frozenset({"word_drawings"})
 
 #: The served tools whose edits read the document's pages (a field's result, a header's page
 #: number, the upgrade's reflow): the session lays the versions out with the document's page
@@ -400,7 +430,8 @@ def _edit(call: Any, entry: Any, arguments: dict[str, Any], counted: bool) -> tu
     layout = _layout(call, entry)
     timing = _timing(call, arguments)
     started = time.perf_counter()
-    reply, app, made = mirror.session.edit(tool, json.dumps(given), context=context, layout=layout)
+    blobs = _Blobs(call.session) if tool in BLOBS else None
+    reply, app, made = mirror.session.edit(tool, json.dumps(given), context=context, layout=layout, blobs=blobs)
     if timing is not None:
         timing.add("update", time.perf_counter() - started)
     envelope = json.loads(reply)
