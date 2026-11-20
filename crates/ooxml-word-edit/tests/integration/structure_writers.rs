@@ -714,9 +714,16 @@ fn a_copied_bookmark_is_renamed_and_its_link_follows() {
     let (before, head, out) = copy_own("generated/lists-and-styles.docx", "p:5A00000B..p:5A00000C");
     let body = "word/document.xml";
     assert_eq!(count_in(&before, body, "w:name=\"target_1\""), 0);
-    assert_eq!(count_in(&head, body, "<w:bookmarkStart w:id=\"1\" w:name=\"target_1\"/>"), 1);
+    assert_eq!(
+        count_in(&head, body, "<w:bookmarkStart w:id=\"1\" w:name=\"target_1\"/>"),
+        1
+    );
     assert_eq!(count_in(&head, body, "<w:bookmarkEnd w:id=\"1\"/>"), 1);
-    assert_eq!(count_in(&head, body, "w:name=\"target\""), 1, "the original keeps its name");
+    assert_eq!(
+        count_in(&head, body, "w:name=\"target\""),
+        1,
+        "the original keeps its name"
+    );
     assert_eq!(count_in(&head, body, "w:anchor=\"target_1\""), 1);
     assert_eq!(count_in(&head, body, "w:anchor=\"target\""), 1);
     assert!(
