@@ -54,6 +54,9 @@ struct Rules {
     slides: Option<Vec<IntOrStr<1>>>,
     /// Free-form options.
     options: Option<Map<String, Value>>,
+    /// Rows to read.
+    #[arg(rename = "from", refused_alias = "markdown_from")]
+    source: Option<String>,
 }
 
 fn accept<T: ToolArgs>(arguments: Value, kind: Option<&str>) -> (T, Vec<String>) {
@@ -128,6 +131,22 @@ fn argument_alias() {
         .map(ooxml_tools::Alias::key)
         .collect();
     assert_eq!(aliases, ["top", "bottom", "find[].range"]);
+}
+
+#[test]
+fn refused_alias() {
+    // Not read as the argument (nor as the nearest name, `markdown` in today's tool): refused
+    // as unknown, naming the argument meant.
+    let error = Rules::accept(json!({"doc": "d1", "markdown_from": "d:1"}), None).unwrap_err();
+    assert_eq!(
+        error.message(),
+        "unknown argument 'markdown_from'; did you mean 'from'?"
+    );
+    assert_eq!(error.field(), Some("markdown_from"));
+    let (call, _) = accept::<Rules>(json!({"doc": "d1", "from": "d:1"}), None);
+    assert_eq!(call.source.as_deref(), Some("d:1"));
+    let export = Rules::spec().export(None);
+    assert_eq!(export["aliases"]["markdown_from"], json!("refused:from"));
 }
 
 #[test]

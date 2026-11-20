@@ -12,9 +12,9 @@ use ooxml_opc::Package;
 use ooxml_store::{Caller, StoreConfig};
 use ooxml_tools::{ArgType, ToolArgs};
 use ooxml_tools_word::{
-    replace_text, word_changes, word_comments, word_delete, word_insert_text, word_set_text, word_set_tracking,
-    CallEditor, Editing, ReplaceText, WordChanges, WordComments, WordDelete, WordInsertText, WordSetText,
-    WordSetTracking,
+    replace_text, word_changes, word_comments, word_delete, word_insert_markdown, word_insert_text, word_set_text,
+    word_set_tracking, CallEditor, Editing, ReplaceText, WordChanges, WordComments, WordDelete, WordInsertMarkdown,
+    WordInsertText, WordSetText, WordSetTracking,
 };
 use ooxml_word_edit::Editor;
 use serde_json::{json, Map, Value};
@@ -58,7 +58,13 @@ pub fn tool_case(bytes: &Arc<[u8]>, case: &Value) -> Result<Value, String> {
     let tool = case.get("tool").and_then(Value::as_str).unwrap_or("");
     let (arguments, mut notes) = match accepted(tool, arguments) {
         Ok(taken) => taken,
-        Err(reply) => return Ok(reply),
+        Err(mut reply) => {
+            // nothing changed: the parts in the order the document has them
+            if let Some(map) = reply.as_object_mut() {
+                map.insert("order".into(), json!(package.part_names()));
+            }
+            return Ok(reply);
+        }
     };
     let mut reply = run(tool, &arguments, &editing)?;
     notes.append(&mut reply.warnings);
@@ -121,6 +127,10 @@ fn run(tool: &str, arguments: &Value, editing: &Editing<'_>) -> Result<ooxml_too
             &WordDelete::from_arg(arguments, "").map_err(|e| e.to_string())?,
             editing,
         ),
+        "word_insert_markdown" => word_insert_markdown(
+            &WordInsertMarkdown::from_arg(arguments, "").map_err(|e| e.to_string())?,
+            editing,
+        ),
         other => return Err(format!("no tool {other}")),
     })
 }
@@ -133,6 +143,7 @@ fn accepted(tool: &str, arguments: Value) -> Result<(Value, Vec<String>), Value>
         "replace_text" => ReplaceText::spec(),
         "word_insert_text" => WordInsertText::spec(),
         "word_delete" => WordDelete::spec(),
+        "word_insert_markdown" => WordInsertMarkdown::spec(),
         _ => return Ok((arguments, Vec::new())),
     };
     match spec.accept(arguments) {

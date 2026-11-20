@@ -18,6 +18,22 @@ cause = """#89: docx-agent rolls the tree back, but its id pool and aliases keep
 drew; the Rust core changes nothing (tool rule 3: a no-op changes nothing). A docx-agent \
 leftover, not copied."""
 
+# Lane P2c12: the same as #89 through the tool -- Markdown that writes nothing (empty, or only a
+# comment).
+[[difference]]
+mode = "text"
+input = { tool = "word_insert_markdown", arguments = { markdown = "" } }
+cause = """#89 through word_insert_markdown: docx-agent rolls the tree back, but its id pool and \
+aliases keep what the stamping drew; the Rust core changes nothing (tool rule 3: a no-op changes \
+nothing). A docx-agent leftover, not copied."""
+
+[[difference]]
+mode = "text"
+input = { tool = "word_insert_markdown", arguments = { markdown = "<!-- only a comment -->\n" } }
+cause = """#89 through word_insert_markdown: docx-agent rolls the tree back, but its id pool and \
+aliases keep what the stamping drew; the Rust core changes nothing (tool rule 3: a no-op changes \
+nothing). A docx-agent leftover, not copied."""
+
 # #84: a SEQ field inserted in the document's text box, untracked and tracked (lane P4b8: by
 # input, not by case number).
 [[difference]]

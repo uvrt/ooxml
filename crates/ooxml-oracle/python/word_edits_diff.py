@@ -53,6 +53,7 @@ from word_edits_compare import reply as _reply, settle as _compare  # noqa: E402
 from word_reads_diff import differences, files_of, report, run_rust  # noqa: E402
 import word_object_cases  # noqa: E402
 import word_structure_cases  # noqa: E402
+import word_text_cases  # noqa: E402
 import word_style_cases  # noqa: E402
 
 TRACKING = {"author": "Writer A", "date": "2026-11-17T10:00:00Z"}
@@ -332,86 +333,6 @@ def _tool_cases(document) -> list[dict]:
         replies = threads[0].replies
         if replies:
             out.append(call("word_comments", action="resolve", items=[{"comment": replies[0].id}]))
-    return out
-
-
-def _text_tool_cases(document, targets: list[str]) -> list[dict]:
-    """``word_set_text`` and ``replace_text`` called as tools (``--text``): a paragraph's or
-    cell's text, in lines, several items in one call, and the refusals (no target, both,
-    no text, a span, an id the document lacks); a word replaced where it occurs once and
-    everywhere, in the body and in every story, and a text that occurs nowhere. Calls that
-    need what is not ported (styled text, spacing) are answered by docx-agent on both sides."""
-    def call(tool, **arguments):
-        return {"op": "tool", "tool": tool, "arguments": {"doc": "d1", **arguments}}
-
-    out = [call("word_set_text", text="x"), call("word_set_text", target=targets[0] if targets else "p:00000001",
-                                                  items=[]),
-           call("word_set_text", items=[]), call("word_set_text", target="p:7FFFFFFE", text="Nowhere"),
-           call("replace_text", find="zz-nowhere-zz", replace="x"),
-           call("word_set_text", target="p:00000001..p:00000002", text="Span")]
-    for target in targets:
-        text = document.paragraph(target).text
-        out += [call("word_set_text", target=target, text="A new sentence, written whole."),
-                call("word_set_text", target=target, text=text),
-                call("word_set_text", target=target, text="First line\nSecond line"),
-                call("word_set_text", target=target, text=""),
-                call("word_set_text", target=target, text="Some **strong** words"),
-                call("word_set_text", target=target)]
-        words = [w for w in text.split() if w.isalpha() and len(w) > 3]
-        for word in words[:2]:
-            out += [call("replace_text", find=word, replace=word.upper()),
-                    call("replace_text", find=word, replace="new words", expect="all"),
-                    call("replace_text", find=word, replace="x", expect="all", stories="all")]
-    if len(targets) > 1:
-        out.append(call("word_set_text", items=[{"target": targets[0], "text": "One"},
-                                                {"target": targets[-1], "text": "Two\nThree"}]))
-        out.append(call("word_set_text", items=[{"target": targets[0], "text": "One"},
-                                                {"target": "p:7FFFFFFE", "text": "Two"}]))
-    tables = document._index(document.package.document_part()).tables
-    if tables:
-        out += [call("word_set_text", target=f"{tables[0].id}/c0,0", text="Cell text"),
-                call("word_set_text", target=tables[0].id, text="A table"),
-                call("word_set_text", target=f"{tables[0].id}/c0,0", text="Two\nlines **here**"),
-                call("word_delete", target=tables[0].id)]
-    return out + _insert_delete_cases(document, targets)
-
-
-def _insert_delete_cases(document, targets: list[str]) -> list[dict]:
-    """``word_insert_text`` and ``word_delete`` called as tools (``--text``): text beside a
-    paragraph, a range, a position and a word found once, several items, refs; text, a range,
-    a block and a span deleted, the space a deletion leaves doubled, a heading whose content
-    stays; and the refusals (no place, both forms, an address as ref, an at that is no side)."""
-    def call(tool, **arguments):
-        return {"op": "tool", "tool": tool, "arguments": {"doc": "d1", **arguments}}
-
-    out = [call("word_insert_text", text="x"), call("word_insert_text", text="x", items=[{"text": "y"}]),
-           call("word_insert_text", items=[]), call("word_insert_text", text="x", ref="p:00000001@0"),
-           call("word_insert_text", text="x", at="end"), call("word_insert_text", find="zz-nowhere-zz", text="x"),
-           call("word_delete"), call("word_delete", find="zz-nowhere-zz"), call("word_delete", target="p:7FFFFFFE")]
-    for target in targets:
-        text = document.paragraph(target).text
-        out += [call("word_insert_text", target=target, text=" added"),
-                call("word_insert_text", target=target, where="before", text="Start: ", ref="first"),
-                call("word_insert_text", at=f"{target}@0", text="«New» "),
-                call("word_insert_text", at=f"before:{target}", where="after", text="x"),
-                call("word_delete", target=target),
-                call("word_delete", target=target, force=True)]
-        if len(text) > 4:
-            out += [call("word_insert_text", at=f"after:{target}@1:3", text="--"),
-                    call("word_delete", target=f"{target}@1:3"),
-                    call("word_delete", target=f"{target}@0:2", collapse_space=True)]
-        words = [w for w in text.split() if w.isalpha() and len(w) > 3]
-        for word in words[:2]:
-            out += [call("word_insert_text", find=word, text=" (more)"),
-                    call("word_insert_text", find=word, where="before", text="very "),
-                    call("word_delete", find=word), call("word_delete", find=word, collapse_space=True),
-                    call("word_delete", find=word, target=target)]
-    if len(targets) > 1:
-        out += [call("word_insert_text", items=[{"target": targets[0], "text": "One "},
-                                                 {"at": f"{targets[-1]}@0", "text": "Two ", "ref": "two"}]),
-                call("word_insert_text", items=[{"target": targets[0], "text": "One"}, {"text": "Two"}]),
-                call("word_delete", target=f"{targets[0]}..{targets[1]}"),
-                call("word_delete", target=f"{targets[0]}..{targets[-1]}", force=True)]
     return out
 
 
@@ -695,7 +616,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--only-ops", action="store_true", help="insert_text, delete_text and replace only")
     parser.add_argument("--review", action="store_true", help="accept and reject only (word_changes)")
     parser.add_argument("--tools", action="store_true", help="the review tools called as tools only")
-    parser.add_argument("--text", action="store_true", help="word_set_text and replace_text called as tools only")
+    parser.add_argument("--text", action="store_true", help="the text tools called as tools only (word_text_cases.py)")
     parser.add_argument("--delete", action="store_true", help="block deletions only")
     parser.add_argument("--structure", action="store_true", help="the structure tools called as tools only")
     parser.add_argument("--objects", action="store_true", help="the object tools called as tools only")
@@ -739,7 +660,7 @@ def main(argv: list[str] | None = None) -> int:
             elif args.style:
                 cases, targets = word_style_cases.cases(document), []
             elif args.review or args.tools:
-                found = (_text_tool_cases(document, targets) if args.text else _tool_cases(document)) \
+                found = (word_text_cases.cases(document, targets) if args.text else _tool_cases(document)) \
                     if args.tools else _review_cases(document)
                 cases = [{**case, "tracked": None} for case in found]
                 targets = []
