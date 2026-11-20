@@ -6,7 +6,8 @@ Made-up documents and pictures only."""
 from __future__ import annotations
 
 import datetime as dt
-import io
+import struct
+import zlib
 
 import pytest
 
@@ -20,11 +21,16 @@ CLOCK = lambda: dt.datetime(2026, 11, 20, 9, 0, tzinfo=dt.timezone.utc)  # noqa:
 
 
 def png(width: int = 40, height: int = 20) -> bytes:
-    from PIL import Image
+    """A made-up PNG, written by hand (no imaging library on every leg)."""
+    row = b"\x00" + bytes((30, 140, 60)) * width
 
-    out = io.BytesIO()
-    Image.new("RGB", (width, height), (30, 140, 60)).save(out, format="PNG")
-    return out.getvalue()
+    def chunk(kind: bytes, body: bytes) -> bytes:
+        return (struct.pack(">I", len(body)) + kind + body
+                + struct.pack(">I", zlib.crc32(kind + body) & 0xFFFFFFFF))
+
+    header = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", zlib.compress(row * height))
+            + chunk(b"IEND", b""))
 
 
 @pytest.fixture(scope="module")
