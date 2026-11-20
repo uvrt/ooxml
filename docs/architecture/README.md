@@ -597,6 +597,9 @@ All are under 0.1 % of the edit budgets.
 - `word_set_text` writes every item through `SetStyledText`: styled text, a paragraph style, a cell in lines and French spacing are the session's; only values or addresses by reference stay with the host.
 - Still the host's: a find `within` a block or span, a picture (`d:`), a heading's range without its end, a ref name the tool layer would fold.
 
+**As built (lane P2c13: relayout after served edits).**
+- A served edit starts the relayout on commit (lane O) as a Python edit does: without the lock, its checks' marker (`rust.edits.Made`) carries the call's engine (`Engine.of` over the toolbox's pool), used without touching the view; under the lock, the call's engine is engaged on the view and the checks' relayout lets it go.
+
 **As built (lane P2c13: served edits that read the pages).**
 - `word_fields`, `word_headers_footers` and `word_template` are served: `Session.edit` takes the document's page engine (`layout=`, a `WordPages`, as `Session.call` does), the one docx-agent's in-process Rust layouts of the document use (`docx_agent.pages.word_pages`, by lineage and layout options); the edit core lays the versions out through it (`FieldLayout`: a field's result, a header's page number, the upgrade's reflow). Options the Rust layout does not take (custom measurement, outlined text) leave the call to the host.
 - Their work ahead -- a layout in Python with the lock let go -- is not done where the session is asked first (`rust.edits.will_serve`); a call the session then leaves to the host lays out under the lock. `word_fields` and `word_template` declare work ahead, so the session serves them under the lock; `word_headers_footers` beside the others.

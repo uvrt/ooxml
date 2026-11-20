@@ -358,8 +358,8 @@ def test_a_check_reads_its_version_as_committed_last_with_its_tracking(made):
 
 def test_relayout_on_commit_lays_out_the_new_version_while_checks_ask(made, monkeypatch):
     # As for a long document: an edit's own checks say "stale" and lay nothing out.  The edits
-    # are docx-agent's own (``like``: not served by the Rust session), whose step engages the
-    # engine the relayout on commit lays out with; a served edit engages none.
+    # are served by the Rust session where it owns the document (lane P2c13: its relayout on
+    # commit lays out with the call's engine), else docx-agent's own.
     monkeypatch.setattr(base_module, "REFLOW_PAGES", 0)
     monkeypatch.setattr(owner_module, "ASKED_SECONDS", 60.0)
     with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, workers=0) as box:
@@ -369,7 +369,7 @@ def test_relayout_on_commit_lays_out_the_new_version_while_checks_ask(made, monk
         owner = session.entry(doc).document._layout_owner
         flights = owner.flights
         assert box.dispatch(session, "word_insert_markdown", {"doc": doc, "at": f"before:{heads[1]}",
-                                                              "markdown": "Laid out at once.", "like": heads[0]}).ok
+                                                              "markdown": "Laid out at once."}).ok
         # The edit's checks started the relayout, if any, before the edit came back.
         assert owner_module.wait_for_relayouts(60)
         assert owner.flights == flights + 1 and owner.done.version == session.entry(doc).version
@@ -379,7 +379,7 @@ def test_relayout_on_commit_lays_out_the_new_version_while_checks_ask(made, monk
         # Once per check asking: of two edits after it, the first is laid out at once.
         for k in range(2):
             assert box.dispatch(session, "word_insert_markdown", {"doc": doc, "at": f"before:{heads[2]}",
-                                                                  "markdown": f"Edit {k}.", "like": heads[0]}).ok
+                                                                  "markdown": f"Edit {k}."}).ok
             assert owner_module.wait_for_relayouts(60)
         assert owner.flights == flights + 2 and owner.done.version == session.entry(doc).version - 1
     monkeypatch.setattr(owner_module, "ASKED_SECONDS", 0.0)
@@ -389,10 +389,41 @@ def test_relayout_on_commit_lays_out_the_new_version_while_checks_ask(made, monk
         owner = session.entry(doc).document._layout_owner
         flights = owner.flights
         assert box.dispatch(session, "word_insert_markdown", {"doc": doc, "at": f"before:{_heads(document)[1]}",
-                                                              "markdown": "Not laid out yet.",
-                                                              "like": _heads(document)[0]}).ok
+                                                              "markdown": "Not laid out yet."}).ok
         assert owner_module.wait_for_relayouts(60)
         assert owner.flights == flights                     # off: the next check lays it out
+
+
+@pytest.mark.parametrize("locked", [False, True], ids=["unlocked", "locked"])
+def test_relayout_on_commit_lays_out_a_served_edit_too(made, monkeypatch, locked):
+    """Lane P2c13: an edit the Rust session serves -- without the document's lock, or under it
+    (as a call with an idempotence key is) -- starts the same relayout on commit as
+    docx-agent's own edits, with the call's engine (the view engages none for it)."""
+    rust_edits = pytest.importorskip("docx_agent.rust.edits")
+    from ooxml_edit.tools import served as served_module
+
+    if locked:
+        monkeypatch.setattr(served_module, "_served_entry", lambda *_: None)
+    monkeypatch.setattr(base_module, "REFLOW_PAGES", 0)
+    monkeypatch.setattr(owner_module, "ASKED_SECONDS", 60.0)
+    with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, workers=0) as box:
+        session, doc, document = _session(box, made)
+        if getattr(session.entry(doc), "owner", None) is None:
+            pytest.skip("needs the Rust session (ooxml_core)")
+        heads = _heads(document)
+        assert box.dispatch(session, "check", {"doc": doc}).ok
+        owner = session.entry(doc).document._layout_owner
+        flights = owner.flights
+        served = rust_edits.served().get("word_insert_text", 0)
+        assert box.dispatch(session, "word_insert_text", {"doc": doc, "target": heads[1],
+                                                          "text": " Laid out at once."}).ok
+        assert rust_edits.served().get("word_insert_text", 0) == served + 1
+        assert owner_module.wait_for_relayouts(60)
+        assert owner.flights == flights + 1 and owner.done.version == session.entry(doc).version
+        result = box.dispatch(session, "check", {"doc": doc})
+        assert result.ok and result.version == owner.done.version
+        assert owner.flights == flights + 1                   # nothing laid out again
+        assert session.entry(doc).held.converter is None      # the engine let go
 
 
 # -- facts made once per layout ----------------------------------------------------------------
