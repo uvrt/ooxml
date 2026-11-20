@@ -7,7 +7,7 @@
 
 use crate::edits::Unlimited;
 use ooxml_opc::Package;
-use ooxml_tools_word::{empty_run_json, lost_cell_json, skipped_level_json};
+use ooxml_tools_word::{empty_run_json, grid_mismatch_json, lost_cell_json, skipped_level_json};
 use ooxml_word_edit::{facts, EditError, WordDoc};
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -28,6 +28,10 @@ fn entries(doc: &WordDoc, fact: &str) -> Result<Option<Vec<Value>>, EditError> {
         "numbering_skips_level" => facts::numbering_skips_level(doc)?
             .iter()
             .map(skipped_level_json)
+            .collect(),
+        "table_grid_mismatch" => facts::table_grid_mismatch(doc, None)?
+            .iter()
+            .map(grid_mismatch_json)
             .collect(),
         "accept_loses_text" => facts::accept_loses_text(doc)?.iter().map(lost_cell_json).collect(),
         _ => return Ok(None),

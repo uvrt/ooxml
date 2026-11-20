@@ -1,11 +1,78 @@
 //! Owns: `check`'s facts read from the document alone as docx-agent words them in `layout`
-//! (`empty_paragraphs`, `numbering_skips_level`, `accept_loses_text`): each entry's JSON,
-//! with the calls that fix it.
+//! (`empty_paragraphs`, `numbering_skips_level`, `table_grid_mismatch`, `accept_loses_text`):
+//! each entry's JSON, with the calls that fix it, an entry's own lists capped as docx-agent
+//! caps them.
 //!
 //! Must not: find the facts (`ooxml_word_edit::facts` does), filter or cap them.
 
-use ooxml_word_edit::facts::{EmptyRun, LostCell, SkippedLevel};
+use ooxml_word_edit::facts::{EmptyRun, GridMismatch, LostCell, SkippedLevel};
 use serde_json::{json, Map, Value};
+
+/// The most of a list inside one entry (docx-agent's `CAP`).
+const CAP: usize = 20;
+
+/// The first [`CAP`] of `items` as JSON, and how many are left out.
+fn capped<T>(items: &[T], each: impl Fn(&T) -> Value) -> (Value, usize) {
+    let shown: Vec<Value> = items.iter().take(CAP).map(each).collect();
+    (Value::from(shown), items.len().saturating_sub(CAP))
+}
+
+/// A `table_grid_mismatch` entry: a table off its grid (`drawn` `widened` or `short`, with
+/// the changes that put it there and the review that settles only them) or ragged.
+#[must_use]
+pub fn grid_mismatch_json(entry: &GridMismatch) -> Value {
+    let mut out = Map::new();
+    match entry {
+        GridMismatch::OffGrid {
+            table,
+            grid,
+            rows,
+            widened,
+            tracked,
+            changes,
+            fix,
+        } => {
+            let (shown, left) = capped(rows, |r| json!({"row": r.row, "reaches": r.reaches}));
+            out.insert("table".into(), Value::from(table.clone()));
+            out.insert("grid".into(), Value::from(*grid));
+            out.insert("rows".into(), shown);
+            out.insert("drawn".into(), Value::from(if *widened { "widened" } else { "short" }));
+            if left > 0 {
+                out.insert("rows_left_out".into(), Value::from(left));
+            }
+            if *tracked {
+                out.insert("tracked".into(), Value::Bool(true));
+                if !changes.is_empty() {
+                    out.insert("changes".into(), capped(changes, |c| Value::from(c.clone())).0);
+                }
+                if let Some(fix) = fix {
+                    let action = if fix.accept { "accept" } else { "reject" };
+                    out.insert(
+                        "fix".into(),
+                        json!({"tool": "word_changes", "calls": [{"action": action, "ids": fix.ids}]}),
+                    );
+                }
+            }
+        }
+        GridMismatch::Ragged {
+            table,
+            grid,
+            rows,
+            after_accept,
+        } => {
+            let (shown, left) = capped(rows, |r| json!({"row": r.row, "covers": [r.covers.0, r.covers.1]}));
+            out.insert("table".into(), Value::from(table.clone()));
+            out.insert("grid".into(), Value::from(*grid));
+            out.insert("rows".into(), shown);
+            out.insert("drawn".into(), Value::from("ragged"));
+            out.insert("after_accept".into(), Value::Bool(*after_accept));
+            if left > 0 {
+                out.insert("rows_left_out".into(), Value::from(left));
+            }
+        }
+    }
+    Value::Object(out)
+}
 
 /// An `empty_paragraphs` entry: where, the paragraphs' positions and ids, and the
 /// `word_delete` calls that remove them.

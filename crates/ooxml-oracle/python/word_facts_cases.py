@@ -27,11 +27,12 @@ if str(TESTS) not in sys.path:
     sys.path.insert(0, str(TESTS))
 
 from docx_agent import Document
-from docx_agent.layout_facts import accept_loses_text, empty_paragraphs, numbering_skips_level
+from docx_agent.layout_facts import accept_loses_text, empty_paragraphs, numbering_skips_level, table_grid_mismatch
 
 FACTS = {
     "empty_paragraphs": empty_paragraphs,
     "numbering_skips_level": numbering_skips_level,
+    "table_grid_mismatch": table_grid_mismatch,
     "accept_loses_text": accept_loses_text,
 }
 
@@ -92,11 +93,49 @@ def made_up() -> dict[str, bytes]:
         '<w:r><w:t>Deep</w:t></w:r></w:p><w:sectPr>')
     for name, body in SHAPES.items():
         out["accept-" + name.replace(" ", "-").replace("'", "")] = _document(body)
+    out.update(_grids(_document, _p))
     # A mark deleted without an id (no change to name: the reject within the cell), and a
     # cell lost in a nested table.
     out["accept-unnamed"] = _document(_edge((0, 1)).replace('w:del w:id="95" ', "w:del "))
     out["accept-nested"] = _document(_tbl([[_p("Outer") + _edge((1, 1)) + _p("Below"), _p("Side")]]))
     return out
+
+
+def _grids(document, p) -> dict[str, bytes]:
+    """Tables off their grid (widened, short, by tracked cells or a tracked grid) and ragged
+    (now, or as Accept All leaves them), each with ``document``'s body (docx-agent's test
+    builder) around it."""
+    record = 'w:id="{}" w:author="Editor B" w:date="2026-11-13T09:00:00Z"'
+
+    def tc(text: str, props: str = "") -> str:
+        return f"<w:tc><w:tcPr><w:tcW w:w='2000' w:type='dxa'/>{props}</w:tcPr>{p(text)}</w:tc>"
+
+    def tbl(columns: int, rows: list[str], grid_change: str = "") -> str:
+        grid = "".join("<w:gridCol w:w='2000'/>" for _ in range(columns))
+        return (f"<w:tbl><w:tblPr><w:tblW w:w='0' w:type='auto'/></w:tblPr><w:tblGrid>{grid}{grid_change}"
+                "</w:tblGrid>" + "".join(f"<w:tr>{row}</w:tr>" for row in rows) + "</w:tbl>")
+
+    def row(*cells: str, props: str = "") -> str:
+        return (f"<w:trPr>{props}</w:trPr>" if props else "") + "".join(cells)
+
+    plain = row(tc("a"), tc("b"))
+    return {
+        "grid-widened": document(tbl(2, [plain, row(tc("a"), tc("b"), tc("c"))])),
+        "grid-short": document(tbl(3, [row(tc("a"), tc("b"), tc("c")), row(tc("a")),
+                                       row(tc("a"), props="<w:gridAfter w:val='2'/>")])),
+        "grid-cell-inserted": document(tbl(2, [plain, row(tc("a"), tc("b"), tc("new", f"<w:cellIns {record.format(41)}/>"))])),
+        "grid-cell-deleted": document(tbl(2, [plain, row(tc("a"), tc("", f"<w:cellDel {record.format(42)}/>"), tc("b"))])),
+        "grid-changed": document(tbl(3, [plain, plain],
+                                     f"<w:tblGridChange w:id='43'><w:tblGrid><w:gridCol w:w='3000'/>"
+                                     "<w:gridCol w:w='3000'/></w:tblGrid></w:tblGridChange>")),
+        "grid-many-rows": document(tbl(1, [plain] * 23)),
+        "ragged-now": document(tbl(2, [plain, row(tc("b"), props="<w:gridBefore w:val='1'/>"),
+                                       row(tc("a"), props="<w:gridAfter w:val='1'/>")])),
+        "ragged-after-accept": document(tbl(3, [row(tc("a"), tc("gone", f"<w:cellDel {record.format(44)}/>"), tc("c")),
+                                                row(tc("a"), tc("b"), tc("c"))])),
+        "ragged-nested": document(tbl(1, [row(tc("x")[:-len("</w:tc>")] + tbl(2, [plain, row(tc("only"))])
+                                              + p("after") + "</w:tc>")])),
+    }
 
 
 def check_facts(args, run_rust, report, files_of) -> int:

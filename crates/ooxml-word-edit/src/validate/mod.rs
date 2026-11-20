@@ -277,8 +277,9 @@ pub(crate) fn author_in_use(doc: &WordDoc, author: &str) -> Result<bool> {
     Ok(doc.tally()?.counts.author_in_use(author))
 }
 
-/// A budget with no limit, for the oracle's memo-free check.
-struct Unlimited;
+/// A budget with no limit, for the oracle's memo-free check and for scratch versions that
+/// are dropped after one reading (`facts`' settled table copies).
+pub(crate) struct Unlimited;
 
 impl CacheBudget for Unlimited {
     fn reserve(&self, _bytes: usize) -> bool {
