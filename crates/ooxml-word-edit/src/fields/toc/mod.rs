@@ -5,12 +5,14 @@
 //! the field's begin to the paragraph holding its end, that paragraph's content after the
 //! end kept -- each new entry keeping the ids of the old one in its place.
 //!
-//! A numbered heading's entry (its list number and the stop after it, measured from the
-//! fonts) is not ported yet ([`EditError::Unsupported`]).
+//! A numbered heading's entry shows its list number, with a left stop after it measured
+//! through the layout port's fonts ([`number`]).
 //!
-//! Must not: lay out (the layout port says the pages), or write but through the sink.
+//! Must not: lay out (the layout port says the pages and measures), or write but through
+//! the sink.
 
 pub(crate) mod build;
+pub(crate) mod number;
 pub(crate) mod select;
 
 use super::pages::{FieldPlace, LaidFields};
@@ -24,7 +26,6 @@ use crate::sink::EditSink;
 use crate::stamping::w14_prefix;
 use crate::work::{scope_above, Id, Work};
 use crate::{EditError, Result};
-use ooxml_word_model::docx::numbering::{membership, style_numbering, Lists};
 use ooxml_word_model::docx::{at_path, find_path, Docx};
 use ooxml_word_model::ids::valid_long_hex;
 use ooxml_xml::{Element, Node, QName};
@@ -41,8 +42,8 @@ const BOOKMARK_BASE: i64 = 100_000_000;
 /// each heading whose page the layout cannot say listed in `unknown`.
 ///
 /// # Errors
-/// [`EditError::Unsupported`] for a numbered heading's entry or a field whose end is not
-/// beside its begin; a part that is not XML.
+/// [`EditError::Unsupported`] for a field whose end is not beside its begin; a part that
+/// is not XML.
 pub(crate) fn rebuild(
     sink: &mut EditSink<'_, '_>,
     toc: &Located,
@@ -61,11 +62,6 @@ pub(crate) fn rebuild(
         .into_iter()
         .filter(|h| !inside.iter().any(|p| **p == *h.paragraph.path))
         .collect();
-    if numbered(&docx, &headings) {
-        return Err(EditError::Unsupported(
-            "a numbered heading in a table of contents".to_owned(),
-        ));
-    }
     let instruction = toc.found.instruction.clone();
     let hyperlinks = has(&instruction, 'h');
     let mut styles: Vec<(i64, String)> = Vec::new();
@@ -86,6 +82,18 @@ pub(crate) fn rebuild(
     let pages = pages(&toc.id(), &headings, laid, unknown);
     let omit = omitted_levels(&instruction);
     let docx = sink.docx()?;
+    let labels = number::labels(&docx, &headings);
+    let mut stops = number::NumberStops::new(&docx, link_style.as_deref(), laid);
+    let numbers: Vec<Option<build::Number<'_>>> = labels
+        .iter()
+        .zip(&headings)
+        .map(|(label, heading)| {
+            label.as_ref().map(|l| build::Number {
+                label: &l.text,
+                stop: l.tab.then(|| stops.stop(heading.level, &l.text)),
+            })
+        })
+        .collect();
     let texts: Vec<String> = headings
         .iter()
         .map(|h| select::heading_text(&h.paragraph.element))
@@ -106,6 +114,7 @@ pub(crate) fn rebuild(
                 page: omit
                     .is_none_or(|(a, b)| !(a <= heading.level && heading.level <= b))
                     .then(|| pages.get(k).map_or("", String::as_str)),
+                number: numbers.get(k).copied().flatten(),
             }
         })
         .collect();
@@ -150,24 +159,6 @@ fn omitted_levels(instruction: &str) -> Option<(i64, i64)> {
         [a @ b'0'..=b'9', b'-', b @ b'0'..=b'9'] => Some((i64::from(a - b'0'), i64::from(b - b'0'))),
         _ => None,
     }
-}
-
-/// Whether a heading listed may be numbered (`_toc_numbered`).
-fn numbered(docx: &Docx, headings: &[select::Heading]) -> bool {
-    if headings.is_empty() {
-        return false;
-    }
-    let lists = Lists::read(docx);
-    headings.iter().any(|heading| {
-        let Some(found) = membership(docx, &lists, &heading.paragraph.element) else {
-            return false;
-        };
-        if found.format.as_deref().is_none_or(|f| f == "none") {
-            return false;
-        }
-        let style = find_path(&heading.paragraph.element, &["pPr", "pStyle"]).and_then(|s| s.attribute(Some(W), "val"));
-        !found.from_style || style_numbering(docx, style).0.is_some()
-    })
 }
 
 /// Whether the paragraph style `id` has tab stops of its own or through its `basedOn`

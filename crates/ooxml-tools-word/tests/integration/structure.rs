@@ -31,13 +31,29 @@ fn package() -> Package {
 
 /// A made-up document of `body`, its styles Normal and `styles`.
 fn package_of(body: &str, styles: &str) -> Package {
-    let parts = [
+    package_numbered(body, styles, "")
+}
+
+/// [`package_of`] with a numbering part holding `numbering` (none where empty).
+fn package_numbered(body: &str, styles: &str, numbering: &str) -> Package {
+    let numbering_rel = if numbering.is_empty() {
+        String::new()
+    } else {
+        format!(r#"<Relationship Id="rId2" Type="{R}numbering" Target="numbering.xml"/>"#)
+    };
+    let mut parts = vec![
         ("[Content_Types].xml".to_owned(), r#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/></Types>"#.to_owned()),
-        ("word/_rels/document.xml.rels".to_owned(), format!(r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="{R}styles" Target="styles.xml"/></Relationships>"#)),
+        ("word/_rels/document.xml.rels".to_owned(), format!(r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="{R}styles" Target="styles.xml"/>{numbering_rel}</Relationships>"#)),
         ("word/styles.xml".to_owned(), format!(r#"<w:styles {W}><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style>{styles}</w:styles>"#)),
         ("_rels/.rels".to_owned(), format!(r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="{R}officeDocument" Target="word/document.xml"/></Relationships>"#)),
         ("word/document.xml".to_owned(), format!("<w:document {W}><w:body>{body}</w:body></w:document>")),
     ];
+    if !numbering.is_empty() {
+        parts.push((
+            "word/numbering.xml".to_owned(),
+            format!("<w:numbering {W}>{numbering}</w:numbering>"),
+        ));
+    }
     let mut w = Writer::new();
     for (name, data) in parts {
         let entry = NewEntry {
@@ -405,6 +421,63 @@ fn a_table_of_contents_numbers_its_new_bookmarks_on_from_the_largest() {
         .map(|rest| rest.split(r#"w:id=""#).nth(1).unwrap().split('"').next().unwrap())
         .collect();
     assert_eq!(ids, ["7", "5", "8", "6"], "{xml}");
+}
+
+#[test]
+fn a_numbered_heading_s_entry_shows_its_number() {
+    // Level 1 is followed by a tab (Word's default): the number in its own run, a tab run,
+    // the text, with a left stop after the number; level 2 by a space: one run.
+    let heading = |id: u32, level: u32, text: &str| {
+        format!(
+            r#"<w:p w14:paraId="{id:08X}" w14:textId="20000001"><w:pPr><w:pStyle w:val="Heading{level}"/></w:pPr><w:r><w:t>{text}</w:t></w:r></w:p>"#
+        )
+    };
+    let body = [
+        heading(0x1000_0001, 1, "One"),
+        heading(0x1000_0002, 2, "Two"),
+        r#"<w:p w14:paraId="10000004" w14:textId="20000001"><w:r><w:t>Body</w:t></w:r></w:p>"#.to_owned(),
+    ]
+    .concat();
+    let style = |level: u32| {
+        format!(
+            r#"<w:style w:type="paragraph" w:styleId="Heading{level}"><w:name w:val="heading {level}"/><w:basedOn w:val="Normal"/><w:pPr><w:numPr><w:ilvl w:val="{}"/><w:numId w:val="1"/></w:numPr><w:outlineLvl w:val="{}"/></w:pPr></w:style>"#,
+            level - 1,
+            level - 1
+        )
+    };
+    let numbering = concat!(
+        r#"<w:abstractNum w:abstractNumId="0"><w:multiLevelType w:val="multilevel"/>"#,
+        r#"<w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:pStyle w:val="Heading1"/><w:lvlText w:val="%1."/></w:lvl>"#,
+        r#"<w:lvl w:ilvl="1"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:pStyle w:val="Heading2"/><w:suff w:val="space"/><w:lvlText w:val="%1.%2"/></w:lvl>"#,
+        r#"</w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>"#,
+    );
+    let (reply, editor) = call_on(
+        package_numbered(&body, &[style(1), style(2)].concat(), numbering),
+        json!({"doc": "d1", "action": "insert_toc", "after": "p:10000004"}),
+        None,
+        word_fields,
+    );
+    assert_eq!(
+        reply["summary"],
+        json!("Inserted a table of contents fld:body/0"),
+        "{reply}"
+    );
+    let head = editor.store().snapshot();
+    let xml = String::from_utf8(
+        head.doc()
+            .package()
+            .read("word/document.xml")
+            .unwrap()
+            .unwrap()
+            .to_vec(),
+    )
+    .unwrap();
+    assert!(xml.contains(r#"<w:tab w:val="left" w:pos=""#), "{xml}");
+    assert!(
+        xml.contains("<w:t>1.</w:t></w:r><w:r><w:rPr><w:noProof/></w:rPr><w:tab/></w:r>"),
+        "{xml}"
+    );
+    assert!(xml.contains("<w:t>1.1 Two</w:t>"), "{xml}");
 }
 
 #[test]
