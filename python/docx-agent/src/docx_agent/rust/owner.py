@@ -45,6 +45,15 @@ def context_of(caller: Mapping[str, Any] | None) -> Any:
     return ooxml_core.CallContext(caller=caller_key(caller))
 
 
+def options(**given: Any) -> Any:
+    """An ``ooxml_core.CallOptions``: what one ``Session.call`` or ``Session.edit`` runs with
+    beside its name and arguments (``context``, ``at``, ``placer``, ``layout``, ``blobs``,
+    ``written``, ``limit``)."""
+    import ooxml_core
+
+    return ooxml_core.CallOptions(**given)
+
+
 class RustOwner:
     """The Rust session as the owner of docx-agent's documents in a toolbox session; its
     handle per document is the :class:`~.reads.Mirror` the reads use."""

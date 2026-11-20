@@ -152,7 +152,9 @@ class RustTools:
                  context: Any = None) -> RustResult:
         """Run the tool ``name``; its reply as a :class:`RustResult`."""
         text = arguments if isinstance(arguments, str) else json.dumps(arguments)
-        reply, _images, _app = self.session.call(name, text, context=context)
+        import ooxml_core
+
+        reply, _images, _app = self.session.call(name, text, ooxml_core.CallOptions(context=context))
         return RustResult.of(reply, name)
 
     def definitions(self, provider: str, **options: Any) -> list[dict[str, Any]]:

@@ -403,8 +403,10 @@ def _call(call: Any, tool: str, arguments: dict[str, Any], *, placer: "Placer | 
     mirror, version = _version_read(call.entry)
     arguments, pinned = _with_others(call, arguments, others, mirror.session)
     arguments = {"doc": mirror.doc, **{k: v for k, v in arguments.items() if v is not None}}
-    reply, _images, app = mirror.session.call(tool, json.dumps(arguments), at=[version, *pinned],
-                                              placer=placer.place if placer is not None else None)
+    import ooxml_core
+
+    reply, _images, app = mirror.session.call(tool, json.dumps(arguments), ooxml_core.CallOptions(
+        at=[version, *pinned], placer=placer.place if placer is not None else None))
     if placer is not None and placer.error is not None:
         raise placer.error
     envelope = json.loads(reply)

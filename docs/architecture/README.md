@@ -542,7 +542,7 @@ All are under 0.1 % of the edit budgets.
 - Typed handles serve the library API.
 
 **The Python shim.**
-- `toolbox.dispatch(...)` calls `session.call(name, json)` with the lock released.
+- `toolbox.dispatch(...)` calls `session.call(name, json)` with the lock released; what one call runs with beside its name and arguments (the caller's context, the versions read, a placer, the page engine, blobs, the values written by reference, a reply limit) is one `ooxml_core.CallOptions`, so a new kind of per-call input is one more keyword there, not one more argument of `call` and `edit`.
 - The adapters (kept in Python, as briefed) read the specs exported by `ooxml_core.tool_specs(kind)`.
 - `definitions`, `render_results`, `system_prompt`, roles and views stay in Python.
 - The clock becomes a `Clock` port in Rust.
@@ -601,12 +601,12 @@ All are under 0.1 % of the edit budgets.
 - A served edit starts the relayout on commit (lane O) as a Python edit does: without the lock, its checks' marker (`rust.edits.Made`) carries the call's engine (`Engine.of` over the toolbox's pool), used without touching the view; under the lock, the call's engine is engaged on the view and the checks' relayout lets it go.
 
 **As built (lane P2c13: served edits that read the pages).**
-- `word_fields`, `word_headers_footers` and `word_template` are served: `Session.edit` takes the document's page engine (`layout=`, a `WordPages`, as `Session.call` does), the one docx-agent's in-process Rust layouts of the document use (`docx_agent.pages.word_pages`, by lineage and layout options); the edit core lays the versions out through it (`FieldLayout`: a field's result, a header's page number, the upgrade's reflow). Options the Rust layout does not take (custom measurement, outlined text) leave the call to the host.
+- `word_fields`, `word_headers_footers` and `word_template` are served: `Session.edit` takes the document's page engine (`CallOptions(layout=...)`, a `WordPages`, as `Session.call` does), the one docx-agent's in-process Rust layouts of the document use (`docx_agent.pages.word_pages`, by lineage and layout options); the edit core lays the versions out through it (`FieldLayout`: a field's result, a header's page number, the upgrade's reflow). Options the Rust layout does not take (custom measurement, outlined text) leave the call to the host.
 - Their work ahead -- a layout in Python with the lock let go -- is not done where the session is asked first (`rust.edits.will_serve`); a call the session then leaves to the host lays out under the lock. `word_fields` and `word_template` declare work ahead, so the session serves them under the lock; `word_headers_footers` beside the others.
 
 **As built (lane P2c14: group 4 served).**
 - `word_move`, `word_sections`, `word_notes` and `word_links` are registered in the session and served; their declared targets reach the session with their refs resolved by the tool layer, a side's (`before:$x`) by `rust.edits`.
-- `word_compare_blocks` and `word_design_facts` are answered by the session (`rust.reads.serve`). A reading call that names another document (`others`: the argument paths of its tool's documents after the first, `reference.doc`) has that document named as the session names it and its version pinned beside the call's own (`Session.call(at=[...])`, read as `Call::others`); a document in another session, or not a committed version, leaves the call to the host.
+- `word_compare_blocks` and `word_design_facts` are answered by the session (`rust.reads.serve`). A reading call that names another document (`others`: the argument paths of its tool's documents after the first, `reference.doc`) has that document named as the session names it and its version pinned beside the call's own (`CallOptions(at=[...])`, read as `Call::others`); a document in another session, or not a committed version, leaves the call to the host.
 
 **As built (lane P2c15: what the structure edits read).**
 - `word_move`, a bookmark added (`AddBookmark`) and a note inserted (`InsertNote`) read what they depend on instead of the whole document when their places are named by id (`address_keys::names_by_id`: `p:`/`t:`/`tr:` ids, positions, ranges, rows and cells): the blocks, the anchor and the stretch they rewrite (written), a note's notes part (written whole); a bookmark's name by condition (`NamesBookmark`: a block written since, or a marker beside it, or a story part written whole, starting one of that name on the head). A place named by condition (a bookmark, a heading's range, a control, a story's id) and a heading's section still read the whole document.

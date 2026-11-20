@@ -41,7 +41,7 @@ from ooxml_edit.tools.session import StepOwner
 from ooxml_edit.tools.session import utc_now
 
 from . import reads
-from .owner import context_of
+from .owner import context_of, options
 
 _COUNTS_LOCK = threading.Lock()
 _FALLBACKS: Counter = Counter()
@@ -229,7 +229,7 @@ def _drawings(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
 
 
 class _Blobs:
-    """The session's blobs as ``Session.edit(blobs=...)`` asks them (lane P2c14): Rust calls
+    """The session's blobs as ``CallOptions(blobs=...)`` asks them (lane P2c14): Rust calls
     back with the interpreter lock taken back, for the blob a call names."""
 
     def __init__(self, session: Any) -> None:
@@ -370,7 +370,7 @@ def _tracking(call: Any, entry: Any, context: Any, counted: bool) -> None:
         arguments: dict[str, Any] = {"doc": mirror.doc, "on": bool(wanted)}
         if wanted and wanted.get("author"):
             arguments["author"] = wanted["author"]
-        reply, _app, made = mirror.session.edit("word_set_tracking", json.dumps(arguments), context=context)
+        reply, _app, made = mirror.session.edit("word_set_tracking", json.dumps(arguments), options(context=context))
         if made is None and json.loads(reply).get("error") is not None:
             raise _Fallback("tracking")
         mirror.tracking = wanted
@@ -447,8 +447,8 @@ def _edit(call: Any, entry: Any, arguments: dict[str, Any], counted: bool) -> tu
     timing = _timing(call, arguments)
     started = time.perf_counter()
     blobs = _Blobs(call.session) if tool in BLOBS else None
-    reply, app, made = mirror.session.edit(tool, json.dumps(given), context=context, layout=layout, blobs=blobs,
-                                           written=_written(call))
+    reply, app, made = mirror.session.edit(tool, json.dumps(given), options(context=context, layout=layout, blobs=blobs,
+                                                                            written=_written(call)))
     if timing is not None:
         timing.add("update", time.perf_counter() - started)
     envelope = json.loads(reply)

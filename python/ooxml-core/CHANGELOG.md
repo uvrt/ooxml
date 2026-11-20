@@ -5,6 +5,11 @@ ooxml-core is the Rust core of the ooxml packages (`crates/`), as the Python mod
 
 ## 0.10.0 -- unreleased
 
+- **`ooxml_core.CallOptions` (lane P2d3).** `Session.call(name, arguments, options)` and
+  `Session.edit(name, arguments, options)` take what one call runs with as one
+  `CallOptions(context=, limit=, at=, placer=, layout=, blobs=, written=)` in place of
+  their growing keyword arguments (the `too_many_arguments` allowances gone); `edit`
+  refuses options with a `limit`. docx-agent's callers moved to it.
 - **Charts and SmartArt in Word's reads (lane R1).** `word_read` writes a chart's or
   SmartArt diagram's one-line summary in its drawing's comment (` [chart: column; title:
   ...; series: ...; categories: ...]`, ` [smartart: Goals [Faster edits], Risks]`, a group's

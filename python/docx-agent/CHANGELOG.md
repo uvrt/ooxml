@@ -7,6 +7,10 @@ snapshot commit; the development history before it is summarised here.
 
 ## 0.1.140 -- unreleased
 
+Phase P2, lane P2d3: the Rust session's calls and edits are given their options as one
+`ooxml_core.CallOptions` (`rust.owner.options`): context, versions read, placer, page engine,
+blobs, values written by reference.
+
 Phase P2, lane P2d2: values written by reference are kept by the Rust session. A
 `word_set_text`, `word_insert_text` or `replace_text` call whose arguments hold references
 (`{{d:scores/Alpha/rating}}`) is served: the dispatcher's `call.facts` go to `Session.edit`
