@@ -19,7 +19,7 @@ use crate::text::write::check_text;
 use crate::{EditError, Result};
 use ooxml_store::{Command, Txn};
 use ooxml_word_model::address::direct;
-use ooxml_word_model::docx::tables::TableGrid;
+use ooxml_word_model::docx::tables::{Accepted, Axis, TableGrid};
 use ooxml_word_model::docx::{at_path, Docx, StoryPart};
 use ooxml_word_model::ids::{Entry, TableId};
 use ooxml_xml::{Element, Node};
@@ -38,6 +38,9 @@ pub struct SetCells {
     pub stamping: bool,
     /// Untracked or tracked.
     pub policy: RevisionPolicy,
+    /// Where given, positions and labels count the table as accepting its tracked changes
+    /// leaves it (docx-agent's `_Accepted`, read before the call); else as it is.
+    pub accepted: Option<Accepted>,
 }
 
 /// A cell's row or column for [`SetCells`].
@@ -94,6 +97,8 @@ pub struct CellsSet {
     pub edits: Vec<CellEdit>,
     /// Each write's cell, `<table>/c<row>,<column>` (the merged cell's first place).
     pub ids: Vec<String>,
+    /// What positions as accepted stepped over or into, said once each.
+    pub notes: Vec<String>,
 }
 
 /// A table found: its part, id and rows' places.
@@ -255,9 +260,13 @@ impl Command<WordDoc> for SetCells {
         let mut out = CellsSet {
             edits: Vec::new(),
             ids: Vec::new(),
+            notes: Vec::new(),
         };
         for write in &self.writes {
-            let (row, column) = locate(&sink, &self.table, write)?;
+            let (row, column) = match &self.accepted {
+                Some(accepted) => located(&sink, &self.table, write, accepted, &mut out.notes)?,
+                None => locate(&sink, &self.table, write)?,
+            };
             let Some((r, c)) = places.get(row).and_then(|l| l.get(column)).copied().flatten() else {
                 let docx = sink.docx()?;
                 let (story, now) = found_table(sink.doc(), &docx, &self.table)?;
@@ -304,6 +313,40 @@ fn locate(sink: &EditSink<'_, '_>, target: &str, write: &CellWrite) -> Result<(u
         CellAxis::Missing => return Err(missing("cells[].col or col_label")),
     };
     Ok((row, column))
+}
+
+/// A write's (document row, grid column) with positions and labels as `accepted` counts
+/// them (`_locate` with `accepted`): labels read as the writes before it left the table.
+fn located(
+    sink: &EditSink<'_, '_>,
+    target: &str,
+    write: &CellWrite,
+    accepted: &Accepted,
+    notes: &mut Vec<String>,
+) -> Result<(usize, usize)> {
+    let index = |n: usize| i64::try_from(n).unwrap_or(i64::MAX);
+    if let (CellAxis::At(row), CellAxis::At(column)) = (&write.row, &write.column) {
+        return accepted
+            .place(index(*row), index(*column), "cells[]", notes)
+            .map_err(EditError::Position);
+    }
+    let row = axis(&write.row, "cells[].row or row_label")?;
+    let column = axis(&write.column, "cells[].col or col_label")?;
+    let docx = sink.docx()?;
+    let (story, found) = found_table(sink.doc(), &docx, target)?;
+    let grid = TableGrid::new(story, &found);
+    accepted
+        .locate(&grid, (row, column), notes)
+        .map_err(EditError::Position)
+}
+
+/// A write's row or column as a position or label; refused at `field` where missing.
+fn axis<'w>(axis: &'w CellAxis, field: &str) -> Result<Axis<'w>> {
+    match axis {
+        CellAxis::At(at) => Ok(Axis::At(i64::try_from(*at).unwrap_or(i64::MAX))),
+        CellAxis::Label(label) => Ok(Axis::Label(label.as_str())),
+        CellAxis::Missing => Err(missing(field)),
+    }
 }
 
 /// docx-agent's `need`: `field` is required.

@@ -6,7 +6,7 @@
 //! Must not: change the document but through the command.
 
 use super::format_table_args::{BorderStyle, HeightRule, Look, Scope, WordFormatTable};
-use super::table_view::{regions_off, table_view, TableView};
+use super::table_view::{regions_off, table_view, AcceptedView, TableView};
 use crate::review::{needed, Editing};
 use crate::structure::common::{call, outcome, policy, refused, Outcome};
 use ooxml_tools::{ArgEnum, Refusal, ToolError, ToolResult, TryCall, WayOut};
@@ -15,8 +15,6 @@ use serde_json::{json, Value};
 
 /// What `unported` says of a call that needs what is not ported yet.
 const LAYOUT: &str = "word_format_table width_of body or window, keep_together, keep_with_next";
-/// What `unported` says of a row, column or cell of a table with tracked structure.
-const ACCEPTED: &str = "word_format_table positions in a table with pending tracked structure";
 
 impl From<TableEdit> for Outcome {
     fn from(edit: TableEdit) -> Self {
@@ -101,16 +99,14 @@ fn run(args: &WordFormatTable, editing: &Editing<'_>, retry: &TryCall) -> Result
             return Err(invalid(message, Some(name), None, retry));
         }
     }
-    if view.pending() {
-        return Ok(unported(ACCEPTED, retry));
-    }
+    let mut accepted = view.accepted(&docx);
     let mut values = CellValues {
         shading: fill,
         borders,
         vertical_alignment: args.vertical_alignment.map(|v| v.as_str().to_owned()),
         width: None,
     };
-    let (formats, positions) = part_formats(args, &view, &mut values, retry)?;
+    let (formats, positions) = part_formats(args, &view, &mut accepted, &mut values, retry)?;
     let mut formats = formats;
     if values != CellValues::default() {
         let mut seen = Vec::new();
@@ -140,29 +136,32 @@ fn run(args: &WordFormatTable, editing: &Editing<'_>, retry: &TryCall) -> Result
         return Err(invalid(&message, None, Some(&options), retry));
     }
     let summary = format!("Formatted {} of {}", args.scope.as_str(), args.table);
-    Ok(finish(args, editing, formats, summary, false, retry))
+    let mut result = finish(args, editing, formats, summary, false, retry);
+    if matches!(result.outcome, ooxml_tools::Outcome::Done(_)) {
+        result.warnings.extend(accepted.notes);
+    }
+    Ok(result)
 }
 
 /// A row's, column's or cell's own edits, and the grid positions whose cells are formatted.
 type Planned = (Vec<TableFormat>, Vec<(usize, usize)>);
 
-/// The row's, column's or cell's own edits and the positions whose cells are formatted.
+/// The row's, column's or cell's own edits and the positions whose cells are formatted,
+/// positions counted as the table is accepted (`_Accepted`: a row or column whose deletion
+/// is pending not counted, a cell taken into another written there, a column's cells Accept
+/// All removes left out).
 fn part_formats(
     args: &WordFormatTable,
     view: &TableView,
+    accepted: &mut AcceptedView,
     values: &mut CellValues,
     retry: &TryCall,
 ) -> Result<Planned, ToolError> {
-    let index = |value: Option<i64>, name: &str| {
-        value
-            .map(|v| usize::try_from(v).unwrap_or(usize::MAX))
-            .ok_or_else(|| needed(name, "", retry.clone()))
-    };
-    let rows = view.table.rows.len();
+    let given = |value: Option<i64>, name: &str| value.ok_or_else(|| needed(name, "", retry.clone()));
     let mut formats = Vec::new();
     let positions = match args.scope {
         Scope::Row => {
-            let row = index(args.row, "row")?;
+            let row = accepted.row(given(args.row, "row")?, "row", retry)?;
             if args.height.is_some() || args.header_rows.is_some() || args.cant_split.is_some() {
                 formats.push(TableFormat::Row {
                     row,
@@ -173,15 +172,29 @@ fn part_formats(
             (0..view.column_count()).map(|c| (row, c)).collect()
         }
         Scope::Column => {
-            let column = index(args.column, "column")?;
+            let column = accepted.column(given(args.column, "column")?, "column", retry)?;
             if let Some(width) = args.width {
                 formats.push(TableFormat::ColumnWidth { column, width });
             }
-            (0..rows).map(|r| (r, column)).collect()
+            let rows: Vec<usize> = if accepted.table.rows_active() {
+                accepted.table.rows.clone()
+            } else {
+                (0..view.table.rows.len()).collect()
+            };
+            rows.into_iter()
+                .filter(|r| !accepted.table.lost.contains(&(*r, column)))
+                .map(|r| (r, column))
+                .collect()
         }
         _ => {
-            let row = index(args.row, "row")?;
-            let column = index(args.column, "column")?;
+            let row = accepted.row(given(args.row, "row")?, "row", retry)?;
+            let column = given(args.column, "column")?;
+            let column = if accepted.table.active() {
+                let grid = accepted.grid_column(column, "column", retry)?;
+                accepted.at(row, grid, retry)?
+            } else {
+                usize::try_from(column).unwrap_or(usize::MAX)
+            };
             values.width = args.width;
             vec![(row, column)]
         }

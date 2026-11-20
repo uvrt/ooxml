@@ -64,6 +64,8 @@ pub struct Editing<'a> {
 pub(crate) fn edit_refusal(error: EditError, field: &str, call: TryCall) -> ToolError {
     match error {
         EditError::Address(e) => crate::refusal::address_refusal(e, field, call),
+        // a table position as accepted names its own argument
+        EditError::Position(m) => crate::refusal::address_refusal(m.error, &m.field, call),
         EditError::Refused(m) | EditError::Text(m) | EditError::Span(m) => {
             ToolError::refusal(Refusal::Refused, m, WayOut::call(call)).at(field)
         }

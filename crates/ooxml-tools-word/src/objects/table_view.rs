@@ -1,13 +1,15 @@
 //! Owns: a table as the object tools read it before and after an edit (docx-agent's
 //! `Document.table`, `Table.grid`, `table_properties` and `tools/style.py`'s `looks_off`):
 //! the table an id names, refused as `_of_kind` refuses another kind; each grid
-//! position's cell origin (a merged cell answering at each position it covers); whether
-//! the table holds tracked structure that its accepted view would count differently; and
-//! the note where its style formats a region its look turns off.
+//! position's cell origin (a merged cell answering at each position it covers); its
+//! positions as accepting its tracked changes leaves it (docx-agent's `_Accepted`: the
+//! one view `word_format_table`, `word_edit_table` and `set_cells` count positions by, its
+//! refusals and notes); and the note where its style formats a region its look turns off.
 //!
 //! Must not: change the document.
 
 use crate::refusal::address_refusal;
+use ooxml_word_model::docx::tables::{Accepted, Misplaced, TableGrid};
 use ooxml_base::pyfmt::repr_str;
 use ooxml_tools::{ToolError, TryCall};
 use ooxml_word_edit::WordDoc;
@@ -217,11 +219,79 @@ impl TableView {
             .collect()
     }
 
-    /// Whether the table holds tracked structure -- a row or cell deleted, cells merged, a
-    /// paragraph mark deleted -- that its accepted view counts otherwise (docx-agent's
-    /// `_Accepted`, not ported yet).
-    pub(crate) fn pending(&self) -> bool {
-        ooxml_word_edit::pending_structure(&self.table.element)
+    /// The table as accepting its tracked changes leaves it (docx-agent's `_Accepted`), read
+    /// on `docx`, the version it was found on.
+    pub(crate) fn accepted(&self, docx: &Docx) -> AcceptedView {
+        let table = docx.part(&self.part).map_or_else(
+            || Accepted::plain(&self.table.id, self.column_count(), self.table.rows.len()),
+            |part| TableGrid::new(part, &self.table).accepted(&self.table.id),
+        );
+        AcceptedView {
+            table,
+            notes: Vec::new(),
+        }
+    }
+}
+
+/// A table's positions as accepted, and what the call's positions stepped over or into,
+/// said once each (docx-agent's `_Accepted` and its `notes`, rule 2). Cell ids stay on the
+/// document's grid, rows and columns.
+pub(crate) struct AcceptedView {
+    /// The table as accepted.
+    pub(crate) table: Accepted,
+    /// The notes, in the order made.
+    pub(crate) notes: Vec<String>,
+}
+
+impl AcceptedView {
+    fn refusal(misplaced: Misplaced, call: &TryCall) -> ToolError {
+        address_refusal(misplaced.error, &misplaced.field, call.clone())
+    }
+
+    /// The document row of position `row` (`to_row`).
+    pub(crate) fn document_row(&mut self, row: i64, field: &str, call: &TryCall) -> Result<usize, ToolError> {
+        self.table
+            .to_row(row, field, &mut self.notes)
+            .map_err(|m| Self::refusal(m, call))
+    }
+
+    /// The grid column of position `column` (`to_grid`).
+    pub(crate) fn grid_column(&mut self, column: i64, field: &str, call: &TryCall) -> Result<usize, ToolError> {
+        self.table
+            .to_grid(column, field, &mut self.notes)
+            .map_err(|m| Self::refusal(m, call))
+    }
+
+    /// Where document row `row`, grid column `grid` is written (`at`).
+    pub(crate) fn at(&mut self, row: usize, grid: usize, call: &TryCall) -> Result<usize, ToolError> {
+        self.table
+            .at(row, grid, &mut self.notes)
+            .map_err(|m| Self::refusal(m, call))
+    }
+
+    /// Position `(row, column)` as (document row, grid column) (`place`).
+    pub(crate) fn place(&mut self, row: i64, column: i64, field: &str, call: &TryCall) -> Result<(usize, usize), ToolError> {
+        self.table
+            .place(row, column, field, &mut self.notes)
+            .map_err(|m| Self::refusal(m, call))
+    }
+
+    /// The row a position names: the document's, as accepted where rows count otherwise.
+    pub(crate) fn row(&mut self, row: i64, field: &str, call: &TryCall) -> Result<usize, ToolError> {
+        if self.table.rows_active() {
+            self.document_row(row, field, call)
+        } else {
+            Ok(usize::try_from(row).unwrap_or(usize::MAX))
+        }
+    }
+
+    /// The grid column a position names: as accepted where columns count otherwise.
+    pub(crate) fn column(&mut self, column: i64, field: &str, call: &TryCall) -> Result<usize, ToolError> {
+        if self.table.active() {
+            self.grid_column(column, field, call)
+        } else {
+            Ok(usize::try_from(column).unwrap_or(usize::MAX))
+        }
     }
 }
 
