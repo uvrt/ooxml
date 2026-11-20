@@ -5,16 +5,19 @@
 //! `kept_with_next`); what `word_format_table`'s `keep_together` / `keep_with_next` write
 //! there ([`plan`]: `set_keep_together`, `set_table_keep_with_next` and the tool's order
 //! of them), each row's keep written directly only where its styles differ; and what is
-//! read after the edit ([`table_keeps`], [`loose_paragraph_after`]).
+//! read after the edit ([`table_keeps`], [`loose_paragraph_after`]; a table kept together's
+//! pages, [`table_pages`], through the layout port).
 //!
 //! Must not: write but through the table's work, or read outside the table's story part
 //! (the paragraph after a table aside).
 
 use super::{find_table, Found};
+use crate::fields::{FieldLayout, Unknown};
 use crate::format::keeps::{declared, row_leads, Keeps};
 use crate::format::values::write_paragraph;
 use crate::format::{Property, Setting, Value};
 use crate::names::W;
+use crate::sink::EditSink;
 use crate::validate::Orders;
 use crate::work::{Id, Work};
 use crate::{EditError, Result, WordDoc};
@@ -322,6 +325,30 @@ pub fn loose_paragraph_after(doc: &WordDoc, table: &str) -> Result<Option<(Strin
         return Ok(None);
     };
     Ok(Some((found.id, p.id, t.id)))
+}
+
+/// The pages the body table `table` names is drawn on in the version `sink` holds (a
+/// table kept together: docx-agent's `_taller_than_page`, read after the call's edits);
+/// `None` for a table outside the body (a header's has no page to break).
+///
+/// # Errors
+/// [`EditError::Unsupported`] without a layout, or for a version the layout does not lay
+/// out: the call is left to the host.
+pub(crate) fn table_pages(
+    sink: &EditSink<'_, '_>,
+    layout: Option<&dyn FieldLayout>,
+    table: &str,
+) -> Result<Option<std::result::Result<Vec<usize>, Unknown>>> {
+    let docx = sink.docx()?;
+    let found = find_table(sink.doc(), &docx, table)?;
+    if found.part != docx.main {
+        return Ok(None);
+    }
+    let layout = layout.ok_or_else(|| EditError::Unsupported("keep_together's pages without a layout".to_owned()))?;
+    let laid = layout
+        .lay_out(sink.doc().package())
+        .map_err(|why| EditError::Unsupported(format!("the layout of this version: {why}")))?;
+    Ok(Some(laid.block_pages(&found.id)))
 }
 
 #[cfg(test)]
