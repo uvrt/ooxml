@@ -192,7 +192,10 @@ fn run(args: &WordEditTable, editing: &Editing<'_>, retry: &TryCall) -> Result<T
     let mut accepted = view.accepted(&docx);
     if accepted.table.cell_ends {
         // the reply's Markdown joins cells across them, and says the cells Accept All loses
-        return Ok(unported(&format!("word_edit_table on a table with {}", crate::CELL_ENDS), retry));
+        return Ok(unported(
+            &format!("word_edit_table on a table with {}", crate::CELL_ENDS),
+            retry,
+        ));
     }
     if args.action == TableAction::SetCells {
         return super::set_cells::set_cells(args, editing, &docx, &view, &mut accepted, retry);

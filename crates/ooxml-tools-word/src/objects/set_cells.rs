@@ -180,10 +180,7 @@ fn place_of(grid: &TableGrid<'_>, accepted: &mut AcceptedView, cell: &CellArg) -
         (None, Some(label)) => Axis::Label(label),
         (None, None) => return None,
     };
-    accepted
-        .table
-        .locate(grid, (row, column), &mut accepted.notes)
-        .ok()
+    accepted.table.locate(grid, (row, column), &mut accepted.notes).ok()
 }
 
 /// One origin's writes: (entry, position given, text).

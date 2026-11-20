@@ -149,7 +149,10 @@ impl TableGrid<'_> {
         let merged = given
             .keys()
             .copied()
-            .filter(|(r, c)| self.cell_element(*r, *c).is_none_or(|e| find_path(e, &["tcPr", "cellDel"]).is_some()))
+            .filter(|(r, c)| {
+                self.cell_element(*r, *c)
+                    .is_none_or(|e| find_path(e, &["tcPr", "cellDel"]).is_some())
+            })
             .collect();
         Accepted {
             table: id.to_owned(),
@@ -373,7 +376,10 @@ impl Accepted {
     pub fn to_row(&self, row: i64, field: &str, notes: &mut Vec<String>) -> Result<usize, Misplaced> {
         let Some(found) = usize::try_from(row).ok().and_then(|r| self.rows.get(r).copied()) else {
             return Err(Misplaced {
-                error: AddressError::not_found(format!("{field} {row}: {}", self.row_shape()), positions(self.height())),
+                error: AddressError::not_found(
+                    format!("{field} {row}: {}", self.row_shape()),
+                    positions(self.height()),
+                ),
                 field: field.to_owned(),
             });
         };
@@ -479,7 +485,13 @@ impl Accepted {
     ///
     /// # Errors
     /// As [`Accepted::to_row`], [`Accepted::to_grid`] and [`Accepted::at`].
-    pub fn place(&self, row: i64, column: i64, field: &str, notes: &mut Vec<String>) -> Result<(usize, usize), Misplaced> {
+    pub fn place(
+        &self,
+        row: i64,
+        column: i64,
+        field: &str,
+        notes: &mut Vec<String>,
+    ) -> Result<(usize, usize), Misplaced> {
         let as_index = |n: i64| usize::try_from(n).unwrap_or(usize::MAX);
         let row = if self.rows_active() {
             self.to_row(row, &format!("{field}.row"), notes)?

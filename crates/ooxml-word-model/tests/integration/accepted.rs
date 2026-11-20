@@ -71,7 +71,10 @@ fn a_deleted_row_is_not_counted_and_said_once() {
     assert_eq!(a.to_row(1, "row", &mut notes).unwrap(), 2);
     assert_eq!(a.to_row(1, "row", &mut notes).unwrap(), 2);
     assert_eq!(notes.len(), 1);
-    assert!(notes[0].contains("document row 1 ('North') has a tracked deletion"), "{notes:?}");
+    assert!(
+        notes[0].contains("document row 1 ('North') has a tracked deletion"),
+        "{notes:?}"
+    );
     let refused = a.to_row(2, "index", &mut notes).unwrap_err();
     assert_eq!(refused.field, "index");
     assert_eq!(
@@ -142,6 +145,10 @@ fn labels_count_the_rows_and_columns_kept() {
     let a = grid.accepted("t:X");
     let mut notes = Vec::new();
     // the deleted row's "North" is not counted: one match
-    assert_eq!(a.locate(&grid, (Axis::Label("North"), Axis::Label("C")), &mut notes).unwrap(), (2, 2));
+    assert_eq!(
+        a.locate(&grid, (Axis::Label("North"), Axis::Label("C")), &mut notes)
+            .unwrap(),
+        (2, 2)
+    );
     assert!(notes.is_empty());
 }

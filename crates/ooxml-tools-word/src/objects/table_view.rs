@@ -9,11 +9,11 @@
 //! Must not: change the document.
 
 use crate::refusal::address_refusal;
-use ooxml_word_model::docx::tables::{Accepted, Misplaced, TableGrid};
 use ooxml_base::pyfmt::repr_str;
 use ooxml_tools::{ToolError, TryCall};
 use ooxml_word_edit::WordDoc;
 use ooxml_word_model::address::{resolve, AddressError};
+use ooxml_word_model::docx::tables::{Accepted, Misplaced, TableGrid};
 use ooxml_word_model::docx::{find_path, style_name, Docx};
 use ooxml_word_model::ids::{Entry, TableId, W};
 use ooxml_xml::{Element, Node};
@@ -270,7 +270,13 @@ impl AcceptedView {
     }
 
     /// Position `(row, column)` as (document row, grid column) (`place`).
-    pub(crate) fn place(&mut self, row: i64, column: i64, field: &str, call: &TryCall) -> Result<(usize, usize), ToolError> {
+    pub(crate) fn place(
+        &mut self,
+        row: i64,
+        column: i64,
+        field: &str,
+        call: &TryCall,
+    ) -> Result<(usize, usize), ToolError> {
         self.table
             .place(row, column, field, &mut self.notes)
             .map_err(|m| Self::refusal(m, call))
