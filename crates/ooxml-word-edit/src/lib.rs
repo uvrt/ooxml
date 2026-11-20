@@ -109,13 +109,18 @@ pub mod validate;
 mod work;
 
 pub use beside::{DeletePlaced, InsertBeside, Placed, Side, TextPlace};
-pub use comments::{CommentEdit, CommentEdited, CommentEdits, EditCommentText};
+pub use comments::{
+    AddComments, CommentEdit, CommentEdited, CommentEdits, CommentMade, CommentWrite, EditCommentText, Who,
+};
 pub use controls::{ControlEdited, ControlKind, FillControl, Filling, InsertControl, RemoveControl};
-pub use copying::{BlocksCopied, CopyBlocks, CopyRange, CopySource};
+pub use copying::{BlocksCopied, CopyBlocks, CopyRange, CopySource, ListPolicy, StylePolicy, UnmappedPolicy};
 pub use delete::{BlockDeleted, DeleteBlock};
 pub use delete_blocks::{blocks_named, BlocksDeleted, DeleteBlocks};
 pub use doc::{Change, Draw, DrawFrom, Key, ModelError, Shared, WordDoc};
-pub use drawings::{DrawingEdited, DrawingValues, FloatDrawing, InlineDrawing, InsertShape, SetDrawing, ZOrder};
+pub use drawings::{
+    image_format, picture_size, written_size, DrawingEdited, DrawingValues, FloatDrawing, InlineDrawing, InsertPicture,
+    InsertShape, SetDrawing, ZOrder,
+};
 pub use editor::{EditTiming, Edited, Editor};
 pub use error::{EditError, Result};
 pub use fields::{
@@ -140,7 +145,7 @@ pub use notes::{DeleteNote, EditNote, InsertNote, MoveNote, NoteEdited, NoteKind
 pub use paragraph_style::{SetParagraphStyle, StyleSet};
 pub use paragraphs::{InsertParagraph, ParagraphInserted};
 pub use policy::{RevisionPolicy, Tracking};
-pub use pool::{Ids, IdsChange, Sequences};
+pub use pool::{EarlierIds, Ids, IdsChange, Sequences};
 pub use ranges::{DeleteText, InsertText, RangesEdited, ReplaceText};
 pub use review::{record_marks, Mark, RemovedBlocks, Review, Reviewed, RowGone, Selection, TableGone, Typed};
 pub use sections::{

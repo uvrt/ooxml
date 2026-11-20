@@ -119,6 +119,7 @@ fn call_tracking<A: ToolArgs>(
             date: "2026-11-17T10:00:00Z",
             layout: Some(&TwoPages),
             others: ooxml_tools_word::Others::default(),
+            blobs: None,
         };
         let (args, _) = A::accept(arguments, Some("docx")).unwrap();
         Value::Object(tool(&args, &editing).to_json())
@@ -389,7 +390,7 @@ fn blocks_of_the_document_are_copied_with_fresh_ids() {
 
 #[test]
 fn what_the_copy_does_not_port_is_left_to_the_host() {
-    // a bookmark in the block, a tracked copy, another policy
+    // a bookmark in the block, a tracked copy
     for (arguments, tracking) in [
         (
             json!({"doc": "d1", "source_doc": "d1", "range": "p:10000001", "at": "end"}),
@@ -398,10 +399,6 @@ fn what_the_copy_does_not_port_is_left_to_the_host() {
         (
             json!({"doc": "d1", "source_doc": "d1", "range": "p:10000002", "at": "end"}),
             Some(()),
-        ),
-        (
-            json!({"doc": "d1", "source_doc": "d1", "range": "p:10000002", "at": "end", "styles": "merge"}),
-            None,
         ),
     ] {
         let tracking = tracking.map(|()| ooxml_word_edit::Tracking {
@@ -420,6 +417,30 @@ fn what_the_copy_does_not_port_is_left_to_the_host() {
             .unwrap()
             .unwrap();
         assert_eq!(String::from_utf8_lossy(&body).matches("Delta epsilon").count(), 1);
+    }
+}
+
+#[test]
+fn a_copy_takes_the_other_style_policies() {
+    for styles in ["keep_source", "merge"] {
+        let (reply, editor) = call(
+            json!({"doc": "d1", "source_doc": "d1", "range": "p:10000002", "at": "end", "styles": styles}),
+            word_copy_from,
+        );
+        assert!(reply.get("error").is_none(), "{reply}");
+        let body = editor
+            .store()
+            .snapshot()
+            .doc()
+            .package()
+            .read("word/document.xml")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&body).matches("Delta epsilon").count(),
+            2,
+            "{styles}"
+        );
     }
 }
 

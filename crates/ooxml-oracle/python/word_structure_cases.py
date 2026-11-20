@@ -246,6 +246,56 @@ def comment_cases(document) -> list[dict]:
     return out
 
 
+@CASES
+def comment_write_cases(document) -> list[dict]:
+    """``word_comments`` add and reply (lane P4b8): comments on a paragraph, a range, a
+    place, a range across paragraphs, text found once, a table and its rows, several at
+    once with refs and an author; replies to a thread and to a reply, one resolving its
+    thread, in lines; refusals (no text, no place, both, a comment that does not exist).
+    Tracked too: comments are written the same, by the tracking author."""
+    out = []
+    paragraphs = _words(document)
+    for pid, text in paragraphs[:3]:
+        out.append(call("word_comments", action="add", items=[{"target": pid, "text": "On the paragraph"}]))
+        if len(text) > 6:
+            out += [call("word_comments", action="add", items=[{"target": f"{pid}@2:5", "text": "One\nTwo"}]),
+                    call("word_comments", action="add", items=[{"target": f"{pid}@3", "text": "At a place"}])]
+        out.append(call("word_comments", action="add", items=[{"find": text[:10], "text": "Found"}]))
+    if len(paragraphs) > 2:
+        first, third = paragraphs[0][0], paragraphs[2][0]
+        out += [call("word_comments", action="add", items=[{"target": f"{first}@1..{third}@2", "text": "Across"}]),
+                call("word_comments", action="add", author="Reviewer B",
+                     items=[{"target": first, "text": "A", "ref": "one"},
+                            {"target": f"{third}@0:1", "text": "B", "ref": "two"}])]
+    tables = [b["id"] for b in document.blocks() if b["id"] and b["id"].startswith("t:")]
+    for table in tables[:2]:
+        out += [call("word_comments", action="add", items=[{"target": table, "text": "On the table"}]),
+                call("word_comments", action="add", items=[{"target": f"{table}/r1", "text": "On a row"}])]
+        rows = document.get(table).rows
+        if len(rows) > 1:
+            out.append(call("word_comments", action="add", items=[{"target": f"{table}/r{len(rows) - 1}",
+                                                                   "text": "On the last row"}]))
+    for thread in document.comments(replies=False)[:3]:
+        out += [call("word_comments", action="reply", items=[{"comment": thread.id, "text": "Agreed"}]),
+                call("word_comments", action="reply", items=[{"comment": thread.id, "text": "Done\nThanks",
+                                                              "resolve": True, "ref": "r"}])]
+        for reply in thread.replies[:1]:
+            out.append(call("word_comments", action="reply", items=[{"comment": reply.id, "text": "To a reply"}]))
+    for control in document.content_controls()[:8]:
+        out.append(call("word_comments", action="add", items=[{"target": control.id, "text": "On the control"}]))
+    out.append(call("word_comments", action="add", items=[{"target": "cc:NoSuch", "text": "x"}]))
+    if paragraphs:
+        pid, text = paragraphs[0]
+        out.append(call("word_comments", action="add", items=[{"find": text[:4], "within": pid, "text": "In"}]))
+        out += [call("word_comments", action="add", items=[{"target": pid}]),
+                call("word_comments", action="add", items=[{"text": "x"}]),
+                call("word_comments", action="add", items=[{"target": pid, "find": "x", "text": "x"}]),
+                call("word_comments", action="add", items=[{"target": f"{pid}@9999", "text": "x"}])]
+    out += [call("word_comments", action="reply", items=[{"comment": "c:00000000", "text": "x"}]),
+            call("word_comments", action="reply", items=[{"text": "x"}])]
+    return out + [tracked(case) for case in out]
+
+
 def fonts_of(document) -> dict:
     """The fonts docx-agent lays ``document`` out with, as docx2svg hands them to the Rust
     layout (``ooxml_core.WordFonts``): the Rust side lays out with the same."""
@@ -338,7 +388,7 @@ _COPY_SOURCE = Path(__file__).resolve().parents[3] / "python" / "docx-agent" / "
 
 @CASES
 def copy_cases(document) -> list[dict]:
-    """``word_copy_from`` (lane P4f1): blocks of the document opened again (``d2``) copied to
+    """``word_copy_from`` (lanes P4f1, P4f2): blocks of the document opened again (``d2``) copied to
     the end, after and before blocks, a span, a table, a heading's section; blocks of this
     document copied beside themselves; blocks of another document whose styles differ;
     refusals and what is left to the host -- untracked, and tracked.  Registered last: the
@@ -390,7 +440,62 @@ def copy_cases(document) -> list[dict]:
         for heading in their_headings[:2]:
             out.append({**call("word_copy_from", source_doc="d2", section_heading=heading, at=f"after:{blocks[0]}"),
                         **other})
+        # Lane P4f2: the other style policies, a style map, unmapped styles as the body style.
+        for block in theirs[:6]:
+            for styles in ("keep_source", "merge"):
+                out.append({**call("word_copy_from", source_doc="d2", range=block, at="end", styles=styles), **other})
+        maps = ([{"source": "Bulletin Body", "destination": "Quote"}],
+                [{"source": "bulletin note", "destination": "Intense Quote"},
+                 {"source": "Heading 1", "destination": "Title"}],
+                [{"source": "Bulletin Body", "destination": "No Such Style"}])
+        for heading in their_headings[:2]:
+            out += [{**call("word_copy_from", source_doc="d2", section_heading=heading, at="end", **extra), **other}
+                    for extra in ({"styles": "merge"}, {"styles": "keep_source"}, {"unmapped": "body"},
+                                  {"style_map": maps[0]}, {"style_map": maps[1], "unmapped": "body"},
+                                  {"style_map": maps[1], "styles": "merge"}, {"style_map": maps[2]})]
+    for block in blocks[:3]:
+        if block != blocks[-1]:
+            out += [from_d2(range=block, at="end", styles="keep_source"),
+                    from_d2(range=block, at="end", styles="merge", unmapped="body")]
     return out + [tracked(case) for case in out]
+
+
+
+@CASES
+def review_within_cases(document) -> list[dict]:
+    """``word_changes`` within text (lane P4b9, P4a's deferred ``within``): each of the
+    first changes' paragraphs by a range at its start, one over its second half, a position
+    in it and a range into the next paragraph -- listed (changes, records),
+    previewed, accepted and rejected; a span (listed; refused for records)."""
+    from docx_agent.edit import text as _text
+
+    out = []
+    seen: list[str] = []
+    for change in document.changes()[:3]:
+        for pid in change.paragraph_ids[:1]:
+            if pid in seen or "@" in pid:
+                continue
+            seen.append(pid)
+            _part, entry = document._resolve(pid)
+            n = len(_text.paragraph_text(entry.element, "markup"))
+            withins = [f"{pid}@0:{min(3, n)}", f"{pid}@{n // 2}:{n}", f"{pid}@{n // 2}"]
+            if len(change.paragraph_ids) > 1 and "@" not in change.paragraph_ids[1]:
+                withins.append(f"{pid}@{n // 2}..{change.paragraph_ids[1]}@1")
+            for within in withins:
+                out += [call("word_changes", action="list", within=within),
+                        call("word_changes", action="list", detail="records", within=within),
+                        call("word_changes", action="preview", within=within),
+                        call("word_changes", action="accept", within=within),
+                        call("word_changes", action="reject", within=within)]
+    if len(seen) > 1:
+        span = f"{seen[0]}..{seen[1]}"
+        out += [call("word_changes", action="list", within=span),
+                call("word_changes", action="list", detail="records", within=span),
+                call("word_changes", action="accept", within=span),
+                call("word_changes", action="accept", within="p:00000000"),
+                call("word_changes", action="list", within="p:00000000@2"),
+                call("word_changes", action="list", detail="records", within="p:00000000@2")]
+    return out
 
 
 def cases(document) -> list[dict]:
@@ -420,6 +525,8 @@ def python_case(data: bytes, case: dict, baseline: list, toolbox, reply_of, part
         session.open(other, name="copy.docx")
     if case.get("tracked"):
         session.entry(doc).tracking = {"on": True, "author": case["tracked"]["author"]}
+    for blob in case.get("blobs") or []:                # b1, b2, ... as the session numbers them
+        session.add_blob(bytes.fromhex(blob["hex"]), blob["name"], blob["mime"])
     arguments = {**case["arguments"], "doc": doc}
     reply = json.loads(json.dumps(toolbox.dispatch(session, case["tool"], arguments).to_json()))
     document = session.entry(doc).document
