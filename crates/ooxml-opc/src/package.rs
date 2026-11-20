@@ -128,6 +128,16 @@ impl Package {
         })
     }
 
+    /// The size of the part's bytes where it is known without reading them: as stored (the
+    /// entry's uncompressed size) or as put; `None` for a tree, or no such part.
+    pub fn size(&self, name: &str) -> Option<u64> {
+        match self.part(name)? {
+            PartVersion::Raw(raw) => self.entry(raw.index).ok().map(|e| e.meta().size),
+            PartVersion::Bytes(bytes) => u64::try_from(bytes.len()).ok(),
+            PartVersion::Tree(_) => None,
+        }
+    }
+
     /// The part's tree: parsed once for a raw part (and shared by every version that has
     /// the part untouched), parsed from bytes put in place, or the tree put in place.
     pub fn tree(&self, name: &str) -> Result<Option<Tree>, OpcError> {

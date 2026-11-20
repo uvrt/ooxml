@@ -237,8 +237,7 @@ impl WordDoc {
     pub fn open(package: Package, budget: Arc<dyn CacheBudget>) -> Result<WordDoc, EditError> {
         let docx = Arc::new(Docx::open(&package)?);
         let roots: Vec<&ooxml_xml::Element> = docx.parts.iter().map(|p| &**p.root()).collect();
-        let highest = drawing_numbers(&roots).into_iter().max().unwrap_or(0);
-        let ids = Ids::opened(used_long_hex(&roots), highest);
+        let ids = Ids::opened(used_long_hex(&roots), drawing_numbers(&roots));
         Ok(WordDoc {
             package,
             ids,
@@ -539,7 +538,7 @@ impl DocModel for WordDoc {
                 for (seed, _) in &added.cursors {
                     into.insert(Key::Seq(Arc::from(seed.as_str())));
                 }
-                if added.highest_drawing > 0 {
+                if added.highest_drawing > 0 || !added.drawings.is_empty() {
                     into.insert(Key::Seq(Arc::from(crate::pool::DRAWING_NUMBERS)));
                 }
             }

@@ -1,12 +1,12 @@
 //! Owns: a copied block made the source's current view, as docx-agent's importer makes it
 //! (`_current_view`, and `bring`'s first steps): insertions kept, deletions dropped, the
 //! records of changes dropped, a paragraph's section break and a control's data binding
-//! left out; and what the copy holds that this port leaves to the host (relationships,
-//! notes, comments, bookmarks, drawings, controls).
+//! left out; and what the copy holds that this port leaves to the host (notes, comments,
+//! bookmarks, controls).
 //!
 //! Must not: read the documents; it works on the copy alone.
 
-use crate::names::{O, R, W, WP};
+use crate::names::W;
 use crate::work::{Id, Work};
 
 /// The records of changes a copy drops wherever they are (`_current_view`).
@@ -70,31 +70,20 @@ pub(crate) fn current_view(work: &mut Work, element: Id) {
 
 /// What in the copies this port leaves to the host, if anything: the first kind found.
 pub(crate) fn left_to_host(work: &Work, elements: &[Id]) -> Option<&'static str> {
-    let kinds: [(&str, &[&str], &'static str); 5] = [
-        (W, &["footnoteReference", "endnoteReference"], "a copied note"),
+    let kinds: [(&[&str], &'static str); 4] = [
+        (&["footnoteReference", "endnoteReference"], "a copied note"),
         (
-            W,
             &["commentRangeStart", "commentRangeEnd", "commentReference"],
             "a copied comment",
         ),
-        (W, &["bookmarkStart", "bookmarkEnd"], "a copied bookmark"),
-        (W, &["sdt"], "a copied content control"),
-        (WP, &["docPr"], "a copied drawing"),
+        (&["bookmarkStart", "bookmarkEnd"], "a copied bookmark"),
+        (&["sdt"], "a copied content control"),
     ];
     for &element in elements {
-        for (namespace, locals, what) in kinds {
-            if work.is_any(element, namespace, locals) || !work.iter(element, namespace, locals).is_empty() {
+        for (locals, what) in kinds {
+            if work.is_any(element, W, locals) || !work.iter(element, W, locals).is_empty() {
                 return Some(what);
             }
-        }
-        let related = work.descendants(element).into_iter().any(|node| {
-            work.attributes(node).iter().any(|a| {
-                let name = &a.name;
-                name.namespace() == Some(R) || (name.namespace() == Some(O) && name.local() == "relid")
-            })
-        });
-        if related {
-            return Some("a copied relationship");
         }
     }
     None

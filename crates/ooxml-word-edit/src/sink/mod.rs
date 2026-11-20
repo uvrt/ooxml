@@ -8,6 +8,7 @@
 //! Must not: be bypassed (no edit touches a tree any other way), commit (the store does),
 //! or decide what an edit means.
 
+mod bytes;
 mod heads;
 mod kept;
 mod written;
