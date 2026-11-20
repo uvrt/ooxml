@@ -14,6 +14,10 @@ purpose:
     symbol and the special hyphens; a table with a horizontal and a vertical merge and
     paraIds on its rows; a header and a footer; a footnote; a comment.
 
+``tables-accepted.docx`` (compatibility mode 15)
+    tables whose positions count otherwise once their tracked changes are accepted: a row
+    deleted, a grid column deleted, deleted cells keeping their text.
+
 ``mode14.docx``
     a few paragraphs with paraIds in compatibility mode 14, to hold edits to a document
     below mode 15 (which an edit must never upgrade).
@@ -348,6 +352,72 @@ def review_follow() -> dict[str, str]:
 
 #: The author and date of the harness's tracked edits (word_edits_diff.py's TRACKING).
 WRITER = 'w:author="Writer A" w:date="2026-11-17T10:00:00Z"'
+
+
+def tables_accepted() -> dict[str, str]:
+    """Tables whose positions count otherwise once their tracked changes are accepted (the
+    tools' ``_Accepted``): a row deleted as a tracked change; a grid column whose cells are
+    all deleted with their content; deleted cells keeping their text (each widens the cell
+    before it).  No cell whose last paragraph mark is deleted (Accept All's cell ends): the
+    reads leave that final view to the host."""
+    numbers = iter(range(601, 700))
+
+    def record(tag: str) -> str:
+        return f'<w:{tag} w:id="{next(numbers)}" {AUTHOR}/>'
+
+    def gone(text: str, para: str) -> str:
+        """A paragraph whose text and mark are deleted."""
+        return (f'<w:p w14:paraId="{para}" w14:textId="77777777"><w:pPr><w:rPr>{record("del")}</w:rPr></w:pPr>'
+                f'<w:del w:id="{next(numbers)}" {AUTHOR}><w:r><w:delText xml:space="preserve">{text}</w:delText>'
+                "</w:r></w:del></w:p>")
+
+    def cell(content: str, properties: str = "") -> str:
+        return f'<w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/>{properties}</w:tcPr>{content}</w:tc>'
+
+    def row(para: str, cells: list[str], properties: str = "") -> str:
+        props = f"<w:trPr>{properties}</w:trPr>" if properties else ""
+        return f'<w:tr w14:paraId="{para}" w14:textId="77777777">{props}{"".join(cells)}</w:tr>'
+
+    def table(rows: list[str]) -> str:
+        return ('<w:tbl><w:tblPr><w:tblStyle w:val="TableGrid"/><w:tblW w:w="0" w:type="auto"/></w:tblPr>'
+                '<w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/></w:tblGrid>'
+                + "".join(rows) + "</w:tbl>")
+
+    def plain(text: str, para: str) -> str:
+        return cell(p(text, para))
+
+    body = "".join([
+        p("Tables as accepted", "7F200001", style="Heading1"),
+        p("A row deleted as a tracked change:", "7F200002"),
+        table([
+            row("7F210001", [plain("Region", "7F210002"), plain("Sales", "7F210003"), plain("Cost", "7F210004")]),
+            row("7F210005", [plain("North", "7F210006"), plain("10", "7F210007"), plain("4", "7F210008")],
+                record("del")),
+            row("7F210009", [plain("South", "7F21000A"), plain("20", "7F21000B"), plain("8", "7F21000C")]),
+            row("7F21000D", [plain("East", "7F21000E"), plain("30", "7F21000F"), plain("9", "7F210010")]),
+        ]),
+        p("A column deleted as a tracked change:", "7F200003"),
+        table([
+            row("7F220001", [plain("Item", "7F220002"), cell(gone("Old", "7F220003"), record("cellDel")),
+                             plain("New", "7F220004")]),
+            row("7F220005", [plain("Pens", "7F220006"), cell(gone("1", "7F220007"), record("cellDel")),
+                             plain("2", "7F220008")]),
+            row("7F220009", [plain("Ink", "7F22000A"), cell(gone("3", "7F22000B"), record("cellDel")),
+                             plain("4", "7F22000C")]),
+        ]),
+        p("Cells merged by pending changes:", "7F200004"),
+        table([
+            row("7F230001", [plain("Left", "7F230002"), cell(p("Kept", "7F230003"), record("cellDel")),
+                             plain("Right", "7F230004")]),
+            row("7F230005", [plain("Joined", "7F230006"), cell(p("Also kept", "7F230007"), record("cellDel")),
+                             plain("Alone", "7F230008")]),
+            row("7F230009", [plain("One", "7F23000A"), plain("Two", "7F23000B"), plain("Three", "7F23000C")]),
+        ]),
+        p("The document ends here.", "7F200005"),
+        '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" '
+        'w:left="1440" w:header="708" w:footer="708" w:gutter="0"/></w:sectPr>',
+    ])
+    return {"word/document.xml": f"{DECL}<w:document {NS}><w:body>{body}</w:body></w:document>"}
 
 
 def own_tracked_note() -> dict[str, str]:
@@ -734,6 +804,23 @@ def main() -> None:
         "word/settings.xml": settings(15, notes=True),
     }
     print(write("own-tracked-note.docx", parts))
+
+    parts = {
+        "[Content_Types].xml": content_types({
+            "word/document.xml": WML + ".document.main+xml",
+            "word/styles.xml": WML + ".styles+xml",
+            "word/settings.xml": WML + ".settings+xml",
+        }),
+        "_rels/.rels": relationships([("rId1", REL + "officeDocument", "word/document.xml", False)]),
+        "word/_rels/document.xml.rels": relationships([
+            ("rIdStyles", REL + "styles", "styles.xml", False),
+            ("rIdSettings", REL + "settings", "settings.xml", False),
+        ]),
+        **tables_accepted(),
+        "word/styles.xml": styles(),
+        "word/settings.xml": settings(15),
+    }
+    print(write("tables-accepted.docx", parts))
 
 
 if __name__ == "__main__":
