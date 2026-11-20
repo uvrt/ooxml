@@ -1,6 +1,6 @@
 //! Word's text tools (docx-agent's `tools/text.py` and the shared `replace_text`):
-//! `word_set_text`, `replace_text`, `word_insert_text` and `word_delete`, over the edit
-//! core's commands.
+//! `word_set_text`, `replace_text`, `word_insert_text`, `word_delete` and
+//! `word_insert_markdown`, over the edit core's commands.
 //!
 //! Owns: the tools' definitions (descriptions beside them), their handlers -- each call's
 //! edits one command through the editor (one history step), written under the document's
@@ -11,11 +11,13 @@
 //! document but through a command.
 
 mod delete;
+mod insert_markdown;
 mod insert_text;
 mod replace_text;
 mod set_text;
 
 pub use delete::{word_delete, WordDelete};
+pub use insert_markdown::{word_insert_markdown, StyleElement, StyleMapEntry, WordInsertMarkdown};
 pub use insert_text::{word_insert_text, InsertItem, Where, WordInsertText};
 pub use replace_text::{replace_text, Expect, ReplaceStories, ReplaceText};
 pub use set_text::{word_set_text, SetTextItem, WordSetText};
@@ -36,6 +38,10 @@ pub enum Unported {
     ParagraphStyle,
     /// An address form or option the handler does not serve yet.
     Form,
+    /// Content from data the host holds: rows or a field (`from`), a blob.
+    HostData,
+    /// Blocks whose look new ones take (`like`).
+    Like,
 }
 
 impl Unported {
@@ -47,6 +53,8 @@ impl Unported {
             Unported::Reference => "values or addresses by reference",
             Unported::ParagraphStyle => "a paragraph style set with the text",
             Unported::Form => "an address form or option not ported",
+            Unported::HostData => "content from the host's data (from, blob)",
+            Unported::Like => "blocks looking like given ones (like)",
         }
     }
 

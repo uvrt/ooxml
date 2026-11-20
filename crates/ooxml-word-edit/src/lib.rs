@@ -145,7 +145,7 @@ pub use notes::{DeleteNote, EditNote, InsertNote, MoveNote, NoteEdited, NoteKind
 pub use paragraph_style::{SetParagraphStyle, StyleSet};
 pub use paragraphs::{InsertParagraph, ParagraphInserted};
 pub use policy::{RevisionPolicy, Tracking};
-pub use pool::{Ids, IdsChange, Sequences};
+pub use pool::{EarlierIds, Ids, IdsChange, Sequences};
 pub use ranges::{DeleteText, InsertText, RangesEdited, ReplaceText};
 pub use review::{record_marks, Mark, RemovedBlocks, Review, Reviewed, RowGone, Selection, TableGone, Typed};
 pub use sections::{

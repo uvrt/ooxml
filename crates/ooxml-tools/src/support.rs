@@ -181,6 +181,14 @@ impl Field {
         self
     }
 
+    /// An argument name refused as unknown, the refusal naming this one
+    /// ([`crate::schema::Intent::refused_aliases`]).
+    #[must_use]
+    pub fn refused_alias(mut self, alias: &str) -> Self {
+        self.property.intent.refused_aliases.push(alias.to_owned());
+        self
+    }
+
     /// The argument a list of names given here means (today's `names_as`).
     #[must_use]
     pub fn names_as(mut self, name: &str) -> Self {
