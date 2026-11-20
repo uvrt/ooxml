@@ -197,6 +197,27 @@ fn a_version_given_by_its_touched_parts_is_the_version_given_whole() {
 }
 
 #[test]
+fn a_version_with_the_last_ones_parts_is_the_last_version() {
+    let mut kept = engine();
+    let bytes: Arc<[u8]> = Arc::from(package(&paragraphs(40, None)));
+    let opened = ooxml_opc::Package::open(bytes, &ooxml_base::Limits::default()).unwrap();
+    let first = kept.lay_out(&opened).unwrap().unwrap();
+    let again = kept.lay_out(&opened.clone()).unwrap().unwrap();
+    assert!(Arc::ptr_eq(&first, &again));
+    let stats = kept.stats();
+    assert_eq!((stats.kept, stats.full, stats.relaid), (1, 1, 0), "{stats:?}");
+    let touched: Arc<[u8]> = Arc::from(document_xml(&paragraphs(40, Some(3))).into_bytes());
+    let edited = opened.with_bytes("word/document.xml", touched);
+    let next = kept.lay_out(&edited).unwrap().unwrap();
+    assert!(!Arc::ptr_eq(&first, &next));
+    assert_eq!(kept.stats().kept, 1);
+    // The version before is no longer the last: it is laid out again, not kept.
+    let back = kept.lay_out(&opened).unwrap().unwrap();
+    assert!(!Arc::ptr_eq(&first, &back));
+    assert_eq!(back.facts(), first.facts());
+}
+
+#[test]
 fn a_floating_table_is_laid_out_in_rust() {
     let body = format!(
         r#"<w:tbl><w:tblPr><w:tblpPr w:tblpX="500" w:tblpY="500"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:p/></w:tc></w:tr></w:tbl>{}"#,
