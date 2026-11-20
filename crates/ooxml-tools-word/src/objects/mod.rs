@@ -13,6 +13,7 @@ mod cell_fills;
 mod controls;
 mod drawings;
 mod drawings_args;
+mod drawings_picture;
 mod edit_table;
 mod edit_table_args;
 mod format_table;

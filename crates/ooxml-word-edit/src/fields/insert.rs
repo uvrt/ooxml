@@ -76,7 +76,7 @@ pub(crate) struct Place {
 /// The paragraph and offset `at` names (`_field_place`: a range's end; `start`: its
 /// start, as a cross-reference takes it), refused outside the paragraph's text or inside
 /// a field's result.
-fn place(doc: &WordDoc, docx: &Docx, at: &str, start: bool) -> Result<Place> {
+pub(crate) fn place(doc: &WordDoc, docx: &Docx, at: &str, start: bool) -> Result<Place> {
     let found = range(doc, docx, at)?;
     let span = Span::of(doc, docx, &found)?;
     let id = range_id(&found);

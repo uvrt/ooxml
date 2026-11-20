@@ -8,12 +8,16 @@ name: Rust
 #   off (DOCX_AGENT_RUST=0), the differential test comparing the two among them;
 # - `wheels` (rust-wheels.yml): on a pull request Linux x86_64, on main, nightly and manual
 #   runs Linux x86_64 and aarch64 (production is Linux only).
-# On a pull request these run when the change touches the workspace, ooxml-core, the
+# On a pull request `rust` runs when the change touches the workspace, ooxml-core, the
 # packages the differential tests compare with (tools/ci.py, RUST_PREFIXES and
-# RUST_REFERENCE), .github/ or tools/.
+# RUST_REFERENCE) or the test workflows and tools/ci.py (RUN_ALL_PREFIXES); `differential`
+# and `rust-check` when it touches what the Python module is built from (module_input), those
+# packages or the differential tests (rust_module); `wheels` when it touches the bindings or a
+# manifest or build script of the module's crates (rust_wheels).
 # The architecture's crates add jobs that run on a pull request only when it changes their
-# own paths, .github/, tools/ or the workspace's Cargo files (tools/ci.py, RUST_JOBS), and on
-# every push to main, nightly and manual run (fuzz: nightly and manual only):
+# own paths, the test workflows, tools/ci.py or the workspace's Cargo files (tools/ci.py,
+# RUST_JOBS), and on every push to main, nightly and manual run (fuzz: nightly and manual
+# only):
 # - `loom`: ooxml-store's commit path model-checked (--cfg loom, its own target dir);
 # - `oracles`: tools/rust_oracles.py -- the XML writer and the package save against
 #   ooxml-edit's on every document of the repository;
@@ -21,7 +25,8 @@ name: Rust
 #   documents and on those docx2svg's tools/make_*.py make;
 # - `cargo-deny`: licences, duplicate versions, sources and advisories (deny.toml);
 # - `fuzz`: fuzz/'s nine targets, 4 minutes each.  Not part of `required (rust)`: a find
-#   shows as a failed job with the crashing input uploaded, without blocking a merge.
+#   shows as a failed job with the crashing input uploaded, without blocking a merge.  On a
+#   pull request that changes the targets or their crates, `rust` only builds them.
 # Not in CI: ooxml-oracle's `text-diff` (the text engine against docx2svg's records) needs
 # Word's own fonts, so it stays a local gate (README, Development).
 # `required (rust)` is the gate to require: it passes when every job it covers passed or
@@ -49,6 +54,9 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       rust: ${{ steps.plan.outputs.rust }}
+      module: ${{ steps.plan.outputs.rust_module }}
+      wheels: ${{ steps.plan.outputs.rust_wheels }}
+      fuzz_check: ${{ steps.plan.outputs.rust_fuzz_check }}
       fuzz: ${{ steps.plan.outputs.rust_fuzz }}
       loom: ${{ steps.plan.outputs.rust_loom }}
       oracles: ${{ steps.plan.outputs.rust_oracles }}
@@ -78,11 +86,17 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: cargo test
         run: cargo test --workspace
+      # The fuzz job runs nightly; a pull request that changes its targets or their crates
+      # checks here that they still build (without the coverage instrumentation).
+      - name: The fuzz targets build
+        if: needs.plan.outputs.fuzz_check == 'true'
+        working-directory: fuzz
+        run: cargo check --locked
 
   differential:
     name: ooxml-core (differential)
     needs: plan
-    if: needs.plan.outputs.rust == 'true'
+    if: needs.plan.outputs.module == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -153,7 +167,7 @@ jobs:
   rust-check:
     name: docx-agent check (Rust path on and off)
     needs: plan
-    if: needs.plan.outputs.rust == 'true'
+    if: needs.plan.outputs.module == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -239,7 +253,7 @@ jobs:
   wheels:
     name: wheels
     needs: plan
-    if: needs.plan.outputs.rust == 'true'
+    if: needs.plan.outputs.wheels == 'true'
     uses: ./.github/workflows/rust-wheels.yml
     with:
       full: ${{ github.event_name != 'pull_request' }}
@@ -369,7 +383,7 @@ jobs:
   # Not required (the workflow's header).  Built as P0a ran it: stable rustc with
   # cargo-fuzz's coverage instrumentation (no sanitizer), for the runner's target so build
   # scripts and macros are left uninstrumented; seeded with the repository's documents and
-  # their XML parts (tools/ci.py fuzz-seeds).
+  # their XML parts (tools/fuzz_seeds.py).
   fuzz:
     name: fuzz (4 minutes per target)
     needs: plan
@@ -392,7 +406,7 @@ jobs:
             -Cllvm-args=-sanitizer-coverage-trace-compares -Cdebug-assertions -Coverflow-checks
         run: cargo build --locked --release --target x86_64-unknown-linux-gnu
       - name: Seed corpora
-        run: python3 tools/ci.py fuzz-seeds "$RUNNER_TEMP/seeds"
+        run: python3 tools/fuzz_seeds.py "$RUNNER_TEMP/seeds"
       # Each target writes the inputs it finds to its own corpus and reads the seeds; every
       # target runs even when one finds a crash.
       - name: Fuzz

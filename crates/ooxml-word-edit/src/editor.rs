@@ -10,6 +10,7 @@
 
 use crate::doc::WordDoc;
 use crate::ids_delta::{ids_delta, IdsDelta};
+use crate::pool::EarlierIds;
 use crate::touched::{touched, Touched};
 use crate::validate::{problems, Delta, Problem};
 use crate::{EditError, Result};
@@ -74,7 +75,22 @@ impl Editor {
         clock: Arc<dyn Clock>,
         budget: Arc<dyn CacheBudget>,
     ) -> Result<Editor> {
-        let doc = WordDoc::open(package, budget)?;
+        Editor::open_with(package, config, clock, budget, &EarlierIds::default())
+    }
+
+    /// The document whose first version is `package`, opened again with the ids it had
+    /// before it was saved ([`EarlierIds`]).
+    ///
+    /// # Errors
+    /// As [`Editor::open`].
+    pub fn open_with(
+        package: Package,
+        config: StoreConfig,
+        clock: Arc<dyn Clock>,
+        budget: Arc<dyn CacheBudget>,
+        earlier: &EarlierIds,
+    ) -> Result<Editor> {
+        let doc = WordDoc::open_with(package, budget, earlier)?;
         let baseline = problems(&doc)?;
         Ok(Editor {
             store: Store::new(doc, config, Arc::clone(&clock)),

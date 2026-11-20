@@ -8,14 +8,17 @@ differences live here and nowhere else:
         Which packages to test, as GitHub Actions matrices (written to $GITHUB_OUTPUT when it
         is set, printed otherwise), and whether rust.yml's jobs run (`rust`, and `rust_<job>`
         for its path-filtered jobs, RUST_JOBS).  On a pull request only the packages a change touches, and
-        every package that depends on one of them (USES below); a change to the workflows or
-        to tools/ runs everything.  A push to main, the nightly run and a manual run take all.
+        every package that depends on one of them (``uses``, or ``pr_uses``, below); a change
+        to a package's notes (NOTES) builds it without running its suite; a change to the test
+        workflows or to this script (RUN_ALL_PREFIXES) runs everything.  A push to main, the
+        nightly run and a manual run take all.
         Which Pythons each OS runs depends on the event (LEGS below): production runs
         CPython 3.15 (moving to 3.15t), development runs on macOS and macOS runners are
         scarce, so a pull request and a push to main run Linux and Windows on the newest
         Python and no macOS; the nightly and a manual run add every older Python on Linux
         and the newest on macOS.
-        The free-threaded legs (`ft`, freethreading.yml) run on Linux only, every event.
+        The free-threaded legs (`ft`, freethreading.yml) run on Linux only: main, nightly and
+        manual runs, and a pull request that changes freethreading.yml.
     python tools/ci.py affected FILE...
         The packages those changed files select, one per line (for a quick look by hand).
     python tools/ci.py install PACKAGE [--free-threading]
@@ -36,13 +39,6 @@ differences live here and nowhere else:
     python tools/ci.py build-check PACKAGE
         The build job's checks: the version agrees with CHANGELOG.md, ruff, mypy where the
         package type checks.
-    python tools/ci.py fuzz-seeds DIR
-        rust.yml's fuzz job's seed corpora from this checkout's documents (FUZZ_SEED_SUFFIXES
-        under python/): DIR/package (each package, for zip_read and opc_open) and DIR/xml
-        (each XML part, for xml_roundtrip, chart_layout, drawing_render and vml_paint),
-        DIR/metafile (the metafiles in ooxml-oracle's recorded case bundle, for metafile_draw)
-        and DIR/font (the .ttf and .otf faces under python/, for glyph_ink), every distinct
-        file once, none over 1 MiB.
 
 Standard library only, Python 3.10+.
 """
@@ -61,11 +57,18 @@ PY = ROOT / "python"
 
 PYTHONS = ["3.10", "3.11", "3.12", "3.13", "3.14", "3.15"]
 
+#: What a changed path changes besides the packages: the Rust core's Python module (MODULE)
+#: and, within it, its bindings (BINDINGS).  ``uses`` names them as it names siblings.
+MODULE = "ooxml-core"
+BINDINGS = "ooxml-core bindings"
+
 #: Each package: the monorepo packages its test run uses (itself included; a package's
 #: tests run when any of them changes), its siblings to install (pip requirement paths,
 #: relative to python/), its own extras, the oldest Python it supports, and how its suite
 #: runs.  ``uses`` is the transitive closure of what is installed, so it is the dependency
-#: graph the path filter follows.
+#: graph the path filter follows.  ``pr_uses``, where given, replaces it on a pull request: the
+#: package's own dependencies without the siblings only its tests install (a push to main
+#: still runs the suite against every one of them).
 PACKAGES: dict[str, dict] = {
     "ooxml-common": {
         # ooxml-edit is test only (tests/test_dates.py, test_numfmt.py read it); the font
@@ -169,6 +172,9 @@ PACKAGES: dict[str, dict] = {
     "xlsx-agent": {
         "uses": ["ooxml-common", "ooxml-edit", "pptx2svg", "pptx-agent", "docx2svg", "ooxml-core", "docx-agent",
                  "xlsx-agent"],
+        # On a pull request: its dependencies and the Python bindings of ooxml-core, not the
+        # Rust core's other crates nor the test-only siblings (main runs those).
+        "pr_uses": ["ooxml-common", "ooxml-edit", BINDINGS, "xlsx-agent"],
         # Test only: pptx2svg and pptx-agent (a deck filled from a workbook's table),
         # docx2svg and docx-agent (a workbook's rich-text cell in a Word document), and
         # docx-agent's ooxml-core.
@@ -192,23 +198,95 @@ PACKAGES: dict[str, dict] = {
 
 IMPORT_NAMES = {name: name.replace("-", "_") for name in PACKAGES}
 
-#: A change under one of these runs every package's tests.
-RUN_ALL_PREFIXES = (".github/", "tools/")
+#: A change to one of these runs every job of the test workflows: those workflows and this
+#: script.  The other files under .github/ and tools/ (gates, release, relayout-full, the
+#: release tools) run none of them: ci.yml's plan job runs tools/'s unit tests on every pull
+#: request, and relayout-full.yml filters its own paths.
+RUN_ALL_PREFIXES = tuple(f".github/workflows/{name}.yml" for name in
+                         ("ci", "python-tests", "freethreading", "rust", "rust-wheels")) + (
+                     ".github/actions/", "tools/ci.py", "tools/ci_durations.json")
 
-#: The Rust workspace and its Python module: a change here runs rust.yml.  So does a change
-#: to the packages the differential tests compare with or build their documents through
-#: (python/ooxml-core/tests: docx2svg is the reference, docx-agent makes the documents).
-#: RUST_MODULE_PREFIXES are what the Python module ooxml-core is built from, so a change there
-#: also runs the suites of the packages that install it (affected); the lints, the dependency
-#: policy, the fuzz targets and xtask's code generation run rust.yml only.
-RUST_MODULE_PREFIXES = ("crates/", "Cargo.toml", "Cargo.lock", ".cargo/", "python/ooxml-core/")
-RUST_PREFIXES = RUST_MODULE_PREFIXES + ("rustfmt.toml", "clippy.toml", "deny.toml", "DEPENDENCIES.md", "fuzz/",
-                                        "xtask/")
-RUST_REFERENCE = ("ooxml-common", "ooxml-edit", "docx2svg", "docx-agent")
+#: A package's notes, which no test reads: a change to them selects the package's build job
+#: (build-check compares CHANGELOG.md with the version), not its suite nor rust.yml's jobs.
+NOTES = ("CHANGELOG.md", "ROADMAP.md", "CONTRIBUTING.md")
 
 #: The workspace's own files: a change to one rebuilds every crate (and fuzz/, whose crates
-#: inherit the workspace's dependencies), so it runs every job of RUST_JOBS.
+#: inherit the workspace's dependencies).
 RUST_WORKSPACE = ("Cargo.toml", "Cargo.lock", ".cargo/")
+
+#: What the Python module ooxml-core is built from: the workspace's files, python/ooxml-core
+#: (its tests aside) and the source of crates/python and every crate it depends on, which is
+#: every crate but NOT_MODULE_CRATES (tools/test_ci.py checks those against Cargo.toml).  A new
+#: crate counts as part of the module until it is listed here.  A crate's tests, benches and
+#: examples are not built into it.  BINDING_PREFIXES: the module's Python bindings.
+NOT_MODULE_CRATES = ("ooxml-oracle",)
+CRATE_TEST_FOLDERS = ("tests", "benches", "examples")
+BINDING_PREFIXES = ("python/ooxml-core/", "crates/python/", "crates/ooxml-python-session/")
+
+#: rust.yml's `rust` job (fmt, clippy, cargo test) runs on a change to the workspace or to the
+#: packages whose files the crates' tests read or the differential tests compare with
+#: (RUST_REFERENCE).  The lints, the dependency policy, the fuzz targets and xtask's code
+#: generation run rust.yml only.
+RUST_PREFIXES = RUST_WORKSPACE + ("crates/", "python/ooxml-core/", "rustfmt.toml", "clippy.toml", "deny.toml",
+                                  "DEPENDENCIES.md", "fuzz/", "xtask/")
+RUST_REFERENCE = ("ooxml-common", "ooxml-edit", "docx2svg", "docx-agent")
+
+
+def _is_notes(path: str) -> bool:
+    parts = path.split("/")
+    return len(parts) == 3 and parts[0] == "python" and parts[2] in NOTES
+
+
+def module_input(path: str) -> bool:
+    """Whether ``path`` is something the Python module ooxml-core is built from."""
+    if path.startswith(RUST_WORKSPACE):
+        return True
+    parts = path.split("/")
+    if path.startswith("python/ooxml-core/"):
+        return parts[2] != "tests" and parts[2] not in NOTES
+    return (len(parts) > 2 and parts[0] == "crates" and parts[1] not in NOT_MODULE_CRATES
+            and parts[2] not in CRATE_TEST_FOLDERS and not path.endswith(".md"))
+
+
+def _units(path: str) -> set[str]:
+    """The packages and units (MODULE, BINDINGS) a change to ``path`` changes."""
+    units: set[str] = set()
+    if module_input(path):
+        units.add(MODULE)
+        if path.startswith(BINDING_PREFIXES + RUST_WORKSPACE):
+            units.add(BINDINGS)
+    parts = path.split("/")
+    if len(parts) > 2 and parts[0] == "python" and parts[1] in PACKAGES and not _is_notes(path):
+        units.add(parts[1])
+    return units
+
+
+def rust_affected(changed: list[str]) -> bool:
+    for path in changed:
+        if path.startswith(RUN_ALL_PREFIXES + RUST_PREFIXES):
+            return True
+        if _units(path) & set(RUST_REFERENCE):
+            return True
+    return False
+
+
+def rust_module_affected(changed: list[str]) -> bool:
+    """rust.yml's `differential` and `rust-check`: the module, the packages they compare with
+    or make their documents with (RUST_REFERENCE), or their own tests changed."""
+    return any(path.startswith(RUN_ALL_PREFIXES + ("python/ooxml-core/tests/",))
+               or _units(path) & {MODULE, *RUST_REFERENCE} for path in changed)
+
+
+def wheels_affected(changed: list[str]) -> bool:
+    """rust-wheels.yml: the bindings (the stable ABI, the free-threaded build), the workspace's
+    and the module's crates' manifests and build scripts (a native dependency, manylinux);
+    the crates' other code is built by `rust`, `differential` and `rust-check` already."""
+    return any(path.startswith(RUN_ALL_PREFIXES) or BINDINGS in _units(path)
+               or (module_input(path) and path.endswith(("/Cargo.toml", "/build.rs"))) for path in changed)
+
+
+def _crates(names: tuple[str, ...]) -> tuple[str, ...]:
+    return tuple(f"crates/{name}/" for name in names)
 
 #: The architecture's crates a job of RUST_JOBS builds: the crate it runs and every
 #: workspace crate that one depends on (tools/test_ci.py checks them against Cargo.toml).
@@ -222,50 +300,38 @@ WORD_MODEL_CRATES = ("ooxml-oracle", "ooxml-base", "ooxml-xml", "ooxml-zip", "oo
                       "ooxml-word-edit", "ooxml-markdown")
 
 
-def _crates(names: tuple[str, ...]) -> tuple[str, ...]:
-    return tuple(f"crates/{name}/" for name in names)
-
-
 #: rust.yml's jobs that run on a pull request only when it changes their own paths (or
-#: RUN_ALL_PREFIXES or RUST_WORKSPACE), and the other events that run them.  rust.yml's
-#: other jobs (fmt, clippy, tests, differential, wheels) follow `rust` above.
-#: - fuzz: fuzz/'s targets, 5 minutes each; nightly and manual runs, not a push to main.
+#: RUN_ALL_PREFIXES or RUST_WORKSPACE), and the events that run them.  rust.yml's other jobs
+#: (fmt, clippy, tests, differential, wheels) follow `rust`, `rust_module` and `rust_wheels`.
+#: - fuzz: fuzz/'s targets, 4 minutes each; nightly and manual runs only.  On a pull request
+#:   that changes its paths the `rust` job checks that the targets still build (fuzz_check).
 #: - loom: ooxml-store's commit path, model-checked.
 #: - oracles: tools/rust_oracles.py -- the XML writer and the package save against ooxml-edit.
 #: - word_model: the Word model against docx2svg's layout input
 #:   (crates/ooxml-oracle/python/word_model_diff.py); xtask generates its typed views.
 #: - deny: cargo-deny (deny.toml) when a Cargo file or the dependency policy changes.
 FULL_EVENTS = ("push", "schedule", "workflow_dispatch")
+PR_EVENTS = ("pull_request", *FULL_EVENTS)
 RUST_JOBS: dict[str, dict] = {
     "fuzz": {"paths": ("fuzz/", *_crates(FUZZ_CRATES)), "events": ("schedule", "workflow_dispatch")},
-    "loom": {"paths": _crates(LOOM_CRATES), "events": FULL_EVENTS},
-    "oracles": {"paths": ("python/ooxml-edit/", "python/ooxml-common/", *_crates(FUZZ_CRATES)),
-                "events": FULL_EVENTS},
+    "loom": {"paths": _crates(LOOM_CRATES), "events": PR_EVENTS},
+    "oracles": {"paths": ("python/ooxml-edit/", "python/ooxml-common/", "tools/rust_oracles.py",
+                          *_crates(FUZZ_CRATES)),
+                "events": PR_EVENTS},
     "word_model": {"paths": ("xtask/", "python/docx2svg/", "python/ooxml-common/", "python/pptx2svg/", *_crates(WORD_MODEL_CRATES)),
-                   "events": FULL_EVENTS},
+                   "events": PR_EVENTS},
     "deny": {"paths": ("deny.toml", "DEPENDENCIES.md"), "suffixes": ("Cargo.toml", "Cargo.lock"),
-             "events": FULL_EVENTS},
+             "events": PR_EVENTS},
 }
 
 
-def rust_affected(changed: list[str]) -> bool:
-    for path in changed:
-        if path.startswith(RUN_ALL_PREFIXES + RUST_PREFIXES):
-            return True
-        parts = path.split("/")
-        if len(parts) > 2 and parts[0] == "python" and parts[1] in RUST_REFERENCE:
-            return True
-    return False
-
-
-def rust_job_runs(job: str, event: str, changed: list[str] | None) -> bool:
-    """Whether rust.yml's ``job`` (RUST_JOBS) runs on ``event``, a pull request changing ``changed``."""
+def _job_paths_changed(job: str, changed: list[str] | None) -> bool:
     spec = RUST_JOBS[job]
-    if event != "pull_request":
-        return event in spec["events"]
     if changed is None:
         return True
     for path in changed:
+        if _is_notes(path):
+            continue
         if path.startswith(RUN_ALL_PREFIXES + RUST_WORKSPACE + spec["paths"]):
             return True
         if path.endswith(spec.get("suffixes", ())):
@@ -273,18 +339,28 @@ def rust_job_runs(job: str, event: str, changed: list[str] | None) -> bool:
     return False
 
 
+def rust_job_runs(job: str, event: str, changed: list[str] | None) -> bool:
+    """Whether rust.yml's ``job`` (RUST_JOBS) runs on ``event``, a pull request changing ``changed``."""
+    if event not in RUST_JOBS[job]["events"]:
+        return False
+    return event != "pull_request" or _job_paths_changed(job, changed)
+
+
 def affected(changed: list[str]) -> list[str]:
-    """The packages whose tests a change to ``changed`` (paths from the root) selects."""
-    touched: set[str] = set()
-    for path in changed:
-        if path.startswith(RUN_ALL_PREFIXES):
-            return list(PACKAGES)
-        if path.startswith(RUST_MODULE_PREFIXES):
-            touched.add("ooxml-core")       # the Rust core: the packages that install it
-        parts = path.split("/")
-        if len(parts) > 2 and parts[0] == "python" and parts[1] in PACKAGES:
-            touched.add(parts[1])
-    return [name for name, spec in PACKAGES.items() if touched & set(spec["uses"])]
+    """The packages whose tests a pull request changing ``changed`` (paths from the root)
+    selects: those whose ``pr_uses`` (or ``uses``) a changed path changes."""
+    if any(path.startswith(RUN_ALL_PREFIXES) for path in changed):
+        return list(PACKAGES)
+    touched = set().union(*map(_units, changed)) if changed else set()
+    return [name for name, spec in PACKAGES.items() if touched & set(spec.get("pr_uses", spec["uses"]))]
+
+
+def built(changed: list[str]) -> list[str]:
+    """The packages whose build job a pull request runs: the tested ones, and those whose
+    notes alone changed (build-check reads CHANGELOG.md)."""
+    names = set(affected(changed))
+    names |= {path.split("/")[1] for path in changed if _is_notes(path) and path.split("/")[1] in PACKAGES}
+    return [name for name in PACKAGES if name in names]
 
 
 def _pythons(name: str) -> list[str]:
@@ -337,8 +413,9 @@ def _sharded(leg: dict[str, str | bool | int]) -> list[dict[str, str | bool | in
 
 
 def plan(event: str, changed: list[str] | None) -> dict[str, str]:
-    full = event != "pull_request"
-    names = list(PACKAGES) if full or changed is None else affected(changed)
+    every = event != "pull_request" or changed is None     # every package and every job
+    names = list(PACKAGES) if every else affected(changed)
+    builds = list(PACKAGES) if every else built(changed)
     legs = LEGS.get(event, FULL_LEGS)
     matrices: dict[str, list[dict[str, str | bool | int]]] = {os_: [] for os_ in RUNNERS}
     for name in names:
@@ -358,17 +435,24 @@ def plan(event: str, changed: list[str] | None) -> dict[str, str]:
     out = {
         "packages": names,
         "any": bool(names),
-        "rust": full or changed is None or rust_affected(changed),
+        "rust": every or rust_affected(changed),
+        # rust.yml's differential and rust-check; its wheels.
+        "rust_module": every or rust_module_affected(changed),
+        "rust_wheels": every or wheels_affected(changed),
         # rust.yml's path-filtered jobs (RUST_JOBS): rust_fuzz, rust_loom, ...
         **{f"rust_{job}": rust_job_runs(job, event, changed) for job in RUST_JOBS},
+        # A pull request that changes the fuzz targets' paths: the `rust` job builds them.
+        "rust_fuzz_check": event == "pull_request" and _job_paths_changed("fuzz", changed),
         **{os_: {"include": legs_} for os_, legs_ in matrices.items()},
-        # The free-threaded legs (freethreading.yml): Linux only, on every event.
+        # The free-threaded legs (freethreading.yml): Linux only; a pull request runs them
+        # only when it changes that workflow (its `paths`).
         "ft": {"include": [shard for leg in ft for shard in _sharded(leg)]},
         # Whether ci.yml's Windows and macOS calls run at all: an empty matrix is an error
         # in Actions.
         "any_windows": bool(matrices["windows"]),
         "any_macos": bool(matrices["macos"]),
-        "build": {"include": [{"package": n} for n in names]},
+        "any_build": bool(builds),
+        "build": {"include": [{"package": n} for n in builds]},
     }
     return {k: json.dumps(v) if not isinstance(v, bool) else str(v).lower() for k, v in out.items()}
 
@@ -572,83 +656,6 @@ def build_check(name: str) -> None:
         subprocess.run(["mypy"], cwd=cwd, check=True)
 
 
-#: The documents fuzz-seeds takes, and the parts of them it takes for the XML target (as
-#: tools/rust_oracles.py does), up to libFuzzer's -max_len in rust.yml.
-FUZZ_SEED_SUFFIXES = (".docx", ".docm", ".dotx", ".dotm", ".pptx", ".pptm", ".potx", ".xlsx", ".xlsm", ".xltx")
-FUZZ_XML_SUFFIXES = (".xml", ".rels", ".vml")
-FUZZ_FONT_SUFFIXES = (".ttf", ".otf")
-FUZZ_MAX_LEN = 1 << 20
-METAFILE_CASES = ROOT / "crates" / "ooxml-oracle" / "tests" / "data" / "metafile-cases.gz"
-
-
-def fuzz_seeds(out: Path) -> dict[str, int]:
-    import hashlib
-    import zipfile
-
-    counts = {"package": 0, "xml": 0, "metafile": 0, "font": 0, "markdown": 0}
-    seen: set[str] = set()
-
-    def keep(kind: str, data: bytes) -> None:
-        digest = hashlib.sha256(data).hexdigest()
-        if len(data) <= FUZZ_MAX_LEN and digest not in seen:
-            seen.add(digest)
-            (out / kind / digest[:20]).write_bytes(data)
-            counts[kind] += 1
-
-    for kind in counts:
-        (out / kind).mkdir(parents=True, exist_ok=True)
-    for path in sorted(PY.rglob("*")):
-        if not path.is_file() or ".venv" in path.parts:
-            continue
-        if path.suffix.lower() in FUZZ_FONT_SUFFIXES:
-            keep("font", path.read_bytes())  # the faces the repository ships, for glyph_ink
-            continue
-        if path.suffix.lower() == ".md":
-            keep("markdown", path.read_bytes())  # the documentation's Markdown, for markdown_parse
-            continue
-        if path.suffix.lower() not in FUZZ_SEED_SUFFIXES:
-            continue
-        data = path.read_bytes()
-        keep("package", data)
-        try:
-            with zipfile.ZipFile(path) as archive:
-                for info in archive.infolist():
-                    if info.filename.lower().endswith(FUZZ_XML_SUFFIXES) and info.file_size <= FUZZ_MAX_LEN:
-                        keep("xml", archive.read(info))
-        except (zipfile.BadZipFile, OSError, RuntimeError, NotImplementedError):
-            continue  # a deliberately damaged document: a package seed only
-    for data in metafile_cases():
-        keep("metafile", data)
-    return counts
-
-
-def metafile_cases(path: Path = METAFILE_CASES) -> list[bytes]:
-    """The metafiles in ooxml-oracle's recorded case bundle (the repository has no .emf or
-    .wmf files; its tests build them): a gzip stream of length-prefixed cases, each a list
-    of length-prefixed fields, field 0 the kind and field 1 a metafile's bytes."""
-    import gzip
-
-    def fields(data: bytes) -> list[bytes]:
-        out, at = [], 0
-        while at + 4 <= len(data):
-            n = int.from_bytes(data[at:at + 4], "little")
-            out.append(data[at + 4:at + 4 + n])
-            at += 4 + n
-        return out
-
-    if not path.is_file():
-        return []
-    blob = gzip.decompress(path.read_bytes())
-    found, at = [], 0
-    while at + 4 <= len(blob):
-        n = int.from_bytes(blob[at:at + 4], "little")
-        case = fields(blob[at + 4:at + 4 + n])
-        if len(case) > 1 and case[0] == b"metafile":
-            found.append(case[1])
-        at += 4 + n
-    return found
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="command", required=True)
@@ -657,8 +664,6 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--changed", action="append", help="a changed path (repeat); default: git diff HEAD^1 HEAD")
     a = sub.add_parser("affected")
     a.add_argument("files", nargs="+")
-    f = sub.add_parser("fuzz-seeds")
-    f.add_argument("out", type=Path)
     sh = sub.add_parser("shard")
     sh.add_argument("package", choices=list(PACKAGES))
     sh.add_argument("shard", type=_shard_arg, help="K/N")
@@ -698,9 +703,6 @@ def main(argv: list[str] | None = None) -> int:
                     fh.write(f"{k}={v}\n")
         for k, v in result.items():
             print(f"{k}={v}")
-        return 0
-    if args.command == "fuzz-seeds":
-        print(json.dumps(fuzz_seeds(args.out)))
         return 0
     if args.command == "install":
         install(args.package, args.free_threading)
