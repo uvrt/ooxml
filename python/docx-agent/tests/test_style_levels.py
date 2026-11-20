@@ -17,9 +17,7 @@ title" is in no list.  Each style states an indent of its own.
 from __future__ import annotations
 
 import datetime as dt
-import io
 import re
-import zipfile
 
 import pytest
 
@@ -27,87 +25,9 @@ from docx_agent import Document, EditError
 from docx_agent.edit.numbering import problems
 from docx_agent.layout_facts import numbering_skips_level
 from docx_agent.validate import check
+from facts_documents import SECTIONS_ONLY, make
 
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
-NS = ('xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
-      'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"')
-_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/"
-_CT = "application/vnd.openxmlformats-officedocument.wordprocessingml."
-
-
-def _numpr(level: int | None) -> str:
-    return "<w:numPr>" + (f'<w:ilvl w:val="{level}"/>' if level else "") + '<w:numId w:val="1"/></w:numPr>'
-
-
-def _style(style_id: str, name: str, ppr: str) -> str:
-    return (f'<w:style w:type="paragraph" w:customStyle="1" w:styleId="{style_id}"><w:name w:val="{name}"/>'
-            f'<w:basedOn w:val="Normal"/><w:qFormat/><w:pPr>{ppr}</w:pPr></w:style>')
-
-
-def _lvl(level: int, text: str, indent: int, style: str | None) -> str:
-    return (f'<w:lvl w:ilvl="{level}"><w:start w:val="1"/><w:numFmt w:val="decimal"/>'
-            + (f'<w:pStyle w:val="{style}"/>' if style else "")
-            + f'<w:lvlText w:val="{text}"/><w:lvlJc w:val="left"/>'
-            f'<w:pPr><w:ind w:left="{indent}" w:hanging="{indent}"/></w:pPr></w:lvl>')
-
-
-def _paragraph(text: str, style: str | None = None) -> str:
-    return ("<w:p>" + (f'<w:pPr><w:pStyle w:val="{style}"/></w:pPr>' if style else "")
-            + f'<w:r><w:t xml:space="preserve">{text}</w:t></w:r></w:p>')
-
-
-#: The body: chapters and sections, an aside, body text.
-FULL = [("One", "ChapterTitle"), ("One first", "SectionTitle"), ("One second", "SectionTitle"),
-        ("Two", "ChapterTitle"), ("Two first", "SectionTitle"), ("Aside", "AsideTitle"), ("Body text", None)]
-#: Sections and no chapter.
-SECTIONS_ONLY = [("Lone first", "SectionTitle"), ("Lone second", "SectionTitle"), ("Body text", None)]
-
-
-def make(body=FULL) -> bytes:
-    styles = (f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles {NS}>'
-              '<w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val="20"/></w:rPr></w:rPrDefault></w:docDefaults>'
-              '<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style>'
-              '<w:style w:type="character" w:customStyle="1" w:styleId="Marked"><w:name w:val="Marked"/></w:style>'
-              + _style("ChapterTitle", "Chapter title", _numpr(None) + '<w:ind w:left="300" w:hanging="300"/>')
-              + _style("SectionTitle", "Section title", _numpr(1) + '<w:ind w:left="900" w:hanging="300"/>')
-              + _style("AsideTitle", "Aside title", '<w:ind w:left="1100" w:hanging="200"/>')
-              + "</w:styles>")
-    numbering = (f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:numbering {NS}>'
-                 '<w:abstractNum w:abstractNumId="0"><w:nsid w:val="5D1E2F30"/>'
-                 '<w:multiLevelType w:val="multilevel"/>'
-                 + _lvl(0, "%1", 432, "ChapterTitle") + _lvl(1, "%1.%2", 576, "SectionTitle")
-                 + _lvl(2, "%1.%2.%3", 720, None)
-                 + '</w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num></w:numbering>')
-    document = (f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document {NS}><w:body>'
-                + "".join(_paragraph(text, style) for text, style in body)
-                + '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1418" w:right="1418" '
-                'w:bottom="1418" w:left="1418" w:header="709" w:footer="709" w:gutter="0"/></w:sectPr>'
-                "</w:body></w:document>")
-    out = io.BytesIO()
-    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as archive:
-        archive.writestr("[Content_Types].xml", (
-            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-            '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
-            '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
-            '<Default Extension="xml" ContentType="application/xml"/>'
-            f'<Override PartName="/word/document.xml" ContentType="{_CT}document.main+xml"/>'
-            f'<Override PartName="/word/styles.xml" ContentType="{_CT}styles+xml"/>'
-            f'<Override PartName="/word/numbering.xml" ContentType="{_CT}numbering+xml"/></Types>'))
-        archive.writestr("_rels/.rels", (
-            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
-            f'<Relationship Id="rId1" Type="{_REL}officeDocument" Target="word/document.xml"/></Relationships>'))
-        archive.writestr("word/_rels/document.xml.rels", (
-            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
-            f'<Relationship Id="rId1" Type="{_REL}styles" Target="styles.xml"/>'
-            f'<Relationship Id="rId2" Type="{_REL}numbering" Target="numbering.xml"/></Relationships>'))
-        archive.writestr("word/document.xml", document)
-        archive.writestr("word/styles.xml", styles)
-        archive.writestr("word/numbering.xml", numbering)
-    return out.getvalue()
-
-
 def style_ppr(document: Document, style_id: str):
     root = document.package.tree(document.package.styles_part())
     node = next(s for s in root.iter(W + "style") if s.get(W + "styleId") == style_id)

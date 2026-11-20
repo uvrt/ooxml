@@ -61,6 +61,10 @@ pub struct CallContext {
     /// The session's blobs as the host keeps them (an inserted picture's bytes); `None`: a
     /// call that reads one is left to the host.
     pub blobs: Option<Arc<dyn ooxml_tools_word::Blobs>>,
+    /// The values the host wrote into the call's arguments for references (`{{d:...}}`,
+    /// resolved against its datasets), which an editing call keeps on the paragraphs they
+    /// went into; empty: none.
+    pub written: Vec<ooxml_tools_word::Written>,
 }
 
 impl std::fmt::Debug for CallContext {

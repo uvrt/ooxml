@@ -7,7 +7,8 @@ name: Rust
 # - `rust-check`: docx-agent's check-related tests with its Rust path on (the default) and
 #   off (DOCX_AGENT_RUST=0), the differential test comparing the two among them;
 # - `wheels` (rust-wheels.yml): on a pull request Linux x86_64, on main, nightly and manual
-#   runs Linux x86_64 and aarch64 (production is Linux only).
+#   runs Linux x86_64 and aarch64 (production is Linux only); a push to main builds them only
+#   when its changes would on a pull request (rust_wheels below; release.yml always does).
 # On a pull request `rust` runs when the change touches the workspace, ooxml-core, the
 # packages the differential tests compare with (tools/ci.py, RUST_PREFIXES and
 # RUST_REFERENCE) or the test workflows and tools/ci.py (RUN_ALL_PREFIXES); `differential`

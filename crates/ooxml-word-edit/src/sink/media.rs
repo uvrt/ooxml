@@ -1,6 +1,6 @@
 //! Owns: a picture's bytes put in the package as docx-agent's `_media` puts them
 //! ([`EditSink::media`]): a part under `word/media` that holds the same bytes already
-//! reused, else a new `imageN.<ext>` (the lowest number free) with its content type
+//! reused (ooxml-edit's `find_part_with_bytes`, shared with the copy's parts), else a new `imageN.<ext>` (the lowest number free) with its content type
 //! declared; a relationship to it from the story part (an existing one of the image type
 //! reused).
 //!
@@ -30,16 +30,12 @@ impl EditSink<'_, '_> {
         (extension, content_type): (&str, &str),
     ) -> Result<String> {
         let package = self.doc().package().clone();
-        let names = package.part_names();
-        let same = names
-            .iter()
-            .filter(|n| n.starts_with(MEDIA))
-            .find(|name| package.read(name).ok().flatten().is_some_and(|held| *held == **bytes));
+        let same = crate::new_part::part_with_bytes(&package, bytes, "word/media")?;
         let target = match same {
             Some(name) => {
                 // the part reused must still hold those bytes where the edit commits
                 self.read(Key::Part(Arc::from(name.as_str())));
-                name.clone()
+                name
             }
             None => {
                 let name = (1u32..)

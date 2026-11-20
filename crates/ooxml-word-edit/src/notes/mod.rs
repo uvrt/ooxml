@@ -64,7 +64,7 @@ impl NoteKind {
         }
     }
 
-    fn prefix(self) -> &'static str {
+    pub(crate) fn prefix(self) -> &'static str {
         match self {
             NoteKind::Footnote => "fn",
             NoteKind::Endnote => "en",
@@ -87,7 +87,7 @@ impl NoteKind {
         }
     }
 
-    fn rel(self) -> String {
+    pub(crate) fn rel(self) -> String {
         format!(
             "http://schemas.openxmlformats.org/officeDocument/2006/relationships/{}s",
             self.name()
@@ -112,7 +112,7 @@ fn notes_part(doc: &WordDoc, kind: NoteKind) -> Result<Option<String>> {
 
 /// The notes part of `kind`, made (with the other kind's when it lacks one too) when the
 /// document has none (docx-agent's `_notes_part(create=True)`).
-fn ensure_notes_part(sink: &mut EditSink<'_, '_>, kind: NoteKind) -> Result<String> {
+pub(crate) fn ensure_notes_part(sink: &mut EditSink<'_, '_>, kind: NoteKind) -> Result<String> {
     if let Some(part) = notes_part(sink.doc(), kind)? {
         return Ok(part);
     }
@@ -374,7 +374,7 @@ fn remove_reference(work: &mut Work, reference: Id) {
 }
 
 /// The largest note number in a notes part, plus one (at least one).
-fn next_number(root: &Element, kind: NoteKind) -> i64 {
+pub(crate) fn next_number(root: &Element, kind: NoteKind) -> i64 {
     root.child_elements()
         .filter(|n| n.name().is(Some(W), kind.name()))
         .filter_map(|n| n.attribute(Some(W), "id"))

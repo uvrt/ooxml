@@ -593,6 +593,7 @@ impl Session {
             made: &state.made,
             layout: context.layout.as_deref(),
             blobs: context.blobs.as_deref(),
+            written: &context.written,
             others: &state.others,
         };
         tool.run(arguments, &call)
