@@ -7,7 +7,7 @@
 //! Must not: read a package (it is given the parts' roots), stamp, or know a tool's reply.
 //! Each pool keeps the sequences it has drawn from (a document's cache, never a global one).
 
-use crate::ids::sha256::sha256;
+use crate::ids::sha256::Sha256;
 use crate::ids::{hex_value, W, W14, WP, WP14};
 use ooxml_xml::{Element, Node};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -20,8 +20,26 @@ pub const REACH: usize = 4096;
 /// `"{seed}\0{counter}"`, big-endian, top bit cleared.
 #[must_use]
 pub fn sequence_value(seed: &str, counter: usize) -> u32 {
-    let digest = sha256(format!("{seed}\0{counter}").as_bytes());
-    let [a, b, c, d, ..] = digest;
+    // the message written without allocating: a value is drawn tens of thousands of times
+    // on a document's first draw
+    let mut digits = [0_u8; 20];
+    let mut at = digits.len();
+    let mut rest = counter;
+    loop {
+        at -= 1;
+        if let Some(d) = digits.get_mut(at) {
+            *d = b'0' + u8::try_from(rest % 10).unwrap_or(0);
+        }
+        rest /= 10;
+        if rest == 0 {
+            break;
+        }
+    }
+    let mut hash = Sha256::new();
+    hash.update(seed.as_bytes());
+    hash.update(&[0]);
+    hash.update(digits.get(at..).unwrap_or_default());
+    let [a, b, c, d, ..] = hash.finish();
     u32::from_be_bytes([a, b, c, d]) & 0x7FFF_FFFF
 }
 

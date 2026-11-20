@@ -25,7 +25,7 @@ pub mod view;
 mod write;
 
 pub use cursor::{ChildCursors, Cursor};
-pub use diff::diff;
+pub use diff::{changed_runs, diff, Run};
 pub use error::{PatchError, XmlError};
 pub use head::HeadPatch;
 pub use name::{Atom, Name, QName};

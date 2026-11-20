@@ -11,11 +11,13 @@
 //! [`cascade`] and the themes in [`theme`]).
 //!
 //! The lists the copies number with are brought as new lists here, or continue the list
-//! before the place ([`ListPolicy`], [`lists`]).
+//! before the place ([`ListPolicy`], [`lists`]). The relationships they name are made
+//! again, the parts they reach copied ([`parts`]); their drawings keep their numbers where
+//! this document never had them ([`crate::imported`]).
 //!
 //! Not ported yet ([`EditError::Unsupported`]: the host copies such blocks its own way):
-//! the copy tracked, `replace:`, and copies holding relationships (pictures, hyperlinks to
-//! addresses), notes, comments, bookmarks, drawings or content controls.
+//! the copy tracked, `replace:`, and copies holding notes, comments, bookmarks or content
+//! controls.
 //!
 //! Must not: write but through the sink, or know a tool's JSON.
 
@@ -23,6 +25,7 @@ mod canonical;
 mod cascade;
 mod flatten;
 mod lists;
+mod parts;
 mod source;
 mod stamp;
 mod styles;
@@ -245,6 +248,9 @@ impl CopyBlocks {
         for &element in &elements {
             styles.bring_lists(sink, &mut space, work, element)?;
         }
+        let mut parts = parts::Parts::new(&source.package, sink.doc().package());
+        parts.bring(sink, work, &elements, (&selected.part, &place.part))?;
+        crate::imported::keep_or_renumber_drawings(sink, work, &elements)?;
         let root = work.root();
         for &element in &elements {
             match anchor {
@@ -263,6 +269,7 @@ impl CopyBlocks {
             stamped.drawings,
         )?;
         space.finish(sink)?;
+        parts.finish(sink)?;
         let mut copied: Vec<(String, String)> = Vec::new();
         for (old_ids, new_ids) in source_ids.iter().zip(&stamped.per_element) {
             for (old, new) in old_ids.iter().zip(new_ids) {

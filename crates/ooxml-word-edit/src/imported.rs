@@ -2,7 +2,8 @@
 //! docx-agent's importer gives them (`edit/importing.py`, `Importer._drawing_ids` and
 //! `_control_ids`): a drawing's `wp:docPr/@id` past every number the document has and had,
 //! a content control's `w:sdtPr/w:id` a fresh value its old one and the document's count
-//! of controls seed.
+//! of controls seed; a copy from another document keeping its drawing numbers where the
+//! document never had them.
 //!
 //! Must not: place the content, stamp its paragraph or drawing ids (the caller does), or
 //! read more of the document than the numbers it compares with.
@@ -31,6 +32,28 @@ pub(crate) fn renumber_drawings(sink: &mut EditSink<'_, '_>, work: &mut Work, el
     let numbers = sink.draw_drawings(nodes.len())?;
     for (node, number) in nodes.into_iter().zip(numbers) {
         work.set(node, Arc::new(QName::new(None, "id", None)), &number.to_string());
+    }
+    Ok(())
+}
+
+/// Number the drawings of `elements`, a copy from another document (or this one as it
+/// was), as docx-agent's importer does (`_drawing_ids`): in document order, each keeps its
+/// `wp:docPr/@id` where the document never had that number and the copy has not given it,
+/// the others the number after every one given.
+///
+/// # Errors
+/// When the numbers cannot be recorded.
+pub(crate) fn keep_or_renumber_drawings(sink: &mut EditSink<'_, '_>, work: &mut Work, elements: &[Id]) -> Result<()> {
+    let nodes: Vec<Id> = elements.iter().flat_map(|e| work.iter(*e, WP, &["docPr"])).collect();
+    let values: Vec<Option<i64>> = nodes
+        .iter()
+        .map(|n| work.get(*n, None, "id").and_then(python_int))
+        .collect();
+    let numbers = sink.keep_or_draw_drawings(&values)?;
+    for ((node, value), number) in nodes.into_iter().zip(values).zip(numbers) {
+        if value != Some(number) {
+            work.set(node, Arc::new(QName::new(None, "id", None)), &number.to_string());
+        }
     }
     Ok(())
 }

@@ -5,7 +5,7 @@
 //!
 //! Must not: change the document but through the command.
 
-use super::format_table_args::{BorderStyle, HeightRule, Look, Scope, WordFormatTable};
+use super::format_table_args::{BorderStyle, HeightRule, Look, Scope, WidthOf, WordFormatTable};
 use super::table_view::{regions_off, table_view, TableView};
 use crate::review::{needed, Editing};
 use crate::structure::common::{call, outcome, policy, refused, Outcome};
@@ -13,8 +13,9 @@ use ooxml_tools::{ArgEnum, Refusal, ToolError, ToolResult, TryCall, WayOut};
 use ooxml_word_edit::{CellValues, EditError, FormatTable, TableEdit, TableFormat, TableValues, TableWidth};
 use serde_json::{json, Value};
 
-/// What `unported` says of a call that needs what is not ported yet.
-const LAYOUT: &str = "word_format_table width_of body or window, keep_together, keep_with_next";
+/// keep_together on a table taller than a page (docx-agent's `TALLER_THAN_PAGE`, round 25):
+/// Word does keep it, so does the tool.
+const TALLER_THAN_PAGE: &str = "taller than a page: Word starts it on a new page and breaks it where the page is full";
 /// What `unported` says of a row, column or cell of a table with tracked structure.
 const ACCEPTED: &str = "word_format_table positions in a table with pending tracked structure";
 
@@ -22,7 +23,7 @@ impl From<TableEdit> for Outcome {
     fn from(edit: TableEdit) -> Self {
         Outcome {
             id: Some(edit.id),
-            changed: true,
+            changed: edit.changed,
             created: Vec::new(),
             removed: Vec::new(),
             renamed: edit.renamed,
@@ -140,7 +141,7 @@ fn run(args: &WordFormatTable, editing: &Editing<'_>, retry: &TryCall) -> Result
         return Err(invalid(&message, None, Some(&options), retry));
     }
     let summary = format!("Formatted {} of {}", args.scope.as_str(), args.table);
-    Ok(finish(args, editing, formats, summary, false, retry))
+    Ok(finish(args, editing, formats, summary, false, retry).result)
 }
 
 /// A row's, column's or cell's own edits, and the grid positions whose cells are formatted.
@@ -207,6 +208,36 @@ fn six_digits(value: f64) -> f64 {
     format!("{value:.5e}").parse().unwrap_or(value)
 }
 
+/// The table's own properties the call sets (`set_table`'s values): on the body's lines,
+/// `body`'s width and indent, aligned left.
+fn table_values(
+    args: &WordFormatTable,
+    body: Option<&ooxml_word_edit::BodyWidth>,
+    fill: Option<Option<String>>,
+    borders: Option<String>,
+) -> TableValues {
+    TableValues {
+        style: args.style.clone(),
+        width: match (body, args.width_percent, args.width) {
+            (Some(body), _, _) => Some(TableWidth::Points(body.width)),
+            // AutoFit to Window takes width_percent (after the rest)
+            _ if args.width_of == Some(WidthOf::Window) => None,
+            (None, Some(p), _) => Some(TableWidth::Percent(six_digits(p))),
+            (None, None, Some(w)) => Some(TableWidth::Points(w)),
+            (None, None, None) => None,
+        },
+        alignment: match body {
+            Some(_) => Some("left".to_owned()),
+            None => args.alignment.map(|a| a.as_str().to_owned()),
+        },
+        indent: body.map(|b| b.indent),
+        header_rows: args.header_rows.map(|h| usize::try_from(h).unwrap_or(usize::MAX)),
+        shading: fill,
+        borders,
+        look: args.look.as_deref().map(look_of),
+    }
+}
+
 fn table_scope(
     args: &WordFormatTable,
     editing: &Editing<'_>,
@@ -215,28 +246,16 @@ fn table_scope(
     borders: Option<String>,
     retry: &TryCall,
 ) -> Result<ToolResult<Value>, ToolError> {
-    use super::format_table_args::WidthOf;
     let body_or_window = matches!(args.width_of, Some(WidthOf::Body | WidthOf::Window));
     if body_or_window && args.width.is_some() {
         let message = "width_of is what width_percent is of: give width_percent (or nothing, for 100), not width";
         return Err(invalid(message, Some("width_of"), None, retry));
     }
-    if body_or_window {
-        return Ok(unported(LAYOUT, retry));
-    }
-    let values = TableValues {
-        style: args.style.clone(),
-        width: match (args.width_percent, args.width) {
-            (Some(p), _) => Some(TableWidth::Percent(six_digits(p))),
-            (None, Some(w)) => Some(TableWidth::Points(w)),
-            (None, None) => None,
-        },
-        alignment: args.alignment.map(|a| a.as_str().to_owned()),
-        header_rows: args.header_rows.map(|h| usize::try_from(h).unwrap_or(usize::MAX)),
-        shading: fill,
-        borders,
-        look: args.look.as_deref().map(look_of),
+    let body = match args.width_of {
+        Some(WidthOf::Body) => Some(on_body_lines(args, editing, retry)?),
+        _ => None,
     };
+    let values = table_values(args, body.as_ref(), fill, borders);
     let mut formats: Vec<TableFormat> = Vec::new();
     if let Some(on) = args.cant_split {
         formats.extend((0..view.table.rows.len()).map(|row| TableFormat::Row {
@@ -251,10 +270,23 @@ fn table_scope(
         return Err(invalid(message, Some("keep_with_next"), None, retry));
     }
     if args.keep_together.is_some() || args.keep_with_next.is_some() {
-        return Ok(unported(LAYOUT, retry));
+        formats.push(TableFormat::Keeps {
+            keep_together: args.keep_together,
+            keep_with_next: args.keep_with_next,
+        });
+    }
+    if let Some(body) = &body {
+        // the columns shared again first, the cells' widths with them: an autofit table is
+        // drawn at its cells' widths, which a table width alone leaves
+        formats.extend(
+            body.columns
+                .iter()
+                .enumerate()
+                .map(|(column, &width)| TableFormat::ColumnWidth { column, width }),
+        );
     }
     let has_values = values != TableValues::default();
-    if !has_values && formats.is_empty() {
+    if !has_values && formats.is_empty() && args.width_of != Some(WidthOf::Window) {
         let options = [
             "style",
             "width",
@@ -273,9 +305,126 @@ fn table_scope(
     if has_values {
         formats.push(TableFormat::Table(values));
     }
+    if args.width_of == Some(WidthOf::Window) {
+        // round 48: Word's AutoFit to Window, after a style or borders given with it (the
+        // grid follows the style's borders and margins)
+        formats.push(TableFormat::Window {
+            percent: args.width_percent.unwrap_or(100.0),
+        });
+    }
     let summary = format!("Formatted {}", args.table);
     let regions = args.style.is_some() || args.look.is_some();
-    Ok(finish(args, editing, formats, summary, regions, retry))
+    let Finished {
+        mut result,
+        changed,
+        pages,
+    } = finish(args, editing, formats, summary, regions, retry);
+    if !has_values && !changed {
+        // round 27, W7: asked for what the table already is; the warnings say why
+        if let ooxml_tools::Outcome::Done(found) = &mut result.outcome {
+            found.summary = format!("No change to {}", args.table);
+            found.changed.clear();
+        }
+    }
+    if args.keep_together.is_some() || args.keep_with_next.is_some() {
+        keep_notes(args, editing, pages, &mut result);
+    }
+    Ok(result)
+}
+
+/// `width_of: "body"` (round 21, T5): the table on the body's lines beside it
+/// ([`ooxml_word_edit::body_width`]), `width_percent` of them (100 unless given); refused
+/// where that is under a point.
+fn on_body_lines(
+    args: &WordFormatTable,
+    editing: &Editing<'_>,
+    retry: &TryCall,
+) -> Result<ooxml_word_edit::BodyWidth, ToolError> {
+    let head = editing.editor.store().snapshot();
+    let percent = args.width_percent.unwrap_or(100.0);
+    let alignment = args.alignment.map(|a| a.as_str());
+    let refusal = |e| crate::review::edit_refusal(e, "", retry.clone());
+    if let Some(body) = ooxml_word_edit::body_width(head.doc(), &args.table, percent, alignment).map_err(refusal)? {
+        return Ok(body);
+    }
+    let lines = ooxml_word_edit::body_lines(head.doc(), &args.table).map_err(refusal)?;
+    let message = format!(
+        "the body's lines beside {} are {} pt wide",
+        args.table,
+        crate::table_read::python_g(lines.width)
+    );
+    Err(invalid(&message, Some("width_of"), None, retry))
+}
+
+/// What a call with `keep_together` or `keep_with_next` says after its edit (docx-agent's
+/// `word_format_table`): a table kept together that is taller than a page, or whose pages
+/// the layout cannot say (`_taller_than_page`, from `pages`); a loose paragraph between the
+/// table kept with the next and the table after it (round 25, W5); else a table released
+/// that its rows' styles still keep together.
+fn keep_notes(
+    args: &WordFormatTable,
+    editing: &Editing<'_>,
+    pages: Option<Result<Vec<usize>, ooxml_word_edit::Unknown>>,
+    result: &mut ToolResult<Value>,
+) {
+    let ooxml_tools::Outcome::Done(found) = &result.outcome else {
+        return;
+    };
+    let table = found
+        .renamed
+        .iter()
+        .find(|(old, _)| *old == args.table)
+        .map_or_else(|| args.table.clone(), |(_, new)| new.clone());
+    match pages {
+        Some(Ok(pages)) if pages.len() > 1 => {
+            result.warnings.push(format!("{table} is {TALLER_THAN_PAGE}"));
+        }
+        Some(Err(_)) => result.warnings.push(format!(
+            "{table} is kept together, but the document could not be laid out to it: whether it is taller than a \
+             page is not known (if it is, Word starts it on a new page and breaks it where the page is full)"
+        )),
+        _ => {}
+    }
+    let head = editing.editor.store().snapshot();
+    let loose = if args.keep_with_next == Some(true) {
+        ooxml_word_edit::loose_paragraph_after(head.doc(), &table)
+            .ok()
+            .flatten()
+    } else {
+        None
+    };
+    if let Some((table, paragraph, after)) = loose {
+        result.warnings.push(format!(
+            "{paragraph}, between {table} and {after}, does not keep with the next: {after} can still start a page \
+             without {table}; word_format keep_with_next true on {paragraph} keeps them together"
+        ));
+    } else if args.keep_together == Some(false) {
+        let kept = ooxml_word_edit::table_keeps(head.doc(), &table).is_ok_and(|k| k.together);
+        if kept {
+            result.warnings.push(format!(
+                "{table} is still kept together by its rows' styles (they keep with the next); keep_together \
+                 false removes only the direct keeps"
+            ));
+        }
+    }
+}
+
+/// What [`finish`] gives: the reply, whether any edit changed the table, and the pages a
+/// table kept together is drawn on (the command's [`ooxml_word_edit::TableFormatted::pages`]).
+struct Finished {
+    result: ToolResult<Value>,
+    changed: bool,
+    pages: Option<Result<Vec<usize>, ooxml_word_edit::Unknown>>,
+}
+
+impl From<ToolResult<Value>> for Finished {
+    fn from(result: ToolResult<Value>) -> Self {
+        Finished {
+            result,
+            changed: false,
+            pages: None,
+        }
+    }
 }
 
 /// Run `formats` as one command and reply as `outcome` does, the table among the changed;
@@ -287,16 +436,19 @@ fn finish(
     summary: String,
     regions: bool,
     retry: &TryCall,
-) -> ToolResult<Value> {
+) -> Finished {
     let command = FormatTable {
         table: args.table.clone(),
         formats,
         policy: policy(editing),
+        layout: editing.layout,
     };
     let done = match editing.editor.run(editing.caller, &command) {
         Ok(done) => done,
-        Err(error) => return refused(error, retry.clone()),
+        Err(error) => return refused(error, retry.clone()).into(),
     };
+    let pages = done.out.pages;
+    let changed = done.out.edits.iter().any(|e| e.changed);
     let now = done.out.edits.first().map(|e| e.id.clone());
     let edits: Vec<Outcome> = done.out.edits.into_iter().map(Outcome::from).collect();
     let mut result = outcome(&edits, summary, None);
@@ -313,5 +465,5 @@ fn finish(
         });
         result.warnings.extend(note);
     }
-    result
+    Finished { result, changed, pages }
 }

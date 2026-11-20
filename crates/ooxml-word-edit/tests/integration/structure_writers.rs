@@ -577,3 +577,46 @@ fn a_copied_list_item_starts_a_list_or_continues_the_one_before_it() {
         assert_eq!(text("word/numbering.xml").matches("<w:num ").count(), nums, "{lists:?}");
     }
 }
+
+/// docx-agent's importer (`_relationships`, `copy_part`, `_drawing_ids`): a picture copied
+/// from the document itself, twice, names the relationship it had (one of that type to that
+/// part reused), its picture found by its bytes (never copied again), and a drawing number
+/// past every one the document has and had each time.
+#[test]
+fn a_copied_picture_reuses_its_part_and_takes_a_new_drawing_number() {
+    let bytes = fixture("generated/lists-and-styles.docx");
+    let editor = editor(&bytes);
+    let parts_before = editor.store().snapshot().doc().package().part_names();
+    let command = CopyBlocks {
+        source: CopySource::Own,
+        range: CopyRange::Blocks("p:5A00000D".to_owned()),
+        at: "end".to_owned(),
+        policy: RevisionPolicy::Untracked,
+        styles: StylePolicy::UseDestination,
+        style_map: Vec::new(),
+        unmapped: UnmappedPolicy::Import,
+        lists: ListPolicy::Separate,
+    };
+    for _ in 0..2 {
+        editor.store().run(&Caller::anonymous(), &command).unwrap();
+    }
+    let head = editor.store().snapshot();
+    assert_eq!(head.doc().package().part_names(), parts_before, "no part added");
+    let body = String::from_utf8(head.doc().tree("word/document.xml").unwrap().unwrap().write()).unwrap();
+    let numbers: Vec<&str> = body
+        .split("<wp:docPr id=\"")
+        .skip(1)
+        .map(|s| s.split('"').next().unwrap())
+        .collect();
+    assert_eq!(numbers.len(), 3, "{numbers:?}");
+    let mut distinct = numbers.clone();
+    distinct.sort_unstable();
+    distinct.dedup();
+    assert_eq!(distinct.len(), 3, "each drawing its own number: {numbers:?}");
+    let embeds: Vec<&str> = body
+        .split("r:embed=\"")
+        .skip(1)
+        .map(|s| s.split('"').next().unwrap())
+        .collect();
+    assert!(embeds.windows(2).all(|w| w[0] == w[1]), "one relationship: {embeds:?}");
+}
