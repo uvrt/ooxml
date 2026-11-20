@@ -8,7 +8,7 @@
 | `lists-and-styles.docx` | `94c56b4994c7f50480d634cbf099d808c7ded428b5a8c254bd289fd3567fabaf` |
 | `review-follow.docx` | `32b604fc864d48b02ff62b6fbf9e1b433572ca31b8734bd98bdfdb72eb63f715` |
 | `own-tracked-note.docx` | `385d29b4493f8feaf6ef8f6ca9f707d3102f3e95c1c9a16c766104157065aa31` |
-| `tables-accepted.docx` | `5b049cd405364fc1e273d6d3c83f5a701e54cd9ab69b6f8993a9e6a394c00b8e` |
+| `tables-accepted.docx` | `d5eeebfec7cde139b95ae6908769ab9f9946f2943bf2920709cf5b35267568ab` |
 
 Written by `tools/make_fixtures.py` in this repository, deterministically (running it
 again writes the same bytes), every part by hand: the styles are a handful written there,
@@ -45,6 +45,5 @@ tracked insertions by the differential harness's own author ("Writer A"): a trac
 delete of the note removes those insertions outright -- for `word_notes` and annotation-id
 numbering.
 `tables-accepted.docx` (mode 15) is three tables whose positions count otherwise once their
-tracked changes are accepted: a row deleted, a grid column deleted with its content, a deleted
-cell keeping its text, a cell Accept All takes into the one before it and a last cell it
-removes with its text -- for `word_edit_table` and `word_format_table` positions.
+tracked changes are accepted: a row deleted, a grid column deleted with its content,
+deleted cells keeping their text -- for `word_edit_table` and `word_format_table` positions.

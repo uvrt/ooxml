@@ -110,7 +110,8 @@ pub(super) fn set_cells(
         writes,
         stamping: true,
         policy: policy(editing),
-        accepted: (accepted.table.active() || accepted.table.rows_active()).then(|| accepted.table.clone()),
+        accepted: (accepted.table.active() || accepted.table.rows_active())
+            .then(|| std::sync::Arc::new(accepted.table.clone())),
     };
     let done = match editing.editor.run(editing.caller, &command) {
         Ok(done) => done,

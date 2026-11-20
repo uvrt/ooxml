@@ -200,6 +200,22 @@ fn run(args: &WordEditTable, editing: &Editing<'_>, retry: &TryCall) -> Result<T
     if args.action == TableAction::SetCells {
         return super::set_cells::set_cells(args, editing, &docx, &view, &mut accepted, retry);
     }
+    let change = match change(args, editing.tracking.is_some(), &view, &mut accepted, retry)? {
+        Ok(change) => change,
+        Err(what) => return Ok(unported(&what, retry)),
+    };
+    Ok(finish(args, editing, &view, change, accepted.notes, retry))
+}
+
+/// The change a row, column, merge or split action names, positions as the table is
+/// accepted; `Err` with what `unported` says where it is not ported yet.
+fn change(
+    args: &WordEditTable,
+    tracked: bool,
+    view: &TableView,
+    accepted: &mut AcceptedView,
+    retry: &TryCall,
+) -> Result<Result<TableChange, String>, ToolError> {
     let below = args.side != Some(Side::Before);
     let height = i64::try_from(accepted.table.height()).unwrap_or(0) - 1;
     // a row named as accepted: one whose deletion is pending stays on its other side
@@ -211,14 +227,14 @@ fn run(args: &WordEditTable, editing: &Editing<'_>, retry: &TryCall) -> Result<T
     };
     let change = match args.action {
         TableAction::InsertRow => TableChange::InsertRow {
-            index: row(&mut accepted, args.index)?,
+            index: row(accepted, args.index)?,
             below,
             plain: true,
         },
         TableAction::DeleteRow => {
             let given = args.index.ok_or_else(|| needed("index", "", retry.clone()))?;
             TableChange::DeleteRow {
-                index: row(&mut accepted, Some(given))?.unwrap_or(usize::MAX),
+                index: row(accepted, Some(given))?.unwrap_or(usize::MAX),
             }
         }
         TableAction::DeleteColumn => {
@@ -228,7 +244,7 @@ fn run(args: &WordEditTable, editing: &Editing<'_>, retry: &TryCall) -> Result<T
             }
         }
         TableAction::CopyRow => TableChange::CopyRow {
-            index: row(&mut accepted, args.index)?,
+            index: row(accepted, args.index)?,
             below,
         },
         TableAction::InsertColumn => {
@@ -240,20 +256,18 @@ fn run(args: &WordEditTable, editing: &Editing<'_>, retry: &TryCall) -> Result<T
             }
         }
         TableAction::Merge | TableAction::Split => {
-            let tracked = editing.tracking.is_some();
-            match super::edit_table_cells::cells_change(args, &view, &mut accepted, tracked, retry)? {
+            match super::edit_table_cells::cells_change(args, view, accepted, tracked, retry)? {
                 Some(change) => change,
                 None => {
-                    return Ok(unported(
-                        "word_edit_table split tracked in a table with pending tracked structure",
-                        retry,
+                    return Ok(Err(
+                        "word_edit_table split tracked in a table with pending tracked structure".to_owned(),
                     ))
                 }
             }
         }
-        other => return Ok(unported(&format!("word_edit_table {}", other.as_str()), retry)),
+        other => return Ok(Err(format!("word_edit_table {}", other.as_str()))),
     };
-    Ok(finish(args, editing, &view, change, accepted.notes, retry))
+    Ok(Ok(change))
 }
 
 /// The watch on the file's text a deletion takes out of the final view.

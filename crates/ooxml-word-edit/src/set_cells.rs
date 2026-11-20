@@ -40,7 +40,7 @@ pub struct SetCells {
     pub policy: RevisionPolicy,
     /// Where given, positions and labels count the table as accepting its tracked changes
     /// leaves it (docx-agent's `_Accepted`, read before the call); else as it is.
-    pub accepted: Option<Accepted>,
+    pub accepted: Option<Arc<Accepted>>,
 }
 
 /// A cell's row or column for [`SetCells`].

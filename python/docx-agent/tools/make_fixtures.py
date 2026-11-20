@@ -16,8 +16,7 @@ purpose:
 
 ``tables-accepted.docx`` (compatibility mode 15)
     tables whose positions count otherwise once their tracked changes are accepted: a row
-    deleted, a grid column deleted, a deleted cell keeping its text, a cell Accept All
-    takes into the one before it, and one it removes with its text.
+    deleted, a grid column deleted, deleted cells keeping their text.
 
 ``mode14.docx``
     a few paragraphs with paraIds in compatibility mode 14, to hold edits to a document
@@ -358,9 +357,9 @@ WRITER = 'w:author="Writer A" w:date="2026-11-17T10:00:00Z"'
 def tables_accepted() -> dict[str, str]:
     """Tables whose positions count otherwise once their tracked changes are accepted (the
     tools' ``_Accepted``): a row deleted as a tracked change; a grid column whose cells are
-    all deleted with their content; a deleted cell keeping its text (it widens the cell
-    before it), a cell whose last paragraph mark is deleted (Accept All takes the next cell
-    into it) and a last cell whose mark is deleted (Accept All removes it with its text)."""
+    all deleted with their content; deleted cells keeping their text (each widens the cell
+    before it).  No cell whose last paragraph mark is deleted (Accept All's cell ends): the
+    reads leave that final view to the host."""
     numbers = iter(range(601, 700))
 
     def record(tag: str) -> str:
@@ -371,11 +370,6 @@ def tables_accepted() -> dict[str, str]:
         return (f'<w:p w14:paraId="{para}" w14:textId="77777777"><w:pPr><w:rPr>{record("del")}</w:rPr></w:pPr>'
                 f'<w:del w:id="{next(numbers)}" {AUTHOR}><w:r><w:delText xml:space="preserve">{text}</w:delText>'
                 "</w:r></w:del></w:p>")
-
-    def marked(text: str, para: str) -> str:
-        """A paragraph whose mark alone is deleted."""
-        return (f'<w:p w14:paraId="{para}" w14:textId="77777777"><w:pPr><w:rPr>{record("del")}</w:rPr></w:pPr>'
-                + r(text) + "</w:p>")
 
     def cell(content: str, properties: str = "") -> str:
         return f'<w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/>{properties}</w:tcPr>{content}</w:tc>'
@@ -415,10 +409,9 @@ def tables_accepted() -> dict[str, str]:
         table([
             row("7F230001", [plain("Left", "7F230002"), cell(p("Kept", "7F230003"), record("cellDel")),
                              plain("Right", "7F230004")]),
-            row("7F230005", [cell(marked("Joined", "7F230006")), plain("into it", "7F230007"),
+            row("7F230005", [plain("Joined", "7F230006"), cell(p("Also kept", "7F230007"), record("cellDel")),
                              plain("Alone", "7F230008")]),
-            row("7F230009", [plain("One", "7F23000A"), plain("Two", "7F23000B"),
-                             cell(marked("Lost", "7F23000C"))]),
+            row("7F230009", [plain("One", "7F23000A"), plain("Two", "7F23000B"), plain("Three", "7F23000C")]),
         ]),
         p("The document ends here.", "7F200005"),
         '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" '
