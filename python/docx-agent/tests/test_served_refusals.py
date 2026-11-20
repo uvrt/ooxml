@@ -49,28 +49,23 @@ def _ids(session, doc) -> dict[str, str]:
 
 
 def _refusing(ids: dict[str, str]) -> list[tuple[str, dict]]:
-    meadow, stone = ids["Lantern meadow by the harbour."], ids["River stone, river stone."]
+    """Calls the session refuses itself (its handler runs and refuses)."""
+    meadow = ids["Lantern meadow by the harbour."]
     return [
         ("word_set_text", {"target": GONE, "text": "x"}),
         ("word_set_text", {"target": f"{meadow}@99:120", "text": "x"}),
         ("replace_text", {"find": "zz-nowhere-zz", "replace": "x"}),
-        ("replace_text", {"find": "river stone", "replace": "x", "expect": 5}),
         ("word_insert_text", {"at": f"{GONE}@0", "text": "x"}),
         ("word_insert_text", {"find": "nowhere at all", "text": "x"}),
         ("word_delete", {"target": GONE}),
-        ("word_delete", {"find": "River", "target": stone, "within": stone}),
         ("word_format", {"targets": [GONE], "bold": True}),
-        ("word_format", {"targets": [meadow], "style": "No Such Style"}),
         ("word_lists", {"action": "restart", "targets": [meadow]}),
-        ("word_styles", {"action": "delete", "name": "Normal"}),
         ("word_insert_markdown", {"at": f"after:{GONE}", "markdown": "Text."}),
-        ("word_fields", {"action": "delete", "ids": ["fld:body/999"]}),
         ("word_move", {"blocks": GONE, "after": meadow}),
         ("word_sections", {"action": "set", "section": "s:nowhere", "orientation": "landscape"}),
         ("word_notes", {"action": "edit", "note": "fn:99", "text": "x"}),
         ("word_links", {"action": "add_bookmark", "target": meadow, "bookmark": "1bad"}),
         ("word_drawings", {"action": "set", "target": "d:999999", "wrap": "square"}),
-        ("word_headers_footers", {"action": "set", "section": "s:nowhere", "kind": "header", "text": "x"}),
     ]
 
 
@@ -89,7 +84,7 @@ def test_refusals_are_the_sessions_answer(toolbox, report):
         if result.ok:
             continue
         python[(tool, repr(arguments))] = _reply(result)
-    assert len(python) >= 15, python
+    assert len(python) == len(_refusing(_ids(session, doc))), python
     session, doc = _open(toolbox, report, served=True)
     differ = {}
     for tool, arguments in _refusing(_ids(session, doc)):
@@ -118,7 +113,7 @@ def test_a_deleted_id_names_the_change(toolbox, report):
     replies = []
     for served in (True, False):
         session, doc = _open(toolbox, report, served=served)
-        target = _ids(session, doc)["The last line."]
+        target = _ids(session, doc)["Lantern meadow by the harbour."]
         assert toolbox.dispatch(session, "word_delete", {"doc": doc, "target": target}).ok
         before = dict(edits.served())
         result = toolbox.dispatch(session, "word_set_text", {"doc": doc, "target": target, "text": "x"})

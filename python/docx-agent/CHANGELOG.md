@@ -7,6 +7,13 @@ snapshot commit; the development history before it is summarised here.
 
 ## 0.1.140 -- unreleased
 
+Phase P2, lane P2e1: a refusal is not a fallback. A served edit or read the Rust session
+refuses answers with that refusal -- docx-agent's code, message and field, with the session's
+way out (`valid_options`, `try_call`) -- no longer handed to the Python handler for its
+wording. An id a change removed is refused as docx-agent's view refuses it (which change
+removed it, and the way on), worded by the host from the session's retired-id record
+(`docx_agent.rust.refusals`).
+
 Phase P2, lane P2d3: a value written by reference right beside a vulgar fraction or a Roman
 numeral is kept by the Rust session as docx-agent keeps it: the digit beside a value is
 Python's `str.isdigit`, exactly (`ooxml_base::pystr`, a table generated from CPython 3.12),

@@ -283,8 +283,8 @@ class _Fallback(Exception):
 def _named(call: Any) -> Any:
     """The document whose ids an address of the call names: the call's; for one the session
     owns (or a read of a version of it), its view where that is current at the call's
-    version, else none -- the session follows its renames and refuses a deleted id itself,
-    and a refusal is answered by the Python path."""
+    version, else none -- the session follows its renames and refuses a deleted id itself
+    (worded by :mod:`.refusals` as the view words it)."""
     entry = call.entry
     owned = _owned(entry)
     if owned is None:
