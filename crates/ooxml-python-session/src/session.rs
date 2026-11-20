@@ -9,7 +9,8 @@
 use crate::adapters::{context, SessionStop};
 use ooxml_base::Locale;
 use ooxml_session::{
-    CallContext, CancelToken, DocId, DocKind, HeldId, Opened, Registry, RetiredBy, Session, SessionConfig, SessionError,
+    CallContext, CancelToken, DocId, DocKind, DocNames, HeldId, Opened, Registry, RetiredBy, Session, SessionConfig,
+    SessionError,
 };
 use ooxml_store::{Caller, StoreConfig};
 use ooxml_tools::{compact, ToolError, ToolResult};
@@ -20,6 +21,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict};
 use serde_json::Map;
 use serde_json::Value;
+use std::collections::BTreeMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
 use std::time::Duration;
@@ -71,6 +73,18 @@ fn doc_id(doc: &str, session: &Session) -> PyResult<DocId> {
             open: session.documents().iter().map(ToString::to_string).collect(),
         })
     })
+}
+
+/// The host's names for the documents a call names (`{name: the session's id}`); a name
+/// whose id is not one of the session's names nothing (the call then refuses it as not open).
+fn names_of(names: Option<BTreeMap<String, String>>) -> DocNames {
+    let mut out = DocNames::new();
+    for (name, id) in names.into_iter().flatten() {
+        if let Some(id) = DocId::parse(&id) {
+            out.insert(name, id);
+        }
+    }
+    out
 }
 
 fn to_py(error: &SessionError) -> PyErr {
@@ -350,7 +364,10 @@ impl PySession {
     /// page engine (a `WordPages`, the host's kept one), which an edit whose results come
     /// from the pages (`word_fields`, a header's page number) lays its versions out with,
     /// each from the one it laid out last; `None`: such a result is left to the host.
-    #[pyo3(signature = (name, arguments, *, context = None, limit = None, at = None, placer = None, layout = None))]
+    /// `names`: the host's names for the documents the call names (`{name: the session's
+    /// id}`): the arguments name documents by these, and the reply names them so.
+    #[pyo3(signature = (name, arguments, *, context = None, limit = None, at = None, placer = None, layout = None,
+                        names = None))]
     #[allow(clippy::too_many_arguments)]
     fn call(
         &self,
@@ -362,8 +379,10 @@ impl PySession {
         at: Option<Vec<PyRef<'_, PyVersion>>>,
         placer: Option<Py<PyAny>>,
         layout: Option<PyRef<'_, crate::layout::PyWordPages>>,
+        names: Option<BTreeMap<String, String>>,
     ) -> Reply {
         let mut context = context_of(context.as_deref());
+        context.names = names_of(names);
         context.at = at.iter().flatten().map(|v| v.inner.clone()).collect();
         context.placer = placer.map(|p| Arc::new(PyPlacer(p)) as Arc<dyn Placer>);
         context.layout = layout.map(|pages| Arc::new(pages.port()) as Arc<dyn ooxml_word_edit::FieldLayout>);
@@ -392,8 +411,10 @@ impl PySession {
     /// engine, as for [`call`](Self::call) (`word_fields` update, a header's page number,
     /// `word_template`'s reflow). `blobs`: the host's blobs, an object with `blob(handle)`
     /// (`(name, mime, bytes)` or `None`) and `listed()` (`[(handle, name)]`), asked with the
-    /// interpreter lock taken back (`word_drawings` insert_picture).
-    #[pyo3(signature = (name, arguments, *, context = None, layout = None, blobs = None))]
+    /// interpreter lock taken back (`word_drawings` insert_picture). `names`: as for
+    /// [`call`](Self::call).
+    #[pyo3(signature = (name, arguments, *, context = None, layout = None, blobs = None, names = None))]
+    #[allow(clippy::too_many_arguments)]
     fn edit(
         &self,
         py: Python<'_>,
@@ -402,8 +423,10 @@ impl PySession {
         context: Option<PyRef<'_, PyCallContext>>,
         layout: Option<PyRef<'_, crate::layout::PyWordPages>>,
         blobs: Option<Py<PyAny>>,
+        names: Option<BTreeMap<String, String>>,
     ) -> (String, String, Option<EditMade>) {
         let mut context = context_of(context.as_deref());
+        context.names = names_of(names);
         context.layout = layout.map(|pages| Arc::new(pages.port()) as Arc<dyn ooxml_word_edit::FieldLayout>);
         context.blobs = blobs.map(|b| Arc::new(crate::adapters::PyBlobs(b)) as Arc<dyn ooxml_tools_word::Blobs>);
         let session = &self.inner;
