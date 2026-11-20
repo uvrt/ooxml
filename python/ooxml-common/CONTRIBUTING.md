@@ -51,11 +51,15 @@ Open a pull request against `main`; CI must pass. CI also runs pptx2svg's and do
 suites, at their `main`, against the change (the `downstream` job). A change a renderer
 must follow is red there until it is merged with the renderer's matching pull request
 right after it; say so on the pull request. Keep the package standard-library only at
-runtime and free of imports from its consumers (`tests/test_independence.py`). Add a
-line to [CHANGELOG.md](CHANGELOG.md) when you bump the version: CI's `build` job checks
-that `pyproject.toml`'s version is the one its top section names, and `__version__` the
-same (`tools/check_version.py`). Each version that reaches `main` is tagged `v<version>`
-on that commit by the tag workflow (`.github/workflows/tag.yml`).
+runtime and free of imports from its consumers (`tests/test_independence.py`).
+
+Note a change in a changelog fragment, `changes/<topic>.<kind>.md` (kind `added`,
+`changed`, `fixed` or `removed`), never in [CHANGELOG.md](CHANGELOG.md): the release
+writes the fragments into it (`tools/changelog.py` at the repository root; its README,
+Development). Raise `pyproject.toml`'s version, and `ooxml_common.__version__` with it, when a
+change needs a new version (a sibling's floor on it); CI's `build` job checks that the
+version is CHANGELOG.md's top version section's, or newer with a fragment
+(`tools/changelog.py check`).
 
 ## Names the siblings import
 
