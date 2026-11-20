@@ -5,14 +5,17 @@
 //! the range refused with the table's rows (rule 2); and what the reply says of each fill
 //! (`_count_fills`, `_fill_brief`: the range and counts, rule 4).
 //!
-//! Must not: change the document, or count a table as accepted (a table with pending
-//! tracked structure is the host's).
+//! Rows and columns count the table as accepted ([`AcceptedView`]): a row whose deletion is
+//! pending not counted, a cell Accept All removes left out and said.
+//!
+//! Must not: change the document.
 
 use super::edit_table_args::CellArg;
-use super::table_view::{read_look, TableView};
+use super::table_view::{read_look, AcceptedView, TableView};
+use crate::refusal::address_refusal;
 use ooxml_base::pyfmt::repr_str;
 use ooxml_tools::{Refusal, ToolError, TryCall, WayOut};
-use ooxml_word_model::docx::tables::TableGrid;
+use ooxml_word_model::docx::tables::{Axis, TableGrid};
 use ooxml_word_model::docx::{at_path, find_path};
 use serde_json::{json, Map, Value};
 
@@ -43,6 +46,7 @@ pub(super) type Places = (Vec<CellArg>, Vec<usize>, Vec<Fill>);
 pub(super) fn column_rows(
     view: &TableView,
     grid: &TableGrid<'_>,
+    accepted: &mut AcceptedView,
     cells: &[CellArg],
     retry: &TryCall,
 ) -> Result<Places, ToolError> {
@@ -50,7 +54,13 @@ pub(super) fn column_rows(
     if !cells.iter().any(given) {
         return Ok((cells.to_vec(), (0..cells.len()).collect(), Vec::new()));
     }
-    let height = view.grid.len();
+    // rows as accepted: a row whose tracked deletion is pending not counted
+    let rows: Vec<usize> = if accepted.table.rows_active() {
+        accepted.table.rows.clone()
+    } else {
+        (0..view.grid.len()).collect()
+    };
+    let height = rows.len();
     let header = header_rows(view);
     let mut places = Vec::new();
     let mut owners = Vec::new();
@@ -61,23 +71,18 @@ pub(super) fn column_rows(
             owners.push(k);
             continue;
         };
-        let col = fill_column(view, grid, cell, k, retry)?;
+        let col = fill_column(view, grid, accepted, cell, k, retry)?;
+        let grid_col = if accepted.table.active() {
+            let field = format!("cells[{k}].col");
+            accepted.grid_column(i64::try_from(col).unwrap_or(i64::MAX), &field, retry)?
+        } else {
+            col
+        };
         let (first, last, mut notes) = fill_range(&view.table.id, said, cell, k, (height, header))?;
-        let mut written: Vec<(usize, usize)> = Vec::new();
-        let mut missing = Vec::new();
-        let mut seen = Vec::new();
-        for row in first..=last {
-            let Some(origin) = view.origin(row, col) else {
-                missing.push(row);
-                continue;
-            };
-            if seen.contains(&origin) {
-                continue; // merged with a row above it in the range
-            }
-            seen.push(origin);
+        let (placed, written, missing) = column_cells(view, accepted, &rows, (first, last), grid_col, retry)?;
+        for row in placed {
             places.push(at(row, col));
             owners.push(k);
-            written.push((row, col));
         }
         if !missing.is_empty() {
             let shown: Vec<String> = missing.iter().take(LISTED).map(ToString::to_string).collect();
@@ -113,6 +118,48 @@ pub(super) fn column_rows(
         });
     }
     Ok((places, owners, fills))
+}
+
+/// The rows of a fill (positions `first..=last`, as accepted) written in grid column
+/// `grid_col`, each merged cell once: the positions written, their (document row, grid
+/// column), and the positions with no cell there (or one Accept All removes).
+type ColumnCells = (Vec<usize>, Vec<(usize, usize)>, Vec<usize>);
+
+fn column_cells(
+    view: &TableView,
+    accepted: &mut AcceptedView,
+    rows: &[usize],
+    (first, last): (usize, usize),
+    grid_col: usize,
+    retry: &TryCall,
+) -> Result<ColumnCells, ToolError> {
+    let mut placed = Vec::new();
+    let mut written = Vec::new();
+    let mut missing = Vec::new();
+    let mut seen = Vec::new();
+    for row in first..=last {
+        let doc_row = rows.get(row).copied().unwrap_or(row);
+        if accepted.table.lost.contains(&(doc_row, grid_col)) {
+            missing.push(row);
+            continue;
+        }
+        let column = if accepted.table.active() {
+            accepted.at(doc_row, grid_col, retry)?
+        } else {
+            grid_col
+        };
+        let Some(origin) = view.origin(doc_row, column) else {
+            missing.push(row);
+            continue;
+        };
+        if seen.contains(&origin) {
+            continue; // merged with a row above it in the range
+        }
+        seen.push(origin);
+        placed.push(row);
+        written.push((doc_row, column));
+    }
+    Ok((placed, written, missing))
 }
 
 /// The cell at `(row, col)` as a cells entry.
@@ -160,15 +207,32 @@ pub(super) fn header_rows(view: &TableView) -> usize {
 }
 
 /// The column a fill writes (`_fill_column`): `col`, or `col_label` (the first row's
-/// text), refused with the table's columns (rule 2).
+/// text), refused with the table's columns (rule 2); a position as the table is accepted.
 fn fill_column(
     view: &TableView,
     grid: &TableGrid<'_>,
+    accepted: &mut AcceptedView,
     cell: &CellArg,
     k: usize,
     retry: &TryCall,
 ) -> Result<usize, ToolError> {
     let label = cell.col_label.as_deref().filter(|l| !l.is_empty());
+    if accepted.table.active() {
+        match (cell.col, label) {
+            (Some(col), None) => {
+                accepted.grid_column(col, &format!("cells[{k}].col"), retry)?;
+                return Ok(usize::try_from(col).unwrap_or(usize::MAX));
+            }
+            (_, Some(label)) => {
+                let found = accepted
+                    .table
+                    .locate(grid, (Axis::At(0), Axis::Label(label)), &mut accepted.notes)
+                    .map_err(|m| address_refusal(m.error, &m.field, retry.clone()))?;
+                return Ok(accepted.table.from_grid(found.1));
+            }
+            (None, None) => {}
+        }
+    }
     let width = view.column_count();
     match (cell.col, label) {
         (Some(col), None) => usize::try_from(col).ok().filter(|c| *c < width).ok_or_else(|| {

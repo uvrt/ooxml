@@ -117,10 +117,22 @@ example `pip install ./python/ooxml-common ./python/ooxml-edit ./python/docx2svg
   required. ooxml-oracle's `text-diff` (the text engine against docx2svg's records) needs
   Word's own fonts, so it is not in CI: it stays a local gate for changes to ooxml-fonts and
   ooxml-text.
+- Changelogs (`tools/changelog.py`): a pull request never edits a package's `CHANGELOG.md`
+  (two that do always conflict); it adds a fragment, `python/<package>/changes/<topic>.<kind>.md`,
+  `topic` its branch or subject (lower case, digits, `-`), `kind` one of `added`, `changed`,
+  `fixed`, `removed`, holding the entry as the changelog would. CI's plan job refuses a
+  `CHANGELOG.md` change on any branch but a release branch (`release/<tag>`); the build job
+  checks each version against its changelog and fragments (`python tools/changelog.py check`).
+  A version is still raised in the pull request that needs it.
 - Releases (`.github/workflows/release.yml`): pushing a date tag builds and checks every
   distribution, creates the GitHub Release and deploys the package index of every release
   to GitHub Pages (`tools/simple_index.py`, tests `tools/test_simple_index.py`); a manual
-  run only builds and checks, the index install included.
+  run only builds and checks, the index install included. To cut release `<tag>`
+  (`v<YYYY>.<MM>.<DD>`, `.<N>` for a second the same day): on a branch `release/<tag>` from
+  main, `python tools/changelog.py release <tag>` writes every package's fragments into its
+  `CHANGELOG.md` under its version and deletes them; merge that pull request, then tag the
+  merge commit. The release workflow refuses a tag while fragments are waiting
+  (`tools/release_notes.py`).
 
 ## History
 
