@@ -287,6 +287,27 @@ def comment_write_cases(document) -> list[dict]:
     if paragraphs:
         pid, text = paragraphs[0]
         out.append(call("word_comments", action="add", items=[{"find": text[:4], "within": pid, "text": "In"}]))
+        if len(text) > 6:
+            # a range's whole paragraph is looked in; text of another paragraph is nowhere in it
+            out.append(call("word_comments", action="add",
+                            items=[{"find": text[-4:], "within": f"{pid}@0:2", "text": "In the range"}]))
+        if len(paragraphs) > 2:
+            third, other = paragraphs[2]
+            out += [call("word_comments", action="add",
+                         items=[{"find": other[:5], "within": f"{pid}..{third}", "text": "In the span"}]),
+                    call("word_comments", action="add",
+                         items=[{"find": other[:8], "within": pid, "text": "Not there"}])]
+        out.append(call("word_comments", action="add", items=[{"find": text[:4], "within": "p:NoSuch", "text": "x"}]))
+    for table in tables[:1]:
+        try:
+            cells = [p.text for p in document.get(table).cell(0, 0).paragraphs if p.text]
+        except IndexError:
+            cells = []
+        if cells:
+            out.append(call("word_comments", action="add",
+                            items=[{"find": cells[0][:3], "within": table, "text": "In the table"}]))
+    if paragraphs:
+        pid, text = paragraphs[0]
         out += [call("word_comments", action="add", items=[{"target": pid}]),
                 call("word_comments", action="add", items=[{"text": "x"}]),
                 call("word_comments", action="add", items=[{"target": pid, "find": "x", "text": "x"}]),

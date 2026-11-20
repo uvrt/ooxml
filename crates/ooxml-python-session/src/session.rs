@@ -390,16 +390,20 @@ impl PySession {
     /// JSON text (`None` where it made more than one version) and the last version's
     /// validation as [`validation`](Self::validation) gives it -- or `None` where it changed
     /// nothing. A host that numbers the document's steps takes the call's step from these,
-    /// whatever other calls commit to the document meanwhile.
-    #[pyo3(signature = (name, arguments, *, context = None))]
+    /// whatever other calls commit to the document meanwhile. `layout`: the document's page
+    /// engine, as for [`call`](Self::call) (`word_fields` update, a header's page number,
+    /// `word_template`'s reflow).
+    #[pyo3(signature = (name, arguments, *, context = None, layout = None))]
     fn edit(
         &self,
         py: Python<'_>,
         name: &str,
         arguments: String,
         context: Option<PyRef<'_, PyCallContext>>,
+        layout: Option<PyRef<'_, crate::layout::PyWordPages>>,
     ) -> (String, String, Option<EditMade>) {
-        let context = context_of(context.as_deref());
+        let mut context = context_of(context.as_deref());
+        context.layout = layout.map(|pages| Arc::new(pages.port()) as Arc<dyn ooxml_word_edit::FieldLayout>);
         let session = &self.inner;
         let (text, app, made) = py.detach(|| {
             let run = || session.edit(name, Value::String(arguments), &context);

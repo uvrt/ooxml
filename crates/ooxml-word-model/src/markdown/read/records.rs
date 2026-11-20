@@ -7,6 +7,7 @@
 use crate::docx::formatting::EffectiveRun;
 use crate::docx::numbering::Membership;
 use crate::markdown::model::Inline;
+use ooxml_chart::data::ChartData;
 use ooxml_xml::Element;
 use std::sync::Arc;
 
@@ -120,8 +121,23 @@ pub struct DrawingRecord {
     pub size: Option<(f64, f64)>,
     /// Whether it is a picture.
     pub picture: bool,
-    /// A group's members: id, kind, name.
-    pub members: Option<Vec<(String, &'static str, Option<String>)>>,
+    /// The chart it holds, where it is a chart whose part could be read.
+    pub chart: Option<Arc<ChartData>>,
+    /// A group's members.
+    pub members: Option<Vec<MemberRecord>>,
+}
+
+/// A drawing inside a group, as read.
+#[derive(Debug, Clone)]
+pub struct MemberRecord {
+    /// Its id, `d:<group>/<cNvPr id>`.
+    pub id: String,
+    /// Its kind (`chart`, `diagram`, `group`, `picture`...).
+    pub kind: &'static str,
+    /// Its `cNvPr/@name`.
+    pub name: Option<String>,
+    /// The chart it holds, where it is a chart whose part could be read.
+    pub chart: Option<Arc<ChartData>>,
 }
 
 /// What a paragraph holds besides its text, as `word_inspect` shows it.
