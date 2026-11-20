@@ -190,6 +190,31 @@ def covering(entries: list[dict], gate: str, mode: str, relative: str, case, sou
     return None
 
 
+def harness_command(args, out: Path, results: Path, files: list[Path]) -> tuple[list[str], dict[str, str]]:
+    """The harness run for ``diff``'s mode, and the variables it adds to the environment.
+
+    The reads harness takes the documents right after its check. It has two positionals
+    (the check, then the files); an older Python's argparse (3.12.5, for one) fills both at
+    the first positional and refuses files that come after the options.
+    """
+    if args.mode in READ_MODES:
+        return [sys.executable, str(HARNESS / "word_reads_diff.py"), args.mode, *map(str, files),
+                "--rust", str(Path(args.bin) / READ_MODES[args.mode]), "--results", str(results)], {}
+    env: dict[str, str] = {}
+    command = [sys.executable, str(HARNESS / "word_edits_diff.py"), *EDIT_MODES[args.mode],
+               "--rust", str(Path(args.bin) / "word-edits")]
+    if args.mode == "spacing":
+        (out / "french").mkdir(exist_ok=True)    # --spacing's folder for the French copies
+        command.insert(command.index("--spacing") + 1, str(out / "french"))
+    if args.cache:
+        command += ["--cache", args.cache, "--cache-new", str(out / "reference-new.jsonl.gz")]
+    if args.per_tool and args.mode in PER_TOOL:
+        env[PER_TOOL[args.mode]] = str(args.per_tool)
+    elif args.per_tool:
+        command += ["--limit", str(args.per_tool)]
+    return [*command, "--results", str(results), *map(str, files)], env
+
+
 def run_diff(args) -> int:
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -201,23 +226,8 @@ def run_diff(args) -> int:
         only = None if chosen == gates_fixtures.ALL else chosen
     files = documents(tree, args.every, (k, n), only)
     results = out / "results.jsonl"
-    env = {**os.environ, "DOCX_AGENT_RUST": "0", "PYTHONWARNINGS": "ignore"}
-    if args.mode in READ_MODES:
-        command = [sys.executable, str(HARNESS / "word_reads_diff.py"), args.mode,
-                   "--rust", str(Path(args.bin) / READ_MODES[args.mode])]
-    else:
-        command = [sys.executable, str(HARNESS / "word_edits_diff.py"), *EDIT_MODES[args.mode],
-                   "--rust", str(Path(args.bin) / "word-edits")]
-        if args.mode == "spacing":
-            (out / "french").mkdir(exist_ok=True)    # --spacing's folder for the French copies
-            command.insert(command.index("--spacing") + 1, str(out / "french"))
-        if args.cache:
-            command += ["--cache", args.cache, "--cache-new", str(out / "reference-new.jsonl.gz")]
-        if args.per_tool and args.mode in PER_TOOL:
-            env[PER_TOOL[args.mode]] = str(args.per_tool)
-        elif args.per_tool:
-            command += ["--limit", str(args.per_tool)]
-    command += ["--results", str(results), *map(str, files)]
+    command, extra = harness_command(args, out, results, files)
+    env = {**os.environ, "DOCX_AGENT_RUST": "0", "PYTHONWARNINGS": "ignore", **extra}
     started = time.monotonic()
     with open(out / "log.txt", "w") as log:
         done = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, env=env, cwd=ROOT) if files else None
