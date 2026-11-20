@@ -149,3 +149,8 @@ fn fields(owned: Owned<'_>) -> Result<Value, ToolError> {
     out.insert("note".into(), Value::from(FIELDS_NOTE));
     Ok(Value::Object(out))
 }
+
+/// Registers `check` (the crate's [`crate::register`]).
+pub(crate) fn register(r: &mut impl crate::Registrar) {
+    r.read::<Check>(check);
+}

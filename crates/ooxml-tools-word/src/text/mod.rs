@@ -102,3 +102,13 @@ pub(crate) fn merge_renamed(into: &mut Vec<(String, String)>, renamed: &[(String
         }
     }
 }
+
+/// Registers the group's tools, in the order a model is shown them (the crate's
+/// [`crate::register`]).
+pub(crate) fn register(r: &mut impl crate::Registrar) {
+    set_text::register(r);
+    replace_text::register(r);
+    insert_text::register(r);
+    delete::register(r);
+    insert_markdown::register(r);
+}

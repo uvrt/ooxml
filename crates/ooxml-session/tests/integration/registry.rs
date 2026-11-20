@@ -49,3 +49,22 @@ fn the_names_are_the_exports_sorted_each_once() {
     }
     assert!(registry.export(DocKind::Pptx).is_empty());
 }
+
+#[test]
+fn every_tool_has_its_hosting_exported() {
+    let registry = Registry::standard();
+    let hosting = registry.hosting(DocKind::Docx);
+    let mut names = registry.names();
+    names.retain(|n| n != "read_batch");
+    assert_eq!(hosting.keys().cloned().collect::<Vec<_>>(), names);
+    for facts in hosting.values() {
+        let keys: Vec<&str> = facts.as_object().unwrap().keys().map(String::as_str).collect();
+        assert_eq!(keys.len(), 4, "{facts}");
+        // what the host hands over is only asked of a tool it hands its calls to
+        let served = facts["served"].as_bool().unwrap();
+        assert!(served || keys.iter().all(|k| !facts[*k].as_bool().unwrap()), "{facts}");
+    }
+    // a reading tool is the host's to answer
+    assert_eq!(hosting["describe"]["served"], false);
+    assert!(registry.hosting(DocKind::Pptx).is_empty());
+}

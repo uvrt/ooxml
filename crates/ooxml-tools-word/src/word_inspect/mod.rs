@@ -181,3 +181,8 @@ fn try_call(args: &WordInspect) -> TryCall {
         fill: Vec::new(),
     }
 }
+
+/// Registers `word_inspect` (the crate's [`crate::register`]).
+pub(crate) fn register(r: &mut impl crate::Registrar) {
+    r.read::<WordInspect>(word_inspect);
+}

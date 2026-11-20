@@ -231,3 +231,8 @@ fn try_call(args: &WordInsertMarkdown) -> TryCall {
         fill: Vec::new(),
     }
 }
+
+/// Registers `word_insert_markdown` (the crate's [`crate::register`]).
+pub(crate) fn register(r: &mut impl crate::Registrar) {
+    r.edit::<WordInsertMarkdown>(word_insert_markdown, crate::Hosting::SERVED);
+}

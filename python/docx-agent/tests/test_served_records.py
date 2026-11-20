@@ -8,6 +8,7 @@ Made-up records only (a source ``d:scores`` named, no data)."""
 
 from __future__ import annotations
 
+import dataclasses
 import io
 import zipfile
 from pathlib import Path
@@ -16,7 +17,7 @@ import pytest
 
 from docx_agent import Document
 from docx_agent.edit.provenance import NS
-from docx_agent.rust import edits
+from docx_agent.rust import edits, served as rust_served
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
 from ooxml_edit.tools import Toolbox
 from ooxml_edit.tools.owned import OwnedEntry
@@ -28,6 +29,19 @@ RECORD = {"v": 1, "source": "d:scores", "columns": [{"column": "rating", "rows":
 
 
 @pytest.fixture(scope="module")
+def _serve_also(monkeypatch, tool: str, adapt) -> None:
+    """The session serves ``tool`` too, its arguments taken by ``adapt`` (a tool it has a Rust
+    handler for that docx-agent does not hand it yet)."""
+    hosting = rust_served.hosting()
+    monkeypatch.setattr(rust_served, "_HOSTING", [dataclasses.replace(hosting, served=hosting.served | {tool})])
+    monkeypatch.setitem(rust_served.ADAPTERS, tool, adapt)
+
+
+def _serve_none(monkeypatch) -> None:
+    """The session serves no tool: every edit is the Python handler's."""
+    monkeypatch.setattr(rust_served, "_HOSTING", [rust_served.NONE])
+
+
 def toolbox():
     with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, workers=0) as box:
         yield box
@@ -139,7 +153,7 @@ def test_served_edits_follow_the_records_as_docx_agent_does(toolbox, request, ca
     calls = CASES[case]
     data = request.getfixturevalue(ON.get(case, "recorded"))
     rust = _run(toolbox, data, calls, served=True)
-    monkeypatch.setattr(edits, "SERVED", {})
+    _serve_none(monkeypatch)
     python = _run(toolbox, data, calls, served=False)
     assert rust[0]["item"] != _kept(data)["item"] or case == "formatted"
     for k, (ours, theirs) in enumerate(zip(rust, python)):
@@ -202,9 +216,9 @@ REVIEWS = {
 def test_served_reviews_follow_the_records_as_docx_agent_does(toolbox, request, case, monkeypatch):
     fixture, calls, served = REVIEWS[case]
     data = request.getfixturevalue(fixture)
-    monkeypatch.setitem(edits.SERVED, "word_changes", _review)
+    _serve_also(monkeypatch, "word_changes", _review)
     rust = _run(toolbox, data, calls, served=served)
-    monkeypatch.setattr(edits, "SERVED", {})
+    _serve_none(monkeypatch)
     python = _run(toolbox, data, calls, served=False)
     for k, (ours, theirs) in enumerate(zip(rust, python)):
         for key in theirs:
@@ -285,10 +299,10 @@ def test_a_comment_in_a_text_box_deleted_served_is_docx_agents(toolbox, tracked,
     data = document.to_bytes()
     with zipfile.ZipFile(io.BytesIO(data)) as package:
         assert package.read("word/document.xml").count(b"commentRangeStart") == 2
-    monkeypatch.setitem(edits.SERVED, "word_comments", _comments)
+    _serve_also(monkeypatch, "word_comments", _comments)
     served, ours = _deleted_comment(toolbox, data, tracked)
     assert served
-    monkeypatch.setattr(edits, "SERVED", {})
+    _serve_none(monkeypatch)
     _, theirs = _deleted_comment(toolbox, data, tracked)
     assert b"commentRangeStart" not in ours["word/document.xml"]
     assert sorted(ours) == sorted(theirs)

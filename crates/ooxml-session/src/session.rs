@@ -8,7 +8,7 @@
 use crate::batch::{MAX_READ_BATCH_CHARS, READ_BATCH};
 use crate::context::{revision_date, CallCancel};
 use crate::document::{At, Document};
-use crate::registry::Call;
+use crate::call::Call;
 use crate::update::{PartUpdate, Updated};
 use crate::{CallContext, DocId, DocKind, DocNames, Registry, SessionError};
 use ooxml_base::{Cancel, Context};

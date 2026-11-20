@@ -23,10 +23,12 @@
 #![forbid(unsafe_code)]
 
 mod batch;
+mod call;
 mod changes;
 mod context;
 mod document;
 mod error;
+mod handlers;
 mod history;
 mod ids;
 mod memory;
@@ -49,7 +51,10 @@ pub use model::{ModelError, PackageDoc, PartChange, PartContent};
 pub use names::DocNames;
 pub use ooxml_store::Caller;
 pub use ooxml_word_model::ids::HeldId;
-pub use registry::{Call, EditFn, EditHandler, ReadHandler, Registry, Tool, TrackingFn};
+pub use call::Call;
+pub use handlers::{EditHandler, ReadHandler, Tool};
+pub use ooxml_tools_word::{EditFn, Hosting, ReadFn, TrackingFn};
+pub use registry::Registry;
 pub use retired::RetiredBy;
 pub use session::{CallMade, Opened, Session, SessionConfig, SessionStats};
 pub use update::{PartUpdate, Updated};
