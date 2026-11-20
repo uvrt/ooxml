@@ -7,6 +7,14 @@ snapshot commit; the development history before it is summarised here.
 
 ## 0.1.140 -- unreleased
 
+Phase P2, lane P2d3: `word_insert_markdown` given references in `markdown` or `from`
+naming one field of one row is served: the session writes a value whose source holds
+Markdown of its own as it (the host hands that Markdown over with the value), names the
+blocks each value standing alone made in `data.facts` (with the note where they do not line
+up), and keeps them as docx-agent's `_fields_placed` and `keep_written` do
+(`rust.edits.KEEPS_WRITTEN`, `rust.edits.Adapted`). `from` a table of rows stays with the
+Python handler.
+
 Phase P2, lane P2d3: a value written by reference right beside a vulgar fraction or a Roman
 numeral is kept by the Rust session as docx-agent keeps it: the digit beside a value is
 Python's `str.isdigit`, exactly (`ooxml_base::pystr`, a table generated from CPython 3.12),
