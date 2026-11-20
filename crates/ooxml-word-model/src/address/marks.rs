@@ -11,9 +11,8 @@ use super::syntax::RangeText;
 use super::AddressError;
 use crate::docx::text::{offset_before, paragraph_text, View};
 use crate::docx::{Docx, StoryPart};
-use crate::ids::{Entry, W};
+use crate::ids::Entry;
 use ooxml_base::pyfmt::repr_str;
-use ooxml_xml::{Element, Node};
 use std::collections::{HashMap, HashSet};
 
 /// A bookmark: its name as written, its part, and its markers' places there.
@@ -36,15 +35,10 @@ pub fn bookmark_markers(docx: &Docx) -> Vec<Bookmark<'_>> {
     let mut out: Vec<Bookmark<'_>> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
     for part in &docx.parts {
-        let mut starts = Vec::new();
-        let mut ends: Vec<(String, Box<[u32]>)> = Vec::new();
-        every(part.root(), &mut Vec::new(), &mut |e, path| {
-            if e.name().is(Some(W), "bookmarkStart") {
-                starts.push((attr(e, "name"), attr(e, "id"), path.to_vec().into_boxed_slice()));
-            } else if e.name().is(Some(W), "bookmarkEnd") {
-                ends.push((attr(e, "id"), path.to_vec().into_boxed_slice()));
-            }
-        });
+        // the part's facts hold its markers, read once per version (a block a later
+        // version shares is not walked again)
+        let facts = part.facts();
+        let (starts, ends) = (facts.bookmark_starts(), facts.bookmark_ends());
         // The last end of each id, as the walk back from the last one finds it.
         let mut last_end: HashMap<&str, &[u32]> = HashMap::new();
         for (id, path) in &ends {
@@ -59,21 +53,6 @@ pub fn bookmark_markers(docx: &Docx) -> Vec<Bookmark<'_>> {
         }
     }
     out
-}
-
-fn attr(e: &Element, local: &str) -> String {
-    e.attribute(Some(W), local).unwrap_or("").to_owned()
-}
-
-/// Every element below `root` (fallbacks included, as lxml's `iter` walks), with its place.
-fn every(root: &Element, path: &mut Vec<u32>, visit: &mut dyn FnMut(&Element, &[u32])) {
-    for (k, node) in root.children().iter().enumerate() {
-        let Node::Element(child) = node else { continue };
-        path.push(u32::try_from(k).unwrap_or(u32::MAX));
-        visit(child, path);
-        every(child, path, visit);
-        path.pop();
-    }
 }
 
 /// The bookmark `name` names (`bm:` optional; matched in any case where no name is equal).

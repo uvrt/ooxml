@@ -12,10 +12,12 @@
 //!
 //! Must not: write but through the sink.
 
+use crate::address_keys::names_by_id;
 use crate::blocks::{blocks_of, resolve_block, BlockAt, BlockKind};
 use crate::delete::{editable, stretch_keys};
 use crate::names::W;
 use crate::policy::RevisionPolicy;
+use crate::set_text::block_key;
 use crate::sink::EditSink;
 use crate::stamping::stamp_document;
 use crate::work::{Id, Work};
@@ -278,20 +280,20 @@ pub(crate) fn outside_blocks(root: &Arc<Element>, parent: &[u32], (from, to): (u
             before: false,
         };
     };
-    let mut after = None;
-    let mut before = false;
-    for (k, node) in holder.children().iter().enumerate() {
-        let ooxml_xml::Node::Element(e) = node else { continue };
+    // the children up to the first block before the stretch, and back from the end to the
+    // last block after it: not the whole container
+    let last_block = |node: &ooxml_xml::Node| {
+        let ooxml_xml::Node::Element(e) = node else { return None };
         let mut found = Vec::new();
         raw_blocks(e, &mut found);
-        let Some(last) = found.last() else { continue };
-        let k = u32::try_from(k).unwrap_or(u32::MAX);
-        if k < from {
-            before = true;
-        } else if k > to {
-            after = Some(*last);
-        }
-    }
+        found.last().copied()
+    };
+    let children = holder.children();
+    let count = children.len();
+    let (from, to) = ((from as usize).min(count), (to as usize).saturating_add(1).min(count));
+    let block_at = |k: usize| children.get(k).and_then(last_block);
+    let before = (0..from).any(|k| block_at(k).is_some());
+    let after = (to..count).rev().find_map(block_at);
     Outside { after, before }
 }
 
@@ -460,11 +462,45 @@ impl Command<WordDoc> for MoveBlocks {
 }
 
 impl MoveBlocks {
+    /// Whether the blocks and the anchor are named by id: then the move depends on them and
+    /// on the stretch it rewrites (its keys written); a heading's section, or a block or
+    /// anchor named by condition, depends on the document around it.
+    fn named_by_id(&self) -> bool {
+        let target = self.after.as_deref().or(self.before.as_deref()).unwrap_or_default();
+        matches!(&self.blocks, Moving::Blocks(a) if names_by_id(a)) && names_by_id(target)
+    }
+
+    /// The reads of a planned move: the blocks and the anchor (named by id); tracked, the
+    /// annotation ids -- its range markers are numbered on this version (their ids and
+    /// `moveN` names, not numbered again where it is applied), so another edit drawing
+    /// some meanwhile is a conflict.
+    fn read_planned(
+        &self,
+        sink: &mut EditSink<'_, '_>,
+        by_id: bool,
+        docx: &Docx,
+        planned: (&str, &[String], &BlockAt),
+    ) {
+        let (part, ids, anchor) = planned;
+        if by_id {
+            for id in ids.iter().chain(block_id(docx, part, anchor).as_ref()) {
+                sink.read(block_key(part, id));
+            }
+        }
+        if matches!(self.policy, RevisionPolicy::Tracked(_)) {
+            sink.read(crate::doc::Key::Annotations);
+        }
+    }
+
     /// The edit, through `sink`.
     fn edit(&self, sink: &mut EditSink<'_, '_>) -> Result<BlocksMoved> {
-        sink.read_everything();
+        let by_id = self.named_by_id();
+        if !by_id {
+            sink.read_everything();
+        }
         let docx = sink.docx()?;
         let (part, blocks, ids, anchor) = self.plan(sink.doc(), &docx)?;
+        self.read_planned(sink, by_id, &docx, (&part, &ids, &anchor));
         let before = sink.doc().tree(&part)?.ok_or_else(|| EditError::NoPart(part.clone()))?;
         if self.arrange(before.root(), &part, (&blocks, &ids, &anchor))?.is_none() {
             return Ok(BlocksMoved {
