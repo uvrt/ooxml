@@ -13,6 +13,7 @@
 mod call_editor;
 mod changes;
 mod comment_edits;
+mod comment_writes;
 mod comments;
 mod listing;
 mod settle;
@@ -20,7 +21,6 @@ mod tracking;
 
 pub use call_editor::{CallEditor, Made};
 pub use changes::{word_changes, ChangeAction, ChangeDetail, ChangeKind, WordChanges};
-pub use comment_edits::COMMENT_WRITES;
 pub use comments::{word_comments, CommentAction, CommentItem, WordComments};
 pub(crate) use settle::Still;
 pub use tracking::{word_set_tracking, Tracked, WordSetTracking};

@@ -173,6 +173,24 @@ impl Space {
         self.put_back(sink, true)
     }
 
+    /// Put `part`'s copy back now (if it changed or was marked dirty) and forget it: what
+    /// writes the part through the sink next sees the copy's changes, and a later use
+    /// copies the part again.
+    ///
+    /// # Errors
+    /// When the part cannot be put.
+    pub(crate) fn put_part(&mut self, sink: &mut EditSink<'_, '_>, part: &str) -> Result<()> {
+        let Some(copy) = self.copies.remove(part) else {
+            return Ok(());
+        };
+        if copy.work.changed() || self.dirty.iter().any(|p| p == part) {
+            sink.keep_written(part, None, &copy.work);
+            let root: Arc<Element> = copy.work.build().ok_or_else(|| EditError::Path(part.to_owned()))?;
+            sink.put(part, copy.tree.with_root(root))?;
+        }
+        Ok(())
+    }
+
     fn put_back(&self, sink: &mut EditSink<'_, '_>, changed_only: bool) -> Result<()> {
         for (part, copy) in &self.copies {
             if !copy.work.changed() && !self.dirty.contains(part) {

@@ -10,6 +10,7 @@
 use crate::doc::Key;
 use crate::list_style::parsed;
 use crate::names::W;
+use crate::namespaces::strip_redundant;
 use crate::sink::EditSink;
 use crate::work::{scope_above, Id, Work};
 use crate::{EditError, Result};
@@ -125,7 +126,7 @@ pub(crate) fn part_key(part: &str) -> Key {
 
 /// docx-agent's `_nsid`: SHA-256(`seed\0counter`)'s eight leading hex digits, in upper
 /// case, the first not in `used` and not `00000000`.
-fn nsid(seed: &str, used: &HashSet<String>) -> String {
+pub(crate) fn nsid(seed: &str, used: &HashSet<String>) -> String {
     (0u64..)
         .map(|counter| {
             let digest = ooxml_word_model::ids::sha256(format!("{seed}\0{counter}").as_bytes());
@@ -146,7 +147,7 @@ fn nsids(element: &Element, out: &mut HashSet<String>) {
 }
 
 /// The `w:nsid` values in use in the numbering part (none without one).
-fn used_nsids(sink: &EditSink<'_, '_>, part: Option<&str>) -> Result<HashSet<String>> {
+pub(crate) fn used_nsids(sink: &EditSink<'_, '_>, part: Option<&str>) -> Result<HashSet<String>> {
     let mut used = HashSet::new();
     if let Some(part) = part {
         nsids(root(sink, part)?.as_ref(), &mut used);
@@ -155,7 +156,7 @@ fn used_nsids(sink: &EditSink<'_, '_>, part: Option<&str>) -> Result<HashSet<Str
 }
 
 /// Word's own Bullets or Numbering definition (docx-agent's `builtin_abstract`).
-fn builtin_abstract(kind: &str, abstract_id: i64, nsid: &str, template: &str) -> String {
+pub(crate) fn builtin_abstract(kind: &str, abstract_id: i64, nsid: &str, template: &str) -> String {
     let mut levels = String::new();
     for level in 0..LEVELS {
         let indent = 720 * (level + 1);
@@ -185,10 +186,12 @@ fn builtin_abstract(kind: &str, abstract_id: i64, nsid: &str, template: &str) ->
 }
 
 /// Insert a definition after the last one (they precede every instance; docx-agent's
-/// `add_abstract`).
-fn add_abstract(sink: &mut EditSink<'_, '_>, main: &str, node: Arc<Element>) -> Result<()> {
+/// `add_abstract`), a declaration in it that the part's root makes already left out (as
+/// lxml moves a subtree).
+pub(crate) fn add_abstract(sink: &mut EditSink<'_, '_>, main: &str, node: Arc<Element>) -> Result<()> {
     let part = ensure_part(sink, main)?;
     let root = root(sink, &part)?;
+    let node = strip_redundant(&node, &mut root.namespaces().to_vec());
     let at = last_of(&root, "abstractNum")
         .map(|k| k + 1)
         .or_else(|| first_of(&root, "num"))
@@ -258,9 +261,6 @@ pub(crate) fn add_num(
     abstract_id: i64,
     overrides: &[(i64, i64)],
 ) -> Result<i64> {
-    let part = ensure_part(sink, main)?;
-    let root = root(sink, &part)?;
-    let num_id = listed(&root, "num", "numId").iter().map(|(n, _)| *n).max().unwrap_or(0) + 1;
     let mut sorted = overrides.to_vec();
     sorted.sort_unstable();
     let inner: String = sorted
@@ -269,7 +269,45 @@ pub(crate) fn add_num(
             format!(r#"<w:lvlOverride w:ilvl="{level}"><w:startOverride w:val="{start}"/></w:lvlOverride>"#)
         })
         .collect();
+    insert_num(sink, main, abstract_id, &inner, Vec::new())
+}
+
+/// A new instance over `abstract_id` after the last one, holding `overrides` (another
+/// list's `w:lvlOverride` elements, copied as lxml copies them: a declaration the part's
+/// root makes already left out); its number (docx-agent's `add_num`, the overrides then
+/// appended).
+///
+/// # Errors
+/// When the numbering part is not XML.
+pub(crate) fn add_num_copying(
+    sink: &mut EditSink<'_, '_>,
+    main: &str,
+    abstract_id: i64,
+    overrides: Vec<Arc<Element>>,
+) -> Result<i64> {
+    insert_num(sink, main, abstract_id, "", overrides)
+}
+
+/// A `w:num` numbered past the last, over `abstract_id`, its children `inner` (XML) and
+/// then `copied`, after the last instance.
+fn insert_num(
+    sink: &mut EditSink<'_, '_>,
+    main: &str,
+    abstract_id: i64,
+    inner: &str,
+    copied: Vec<Arc<Element>>,
+) -> Result<i64> {
+    let part = ensure_part(sink, main)?;
+    let root = root(sink, &part)?;
+    let num_id = listed(&root, "num", "numId").iter().map(|(n, _)| *n).max().unwrap_or(0) + 1;
     let xml = format!(r#"<w:num {W_DECL} w:numId="{num_id}"><w:abstractNumId w:val="{abstract_id}"/>{inner}</w:num>"#);
+    let mut num = parsed(&xml)?;
+    if !copied.is_empty() {
+        let mut scope = root.namespaces().to_vec();
+        let mut children = num.children().to_vec();
+        children.extend(copied.iter().map(|o| Node::Element(strip_redundant(o, &mut scope))));
+        num = Arc::new(num.with_children(ooxml_xml::Children::from_vec(children)));
+    }
     let at = last_of(&root, "num")
         .map(|k| k + 1)
         .or_else(|| first_of(&root, "numIdMacAtCleanup"))
@@ -277,7 +315,7 @@ pub(crate) fn add_num(
     sink.splice_children(
         &part,
         (&[], at, 0),
-        vec![Node::Element(parsed(&xml)?)],
+        vec![Node::Element(num)],
         vec![part_key(&part)],
         Vec::new(),
     )?;

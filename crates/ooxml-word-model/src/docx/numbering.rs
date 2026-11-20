@@ -146,6 +146,12 @@ impl Lists {
             .cloned()
     }
 
+    /// The instance `num_id` (the last of that number in the part).
+    #[must_use]
+    pub fn num_element(&self, num_id: i64) -> Option<&Arc<Element>> {
+        self.nums.get(&num_id)
+    }
+
     /// Whether the part has instance `num_id`.
     #[must_use]
     pub fn has(&self, num_id: i64) -> bool {
