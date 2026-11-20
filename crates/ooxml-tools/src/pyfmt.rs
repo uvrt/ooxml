@@ -2,63 +2,15 @@
 //! string (`'one'`), of a JSON value (`True`, `None`, `['a', 2]`) and of a float (`0.06`,
 //! `1e-05`, `2.0`).
 //!
-//! Owns: those formats (a string's `repr` is `ooxml-base`'s, re-exported), so that a message reads the same from the Rust core as from the
+//! Owns: those formats (a string's and a float's `repr` are `ooxml-base`'s, re-exported), so that a message reads the same from the Rust core as from the
 //! Python path it replaces (the differential compares them).
 //!
 //! Must not: be used for anything but messages. `str.isprintable` is approximated without
 //! Unicode tables: control characters, line and paragraph separators, the Unicode spaces
 //! other than U+0020 and the common format characters are escaped.
 
-pub use ooxml_base::pyfmt::repr_str;
+pub use ooxml_base::pyfmt::{repr_float, repr_str};
 use serde_json::Value;
-
-/// Python's `repr` of a float.
-#[must_use]
-pub fn repr_float(value: f64) -> String {
-    if value.is_nan() {
-        return "nan".into();
-    }
-    if value.is_infinite() {
-        return if value > 0.0 { "inf" } else { "-inf" }.into();
-    }
-    // `{:e}` is the shortest form that reads back as the same float, as Python's repr.
-    let scientific = format!("{value:e}");
-    let (mantissa, exponent) = scientific.split_once('e').unwrap_or((&scientific, "0"));
-    let exponent: i32 = exponent.parse().unwrap_or(0);
-    let negative = mantissa.starts_with('-');
-    let digits: String = mantissa.chars().filter(char::is_ascii_digit).collect();
-    let sign = if negative { "-" } else { "" };
-    if (-4..16).contains(&exponent) {
-        let point = exponent + 1;
-        let fixed = fixed_digits(&digits, point);
-        return format!("{sign}{fixed}");
-    }
-    let (head, tail) = digits.split_at(1.min(digits.len()));
-    let fraction = if tail.is_empty() {
-        String::new()
-    } else {
-        format!(".{tail}")
-    };
-    let exp_sign = if exponent < 0 { '-' } else { '+' };
-    format!("{sign}{head}{fraction}e{exp_sign}{:02}", exponent.abs())
-}
-
-/// `digits` with the decimal point after `point` of them (it may fall before the first or
-/// after the last), always with a fraction (`2.0`).
-fn fixed_digits(digits: &str, point: i32) -> String {
-    let count = i32::try_from(digits.len()).unwrap_or(i32::MAX);
-    if point <= 0 {
-        let zeros = "0".repeat(usize::try_from(-point).unwrap_or(0));
-        return format!("0.{zeros}{digits}");
-    }
-    if point >= count {
-        let zeros = "0".repeat(usize::try_from(point - count).unwrap_or(0));
-        return format!("{digits}{zeros}.0");
-    }
-    let at = usize::try_from(point).unwrap_or(0);
-    let (whole, fraction) = digits.split_at(at.min(digits.len()));
-    format!("{whole}.{fraction}")
-}
 
 /// A JSON number as Python prints it: a whole number as one, a float by [`repr_float`].
 #[must_use]

@@ -81,6 +81,7 @@ mod placing;
 mod policy;
 mod pool;
 mod props;
+mod provenance;
 mod ranges;
 mod ranges_across;
 mod release;

@@ -13,6 +13,7 @@ use crate::doc::{Key, WordDoc};
 use crate::text::diff::python_space;
 use crate::{EditError, Result};
 use ooxml_store::ReadPredicate;
+use ooxml_word_model::address::scope_paragraphs;
 use ooxml_word_model::docx::text::{paragraph_text, View};
 use ooxml_word_model::docx::{Docx, StoryPart};
 use ooxml_word_model::ids::Entry;
@@ -201,19 +202,7 @@ pub(crate) fn matches(docx: &Docx, pattern: &dyn Pattern, across: bool) -> Resul
         let texts = story.texts();
         let id_of = |k: usize| story.ids.paragraphs().get(k).map(|p| p.id);
         if !across {
-            for (k, text) in texts.iter().enumerate() {
-                if !pattern.may_match(text) {
-                    continue;
-                }
-                let found = pattern.matches(text).map_err(refuse)?;
-                if found.is_empty() {
-                    continue;
-                }
-                let Some(id) = id_of(k) else { continue };
-                for (a, b, with) in found {
-                    out.push((id.clone(), a, id.clone(), b, with));
-                }
-            }
+            paragraph_matches(story, pattern, 0..texts.len(), &mut out)?;
             continue;
         }
         let mut starts = Vec::with_capacity(texts.len());
@@ -238,6 +227,43 @@ pub(crate) fn matches(docx: &Docx, pattern: &dyn Pattern, across: bool) -> Resul
             out.push((first, a - sp, last, b - sq, with));
         }
     }
+    Ok(out)
+}
+
+/// Every match of `pattern` in the paragraphs of `story` at `places` (each paragraph's
+/// text alone), in order, added to `out`.
+fn paragraph_matches(
+    story: &StoryPart,
+    pattern: &dyn Pattern,
+    places: impl IntoIterator<Item = usize>,
+    out: &mut Vec<Found>,
+) -> Result<()> {
+    let texts = story.texts();
+    for k in places {
+        let Some(text) = texts.get(k).filter(|t| pattern.may_match(t)) else {
+            continue;
+        };
+        let found = pattern.matches(text).map_err(EditError::Refused)?;
+        let Some(id) = story.ids.paragraphs().get(k).map(|p| p.id) else {
+            continue;
+        };
+        for (a, b, with) in found {
+            out.push((id.clone(), a, id.clone(), b, with));
+        }
+    }
+    Ok(())
+}
+
+/// Every match of `pattern` in the paragraphs `within` holds (docx-agent's `_scope`: the
+/// whole paragraphs of a story, block, span, cell, section, bookmark or range), each
+/// paragraph's text alone, in document order; only those paragraphs are read.
+///
+/// # Errors
+/// `within`'s refusal, or the pattern's.
+pub(crate) fn matches_within(docx: &Docx, pattern: &dyn Pattern, within: &str) -> Result<Vec<Found>> {
+    let (story, places) = scope_paragraphs(docx, within).map_err(EditError::Address)?;
+    let mut out = Vec::new();
+    paragraph_matches(story, pattern, places, &mut out)?;
     Ok(out)
 }
 
