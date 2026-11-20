@@ -166,7 +166,9 @@ fn alone(text: &[char], start: usize, end: usize) -> bool {
     let kept = before.len() - before.iter().rev().take_while(|c| tab(c)).count();
     let before = before.get(..kept).unwrap_or_default();
     let after = text.get(end..).unwrap_or_default();
-    let after = after.get(after.iter().take_while(|c| tab(c)).count()..).unwrap_or_default();
+    let after = after
+        .get(after.iter().take_while(|c| tab(c)).count()..)
+        .unwrap_or_default();
     let blank = |part: &[char]| part.iter().all(|c| py_space(*c));
     // a line break, spaces and tabs, a line break
     fn broken<'a>(mut part: impl Iterator<Item = &'a char>) -> bool {
