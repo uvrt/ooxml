@@ -80,16 +80,16 @@ takes."""
 [[difference]]
 gate = "reads"
 mode = "read"
-file = "generated/charts/*.docx"
-cause = """Phase P3 (the chart model): docx_agent.rust.session's reads are equal to docx-agent's on \
-every fixture but drawings' chart and SmartArt summaries (tests/test_rust_word_read.py)."""
+file = "generated/charts/smartart.docx"
+cause = """The SmartArt data model: docx_agent.rust.session's reads are equal to docx-agent's on \
+every fixture but drawings' SmartArt summaries (tests/test_rust_word_read.py)."""
 
 [[difference]]
 gate = "reads"
 mode = "ranges"
-file = "generated/charts/*.docx"
-cause = """Phase P3 (the chart model): word_read of a range holding a chart or SmartArt, as for \
-mode read above."""
+file = "generated/charts/smartart.docx"
+cause = """The SmartArt data model: word_read of a range holding a SmartArt diagram, as for mode \
+read above."""
 
 # word_controls insert at a position past its paragraph's text, untracked and tracked (one per
 # document with a paragraph; the case's tag marks it).
