@@ -10,7 +10,7 @@
 //!
 //! Must not: resolve a colour or font, lay anything out, or read the embedded workbook.
 
-mod cache;
+pub(crate) mod cache;
 
 use crate::model::{
     Axis, Chart, ChartText, DataLabels, DataPoint, Legend, Lines, Marker, Plot, Series, UpDownBars, View3D,

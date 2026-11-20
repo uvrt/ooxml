@@ -97,18 +97,19 @@ fn cache_format_code(cache: &Element) -> Option<String> {
     if let Some(node) = child(cache, "formatCode") {
         return stripped_text(node);
     }
-    for alternate in children(cache, "AlternateContent") {
-        for choice in children(alternate, "Choice") {
-            if let Some(found) = child(choice, "formatcode2").and_then(stripped_text) {
-                return Some(found);
-            }
-        }
-        let fallback = child(alternate, "Fallback").and_then(|f| child(f, "formatCode"));
-        if let Some(found) = fallback.and_then(stripped_text) {
-            return Some(found);
-        }
-    }
-    None
+    alternate_format_codes(cache).find_map(stripped_text)
+}
+
+/// The format codes Office writes inside a number cache's `mc:AlternateContent` (measured:
+/// a code with a language tag re-saved as a Choice's `formatcode2` and a Fallback
+/// `c:formatCode`), in the order both readers try them: per alternate, each Choice's, then
+/// the Fallback's.
+pub(crate) fn alternate_format_codes(cache: &Element) -> impl Iterator<Item = &Element> {
+    children(cache, "AlternateContent").flat_map(|alternate| {
+        children(alternate, "Choice")
+            .filter_map(|choice| child(choice, "formatcode2"))
+            .chain(child(alternate, "Fallback").and_then(|f| child(f, "formatCode")))
+    })
 }
 
 /// A multi-level cache's first level (`c:multiLvlStrRef/c:multiLvlStrCache` or
