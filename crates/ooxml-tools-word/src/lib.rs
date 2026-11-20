@@ -34,7 +34,7 @@ pub use blobs::{Blob, BlobList, Blobs};
 pub use check::*;
 pub use describe::{describe, Describe, DESCRIBED, NOT_DESCRIBED};
 pub use find_text::{find_text, FindStories, FindText};
-pub use pages::{EnginePages, WordLayout};
+pub use pages::{EnginePages, LayoutLimit, NotLaid, WordLayout};
 pub use placements::Placer;
 // A tool group's module exports its tools (`pub use` in its `mod.rs`); the crate exports
 // each group whole, so a new tool in a group is named only there.

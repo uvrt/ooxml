@@ -754,6 +754,7 @@ dependencies = [
  "ooxml-derive",
  "ooxml-fonts",
  "ooxml-opc",
+ "ooxml-scene",
  "ooxml-store",
  "ooxml-tools",
  "ooxml-word-edit",

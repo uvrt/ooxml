@@ -25,10 +25,11 @@ use crate::drawings::WordDrawings;
 use crate::error::{Fallback, PagesError};
 use crate::fonts::{DocumentFonts, FontSetup};
 use crate::pictures::PackagePictures;
+use crate::stats::EngineStats;
 use crate::support;
 use crate::text_boxes::{text_boxes, TextBoxJob};
 use crate::version::{LaidVersion, PageView};
-use ooxml_base::{DigestKey, Limits, Locale};
+use ooxml_base::{Cancel, DigestKey, Limits, Locale};
 use ooxml_derive::{CacheBudget, Memo, Weigh};
 use ooxml_opc::Package;
 use ooxml_word_layout::paint::svg::{page_svg, Drawings, Pictures, SvgContext};
@@ -38,52 +39,10 @@ use ooxml_word_layout::WordLayout;
 use ooxml_word_model::Model;
 use ooxml_zip::Archive;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 /// The key the engine digests content under.
 const KEY: DigestKey = DigestKey::new(0x6f6f_786d_6c2d_7061, 0x6765_732d_4c34_0001);
-
-/// What an engine did, since it was made.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct EngineStats {
-    /// Versions laid out whole.
-    pub full: u64,
-    /// Versions laid out again from the version before.
-    pub relaid: u64,
-    /// Versions answered with a fallback.
-    pub fallbacks: u64,
-    /// Parts read again (their stored bytes changed), over every version.
-    pub parts_read: u64,
-    /// Parts taken as they were.
-    pub parts_kept: u64,
-    /// Pages painted.
-    pub pages_painted: u64,
-    /// Time spent opening versions (the model).
-    pub open_time: Duration,
-    /// Time spent laying out.
-    pub layout_time: Duration,
-    /// Memo entries swept (no version in use held them).
-    pub swept: u64,
-    /// Pages painted that were kept painted already.
-    pub paint_hits: u64,
-    /// Pages whose warnings were said again as the version before's same page said them,
-    /// and pages walked for them.
-    pub pages_said: (u64, u64),
-    /// Versions asked again: the same parts as the last version laid out, which was
-    /// answered (nothing laid out).
-    pub kept: u64,
-}
-
-impl EngineStats {
-    /// Count a version laid out: from the one before (`relaid`) or whole.
-    fn count_laid(&mut self, relaid: bool) {
-        if relaid {
-            self.relaid += 1;
-        } else {
-            self.full += 1;
-        }
-    }
-}
 
 /// What a generation holds: the fonts, the model, the layout's memos, the last version.
 struct Generation {
@@ -110,6 +69,34 @@ impl Generation {
     fn last_for(&self, package: &Package) -> Option<Arc<LaidVersion>> {
         let from = self.laid_from.as_ref()?;
         from.same_parts(package).then(|| self.last.clone()).flatten()
+    }
+
+    /// `document` laid out, from `previous` where given, stopped where `cancel` says so.
+    fn lay_out(
+        &mut self,
+        document: &ooxml_word_model::WordDocument,
+        previous: Option<&LaidVersion>,
+        cancel: Option<&dyn Cancel>,
+    ) -> Result<ooxml_word_layout::DocumentLayout, ooxml_base::BaseError> {
+        let (layout, model) = (&mut self.layout, &mut self.model);
+        match (cancel, previous) {
+            (Some(cancel), _) => layout.lay_out_until(model, document, previous.map(|p| &p.layout), cancel),
+            (None, Some(previous)) => Ok(layout.relayout(model, document, &previous.layout)),
+            (None, None) => Ok(layout.lay_out(model, document)),
+        }
+    }
+
+    /// A layout stopped: the version laid out before (`last`, laid out from `from`) is
+    /// still the one the next is laid out from. Where a part beside the main one changed
+    /// (`others_changed`), what its pages said goes: the next version, read against the
+    /// stopped one's parts, would not see that change.
+    fn stopped(&mut self, last: Option<Arc<LaidVersion>>, from: Option<Package>, others_changed: bool) {
+        self.last = last;
+        self.laid_from = from;
+        if others_changed {
+            self.said = crate::page_said::PageMemo::default();
+            self.summaries = crate::summary::SummaryMemo::default();
+        }
     }
 }
 
@@ -365,6 +352,29 @@ impl PageEngine {
     /// # Errors
     /// Its Word parts do not open.
     pub fn lay_out(&mut self, package: &Package) -> Result<Result<Arc<LaidVersion>, Fallback>, PagesError> {
+        self.lay_out_within(package, None)
+    }
+
+    /// [`PageEngine::lay_out`], stopped where `cancel` says so (asked before each top-level
+    /// block of the body's flow and before each page). The version laid out last, the same
+    /// parts asked again, is answered whatever `cancel` says: nothing is laid out.
+    ///
+    /// # Errors
+    /// Its Word parts do not open; [`PagesError::Stopped`] where `cancel` stopped it: the
+    /// engine then lays the next version out from the one it laid out before.
+    pub fn lay_out_until(
+        &mut self,
+        package: &Package,
+        cancel: &dyn Cancel,
+    ) -> Result<Result<Arc<LaidVersion>, Fallback>, PagesError> {
+        self.lay_out_within(package, Some(cancel))
+    }
+
+    fn lay_out_within(
+        &mut self,
+        package: &Package,
+        cancel: Option<&dyn Cancel>,
+    ) -> Result<Result<Arc<LaidVersion>, Fallback>, PagesError> {
         self.changed.sort();
         let fonts = self.setup.document(package);
         let (generation, mut cause) = self.generation_for(fonts);
@@ -391,12 +401,13 @@ impl PageEngine {
         }
         let started = Instant::now();
         let previous = generation.last.take();
-        generation.laid_from = None;
-        let laid = match &previous {
-            Some(previous) => generation
-                .layout
-                .relayout(&mut generation.model, &document, &previous.layout),
-            None => generation.layout.lay_out(&mut generation.model, &document),
+        let laid_from = generation.laid_from.take();
+        let Ok(laid) = generation.lay_out(&document, previous.as_deref(), cancel) else {
+            self.stats.layout_time += started.elapsed();
+            self.stats.stopped += 1;
+            let others_changed = self.changed.iter().any(|name| *name != *document.main_part);
+            generation.stopped(previous, laid_from, others_changed);
+            return Err(PagesError::Stopped);
         };
         if let (Some(previous), true) = (&previous, laid.relaid.is_empty()) {
             cause = whole_cause(&previous.layout, &laid, &self.changed);

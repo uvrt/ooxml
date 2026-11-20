@@ -47,6 +47,10 @@ pub struct CallContext {
     pub cancel: Option<Arc<CancelToken>>,
     /// How long the call may run; past it, it stops with `timeout`.
     pub deadline: Option<Duration>,
+    /// How long laying a document out may take in the call, from its start (docx-agent's
+    /// `Limits.layout_timeout`); past it, a tool reading the layout says so (`check`'s
+    /// `reflow.error`) and goes on. `None`: as long as the call.
+    pub layout_timeout: Option<Duration>,
     /// The versions the call reads (each a document's, as [`crate::Session::commit`] or
     /// [`crate::Session::snapshot`] gave it): a document named here is read at this
     /// version, any other at its head. The host that owns the documents names the version
@@ -69,6 +73,7 @@ impl std::fmt::Debug for CallContext {
         f.debug_struct("CallContext")
             .field("caller", &self.caller)
             .field("deadline", &self.deadline)
+            .field("layout_timeout", &self.layout_timeout)
             .field(
                 "at",
                 &self
@@ -82,21 +87,59 @@ impl std::fmt::Debug for CallContext {
 }
 
 /// The cancellation a call runs under.
+#[derive(Clone, Copy)]
 pub(crate) struct CallCancel<'a> {
     token: Option<&'a CancelToken>,
     session: &'a dyn Cancel,
     clock: &'a dyn Clock,
     until: Option<Duration>,
+    /// The call's limit on laying out, and when it passes.
+    layout: Option<(Duration, Duration)>,
 }
 
 impl<'a> CallCancel<'a> {
     pub(crate) fn new(context: &'a CallContext, session: &'a dyn Cancel, clock: &'a dyn Clock) -> Self {
+        let now = clock.monotonic();
         Self {
             token: context.cancel.as_deref(),
             session,
             clock,
-            until: context.deadline.map(|d| clock.monotonic().saturating_add(d)),
+            until: context.deadline.map(|d| now.saturating_add(d)),
+            layout: context.layout_timeout.map(|t| (t, now.saturating_add(t))),
         }
+    }
+
+    /// What stops laying a document out in the call, where it has a limit on that.
+    pub(crate) fn layout(&self) -> Option<LayoutCancel<'a>> {
+        self.layout.map(|(timeout, until)| LayoutCancel {
+            call: *self,
+            timeout,
+            until,
+        })
+    }
+}
+
+/// What stops laying a document out in a call: the call's cancellation, or its limit on
+/// laying out passed.
+pub(crate) struct LayoutCancel<'a> {
+    call: CallCancel<'a>,
+    timeout: Duration,
+    until: Duration,
+}
+
+impl LayoutCancel<'_> {
+    /// As a tool is handed it.
+    pub(crate) fn limit(&self) -> ooxml_tools_word::LayoutLimit<'_> {
+        ooxml_tools_word::LayoutLimit {
+            cancel: self,
+            timeout: self.timeout,
+        }
+    }
+}
+
+impl Cancel for LayoutCancel<'_> {
+    fn is_cancelled(&self) -> bool {
+        self.call.is_cancelled() || self.call.clock.monotonic() >= self.until
     }
 }
 
@@ -147,5 +190,45 @@ mod tests {
         assert_eq!(at(0), "1970-01-01T00:00:00Z");
         assert_eq!(at(1_795_000_000), "2026-11-18T11:06:00Z");
         assert_eq!(at(951_782_400), "2000-02-29T00:00:00Z");
+    }
+
+    /// A clock at `0.0` seconds, moved by hand.
+    struct Hand(std::sync::Mutex<std::time::Duration>);
+
+    impl ooxml_base::Clock for Hand {
+        fn now(&self) -> ooxml_base::context::Timestamp {
+            ooxml_base::context::Timestamp::default()
+        }
+        fn monotonic(&self) -> std::time::Duration {
+            *self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+        }
+    }
+
+    #[test]
+    fn laying_out_stops_past_the_calls_limit_on_it_or_with_the_call() {
+        use ooxml_base::Cancel;
+        use std::time::Duration;
+        let clock = Hand(std::sync::Mutex::new(Duration::from_secs(100)));
+        let token = std::sync::Arc::new(super::CancelToken::new());
+        let session = super::CancelToken::new();
+        let context = super::CallContext {
+            cancel: Some(std::sync::Arc::clone(&token)),
+            layout_timeout: Some(Duration::from_secs(30)),
+            ..super::CallContext::default()
+        };
+        let call = super::CallCancel::new(&context, &session, &clock);
+        let Some(layout) = call.layout() else {
+            panic!("a limit on laying out")
+        };
+        assert_eq!(layout.limit().timeout, Duration::from_secs(30));
+        assert!(!layout.is_cancelled());
+        *clock.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Duration::from_secs(130);
+        assert!(layout.limit().cancel.is_cancelled(), "past the limit");
+        assert!(!call.is_cancelled(), "the call goes on");
+        *clock.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Duration::from_secs(100);
+        token.cancel();
+        assert!(layout.is_cancelled(), "with the call");
+        let plain = super::CallContext::default();
+        assert!(super::CallCancel::new(&plain, &session, &clock).layout().is_none());
     }
 }

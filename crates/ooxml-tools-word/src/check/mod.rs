@@ -19,8 +19,10 @@ pub use args::{Check, CheckCopy, CheckInclude, CheckScale, CopyLists, CopyRefere
 pub use reflow::{LastCheck, Seen};
 
 use crate::describe::cancelled;
+use crate::pages::NotLaid;
 use crate::version::{Owned, Version};
 use ooxml_base::Cancel;
+use ooxml_scene::python_g;
 use ooxml_tools::{ArgEnum, Done, ToolError};
 use ooxml_word_edit::validate::{problems, Delta};
 use serde_json::{Map, Value};
@@ -71,17 +73,36 @@ pub fn check(args: &Check, version: &Version<'_>, cancel: &dyn Cancel) -> Result
     cancel.check().map_err(cancelled)?;
     if let Some(layout) = layout {
         let started = Instant::now();
-        let last = layout.engine().lock().unwrap_or_else(PoisonError::into_inner).last().cloned();
-        let Ok(laid) = layout.laid(version.package) else {
-            return Ok(unported(CHECK_NOT_LAID_OUT));
+        let last = layout
+            .engine()
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .last()
+            .cloned();
+        let stop = owned.layout_limit.map_or(cancel, |limit| limit.cancel);
+        let reflow = match layout.laid(version.package, stop) {
+            Ok(laid) => {
+                // `layout`: the time laying the version out, where the engine had not laid it
+                // out last
+                if !last.is_some_and(|last| Arc::ptr_eq(&last, &laid)) {
+                    timing.insert("layout".into(), seconds(started));
+                }
+                let started = Instant::now();
+                let facts = reflow_facts(layout, &laid, version, owned, args.pages.as_deref())?;
+                timing.insert("facts".into(), seconds(started));
+                facts
+            }
+            Err(NotLaid::Other(_)) => return Ok(unported(CHECK_NOT_LAID_OUT)),
+            Err(NotLaid::Stopped) => {
+                // The call's own stop ends it; the layout's limit passed is said, and the
+                // check goes on (docx-agent's `reflow.error`).
+                cancel.check().map_err(cancelled)?;
+                timing.insert("layout".into(), seconds(started));
+                timing.insert("facts".into(), Value::from(0.0));
+                timed_out(owned.layout_limit.map(|limit| limit.timeout))
+            }
         };
-        // `layout`: the time laying the version out, where the engine had not laid it out last
-        if !last.is_some_and(|last| Arc::ptr_eq(&last, &laid)) {
-            timing.insert("layout".into(), seconds(started));
-        }
-        let started = Instant::now();
-        data.insert("reflow".into(), reflow_facts(layout, &laid, version, owned, args.pages.as_deref())?);
-        timing.insert("facts".into(), seconds(started));
+        data.insert("reflow".into(), reflow);
     }
     cancel.check().map_err(cancelled)?;
     if wanted.contains(&CheckInclude::Fields) {
@@ -157,6 +178,18 @@ fn reflow_facts(
         facts.insert("layout_warnings".into(), warnings);
     }
     Ok(Value::Object(facts))
+}
+
+/// `reflow` where laying the version out passed the call's limit on it, as docx-agent says
+/// it (`f"timeout: laying the document out did not finish within {timeout:g} s"`).
+fn timed_out(timeout: Option<std::time::Duration>) -> Value {
+    let within = timeout.map_or_else(String::new, |t| format!(" within {} s", python_g(t.as_secs_f64())));
+    let mut out = Map::new();
+    out.insert(
+        "error".into(),
+        Value::from(format!("timeout: laying the document out did not finish{within}")),
+    );
+    Value::Object(out)
 }
 
 fn unported(why: &str) -> Done<Value> {

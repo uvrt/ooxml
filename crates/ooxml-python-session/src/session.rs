@@ -95,6 +95,7 @@ type Validation = (Vec<String>, Vec<String>, usize);
 type EditMade = (u64, PyVersion, Option<String>, Validation);
 
 /// What a call runs with (`ooxml_core.CallContext`): who calls, a token that stops it,
+/// how long laying a document out may take in it (`layout_timeout`, seconds),
 /// and how long it may run, in seconds. One may serve many calls.
 #[pyclass(frozen, name = "CallContext", module = "ooxml_core")]
 pub struct PyCallContext {
@@ -104,23 +105,33 @@ pub struct PyCallContext {
 #[pymethods]
 impl PyCallContext {
     #[new]
-    #[pyo3(signature = (*, caller = None, cancel = None, deadline = None))]
-    fn new(caller: Option<&str>, cancel: Option<PyRef<'_, PyCancelToken>>, deadline: Option<f64>) -> PyResult<Self> {
-        let deadline = deadline
-            .map(|seconds| {
-                Duration::try_from_secs_f64(seconds)
-                    .map_err(|_| PyValueError::new_err("deadline is seconds, 0 or more"))
-            })
-            .transpose()?;
+    #[pyo3(signature = (*, caller = None, cancel = None, deadline = None, layout_timeout = None))]
+    fn new(
+        caller: Option<&str>,
+        cancel: Option<PyRef<'_, PyCancelToken>>,
+        deadline: Option<f64>,
+        layout_timeout: Option<f64>,
+    ) -> PyResult<Self> {
         Ok(Self {
             inner: CallContext {
                 caller: caller.map_or_else(Caller::anonymous, Caller::named),
                 cancel: cancel.map(|t| Arc::clone(&t.inner)),
-                deadline,
+                deadline: seconds(deadline, "deadline")?,
+                layout_timeout: seconds(layout_timeout, "layout_timeout")?,
                 ..CallContext::default()
             },
         })
     }
+}
+
+/// `value` seconds as a duration (`name` said where it is not 0 or more).
+fn seconds(value: Option<f64>, name: &str) -> PyResult<Option<Duration>> {
+    value
+        .map(|seconds| {
+            Duration::try_from_secs_f64(seconds)
+                .map_err(|_| PyValueError::new_err(format!("{name} is seconds, 0 or more")))
+        })
+        .transpose()
 }
 
 /// A call that panicked, as its failure.
@@ -536,7 +547,9 @@ impl PySession {
     fn last_check(&self, doc: &str) -> PyResult<Option<(Option<u64>, crate::summary::PyLayoutSummary)>> {
         let id = doc_id(doc, &self.inner)?;
         let kept = self.inner.last_check(&id).map_err(|e| to_py(&e))?;
-        Ok(kept.and_then(|kept| kept.get()).map(|seen| (seen.version, crate::summary::PyLayoutSummary { inner: seen.summary })))
+        Ok(kept
+            .and_then(|kept| kept.get())
+            .map(|seen| (seen.version, crate::summary::PyLayoutSummary { inner: seen.summary })))
     }
 
     /// Keep `summary` (a `LayoutSummary` of the document's engine) as what the document's

@@ -398,15 +398,21 @@ def _call(call: Any, tool: str, arguments: dict[str, Any], *, placer: "Placer | 
     """The Rust envelope of ``tool`` with ``arguments`` on the version ``call`` reads (and
     of each other document named at a path of ``others``, :func:`_with_others`); ``layout``:
     the document's page engine (an ``ooxml_core.WordPages``), for a call that reads the
-    pages (``check``'s ``reflow``)."""
+    pages (``check``'s ``reflow``), laying out within ``call.limits.layout_timeout`` (lane
+    P5c: past it, ``reflow.error`` says so, as the Python path's does)."""
     if _session() is None:
         raise _Fallback("no session")
     mirror, version = _version_read(call.entry)
     arguments, pinned = _with_others(call, arguments, others, mirror.session)
     arguments = {"doc": mirror.doc, **{k: v for k, v in arguments.items() if v is not None}}
+    context = None
+    if layout is not None:
+        import ooxml_core
+
+        context = ooxml_core.CallContext(layout_timeout=call.limits.layout_timeout)
     reply, _images, app = mirror.session.call(tool, json.dumps(arguments), at=[version, *pinned],
                                               placer=placer.place if placer is not None else None,
-                                              layout=layout)
+                                              layout=layout, context=context)
     if placer is not None and placer.error is not None:
         raise placer.error
     envelope = json.loads(reply)

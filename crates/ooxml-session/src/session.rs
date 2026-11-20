@@ -6,7 +6,7 @@
 //! lock is held only to find or change an entry), or implement a tool.
 
 use crate::batch::{MAX_READ_BATCH_CHARS, READ_BATCH};
-use crate::context::{revision_date, CallCancel};
+use crate::context::{revision_date, CallCancel, LayoutCancel};
 use crate::document::{At, Document};
 use crate::registry::Call;
 use crate::update::{PartUpdate, Updated};
@@ -115,6 +115,8 @@ pub(crate) struct CallState<'p> {
     placer: Option<Arc<dyn Placer>>,
     /// The versions an editing tool's edits made.
     made: Mutex<Option<Made>>,
+    /// The call's limit on laying a document out.
+    layout_limit: Option<ooxml_tools_word::LayoutLimit<'p>>,
 }
 
 /// The versions one changing call made ([`Session::edit`]): its first edit's number and its
@@ -510,6 +512,7 @@ impl Session {
     ) -> (ToolResult<Value>, Option<CallMade>) {
         self.counts.calls.fetch_add(1, Ordering::Relaxed);
         let cancel = CallCancel::new(context, &*self.context.cancel, &*self.context.clock);
+        let layout_cancel = cancel.layout();
         let mut state = CallState {
             opened: None,
             warnings: Vec::new(),
@@ -517,6 +520,7 @@ impl Session {
             others: Vec::new(),
             placer: context.placer.clone(),
             made: Mutex::new(None),
+            layout_limit: layout_cancel.as_ref().map(LayoutCancel::limit),
         };
         let mut result = if within.is_empty() {
             self.dispatch(name, arguments, context, &cancel, &mut state)
@@ -601,6 +605,7 @@ impl Session {
             date: revision_date(self.context.clock.now()),
             made: &state.made,
             layout: context.layout.as_deref(),
+            layout_limit: state.layout_limit,
             blobs: context.blobs.as_deref(),
             others: &state.others,
         };
