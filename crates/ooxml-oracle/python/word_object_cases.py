@@ -14,7 +14,7 @@ import os
 import struct
 import zlib
 
-from word_structure_cases import ToolCases, tracked
+from word_structure_cases import ToolCases, fonts_of, tracked
 
 CASES = ToolCases()
 
@@ -75,6 +75,36 @@ def format_table_cases(document) -> list[dict]:
     out += [call("word_format_table", table="t:00000000", scope="table", shading="FFFFFF")]
     if paragraphs:
         out.append(call("word_format_table", table=paragraphs[0], scope="table", shading="FFFFFF"))
+    out = _laid(document, out)
+    return out + [tracked(case) for case in out]
+
+
+def _laid(document, out: list[dict]) -> list[dict]:
+    """``out`` with the fonts the layout reads on each case keeping a table together (its
+    taller-than-a-page warning reads the layout)."""
+    if not any(case["arguments"].get("keep_together") for case in out):
+        return out
+    fonts = fonts_of(document)
+    return [{**case, "fonts": fonts} if case["arguments"].get("keep_together") else case for case in out]
+
+
+@CASES
+def table_keep_cases(document) -> list[dict]:
+    """``word_format_table``'s keeps: ``keep_together`` and ``keep_with_next`` on and off,
+    alone and together, with a row's breaking or a table's shading beside them, on each of
+    the first eight tables -- untracked and tracked; ``keep_together`` on with the fonts the
+    layout reads (a table taller than a page is said so)."""
+    def fmt(table: str, **arguments) -> dict:
+        return call("word_format_table", table=table, scope="table", **arguments)
+
+    out = []
+    for table in _tables(document)[:8]:
+        out += [fmt(table, keep_together=False), fmt(table, keep_with_next=True), fmt(table, keep_with_next=False),
+                fmt(table, keep_together=False, keep_with_next=False), fmt(table, keep_together=True),
+                fmt(table, keep_together=True, keep_with_next=True),
+                fmt(table, keep_together=True, keep_with_next=False),
+                fmt(table, keep_with_next=False, cant_split=True), fmt(table, keep_together=False, shading="FFF2CC")]
+    out = _laid(document, out)
     return out + [tracked(case) for case in out]
 
 

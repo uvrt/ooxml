@@ -11,6 +11,7 @@
 
 mod columns;
 mod copy_row;
+mod keeps;
 mod merge;
 mod new_column;
 mod new_row;
@@ -22,17 +23,20 @@ pub(crate) mod tracker;
 
 pub(crate) use rows::placed;
 
+pub use keeps::{loose_paragraph_after, table_keeps, table_keeps_at, TableKeeps};
 pub use props::{CellValues, Look, TableValues, TableWidth};
 pub use rows::{pending_structure, EditTable, TableChange, TableChanged};
 
 use crate::doc::Key;
+use crate::fields::{FieldLayout, Unknown};
 use crate::names::{W, W16DU};
 use crate::policy::{RevisionPolicy, Stamp};
+use crate::props::PropertyTracker;
 use crate::set_text::block_key;
 use crate::sink::{annotation_draws, EditSink};
 use crate::stamping::stamp_document;
 use crate::validate::Orders;
-use crate::work::{scope_above, Work};
+use crate::work::{scope_above, Id, Work};
 use crate::{EditError, Result, WordDoc};
 use ooxml_store::{Command, Txn};
 use ooxml_word_model::address::direct;
@@ -72,17 +76,40 @@ pub enum TableFormat {
         /// What to set.
         values: CellValues,
     },
+    /// The rows' keeps: `keep_together` and `keep_with_next` as `word_format_table` gives
+    /// them (`set_keep_together`, `set_table_keep_with_next`; [`keeps::plan`]).
+    Keeps {
+        /// Keep the table on one page (`Some(false)`: release it).
+        keep_together: Option<bool>,
+        /// Keep it with the next block too.
+        keep_with_next: Option<bool>,
+    },
 }
 
 /// Format a table: its edits in order, one step.
-#[derive(Debug, Clone)]
-pub struct FormatTable {
+#[derive(Clone)]
+pub struct FormatTable<'l> {
     /// The table (an id, an alias).
     pub table: String,
     /// The edits.
     pub formats: Vec<TableFormat>,
     /// Untracked or tracked.
     pub policy: RevisionPolicy,
+    /// The layout of the document's versions: a body table kept together
+    /// ([`TableFormat::Keeps`], `keep_together` on) is laid out after the edits, for the
+    /// pages it is drawn on ([`TableFormatted::pages`]); without one, that is
+    /// [`EditError::Unsupported`].
+    pub layout: Option<&'l dyn FieldLayout>,
+}
+
+impl std::fmt::Debug for FormatTable<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FormatTable")
+            .field("table", &self.table)
+            .field("formats", &self.formats)
+            .field("policy", &self.policy)
+            .finish_non_exhaustive()
+    }
 }
 
 /// What one edit of a [`FormatTable`] did, as docx-agent's `EditResult` says it.
@@ -90,6 +117,8 @@ pub struct FormatTable {
 pub struct TableEdit {
     /// The table's id after the edit.
     pub id: String,
+    /// Whether the edit changed the table (a keep already as asked does not).
+    pub changed: bool,
     /// Ids renamed (stamping, by the first edit), old to new.
     pub renamed: Vec<(String, String)>,
     /// What it did that the caller did not ask for.
@@ -101,6 +130,10 @@ pub struct TableEdit {
 pub struct TableFormatted {
     /// The edits.
     pub edits: Vec<TableEdit>,
+    /// A body table kept together: the 0-based pages it is drawn on after the edits, or why
+    /// the layout cannot say (docx-agent's `_taller_than_page` reads them); `None` where not
+    /// asked, or the table is not the body's.
+    pub pages: Option<std::result::Result<Vec<usize>, Unknown>>,
 }
 
 /// A table found: its part, its place there and its id.
@@ -177,7 +210,7 @@ fn room_for(doc: &WordDoc, docx: &Docx, found: &Found) -> i64 {
     }
 }
 
-impl FormatTable {
+impl FormatTable<'_> {
     /// Each edit's arguments against the table as it is (docx-agent's checks before an
     /// edit); `id` the table's id then.
     fn check(&self, docx: &Docx, found: &Found) -> Result<()> {
@@ -216,7 +249,7 @@ impl FormatTable {
     }
 }
 
-impl Command<WordDoc> for FormatTable {
+impl Command<WordDoc> for FormatTable<'_> {
     type Out = TableFormatted;
     type Error = EditError;
 
@@ -228,8 +261,20 @@ impl Command<WordDoc> for FormatTable {
 
     fn prepare(&self, tx: &mut Txn<'_, WordDoc>) -> Result<TableFormatted> {
         let mut sink = EditSink::new(tx, self.policy.clone());
-        let out = self.edit(&mut sink)?;
+        let mut out = self.edit(&mut sink)?;
         crate::after::after_edit(&mut sink)?;
+        let kept = self.formats.iter().any(|f| {
+            matches!(
+                f,
+                TableFormat::Keeps {
+                    keep_together: Some(true),
+                    ..
+                }
+            )
+        });
+        if kept {
+            out.pages = keeps::table_pages(&sink, self.layout, &self.table)?;
+        }
         Ok(out)
     }
 }
@@ -255,7 +300,7 @@ impl Written {
     }
 }
 
-impl FormatTable {
+impl FormatTable<'_> {
     /// The edits, through `sink`.
     fn edit(&self, sink: &mut EditSink<'_, '_>) -> Result<TableFormatted> {
         let docx = sink.docx()?;
@@ -263,7 +308,38 @@ impl FormatTable {
         self.check(&docx, &found)?;
         let room = room_for(sink.doc(), &docx, &found);
         sink.read(block_key(&found.part, &found.id));
+        // keeps first in the call are planned before the document is stamped (docx-agent's
+        // `_write_keeps` stamps only what it writes); a keep already as asked, alone, writes
+        // nothing at all
+        let keeps_first = matches!(self.formats.first(), Some(TableFormat::Keeps { .. }));
+        let mut plans = if keeps_first {
+            self.keep_plans(&docx, &found)?
+        } else {
+            Vec::new()
+        };
+        if keeps_first && self.formats.len() == 1 && plans.iter().flatten().all(|p| p.write.changes.is_empty()) {
+            let edits = plans.into_iter().flatten().map(|p| TableEdit {
+                id: found.id.clone(),
+                changed: false,
+                renamed: Vec::new(),
+                warnings: p.write.warnings,
+            });
+            return Ok(TableFormatted {
+                edits: edits.collect(),
+                pages: None,
+            });
+        }
         let renamed = stamp_document(&mut *sink, &docx)?;
+        let (docx, found) = if renamed.is_empty() {
+            (docx, found)
+        } else {
+            let docx = sink.docx()?;
+            let found = find_table(sink.doc(), &docx, &self.table)?;
+            (docx, found)
+        };
+        if !keeps_first {
+            plans = self.keep_plans(&docx, &found)?;
+        }
         let mut style_ids = Vec::new();
         for format in &self.formats {
             if let TableFormat::Table(TableValues { style: Some(style), .. }) = format {
@@ -281,7 +357,7 @@ impl FormatTable {
         let written = match sink.policy().clone() {
             RevisionPolicy::Tracked(tracking) => {
                 let (warnings, numbered, dated) = sink.stamped(tracking, |stamp| {
-                    Ok(self.apply(&mut work, Some(stamp), &style_ids, room, orders))
+                    Ok(self.apply(&mut work, Some(stamp), &style_ids, room, orders, &plans))
                 })?;
                 Written {
                     numbered: Some(numbered),
@@ -292,7 +368,7 @@ impl FormatTable {
             RevisionPolicy::Untracked => Written {
                 numbered: None,
                 dated: false,
-                warnings: self.apply(&mut work, None, &style_ids, room, orders),
+                warnings: self.apply(&mut work, None, &style_ids, room, orders, &plans),
             },
         };
         sink.keep_written(&found.part, None, &work);
@@ -307,17 +383,38 @@ impl FormatTable {
         if new.as_ref() != element.as_ref() {
             write(sink, &found, &id, new, &written)?;
         }
-        let edits = written
-            .warnings
+        let edits = self.outcomes(written.warnings, &plans, &id, &renamed);
+        Ok(TableFormatted { edits, pages: None })
+    }
+
+    /// Each edit's outcome: the table's id after them, the renames (the first edit's), its
+    /// warnings -- a released last row's said with that id -- and whether it changed the
+    /// table (a keep already as asked did not).
+    fn outcomes(
+        &self,
+        warnings: Vec<Vec<String>>,
+        plans: &[Option<KeepPlan>],
+        id: &str,
+        renamed: &[(String, String)],
+    ) -> Vec<TableEdit> {
+        warnings
             .into_iter()
             .enumerate()
-            .map(|(k, warnings)| TableEdit {
-                id: id.clone(),
-                renamed: if k == 0 { renamed.clone() } else { Vec::new() },
-                warnings,
+            .zip(&self.formats)
+            .map(|((k, mut warnings), format)| {
+                let plan = plans.get(k).and_then(Option::as_ref);
+                if plan.is_some_and(|p| p.released) {
+                    warnings.push(keeps::released_note(id));
+                }
+                let kept = plan.is_some_and(|p| !p.write.changes.is_empty());
+                TableEdit {
+                    id: id.to_owned(),
+                    changed: !matches!(format, TableFormat::Keeps { .. }) || kept,
+                    renamed: if k == 0 { renamed.to_vec() } else { Vec::new() },
+                    warnings,
+                }
             })
-            .collect();
-        Ok(TableFormatted { edits })
+            .collect()
     }
 
     /// Each edit on the table's copy, recorded by `stamp` when tracked; each one's
@@ -329,13 +426,33 @@ impl FormatTable {
         style_ids: &[String],
         room: i64,
         orders: &Orders,
+        plans: &[Option<KeepPlan>],
     ) -> Vec<Vec<String>> {
         let table = work.root();
+        // the rows' paragraphs found before any edit moves them (a row's new `w:trPr`)
+        let leads: Vec<Vec<(Id, Option<bool>)>> = plans
+            .iter()
+            .map(|p| {
+                p.as_ref()
+                    .map_or_else(Vec::new, |p| keeps::leads(work, table, &p.rows, &p.write.changes))
+            })
+            .collect();
         let mut styles = style_ids.iter();
         let mut out = Vec::new();
-        for format in &self.formats {
+        for (k, format) in self.formats.iter().enumerate() {
             let mut warnings = Vec::new();
             match format {
+                TableFormat::Keeps { .. } => {
+                    if let (Some(plan), Some(leads)) = (plans.get(k).and_then(Option::as_ref), leads.get(k)) {
+                        let roots: Vec<Id> = leads.iter().map(|l| l.0).collect();
+                        let tracker = stamp.is_some().then(|| PropertyTracker::start(work, &roots));
+                        keeps::write(work, leads, orders);
+                        if let (Some(tracker), Some(stamp)) = (tracker, stamp.as_deref_mut()) {
+                            tracker.record(work, stamp, orders);
+                        }
+                        warnings.extend(plan.write.warnings.iter().cloned());
+                    }
+                }
                 TableFormat::Table(values) => {
                     let style = values.style.as_ref().and_then(|_| styles.next()).map(String::as_str);
                     let tracker = stamp.is_some().then(|| TableTracker::new(work, table, true));
@@ -384,6 +501,38 @@ impl FormatTable {
             out.push(warnings);
         }
         out
+    }
+}
+
+/// A keep format's plan: the rows' keeps it was planned on, what it writes, and whether
+/// it releases a last row keeping alone.
+pub(crate) struct KeepPlan {
+    rows: Vec<keeps::RowKeep>,
+    write: keeps::KeepWrite,
+    released: bool,
+}
+
+impl FormatTable<'_> {
+    /// Each keep format's plan, in the formats' places (`None` for the others), against
+    /// the table at `found`.
+    fn keep_plans(&self, docx: &Docx, found: &Found) -> Result<Vec<Option<KeepPlan>>> {
+        let mut out = Vec::new();
+        for format in &self.formats {
+            let TableFormat::Keeps {
+                keep_together,
+                keep_with_next,
+            } = format
+            else {
+                out.push(None);
+                continue;
+            };
+            let rows = keeps::row_keeps(docx, found)?;
+            let work = Work::of(&found.element, Vec::new());
+            let own = shape::own_rows(&work, work.root()).len();
+            let (write, released) = keeps::plan(&rows, &found.id, own, *keep_together, *keep_with_next)?;
+            out.push(Some(KeepPlan { rows, write, released }));
+        }
+        Ok(out)
     }
 }
 

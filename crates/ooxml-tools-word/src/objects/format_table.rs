@@ -14,7 +14,11 @@ use ooxml_word_edit::{CellValues, EditError, FormatTable, TableEdit, TableFormat
 use serde_json::{json, Value};
 
 /// What `unported` says of a call that needs what is not ported yet.
-const LAYOUT: &str = "word_format_table width_of body or window, keep_together, keep_with_next";
+const LAYOUT: &str = "word_format_table width_of body or window";
+
+/// keep_together on a table taller than a page (docx-agent's `TALLER_THAN_PAGE`, round 25):
+/// Word does keep it, so does the tool.
+const TALLER_THAN_PAGE: &str = "taller than a page: Word starts it on a new page and breaks it where the page is full";
 /// What `unported` says of a row, column or cell of a table with tracked structure.
 const ACCEPTED: &str = "word_format_table positions in a table with pending tracked structure";
 
@@ -22,7 +26,7 @@ impl From<TableEdit> for Outcome {
     fn from(edit: TableEdit) -> Self {
         Outcome {
             id: Some(edit.id),
-            changed: true,
+            changed: edit.changed,
             created: Vec::new(),
             removed: Vec::new(),
             renamed: edit.renamed,
@@ -140,7 +144,7 @@ fn run(args: &WordFormatTable, editing: &Editing<'_>, retry: &TryCall) -> Result
         return Err(invalid(&message, None, Some(&options), retry));
     }
     let summary = format!("Formatted {} of {}", args.scope.as_str(), args.table);
-    Ok(finish(args, editing, formats, summary, false, retry))
+    Ok(finish(args, editing, formats, summary, false, retry).result)
 }
 
 /// A row's, column's or cell's own edits, and the grid positions whose cells are formatted.
@@ -251,7 +255,10 @@ fn table_scope(
         return Err(invalid(message, Some("keep_with_next"), None, retry));
     }
     if args.keep_together.is_some() || args.keep_with_next.is_some() {
-        return Ok(unported(LAYOUT, retry));
+        formats.push(TableFormat::Keeps {
+            keep_together: args.keep_together,
+            keep_with_next: args.keep_with_next,
+        });
     }
     let has_values = values != TableValues::default();
     if !has_values && formats.is_empty() {
@@ -275,7 +282,93 @@ fn table_scope(
     }
     let summary = format!("Formatted {}", args.table);
     let regions = args.style.is_some() || args.look.is_some();
-    Ok(finish(args, editing, formats, summary, regions, retry))
+    let Finished {
+        mut result,
+        changed,
+        pages,
+    } = finish(args, editing, formats, summary, regions, retry);
+    if !has_values && !changed {
+        // round 27, W7: asked for what the table already is; the warnings say why
+        if let ooxml_tools::Outcome::Done(found) = &mut result.outcome {
+            found.summary = format!("No change to {}", args.table);
+            found.changed.clear();
+        }
+    }
+    if args.keep_together.is_some() || args.keep_with_next.is_some() {
+        keep_notes(args, editing, pages, &mut result);
+    }
+    Ok(result)
+}
+
+/// What a call with `keep_together` or `keep_with_next` says after its edit (docx-agent's
+/// `word_format_table`): a table kept together that is taller than a page, or whose pages
+/// the layout cannot say (`_taller_than_page`, from `pages`); a loose paragraph between the
+/// table kept with the next and the table after it (round 25, W5); else a table released
+/// that its rows' styles still keep together.
+fn keep_notes(
+    args: &WordFormatTable,
+    editing: &Editing<'_>,
+    pages: Option<Result<Vec<usize>, ooxml_word_edit::Unknown>>,
+    result: &mut ToolResult<Value>,
+) {
+    let ooxml_tools::Outcome::Done(found) = &result.outcome else {
+        return;
+    };
+    let table = found
+        .renamed
+        .iter()
+        .find(|(old, _)| *old == args.table)
+        .map_or_else(|| args.table.clone(), |(_, new)| new.clone());
+    match pages {
+        Some(Ok(pages)) if pages.len() > 1 => {
+            result.warnings.push(format!("{table} is {TALLER_THAN_PAGE}"));
+        }
+        Some(Err(_)) => result.warnings.push(format!(
+            "{table} is kept together, but the document could not be laid out to it: whether it is taller than a \
+             page is not known (if it is, Word starts it on a new page and breaks it where the page is full)"
+        )),
+        _ => {}
+    }
+    let head = editing.editor.store().snapshot();
+    let loose = if args.keep_with_next == Some(true) {
+        ooxml_word_edit::loose_paragraph_after(head.doc(), &table)
+            .ok()
+            .flatten()
+    } else {
+        None
+    };
+    if let Some((table, paragraph, after)) = loose {
+        result.warnings.push(format!(
+            "{paragraph}, between {table} and {after}, does not keep with the next: {after} can still start a page \
+             without {table}; word_format keep_with_next true on {paragraph} keeps them together"
+        ));
+    } else if args.keep_together == Some(false) {
+        let kept = ooxml_word_edit::table_keeps(head.doc(), &table).is_ok_and(|k| k.together);
+        if kept {
+            result.warnings.push(format!(
+                "{table} is still kept together by its rows' styles (they keep with the next); keep_together \
+                 false removes only the direct keeps"
+            ));
+        }
+    }
+}
+
+/// What [`finish`] gives: the reply, whether any edit changed the table, and the pages a
+/// table kept together is drawn on (the command's [`ooxml_word_edit::TableFormatted::pages`]).
+struct Finished {
+    result: ToolResult<Value>,
+    changed: bool,
+    pages: Option<Result<Vec<usize>, ooxml_word_edit::Unknown>>,
+}
+
+impl From<ToolResult<Value>> for Finished {
+    fn from(result: ToolResult<Value>) -> Self {
+        Finished {
+            result,
+            changed: false,
+            pages: None,
+        }
+    }
 }
 
 /// Run `formats` as one command and reply as `outcome` does, the table among the changed;
@@ -287,16 +380,19 @@ fn finish(
     summary: String,
     regions: bool,
     retry: &TryCall,
-) -> ToolResult<Value> {
+) -> Finished {
     let command = FormatTable {
         table: args.table.clone(),
         formats,
         policy: policy(editing),
+        layout: editing.layout,
     };
     let done = match editing.editor.run(editing.caller, &command) {
         Ok(done) => done,
-        Err(error) => return refused(error, retry.clone()),
+        Err(error) => return refused(error, retry.clone()).into(),
     };
+    let pages = done.out.pages;
+    let changed = done.out.edits.iter().any(|e| e.changed);
     let now = done.out.edits.first().map(|e| e.id.clone());
     let edits: Vec<Outcome> = done.out.edits.into_iter().map(Outcome::from).collect();
     let mut result = outcome(&edits, summary, None);
@@ -313,5 +409,5 @@ fn finish(
         });
         result.warnings.extend(note);
     }
-    result
+    Finished { result, changed, pages }
 }

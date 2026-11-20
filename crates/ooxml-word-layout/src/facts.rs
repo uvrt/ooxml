@@ -338,6 +338,26 @@ impl LayoutFacts {
             .map(|p| p.page)
             .collect()
     }
+
+    /// [`LayoutFacts::pages_of`] for each of `keys`, in their order, in one pass over the
+    /// pages.
+    pub fn pages_of_each(&self, keys: &[&str]) -> Vec<Vec<usize>> {
+        let mut wanted: std::collections::HashMap<&str, Vec<usize>> = std::collections::HashMap::new();
+        for (k, key) in keys.iter().enumerate() {
+            wanted.entry(key).or_default().push(k);
+        }
+        let mut out = vec![Vec::new(); keys.len()];
+        for page in &self.pages {
+            for block in &page.blocks {
+                for &k in wanted.get(&**block).map_or(&[][..], Vec::as_slice) {
+                    if let Some(pages) = out.get_mut(k) {
+                        pages.push(page.page);
+                    }
+                }
+            }
+        }
+        out
+    }
 }
 
 /// The top-level body block `layout` stopped at, if it did.
