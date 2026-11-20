@@ -13,6 +13,7 @@ mod rename;
 
 pub use bookmarks::AddBookmark;
 pub use hyperlinks::AddHyperlink;
+pub(crate) use rename::rename_in_instruction;
 pub use rename::{RemoveBookmark, RenameBookmark};
 
 use crate::doc::{Draw, DrawFrom};
