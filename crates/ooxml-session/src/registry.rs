@@ -100,6 +100,18 @@ impl Call<'_> {
         self.cancel
     }
 
+    /// The version the call reads as the session's editor holds it, with the problems the
+    /// document was opened with, where the session owns it as a Word document.
+    #[must_use]
+    pub fn owned(&self) -> Option<ooxml_tools_word::Owned<'_>> {
+        let doc = self.doc.word()?;
+        let word = self.word?;
+        Some(ooxml_tools_word::Owned {
+            doc,
+            baseline: word.editor.baseline(),
+        })
+    }
+
     /// The other documents the call names, by id, at their pinned versions.
     #[must_use]
     pub fn others(&self) -> &[(String, Opened)] {
@@ -156,6 +168,7 @@ impl<T: ToolArgs> Tool for ReadHandler<T> {
                 let others = call.other_versions();
                 let version = Version {
                     others: Others::new(&others),
+                    owned: call.owned(),
                     ..call.doc.version_of()
                 };
                 (self.run)(&args, &version, call.cancel)
@@ -387,6 +400,7 @@ impl Registry {
         registry.register(word_edit::<ooxml_tools_word::WordCopyFrom>(
             ooxml_tools_word::word_copy_from,
         ));
+        registry.register(word_read::<ooxml_tools_word::Check>(ooxml_tools_word::check));
         registry
     }
 

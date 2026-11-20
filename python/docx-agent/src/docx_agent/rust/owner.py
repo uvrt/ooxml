@@ -217,4 +217,25 @@ def owned_validation(entry: Any) -> dict[str, Any] | None:
     return {"new": list(new), "fixed": list(fixed), "baseline": baseline}
 
 
+def session_validation(entry: Any) -> dict[str, Any] | None:
+    """The save gate's comparison of a document the session owns (or of a read copy of one of
+    its committed versions), at the entry's version: the session's, against the problems it
+    opened with -- the format's :attr:`~ooxml_edit.tools.DocumentFormat.validation`, so
+    neither ``check``'s ``validation`` nor saving makes the Python view current to validate
+    it.  ``None`` for a document the session does not own, or a version it let go."""
+    owned = reads._owned(entry)
+    mirror = getattr(owned, "handle", None)
+    if not isinstance(mirror, reads.Mirror):
+        return None
+    with mirror.lock:
+        version = mirror.versions.get(entry.version)
+    if version is None:
+        return None
+    found = mirror.session.validation(mirror.doc, at=version)
+    if found is None:
+        return None
+    new, fixed, baseline = found
+    return {"new": list(new), "fixed": list(fixed), "baseline": baseline}
+
+
 OWNER = RustOwner()

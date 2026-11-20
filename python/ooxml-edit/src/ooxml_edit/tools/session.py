@@ -208,6 +208,12 @@ class DocumentFormat:
     problems: Callable[[Any], Sequence[Any]] | None = None
     #: How a problem is compared with the baseline; ``str`` by default.
     problem_key: Callable[[Any], Hashable] = str
+    #: The save gate's comparison (:func:`.savegate.validation`: ``{"new", "fixed",
+    #: "baseline"}``) of an entry's version, where the format keeps the document itself (a
+    #: Rust owner) and compares there; ``None`` (the hook or its answer): the problems are
+    #: found here (``problems``) and compared with the baseline.  Not asked inside a batch,
+    #: whose ops change the document before its version moves.
+    validation: Callable[[Any], dict[str, Any] | None] | None = None
     #: Warning categories the library raises; collected into results, never printed.
     warnings: tuple[type[Warning], ...] = ()
     #: The format's system-prompt fragment, appended after the shared one.
