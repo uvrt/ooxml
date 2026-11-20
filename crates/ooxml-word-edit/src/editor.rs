@@ -2,13 +2,15 @@
 //! problems it opened with, and the run of a command through it: validate and prepare on a
 //! snapshot, commit (rebased past concurrent commits, prepared again on a conflict), then
 //! the result from the change and the version after it ([`Edited`]): what it touched and
-//! the validation delta (design section 5, "Results").
+//! the validation delta (design section 5, "Results"); every command followed by the
+//! records of placed values kept in the document ([`crate::provenance`]).
 //!
 //! Must not: hold anything but the store and the baseline; read the clock but through the
 //! store's port; run a command's effects outside its transaction.
 
 use crate::doc::WordDoc;
 use crate::ids_delta::{ids_delta, IdsDelta};
+use crate::pool::EarlierIds;
 use crate::touched::{touched, Touched};
 use crate::validate::{problems, Delta, Problem};
 use crate::{EditError, Result};
@@ -73,7 +75,22 @@ impl Editor {
         clock: Arc<dyn Clock>,
         budget: Arc<dyn CacheBudget>,
     ) -> Result<Editor> {
-        let doc = WordDoc::open(package, budget)?;
+        Editor::open_with(package, config, clock, budget, &EarlierIds::default())
+    }
+
+    /// The document whose first version is `package`, opened again with the ids it had
+    /// before it was saved ([`EarlierIds`]).
+    ///
+    /// # Errors
+    /// As [`Editor::open`].
+    pub fn open_with(
+        package: Package,
+        config: StoreConfig,
+        clock: Arc<dyn Clock>,
+        budget: Arc<dyn CacheBudget>,
+        earlier: &EarlierIds,
+    ) -> Result<Editor> {
+        let doc = WordDoc::open_with(package, budget, earlier)?;
         let baseline = problems(&doc)?;
         Ok(Editor {
             store: Store::new(doc, config, Arc::clone(&clock)),
@@ -103,7 +120,8 @@ impl Editor {
     where
         C: Command<WordDoc, Error = EditError>,
     {
-        let committed = self.store.run(caller, command)?;
+        // docx-agent's records of placed values follow every edit, in its own step
+        let committed = self.store.run(caller, &crate::provenance::Followed(command))?;
         let started = self.clock.monotonic();
         let (touched, ids) = match &committed.previous {
             Some(previous) if committed.changed => (

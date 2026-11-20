@@ -16,7 +16,7 @@
 
 use crate::doc::Key;
 use crate::names::{O, R};
-use crate::new_part::{add_external, add_internal, declare_type};
+use crate::new_part::{add_external, add_internal, declare_type, part_with_bytes};
 use crate::sink::EditSink;
 use crate::work::{Id, Work};
 use crate::Result;
@@ -157,7 +157,7 @@ impl Parts {
         let content_type = self.source.content_types()?.of(source_part).map(str::to_owned);
         let folder = directory(source_part);
         if folder.rsplit('/').next() == Some("media") {
-            if let Some(existing) = self.with_bytes(&data, folder)? {
+            if let Some(existing) = part_with_bytes(&self.package, &data, folder)? {
                 self.copied.insert(source_part.to_owned(), existing.clone());
                 return Ok(existing);
             }
@@ -205,22 +205,6 @@ impl Parts {
             }
         }
         Ok(target)
-    }
-
-    /// `find_part_with_bytes`: a part below `folder` holding exactly `data` (none changed
-    /// as a tree), the first in archive order.
-    fn with_bytes(&self, data: &[u8], folder: &str) -> Result<Option<String>> {
-        let prefix = format!("{}/", normalize(folder).trim_end_matches('/'));
-        let size = u64::try_from(data.len()).ok();
-        for name in self.package.part_names() {
-            if !name.starts_with(&prefix) || self.package.size(&name) != size {
-                continue;
-            }
-            if self.package.read(&name)?.is_some_and(|bytes| *bytes == *data) {
-                return Ok(Some(name));
-            }
-        }
-        Ok(None)
     }
 
     /// `_rename_relationship`: a copied part's relationship `old` got the id `new`: its

@@ -210,7 +210,14 @@ fn object(
     if let Some(unknown) = given.keys().find(|key| node.property(key).is_none()) {
         let name = join(where_, unknown);
         let names: Vec<&str> = node.properties().iter().map(|p| p.name.as_str()).collect();
-        let hint = misplaced(unknown, node, where_, outer).unwrap_or_else(|| did_you_mean(unknown, &names));
+        let refused = node
+            .properties()
+            .iter()
+            .find(|p| p.intent.refused_aliases.iter().any(|a| a == unknown))
+            .map(|p| format!("; did you mean {}?", repr_str(&p.name)));
+        let hint = refused
+            .or_else(|| misplaced(unknown, node, where_, outer))
+            .unwrap_or_else(|| did_you_mean(unknown, &names));
         let mut sorted: Vec<&str> = names.clone();
         sorted.sort_unstable();
         let options = sorted.into_iter().map(Value::from).collect();

@@ -246,7 +246,7 @@ def mirror_of(live: Any, copy: Any = None) -> "Mirror | None":
             return found
         source = live if copy is None else copy
         data = source.to_bytes()
-        doc = session.open(data, kind="docx", name="document.docx")
+        doc = session.open(data, kind="docx", name="document.docx", ids=_earlier_ids(source))
         parts = {part: identity for part, (identity, _) in _identities(source.package).items()}
         made = Mirror(session, doc, parts)
         made.versions[source.history.version] = session.head(doc)
@@ -254,6 +254,18 @@ def mirror_of(live: Any, copy: Any = None) -> "Mirror | None":
         weakref.finalize(live, finalizers.later, _close, session, doc)
         live.__dict__["_rust_reads"] = made
         return made
+
+
+def _earlier_ids(document: Any) -> "tuple[list[int], list[tuple[str, int]], int] | None":
+    """The ids ``document`` had before it was saved, where its id state was opened with it
+    (round 38: its ledger's pool, restored): every value, each seed's cursor and the highest
+    drawing number -- for the session never to give a retired id again.  ``None`` where its
+    pool is not read yet (the parts' ids are all it has)."""
+    ledger = getattr(document, "_ledger", None)
+    pool = getattr(ledger, "pool", None)
+    if pool is None:
+        return None
+    return list(pool), list(getattr(pool, "cursors", {}).items()), ledger.highest_drawing
 
 
 # -- serving a call ---------------------------------------------------------------------------

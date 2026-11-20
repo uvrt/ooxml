@@ -155,6 +155,26 @@ pub(crate) fn declare_type(package: &Package, part: &str, content_type: &str) ->
     crate::content_types::declare(package, part, content_type)
 }
 
+/// ooxml-edit's `find_part_with_bytes`: a part below `folder` holding exactly `data`, the
+/// first in archive order; a part held as a tree (changed by an edit) is not one (sizes are
+/// compared before any bytes are read).
+///
+/// # Errors
+/// When a part cannot be read.
+pub(crate) fn part_with_bytes(package: &Package, data: &[u8], folder: &str) -> Result<Option<String>, ModelError> {
+    let prefix = format!("{}/", ooxml_opc::name::normalize(folder).trim_end_matches('/'));
+    let size = u64::try_from(data.len()).ok();
+    for name in package.part_names() {
+        if !name.starts_with(&prefix) || package.size(&name) != size {
+            continue;
+        }
+        if package.read(&name)?.is_some_and(|bytes| *bytes == *data) {
+            return Ok(Some(name));
+        }
+    }
+    Ok(None)
+}
+
 /// An external relationship from `source` to the address `target` of `rel_type`, as
 /// ooxml-edit's `add_external_relationship` adds one: an existing one of that type and
 /// address reused. Returns the package made (`None`: none was added) and the

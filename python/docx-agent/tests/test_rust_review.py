@@ -1,7 +1,8 @@
 """The editing tools' Rust definitions (``crates/ooxml-tools-word``, golden ``tests/golden``)
 equal today's byte for byte: the review tools ``word_set_tracking``, ``word_changes`` and
-``word_comments`` (lane P4a), and ``word_set_text``, ``replace_text``, ``word_insert_text`` and
-``word_delete`` (lane P2c; a placing alias written as the kind of place it reads).  Their
+``word_comments`` (lane P4a), and ``word_set_text``, ``replace_text``, ``word_insert_text``,
+``word_delete`` and ``word_insert_markdown`` (lane P2c; a placing alias written as the kind of place
+it reads, a refusing one as the name it gives).  Their
 handlers' equality with today's is the edit oracle's
 (``crates/ooxml-oracle/python/word_edits_diff.py --review``, ``--tools``, ``--text``).
 """
@@ -18,14 +19,22 @@ HERE = Path(__file__).resolve().parent
 GOLDEN = HERE.parents[2] / "crates" / "ooxml-tools-word" / "tests" / "golden"
 
 
+#: Today's aliases that refuse, each written as the name its refusal gives (Rust's
+#: ``refused_alias``).
+REFUSED = {"_no_markdown_from": "refused:from"}
+
+
 def _alias(value):
     if isinstance(value, str):
         return value
+    if value.__name__ in REFUSED:
+        return REFUSED[value.__name__]
     return "place:" + inspect.getclosurevars(value).nonlocals["kind"]
 
 
 @pytest.mark.parametrize("name", ["word_set_tracking", "word_changes", "word_comments", "word_set_text",
-                                  "replace_text", "word_insert_text", "word_delete"])
+                                  "replace_text", "word_insert_text", "word_delete",
+                                  "word_insert_markdown"])
 def test_the_rust_definitions_are_todays_byte_for_byte(name):
     from test_rust_tool_specs import export, text
 

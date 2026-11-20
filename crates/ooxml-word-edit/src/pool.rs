@@ -80,6 +80,22 @@ impl IdsChange {
     }
 }
 
+/// The ids a document had before it was saved and opened again, as the host kept them
+/// beside its bytes (docx-agent's id state, round 38): every value its pool held -- in use
+/// and retired --, where each seed's generation got to, and the highest drawing number
+/// given. A document opened with them never gives a retired id again.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct EarlierIds {
+    /// Every value the pool held.
+    pub values: Vec<u32>,
+    /// Seeds and where their generation got to.
+    pub cursors: Vec<(String, usize)>,
+    /// The highest drawing number given.
+    pub highest_drawing: u64,
+    /// The drawing numbers retired (docx-agent's `drawings_gone`): a copy keeps none of them.
+    pub drawings: Vec<u64>,
+}
+
 /// A version's ids: the pool, the sequences' cursors and the renames. Cloning shares.
 #[derive(Debug, Clone, Default)]
 pub struct Ids {
@@ -109,6 +125,23 @@ impl Ids {
             drawings: Arc::new(drawings.into_iter().collect()),
             ..Ids::default()
         }
+    }
+
+    /// These ids with what the document had before it was saved and opened again
+    /// (`earlier`): its values in the pool, its cursors, its highest drawing number.
+    #[must_use]
+    pub fn with_earlier(mut self, earlier: &EarlierIds) -> Ids {
+        if !earlier.values.is_empty() {
+            Arc::make_mut(&mut self.base).extend(earlier.values.iter().copied());
+        }
+        if !earlier.cursors.is_empty() {
+            Arc::make_mut(&mut self.cursors).extend(earlier.cursors.iter().cloned());
+        }
+        self.highest_drawing = self.highest_drawing.max(earlier.highest_drawing);
+        if !earlier.drawings.is_empty() {
+            Arc::make_mut(&mut self.drawings).extend(earlier.drawings.iter().copied());
+        }
+        self
     }
 
     /// Whether the document has or had the drawing number `number`, or a draw gave it.
@@ -323,5 +356,30 @@ mod tests {
         let (again, _) = next.draw("word/document.xml", 1, &sequences);
         assert_eq!(again, vec![format!("{:08X}", sequence_value("word/document.xml", 3))]);
         assert!(!ids.contains(sequence_value("word/document.xml", 2)));
+    }
+
+    #[test]
+    fn an_id_retired_before_the_document_was_saved_is_never_drawn_again() {
+        let sequences = Sequences::default();
+        let seed = "word/document.xml";
+        // the parts hold the first value; the second was given and deleted before the save
+        let opened = Ids::opened(
+            [sequence_value(seed, 1)].into_iter().collect(),
+            [3].into_iter().collect(),
+        );
+        let earlier = EarlierIds {
+            values: vec![sequence_value(seed, 2)],
+            cursors: Vec::new(),
+            highest_drawing: 7,
+            drawings: vec![5],
+        };
+        let ids = opened.clone().with_earlier(&earlier);
+        let (again, _) = opened.draw(seed, 1, &sequences);
+        let (made, _) = ids.draw(seed, 1, &sequences);
+        assert_eq!(again, vec![format!("{:08X}", sequence_value(seed, 2))]);
+        assert_eq!(made, vec![format!("{:08X}", sequence_value(seed, 3))]);
+        assert_eq!(ids.highest_drawing(), 7);
+        assert!(ids.had_drawing(5) && ids.had_drawing(3) && !ids.had_drawing(4));
+        assert!(ids.added().is_empty());
     }
 }
