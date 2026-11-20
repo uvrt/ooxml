@@ -6,6 +6,7 @@
 | `mode14.docx` | `77be777abae6193af48cb3c970c7a4c67a2a3a4a1c147acc569c89a7fc7240cc` |
 | `controls.docx` | `fc2f42cc7f052802a23f82f3fa25d0d39c65bf54c7f8db674aba0042d23934b4` |
 | `lists-and-styles.docx` | `94c56b4994c7f50480d634cbf099d808c7ded428b5a8c254bd289fd3567fabaf` |
+| `own-tracked-note.docx` | `385d29b4493f8feaf6ef8f6ca9f707d3102f3e95c1c9a16c766104157065aa31` |
 
 Written by `tools/make_fixtures.py` in this repository, deterministically (running it
 again writes the same bytes), every part by hand: the styles are a handful written there,
@@ -31,3 +32,7 @@ names), numbered lists over one abstract definition (one restarted), a list a pa
 style gives, an unused list instance, formatting that changes mid-word with runs split by
 rsids and a proofing mark, an external and an internal hyperlink, a bookmark, and an inline
 picture -- a 4x4 one-colour PNG written by the same script.
+`own-tracked-note.docx` (mode 15) is a footnote of three paragraphs, it and its reference
+tracked insertions by the differential harness's own author ("Writer A"): a tracked edit or
+delete of the note removes those insertions outright -- for `word_notes` and annotation-id
+numbering.
