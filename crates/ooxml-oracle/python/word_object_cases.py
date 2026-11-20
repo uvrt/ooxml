@@ -41,7 +41,9 @@ def _table_scope(table: str) -> list[dict]:
             fmt(width_of="body"), fmt(width_of="body", width_percent=80), fmt(width_of="body", alignment="center"),
             fmt(width_of="body", width_percent=50, alignment="right"), fmt(width_of="body", width_percent=0.01),
             fmt(width_of="body", style="Table Grid", borders="single", cant_split=True),
-            fmt(width_of="window"), fmt(width_of="window", width=100), fmt(keep_together=True),
+            fmt(width_of="window"), fmt(width_of="window", width=100), fmt(width_of="window", width_percent=80),
+            fmt(width_of="window", style="Table Grid"), fmt(width_of="window", borders="double", shading="DDEEFF"),
+            fmt(keep_together=True),
             fmt(keep_together=False, keep_with_next=True), fmt(), fmt(style="Table Grid", width=250,
                                                                      alignment="center", header_rows=1)]
 
