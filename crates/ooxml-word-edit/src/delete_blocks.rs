@@ -6,7 +6,8 @@
 //!
 //! Must not: write but through the block deletion's writer, or read outside what it records
 //! reading: the blocks it deletes, the styles part (a paragraph's level), and the whole
-//! document when a heading it deletes leaves blocks under another.
+//! document when a heading it deletes leaves blocks under another. A heading it deletes is
+//! read with its own range alone, not the whole outline.
 
 use crate::blocks::{blocks_of, BlockKind};
 use crate::delete::BlockDeleted;
@@ -19,10 +20,13 @@ use crate::work::Work;
 use crate::{EditError, Result};
 use ooxml_base::pyfmt::repr_str;
 use ooxml_store::{Command, Txn};
+use ooxml_word_model::address::resolve::resolve;
 use ooxml_word_model::docx::controls::controls;
-use ooxml_word_model::docx::outline::{body_blocks, headings, Heading};
+use ooxml_word_model::docx::outline::{BodyWalk, Step};
 use ooxml_word_model::docx::Docx;
+use ooxml_word_model::ids::Entry;
 use ooxml_word_model::parts::related;
+use ooxml_xml::Element;
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -117,7 +121,9 @@ fn block_ids(doc: &WordDoc, docx: &Docx, address: &str) -> Result<Vec<String>> {
 
 /// `_headings_kept`: the refusal of deleting a heading whose content stays, with its ways
 /// out (the heading's range, or `force`); forced, the lines saying where it went. Blocks
-/// it cannot resolve leave the check to the deletion's own refusal.
+/// it cannot resolve leave the check to the deletion's own refusal. Each heading that goes
+/// is read from itself to its range's end (the next heading of its level or higher), and
+/// back to the heading its blocks would go under; nothing else of the outline is built.
 fn headings_kept(sink: &mut EditSink<'_, '_>, docx: &Docx, ids: &[String], force: bool) -> Result<Vec<String>> {
     let Ok(canonical) = ids
         .iter()
@@ -130,53 +136,44 @@ fn headings_kept(sink: &mut EditSink<'_, '_>, docx: &Docx, ids: &[String], force
     if let Some(part) = related(sink.doc().package(), &docx.main, REL_STYLES)? {
         sink.read(Key::Part(Arc::from(part.as_str())));
     }
-    let blocks = body_blocks(docx, &controls(docx));
-    let found = headings(&blocks);
-    let gone: HashSet<&str> = canonical.iter().map(String::as_str).collect();
-    if !found.iter().any(|h| gone.contains(h.id.as_str())) {
+    let Some(walk) = BodyWalk::new(docx) else {
+        return Ok(Vec::new());
+    };
+    let mut going: Vec<Step> = canonical.iter().filter_map(|id| heading(docx, &walk, id)).collect();
+    if going.is_empty() {
+        // no heading goes: the outline decides nothing, and is not read
         return Ok(Vec::new());
     }
-    // a heading goes: where its blocks go depends on the whole outline
+    going.sort_by_key(|s| s.child);
+    going.dedup_by_key(|s| s.child);
+    // a heading goes: where its blocks go depends on the outline around it
     sink.read_everything();
-    let mut left: Vec<(&Heading, usize, String, Option<&Heading>)> = Vec::new();
-    for heading in found.iter().filter(|h| gone.contains(h.id.as_str())) {
-        let kept: Vec<&String> = blocks
-            .get(heading.start + 1..heading.end)
-            .unwrap_or_default()
-            .iter()
-            .filter_map(|b| b.id.as_ref())
-            .filter(|id| !gone.contains(id.as_str()))
-            .collect();
-        let Some(first) = kept.first() else { continue };
-        let under = found
-            .iter()
-            .rev()
-            .find(|h| h.start < heading.start && !gone.contains(h.id.as_str()));
-        left.push((heading, kept.len(), (*first).clone(), under));
-    }
+    let gone: HashSet<&str> = canonical.iter().map(String::as_str).collect();
+    let left: Vec<Left> = going.into_iter().filter_map(|h| left_of(&walk, h, &gone)).collect();
     if left.is_empty() {
         return Ok(Vec::new());
     }
     let lines: Vec<String> = left
         .iter()
-        .map(|(heading, kept, first, under)| {
+        .map(|l| {
             format!(
-                "{} is a heading: its {kept} block(s) from {first} (to {}) would go under {}",
-                label(Some(heading)),
-                heading.last,
-                label(*under)
+                "{} is a heading: its {} block(s) from {} (to {}) would go under {}",
+                label(Some(&l.heading)),
+                l.kept,
+                l.first,
+                l.last,
+                label(l.under.as_ref())
             )
         })
         .collect();
     if force {
         return Ok(lines.iter().map(|l| l.replace("would go", "now go")).collect());
     }
-    let range = |h: &Heading| format!("h:{}", h.id);
     let mut message = lines.iter().take(5).cloned().collect::<Vec<_>>().join("; ");
     if lines.len() > 5 {
         message.push_str(&format!("; and {} more", lines.len() - 5));
     }
-    let ranges: Vec<String> = left.iter().map(|(h, ..)| range(h)).collect();
+    let ranges: Vec<String> = left.iter().map(|l| format!("h:{}", l.heading.0)).collect();
     message.push_str(&format!(
         ". To delete a heading with everything under it, target its range {}; to delete the heading alone and keep its content, force true",
         ranges.iter().take(3).cloned().collect::<Vec<_>>().join(", ")
@@ -190,12 +187,62 @@ fn headings_kept(sink: &mut EditSink<'_, '_>, docx: &Docx, ids: &[String], force
     })
 }
 
+/// A heading that goes while blocks of its range stay: it (id, paragraph), how many stay,
+/// the first and the range's last block, and the heading they would go under.
+struct Left {
+    heading: (String, Arc<Element>),
+    kept: usize,
+    first: String,
+    last: String,
+    under: Option<(String, Arc<Element>)>,
+}
+
+/// What of `heading`'s range stays when the blocks `gone` go, read from the heading to its
+/// range's end and back to the heading before it that stays; `None` when nothing stays.
+fn left_of(walk: &BodyWalk<'_>, heading: Step, gone: &HashSet<&str>) -> Option<Left> {
+    let (level, id) = (heading.level?, heading.id?);
+    let (mut kept, mut first, mut last) = (0, None, None);
+    for step in walk.after(heading.child) {
+        if step.level.is_some_and(|l| l <= level) {
+            break;
+        }
+        let Some(block) = step.id else { continue };
+        if !gone.contains(block.as_str()) {
+            kept += 1;
+            first.get_or_insert_with(|| block.clone());
+        }
+        last = Some(block);
+    }
+    let under = walk
+        .before(heading.child)
+        .find(|s| s.level.is_some() && s.id.as_deref().is_some_and(|i| !gone.contains(i)));
+    Some(Left {
+        first: first?,
+        last: last.unwrap_or_else(|| id.clone()),
+        heading: (id, heading.element),
+        kept,
+        under: under.and_then(|s| Some((s.id?, s.element))),
+    })
+}
+
+/// The block `id` names when it is a heading: a paragraph of the body's top level with an
+/// outline level, its own or its style chain's (what `headings` finds), read for it alone.
+fn heading(docx: &Docx, walk: &BodyWalk<'_>, id: &str) -> Option<Step> {
+    let Ok((part, Entry::Paragraph(k))) = resolve(docx, id) else {
+        return None;
+    };
+    let paragraph = part.ids.paragraphs().get(k)?;
+    let top = part.part == docx.main && paragraph.path.len() == 2 && paragraph.path.first() == Some(&walk.body_index());
+    let step = walk.at(*paragraph.path.get(1)? as usize).filter(|_| top)?;
+    step.level.is_some().then_some(step)
+}
+
 /// `p:A 'Results'`, or the start of the document for none (docx-agent's `label`).
-fn label(heading: Option<&Heading>) -> String {
-    let Some(heading) = heading else {
+fn label(heading: Option<&(String, Arc<Element>)>) -> String {
+    let Some((id, element)) = heading else {
         return "no heading (the document's start)".to_owned();
     };
-    let work = Work::of(&heading.element, Vec::new());
+    let work = Work::of(element, Vec::new());
     let text = paragraph_text(&work, work.root());
     let words = text
         .split(crate::text::diff::python_space)
@@ -203,11 +250,7 @@ fn label(heading: Option<&Heading>) -> String {
         .collect::<Vec<_>>()
         .join(" ");
     if words.is_empty() {
-        return heading.id.clone();
+        return id.clone();
     }
-    format!(
-        "{} {}",
-        heading.id,
-        repr_str(&words.chars().take(40).collect::<String>())
-    )
+    format!("{id} {}", repr_str(&words.chars().take(40).collect::<String>()))
 }
