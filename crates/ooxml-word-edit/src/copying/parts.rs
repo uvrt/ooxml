@@ -8,8 +8,9 @@
 //! following an id that changed); a picture or other media found by its bytes among the
 //! parts of its folder instead of copied again.
 //!
-//! The parts are built in a package of their own and put in place at the end, new parts in
-//! the order they were made (docx-agent's archive order).
+//! The parts are built in a package of their own, from the document as it is when each
+//! piece of the copy (the blocks, each note, each comment) is brought, and put in place
+//! then, new parts in the order they were made (docx-agent's archive order).
 //!
 //! Must not: place the copy, or change a part this document had but its relationships and
 //! content types.
@@ -26,21 +27,22 @@ use ooxml_xml::Attribute;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-/// The parts a copy brings, built beside the document's package.
+/// The parts a copy brings, built beside the document's package while it brings them.
 pub(crate) struct Parts {
     /// The source document's package.
     source: Package,
-    /// This document's package as the copy found it.
+    /// This document's package as the sink held it when bringing began.
     original: Package,
-    /// This document's package with what the copy brought.
+    /// That package with what the copy brought since.
     package: Package,
     /// Source part -> this document's copy of it (`part_map`).
     copied: HashMap<String, String>,
 }
 
 impl Parts {
-    /// Parts copied from `source` into `destination`.
-    pub(crate) fn new(source: &Package, destination: &Package) -> Parts {
+    /// Parts copied from `source` into the document `sink` edits.
+    pub(crate) fn new(source: &Package, sink: &EditSink<'_, '_>) -> Parts {
+        let destination = sink.doc().package();
         Parts {
             source: source.clone(),
             original: destination.clone(),
@@ -50,12 +52,28 @@ impl Parts {
     }
 
     /// `_relationships`: every relationship id `elements` (copies from `source_part`, in
-    /// `work`) name made again from `dest_part`, each id once per call. Reads the
-    /// relationships of `dest_part` and the content types where there is any.
+    /// `work`) name made again from `dest_part`, each id once per call, and the parts made
+    /// or changed put in place (see [`Parts::flush`]). Reads the relationships of
+    /// `dest_part` and the content types where there is any.
     ///
     /// # Errors
-    /// When a part or relationships part is not readable.
+    /// When a part or relationships part is not readable, or a change cannot be applied.
     pub(crate) fn bring(
+        &mut self,
+        sink: &mut EditSink<'_, '_>,
+        work: &mut Work,
+        elements: &[Id],
+        parts: (&str, &str),
+    ) -> Result<()> {
+        // built on the package as the sink holds it now: what the copy wrote since the last
+        // bringing (a numbering or notes part made, their relationships) is kept
+        self.original = sink.doc().package().clone();
+        self.package = self.original.clone();
+        self.relate(sink, work, elements, parts)?;
+        self.flush(sink)
+    }
+
+    fn relate(
         &mut self,
         sink: &mut EditSink<'_, '_>,
         work: &mut Work,
@@ -92,12 +110,12 @@ impl Parts {
         Ok(())
     }
 
-    /// Put in place every part the copy made or changed: changed ones where they are, new
-    /// ones in the order they were made.
+    /// Put in place every part the bringing made or changed: changed ones where they are,
+    /// new ones in the order they were made.
     ///
     /// # Errors
     /// When the change cannot be applied.
-    pub(crate) fn finish(self, sink: &mut EditSink<'_, '_>) -> Result<()> {
+    fn flush(&self, sink: &mut EditSink<'_, '_>) -> Result<()> {
         for name in self.package.part_names() {
             let Some(version) = self.package.part(&name) else {
                 continue;

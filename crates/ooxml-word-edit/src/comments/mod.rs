@@ -20,6 +20,7 @@ mod write;
 pub use add::{AddComments, CommentMade, CommentWrite, Who};
 pub use edits::{CommentEdit, CommentEdited, CommentEdits};
 pub use text::EditCommentText;
+pub(crate) use write::{append, complete, last_para};
 
 /// `commentsExtended`'s namespace (`w15`).
 pub(crate) const W15: &str = "http://schemas.microsoft.com/office/word/2012/wordml";

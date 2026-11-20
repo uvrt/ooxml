@@ -229,8 +229,8 @@ impl PyVersion {
 type IdsSince = (Vec<u32>, Vec<(String, String)>);
 
 /// A Word document's ids before it was saved, as a host's state keeps them:
-/// `(values, cursors, highest_drawing)` ([`EarlierIds`]).
-type StateIds = (Vec<u32>, Vec<(String, usize)>, u64);
+/// `(values, cursors, highest_drawing, drawings)` ([`EarlierIds`]).
+type StateIds = (Vec<u32>, Vec<(String, usize)>, u64, Vec<u64>);
 
 /// One retired id as `Session.retired` gives it: `(kind, value, seq, caller, tool, version,
 /// said)` -- `"block"` (a paraId's value) or `"drawing"`; a version this session made
@@ -328,18 +328,20 @@ impl PySession {
 
     /// Open a package's bytes as a document of `kind`, named `name`; returns its id (`d1`).
     /// `ids`: a Word document's ids before it was saved, as the host's state of it keeps them
-    /// -- `(values, cursors, highest_drawing)`: every value its pool held, each seed's
-    /// cursor, the highest drawing number given -- so it never gives a retired id again.
+    /// -- `(values, cursors, highest_drawing, drawings)`: every value its pool held, each
+    /// seed's cursor, the highest drawing number given, the drawing numbers retired -- so it
+    /// never gives a retired id or drawing number again.
     #[pyo3(signature = (data, *, kind = "docx", name = "document.docx", ids = None))]
     fn open(&self, py: Python<'_>, data: &[u8], kind: &str, name: &str, ids: Option<StateIds>) -> PyResult<String> {
         let kind = kind_of(kind)?;
         let bytes: Arc<[u8]> = Arc::from(data);
-        let earlier = ids.map_or_else(EarlierIds::default, |(values, cursors, highest_drawing)| EarlierIds {
-            values,
-            cursors,
-            highest_drawing,
-            // the host's state does not pass the drawing numbers it retired yet
-            drawings: Vec::new(),
+        let earlier = ids.map_or_else(EarlierIds::default, |(values, cursors, highest_drawing, drawings)| {
+            EarlierIds {
+                values,
+                cursors,
+                highest_drawing,
+                drawings,
+            }
         });
         let session = &self.inner;
         let id = py
