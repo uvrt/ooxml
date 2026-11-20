@@ -11,7 +11,7 @@ use super::{child_at, comment, index, DrawingRecord, ParagraphRecord, Placed, Re
 use crate::docx::controls::control_kind;
 use crate::docx::drawings::drawing_kind;
 use crate::docx::formatting::{Cell, EffectiveRun};
-use crate::docx::graphics::chart_of;
+use crate::docx::graphics::Graphic;
 use crate::docx::text::{leading_text, View, NON_BREAKING_HYPHEN, OBJECT, SOFT_HYPHEN};
 use crate::docx::{child_val, live_paths};
 use crate::ids::{MC, W, WP};
@@ -560,7 +560,7 @@ impl<'r, 'a> Walk<'r, 'a> {
                 self.reader.shared.pictures(docx).get(&key).cloned(),
                 self.reader.shared.drawings(docx).get(&key).cloned(),
                 (name.clone(), alt.clone()),
-                &|element| chart_of(docx, part, element),
+                &|element, kind| Graphic::of(docx, part, element, kind),
             );
             let summary = graphic_summary(&record);
             self.record.detail.drawings.push(record);
@@ -663,17 +663,23 @@ pub(crate) fn one_line(text: &str, limit: usize) -> String {
     format!("{}\u{2026}", cut.trim_end())
 }
 
-/// What a drawing's comment says of the charts it holds, after its name: ` [chart: ...]`
-/// for a chart, ` [d:G/m chart: ...]` for each chart among a group's members (docx-agent's
-/// `_graphic`; in the comment, since the drawing stands in a paragraph's line).
+/// What a drawing's comment says of the charts and diagrams it holds, after its name:
+/// ` [chart: ...]` or ` [smartart: ...]`, and ` [d:G/m chart: ...]` for each among a group's
+/// members (docx-agent's `_graphic`; in the comment, since the drawing stands in a
+/// paragraph's line).
 fn graphic_summary(record: &DrawingRecord) -> String {
-    if let Some(chart) = &record.chart {
-        return format!(" [chart: {}]", chart.summary());
+    if let Some(graphic) = &record.graphic {
+        return format!(" [{}: {}]", graphic.names().1, graphic.summary());
     }
     let mut out = String::new();
     for member in record.members.iter().flatten() {
-        if let Some(chart) = &member.chart {
-            out.push_str(&format!(" [{} chart: {}]", member.id, chart.summary()));
+        if let Some(graphic) = &member.graphic {
+            out.push_str(&format!(
+                " [{} {}: {}]",
+                member.id,
+                graphic.names().1,
+                graphic.summary()
+            ));
         }
     }
     out

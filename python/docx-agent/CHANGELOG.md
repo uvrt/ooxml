@@ -16,6 +16,9 @@ Rust session (`rust.edits.SERVED`; a ref after a side, `after: "before:$x"`, res
 `word_compare_blocks` and `word_design_facts` are read there, a reference in another open
 document at the version the call reads (`rust.reads.serve(..., others=...)`).
 
+Phase P2, lane P2c13: an edit the Rust session serves starts the relayout on commit while
+the document's checks ask, as docx-agent's own edits do (it left the layout stale before).
+
 Phase P2, lane P2c13: `word_fields`, `word_headers_footers` and `word_template` run in the
 Rust session (`rust.edits.SERVED`), which lays the versions out with the document's page
 engine (`pages.word_pages`, `Session.edit(layout=...)`); their work ahead in Python is
