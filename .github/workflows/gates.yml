@@ -124,8 +124,15 @@ jobs:
           echo "fixtures=$fixtures" >> "$GITHUB_OUTPUT"
           warm=()
           if [ -n "$STORE" ]; then warm=(--warm); fi
-          matrix=$(python3 tools/gates.py matrix --gates "$GATES" --modes "$MODES" --shards "$SHARDS" --per-tool "$PER_TOOL" \
-            --every "$EVERY" --fixtures "$fixtures" "${warm[@]}" 2> plan.txt)
+          if grep -q -- '"--warm"' tools/gates.py; then
+            matrix=$(python3 tools/gates.py matrix --gates "$GATES" --modes "$MODES" --shards "$SHARDS" --per-tool "$PER_TOOL" \
+              --every "$EVERY" --fixtures "$fixtures" "${warm[@]}" 2> plan.txt)
+          else
+            # A branch that has not merged main since tools/gates_jobs.py: its own jobs, 3 shards a mode (the
+            # differential job reads their `mode` as a one-mode list). Remove once no such branch is dispatched.
+            matrix=$(python3 tools/gates.py matrix --gates "$GATES" --modes "$MODES" --shards "${SHARDS/auto/3}" \
+              --per-tool "$PER_TOOL" 2> plan.txt)
+          fi
           cat plan.txt
           echo "matrix: $matrix"
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
@@ -181,7 +188,7 @@ jobs:
   # One job of tools/gates_jobs.py's: a gate's modes (one, or a bundle run one after another)
   # in one shard; each mode's results in its own folder of the job's logs.
   differential:
-    name: ${{ matrix.gate }} ${{ matrix.modes }} ${{ matrix.shard }}
+    name: ${{ matrix.gate }} ${{ matrix.modes || matrix.mode }} ${{ matrix.shard }}
     needs: [plan, oracles, corpus]
     if: >-
       always() && needs.plan.outputs.matrix != '' && needs.oracles.result == 'success' &&
@@ -224,7 +231,7 @@ jobs:
       - name: Differential
         env:
           GATE: ${{ matrix.gate }}
-          MODES: ${{ matrix.modes }}
+          MODES: ${{ matrix.modes || matrix.mode }}
           SHARD: ${{ matrix.shard }}
           PER_TOOL: ${{ matrix.per_tool }}
           EVERY: ${{ inputs.every || '1' }}
@@ -250,7 +257,7 @@ jobs:
         id: name
         env:
           SHARD: ${{ matrix.shard }}
-          LABEL: ${{ matrix.label }}
+          LABEL: ${{ matrix.label || matrix.mode }}
         run: echo "name=diff-${{ matrix.gate }}-${LABEL}-${SHARD%/*}" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v4
         if: always()
