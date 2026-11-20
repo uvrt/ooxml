@@ -71,6 +71,9 @@ fn accepted<T: ToolArgs>(arguments: &Value, handler: impl FnOnce(&T) -> ToolResu
 /// cancellation, and for a Word document the session's editing state.
 pub struct Call<'a> {
     pub(crate) doc: &'a Opened,
+    /// The name the call gives its document (the host's; the session's id where the host
+    /// gives none): what its reply names it by.
+    pub(crate) name: &'a str,
     pub(crate) word: Option<&'a Word>,
     pub(crate) caller: &'a Caller,
     pub(crate) cancel: &'a dyn Cancel,
@@ -92,6 +95,12 @@ impl Call<'_> {
     #[must_use]
     pub fn doc(&self) -> &Opened {
         self.doc
+    }
+
+    /// The name the call gives its document, which its reply names it by.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        self.name
     }
 
     /// The call's cancellation.
@@ -247,7 +256,7 @@ impl<T: ToolArgs> Tool for EditHandler<T> {
             ooxml_word_edit::RevisionPolicy::Tracked(tracking) => Some(tracking),
             ooxml_word_edit::RevisionPolicy::Untracked => None,
         };
-        let doc = call.doc.id().to_string();
+        let doc = call.name.to_owned();
         let editor = CallEditor::new(&word.editor);
         let others = call.other_versions();
         let editing = Editing {

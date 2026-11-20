@@ -261,25 +261,10 @@ def _set_tracking(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
 
 
 def _copy_from(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
-    return {**_own(arguments), "source_doc": _session_doc(call, arguments.get("source_doc")),
-            "at": _blocks_at(call, arguments.get("at")), "range": reads._refs(call, arguments.get("range")),
+    # (``source_doc`` stays the host's id: the session finds it by the call's names, :func:`_names`)
+    return {**_own(arguments), "at": _blocks_at(call, arguments.get("at")),
+            "range": reads._refs(call, arguments.get("range")),
             "section_heading": reads._refs(call, arguments.get("section_heading"))}
-
-
-def _session_doc(call: Any, doc: Any) -> Any:
-    """The document the host names ``doc`` as the call's session names it: the call's own,
-    or another the same session holds as it is (no draft); the Python handler answers for
-    any other (one not open, a draft, one in another session)."""
-    if doc == getattr(call.entry, "doc_id", None):
-        return call.entry.handle.doc
-    entry = call.entries.get(doc) if isinstance(doc, str) else None
-    if entry is None or getattr(entry, "owner", None) is None:
-        raise _Fallback("a source the session does not own")
-    if entry.live is not None or entry.pinned is not None:
-        raise _Fallback("a source with a draft")
-    if entry.handle.session is not call.entry.handle.session:
-        raise _Fallback("a document in another session")
-    return entry.handle.doc
 
 
 class _Blobs:
@@ -423,18 +408,40 @@ def _tracking(call: Any, entry: Any, context: Any, counted: bool) -> None:
         entry.served(first, head, StepOwner(dict(call.caller), "word_set_tracking"), counted=counted)
 
 
-def _set_mode(entry: Any, given: dict[str, Any], context: Any) -> tuple[str, str, Any]:
+def _set_mode(entry: Any, given: dict[str, Any], context: Any, names: dict[str, str]) -> tuple[str, str, Any]:
     """``word_set_tracking`` served: the session's tracking mode of the document and the
     host's (``entry.tracking``, which later calls are made under and :func:`_tracking` keeps
     the session to) set together, under the mirror's lock, where the session sets it."""
     mirror = entry.handle
     with mirror.lock:
-        reply, app, made = mirror.session.edit("word_set_tracking", json.dumps(given), context=context)
+        reply, app, made = mirror.session.edit("word_set_tracking", json.dumps(given), context=context,
+                                               names=names)
         if json.loads(reply).get("error") is None and not json.loads(app).get("unported"):
             wanted = {"on": True, "author": given.get("author")} if given.get("on") else None
             entry.tracking = wanted
             mirror.tracking = wanted
     return reply, app, made
+
+
+def _names(call: Any, entry: Any, arguments: dict[str, Any]) -> dict[str, str]:
+    """The host's names for the documents a call names, each the session's id of it
+    (``Session.edit``'s ``names``; lane P2c17): the arguments name documents as the host
+    does, and so does the reply (an undo or way-out call, a summary).  The Python handler
+    answers where another document named is not the session's as it is."""
+    mirror = entry.handle
+    names = {entry.doc_id: mirror.doc}
+    for doc in call.tool.doc_ids(arguments):
+        if doc in names:
+            continue
+        other = call.entries.get(doc)
+        if other is None or getattr(other, "owner", None) is None:
+            raise _Fallback("a document the session does not own")
+        if other.live is not None or other.pinned is not None:
+            raise _Fallback("a document with a draft")
+        if other.handle.session is not mirror.session:
+            raise _Fallback("a document in another session")
+        names[doc] = other.handle.doc
+    return names
 
 
 def _layout_before(call: Any, entry: Any) -> Any:
@@ -499,17 +506,18 @@ def _edit(call: Any, entry: Any, arguments: dict[str, Any], counted: bool) -> tu
     tool = call.tool.name
     context = context_of(call.caller)
     _tracking(call, entry, context, counted)
-    given = {"doc": mirror.doc, **{k: v for k, v in SERVED[tool](call, arguments).items()
-                                   if v is not None}}
+    given = {**{k: v for k, v in SERVED[tool](call, arguments).items() if v is not None},
+             "doc": entry.doc_id}
+    names = _names(call, entry, arguments)
     layout = _layout(call, entry)
     timing = _timing(call, arguments)
     started = time.perf_counter()
     blobs = _Blobs(call.session) if tool in BLOBS else None
     if tool == "word_set_tracking":
-        reply, app, made = _set_mode(entry, given, context)
+        reply, app, made = _set_mode(entry, given, context, names)
     else:
         reply, app, made = mirror.session.edit(tool, json.dumps(given), context=context, layout=layout,
-                                               blobs=blobs)
+                                               blobs=blobs, names=names)
     if timing is not None:
         timing.add("update", time.perf_counter() - started)
     envelope = json.loads(reply)

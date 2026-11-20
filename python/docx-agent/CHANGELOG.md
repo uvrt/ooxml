@@ -7,6 +7,11 @@ snapshot commit; the development history before it is summarised here.
 
 ## 0.1.140 -- unreleased
 
+Phase P2, lane P2c17: a call the Rust session answers names documents as the host does
+(`Session.edit`/`Session.call` `names`): from the second session of a process on, a served
+reply named the Rust session's id of the document (an undo call `{"doc": "d3"}` for the
+host's `d1`, a way-out call, a summary).
+
 Phase P2, lane P2c14: `word_drawings` runs in the Rust session, an inserted picture's bytes
 asked of the session's blobs (`Session.edit(blobs=...)`); a catalogue `asset` stays with the
 Python handler.
