@@ -5,7 +5,10 @@
 Prints Markdown: a table of the distributions the release carries (the seven packages, the
 font bundle, and ooxml-core once it is built), each with the version its pyproject.toml
 names, then how to install from the release.  With DIST_DIR, every distribution named must
-have a wheel and an sdist there, so the notes never list a file the release lacks.
+have a wheel and an sdist there, so the notes never list a file the release lacks.  For a
+release tag (TAG_PATTERN, as release.yml's tags), no changelog fragment may be waiting:
+a release is cut after `tools/changelog.py release TAG` wrote them into the CHANGELOG.md
+files (README.md, Development).
 
 Standard library only.
 """
@@ -17,9 +20,13 @@ import sys
 import tomllib
 from pathlib import Path
 
+import changelog
+
 ROOT = Path(__file__).resolve().parent.parent
 REPO = "uvrt/ooxml"
 INDEX = "https://uvrt.github.io/ooxml/simple/"  # GitHub Pages, tools/simple_index.py
+#: release.yml's tags: `v<YYYY>.<MM>.<DD>`, `.<N>` for a second release the same day.
+TAG_PATTERN = re.compile(r"v\d{4}\.\d\d\.\d\d(\.\d+)?")
 
 #: The distributions a release carries, in dependency order, by their pyproject.toml.
 DISTRIBUTIONS = [
@@ -101,6 +108,13 @@ def main(argv: list[str]) -> int:
     if not argv or len(argv) > 2:
         print(__doc__, file=sys.stderr)
         return 2
+    if TAG_PATTERN.fullmatch(argv[0]):
+        waiting = changelog.pending(changelog.packages())
+        if waiting:
+            print(f"changelog fragments not yet in CHANGELOG.md (run tools/changelog.py release {argv[0]} "
+                  "on a release branch first):\n  " + "\n  ".join(str(p.relative_to(ROOT)) for p in waiting),
+                  file=sys.stderr)
+            return 1
     items = versions()
     if len(argv) == 2:
         missing = check(Path(argv[1]), items)
