@@ -24,7 +24,7 @@ application would hold them itself.
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -45,11 +45,13 @@ def _runs_in_rust(call: Any, **arguments: Any) -> Result:
     raise ToolError("internal", "this tool runs in the Rust session: RustTools.dispatch")
 
 
-def aliases_of(tool: str, exported: Mapping[str, str]) -> dict[str, Any]:
+def aliases_of(tool: str, exported: Mapping[str, str], parameters: Sequence[str] = ()) -> dict[str, Any]:
     """A Rust tool's exported ``aliases`` as :attr:`Tool.aliases` takes them: a name stays a
     name; ``names:<param>`` (a list of names given for a parameter that takes none can only
     mean ``param``) and ``place:<kind>`` (a place said in another placing tool's words) are
-    the functions today's Python tools have for them (``names_as``, :func:`.positions.alias`)."""
+    the functions today's Python tools have for them (``names_as``, :func:`.positions.alias`);
+    ``refused:<param>`` a name refused as unknown, naming ``param`` (:func:`refused_as`; the
+    options are the tool's ``parameters``)."""
     from ooxml_edit.tools.registry import names_as
 
     from ..tools.positions import alias
@@ -61,9 +63,22 @@ def aliases_of(tool: str, exported: Mapping[str, str]) -> dict[str, Any]:
             out[key] = names_as(name, target.removeprefix("names:"))
         elif target.startswith("place:"):
             out[key] = alias(tool, target.removeprefix("place:"), name, f"{where}." if where else "")
+        elif target.startswith("refused:"):
+            out[key] = refused_as(key, target.removeprefix("refused:"), parameters)
         else:
             out[key] = target
     return out
+
+
+def refused_as(key: str, meant: str, parameters: Sequence[str]) -> Any:
+    """The alias of a name that is not read as ``meant`` (Rust's ``refused_alias``): refused
+    as an unknown argument, the refusal naming ``meant`` -- as today's ``markdown_from``."""
+
+    def refuse(node: Mapping[str, Any]) -> None:
+        raise ToolError("invalid_arguments", f"unknown argument {key!r}; did you mean {meant!r}?", field=key,
+                        valid_options=sorted(parameters))
+
+    return refuse
 
 
 def tool_of(export: Mapping[str, Any], kind: str = KIND) -> Tool:
@@ -78,7 +93,8 @@ def tool_of(export: Mapping[str, Any], kind: str = KIND) -> Tool:
                 exactly_one=tuple(tuple(group) for group in export["exactly_one"]),
                 refs=tuple(export["refs"]), datasets=tuple(export["datasets"]),
                 sources=tuple(export["sources"]), facts=tuple(export["facts"]),
-                aliases=aliases_of(export["name"], export["aliases"]), defaults=export["defaults"],
+                aliases=aliases_of(export["name"], export["aliases"],
+                                   list(export["schema"].get("properties", {}))), defaults=export["defaults"],
                 kind_fields={k: tuple(v) for k, v in export["kind_fields"].items()},
                 kind_neutral={k: tuple(v) for k, v in export["kind_neutral"].items()},
                 kind_values={k: {v: tuple(kinds) for v, kinds in values.items()}
