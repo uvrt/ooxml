@@ -223,3 +223,14 @@ mode = "objects"
 file = "generated/markdown/constructs.docx"
 input = { tool = "word_drawings", arguments = { action = "set", z_order = "forward" } }
 cause = """P4c10: as the set wrap square entry above: no drawing above, the frame keeps its order."""
+
+# Lane P4f7: an untracked copy at replace: of blocks the document never stamped (positional
+# addresses), in a document whose stamping gives them ids first (chart-places: 2 cases).
+[[difference]]
+mode = "structure"
+input = { tool = "word_copy_from", replaces_unstamped = true }
+cause = """Lane P4f7: docx-agent's copy_blocks reads the ids the document had (_known_ids) before \
+_prepare stamps it, so a paraId or drawing id its stamping gave a replaced block, deleted before \
+the copy is stamped, is given again to the copy (the id is both removed and created). The Rust \
+core never gives an id twice (the ledger's rule); its copy takes the next id. A docx-agent \
+leftover, not copied."""

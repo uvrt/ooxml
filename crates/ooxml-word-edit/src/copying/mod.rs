@@ -21,8 +21,10 @@
 //! content controls given ids no control has ([`crate::imported::Controls`]), a
 //! block-level control a top-level block of its own in the reply.
 //!
-//! Not ported yet ([`EditError::Unsupported`]: the host copies such blocks its own way):
-//! the copy tracked, `replace:`.
+//! Tracked, the copy is one insertion, as Word's tracked paste is: every paragraph's content
+//! and mark, every row, the notes' content ([`crate::markdown::track`]).
+//!
+//! At `replace:`, the blocks replaced are deleted by the copy's policy ([`replace`]).
 //!
 //! Must not: write but through the sink, or know a tool's JSON.
 
@@ -35,6 +37,7 @@ mod flatten;
 mod lists;
 mod notes;
 mod parts;
+mod replace;
 mod source;
 mod stamp;
 mod styles;
@@ -46,7 +49,7 @@ use crate::placing::{locate, Place, Stretch};
 use crate::policy::RevisionPolicy;
 use crate::review::space::Space;
 use crate::set_text::block_key;
-use crate::sink::{EditSink, TextWrite};
+use crate::sink::EditSink;
 use crate::stamping::stamp_document;
 use crate::work::{Id, Work};
 use crate::{EditError, Result, WordDoc};
@@ -167,6 +170,8 @@ pub struct BlocksCopied {
     pub created: Vec<String>,
     /// Ids the edit's stamping renamed, old to new.
     pub renamed: Vec<(String, String)>,
+    /// The ids of the blocks replaced that went (`replace:`).
+    pub removed: Vec<String>,
     /// The styles imported, the bookmarks renamed.
     pub warnings: Vec<String>,
     /// The top-level blocks made.
@@ -187,9 +192,6 @@ impl Command<WordDoc> for CopyBlocks {
         self.select(doc, &source)?;
         let docx = doc.docx()?;
         destination(doc, &docx, &self.at)?;
-        if matches!(self.policy, RevisionPolicy::Tracked(_)) {
-            return Err(EditError::Unsupported("copy_from tracked".to_owned()));
-        }
         Ok(())
     }
 
@@ -205,9 +207,13 @@ impl Command<WordDoc> for CopyBlocks {
     }
 }
 
-/// The place `at` names, in the body, a header or footer, or a cell.
-fn destination(doc: &WordDoc, docx: &Docx, at: &str) -> Result<Place> {
-    let place = locate(doc, docx, at, "copy_from")?;
+/// The place `at` names, in the body, a header or footer, or a cell, and the blocks it
+/// replaces (`replace:`).
+fn destination(doc: &WordDoc, docx: &Docx, at: &str) -> Result<(Place, Vec<String>)> {
+    let (place, replaced) = match at.strip_prefix("replace:") {
+        Some(blocks) => crate::placing::replacing(doc, docx, blocks)?,
+        None => (locate(doc, docx, at, "copy_from")?, Vec::new()),
+    };
     let tree = doc
         .tree(&place.part)?
         .ok_or_else(|| EditError::NoPart(place.part.clone()))?;
@@ -219,7 +225,7 @@ fn destination(doc: &WordDoc, docx: &Docx, at: &str) -> Result<Place> {
             "blocks are copied into the body, a header or a footer, or a cell".to_owned(),
         ));
     }
-    Ok(place)
+    Ok((place, replaced))
 }
 
 impl CopyBlocks {
@@ -253,11 +259,10 @@ impl CopyBlocks {
         }
         let source_ids = source::block_ids(source, &selected);
         let docx = sink.docx()?;
-        let place = destination(sink.doc(), &docx, &self.at)?;
-        if matches!(self.policy, RevisionPolicy::Tracked(_)) {
-            return Err(EditError::Unsupported("copy_from tracked".to_owned()));
-        }
+        let (mut place, replaced) = destination(sink.doc(), &docx, &self.at)?;
         let renamed = stamp_document(sink, &docx)?;
+        let tracked = matches!(self.policy, RevisionPolicy::Tracked(_));
+        let mut replaced = replace::Replaced::begin(sink, &mut place, replaced, tracked)?;
         let mut stretch = Stretch::open(sink, &place, "copy_from")?;
         let anchor = stretch.anchor(&place);
         let space = Space::default();
@@ -294,21 +299,27 @@ impl CopyBlocks {
         let mut stamped = stamp::stamp(sink, work, &place, &elements)?;
         let mut note_ids = Vec::new();
         let notes_parts = notes.stamp(sink, &mut stories, &mut note_ids)?;
-        crate::placing::commit(
-            sink,
-            &stretch,
-            &place,
-            &stamped.created,
-            &TextWrite::default(),
-            stamped.drawings,
-        )?;
+        // tracked, one revision group: the blocks (Word's typing form at a container's end),
+        // then the notes
+        let wrote = sink.track(work, |work, stamp, orders| {
+            crate::markdown::track(work, &elements, stamp, orders, None);
+            Vec::new()
+        })?;
+        let notes_dated = notes.track(sink, &mut stories)?;
+        crate::placing::commit(sink, &stretch, &place, &stamped.created, &wrote, stamped.drawings)?;
         stamped.created.extend(note_ids);
         let warnings = bringer.finish(sink)?;
         stories.finish(sink)?;
         let comments_part = comments.part.iter().map(|p| (p.clone(), false));
         for (part, drawings) in notes_parts.into_iter().chain(comments_part) {
-            sink.ensure_w14(&part, drawings, &[])?;
+            let dated: &[(&str, &str)] = if notes_dated.contains(&part) {
+                &[("w16du", crate::names::W16DU)]
+            } else {
+                &[]
+            };
+            sink.ensure_w14(&part, drawings, dated)?;
         }
+        replaced.finish(sink, tracked, &stamped.per_element)?;
         let (blocks, top_controls) = top_blocks(sink, (source, &selected), &place, &placed, &stamped.per_element)?;
         // docx-agent's `copied`: the notes', comments' and controls' first, then the blocks',
         // then the block-level controls'
@@ -318,6 +329,7 @@ impl CopyBlocks {
             id: blocks.first().cloned(),
             created: stamped.created,
             renamed,
+            removed: replaced.removed,
             warnings,
             blocks,
             copied,

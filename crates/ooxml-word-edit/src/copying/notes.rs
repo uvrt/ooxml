@@ -16,6 +16,7 @@ use super::content::Bringer;
 use super::view::records_view;
 use crate::names::{W, W14, WP};
 use crate::notes::{ensure_notes_part, next_number, NoteKind};
+use crate::policy::RevisionPolicy;
 use crate::review::space::Space;
 use crate::sink::EditSink;
 use crate::work::{Id, Work};
@@ -153,6 +154,49 @@ impl NotesCopied {
             }
         }
         Ok(parts)
+    }
+}
+
+impl NotesCopied {
+    /// Tracked, each copied note's content recorded as inserted as the importer's `_track`
+    /// records it: each paragraph's content, and its mark but the last's; each table's rows
+    /// and paragraphs. The notes parts a record is dated in.
+    ///
+    /// # Errors
+    /// When the annotation ids cannot be read.
+    pub(super) fn track(&self, sink: &mut EditSink<'_, '_>, stories: &mut Space) -> Result<Vec<String>> {
+        let RevisionPolicy::Tracked(tracking) = sink.policy().clone() else {
+            return Ok(Vec::new());
+        };
+        let shared = sink.doc().shared_handle();
+        let orders = shared.facts.orders();
+        let mut dated: Vec<String> = Vec::new();
+        for (part, note) in &self.made {
+            let work = stories.get_mut(part).ok_or_else(|| EditError::NoPart(part.clone()))?;
+            let content: Vec<Id> = work
+                .children(*note)
+                .iter()
+                .copied()
+                .filter(|c| work.is_element(*c))
+                .collect();
+            let ((), _, d) = sink.stamped(tracking.clone(), |stamp| {
+                for (k, &element) in content.iter().enumerate() {
+                    if work.is(element, W, "p") {
+                        crate::markdown::insert_content(work, element, stamp);
+                        if k + 1 < content.len() {
+                            crate::marks::mark(work, element, "ins", stamp, orders);
+                        }
+                    } else {
+                        crate::markdown::track_table(work, element, stamp, orders);
+                    }
+                }
+                Ok(())
+            })?;
+            if d && !dated.contains(part) {
+                dated.push(part.clone());
+            }
+        }
+        Ok(dated)
     }
 }
 

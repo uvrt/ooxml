@@ -3,8 +3,8 @@
 //! document (as it was before the call) or another open one, its blocks a range or a
 //! heading's section, the reply naming the blocks made and each source id's copy.
 //!
-//! Left to the host (`unported`): a place given by reference, and what the edit core does
-//! not port yet.
+//! Left to the host (`unported`): a place given by reference (the host resolves its refs
+//! before it calls), and what the edit core does not port yet.
 //!
 //! Must not: change the document but through a command.
 
@@ -188,7 +188,7 @@ fn reply(args: &WordCopyFrom, out: ooxml_word_edit::BlocksCopied) -> ToolResult<
         id: out.id.clone(),
         changed: true,
         created: out.created.clone(),
-        removed: Vec::new(),
+        removed: out.removed.clone(),
         renamed: out.renamed.clone(),
         warnings: out.warnings.clone(),
     };
