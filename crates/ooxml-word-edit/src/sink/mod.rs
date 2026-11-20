@@ -12,6 +12,7 @@ mod heads;
 mod kept;
 mod media;
 mod numbering;
+mod stretch;
 mod written;
 
 pub(crate) use heads::{annotation_draws, ensured_head};
