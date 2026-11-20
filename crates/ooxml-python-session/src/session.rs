@@ -397,23 +397,26 @@ impl PySession {
     /// JSON text (`None` where it made more than one version) and the last version's
     /// validation as [`validation`](Self::validation) gives it -- or `None` where it changed
     /// nothing. A host that numbers the document's steps takes the call's step from these,
-    /// whatever other calls commit to the document meanwhile. `written`: the values the host
-    /// wrote into the arguments for references, as JSON text (`[{"field", "start", "end",
-    /// "text", "record", "brief"}]`, ooxml-edit's `call.facts`), which the call keeps on the
-    /// paragraphs they went into.
+    /// whatever other calls commit to the document meanwhile. `layout`: the document's page
+    /// engine, as for [`call`](Self::call) (`word_fields` update, a header's page number,
+    /// `word_template`'s reflow). `written`: the values the host wrote into the arguments for
+    /// references, as JSON text (`[{"field", "start", "end", "text", "record", "brief"}]`,
+    /// ooxml-edit's `call.facts`), which the call keeps on the paragraphs they went into.
     ///
     /// # Errors
     /// `ValueError` for `written` that is not such a list.
-    #[pyo3(signature = (name, arguments, *, context = None, written = None))]
+    #[pyo3(signature = (name, arguments, *, context = None, layout = None, written = None))]
     fn edit(
         &self,
         py: Python<'_>,
         name: &str,
         arguments: String,
         context: Option<PyRef<'_, PyCallContext>>,
+        layout: Option<PyRef<'_, crate::layout::PyWordPages>>,
         written: Option<&str>,
     ) -> PyResult<(String, String, Option<EditMade>)> {
         let mut context = context_of(context.as_deref());
+        context.layout = layout.map(|pages| Arc::new(pages.port()) as Arc<dyn ooxml_word_edit::FieldLayout>);
         if let Some(written) = written {
             context.written = serde_json::from_str::<Value>(written)
                 .ok()

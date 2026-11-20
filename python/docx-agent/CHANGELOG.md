@@ -17,6 +17,12 @@ making the records' custom XML item (with its properties, relationships and cont
 paragraphs a whole value went into (`data.facts`). Other served tools given a reference
 still go to the Python handler (`rust.edits.KEEPS_WRITTEN`).
 
+Phase P2, lane P2c13: `word_fields`, `word_headers_footers` and `word_template` run in the
+Rust session (`rust.edits.SERVED`), which lays the versions out with the document's page
+engine (`pages.word_pages`, `Session.edit(layout=...)`); their work ahead in Python is
+skipped when the session is asked first. A served fields update's `timing` has `update` and
+the checks' `validate`.
+
 Phase P4, lane P4b6: a text box's fallback is synced when the box's content changed, and
 where its namespaces are declared is not content. Moving the block that holds a box made
 lxml declare namespaces on the moved block, so the box looked changed and its fallback was

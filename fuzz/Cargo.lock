@@ -567,6 +567,7 @@ version = "0.1.0"
 dependencies = [
  "flate2",
  "ooxml-base",
+ "ooxml-chart",
  "ooxml-colour",
  "ooxml-derive",
  "ooxml-opc",

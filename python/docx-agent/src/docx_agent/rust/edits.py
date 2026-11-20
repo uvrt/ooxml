@@ -3,7 +3,8 @@ lane P2c4: the session is the only owner, :mod:`.owner`; lane P2c6: side by side
 
 A tool with a Rust editing handler (:data:`SERVED`: ``word_set_text``, ``replace_text``,
 ``word_insert_text``, ``word_delete``, ``word_format``, ``word_lists``, ``word_format_table``,
-``word_styles``, ``word_follow_sample``, ``word_insert_markdown``, and each one ported after them)
+``word_styles``, ``word_follow_sample``, ``word_insert_markdown``, ``word_fields``,
+``word_headers_footers``, ``word_template``, and each one ported after them)
 runs there, ahead of docx-agent's handler and its wrapper
 (:func:`docx_agent.tools._base.wrap`): the call's arguments, its ``$name`` refs resolved, go to
 ``Session.edit`` with the call's caller and the document's tracking mode; the versions the
@@ -29,6 +30,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from collections import Counter
 from typing import Any, Callable
 
@@ -175,6 +177,19 @@ def _blocks_at(call: Any, at: Any) -> Any:
     return _at(call, at)
 
 
+def _fields(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+    return {**_own(arguments), **{k: reads._refs(call, arguments.get(k)) for k in ("after", "before", "at")},
+            "ids": _refs_in(call, arguments.get("ids"))}
+
+
+def _headers_footers(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+    return {**_own(arguments), "section": reads._refs(call, arguments.get("section"))}
+
+
+def _template(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+    return _own(arguments)
+
+
 #: The tools the session edits with, and each one's arguments as the session takes them.
 SERVED: dict[str, Callable[[Any, dict[str, Any]], dict[str, Any]]] = {
     "word_set_text": _set_text,
@@ -187,7 +202,15 @@ SERVED: dict[str, Callable[[Any, dict[str, Any]], dict[str, Any]]] = {
     "word_styles": _styles,
     "word_follow_sample": _follow_sample,
     "word_insert_markdown": _insert_markdown,
+    "word_fields": _fields,
+    "word_headers_footers": _headers_footers,
+    "word_template": _template,
 }
+
+#: The served tools whose edits read the document's pages (a field's result, a header's page
+#: number, the upgrade's reflow): the session lays the versions out with the document's page
+#: engine (lane P2c13, :func:`_pages`).
+LAID = frozenset({"word_fields", "word_headers_footers", "word_template"})
 
 
 #: The tools whose Rust handler keeps the values written by reference on the paragraphs
@@ -239,6 +262,37 @@ def _why_not(call: Any, entry: Any, arguments: dict[str, Any]) -> str | None:
         # Revisions are dated by the session's clock: the Rust session's is the system's.
         return "the session's own clock"
     return None
+
+
+def will_serve(call: Any, arguments: dict[str, Any]) -> bool:
+    """Whether the session is asked first for the changing call (lane P2c13): then its work
+    ahead (a layout in Python, the lock let go) is not done -- the session lays out in Rust;
+    where it then leaves the call to the Python handler, that lays out under the lock."""
+    entry = owned_entry(call)
+    if entry is None or not call.changing or call.owner_declined:
+        return False
+    if _why_not(call, entry, arguments) is not None:
+        return False
+    return call.tool.name not in LAID or _pages(entry) is not None
+
+
+def _pages(entry: Any) -> Any:
+    """The document's page engine (:func:`docx_agent.pages.word_pages`), or ``None``."""
+    from ..pages import word_pages
+
+    return word_pages(entry.held)[0]
+
+
+def _layout(call: Any, entry: Any) -> Any:
+    """The page engine a call of a :data:`LAID` tool edits with; ``None`` for the others."""
+    if call.tool.name not in LAID:
+        return None
+    from ..pages import word_pages
+
+    found, why = word_pages(entry.held)
+    if found is None:
+        raise _Fallback(f"the layout: {why}")
+    return found
 
 
 def _tracking(call: Any, entry: Any, context: Any, counted: bool) -> None:
@@ -293,9 +347,20 @@ def _compares(before: Any) -> bool:
     return before is not None and before.count <= REFLOW_PAGES
 
 
-def _edit(call: Any, entry: Any, arguments: dict[str, Any], counted: bool) -> tuple[Result, Any]:
-    """The call's edit made by the session: its result, and what it made (``Session.edit``'s
-    ``(first, head, touched, validation)``, ``None`` where it changed nothing).  ``counted``: as for
+def _timing(call: Any, arguments: dict[str, Any]) -> Any:
+    """The ``Timing`` of a call whose result says where its time went (round 45, R67:
+    ``word_fields`` update), or ``None``."""
+    from ..tools._base import Timing
+
+    if call.tool.name == "word_fields" and arguments.get("action") == "update":
+        return Timing()
+    return None
+
+
+def _edit(call: Any, entry: Any, arguments: dict[str, Any], counted: bool) -> tuple[Result, Any, list[Any]]:
+    """The call's edit made by the session: its result, what it made (``Session.edit``'s
+    ``(first, head, touched, validation)``, ``None`` where it changed nothing), and the
+    markers its checks get (its ``Timing``, :func:`_timing`).  ``counted``: as for
     :meth:`~ooxml_edit.tools.owned.OwnedEntry.served`."""
     mirror = entry.handle
     tool = call.tool.name
@@ -303,7 +368,13 @@ def _edit(call: Any, entry: Any, arguments: dict[str, Any], counted: bool) -> tu
     _tracking(call, entry, context, counted)
     given = {"doc": mirror.doc, **{k: v for k, v in SERVED[tool](call, arguments).items()
                                    if v is not None}}
-    reply, app, made = mirror.session.edit(tool, json.dumps(given), context=context, written=_written(call))
+    layout = _layout(call, entry)
+    timing = _timing(call, arguments)
+    started = time.perf_counter()
+    reply, app, made = mirror.session.edit(tool, json.dumps(given), context=context, layout=layout,
+                                           written=_written(call))
+    if timing is not None:
+        timing.add("update", time.perf_counter() - started)
     envelope = json.loads(reply)
     error = envelope.get("error")
     unported = json.loads(app).get("unported") or []
@@ -315,7 +386,11 @@ def _edit(call: Any, entry: Any, arguments: dict[str, Any], counted: bool) -> tu
     for name, address in (envelope.get("refs") or {}).items():
         call.define_ref(name, address)        # the call's refs, as docx-agent's remember
         result.refs[name] = address
-    return result, made
+    if timing is None:
+        return result, made, []
+    if isinstance(result.data, dict):
+        result.data["timing"] = timing.parts      # (the checks add theirs)
+    return result, made, [timing]
 
 
 def _count(tool: str, why: str | None) -> None:
@@ -355,14 +430,14 @@ def serve_owned(call: Any, arguments: dict[str, Any]) -> Any:
         if _compares(before):
             return None
         try:
-            result, made = _edit(call, entry, arguments, counted=True)
+            result, made, markers = _edit(call, entry, arguments, counted=True)
         except _Fallback as fallback:
             why = str(fallback)
     if why is not None:
         _count(tool, why)
         return Declined(why)
     _count(tool, None)
-    touched: list[Any] = [_before(before)] if current else []
+    touched: list[Any] = [*([_before(before)] if current else []), *markers]
     if made is None:
         return Served(result, None, None, touched)
     first, head, step, validation = made
@@ -393,7 +468,9 @@ def serve(call: Any, arguments: dict[str, Any], python: Callable[[], Any]) -> An
         if entry.view_current:
             call.touch(_before(before))
         with entry.serving():
-            result, made = _edit(call, entry, arguments, counted=False)
+            result, made, markers = _edit(call, entry, arguments, counted=False)
+            for marker in markers:
+                call.touch(marker)
             if made is not None:
                 entry.served(made[0], made[1])
         _hand_engine(call, entry, before)
