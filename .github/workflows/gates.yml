@@ -18,7 +18,8 @@ name: Gates
 # docx-agent's results are kept between runs (crates/ooxml-oracle/python/reference_cache.py):
 # each edit-mode job restores the store for the reference code it runs, computes only the
 # cases it lacks, and reference-cache adds those to the store.  A new dispatch with the same
-# inputs cancels the run before it.
+# inputs cancels the run before it.  The plan job resolves `ref` to one commit and every other
+# job checks out that commit (a branch that moves while the run queues does not change it).
 
 on:
   workflow_dispatch:
@@ -56,6 +57,9 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
+      # inputs.ref as one commit: every job checks out this one, so a branch that moves while
+      # the run queues cannot pair one commit's oracles with another's cases.
+      sha: ${{ steps.plan.outputs.sha }}
       seeds: ${{ contains(inputs.gates, 'seeds') }}
       bench: ${{ contains(inputs.gates, 'bench') }}
       corpus: ${{ steps.plan.outputs.corpus }}
@@ -77,6 +81,7 @@ jobs:
           matrix=$(python3 tools/gates.py matrix --gates "$GATES" --modes "$MODES" --shards "$SHARDS" --per-tool "$PER_TOOL" 2> plan.txt)
           cat plan.txt
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           echo "corpus=$(case "$matrix" in *'"gate": "corpus"'*) echo true;; *) echo false;; esac)" >> "$GITHUB_OUTPUT"
           echo "ref $REF at $(git rev-parse HEAD); gates $GATES; modes $MODES $(cat plan.txt); per_tool '${PER_TOOL}'; every $EVERY; shards $SHARDS" >> "$GITHUB_STEP_SUMMARY"
 
@@ -88,7 +93,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref }}
+          ref: ${{ needs.plan.outputs.sha }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -111,7 +116,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref }}
+          ref: ${{ needs.plan.outputs.sha }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -141,7 +146,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref }}
+          ref: ${{ needs.plan.outputs.sha }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -219,24 +224,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref }}
+          ref: ${{ needs.plan.outputs.sha }}
       - uses: actions/download-artifact@v4
         with:
           pattern: diff-*
           path: ${{ runner.temp }}/diffs
       - name: Differentials
-        run: python3 tools/gates.py summary "$RUNNER_TEMP/diffs" >> "$GITHUB_STEP_SUMMARY"
+        env:
+          REF: ${{ inputs.ref }}
+          SHA: ${{ needs.plan.outputs.sha }}
+        run: |
+          echo "Every job ran $REF at $SHA." >> "$GITHUB_STEP_SUMMARY"
+          python3 tools/gates.py summary "$RUNNER_TEMP/diffs" >> "$GITHUB_STEP_SUMMARY"
 
   # The results the differential jobs computed, added to the store they restored (saved as a
   # new cache entry; the next run restores the newest).
   reference-cache:
-    needs: differential
+    needs: [plan, differential]
     if: ${{ !cancelled() && needs.differential.outputs.chain != '' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref }}
+          ref: ${{ needs.plan.outputs.sha }}
       - uses: actions/download-artifact@v4
         with:
           pattern: reference-diff-*
@@ -267,7 +277,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref }}
+          ref: ${{ needs.plan.outputs.sha }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -321,7 +331,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref }}
+          ref: ${{ needs.plan.outputs.sha }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:

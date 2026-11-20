@@ -726,7 +726,9 @@ def main(argv: list[str] | None = None) -> int:
                 expected[key], got[key] = w, h
                 counts[tag] += 1
                 continue
-            want = expected[key] = python_case(*kept[key])
+            # computed again, and kept again: the fresh result replaces the kept one in the store
+            # (a kept result that is wrong now, e.g. an error of the run that made it, is not reused)
+            want = expected[key] = store.compute(python_case, *kept[key])
             counts["again"] += 1
         got[key], tag = _compare(want, have)
         counts[tag] += 1
