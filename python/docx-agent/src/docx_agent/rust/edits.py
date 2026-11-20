@@ -5,7 +5,8 @@ A tool with a Rust editing handler (:data:`SERVED`: ``word_set_text``, ``replace
 ``word_insert_text``, ``word_delete``, ``word_format``, ``word_lists``, ``word_format_table``,
 ``word_styles``, ``word_follow_sample``, ``word_insert_markdown``, ``word_fields``,
 ``word_headers_footers``, ``word_template``, ``word_move``, ``word_sections``, ``word_notes``,
-``word_links``, ``word_drawings``, and each one ported after them)
+``word_links``, ``word_drawings``, ``word_edit_table``, ``word_changes``, ``word_comments``,
+``word_controls``, ``word_set_tracking``, ``word_copy_from``, and each one ported after them)
 runs there, ahead of docx-agent's handler and its wrapper
 (:func:`docx_agent.tools._base.wrap`): the call's arguments, its ``$name`` refs resolved, go to
 ``Session.edit`` with the call's caller and the document's tracking mode; the versions the
@@ -228,6 +229,59 @@ def _drawings(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
             "at": _sided(call, arguments.get("at"))}
 
 
+def _edit_table(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+    from ..tools.objects import _WRITES_ROWS
+
+    if arguments.get("action") in _WRITES_ROWS:
+        # The rows a call adds or writes into are looked at against the rows around them
+        # (round 58, R126: a warning, the column's formatting taken into a cell that was
+        # empty, the rows kept for check's row_text_format) by the Python handler.
+        raise _Fallback("rows written: their look against the rows around them")
+    return {**_own(arguments), "table": reads._refs(call, arguments.get("table"))}
+
+
+def _changes(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+    return {**_own(arguments), "ids": _refs_in(call, arguments.get("ids")),
+            "within": reads._refs(call, arguments.get("within"))}
+
+
+def _comments(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+    items = arguments.get("items")
+    return {**_own(arguments), "items": None if items is None else [
+        {**item, **{k: reads._refs(call, item.get(k)) for k in ("target", "within", "comment") if k in item}}
+        if isinstance(item, dict) else item for item in items]}
+
+
+def _controls(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+    return {**_own(arguments), **{k: reads._refs(call, arguments.get(k)) for k in ("control", "at")}}
+
+
+def _set_tracking(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+    return _own(arguments)
+
+
+def _copy_from(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+    return {**_own(arguments), "source_doc": _session_doc(call, arguments.get("source_doc")),
+            "at": _blocks_at(call, arguments.get("at")), "range": reads._refs(call, arguments.get("range")),
+            "section_heading": reads._refs(call, arguments.get("section_heading"))}
+
+
+def _session_doc(call: Any, doc: Any) -> Any:
+    """The document the host names ``doc`` as the call's session names it: the call's own,
+    or another the same session holds as it is (no draft); the Python handler answers for
+    any other (one not open, a draft, one in another session)."""
+    if doc == getattr(call.entry, "doc_id", None):
+        return call.entry.handle.doc
+    entry = call.entries.get(doc) if isinstance(doc, str) else None
+    if entry is None or getattr(entry, "owner", None) is None:
+        raise _Fallback("a source the session does not own")
+    if entry.live is not None or entry.pinned is not None:
+        raise _Fallback("a source with a draft")
+    if entry.handle.session is not call.entry.handle.session:
+        raise _Fallback("a document in another session")
+    return entry.handle.doc
+
+
 class _Blobs:
     """The session's blobs as ``Session.edit(blobs=...)`` asks them (lane P2c14): Rust calls
     back with the interpreter lock taken back, for the blob a call names."""
@@ -266,6 +320,12 @@ SERVED: dict[str, Callable[[Any, dict[str, Any]], dict[str, Any]]] = {
     "word_notes": _notes,
     "word_links": _links,
     "word_drawings": _drawings,
+    "word_edit_table": _edit_table,
+    "word_changes": _changes,
+    "word_comments": _comments,
+    "word_controls": _controls,
+    "word_set_tracking": _set_tracking,
+    "word_copy_from": _copy_from,
 }
 
 #: The served tools that read the session's blobs (an inserted picture's bytes).
@@ -363,6 +423,20 @@ def _tracking(call: Any, entry: Any, context: Any, counted: bool) -> None:
         entry.served(first, head, StepOwner(dict(call.caller), "word_set_tracking"), counted=counted)
 
 
+def _set_mode(entry: Any, given: dict[str, Any], context: Any) -> tuple[str, str, Any]:
+    """``word_set_tracking`` served: the session's tracking mode of the document and the
+    host's (``entry.tracking``, which later calls are made under and :func:`_tracking` keeps
+    the session to) set together, under the mirror's lock, where the session sets it."""
+    mirror = entry.handle
+    with mirror.lock:
+        reply, app, made = mirror.session.edit("word_set_tracking", json.dumps(given), context=context)
+        if json.loads(reply).get("error") is None and not json.loads(app).get("unported"):
+            wanted = {"on": True, "author": given.get("author")} if given.get("on") else None
+            entry.tracking = wanted
+            mirror.tracking = wanted
+    return reply, app, made
+
+
 def _layout_before(call: Any, entry: Any) -> Any:
     """What the call's reflow is measured from, as docx-agent's wrapper takes it -- only where
     the view is current (the version before the edit; ``entry.held``: read as it is, no step
@@ -431,7 +505,11 @@ def _edit(call: Any, entry: Any, arguments: dict[str, Any], counted: bool) -> tu
     timing = _timing(call, arguments)
     started = time.perf_counter()
     blobs = _Blobs(call.session) if tool in BLOBS else None
-    reply, app, made = mirror.session.edit(tool, json.dumps(given), context=context, layout=layout, blobs=blobs)
+    if tool == "word_set_tracking":
+        reply, app, made = _set_mode(entry, given, context)
+    else:
+        reply, app, made = mirror.session.edit(tool, json.dumps(given), context=context, layout=layout,
+                                               blobs=blobs)
     if timing is not None:
         timing.add("update", time.perf_counter() - started)
     envelope = json.loads(reply)
