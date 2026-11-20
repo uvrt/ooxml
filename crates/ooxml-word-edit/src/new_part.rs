@@ -78,7 +78,7 @@ pub(crate) fn unused_name(package: &Package, default: &str, template: &str) -> S
 
 /// Indent a new last child like its siblings, for parts written pretty-printed
 /// (ooxml-edit's `_match_tail`).
-fn match_tail(work: &mut Work, node: Id) {
+pub(crate) fn match_tail(work: &mut Work, node: Id) {
     let Some(previous) = work.previous(node) else { return };
     let tail = work.tail(previous).to_owned();
     if tail.is_empty() || !tail.trim().is_empty() {
@@ -146,41 +146,33 @@ pub(crate) fn add_internal(
     }
 }
 
-/// `part` of `content_type` declared as ooxml-edit's `add_part` declares a new part's type:
-/// nothing when its extension's `Default` gives that type already, a `Default` for an
-/// extension without one (after the last `Default`, the convention for media), else an
-/// `Override`. `None`: nothing to declare.
+/// `part` of `content_type` declared as ooxml-edit's `add_part` declares a new part's type
+/// ([`crate::content_types::declare`]). `None`: nothing to declare.
 ///
 /// # Errors
 /// When the content types are not XML.
 pub(crate) fn declare_type(package: &Package, part: &str, content_type: &str) -> Result<Option<Package>, ModelError> {
-    let types = package.content_types()?;
-    if types.of(part) == Some(content_type) {
-        return Ok(None);
-    }
-    let extension = part.rsplit_once('.').map(|(_, e)| e.to_lowercase()).unwrap_or_default();
-    let has_default = types.defaults.iter().any(|(e, _)| e.to_lowercase() == extension);
-    if extension.is_empty() || has_default {
-        return declare_override(package, part, content_type).map(Some);
-    }
-    edit_part(package, CONTENT_TYPES_PART, |work| {
-        let root = work.root();
-        let node = work.new_element(work.element_name(root, TYPES, "Default", ""));
-        let last = work
-            .children(root)
-            .iter()
-            .copied()
-            .rfind(|c| work.is(*c, TYPES, "Default"));
-        match last.and_then(|l| work.index(l)) {
-            Some(index) => work.insert(root, index + 1, node),
-            None => work.insert(root, 0, node),
+    crate::content_types::declare(package, part, content_type)
+}
+
+/// ooxml-edit's `find_part_with_bytes`: a part below `folder` holding exactly `data`, the
+/// first in archive order; a part held as a tree (changed by an edit) is not one (sizes are
+/// compared before any bytes are read).
+///
+/// # Errors
+/// When a part cannot be read.
+pub(crate) fn part_with_bytes(package: &Package, data: &[u8], folder: &str) -> Result<Option<String>, ModelError> {
+    let prefix = format!("{}/", ooxml_opc::name::normalize(folder).trim_end_matches('/'));
+    let size = u64::try_from(data.len()).ok();
+    for name in package.part_names() {
+        if !name.starts_with(&prefix) || package.size(&name) != size {
+            continue;
         }
-        for (local, value) in [("Extension", extension.as_str()), ("ContentType", content_type)] {
-            work.set(node, Arc::new(QName::new(None, local, None)), value);
+        if package.read(&name)?.is_some_and(|bytes| *bytes == *data) {
+            return Ok(Some(name));
         }
-        match_tail(work, node);
-    })
-    .map(Some)
+    }
+    Ok(None)
 }
 
 /// An external relationship from `source` to the address `target` of `rel_type`, as
@@ -271,7 +263,7 @@ fn relative_to(target: &str, base: &str) -> String {
 }
 
 /// Edit a small part (relationships, content types) in an editable copy.
-fn edit_part(package: &Package, part: &str, edit: impl FnOnce(&mut Work)) -> Result<Package, ModelError> {
+pub(crate) fn edit_part(package: &Package, part: &str, edit: impl FnOnce(&mut Work)) -> Result<Package, ModelError> {
     let tree = package.tree(part)?.ok_or_else(|| ModelError::NoPart(part.to_owned()))?;
     let mut work = Work::of(tree.root(), Vec::new());
     edit(&mut work);

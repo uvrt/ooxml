@@ -368,5 +368,23 @@ class RustPlanTest(unittest.TestCase):
             self.assertEqual(_workspace_deps(job_crate), set(listed), job_crate)
 
 
+class MainPushTest(unittest.TestCase):
+    """A push to main runs every package and job, but builds the wheels only when its changes
+    would on a pull request; the nightly and a manual run build them every time."""
+
+    def test_wheels_follow_the_change(self) -> None:
+        crate = ["crates/ooxml-word-edit/src/set_text.rs"]
+        out = _plan("push", crate)
+        self.assertFalse(out["rust_wheels"])
+        self.assertTrue(out["rust"] and out["rust_module"] and out["rust_word_model"])
+        self.assertEqual(out["packages"], list(ci.PACKAGES))
+        for changed in (["crates/python/src/lib.rs"], ["Cargo.lock"], ["crates/ooxml-word-edit/Cargo.toml"],
+                        [".github/workflows/rust-wheels.yml"]):
+            self.assertTrue(_plan("push", changed)["rust_wheels"], changed)
+        for event in ("schedule", "workflow_dispatch"):
+            self.assertTrue(_plan(event, crate)["rust_wheels"], event)
+        self.assertTrue(_plan("push")["rust_wheels"])
+
+
 if __name__ == "__main__":
     unittest.main()

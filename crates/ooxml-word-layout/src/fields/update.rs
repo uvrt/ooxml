@@ -37,11 +37,6 @@ pub struct PageNumbers<F> {
     pages: Vec<PageInfo>,
     /// The layout stopped before the body's end.
     stopped: bool,
-    /// Each paragraph path's first page (0-based, as `LayoutFacts::first_page`), made once
-    /// when first asked: a field update and a check ask it for every field and reference
-    /// (lane L4b: a walk of every page per field was most of a 3,000-page version's
-    /// warnings).
-    first: std::sync::OnceLock<std::collections::HashMap<Text, usize>>,
 }
 
 impl<F: Borrow<LayoutFacts>> PageNumbers<F> {
@@ -78,20 +73,13 @@ impl<F: Borrow<LayoutFacts>> PageNumbers<F> {
             formats,
             pages,
             stopped,
-            first: std::sync::OnceLock::new(),
         }
     }
 
+    /// Each paragraph path's first page, the facts' (made once per version, whoever reads
+    /// it first: a field update and a check ask it for every field and reference).
     fn first(&self) -> &std::collections::HashMap<Text, usize> {
-        self.first.get_or_init(|| {
-            let mut first = std::collections::HashMap::new();
-            for page in &self.facts.borrow().pages {
-                for line in &page.lines {
-                    first.entry(Text::clone(&line.path)).or_insert(page.page);
-                }
-            }
-            first
-        })
+        self.facts.borrow().first_pages()
     }
 
     /// Whether the paragraph at `path` is drawn: the page its first line is on.

@@ -303,12 +303,18 @@ pub fn field_values(document: &WordDocument, layout: &DocumentLayout, keys: &[Fi
     if keys.is_empty() {
         return out;
     }
-    let (paragraphs, _) = body_paragraphs(&document.body);
+    let walked;
+    let paragraphs: &[Arc<Paragraph>] = if Arc::ptr_eq(&document.body, &layout.document.body) {
+        layout.body_paragraphs()
+    } else {
+        walked = body_paragraphs(&document.body).0;
+        &walked
+    };
     let field_of = |(block, k): (usize, usize)| paragraphs.get(block)?.runs.get(k)?.field.clone();
     let refers = keys
         .iter()
         .any(|key| field_of(*key).is_some_and(|f| &*f.keyword == "PAGEREF"));
-    let targets: HashMap<String, (usize, usize)> = if refers { bookmarks(&paragraphs) } else { HashMap::new() };
+    let targets: HashMap<String, (usize, usize)> = if refers { bookmarks(paragraphs) } else { HashMap::new() };
     // Only the paragraphs holding fields, and the bookmarks PAGEREF points at, are looked up.
     let mut asked: BTreeSet<usize> = keys.iter().map(|(block, _)| *block).collect();
     asked.extend(targets.values().map(|(block, _)| *block));
