@@ -9,7 +9,8 @@
 use crate::adapters::{context, SessionStop};
 use ooxml_base::Locale;
 use ooxml_session::{
-    CallContext, CancelToken, DocId, DocKind, HeldId, Opened, Registry, RetiredBy, Session, SessionConfig, SessionError,
+    CallContext, CancelToken, DocId, DocKind, DocNames, HeldId, Opened, Registry, RetiredBy, Session, SessionConfig,
+    SessionError,
 };
 use ooxml_store::{Caller, StoreConfig};
 use ooxml_tools::{compact, ToolError, ToolResult};
@@ -20,6 +21,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict};
 use serde_json::Map;
 use serde_json::Value;
+use std::collections::BTreeMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
 use std::time::Duration;
@@ -71,6 +73,18 @@ fn doc_id(doc: &str, session: &Session) -> PyResult<DocId> {
             open: session.documents().iter().map(ToString::to_string).collect(),
         })
     })
+}
+
+/// The host's names for the documents a call names (`{name: the session's id}`); a name
+/// whose id is not one of the session's names nothing (the call then refuses it as not open).
+fn names_of(names: Option<BTreeMap<String, String>>) -> DocNames {
+    let mut out = DocNames::new();
+    for (name, id) in names.into_iter().flatten() {
+        if let Some(id) = DocId::parse(&id) {
+            out.insert(name, id);
+        }
+    }
+    out
 }
 
 fn to_py(error: &SessionError) -> PyErr {
@@ -199,6 +213,15 @@ impl PyVersion {
         Ok(PyBytes::new(py, &bytes))
     }
 
+    /// The records of placed values this version keeps (JSON text, `Opened::records`): the
+    /// tables' and charts' records, the entries left out, the paragraphs' text facts and
+    /// labels; `None` for a document that is not a Word document.
+    fn records(&self, py: Python<'_>) -> PyResult<Option<String>> {
+        let version = &self.inner;
+        let found = py.detach(|| version.records()).map_err(|e| to_py(&e))?;
+        Ok(found.map(|v| v.to_string()))
+    }
+
     /// What changed since `before`, as docx-agent's ``Result.touched`` entries (JSON text).
     fn touched_since(&self, py: Python<'_>, before: PyRef<'_, PyVersion>) -> PyResult<String> {
         let (now, then) = (&self.inner, &before.inner);
@@ -220,8 +243,8 @@ impl PyVersion {
 type IdsSince = (Vec<u32>, Vec<(String, String)>);
 
 /// A Word document's ids before it was saved, as a host's state keeps them:
-/// `(values, cursors, highest_drawing)` ([`EarlierIds`]).
-type StateIds = (Vec<u32>, Vec<(String, usize)>, u64);
+/// `(values, cursors, highest_drawing, drawings)` ([`EarlierIds`]).
+type StateIds = (Vec<u32>, Vec<(String, usize)>, u64, Vec<u64>);
 
 /// One retired id as `Session.retired` gives it: `(kind, value, seq, caller, tool, version,
 /// said)` -- `"block"` (a paraId's value) or `"drawing"`; a version this session made
@@ -319,18 +342,20 @@ impl PySession {
 
     /// Open a package's bytes as a document of `kind`, named `name`; returns its id (`d1`).
     /// `ids`: a Word document's ids before it was saved, as the host's state of it keeps them
-    /// -- `(values, cursors, highest_drawing)`: every value its pool held, each seed's
-    /// cursor, the highest drawing number given -- so it never gives a retired id again.
+    /// -- `(values, cursors, highest_drawing, drawings)`: every value its pool held, each
+    /// seed's cursor, the highest drawing number given, the drawing numbers retired -- so it
+    /// never gives a retired id or drawing number again.
     #[pyo3(signature = (data, *, kind = "docx", name = "document.docx", ids = None))]
     fn open(&self, py: Python<'_>, data: &[u8], kind: &str, name: &str, ids: Option<StateIds>) -> PyResult<String> {
         let kind = kind_of(kind)?;
         let bytes: Arc<[u8]> = Arc::from(data);
-        let earlier = ids.map_or_else(EarlierIds::default, |(values, cursors, highest_drawing)| EarlierIds {
-            values,
-            cursors,
-            highest_drawing,
-            // the host's state does not pass the drawing numbers it retired yet
-            drawings: Vec::new(),
+        let earlier = ids.map_or_else(EarlierIds::default, |(values, cursors, highest_drawing, drawings)| {
+            EarlierIds {
+                values,
+                cursors,
+                highest_drawing,
+                drawings,
+            }
         });
         let session = &self.inner;
         let id = py
@@ -352,7 +377,10 @@ impl PySession {
     /// page engine (a `WordPages`, the host's kept one), which an edit whose results come
     /// from the pages (`word_fields`, a header's page number) lays its versions out with,
     /// each from the one it laid out last; `None`: such a result is left to the host.
-    #[pyo3(signature = (name, arguments, *, context = None, limit = None, at = None, placer = None, layout = None))]
+    /// `names`: the host's names for the documents the call names (`{name: the session's
+    /// id}`): the arguments name documents by these, and the reply names them so.
+    #[pyo3(signature = (name, arguments, *, context = None, limit = None, at = None, placer = None, layout = None,
+                        names = None))]
     #[allow(clippy::too_many_arguments)]
     fn call(
         &self,
@@ -364,8 +392,10 @@ impl PySession {
         at: Option<Vec<PyRef<'_, PyVersion>>>,
         placer: Option<Py<PyAny>>,
         layout: Option<PyRef<'_, crate::layout::PyWordPages>>,
+        names: Option<BTreeMap<String, String>>,
     ) -> Reply {
         let mut context = context_of(context.as_deref());
+        context.names = names_of(names);
         context.at = at.iter().flatten().map(|v| v.inner.clone()).collect();
         context.placer = placer.map(|p| Arc::new(PyPlacer(p)) as Arc<dyn Placer>);
         context.layout = layout.map(|pages| Arc::new(pages.port()) as Arc<dyn ooxml_word_edit::FieldLayout>);
@@ -392,8 +422,17 @@ impl PySession {
     /// nothing. A host that numbers the document's steps takes the call's step from these,
     /// whatever other calls commit to the document meanwhile. `layout`: the document's page
     /// engine, as for [`call`](Self::call) (`word_fields` update, a header's page number,
-    /// `word_template`'s reflow).
-    #[pyo3(signature = (name, arguments, *, context = None, layout = None))]
+    /// `word_template`'s reflow). `blobs`: the host's blobs, an object with `blob(handle)`
+    /// (`(name, mime, bytes)` or `None`) and `listed()` (`[(handle, name)]`), asked with the
+    /// interpreter lock taken back (`word_drawings` insert_picture). `written`: the values the
+    /// host wrote into the arguments for references, as JSON text (`[{"field", "start", "end",
+    /// "text", "record", "brief"}]`, ooxml-edit's `call.facts`), which the call keeps on the
+    /// paragraphs they went into. `names`: as for [`call`](Self::call).
+    ///
+    /// # Errors
+    /// `ValueError` for `written` that is not such a list.
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (name, arguments, *, context = None, layout = None, blobs = None, written = None, names = None))]
     fn edit(
         &self,
         py: Python<'_>,
@@ -401,9 +440,21 @@ impl PySession {
         arguments: String,
         context: Option<PyRef<'_, PyCallContext>>,
         layout: Option<PyRef<'_, crate::layout::PyWordPages>>,
-    ) -> (String, String, Option<EditMade>) {
+        blobs: Option<Py<PyAny>>,
+        written: Option<&str>,
+        names: Option<BTreeMap<String, String>>,
+    ) -> PyResult<(String, String, Option<EditMade>)> {
         let mut context = context_of(context.as_deref());
+        context.names = names_of(names);
         context.layout = layout.map(|pages| Arc::new(pages.port()) as Arc<dyn ooxml_word_edit::FieldLayout>);
+        context.blobs = blobs.map(|b| Arc::new(crate::adapters::PyBlobs(b)) as Arc<dyn ooxml_tools_word::Blobs>);
+        if let Some(written) = written {
+            context.written = serde_json::from_str::<Value>(written)
+                .ok()
+                .as_ref()
+                .and_then(ooxml_tools_word::Written::list_from_json)
+                .ok_or_else(|| PyValueError::new_err("written is a JSON list of the values written by reference"))?;
+        }
         let session = &self.inner;
         let (text, app, made) = py.detach(|| {
             let run = || session.edit(name, Value::String(arguments), &context);
@@ -417,7 +468,7 @@ impl PySession {
             let validation = (m.validation.new, m.validation.fixed, m.validation.baseline);
             (m.first, PyVersion { inner: m.last }, touched, validation)
         });
-        (text, app, made)
+        Ok((text, app, made))
     }
 
     /// Commit a version's touched parts (bytes, or `None` to remove the part) as one step:

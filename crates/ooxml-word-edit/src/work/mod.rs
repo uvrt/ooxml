@@ -7,9 +7,15 @@
 //! `Work`, applies its rules there, and hands the result to the sink as one patch: the
 //! version's path copy (design section 4, "Edits are path copies").
 //!
+//! A stretch of a long body can be read with only some of its blocks whole
+//! ([`Work::of_stretch`]): the others are sealed -- their element without what is below
+//! it -- and give back the version's own node; a sealed block changed fails the build
+//! rather than lose its content.
+//!
 //! Must not: outlive its edit, reach outside the subtree it was made from (the namespace
 //! declarations in scope above it are given, read only), or know any Word rule.
 
+mod build;
 mod compare;
 mod marks;
 
@@ -45,6 +51,9 @@ struct Slot {
     /// The green node this one was read from, while nothing below it changed.
     origin: Option<Node>,
     changed: bool,
+    /// Read without its children ([`Work::of_stretch`]): it stands for its origin, and
+    /// cannot be built changed.
+    sealed: bool,
     /// A key an edit gives the node to know it again after splits (copies carry it); not
     /// part of the XML (docx-agent's temporary tracking attribute).
     key: Option<u32>,
@@ -75,9 +84,34 @@ impl Work {
         work
     }
 
+    /// An editable copy of `element`, a stretch of a container's children standing in
+    /// one element, where only the children at the places `open` takes (among all its
+    /// children, text included) are read whole: every other paragraph and table is read
+    /// sealed -- its name and attributes, nothing below it -- so an edit of a few blocks of
+    /// a long stretch reads those. An edit must neither read below nor change a sealed
+    /// block (its children read as none; building it changed fails).
+    pub(crate) fn of_stretch(element: &Arc<Element>, scope: Vec<NamespaceDecl>, open: &dyn Fn(usize) -> bool) -> Work {
+        let mut work = Work {
+            slots: Vec::new(),
+            root: 0,
+            scope,
+            marks: BTreeMap::new(),
+        };
+        work.root = work
+            .read_opening(&Node::Element(Arc::clone(element)), None, Some(open))
+            .unwrap_or(0);
+        work
+    }
+
     /// Read `node` and what is below it; `None` for text, which is its element's text or
     /// a node's tail, never a node.
     fn read(&mut self, node: &Node, parent: Option<Id>) -> Option<Id> {
+        self.read_opening(node, parent, None)
+    }
+
+    /// [`Work::read`], its own children read whole only at the places `open` takes when
+    /// given (the others, paragraphs and tables, sealed).
+    fn read_opening(&mut self, node: &Node, parent: Option<Id>, open: Option<&dyn Fn(usize) -> bool>) -> Option<Id> {
         let kind = match node {
             Node::Element(e) => Kind::Element {
                 name: e.name().clone(),
@@ -96,7 +130,7 @@ impl Work {
         }
         if let Node::Element(e) = node {
             let mut last: Option<Id> = None;
-            for child in e.children().iter() {
+            for (k, child) in e.children().iter().enumerate() {
                 match child {
                     Node::Text(t) => {
                         let into = match last {
@@ -106,6 +140,17 @@ impl Work {
                         if let Some(into) = into {
                             into.push_str(t);
                         }
+                    }
+                    Node::Element(block)
+                        if open.is_some_and(|o| !o(k))
+                            && block.name().namespace() == Some(crate::names::W)
+                            && matches!(block.name().local(), "p" | "tbl") =>
+                    {
+                        let c = self.sealed(block, id);
+                        if let Some(slot) = self.slots.get_mut(id) {
+                            slot.children.push(c);
+                        }
+                        last = Some(c);
                     }
                     other => {
                         if let Some(c) = self.read(other, Some(id)) {
@@ -121,6 +166,22 @@ impl Work {
         Some(id)
     }
 
+    /// `block` read sealed under `parent`.
+    fn sealed(&mut self, block: &Arc<Element>, parent: Id) -> Id {
+        let kind = Kind::Element {
+            name: block.name().clone(),
+            namespaces: block.namespaces().to_vec(),
+            attributes: block.attributes().to_vec(),
+            text: String::new(),
+        };
+        let id = self.push(kind, Some(Node::Element(Arc::clone(block))));
+        if let Some(slot) = self.slots.get_mut(id) {
+            slot.parent = Some(parent);
+            slot.sealed = true;
+        }
+        id
+    }
+
     fn push(&mut self, kind: Kind, origin: Option<Node>) -> Id {
         let changed = origin.is_none();
         self.slots.push(Slot {
@@ -130,6 +191,7 @@ impl Work {
             tail: String::new(),
             origin,
             changed,
+            sealed: false,
             key: None,
         });
         self.slots.len() - 1
@@ -638,6 +700,7 @@ impl Work {
         if let Some(s) = self.slots.get_mut(copy) {
             s.tail = slot.tail.clone();
             s.changed = slot.changed;
+            s.sealed = slot.sealed;
             s.key = slot.key;
         }
         for child in slot.children {
@@ -650,6 +713,11 @@ impl Work {
             }
         }
         copy
+    }
+
+    /// `element` (built elsewhere) read into this work, detached.
+    pub(crate) fn adopt(&mut self, element: &Arc<Element>) -> Option<Id> {
+        self.read(&Node::Element(Arc::clone(element)), None)
     }
 
     /// A detached shallow copy of the element: its name and attributes, no children
@@ -668,90 +736,6 @@ impl Work {
             }
         }
         copy
-    }
-
-    // -- back to green -------------------------------------------------------------------
-
-    /// Whether anything at or below the root changed.
-    pub(crate) fn changed(&self) -> bool {
-        self.slot(self.root).is_some_and(|s| s.changed)
-    }
-
-    /// The root as a green element: unchanged subtrees are the version's own nodes.
-    pub(crate) fn build(&self) -> Option<Arc<Element>> {
-        match self.build_node(self.root) {
-            Some(Node::Element(e)) => Some(e),
-            _ => None,
-        }
-    }
-
-    /// The element `id` built, detached (its tail left out).
-    pub(crate) fn build_element(&self, id: Id) -> Option<Arc<Element>> {
-        match self.build_node(id) {
-            Some(Node::Element(e)) => Some(e),
-            _ => None,
-        }
-    }
-
-    /// `element` (built elsewhere) read into this work, detached.
-    pub(crate) fn adopt(&mut self, element: &Arc<Element>) -> Option<Id> {
-        self.read(&Node::Element(Arc::clone(element)), None)
-    }
-
-    /// The element's content as green nodes (its text, its children, their tails): what
-    /// replaces a stretch of a parent's children when the root stands for that stretch.
-    pub(crate) fn build_content(&self, id: Id) -> Option<Vec<Node>> {
-        let slot = self.slot(id)?;
-        let mut out = Vec::new();
-        if !self.text(id).is_empty() {
-            out.push(Node::Text(Atom::from(self.text(id))));
-        }
-        for child in &slot.children {
-            out.push(self.build_node(*child)?);
-            let tail = self.tail(*child);
-            if !tail.is_empty() {
-                out.push(Node::Text(Atom::from(tail)));
-            }
-        }
-        Some(out)
-    }
-
-    fn build_node(&self, id: Id) -> Option<Node> {
-        let slot = self.slot(id)?;
-        if !slot.changed {
-            if let Some(origin) = &slot.origin {
-                return Some(origin.clone());
-            }
-        }
-        Some(match &slot.kind {
-            Kind::Element {
-                name,
-                namespaces,
-                attributes,
-                text,
-            } => {
-                let mut children = Vec::with_capacity(slot.children.len() * 2 + 1);
-                if !text.is_empty() {
-                    children.push(Node::Text(Atom::from(text.as_str())));
-                }
-                for child in &slot.children {
-                    children.push(self.build_node(*child)?);
-                    let tail = self.tail(*child);
-                    if !tail.is_empty() {
-                        children.push(Node::Text(Atom::from(tail)));
-                    }
-                }
-                Node::Element(Arc::new(Element::new(
-                    name.clone(),
-                    namespaces.clone(),
-                    attributes.clone(),
-                    children,
-                )))
-            }
-            Kind::Comment(c) => Node::Comment(Arc::clone(c)),
-            Kind::Pi(p) => Node::Pi(Arc::clone(p)),
-            Kind::Entity(r) => Node::EntityRef(Arc::clone(r)),
-        })
     }
 }
 

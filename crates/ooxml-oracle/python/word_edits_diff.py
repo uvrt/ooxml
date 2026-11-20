@@ -49,12 +49,14 @@ from lxml import etree  # noqa: E402
 from ooxml_edit.tools.savegate import compare_problems  # noqa: E402
 from ooxml_edit.xml import serialize  # noqa: E402
 from reference_cache import Store, compact  # noqa: E402
-from word_edits_compare import reply as _reply, settle as _compare  # noqa: E402
+from word_edits_compare import settle as _compare  # noqa: E402
+from word_tool_reference import reply as _reply  # noqa: E402
 from word_reads_diff import differences, files_of, report, run_rust  # noqa: E402
 import word_object_cases  # noqa: E402
 import word_structure_cases  # noqa: E402
 import word_text_cases  # noqa: E402
 import word_style_cases  # noqa: E402
+import word_tool_reference  # noqa: E402
 
 TRACKING = {"author": "Writer A", "date": "2026-11-17T10:00:00Z"}
 #: Marks the styled reading of word_set_text takes as emphasis; the plain path only here.
@@ -548,7 +550,7 @@ def python_case(data: bytes, case: dict, baseline: list) -> dict:
     if case.get("op") == "tool":
         return python_tool_case(data, case)
     if case.get("op") in ("structure", "objects", "style"):
-        return word_structure_cases.python_case(data, case, baseline, _toolbox(), _reply, _parts, _order, _touched)
+        return word_tool_reference.python_case(data, case, baseline, _toolbox(), _parts, _order, _touched)
     document = Document.open(data)
     before = _parts(data)
     try:
@@ -710,10 +712,10 @@ def main(argv: list[str] | None = None) -> int:
             continue
         for k, case in enumerate(cases):
             found = store.get(data, case) if store else None
-            if found is None:
+            if found is None and store:
+                found = store.compute(python_case, data, case, baseline)
+            elif found is None:
                 found = python_case(data, case, baseline)
-                if store:
-                    store.keep(data, case, found)
             else:
                 kept[(str(path), k)] = (data, case, baseline)
             expected[(str(path), k)] = found
@@ -731,7 +733,9 @@ def main(argv: list[str] | None = None) -> int:
                 expected[key], got[key] = w, h
                 counts[tag] += 1
                 continue
-            want = expected[key] = python_case(*kept[key])
+            # computed again, and kept again: the fresh result replaces the kept one in the store
+            # (a kept result that is wrong now, e.g. an error of the run that made it, is not reused)
+            want = expected[key] = store.compute(python_case, *kept[key])
             counts["again"] += 1
         got[key], tag = _compare(want, have)
         counts[tag] += 1

@@ -108,6 +108,17 @@ impl Package {
         named.into_iter().map(|(_, n)| n.to_owned()).collect()
     }
 
+    /// Whether `other` has the same parts as this package, each the same content by
+    /// identity ([`PartVersion::same`]): one version as far as any reader can tell, known
+    /// without reading a part.
+    pub fn same_parts(&self, other: &Package) -> bool {
+        self.slots.iter().count() == other.slots.iter().count()
+            && self
+                .slots
+                .iter()
+                .all(|(name, slot)| other.slots.get(name).is_some_and(|o| o.content.same(&slot.content)))
+    }
+
     /// Whether the package has the part `name` (any spelling of it).
     pub fn has_part(&self, name: &str) -> bool {
         self.slots.contains_key(&normalize(name))

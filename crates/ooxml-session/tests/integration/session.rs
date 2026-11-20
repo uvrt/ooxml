@@ -387,7 +387,7 @@ fn a_part_parsed_again_shares_what_did_not_change() {
 }
 
 #[test]
-fn a_read_says_what_it_does_not_give_as_docx_agent_does() {
+fn a_diagram_whose_parts_are_missing_reads_as_a_drawing() {
     let s = session();
     let d = s.open(Arc::from(docx()), DocKind::Docx, "a.docx").unwrap();
     let diagram = r#"<w:p><w:r><w:drawing><wp:inline><wp:docPr id="1" name="Diagram 1"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/diagram"/></a:graphic></wp:inline></w:drawing></w:r></w:p>"#;
@@ -397,13 +397,12 @@ fn a_read_says_what_it_does_not_give_as_docx_agent_does() {
     s.update(&d, vec![put("word/document.xml", &doc)], &CallContext::default())
         .unwrap();
     let read = s.call("word_read", json!({"doc": "d1"}), &CallContext::default());
-    assert_eq!(read.unported(), ["SmartArt summary"]);
-    let first = s.call(
-        "word_read",
-        json!({"doc": "d1", "range": "p@body/0"}),
-        &CallContext::default(),
-    );
-    assert!(first.unported().is_empty());
+    assert!(read.unported().is_empty());
+    let text = Value::Object(read.to_json());
+    assert!(text["data"]
+        .as_str()
+        .is_some_and(|t| t.contains("d:1 diagram \"Diagram 1\" ")));
+    assert!(!text["data"].as_str().is_some_and(|t| t.contains("smartart")));
 }
 
 /// A body of `n` numbered paragraphs (one list), the `k`th with `text`.

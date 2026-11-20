@@ -72,6 +72,7 @@ fn find(args: &FindText) -> Result<Value, Value> {
         number: 1,
         versions: &versions,
         placer: None,
+        owned: None,
         others: ooxml_tools_word::Others::default(),
         word: None,
     };
@@ -89,6 +90,7 @@ fn inspect(target: &str, layout: Option<bool>) -> Result<Value, Value> {
         number: 1,
         versions: &versions,
         placer: None,
+        owned: None,
         others: ooxml_tools_word::Others::default(),
         word: None,
     };

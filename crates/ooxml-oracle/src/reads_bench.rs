@@ -144,6 +144,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
         number: 1,
         versions: &versions,
         placer: None,
+        owned: None,
         others: ooxml_tools_word::Others::default(),
         word: None,
     };
@@ -282,6 +283,7 @@ fn after_edit(
             number: 1,
             versions: &versions,
             placer: None,
+            owned: None,
             others: ooxml_tools_word::Others::default(),
             word: None,
         };
@@ -292,6 +294,7 @@ fn after_edit(
             number: 2,
             versions: &versions,
             placer: None,
+            owned: None,
             others: ooxml_tools_word::Others::default(),
             word: None,
         };

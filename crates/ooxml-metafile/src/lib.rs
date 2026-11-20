@@ -28,7 +28,6 @@ mod player;
 mod plus;
 mod png;
 mod pymath;
-mod sha1;
 mod wmf;
 
 pub use error::ReadError;
@@ -133,7 +132,7 @@ pub fn is_metafile(data: &[u8]) -> bool {
 
 /// The drawing of a metafile `nesting` EMF+ images deep.
 pub(crate) fn draw_nested(data: &[u8], faces: &Faces, limits: MetafileLimits, nesting: u32) -> Option<Drawing> {
-    let prefix = format!("m{}-", sha1::hex_prefix(data, 10));
+    let prefix = format!("m{}-", ooxml_base::sha1::hex_prefix(data, 10));
     let (player, (width, height), emf_plus, gdi_fallback) = if emf::is_emf(data) {
         let played = emf::play(data, faces, limits, false, nesting)?;
         let size = played.header.natural_size();

@@ -108,6 +108,7 @@ fn reply(arguments: Value) -> Value {
         number: 1,
         versions: &versions,
         placer: None,
+        owned: None,
         others: Others::default(),
         word: None,
     };
@@ -209,6 +210,7 @@ fn design_facts_on_a_long_document() {
         number: 1,
         versions: &versions,
         placer: None,
+        owned: None,
         others: Others::default(),
         word: None,
     };

@@ -3,7 +3,9 @@
 //! what differs between them, not what they hold. Within an element whose children differ
 //! it finds a shortest edit script (Myers' O(ND) algorithm, the edit distance capped at
 //! [`MAX_EDITS`]: beyond it the differing middle is one splice), and descends into a child
-//! replaced by one of the same head.
+//! replaced by one of the same head. [`changed_runs`]: the runs where two versions of one
+//! child list differ, found by the same search over node identity (a block moved from early
+//! to late is two short runs, not every place between).
 //!
 //! Must not: guess at moves (a moved block is a removal and an insertion), or compare text
 //! by character (a changed text node is replaced whole).
@@ -11,6 +13,7 @@
 use crate::node::{Element, Node, Tree};
 use crate::patch::{NodePath, Patch};
 use crate::rope::Children;
+use std::ops::Range;
 use std::sync::Arc;
 
 /// The largest edit distance searched for within one element's children.
@@ -62,7 +65,7 @@ fn diff_children(a: &Element, b: &Element, path: &NodePath, out: &mut Vec<Patch>
         b: prefix,
         m: m - prefix - suffix,
     };
-    let hunks = edit_script(old, new, middle).unwrap_or_else(|| vec![middle]);
+    let hunks = edit_script(old, new, middle, |p, q| p == q).unwrap_or_else(|| vec![middle]);
     // last first, so each patch's position is still the old tree's
     for h in hunks.iter().rev() {
         emit(old, new, *h, path, out);
@@ -90,15 +93,52 @@ fn emit(old: &Children, new: &Children, h: Hunk, path: &NodePath, out: &mut Vec<
     out.push(Patch::splice(path.clone(), h.a, removed, inserted));
 }
 
+/// A run of children where a later version of a list differs from it: the places `old`
+/// here replaced by the places `new` there.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Run {
+    /// The places replaced, in the earlier list.
+    pub old: Range<usize>,
+    /// The places put there, in the later list.
+    pub new: Range<usize>,
+}
+
+/// The runs where `new`, a later version of the child list `old`, differs from it, in
+/// order: between two runs (and outside them) the nodes are the same ([`Node::same`]), so
+/// replacing each run's `old` places by its `new` ones, the last run first, gives `new`.
+/// Found as [`diff`] finds its splices, by identity: a block moved from one place to a far
+/// one is a removal and an insertion; past [`MAX_EDITS`] edits the stretch from the first
+/// difference to the last is one run.
+#[must_use]
+pub fn changed_runs(old: &Children, new: &Children) -> Vec<Run> {
+    let Some((start, old_end, new_end)) = old.changed_span(new) else {
+        return Vec::new();
+    };
+    let middle = Hunk {
+        a: start,
+        n: old_end - start,
+        b: start,
+        m: new_end - start,
+    };
+    edit_script(old, new, middle, Node::same)
+        .unwrap_or_else(|| vec![middle])
+        .into_iter()
+        .map(|h| Run {
+            old: h.a..h.a + h.n,
+            new: h.b..h.b + h.m,
+        })
+        .collect()
+}
+
 /// The hunks of a shortest edit script of `old[h.a..]` into `new[h.b..]` within `h`
 /// (Myers 1986, the greedy forward search, keeping each step's frontier to trace back), or
 /// `None` when it takes more than [`MAX_EDITS`] edits.
-fn edit_script(old: &Children, new: &Children, h: Hunk) -> Option<Vec<Hunk>> {
+fn edit_script(old: &Children, new: &Children, h: Hunk, equal: impl Fn(&Node, &Node) -> bool) -> Option<Vec<Hunk>> {
     let (n, m) = (h.n as isize, h.m as isize);
     let same = |x: isize, y: isize| {
         old.get(h.a + x as usize)
             .zip(new.get(h.b + y as usize))
-            .is_some_and(|(p, q)| p == q)
+            .is_some_and(|(p, q)| equal(p, q))
     };
     let offset = MAX_EDITS as isize + 1;
     let mut v = vec![0isize; 2 * MAX_EDITS + 3];
@@ -167,4 +207,67 @@ fn trace_back(trace: &[Vec<isize>], n: isize, m: isize, h: Hunk) -> Vec<Hunk> {
         }
     }
     hunks
+}
+
+#[cfg(test)]
+#[allow(clippy::indexing_slicing)]
+mod tests {
+    use super::*;
+    use crate::name::{Atom, QName};
+
+    fn el(name: &str) -> Node {
+        Node::Element(Arc::new(Element::new(
+            Arc::new(QName::new(None, name, None)),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )))
+    }
+
+    fn runs(old: &[Node], new: &[Node]) -> Vec<(Range<usize>, Range<usize>)> {
+        changed_runs(&Children::from_vec(old.to_vec()), &Children::from_vec(new.to_vec()))
+            .into_iter()
+            .map(|r| (r.old, r.new))
+            .collect()
+    }
+
+    #[test]
+    fn a_block_moved_far_is_a_removal_and_an_insertion() {
+        let old: Vec<Node> = (0..300).map(|k| el(&format!("b{k}"))).collect();
+        let mut new = old.clone();
+        let moved = new.remove(10);
+        new.insert(290, moved);
+        assert_eq!(runs(&old, &new), vec![(10..11, 10..10), (291..291, 290..291)]);
+    }
+
+    #[test]
+    fn a_changed_child_and_one_inserted_are_runs_of_their_own() {
+        let old: Vec<Node> = (0..5).map(|k| el(&format!("b{k}"))).collect();
+        let new = vec![
+            old[0].clone(),
+            el("new"),
+            old[1].clone(),
+            old[2].clone(),
+            old[3].clone(),
+            el("b4 changed"),
+            Node::Text(Atom::from("\n")),
+        ];
+        assert_eq!(runs(&old, &new), vec![(1..1, 1..2), (4..5, 5..7)]);
+        assert_eq!(runs(&old, &old), Vec::new());
+    }
+
+    #[test]
+    fn replaying_the_runs_gives_the_later_list() {
+        let old: Vec<Node> = (0..120).map(|k| el(&format!("b{k}"))).collect();
+        let mut new = old.clone();
+        new.swap(3, 100);
+        new.insert(50, el("x"));
+        new.remove(70);
+        new[110] = el("y");
+        let mut replayed = old.clone();
+        for (gone, came) in runs(&old, &new).into_iter().rev() {
+            replayed.splice(gone, new[came].iter().cloned());
+        }
+        assert!(replayed.iter().zip(&new).all(|(a, b)| a.same(b)) && replayed.len() == new.len());
+    }
 }

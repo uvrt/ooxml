@@ -296,6 +296,7 @@ fn set_cells(editor: &Editor, caller: &Caller, package: &Package, case: &Value) 
         writes,
         stamping: false,
         policy: policy(case),
+        accepted: None,
     };
     editor.run(caller, &command).map(|done| {
         let edits: Vec<Value> = done

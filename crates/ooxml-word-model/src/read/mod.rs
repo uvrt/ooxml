@@ -36,6 +36,8 @@ use std::sync::Arc;
 pub(crate) struct Steps {
     prefix: Text,
     counts: HashMap<String, usize>,
+    /// The last path given by [`Steps::step_str`].
+    written: String,
 }
 
 impl Steps {
@@ -43,19 +45,33 @@ impl Steps {
         Steps {
             prefix: text(prefix),
             counts: HashMap::new(),
+            written: String::new(),
         }
     }
 
     /// Count `node` and give its path.
     pub(crate) fn step(&mut self, node: &Element) -> Text {
+        text(self.step_str(node))
+    }
+
+    /// Count `node` and give its path, written in a buffer the next step reuses (a reader
+    /// that keeps most paths as they were allocates none).
+    pub(crate) fn step_str(&mut self, node: &Element) -> &str {
+        use std::fmt::Write as _;
         let name = local(node);
-        let count = self.counts.entry(name.to_owned()).or_insert(0);
+        let count = match self.counts.get_mut(name) {
+            Some(count) => count,
+            None => self.counts.entry(name.to_owned()).or_insert(0),
+        };
         *count += 1;
-        if self.prefix.is_empty() {
-            text(&format!("w:{name}[{count}]"))
-        } else {
-            text(&format!("{}/w:{name}[{count}]", self.prefix))
+        self.written.clear();
+        if !self.prefix.is_empty() {
+            self.written.push_str(&self.prefix);
+            self.written.push('/');
         }
+        // Writing to a String does not fail.
+        let _ = write!(self.written, "w:{name}[{count}]");
+        &self.written
     }
 }
 

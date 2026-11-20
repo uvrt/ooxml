@@ -267,6 +267,8 @@ impl Command<WordDoc> for Review {
                 }
             }
         }
+        // docx-agent's `_follow_review`: the tables' records kept true
+        crate::provenance::follow_review(&mut sink, self.accept)?;
         let after = record_marks(&*sink.docx()?);
         let total = |m: &BTreeMap<Mark, usize>| m.values().sum::<usize>();
         let mut settled = BTreeMap::new();

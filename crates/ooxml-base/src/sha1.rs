@@ -1,6 +1,6 @@
-//! Owns: SHA-1 (FIPS 180-4), only to name a drawing's ids as the reference names them (the
-//! first ten hexadecimal digits of the digest of the metafile's bytes), so that two
-//! metafiles drawn inline in one page never share an id.
+//! Owns: SHA-1 (FIPS 180-4), only where a name is made as Python makes it: a drawing's ids
+//! as the metafile reference names them (the first ten hexadecimal digits of the digest of
+//! the metafile's bytes), and name-based UUIDs ([`crate::uuid`], version 5).
 //!
 //! Must not: be used for anything that needs a secure digest.
 
