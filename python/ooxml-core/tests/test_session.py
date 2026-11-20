@@ -108,7 +108,7 @@ def test_cancelled_and_late_calls_stop_with_timeout():
 
 def test_tool_specs_are_the_exports():
     specs = json.loads(ooxml_core.tool_specs("docx"))
-    # the registry's tools in registration order (ooxml-session's tests/registry.rs holds each
+    # the registry's tools in registration order (ooxml-session's tests/integration/registry.rs holds each
     # to its golden export): describe first, read_batch over the others last, each once
     names = [s["name"] for s in specs]
     assert names[0] == "describe" and names[-1] == "read_batch" and len(set(names)) == len(names)

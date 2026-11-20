@@ -18,7 +18,7 @@
 //! Concurrency contract: a command's `prepare` records, through [`Txn::read`], every key its
 //! changes depend on, and [`DocModel::apply`] of its changes to any version that agrees with
 //! the snapshot on those keys gives what `prepare` would have given there. Under that
-//! contract every run equals a serial replay in commit order (tests/serial_replay.rs).
+//! contract every run equals a serial replay in commit order (tests/integration/serial_replay.rs).
 #![forbid(unsafe_code)]
 
 mod changeset;
