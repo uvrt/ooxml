@@ -60,13 +60,16 @@ impl TableKeeps {
 
 /// Per row of the table at `found`, its keep (docx-agent's `row_keeps`).
 pub(crate) fn row_keeps(docx: &Docx, found: &Found) -> Result<Vec<RowKeep>> {
-    let story = docx
-        .part(&found.part)
-        .ok_or_else(|| EditError::NoPart(found.part.clone()))?;
-    let table = at_path(story.root(), &found.path).ok_or_else(|| EditError::Path(found.part.clone()))?;
+    rows_at(docx, &found.part, &found.path)
+}
+
+/// Per row of the table at `path` in `part`, its keep.
+fn rows_at(docx: &Docx, part: &str, path: &[u32]) -> Result<Vec<RowKeep>> {
+    let story = docx.part(part).ok_or_else(|| EditError::NoPart(part.to_owned()))?;
+    let table = at_path(story.root(), path).ok_or_else(|| EditError::Path(part.to_owned()))?;
     let mut look = Keeps::new(docx, story);
     let mut out = Vec::new();
-    for lead in row_leads(table, &found.path) {
+    for lead in row_leads(table, path) {
         let paragraph = lead.as_ref().and_then(|l| Some((l, at_path(story.root(), l)?)));
         let Some((lead, paragraph)) = paragraph else {
             out.push(RowKeep {
@@ -78,7 +81,7 @@ pub(crate) fn row_keeps(docx: &Docx, found: &Found) -> Result<Vec<RowKeep>> {
             continue;
         };
         out.push(RowKeep {
-            lead: lead.get(found.path.len()..).map(<[u32]>::to_vec),
+            lead: lead.get(path.len()..).map(<[u32]>::to_vec),
             keeps: look.effective(paragraph, lead, true).keep_with_next,
             styled: look.effective(paragraph, lead, false).keep_with_next,
             declared: declared(paragraph, "keepNext"),
@@ -267,6 +270,15 @@ pub fn table_keeps(doc: &WordDoc, table: &str) -> Result<TableKeeps> {
     let docx = doc.docx()?;
     let found = find_table(doc, &docx, table)?;
     Ok(TableKeeps::of(&row_keeps(&docx, &found)?))
+}
+
+/// [`table_keeps`] of the table at `path` in the story part `part` of `docx` (a reader's:
+/// `word_describe`'s tables).
+///
+/// # Errors
+/// A `part` or `path` that holds no table.
+pub fn table_keeps_at(docx: &Docx, part: &str, path: &[u32]) -> Result<TableKeeps> {
+    Ok(TableKeeps::of(&rows_at(docx, part, path)?))
 }
 
 /// A paragraph between a table and the next table that does not keep with the next

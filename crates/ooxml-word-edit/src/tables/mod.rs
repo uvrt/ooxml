@@ -26,7 +26,7 @@ mod window;
 pub(crate) use rows::placed;
 
 pub use body_lines::{body_lines, body_width, BodyLines, BodyWidth};
-pub use keeps::{loose_paragraph_after, table_keeps, TableKeeps};
+pub use keeps::{loose_paragraph_after, table_keeps, table_keeps_at, TableKeeps};
 pub use props::{CellValues, Look, TableValues, TableWidth};
 pub use rows::{pending_structure, EditTable, TableChange, TableChanged};
 
