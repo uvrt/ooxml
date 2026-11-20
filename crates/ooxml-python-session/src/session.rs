@@ -198,6 +198,15 @@ impl PyVersion {
         Ok(PyBytes::new(py, &bytes))
     }
 
+    /// The records of placed values this version keeps (JSON text, `Opened::records`): the
+    /// tables' and charts' records, the entries left out, the paragraphs' text facts and
+    /// labels; `None` for a document that is not a Word document.
+    fn records(&self, py: Python<'_>) -> PyResult<Option<String>> {
+        let version = &self.inner;
+        let found = py.detach(|| version.records()).map_err(|e| to_py(&e))?;
+        Ok(found.map(|v| v.to_string()))
+    }
+
     /// What changed since `before`, as docx-agent's ``Result.touched`` entries (JSON text).
     fn touched_since(&self, py: Python<'_>, before: PyRef<'_, PyVersion>) -> PyResult<String> {
         let (now, then) = (&self.inner, &before.inner);

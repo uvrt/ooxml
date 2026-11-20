@@ -6,7 +6,7 @@
 //! paragraph is in a version ([`target_in_file`], renamed paragraphs followed); a text
 //! entry's paragraph text, facts and labels ([`TextEntry`]); and the rules facts and labels
 //! follow an edit by ([`facts`]); the tables' and charts' records as docx-agent reads
-//! them ([`provenance`]).
+//! them ([`provenance`]), and the paragraphs' text facts and labels ([`text_records`]).
 //!
 //! Must not: change the document (the editing crate writes the item), or decide what a
 //! tool reports about a record.
@@ -14,9 +14,11 @@
 pub mod facts;
 mod json;
 mod read;
+mod text;
 
 pub use json::dumps;
 pub use read::{provenance, Provenance};
+pub use text::{text_records, ByParagraph, TextRecords};
 
 use crate::address::resolve::direct;
 use crate::docx::drawings::graphics;

@@ -210,3 +210,37 @@ def test_served_reviews_follow_the_records_as_docx_agent_does(toolbox, request, 
         for key in theirs:
             assert ours[key] == theirs[key], (case, k, key, ours[key], theirs[key])
     assert rust[0]["item"] != _kept(data)["item"]
+
+
+# -- reading them (lane P2d1, PR c): the session's reading of the view's version -------------------
+
+
+def _reads(document) -> tuple:
+    found = document.provenance()
+    return dict(found), found.ignored, document.text_facts(), document.text_labels()
+
+
+@pytest.mark.parametrize("fixture", ["recorded", "stale", "charted", "reviewed", "reviewed_alone"])
+def test_the_session_reads_the_records_as_docx_agent_does(toolbox, request, fixture):
+    data = request.getfixturevalue(fixture)
+    session = toolbox.session()
+    doc = session.open(data, name="recorded.docx")
+    entry = session.entry(doc)
+    if not isinstance(entry, OwnedEntry):
+        pytest.skip("no Rust session to own the document")
+    steps = [None, *CASES["chart's paragraph deleted"]] if fixture == "charted" else \
+        [None, *CASES["fact moved"], *CASES["label stretched"], *REVIEWS["accept all"][1]]
+    for step in steps:
+        if step is not None:
+            assert toolbox.dispatch(session, step[0], {"doc": doc, **step[1]}).ok
+        document = entry.document
+        hook = document.owned_records
+        assert hook is not None and hook() is not None
+        ours = _reads(document)
+        document.owned_records = None
+        try:
+            theirs = _reads(document)
+        finally:
+            document.owned_records = hook
+        assert ours == theirs, (fixture, step)
+    session.close(doc)
