@@ -1,7 +1,8 @@
 //! Owns: [`Version`], one version of a Word document as a reading tool is handed it: its
 //! name, its package, its number and the document's kept readings, from which the
 //! version's [`Docx`] is taken (read once per version; a new version reads only what
-//! changed); where the call may ask where its blocks are laid out ([`Placer`]); and
+//! changed); where the call may ask where its blocks are laid out ([`Placer`]); the
+//! version as the session's editor holds it, where it owns the document ([`Owned`]); and
 //! [`Others`], the other documents the call names, at the versions pinned for it.
 //!
 //! Must not: hold documents or sessions (`ooxml-session` does, and makes a `Version` per
@@ -10,6 +11,8 @@
 use crate::placements::Placer;
 use ooxml_opc::Package;
 use ooxml_tools::ToolError;
+use ooxml_word_edit::validate::Problem;
+use ooxml_word_edit::WordDoc;
 use ooxml_word_model::docx::{Docx, Versions};
 use std::sync::Arc;
 
@@ -27,6 +30,10 @@ pub struct Version<'a> {
     /// Where the call may ask where blocks are laid out (`None`: nowhere; a tool that needs
     /// it refuses with the call that works without).
     pub placer: Option<&'a dyn Placer>,
+    /// The version as the session's editor holds it, where the session owns the document
+    /// (`None`: a package the session only reads; a tool that needs it leaves the call to
+    /// the host).
+    pub owned: Option<Owned<'a>>,
     /// The other open documents the call names (`ooxml_tools::documents`), each at the
     /// version the session pinned for the call.
     pub others: Others<'a>,
@@ -42,6 +49,16 @@ impl Version<'_> {
             .docx(self.number, self.package)
             .map_err(|e| ToolError::internal(e.to_string(), "word:model"))
     }
+}
+
+/// A version of a document the session owns, as its editor holds it: what validation
+/// reads, and the problems the document was opened with (the save gate's baseline).
+#[derive(Clone, Copy)]
+pub struct Owned<'a> {
+    /// The version.
+    pub doc: &'a WordDoc,
+    /// The problems the document had when the session opened it.
+    pub baseline: &'a [Problem],
 }
 
 /// The other documents a call names, by id, each at the version the session pinned for the

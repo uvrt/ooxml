@@ -4,7 +4,8 @@
 //! `[text]{Character style}` written in character styles: every item one
 //! [`SetStyledText`] in one atomic batch (one history step: an item refused refuses the
 //! call, and nothing changes); the reply as docx-agent's `outcome` makes it, with the styled
-//! runs (`data.styled`) and the notes.
+//! runs (`data.styled`) and the notes; the values the host wrote for references kept on
+//! their paragraphs and listed (`data.facts`).
 //!
 //! Must not: write the document but through the command, or answer a call it does not
 //! port otherwise than by saying so ([`Unported`]).
@@ -13,9 +14,9 @@ use super::{by_reference, Unported};
 use crate::describe::short;
 use crate::review::{edit_refusal, needed};
 use crate::structure::common::{outcome, Outcome};
-use crate::Editing;
+use crate::{written, Editing};
 use ooxml_store::Batch;
-use ooxml_tools::{Refusal, ToolArgs, ToolError, ToolResult, TryCall, WayOut};
+use ooxml_tools::{Outcome as Replied, Refusal, ToolArgs, ToolError, ToolResult, TryCall, WayOut};
 use ooxml_word_edit::{SetStyledText, StyledRun, StyledTextSet};
 use ooxml_word_model::address::resolve::resolve;
 use ooxml_word_model::ids::Entry;
@@ -129,6 +130,15 @@ fn run(args: &WordSetText, editing: &Editing<'_>) -> Result<ToolResult<Value>, T
         )
         .at(format!("{prefix}target")));
     }
+    write(args, editing, &work)
+}
+
+/// The items written in one atomic batch, the values written by reference kept, the reply.
+fn write(
+    args: &WordSetText,
+    editing: &Editing<'_>,
+    work: &[(String, String, Option<String>, String)],
+) -> Result<ToolResult<Value>, ToolError> {
     let policy = editing.policy();
     let ops = work
         .iter()
@@ -145,7 +155,60 @@ fn run(args: &WordSetText, editing: &Editing<'_>) -> Result<ToolResult<Value>, T
         .run(editing.caller, &Batch::atomic(ops))
         .map_err(|e| edit_refusal(e, "", try_call(args)))?;
     let items: Vec<StyledTextSet> = done.out.into_iter().filter_map(Result::ok).collect();
-    Ok(reply(work.len(), items))
+    let wrote: Vec<Vec<String>> = items.iter().map(|item| item.written.clone()).collect();
+    let mut result = reply(work.len(), items);
+    if !editing.written.is_empty() {
+        keep_facts(args, editing, work, &wrote, &mut result)?;
+    }
+    Ok(result)
+}
+
+/// Round 45, R65: each value written by reference kept where it went (docx-agent's
+/// `_set_facts`, then `keep_written`) and listed in the reply's `facts` -- a value that is
+/// an item's whole text with the paragraphs it went into (`blocks`), kept as their source.
+fn keep_facts(
+    args: &WordSetText,
+    editing: &Editing<'_>,
+    work: &[(String, String, Option<String>, String)],
+    wrote: &[Vec<String>],
+    result: &mut ToolResult<Value>,
+) -> Result<(), ToolError> {
+    let after = written::after_edit(editing)?;
+    let mut said = Vec::new();
+    let mut keeps = Vec::new();
+    for fact in editing.written {
+        let k = if args.items.is_some() { fact.item() } else { Some(0) };
+        let text = k.and_then(|k| work.get(k)).map(|(_, text, ..)| text.as_str());
+        let blocks = match (k, text) {
+            (Some(k), Some(text)) if fact.is_whole(text) => wrote.get(k).cloned(),
+            _ => None,
+        };
+        if let Some(blocks) = &blocks {
+            keeps.extend(written::whole_keeps(&after, fact, blocks));
+        }
+        said.push(written::brief(fact, blocks.as_deref()));
+    }
+    if let Replied::Done(done) = &mut result.outcome {
+        let targets: Vec<&str> = work.iter().map(|(target, ..)| target.as_str()).collect();
+        let argument = |field: &str| argument(args, field);
+        keeps.extend(written::written_keeps(&after, editing, done, &targets, &argument));
+        let mut data = match done.data.take() {
+            Some(Value::Object(data)) => data,
+            _ => Map::new(),
+        };
+        data.insert("facts".into(), Value::Array(said));
+        done.data = Some(Value::Object(data));
+    }
+    written::keep(editing, keeps, &try_call(args))
+}
+
+/// The text of the argument `field` names (`text`, `items[0].text`).
+fn argument(args: &WordSetText, field: &str) -> Option<String> {
+    if field == "text" {
+        return args.text.clone();
+    }
+    let k: usize = field.strip_prefix("items[")?.strip_suffix("].text")?.parse().ok()?;
+    args.items.as_ref()?.get(k).map(|item| item.text.clone())
 }
 
 /// The first item whose target names a table (on the head: what an address names is no

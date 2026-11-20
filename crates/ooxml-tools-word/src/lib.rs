@@ -12,6 +12,7 @@
 #![forbid(unsafe_code)]
 
 mod blobs;
+mod check;
 mod describe;
 mod find_text;
 mod objects;
@@ -28,8 +29,10 @@ mod text;
 mod version;
 mod word_inspect;
 mod word_read;
+mod written;
 
 pub use blobs::{Blob, BlobList, Blobs};
+pub use check::*;
 pub use describe::{describe, Describe, DESCRIBED, NOT_DESCRIBED};
 pub use find_text::{find_text, FindStories, FindText};
 pub use pages::EnginePages;
@@ -41,9 +44,10 @@ pub use review::*;
 pub use structure::*;
 pub use style::*;
 pub use text::*;
-pub use version::{Others, Version};
+pub use version::{Others, Owned, Version};
 pub use word_inspect::{word_inspect, WordInspect};
 pub use word_read::{word_read, Story, View, WordRead};
+pub use written::Written;
 
 /// What `unported` says of a final view where a cell's end is one Accept All takes away.
 pub const CELL_ENDS: &str = "Accept All's cell ends";

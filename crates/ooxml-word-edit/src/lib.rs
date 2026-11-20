@@ -127,9 +127,9 @@ pub use drawings::{
 pub use editor::{EditTiming, Edited, Editor};
 pub use error::{EditError, Result};
 pub use fields::{
-    fields, format_date, Day, FieldEdited, FieldInfo, FieldLayout, FieldPlace, InsertCaption, InsertCrossReference,
-    InsertField, InsertToc, LaidFields, PageReflow, PageShows, SetStoryNumbered, StoryNumber, StoryNumbered, Unknown,
-    UpdateFields,
+    field_facts, fields, format_date, Day, FieldEdited, FieldFacts, FieldInfo, FieldLayout, FieldPlace, InsertCaption,
+    InsertCrossReference, InsertField, InsertToc, LaidFields, PageReflow, PageShows, SetStoryNumbered, StoryNumber,
+    StoryNumbered, Unknown, UpdateFields,
 };
 pub use follow::{CopyFollowed, FollowSample, Followed};
 pub use format::{
@@ -149,6 +149,7 @@ pub use paragraph_style::{SetParagraphStyle, StyleSet};
 pub use paragraphs::{InsertParagraph, ParagraphInserted};
 pub use policy::{RevisionPolicy, Tracking};
 pub use pool::{EarlierIds, Ids, IdsChange, Sequences};
+pub use provenance::{KeepText, TextKeep};
 pub use ranges::{DeleteText, InsertText, RangesEdited, ReplaceText};
 pub use review::{record_marks, Mark, RemovedBlocks, Review, Reviewed, RowGone, Selection, TableGone, Typed};
 pub use sections::{

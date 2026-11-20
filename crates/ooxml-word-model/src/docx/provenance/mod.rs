@@ -5,7 +5,8 @@
 //! record as text); what a key names ([`kind_of`]) and whether its table, chart or
 //! paragraph is in a version ([`target_in_file`], renamed paragraphs followed); a text
 //! entry's paragraph text, facts and labels ([`TextEntry`]); and the rules facts and labels
-//! follow an edit by ([`facts`]); the tables' and charts' records as docx-agent reads
+//! follow an edit by ([`facts`]); what an entry holds once facts or labels are kept on it
+//! ([`keep`]); the tables' and charts' records as docx-agent reads
 //! them ([`provenance`]), and the paragraphs' text facts and labels ([`text_records`]).
 //!
 //! Must not: change the document (the editing crate writes the item), or decide what a
@@ -13,6 +14,7 @@
 
 pub mod facts;
 mod json;
+pub mod keep;
 mod read;
 mod text;
 
@@ -34,6 +36,15 @@ use std::sync::Arc;
 pub const NS: &str = "urn:uvrt:docx-agent:provenance:v1";
 /// The relationship from the main part to a custom XML item.
 pub const REL_CUSTOM_XML: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/customXml";
+/// The relationship from a custom XML item to its properties.
+pub const REL_CUSTOM_XML_PROPS: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/customXmlProps";
+/// The namespace of a custom XML item's properties (`ds:datastoreItem`).
+pub const DS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/customXml";
+/// A custom XML item's content type (Word's `Default` for `.xml`), and its properties'.
+pub const ITEM_TYPE: &str = "application/xml";
+/// A custom XML item's properties' content type.
+pub const PROPS_TYPE: &str = "application/vnd.openxmlformats-officedocument.customXmlProperties+xml";
 /// The record format's version, `v` in every record.
 pub const VERSION: u64 = 1;
 
