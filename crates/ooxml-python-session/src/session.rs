@@ -329,6 +329,8 @@ impl PySession {
             values,
             cursors,
             highest_drawing,
+            // the host's state does not pass the drawing numbers it retired yet
+            drawings: Vec::new(),
         });
         let session = &self.inner;
         let id = py

@@ -45,6 +45,7 @@ mod block_checks;
 mod blocks;
 mod builtin;
 mod comments;
+mod content_types;
 mod control_delete;
 mod controls;
 mod copying;
