@@ -150,11 +150,13 @@ def test_the_problems_are_found_once_per_version(box, monkeypatch):
     assert (len(found), bool(asked)) == ((0, True) if owned else (1, False))   # the call's checks
     for asked_for in ([], ["validate"], ["layout"]):
         _ok(box, session, "check", doc="d1", **({"include": asked_for} if asked_for else {}))
-    assert len(found) == 1                                  # kept for the version
+    # kept for the version; lane P5b: the default check (reflow) is the session's too, so
+    # of an owned document Python finds none (the layout check validates nothing)
+    assert len(found) == (0 if owned else 1)
     gate = len(asked)
     assert _save(box, session).error.code == "refused"
     # the gate finds them afresh: here, or in the session
-    assert (len(found), len(asked)) == ((1, gate + 1) if owned else (2, gate))
+    assert (len(found), len(asked)) == ((0, gate + 1) if owned else (2, gate))
 
 
 def test_a_check_inside_a_batch_sees_the_batchs_own_edit(box):

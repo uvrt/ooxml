@@ -68,7 +68,7 @@ fn a_default_check_reports_the_reflow_since_the_last() {
     assert_eq!(reply["summary"], "Checked validate, reflow, fields");
     let data = &reply["data"];
     let parts: Vec<&String> = data["timing"].as_object().unwrap().keys().collect();
-    assert_eq!(parts, ["layout", "validate", "facts", "fields"]);
+    assert_eq!(parts, ["validate", "layout", "facts", "fields"]);
     let reflow = &data["reflow"];
     let pages = reflow["pages"].as_u64().unwrap();
     assert!(pages >= 1);

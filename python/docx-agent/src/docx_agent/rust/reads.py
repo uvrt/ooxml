@@ -429,7 +429,13 @@ def serve_check(call: Any, arguments: dict[str, Any]) -> Result | None:
         from ..pages import word_pages
 
         layout, _ = word_pages(owned.held)     # none: the session says so (unported)
-    return serve(call, "check", arguments, lambda: None, why_not=why, layout=layout)
+    served = serve(call, "check", arguments, lambda: None, why_not=why, layout=layout)
+    if served is not None and layout is not None:
+        # Lane F's checks of ranges measure from what a check saw last: this one.
+        from .check import seen_by_python
+
+        seen_by_python(call, call.entry.version)
+    return served
 
 
 def last_check(call: Any) -> tuple[bool, Any, int | None]:
@@ -444,6 +450,19 @@ def last_check(call: Any) -> tuple[bool, Any, int | None]:
     if mirror is None:
         return False, None, None
     return True, mirror.session.last_check(mirror.doc), None if version is None else version.number
+
+
+def checked_before(call: Any) -> Any:
+    """Lane P5b: what a changing call's reflow is measured from where no layout of the
+    document's current version was made here: the summary its last check saw, kept by the
+    session, where that check was of this very version (a ``LayoutSummary`` held in Rust);
+    else ``None``."""
+    owned, kept, number = last_check(call)
+    if not owned or kept is None or kept[0] is None or kept[0] != number:
+        return None
+    from ..layout import LayoutSummary
+
+    return LayoutSummary.held(kept[1])
 
 
 def keep_last_check(call: Any, summary: Any) -> None:

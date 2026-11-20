@@ -24,6 +24,7 @@ use ooxml_base::Cancel;
 use ooxml_tools::{ArgEnum, Done, ToolError};
 use ooxml_word_edit::validate::{problems, Delta};
 use serde_json::{Map, Value};
+use std::sync::{Arc, PoisonError};
 use std::time::Instant;
 
 /// The problems a check lists at most (the rest are in `new` and the count).
@@ -57,27 +58,27 @@ pub fn check(args: &Check, version: &Version<'_>, cancel: &dyn Cancel) -> Result
     };
     let mut data = Map::new();
     let mut timing = Map::new();
-    let laid = if wanted.contains(&CheckInclude::Reflow) {
-        let Some(layout) = owned.layout else {
-            return Ok(unported(CHECK_NO_LAYOUT));
-        };
-        let started = Instant::now();
-        let Ok(laid) = layout.laid(version.package) else {
-            return Ok(unported(CHECK_NOT_LAID_OUT));
-        };
-        timing.insert("layout".into(), seconds(started));
-        Some((layout, laid))
-    } else {
-        None
+    let layout = match (wanted.contains(&CheckInclude::Reflow), owned.layout) {
+        (true, None) => return Ok(unported(CHECK_NO_LAYOUT)),
+        (true, Some(layout)) => Some(layout),
+        (false, _) => None,
     };
-    cancel.check().map_err(cancelled)?;
     if wanted.contains(&CheckInclude::Validate) {
         let started = Instant::now();
         data.insert("validate".into(), validate(owned)?);
         timing.insert("validate".into(), seconds(started));
     }
     cancel.check().map_err(cancelled)?;
-    if let Some((layout, laid)) = laid {
+    if let Some(layout) = layout {
+        let started = Instant::now();
+        let last = layout.engine().lock().unwrap_or_else(PoisonError::into_inner).last().cloned();
+        let Ok(laid) = layout.laid(version.package) else {
+            return Ok(unported(CHECK_NOT_LAID_OUT));
+        };
+        // `layout`: the time laying the version out, where the engine had not laid it out last
+        if !last.is_some_and(|last| Arc::ptr_eq(&last, &laid)) {
+            timing.insert("layout".into(), seconds(started));
+        }
         let started = Instant::now();
         data.insert("reflow".into(), reflow_facts(layout, &laid, version, owned, args.pages.as_deref())?);
         timing.insert("facts".into(), seconds(started));
