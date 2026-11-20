@@ -1,20 +1,11 @@
 """How the Word edits' harness compares docx-agent's results with the Rust core's
-(word_edits_diff.py): what a reply must say alike, and the rules under which two results
-that differ in form are equal."""
+(word_edits_diff.py): the rules under which two results that differ in form are equal (what a
+reply must say alike is docx-agent's side's, word_tool_reference.reply)."""
 
 from __future__ import annotations
 
 from word_structure_cases import settle as _structure_settle
-
-
-def reply(reply: dict) -> dict:
-    """What a reply says that both sides must say alike: an error's code, message and
-    field (the way out is Rust's rule-2 addition); else the summary, data, ids and warnings."""
-    if reply.get("error"):
-        error = reply["error"]
-        return {"error": {k: error.get(k) for k in ("code", "message", "field")}}
-    return {k: reply.get(k) for k in ("summary", "data", "changed", "created", "removed", "renamed", "warnings",
-                                      "total", "next_cursor") if reply.get(k) not in (None, [], {})}
+from word_tool_reference import reply
 
 
 def settle(want: dict, have) -> tuple:

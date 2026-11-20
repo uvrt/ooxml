@@ -5,6 +5,7 @@
 //! Must not: read the document; the reader ([`super::Reader`]) makes them.
 
 use crate::docx::formatting::EffectiveRun;
+use crate::docx::graphics::Graphic;
 use crate::docx::numbering::Membership;
 use crate::markdown::model::Inline;
 use ooxml_xml::Element;
@@ -120,8 +121,23 @@ pub struct DrawingRecord {
     pub size: Option<(f64, f64)>,
     /// Whether it is a picture.
     pub picture: bool,
-    /// A group's members: id, kind, name.
-    pub members: Option<Vec<(String, &'static str, Option<String>)>>,
+    /// The chart or SmartArt diagram it holds, where its parts could be read.
+    pub graphic: Option<Graphic>,
+    /// A group's members.
+    pub members: Option<Vec<MemberRecord>>,
+}
+
+/// A drawing inside a group, as read.
+#[derive(Debug, Clone)]
+pub struct MemberRecord {
+    /// Its id, `d:<group>/<cNvPr id>`.
+    pub id: String,
+    /// Its kind (`chart`, `diagram`, `group`, `picture`...).
+    pub kind: &'static str,
+    /// Its `cNvPr/@name`.
+    pub name: Option<String>,
+    /// The chart or SmartArt diagram it holds, where its parts could be read.
+    pub graphic: Option<Graphic>,
 }
 
 /// What a paragraph holds besides its text, as `word_inspect` shows it.

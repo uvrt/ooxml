@@ -1,7 +1,7 @@
 """The object tools' cases for ``word_edits_diff.py --objects`` (lane P4c): the tools
 called through docx-agent's toolbox on a document as opened, compared with the Rust core's
 (``word-edits``, ``op: "objects"``) as the structure tools' cases are
-(:func:`word_structure_cases.python_case`: the reply, every changed part, the part order,
+(:func:`word_tool_reference.python_case`: the reply, every changed part, the part order,
 ``touched``, the validation delta, the problems and the next ids).
 
 Python's behaviour is not changed: this calls docx-agent's public and documented internal

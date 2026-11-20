@@ -2,16 +2,13 @@
 
 The Rust definition (``crates/ooxml-tools-word``, golden ``tests/golden/word_read.json``
 there) equals today's byte for byte, and the reply of ``ooxml_core.Session.call("word_read",
-...)`` equals today's envelope on every fixture, in every view and with every story -- but
-for one thing the Rust core does not read yet: a chart's or SmartArt diagram's one-line
-summary in its drawing's comment (``[chart: ...]``, ``[smartart: ...]``), which waits for the
-chart model (phase P3).  ``KNOWN`` takes those summaries out of today's text before the two
-are compared, so any other difference fails.
+...)`` equals today's envelope on every fixture, in every view and with every story: a
+chart's and a SmartArt diagram's one-line summary in its drawing's comment (``[chart: ...]``,
+``[smartart: ...]``) included.
 """
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 
 import pytest
@@ -28,9 +25,6 @@ from docx_agent.tools import FORMAT, GROUPS, TOOLS
 HERE = Path(__file__).resolve().parent
 GOLDEN = HERE.parents[2] / "crates" / "ooxml-tools-word" / "tests" / "golden" / "word_read.json"
 FIXTURES = sorted((HERE / "fixtures").rglob("*.docx"))
-
-#: What the Rust core does not write yet: a chart's or diagram's summary in its comment.
-KNOWN = re.compile(r" \[(?:d:[^ \]]+ )?(?:chart|smartart): [^\n]*?\](?= -->| \[| empty -->)")
 
 CASES = {"final": {}, "markup": {"view": "markup"}, "original": {"view": "original"}, "all": {"stories": "all"}}
 
@@ -68,9 +62,6 @@ def test_word_read_in_rust_equals_todays_on_the_fixtures(toolbox, path):
             today = json.loads(json.dumps(toolbox.dispatch(session, "word_read", {"doc": doc, **arguments}).to_json()))
             reply = rust.dispatch("word_read", {"doc": rust_doc, **arguments}).to_json()
             assert today["ok"] and reply["ok"], (case, today, reply)
-            kept = KNOWN.sub("", today["data"])
-            today["total"] -= len(today["data"]) - len(kept)     # each fixture reads in one page
-            today["data"] = kept
             assert reply == today, case
     finally:
         session.close(doc)

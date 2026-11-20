@@ -1,11 +1,13 @@
 //! Owns: what `word_inspect` reads of a paragraph's inline content besides its Markdown
 //! (docx-agent's `_Inline` record details): the hyperlinks' numbering in a paragraph, and
-//! a drawing's record (picture or drawing, with a group's members).
+//! a drawing's record (picture or drawing, with a group's members and the charts and
+//! diagrams they hold).
 //!
 //! Must not: write Markdown items.
 
-use super::{index, DrawingRecord};
+use super::{index, DrawingRecord, MemberRecord};
 use crate::docx::drawings::{drawing_kind, group_members, member_kind};
+use crate::docx::graphics::Graphic;
 use crate::ids::{W, WP};
 use ooxml_xml::{Element, Node};
 
@@ -33,14 +35,15 @@ fn collect(node: &Element, path: &mut Vec<u32>, out: &mut Vec<Box<[u32]>>) {
     }
 }
 
-/// A frame's record: a picture where `picture` names it, else a drawing.
+/// A frame's record: a picture where `picture` names it, else a drawing, with what
+/// `graphic_of` reads of it (or of a group's member) given its kind.
 #[must_use]
 pub(super) fn drawing_record(
     frame: &Element,
     picture: Option<String>,
     drawing: Option<String>,
-    name: Option<String>,
-    alt: String,
+    (name, alt): (Option<String>, String),
+    graphic_of: &dyn Fn(&Element, &str) -> Option<Graphic>,
 ) -> DrawingRecord {
     let floating = frame.name().is(Some(WP), "anchor");
     let kind = drawing_kind(frame);
@@ -58,6 +61,7 @@ pub(super) fn drawing_record(
             floating,
             size,
             picture: true,
+            graphic: None,
             members: None,
         };
     }
@@ -71,7 +75,14 @@ pub(super) fn drawing_record(
                     .find_map(|ns| element.find(Some(ns), "cNvPr"))
                     .and_then(|p| p.attribute(None, "name"))
                     .map(str::to_owned);
-                (id, member_kind(&element), name)
+                let kind = member_kind(&element);
+                let graphic = graphic_of(&element, kind);
+                MemberRecord {
+                    id,
+                    kind,
+                    name,
+                    graphic,
+                }
             })
             .collect()
     });
@@ -83,6 +94,7 @@ pub(super) fn drawing_record(
         floating,
         size: None,
         picture: false,
+        graphic: graphic_of(frame, kind),
         members,
     }
 }

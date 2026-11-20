@@ -5,6 +5,19 @@ ooxml-core is the Rust core of the ooxml packages (`crates/`), as the Python mod
 
 ## 0.10.0 -- unreleased
 
+- **Charts and SmartArt in Word's reads (lane R1).** `word_read` writes a chart's or
+  SmartArt diagram's one-line summary in its drawing's comment (` [chart: column; title:
+  ...; series: ...; categories: ...]`, ` [smartart: Goals [Faster edits], Risks]`, a group's
+  each ` [d:G/m chart: ...]`) and `word_inspect` gives a drawing's or group member's
+  `chart` JSON (types, titles, legend, format, categories, series, dates kept as serials) or
+  `diagram` JSON (layout, nodes with level and text) as docx-agent does, from Rust:
+  `ooxml_chart::data` reads a chart part as ooxml-edit's `chart_model` does (integers and
+  floats as written, `c:ptCount` counts, a series' name its reference's first point),
+  beside the render model and sharing its format-code walk; `ooxml_drawingml::diagram`
+  walks a diagram's data model as ooxml-edit's `DiagramModel` does;
+  `ooxml_word_model::docx::graphics` finds a drawing's parts. These reads no longer fall
+  back to Python (`unported` no longer names graphics; only Accept All's cell ends).
+
 - **Compact lengths in the layout's structures (phase PL, lane L4f).** One compact form
   for every exact length kept in quantity: `ooxml_base::Compact<L>` (16 bytes, numerator
   and denominator inline, the exact value boxed where they do not fit; `ExactLength` for

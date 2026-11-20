@@ -77,20 +77,6 @@ entry's rows do not, so _add_block_comment fails with an internal IndexError ("l
 of range"). Rust finds no such row either and refuses the address as text, naming the forms it \
 takes."""
 
-[[difference]]
-gate = "reads"
-mode = "read"
-file = "generated/charts/*.docx"
-cause = """Phase P3 (the chart model): docx_agent.rust.session's reads are equal to docx-agent's on \
-every fixture but drawings' chart and SmartArt summaries (tests/test_rust_word_read.py)."""
-
-[[difference]]
-gate = "reads"
-mode = "ranges"
-file = "generated/charts/*.docx"
-cause = """Phase P3 (the chart model): word_read of a range holding a chart or SmartArt, as for \
-mode read above."""
-
 # word_controls insert at a position past its paragraph's text, untracked and tracked (one per
 # document with a paragraph; the case's tag marks it).
 [[difference]]
@@ -164,6 +150,20 @@ file = "generated/controls.docx"
 input = { tool = "word_drawings", arguments = { action = "insert_picture", alt_text = "A floated picture for the oracle" } }
 cause = """P4c11: as the constructs.docx float entry above: docx-agent's float_drawing gives the new wp:anchor the ns0 prefix."""
 
+# P4b10: the fixtures #133 and #135 added (their roots do not declare wordprocessingDrawing
+# either): the same floated picture.
+[[difference]]
+mode = "objects"
+file = "generated/review-follow.docx"
+input = { tool = "word_drawings", arguments = { action = "insert_picture", alt_text = "A floated picture for the oracle" } }
+cause = """P4c11: as the constructs.docx float entry above: docx-agent's float_drawing gives the new wp:anchor the ns0 prefix."""
+
+[[difference]]
+mode = "objects"
+file = "generated/own-tracked-note.docx"
+input = { tool = "word_drawings", arguments = { action = "insert_picture", alt_text = "A floated picture for the oracle" } }
+cause = """P4c11: as the constructs.docx float entry above: docx-agent's float_drawing gives the new wp:anchor the ns0 prefix."""
+
 [[difference]]
 mode = "objects"
 file = "generated/ids-and-markup.docx"
@@ -209,3 +209,21 @@ mode = "objects"
 file = "generated/markdown/constructs.docx"
 input = { tool = "word_drawings", arguments = { action = "set", z_order = "forward" } }
 cause = """P4c10: as the set wrap square entry above: no drawing above, the frame keeps its order."""
+
+# Lane P2c15 (found in #146, lane P2c14): declared table styles in Word's Dark List and Colorful
+# List families (and their accents), where a case pages that far.
+[[difference]]
+mode = "style"
+input = { tool = "word_design_facts", arguments = { include = ["declared_styles"] } }
+cause = """#146: the Rust tool names the theme colour of a band cell's edge drawn by a \
+neighbouring place's border (the header row's bottom, w:themeColor="background1": \
+"single 2.25pt FFFFFF (background1)"); docx-agent labels only the colours of the place's own \
+conditions and leaves the label out. Every other value is the same. Rust's answer is the \
+accurate one; docx-agent's code is deleted at P4e (test_declared_styles asserts Rust's values)."""
+
+[[difference]]
+mode = "style"
+input = { tool = "word_design_facts", arguments = { include = ["theme", "declared_styles"] } }
+cause = """#146: as above -- the Rust tool names the theme colour (background1) of a band \
+cell's edge drawn by a neighbouring place's border; docx-agent leaves the label out. Rust's \
+answer is the accurate one; docx-agent's code is deleted at P4e."""
