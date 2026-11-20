@@ -148,8 +148,8 @@ fn placer_of<'v>(args: &WordInspect, version: &Version<'v>) -> Result<Option<&'v
     })
 }
 
-/// What of `data` docx-agent gives otherwise: a chart's or SmartArt diagram's JSON on its
-/// drawing (the chart model, phase P3); the final view's cells whose end Accept All takes
+/// What of `data` docx-agent gives otherwise: a SmartArt diagram's JSON on its drawing; the
+/// final view's cells whose end Accept All takes
 /// away.
 fn unported(docx: &ooxml_word_model::docx::Docx, data: &Value) -> Vec<String> {
     let shared = ooxml_word_model::markdown::read::Shared::of(docx);
