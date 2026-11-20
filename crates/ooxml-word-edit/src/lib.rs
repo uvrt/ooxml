@@ -54,6 +54,7 @@ mod doc;
 mod drawings;
 mod editor;
 mod error;
+pub mod facts;
 mod fields;
 pub mod find;
 mod follow;

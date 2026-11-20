@@ -2,7 +2,9 @@
 //! `word_read`) on documents, in the form `python/word_reads_diff.py` writes docx-agent's:
 //! the summary, data, next cursor and total, or the refusal.
 //!
-//! The manifest is a JSON list of `{"file": path, "case": name, "tool": name, "arguments": {...}}`.
+//! The manifest is a JSON list of `{"file": path, "case": name, "tool": name, "arguments": {...}}`,
+//! or `{"file", "case", "fact": name}` for one of `check`'s facts read from the document
+//! alone ([`crate::facts`]).
 //!
 //! Must not: be used by any library; it is a test instrument.
 
@@ -62,7 +64,9 @@ pub fn run(args: &[String]) -> Result<(), String> {
             owned: None,
             others: ooxml_tools_word::Others::default(),
         };
-        let reply = if matches!(tool, "read_batch" | "check") {
+        let reply = if let Some(fact) = item.get("fact").and_then(Value::as_str) {
+            crate::facts::reply(package, fact)
+        } else if matches!(tool, "read_batch" | "check") {
             through_session(tool, &arguments, file, name)
         } else {
             call(tool, &arguments, &version)

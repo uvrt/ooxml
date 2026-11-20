@@ -9,8 +9,10 @@
 //! yet: such a call is answered `unported`, and the host answers it.
 
 mod args;
+mod facts;
 
 pub use args::{Check, CheckCopy, CheckInclude, CheckScale, CopyLists, CopyReference, ScaleShow, ScaleStep, StepText};
+pub use facts::{empty_run_json, lost_cell_json, skipped_level_json};
 
 use crate::describe::cancelled;
 use crate::version::{Owned, Version};

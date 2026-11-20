@@ -15,11 +15,10 @@ use crate::blocks::{blocks_of, resolve_block, BlockKind};
 use crate::names::W;
 use crate::{EditError, Result, WordDoc};
 use ooxml_word_model::address::{expand_heading, scope_paragraphs, span_ends};
-use ooxml_word_model::docx::cells::{model_path, TableFacts};
+use ooxml_word_model::docx::cells::PartCells;
 use ooxml_word_model::docx::formatting::{Cell, EffectiveParagraph, Formatting};
 use ooxml_word_model::docx::{at_path, Docx, StoryPart};
 use ooxml_xml::{Element, Node};
-use std::collections::HashMap;
 use std::sync::Arc;
 
 /// What keeping some blocks together writes.
@@ -162,7 +161,8 @@ pub(crate) fn keep_plan(doc: &WordDoc, docx: &Docx, address: &str, on: bool) -> 
         )));
     };
     let body = docx.body().ok_or_else(|| EditError::NoPart(docx.main.clone()))?;
-    let mut look = Keeps::new(docx, body);
+    let formatting = Formatting::read(docx);
+    let mut look = Keeps::new(&formatting, body);
     let mut plan = KeepPlan {
         first: first.clone(),
         ..KeepPlan::default()
@@ -299,32 +299,21 @@ fn first_paragraph(container: &Element, place: &[u32]) -> Option<Vec<u32>> {
 
 /// Paragraphs' keeps as Word applies them, with and without their direct formatting.
 struct Keeps<'a> {
-    formatting: Formatting,
-    body: &'a StoryPart,
-    tables: HashMap<Vec<u32>, Arc<TableFacts>>,
+    formatting: &'a Formatting,
+    cells: PartCells<'a>,
 }
 
 impl<'a> Keeps<'a> {
-    fn new(docx: &Docx, body: &'a StoryPart) -> Keeps<'a> {
+    fn new(formatting: &'a Formatting, body: &'a StoryPart) -> Keeps<'a> {
         Keeps {
-            formatting: Formatting::read(docx),
-            body,
-            tables: HashMap::new(),
+            formatting,
+            cells: PartCells::new(formatting, body.root()),
         }
     }
 
     /// The cell of the outermost table holding the paragraph at `place`.
     fn cell(&mut self, place: &[u32]) -> Option<Cell> {
-        let root = self.body.root();
-        let depth = (1..place.len())
-            .find(|d| at_path(root, place.get(..*d).unwrap_or_default()).is_some_and(|e| is_w(e, "tbl")))?;
-        let (table_at, below) = place.split_at(depth);
-        let table = at_path(root, table_at)?;
-        let facts = self
-            .tables
-            .entry(table_at.to_vec())
-            .or_insert_with(|| Arc::new(TableFacts::read(&self.formatting, table)));
-        facts.cell(&model_path(table, below)?).cloned()
+        self.cells.cell(place)
     }
 
     /// The paragraph's formatting as Word applies it; without `direct`, what its styles

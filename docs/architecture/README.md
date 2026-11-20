@@ -614,6 +614,11 @@ All are under 0.1 % of the edit budgets.
 - The save gate's comparison of an owned document is the session's (ooxml-edit's `DocumentFormat.validation`, docx-agent's `rust.owner.session_validation`, outside a batch): `check`'s `validation`, saving and a changing call's checks no longer make the Python view current to validate it.
 - docx-agent asks the session first (`rust.reads.serve_check`), counted in `read_fallbacks{check,reason}` where it does not answer.
 
+**As built (lane P5a2, part b1: facts read from the document alone).**
+- `ooxml_word_edit::facts` holds `check`'s layout facts that need no layout as library functions returning typed entries in document order, uncapped and unfiltered: `empty_paragraphs` (`EmptyRun`), `numbering_skips_level` (`SkippedLevel`), `accept_loses_text` (`LostCell`). `ooxml_tools_word` words each entry as docx-agent does (`empty_run_json`, `skipped_level_json`, `lost_cell_json`, with their fixes). Elements are found by place (child-index paths), never by node address: green nodes are shared between equal subtrees.
+- Shared reads they added to `ooxml-word-model`: `cells::PartCells` (a paragraph's cell context, each outermost table read once; `format`'s keeps use it too), `tables::cells_at` / `PlacedCell` (a row's cells with places and grid columns), `tables::cells_lost_on_accept`, `numbering::Lists::definition_of`.
+- Not served yet: `check` adds them under `layout`, which waits for the layout facts on the page engine (P5b). Their differential is the reads gate's `facts` mode (`word_reads_diff.py facts`, `word-reads`' `fact` cases, made-up documents for each fact on every run).
+
 **Library API.**
 - `docx_agent.Document`, `pptx_agent` and `xlsx_agent` become handles. Methods that take and return plain values keep their signatures.
 - APIs that expose lxml (`.element`, `package.tree()`, `History`) warn for two releases and are then removed, each with a CHANGELOG note naming the replacement.
