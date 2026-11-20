@@ -460,6 +460,44 @@ def copy_cases(document) -> list[dict]:
     return out + [tracked(case) for case in out]
 
 
+
+@CASES
+def review_within_cases(document) -> list[dict]:
+    """``word_changes`` within text (lane P4b9, P4a's deferred ``within``): each of the
+    first changes' paragraphs by a range at its start, one over its second half, a position
+    in it and a range into the next paragraph -- listed (changes, records),
+    previewed, accepted and rejected; a span (listed; refused for records)."""
+    from docx_agent.edit import text as _text
+
+    out = []
+    seen: list[str] = []
+    for change in document.changes()[:3]:
+        for pid in change.paragraph_ids[:1]:
+            if pid in seen or "@" in pid:
+                continue
+            seen.append(pid)
+            _part, entry = document._resolve(pid)
+            n = len(_text.paragraph_text(entry.element, "markup"))
+            withins = [f"{pid}@0:{min(3, n)}", f"{pid}@{n // 2}:{n}", f"{pid}@{n // 2}"]
+            if len(change.paragraph_ids) > 1 and "@" not in change.paragraph_ids[1]:
+                withins.append(f"{pid}@{n // 2}..{change.paragraph_ids[1]}@1")
+            for within in withins:
+                out += [call("word_changes", action="list", within=within),
+                        call("word_changes", action="list", detail="records", within=within),
+                        call("word_changes", action="preview", within=within),
+                        call("word_changes", action="accept", within=within),
+                        call("word_changes", action="reject", within=within)]
+    if len(seen) > 1:
+        span = f"{seen[0]}..{seen[1]}"
+        out += [call("word_changes", action="list", within=span),
+                call("word_changes", action="list", detail="records", within=span),
+                call("word_changes", action="accept", within=span),
+                call("word_changes", action="accept", within="p:00000000"),
+                call("word_changes", action="list", within="p:00000000@2"),
+                call("word_changes", action="list", detail="records", within="p:00000000@2")]
+    return out
+
+
 def cases(document) -> list[dict]:
     """Every structure case for ``document``."""
     found = CASES.of(document)
@@ -487,6 +525,8 @@ def python_case(data: bytes, case: dict, baseline: list, toolbox, reply_of, part
         session.open(other, name="copy.docx")
     if case.get("tracked"):
         session.entry(doc).tracking = {"on": True, "author": case["tracked"]["author"]}
+    for blob in case.get("blobs") or []:                # b1, b2, ... as the session numbers them
+        session.add_blob(bytes.fromhex(blob["hex"]), blob["name"], blob["mime"])
     arguments = {**case["arguments"], "doc": doc}
     reply = json.loads(json.dumps(toolbox.dispatch(session, case["tool"], arguments).to_json()))
     document = session.entry(doc).document
