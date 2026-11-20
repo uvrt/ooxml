@@ -26,10 +26,15 @@ fn package() -> Package {
         r#"<w:r><w:t>Alpha</w:t></w:r><w:bookmarkEnd w:id="0"/><w:r><w:t xml:space="preserve"> beta gamma</w:t></w:r></w:p>"#,
         r#"<w:p w14:paraId="10000002" w14:textId="20000002"><w:r><w:t>Delta epsilon</w:t></w:r></w:p>"#,
     );
+    package_of(body, "")
+}
+
+/// A made-up document of `body`, its styles Normal and `styles`.
+fn package_of(body: &str, styles: &str) -> Package {
     let parts = [
         ("[Content_Types].xml".to_owned(), r#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/></Types>"#.to_owned()),
         ("word/_rels/document.xml.rels".to_owned(), format!(r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="{R}styles" Target="styles.xml"/></Relationships>"#)),
-        ("word/styles.xml".to_owned(), format!(r#"<w:styles {W}><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style></w:styles>"#)),
+        ("word/styles.xml".to_owned(), format!(r#"<w:styles {W}><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style>{styles}</w:styles>"#)),
         ("_rels/.rels".to_owned(), format!(r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="{R}officeDocument" Target="word/document.xml"/></Relationships>"#)),
         ("word/document.xml".to_owned(), format!("<w:document {W}><w:body>{body}</w:body></w:document>")),
     ];
@@ -105,7 +110,17 @@ fn call_tracking<A: ToolArgs>(
     tracking: Option<&ooxml_word_edit::Tracking>,
     tool: impl Fn(&A, &Editing<'_>) -> ToolResult<Value>,
 ) -> (Value, Editor) {
-    let editor = Editor::open(package(), StoreConfig::default(), Arc::new(Still), Arc::new(Unlimited)).unwrap();
+    call_on(package(), arguments, tracking, tool)
+}
+
+/// [`call_tracking`] on `package`.
+fn call_on<A: ToolArgs>(
+    package: Package,
+    arguments: Value,
+    tracking: Option<&ooxml_word_edit::Tracking>,
+    tool: impl Fn(&A, &Editing<'_>) -> ToolResult<Value>,
+) -> (Value, Editor) {
+    let editor = Editor::open(package, StoreConfig::default(), Arc::new(Still), Arc::new(Unlimited)).unwrap();
     let opened = editor.store().snapshot().doc().clone();
     let caller = Caller::anonymous();
     let reply = {
@@ -335,6 +350,65 @@ fn a_table_of_contents_with_no_headings_says_so() {
     let head = editor.store().snapshot();
     let found = ooxml_word_edit::fields(head.doc()).unwrap();
     assert_eq!(found[0].result, "No table of contents entries found.");
+}
+
+#[test]
+fn a_table_of_contents_numbers_its_new_bookmarks_on_from_the_largest() {
+    // Three headings: the second has a `_Toc` bookmark of its own (kept), the others get new
+    // ones numbered one above the largest in the document, in order.
+    let heading = |id: u32, inside: &str| {
+        format!(
+            r#"<w:p w14:paraId="{id:08X}" w14:textId="20000001"><w:pPr><w:pStyle w:val="Heading1"/></w:pPr>{inside}</w:p>"#
+        )
+    };
+    let body = [
+        heading(0x1000_0001, "<w:r><w:t>One</w:t></w:r>"),
+        heading(
+            0x1000_0002,
+            r#"<w:bookmarkStart w:id="5" w:name="_Toc100000041"/><w:r><w:t>Two</w:t></w:r><w:bookmarkEnd w:id="5"/>"#,
+        ),
+        heading(0x1000_0003, "<w:r><w:t>Three</w:t></w:r>"),
+        r#"<w:p w14:paraId="10000004" w14:textId="20000001"><w:bookmarkStart w:id="6" w:name="_Toc100000007"/><w:r><w:t>Body</w:t></w:r><w:bookmarkEnd w:id="6"/></w:p>"#.to_owned(),
+    ]
+    .concat();
+    let styles = concat!(
+        r#"<w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/>"#,
+        r#"<w:pPr><w:outlineLvl w:val="0"/></w:pPr></w:style>"#,
+    );
+    let (reply, editor) = call_on(
+        package_of(&body, styles),
+        json!({"doc": "d1", "action": "insert_toc", "after": "p:10000004"}),
+        None,
+        word_fields,
+    );
+    assert_eq!(
+        reply["summary"],
+        json!("Inserted a table of contents fld:body/0"),
+        "{reply}"
+    );
+    let head = editor.store().snapshot();
+    let xml = String::from_utf8(
+        head.doc()
+            .package()
+            .read("word/document.xml")
+            .unwrap()
+            .unwrap()
+            .to_vec(),
+    )
+    .unwrap();
+    let names: Vec<&str> = xml
+        .split(r#"w:name="_Toc"#)
+        .skip(1)
+        .map(|rest| rest.split('"').next().unwrap())
+        .collect();
+    assert_eq!(names, ["100000042", "100000041", "100000043", "100000007"], "{xml}");
+    // Their annotation ids one above the document's largest (6), one after another.
+    let ids: Vec<&str> = xml
+        .split("<w:bookmarkStart ")
+        .skip(1)
+        .map(|rest| rest.split(r#"w:id=""#).nth(1).unwrap().split('"').next().unwrap())
+        .collect();
+    assert_eq!(ids, ["7", "5", "8", "6"], "{xml}");
 }
 
 #[test]

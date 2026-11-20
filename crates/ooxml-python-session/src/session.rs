@@ -390,8 +390,10 @@ impl PySession {
     /// nothing. A host that numbers the document's steps takes the call's step from these,
     /// whatever other calls commit to the document meanwhile. `layout`: the document's page
     /// engine, as for [`call`](Self::call) (`word_fields` update, a header's page number,
-    /// `word_template`'s reflow).
-    #[pyo3(signature = (name, arguments, *, context = None, layout = None))]
+    /// `word_template`'s reflow). `blobs`: the host's blobs, an object with `blob(handle)`
+    /// (`(name, mime, bytes)` or `None`) and `listed()` (`[(handle, name)]`), asked with the
+    /// interpreter lock taken back (`word_drawings` insert_picture).
+    #[pyo3(signature = (name, arguments, *, context = None, layout = None, blobs = None))]
     fn edit(
         &self,
         py: Python<'_>,
@@ -399,9 +401,11 @@ impl PySession {
         arguments: String,
         context: Option<PyRef<'_, PyCallContext>>,
         layout: Option<PyRef<'_, crate::layout::PyWordPages>>,
+        blobs: Option<Py<PyAny>>,
     ) -> (String, String, Option<EditMade>) {
         let mut context = context_of(context.as_deref());
         context.layout = layout.map(|pages| Arc::new(pages.port()) as Arc<dyn ooxml_word_edit::FieldLayout>);
+        context.blobs = blobs.map(|b| Arc::new(crate::adapters::PyBlobs(b)) as Arc<dyn ooxml_tools_word::Blobs>);
         let session = &self.inner;
         let (text, app, made) = py.detach(|| {
             let run = || session.edit(name, Value::String(arguments), &context);

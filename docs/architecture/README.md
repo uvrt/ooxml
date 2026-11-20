@@ -615,6 +615,9 @@ All are under 0.1 % of the edit budgets.
 - Bookmark markers are part of each part's facts (`PartFacts::bookmark_starts`/`bookmark_ends`, a block a later version shares not walked again); `bookmark_markers` reads them. A move looks at the container's children only up to the first block before its stretch and back to the last after it.
 - Structure mix at ~3k pages (24 writers x 5, every 4th edit a note, a bookmark or a move): commit conflicts 36 -> 2, exclusive runs 25 -> 0; the two left are notes appended concurrently to a notes part written whole, or both making the notes parts.
 
+**As built (lane P2c14: the host's blobs).**
+- `Session.edit` takes `blobs=`: a Python object with `blob(handle)` (`(name, mime, bytes)` or `None`) and `listed()`, adapted as `ooxml_tools_word::Blobs` (`PyBlobs`, called with the interpreter lock taken back, as a placer is); a blob's bytes are copied once, when the tool asks for it. docx-agent hands its session's blobs to the served tools that read them (`rust.edits.BLOBS`: `word_drawings`, whose insert_picture is served; a catalogue asset is the host's).
+
 **As built (lane P4d7: calls that name other documents).**
 - A tool's declared documents rule (`ooxml_tools::documents`, `named_at`) names the call's own document first; the session pins every other open document it names like the call's own (the version the context or batch holds, else the head; no lock: versions are immutable) and hands them over in `Call::others`, which read handlers see as `Version::others` and editing handlers as `Editing::others` (`Others::get` by id). A named document that is not open is refused at the field naming it (`reference.doc`). `word_compare_blocks` is the first tool to read one.
 

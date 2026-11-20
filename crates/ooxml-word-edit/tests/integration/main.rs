@@ -16,5 +16,6 @@ mod style_bench;
 mod style_writers;
 mod styled;
 mod textbox_sync;
+mod touched_sections;
 mod validation;
 mod writers;
