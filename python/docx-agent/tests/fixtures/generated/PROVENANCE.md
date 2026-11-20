@@ -7,6 +7,7 @@
 | `controls.docx` | `fc2f42cc7f052802a23f82f3fa25d0d39c65bf54c7f8db674aba0042d23934b4` |
 | `lists-and-styles.docx` | `94c56b4994c7f50480d634cbf099d808c7ded428b5a8c254bd289fd3567fabaf` |
 | `review-follow.docx` | `32b604fc864d48b02ff62b6fbf9e1b433572ca31b8734bd98bdfdb72eb63f715` |
+| `own-tracked-note.docx` | `385d29b4493f8feaf6ef8f6ca9f707d3102f3e95c1c9a16c766104157065aa31` |
 
 Written by `tools/make_fixtures.py` in this repository, deterministically (running it
 again writes the same bytes), every part by hand: the styles are a handful written there,
@@ -38,3 +39,7 @@ controls (text, a drop-down list, a date whose node lacks its time) showing trac
 and a table with tracked cell insertions that a comment describing them ("Tracked structural
 change: ...", as docx-agent wrote before its round 57) is anchored in, beside an ordinary
 comment; each bound node holds what its control shows -- for `word_changes`.
+`own-tracked-note.docx` (mode 15) is a footnote of three paragraphs, it and its reference
+tracked insertions by the differential harness's own author ("Writer A"): a tracked edit or
+delete of the note removes those insertions outright -- for `word_notes` and annotation-id
+numbering.
