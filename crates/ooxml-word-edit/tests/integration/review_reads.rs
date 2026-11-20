@@ -152,3 +152,21 @@ fn resolving_a_thread_commits_past_an_edit_elsewhere_and_conflicts_with_another_
     );
     assert_eq!((done, conflicts), (true, 1));
 }
+
+#[test]
+fn a_comment_written_into_a_stretch_declares_no_namespace_again() {
+    // the stretch copy has the namespaces declared above the body in scope, as the whole
+    // part's copy had: a run it splits or makes carries no `xmlns:w` of its own
+    let (shared, targets) = opened();
+    shared
+        .store()
+        .run(&Caller::anonymous(), &comment(&format!("{}@0:1", targets[1])))
+        .unwrap();
+    let parts = written(shared.store().snapshot().doc());
+    let (_, body) = parts
+        .iter()
+        .find(|(name, _)| name.ends_with("word/document.xml"))
+        .unwrap();
+    let text = String::from_utf8_lossy(body);
+    assert_eq!(text.matches("xmlns:w=").count(), 1, "{text}");
+}

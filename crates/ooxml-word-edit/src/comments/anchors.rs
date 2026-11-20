@@ -16,7 +16,7 @@ use crate::text::atoms;
 use crate::text_range::{range, range_id, Span};
 use crate::work::{Id, Work};
 use crate::{EditError, Result, WordDoc};
-use ooxml_word_model::address::{in_table, resolve};
+use ooxml_word_model::address::{in_table, resolve, AddressError};
 use ooxml_word_model::docx::Docx;
 use ooxml_word_model::ids::Entry;
 
@@ -52,7 +52,7 @@ pub(super) fn anchor(doc: &WordDoc, docx: &Docx, place: &str) -> Result<Anchor> 
     if place.starts_with("cc:") || place.starts_with("cc@") {
         return control(docx, place).map(Anchor::Control);
     }
-    if let Some(block) = block(doc, docx, place) {
+    if let Some(block) = block(doc, docx, place)? {
         return Ok(block);
     }
     let found = range(doc, docx, place)?;
@@ -81,36 +81,44 @@ pub(super) fn anchor(doc: &WordDoc, docx: &Docx, place: &str) -> Result<Anchor> 
 }
 
 /// The table or row `place` names, if it names one.
-fn block(doc: &WordDoc, docx: &Docx, place: &str) -> Option<Anchor> {
+///
+/// # Errors
+/// A row past the table's last: not found, as docx-agent's lookup of it fails (its text
+/// range is no more found than the row).
+fn block(doc: &WordDoc, docx: &Docx, place: &str) -> Result<Option<Anchor>> {
     if place.contains('@') || place.contains("..") {
-        return None;
+        return Ok(None);
     }
     let followed = doc.ids().follow(place);
     if let Ok(Some(found)) = in_table(docx, &followed) {
         if found.column.is_some() {
-            return None;
+            return Ok(None);
         }
-        let table = found.part.ids.tables().get(found.table)?;
-        let (path, id) = table.rows.get(found.row)?;
-        return Some(Anchor::Block {
+        let Some(table) = found.part.ids.tables().get(found.table) else {
+            return Ok(None);
+        };
+        let Some((path, id)) = table.rows.get(found.row) else {
+            return Err(EditError::Address(AddressError::not_found(
+                format!("{place} names no row of its table"),
+                Vec::new(),
+            )));
+        };
+        return Ok(Some(Anchor::Block {
             part: found.part.part.clone(),
             path: path.to_vec(),
             id: id.clone(),
             row: true,
-        });
+        }));
     }
-    match resolve(docx, &followed).ok()? {
-        (part, Entry::Table(t)) => {
-            let table = part.ids.tables().get(t)?;
-            Some(Anchor::Block {
-                part: part.part.clone(),
-                path: table.path.to_vec(),
-                id: table.id.clone(),
-                row: false,
-            })
-        }
-        (_, Entry::Paragraph(_)) => None,
-    }
+    Ok(match resolve(docx, &followed).ok() {
+        Some((part, Entry::Table(t))) => part.ids.tables().get(t).map(|table| Anchor::Block {
+            part: part.part.clone(),
+            path: table.path.to_vec(),
+            id: table.id.clone(),
+            row: false,
+        }),
+        _ => None,
+    })
 }
 
 /// Write comment `id`'s markers and reference run where `anchor` says, in `space`'s copy

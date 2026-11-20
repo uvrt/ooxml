@@ -16,10 +16,10 @@
 
 use crate::doc::WordDoc;
 use crate::sink::EditSink;
-use crate::work::{Id, Work};
+use crate::work::{scope_above, Id, Work};
 use crate::{EditError, Result};
 use ooxml_word_model::docx::at_path;
-use ooxml_xml::{Element, Node, Tree};
+use ooxml_xml::{Element, NamespaceDecl, Node, Tree};
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
@@ -50,8 +50,9 @@ pub(crate) struct Copy {
 }
 
 impl Copy {
-    fn new(tree: Tree, holder: &Arc<Element>, within: Option<Within>) -> Self {
-        let work = Work::of(holder, Vec::new());
+    /// A copy of `holder`, the namespaces declared above it (`scope`) in scope there.
+    fn new(tree: Tree, holder: &Arc<Element>, scope: Vec<NamespaceDecl>, within: Option<Within>) -> Self {
+        let work = Work::of(holder, scope);
         let mut top = Vec::new();
         let mut next = work.root() + 1;
         for node in holder.children().iter() {
@@ -137,7 +138,8 @@ impl Space {
                 return Ok(None);
             };
             let root = Arc::clone(tree.root());
-            self.copies.insert(part.to_owned(), Copy::new(tree, &root, None));
+            self.copies
+                .insert(part.to_owned(), Copy::new(tree, &root, Vec::new(), None));
         }
         Ok(self.copies.get_mut(part).map(|c| &mut c.work))
     }
@@ -200,13 +202,20 @@ impl Space {
             Arc::clone(parent.head()),
             ooxml_xml::Children::from_vec(slice),
         ));
+        // the holder stands where the container is: what is declared above it is in scope
+        // there (a copy without it would declare the namespaces again on what it makes)
+        let scope = if container.is_empty() {
+            Vec::new()
+        } else {
+            scope_above(tree.root(), container)
+        };
         let within = Within {
             parent: container.to_vec(),
             from,
             to,
         };
         self.copies
-            .insert(part.to_owned(), Copy::new(tree, &holder, Some(within)));
+            .insert(part.to_owned(), Copy::new(tree, &holder, scope, Some(within)));
         Ok(true)
     }
 
