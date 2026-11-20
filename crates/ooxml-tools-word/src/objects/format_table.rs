@@ -5,16 +5,13 @@
 //!
 //! Must not: change the document but through the command.
 
-use super::format_table_args::{BorderStyle, HeightRule, Look, Scope, WordFormatTable};
+use super::format_table_args::{BorderStyle, HeightRule, Look, Scope, WidthOf, WordFormatTable};
 use super::table_view::{regions_off, table_view, TableView};
 use crate::review::{needed, Editing};
 use crate::structure::common::{call, outcome, policy, refused, Outcome};
 use ooxml_tools::{ArgEnum, Refusal, ToolError, ToolResult, TryCall, WayOut};
 use ooxml_word_edit::{CellValues, EditError, FormatTable, TableEdit, TableFormat, TableValues, TableWidth};
 use serde_json::{json, Value};
-
-/// What `unported` says of a call that needs what is not ported yet.
-const LAYOUT: &str = "word_format_table width_of window";
 
 /// keep_together on a table taller than a page (docx-agent's `TALLER_THAN_PAGE`, round 25):
 /// Word does keep it, so does the tool.
@@ -223,6 +220,8 @@ fn table_values(
         style: args.style.clone(),
         width: match (body, args.width_percent, args.width) {
             (Some(body), _, _) => Some(TableWidth::Points(body.width)),
+            // AutoFit to Window takes width_percent (after the rest)
+            _ if args.width_of == Some(WidthOf::Window) => None,
             (None, Some(p), _) => Some(TableWidth::Percent(six_digits(p))),
             (None, None, Some(w)) => Some(TableWidth::Points(w)),
             (None, None, None) => None,
@@ -247,14 +246,10 @@ fn table_scope(
     borders: Option<String>,
     retry: &TryCall,
 ) -> Result<ToolResult<Value>, ToolError> {
-    use super::format_table_args::WidthOf;
     let body_or_window = matches!(args.width_of, Some(WidthOf::Body | WidthOf::Window));
     if body_or_window && args.width.is_some() {
         let message = "width_of is what width_percent is of: give width_percent (or nothing, for 100), not width";
         return Err(invalid(message, Some("width_of"), None, retry));
-    }
-    if args.width_of == Some(WidthOf::Window) {
-        return Ok(unported(LAYOUT, retry));
     }
     let body = match args.width_of {
         Some(WidthOf::Body) => Some(on_body_lines(args, editing, retry)?),
@@ -291,7 +286,7 @@ fn table_scope(
         );
     }
     let has_values = values != TableValues::default();
-    if !has_values && formats.is_empty() {
+    if !has_values && formats.is_empty() && args.width_of != Some(WidthOf::Window) {
         let options = [
             "style",
             "width",
@@ -309,6 +304,13 @@ fn table_scope(
     }
     if has_values {
         formats.push(TableFormat::Table(values));
+    }
+    if args.width_of == Some(WidthOf::Window) {
+        // round 48: Word's AutoFit to Window, after a style or borders given with it (the
+        // grid follows the style's borders and margins)
+        formats.push(TableFormat::Window {
+            percent: args.width_percent.unwrap_or(100.0),
+        });
     }
     let summary = format!("Formatted {}", args.table);
     let regions = args.style.is_some() || args.look.is_some();
