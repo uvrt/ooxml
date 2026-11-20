@@ -3,7 +3,7 @@
 //!
 //! Owns: units and exact arithmetic ([`units`]), the compact form exact lengths are kept in
 //! ([`compact`]), content digests ([`digest`]), the limits on
-//! untrusted input and the locale as values ([`limits`], [`locale`]), a string as Python's `repr` writes it in messages ([`pyfmt`]), SHA-1 and name-based UUIDs as
+//! untrusted input and the locale as values ([`limits`], [`locale`]), a string as Python's `repr` writes it in messages ([`pyfmt`]), Python's `str.isdigit` exactly ([`pystr`]), SHA-1 and name-based UUIDs as
 //! Python makes them ([`sha1`], [`uuid`]), the ports the core is
 //! given its I/O through ([`context`]), and the error type for all of these ([`BaseError`]).
 //!
@@ -18,6 +18,7 @@ mod error;
 pub mod limits;
 pub mod locale;
 pub mod pyfmt;
+pub mod pystr;
 pub mod sha1;
 pub mod units;
 pub mod uuid;
