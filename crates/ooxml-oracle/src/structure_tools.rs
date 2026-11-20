@@ -58,6 +58,7 @@ fn registered(tool: &str, arguments: &Value, editing: &Editing<'_>) -> Option<To
         number: 1,
         versions: &versions,
         placer: None,
+        owned: None,
         others: editing.others,
     };
     Some(tool.run_outside(arguments, editing, &version))
@@ -132,17 +133,7 @@ pub(crate) fn tool_case(
     let copy_versions = Versions::new();
     let others: Vec<(&str, Version<'_>)> = copy
         .iter()
-        .map(|package| {
-            let version = Version {
-                name: "copy.docx",
-                package,
-                number: 1,
-                versions: &copy_versions,
-                placer: None,
-                others: Others::default(),
-            };
-            ("d2", version)
-        })
+        .map(|package| ("d2", other_version(package, &copy_versions)))
         .collect();
     let call_editor = CallEditor::new(&editor);
     let editing = Editing::new(&call_editor, &caller, &opened, "d1", &Never, date)
@@ -182,6 +173,19 @@ pub(crate) fn tool_case(
         "problems": now.iter().map(ToString::to_string).collect::<Vec<_>>(),
         "next": next_ids(doc),
     }))
+}
+
+/// The other document a case names (`d2`), as a reading tool is handed it.
+fn other_version<'a>(package: &'a Package, versions: &'a Versions) -> Version<'a> {
+    Version {
+        name: "copy.docx",
+        package,
+        number: 1,
+        versions,
+        placer: None,
+        owned: None,
+        others: Others::default(),
+    }
 }
 
 /// The blobs a case registers (`blobs`: `{name, mime, hex}` each), as the session's

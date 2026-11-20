@@ -672,7 +672,7 @@ def definition_problems(tool: Tool) -> list[str]:
     if not callable(tool.documents):
         for name in tool.documents:
             if "." in name:
-                if not _path_exists(tool.schema, name) or "[]" in name:
+                if not _path_exists(tool.schema, name) or name.endswith("[]"):
                     problems.append(f"document path {name!r} names no string in an object")
             elif name in properties and properties[name].get("type") != "string":
                 problems.append(f"document argument {name!r} is not a string")
@@ -682,19 +682,31 @@ def definition_problems(tool: Tool) -> list[str]:
 def documents_named(documents: Sequence[str], arguments: Mapping[str, Any]) -> list[str]:
     """The documents a call's ``arguments`` name, by its tool's :attr:`Tool.documents`: an
     argument's value when it is a string; a path's (``reference.doc``) when it is a string
-    neither empty nor named before (``""`` is a placeholder for the call's own document)."""
+    neither empty nor named before (``""`` is a placeholder for the call's own document).  A
+    path's step ending in ``[]`` (``copies[].reference.doc``) is an array: each item's value
+    is read, in order."""
     out: list[str] = []
     for name in documents:
         if "." not in name:
             if isinstance(arguments.get(name), str):
                 out.append(arguments[name])
             continue
-        value: Any = arguments
-        for part in name.split("."):
-            value = value.get(part) if isinstance(value, Mapping) else None
-        if isinstance(value, str) and value and value not in out:
-            out.append(value)
+        for value in _values_at(arguments, name.split(".")):
+            if value and value not in out:
+                out.append(value)
     return out
+
+
+def _values_at(value: Any, steps: Sequence[str]) -> list[str]:
+    """The strings at the path ``steps`` below ``value`` (a step ``name[]``: each item of the
+    array ``name``)."""
+    if not steps:
+        return [value] if isinstance(value, str) else []
+    step, rest = steps[0], steps[1:]
+    array = step.endswith("[]")
+    found = value.get(step[:-2] if array else step) if isinstance(value, Mapping) else None
+    items = (found if isinstance(found, list) else []) if array else [found]
+    return [text for item in items for text in _values_at(item, rest)]
 
 
 def _object_at(schema: Mapping[str, Any], parts: Sequence[str]) -> Mapping[str, Any] | None:

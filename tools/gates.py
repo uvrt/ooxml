@@ -82,7 +82,8 @@ EDIT_MODES = {
 }
 #: word_reads_diff.py's checks (the ``reads`` gate) and the binary each runs.
 READ_MODES = {"ids": "word-ids", "describe": "word-reads", "read": "word-reads", "ranges": "word-reads",
-              "inspect": "word-reads", "find": "word-reads", "batch": "word-reads"}
+              "inspect": "word-reads", "find": "word-reads", "batch": "word-reads",
+              "check": "word-reads"}
 #: The tool modes' sampling knobs (word_*_cases.py).
 #: The corpus's cases per tool and document when the run gives none (a full corpus run of
 #: every case is hours of docx-agent).
