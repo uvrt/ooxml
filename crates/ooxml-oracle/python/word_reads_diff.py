@@ -11,6 +11,8 @@ Runs docx-agent and the Rust core on the same documents and compares, field by f
 * ``describe`` and ``read``: the tools' replies (``word-reads``, the Rust session's
   ``describe`` and ``word_read``) against docx-agent's toolbox, ``word_read`` in every view
   and for ``stories=all``.
+* ``ranges``, ``inspect``, ``find``, ``batch`` and ``check``: the addressed reads, the batch,
+  and ``check``'s facts read from the document alone (lane P5a; ``word_reads_tools.py``).
 
 Every difference is printed with its JSON path; the exit status is 1 when there is any.
 
@@ -139,11 +141,24 @@ def check_ids(args) -> int:
     return report(expected, {k: v.get("ids") for k, v in rust.items()}, ignore=("notes",), results=args.results)
 
 
+def refusal(result) -> dict | str | None:
+    """What a side's result says went wrong, if anything: a tool reply's error (code,
+    message, field) or a refused edit's message; kept in the results so a difference that is
+    one side's error says which error."""
+    if not isinstance(result, dict):
+        return None
+    reply = result.get("reply")
+    if isinstance(reply, dict) and reply.get("error"):
+        return reply["error"]
+    return result.get("refused") or result.get("error") or None
+
+
 def report(expected: dict, rust: dict, ignore: tuple = (), results: str | None = None,
            inputs: dict | None = None, counts: dict | None = None) -> int:
     """Prints each case with differences and the totals; exits 1 when there is any.
     ``results``: also a JSON-lines file of them for tools/gates.py -- one line per case with
-    differences (its file, case key, input from ``inputs`` and differences), then the totals
+    differences (its file, case key, input from ``inputs``, differences and each side's error,
+    :func:`refusal`), then the totals
     with ``counts`` (e.g. the cases left to the host)."""
     failed = 0
     lines = []
@@ -157,7 +172,11 @@ def report(expected: dict, rust: dict, ignore: tuple = (), results: str | None =
             print(f"{name}: {len(found)} differences")
             for line in found[:20]:
                 print("   ", line)
-            lines.append({"file": key[0], "case": key[1], "input": (inputs or {}).get(key), "differences": found})
+            errors = {side: refusal(r) for side, r in (("python", want), ("rust", got)) if refusal(r)}
+            for side, error in errors.items():
+                print(f"    {side} error: {json.dumps(error)[:400]}")
+            lines.append({"file": key[0], "case": key[1], "input": (inputs or {}).get(key), "differences": found,
+                          **({"errors": errors} if errors else {})})
     print(f"{len(expected)} cases, {failed} with differences")
     if results:
         totals = {"cases": len(expected), "failed": failed, **(counts or {})}
@@ -167,7 +186,7 @@ def report(expected: dict, rust: dict, ignore: tuple = (), results: str | None =
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("what", choices=["ids", "describe", "read", "ranges", "inspect", "find", "batch"])
+    parser.add_argument("what", choices=["ids", "describe", "read", "ranges", "inspect", "find", "batch", "check"])
     parser.add_argument("--rust", required=True, help="the word-ids or word-reads binary")
     parser.add_argument("--tree", action="append", help="every .docx below this folder")
     parser.add_argument("--results", help="also write the cases with differences here (JSON lines)")

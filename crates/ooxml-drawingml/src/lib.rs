@@ -8,7 +8,9 @@
 //! - the guide-formula language ([`guides`]) and the preset geometries ([`presets`]);
 //! - resolution: a theme and colour maps to a colour context, and fills, outlines and
 //!   effects -- with a style reference's `phClr` -- to concrete colours ([`resolve`]);
-//! - the drawable elements a chart is lowered to ([`drawable`]).
+//! - the drawable elements a chart is lowered to ([`drawable`]);
+//! - a SmartArt diagram's data model as an editor shows it: its nodes and their summary
+//!   ([`diagram`]).
 //!
 //! Must not: write SVG or paint (phase P3c: `ooxml-render`), lay text out, or resolve a
 //! slide's or a document's own inheritance (`p:ph` shapes, list styles through a master: the
@@ -16,6 +18,7 @@
 //! interpreter lock.
 #![forbid(unsafe_code)]
 
+pub mod diagram;
 pub mod drawable;
 pub mod guides;
 pub mod presets;

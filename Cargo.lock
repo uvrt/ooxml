@@ -822,6 +822,7 @@ dependencies = [
  "ooxml-chart",
  "ooxml-colour",
  "ooxml-derive",
+ "ooxml-drawingml",
  "ooxml-opc",
  "ooxml-xml",
  "ooxml-zip",

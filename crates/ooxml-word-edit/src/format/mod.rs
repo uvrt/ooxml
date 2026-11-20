@@ -13,10 +13,10 @@
 mod colour;
 mod edit;
 mod found;
-mod keeps;
+pub(crate) mod keeps;
 mod like;
 mod outline;
-mod values;
+pub(crate) mod values;
 
 pub(crate) use colour::ThemeColours;
 pub use found::{occurrences, range_text, Occurrence};

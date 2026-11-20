@@ -159,7 +159,9 @@ def fitted(data: bytes, which: list[int] | None = None, **extra) -> tuple[bytes,
             t.id for t in found.tables() if t.id not in top]
         results = [box.dispatch(session, "word_format_table", {"doc": "d1", "table": t, "scope": "table",
                                                                "width_of": "window", **extra}) for t in targets]
-        return found.to_bytes(), results
+        # the entry's document now: a call the Rust core serves commits a new version, so
+        # the document read before the calls is not the edited one
+        return session.entry("d1").document.to_bytes(), results
 
 
 @pytest.mark.parametrize("case", sorted(WORD))

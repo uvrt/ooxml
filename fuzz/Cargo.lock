@@ -570,6 +570,7 @@ dependencies = [
  "ooxml-chart",
  "ooxml-colour",
  "ooxml-derive",
+ "ooxml-drawingml",
  "ooxml-opc",
  "ooxml-xml",
  "serde_json",

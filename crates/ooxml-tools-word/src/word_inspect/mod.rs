@@ -125,7 +125,7 @@ pub fn word_inspect(args: &WordInspect, version: &Version<'_>, cancel: &dyn Canc
         crate::placements::fill(&mut data, &answers);
     }
     let mut done = Done::new(format!("Inspected {}", args.target));
-    done.unported = unported(&docx, &data);
+    done.unported = unported(&docx);
     done.data = Some(data);
     Ok(done)
 }
@@ -148,37 +148,13 @@ fn placer_of<'v>(args: &WordInspect, version: &Version<'v>) -> Result<Option<&'v
     })
 }
 
-/// What of `data` docx-agent gives otherwise: a SmartArt diagram's JSON on its drawing; the
-/// final view's cells whose end Accept All takes
-/// away.
-fn unported(docx: &ooxml_word_model::docx::Docx, data: &Value) -> Vec<String> {
+/// What docx-agent gives otherwise: the final view's cells whose end Accept All takes away.
+fn unported(docx: &ooxml_word_model::docx::Docx) -> Vec<String> {
     let shared = ooxml_word_model::markdown::read::Shared::of(docx);
-    let mut out = Vec::new();
-    let graphics = shared.graphics(docx);
-    if !graphics.is_empty() && holds_drawing(data, graphics) {
-        out.push(crate::GRAPHICS.to_owned());
-    }
     if shared.cell_ends(docx) {
-        out.push(crate::CELL_ENDS.to_owned());
+        return vec![crate::CELL_ENDS.to_owned()];
     }
-    out
-}
-
-/// Whether a block of `value` lists one of `ids` among its drawings.
-fn holds_drawing(value: &Value, ids: &[String]) -> bool {
-    match value {
-        Value::Array(items) => items.iter().any(|v| holds_drawing(v, ids)),
-        Value::Object(map) => {
-            let listed = map.get("drawings").and_then(Value::as_array).is_some_and(|drawings| {
-                drawings
-                    .iter()
-                    .filter_map(|d| d.get("id").and_then(Value::as_str))
-                    .any(|id| ids.iter().any(|g| g == id))
-            });
-            listed || map.values().any(|v| holds_drawing(v, ids))
-        }
-        _ => false,
-    }
+    Vec::new()
 }
 
 /// Whether Python reads `value` as false (`if state.get(key)`).

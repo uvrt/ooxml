@@ -84,6 +84,26 @@ pub fn best<C: Command<WordDoc, Error = EditError>>(bytes: &Arc<[u8]>, command: 
         .unwrap()
 }
 
+/// The best of three runs of `command`, each on a fresh editor that ran `first` before
+/// (opening and `first` not counted): what a session's next call costs, the document's
+/// reading and id sequences already made.
+pub fn best_after<F, C>(bytes: &Arc<[u8]>, first: &F, command: &C) -> Duration
+where
+    F: Command<WordDoc, Error = EditError>,
+    C: Command<WordDoc, Error = EditError>,
+{
+    (0..3)
+        .map(|_| {
+            let editor = editor(bytes);
+            editor.run(&Caller::anonymous(), first).unwrap();
+            let started = Instant::now();
+            editor.run(&Caller::anonymous(), command).unwrap();
+            started.elapsed()
+        })
+        .min()
+        .unwrap()
+}
+
 pub fn fixture(name: &str) -> Arc<[u8]> {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../python/docx-agent/tests/fixtures")

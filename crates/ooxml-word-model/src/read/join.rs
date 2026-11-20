@@ -139,7 +139,42 @@ pub(crate) fn following_properties(
     (out, following)
 }
 
-fn table_following(table: &Arc<Table>, mut following: Option<Arc<ParaProps>>) -> (Arc<Table>, Option<Arc<ParaProps>>) {
+/// What [`following_properties`] would do to `blocks`, without making anything: whether it
+/// changes a paragraph, and the properties it hands the blocks before them.
+fn following_of(blocks: &[Block], mut following: Option<Arc<ParaProps>>) -> (bool, Option<Arc<ParaProps>>) {
+    let mut changed = false;
+    for block in blocks.iter().rev() {
+        match block {
+            Block::Paragraph(p) => {
+                if p.mark_deleted && p.properties != following {
+                    changed = true;
+                } else {
+                    following.clone_from(&p.properties);
+                }
+            }
+            Block::Table(t) => {
+                for cell in t.rows.iter().rev().flat_map(|row| row.iter().rev()) {
+                    let (inner, next) = following_of(cell, following);
+                    changed |= inner;
+                    following = next;
+                }
+            }
+        }
+    }
+    (changed, following)
+}
+
+fn table_following(table: &Arc<Table>, following: Option<Arc<ParaProps>>) -> (Arc<Table>, Option<Arc<ParaProps>>) {
+    // Most tables hold no paragraph whose mark is deleted: they are taken as they are,
+    // nothing copied.
+    let (changes, next) = following_of(
+        std::slice::from_ref(&Block::Table(Arc::clone(table))),
+        following.clone(),
+    );
+    if !changes {
+        return (Arc::clone(table), next);
+    }
+    let mut following = following;
     let mut changed = false;
     let mut rows = Vec::with_capacity(table.rows.len());
     for row in table.rows.iter().rev() {

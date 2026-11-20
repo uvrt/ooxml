@@ -210,6 +210,16 @@ fn plan_across(
 /// A work whose root stands for the stretch of a parent's children from the first of
 /// `paths` (siblings, in order) to the last, with the ids of those children in it.
 pub(crate) fn stretch(root: &Arc<ooxml_xml::Element>, paths: &[Box<[u32]>]) -> Option<(Work, Vec<crate::work::Id>)> {
+    stretch_opening(root, paths, &|_| true)
+}
+
+/// [`stretch`], the children read whole only at the places (in the parent) `open` takes;
+/// the other paragraphs and tables sealed ([`Work::of_stretch`]).
+pub(crate) fn stretch_opening(
+    root: &Arc<ooxml_xml::Element>,
+    paths: &[Box<[u32]>],
+    open: &dyn Fn(u32) -> bool,
+) -> Option<(Work, Vec<crate::work::Id>)> {
     let (first, last) = (paths.first()?, paths.last()?);
     let (&from, parent_path) = first.split_last()?;
     let &to = last.last()?;
@@ -234,7 +244,12 @@ pub(crate) fn stretch(root: &Arc<ooxml_xml::Element>, paths: &[Box<[u32]>]) -> O
     } else {
         scope_above(root, parent_path)
     };
-    let work = Work::of(&holder, scope);
+    let work = Work::of_stretch(&holder, scope, &|k| {
+        u32::try_from(k)
+            .ok()
+            .and_then(|k| from.checked_add(k))
+            .is_some_and(open)
+    });
     let ids: Vec<crate::work::Id> = work.children(work.root()).to_vec();
     let mut placed = Vec::new();
     let mut it = ids.iter();

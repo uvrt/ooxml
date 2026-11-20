@@ -229,8 +229,8 @@ impl PyVersion {
 type IdsSince = (Vec<u32>, Vec<(String, String)>);
 
 /// A Word document's ids before it was saved, as a host's state keeps them:
-/// `(values, cursors, highest_drawing)` ([`EarlierIds`]).
-type StateIds = (Vec<u32>, Vec<(String, usize)>, u64);
+/// `(values, cursors, highest_drawing, drawings)` ([`EarlierIds`]).
+type StateIds = (Vec<u32>, Vec<(String, usize)>, u64, Vec<u64>);
 
 /// One retired id as `Session.retired` gives it: `(kind, value, seq, caller, tool, version,
 /// said)` -- `"block"` (a paraId's value) or `"drawing"`; a version this session made
@@ -328,16 +328,20 @@ impl PySession {
 
     /// Open a package's bytes as a document of `kind`, named `name`; returns its id (`d1`).
     /// `ids`: a Word document's ids before it was saved, as the host's state of it keeps them
-    /// -- `(values, cursors, highest_drawing)`: every value its pool held, each seed's
-    /// cursor, the highest drawing number given -- so it never gives a retired id again.
+    /// -- `(values, cursors, highest_drawing, drawings)`: every value its pool held, each
+    /// seed's cursor, the highest drawing number given, the drawing numbers retired -- so it
+    /// never gives a retired id or drawing number again.
     #[pyo3(signature = (data, *, kind = "docx", name = "document.docx", ids = None))]
     fn open(&self, py: Python<'_>, data: &[u8], kind: &str, name: &str, ids: Option<StateIds>) -> PyResult<String> {
         let kind = kind_of(kind)?;
         let bytes: Arc<[u8]> = Arc::from(data);
-        let earlier = ids.map_or_else(EarlierIds::default, |(values, cursors, highest_drawing)| EarlierIds {
-            values,
-            cursors,
-            highest_drawing,
+        let earlier = ids.map_or_else(EarlierIds::default, |(values, cursors, highest_drawing, drawings)| {
+            EarlierIds {
+                values,
+                cursors,
+                highest_drawing,
+                drawings,
+            }
         });
         let session = &self.inner;
         let id = py
@@ -399,13 +403,17 @@ impl PySession {
     /// nothing. A host that numbers the document's steps takes the call's step from these,
     /// whatever other calls commit to the document meanwhile. `layout`: the document's page
     /// engine, as for [`call`](Self::call) (`word_fields` update, a header's page number,
-    /// `word_template`'s reflow). `written`: the values the host wrote into the arguments for
-    /// references, as JSON text (`[{"field", "start", "end", "text", "record", "brief"}]`,
-    /// ooxml-edit's `call.facts`), which the call keeps on the paragraphs they went into.
+    /// `word_template`'s reflow). `blobs`: the host's blobs, an object with `blob(handle)`
+    /// (`(name, mime, bytes)` or `None`) and `listed()` (`[(handle, name)]`), asked with the
+    /// interpreter lock taken back (`word_drawings` insert_picture). `written`: the values the
+    /// host wrote into the arguments for references, as JSON text (`[{"field", "start", "end",
+    /// "text", "record", "brief"}]`, ooxml-edit's `call.facts`), which the call keeps on the
+    /// paragraphs they went into.
     ///
     /// # Errors
     /// `ValueError` for `written` that is not such a list.
-    #[pyo3(signature = (name, arguments, *, context = None, layout = None, written = None))]
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (name, arguments, *, context = None, layout = None, blobs = None, written = None))]
     fn edit(
         &self,
         py: Python<'_>,
@@ -413,10 +421,12 @@ impl PySession {
         arguments: String,
         context: Option<PyRef<'_, PyCallContext>>,
         layout: Option<PyRef<'_, crate::layout::PyWordPages>>,
+        blobs: Option<Py<PyAny>>,
         written: Option<&str>,
     ) -> PyResult<(String, String, Option<EditMade>)> {
         let mut context = context_of(context.as_deref());
         context.layout = layout.map(|pages| Arc::new(pages.port()) as Arc<dyn ooxml_word_edit::FieldLayout>);
+        context.blobs = blobs.map(|b| Arc::new(crate::adapters::PyBlobs(b)) as Arc<dyn ooxml_tools_word::Blobs>);
         if let Some(written) = written {
             context.written = serde_json::from_str::<Value>(written)
                 .ok()

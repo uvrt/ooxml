@@ -50,6 +50,7 @@ fn reply(arguments: Value) -> Value {
         number: 1,
         versions: &versions.1,
         placer: None,
+        owned: None,
         others: Others::default(),
     };
     let others = [("d2", other)];
@@ -59,6 +60,7 @@ fn reply(arguments: Value) -> Value {
         number: 1,
         versions: &versions.0,
         placer: None,
+        owned: None,
         others: Others::new(&others),
     };
     let (args, _) = WordCompareBlocks::accept(arguments, Some("docx")).unwrap();
@@ -107,6 +109,7 @@ fn compare_on_a_long_document() {
         number: 1,
         versions: &versions,
         placer: None,
+        owned: None,
         others: Others::default(),
     };
     let start = std::time::Instant::now();
