@@ -31,6 +31,7 @@ pub use read::{
 };
 pub use regions::{RegionBorders, RegionValues, BORDER_SIDES, BORDER_STYLES};
 pub use shading::read_shading;
+pub(crate) use sheet::REL_STYLES;
 pub use tabs::{TabStop, TAB_ALIGNMENTS, TAB_LEADERS};
 
 use crate::format::{check, Setting};

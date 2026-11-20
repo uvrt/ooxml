@@ -9,6 +9,7 @@
 //! or decide what an edit means.
 
 mod heads;
+mod kept;
 mod written;
 
 pub(crate) use heads::{annotation_draws, ensured_head};
