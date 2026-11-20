@@ -596,6 +596,9 @@ All are under 0.1 % of the edit budgets.
 - `word_set_text` writes every item through `SetStyledText`: styled text, a paragraph style, a cell in lines and French spacing are the session's; only values or addresses by reference stay with the host.
 - Still the host's: a find `within` a block or span, a picture (`d:`), a heading's range without its end, a ref name the tool layer would fold.
 
+**As built (lane P2c13: relayout after served edits).**
+- A served edit starts the relayout on commit (lane O) as a Python edit does: without the lock, its checks' marker (`rust.edits.Made`) carries the call's engine (`Engine.of` over the toolbox's pool), used without touching the view; under the lock, the call's engine is engaged on the view and the checks' relayout lets it go.
+
 **As built (lane P4d7: calls that name other documents).**
 - A tool's declared documents rule (`ooxml_tools::documents`, `named_at`) names the call's own document first; the session pins every other open document it names like the call's own (the version the context or batch holds, else the head; no lock: versions are immutable) and hands them over in `Call::others`, which read handlers see as `Version::others` and editing handlers as `Editing::others` (`Others::get` by id). A named document that is not open is refused at the field naming it (`reference.doc`). `word_compare_blocks` is the first tool to read one.
 
