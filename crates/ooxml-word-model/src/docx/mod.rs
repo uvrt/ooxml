@@ -103,14 +103,16 @@ impl StoryPart {
     /// Each paragraph's text in the current view ([`PartTexts`]), read once.
     pub fn texts(&self) -> &Arc<PartTexts> {
         self.texts.get_or_init(|| {
-            self.kept.texts(&self.part, |earlier| PartTexts::read(&self.ids, earlier))
+            self.kept
+                .texts(&self.part, |earlier| PartTexts::read(&self.ids, earlier))
         })
     }
 
     /// What the document-wide lookups read of the part ([`PartFacts`]), read once.
     pub fn facts(&self) -> &Arc<PartFacts> {
         self.facts.get_or_init(|| {
-            self.kept.facts(&self.part, |earlier| PartFacts::read(self.root(), earlier))
+            self.kept
+                .facts(&self.part, |earlier| PartFacts::read(self.root(), earlier))
         })
     }
 }

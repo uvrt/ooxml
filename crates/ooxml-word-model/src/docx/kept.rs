@@ -23,13 +23,20 @@ struct Latest<T> {
 
 impl<T> Default for Latest<T> {
     fn default() -> Self {
-        Latest { read: Mutex::new(HashMap::new()), first: Mutex::new(HashMap::new()) }
+        Latest {
+            read: Mutex::new(HashMap::new()),
+            first: Mutex::new(HashMap::new()),
+        }
     }
 }
 
 impl<T> Latest<T> {
     fn get(&self, part: &str) -> Option<Arc<T>> {
-        self.read.lock().unwrap_or_else(PoisonError::into_inner).get(part).cloned()
+        self.read
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(part)
+            .cloned()
     }
 
     fn keep(&self, part: &str, made: T) -> Arc<T> {

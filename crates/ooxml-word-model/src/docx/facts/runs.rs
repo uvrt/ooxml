@@ -144,7 +144,9 @@ fn made<T>(
         };
         slots.push(slot);
         if slots.len() == RUN {
-            runs.push(Arc::new(Run { slots: std::mem::take(&mut slots) }));
+            runs.push(Arc::new(Run {
+                slots: std::mem::take(&mut slots),
+            }));
         }
     }
     if !slots.is_empty() {
@@ -163,13 +165,20 @@ mod tests {
 
     /// `n` fresh nodes: elements, every fifth a text node.
     fn nodes(n: usize) -> Vec<Node> {
-        let xml = format!("<r>{}</r>", (0..n).map(|k| if k % 5 == 4 { "t" } else { "<a/>" }).collect::<String>());
+        let xml = format!(
+            "<r>{}</r>",
+            (0..n)
+                .map(|k| if k % 5 == 4 { "t" } else { "<a/>" })
+                .collect::<String>()
+        );
         let tree = ooxml_xml::parse(xml.as_bytes(), &XmlLimits::default()).unwrap_or_else(|e| panic!("{e}"));
         tree.root().children().to_vec()
     }
 
     fn placed<T>(runs: &Runs<T>) -> Vec<(u32, *const Element, *const T)> {
-        runs.iter().map(|(k, e, v)| (k, Arc::as_ptr(e), Arc::as_ptr(v))).collect()
+        runs.iter()
+            .map(|(k, e, v)| (k, Arc::as_ptr(e), Arc::as_ptr(v)))
+            .collect()
     }
 
     #[test]
@@ -183,16 +192,18 @@ mod tests {
         let mut runs = Runs::read(&list, None, &keep, &make);
         let mut seed: u64 = 7;
         let mut next = |bound: usize| {
-            seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+            seed = seed
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
             usize::try_from(seed >> 33).unwrap_or(0) % bound.max(1)
         };
         for round in 0..300 {
             let len = list.len();
             let (at, gone, new) = match round % 4 {
-                0 => (next(len + 1), 0, 1 + next(3)),          // insert
-                1 => (next(len), 1 + next(2), 0),              // delete
-                2 => (next(len), 1, 1),                        // replace one
-                _ => (len, 0, 1 + next(RUN * 2)),              // append
+                0 => (next(len + 1), 0, 1 + next(3)), // insert
+                1 => (next(len), 1 + next(2), 0),     // delete
+                2 => (next(len), 1, 1),               // replace one
+                _ => (len, 0, 1 + next(RUN * 2)),     // append
             };
             let gone = gone.min(len - at.min(len));
             let fresh = nodes(new);

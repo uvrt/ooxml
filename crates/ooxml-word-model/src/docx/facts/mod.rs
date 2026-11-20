@@ -262,7 +262,8 @@ mod tests {
         assert_eq!(anchors, ["x", "y"]);
         assert!(facts.cell_ends());
         let again = PartFacts::read(tree.root(), Some(&facts));
-        let first = |f: &PartFacts| std::sync::Arc::clone(f.bodies[0].1.iter().next().unwrap_or_else(|| panic!("a block")).2);
+        let first =
+            |f: &PartFacts| std::sync::Arc::clone(f.bodies[0].1.iter().next().unwrap_or_else(|| panic!("a block")).2);
         assert!(std::sync::Arc::ptr_eq(&first(&again), &first(&facts)));
     }
 
