@@ -3,7 +3,7 @@
 //! commits past a commit since its snapshot that wrote cells not holding the value, and is
 //! prepared again when one written since holds it on the head or one it matched was written.
 //! What it commits equals a serial run in commit order. The history keeps such a read as a
-//! read of every cell.
+//! read of every cell, or of the cells the condition names where it names them.
 // Tests may unwrap, panic and index (docs/architecture/README.md, section 2.5).
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
 
@@ -139,4 +139,45 @@ fn the_history_keeps_a_read_by_condition_as_a_read_of_everything() {
     let steps = store.steps();
     let finder = steps.iter().find(|s| s.caller.as_deref() == Some("finder")).unwrap();
     assert_eq!(finder.reads, KeySet::Everything);
+}
+
+/// A condition over two cells only, which says so.
+#[derive(Debug)]
+struct Within(i64);
+
+impl ReadPredicate<Cells> for Within {
+    fn depends(&self, head: &Cells, key: &u32) -> bool {
+        (3..5).contains(key) && head.0.get(key) == Some(&self.0)
+    }
+
+    fn history_keys(&self) -> Option<Vec<u32>> {
+        Some(vec![3, 4])
+    }
+}
+
+/// Cell 9 set to `.0`, having read cells 3 and 4 by [`Within`].
+struct SetNine(i64);
+
+impl Command<Cells> for SetNine {
+    type Out = ();
+    type Error = Fail;
+
+    fn validate(&self, _doc: &Cells) -> Result<(), Fail> {
+        Ok(())
+    }
+
+    fn prepare(&self, tx: &mut Txn<'_, Cells>) -> Result<(), Fail> {
+        tx.read_where(Arc::new(Within(1)));
+        tx.write(Change::Set(9, Some(self.0)))?;
+        Ok(())
+    }
+}
+
+#[test]
+fn the_history_keeps_a_read_by_condition_that_names_its_keys_as_a_read_of_those() {
+    let store = store();
+    store.run(&Caller::named("setter"), &SetNine(5)).unwrap();
+    let steps = store.steps();
+    let setter = steps.iter().find(|s| s.caller.as_deref() == Some("setter")).unwrap();
+    assert_eq!(setter.reads, KeySet::of([3, 4]));
 }
