@@ -487,6 +487,8 @@ def python_case(data: bytes, case: dict, baseline: list, toolbox, reply_of, part
         session.open(other, name="copy.docx")
     if case.get("tracked"):
         session.entry(doc).tracking = {"on": True, "author": case["tracked"]["author"]}
+    for blob in case.get("blobs") or []:                # b1, b2, ... as the session numbers them
+        session.add_blob(bytes.fromhex(blob["hex"]), blob["name"], blob["mime"])
     arguments = {**case["arguments"], "doc": doc}
     reply = json.loads(json.dumps(toolbox.dispatch(session, case["tool"], arguments).to_json()))
     document = session.entry(doc).document
