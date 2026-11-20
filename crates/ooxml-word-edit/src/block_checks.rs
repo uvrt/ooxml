@@ -117,33 +117,42 @@ pub(crate) fn block_references(root: &Element, element: &Element) -> Option<bool
     Some(true)
 }
 
-/// The blocks of a container in order, each with its place, through block-level content
-/// controls and custom XML (docx-agent's `_direct_blocks`). Places, not addresses, tell
-/// blocks apart: equal elements may share one allocation.
-fn direct_blocks<'e>(container: &'e Element, at: &mut Vec<u32>, out: &mut Vec<(Vec<u32>, &'e Element)>) {
-    for (k, node) in container.children().iter().enumerate() {
-        let (Node::Element(child), Ok(k)) = (node, u32::try_from(k)) else {
+/// The last of a container's blocks (through block-level content controls and custom XML,
+/// as docx-agent's `_direct_blocks` lists them) that is not the one at `skip`, read from
+/// the end. Places, not addresses, tell blocks apart: equal elements may share one
+/// allocation.
+fn last_block_but<'e>(container: &'e Element, at: &mut Vec<u32>, skip: &[u32]) -> Option<&'e Element> {
+    let children = container.children();
+    for k in (0..children.len()).rev() {
+        let (Some(Node::Element(child)), Ok(place)) = (children.get(k), u32::try_from(k)) else {
             continue;
         };
-        at.push(k);
-        if is(child, "p") || is(child, "tbl") {
-            out.push((at.clone(), child));
+        at.push(place);
+        let found = if is(child, "p") || is(child, "tbl") {
+            (at.as_slice() != skip).then_some(&**child)
         } else if is(child, "sdt") {
-            if let Some((c, content)) = child
+            child
                 .children()
                 .iter()
                 .enumerate()
                 .find_map(|(c, n)| n.as_element().filter(|e| is(e, "sdtContent")).map(|e| (c, e)))
-            {
-                at.push(u32::try_from(c).unwrap_or(u32::MAX));
-                direct_blocks(content, at, out);
-                at.pop();
-            }
+                .and_then(|(c, content)| {
+                    at.push(u32::try_from(c).unwrap_or(u32::MAX));
+                    let found = last_block_but(content, at, skip);
+                    at.pop();
+                    found
+                })
         } else if is(child, "customXml") {
-            direct_blocks(child, at, out);
-        }
+            last_block_but(child, at, skip)
+        } else {
+            None
+        };
         at.pop();
+        if found.is_some() {
+            return found;
+        }
     }
+    None
 }
 
 /// Refuse a deletion that would leave a cell, the body or a story without a paragraph to
@@ -163,14 +172,11 @@ pub(crate) fn check_container_survives(root: &Arc<Element>, path: &[u32]) -> Res
         }
         break node;
     };
-    let mut blocks = Vec::new();
-    direct_blocks(container, &mut at, &mut blocks);
-    blocks.retain(|(at, _)| at.as_slice() != path);
-    match blocks.last() {
+    match last_block_but(container, &mut at, path) {
         None => Err(EditError::Refused(
             "deleting it would leave its story or cell with no paragraph".to_owned(),
         )),
-        Some((_, last)) if is(last, "tbl") => Err(EditError::Refused(
+        Some(last) if is(last, "tbl") => Err(EditError::Refused(
             "deleting it would leave a table last in its story or cell; Word needs a paragraph after it".to_owned(),
         )),
         Some(_) => Ok(()),

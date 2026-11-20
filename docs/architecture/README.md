@@ -684,6 +684,12 @@ No parser contains unsafe code.
    - wall-clock benches nightly on a fixed runner, never as PR gates;
    - memory per version and per document asserted with a counting allocator.
 6. **Tool rules:** each of the 8 rules is tested per tool family, carried over from today's suites.
+7. **One integration-test program per crate:**
+   - integration tests go in `tests/integration/` as a module of `main.rs`, not as a new file in `tests/`: every file there is a program of its own, built and linked again after each change to the crate or one below it;
+   - a crate whose tests are one file (`tests/<name>.rs`) moves it into `tests/integration/` when it gets a second;
+   - helpers the modules share live once in the program (`common.rs` or the crate's support module), not as a copy per module;
+   - a test that needs its own process stays a file of its own (today only ooxml-store's `tests/loom.rs`, built with `RUSTFLAGS="--cfg loom"`);
+   - run one module with a filter, e.g. `cargo test -p ooxml-word-layout --test integration relayout::`.
 
 ---
 
