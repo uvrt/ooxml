@@ -4,6 +4,10 @@
 //! series' name and values -- and the one-line summary docx-agent and pptx-agent write of it
 //! (`column; title: Sales; series: North, South; categories: Q1, Q2`).
 //!
+//! Beside them, what ooxml-edit's `Chart` reads for `edit_chart`'s `read` beyond the model:
+//! how blanks draw, the gap width, dot charts, number formats, axis names and scales and a
+//! series' own look (`look`), and its point labels (`labels`).
+//!
 //! **Why a second view beside [`crate::read`].** The render model reads what a chart looks
 //! like, as ooxml-common's `chart/read.py` does; this reads what an editor shows of its data,
 //! as ooxml-edit does, and the two differ where their Python sources differ:
@@ -22,9 +26,16 @@
 //! Must not: lay anything out, resolve styling, or know which document format holds the
 //! chart.
 
+mod labels;
+mod look;
 mod serial;
 mod source;
 
+pub use labels::point_labels;
+pub use look::{
+    axis_names, axis_scale, blanks, gap_width, is_dot, number_formats, series_look, Look, NumberFormats, Said, Scale,
+    SeriesLook,
+};
 pub use serial::iso_of_serial;
 pub use source::{decode_number, Point, Unreadable};
 
@@ -69,14 +80,14 @@ pub struct ChartData {
 }
 
 /// One `c:ser` and its sources.
-struct Ser<'a> {
-    name: Source<'a>,
-    categories: Source<'a>,
-    values: Source<'a>,
+pub(crate) struct Ser<'a> {
+    pub(crate) name: Source<'a>,
+    pub(crate) categories: Source<'a>,
+    pub(crate) values: Source<'a>,
 }
 
 impl<'a> Ser<'a> {
-    fn of(ser: &'a Element) -> Ser<'a> {
+    pub(crate) fn of(ser: &'a Element) -> Ser<'a> {
         let either = |a: &str, b: &str| child(ser, a).or_else(|| child(ser, b));
         Ser {
             name: Source::of(child(ser, "tx")),
@@ -149,7 +160,7 @@ fn plot_type(name: &str) -> &str {
 
 /// The category (x) or value (y) axis: a scatter or bubble chart's x is a value axis too,
 /// the one at the bottom or top.
-fn axis_of<'a>(plot_area: &'a Element, axis: &str) -> Option<&'a Element> {
+pub(crate) fn axis_of<'a>(plot_area: &'a Element, axis: &str) -> Option<&'a Element> {
     let axes: Vec<&Element> = elements(plot_area)
         .filter(|e| AXIS_ELEMENTS.contains(&local(e)))
         .collect();
@@ -248,5 +259,7 @@ fn shown(category: Option<&Point>) -> String {
     category.map(Point::text).unwrap_or_default()
 }
 
+#[cfg(test)]
+mod look_tests;
 #[cfg(test)]
 mod tests;
