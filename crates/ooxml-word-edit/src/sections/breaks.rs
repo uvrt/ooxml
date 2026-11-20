@@ -12,7 +12,7 @@
 use super::setup::{apply, kinds, record_change, SectionValues};
 use super::SectionEdited;
 use crate::blocks::resolve_block;
-use crate::delete::{editable, stretch_keys};
+use crate::delete::editable;
 use crate::doc::Key;
 use crate::names::{W, W14, W16DU};
 use crate::policy::RevisionPolicy;
@@ -211,10 +211,15 @@ impl InsertSectionBreak {
         let (numbered, dated) = track_break(&mut *sink, &mut work, (paragraph, filler, sect), &before, orders)?;
         let nodes = work.build_content(work.root()).ok_or_else(path_error)?;
         let draws = crate::delete::draws_of(&nodes, numbered);
-        let mut keys = stretch_keys(&docx, &main, &parent, stretch);
-        keys.push(Key::Annotations);
         let count = (stretch.1 - stretch.0) as usize + 1;
-        sink.splice_children(&main, (&parent, stretch.0 as usize, count), nodes, keys, draws)?;
+        sink.splice_stretch(
+            &docx,
+            &main,
+            (&parent, stretch.0 as usize, count),
+            nodes,
+            &[Key::Annotations],
+            draws,
+        )?;
         sink.ensure_w14(&main, false, &[])?;
         if dated {
             sink.ensure_w14(&main, false, &[("w16du", W16DU)])?;

@@ -10,6 +10,7 @@
 
 mod heads;
 mod kept;
+mod stretch;
 mod written;
 
 pub(crate) use heads::{annotation_draws, ensured_head};

@@ -13,7 +13,7 @@
 //! Must not: write but through the sink.
 
 use crate::blocks::{blocks_of, resolve_block, BlockAt, BlockKind};
-use crate::delete::{editable, stretch_keys};
+use crate::delete::editable;
 use crate::names::W;
 use crate::policy::RevisionPolicy;
 use crate::sink::EditSink;
@@ -466,7 +466,7 @@ impl MoveBlocks {
         let docx = sink.docx()?;
         let (part, blocks, ids, anchor) = self.plan(sink.doc(), &docx)?;
         let before = sink.doc().tree(&part)?.ok_or_else(|| EditError::NoPart(part.clone()))?;
-        if self.arrange(before.root(), &part, (&blocks, &ids, &anchor))?.is_none() {
+        let Some(arranged) = self.arrange(before.root(), &part, (&blocks, &ids, &anchor))? else {
             return Ok(BlocksMoved {
                 id: ids.first().cloned(),
                 changed: false,
@@ -475,7 +475,7 @@ impl MoveBlocks {
                 renamed: Vec::new(),
                 warnings: Vec::new(),
             });
-        }
+        };
         let (tracked, warnings) = self.tracked_blocks(&docx, &part, &blocks)?;
         let renamed = stamp_document(sink, &docx)?;
         // docx-agent moves the blocks one by one, the first stamping the document: a later
@@ -515,15 +515,25 @@ impl MoveBlocks {
         }
         let docx = sink.docx()?;
         let tree = sink.doc().tree(&part)?.ok_or_else(|| EditError::NoPart(part.clone()))?;
-        let (work, parent, stretch) = self
-            .arrange(tree.root(), &part, (&blocks, &ids, &anchor))?
-            .ok_or_else(|| EditError::Path(part.clone()))?;
+        // arranged again only where the stamping changed the part (its tree is another)
+        let (work, parent, stretch) = if Arc::ptr_eq(tree.root(), before.root()) {
+            arranged
+        } else {
+            self.arrange(tree.root(), &part, (&blocks, &ids, &anchor))?
+                .ok_or_else(|| EditError::Path(part.clone()))?
+        };
         let built = work
             .build_content(work.root())
             .ok_or_else(|| EditError::Path(part.clone()))?;
-        let keys = stretch_keys(&docx, &part, &parent, stretch);
         let count = (stretch.1 - stretch.0) as usize + 1;
-        sink.splice_children(&part, (&parent, stretch.0 as usize, count), built, keys, Vec::new())?;
+        sink.splice_stretch(
+            &docx,
+            &part,
+            (&parent, stretch.0 as usize, count),
+            built,
+            &[],
+            Vec::new(),
+        )?;
         let moved: Vec<String> = ids.iter().map(|id| crate::ranges::renamed_id(&renamed, id)).collect();
         Ok(BlocksMoved {
             id: moved.first().cloned(),
