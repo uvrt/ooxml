@@ -16,7 +16,7 @@
 
 use crate::doc::Key;
 use crate::names::{O, R};
-use crate::new_part::{add_external, add_internal};
+use crate::new_part::{add_external, add_internal, declare_type};
 use crate::sink::EditSink;
 use crate::work::{Id, Work};
 use crate::Result;
@@ -139,7 +139,7 @@ impl Parts {
     }
 
     fn internal(&mut self, part: &str, rel_type: &str, target: &str) -> Result<String> {
-        let (made, id) = add_internal(&self.package, part, rel_type, target)?;
+        let (made, id) = add_internal(&self.package, part, &normalize(target), rel_type)?;
         if let Some(made) = made {
             self.package = made;
         }
@@ -183,7 +183,7 @@ impl Parts {
         };
         self.package = self.package.with_bytes(&target, data);
         if let Some(content_type) = content_type {
-            if let Some(made) = crate::content_types::declare(&self.package, &target, &content_type)? {
+            if let Some(made) = declare_type(&self.package, &target, &content_type)? {
                 self.package = made;
             }
         }

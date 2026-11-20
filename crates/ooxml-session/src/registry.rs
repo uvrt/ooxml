@@ -80,6 +80,8 @@ pub struct Call<'a> {
     pub(crate) made: &'a Mutex<Option<Made>>,
     /// The host's layout of the document's versions.
     pub(crate) layout: Option<&'a dyn ooxml_word_edit::FieldLayout>,
+    /// The session's blobs, where the host hands them over.
+    pub(crate) blobs: Option<&'a dyn ooxml_tools_word::Blobs>,
     /// The other documents the call names (`ooxml_tools::documents`), by id, each at the
     /// version pinned for the call when it was dispatched.
     pub(crate) others: &'a [(String, Opened)],
@@ -258,6 +260,7 @@ impl<T: ToolArgs> Tool for EditHandler<T> {
             date: &call.date,
             layout: call.layout,
             others: Others::new(&others),
+            blobs: call.blobs,
         };
         let result = match &self.run {
             EditRun::Plain(run) => run(&args, &editing),

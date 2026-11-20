@@ -11,6 +11,7 @@
 mod bytes;
 mod heads;
 mod kept;
+mod media;
 mod written;
 
 pub(crate) use heads::{annotation_draws, ensured_head};
