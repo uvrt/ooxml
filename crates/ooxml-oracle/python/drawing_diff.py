@@ -18,8 +18,8 @@ its own fonts, no embedded faces), freezes each slide's elements as the golden h
 freezes a scene (``goldens.to_data``), and compares ooxml-common's ``svg_document`` of them
 with ``drawing-svg --scene``'s, under both rules.
 
-The goldens themselves are gated by ``cargo test``'s ``tests/chart_goldens.rs`` and
-``tests/scene_goldens.rs``; this reaches every chart part of the repository's packages, at
+The goldens themselves are gated by ``cargo test``'s ``tests/integration/chart_goldens.rs`` and
+``tests/integration/scene_goldens.rs``; this reaches every chart part of the repository's packages, at
 several sizes. Python's behaviour is not changed: this only calls ooxml-common's public
 functions and the golden harness.
 """

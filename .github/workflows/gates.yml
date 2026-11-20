@@ -283,10 +283,13 @@ jobs:
             if "$@" >> "$RUNNER_TEMP/seeds.log" 2>&1; then r=ok; else r=FAILED; status=1; fi
             echo "| $name | $r | $(( $(date +%s) - at )) |" >> "$RUNNER_TEMP/seeds.md"
           }
-          for t in writers style_writers structure_writers review_writers object_writers history; do
-            run "ooxml-word-edit $t" cargo test --locked --release -p ooxml-word-edit --test "$t" -- --ignored --nocapture
+          # One test program per crate (tests/integration); each run picks its module's long test by its exact name.
+          for t in writers::sixty_seeds_of_eight_writers style_writers::sixty_seeds_of_eight_writers_styling \
+            structure_writers::sixty_seeds_of_eight_writers_structuring review_writers::sixty_seeds_of_eight_writers_reviewing \
+            object_writers::sixty_seeds_of_eight_writers_formatting_tables history::sixty_seeds_of_eight_writers_with_undo; do
+            run "ooxml-word-edit ${t%%::*}" cargo test --locked --release -p ooxml-word-edit --test integration -- --ignored --nocapture --exact "$t"
           done
-          run "ooxml-word-layout relayout sixty_seeds" cargo test --locked --release -p ooxml-word-layout --test relayout -- --ignored --nocapture sixty_seeds
+          run "ooxml-word-layout relayout sixty_seeds" cargo test --locked --release -p ooxml-word-layout --test integration -- --ignored --nocapture --exact relayout::sixty_seeds
           run "ooxml-store, ooxml-session" cargo test --locked --release -p ooxml-store -p ooxml-session -- --include-ignored --nocapture
           {
             echo "### seeds ($(( $(date +%s) - start )) s with the build)"
@@ -347,9 +350,11 @@ jobs:
       - name: Build
         run: |
           cargo build --locked --release -p ooxml-oracle --bin word-edits-bench --bin word-objects-bench
-          cargo test --locked --release -p ooxml-word-edit --test object_bench --test structure_bench --test style_bench --no-run
-          cargo test --locked --release -p ooxml-tools-word --test template_bench --test fields_bench --no-run
+          cargo test --locked --release -p ooxml-word-edit --test integration --no-run
+          cargo test --locked --release -p ooxml-tools-word --test integration --no-run
       # Each bench once, at most 30 minutes; a failing bench is reported and the others still run.
+      # The benches of one test program run one at a time (--test-threads 1), as their separate
+      # programs did, so no timing shares the runner with another.
       - name: Benches
         env:
           DOC: ${{ runner.temp }}/long/long-61.docx
@@ -371,8 +376,8 @@ jobs:
           echo "|---|---|---:|" >> "$out/table.md"
           bench word-edits-bench target/release/word-edits-bench "$DOC" 24 5
           bench word-objects-bench target/release/word-objects-bench "$DOC"
-          bench word-edit-benches cargo test --locked --release -p ooxml-word-edit --test object_bench --test structure_bench --test style_bench -- --ignored --nocapture
-          bench tools-word-benches cargo test --locked --release -p ooxml-tools-word --test template_bench --test fields_bench -- --ignored --nocapture
+          bench word-edit-benches cargo test --locked --release -p ooxml-word-edit --test integration -- --ignored --nocapture --test-threads 1 object_bench:: structure_bench:: style_bench::
+          bench tools-word-benches cargo test --locked --release -p ooxml-tools-word --test integration -- --ignored --nocapture --test-threads 1 template_bench:: fields_bench::
           bench docx-agent-24-writers python python/docx-agent/tools/writers_bench.py "$DOC" 24 5 rust
           {
             echo "### bench (a shared runner: timings are noisy and not compared with a laptop's)"

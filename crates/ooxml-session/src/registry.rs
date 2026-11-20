@@ -11,7 +11,7 @@
 //! its entry in [`Registry::standard`], and its oracle cases (a function of its own marked
 //! `@CASES` in `ooxml-oracle/python/word_*_cases.py`). Every other view of the tool set
 //! derives from the registry: the session's tools and refusals, `tool_specs` for the Python
-//! adapters, the golden exports' test (`tests/registry.rs`) and the oracle's Rust side
+//! adapters, the golden exports' test (`tests/integration/registry.rs`) and the oracle's Rust side
 //! ([`Tool::run_outside`]).
 //!
 //! Must not: run a handler outside a call the session dispatches (but for a test
