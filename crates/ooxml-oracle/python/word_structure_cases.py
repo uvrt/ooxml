@@ -246,6 +246,56 @@ def comment_cases(document) -> list[dict]:
     return out
 
 
+@CASES
+def comment_write_cases(document) -> list[dict]:
+    """``word_comments`` add and reply (lane P4b8): comments on a paragraph, a range, a
+    place, a range across paragraphs, text found once, a table and its rows, several at
+    once with refs and an author; replies to a thread and to a reply, one resolving its
+    thread, in lines; refusals (no text, no place, both, a comment that does not exist).
+    Tracked too: comments are written the same, by the tracking author."""
+    out = []
+    paragraphs = _words(document)
+    for pid, text in paragraphs[:3]:
+        out.append(call("word_comments", action="add", items=[{"target": pid, "text": "On the paragraph"}]))
+        if len(text) > 6:
+            out += [call("word_comments", action="add", items=[{"target": f"{pid}@2:5", "text": "One\nTwo"}]),
+                    call("word_comments", action="add", items=[{"target": f"{pid}@3", "text": "At a place"}])]
+        out.append(call("word_comments", action="add", items=[{"find": text[:10], "text": "Found"}]))
+    if len(paragraphs) > 2:
+        first, third = paragraphs[0][0], paragraphs[2][0]
+        out += [call("word_comments", action="add", items=[{"target": f"{first}@1..{third}@2", "text": "Across"}]),
+                call("word_comments", action="add", author="Reviewer B",
+                     items=[{"target": first, "text": "A", "ref": "one"},
+                            {"target": f"{third}@0:1", "text": "B", "ref": "two"}])]
+    tables = [b["id"] for b in document.blocks() if b["id"] and b["id"].startswith("t:")]
+    for table in tables[:2]:
+        out += [call("word_comments", action="add", items=[{"target": table, "text": "On the table"}]),
+                call("word_comments", action="add", items=[{"target": f"{table}/r1", "text": "On a row"}])]
+        rows = document.get(table).rows
+        if len(rows) > 1:
+            out.append(call("word_comments", action="add", items=[{"target": f"{table}/r{len(rows) - 1}",
+                                                                   "text": "On the last row"}]))
+    for thread in document.comments(replies=False)[:3]:
+        out += [call("word_comments", action="reply", items=[{"comment": thread.id, "text": "Agreed"}]),
+                call("word_comments", action="reply", items=[{"comment": thread.id, "text": "Done\nThanks",
+                                                              "resolve": True, "ref": "r"}])]
+        for reply in thread.replies[:1]:
+            out.append(call("word_comments", action="reply", items=[{"comment": reply.id, "text": "To a reply"}]))
+    for control in document.content_controls()[:8]:
+        out.append(call("word_comments", action="add", items=[{"target": control.id, "text": "On the control"}]))
+    out.append(call("word_comments", action="add", items=[{"target": "cc:NoSuch", "text": "x"}]))
+    if paragraphs:
+        pid, text = paragraphs[0]
+        out.append(call("word_comments", action="add", items=[{"find": text[:4], "within": pid, "text": "In"}]))
+        out += [call("word_comments", action="add", items=[{"target": pid}]),
+                call("word_comments", action="add", items=[{"text": "x"}]),
+                call("word_comments", action="add", items=[{"target": pid, "find": "x", "text": "x"}]),
+                call("word_comments", action="add", items=[{"target": f"{pid}@9999", "text": "x"}])]
+    out += [call("word_comments", action="reply", items=[{"comment": "c:00000000", "text": "x"}]),
+            call("word_comments", action="reply", items=[{"text": "x"}])]
+    return out + [tracked(case) for case in out]
+
+
 def fonts_of(document) -> dict:
     """The fonts docx-agent lays ``document`` out with, as docx2svg hands them to the Rust
     layout (``ooxml_core.WordFonts``): the Rust side lays out with the same."""

@@ -109,7 +109,9 @@ pub mod validate;
 mod work;
 
 pub use beside::{DeletePlaced, InsertBeside, Placed, Side, TextPlace};
-pub use comments::{CommentEdit, CommentEdited, CommentEdits, EditCommentText};
+pub use comments::{
+    AddComments, CommentEdit, CommentEdited, CommentEdits, CommentMade, CommentWrite, EditCommentText, Who,
+};
 pub use controls::{ControlEdited, ControlKind, FillControl, Filling, InsertControl, RemoveControl};
 pub use copying::{BlocksCopied, CopyBlocks, CopyRange, CopySource};
 pub use delete::{BlockDeleted, DeleteBlock};
