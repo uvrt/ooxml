@@ -92,6 +92,7 @@ impl Opened {
             number: self.version(),
             versions: &self.versions,
             placer: self.placer.as_deref(),
+            owned: None,
             others: ooxml_tools_word::Others::default(),
         }
     }
@@ -592,6 +593,7 @@ impl Session {
             made: &state.made,
             layout: context.layout.as_deref(),
             blobs: context.blobs.as_deref(),
+            written: &context.written,
             others: &state.others,
         };
         tool.run(arguments, &call)

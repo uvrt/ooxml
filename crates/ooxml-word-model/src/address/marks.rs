@@ -3,9 +3,9 @@
 //! any two markers (a comment's) in a view, with its text.
 //!
 //! [`Bookmarks`] holds every bookmark by name, for a caller that looks many up in one
-//! version (a field update's `REF`s and `PAGEREF`s): one walk, not one per name; the walk
-//! made of each block's markers ([`BlockMarks`]), which a caller may keep for a block while it
-//! is unchanged ([`bookmark_markers_with`]).
+//! version (a field update's `REF`s and `PAGEREF`s): one walk, not one per name;
+//! [`bookmark_named`] finds one name without listing them all (a caller looking up a few
+//! names in a long document).
 //!
 //! Must not: resolve block ids (the resolver does) or change the document.
 
@@ -13,9 +13,8 @@ use super::syntax::RangeText;
 use super::AddressError;
 use crate::docx::text::{offset_before, paragraph_text, View};
 use crate::docx::{Docx, StoryPart};
-use crate::ids::{Entry, W};
+use crate::ids::Entry;
 use ooxml_base::pyfmt::repr_str;
-use ooxml_xml::{Element, Node};
 use std::collections::{HashMap, HashSet};
 
 /// A bookmark: its name as written, its part, and its markers' places there.
@@ -31,190 +30,31 @@ pub struct Bookmark<'d> {
     pub end: Option<Box<[u32]>>,
 }
 
-/// The bookmark markers of one block (a part root's child, or the body's): each start's name,
-/// id and place, each end's id and place, in document order, places from the block (the
-/// block itself at `[]`).
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct BlockMarks {
-    starts: Vec<(String, String, Box<[u32]>)>,
-    ends: Vec<(String, Box<[u32]>)>,
-}
-
-impl BlockMarks {
-    /// The markers of `block` and of every element below it.
-    #[must_use]
-    pub fn of(block: &Element) -> BlockMarks {
-        let mut out = BlockMarks::default();
-        let mut visit = |e: &Element, path: &[u32]| {
-            if e.name().is(Some(W), "bookmarkStart") {
-                out.starts.push((attr(e, "name"), attr(e, "id"), path.into()));
-            } else if e.name().is(Some(W), "bookmarkEnd") {
-                out.ends.push((attr(e, "id"), path.into()));
-            }
-        };
-        visit(block, &[]);
-        every(block, &mut Vec::new(), &mut visit);
-        out
-    }
-
-    /// Its size in bytes, roughly (what a memo of it weighs).
-    #[must_use]
-    pub fn weight(&self) -> usize {
-        let path = |p: &[u32]| 16 + 4 * p.len();
-        64 + self
-            .starts
-            .iter()
-            .map(|(name, id, p)| 48 + name.len() + id.len() + path(p))
-            .sum::<usize>()
-            + self.ends.iter().map(|(id, p)| 24 + id.len() + path(p)).sum::<usize>()
-    }
-}
-
 /// Every bookmark's markers, name to (part, start, end), the first start of a name winning,
 /// in story and document order (docx-agent's `_bookmark_markers`).
 #[must_use]
 pub fn bookmark_markers(docx: &Docx) -> Vec<Bookmark<'_>> {
-    bookmark_markers_with(docx, &mut |block| std::sync::Arc::new(BlockMarks::of(block)))
-}
-
-/// As [`bookmark_markers`], each block's markers from `marks` (which may keep them while the
-/// block is unchanged: green elements are immutable).
-pub fn bookmark_markers_with<'d>(
-    docx: &'d Docx,
-    marks: &mut dyn FnMut(&std::sync::Arc<Element>) -> std::sync::Arc<BlockMarks>,
-) -> Vec<Bookmark<'d>> {
     let mut out: Vec<Bookmark<'_>> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
     for part in &docx.parts {
-        let held = part_blocks(part, marks);
-        let mut starts = Vec::new();
-        let mut ends: Vec<(&str, Box<[u32]>)> = Vec::new();
-        for (above, block) in &held {
-            starts.extend(
-                block
-                    .starts
-                    .iter()
-                    .map(|(name, id, p)| (name, id.as_str(), at(above, p))),
-            );
-            ends.extend(block.ends.iter().map(|(id, p)| (id.as_str(), at(above, p))));
-        }
+        // the part's facts hold its markers, read once per version (a block a later
+        // version shares is not walked again)
+        let facts = part.facts();
+        let (starts, ends) = (facts.bookmark_starts(), facts.bookmark_ends());
         // The last end of each id, as the walk back from the last one finds it.
         let mut last_end: HashMap<&str, &[u32]> = HashMap::new();
         for (id, path) in &ends {
-            last_end.insert(id, path);
+            last_end.insert(id.as_str(), path);
         }
         for (name, id, start) in starts {
-            if seen.contains(name) {
+            if !seen.insert(name.clone()) {
                 continue;
             }
-            seen.insert(name.clone());
-            let end = last_end.get(id).map(|p| Box::<[u32]>::from(*p));
-            out.push(Bookmark {
-                name: name.clone(),
-                part,
-                start,
-                end,
-            });
+            let end = last_end.get(id.as_str()).map(|p| Box::<[u32]>::from(*p));
+            out.push(Bookmark { name, part, start, end });
         }
     }
     out
-}
-
-/// The bookmark `name` names, as [`Bookmarks::get`] finds it, each block's markers from
-/// `marks` (as [`bookmark_markers_with`]): one name looked up without listing every
-/// bookmark of the version (what a caller looking up a few names in a long document wants).
-///
-/// # Errors
-/// `not_found` naming it.
-pub fn bookmark_with<'d>(
-    docx: &'d Docx,
-    name: &str,
-    marks: &mut dyn FnMut(&std::sync::Arc<Element>) -> std::sync::Arc<BlockMarks>,
-) -> Result<Bookmark<'d>, AddressError> {
-    let name = name.strip_prefix("bm:").unwrap_or(name);
-    let parts: Vec<(&StoryPart, Vec<PlacedMarks>)> = docx
-        .parts
-        .iter()
-        .map(|part| (&**part, part_blocks(part, marks)))
-        .collect();
-    // A name written as asked first, else one equal in any case (the first of either).
-    let folded = std::cell::OnceCell::new();
-    let matches: [&dyn Fn(&str) -> bool; 2] = [&|n: &str| n == name, &|n: &str| {
-        crate::docx::casefold(n) == *folded.get_or_init(|| crate::docx::casefold(name))
-    }];
-    for matches in matches {
-        for (part, held) in &parts {
-            let start = held.iter().find_map(|(above, block)| {
-                block
-                    .starts
-                    .iter()
-                    .find(|(n, _, _)| matches(n))
-                    .map(|(n, id, p)| (n, id, at(above, p)))
-            });
-            let Some((found, id, start)) = start else { continue };
-            // The last end of its id in its part.
-            let end = held.iter().rev().find_map(|(above, block)| {
-                block
-                    .ends
-                    .iter()
-                    .rev()
-                    .find(|(e, _)| e == id)
-                    .map(|(_, p)| at(above, p))
-            });
-            return Ok(Bookmark {
-                name: found.clone(),
-                part,
-                start,
-                end,
-            });
-        }
-    }
-    Err(no_bookmark(name))
-}
-
-/// A block's place in its part and its markers.
-type PlacedMarks = (Vec<u32>, std::sync::Arc<BlockMarks>);
-
-/// The blocks of `part` whose markers are read (each child of the root, the body's children
-/// in its place), with their places and markers from `marks`.
-fn part_blocks(
-    part: &StoryPart,
-    marks: &mut dyn FnMut(&std::sync::Arc<Element>) -> std::sync::Arc<BlockMarks>,
-) -> Vec<PlacedMarks> {
-    let mut held = Vec::new();
-    for (k, node) in part.root().children().iter().enumerate() {
-        let Node::Element(child) = node else { continue };
-        let k = u32::try_from(k).unwrap_or(u32::MAX);
-        if child.name().is(Some(W), "body") {
-            for (j, node) in child.children().iter().enumerate() {
-                let Node::Element(block) = node else { continue };
-                held.push((vec![k, u32::try_from(j).unwrap_or(u32::MAX)], marks(block)));
-            }
-        } else {
-            held.push((vec![k], marks(child)));
-        }
-    }
-    held
-}
-
-/// A marker's place in its part: its block's place, then its place in the block.
-fn at(above: &[u32], p: &[u32]) -> Box<[u32]> {
-    [above, p].concat().into_boxed_slice()
-}
-
-fn attr(e: &Element, local: &str) -> String {
-    e.attribute(Some(W), local).unwrap_or("").to_owned()
-}
-
-/// Every element below `root` (fallbacks included, as lxml's `iter` walks), with its place.
-fn every(root: &Element, path: &mut Vec<u32>, visit: &mut dyn FnMut(&Element, &[u32])) {
-    for (k, node) in root.children().iter().enumerate() {
-        let Node::Element(child) = node else { continue };
-        path.push(u32::try_from(k).unwrap_or(u32::MAX));
-        visit(child, path);
-        every(child, path, visit);
-        path.pop();
-    }
 }
 
 /// The bookmark `name` names (`bm:` optional; matched in any case where no name is equal).
@@ -223,6 +63,34 @@ fn every(root: &Element, path: &mut Vec<u32>, visit: &mut dyn FnMut(&Element, &[
 /// `not_found` naming it.
 pub fn bookmark<'d>(docx: &'d Docx, name: &str) -> Result<Bookmark<'d>, AddressError> {
     Bookmarks::of(docx).get(name).cloned()
+}
+
+/// The bookmark `name` names, as [`Bookmarks::get`] finds it -- written as asked first,
+/// else in any case; the first start of a name in story and document order; the last end
+/// of its id in its part -- read from the parts' facts without listing every bookmark.
+///
+/// # Errors
+/// `not_found` naming it.
+pub fn bookmark_named<'d>(docx: &'d Docx, name: &str) -> Result<Bookmark<'d>, AddressError> {
+    let name = name.strip_prefix("bm:").unwrap_or(name);
+    let folded = std::cell::OnceCell::new();
+    let exact = |n: &str| n == name;
+    let any_case = |n: &str| crate::docx::casefold(n) == *folded.get_or_init(|| crate::docx::casefold(name));
+    for matches in [&exact as &dyn Fn(&str) -> bool, &any_case] {
+        for part in &docx.parts {
+            let facts = part.facts();
+            if let Some((found, id, start)) = facts.bookmark_start(matches) {
+                let end = facts.bookmark_end(&id);
+                return Ok(Bookmark {
+                    name: found,
+                    part,
+                    start,
+                    end,
+                });
+            }
+        }
+    }
+    Err(no_bookmark(name))
 }
 
 /// Every bookmark of a version by name, found as [`bookmark`] finds one.
@@ -237,12 +105,7 @@ impl<'d> Bookmarks<'d> {
     /// `docx`'s bookmarks.
     #[must_use]
     pub fn of(docx: &'d Docx) -> Bookmarks<'d> {
-        Bookmarks::of_markers(bookmark_markers(docx))
-    }
-
-    /// The bookmarks `markers` (as [`bookmark_markers`] finds them) are.
-    #[must_use]
-    pub fn of_markers(markers: Vec<Bookmark<'d>>) -> Bookmarks<'d> {
+        let markers = bookmark_markers(docx);
         let mut exact = HashMap::new();
         let mut folded = HashMap::new();
         for (k, marker) in markers.iter().enumerate() {

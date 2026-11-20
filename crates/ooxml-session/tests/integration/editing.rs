@@ -189,6 +189,42 @@ fn the_save_gate_refuses_new_problems_and_the_bridge_feeds_the_ledger() {
 }
 
 #[test]
+fn a_check_of_the_document_alone_is_the_sessions() {
+    let s = session();
+    let d = s
+        .open(docx(&paragraph("11111111", "one")), DocKind::Docx, "a.docx")
+        .unwrap();
+    let asked = json!({"doc": "d1", "include": ["validate", "fields", "app"]});
+    let reply = call(&s, "check", asked.clone(), &CallContext::default());
+    assert_eq!(reply["summary"], "Checked validate, fields, app");
+    let data = &reply["data"];
+    assert_eq!(
+        data["validate"],
+        json!({"new": [], "fixed": [], "baseline": 0, "problems": []})
+    );
+    assert_eq!(data["fields"]["counts"], json!({}));
+    assert_eq!(data["app_findings"], Value::Null);
+    let parts: Vec<&String> = data["timing"].as_object().unwrap().keys().collect();
+    assert_eq!(parts, ["validate", "fields"]);
+    // a repeated paragraph id: a new problem, against the problems the document opened with
+    let twice = format!("{}{}", paragraph("11111111", "one"), paragraph("11111111", "two"));
+    put(&s, &d, &twice, &CallContext::default());
+    let validate = &call(&s, "check", asked, &CallContext::default())["data"]["validate"];
+    assert_eq!(validate["new"].as_array().unwrap().len(), 1);
+    assert!(validate["new"][0].as_str().unwrap().starts_with("[paraid-repeated]"));
+    assert_eq!(validate["problems"], validate["new"]);
+    // what needs the layout is the host's
+    for asked in [
+        json!({"doc": "d1"}),
+        json!({"doc": "d1", "include": ["validate", "reflow"]}),
+        json!({"doc": "d1", "include": ["validate"], "range": "p:11111111"}),
+    ] {
+        let result = s.call("check", asked, &CallContext::default());
+        assert_eq!(result.unported(), [ooxml_tools_word::CHECK_LAYOUT.to_owned()]);
+    }
+}
+
+#[test]
 fn bridged_calls_are_counted_by_tool() {
     let s = session();
     let d = s
@@ -400,4 +436,59 @@ fn retired_ids_say_who_removed_them_and_an_undone_deletion_is_back() {
     s.seed_retired(&d, vec![(HeldId::Drawing(4), 3, Some("word_delete (agent=a)".into()))])
         .unwrap();
     assert_eq!(s.retired(&d).unwrap().len(), 2);
+}
+
+fn part_of(session: &Session, doc: &DocId, name: &str) -> Option<String> {
+    let saved = session.save(doc).unwrap();
+    let package = ooxml_opc::Package::open(Arc::from(saved), &Limits::default()).unwrap();
+    package
+        .read(name)
+        .unwrap()
+        .map(|data| String::from_utf8(data.to_vec()).unwrap())
+}
+
+#[test]
+fn a_value_written_by_reference_is_kept_on_its_paragraph() {
+    let s = session();
+    let d = s
+        .open(docx(&paragraph("22222222", "two word there")), DocKind::Docx, "a.docx")
+        .unwrap();
+    // the host wrote "3.5" for {{d:scores/Alpha/rating}} at characters 6..9 of the text
+    let record = json!({"source": "d:scores/Alpha/rating", "text": "3.5"});
+    let mut context = as_caller("w1");
+    context.written = ooxml_tools_word::Written::list_from_json(&json!([{
+        "field": "text", "start": 6, "end": 9, "text": "3.5", "record": record,
+        "brief": {"from": "d:scores/Alpha/rating", "text": "3.5"},
+    }]))
+    .unwrap();
+    let reply = call(
+        &s,
+        "word_set_text",
+        json!({"doc": "d1", "target": "p:22222222", "text": "Rated 3.5 today"}),
+        &context,
+    );
+    assert_eq!(
+        reply["data"]["facts"],
+        json!([{"from": "d:scores/Alpha/rating", "text": "3.5"}]),
+        "{reply}"
+    );
+    let item = part_of(&s, &d, "customXml/item1.xml").expect("the item is made");
+    assert!(
+        item.ends_with(
+            r#"<prov:source kind="text" key="p:22222222">{"v":1,"paragraph":"Rated 3.5 today","facts":[{"source":"d:scores/Alpha/rating","text":"3.5","p":0,"at":6}]}</prov:source></prov:sources>"#
+        ),
+        "{item}"
+    );
+    let props = part_of(&s, &d, "customXml/itemProps1.xml").unwrap();
+    assert!(props.contains("ds:itemID=\"{"), "{props}");
+    assert!(part_of(&s, &d, "word/_rels/document.xml.rels").is_some_and(|r| r.contains("customXml/item1.xml")));
+    // the value edited by hand: its fact goes, and with the last entry the item
+    call(
+        &s,
+        "word_set_text",
+        json!({"doc": "d1", "target": "p:22222222", "text": "Rated 4 today"}),
+        &as_caller("w1"),
+    );
+    assert!(part_of(&s, &d, "customXml/item1.xml").is_none());
+    assert!(part_of(&s, &d, "customXml/itemProps1.xml").is_none());
 }

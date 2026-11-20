@@ -1,12 +1,11 @@
-//! A bookmark looked up by name alone (`bookmark_with`) is the one every bookmark listed
+//! A bookmark looked up by name alone (`bookmark_named`) is the one every bookmark listed
 //! finds (`Bookmarks::get`): written as asked first, else in any case, the first start of a
 //! name, the last end of its id in its part.
 #![allow(clippy::unwrap_used)]
 
 use crate::support::{package, Parts};
-use ooxml_word_model::address::marks::{bookmark_with, BlockMarks, Bookmark, Bookmarks};
+use ooxml_word_model::address::marks::{bookmark_named, Bookmark, Bookmarks};
 use ooxml_word_model::docx::Docx;
-use std::sync::Arc;
 
 fn start(name: &str, id: u32) -> String {
     format!(r#"<w:bookmarkStart w:id="{id}" w:name="{name}"/>"#)
@@ -53,7 +52,6 @@ fn one_name_found_as_all_find_it() {
     }))
     .unwrap();
     let all = Bookmarks::of(&docx);
-    let mut fresh = |block: &Arc<ooxml_xml::Element>| Arc::new(BlockMarks::of(block));
     for name in [
         "Intro",
         "Twice",
@@ -65,9 +63,9 @@ fn one_name_found_as_all_find_it() {
         "Missing",
         "",
     ] {
-        let alone = bookmark_with(&docx, name, &mut fresh).map(|b| place(&b)).ok();
+        let alone = bookmark_named(&docx, name).map(|b| place(&b)).ok();
         let listed = all.get(name).map(place).ok();
         assert_eq!(alone, listed, "{name}");
     }
-    assert!(bookmark_with(&docx, "TWICE", &mut fresh).is_ok_and(|b| b.name == "Twice"));
+    assert!(bookmark_named(&docx, "TWICE").is_ok_and(|b| b.name == "Twice"));
 }

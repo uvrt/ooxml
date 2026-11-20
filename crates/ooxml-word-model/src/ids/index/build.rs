@@ -96,9 +96,10 @@ impl PartIds {
             out.before = Arc::new(before);
             out.after = Arc::new(after);
         }
-        for (start, old_end, new_end) in old.changed_spans(new) {
-            let fresh: Vec<Node> = new.iter().skip(start).take(new_end - start).cloned().collect();
-            out.replace(start, old_end, &fresh);
+        // the last run first: the places before it are still the old version's
+        for run in ooxml_xml::changed_runs(old, new).into_iter().rev() {
+            let fresh: Vec<Node> = run.new.filter_map(|k| new.get(k).cloned()).collect();
+            out.replace(run.old.start, run.old.end, &fresh);
         }
         out
     }

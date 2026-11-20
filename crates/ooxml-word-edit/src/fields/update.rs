@@ -211,7 +211,7 @@ fn pass(
         .filter_map(|k| now.get(k))
         .filter(|l| matches!(l.found.keyword().as_str(), "REF" | "PAGEREF"))
         .count();
-    let mut marks = Marks::of(sink.doc(), &docx, names);
+    let mut marks = Marks::of(&docx, names);
     for known in order {
         let Some(located) = now.get(&known).cloned() else {
             continue;
@@ -232,7 +232,7 @@ fn pass(
             }
             docx = sink.docx()?;
             now = identified(sink.doc(), &docx, held).into_iter().collect();
-            marks = Marks::of(sink.doc(), &docx, names);
+            marks = Marks::of(&docx, names);
             continue;
         }
         match value(sink.doc(), (&docx, &marks), &located, pass.laid.as_deref(), pass.today) {

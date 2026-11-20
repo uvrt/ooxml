@@ -87,7 +87,9 @@ const H0: [u32; 8] = [
 #[derive(Clone)]
 pub(crate) struct Sha256 {
     state: [u32; 8],
-    block: Vec<u8>,
+    /// The bytes of the block being filled, `filled` of them.
+    block: [u8; 64],
+    filled: usize,
     length: u64,
 }
 
@@ -96,21 +98,26 @@ impl Sha256 {
     pub(crate) fn new() -> Sha256 {
         Sha256 {
             state: H0,
-            block: Vec::with_capacity(64),
+            block: [0; 64],
+            filled: 0,
             length: 0,
         }
     }
 
     /// Add `data`.
-    pub(crate) fn update(&mut self, data: &[u8]) {
+    pub(crate) fn update(&mut self, mut data: &[u8]) {
         self.length = self.length.wrapping_add(data.len() as u64);
-        for &byte in data {
-            self.block.push(byte);
-            if self.block.len() == 64 {
-                let block = std::mem::take(&mut self.block);
-                compress(&mut self.state, &block);
-                self.block = block;
-                self.block.clear();
+        while !data.is_empty() {
+            let take = (64 - self.filled).min(data.len());
+            let (now, rest) = data.split_at(take);
+            if let Some(room) = self.block.get_mut(self.filled..self.filled + take) {
+                room.copy_from_slice(now);
+            }
+            self.filled += take;
+            data = rest;
+            if self.filled == 64 {
+                compress(&mut self.state, &self.block);
+                self.filled = 0;
             }
         }
     }
@@ -118,13 +125,22 @@ impl Sha256 {
     /// The digest.
     pub(crate) fn finish(mut self) -> [u8; 32] {
         let bits = self.length.wrapping_mul(8);
-        self.update(&[0x80]);
-        while self.block.len() != 56 {
-            self.update(&[0]);
+        // the 0x80 byte, zeros to 56 bytes of the last block (a block more when no room), the length
+        let pad = if self.filled < 56 {
+            56 - self.filled
+        } else {
+            120 - self.filled
+        };
+        let mut tail = [0_u8; 72];
+        if let Some(first) = tail.first_mut() {
+            *first = 0x80;
         }
-        self.block.extend_from_slice(&bits.to_be_bytes());
-        let block = std::mem::take(&mut self.block);
-        compress(&mut self.state, &block);
+        if let Some(room) = tail.get_mut(pad..pad + 8) {
+            room.copy_from_slice(&bits.to_be_bytes());
+        }
+        let length = self.length;
+        self.update(tail.get(..pad + 8).unwrap_or_default());
+        self.length = length;
         let mut out = [0_u8; 32];
         for (chunk, word) in out.as_chunks_mut::<4>().0.iter_mut().zip(self.state) {
             *chunk = word.to_be_bytes();
@@ -180,7 +196,7 @@ fn compress(state: &mut [u32; 8], block: &[u8]) {
 
 #[cfg(test)]
 mod tests {
-    use super::sha256;
+    use super::{sha256, Sha256};
 
     fn hex(bytes: &[u8]) -> String {
         bytes.iter().map(|b| format!("{b:02x}")).collect()
@@ -200,6 +216,15 @@ mod tests {
         assert_eq!(
             hex(&sha256(long)),
             "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"
+        );
+        // a million a's, given in pieces that straddle blocks
+        let mut hash = Sha256::new();
+        for _ in 0..10_000 {
+            hash.update(&[b'a'; 100]);
+        }
+        assert_eq!(
+            hex(&hash.finish()),
+            "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0"
         );
     }
 }

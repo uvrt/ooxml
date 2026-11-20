@@ -8,6 +8,7 @@
 //! Must not: lay out, or write but through the sink.
 
 mod caption;
+mod facts;
 mod insert;
 mod insert_toc;
 mod pages;
@@ -20,6 +21,7 @@ mod values;
 mod write;
 
 pub use caption::InsertCaption;
+pub use facts::{field_facts, FieldFacts};
 pub(crate) use insert::{place, put_back, Place};
 pub use insert::{InsertCrossReference, InsertField};
 pub use insert_toc::InsertToc;

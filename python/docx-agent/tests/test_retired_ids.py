@@ -252,6 +252,43 @@ def test_a_deleted_drawing_s_number_is_not_given_to_the_next():
 # -- a document saved and opened again ----------------------------------------------------------
 
 
+def _drawing_numbers(data: bytes) -> list[int]:
+    """Every ``wp:docPr/@id`` of the main part, in order."""
+    import io
+    import re
+    import zipfile
+
+    body = zipfile.ZipFile(io.BytesIO(data)).read("word/document.xml").decode()
+    return [int(v) for v in re.findall(r'<wp:docPr id="(\d+)"', body)]
+
+
+def test_a_copy_into_a_reopened_document_keeps_no_drawing_number_it_retired(box):
+    """P4f5: a drawing number the document retired before it was saved stays retired once
+    it is opened again with its state -- a picture copied in that has that number takes
+    another, on the Python path and on the Rust session's alike (the host passes the
+    numbers it retired)."""
+    document = Document.new()
+    anchor = document.append_paragraph("Pictures here.").id
+    document.insert_picture(f"{anchor}@0", png(), alt_text="Kept")
+    gone = document.insert_picture(f"{anchor}@0", png(), alt_text="Gone").id
+    document.picture(gone).delete()
+    (kept,) = _drawing_numbers(document.to_bytes())
+    source = Document.new()
+    held = source.append_paragraph("A picture.").id
+    first = source.insert_picture(f"{held}@0", png(), alt_text="First").id
+    source.insert_picture(f"{held}@0", png(), alt_text="Second")
+    source.picture(first).delete()
+    (retired,) = _drawing_numbers(source.to_bytes())
+    assert retired != kept and retired in document._ledger.drawings_gone
+    session = box.session()
+    doc = session.open(document.to_bytes(), "report.docx", state=document.id_state())
+    other = session.open(source.to_bytes(), "source.docx")
+    copied = box.dispatch(session, "word_copy_from", {"doc": doc, "source_doc": other, "range": held, "at": "end"})
+    assert copied.ok, copied.to_json()
+    numbers = _drawing_numbers(session.entry(doc).document.to_bytes())
+    assert len(numbers) == 2 and retired not in numbers, numbers
+
+
 def test_reopened_the_sequence_goes_on_after_the_last_id_the_file_has():
     document = Document.new()
     document.insert_markdown("\n\n".join(f"Line {k}." for k in range(12)))
