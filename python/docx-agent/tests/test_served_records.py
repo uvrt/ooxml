@@ -149,3 +149,64 @@ def test_served_edits_follow_the_records_as_docx_agent_does(toolbox, request, ca
         assert b'"text":"second","at":6,"p":0' in rust[0]["item"]
     if case == "every record gone":
         assert rust[-1]["item"] is None and b"customXml" not in rust[-1]["names"]
+
+
+# -- word_changes (docx-agent's _follow_review) --------------------------------------------------
+
+
+def _tracked(data: bytes, tables: tuple[str, ...]) -> bytes:
+    """``data`` with tracked changes in the recorded tables: a cell's text changed in
+    t:6B000029, t:6B000033's first row deleted (accepting renames that table)."""
+    document = Document.open(data)
+    with document.tracking(author="Reviewer", date="2026-11-20T10:00:00Z"):
+        if "t:6B000029" in tables:
+            document.table("t:6B000029").cell(1, 0).paragraphs[0].set_text("Changed")
+        if "t:6B000033" in tables:
+            document.table("t:6B000033").delete_row(0)
+    return document.to_bytes()
+
+
+@pytest.fixture(scope="module")
+def reviewed(recorded) -> bytes:
+    return _tracked(recorded, ("t:6B000029", "t:6B000033"))
+
+
+@pytest.fixture(scope="module")
+def reviewed_alone() -> bytes:
+    """Only t:6B000033's record, its first row deleted as a tracked change."""
+    document = Document.open(FIXTURE.read_bytes())
+    assert document.store_provenance("t:6B000033", RECORD)
+    return _tracked(document.to_bytes(), ("t:6B000033",))
+
+
+def _review(call: object, arguments: dict) -> dict:
+    from docx_agent.rust.reads import _refs
+
+    return {**{k: v for k, v in arguments.items() if k != "doc"}, "within": _refs(call, arguments.get("within"))}
+
+
+REVIEWS = {
+    "accept all": ("reviewed", [("word_changes", {"action": "accept", "all": True})], True),
+    "reject all": ("reviewed", [("word_changes", {"action": "reject", "all": True})], True),
+    "accept within the renamed table": ("reviewed", [("word_changes", {"action": "accept",
+                                                                      "within": "t:6B000033"})], True),
+    "reject within the other table": ("reviewed", [("word_changes", {"action": "reject",
+                                                                    "within": "t:6B000029"})], True),
+    # moving the only record makes the item again: the session leaves it to docx-agent
+    "accept moving the only record": ("reviewed_alone", [("word_changes", {"action": "accept", "all": True})],
+                                      False),
+}
+
+
+@pytest.mark.parametrize("case", list(REVIEWS))
+def test_served_reviews_follow_the_records_as_docx_agent_does(toolbox, request, case, monkeypatch):
+    fixture, calls, served = REVIEWS[case]
+    data = request.getfixturevalue(fixture)
+    monkeypatch.setitem(edits.SERVED, "word_changes", _review)
+    rust = _run(toolbox, data, calls, served=served)
+    monkeypatch.setattr(edits, "SERVED", {})
+    python = _run(toolbox, data, calls, served=False)
+    for k, (ours, theirs) in enumerate(zip(rust, python)):
+        for key in theirs:
+            assert ours[key] == theirs[key], (case, k, key, ours[key], theirs[key])
+    assert rust[0]["item"] != _kept(data)["item"]
