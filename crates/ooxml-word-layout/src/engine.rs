@@ -80,6 +80,8 @@ pub struct LayoutMemo {
     text_box_labels: std::sync::OnceLock<Arc<std::collections::HashMap<String, Option<String>>>>,
     /// Each page's facts, made when first asked.
     page_facts: std::sync::OnceLock<Arc<[std::sync::OnceLock<Option<crate::facts::PageFacts>>]>>,
+    /// Its body's paragraphs in document order, cells included.
+    paragraphs: std::sync::OnceLock<Arc<[Arc<ooxml_word_model::model::Paragraph>]>>,
 }
 
 impl DocumentLayout {
@@ -89,6 +91,15 @@ impl DocumentLayout {
         self.memo
             .story_texts
             .get_or_init(|| Arc::new(crate::page_stories::story_texts(self, locale, &self.roles)))
+    }
+
+    /// Its body's paragraphs in document order, cells included
+    /// ([`crate::flow::body_paragraphs`]), made when first asked: its field values, facts
+    /// and warnings each read them.
+    pub fn body_paragraphs(&self) -> &Arc<[Arc<ooxml_word_model::model::Paragraph>]> {
+        self.memo
+            .paragraphs
+            .get_or_init(|| crate::flow::body_paragraphs(&self.document.body).0.into())
     }
 
     /// The paths its drawn lines can be of, made when first asked.
