@@ -5,7 +5,7 @@
 //! change (pages after it moved, not laid out again) ([`repaginate`]).
 //!
 //! Must not: decide anything a full pagination would not: the result equals paginating
-//! the new flow from its start (the property `tests/relayout.rs` checks).
+//! the new flow from its start (the property `tests/integration/relayout.rs` checks).
 
 use crate::flow::FlowItem;
 use crate::paginate::{LaidPage, LineStore, PageContext, Pagination, Paginator, Position, Resume};

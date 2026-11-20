@@ -11,7 +11,7 @@
 //! and the full recompute. It runs on one thread, so its CPU time is at most its wall time;
 //! measure the process's CPU with `/usr/bin/time`.
 
-#[path = "../tests/support/labels.rs"]
+#[path = "../tests/integration/labels.rs"]
 mod labels;
 
 use labels::{full, generate, labels, Block, Budget, ListItems};

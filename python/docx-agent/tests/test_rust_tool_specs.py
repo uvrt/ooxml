@@ -3,7 +3,7 @@
 ``crates/ooxml-tools`` builds a tool's schema, validation schema and declarations from one
 Rust struct (``#[derive(ToolArgs)]``).  Three of today's tools are ported there as examples
 (``crates/ooxml-tools/tests/ported``), and their exports are kept in
-``crates/ooxml-tools/tests/golden``; the Rust test ``tests/equality.rs`` holds the generated
+``crates/ooxml-tools/tests/golden``; the Rust test ``tests/integration/equality.rs`` holds the generated
 exports to those files byte for byte.  This test holds the same files to today's Python
 definitions byte for byte, and runs today's checker and adapters on them unchanged: a
 ``Tool`` made from a golden passes ``definition_problems`` (``subset_problems`` with the
@@ -98,7 +98,7 @@ def test_the_rust_schemas_pass_todays_checker_and_adapters(name):
 # today's dispatcher makes of them before a handler runs: the arguments as meant (aliases,
 # defaults, JSON strings, validation, exactly-one groups, then the kind rules for the call's
 # document kind) and the notes, or the refusal (code, message, field, valid options).  This
-# test holds the file to today's Python; ``crates/ooxml-tools/tests/calls.rs`` holds the Rust
+# test holds the file to today's Python; ``crates/ooxml-tools/tests/integration/calls.rs`` holds the Rust
 # contract to the same file.  The Rust refusals also carry a ``try_call`` (rule 2), which
 # today's do not: that is outside what is compared.
 

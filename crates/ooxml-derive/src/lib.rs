@@ -11,7 +11,7 @@
 //! Must not: know any format, any document type or any particular fact; read the clock or
 //! hold global state. A fact (list labels, heading numbers, the block-to-page index)
 //! lives with its format and ships an oracle that recomputes it from scratch, against which
-//! property tests check the incremental result (tests/list_labels.rs is the reference).
+//! property tests check the incremental result (tests/integration/list_labels.rs is the reference).
 #![forbid(unsafe_code)]
 
 mod blocks;
