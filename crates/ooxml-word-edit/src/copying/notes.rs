@@ -2,12 +2,12 @@
 //! importer copies them (`_notes`, `_stamp_notes`): per kind, the references in document
 //! order, each given the next number of this document's notes part (made, with the other
 //! kind's, where it has none) and a copy of its note there -- the note's content as the
-//! source shows it now, with its styles, lists, relationships, bookmarks and drawing
-//! numbers brought like a block's -- and once the blocks are stamped, every paragraph and row of a copied
+//! source shows it now, with its styles, lists, relationships, bookmarks, drawing numbers
+//! and control ids brought like a block's -- and once the blocks are stamped, every paragraph and row of a copied
 //! note given new ids. A reference to a note the source lacks stays as it is; references
 //! of a kind the source has no part for are dropped.
 //!
-//! A note holding a content control or a comment is left to the host.
+//! A note holding a comment is left to the host.
 //!
 //! Must not: write a notes part but through the copy's [`Space`].
 
@@ -32,7 +32,8 @@ type ById = HashMap<String, Arc<Element>>;
 pub(super) struct NotesCopied {
     /// Each note copied: its notes part and its copy there.
     made: Vec<(String, Id)>,
-    /// Each source note and its copy (`fn:2` -> `fn:5`), in order.
+    /// Each source note and its copy (`fn:2` -> `fn:5`), each after its controls' ids
+    /// changed (`sdt#7` -> `sdt#12`), in order.
     pub(super) copied: Vec<(String, String)>,
 }
 
@@ -99,6 +100,8 @@ pub(super) fn bring(
             bringer.content(sink, into, &content, (&source_part, &part))?;
             bringer.bookmarks(sink, into, &content)?;
             crate::imported::keep_or_renumber_drawings(sink, into, &content)?;
+            let controls = bringer.controls(sink, into, &content)?;
+            out.copied.extend(controls);
             let root = into.root();
             into.append(root, copy);
             out.made.push((part.clone(), copy));
@@ -176,15 +179,6 @@ fn source_notes(source: &Docx, kind: NoteKind) -> Result<Option<(String, ById)>>
 
 /// What in a copied note's content this port leaves to the host, if anything.
 fn left_to_host(work: &Work, content: &[Id]) -> Option<&'static str> {
-    let kinds: [(&[&str], &'static str); 2] = [
-        (&["sdt"], "a copied note holding a content control"),
-        (
-            &["commentRangeStart", "commentRangeEnd", "commentReference"],
-            "a copied note holding a comment",
-        ),
-    ];
-    kinds
-        .into_iter()
-        .find(|(locals, _)| holds(work, content, locals))
-        .map(|(_, what)| what)
+    let comments = ["commentRangeStart", "commentRangeEnd", "commentReference"];
+    holds(work, content, &comments).then_some("a copied note holding a comment")
 }

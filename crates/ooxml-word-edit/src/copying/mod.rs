@@ -17,11 +17,12 @@
 //!
 //! The notes and comments the copies hold are copied with them ([`notes`], [`comments`]),
 //! their content brought as the blocks' is ([`content`]); their bookmarks renamed where
-//! this document has the name, or dropped ([`BookmarkPolicy`], [`bookmarks`]).
+//! this document has the name, or dropped ([`BookmarkPolicy`], [`bookmarks`]); their
+//! content controls given ids no control has ([`crate::imported::Controls`]), a
+//! block-level control a top-level block of its own in the reply.
 //!
 //! Not ported yet ([`EditError::Unsupported`]: the host copies such blocks its own way):
-//! the copy tracked, `replace:`, and copies holding content controls (in a block or a
-//! note), or a comment holding a drawing.
+//! the copy tracked, `replace:`, a note holding a comment, a comment holding a drawing.
 //!
 //! Must not: write but through the sink, or know a tool's JSON.
 
@@ -50,6 +51,7 @@ use crate::stamping::stamp_document;
 use crate::work::{Id, Work};
 use crate::{EditError, Ids, Result, WordDoc};
 use ooxml_store::{Command, Txn};
+use ooxml_word_model::docx::controls::controls;
 use ooxml_word_model::docx::Docx;
 use source::Selected;
 use std::sync::Arc;
@@ -264,6 +266,7 @@ impl CopyBlocks {
         let anchor = stretch.anchor(&place);
         let space = Space::default();
         let styles = styles::Styles::new(sink, source, self.policies(), &place)?;
+        let from = stretch.from;
         let work = &mut stretch.work;
         let mut elements = copies(work, &selected)?;
         if view::holds(work, &elements, &NOTED) {
@@ -274,6 +277,7 @@ impl CopyBlocks {
             space,
             parts: parts::Parts::new(&source.package, sink),
             bookmarks: bookmarks::Bookmarks::new(self.bookmarks),
+            controls: crate::imported::Controls::default(),
         };
         bringer.content(sink, work, &elements, (&selected.part, &place.part))?;
         let mut stories = Space::default();
@@ -281,6 +285,7 @@ impl CopyBlocks {
         let comments = comments::bring(sink, &mut bringer, &mut stories, (source, work), &elements)?;
         bringer.bookmarks(sink, work, &elements)?;
         crate::imported::keep_or_renumber_drawings(sink, work, &elements)?;
+        let controls = bringer.controls(sink, work, &elements)?;
         let root = work.root();
         for &element in &elements {
             match anchor {
@@ -289,6 +294,7 @@ impl CopyBlocks {
             }
         }
         close_table(work, &mut elements);
+        let placed = placed_controls(work, &place, from, &elements);
         let mut stamped = stamp::stamp(sink, work, &place, &elements)?;
         let mut note_ids = Vec::new();
         let notes_parts = notes.stamp(sink, &mut stories, &mut note_ids)?;
@@ -307,8 +313,10 @@ impl CopyBlocks {
         for (part, drawings) in notes_parts.into_iter().chain(comments_part) {
             sink.ensure_w14(&part, drawings, &[])?;
         }
-        // docx-agent's `copied`: the notes' and comments' first, then the blocks'
-        let blocks = source_ids
+        let (blocks, top_controls) = top_blocks(sink, (source, &selected), &place, &placed, &stamped.per_element)?;
+        // docx-agent's `copied`: the notes', comments' and controls' first, then the blocks',
+        // then the block-level controls'
+        let block_ids = source_ids
             .iter()
             .zip(&stamped.per_element)
             .flat_map(|(o, n)| o.iter().zip(n));
@@ -317,10 +325,11 @@ impl CopyBlocks {
                 .copied
                 .iter()
                 .chain(&comments.copied)
+                .chain(&controls)
                 .map(|(o, n)| (o, n))
-                .chain(blocks),
+                .chain(block_ids)
+                .chain(top_controls.iter().map(|(o, n)| (o, n))),
         );
-        let blocks = top_blocks(&stamped.per_element);
         Ok(BlocksCopied {
             id: blocks.first().cloned(),
             created: stamped.created,
@@ -332,18 +341,67 @@ impl CopyBlocks {
     }
 }
 
-/// Each copied block's own id, where it has one (the top-level blocks made).
-fn top_blocks(per_element: &[Vec<String>]) -> Vec<String> {
-    per_element
+/// Where each of `elements` (placed in the stretch `work` of the container at `place`,
+/// whose first child is the container's child `from`) that is a block-level content
+/// control is in the part.
+fn placed_controls(work: &Work, place: &Place, from: u32, elements: &[Id]) -> Vec<Option<Box<[u32]>>> {
+    elements
         .iter()
-        .filter_map(|ids| ids.first().filter(|id| !id.is_empty()).cloned())
+        .map(|&e| {
+            let index = work.index(e).filter(|_| work.is(e, W, "sdt"))?;
+            let index = from + u32::try_from(index).ok()?;
+            Some(place.container.iter().copied().chain([index]).collect())
+        })
         .collect()
+}
+
+/// The top-level blocks made, as docx-agent's `copy_blocks` lists them: a block-level
+/// content control's id in this document (`cc:...`), each other block's own id where it
+/// has one; and each copied control's source id with its copy's.
+///
+/// # Errors
+/// A placed control this document does not list.
+fn top_blocks(
+    sink: &mut EditSink<'_, '_>,
+    (source, selected): (&Docx, &Selected),
+    place: &Place,
+    placed: &[Option<Box<[u32]>>],
+    per_element: &[Vec<String>],
+) -> Result<(Vec<String>, Vec<(String, String)>)> {
+    let mut found = None;
+    let mut blocks = Vec::new();
+    let mut copied = Vec::new();
+    for (k, ids) in per_element.iter().enumerate() {
+        let Some(path) = placed.get(k).and_then(Option::as_ref) else {
+            blocks.extend(ids.first().filter(|id| !id.is_empty()).cloned());
+            continue;
+        };
+        if found.is_none() {
+            sink.read_everything();
+            found = Some((controls(&sink.docx()?), controls(source)));
+        }
+        let Some((here, there)) = &found else { continue };
+        let id = here
+            .iter()
+            .find(|c| c.part == place.part && c.path == *path)
+            .map(|c| c.id.clone())
+            .ok_or_else(|| EditError::Path(place.part.clone()))?;
+        let original = selected
+            .blocks
+            .get(k)
+            .and_then(|(at, _)| there.iter().find(|c| c.part == selected.part && *c.path == at[..]));
+        if let Some(original) = original {
+            copied.push((original.id.clone(), id.clone()));
+        }
+        blocks.push(id);
+    }
+    Ok((blocks, copied))
 }
 
 /// The source blocks copied into `work` (detached), each as the source shows it now.
 ///
 /// # Errors
-/// [`EditError::Unsupported`] for what the copies hold that is left to the host.
+/// A block that cannot be copied.
 fn copies(work: &mut Work, selected: &Selected) -> Result<Vec<Id>> {
     let mut elements = Vec::with_capacity(selected.blocks.len());
     for (_, element) in &selected.blocks {
@@ -353,10 +411,7 @@ fn copies(work: &mut Work, selected: &Selected) -> Result<Vec<Id>> {
         view::current_view(work, copy);
         elements.push(copy);
     }
-    match view::left_to_host(work, &elements) {
-        Some(what) => Err(EditError::Unsupported(what.to_owned())),
-        None => Ok(elements),
-    }
+    Ok(elements)
 }
 
 /// Each old id with the new id it was last given, in the order first given (a dict's
