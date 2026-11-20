@@ -3,8 +3,9 @@
 //! (opening not counted), over one page engine kept for the document as a host keeps it (its first layout timed
 //! apart): before each call the engine has laid out the version the call starts from, as a host's kept layout
 //! has, and the fields have been listed once (the document's field scans, as a session keeps them).
-//! `FIELDS_CALLS=footer,one` (names: update, again, one, toc, footer) runs only those; `again` is an update
-//! of every field after one has updated them (not counted).
+//! `FIELDS_CALLS=footer,one` (names: update, again, one, toc, footer) runs only those; `again` (asked by name
+//! only, to keep the gates' bench within its limit) is an update of every field after one
+//! has updated them (not counted).
 //!
 //! Must not: run without the variable; it is a timing, not a test.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
@@ -177,7 +178,7 @@ fn run_calls(bytes: &Arc<[u8]>, layout: &Timed, ids: &[String]) {
             layout.take()
         );
     };
-    let calls = std::env::var("FIELDS_CALLS").unwrap_or_else(|_| "update,again,one,toc,footer".to_owned());
+    let calls = std::env::var("FIELDS_CALLS").unwrap_or_else(|_| "update,one,toc,footer".to_owned());
     let wanted = |name: &str| calls.split(',').any(|c| c == name);
     if wanted("update") {
         report(
