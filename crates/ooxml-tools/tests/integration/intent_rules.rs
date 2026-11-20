@@ -88,7 +88,7 @@ fn alias_when() {
     let both = When::accept(json!({"doc": "d1", "slide": "2", "target": "3", "action": "add"}), None);
     assert!(both.unwrap_err().message().contains("say the same"));
     let export = When::spec().export(None);
-    assert_eq!(export["aliases"], json!({"slide": "when:action=add:target"}));
+    assert_eq!(export["aliases"], json!({"slide": {"name": "target", "when": {"action": "add"}}}));
 }
 
 #[test]

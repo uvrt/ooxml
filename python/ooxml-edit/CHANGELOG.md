@@ -6,6 +6,12 @@ earlier ones were never tagged.
 
 ## 0.124.1 -- unreleased
 
+- **`AliasWhen(name, argument, value)`**, a `Tool.aliases` entry read as `name` only while
+  `argument` has `value` (`edit_chart`'s `slide`, its `target` when adding). The definition
+  check holds `name` and `argument` to parameters, and the Rust session's tool export writes
+  the same entry as `{"name", "when": {argument: value}}` (`exported`, `of_export`), which
+  docx-agent reads back as one.
+
 Phase P2, lane P2c4: `DocumentFormat.owner` holds a format's documents outright
 (`ooxml_edit.tools.owned`): an `OwnedEntry`'s version, steps (`OwnedHistory`), undo and redo
 and snapshot are the owner's, and its `document` is a view made current when read.
