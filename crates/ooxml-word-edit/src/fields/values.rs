@@ -7,6 +7,7 @@
 
 use super::pages::{FieldPlace, FieldRun, LaidFields, Unknown};
 use super::scan::{instruction_run, paragraph_of, Located, Marks};
+use crate::names::W;
 use crate::text_range::Span;
 use crate::WordDoc;
 use ooxml_word_model::address::bookmark_range;
@@ -196,9 +197,12 @@ pub(crate) fn place_of(docx: &Docx, located: &Located, laid: &dyn LaidFields) ->
         return part.ids.paragraph_at(&path).map(|p| Placed::Body(p.id));
     }
     let story = &part.story;
-    let which = if story.starts_with("header") {
+    // A header or footer by its root (`w:hdr`, `w:ftr`), not its name: a part may be named
+    // anything (`word/hrIdH1.xml`).
+    let root = part.root().name();
+    let which = if root.is(Some(W), "hdr") {
         "header"
-    } else if story.starts_with("footer") {
+    } else if root.is(Some(W), "ftr") {
         "footer"
     } else {
         return None;
