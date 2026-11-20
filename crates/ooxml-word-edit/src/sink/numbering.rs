@@ -14,10 +14,12 @@
 //! Must not: number from the working version while an id it gave may be unwritten.
 
 use super::{EditSink, Numbered};
-use crate::doc::{Change, Draw, DrawFrom};
+use crate::doc::{Change, Draw, DrawFrom, Key, WordDoc};
 use crate::policy::Stamp;
 use crate::validate::annotation_ceiling;
 use crate::{EditError, Result};
+use ooxml_store::ReadPredicate;
+use std::sync::Arc;
 
 /// An edit's numbering: the first id of its latest [`Change::Number`], the next id it
 /// gives, and one above the largest it wrote.
@@ -113,5 +115,32 @@ impl EditSink<'_, '_> {
         let released = write(&mut stamp)?;
         let numbered = self.given(from, stamp.next());
         Ok((released, stamp.dated, numbered))
+    }
+
+    /// Depend on the largest annotation id in use as the edit's version holds it, by
+    /// condition ([`AnnotationCeiling`]): for an edit that writes ids it numbered where they
+    /// are not drawn again when the change is applied (a part put whole).
+    ///
+    /// # Errors
+    /// When a story part is not XML.
+    pub(crate) fn read_annotation_ceiling(&mut self) -> Result<()> {
+        let ceiling = annotation_ceiling(self.tx.doc())?;
+        self.read_where(Arc::new(AnnotationCeiling { ceiling }));
+        Ok(())
+    }
+}
+
+/// The largest annotation id in use, read by condition: a commit since the edit's snapshot
+/// that leaves it otherwise on the head -- ids numbered, or the holder of the largest
+/// removed -- is a conflict, so ids numbered from it are those the serial order gives.
+#[derive(Debug)]
+pub(crate) struct AnnotationCeiling {
+    ceiling: i64,
+}
+
+impl ReadPredicate<WordDoc> for AnnotationCeiling {
+    fn depends(&self, head: &WordDoc, _key: &Key) -> bool {
+        // the head's tally is read as it is published: no walk here
+        annotation_ceiling(head).map_or(true, |ceiling| ceiling != self.ceiling)
     }
 }

@@ -129,7 +129,7 @@ pub(super) fn mark(
         Anchor::Range { part, .. } | Anchor::Block { part, .. } => part.clone(),
         Anchor::Control(found) => return mark_control(space, doc, found, sizes, (id, reference)),
     };
-    space.work(doc, &part)?;
+    copy_anchored(space, doc, &part, anchor)?;
     let gone = || EditError::Path(part.clone());
     match anchor {
         Anchor::Range {
@@ -193,6 +193,57 @@ pub(super) fn mark(
         Anchor::Control(_) => {}
     }
     Ok(())
+}
+
+/// Copy into `space` what marking `anchor` (a range, a table or a row) changes of `part`:
+/// the stretch of its story's blocks from the anchor's first to its last -- for a table or
+/// row, on to the first block after it with a paragraph, which takes the reference -- else
+/// (no stretch to be had) the whole part.
+///
+/// # Errors
+/// When the part is not XML.
+fn copy_anchored(space: &mut Space, doc: &WordDoc, part: &str, anchor: &Anchor) -> Result<()> {
+    let docx = doc.docx()?;
+    let Some(story) = docx.part(part) else {
+        space.work(doc, part)?;
+        return Ok(());
+    };
+    let container = story.ids.container().to_vec();
+    let (paths, through): (Vec<&[u32]>, Option<u32>) = match anchor {
+        Anchor::Range { first, last, .. } => (vec![first.as_slice(), last.as_slice()], None),
+        Anchor::Block { path, .. } => {
+            let top = path.strip_prefix(container.as_slice()).and_then(|rest| rest.first().copied());
+            (vec![path.as_slice()], top.and_then(|top| paragraph_after(story.root(), &container, top)))
+        }
+        Anchor::Control(_) => (Vec::new(), None),
+    };
+    if paths.is_empty() || !space.stretch(doc, part, &container, &paths, through)? {
+        space.work(doc, part)?;
+    }
+    Ok(())
+}
+
+/// The index of the first child of the container at `container` after its `top`th that
+/// is or holds a paragraph; with none, its last child.
+fn paragraph_after(root: &std::sync::Arc<ooxml_xml::Element>, container: &[u32], top: u32) -> Option<u32> {
+    let parent = if container.is_empty() {
+        root
+    } else {
+        ooxml_word_model::docx::at_path(root, container)?
+    };
+    let children = parent.children();
+    let found = (top as usize + 1..children.len()).find(|&k| {
+        children
+            .get(k)
+            .and_then(ooxml_xml::Node::as_element)
+            .is_some_and(|e| holds_paragraph(e))
+    });
+    u32::try_from(found.unwrap_or(children.len().saturating_sub(1))).ok()
+}
+
+/// Whether `element` is a paragraph or has one below it.
+fn holds_paragraph(element: &ooxml_xml::Element) -> bool {
+    element.name().is(Some(W), "p") || element.child_elements().any(|e| holds_paragraph(e))
 }
 
 /// What a comment on the table or row `element` ends after (`_add_block_comment`): a
