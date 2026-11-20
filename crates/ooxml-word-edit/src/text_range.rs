@@ -277,28 +277,33 @@ pub(crate) fn range_id(range: &RangeText) -> String {
 }
 
 /// The one place `text` occurs in the document's current text, as a range id (docx-agent's
-/// `Document.anchor`: every story's paragraphs, case-sensitive, not across paragraphs).
+/// `Document.anchor`: every story's paragraphs, or the paragraphs `within` holds, whole;
+/// case-sensitive, not across paragraphs).
 ///
 /// # Errors
-/// `not_found` when it occurs nowhere; `ambiguous`, listing the places with their
-/// context, when it occurs more than once.
-pub fn anchor(doc: &WordDoc, text: &str) -> Result<String> {
+/// `within`'s refusal; `not_found` when it occurs nowhere (in `within`); `ambiguous`,
+/// listing the places with their context, when it occurs more than once.
+pub fn anchor(doc: &WordDoc, text: &str, within: Option<&str>) -> Result<String> {
     let docx = doc.docx()?;
     let pattern = crate::find::Literal::new(text, true, false, "")?;
-    anchor_range(doc, &docx, &pattern, text).map(|r| range_id(&r))
+    anchor_range(doc, &docx, (&pattern, text), within).map(|r| range_id(&r))
 }
 
-/// [`anchor`]'s range, found by `pattern` (`text`'s literal) in `docx`, a version of `doc`.
+/// [`anchor`]'s range, found by `pattern` (`text`'s literal) in `docx`, a version of `doc`
+/// (in the paragraphs `within` holds, when given).
 ///
 /// # Errors
 /// As [`anchor`]'s.
 pub(crate) fn anchor_range(
     doc: &WordDoc,
     docx: &Docx,
-    pattern: &crate::find::Literal,
-    text: &str,
+    (pattern, text): (&crate::find::Literal, &str),
+    within: Option<&str>,
 ) -> Result<RangeText> {
-    let found = crate::find::matches(docx, pattern, false)?;
+    let found = match within {
+        Some(within) => crate::find::matches_within(docx, pattern, within)?,
+        None => crate::find::matches(docx, pattern, false)?,
+    };
     let ranges: Vec<RangeText> = found
         .into_iter()
         .map(|(start_id, start, end_id, end, _)| RangeText {
@@ -311,7 +316,10 @@ pub(crate) fn anchor_range(
     let wanted = repr_str(text);
     match ranges.as_slice() {
         [] => Err(EditError::Address(AddressError::not_found(
-            format!("{wanted} occurs nowhere"),
+            format!(
+                "{wanted} occurs nowhere{}",
+                within.map(|w| format!(" in {w}")).unwrap_or_default()
+            ),
             Vec::new(),
         ))),
         [one] => Ok(one.clone()),
