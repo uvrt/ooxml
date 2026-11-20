@@ -503,16 +503,37 @@ fn sections(docx: &Docx, new: &Body<'_>, changed: &BTreeSet<usize>) -> Vec<Optio
         map: StyleMap::default(),
         memo: HashMap::new(),
     };
-    let mut level = |k: usize| new.block(k).and_then(|b| levels.of(b));
+    // Each block's level read once: the walks below pass a block once per changed block
+    // and per section start that reaches it.
+    let mut known: HashMap<usize, Option<i64>> = HashMap::new();
+    let mut level = |k: usize| {
+        *known
+            .entry(k)
+            .or_insert_with(|| new.block(k).and_then(|b| levels.of(b)))
+    };
     let mut starts = BTreeSet::new();
+    // The changed blocks in order: a walk back that reaches the changed block before has
+    // that block's heading (no heading stands between them), so the walks back pass each
+    // block once together.
+    let mut previous: Option<(usize, Option<usize>)> = None;
     for &j in changed {
         let mut k = Some(j);
+        let mut reached = None;
         while let Some(at) = k.filter(|at| level(*at).is_none()) {
+            if let Some((_, start)) = previous.filter(|(place, _)| *place == at && at != j) {
+                reached = Some(start);
+                break;
+            }
             k = new.block_before(at);
         }
-        if let Some(k) = k.or_else(|| new.first_block()) {
-            starts.insert(k);
+        let start = match reached {
+            Some(start) => start,
+            None => k.or_else(|| new.first_block()),
+        };
+        if let Some(start) = start {
+            starts.insert(start);
         }
+        previous = Some((j, start));
     }
     let mut ids = BlockIds::new(docx, new);
     let mut out = Vec::new();
