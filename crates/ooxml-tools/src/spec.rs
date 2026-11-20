@@ -111,13 +111,20 @@ impl Alias {
     }
 
     /// What the export writes it reads as: the name, or for an alias read only while an
-    /// argument has a value (a function in today's `Tool.aliases`),
-    /// `when:<argument>=<value>:<name>`.
+    /// argument has a value (ooxml-edit's `AliasWhen` in today's `Tool.aliases`),
+    /// `{"name": <name>, "when": {<argument>: <value>}}`.
     #[must_use]
-    pub fn export(&self) -> String {
+    pub fn export(&self) -> Value {
         match &self.when {
-            None => self.name.clone(),
-            Some((argument, value)) => format!("when:{argument}={value}:{}", self.name),
+            None => Value::from(self.name.as_str()),
+            Some((argument, value)) => {
+                let mut when = Map::new();
+                when.insert(argument.clone(), Value::from(value.as_str()));
+                let mut out = Map::new();
+                out.insert("name".into(), Value::from(self.name.as_str()));
+                out.insert("when".into(), Value::Object(when));
+                Value::Object(out)
+            }
         }
     }
 }
@@ -303,11 +310,7 @@ impl ToolSpec {
         ] {
             out.insert(key.into(), strings(&self.paths(what)));
         }
-        let mut aliases: Map<String, Value> = self
-            .aliases()
-            .into_iter()
-            .map(|a| (a.key(), Value::from(a.export())))
-            .collect();
+        let mut aliases: Map<String, Value> = self.aliases().into_iter().map(|a| (a.key(), a.export())).collect();
         for property in self.arguments.properties() {
             if let Some(name) = &property.intent.names_as {
                 // a function in today's `Tool.aliases` (`names_as`): written as what it reads

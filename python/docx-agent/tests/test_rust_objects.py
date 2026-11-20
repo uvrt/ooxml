@@ -4,9 +4,10 @@
 ``word_controls`` and ``edit_chart``.  An alias that is a function today is written as what
 it reads: a placing tool's place as ``place:<kind>``
 (:func:`docx_agent.tools.positions.aliases`), a list of names given to a parameter that
-takes none as ``names:<parameter>`` (:func:`ooxml_edit.tools.registry.names_as`), and an
-alias read only while an argument has one of its values as ``when:<argument>=<value>:<name>``
-(``edit_chart``'s ``slide``: ``target`` when ``action`` is ``add``).  The handlers' equality with today's is the
+takes none as ``names:<parameter>`` (:func:`ooxml_edit.tools.registry.names_as`); an alias
+read only while an argument has a value (:class:`ooxml_edit.tools.AliasWhen`, ``edit_chart``'s
+``slide``: ``target`` when ``action`` is ``add``) is the entry both sides write,
+``{"name", "when": {argument: value}}``.  The handlers' equality with today's is the
 edit oracle's (``crates/ooxml-oracle/python/word_edits_diff.py --objects``); nothing is
 switched on here.
 """
@@ -16,6 +17,7 @@ import inspect
 from pathlib import Path
 
 import pytest
+from ooxml_edit.tools import AliasWhen
 
 from docx_agent.tools import TOOLS
 
@@ -27,17 +29,13 @@ NAMES = ["word_edit_table", "word_format_table", "word_drawings", "word_controls
 def _alias(value, tool):
     if isinstance(value, str):
         return value
+    if isinstance(value, AliasWhen):
+        return value.exported()
     free = inspect.getclosurevars(value).nonlocals
     if "kind" in free:
         return "place:" + free["kind"]
     if "name" in free:
         return "names:" + free["name"]
-    # read only while an argument has one value: the first of its values that gives a name
-    for argument, node in tool.schema["properties"].items():
-        for choice in node.get("enum", ()):
-            meant = value({argument: choice})
-            if meant is not None:
-                return f"when:{argument}={choice}:{meant}"
     raise AssertionError(f"{tool.name}: an alias function that reads nothing")
 
 

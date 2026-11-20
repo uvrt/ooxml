@@ -609,9 +609,18 @@ def definition_problems(tool: Tool) -> list[str]:
         if container is None:
             problems.append(f"aliases names {alias!r}, which is in no object parameter")
             continue
+        names = container.get("properties", {})
+        if isinstance(target, AliasWhen):
+            if key in names:
+                problems.append(f"aliases names {alias!r}, which is a parameter")
+            if target.name not in names:
+                problems.append(f"aliases reads {alias!r} as {target.name!r}, which is not a parameter")
+            if target.argument not in names:
+                problems.append(f"aliases reads {alias!r} while {target.argument!r} is "
+                                f"{target.value!r}, which is not a parameter")
+            continue
         if callable(target):
             continue
-        names = container.get("properties", {})
         if key in names:
             problems.append(f"aliases names {alias!r}, which is a parameter")
         if target not in names:
@@ -787,6 +796,44 @@ def tool(name: str, description: str, params: Mapping[str, Param] | None = None,
                     defaults=dict(defaults or {}), retry_key=retry_key)
 
     return make
+
+
+@dataclass(frozen=True)
+class AliasWhen:
+    """A :attr:`Tool.aliases` entry read as the parameter ``name`` only while the argument
+    ``argument`` of the same object has ``value`` -- ``edit_chart``'s ``slide``, its
+    ``target`` when adding (a deck's slide); in another action the target is the chart, so
+    ``slide`` stays an unknown argument::
+
+        AliasWhen("target", "action", "add")({"action": "add"})     # 'target'
+
+    A definition check (:func:`definition_problems`) holds ``name`` and ``argument`` to
+    parameters of that object; the Rust export writes it as ``{"name": name, "when":
+    {argument: value}}`` (:meth:`exported`, :meth:`of_export`)."""
+
+    name: str
+    argument: str
+    value: str
+
+    def __call__(self, arguments: Mapping[str, Any]) -> str | None:
+        return self.name if arguments.get(self.argument) == self.value else None
+
+    def exported(self) -> dict[str, Any]:
+        """The entry as the Rust export writes it."""
+        return {"name": self.name, "when": {self.argument: self.value}}
+
+    @classmethod
+    def of_export(cls, entry: Mapping[str, Any]) -> "AliasWhen":
+        """The entry the Rust export wrote (:meth:`exported`); ``ValueError`` for any other
+        shape."""
+        when = entry.get("when")
+        if (set(entry) != {"name", "when"} or not isinstance(entry.get("name"), str)
+                or not isinstance(when, Mapping) or len(when) != 1):
+            raise ValueError(f"an alias entry {dict(entry)!r} is not {{name, when: {{argument: value}}}}")
+        ((argument, value),) = when.items()
+        if not isinstance(argument, str) or not isinstance(value, str):
+            raise ValueError(f"an alias entry {dict(entry)!r} names its argument and value as text")
+        return cls(entry["name"], argument, value)
 
 
 def names_as(alias: str, name: str) -> Callable[[Mapping[str, Any]], str | None]:
