@@ -55,11 +55,9 @@ def made_up() -> dict[str, bytes]:
     by a page break before, a section break or a deleted mark); list levels skipped (no
     chapter, a start override, a level not decimal, direct numbering two levels down);
     cells Accept All removes (each of docx-agent's row-edge shapes)."""
-    import test_empty_paragraphs as empties
-    import test_style_levels as levels
-    from test_rows_joins_r54r import SHAPES, _document, _edge, _p, _tbl
+    from facts_documents import SECTIONS_ONLY, SHAPES, _document, _edge, _p, _tbl, empty_document, make
 
-    out: dict[str, bytes] = {"empty-repro": empties._document()[0].to_bytes()}
+    out: dict[str, bytes] = {"empty-repro": empty_document()[0].to_bytes()}
     blank = "<w:p/>"
     spaced = "<w:p><w:r><w:t xml:space='preserve'>  </w:t></w:r></w:p>"
     kept = ("<w:p><w:pPr><w:pageBreakBefore/></w:pPr></w:p>", "<w:p><w:pPr><w:sectPr/></w:pPr></w:p>",
@@ -76,9 +74,9 @@ def made_up() -> dict[str, bytes]:
         "<w:tr><w:trPr><w:gridBefore w:val='1'/></w:trPr>" + merged[0] + "</w:tr><w:tr>"
         + "<w:tc>" + _p("Left") + "</w:tc>" + merged[1] + "</w:tr></w:tbl>" + _p("Nine")
         + "<w:customXml w:element='x'>" + _p("Custom") + "</w:customXml>" + blank + _p("Ten"))
-    data = levels.make(levels.SECTIONS_ONLY)
+    data = make(SECTIONS_ONLY)
     numbering = "word/numbering.xml"
-    out["levels-full"] = levels.make()
+    out["levels-full"] = make()
     out["levels-sections-only"] = data
     out["levels-start-override"] = _replaced(
         data, numbering, '<w:abstractNumId w:val="0"/></w:num>',
