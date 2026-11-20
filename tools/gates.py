@@ -39,7 +39,10 @@ import subprocess
 import sys
 import time
 import tomllib
+import zipfile
+from functools import lru_cache
 from pathlib import Path
+from xml.etree import ElementTree
 
 ROOT = Path(__file__).resolve().parents[1]
 HARNESS = ROOT / "crates" / "ooxml-oracle" / "python"
@@ -84,6 +87,10 @@ def known_entries(path: Path = KNOWN) -> list[dict]:
         if "case" in entry:
             # a case's number changes with the run's sampling and with each case maker added
             raise SystemExit(f"{path}: a known difference names its case by input, not by number: {entry}")
+        condition = entry.get("document")
+        if condition is not None and (not isinstance(condition, dict) or "lacks_namespace" not in condition
+                                      or set(condition) - DOCUMENT_KEYS):
+            raise SystemExit(f"{path}: a document condition takes lacks_namespace (and part): {entry}")
     return entries
 
 
@@ -94,14 +101,46 @@ def _contains(have, want) -> bool:
     return have == want
 
 
-def covering(entries: list[dict], gate: str, mode: str, relative: str, case) -> dict | None:
-    """The known difference that covers a case, if one does."""
+#: The keys a known difference's ``document`` condition takes.
+DOCUMENT_KEYS = {"part", "lacks_namespace"}
+
+
+@lru_cache(maxsize=256)
+def root_namespaces(source: str, part: str) -> frozenset[str] | None:
+    """The namespaces the root element of ``part`` in the package ``source`` declares
+    (``None``: no such package or part)."""
+    try:
+        with zipfile.ZipFile(source) as package, package.open(part) as xml:
+            declared = set()
+            for event, item in ElementTree.iterparse(xml, events=("start-ns", "start")):
+                if event == "start":
+                    return frozenset(declared)
+                declared.add(item[1])
+    except (OSError, KeyError, zipfile.BadZipFile, ElementTree.ParseError):
+        return None
+    return None
+
+
+def _document_holds(condition: dict, source: str | None) -> bool:
+    """Whether the case's document meets an entry's ``document`` condition: the root of its
+    ``part`` (word/document.xml when not given) does not declare ``lacks_namespace``."""
+    if source is None:
+        return False
+    declared = root_namespaces(source, condition.get("part", "word/document.xml"))
+    return declared is not None and condition["lacks_namespace"] not in declared
+
+
+def covering(entries: list[dict], gate: str, mode: str, relative: str, case, source: str | None = None) -> dict | None:
+    """The known difference that covers a case, if one does (``source``: the case's document,
+    for an entry's ``document`` condition)."""
     for entry in entries:
         if entry["mode"] != mode or entry.get("gate", gate) != gate:
             continue
         if not fnmatch.fnmatch(relative, entry.get("file", "*")):
             continue
         if "input" in entry and not _contains(case.get("input"), entry["input"]):
+            continue
+        if "document" in entry and not _document_holds(entry["document"], source):
             continue
         return entry
     return None
@@ -142,7 +181,7 @@ def run_diff(args) -> int:
     for case in lines:
         source = (case.get("input") or {}).get("source") or case["file"]
         relative = os.path.relpath(source, tree)
-        entry = covering(entries, args.gate, args.mode, relative, case)
+        entry = covering(entries, args.gate, args.mode, relative, case, source)
         (known if entry else unknown).append({"file": relative, "case": case["case"],
                                               "cause": entry and entry["cause"]})
     crashed = done is not None and done.returncode not in (0, 1) or (files and not totals)
