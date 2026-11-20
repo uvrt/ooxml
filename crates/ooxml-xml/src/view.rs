@@ -65,9 +65,9 @@ pub fn text(element: &Element) -> String {
     out
 }
 
-/// Whether `c` is whitespace to Python's `str.strip()`: Unicode's White_Space, plus the
-/// four information separators (U+001C to U+001F) Python counts as well.
-fn py_space(c: char) -> bool {
+/// Whether `c` is whitespace to Python's `str.strip()` and `str.split()`: Unicode's
+/// White_Space, plus the four information separators (U+001C to U+001F) Python counts as well.
+pub fn py_space(c: char) -> bool {
     c.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c)
 }
 
@@ -119,6 +119,26 @@ pub fn py_float(text: &str) -> Option<f64> {
     Some(if negative { -magnitude } else { magnitude })
 }
 
+/// `text`'s words joined by single spaces, as Python's `" ".join(text.split())` writes them.
+pub fn py_flat(text: &str) -> String {
+    text.split(py_space)
+        .filter(|w| !w.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// `text` as Python's `int(text)` reads it: surrounding whitespace, an optional sign and
+/// ASCII digits with single underscores between them; `None` for anything else, or a value
+/// outside `i64`.
+pub fn py_int(text: &str) -> Option<i64> {
+    let s = text.trim_matches(py_space);
+    let body = s.strip_prefix(['+', '-']).unwrap_or(s);
+    if !digit_part(body) {
+        return None;
+    }
+    s.replace('_', "").parse::<i64>().ok()
+}
+
 /// The rank of the child named `name` in `order` (a schema sequence, each entry the local
 /// names of one step: a choice lists several).
 fn rank(order: &[&[&str]], name: &str) -> Option<usize> {
@@ -165,6 +185,16 @@ mod tests {
         assert!(py_float("nan").is_some_and(f64::is_nan));
         for bad in ["", ".", "1_", "_1", "1__0", "1._5", "e5", "1e", "0x10", "1 2", "--1"] {
             assert_eq!(py_float(bad), None, "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn integers_read_as_python_reads_them() {
+        assert_eq!(py_int(" 12 "), Some(12));
+        assert_eq!(py_int("+1_000"), Some(1000));
+        assert_eq!(py_int("-3"), Some(-3));
+        for bad in ["", "3.0", "1e3", "x", "1__0", "_1", "99999999999999999999"] {
+            assert_eq!(py_int(bad), None, "{bad:?}");
         }
     }
 }

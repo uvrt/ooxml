@@ -380,6 +380,9 @@ impl Registry {
         ));
         registry.register(word_edit::<ooxml_tools_word::WordLists>(ooxml_tools_word::word_lists));
         registry.register(word_edit::<ooxml_tools_word::WordFields>(ooxml_tools_word::word_fields));
+        registry.register(word_edit::<ooxml_tools_word::WordHeadersFooters>(
+            ooxml_tools_word::word_headers_footers,
+        ));
         registry.register(word_edit::<ooxml_tools_word::WordFormat>(ooxml_tools_word::word_format));
         registry.register(word_edit::<ooxml_tools_word::WordStyles>(ooxml_tools_word::word_styles));
         registry.register(word_edit::<ooxml_tools_word::WordTemplate>(

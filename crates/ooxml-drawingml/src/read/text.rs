@@ -1,6 +1,8 @@
 //! Owns: reading a text body (`p:txBody`, `a:txBody`, `c:rich`, `c:txPr`) -- body
 //! properties, list styles, paragraphs and their runs in document order -- as
-//! ooxml-common's `drawingml/read_text.py` reads it.
+//! ooxml-common's `drawingml/read_text.py` reads it; and a paragraph's plain text as
+//! ooxml-edit's `dmltext.paragraph_text` reads it, for an editor's view of a chart title or
+//! a diagram node.
 //!
 //! Must not: fill a run's properties in from its paragraph, list style or theme (the
 //! consumer's inheritance).
@@ -240,4 +242,20 @@ pub fn run_properties(r: Option<a::RunProperties<'_>>) -> Option<RunProperties> 
         alt_lang: non_empty(r.alt_lang()),
     };
     (properties != RunProperties::default()).then_some(properties)
+}
+
+/// A paragraph's (`a:p`) plain text as ooxml-edit reads it: its runs' and fields' `a:t`, a
+/// line break as `\v`; nothing else.
+#[must_use]
+pub fn paragraph_text(paragraph: &Element) -> String {
+    use ooxml_xml::view::{child, elements, local, text};
+    let mut out = String::new();
+    for node in elements(paragraph) {
+        match local(node) {
+            "r" | "fld" => out.push_str(&child(node, "t").map(text).unwrap_or_default()),
+            "br" => out.push('\u{b}'),
+            _ => {}
+        }
+    }
+    out
 }
