@@ -9,6 +9,7 @@ shard of the documents at a time:
     python tools/gates.py report OUT 6 61                 # the 3k document: make_report 6, grown to 61 chapters
     python tools/gates.py diff --gate fixtures --mode styled --shard 2/4 --bin DIR --out DIR
     python tools/gates.py matrix --gates fixtures,corpus  # the differential jobs (JSON)
+    python tools/gates.py plan [--changed FILE]...        # the modes a branch can affect (modes=auto)
     python tools/gates.py summary DIR                     # the job summary's tables (Markdown)
     python tools/gates.py cache-key                       # the reference cache's chain digest
     python tools/gates.py cache-merge STORE FILE...       # kept results added to a store
@@ -23,6 +24,13 @@ finds a difference is computed again in full.
 A ``diff`` writes the harness's log, its cases with differences (JSON lines) and a summary
 (JSON) into ``--out``.  It fails when a case differs and no entry of the known differences
 (crates/ooxml-oracle/known-differences.toml, each with its cause) covers it.
+
+Modes ``auto`` (the dispatch's default): the edit modes, and whether the reads' checks run,
+picked from the files the branch changes against origin/main (``git diff origin/main...``):
+a path counts for the modes it can change and no others (``gate_effects``), conservatively --
+the Rust code and docx-agent's count for every mode, a harness's case maker for its own
+modes, notes and the packages and crates the gates do not run for none, and anything not
+named for every mode.  No change at all (the ref is main) is every mode too.
 
 Sampling: ``--every N`` takes every N-th document; ``--per-tool N`` the first N cases of each
 tool for the tool modes (structure, objects, style: the harnesses' *_PER_TOOL) and the first N
@@ -65,6 +73,28 @@ READ_MODES = {"ids": "word-ids", "describe": "word-reads", "read": "word-reads",
 #: every case is hours of docx-agent).
 CORPUS_PER_TOOL = 10
 PER_TOOL = {"structure": "STRUCTURE_PER_TOOL", "objects": "OBJECTS_PER_TOOL", "style": "STYLE_PER_TOOL"}
+
+#: What a changed path can change in the gates, for modes ``auto`` (``gate_effects``).  ALL is
+#: every edit mode and the reads.
+READS = "reads"
+ALL = frozenset([*EDIT_MODES, READS])
+#: The harness's case makers: each the modes whose cases it makes (word_object_cases.py and
+#: word_style_cases.py take their helpers from word_structure_cases.py).
+CASE_MAKERS = {"word_structure_cases.py": {"structure", "objects", "style"}, "word_object_cases.py": {"objects"},
+               "word_style_cases.py": {"style"}, "word_text_cases.py": {"text"}}
+#: The rest of the harness the gates run: the edits harness (it imports word_reads_diff.py).
+GATE_HARNESS = ("word_edits_", "word_tool_reference", "word_reads_", "reference_cache")
+#: The oracle binaries the gates run, and what each answers.
+GATE_BINARIES = {"word-edits": set(EDIT_MODES), "word-reads": {READS}, "word-ids": {READS}}
+#: The packages the gates install (gates.yml: the reference and what makes the corpus).
+GATE_PACKAGES = ("docx-agent", "docx2svg", "ooxml-edit", "ooxml-common")
+#: The files the gates themselves are: they change every mode.
+GATE_FILES = ("tools/gates.py", ".github/workflows/gates.yml", ".github/actions/", "Cargo.toml", "Cargo.lock",
+              ".cargo/", "rust-toolchain", "crates/ooxml-oracle/known-differences.toml")
+#: Paths no gate reads: notes and the other workflows, tools and documentation.
+NOT_GATES = (".github/", "tools/", "docs/")
+#: A crate's folders not built into its library or binaries.
+CRATE_TEST_FOLDERS = ("tests", "benches", "examples")
 
 
 def documents(tree: Path, every: int, shard: tuple[int, int]) -> list[Path]:
@@ -203,17 +233,97 @@ def run_report(args) -> int:
     return 0
 
 
+def oracle_crates(root: Path = ROOT) -> set[str]:
+    """The folders below crates/ the oracle binaries are built from: ooxml-oracle and every
+    workspace crate it depends on (dependencies and build-dependencies, read from Cargo.toml)."""
+    folders = {}
+    for manifest in sorted((root / "crates").glob("*/Cargo.toml")):
+        folders[tomllib.loads(manifest.read_text())["package"]["name"]] = manifest.parent.name
+    found: set[str] = set()
+    todo = ["ooxml-oracle"]
+    while todo:
+        folder = todo.pop()
+        if folder in found:
+            continue
+        found.add(folder)
+        manifest = tomllib.loads((root / "crates" / folder / "Cargo.toml").read_text())
+        tables = [manifest.get("dependencies", {}), manifest.get("build-dependencies", {})]
+        tables += [t.get(k, {}) for t in manifest.get("target", {}).values() for k in ("dependencies",
+                                                                                      "build-dependencies")]
+        todo += [folders[name] for table in tables for name in table if name in folders]
+    return found
+
+
+def gate_effects(path: str, crates: set[str]) -> set[str]:
+    """The edit modes (and READS) a change to ``path`` can change; ``crates``: oracle_crates()."""
+    parts = path.split("/")
+    if path.startswith(GATE_FILES):
+        return set(ALL)
+    if path.startswith("crates/ooxml-oracle/python/"):
+        if parts[-1] in CASE_MAKERS:
+            return set(CASE_MAKERS[parts[-1]])
+        return set(ALL) if parts[-1].startswith(GATE_HARNESS) else set()
+    if parts[0] == "crates" and len(parts) > 2:
+        if parts[1] not in crates or parts[2] in CRATE_TEST_FOLDERS or path.endswith(".md") and parts[2] != "src":
+            return set()
+        if path.startswith("crates/ooxml-oracle/src/bin/"):
+            return set(GATE_BINARIES.get(parts[-1].removesuffix(".rs"), ()))
+        return set(ALL)
+    if parts[0] == "python" and len(parts) > 2:
+        if parts[1] not in GATE_PACKAGES:
+            return set()
+        inside = "/".join(parts[2:])
+        if inside.startswith(("src/", "tests/fixtures/")) or inside == "pyproject.toml" \
+                or parts[1] == "docx2svg" and inside.startswith("tools/make_"):
+            return set(ALL)
+        return set()
+    if path.startswith(NOT_GATES) or len(parts) == 1 and path.endswith((".md", ".txt")) or path.startswith("."):
+        return set()
+    return set(ALL)
+
+
+def changed_files(base: str = "origin/main") -> list[str]:
+    """The files the checkout changes against ``base`` (since their merge base)."""
+    done = subprocess.run(["git", "diff", "--name-only", f"{base}...HEAD"], cwd=ROOT, capture_output=True,
+                          text=True, check=True)
+    return [line for line in done.stdout.splitlines() if line]
+
+
+def auto_modes(changed: list[str]) -> tuple[list[str], bool]:
+    """The edit modes (in EDIT_MODES' order) and whether the reads run, for a branch that
+    changes ``changed``; no change at all is every mode."""
+    if not changed:
+        return list(EDIT_MODES), True
+    crates = oracle_crates()
+    effects = set().union(*(gate_effects(path, crates) for path in changed))
+    return [m for m in EDIT_MODES if m in effects], READS in effects
+
+
+def run_plan(args) -> int:
+    changed = args.changed if args.changed is not None else changed_files(args.base)
+    modes, reads = auto_modes(changed)
+    print(f"{len(changed)} changed files; modes: {','.join(modes) or '(none)'}; reads: {'yes' if reads else 'no'}")
+    return 0
+
+
 def run_matrix(args) -> int:
     """The differential jobs' matrix (JSON) for the gates asked for: each gate's modes, each
     in ``shards`` shards; the corpus's default sampling where none is given."""
     gates = [g.strip() for g in args.gates.split(",") if g.strip()]
-    modes = list(EDIT_MODES) if args.modes in ("", "all") else [m.strip() for m in args.modes.split(",")]
+    reads = True
+    if args.modes == "auto":
+        modes, reads = auto_modes(changed_files(args.base))
+        print(f"modes auto: {','.join(modes) or '(none)'}; reads: {'yes' if reads else 'no'}", file=sys.stderr)
+    elif args.modes in ("", "all"):
+        modes = list(EDIT_MODES)
+    else:
+        modes = [m.strip() for m in args.modes.split(",")]
     unknown = [m for m in modes if m not in EDIT_MODES]
     if unknown:
         raise SystemExit(f"unknown modes {unknown}; the modes: {', '.join(EDIT_MODES)}")
     include = []
     for gate in gates:
-        if gate not in ("fixtures", "corpus", "reads"):
+        if gate not in ("fixtures", "corpus", "reads") or gate == "reads" and not reads:
             continue
         per_tool = args.per_tool if args.per_tool != "" else str(CORPUS_PER_TOOL if gate == "corpus" else 0)
         for mode in (READ_MODES if gate == "reads" else modes):
@@ -285,9 +395,13 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("chapters", type=int)
     m = sub.add_parser("matrix")
     m.add_argument("--gates", required=True)
-    m.add_argument("--modes", default="all")
+    m.add_argument("--modes", default="auto", help="all, auto or a comma list")
+    m.add_argument("--base", default="origin/main", help="modes auto: the changes since this one's merge base")
     m.add_argument("--shards", type=int, default=3)
     m.add_argument("--per-tool", default="")
+    pl = sub.add_parser("plan", help="the modes a branch can affect (modes auto)")
+    pl.add_argument("--changed", action="append", help="a changed path (repeat); default: git diff BASE...HEAD")
+    pl.add_argument("--base", default="origin/main")
     s = sub.add_parser("summary")
     s.add_argument("dir")
     sub.add_parser("cache-key")
@@ -296,7 +410,7 @@ def main(argv: list[str] | None = None) -> int:
     k.add_argument("files", nargs="*")
     args = parser.parse_args(argv)
     return {"diff": run_diff, "corpus": run_corpus, "report": run_report, "matrix": run_matrix,
-            "summary": run_summary, "cache-key": run_cache_key, "cache-merge": run_cache_merge}[args.command](args)
+            "summary": run_summary, "plan": run_plan, "cache-key": run_cache_key, "cache-merge": run_cache_merge}[args.command](args)
 
 
 if __name__ == "__main__":

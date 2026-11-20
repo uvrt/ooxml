@@ -3,6 +3,8 @@ name: Gates
 # The heavy gates a lane runs before its pull request is done, on GitHub's Linux runners and on
 # demand only (never on push, not a required check):
 #   gh workflow run gates.yml --repo uvrt/ooxml -f ref=<branch> -f gates=fixtures,corpus,seeds
+# modes `auto` (the default) runs the edit modes, and the reads' checks, that the branch's
+# changes against main can affect (tools/gates.py plan); `all` or a comma list names them.
 #   gh run watch --repo uvrt/ooxml $(gh run list --repo uvrt/ooxml --workflow gates.yml --limit 1 --json databaseId -q '.[0].databaseId')
 # - fixtures, corpus: crates/ooxml-oracle/python/word_edits_diff.py's modes, docx-agent (pure
 #   Python) against the release `word-edits`, on docx-agent's fixtures and on the documents
@@ -28,8 +30,8 @@ on:
         description: "Comma list of: fixtures, corpus, reads, seeds, bench"
         default: fixtures,corpus,reads,seeds,bench
       modes:
-        description: "word_edits_diff.py modes for fixtures and corpus (all, or a comma list: set_text, ops, paragraphs, delete, cells, styled, markdown, spacing, text, tools, review, structure, objects, style)"
-        default: all
+        description: "word_edits_diff.py modes for fixtures and corpus (auto: those the branch's changes can affect, and the reads only if they can; all; or a comma list: set_text, ops, paragraphs, delete, cells, styled, markdown, spacing, text, tools, review, structure, objects, style)"
+        default: auto
       per_tool:
         description: "Cases per tool and document (empty: all on fixtures and reads, 10 on the corpus; 0: all)"
         default: ""
@@ -56,11 +58,13 @@ jobs:
       matrix: ${{ steps.plan.outputs.matrix }}
       seeds: ${{ contains(inputs.gates, 'seeds') }}
       bench: ${{ contains(inputs.gates, 'bench') }}
-      corpus: ${{ contains(inputs.gates, 'corpus') }}
+      corpus: ${{ steps.plan.outputs.corpus }}
     steps:
+      # The whole history: modes auto compares the ref with its merge base with main.
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.ref }}
+          fetch-depth: 0
       - id: plan
         env:
           GATES: ${{ inputs.gates }}
@@ -70,9 +74,11 @@ jobs:
           REF: ${{ inputs.ref }}
           EVERY: ${{ inputs.every }}
         run: |
-          matrix=$(python3 tools/gates.py matrix --gates "$GATES" --modes "$MODES" --shards "$SHARDS" --per-tool "$PER_TOOL")
+          matrix=$(python3 tools/gates.py matrix --gates "$GATES" --modes "$MODES" --shards "$SHARDS" --per-tool "$PER_TOOL" 2> plan.txt)
+          cat plan.txt
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
-          echo "ref $REF at $(git rev-parse HEAD); gates $GATES; modes $MODES; per_tool '${PER_TOOL}'; every $EVERY; shards $SHARDS" >> "$GITHUB_STEP_SUMMARY"
+          echo "corpus=$(case "$matrix" in *'"gate": "corpus"'*) echo true;; *) echo false;; esac)" >> "$GITHUB_OUTPUT"
+          echo "ref $REF at $(git rev-parse HEAD); gates $GATES; modes $MODES $(cat plan.txt); per_tool '${PER_TOOL}'; every $EVERY; shards $SHARDS" >> "$GITHUB_STEP_SUMMARY"
 
   # The release oracle binaries, once per run.
   oracles:
