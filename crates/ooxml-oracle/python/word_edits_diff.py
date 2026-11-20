@@ -347,7 +347,7 @@ def _toolbox():
         from docx_agent.tools import FORMAT, GROUPS, TOOLS
         from ooxml_edit.tools import Toolbox
 
-        _TOOLBOX = Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS)
+        _TOOLBOX = Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, limits=word_tool_reference.REFERENCE_LIMITS)
     return _TOOLBOX
 
 

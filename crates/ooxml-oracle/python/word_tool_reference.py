@@ -13,14 +13,25 @@ functions only.
 from __future__ import annotations
 
 import copy
+import dataclasses
 import datetime
 import json
 
 from docx_agent import validate as _validate
 from docx_agent.edit import ids as _ids
 from lxml import etree
+from ooxml_edit.tools.limits import Limits
 from ooxml_edit.tools.savegate import compare_problems
 from ooxml_edit.xml import serialize
+
+#: The toolbox's limits for the reference: every deadline (a ``*_timeout`` or ``*_deadline``)
+#: an hour.  The Rust core has none, and docx-agent's are for a live application: on a busy
+#: shared runner a layout in a worker (word_template's reflow, word_fields' pages) or a
+#: worker's start can pass 30 s, and docx-agent's reply is then a ``timeout`` error that says
+#: how busy the runner was, not what the tool does.
+REFERENCE_LIMITS = dataclasses.replace(Limits(), **{
+    field.name: max(getattr(Limits(), field.name), 3600.0) for field in dataclasses.fields(Limits)
+    if field.name.endswith(("_timeout", "_deadline"))})
 
 #: The harness's clock (the cases' tracked changes are dated by it).
 _NOW = datetime.datetime(2026, 11, 17, 10, 0, 0, tzinfo=datetime.timezone.utc)
