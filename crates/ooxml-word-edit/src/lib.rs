@@ -15,7 +15,8 @@
 //!   [`DeleteBlocks`] (`word_delete`'s blocks, the outline checked first);
 //!   [`SetCells`]; [`StyleSpans`] (character styles and emphasis over a paragraph's text);
 //!   [`SetStyledText`] (`word_set_text`'s item: text with inline emphasis);
-//!   [`InsertMarkdown`] (Markdown written as the document's own blocks);
+//!   [`InsertMarkdown`] (Markdown written as the document's own blocks); [`CopyBlocks`]
+//!   (blocks copied from another open document, or from this one);
 //!   [`InsertText`], [`DeleteText`] and [`ReplaceText`] (text within a
 //!   paragraph, docx-agent's `_replace_ranges`); [`InsertBeside`] and [`DeletePlaced`] (text
 //!   at a range or at the one place a text occurs, `word_insert_text`'s and `word_delete`'s); [`Review`] (accepting and rejecting tracked
@@ -45,6 +46,7 @@ mod builtin;
 mod comments;
 mod control_delete;
 mod controls;
+mod copying;
 mod delete;
 mod delete_blocks;
 mod delete_write;
@@ -75,6 +77,7 @@ pub mod pairing;
 mod paragraph_style;
 mod paragraphs;
 mod people;
+mod placing;
 mod policy;
 mod pool;
 mod props;
@@ -110,6 +113,7 @@ pub use comments::{
     AddComments, CommentEdit, CommentEdited, CommentEdits, CommentMade, CommentWrite, EditCommentText, Who,
 };
 pub use controls::{ControlEdited, ControlKind, FillControl, Filling, InsertControl, RemoveControl};
+pub use copying::{BlocksCopied, CopyBlocks, CopyRange, CopySource};
 pub use delete::{BlockDeleted, DeleteBlock};
 pub use delete_blocks::{blocks_named, BlocksDeleted, DeleteBlocks};
 pub use doc::{Change, Draw, DrawFrom, Key, ModelError, Shared, WordDoc};
@@ -133,7 +137,7 @@ pub use lists::{
     numbered_by_style, paragraphs_of, unnumbered_styles_like, LevelFormat, ListAction, ListEdit, ListStep, ListsEdited,
 };
 pub use markdown::{InsertMarkdown, MarkdownInserted, Options as MarkdownOptions, WriteMap};
-pub use moving::{section_blocks, BlocksMoved, MoveBlocks, Moving};
+pub use moving::{section_blocks, section_blocks_in, BlocksMoved, MoveBlocks, Moving};
 pub use notes::{DeleteNote, EditNote, InsertNote, MoveNote, NoteEdited, NoteKind};
 pub use paragraph_style::{SetParagraphStyle, StyleSet};
 pub use paragraphs::{InsertParagraph, ParagraphInserted};

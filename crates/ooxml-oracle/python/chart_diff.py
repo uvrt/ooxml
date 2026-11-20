@@ -15,7 +15,7 @@ status is 1 when there is any.
 
 ``--freeze`` writes ooxml-common's layout of the repository's charts (the golden fixtures
 under their rules, the committed packages' chart parts under both) with the cases, for
-``cargo test``'s ``tests/chart_layout.rs`` to compare the Rust layout with where Python is
+``cargo test``'s ``tests/integration/chart_layout.rs`` to compare the Rust layout with where Python is
 not installed. Regenerate it whenever ooxml-common's chart layout changes on purpose.
 
 With ``--layout`` each chart is laid out as ooxml-common's golden harness lays it out

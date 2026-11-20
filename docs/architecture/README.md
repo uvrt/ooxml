@@ -599,6 +599,10 @@ All are under 0.1 % of the edit budgets.
 **As built (lane P4d7: calls that name other documents).**
 - A tool's declared documents rule (`ooxml_tools::documents`, `named_at`) names the call's own document first; the session pins every other open document it names like the call's own (the version the context or batch holds, else the head; no lock: versions are immutable) and hands them over in `Call::others`, which read handlers see as `Version::others` and editing handlers as `Editing::others` (`Others::get` by id). A named document that is not open is refused at the field naming it (`reference.doc`). `word_compare_blocks` is the first tool to read one.
 
+**As built (lane P4f1, part 1: `word_copy_from`).**
+- `ooxml_word_edit::CopyBlocks` copies blocks of another open document (`CopySource::Other`, the version the call pins) or of this one as the call found it (`CopySource::Own`) as docx-agent's importer does: the source blocks selected (`_source_blocks`; another document's ids as they are, one it does not know left to the host, whose session may have renamed it), each made the source's current view, its styles brought by name under `use_destination` (one the destination lacks imported under a free id with what it is based on), placed where `crate::placing` puts new blocks (shared with insert_markdown), and stamped keeping the copy's own ids where the document never had them (`EditSink::keep_or_draw`, under the seed's key as a draw is). An edit of this document's source blocks conflicts with the copy (their keys are read).
+- Still the host's (`unported`): tracked copies, `replace:`, the other style policies and style maps, and copies holding lists, relationships, notes, comments, bookmarks, drawings or controls (the next parts of the lane).
+
 **Library API.**
 - `docx_agent.Document`, `pptx_agent` and `xlsx_agent` become handles. Methods that take and return plain values keep their signatures.
 - APIs that expose lxml (`.element`, `package.tree()`, `History`) warn for two releases and are then removed, each with a CHANGELOG note naming the replacement.
@@ -680,6 +684,12 @@ No parser contains unsafe code.
    - wall-clock benches nightly on a fixed runner, never as PR gates;
    - memory per version and per document asserted with a counting allocator.
 6. **Tool rules:** each of the 8 rules is tested per tool family, carried over from today's suites.
+7. **One integration-test program per crate:**
+   - integration tests go in `tests/integration/` as a module of `main.rs`, not as a new file in `tests/`: every file there is a program of its own, built and linked again after each change to the crate or one below it;
+   - a crate whose tests are one file (`tests/<name>.rs`) moves it into `tests/integration/` when it gets a second;
+   - helpers the modules share live once in the program (`common.rs` or the crate's support module), not as a copy per module;
+   - a test that needs its own process stays a file of its own (today only ooxml-store's `tests/loom.rs`, built with `RUSTFLAGS="--cfg loom"`);
+   - run one module with a filter, e.g. `cargo test -p ooxml-word-layout --test integration relayout::`.
 
 ---
 

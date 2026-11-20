@@ -1,9 +1,22 @@
-//! Owns: `word_copy_from`'s definition (docx-agent's `tools/structure.py`,
-//! `word_copy_from`).
+//! Owns: `word_copy_from` (docx-agent's `tools/structure.py`, `word_copy_from`): its
+//! definition and its copy through the edit core's [`CopyBlocks`] -- the source this
+//! document (as it was before the call) or another open one, its blocks a range or a
+//! heading's section, the reply naming the blocks made and each source id's copy.
+//!
+//! Left to the host (`unported`): the policies other than `use_destination`, a style map,
+//! `unmapped: body`, a place given by reference, and what the edit core does not port yet.
 //!
 //! Must not: change the document but through a command.
 
-use ooxml_tools::{ArgEnum, ToolArgs};
+use super::common::{call, outcome, policy, refused, Outcome};
+use crate::review::Editing;
+use ooxml_tools::pyfmt::repr_str;
+use ooxml_tools::{ArgEnum, Done, Refusal, ToolArgs, ToolError, ToolResult, TryCall, WayOut};
+use ooxml_word_edit::{section_blocks, section_blocks_in, CopyBlocks, CopyRange, CopySource, EditError, Ids};
+use serde_json::{json, Map, Value};
+
+/// How many of the source ids and their copies' the reply lists.
+const COPIED_SHOWN: usize = 60;
 
 /// Which styles copied blocks keep.
 #[derive(ArgEnum, Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,4 +80,144 @@ pub struct WordCopyFrom {
     /// Ref name for the new blocks ($name).
     #[arg(rename = "ref")]
     pub ref_name: Option<String>,
+}
+
+/// `word_copy_from` (docx-agent's `word_copy_from`): blocks of an open document copied
+/// here -- one command.
+#[must_use]
+pub fn word_copy_from(args: &WordCopyFrom, editing: &Editing<'_>) -> ToolResult<Value> {
+    if let Err(error) = crate::review::stopped(editing.cancel) {
+        return ToolResult::failed(error);
+    }
+    let way = call("word_read", &[("doc", json!(args.doc))]);
+    match run(args, editing, &way) {
+        Ok(result) => result,
+        Err(error) => ToolResult::failed(error),
+    }
+}
+
+/// What the host answers its own way.
+fn unported(what: &str) -> ToolResult<Value> {
+    let mut done = Done::new(String::new());
+    done.unported.push(what.to_owned());
+    ToolResult::done(done)
+}
+
+fn run(args: &WordCopyFrom, editing: &Editing<'_>, way: &TryCall) -> Result<ToolResult<Value>, ToolError> {
+    if let Some(name) = args.ref_name.as_deref().filter(|r| is_place(r)) {
+        return Err(ref_as_place(name, &args.at));
+    }
+    if args.at.contains('$') {
+        return Ok(unported("copy_from at a place by reference"));
+    }
+    if args.styles.is_some_and(|s| s != CopyStyles::UseDestination) {
+        return Ok(unported("copy_from styles other than use_destination"));
+    }
+    if args.style_map.as_ref().is_some_and(|m| !m.is_empty()) || args.unmapped == Some(Unmapped::Body) {
+        return Ok(unported("copy_from with a style map"));
+    }
+    let source = if args.source_doc == args.doc {
+        CopySource::Own
+    } else {
+        let other = editing
+            .others
+            .get(&args.source_doc)
+            .ok_or_else(|| not_open(&args.source_doc, &args.doc))?;
+        CopySource::Other(other.docx()?)
+    };
+    let edit_refusal = |e| crate::review::edit_refusal(e, "", way.clone());
+    let range = match (&args.section_heading, &args.range) {
+        (Some(heading), _) => {
+            let found = match &source {
+                CopySource::Own => section_blocks(editing.editor.store().snapshot().doc(), heading),
+                CopySource::Other(docx) => section_blocks_in(&Ids::default(), docx, heading),
+            };
+            match found {
+                Ok(ids) => CopyRange::Ids(ids),
+                Err(EditError::Address(_)) if matches!(source, CopySource::Other(_)) => {
+                    return Ok(unported("a source heading the source's session may have renamed"));
+                }
+                Err(error) => return Err(edit_refusal(error)),
+            }
+        }
+        (None, Some(range)) => CopyRange::Blocks(range.clone()),
+        (None, None) => return Err(crate::review::needed("range", "", way.clone())),
+    };
+    let command = CopyBlocks {
+        source,
+        range,
+        at: args.at.clone(),
+        policy: policy(editing),
+    };
+    Ok(match editing.editor.run(editing.caller, &command) {
+        Ok(done) => reply(args, done.out),
+        Err(error) => refused(error, way.clone()),
+    })
+}
+
+/// The reply, as docx-agent's `outcome` and `name_blocks` make it of the copy.
+fn reply(args: &WordCopyFrom, out: ooxml_word_edit::BlocksCopied) -> ToolResult<Value> {
+    let count = if out.blocks.is_empty() {
+        out.copied.len()
+    } else {
+        out.blocks.len()
+    };
+    let copied: Map<String, Value> = out
+        .copied
+        .iter()
+        .take(COPIED_SHOWN)
+        .map(|(old, new)| (old.clone(), Value::from(new.as_str())))
+        .collect();
+    let edit = Outcome {
+        id: out.id.clone(),
+        changed: true,
+        created: out.created.clone(),
+        removed: Vec::new(),
+        renamed: out.renamed.clone(),
+        warnings: out.warnings.clone(),
+    };
+    let mut result = outcome(
+        &[edit],
+        format!("Copied {count} block(s) from {}", args.source_doc),
+        Some(json!({"blocks": out.blocks, "copied": Value::Object(copied)})),
+    );
+    let named = match out.blocks.as_slice() {
+        [] => None,
+        [one] => Some(one.clone()),
+        [first, .., last] => Some(format!("{first}..{last}")),
+    };
+    if let (Some(name), Some(address), ooxml_tools::Outcome::Done(done)) = (
+        args.ref_name.as_ref().filter(|n| !n.is_empty()),
+        named,
+        &mut result.outcome,
+    ) {
+        done.refs.push((name.clone(), address));
+    }
+    result
+}
+
+/// Whether a ref reads as an address or a place (docx-agent's `positions.is_place`).
+fn is_place(value: &str) -> bool {
+    value.contains([':', '@', '$']) || value.contains("..")
+}
+
+/// docx-agent's `named`: a ref that holds an address refused, the place being `at`.
+fn ref_as_place(name: &str, at: &str) -> ToolError {
+    let message = format!(
+        "ref {} is an address: ref names the blocks this call makes, for $name later; the place is at (now {}): \
+         write at: 'after:{name}' to place them after it",
+        repr_str(name),
+        repr_str(at)
+    );
+    let way = WayOut::names(["at"]).unwrap_or_else(|| WayOut::call(call("word_read", &[])));
+    ToolError::refusal(Refusal::InvalidArguments, message, way).at("ref")
+}
+
+/// The source document is not open.
+fn not_open(id: &str, doc: &str) -> ToolError {
+    let message = format!("no open document {}", repr_str(id));
+    match WayOut::names([doc.to_owned()]) {
+        Some(way_out) => ToolError::refusal(Refusal::NotFound, message, way_out).at("source_doc"),
+        None => ToolError::internal(message, "word_copy_from:source_doc"),
+    }
 }

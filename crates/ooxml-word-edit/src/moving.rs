@@ -73,21 +73,29 @@ pub struct BlocksMoved {
 /// # Errors
 /// A heading that is no body paragraph, or no heading.
 pub fn section_blocks(doc: &WordDoc, heading: &str) -> Result<Vec<String>> {
-    let docx = doc.docx()?;
-    let found = crate::set_text::find(doc, &docx, heading)?;
+    section_blocks_in(doc.ids(), &*doc.docx()?, heading)
+}
+
+/// [`section_blocks`] in a document read as `docx` whose renames are `ids`' (another open
+/// document's: [`Ids::default`] when none are known).
+///
+/// # Errors
+/// As [`section_blocks`].
+pub fn section_blocks_in(ids: &crate::Ids, docx: &Docx, heading: &str) -> Result<Vec<String>> {
+    let found = crate::set_text::find_with(ids, docx, heading)?;
     if found.part != docx.main || found.path.len() != 2 {
         return Err(EditError::Refused(format!(
             "{heading} is not a paragraph of the body itself (not in a table or a control)"
         )));
     }
-    let Some(owned) = body_headings(&docx).into_iter().find(|h| h.id == found.id) else {
+    let Some(owned) = body_headings(docx).into_iter().find(|h| h.id == found.id) else {
         return Err(EditError::Refused(format!(
             "{} is not a heading: its style has no heading level",
             found.id
         )));
     };
-    let all = controls(&docx);
-    Ok(body_blocks(&docx, &all)
+    let all = controls(docx);
+    Ok(body_blocks(docx, &all)
         .into_iter()
         .skip(owned.start)
         .take(owned.end - owned.start)
