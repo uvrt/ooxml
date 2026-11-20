@@ -12,24 +12,30 @@
 //! the entries name are not read as keys -- an edit that changes one writes it, and its own
 //! follow-up then writes the item, which a concurrent follow-up read.
 //!
-//! Must not: write an entry (docx-agent's tools that place values do), or run but once per
-//! command, after it ([`Followed`]).
+//! A review moves or drops the tables' records as well ([`follow_review`], run by the
+//! review itself before this).
+//!
+//! Must not: write a new entry (docx-agent's tools that place values do), or run but once
+//! per command, after it ([`Followed`]).
 
-use crate::doc::{Key, WordDoc};
+mod item;
+mod review;
+
+pub(crate) use review::follow_review;
+
+use crate::doc::WordDoc;
 use crate::policy::RevisionPolicy;
 use crate::sink::EditSink;
 use crate::{EditError, Result};
-use ooxml_opc::name::rels_for;
+use item::{Draft, Fate};
 use ooxml_store::{Command, Txn};
 use ooxml_word_model::docx::provenance::{
-    self as records, dumps, entry_text, facts, kind_of, target_in_file, text_paragraph, Kind, TextEntry, NS,
-    REL_CUSTOM_XML,
+    self as records, dumps, entry_text, facts, kind_of, target_in_file, text_paragraph, Kind, TextEntry,
 };
 use ooxml_word_model::docx::text::{paragraph_text, View};
 use ooxml_word_model::docx::Docx;
-use ooxml_xml::{Attribute, Element, Node};
-use std::collections::BTreeMap;
-use std::sync::Arc;
+use ooxml_xml::Element;
+use std::collections::{BTreeMap, HashSet};
 
 /// A command, then the records followed in its transaction when it changed anything.
 pub(crate) struct Followed<'c, C>(pub(crate) &'c C);
@@ -51,19 +57,11 @@ impl<C: Command<WordDoc, Error = EditError>> Command<WordDoc> for Followed<'_, C
     }
 }
 
-/// What becomes of one entry.
-enum Fate {
-    Kept,
-    Dropped,
-    /// Its key and its record now.
-    Written(String, String),
-}
-
-/// The versions an entry is weighed against: the one the edit started from and the one
-/// it made, each with its renames.
+/// What an entry is weighed against: the keys of the entries whose object the version the
+/// edit started from no longer had (pruned as the edit began: an entry the edit itself
+/// wrote is not), and the version the edit made, with its renames.
 struct Versions<'v> {
-    base: &'v Docx,
-    base_aliases: &'v BTreeMap<String, String>,
+    stale: &'v HashSet<String>,
     now: &'v Docx,
     aliases: &'v BTreeMap<String, String>,
 }
@@ -74,72 +72,42 @@ struct Versions<'v> {
 /// When the main part's relationships or a story part are not XML.
 pub(crate) fn follow(sink: &mut EditSink<'_, '_>) -> Result<()> {
     let now = sink.docx()?;
-    sink.read(Key::Part(Arc::from(rels_for(&now.main))));
-    let Some(item) = records::item(&now)? else {
+    let Some(mut draft) = Draft::open(sink, &now)? else {
         return Ok(());
     };
-    sink.read(Key::Part(Arc::from(item.as_str())));
-    let Some(tree) = sink.doc().package().tree(&item)? else {
-        return Ok(());
-    };
-    let base = sink.base().docx()?;
-    let (base_aliases, aliases) = (sink.base().ids().aliases().clone(), sink.doc().ids().aliases().clone());
+    let stale = stale(&*sink.base().docx()?, sink.base().ids().aliases())?;
+    let aliases = sink.doc().ids().aliases().clone();
     let versions = Versions {
-        base: &base,
-        base_aliases: &base_aliases,
+        stale: &stale,
         now: &now,
         aliases: &aliases,
     };
-    let root = tree.root();
-    let mut children = Vec::new();
-    let (mut changed, mut entries, mut tail) = (false, 0usize, false);
-    for node in root.children().iter() {
-        match node {
-            Node::Element(entry) if entry.name().is(Some(NS), "source") => {
-                tail = false;
-                match fate(&versions, entry) {
-                    Fate::Kept => {
-                        children.push(node.clone());
-                        entries += 1;
-                    }
-                    Fate::Dropped => {
-                        // lxml's remove takes the element's tail with it
-                        (changed, tail) = (true, true);
-                    }
-                    Fate::Written(key, text) => {
-                        children.push(Node::Element(Arc::new(written(entry, &key, &text))));
-                        (changed, entries) = (true, entries + 1);
-                    }
-                }
-            }
-            Node::Text(_) if tail => tail = false,
-            other => {
-                tail = false;
-                children.push(other.clone());
-            }
-        }
-    }
-    if entries == 0 {
-        let ids: Vec<String> = now
-            .package
-            .relationships(&now.main)?
-            .iter()
-            .filter(|r| r.rel_type == REL_CUSTOM_XML && !r.external && r.target_part.as_deref() == Some(&item))
-            .map(|r| r.id.clone())
-            .collect();
-        return sink.release(&now.main, &ids);
-    }
-    if changed {
-        let root = Element::from_head(Arc::clone(root.head()), ooxml_xml::Children::from_vec(children));
-        sink.put(&item, tree.with_root(Arc::new(root)))?;
-    }
-    Ok(())
+    draft.settle(|entry| fate(&versions, entry));
+    draft.finish(sink, &now)
+}
+
+/// The keys of `base`'s entries whose table, chart or paragraph `base` does not have.
+///
+/// # Errors
+/// When the main part's relationships are not XML.
+fn stale(base: &Docx, aliases: &BTreeMap<String, String>) -> Result<HashSet<String>> {
+    let Some(name) = records::item(base)? else {
+        return Ok(HashSet::new());
+    };
+    let Some(tree) = base.package.tree(&name)? else {
+        return Ok(HashSet::new());
+    };
+    Ok(records::entries(tree.root())
+        .map(|e| e.attribute(None, "key").unwrap_or_default())
+        .filter(|key| !target_in_file(base, aliases, key))
+        .map(str::to_owned)
+        .collect())
 }
 
 /// What the edit made of `entry`.
 fn fate(versions: &Versions<'_>, entry: &Element) -> Fate {
     let key = entry.attribute(None, "key").unwrap_or_default();
-    if !target_in_file(versions.base, versions.base_aliases, key) {
+    if versions.stale.contains(key) {
         return Fate::Dropped;
     }
     let mut fate = Fate::Kept;
@@ -179,32 +147,4 @@ fn followed(versions: &Versions<'_>, key: &str, text: &str) -> Option<Fate> {
         return Some(Fate::Dropped);
     }
     Some(Fate::Written(name, dumps(&after.record())))
-}
-
-/// `entry` keyed `key`, its text `text` (its attributes in their order, its other children
-/// kept).
-fn written(entry: &Element, key: &str, text: &str) -> Element {
-    let attributes = entry
-        .attributes()
-        .iter()
-        .map(|a| {
-            if a.name.namespace().is_none() && a.name.local() == "key" {
-                Attribute {
-                    name: a.name.clone(),
-                    value: Arc::from(key),
-                }
-            } else {
-                a.clone()
-            }
-        })
-        .collect();
-    let mut children = vec![Node::Text(Arc::from(text))];
-    children.extend(
-        entry
-            .children()
-            .iter()
-            .skip_while(|n| !matches!(n, Node::Element(_)))
-            .cloned(),
-    );
-    Element::new(entry.name().clone(), entry.namespaces().to_vec(), attributes, children)
 }
