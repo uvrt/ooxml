@@ -577,3 +577,128 @@ fn a_copied_list_item_starts_a_list_or_continues_the_one_before_it() {
         assert_eq!(text("word/numbering.xml").matches("<w:num ").count(), nums, "{lists:?}");
     }
 }
+
+/// docx-agent's importer (`_relationships`, `copy_part`, `_drawing_ids`): a picture copied
+/// from the document itself, twice, names the relationship it had (one of that type to that
+/// part reused), its picture found by its bytes (never copied again), and a drawing number
+/// past every one the document has and had each time.
+#[test]
+fn a_copied_picture_reuses_its_part_and_takes_a_new_drawing_number() {
+    let bytes = fixture("generated/lists-and-styles.docx");
+    let editor = editor(&bytes);
+    let parts_before = editor.store().snapshot().doc().package().part_names();
+    let command = CopyBlocks {
+        source: CopySource::Own,
+        range: CopyRange::Blocks("p:5A00000D".to_owned()),
+        at: "end".to_owned(),
+        policy: RevisionPolicy::Untracked,
+        styles: StylePolicy::UseDestination,
+        style_map: Vec::new(),
+        unmapped: UnmappedPolicy::Import,
+        lists: ListPolicy::Separate,
+    };
+    for _ in 0..2 {
+        editor.store().run(&Caller::anonymous(), &command).unwrap();
+    }
+    let head = editor.store().snapshot();
+    assert_eq!(head.doc().package().part_names(), parts_before, "no part added");
+    let body = String::from_utf8(head.doc().tree("word/document.xml").unwrap().unwrap().write()).unwrap();
+    let numbers: Vec<&str> = body
+        .split("<wp:docPr id=\"")
+        .skip(1)
+        .map(|s| s.split('"').next().unwrap())
+        .collect();
+    assert_eq!(numbers.len(), 3, "{numbers:?}");
+    let mut distinct = numbers.clone();
+    distinct.sort_unstable();
+    distinct.dedup();
+    assert_eq!(distinct.len(), 3, "each drawing its own number: {numbers:?}");
+    let embeds: Vec<&str> = body
+        .split("r:embed=\"")
+        .skip(1)
+        .map(|s| s.split('"').next().unwrap())
+        .collect();
+    assert!(embeds.windows(2).all(|w| w[0] == w[1]), "one relationship: {embeds:?}");
+}
+
+/// The occurrences of `needle` in part `name` of `snapshot` (none without the part).
+fn count_in(snapshot: &Snapshot<WordDoc>, name: &str, needle: &str) -> usize {
+    snapshot.doc().tree(name).unwrap().map_or(0, |tree| {
+        String::from_utf8(tree.write()).unwrap().matches(needle).count()
+    })
+}
+
+/// A copy of block `block` of fixture `name` from the document itself, to the end: the
+/// snapshots before and after, and what it reported.
+fn copy_own(name: &str, block: &str) -> (Snapshot<WordDoc>, Snapshot<WordDoc>, ooxml_word_edit::BlocksCopied) {
+    let editor = editor(&fixture(name));
+    let before = editor.store().snapshot();
+    let command = CopyBlocks {
+        source: CopySource::Own,
+        range: CopyRange::Blocks(block.to_owned()),
+        at: "end".to_owned(),
+        policy: RevisionPolicy::Untracked,
+        styles: StylePolicy::UseDestination,
+        style_map: Vec::new(),
+        unmapped: UnmappedPolicy::Import,
+        lists: ListPolicy::Separate,
+    };
+    let out = editor.store().run(&Caller::anonymous(), &command).unwrap().out;
+    (before, editor.store().snapshot(), out)
+}
+
+/// docx-agent's importer (`_notes`): a paragraph holding a footnote, copied from the
+/// document itself, brings a new note, its reference numbered as it, its paragraphs new.
+#[test]
+fn a_copied_footnote_comes_with_its_block() {
+    let (before, head, out) = copy_own("generated/own-tracked-note.docx", "p:7F100002");
+    let notes = "word/footnotes.xml";
+    assert_eq!(
+        count_in(&head, notes, "<w:footnote "),
+        count_in(&before, notes, "<w:footnote ") + 1
+    );
+    let note = out
+        .copied
+        .iter()
+        .find(|(old, _)| old.starts_with("fn:"))
+        .expect("a note copied");
+    let body = String::from_utf8(head.doc().tree("word/document.xml").unwrap().unwrap().write()).unwrap();
+    let number = note.1.trim_start_matches("fn:");
+    assert!(body.contains(&format!("w:id=\"{number}\"/>")), "{note:?}");
+    assert!(
+        out.created.iter().any(|c| c.starts_with("footnotes/p:")),
+        "{:?}",
+        out.created
+    );
+}
+
+/// docx-agent's importer (`_comments`): a paragraph holding a comment, copied from the
+/// document itself, brings a new comment (its markers on the next annotation id) with an
+/// entry in each modern comment part.
+#[test]
+fn a_copied_comment_comes_with_its_block() {
+    let (before, head, out) = copy_own("generated/pilot/agreement-summary.docx", "p:3B212964");
+    let comments = |s: &Snapshot<WordDoc>| count_in(s, "word/comments.xml", "<w:comment ");
+    assert!(comments(&head) > comments(&before));
+    for (part, needle) in [
+        ("word/commentsExtended.xml", "<w15:commentEx "),
+        ("word/commentsIds.xml", "<w16cid:commentId "),
+    ] {
+        assert_eq!(
+            count_in(&head, part, needle),
+            comments(&head),
+            "{part}: an entry per comment"
+        );
+    }
+    let comment = out
+        .copied
+        .iter()
+        .find(|(old, _)| old.starts_with("comment#"))
+        .expect("a comment copied");
+    let body = String::from_utf8(head.doc().tree("word/document.xml").unwrap().unwrap().write()).unwrap();
+    let id = comment.1.trim_start_matches("comment#");
+    assert!(
+        body.contains(&format!("<w:commentRangeStart w:id=\"{id}\"/>")),
+        "{comment:?}"
+    );
+}

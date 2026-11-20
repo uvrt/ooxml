@@ -257,16 +257,18 @@ def mirror_of(live: Any, copy: Any = None) -> "Mirror | None":
         return made
 
 
-def _earlier_ids(document: Any) -> "tuple[list[int], list[tuple[str, int]], int] | None":
+def _earlier_ids(document: Any) -> "tuple[list[int], list[tuple[str, int]], int, list[int]] | None":
     """The ids ``document`` had before it was saved, where its id state was opened with it
-    (round 38: its ledger's pool, restored): every value, each seed's cursor and the highest
-    drawing number -- for the session never to give a retired id again.  ``None`` where its
-    pool is not read yet (the parts' ids are all it has)."""
+    (round 38: its ledger's pool, restored): every value, each seed's cursor, the highest
+    drawing number and the drawing numbers retired (``drawings_gone``) -- for the session
+    never to give a retired id again, nor keep a retired drawing number in a copy.  ``None``
+    where its pool is not read yet (the parts' ids are all it has)."""
     ledger = getattr(document, "_ledger", None)
     pool = getattr(ledger, "pool", None)
     if pool is None:
         return None
-    return list(pool), list(getattr(pool, "cursors", {}).items()), ledger.highest_drawing
+    return (list(pool), list(getattr(pool, "cursors", {}).items()), ledger.highest_drawing,
+            sorted(ledger.drawings_gone))
 
 
 # -- serving a call ---------------------------------------------------------------------------

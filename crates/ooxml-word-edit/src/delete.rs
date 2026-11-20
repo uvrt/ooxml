@@ -20,7 +20,7 @@ use crate::marks::mark_record;
 use crate::names::{W, W16DU};
 use crate::paragraphs::{anchor, followed, Anchor};
 use crate::policy::RevisionPolicy;
-use crate::ranges::stretch;
+use crate::ranges::stretch_opening;
 use crate::set_text::block_key;
 use crate::sink::{annotation_draws, EditSink};
 use crate::stamping::stamp_document;
@@ -29,6 +29,7 @@ use crate::{EditError, Result};
 use ooxml_store::{Command, Txn};
 use ooxml_word_model::docx::{at_path, Docx};
 use ooxml_xml::{Element, Node};
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 /// Delete a paragraph or a table with its content.
@@ -269,6 +270,27 @@ pub(crate) type Editable = (Work, Vec<u32>, (u32, u32), Vec<Id>);
 /// A stretch of `root`'s part made editable: its work, the parent's place, the first and
 /// last child's index, and the work's node for each of `wanted`.
 pub(crate) fn editable(root: &Arc<Element>, paths: &[Vec<u32>], wanted: &[&[u32]]) -> Option<Editable> {
+    editable_opening(root, paths, wanted, Opening::All)
+}
+
+/// Which children of a stretch an edit reads whole.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Opening {
+    /// Every one (an edit of the whole stretch).
+    All,
+    /// Those holding one of the paths, and the element before and after each: an edit of
+    /// the stretch's ends (a block moved far, a section break early in a long body), which
+    /// reads and moves those and passes the others whole ([`Work::of_stretch`]).
+    Ends,
+}
+
+/// [`editable`], reading the children `opening` says whole.
+pub(crate) fn editable_opening(
+    root: &Arc<Element>,
+    paths: &[Vec<u32>],
+    wanted: &[&[u32]],
+    opening: Opening,
+) -> Option<Editable> {
     let (parent, from, to) = span(paths)?;
     let ends: Vec<Box<[u32]>> = [from, to]
         .iter()
@@ -278,22 +300,27 @@ pub(crate) fn editable(root: &Arc<Element>, paths: &[Vec<u32>], wanted: &[&[u32]
             p.into_boxed_slice()
         })
         .collect();
-    let (work, _) = stretch(root, &ends)?;
     let holder = if parent.is_empty() {
         Arc::clone(root)
     } else {
         Arc::clone(at_path(root, &parent)?)
     };
+    let opened = match opening {
+        Opening::All => None,
+        Opening::Ends => Some(ends_and_neighbours(&holder, paths, parent.len())),
+    };
+    let open = |k: u32| opened.as_ref().is_none_or(|o| o.contains(&k));
+    let (work, _) = stretch_opening(root, &ends, &open)?;
+    // the parent's children read by index, within the stretch only (a body's thousands of
+    // nodes are not copied per path)
+    let nodes = holder.children();
     let mut found = Vec::new();
     for path in wanted {
         let rest = path.get(parent.len()..)?;
         let (&top, below) = rest.split_first()?;
-        let nodes = holder.children().to_vec();
-        let index = nodes
-            .iter()
-            .skip(from as usize)
-            .take(top.checked_sub(from)? as usize)
-            .filter(|n| !matches!(n, Node::Text(_)))
+        top.checked_sub(from)?;
+        let index = (from..top)
+            .filter(|&k| nodes.get(k as usize).is_some_and(|n| !matches!(n, Node::Text(_))))
             .count();
         let at = *work.children(work.root()).get(index)?;
         let Node::Element(element) = nodes.get(top as usize)? else {
@@ -302,6 +329,22 @@ pub(crate) fn editable(root: &Arc<Element>, paths: &[Vec<u32>], wanted: &[&[u32]
         found.push(descend(&work, at, element, below)?);
     }
     Some((work, parent, (from, to), found))
+}
+
+/// The places among `holder`'s children of the child holding each of `paths` (below
+/// `depth`) and of the element before and after it.
+fn ends_and_neighbours(holder: &Element, paths: &[Vec<u32>], depth: usize) -> BTreeSet<u32> {
+    let children = holder.children();
+    let element_at = |k: usize| children.get(k).is_some_and(|n| matches!(n, Node::Element(_)));
+    let mut out = BTreeSet::new();
+    for top in paths.iter().filter_map(|p| p.get(depth)) {
+        out.insert(*top);
+        let at = *top as usize;
+        let before = (0..at).rev().find(|k| element_at(*k));
+        let after = (at + 1..children.len()).find(|k| element_at(*k));
+        out.extend(before.into_iter().chain(after).filter_map(|k| u32::try_from(k).ok()));
+    }
+    out
 }
 
 /// The keys of the blocks in the part's stretch `from..=to` of the parent at `parent`

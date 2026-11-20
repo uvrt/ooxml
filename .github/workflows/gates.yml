@@ -1,14 +1,19 @@
 name: Gates
+# Each run's title names its ref, gates and modes (`gh run list --workflow gates.yml --json
+# displayTitle`), so a lane finds its own run among several queued at once.
+run-name: Gates ${{ inputs.ref || 'main' }} [${{ inputs.gates || 'fixtures,corpus' }} / ${{ inputs.modes || 'all' }} / fixtures ${{ inputs.fixtures || 'all' }}]
 
-# The heavy gates a lane runs before its pull request is done, on GitHub's Linux runners and on
-# demand only (never on push, not a required check):
+# The heavy gates a lane runs before its pull request is done, on GitHub's Linux runners, on
+# demand and nightly on main (never on push, not a required check):
 #   gh workflow run gates.yml --repo uvrt/ooxml -f ref=<branch> -f gates=fixtures,corpus,seeds
 # modes `auto` (the default) runs the edit modes, and the reads' checks, that the branch's
 # changes against main can affect (tools/gates.py plan); `all` or a comma list names them.
 #   gh run watch --repo uvrt/ooxml $(gh run list --repo uvrt/ooxml --workflow gates.yml --limit 1 --json databaseId -q '.[0].databaseId')
 # - fixtures, corpus: crates/ooxml-oracle/python/word_edits_diff.py's modes, docx-agent (pure
 #   Python) against the release `word-edits`, on docx-agent's fixtures and on the documents
-#   docx2svg's tools/make_*.py make; each mode in `shards` jobs (tools/gates.py);
+#   docx2svg's tools/make_*.py make; each mode in `shards` jobs, or with shards `auto` (the
+#   default) as tools/gates_jobs.py sizes them: when the reference cache holds a store for the
+#   checkout (warm) one job per mode, the small modes of a gate sharing one; when cold three;
 # - reads: word_reads_diff.py's checks on the fixtures (`word-ids`, `word-reads`);
 # - seeds: the multi-writer seed runs (`--ignored`) in release;
 # - bench: the 3k-page benches on a made-up report generated here (tools/gates.py report).
@@ -20,6 +25,9 @@ name: Gates
 # cases it lacks, and reference-cache adds those to the store.  A new dispatch with the same
 # inputs cancels the run before it.  The plan job resolves `ref` to one commit and every other
 # job checks out that commit (a branch that moves while the run queues does not change it).
+# fixtures `auto` (the default) runs, on the fixtures and reads gates, the fixtures holding the
+# Word features the branch's changes touch and a few canaries (tools/gates_fixtures.py);
+# `all` every fixture.  Nightly (schedule) on main: fixtures all and the corpus, every mode.
 
 on:
   workflow_dispatch:
@@ -39,14 +47,21 @@ on:
       every:
         description: Every n-th document of each tree
         default: "1"
+      fixtures:
+        description: "The fixtures for fixtures and reads (auto: those holding the features the branch's changes touch, and the canaries -- tools/gates_fixtures.py; all; or a comma list)"
+        default: auto
       shards:
-        # 3 (was 6) since the reference cache: a warm corpus job of 120 documents is about
-        # 100 s, a cold one (docx-agent's code changed) about twice a 6-shard one.
-        description: Jobs per mode
-        default: "3"
+        # auto: the plan job looks the reference cache's store up (warm: one shard a mode, the
+        # gate's small modes in one job; cold: 3) -- tools/gates_jobs.py; a number wins.
+        description: "Jobs per mode (auto: 1 and small modes bundled when the reference cache is warm, 3 when cold)"
+        default: auto
+  # Nightly on main: every fixture and the corpus, every mode, at the commit main is at when
+  # the run starts (the summary names it, so a failure is bisected between two nightlies).
+  schedule:
+    - cron: "0 2 * * *"
 
 concurrency:
-  group: gates-${{ inputs.ref }}-${{ inputs.gates }}-${{ inputs.modes }}-${{ inputs.per_tool }}-${{ inputs.every }}-${{ inputs.shards }}
+  group: gates-${{ inputs.ref || 'main' }}-${{ inputs.gates || 'fixtures,corpus' }}-${{ inputs.modes || 'all' }}-${{ inputs.per_tool }}-${{ inputs.every || '1' }}-${{ inputs.shards || 'auto' }}-${{ inputs.fixtures || 'all' }}
   cancel-in-progress: true
 
 env:
@@ -57,33 +72,85 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
-      # inputs.ref as one commit: every job checks out this one, so a branch that moves while
+      # inputs.ref (main on the nightly run) as one commit: every job checks out this one, so a branch that moves while
       # the run queues cannot pair one commit's oracles with another's cases.
       sha: ${{ steps.plan.outputs.sha }}
-      seeds: ${{ contains(inputs.gates, 'seeds') }}
-      bench: ${{ contains(inputs.gates, 'bench') }}
+      seeds: ${{ contains(inputs.gates || 'fixtures,corpus', 'seeds') }}
+      bench: ${{ contains(inputs.gates || 'fixtures,corpus', 'bench') }}
       corpus: ${{ steps.plan.outputs.corpus }}
+      fixtures: ${{ steps.plan.outputs.fixtures }}
     steps:
       # The whole history: modes auto compares the ref with its merge base with main.
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref }}
+          ref: ${{ inputs.ref || 'main' }}
           fetch-depth: 0
+      # Warm or cold: whether the reference cache holds a store for the reference code this
+      # checkout runs (its key computed as the differential jobs compute it).  Only for the edit
+      # gates with shards auto.
+      - id: lookup
+        env:
+          GATES: ${{ inputs.gates || 'fixtures,corpus' }}
+          SHARDS: ${{ inputs.shards || 'auto' }}
+        run: |
+          lookup=false
+          if [ "$SHARDS" = auto ]; then case ",$GATES," in *,fixtures,*|*,corpus,*) lookup=true;; esac; fi
+          echo "lookup=$lookup" >> "$GITHUB_OUTPUT"
+      - if: steps.lookup.outputs.lookup == 'true'
+        uses: ./.github/actions/gates-reference
+      - if: steps.lookup.outputs.lookup == 'true'
+        id: chain
+        run: echo "chain=$(python tools/gates.py cache-key)" >> "$GITHUB_OUTPUT"
+      - if: steps.lookup.outputs.lookup == 'true'
+        id: store
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/reference
+          key: gates-reference-${{ steps.chain.outputs.chain }}-${{ github.run_id }}
+          restore-keys: gates-reference-${{ steps.chain.outputs.chain }}-
+          lookup-only: true
       - id: plan
         env:
-          GATES: ${{ inputs.gates }}
-          MODES: ${{ inputs.modes }}
-          SHARDS: ${{ inputs.shards }}
+          GATES: ${{ inputs.gates || 'fixtures,corpus' }}
+          MODES: ${{ inputs.modes || 'all' }}
+          SHARDS: ${{ inputs.shards || 'auto' }}
+          STORE: ${{ steps.store.outputs.cache-matched-key }}
           PER_TOOL: ${{ inputs.per_tool }}
-          REF: ${{ inputs.ref }}
-          EVERY: ${{ inputs.every }}
+          REF: ${{ inputs.ref || 'main' }}
+          EVERY: ${{ inputs.every || '1' }}
+          FIXTURES: ${{ inputs.fixtures || 'all' }}
+        # The checked-out ref's tools/gates.py may predate an option this workflow passes (a branch that
+        # has not merged main since): each one is used only where its --help lists it, else the older call
+        # (fixtures all, modes all, 3 shards a mode). Remove a fallback once no such branch is dispatched.
         run: |
-          matrix=$(python3 tools/gates.py matrix --gates "$GATES" --modes "$MODES" --shards "$SHARDS" --per-tool "$PER_TOOL" 2> plan.txt)
+          commands=$(python3 tools/gates.py --help)
+          has() { [[ "$commands" =~ [{,]$1[,}] ]]; }
+          if has fixtures; then
+            fixtures=$(python3 tools/gates.py fixtures --fixtures "$FIXTURES")
+            echo "fixtures=$fixtures" >> "$GITHUB_OUTPUT"
+          else
+            fixtures=all           # and the differential jobs pass no --fixtures
+            echo "tools/gates.py has no fixtures selection: every fixture" >&2
+          fi
+          if [ "$MODES" = auto ] && ! has plan; then MODES=all; fi
+          args=()
+          matrix_help=$(python3 tools/gates.py matrix --help)
+          if [[ "$matrix_help" == *--warm* ]]; then
+            args=(--shards "$SHARDS" --every "$EVERY" --fixtures "$fixtures")
+            if [ -n "$STORE" ]; then args+=(--warm); fi
+          else
+            # its own jobs, 3 shards a mode (the differential job reads their `mode` as a one-mode list)
+            args=(--shards "${SHARDS/auto/3}")
+          fi
+          matrix=$(python3 tools/gates.py matrix --gates "$GATES" --modes "$MODES" --per-tool "$PER_TOOL" "${args[@]}" 2> plan.txt)
           cat plan.txt
+          echo "matrix: $matrix"
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-          echo "corpus=$(case "$matrix" in *'"gate": "corpus"'*) echo true;; *) echo false;; esac)" >> "$GITHUB_OUTPUT"
-          echo "ref $REF at $(git rev-parse HEAD); gates $GATES; modes $MODES $(cat plan.txt); per_tool '${PER_TOOL}'; every $EVERY; shards $SHARDS" >> "$GITHUB_STEP_SUMMARY"
+          corpus=false
+          if [[ "$matrix" == *'"gate": "corpus"'* ]]; then corpus=true; fi
+          echo "corpus=$corpus" >> "$GITHUB_OUTPUT"
+          echo "ref $REF at $(git rev-parse HEAD); gates $GATES; modes $MODES $(cat plan.txt); per_tool '${PER_TOOL}'; every $EVERY; shards $SHARDS; reference store ${STORE:-none}; fixtures $FIXTURES: $fixtures" >> "$GITHUB_STEP_SUMMARY"
 
   # The release oracle binaries, once per run.
   oracles:
@@ -130,8 +197,10 @@ jobs:
           path: ${{ runner.temp }}/corpus/
           retention-days: 3
 
+  # One job of tools/gates_jobs.py's: a gate's modes (one, or a bundle run one after another)
+  # in one shard; each mode's results in its own folder of the job's logs.
   differential:
-    name: ${{ matrix.gate }} ${{ matrix.mode }} ${{ matrix.shard }}
+    name: ${{ matrix.gate }} ${{ matrix.modes || matrix.mode }} ${{ matrix.shard }}
     needs: [plan, oracles, corpus]
     if: >-
       always() && needs.plan.outputs.matrix != '' && needs.oracles.result == 'success' &&
@@ -147,15 +216,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.plan.outputs.sha }}
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
       # docx-agent is the reference: pure Python, so not ooxml-core (DOCX_AGENT_RUST=0 too).
-      - name: Install
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install ./python/ooxml-common ./python/ooxml-edit "./python/docx2svg[measure]" markdown-it-py mdit-py-plugins
-          python -m pip install --no-deps ./python/docx-agent
+      - uses: ./.github/actions/gates-reference
       - uses: ./.github/actions/substitute-fonts
       - uses: actions/download-artifact@v4
         with:
@@ -181,25 +243,36 @@ jobs:
       - name: Differential
         env:
           GATE: ${{ matrix.gate }}
-          MODE: ${{ matrix.mode }}
+          MODES: ${{ matrix.modes || matrix.mode }}
           SHARD: ${{ matrix.shard }}
           PER_TOOL: ${{ matrix.per_tool }}
-          EVERY: ${{ inputs.every }}
+          EVERY: ${{ inputs.every || '1' }}
+          FIXTURES: ${{ needs.plan.outputs.fixtures }}
         run: |
           chmod +x "$RUNNER_TEMP"/oracles/*
           tree=()
           if [ "$GATE" = corpus ]; then tree=(--tree "$RUNNER_TEMP/corpus"); fi
           cache=()
           if [ "$GATE" != reads ]; then cache=(--cache "$RUNNER_TEMP/reference"); fi
-          python tools/gates.py diff --gate "$GATE" --mode "$MODE" --shard "$SHARD" --per-tool "$PER_TOOL" \
-            --every "$EVERY" --bin "$RUNNER_TEMP/oracles" --out "$RUNNER_TEMP/out/$GATE-$MODE-${SHARD%/*}" \
-            "${tree[@]}" "${cache[@]}"
+          fixtures=()     # none from a tools/gates.py without the fixtures selection (the plan job)
+          if [ -n "$FIXTURES" ]; then fixtures=(--fixtures "$FIXTURES"); fi
+          # Each mode on its own: one failing still lets the others run.
+          status=0
+          for mode in ${MODES//,/ }; do
+            echo "::group::$GATE $mode $SHARD"
+            python tools/gates.py diff --gate "$GATE" --mode "$mode" --shard "$SHARD" --per-tool "$PER_TOOL" \
+              --every "$EVERY" --bin "$RUNNER_TEMP/oracles" --out "$RUNNER_TEMP/out/$GATE-$mode-${SHARD%/*}" \
+              "${fixtures[@]}" "${tree[@]}" "${cache[@]}" || status=1
+            echo "::endgroup::"
+          done
+          exit $status
       - name: Name the logs
         if: always()
         id: name
         env:
           SHARD: ${{ matrix.shard }}
-        run: echo "name=diff-${{ matrix.gate }}-${{ matrix.mode }}-${SHARD%/*}" >> "$GITHUB_OUTPUT"
+          LABEL: ${{ matrix.label || matrix.mode }}
+        run: echo "name=diff-${{ matrix.gate }}-${LABEL}-${SHARD%/*}" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -231,11 +304,18 @@ jobs:
           path: ${{ runner.temp }}/diffs
       - name: Differentials
         env:
-          REF: ${{ inputs.ref }}
+          REF: ${{ inputs.ref || 'main' }}
           SHA: ${{ needs.plan.outputs.sha }}
         run: |
           echo "Every job ran $REF at $SHA." >> "$GITHUB_STEP_SUMMARY"
           python3 tools/gates.py summary "$RUNNER_TEMP/diffs" >> "$GITHUB_STEP_SUMMARY"
+          commands=$(python3 tools/gates.py --help)
+          if [[ "$commands" =~ [{,]durations[,}] ]]; then {
+            echo "<details><summary>The warm modes' times (tools/gates_durations.json: python tools/gates.py durations DIR --write)</summary>"
+            echo; echo '```json'
+            python3 tools/gates.py durations "$RUNNER_TEMP/diffs"
+            echo '```'; echo "</details>"
+          } >> "$GITHUB_STEP_SUMMARY"; fi
 
   # The results the differential jobs computed, added to the store they restored (saved as a
   # new cache entry; the next run restores the newest).
@@ -327,7 +407,7 @@ jobs:
     needs: plan
     if: needs.plan.outputs.bench == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 240
     steps:
       - uses: actions/checkout@v4
         with:
@@ -368,7 +448,7 @@ jobs:
           cargo build --locked --release -p ooxml-oracle --bin word-edits-bench --bin word-objects-bench
           cargo test --locked --release -p ooxml-word-edit --test integration --no-run
           cargo test --locked --release -p ooxml-tools-word --test integration --no-run
-      # Each bench once, at most 30 minutes; a failing bench is reported and the others still run.
+      # Each bench once, within its own limit (bench NAME LIMIT ...); a failing bench is reported and the others still run.
       # The benches of one test program run one at a time (--test-threads 1), as their separate
       # programs did, so no timing shares the runner with another.
       - name: Benches
@@ -382,19 +462,23 @@ jobs:
         run: |
           out="$RUNNER_TEMP/bench"; mkdir -p "$out"
           status=0
+          # bench NAME LIMIT COMMAND...: LIMIT seconds for this bench alone.
           bench() {
-            local name=$1; shift
+            local name=$1 limit=$2; shift 2
             local start=$(date +%s)
-            if timeout 1800 "$@" > "$out/$name.txt" 2>&1; then r=ok; else r="failed ($?; 124 is the 30-minute limit)"; status=1; fi
+            if timeout "$limit" "$@" > "$out/$name.txt" 2>&1; then r=ok; else r="failed ($?; 124 is the ${limit} s limit)"; status=1; fi
             echo "| $name | $r | $(( $(date +%s) - start )) |" >> "$out/table.md"
           }
           echo "| bench | result | wall (s) |" > "$out/table.md"
           echo "|---|---|---:|" >> "$out/table.md"
-          bench word-edits-bench target/release/word-edits-bench "$DOC" 24 5
-          bench word-objects-bench target/release/word-objects-bench "$DOC"
-          bench word-edit-benches cargo test --locked --release -p ooxml-word-edit --test integration -- --ignored --nocapture --test-threads 1 object_bench:: structure_bench:: style_bench::
-          bench tools-word-benches cargo test --locked --release -p ooxml-tools-word --test integration -- --ignored --nocapture --test-threads 1 template_bench:: fields_bench::
-          bench docx-agent-24-writers python python/docx-agent/tools/writers_bench.py "$DOC" 24 5 rust
+          bench word-edits-bench 1800 target/release/word-edits-bench "$DOC" 24 5
+          bench word-objects-bench 1800 target/release/word-objects-bench "$DOC"
+          bench word-edit-benches 1800 cargo test --locked --release -p ooxml-word-edit --test integration -- --ignored --nocapture --test-threads 1 object_bench:: structure_bench:: style_bench::
+          # template and fields each alone (together they took 1,555 s on one run and passed 1,800
+          # on a runner about a quarter slower): 2,700 s each.
+          bench tools-word-template-bench 2700 cargo test --locked --release -p ooxml-tools-word --test integration -- --ignored --nocapture --test-threads 1 template_bench::
+          bench tools-word-fields-bench 2700 cargo test --locked --release -p ooxml-tools-word --test integration -- --ignored --nocapture --test-threads 1 fields_bench::
+          bench docx-agent-24-writers 1800 python python/docx-agent/tools/writers_bench.py "$DOC" 24 5 rust
           {
             echo "### bench (a shared runner: timings are noisy and not compared with a laptop's)"
             echo

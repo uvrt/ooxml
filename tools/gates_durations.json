@@ -1,0 +1,134 @@
+{
+ "corpus": {
+  "cells": {
+   "seconds": 53.0
+  },
+  "delete": {
+   "seconds": 114.0
+  },
+  "markdown": {
+   "seconds": 224.0
+  },
+  "objects": {
+   "seconds": 2092.0
+  },
+  "ops": {
+   "seconds": 148.0
+  },
+  "paragraphs": {
+   "seconds": 159.0
+  },
+  "review": {
+   "seconds": 13.0
+  },
+  "set_text": {
+   "seconds": 167.0
+  },
+  "spacing": {
+   "seconds": 163.0
+  },
+  "structure": {
+   "seconds": 645.0
+  },
+  "style": {
+   "seconds": 54.0
+  },
+  "styled": {
+   "seconds": 161.0
+  },
+  "text": {
+   "seconds": 159.0
+  },
+  "tools": {
+   "seconds": 122.0
+  }
+ },
+ "fixtures": {
+  "cells": {
+   "seconds": 5.0,
+   "documents": 28
+  },
+  "delete": {
+   "seconds": 13.0,
+   "documents": 28
+  },
+  "markdown": {
+   "seconds": 34.0,
+   "documents": 28
+  },
+  "objects": {
+   "seconds": 927.0,
+   "documents": 28
+  },
+  "ops": {
+   "seconds": 65.0,
+   "documents": 28
+  },
+  "paragraphs": {
+   "seconds": 98.0,
+   "documents": 28
+  },
+  "review": {
+   "seconds": 2.0,
+   "documents": 28
+  },
+  "set_text": {
+   "seconds": 58.0,
+   "documents": 28
+  },
+  "spacing": {
+   "seconds": 101.0,
+   "documents": 28
+  },
+  "structure": {
+   "seconds": 172.0,
+   "documents": 28
+  },
+  "style": {
+   "seconds": 1296.0,
+   "documents": 28
+  },
+  "styled": {
+   "seconds": 59.0,
+   "documents": 28
+  },
+  "text": {
+   "seconds": 271.0,
+   "documents": 28
+  },
+  "tools": {
+   "seconds": 29.0,
+   "documents": 28
+  }
+ },
+ "reads": {
+  "batch": {
+   "seconds": 5.0,
+   "documents": 28
+  },
+  "describe": {
+   "seconds": 13.0,
+   "documents": 28
+  },
+  "find": {
+   "seconds": 11.0,
+   "documents": 28
+  },
+  "ids": {
+   "seconds": 5.0,
+   "documents": 28
+  },
+  "inspect": {
+   "seconds": 11.0,
+   "documents": 28
+  },
+  "ranges": {
+   "seconds": 10.0,
+   "documents": 28
+  },
+  "read": {
+   "seconds": 9.0,
+   "documents": 28
+  }
+ }
+}

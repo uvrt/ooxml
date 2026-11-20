@@ -229,11 +229,28 @@ fn find_breaks(
                 });
             }
         }
-        ancestors.push((Arc::clone(element), path.clone().into_boxed_slice()));
-        find_breaks(docx, child, ancestors, path, out);
-        ancestors.pop();
+        if holds_breaks(element, child) {
+            ancestors.push((Arc::clone(element), path.clone().into_boxed_slice()));
+            find_breaks(docx, child, ancestors, path, out);
+            ancestors.pop();
+        }
         path.pop();
     }
+}
+
+/// Whether `child` (of `parent`) can hold a section break ([`break_id`]): the body, the
+/// containers between it and its paragraphs, a paragraph, and a paragraph's properties.
+/// Anything else (a run, a table, a cell's paragraphs) holds none, so the walk does not go
+/// into it.
+fn holds_breaks(parent: &Element, child: &Element) -> bool {
+    let name = child.name();
+    if name.is(Some(W), "pPr") {
+        return parent.name().is(Some(W), "p");
+    }
+    ["body", "p", "sdt", "sdtContent", "customXml"]
+        .iter()
+        .any(|local| name.is(Some(W), local))
+        && !parent.name().is(Some(W), "p")
 }
 
 /// The section id of a `w:sectPr` in `properties`, where it ends a section: the first
@@ -303,4 +320,77 @@ pub fn section_story(docx: &Docx, sections: &[Section], index: usize, which: &st
 #[must_use]
 pub fn ends_section(paragraph: &Element) -> bool {
     find_path(paragraph, &["pPr", "sectPr"]).is_some()
+}
+
+#[cfg(test)]
+mod tests {
+    //! The section breaks found walking only where one can stand equal those a walk of the
+    //! whole body finds, on every docx-agent fixture.
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
+
+    use super::{break_id, sections, Section, W};
+    use crate::docx::Docx;
+    use ooxml_xml::{Element, Node};
+    use std::path::{Path, PathBuf};
+    use std::sync::Arc;
+
+    /// Every element walked, as the breaks were found before lane L4a.
+    fn every_break(
+        docx: &Docx,
+        element: &Arc<Element>,
+        ancestors: &mut Vec<(Arc<Element>, Box<[u32]>)>,
+        path: &mut Vec<u32>,
+        out: &mut Vec<(String, Box<[u32]>)>,
+    ) {
+        for (k, node) in element.children().iter().enumerate() {
+            let Node::Element(child) = node else { continue };
+            path.push(u32::try_from(k).unwrap());
+            if child.name().is(Some(W), "sectPr") {
+                if let Some(id) = break_id(docx, element, ancestors, k) {
+                    out.push((id, path.clone().into_boxed_slice()));
+                }
+            }
+            ancestors.push((Arc::clone(element), path.clone().into_boxed_slice()));
+            every_break(docx, child, ancestors, path, out);
+            ancestors.pop();
+            path.pop();
+        }
+    }
+
+    fn fixtures(dir: &Path, out: &mut Vec<PathBuf>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                fixtures(&path, out);
+            } else if path.extension().is_some_and(|e| e == "docx") {
+                out.push(path);
+            }
+        }
+    }
+
+    #[test]
+    fn breaks_found_where_they_can_stand_equal_a_whole_walk() {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../python/docx-agent/tests/fixtures");
+        let mut paths = Vec::new();
+        fixtures(&dir, &mut paths);
+        let mut breaks = 0;
+        for path in paths {
+            let bytes: Arc<[u8]> = Arc::from(std::fs::read(&path).unwrap());
+            let Ok(package) = ooxml_opc::Package::open(bytes, &ooxml_base::Limits::default()) else {
+                continue;
+            };
+            let Ok(docx) = Docx::open(&package) else { continue };
+            let Some(body) = docx.body() else { continue };
+            let mut whole = Vec::new();
+            every_break(&docx, body.root(), &mut Vec::new(), &mut Vec::new(), &mut whole);
+            let found: Vec<(String, Box<[u32]>)> = sections(&docx)
+                .into_iter()
+                .filter(|s| s.id != "s:body")
+                .map(|Section { id, path, .. }| (id, path))
+                .collect();
+            assert_eq!(found, whole, "{}", path.display());
+            breaks += found.len();
+        }
+        assert!(breaks > 1, "{breaks} breaks");
+    }
 }

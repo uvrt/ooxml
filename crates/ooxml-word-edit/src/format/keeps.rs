@@ -222,7 +222,7 @@ pub(crate) fn keep_plan(doc: &WordDoc, docx: &Docx, address: &str, on: bool) -> 
 }
 
 /// A paragraph's direct toggle `w:{local}`: on, off, or not said.
-fn declared(paragraph: &Element, local: &str) -> Option<bool> {
+pub(crate) fn declared(paragraph: &Element, local: &str) -> Option<bool> {
     let node = paragraph.find(Some(W), "pPr")?.find(Some(W), local)?;
     Some(
         node.attribute(Some(W), "val")
@@ -233,7 +233,7 @@ fn declared(paragraph: &Element, local: &str) -> Option<bool> {
 /// Per row of a table, the place of the paragraph Word decides the row's keep with the next
 /// by (docx2svg's `lead_paragraph`: its first cell's first paragraph, a nested table's
 /// first there).
-fn row_leads(table: &Element, place: &[u32]) -> Vec<Option<Vec<u32>>> {
+pub(crate) fn row_leads(table: &Element, place: &[u32]) -> Vec<Option<Vec<u32>>> {
     let mut out = Vec::new();
     for (k, row) in rows(table) {
         let at = [place, k.as_slice()].concat();
@@ -297,25 +297,26 @@ fn first_paragraph(container: &Element, place: &[u32]) -> Option<Vec<u32>> {
     first_paragraph(cell, &[row_at.as_slice(), c.as_slice()].concat())
 }
 
-/// Paragraphs' keeps as Word applies them, with and without their direct formatting.
-struct Keeps<'a> {
+/// Paragraphs' keeps as Word applies them, with and without their direct formatting, in
+/// one story part.
+pub(crate) struct Keeps<'a> {
     formatting: Formatting,
-    body: &'a StoryPart,
+    story: &'a StoryPart,
     tables: HashMap<Vec<u32>, Arc<TableFacts>>,
 }
 
 impl<'a> Keeps<'a> {
-    fn new(docx: &Docx, body: &'a StoryPart) -> Keeps<'a> {
+    pub(crate) fn new(docx: &Docx, story: &'a StoryPart) -> Keeps<'a> {
         Keeps {
             formatting: Formatting::read(docx),
-            body,
+            story,
             tables: HashMap::new(),
         }
     }
 
     /// The cell of the outermost table holding the paragraph at `place`.
     fn cell(&mut self, place: &[u32]) -> Option<Cell> {
-        let root = self.body.root();
+        let root = self.story.root();
         let depth = (1..place.len())
             .find(|d| at_path(root, place.get(..*d).unwrap_or_default()).is_some_and(|e| is_w(e, "tbl")))?;
         let (table_at, below) = place.split_at(depth);
@@ -329,7 +330,7 @@ impl<'a> Keeps<'a> {
 
     /// The paragraph's formatting as Word applies it; without `direct`, what its styles
     /// (and its list) give it.
-    fn effective(&mut self, paragraph: &Element, place: &[u32], direct: bool) -> EffectiveParagraph {
+    pub(crate) fn effective(&mut self, paragraph: &Element, place: &[u32], direct: bool) -> EffectiveParagraph {
         let cell = self.cell(place);
         if direct {
             return self.formatting.paragraph(paragraph, cell.as_ref());
