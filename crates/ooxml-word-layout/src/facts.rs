@@ -145,7 +145,24 @@ pub struct LayoutFacts {
     pub stopped: Option<usize>,
     /// Each top-level body block laid out in the flow, by its index in the body.
     pub keeps: BTreeMap<usize, BlockKeeps>,
+    /// Each paragraph path's first page, made when first asked.
+    first: FirstPages,
 }
+
+/// Each paragraph path's first page (0-based), made once from the pages' lines when first
+/// asked: a field update and a check ask it for every field and reference (lane L4b: a
+/// walk of every page per field; lane L4a: made once per version, not once per reader).
+/// Derived from the pages, so two facts are equal whatever it holds yet.
+#[derive(Debug, Clone, Default)]
+struct FirstPages(std::sync::OnceLock<std::collections::HashMap<Text, usize>>);
+
+impl PartialEq for FirstPages {
+    fn eq(&self, _: &FirstPages) -> bool {
+        true
+    }
+}
+
+impl Eq for FirstPages {}
 
 /// The body's blocks a body path is in, outermost first (`paths.block_keys`): every prefix
 /// ending at a paragraph, table, row or cell step, up to the first paragraph.
@@ -185,7 +202,7 @@ pub(crate) struct LinePaths {
 impl LinePaths {
     /// The paths of `layout`'s lines.
     pub(crate) fn of(layout: &DocumentLayout) -> LinePaths {
-        let (paragraphs, _) = body_paragraphs(&layout.document.body);
+        let paragraphs = layout.body_paragraphs();
         let opening = separator(&layout.document, "continuationSeparator", NotesPart::Endnotes)
             .iter()
             .find_map(|b| match b {
@@ -263,6 +280,7 @@ impl LayoutFacts {
             pages,
             stopped: stopped(layout),
             keeps: keeps(layout),
+            first: FirstPages::default(),
         }
     }
 
@@ -287,6 +305,7 @@ impl LayoutFacts {
             pages,
             stopped: stopped(layout),
             keeps: keeps(layout),
+            first: FirstPages::default(),
         }
     }
 
@@ -323,10 +342,20 @@ impl LayoutFacts {
 
     /// The 0-based page a paragraph's first line is drawn on.
     pub fn first_page(&self, path: &str) -> Option<usize> {
-        self.pages
-            .iter()
-            .find(|p| p.lines.iter().any(|l| &*l.path == path))
-            .map(|p| p.page)
+        self.first_pages().get(path).copied()
+    }
+
+    /// Each paragraph path's first page (0-based), made once.
+    pub fn first_pages(&self) -> &std::collections::HashMap<Text, usize> {
+        self.first.0.get_or_init(|| {
+            let mut first = std::collections::HashMap::new();
+            for page in &self.pages {
+                for line in &page.lines {
+                    first.entry(Text::clone(&line.path)).or_insert(page.page);
+                }
+            }
+            first
+        })
     }
 
     /// Every 0-based page a block (its key: a paragraph's, table's, row's or cell's path)
