@@ -13,6 +13,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import gates  # noqa: E402
+import gates_fixtures  # noqa: E402
 
 CHART_PLACES = "generated/charts/chart-places.docx"
 SEQ = {"op": "structure", "tool": "word_fields",
@@ -108,6 +109,56 @@ class AutoModes(unittest.TestCase):
         import reference_cache
 
         self.assertTrue(set(gates.CASE_MAKERS) <= set(reference_cache.NOT_REFERENCE))
+
+
+class AutoFixtures(unittest.TestCase):
+    """--fixtures auto: the fixtures a branch's changes can affect, and the canaries."""
+
+    def test_the_feature_map_is_current(self) -> None:
+        # after adding or changing a fixture: python tools/gates_fixtures.py write
+        self.assertEqual(gates_fixtures.scan(), gates_fixtures.load())
+
+    def test_the_canaries_are_fixtures(self) -> None:
+        known = gates_fixtures.load()
+        for name in gates_fixtures.CANARIES:
+            self.assertIn(name, known)
+
+    def test_a_tables_change_runs_the_table_fixtures(self) -> None:
+        known = gates_fixtures.load()
+        tables = {name for name, held in known.items() if "tables" in held}
+        for path in ("crates/ooxml-word-edit/src/tables/merge.rs", "python/docx-agent/src/docx_agent/edit/tables.py"):
+            chosen = gates.auto_fixtures([path])
+            self.assertEqual(set(chosen), tables | set(gates_fixtures.CANARIES), path)
+            self.assertLess(len(chosen), len(known))
+
+    def test_a_notes_change_leaves_the_others_out(self) -> None:
+        chosen = gates.auto_fixtures(["crates/ooxml-tools-word/src/structure/notes.rs"])
+        self.assertIn("generated/own-tracked-note.docx", chosen)
+        self.assertNotIn("wordto/sample-10pages.docx", chosen)
+
+    def test_a_foundation_or_an_unnamed_path_runs_every_fixture(self) -> None:
+        for path in ("crates/ooxml-xml/src/writer.rs", "crates/ooxml-opc/src/package.rs",
+                     "crates/ooxml-store/src/lib.rs", "crates/ooxml-session/src/lib.rs",
+                     "crates/ooxml-oracle/python/word_edits_diff.py", "crates/ooxml-oracle/known-differences.toml",
+                     "crates/ooxml-word-edit/src/editor.rs", "python/docx-agent/src/docx_agent/layout.py"):
+            self.assertEqual(gates.auto_fixtures([path]), gates_fixtures.ALL, path)
+        self.assertEqual(gates.auto_fixtures([]), gates_fixtures.ALL)
+
+    def test_a_changed_fixture_runs(self) -> None:
+        name = "generated/mode14.docx"
+        chosen = gates.auto_fixtures([f"python/docx-agent/tests/fixtures/{name}"])
+        self.assertIn(name, chosen)
+        self.assertEqual(gates.auto_fixtures(["python/docx-agent/tests/fixtures/generated/new-one.docx"]),
+                         gates_fixtures.ALL)
+
+    def test_paths_the_gates_do_not_run_add_nothing(self) -> None:
+        chosen = gates.auto_fixtures(["crates/ooxml-word-edit/src/tables/merge.rs", "README.md", "tools/ci.py"])
+        self.assertEqual(chosen, gates.auto_fixtures(["crates/ooxml-word-edit/src/tables/merge.rs"]))
+
+    def test_documents_keep_the_selection(self) -> None:
+        only = list(gates_fixtures.CANARIES)
+        files = gates.documents(gates.FIXTURES, 1, (1, 1), only)
+        self.assertEqual(sorted(str(f.relative_to(gates.FIXTURES)) for f in files), sorted(only))
 
 
 if __name__ == "__main__":
