@@ -86,22 +86,9 @@ pub fn bookmark_markers_with<'d>(
     let mut out: Vec<Bookmark<'_>> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
     for part in &docx.parts {
+        let held = part_blocks(part, marks);
         let mut starts = Vec::new();
         let mut ends: Vec<(&str, Box<[u32]>)> = Vec::new();
-        let mut held = Vec::new();
-        for (k, node) in part.root().children().iter().enumerate() {
-            let Node::Element(child) = node else { continue };
-            let k = u32::try_from(k).unwrap_or(u32::MAX);
-            if child.name().is(Some(W), "body") {
-                for (j, node) in child.children().iter().enumerate() {
-                    let Node::Element(block) = node else { continue };
-                    held.push((vec![k, u32::try_from(j).unwrap_or(u32::MAX)], marks(block)));
-                }
-            } else {
-                held.push((vec![k], marks(child)));
-            }
-        }
-        let at = |above: &[u32], p: &[u32]| -> Box<[u32]> { [above, p].concat().into_boxed_slice() };
         for (above, block) in &held {
             starts.extend(
                 block
@@ -131,6 +118,88 @@ pub fn bookmark_markers_with<'d>(
         }
     }
     out
+}
+
+/// The bookmark `name` names, as [`Bookmarks::get`] finds it, each block's markers from
+/// `marks` (as [`bookmark_markers_with`]): one name looked up without listing every
+/// bookmark of the version (what a caller looking up a few names in a long document wants).
+///
+/// # Errors
+/// `not_found` naming it.
+pub fn bookmark_with<'d>(
+    docx: &'d Docx,
+    name: &str,
+    marks: &mut dyn FnMut(&std::sync::Arc<Element>) -> std::sync::Arc<BlockMarks>,
+) -> Result<Bookmark<'d>, AddressError> {
+    let name = name.strip_prefix("bm:").unwrap_or(name);
+    let parts: Vec<(&StoryPart, Vec<PlacedMarks>)> = docx
+        .parts
+        .iter()
+        .map(|part| (&**part, part_blocks(part, marks)))
+        .collect();
+    // A name written as asked first, else one equal in any case (the first of either).
+    let folded = std::cell::OnceCell::new();
+    let matches: [&dyn Fn(&str) -> bool; 2] = [&|n: &str| n == name, &|n: &str| {
+        crate::docx::casefold(n) == *folded.get_or_init(|| crate::docx::casefold(name))
+    }];
+    for matches in matches {
+        for (part, held) in &parts {
+            let start = held.iter().find_map(|(above, block)| {
+                block
+                    .starts
+                    .iter()
+                    .find(|(n, _, _)| matches(n))
+                    .map(|(n, id, p)| (n, id, at(above, p)))
+            });
+            let Some((found, id, start)) = start else { continue };
+            // The last end of its id in its part.
+            let end = held.iter().rev().find_map(|(above, block)| {
+                block
+                    .ends
+                    .iter()
+                    .rev()
+                    .find(|(e, _)| e == id)
+                    .map(|(_, p)| at(above, p))
+            });
+            return Ok(Bookmark {
+                name: found.clone(),
+                part,
+                start,
+                end,
+            });
+        }
+    }
+    Err(no_bookmark(name))
+}
+
+/// A block's place in its part and its markers.
+type PlacedMarks = (Vec<u32>, std::sync::Arc<BlockMarks>);
+
+/// The blocks of `part` whose markers are read (each child of the root, the body's children
+/// in its place), with their places and markers from `marks`.
+fn part_blocks(
+    part: &StoryPart,
+    marks: &mut dyn FnMut(&std::sync::Arc<Element>) -> std::sync::Arc<BlockMarks>,
+) -> Vec<PlacedMarks> {
+    let mut held = Vec::new();
+    for (k, node) in part.root().children().iter().enumerate() {
+        let Node::Element(child) = node else { continue };
+        let k = u32::try_from(k).unwrap_or(u32::MAX);
+        if child.name().is(Some(W), "body") {
+            for (j, node) in child.children().iter().enumerate() {
+                let Node::Element(block) = node else { continue };
+                held.push((vec![k, u32::try_from(j).unwrap_or(u32::MAX)], marks(block)));
+            }
+        } else {
+            held.push((vec![k], marks(child)));
+        }
+    }
+    held
+}
+
+/// A marker's place in its part: its block's place, then its place in the block.
+fn at(above: &[u32], p: &[u32]) -> Box<[u32]> {
+    [above, p].concat().into_boxed_slice()
 }
 
 fn attr(e: &Element, local: &str) -> String {

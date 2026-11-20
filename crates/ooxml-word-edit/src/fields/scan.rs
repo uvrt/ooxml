@@ -6,14 +6,15 @@
 //! story order (`_all_fields`). A block's fields are scanned once while it is unchanged,
 //! and a version's fields once while its parts are ([`FieldScans`], the document's); the
 //! bookmarks the fields refer to, each block's markers read once while it is unchanged
-//! ([`bookmarks`]).
+//! ([`Marks`]).
 //!
 //! Must not: change a field or compute its value.
 
+use crate::doc::Shared;
 use crate::names::W;
 use crate::WordDoc;
 use ooxml_derive::{CacheBudget, Memo, Weigh};
-use ooxml_word_model::address::marks::{bookmark_markers_with, BlockMarks, Bookmarks};
+use ooxml_word_model::address::marks::{bookmark_markers_with, bookmark_with, BlockMarks, Bookmark, Bookmarks};
 use ooxml_word_model::docx::text::leading_text;
 use ooxml_word_model::docx::{at_path, Docx};
 use ooxml_xml::{Element, Node};
@@ -332,26 +333,64 @@ pub(crate) fn all_fields(doc: &WordDoc, docx: &Docx) -> Arc<[Located]> {
     fields
 }
 
-/// The bookmarks of `docx` (a reading of `doc`), each block's markers read once while it is
-/// unchanged.
-pub(crate) fn bookmarks<'d>(doc: &WordDoc, docx: &'d Docx) -> Bookmarks<'d> {
-    let mut memo = doc.shared().fields.marks.lock().unwrap_or_else(PoisonError::into_inner);
-    let markers = bookmark_markers_with(docx, &mut |block| {
-        let key = Arc::as_ptr(block) as usize;
-        if let Some(held) = memo.get(&key).filter(|h| Arc::ptr_eq(&h.element, block)) {
-            return held.marks;
+/// How many bookmark names a pass looks up one by one before it lists every bookmark of the
+/// version: a lookup alone walks the version's blocks once (their markers held while they are
+/// unchanged); the list does that and copies out every bookmark, which a long document's
+/// table of contents makes thousands.
+const LOOKED_UP_ALONE: usize = 4;
+
+/// A version's bookmarks as a pass asks for them by name: a few looked up alone, more from
+/// one list of every bookmark.
+pub(crate) enum Marks<'d> {
+    /// Every bookmark, listed once.
+    Listed(Bookmarks<'d>),
+    /// Each name looked up alone, each block's markers from the document's memo.
+    Alone { docx: &'d Docx, shared: Arc<Shared> },
+}
+
+impl<'d> Marks<'d> {
+    /// The bookmarks of `docx` (a reading of `doc`) for a pass that looks up `names` names.
+    pub(crate) fn of(doc: &WordDoc, docx: &'d Docx, names: usize) -> Marks<'d> {
+        if names <= LOOKED_UP_ALONE {
+            return Marks::Alone {
+                docx,
+                shared: doc.shared_handle(),
+            };
         }
-        let marks = Arc::new(BlockMarks::of(block));
-        memo.insert(
-            key,
-            HeldMarks {
-                element: Arc::clone(block),
-                marks: Arc::clone(&marks),
-            },
-        );
-        marks
-    });
-    Bookmarks::of_markers(markers)
+        let shared = doc.shared_handle();
+        let mut memo = shared.fields.marks.lock().unwrap_or_else(PoisonError::into_inner);
+        Marks::Listed(Bookmarks::of_markers(bookmark_markers_with(docx, &mut |block| {
+            held_marks(&mut memo, block)
+        })))
+    }
+
+    /// The bookmark `name` names (as [`Bookmarks::get`] finds it).
+    pub(crate) fn get(&self, name: &str) -> Option<Bookmark<'d>> {
+        match self {
+            Marks::Listed(all) => all.get(name).ok().cloned(),
+            Marks::Alone { docx, shared } => {
+                let mut memo = shared.fields.marks.lock().unwrap_or_else(PoisonError::into_inner);
+                bookmark_with(docx, name, &mut |block| held_marks(&mut memo, block)).ok()
+            }
+        }
+    }
+}
+
+/// The markers of `block`, read once while it is unchanged.
+fn held_marks(memo: &mut Memo<usize, HeldMarks>, block: &Arc<Element>) -> Arc<BlockMarks> {
+    let key = Arc::as_ptr(block) as usize;
+    if let Some(held) = memo.get(&key).filter(|h| Arc::ptr_eq(&h.element, block)) {
+        return held.marks;
+    }
+    let marks = Arc::new(BlockMarks::of(block));
+    memo.insert(
+        key,
+        HeldMarks {
+            element: Arc::clone(block),
+            marks: Arc::clone(&marks),
+        },
+    );
+    marks
 }
 
 /// The path of the paragraph holding the node at `path` (its nearest `w:p` above it).

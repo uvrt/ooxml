@@ -6,5 +6,6 @@ mod support;
 
 mod block_index;
 mod changes;
+mod marks;
 mod model;
 mod origins;

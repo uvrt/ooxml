@@ -13,7 +13,7 @@
 //! Must not: lay out (the [`FieldLayout`] port does), or write but through the sink.
 
 use super::pages::{FieldLayout, LaidFields};
-use super::scan::{all_fields, bookmarks, paragraph_of, result_text, same_result, Located};
+use super::scan::{all_fields, paragraph_of, result_text, same_result, Located, Marks};
 use super::toc::build::EMPTY_TOC;
 use super::values::{sequence_values, value, Day};
 use super::write::{locate, write_complex, write_simple, Complex};
@@ -57,28 +57,41 @@ impl std::fmt::Debug for UpdateFields<'_> {
 /// not inside a table of contents being rebuilt.
 type Known = (String, usize);
 
-/// The fields of `docx` by what passes know them as, given which tables of contents are rebuilt.
-fn identified(doc: &WordDoc, docx: &Docx, held: &[Known]) -> Vec<(Known, Located)> {
-    let mut out = Vec::new();
-    let mut part = String::new();
+/// Each field of `fields` (a version's, as [`all_fields`] lists them) with its place among
+/// its part's fields as passes know it, given which tables of contents are rebuilt (`held`):
+/// the fields a rebuilt table of contents holds aside are not met.
+fn each_known<'f>(fields: &'f [Located], held: &HashSet<(&str, usize)>, each: &mut dyn FnMut(usize, &'f Located)) {
+    let mut part: &str = "";
     let mut ordinal = 0;
     let mut aside: HashSet<usize> = HashSet::new();
-    for located in all_fields(doc, docx).iter() {
+    for located in fields {
         if located.part != part {
-            part.clone_from(&located.part);
+            part = &located.part;
             ordinal = 0;
             aside.clear();
         }
         if aside.contains(&located.found.number) {
             continue;
         }
-        let known = (located.part.clone(), ordinal);
-        ordinal += 1;
-        if located.found.keyword() == "TOC" && held.contains(&known) {
+        if held.contains(&(part, ordinal)) && located.found.keyword() == "TOC" {
             aside.extend(located.found.nested.iter().copied());
         }
-        out.push((known, located.clone()));
+        each(ordinal, located);
+        ordinal += 1;
     }
+}
+
+/// The fields `held` of `docx`, by what passes know them as, in document order (only these
+/// are copied out: an update of one field does not copy the document's thousands).
+fn identified(doc: &WordDoc, docx: &Docx, held: &[Known]) -> Vec<(Known, Located)> {
+    let wanted: HashSet<(&str, usize)> = held.iter().map(|(part, k)| (part.as_str(), *k)).collect();
+    let fields = all_fields(doc, docx);
+    let mut out = Vec::new();
+    each_known(&fields, &wanted, &mut |ordinal, located| {
+        if wanted.contains(&(located.part.as_str(), ordinal)) {
+            out.push(((located.part.clone(), ordinal), located.clone()));
+        }
+    });
     out
 }
 
@@ -127,10 +140,12 @@ pub(crate) fn pass_on(
     today: Day,
 ) -> Result<Vec<String>> {
     let docx = sink.docx()?;
-    let known = identified(sink.doc(), &docx, &[])
-        .into_iter()
-        .find(|(_, l)| l.part == located.part && l.found.begin == located.found.begin)
-        .map(|(i, _)| i);
+    let mut known = None;
+    each_known(&all_fields(sink.doc(), &docx), &HashSet::new(), &mut |ordinal, l| {
+        if known.is_none() && l.part == located.part && l.found.begin == located.found.begin {
+            known = Some((l.part.clone(), ordinal));
+        }
+    });
     match known {
         Some(known) => pass(sink, &[known], layout, today),
         None => Ok(Vec::new()),
@@ -142,10 +157,8 @@ pub(crate) fn pass_on(
 /// rebuilt holds aside is in that table's result, so the document's fields are as they
 /// were exactly when these are.
 fn state(doc: &WordDoc, docx: &Docx, held: &[Known]) -> Vec<(String, String)> {
-    let wanted: HashSet<&Known> = held.iter().collect();
     identified(doc, docx, held)
         .into_iter()
-        .filter(|(known, _)| wanted.contains(known))
         .map(|(_, l)| {
             let text = docx
                 .part(&l.part)
@@ -164,13 +177,8 @@ fn pass(
     today: Day,
 ) -> Result<Vec<String>> {
     let docx = sink.docx()?;
-    let held_set: HashSet<&Known> = held.iter().collect();
     let fields = identified(sink.doc(), &docx, held);
-    let current: Vec<&Located> = fields
-        .iter()
-        .filter(|(i, _)| held_set.contains(i))
-        .map(|(_, l)| l)
-        .collect();
+    let current: Vec<&Located> = fields.iter().map(|(_, l)| l).collect();
     if current.iter().any(|l| l.found.keyword() == "STYLEREF") {
         return Err(EditError::Unsupported("a STYLEREF field's update".to_owned()));
     }
@@ -190,24 +198,23 @@ fn pass(
     };
     let pass = Pass { laid, today };
     let mut unknown = Vec::new();
-    let sequences = sequence_values(&all_fields(sink.doc(), &docx));
-    let mut writes = Vec::new();
-    for located in current.iter().filter(|l| l.found.keyword() == "SEQ") {
-        match sequences.get(&(located.part.clone(), located.found.number)) {
-            Some(Some(text)) => writes.push(((*located).clone(), text.clone())),
-            _ => unknown.push(located.id()),
-        }
-    }
+    let writes = sequence_writes(sink.doc(), &docx, &current, &mut unknown);
     apply(sink, &writes)?;
     let order: Vec<Known> = fields
         .iter()
-        .filter(|(i, l)| held_set.contains(i) && l.found.keyword() != "SEQ")
+        .filter(|(_, l)| l.found.keyword() != "SEQ")
         .map(|(i, _)| i.clone())
         .collect();
     let mut batch: Vec<(Located, String)> = Vec::new();
     let mut docx = sink.docx()?;
     let mut now: HashMap<Known, Located> = identified(sink.doc(), &docx, held).into_iter().collect();
-    let mut marks = bookmarks(sink.doc(), &docx);
+    // The bookmarks REF and PAGEREF look up.
+    let names = order
+        .iter()
+        .filter_map(|k| now.get(k))
+        .filter(|l| matches!(l.found.keyword().as_str(), "REF" | "PAGEREF"))
+        .count();
+    let mut marks = Marks::of(sink.doc(), &docx, names);
     for known in order {
         let Some(located) = now.get(&known).cloned() else {
             continue;
@@ -228,7 +235,7 @@ fn pass(
             }
             docx = sink.docx()?;
             now = identified(sink.doc(), &docx, held).into_iter().collect();
-            marks = bookmarks(sink.doc(), &docx);
+            marks = Marks::of(sink.doc(), &docx, names);
             continue;
         }
         match value(sink.doc(), (&docx, &marks), &located, pass.laid.as_deref(), pass.today) {
@@ -239,6 +246,29 @@ fn pass(
     }
     apply(sink, &batch)?;
     Ok(unknown)
+}
+
+/// The `SEQ` fields among `current` with their numbers (counted over every field, so only
+/// where one is held); those that have none added to `unknown`.
+fn sequence_writes(
+    doc: &WordDoc,
+    docx: &Docx,
+    current: &[&Located],
+    unknown: &mut Vec<String>,
+) -> Vec<(Located, String)> {
+    let numbered: Vec<&Located> = current.iter().copied().filter(|l| l.found.keyword() == "SEQ").collect();
+    if numbered.is_empty() {
+        return Vec::new();
+    }
+    let sequences = sequence_values(&all_fields(doc, docx));
+    let mut writes = Vec::new();
+    for located in numbered {
+        match sequences.get(&(located.part.clone(), located.found.number)) {
+            Some(Some(text)) => writes.push((located.clone(), text.clone())),
+            _ => unknown.push(located.id()),
+        }
+    }
+    writes
 }
 
 /// Writes by the part and paragraph they begin in.
@@ -363,9 +393,10 @@ pub(crate) fn empty_tocs(doc: &WordDoc, docx: &Docx, ids: Option<&[String]>) -> 
 /// field with the same result (`_update_fields`' count): a field whose result stands in the
 /// same elements of both versions is not read.
 fn changed_results(doc: &WordDoc, before: (&Docx, &[Located]), after: &Docx) -> usize {
-    let mut was: HashMap<String, Vec<&Located>> = HashMap::new();
+    // By id (`fld:<story>/<number>`), its parts not written out.
+    let mut was: HashMap<(&str, usize), Vec<&Located>> = HashMap::new();
     for located in before.1 {
-        was.entry(located.id()).or_default().push(located);
+        was.entry((&located.story, located.found.number)).or_default().push(located);
     }
     let text = |docx: &Docx, l: &Located| {
         docx.part(&l.part)
@@ -374,7 +405,7 @@ fn changed_results(doc: &WordDoc, before: (&Docx, &[Located]), after: &Docx) -> 
     all_fields(doc, after)
         .iter()
         .filter(|now| {
-            let Some(earlier) = was.get(&now.id()) else {
+            let Some(earlier) = was.get(&(now.story.as_str(), now.found.number)) else {
                 return true;
             };
             let roots = (before.0.part(&now.part), after.part(&now.part));
