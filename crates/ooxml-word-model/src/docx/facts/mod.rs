@@ -15,8 +15,10 @@ use crate::docx::revisions::is_revision;
 use crate::docx::Found;
 use crate::ids::{MC, W, WP};
 use ooxml_xml::{Element, Node};
-use std::collections::HashMap;
+use runs::Runs;
 use std::sync::Arc;
+
+mod runs;
 
 /// One block's facts (a body's child, or the root's child in another story), with places
 /// relative to the block (its own place is `[]`).
@@ -33,53 +35,71 @@ struct BlockFacts {
     cell_ends: bool,
 }
 
-/// A block of the part and its facts.
-#[derive(Debug, Clone)]
-struct Block {
-    element: Arc<Element>,
-    place: Box<[u32]>,
-    facts: Arc<BlockFacts>,
-}
-
-/// What the lookups read of one story part.
+/// What the lookups read of one story part: the root's children's facts (a body left out)
+/// and each body's blocks' facts, in runs later versions share ([`Runs`]).
 #[derive(Debug, Clone)]
 pub struct PartFacts {
-    blocks: Vec<Block>,
+    root: Runs<BlockFacts>,
+    bodies: Vec<(u32, Runs<BlockFacts>)>,
+}
+
+/// A block's place in the part: the root's child `at[0]`, or the body `at[0]`'s child
+/// `at[1]`.
+#[derive(Clone, Copy)]
+struct Place {
+    at: [u32; 2],
+    len: usize,
+}
+
+impl Place {
+    /// A place relative to the block, as the part's.
+    fn with(self, path: &[u32]) -> Box<[u32]> {
+        let mut out = Vec::with_capacity(self.len + path.len());
+        out.extend(self.at.iter().take(self.len));
+        out.extend_from_slice(path);
+        out.into_boxed_slice()
+    }
+}
+
+/// A root's child and its facts, placed.
+fn top<'a>((k, _, facts): (u32, &'a Arc<Element>, &'a Arc<BlockFacts>)) -> (Place, &'a BlockFacts) {
+    (Place { at: [k, 0], len: 1 }, facts)
+}
+
+fn is_body(element: &Element) -> bool {
+    element.name().is(Some(W), "body")
 }
 
 impl PartFacts {
-    /// The facts of the part whose root is `root`; `earlier`, the facts of a version
-    /// before, whose blocks this version shares are taken as they are.
+    /// The facts of the part whose root is `root`; `earlier`, the facts of another version
+    /// of it, whose blocks this version shares are taken as they are (and the runs of them
+    /// outside the stretch where the two differ, without visiting them).
     #[must_use]
     pub fn read(root: &Element, earlier: Option<&PartFacts>) -> PartFacts {
-        let known: HashMap<*const Element, &Arc<BlockFacts>> = earlier
-            .map(|e| e.blocks.iter().map(|b| (Arc::as_ptr(&b.element), &b.facts)).collect())
-            .unwrap_or_default();
-        let mut blocks = Vec::new();
-        let mut take = |element: &Arc<Element>, place: Vec<u32>| {
-            let facts = known
-                .get(&Arc::as_ptr(element))
-                .map_or_else(|| Arc::new(BlockFacts::read(element)), |found| Arc::clone(found));
-            blocks.push(Block {
-                element: Arc::clone(element),
-                place: place.into_boxed_slice(),
-                facts,
-            });
-        };
+        let make = |block: &Arc<Element>| BlockFacts::read(block);
+        let others = Runs::read(root.children(), earlier.map(|e| &e.root), &|e| !is_body(e), &make);
+        let mut bodies = Vec::new();
         for (k, node) in root.children().iter().enumerate() {
-            let Node::Element(child) = node else { continue };
-            let k = index(k);
-            if child.name().is(Some(W), "body") {
-                for (j, node) in child.children().iter().enumerate() {
-                    if let Node::Element(block) = node {
-                        take(block, vec![k, index(j)]);
-                    }
-                }
-            } else {
-                take(child, vec![k]);
+            let Node::Element(body) = node else { continue };
+            if is_body(body) {
+                let before = earlier.and_then(|e| e.bodies.get(bodies.len())).map(|(_, r)| r);
+                bodies.push((index(k), Runs::read(body.children(), before, &|_| true, &make)));
             }
         }
-        PartFacts { blocks }
+        PartFacts { root: others, bodies }
+    }
+
+    /// Each block's place and facts, in document order (the root's children around its
+    /// body; a second body, which no valid part has, follows the first).
+    fn blocks(&self) -> impl Iterator<Item = (Place, &BlockFacts)> {
+        let first = self.bodies.first().map_or(u32::MAX, |(k, _)| *k);
+        let before = self.root.iter().take_while(move |(k, _, _)| *k < first).map(top);
+        let after = self.root.iter().skip_while(move |(k, _, _)| *k < first).map(top);
+        let bodies = self.bodies.iter().flat_map(|(k, runs)| {
+            runs.iter()
+                .map(move |(j, _, facts)| (Place { at: [*k, j], len: 2 }, &**facts))
+        });
+        before.chain(bodies).chain(after)
     }
 
     /// The content controls (`w:sdt`), in document order.
@@ -102,18 +122,16 @@ impl PartFacts {
 
     /// The bookmarks the part's hyperlinks point at (fallbacks' too), each once per block.
     pub fn anchors(&self) -> impl Iterator<Item = &str> {
-        self.blocks
-            .iter()
-            .flat_map(|b| b.facts.anchors.iter().map(String::as_str))
+        self.blocks().flat_map(|(_, f)| f.anchors.iter().map(String::as_str))
     }
 
     /// The bookmarks' starts (name, id, place), in document order.
     #[must_use]
     pub fn bookmark_starts(&self) -> Vec<(String, String, Box<[u32]>)> {
         let mut out = Vec::new();
-        for block in &self.blocks {
-            for (name, id, path) in &block.facts.starts {
-                out.push((name.clone(), id.clone(), block.placed(path)));
+        for (place, facts) in self.blocks() {
+            for (name, id, path) in &facts.starts {
+                out.push((name.clone(), id.clone(), place.with(path)));
             }
         }
         out
@@ -123,9 +141,9 @@ impl PartFacts {
     #[must_use]
     pub fn bookmark_ends(&self) -> Vec<(String, Box<[u32]>)> {
         let mut out = Vec::new();
-        for block in &self.blocks {
-            for (id, path) in &block.facts.ends {
-                out.push((id.clone(), block.placed(path)));
+        for (place, facts) in self.blocks() {
+            for (id, path) in &facts.ends {
+                out.push((id.clone(), place.with(path)));
             }
         }
         out
@@ -135,31 +153,20 @@ impl PartFacts {
     /// away, or is itself deleted: Accept All takes the next cell's text into it.
     #[must_use]
     pub fn cell_ends(&self) -> bool {
-        self.blocks.iter().any(|b| b.facts.cell_ends)
+        self.blocks().any(|(_, f)| f.cell_ends)
     }
 
     fn placed(&self, list: impl Fn(&BlockFacts) -> &Vec<Found>) -> Vec<Found> {
         let mut out = Vec::new();
-        for block in &self.blocks {
-            for found in list(&block.facts) {
-                let mut path = block.place.to_vec();
-                path.extend_from_slice(&found.path);
+        for (place, facts) in self.blocks() {
+            for found in list(facts) {
                 out.push(Found {
                     element: Arc::clone(&found.element),
-                    path: path.into_boxed_slice(),
+                    path: place.with(&found.path),
                 });
             }
         }
         out
-    }
-}
-
-impl Block {
-    /// A place relative to the block, as the part's.
-    fn placed(&self, path: &[u32]) -> Box<[u32]> {
-        let mut out = self.place.to_vec();
-        out.extend_from_slice(path);
-        out.into_boxed_slice()
     }
 }
 
@@ -255,7 +262,9 @@ mod tests {
         assert_eq!(anchors, ["x", "y"]);
         assert!(facts.cell_ends());
         let again = PartFacts::read(tree.root(), Some(&facts));
-        assert!(std::sync::Arc::ptr_eq(&again.blocks[0].facts, &facts.blocks[0].facts));
+        let first =
+            |f: &PartFacts| std::sync::Arc::clone(f.bodies[0].1.iter().next().unwrap_or_else(|| panic!("a block")).2);
+        assert!(std::sync::Arc::ptr_eq(&first(&again), &first(&facts)));
     }
 
     #[test]

@@ -8,7 +8,7 @@
 
 use super::counts::Notes;
 use super::rules::{
-    bookmark_name_ok as name_ok, comment_parts_with, move_problems, num_ref_problems, numbering_tables,
+    bookmark_name_ok as name_ok, comment_parts_with, move_problems, num_ids, num_ref_problems, numbering_tables,
     package_problems, problem, py_str, style_part_problems, style_table,
 };
 use super::tally::{Holder, Tally};
@@ -158,6 +158,7 @@ fn numbering(out: &mut Vec<Problem>, tally: &Tally, package: &Package) {
         .and_then(|p| tally.parts.get(p))
         .map(|t| Arc::clone(&t.root));
     let nums = numbering_tables(out, part.as_deref(), root.as_ref());
+    let nums = num_ids(&nums);
     for ((name, reference), count) in tally.counts.num_refs.iter() {
         num_ref_problems(out, name, reference, &nums, *count);
     }
