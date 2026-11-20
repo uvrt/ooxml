@@ -348,8 +348,11 @@ def _owned_version(call: Any) -> tuple["Mirror | None", Any]:
     return mirror, found
 
 
-def _call(call: Any, tool: str, arguments: dict[str, Any], *, placer: "Placer | None" = None) -> dict[str, Any]:
-    """The Rust envelope of ``tool`` with ``arguments`` on the version ``call`` reads."""
+def _call(call: Any, tool: str, arguments: dict[str, Any], *, placer: "Placer | None" = None,
+          layout: Any = None) -> dict[str, Any]:
+    """The Rust envelope of ``tool`` with ``arguments`` on the version ``call`` reads;
+    ``layout``: the document's page engine (an ``ooxml_core.WordPages``), for a call that
+    reads the pages (``check``'s ``reflow``)."""
     if _session() is None:
         raise _Fallback("no session")
     mirror, version = _owned_version(call)
@@ -361,7 +364,8 @@ def _call(call: Any, tool: str, arguments: dict[str, Any], *, placer: "Placer | 
         version = mirror.version(copy)
     arguments = {"doc": mirror.doc, **{k: v for k, v in arguments.items() if v is not None}}
     reply, _images, app = mirror.session.call(tool, json.dumps(arguments), at=[version],
-                                              placer=placer.place if placer is not None else None)
+                                              placer=placer.place if placer is not None else None,
+                                              layout=layout)
     if placer is not None and placer.error is not None:
         raise placer.error
     envelope = json.loads(reply)
@@ -380,9 +384,10 @@ def _call(call: Any, tool: str, arguments: dict[str, Any], *, placer: "Placer | 
 def serve(call: Any, tool: str, arguments: dict[str, Any],
           python: Callable[[], Result], *, addresses: tuple = (),
           answer: Callable[[dict[str, Any]], Result] | None = None,
-          placer: "Placer | None" = None, why_not: str | None = None) -> Result:
+          placer: "Placer | None" = None, why_not: str | None = None, layout: Any = None) -> Result:
     """``tool``'s answer from the Rust session (``answer`` makes the :class:`Result` of its
-    envelope), or ``python()``'s where Rust's is not the same yet (counted, with why)."""
+    envelope), or ``python()``'s where Rust's is not the same yet (counted, with why);
+    ``layout`` as for :func:`_call`."""
     try:
         if why_not is not None:
             raise _Fallback(why_not)
@@ -390,7 +395,7 @@ def serve(call: Any, tool: str, arguments: dict[str, Any],
             raise _Fallback("limits")
         if _renamed_or_deleted(_named(call), *addresses):
             raise _Fallback("renamed or deleted id")
-        envelope = _call(call, tool, arguments, placer=placer)
+        envelope = _call(call, tool, arguments, placer=placer, layout=layout)
         result = (answer or _result)(envelope)
     except _Fallback as why:
         _fell_back(tool, str(why))
@@ -403,17 +408,62 @@ def serve_check(call: Any, arguments: dict[str, Any]) -> Result | None:
     """Lane P5a: ``check`` answered by the Rust session where it answers it whole -- the
     facts read from the document alone (``validate``, ``fields``) of a document it owns,
     outside a batch -- else ``None`` (counted, with why), and the handler goes on.  What
-    needs the layout, copies, a scale and the application's ``min_text_size`` (which asks
-    for layout facts) are the handler's still (the session says which: ``unported``)."""
+    needs the layout's facts, copies, a scale and the application's ``min_text_size``
+    (which asks for layout facts) are the handler's still (the session says which:
+    ``unported``).
+
+    Lane P5b: ``reflow`` (asked, or by default) is answered there too, laid out by the
+    document's page engine (:func:`docx_agent.pages.word_pages`), handed to the call; the
+    session keeps what the check saw for the next one's ``since_last_check``
+    (:func:`last_check`)."""
     owned = _owned(call.entry)
     why = None
+    layout = None
     if owned is None:
         why = "not owned"
     elif call.in_batch:
         why = "in a batch"
     elif getattr(owned.held, "min_text_size", None) is not None:
         why = "min_text_size"
-    return serve(call, "check", arguments, lambda: None, why_not=why)
+    elif arguments.get("include") is None or "reflow" in arguments["include"]:
+        from ..pages import word_pages
+
+        layout, _ = word_pages(owned.held)     # none: the session says so (unported)
+    return serve(call, "check", arguments, lambda: None, why_not=why, layout=layout)
+
+
+def last_check(call: Any) -> tuple[bool, Any, int | None]:
+    """Lane P5b: what the last check of the document ``call`` reads saw, kept by the session
+    where it owns the document (its own checks keep it there): ``(True, seen, number)`` --
+    ``seen`` ``(version, summary)``, the session's number of the version seen (``None``: one
+    a check here kept without one) and its ``LayoutSummary`` (Rust's), or ``None`` where no
+    check saw one yet; ``number`` the session's number of the version ``call`` reads (``None``
+    where it was let go) -- or ``(False, None, None)`` for a document the session does not
+    own (the check's own record holds)."""
+    mirror, version = _owned_now(call)
+    if mirror is None:
+        return False, None, None
+    return True, mirror.session.last_check(mirror.doc), None if version is None else version.number
+
+
+def keep_last_check(call: Any, summary: Any) -> None:
+    """Lane P5b: a check here saw the version ``call`` reads, ``summary`` its
+    ``LayoutSummary`` held in Rust (``None``: one made in Python, which the session cannot
+    compare -- it forgets what it kept): kept by the session for the next check, served or
+    not.  Nothing for a document the session does not own."""
+    mirror, version = _owned_now(call)
+    if mirror is not None:
+        mirror.session.set_last_check(mirror.doc, summary, at=version if summary is not None else None)
+
+
+def _owned_now(call: Any) -> tuple["Mirror | None", Any]:
+    """The session's mirror of the document ``call`` reads where it owns it (else ``None``),
+    and the version read there (``None`` where it was let go)."""
+    mirror = getattr(_owned(call.entry), "handle", None)
+    if not isinstance(mirror, Mirror):
+        return None, None
+    with mirror.lock:
+        return mirror, mirror.versions.get(call.entry.version)
 
 
 def _result(envelope: dict[str, Any]) -> Result:

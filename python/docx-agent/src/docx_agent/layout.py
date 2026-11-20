@@ -917,6 +917,16 @@ class LayoutSummary:
         #: id -> (page or line, its digest), for the next summary (``keep``), else ``None``.
         self._drawn: dict[int, tuple] | None = drawn if keep else None
 
+    @classmethod
+    def held(cls, rust: Any) -> "LayoutSummary":
+        """The summary held in Rust ``rust`` (an ``ooxml_core.LayoutSummary``: one the Rust
+        session kept for a document's checks, lane P5b), compared as one made here of a
+        Rust layout is."""
+        made = cls.__new__(cls)
+        made.count, made.known = rust.count, rust.known
+        made.rest, made.lines, made._rust, made._drawn = [], [], rust, None
+        return made
+
     def _lines_here(self) -> None:
         """The pages and lines of a summary held in Rust, read into Python: for a comparison
         with a summary made here (a layout docx2svg's Python layout made)."""

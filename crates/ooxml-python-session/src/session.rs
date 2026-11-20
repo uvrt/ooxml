@@ -366,7 +366,7 @@ impl PySession {
         let mut context = context_of(context.as_deref());
         context.at = at.iter().flatten().map(|v| v.inner.clone()).collect();
         context.placer = placer.map(|p| Arc::new(PyPlacer(p)) as Arc<dyn Placer>);
-        context.layout = layout.map(|pages| Arc::new(pages.port()) as Arc<dyn ooxml_word_edit::FieldLayout>);
+        context.layout = layout.map(|pages| Arc::new(pages.port()) as Arc<dyn ooxml_tools_word::WordLayout>);
         let session = &self.inner;
         let text = py.detach(|| {
             let run = || session.call(name, Value::String(arguments), &context);
@@ -401,7 +401,7 @@ impl PySession {
         layout: Option<PyRef<'_, crate::layout::PyWordPages>>,
     ) -> (String, String, Option<EditMade>) {
         let mut context = context_of(context.as_deref());
-        context.layout = layout.map(|pages| Arc::new(pages.port()) as Arc<dyn ooxml_word_edit::FieldLayout>);
+        context.layout = layout.map(|pages| Arc::new(pages.port()) as Arc<dyn ooxml_tools_word::WordLayout>);
         let session = &self.inner;
         let (text, app, made) = py.detach(|| {
             let run = || session.edit(name, Value::String(arguments), &context);
@@ -527,6 +527,34 @@ impl PySession {
             })
             .map_err(|e| to_py(&e))?;
         Ok(delta.map(|d| (d.new, d.fixed, d.baseline)))
+    }
+
+    /// What the document's last check with `reflow` saw, which the session's next check
+    /// measures `since_last_check` from: `(version, summary)` -- the number of the version
+    /// it saw (`None`: the host's check kept it without one) and its `LayoutSummary` -- or
+    /// `None`.
+    fn last_check(&self, doc: &str) -> PyResult<Option<(Option<u64>, crate::summary::PyLayoutSummary)>> {
+        let id = doc_id(doc, &self.inner)?;
+        let seen = self.inner.last_check(&id).map_err(|e| to_py(&e))?;
+        Ok(seen.map(|seen| (seen.version, crate::summary::PyLayoutSummary { inner: seen.summary })))
+    }
+
+    /// Keep `summary` (a `LayoutSummary` of the document's engine) as what the document's
+    /// last check saw -- a check the host made itself -- of the version `at` where given;
+    /// `None`: forget what the last check saw.
+    #[pyo3(signature = (doc, summary = None, *, at = None))]
+    fn set_last_check(
+        &self,
+        doc: &str,
+        summary: Option<PyRef<'_, crate::summary::PyLayoutSummary>>,
+        at: Option<PyRef<'_, PyVersion>>,
+    ) -> PyResult<()> {
+        let id = doc_id(doc, &self.inner)?;
+        let seen = summary.map(|summary| ooxml_tools_word::Seen {
+            version: at.map(|v| v.inner.version()),
+            summary: Arc::clone(&summary.inner),
+        });
+        self.inner.set_last_check(&id, seen).map_err(|e| to_py(&e))
     }
 
     /// Undo up to `steps` calls (with a caller in `context`, only its own, while its latest

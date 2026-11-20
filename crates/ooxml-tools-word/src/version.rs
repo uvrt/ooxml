@@ -8,6 +8,8 @@
 //! Must not: hold documents or sessions (`ooxml-session` does, and makes a `Version` per
 //! call).
 
+use crate::check::LastCheck;
+use crate::pages::WordLayout;
 use crate::placements::Placer;
 use ooxml_opc::Package;
 use ooxml_tools::ToolError;
@@ -52,13 +54,19 @@ impl Version<'_> {
 }
 
 /// A version of a document the session owns, as its editor holds it: what validation
-/// reads, and the problems the document was opened with (the save gate's baseline).
+/// reads, the problems the document was opened with (the save gate's baseline), what the
+/// document's last check saw, and the host's layout of its versions where the call was
+/// handed one.
 #[derive(Clone, Copy)]
 pub struct Owned<'a> {
     /// The version.
     pub doc: &'a WordDoc,
     /// The problems the document had when the session opened it.
     pub baseline: &'a [Problem],
+    /// What the document's last check with `reflow` saw.
+    pub last_check: &'a LastCheck,
+    /// The host's layout of the document's versions (`None`: the call was handed none).
+    pub layout: Option<&'a dyn WordLayout>,
 }
 
 /// The other documents a call names, by id, each at the version the session pinned for the

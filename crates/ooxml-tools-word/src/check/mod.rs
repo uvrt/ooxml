@@ -1,16 +1,22 @@
-//! `check` for Word documents (lane P5a; docx-agent's `tools/shared.py` `check`): a
-//! version's facts -- its validation problems against those it opened with (`validate`) and
-//! its fields (`fields`) -- each part's seconds in `timing`, as docx-agent words them.
+//! `check` for Word documents (lanes P5a, P5b; docx-agent's `tools/shared.py` `check`): a
+//! version's facts -- its validation problems against those it opened with (`validate`),
+//! its pages since the last check (`reflow`, [`reflow`]) and its fields (`fields`) -- each
+//! part's seconds in `timing`, as docx-agent words them.
 //!
-//! Owns: the tool's definition ([`args`]) and the facts read from the document alone.
+//! Owns: the tool's definition ([`args`]), the facts read from the document alone, and
+//! those read from its pages as the host's engine lays them out ([`crate::WordLayout`]).
 //!
-//! Must not: lay out. What needs the layout (`reflow`, `layout`, a `range`'s or `pages`'
-//! facts, `min_size`, `styles`), copies, a scale and a deck's arguments are not given here
-//! yet: such a call is answered `unported`, and the host answers it.
+//! Must not: lay out but through the host's engine. What needs the layout's facts
+//! (`layout`, a `range`'s facts, `min_size`, `styles`), copies, a scale and a deck's
+//! arguments are not given here yet: such a call is answered `unported`, and the host
+//! answers it; so is a `reflow` without the host's layout, or of a version its engine does
+//! not lay out.
 
 mod args;
+mod reflow;
 
 pub use args::{Check, CheckCopy, CheckInclude, CheckScale, CopyLists, CopyReference, ScaleShow, ScaleStep, StepText};
+pub use reflow::{LastCheck, Seen};
 
 use crate::describe::cancelled;
 use crate::version::{Owned, Version};
@@ -32,6 +38,10 @@ pub const CHECK_LAYOUT: &str = "check: layout facts";
 pub const CHECK_ARGUMENTS: &str = "check: arguments";
 /// What `unported` says of a check of a document the session does not own.
 pub const CHECK_NOT_OWNED: &str = "check: a document the session does not own";
+/// What `unported` says of a `reflow` the host hands no layout for.
+pub const CHECK_NO_LAYOUT: &str = "check: no layout";
+/// What `unported` says of a `reflow` of a version the host's engine does not lay out.
+pub const CHECK_NOT_LAID_OUT: &str = "check: the layout falls back";
 
 /// `check` of a Word document at one version.
 ///
@@ -47,10 +57,30 @@ pub fn check(args: &Check, version: &Version<'_>, cancel: &dyn Cancel) -> Result
     };
     let mut data = Map::new();
     let mut timing = Map::new();
+    let laid = if wanted.contains(&CheckInclude::Reflow) {
+        let Some(layout) = owned.layout else {
+            return Ok(unported(CHECK_NO_LAYOUT));
+        };
+        let started = Instant::now();
+        let Ok(laid) = layout.laid(version.package) else {
+            return Ok(unported(CHECK_NOT_LAID_OUT));
+        };
+        timing.insert("layout".into(), seconds(started));
+        Some((layout, laid))
+    } else {
+        None
+    };
+    cancel.check().map_err(cancelled)?;
     if wanted.contains(&CheckInclude::Validate) {
         let started = Instant::now();
         data.insert("validate".into(), validate(owned)?);
         timing.insert("validate".into(), seconds(started));
+    }
+    cancel.check().map_err(cancelled)?;
+    if let Some((layout, laid)) = laid {
+        let started = Instant::now();
+        data.insert("reflow".into(), reflow_facts(layout, &laid, version, owned, args.pages.as_deref())?);
+        timing.insert("facts".into(), seconds(started));
     }
     cancel.check().map_err(cancelled)?;
     if wanted.contains(&CheckInclude::Fields) {
@@ -85,20 +115,47 @@ fn served(args: &Check) -> Result<Vec<CheckInclude>, &'static str> {
     {
         return Err(CHECK_ARGUMENTS);
     }
-    if args.pages.is_some() || args.min_size.is_some() || args.styles.is_some() || ranged {
+    if args.min_size.is_some() || args.styles.is_some() || ranged {
         return Err(CHECK_LAYOUT);
     }
-    let Some(wanted) = &args.include else {
-        return Err(CHECK_LAYOUT); // the default reports reflow
-    };
-    for part in wanted {
+    let wanted = args
+        .include
+        .clone()
+        .unwrap_or_else(|| vec![CheckInclude::Validate, CheckInclude::Reflow, CheckInclude::Fields]);
+    for part in &wanted {
         match part {
-            CheckInclude::Validate | CheckInclude::Fields | CheckInclude::App => {}
-            CheckInclude::Reflow | CheckInclude::Layout => return Err(CHECK_LAYOUT),
+            CheckInclude::Validate | CheckInclude::Fields | CheckInclude::App | CheckInclude::Reflow => {}
+            CheckInclude::Layout => return Err(CHECK_LAYOUT),
             _ => return Err(CHECK_ARGUMENTS),
         }
     }
-    Ok(wanted.clone())
+    Ok(wanted)
+}
+
+/// `reflow`: the version's pages, coverage and first warnings, and the pages changed since
+/// the document's last check (which this one now is).
+fn reflow_facts(
+    layout: &dyn crate::WordLayout,
+    laid: &ooxml_word_pages::LaidVersion,
+    version: &Version<'_>,
+    owned: Owned<'_>,
+    pages: Option<&[i64]>,
+) -> Result<Value, ToolError> {
+    let found = reflow::laid_facts(layout, laid).map_err(|e| ToolError::internal(e, "check:reflow"))?;
+    let mut facts = found.facts;
+    let last = owned.last_check.get();
+    let aliases = owned.doc.ids().aliases();
+    if let Some(since) = reflow::since(last.as_ref(), &found.summary, version.number, aliases, pages) {
+        facts.insert("since_last_check".into(), since);
+    }
+    owned.last_check.set(Some(Seen {
+        version: Some(version.number),
+        summary: found.summary,
+    }));
+    if let Some(warnings) = found.warnings {
+        facts.insert("layout_warnings".into(), warnings);
+    }
+    Ok(Value::Object(facts))
 }
 
 fn unported(why: &str) -> Done<Value> {

@@ -127,6 +127,6 @@ def test_a_check_that_needs_the_layout_is_pythons_counted(toolbox, monkeypatch):
     if not _owned(session, doc):
         pytest.skip("the session does not own this document")
     before = dict(reads.fallbacks().get("check", {}))
-    toolbox.dispatch(session, "check", {"doc": doc, "include": ["validate", "reflow"]})
+    toolbox.dispatch(session, "check", {"doc": doc, "include": ["validate", "layout"]})
     after = reads.fallbacks().get("check", {})
     assert after.get("check: layout facts", 0) == before.get("check: layout facts", 0) + 1
