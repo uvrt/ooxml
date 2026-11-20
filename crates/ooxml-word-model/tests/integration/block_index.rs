@@ -324,6 +324,25 @@ fn check(story: &str, ids: &PartIds, root: &Element, rng: &mut Rng) {
                 .collect::<Vec<_>>(),
             within
         );
+        // the blocks below a stretch of the marker's parent's children
+        if let Some((&k, parent)) = marker.split_last() {
+            let (from, to) = (k.saturating_sub(rng.below(3) as u32), k + rng.below(3) as u32);
+            let below =
+                |p: &[u32]| p.len() > parent.len() && p.starts_with(parent) && (from..=to).contains(&p[parent.len()]);
+            let (paragraphs, tables) = ids.within_stretch(parent, (from, to));
+            let want_p: Vec<&String> = want.paragraphs.iter().filter(|p| below(&p.1)).map(|p| &p.0).collect();
+            let want_t: Vec<&String> = want.tables.iter().filter(|t| below(&t.1)).map(|t| &t.0).collect();
+            assert_eq!(
+                paragraphs.iter().map(|p| &p.id).collect::<Vec<_>>(),
+                want_p,
+                "{parent:?} {from}..={to}"
+            );
+            assert_eq!(
+                tables.iter().map(|t| &t.id).collect::<Vec<_>>(),
+                want_t,
+                "{parent:?} {from}..={to}"
+            );
+        }
     }
 }
 
