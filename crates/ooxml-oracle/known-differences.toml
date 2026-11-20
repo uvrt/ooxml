@@ -164,6 +164,13 @@ file = "generated/controls.docx"
 input = { tool = "word_drawings", arguments = { action = "insert_picture", alt_text = "A floated picture for the oracle" } }
 cause = """P4c11: as the constructs.docx float entry above: docx-agent's float_drawing gives the new wp:anchor the ns0 prefix."""
 
+# Lane P2c14: the fixture review-follow.docx (from main, 2026-11-20) has the same root.
+[[difference]]
+mode = "objects"
+file = "generated/review-follow.docx"
+input = { tool = "word_drawings", arguments = { action = "insert_picture", alt_text = "A floated picture for the oracle" } }
+cause = """P4c11: as the constructs.docx float entry above: docx-agent's float_drawing gives the new wp:anchor the ns0 prefix."""
+
 [[difference]]
 mode = "objects"
 file = "generated/ids-and-markup.docx"
