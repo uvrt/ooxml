@@ -181,6 +181,18 @@ impl Field {
         self
     }
 
+    /// An argument name read as this one while the argument `argument` of the same object
+    /// is `value` ([`crate::schema::AliasWhen`]).
+    #[must_use]
+    pub fn alias_when(mut self, alias: &str, argument: &str, value: &str) -> Self {
+        self.property.intent.aliases_when.push(crate::schema::AliasWhen {
+            alias: alias.to_owned(),
+            argument: argument.to_owned(),
+            value: value.to_owned(),
+        });
+        self
+    }
+
     /// An argument name refused as unknown, the refusal naming this one
     /// ([`crate::schema::Intent::refused_aliases`]).
     #[must_use]

@@ -4,7 +4,9 @@
 //! handed; [`ReadHandler`], a reading tool made from a `ToolArgs` struct and a handler
 //! function of a version; and [`EditHandler`], an editing tool made from a `ToolArgs`
 //! struct and a handler function of the document's editor and what the session keeps of it
-//! ([`Editing`]: the caller, the version it was opened as, its tracking mode).
+//! ([`Editing`]: the caller, the version it was opened as, its tracking mode); and the
+//! pieces both run on ([`read_pinned`], [`edit_head`]), which an editing tool whose reading
+//! calls read the pinned version shares ([`crate::ReadingEditHandler`]).
 //!
 //! To add a tool, touch: its own files in its `ooxml-tools-*` crate (its module, named in
 //! its group's `mod.rs`; its arguments, description, tests and `tests/golden/<name>.json`),
@@ -21,6 +23,7 @@
 use crate::document::Word;
 use crate::session::Opened;
 use crate::DocKind;
+use crate::ReadingEditHandler;
 use ooxml_base::Cancel;
 use ooxml_store::Caller;
 use ooxml_tools::{Done, Failure, ToolArgs, ToolError, ToolResult, ToolSpec};
@@ -52,7 +55,10 @@ pub trait Tool: Send + Sync {
 
 /// `handler`'s reply to `arguments` taken as meant for a Word document (a refusal of the
 /// arguments is the reply), the notes on what was read as what first among its warnings.
-fn accepted<T: ToolArgs>(arguments: &Value, handler: impl FnOnce(&T) -> ToolResult<Value>) -> ToolResult<Value> {
+pub(crate) fn accepted<T: ToolArgs>(
+    arguments: &Value,
+    handler: impl FnOnce(&T) -> ToolResult<Value>,
+) -> ToolResult<Value> {
     match T::accept(arguments.clone(), Some(DocKind::Docx.as_str())) {
         Ok((args, notes)) => {
             let mut reply = handler(&args);
@@ -121,7 +127,7 @@ impl Call<'_> {
     }
 
     /// [`Call::others`] as a tool reads them.
-    fn other_versions(&self) -> Vec<(&str, Version<'_>)> {
+    pub(crate) fn other_versions(&self) -> Vec<(&str, Version<'_>)> {
         self.others
             .iter()
             .map(|(id, o)| (id.as_str(), o.version_of()))
@@ -164,19 +170,8 @@ impl<T: ToolArgs> Tool for ReadHandler<T> {
     }
 
     fn run(&self, arguments: Map<String, Value>, call: &Call<'_>) -> ToolResult<Value> {
-        let outcome = T::from_arg(&Value::Object(arguments), "")
-            .map_err(|e| ToolError::internal(e.to_string(), &format!("{}:arguments", self.spec.name)))
-            .and_then(|args| {
-                let others = call.other_versions();
-                let version = Version {
-                    others: Others::new(&others),
-                    owned: call.owned(),
-                    ..call.doc.version_of()
-                };
-                (self.run)(&args, &version, call.cancel)
-            });
-        match outcome {
-            Ok(done) => ToolResult::done(done),
+        match typed::<T>(arguments, &self.spec) {
+            Ok(args) => read_pinned(&args, self.run, call),
             Err(error) => ToolResult::failed(error),
         }
     }
@@ -244,45 +239,19 @@ impl<T: ToolArgs> Tool for EditHandler<T> {
     }
 
     fn run(&self, arguments: Map<String, Value>, call: &Call<'_>) -> ToolResult<Value> {
-        let Some(word) = call.word else {
-            let message = format!("{} edits Word documents the session owns", self.spec.name);
-            return ToolResult::failed(ToolError::failure(Failure::Internal, message));
-        };
-        let args = match T::from_arg(&Value::Object(arguments), "") {
-            Ok(args) => args,
-            Err(e) => {
-                return ToolResult::failed(ToolError::internal(
-                    e.to_string(),
-                    &format!("{}:arguments", self.spec.name),
-                ))
-            }
-        };
-        let policy = word.policy(&call.date);
-        let tracking = match &policy {
-            ooxml_word_edit::RevisionPolicy::Tracked(tracking) => Some(tracking),
-            ooxml_word_edit::RevisionPolicy::Untracked => None,
-        };
-        let doc = call.doc.id().to_string();
-        let editor = CallEditor::new(&word.editor);
-        let others = call.other_versions();
-        let editing = Editing::new(&editor, call.caller, word.opened.doc(), &doc, call.cancel, &call.date)
-            .with_tracking(tracking)
-            .with_layout(call.layout)
-            .with_others(Others::new(&others))
-            .with_blobs(call.blobs)
-            .with_written(call.written);
-        let result = match &self.run {
-            EditRun::Plain(run) => run(&args, &editing),
-            EditRun::Tracking(run) => {
-                let (result, mode) = run(&args, &editing);
-                if let Some(mode) = mode {
-                    word.set_tracking(mode);
+        match typed::<T>(arguments, &self.spec) {
+            Ok(args) => edit_head(&self.spec, call, |editing, word| match &self.run {
+                EditRun::Plain(run) => run(&args, editing),
+                EditRun::Tracking(run) => {
+                    let (result, mode) = run(&args, editing);
+                    if let Some(mode) = mode {
+                        word.set_tracking(mode);
+                    }
+                    result
                 }
-                result
-            }
-        };
-        *call.made.lock().unwrap_or_else(PoisonError::into_inner) = editor.made();
-        result
+            }),
+            Err(error) => ToolResult::failed(error),
+        }
     }
 
     fn run_outside(&self, arguments: &Value, editing: &Editing<'_>, _: &Version<'_>) -> ToolResult<Value> {
@@ -291,6 +260,56 @@ impl<T: ToolArgs> Tool for EditHandler<T> {
             EditRun::Tracking(run) => run(args, editing).0,
         })
     }
+}
+
+/// The call's arguments as `T` (already accepted and validated: a failure is internal).
+pub(crate) fn typed<T: ToolArgs>(arguments: Map<String, Value>, spec: &ToolSpec) -> Result<T, ToolError> {
+    T::from_arg(&Value::Object(arguments), "")
+        .map_err(|e| ToolError::internal(e.to_string(), &format!("{}:arguments", spec.name)))
+}
+
+/// `run` on the version the call pins, with the other documents it names.
+pub(crate) fn read_pinned<T>(args: &T, run: ReadFn<T>, call: &Call<'_>) -> ToolResult<Value> {
+    let others = call.other_versions();
+    let version = Version {
+        others: Others::new(&others),
+        owned: call.owned(),
+        ..call.doc.version_of()
+    };
+    match run(args, &version, call.cancel) {
+        Ok(done) => ToolResult::done(done),
+        Err(error) => ToolResult::failed(error),
+    }
+}
+
+/// `edit` through the session's editor of the Word document the call names (its head,
+/// under its tracking mode), the versions it made kept for the call.
+pub(crate) fn edit_head(
+    spec: &ToolSpec,
+    call: &Call<'_>,
+    edit: impl FnOnce(&Editing<'_>, &Word) -> ToolResult<Value>,
+) -> ToolResult<Value> {
+    let Some(word) = call.word else {
+        let message = format!("{} edits Word documents the session owns", spec.name);
+        return ToolResult::failed(ToolError::failure(Failure::Internal, message));
+    };
+    let policy = word.policy(&call.date);
+    let tracking = match &policy {
+        ooxml_word_edit::RevisionPolicy::Tracked(tracking) => Some(tracking),
+        ooxml_word_edit::RevisionPolicy::Untracked => None,
+    };
+    let doc = call.doc.id().to_string();
+    let editor = CallEditor::new(&word.editor);
+    let others = call.other_versions();
+    let editing = Editing::new(&editor, call.caller, word.opened.doc(), &doc, call.cancel, &call.date)
+        .with_tracking(tracking)
+        .with_layout(call.layout)
+        .with_others(Others::new(&others))
+        .with_blobs(call.blobs)
+        .with_written(call.written);
+    let result = edit(&editing, word);
+    *call.made.lock().unwrap_or_else(PoisonError::into_inner) = editor.made();
+    result
 }
 
 /// The tools a session dispatches, in registration order.
@@ -374,6 +393,11 @@ impl Registry {
         registry.register(word_edit::<ooxml_tools_word::WordControls>(
             ooxml_tools_word::word_controls,
         ));
+        registry.register(Arc::new(ReadingEditHandler::<ooxml_tools_word::EditChart>::new(
+            &[DocKind::Docx],
+            ooxml_tools_word::edit_chart_read,
+            ooxml_tools_word::edit_chart,
+        )));
         registry.register(word_edit::<ooxml_tools_word::WordLists>(ooxml_tools_word::word_lists));
         registry.register(word_edit::<ooxml_tools_word::WordFields>(ooxml_tools_word::word_fields));
         registry.register(word_edit::<ooxml_tools_word::WordHeadersFooters>(

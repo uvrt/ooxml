@@ -14,6 +14,8 @@ mod controls;
 mod drawings;
 mod drawings_args;
 mod drawings_picture;
+mod edit_chart;
+mod edit_chart_args;
 mod edit_table;
 mod edit_table_args;
 mod format_table;
@@ -24,6 +26,11 @@ mod table_view;
 pub use controls::word_controls;
 pub use drawings::word_drawings;
 pub use drawings_args::{Against, ControlAction, ControlType, DrawingAction, WordControls, WordDrawings, Wrap, ZOrder};
+pub use edit_chart::{edit_chart, edit_chart_read};
+pub use edit_chart_args::{
+    Blanks, ChartAction, ChartAxis, ChartBox, ChartPosition, ChartType, Dash, EditChart, Gridlines, Marker, ScaleArg,
+    ScaleKey, SeriesArg, SeriesType, StyleArg, TextPart,
+};
 pub use edit_table::word_edit_table;
 pub use edit_table_args::{CellArg, KeyPair, Loose, Position, Side, TableAction, WordEditTable};
 pub use format_table::word_format_table;
