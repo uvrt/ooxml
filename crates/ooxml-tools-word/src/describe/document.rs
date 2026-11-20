@@ -215,6 +215,14 @@ impl<'a> Reading<'a> {
                         item.insert(label.into(), json!(short(value, 80)));
                     }
                 }
+                // round 25, W2/W5: kept on one page by its rows' keeps, and with the next block
+                let keeps = ooxml_word_edit::table_keeps_at(self.docx, &body.part, &t.path).unwrap_or_default();
+                if keeps.together {
+                    item.insert("keep_together".into(), json!(true));
+                    if keeps.with_next {
+                        item.insert("keep_with_next".into(), json!(true));
+                    }
+                }
                 Value::Object(item)
             })
             .collect();

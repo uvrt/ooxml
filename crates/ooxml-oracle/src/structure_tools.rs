@@ -58,6 +58,7 @@ fn registered(tool: &str, arguments: &Value, editing: &Editing<'_>) -> Option<To
         number: 1,
         versions: &versions,
         placer: None,
+        owned: None,
         others: editing.others,
     };
     Some(tool.run_outside(arguments, editing, &version))
@@ -92,6 +93,14 @@ fn other_package(bytes: &Arc<[u8]>, case: &Value) -> Option<Package> {
     other.and_then(|b| Package::open(b, &Limits::default()).ok())
 }
 
+/// The tracking mode a case gives (`tracked`: its author and date), if any.
+fn case_tracking(case: &Value) -> Option<Tracking> {
+    case.get("tracked").and_then(Value::as_object).map(|t| Tracking {
+        author: t.get("author").and_then(Value::as_str).unwrap_or("").to_owned(),
+        date: t.get("date").and_then(Value::as_str).unwrap_or("").to_owned(),
+    })
+}
+
 /// One tool case on a freshly opened document, the tool's reply given by `reply` (`None`:
 /// no such tool): the reply and what the document became. `d2`, which a call may name, is
 /// the document opened again (`reference_copy`) or the file `reference_file`.
@@ -113,10 +122,7 @@ pub(crate) fn tool_case(
     .map_err(|e| e.to_string())?;
     let opened = editor.store().snapshot().doc().clone();
     let caller = Caller::anonymous();
-    let tracking = case.get("tracked").and_then(Value::as_object).map(|t| Tracking {
-        author: t.get("author").and_then(Value::as_str).unwrap_or("").to_owned(),
-        date: t.get("date").and_then(Value::as_str).unwrap_or("").to_owned(),
-    });
+    let tracking = case_tracking(case);
     let layout = case.get("fonts").map(engine_pages);
     let date = case
         .get("date")
@@ -127,30 +133,14 @@ pub(crate) fn tool_case(
     let copy_versions = Versions::new();
     let others: Vec<(&str, Version<'_>)> = copy
         .iter()
-        .map(|package| {
-            let version = Version {
-                name: "copy.docx",
-                package,
-                number: 1,
-                versions: &copy_versions,
-                placer: None,
-                others: Others::default(),
-            };
-            ("d2", version)
-        })
+        .map(|package| ("d2", other_version(package, &copy_versions)))
         .collect();
-    let editing = Editing {
-        editor: &CallEditor::new(&editor),
-        caller: &caller,
-        opened: &opened,
-        tracking: tracking.as_ref(),
-        doc: "d1",
-        cancel: &Never,
-        date,
-        layout: layout.as_ref().map(|l| l as &dyn ooxml_word_edit::FieldLayout),
-        others: Others::new(&others),
-        blobs: Some(&blobs),
-    };
+    let call_editor = CallEditor::new(&editor);
+    let editing = Editing::new(&call_editor, &caller, &opened, "d1", &Never, date)
+        .with_tracking(tracking.as_ref())
+        .with_layout(layout.as_ref().map(|l| l as &dyn ooxml_word_edit::FieldLayout))
+        .with_others(Others::new(&others))
+        .with_blobs(Some(&blobs));
     let arguments = case.get("arguments").cloned().unwrap_or(Value::Object(Map::new()));
     let tool = case.get("tool").and_then(Value::as_str).unwrap_or("");
     let reply = reply(tool, &arguments, &editing).ok_or_else(|| format!("no tool {tool}"))?;
@@ -183,6 +173,19 @@ pub(crate) fn tool_case(
         "problems": now.iter().map(ToString::to_string).collect::<Vec<_>>(),
         "next": next_ids(doc),
     }))
+}
+
+/// The other document a case names (`d2`), as a reading tool is handed it.
+fn other_version<'a>(package: &'a Package, versions: &'a Versions) -> Version<'a> {
+    Version {
+        name: "copy.docx",
+        package,
+        number: 1,
+        versions,
+        placer: None,
+        owned: None,
+        others: Others::default(),
+    }
 }
 
 /// The blobs a case registers (`blobs`: `{name, mime, hex}` each), as the session's

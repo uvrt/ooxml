@@ -149,3 +149,148 @@ def test_served_edits_follow_the_records_as_docx_agent_does(toolbox, request, ca
         assert b'"text":"second","at":6,"p":0' in rust[0]["item"]
     if case == "every record gone":
         assert rust[-1]["item"] is None and b"customXml" not in rust[-1]["names"]
+
+
+# -- word_changes (docx-agent's _follow_review) --------------------------------------------------
+
+
+def _tracked(data: bytes, tables: tuple[str, ...]) -> bytes:
+    """``data`` with tracked changes in the recorded tables: a cell's text changed in
+    t:6B000029, t:6B000033's first row deleted (accepting renames that table)."""
+    document = Document.open(data)
+    with document.tracking(author="Reviewer", date="2026-11-20T10:00:00Z"):
+        if "t:6B000029" in tables:
+            document.table("t:6B000029").cell(1, 0).paragraphs[0].set_text("Changed")
+        if "t:6B000033" in tables:
+            document.table("t:6B000033").delete_row(0)
+    return document.to_bytes()
+
+
+@pytest.fixture(scope="module")
+def reviewed(recorded) -> bytes:
+    return _tracked(recorded, ("t:6B000029", "t:6B000033"))
+
+
+@pytest.fixture(scope="module")
+def reviewed_alone() -> bytes:
+    """Only t:6B000033's record, its first row deleted as a tracked change."""
+    document = Document.open(FIXTURE.read_bytes())
+    assert document.store_provenance("t:6B000033", RECORD)
+    return _tracked(document.to_bytes(), ("t:6B000033",))
+
+
+def _review(call: object, arguments: dict) -> dict:
+    from docx_agent.rust.reads import _refs
+
+    return {**{k: v for k, v in arguments.items() if k != "doc"}, "within": _refs(call, arguments.get("within"))}
+
+
+REVIEWS = {
+    "accept all": ("reviewed", [("word_changes", {"action": "accept", "all": True})], True),
+    "reject all": ("reviewed", [("word_changes", {"action": "reject", "all": True})], True),
+    "accept within the renamed table": ("reviewed", [("word_changes", {"action": "accept",
+                                                                      "within": "t:6B000033"})], True),
+    "reject within the other table": ("reviewed", [("word_changes", {"action": "reject",
+                                                                    "within": "t:6B000029"})], True),
+    # moving the only record makes the item again: the session leaves it to docx-agent
+    "accept moving the only record": ("reviewed_alone", [("word_changes", {"action": "accept", "all": True})],
+                                      False),
+}
+
+
+@pytest.mark.parametrize("case", list(REVIEWS))
+def test_served_reviews_follow_the_records_as_docx_agent_does(toolbox, request, case, monkeypatch):
+    fixture, calls, served = REVIEWS[case]
+    data = request.getfixturevalue(fixture)
+    monkeypatch.setitem(edits.SERVED, "word_changes", _review)
+    rust = _run(toolbox, data, calls, served=served)
+    monkeypatch.setattr(edits, "SERVED", {})
+    python = _run(toolbox, data, calls, served=False)
+    for k, (ours, theirs) in enumerate(zip(rust, python)):
+        for key in theirs:
+            assert ours[key] == theirs[key], (case, k, key, ours[key], theirs[key])
+    assert rust[0]["item"] != _kept(data)["item"]
+
+
+# -- reading them (lane P2d1, PR c): the session's reading of the view's version -------------------
+
+
+def _reads(document) -> tuple:
+    found = document.provenance()
+    return dict(found), found.ignored, document.text_facts(), document.text_labels()
+
+
+@pytest.mark.parametrize("fixture", ["recorded", "stale", "charted", "reviewed", "reviewed_alone"])
+def test_the_session_reads_the_records_as_docx_agent_does(toolbox, request, fixture):
+    data = request.getfixturevalue(fixture)
+    session = toolbox.session()
+    doc = session.open(data, name="recorded.docx")
+    entry = session.entry(doc)
+    if not isinstance(entry, OwnedEntry):
+        pytest.skip("no Rust session to own the document")
+    steps = [None, *CASES["chart's paragraph deleted"]] if fixture == "charted" else \
+        [None, *CASES["fact moved"], *CASES["label stretched"], *REVIEWS["accept all"][1]]
+    for step in steps:
+        if step is not None:
+            assert toolbox.dispatch(session, step[0], {"doc": doc, **step[1]}).ok
+        document = entry.document
+        hook = document.owned_records
+        assert hook is not None and hook() is not None
+        ours = _reads(document)
+        document.owned_records = None
+        try:
+            theirs = _reads(document)
+        finally:
+            document.owned_records = hook
+        assert ours == theirs, (fixture, step)
+    session.close(doc)
+
+
+# -- the one command without the after-edit steps that could need them (lane P2d1 audit) ---------
+
+
+def _comments(call: object, arguments: dict) -> dict:
+    from docx_agent.rust.reads import _refs
+
+    return {**{k: v for k, v in arguments.items() if k != "doc"},
+            "items": [{**item, "comment": _refs(call, item.get("comment"))} for item in arguments.get("items") or []]}
+
+
+def _deleted_comment(toolbox, data: bytes, tracked: bool) -> tuple[bool, dict[str, bytes]]:
+    session = toolbox.session()
+    doc = session.open(data, name="boxed.docx")
+    entry = session.entry(doc)
+    if not isinstance(entry, OwnedEntry):
+        pytest.skip("no Rust session to own the document")
+    if tracked:
+        assert toolbox.dispatch(session, "word_set_tracking", {"doc": doc, "on": True, "author": "Reviewer"}).ok
+    before = sum(edits.served().values())
+    comment = entry.document.comments()[0].id
+    assert toolbox.dispatch(session, "word_comments", {"doc": doc, "action": "delete",
+                                                       "items": [{"comment": comment}]}).ok
+    served = sum(edits.served().values()) > before
+    with zipfile.ZipFile(io.BytesIO(entry.document.to_bytes())) as package:
+        parts = {name: package.read(name) for name in package.namelist()}
+    session.close(doc)
+    return served, parts
+
+
+@pytest.mark.parametrize("tracked", [False, True], ids=["untracked", "tracked"])
+def test_a_comment_in_a_text_box_deleted_served_is_docx_agents(toolbox, tracked, monkeypatch):
+    """CommentEdits runs no text-box sync: a comment anchored in a text box (its markers in the
+    DrawingML box and in its VML fallback) deleted by the session leaves what docx-agent's
+    handler leaves -- the fallback in step."""
+    document = Document.open((GENERATED / "charts" / "chart-places.docx").read_bytes())
+    document.add_comment("p@body/2", "Note on the box", author="Reviewer")
+    data = document.to_bytes()
+    with zipfile.ZipFile(io.BytesIO(data)) as package:
+        assert package.read("word/document.xml").count(b"commentRangeStart") == 2
+    monkeypatch.setitem(edits.SERVED, "word_comments", _comments)
+    served, ours = _deleted_comment(toolbox, data, tracked)
+    assert served
+    monkeypatch.setattr(edits, "SERVED", {})
+    _, theirs = _deleted_comment(toolbox, data, tracked)
+    assert b"commentRangeStart" not in ours["word/document.xml"]
+    assert sorted(ours) == sorted(theirs)
+    for name in theirs:
+        assert ours[name] == theirs[name], name

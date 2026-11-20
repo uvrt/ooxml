@@ -16,6 +16,7 @@ mod drawings_args;
 mod drawings_picture;
 mod edit_table;
 mod edit_table_args;
+mod edit_table_cells;
 mod format_table;
 mod format_table_args;
 mod set_cells;

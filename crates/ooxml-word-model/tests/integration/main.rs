@@ -4,6 +4,7 @@
 
 mod support;
 
+mod accepted;
 mod block_index;
 mod changes;
 mod marks;

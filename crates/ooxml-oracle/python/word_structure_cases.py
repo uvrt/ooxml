@@ -471,8 +471,65 @@ def copy_cases(document) -> list[dict]:
         if block != blocks[-1]:
             out += [from_d2(range=block, at="end", styles="keep_source"),
                     from_d2(range=block, at="end", styles="merge", unmapped="body")]
+    # Lane P4f4: blocks naming relationships (hyperlinks, pictures, charts): the relationships
+    # made again, the parts they reach copied (media found by its bytes), drawings numbered.
+    for block in _related(document, blocks)[:3]:
+        out += [from_d2(range=block, at="end"),
+                call("word_copy_from", source_doc="d1", range=block, at=f"before:{blocks[0]}")]
+    if _COPY_SOURCE.exists() and blocks:
+        source = Document.open(_COPY_SOURCE.read_bytes())
+        for block in _related(source, [b["id"] for b in source.blocks() if b["id"]])[:2]:
+            out += [{**call("word_copy_from", source_doc="d2", range=block, at=at),
+                     "reference_file": str(_COPY_SOURCE)} for at in ("end", f"before:{blocks[0]}")]
+    # Lane P4f5: blocks holding notes or comments (the notes and comments copied with them,
+    # renumbered; the modern comment parts), from this document and from others.
+    for block in _annotated(document, blocks)[:3]:
+        out += [from_d2(range=block, at="end"),
+                call("word_copy_from", source_doc="d1", range=block, at=f"before:{blocks[0]}")]
+    for other in (_COPY_SOURCE, _COMMENTED_SOURCE):
+        if other.exists() and blocks:
+            source = Document.open(other.read_bytes())
+            for block in _annotated(source, [b["id"] for b in source.blocks() if b["id"]])[:2]:
+                out += [{**call("word_copy_from", source_doc="d2", range=block, at=at),
+                         "reference_file": str(other)} for at in ("end", f"before:{blocks[0]}")]
     return out + [tracked(case) for case in out]
 
+
+_RELATIONSHIPS = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
+
+
+def _related(document, blocks: list[str]) -> list[str]:
+    """The blocks of ``blocks`` naming a relationship or holding a drawing (lane P4f4)."""
+    out = []
+    for block in blocks:
+        try:
+            element = document._resolve(block)[1].element
+        except (KeyError, ValueError):
+            continue
+        if any(isinstance(n.tag, str) and (any(k.startswith(_RELATIONSHIPS) for k in n.attrib)
+                                           or n.tag.endswith("}docPr"))
+               for n in element.iter()):
+            out.append(block)
+    return out
+
+
+#: A document whose blocks hold comments with replies (lane P4f5).
+_COMMENTED_SOURCE = _COPY_SOURCE.parents[1] / "pilot" / "agreement-summary.docx"
+
+_ANNOTATIONS = ("}footnoteReference", "}endnoteReference", "}commentRangeStart", "}commentReference")
+
+
+def _annotated(document, blocks: list[str]) -> list[str]:
+    """The blocks of ``blocks`` holding a note reference or a comment (lane P4f5)."""
+    out = []
+    for block in blocks:
+        try:
+            element = document._resolve(block)[1].element
+        except (KeyError, ValueError):
+            continue
+        if any(isinstance(n.tag, str) and n.tag.endswith(_ANNOTATIONS) for n in element.iter()):
+            out.append(block)
+    return out
 
 
 @CASES

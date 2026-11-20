@@ -12,7 +12,7 @@
 use super::setup::{apply, kinds, record_change, SectionValues};
 use super::SectionEdited;
 use crate::blocks::resolve_block;
-use crate::delete::{editable, stretch_keys};
+use crate::delete::{editable_opening, Opening};
 use crate::doc::Key;
 use crate::names::{W, W14, W16DU};
 use crate::policy::RevisionPolicy;
@@ -181,7 +181,9 @@ impl InsertSectionBreak {
         let paths = [anchor_path.clone(), sect_path.clone()];
         let wanted: [&[u32]; 2] = [&anchor_path, &sect_path];
         let path_error = || EditError::Path(main.clone());
-        let (mut work, parent, stretch, found) = editable(root, &paths, &wanted).ok_or_else(path_error)?;
+        // the anchor, its neighbours and the section's end read whole; the body between sealed
+        let (mut work, parent, stretch, found) =
+            editable_opening(root, &paths, &wanted, Opening::Ends).ok_or_else(path_error)?;
         let (&anchor, &sect) = (
             found.first().ok_or_else(path_error)?,
             found.get(1).ok_or_else(path_error)?,
@@ -211,10 +213,15 @@ impl InsertSectionBreak {
         let (numbered, dated) = track_break(&mut *sink, &mut work, (paragraph, filler, sect), &before, orders)?;
         let nodes = work.build_content(work.root()).ok_or_else(path_error)?;
         let draws = crate::delete::draws_of(&nodes, numbered);
-        let mut keys = stretch_keys(&docx, &main, &parent, stretch);
-        keys.push(Key::Annotations);
         let count = (stretch.1 - stretch.0) as usize + 1;
-        sink.splice_children(&main, (&parent, stretch.0 as usize, count), nodes, keys, draws)?;
+        sink.splice_stretch(
+            &docx,
+            &main,
+            (&parent, stretch.0 as usize, count),
+            nodes,
+            &[Key::Annotations],
+            draws,
+        )?;
         sink.ensure_w14(&main, false, &[])?;
         if dated {
             sink.ensure_w14(&main, false, &[("w16du", W16DU)])?;

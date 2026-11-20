@@ -107,6 +107,7 @@ fn cells(rng: &mut Rng, writer: u64) -> SetCells {
         )],
         stamping: false,
         policy: policy(rng, writer),
+        accepted: None,
     }
 }
 

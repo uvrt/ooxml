@@ -53,18 +53,8 @@ fn call<A: ToolArgs>(arguments: Value, tool: impl Fn(&A, &Editing<'_>) -> ToolRe
     let opened = editor.store().snapshot().doc().clone();
     let caller = Caller::anonymous();
     let reply = {
-        let editing = Editing {
-            editor: &CallEditor::new(&editor),
-            caller: &caller,
-            opened: &opened,
-            tracking: None,
-            doc: "d1",
-            cancel: &Never,
-            date: "2026-11-17T10:00:00Z",
-            layout: None,
-            others: ooxml_tools_word::Others::default(),
-            blobs: None,
-        };
+        let call_editor = CallEditor::new(&editor);
+        let editing = Editing::new(&call_editor, &caller, &opened, "d1", &Never, "2026-11-17T10:00:00Z");
         let (args, _) = A::accept(arguments, Some("docx")).unwrap();
         Value::Object(tool(&args, &editing).to_json())
     };
@@ -319,18 +309,9 @@ impl FieldLayout for OnePage {
 fn template(editor: &Editor, layout: Option<&dyn FieldLayout>) -> ToolResult<Value> {
     let opened = editor.store().snapshot().doc().clone();
     let caller = Caller::anonymous();
-    let editing = Editing {
-        editor: &CallEditor::new(editor),
-        caller: &caller,
-        opened: &opened,
-        tracking: None,
-        doc: "d1",
-        cancel: &Never,
-        date: "2026-11-17T10:00:00Z",
-        layout,
-        others: ooxml_tools_word::Others::default(),
-        blobs: None,
-    };
+    let call_editor = CallEditor::new(editor);
+    let editing =
+        Editing::new(&call_editor, &caller, &opened, "d1", &Never, "2026-11-17T10:00:00Z").with_layout(layout);
     let (args, _) = WordTemplate::accept(json!({"doc": "d1", "action": "upgrade_to_modern"}), Some("docx")).unwrap();
     word_template(&args, &editing)
 }
