@@ -385,6 +385,10 @@ def _media_bytes(document) -> bytes | None:
     return None
 
 
+#: The alt text of a picture the cases float (wrap given).
+FLOATED = "A floated picture for the oracle"
+
+
 @CASES
 def picture_cases(document) -> list[dict]:
     """``word_drawings insert_picture``: a picture of each format (natural size, its stated
@@ -406,13 +410,17 @@ def picture_cases(document) -> list[dict]:
                     **{k: v for k, v in arguments.items() if v is not None})
         return {**case, "blobs": [_PICTURES[picture]]}
 
+    def floated(**arguments) -> dict:
+        # its own alt text: known-differences.toml names the floated pictures by it
+        return put(alt_text=FLOATED, **arguments)
+
     out = [put(at=f"{first}@0"), put(at=first, width=50), put("png300", at=f"{first}@0"),
            put("jpeg", at=f"{first}@0", width=120.5), put("gif", at=f"{first}@0"), put("bmp", at=f"{first}@0"),
            put(at=f"after:{first}"), put(at=f"before:{first}", width=30),
-           put(at=f"after:{first}", align="center"), put(at=f"after:{first}", wrap="square", align="right"),
-           put(at=f"{first}@0", wrap="square", x=10, y=5), put(at=f"{first}@0", wrap="behind", against="page",
-                                                               align="center"),
-           put(at=f"{first}@0", wrap="tight"), put(at=f"{first}@0", wrap="front", against="margin", y=-8),
+           put(at=f"after:{first}", align="center"), floated(at=f"after:{first}", wrap="square", align="right"),
+           floated(at=f"{first}@0", wrap="square", x=10, y=5),
+           floated(at=f"{first}@0", wrap="behind", against="page", align="center"),
+           floated(at=f"{first}@0", wrap="tight"), floated(at=f"{first}@0", wrap="front", against="margin", y=-8),
            put(at=f"{first}@0", alt_text="Line one\nline \"two\" & <three>"),
            put(at=f"{first}@0", image=None), put(at=f"{first}@0", image="b9"), put("text", at=f"{first}@0"),
            put(at=f"{first}@0", alt_text=None), put(at=f"{first}@0", height=40), put(at=f"{first}@0", x=10),

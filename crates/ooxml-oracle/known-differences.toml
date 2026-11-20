@@ -87,55 +87,68 @@ file = "generated/lists-and-styles.docx"
 input = { tool = "word_drawings", arguments = { action = "float" } }
 cause = """P4c10: as the constructs.docx float entry above: docx-agent's ns0 prefix on the new wp:anchor."""
 
-# P4c11: word_drawings insert_picture floated (wrap given) in the same two fixtures: the
-# float's new wp:anchor, as the float entries above.
+# P4c11: word_drawings insert_picture floated (wrap given; the cases give such a picture
+# the alt text below) in the fixtures whose root does not declare the wordprocessingDrawing
+# namespace: the float's new wp:anchor, as the P4c10 float entries above.
 [[difference]]
 mode = "objects"
 file = "generated/markdown/constructs.docx"
-input = { tool = "word_drawings", arguments = { action = "insert_picture", wrap = "square" } }
-cause = """P4c11: as the constructs.docx float entry above: the picture floated by docx-agent's float_drawing gets the ns0 prefix."""
-
-[[difference]]
-mode = "objects"
-file = "generated/markdown/constructs.docx"
-input = { tool = "word_drawings", arguments = { action = "insert_picture", wrap = "behind" } }
-cause = """P4c11: as the constructs.docx float entry above: the picture floated by docx-agent's float_drawing gets the ns0 prefix."""
-
-[[difference]]
-mode = "objects"
-file = "generated/markdown/constructs.docx"
-input = { tool = "word_drawings", arguments = { action = "insert_picture", wrap = "tight" } }
-cause = """P4c11: as the constructs.docx float entry above: the picture floated by docx-agent's float_drawing gets the ns0 prefix."""
-
-[[difference]]
-mode = "objects"
-file = "generated/markdown/constructs.docx"
-input = { tool = "word_drawings", arguments = { action = "insert_picture", wrap = "front" } }
-cause = """P4c11: as the constructs.docx float entry above: the picture floated by docx-agent's float_drawing gets the ns0 prefix."""
+input = { tool = "word_drawings", arguments = { action = "insert_picture", alt_text = "A floated picture for the oracle" } }
+cause = """P4c11: as the constructs.docx float entry above: docx-agent's float_drawing gives the new wp:anchor the ns0 prefix."""
 
 [[difference]]
 mode = "objects"
 file = "generated/lists-and-styles.docx"
-input = { tool = "word_drawings", arguments = { action = "insert_picture", wrap = "square" } }
-cause = """P4c11: as the constructs.docx float entry above: the picture floated by docx-agent's float_drawing gets the ns0 prefix."""
+input = { tool = "word_drawings", arguments = { action = "insert_picture", alt_text = "A floated picture for the oracle" } }
+cause = """P4c11: as the constructs.docx float entry above: docx-agent's float_drawing gives the new wp:anchor the ns0 prefix."""
 
 [[difference]]
 mode = "objects"
-file = "generated/lists-and-styles.docx"
-input = { tool = "word_drawings", arguments = { action = "insert_picture", wrap = "behind" } }
-cause = """P4c11: as the constructs.docx float entry above: the picture floated by docx-agent's float_drawing gets the ns0 prefix."""
+file = "generated/markdown/blank.docx"
+input = { tool = "word_drawings", arguments = { action = "insert_picture", alt_text = "A floated picture for the oracle" } }
+cause = """P4c11: as the constructs.docx float entry above: docx-agent's float_drawing gives the new wp:anchor the ns0 prefix."""
 
 [[difference]]
 mode = "objects"
-file = "generated/lists-and-styles.docx"
-input = { tool = "word_drawings", arguments = { action = "insert_picture", wrap = "tight" } }
-cause = """P4c11: as the constructs.docx float entry above: the picture floated by docx-agent's float_drawing gets the ns0 prefix."""
+file = "generated/markdown/dutch-template.docx"
+input = { tool = "word_drawings", arguments = { action = "insert_picture", alt_text = "A floated picture for the oracle" } }
+cause = """P4c11: as the constructs.docx float entry above: docx-agent's float_drawing gives the new wp:anchor the ns0 prefix."""
 
 [[difference]]
 mode = "objects"
-file = "generated/lists-and-styles.docx"
-input = { tool = "word_drawings", arguments = { action = "insert_picture", wrap = "front" } }
-cause = """P4c11: as the constructs.docx float entry above: the picture floated by docx-agent's float_drawing gets the ns0 prefix."""
+file = "generated/markdown/review.docx"
+input = { tool = "word_drawings", arguments = { action = "insert_picture", alt_text = "A floated picture for the oracle" } }
+cause = """P4c11: as the constructs.docx float entry above: docx-agent's float_drawing gives the new wp:anchor the ns0 prefix."""
+
+[[difference]]
+mode = "objects"
+file = "generated/controls.docx"
+input = { tool = "word_drawings", arguments = { action = "insert_picture", alt_text = "A floated picture for the oracle" } }
+cause = """P4c11: as the constructs.docx float entry above: docx-agent's float_drawing gives the new wp:anchor the ns0 prefix."""
+
+[[difference]]
+mode = "objects"
+file = "generated/ids-and-markup.docx"
+input = { tool = "word_drawings", arguments = { action = "insert_picture", alt_text = "A floated picture for the oracle" } }
+cause = """P4c11: as the constructs.docx float entry above: docx-agent's float_drawing gives the new wp:anchor the ns0 prefix."""
+
+[[difference]]
+mode = "objects"
+file = "generated/mode14.docx"
+input = { tool = "word_drawings", arguments = { action = "insert_picture", alt_text = "A floated picture for the oracle" } }
+cause = """P4c11: as the constructs.docx float entry above: docx-agent's float_drawing gives the new wp:anchor the ns0 prefix."""
+
+[[difference]]
+mode = "objects"
+file = "docx2svg/layout-sweep.docx"
+input = { tool = "word_drawings", arguments = { action = "insert_picture", alt_text = "A floated picture for the oracle" } }
+cause = """P4c11: as the constructs.docx float entry above: docx-agent's float_drawing gives the new wp:anchor the ns0 prefix."""
+
+[[difference]]
+mode = "objects"
+file = "docx2svg/style-document.docx"
+input = { tool = "word_drawings", arguments = { action = "insert_picture", alt_text = "A floated picture for the oracle" } }
+cause = """P4c11: as the constructs.docx float entry above: docx-agent's float_drawing gives the new wp:anchor the ns0 prefix."""
 
 # P4c10: a set that leaves the frame as it was (square wrapping on a frame wrapped square,
 # one step back or forward with no drawing there) in a fixture lxml did not write.
