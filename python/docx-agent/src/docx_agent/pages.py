@@ -101,6 +101,25 @@ def _engine(lineage: str, convert_options: Any, make: bool = True) -> Any:
     return found
 
 
+def word_pages(document: Any) -> tuple[Any, str | None]:
+    """``document``'s page engine in this process (an ``ooxml_core.WordPages``: the one
+    :func:`lay_out` lays its versions out with, made where there is none), for an edit the
+    Rust session makes that reads the pages (lane P2c13); ``(None, why)`` where the Rust
+    layout does not lay it out with the document's options."""
+    if not available():
+        return None, "no Rust layout"
+    import docx2svg
+    from docx2svg import rust
+
+    from .layout import layout_options, lineage
+
+    convert_options = docx2svg.ConvertOptions(**layout_options(document, {}))
+    why = rust.unsupported_options(convert_options)
+    if why is not None:
+        return None, why
+    return _engine(lineage(document), convert_options)._pages, None
+
+
 def lay_out(data: bytes, options: dict, lineage: str, *, make: bool = True) -> Any:
     """The version ``data`` laid out in Rust with ``options`` (docx2svg's
     :class:`~docx2svg.ConvertOptions` keywords), by the engine of ``lineage`` -- a
