@@ -174,7 +174,8 @@ def run_diff(args) -> int:
         relative = os.path.relpath(source, tree)
         entry = covering(entries, args.gate, args.mode, relative, case)
         (known if entry else unknown).append({"file": relative, "case": case["case"],
-                                              "cause": entry and entry["cause"]})
+                                              "cause": entry and entry["cause"],
+                                              **({"errors": case["errors"]} if case.get("errors") else {})})
     crashed = done is not None and done.returncode not in (0, 1) or (files and not totals)
     summary = {"gate": args.gate, "mode": args.mode, "shard": args.shard, "documents": len(files),
                "cases": totals.get("cases", 0), "differences": len(unknown), "known": len(known),
@@ -184,7 +185,9 @@ def run_diff(args) -> int:
     (out / "summary.json").write_text(json.dumps(summary, indent=1))
     print(json.dumps({k: v for k, v in summary.items() if k != "unknown"}))
     for case in unknown[:50]:
-        print(f"::error::{args.gate}/{args.mode}: {case['file']} [{case['case']}] differs (log.txt has the paths)")
+        errors = f"; errors {json.dumps(case['errors'])[:300]}" if case.get("errors") else ""
+        print(f"::error::{args.gate}/{args.mode}: {case['file']} [{case['case']}] differs (log.txt has the paths)"
+              f"{errors}")
     if crashed:
         print(f"::error::{args.gate}/{args.mode} {args.shard}: the harness failed (log.txt)")
     return 1 if unknown or crashed else 0
@@ -368,7 +371,8 @@ def run_summary(args) -> int:
         out.append("")
         for (g, mode), r in rows.items():
             for case in r["unknown"][:20] if g == gate else []:
-                out.append(f"- {mode}: `{case['file']}` [{case['case']}]")
+                errors = f": {json.dumps(case['errors'])[:300]}" if case.get("errors") else ""
+                out.append(f"- {mode}: `{case['file']}` [{case['case']}]{errors}")
         out.append("")
     print("\n".join(out))
     return 0
