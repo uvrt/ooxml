@@ -16,9 +16,9 @@
 
 use crate::doc::WordDoc;
 use crate::sink::EditSink;
-use ooxml_word_model::docx::at_path;
 use crate::work::{Id, Work};
 use crate::{EditError, Result};
+use ooxml_word_model::docx::at_path;
 use ooxml_xml::{Element, Node, Tree};
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
@@ -205,7 +205,8 @@ impl Space {
             from,
             to,
         };
-        self.copies.insert(part.to_owned(), Copy::new(tree, &holder, Some(within)));
+        self.copies
+            .insert(part.to_owned(), Copy::new(tree, &holder, Some(within)));
         Ok(true)
     }
 

@@ -212,8 +212,13 @@ fn copy_anchored(space: &mut Space, doc: &WordDoc, part: &str, anchor: &Anchor) 
     let (paths, through): (Vec<&[u32]>, Option<u32>) = match anchor {
         Anchor::Range { first, last, .. } => (vec![first.as_slice(), last.as_slice()], None),
         Anchor::Block { path, .. } => {
-            let top = path.strip_prefix(container.as_slice()).and_then(|rest| rest.first().copied());
-            (vec![path.as_slice()], top.and_then(|top| paragraph_after(story.root(), &container, top)))
+            let top = path
+                .strip_prefix(container.as_slice())
+                .and_then(|rest| rest.first().copied());
+            (
+                vec![path.as_slice()],
+                top.and_then(|top| paragraph_after(story.root(), &container, top)),
+            )
         }
         Anchor::Control(_) => (Vec::new(), None),
     };

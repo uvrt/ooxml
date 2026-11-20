@@ -102,7 +102,10 @@ fn a_control_by_id_commits_past_an_edit_elsewhere() {
 fn two_controls_at_once_take_the_numbers_of_the_serial_order() {
     // the second chose the number the first took: prepared again, it takes the next
     let (shared, targets) = opened();
-    let (first, second) = (control(&format!("{}@0", targets[6])), control(&format!("{}@0", targets[0])));
+    let (first, second) = (
+        control(&format!("{}@0", targets[6])),
+        control(&format!("{}@0", targets[0])),
+    );
     let (done, conflicts) = interleaved(&shared, second.clone(), &first);
     assert_eq!((done, conflicts), (true, 1));
     assert_eq!(written(shared.store().snapshot().doc()), serial(&first, &second));
@@ -121,7 +124,14 @@ fn resolving_a_thread_commits_past_an_edit_elsewhere_and_conflicts_with_another_
         let shared = editor(&fixture("generated/markdown/review.docx"));
         let docx = shared.store().snapshot().doc().docx().unwrap();
         let threads: Vec<String> = comments(&docx).into_iter().map(|c| c.id).collect();
-        let targets: Vec<String> = docx.body().unwrap().ids.paragraphs().iter().map(|p| p.id.clone()).collect();
+        let targets: Vec<String> = docx
+            .body()
+            .unwrap()
+            .ids
+            .paragraphs()
+            .iter()
+            .map(|p| p.id.clone())
+            .collect();
         assert!(threads.len() >= 2, "{threads:?}");
         (shared, threads, targets)
     };
