@@ -1,11 +1,12 @@
 //! The structure edits timed on a long document (lane P4b's hand-back): run with
 //! `STRUCTURE_BENCH=<path to a .docx> cargo test --release -p ooxml-word-edit --test
 //! integration -- --ignored --nocapture structure_bench::`; each edit's best of three runs,
-//! each on the document as opened.
+//! each on the document as opened -- and, for a section break and a move, also as a
+//! session's next call (after another edit: the document's reading and id sequences made).
 // Tests may unwrap, panic and index (docs/architecture/README.md, section 2.5).
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
 
-use crate::common::{best, editor};
+use crate::common::{best, best_after, editor};
 use ooxml_word_edit::{
     AddBookmark, InsertNote, InsertSectionBreak, MoveBlocks, Moving, NoteKind, RevisionPolicy, SectionValues,
     SetSection, SetStoryText,
@@ -36,6 +37,39 @@ fn structure_edits_on_a_long_document() {
     let report = |name: &str, took: Duration| println!("{name}: {:.1} ms", took.as_secs_f64() * 1000.0);
     links_and_notes(&bytes, &middle, &report);
     sections_and_moves(&bytes, (&early, &late), &report);
+    next_calls(&bytes, (&early, &middle, &late), &report);
+}
+
+/// A section break and a move as the next call of a session: after a bookmark added (no
+/// draw) and after a paragraph inserted elsewhere (the paraId sequence made).
+fn next_calls(bytes: &Arc<[u8]>, (early, middle, late): (&str, &str, &str), report: &dyn Fn(&str, Duration)) {
+    let untracked = RevisionPolicy::Untracked;
+    let first = InsertSectionBreak {
+        after: Some(middle.to_owned()),
+        before: None,
+        kind: "nextPage".into(),
+        policy: untracked.clone(),
+    };
+    let section = InsertSectionBreak {
+        after: Some(early.to_owned()),
+        before: None,
+        kind: "nextPage".into(),
+        policy: untracked.clone(),
+    };
+    let moving = MoveBlocks {
+        blocks: Moving::Blocks(early.to_owned()),
+        after: Some(late.to_owned()),
+        before: None,
+        policy: untracked,
+    };
+    report(
+        "insert_section_break (early), next call",
+        best_after(bytes, &first, &section),
+    );
+    report(
+        "move_blocks (early after late), next call",
+        best_after(bytes, &first, &moving),
+    );
 }
 
 fn links_and_notes(bytes: &Arc<[u8]>, middle: &str, report: &dyn Fn(&str, Duration)) {

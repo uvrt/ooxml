@@ -4,10 +4,11 @@
 //! a bookmark of that name marking this text already is no change (rule 3); its markers'
 //! `w:id` one above the largest annotation id in use, drawn again where it is committed.
 //!
-//! Must not: write but through the sink; it reads every story (names are unique in the
-//! document).
+//! Must not: write but through the sink. Names are unique in the document: the edit reads
+//! by condition every bookmark of its name ([`NamesBookmark`]).
 
 use super::{marker_draws, new_w, LinkEdited};
+use crate::address_keys::names_by_id;
 use crate::blocks::{blocks_of, resolve_block, BlockAt, BlockKind};
 use crate::delete::{editable, stretch_keys};
 use crate::doc::Key;
@@ -19,10 +20,11 @@ use crate::text_range::{range, range_id, Span};
 use crate::work::{Id, Work};
 use crate::{EditError, Result, WordDoc};
 use ooxml_base::pyfmt::repr_str;
-use ooxml_store::{Command, Txn};
+use ooxml_store::{Command, ReadPredicate, Txn};
 use ooxml_word_model::address::marks::{bookmark_markers, bookmark_range};
 use ooxml_word_model::address::{expand_heading, is_text_range, span_ends, RangeText};
-use ooxml_word_model::docx::{at_path, casefold, Docx};
+use ooxml_word_model::docx::{at_path, casefold, Docx, StoryPart};
+use ooxml_word_model::ids::Entry;
 use ooxml_xml::{Element, Node};
 use std::sync::Arc;
 
@@ -124,9 +126,22 @@ impl Command<WordDoc> for AddBookmark {
 }
 
 impl AddBookmark {
+    /// What the edit reads: the blocks it marks (the stretch it writes) and, by condition,
+    /// any bookmark of its name added meanwhile; a place named by condition (a heading's
+    /// range, a bookmark, a control) depends on the whole document.
+    fn reads(&self, sink: &mut EditSink<'_, '_>) {
+        if names_by_id(&self.place) {
+            sink.read_where(Arc::new(NamesBookmark {
+                name: casefold(&self.name),
+            }));
+        } else {
+            sink.read_everything();
+        }
+    }
+
     /// The edit, through `sink`.
     fn edit(&self, sink: &mut EditSink<'_, '_>) -> Result<LinkEdited> {
-        sink.read_everything();
+        self.reads(sink);
         super::check_name(&self.name)?;
         let docx = sink.docx()?;
         let place = place(sink.doc(), &docx, &self.place)?;
@@ -203,6 +218,73 @@ impl AddBookmark {
             renamed,
             ..LinkEdited::default()
         })
+    }
+}
+
+/// A bookmark's name read by condition (design section 5): adding one depends on the
+/// document holding no other bookmark of that name. A block written since the edit's
+/// snapshot conflicts when, on the head, it starts a bookmark of the name -- inside it, or
+/// among the markers beside it in its parent (a bookmark Word starts before a control);
+/// a story part written whole conflicts when it starts one on the head; nothing else does.
+#[derive(Debug)]
+struct NamesBookmark {
+    /// The name, casefolded (names compare without case).
+    name: String,
+}
+
+impl NamesBookmark {
+    fn starts(&self, element: &Element) -> bool {
+        if element.name().is(Some(W), "bookmarkStart") {
+            return element
+                .attribute(Some(W), "name")
+                .is_some_and(|name| casefold(name) == self.name);
+        }
+        element.child_elements().any(|child| self.starts(child))
+    }
+
+    /// Whether block `id` of `story`, or a marker beside it, starts a bookmark of the name;
+    /// a block the index does not know (a row, a block gone) may.
+    fn near(&self, story: &StoryPart, id: &str) -> bool {
+        let ids = &story.ids;
+        let path = match ids.get(id) {
+            Some(Entry::Paragraph(k)) => ids.paragraphs().get(k).map(|p| p.path),
+            Some(Entry::Table(k)) => ids.tables().get(k).map(|t| t.path),
+            None => None,
+        };
+        let Some((&last, above)) = path.as_deref().and_then(<[u32]>::split_last) else {
+            return true;
+        };
+        let Some(parent) = at_path(story.root(), above) else {
+            return true;
+        };
+        let children = parent.children();
+        let at = last as usize;
+        let element = |k: usize| children.get(k).and_then(Node::as_element);
+        if element(at).is_some_and(|e| self.starts(e)) {
+            return true;
+        }
+        let beside = |k: usize| element(k).filter(|e| !is_block(e));
+        let before = (0..at).rev().map_while(beside);
+        let after = (at + 1..children.len()).map_while(beside);
+        before.chain(after).any(|e| self.starts(e))
+    }
+}
+
+/// Whether `element` is a block (a paragraph, table, control or custom XML).
+fn is_block(element: &Element) -> bool {
+    ["p", "tbl", "sdt", "customXml"]
+        .iter()
+        .any(|local| element.name().is(Some(W), local))
+}
+
+impl ReadPredicate<WordDoc> for NamesBookmark {
+    fn depends(&self, head: &WordDoc, key: &Key) -> bool {
+        let Ok(docx) = head.docx() else { return true };
+        match key {
+            Key::Block { part, id } => docx.part(part).is_some_and(|story| self.near(story, id)),
+            Key::Part(part) => docx.part(part).is_some_and(|story| self.starts(story.root())),
+            Key::Root(_) | Key::Seq(_) | Key::Annotations | Key::People => false,
+        }
     }
 }
 

@@ -94,6 +94,7 @@ def test_word_drawings_inline_and_float_what_is_so_already(box, session):
     result = ok(box, session, "word_drawings", doc=d, action="float", target=picture)
     assert result.summary == f"No change to {picture}" and result.warnings == [f"{picture} floats already"]
     result = ok(box, session, "word_drawings", doc=d, action="float", target=picture, wrap="square")
+    document = session.entry(d).document  # (the view as the served call left it)
     assert result.changed == [picture] and document.drawing(picture).wrapping["wrap"] == "square"
 
 

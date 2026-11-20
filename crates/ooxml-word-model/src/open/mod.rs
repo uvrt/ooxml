@@ -159,6 +159,7 @@ pub struct Model {
     notes: Memo<Digest, Kept<Notes>>,
     resolver: Resolver,
     label_keys: Vec<Digest>,
+    block_keys: labels::LabelKeys,
     labels: MonoidTree<BlockItems>,
     label_memo: Memo<Digest, BlockItems>,
     stats: OpenStats,
@@ -225,6 +226,7 @@ impl Model {
             notes: Memo::new(Arc::clone(&budget)),
             resolver: Resolver::new(&budget),
             label_keys: Vec::new(),
+            block_keys: labels::LabelKeys::default(),
             labels: MonoidTree::new(),
             label_memo: Memo::new(Arc::clone(&budget)),
             stats: OpenStats::default(),
@@ -325,10 +327,10 @@ fn element_key(key: DigestKey, colours: Digest, content: Digest, fields: &Fields
 }
 
 /// A paragraph taken from the memo, at its new place.
-fn moved(block: &Block, here: &Text) -> Block {
+fn moved(block: &Block, here: &str) -> Block {
     match block {
-        Block::Paragraph(p) if p.path != *here => Block::Paragraph(Arc::new(Paragraph {
-            path: here.clone(),
+        Block::Paragraph(p) if *p.path != *here => Block::Paragraph(Arc::new(Paragraph {
+            path: text(here),
             ..(**p).clone()
         })),
         other => other.clone(),
@@ -354,7 +356,7 @@ impl Model {
         let mut out = Vec::new();
         let (mut count, mut read) = (0, 0);
         for node in elements(&body) {
-            let here = steps.step(node);
+            let here = steps.step_str(node);
             let name = local(node);
             if !matches!(name, "p" | "tbl" | "sdt" | "customXml") {
                 let known = matches!(name, "sectPr") || MARKERS.contains(&name);
@@ -366,14 +368,14 @@ impl Model {
             }
             count += 1;
             let content = self.bodies.of(self.key, node);
-            let key = element_key(self.key, colours_d, content, &fields, (name != "p").then_some(&*here));
+            let key = element_key(self.key, colours_d, content, &fields, (name != "p").then_some(here));
             if let Some(Kept(kept)) = self.elements.get(&key) {
                 fields.cached.extend(kept.cached.iter().cloned());
                 if name == "p" {
                     // A paragraph is kept by its content wherever it stands: it takes its new
                     // place. Any other element is kept at its own place (its key holds it),
                     // and the paragraphs in it keep their paths below it.
-                    out.extend(kept.blocks.iter().map(|b| moved(b, &here)));
+                    out.extend(kept.blocks.iter().map(|b| moved(b, here)));
                 } else {
                     out.extend(kept.blocks.iter().cloned());
                 }
@@ -381,7 +383,7 @@ impl Model {
             }
             read += 1;
             let before = fields.stack.clone();
-            let element = reader.body_element(node, &here, &mut fields);
+            let element = reader.body_element(node, &text(here), &mut fields);
             out.extend(element.blocks.iter().cloned());
             if fields.stack == before {
                 self.elements.insert(key, Kept(Arc::new(element)));

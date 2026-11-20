@@ -1,8 +1,9 @@
 //! Owns: one document's page engine ([`PageEngine`]): the versions it is given (a
 //! package's bytes, of which only the parts whose stored bytes changed are read again, or
 //! a version's touched parts), the Word model's and the layout's memos kept between
-//! versions, the last version laid out -- which the next is laid out from -- and painting
-//! a version's pages.
+//! versions, the last version laid out -- which the next is laid out from, and which is the
+//! answer again for a version with the same parts (a caller asking for the version it has,
+//! as a field update's first pass does) -- and painting a version's pages.
 //!
 //! A version is laid out only where the layout lays it out as docx2svg does
 //! ([`crate::support`]); otherwise the answer is a [`Fallback`], and the engine keeps
@@ -68,6 +69,9 @@ pub struct EngineStats {
     /// Pages whose warnings were said again as the version before's same page said them,
     /// and pages walked for them.
     pub pages_said: (u64, u64),
+    /// Versions asked again: the same parts as the last version laid out, which was
+    /// answered (nothing laid out).
+    pub kept: u64,
 }
 
 impl EngineStats {
@@ -88,6 +92,8 @@ struct Generation {
     model: Model,
     layout: WordLayout,
     last: Option<Arc<LaidVersion>>,
+    /// The package `last` was laid out from: a version with the same parts is `last`.
+    laid_from: Option<Package>,
     /// What each page of the last version said (its warnings), for the pages the next
     /// version keeps.
     said: crate::page_said::PageMemo,
@@ -96,6 +102,15 @@ struct Generation {
     ids: Option<(Arc<ooxml_xml::Element>, Arc<ooxml_word_model::ids::PartIds>)>,
     /// What each page of the version summarised last digested to.
     summaries: crate::summary::SummaryMemo,
+}
+
+impl Generation {
+    /// The last version laid out where `package` has its parts (the same version asked
+    /// again).
+    fn last_for(&self, package: &Package) -> Option<Arc<LaidVersion>> {
+        let from = self.laid_from.as_ref()?;
+        from.same_parts(package).then(|| self.last.clone()).flatten()
+    }
 }
 
 /// A line's paragraph path, its story (a header's or footer's: its kind and part), its
@@ -352,18 +367,12 @@ impl PageEngine {
     pub fn lay_out(&mut self, package: &Package) -> Result<Result<Arc<LaidVersion>, Fallback>, PagesError> {
         self.changed.sort();
         let fonts = self.setup.document(package);
-        let mut cause: Option<RelaidCause> = None;
-        let generation = match self.generation.take() {
-            Some(g) if g.fonts.epoch == fonts.epoch => g,
-            Some(g) => {
-                if g.last.is_some() {
-                    cause = Some(self.part_cause("fonts"));
-                }
-                self.new_generation(fonts)
-            }
-            None => self.new_generation(fonts),
-        };
+        let (generation, mut cause) = self.generation_for(fonts);
         let generation = self.generation.insert(generation);
+        if let Some(last) = generation.last_for(package) {
+            self.stats.kept += 1;
+            return Ok(Ok(last));
+        }
         let started = Instant::now();
         let document = generation.model.open(package)?;
         self.stats.open_time += started.elapsed();
@@ -382,6 +391,7 @@ impl PageEngine {
         }
         let started = Instant::now();
         let previous = generation.last.take();
+        generation.laid_from = None;
         let laid = match &previous {
             Some(previous) => generation
                 .layout
@@ -430,6 +440,7 @@ impl PageEngine {
         // memos held goes now, not with every version kept.
         drop(previous);
         generation.last = Some(Arc::clone(&version));
+        generation.laid_from = Some(package.clone());
         let swept = generation.model.sweep() + generation.layout.sweep();
         self.stats.swept += swept as u64;
         Ok(Ok(version))
@@ -444,6 +455,19 @@ impl PageEngine {
         }
     }
 
+    /// The generation `fonts` lay out in: the current one where its fonts are the same,
+    /// else a new one, with the cause of laying out whole where the old had a version.
+    fn generation_for(&mut self, fonts: DocumentFonts) -> (Generation, Option<RelaidCause>) {
+        match self.generation.take() {
+            Some(g) if g.fonts.epoch == fonts.epoch => (g, None),
+            Some(g) => {
+                let cause = g.last.is_some().then(|| self.part_cause("fonts"));
+                (self.new_generation(fonts), cause)
+            }
+            None => (self.new_generation(fonts), None),
+        }
+    }
+
     fn new_generation(&mut self, fonts: DocumentFonts) -> Generation {
         self.generations += 1;
         Generation {
@@ -452,6 +476,7 @@ impl PageEngine {
             layout: new_layout(&fonts, &self.locale, &self.budgets.held),
             fonts,
             last: None,
+            laid_from: None,
             said: crate::page_said::PageMemo::default(),
             ids: None,
             summaries: crate::summary::SummaryMemo::default(),

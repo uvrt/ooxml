@@ -62,6 +62,7 @@ fn object_edits_on_a_long_document() {
             table: table.clone(),
             formats,
             policy,
+            layout: None,
         };
         report(name, best(&bytes, &command));
     }

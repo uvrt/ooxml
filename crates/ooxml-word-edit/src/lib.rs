@@ -38,12 +38,14 @@
 #![forbid(unsafe_code)]
 
 mod across;
+mod address_keys;
 mod after;
 mod beside;
 mod block_checks;
 mod blocks;
 mod builtin;
 mod comments;
+mod content_types;
 mod control_delete;
 mod controls;
 mod copying;
@@ -148,6 +150,7 @@ pub use paragraph_style::{SetParagraphStyle, StyleSet};
 pub use paragraphs::{InsertParagraph, ParagraphInserted};
 pub use policy::{RevisionPolicy, Tracking};
 pub use pool::{EarlierIds, Ids, IdsChange, Sequences};
+pub use provenance::{KeepText, TextKeep};
 pub use ranges::{DeleteText, InsertText, RangesEdited, ReplaceText};
 pub use review::{record_marks, Mark, RemovedBlocks, Review, Reviewed, RowGone, Selection, TableGone, Typed};
 pub use sections::{
@@ -168,8 +171,9 @@ pub use styles::{
 };
 pub use switch::{tracks_changes, word_tracks_changes, SetWordTracking, WordTracking};
 pub use tables::{
-    pending_structure, CellValues, EditTable, FormatTable, Look, TableChange, TableChanged, TableEdit, TableFormat,
-    TableFormatted, TableValues, TableWidth,
+    body_lines, body_width, loose_paragraph_after, pending_structure, table_keeps, table_keeps_at, BodyLines,
+    BodyWidth, CellValues, EditTable, FormatTable, Look, TableChange, TableChanged, TableEdit, TableFormat,
+    TableFormatted, TableKeeps, TableValues, TableWidth,
 };
 pub use template::{compatibility_mode, UpgradeToModern, Upgraded, DEFAULT_COMPATIBILITY_MODE, MODERN_MODE};
 pub use text::diff::ratio as text_ratio;

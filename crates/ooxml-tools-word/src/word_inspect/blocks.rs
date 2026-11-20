@@ -7,7 +7,6 @@
 
 use ooxml_word_model::docx::cells::model_path;
 use ooxml_word_model::docx::formatting::{Cell, EffectiveParagraph, EffectiveRun};
-use ooxml_word_model::docx::graphics::chart_json;
 use ooxml_word_model::docx::Docx;
 use ooxml_word_model::ids::W;
 use ooxml_word_model::markdown::read::{
@@ -568,8 +567,8 @@ fn drawing(d: &ooxml_word_model::markdown::read::DrawingRecord) -> Value {
     out.insert("name".into(), opt(d.name.as_deref()));
     out.insert("alt".into(), Value::from(d.alt.as_str()));
     out.insert("floating".into(), Value::Bool(d.floating));
-    if let Some(chart) = &d.chart {
-        out.insert("chart".into(), chart_json(chart));
+    if let Some(graphic) = &d.graphic {
+        out.insert(graphic.names().0.into(), graphic.json());
     }
     if let Some(members) = &d.members {
         let members: Vec<Value> = members
@@ -579,8 +578,8 @@ fn drawing(d: &ooxml_word_model::markdown::read::DrawingRecord) -> Value {
                 one.insert("id".into(), Value::from(m.id.as_str()));
                 one.insert("kind".into(), Value::from(m.kind));
                 one.insert("name".into(), opt(m.name.as_deref()));
-                if let Some(chart) = &m.chart {
-                    one.insert("chart".into(), chart_json(chart));
+                if let Some(graphic) = &m.graphic {
+                    one.insert(graphic.names().0.into(), graphic.json());
                 }
                 Value::Object(one)
             })
