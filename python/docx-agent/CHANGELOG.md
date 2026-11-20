@@ -7,6 +7,10 @@ snapshot commit; the development history before it is summarised here.
 
 ## 0.1.140 -- unreleased
 
+Phase P2, lane P2c18: served comments and content controls placed by id no longer read
+the whole document: concurrent writers elsewhere commit past them instead of queueing
+behind them (the review mix at ~3k pages).
+
 Phase P2, lane P2c17: the last editing group runs in the Rust session (`rust.edits.SERVED`):
 `word_changes`, `word_comments`, `word_controls`, `word_set_tracking` (the document's
 tracking mode set in the session and on the entry together), `word_copy_from` (a source in

@@ -6,10 +6,13 @@ mod common;
 
 mod control_delete;
 mod history;
+mod interleave;
 mod object_bench;
 mod object_writers;
+mod review_reads;
 mod review_writers;
 mod structure_bench;
+mod structure_reads;
 mod structure_writers;
 mod style_bench;
 mod style_writers;

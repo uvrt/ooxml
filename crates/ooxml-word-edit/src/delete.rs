@@ -284,16 +284,16 @@ pub(crate) fn editable(root: &Arc<Element>, paths: &[Vec<u32>], wanted: &[&[u32]
     } else {
         Arc::clone(at_path(root, &parent)?)
     };
+    // the parent's children read by index, within the stretch only (a body's thousands of
+    // nodes are not copied per path)
+    let nodes = holder.children();
     let mut found = Vec::new();
     for path in wanted {
         let rest = path.get(parent.len()..)?;
         let (&top, below) = rest.split_first()?;
-        let nodes = holder.children().to_vec();
-        let index = nodes
-            .iter()
-            .skip(from as usize)
-            .take(top.checked_sub(from)? as usize)
-            .filter(|n| !matches!(n, Node::Text(_)))
+        top.checked_sub(from)?;
+        let index = (from..top)
+            .filter(|&k| nodes.get(k as usize).is_some_and(|n| !matches!(n, Node::Text(_))))
             .count();
         let at = *work.children(work.root()).get(index)?;
         let Node::Element(element) = nodes.get(top as usize)? else {
