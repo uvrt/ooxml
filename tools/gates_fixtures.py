@@ -12,7 +12,10 @@ handful of mixed documents run every time.  Two maps make the choice:
   foundations every document goes through (FOUNDATIONS: the XML writer, the package, the
   store, the session, the layout, the harness, the known differences) and any path whose
   words name no feature count for every fixture -- conservative, as is a fixture changed
-  itself (it runs; ``all`` when its features cannot be read).
+  itself (it runs; ``all`` when its features cannot be read).  Where a path alone says
+  every fixture, its changed lines may say less (tools/gates_hunks.py: a ``mod``/``use``
+  line, a tool's registration, a known difference, a case maker's tool, a served tool, a
+  comment).
 
 Paths the gates do not run at all (tools/gates.py ``gate_effects``) select nothing.
 """
@@ -24,6 +27,8 @@ import re
 import sys
 import zipfile
 from pathlib import Path
+
+import gates_hunks
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / "python" / "docx-agent" / "tests" / "fixtures"
@@ -144,9 +149,10 @@ def path_features(path: str) -> set[str] | str:
     return found or ALL
 
 
-def select(changed: list[str], known: dict[str, list[str]] | None = None) -> list[str] | str:
+def select(changed: list[str], known: dict[str, list[str]] | None = None, diff=None) -> list[str] | str:
     """The fixtures (names relative to the fixtures folder) a branch changing ``changed`` runs,
-    or ALL; ``changed``: the changed paths the gates run at all (tools/gates.py gate_effects)."""
+    or ALL; ``changed``: the changed paths the gates run at all (tools/gates.py gate_effects);
+    ``diff``: their changed lines (gates_hunks.Diff), read where a path alone says ALL."""
     known = load() if known is None else known
     prefix = str(FIXTURES.relative_to(ROOT)) + "/"
     chosen = set(CANARIES)
@@ -164,7 +170,11 @@ def select(changed: list[str], known: dict[str, list[str]] | None = None) -> lis
             continue
         found = path_features(path)
         if found == ALL:
-            return ALL
+            read = gates_hunks.effect(path, diff, FEATURE_WORDS, list(known)) if diff is not None else None
+            if read is None:
+                return ALL
+            found, named = read
+            chosen |= named
         features |= found
     chosen |= {name for name, held in known.items() if features & set(held)}
     return sorted(name for name in chosen if name in known or (FIXTURES / name).is_file())

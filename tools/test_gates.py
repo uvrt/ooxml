@@ -5,6 +5,7 @@ ci.yml's plan job runs them (`python3 -m unittest discover -s tools -p 'test_*.p
 
 from __future__ import annotations
 
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -14,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import gates  # noqa: E402
 import gates_fixtures  # noqa: E402
+import gates_hunks  # noqa: E402
 
 CHART_PLACES = "generated/charts/chart-places.docx"
 SEQ = {"op": "structure", "tool": "word_fields",
@@ -159,6 +161,81 @@ class AutoFixtures(unittest.TestCase):
         only = list(gates_fixtures.CANARIES)
         files = gates.documents(gates.FIXTURES, 1, (1, 1), only)
         self.assertEqual(sorted(str(f.relative_to(gates.FIXTURES)) for f in files), sorted(only))
+
+
+class ChangedLines(unittest.TestCase):
+    """--fixtures auto reads the changed lines of the files every branch touches
+    (tools/gates_hunks.py), in a scratch repository: base and head commits of a few files."""
+
+    def select(self, files: dict[str, tuple[str, str]]) -> list[str] | str:
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+
+            def git(*args: str) -> str:
+                return subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *args], cwd=root,
+                                      capture_output=True, text=True, check=True).stdout.strip()
+
+            git("init", "-q")
+            for side in (0, 1):
+                for path, texts in files.items():
+                    (root / path).parent.mkdir(parents=True, exist_ok=True)
+                    (root / path).write_text(texts[side])
+                git("add", "-A")
+                git("commit", "-q", "-m", str(side))
+            diff = gates_hunks.Diff("HEAD~1", "HEAD", root=root)
+            return gates_fixtures.select(list(files), diff=diff)
+
+    def features(self, *names: str) -> set[str]:
+        return {n for n, held in gates_fixtures.load().items() if set(names) & set(held)} | set(gates_fixtures.CANARIES)
+
+    def test_a_use_line_in_lib_rs_adds_nothing(self) -> None:
+        lib = "crates/ooxml-word-edit/src/lib.rs"
+        base = "mod a;\npub use a::{B, C};\n\npub fn f() -> u8 {\n    1\n}\n"
+        self.assertEqual(set(self.select({lib: (base, base.replace("{B, C}", "{B, C, D}").replace("mod a;", "mod a;\nmod e;"))})),
+                         set(gates_fixtures.CANARIES))
+        self.assertEqual(self.select({lib: (base, base.replace("    1", "    2"))}), gates_fixtures.ALL)
+
+    def test_a_comment_adds_nothing(self) -> None:
+        editor = "crates/ooxml-word-edit/src/editor.rs"
+        base = "// one\npub fn f() -> u8 {\n    1\n}\n"
+        self.assertEqual(set(self.select({editor: (base, base.replace("// one", "// two"))})),
+                         set(gates_fixtures.CANARIES))
+
+    def test_a_registration_runs_its_tool(self) -> None:
+        registry = "crates/ooxml-session/src/registry.rs"
+        base = ("fn r() {\n        registry.register(word_edit::<ooxml_tools_word::WordDelete>(ooxml_tools_word::word_delete));\n"
+                "}\n")
+        head = base.replace("}\n", "        registry.register(word_edit::<ooxml_tools_word::WordComments>(\n"
+                                   "            ooxml_tools_word::word_comments,\n        ));\n}\n")
+        self.assertEqual(set(self.select({registry: (base, head)})), self.features("comments"))
+        self.assertEqual(self.select({registry: (base, base.replace("fn r() {", "fn r() {\n    let x = 1;"))}),
+                         gates_fixtures.ALL)
+
+    def test_a_known_difference_runs_its_fixture(self) -> None:
+        known = "crates/ooxml-oracle/known-differences.toml"
+        entry = '[[difference]]\nmode = "structure"\nfile = "generated/mode14.docx"\ncause = "x"\n'
+        self.assertEqual(set(self.select({known: ("", entry)})),
+                         set(gates_fixtures.CANARIES) | {"generated/mode14.docx"})
+        self.assertEqual(self.select({known: ("", entry.replace('file = "generated/mode14.docx"\n', ""))}),
+                         gates_fixtures.ALL)
+        self.assertEqual(set(self.select({known: ("", entry.replace('mode =', 'gate = "corpus"\nmode ='))})),
+                         set(gates_fixtures.CANARIES))
+
+    def test_a_case_maker_runs_the_tools_whose_cases_changed(self) -> None:
+        cases = "crates/ooxml-oracle/python/word_structure_cases.py"
+        base = ('@CASES\ndef note_cases(document):\n    out = [call("word_notes", action="insert")]\n    return out\n\n\n'
+                "def _words(document):\n    return []\n")
+        self.assertEqual(set(self.select({cases: (base, base.replace('"insert"', '"delete"'))})),
+                         self.features("notes"))
+        self.assertEqual(self.select({cases: (base, base.replace("return []", "return [1]"))}), gates_fixtures.ALL)
+
+    def test_a_served_entry_runs_its_tool(self) -> None:
+        served = "python/docx-agent/src/docx_agent/rust/edits.py"
+        base = 'SERVED = {\n    "word_delete": _delete,\n}\n'
+        head = base.replace("}", '    "word_format_table": _format_table,\n}')
+        self.assertEqual(set(self.select({served: (base, head)})), self.features("tables", "styles"))
+        self.assertEqual(self.select({served: (base, head.replace("SERVED = {", "X = 2\nSERVED = {"))}),
+                         gates_fixtures.ALL)
 
 
 if __name__ == "__main__":

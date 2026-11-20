@@ -57,6 +57,7 @@ import tomllib
 from pathlib import Path
 
 import gates_fixtures
+import gates_hunks
 
 ROOT = Path(__file__).resolve().parents[1]
 HARNESS = ROOT / "crates" / "ooxml-oracle" / "python"
@@ -317,13 +318,13 @@ def auto_modes(changed: list[str]) -> tuple[list[str], bool]:
     return [m for m in EDIT_MODES if m in effects], READS in effects
 
 
-def auto_fixtures(changed: list[str]) -> list[str] | str:
+def auto_fixtures(changed: list[str], diff=None) -> list[str] | str:
     """The fixtures a branch changing ``changed`` runs (tools/gates_fixtures.py), or ALL; no
-    change at all is every fixture."""
+    change at all is every fixture.  ``diff``: the changed lines (gates_hunks.Diff)."""
     if not changed:
         return gates_fixtures.ALL
     crates = oracle_crates()
-    return gates_fixtures.select([path for path in changed if gate_effects(path, crates)])
+    return gates_fixtures.select([path for path in changed if gate_effects(path, crates)], diff=diff)
 
 
 def fixture_selection(value: str, base: str = "origin/main") -> list[str] | str:
@@ -332,14 +333,14 @@ def fixture_selection(value: str, base: str = "origin/main") -> list[str] | str:
     if value in ("", gates_fixtures.ALL):
         return gates_fixtures.ALL
     if value == "auto":
-        return auto_fixtures(changed_files(base))
+        return auto_fixtures(changed_files(base), gates_hunks.Diff(base))
     return [name.strip() for name in value.split(",") if name.strip()]
 
 
 def run_plan(args) -> int:
     changed = args.changed if args.changed is not None else changed_files(args.base)
     modes, reads = auto_modes(changed)
-    chosen = auto_fixtures(changed)
+    chosen = auto_fixtures(changed, None if args.changed is not None else gates_hunks.Diff(args.base))
     fixtures = "all" if chosen == gates_fixtures.ALL else f"{len(chosen)}: {','.join(chosen)}"
     print(f"{len(changed)} changed files; modes: {','.join(modes) or '(none)'}; reads: {'yes' if reads else 'no'}; "
           f"fixtures: {fixtures}")
