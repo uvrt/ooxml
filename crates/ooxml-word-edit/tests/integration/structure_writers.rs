@@ -733,3 +733,22 @@ fn a_copied_bookmark_is_renamed_and_its_link_follows() {
         out.warnings
     );
 }
+
+/// docx-agent's importer (`_control_ids`, `copy_blocks`' top blocks): a block-level content
+/// control copied from the document itself takes an id no control has (its id is taken),
+/// and is a top-level block of its own, named by its new id.
+#[test]
+fn a_copied_block_control_takes_a_new_id_and_is_a_block_of_its_own() {
+    let (_, head, out) = copy_own("generated/controls.docx", "cc:311");
+    let pair = |old: &str| out.copied.iter().find(|(o, _)| o == old).map(|(_, n)| n.clone());
+    let new = pair("sdt#311").expect("the control's id changed");
+    assert_ne!(new, "sdt#311");
+    let number = new.trim_start_matches("sdt#");
+    assert_eq!(out.blocks, vec![format!("cc:{number}")]);
+    assert_eq!(out.id.as_deref(), Some(format!("cc:{number}").as_str()));
+    assert_eq!(pair("cc:311"), Some(format!("cc:{number}")));
+    assert_eq!(
+        count_in(&head, "word/document.xml", &format!("<w:id w:val=\"{number}\"/>")),
+        1
+    );
+}

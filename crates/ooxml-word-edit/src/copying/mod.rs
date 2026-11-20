@@ -316,20 +316,8 @@ impl CopyBlocks {
         let (blocks, top_controls) = top_blocks(sink, (source, &selected), &place, &placed, &stamped.per_element)?;
         // docx-agent's `copied`: the notes', comments' and controls' first, then the blocks',
         // then the block-level controls'
-        let block_ids = source_ids
-            .iter()
-            .zip(&stamped.per_element)
-            .flat_map(|(o, n)| o.iter().zip(n));
-        let copied = first_to_last(
-            notes
-                .copied
-                .iter()
-                .chain(&comments.copied)
-                .chain(&controls)
-                .map(|(o, n)| (o, n))
-                .chain(block_ids)
-                .chain(top_controls.iter().map(|(o, n)| (o, n))),
-        );
+        let annotations = [&notes.copied, &comments.copied, &controls];
+        let copied = copied_pairs(&annotations, (&source_ids, &stamped.per_element), &top_controls);
         Ok(BlocksCopied {
             id: blocks.first().cloned(),
             created: stamped.created,
@@ -339,6 +327,27 @@ impl CopyBlocks {
             copied,
         })
     }
+}
+
+/// Old and new ids, in order.
+type Pairs = Vec<(String, String)>;
+
+/// docx-agent's `copied` of `annotations` (each `(old, new)` in order), then each source
+/// block's ids with its copy's, then `after`.
+fn copied_pairs(
+    annotations: &[&Pairs],
+    (source_ids, per_element): (&[Vec<String>], &[Vec<String>]),
+    after: &Pairs,
+) -> Pairs {
+    let block_ids = source_ids.iter().zip(per_element).flat_map(|(o, n)| o.iter().zip(n));
+    first_to_last(
+        annotations
+            .iter()
+            .flat_map(|pairs| pairs.iter())
+            .map(|(o, n)| (o, n))
+            .chain(block_ids)
+            .chain(after.iter().map(|(o, n)| (o, n))),
+    )
 }
 
 /// Where each of `elements` (placed in the stretch `work` of the container at `place`,
@@ -367,7 +376,7 @@ fn top_blocks(
     place: &Place,
     placed: &[Option<Box<[u32]>>],
     per_element: &[Vec<String>],
-) -> Result<(Vec<String>, Vec<(String, String)>)> {
+) -> Result<(Vec<String>, Pairs)> {
     let mut found = None;
     let mut blocks = Vec::new();
     let mut copied = Vec::new();
@@ -378,7 +387,8 @@ fn top_blocks(
         };
         if found.is_none() {
             sink.read_everything();
-            found = Some((controls(&sink.docx()?), controls(source)));
+            let here = sink.docx()?;
+            found = Some((controls(&here), controls(source)));
         }
         let Some((here, there)) = &found else { continue };
         let id = here
