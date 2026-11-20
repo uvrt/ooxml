@@ -458,15 +458,18 @@ impl<D: DocModel> Store<D> {
     }
 }
 
-/// The reads a step keeps in the history: a read by condition counts there as a read of every
-/// key, so undo and redo find a step entangled exactly as they did before such reads (a
-/// condition is checked against the head only at commit).
-fn history_reads<D: DocModel>(reads: KeySet<D::Key>, predicates: &[Arc<dyn ReadPredicate<D>>]) -> KeySet<D::Key> {
-    if predicates.is_empty() {
-        reads
-    } else {
-        KeySet::Everything
+/// The reads a step keeps in the history: a read by condition counts there as a read of the
+/// keys it names ([`ReadPredicate::history_keys`]), or of every key when it names none, so
+/// undo and redo find a step entangled at least as they did before such reads (a condition
+/// is checked against the head only at commit).
+fn history_reads<D: DocModel>(mut reads: KeySet<D::Key>, predicates: &[Arc<dyn ReadPredicate<D>>]) -> KeySet<D::Key> {
+    for predicate in predicates {
+        match predicate.history_keys() {
+            Some(keys) => reads.extend(&KeySet::of(keys)),
+            None => return KeySet::Everything,
+        }
     }
+    reads
 }
 
 /// `changes` applied in order to `doc`.

@@ -95,16 +95,23 @@ impl Bridged for WordDoc {
             .filter(|v| !self.ids().contains(*v))
             .collect();
         values.sort_unstable();
-        // a drawing the parts bring raises the highest number given (never given again)
-        let highest = ooxml_word_model::ids::drawing_numbers(&roots)
+        // a drawing the parts bring is one the document had (a copy keeps no number it had),
+        // and raises the highest number given (never given again)
+        let mut drawings: Vec<u64> = ooxml_word_model::ids::drawing_numbers(&roots)
             .into_iter()
-            .max()
+            .filter(|n| !self.ids().had_drawing(*n))
+            .collect();
+        drawings.sort_unstable();
+        let highest = drawings
+            .last()
+            .copied()
             .filter(|n| *n > self.ids().highest_drawing())
             .unwrap_or(0);
-        (!values.is_empty() || highest > 0).then(|| {
+        (!values.is_empty() || !drawings.is_empty()).then(|| {
             Change::Ids(IdsChange {
                 values,
                 highest_drawing: highest,
+                drawings,
                 ..IdsChange::default()
             })
         })

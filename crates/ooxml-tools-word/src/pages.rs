@@ -1,7 +1,8 @@
 //! Owns: [`EnginePages`], the edit core's [`FieldLayout`] port over a Word page engine
 //! (`ooxml-word-pages`): a version laid out from the one the engine laid out last, its page
 //! numbers read as a field update reads them (`ooxml_word_layout::fields::update`), places
-//! named by the tool's block ids (each found from its id when asked); and the reflow
+//! named by the tool's block ids (each found from its id when asked), the pages a block is
+//! drawn on (`LayoutFacts::pages_of_each`); and the reflow
 //! between two versions, each summarised as docx-agent's `LayoutSummary` is
 //! (`ooxml_word_pages::summary`).
 //!
@@ -132,6 +133,20 @@ impl LaidFields for Laid {
                 .map_err(unknown),
             FieldPlace::Page(page) => Err(Unknown(format!("a reference to page {page}"))),
         }
+    }
+
+    fn blocks_pages(&self, ids: &[&str]) -> Vec<Result<Vec<usize>, Unknown>> {
+        let paths: Vec<Option<Text>> = ids.iter().map(|id| self.version.path_of(id)).collect();
+        let keys: Vec<&str> = paths.iter().map(|p| p.as_deref().unwrap_or_default()).collect();
+        let found = self.version.facts().pages_of_each(&keys);
+        ids.iter()
+            .zip(paths.iter().zip(found))
+            .map(|(id, (path, pages))| match path {
+                Some(_) if !pages.is_empty() => Ok(pages),
+                Some(_) => Err(Unknown(format!("{id} is not drawn: the layout stops before it"))),
+                None => Err(Unknown(format!("{id} is not laid out"))),
+            })
+            .collect()
     }
 
     fn pages(&self) -> Vec<PageShows> {

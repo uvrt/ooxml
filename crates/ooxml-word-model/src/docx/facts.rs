@@ -1,7 +1,8 @@
 //! Owns: [`PartFacts`], what docx-agent's document-wide lookups read of one story part --
 //! its content controls, revision records and drawing frames with their places (live
 //! elements, `mc:Fallback` left out, in document order), the bookmarks its hyperlinks point
-//! at, and whether a table cell's end is one Accept All takes away -- found in one walk and
+//! at, its bookmarks' markers (fallbacks' too, as docx-agent's `_bookmark_markers` walks
+//! them), and whether a table cell's end is one Accept All takes away -- found in one walk and
 //! kept with the part, each top-level block's facts apart: a later version of the part
 //! takes every block it shares with the version before (the same subtree, by pointer) from
 //! that version's facts and walks only the blocks that changed.
@@ -25,6 +26,10 @@ struct BlockFacts {
     revisions: Vec<Found>,
     frames: Vec<Found>,
     anchors: Vec<String>,
+    /// `w:bookmarkStart`s: name, id, place.
+    starts: Vec<(String, String, Box<[u32]>)>,
+    /// `w:bookmarkEnd`s: id, place.
+    ends: Vec<(String, Box<[u32]>)>,
     cell_ends: bool,
 }
 
@@ -102,6 +107,30 @@ impl PartFacts {
             .flat_map(|b| b.facts.anchors.iter().map(String::as_str))
     }
 
+    /// The bookmarks' starts (name, id, place), in document order.
+    #[must_use]
+    pub fn bookmark_starts(&self) -> Vec<(String, String, Box<[u32]>)> {
+        let mut out = Vec::new();
+        for block in &self.blocks {
+            for (name, id, path) in &block.facts.starts {
+                out.push((name.clone(), id.clone(), block.placed(path)));
+            }
+        }
+        out
+    }
+
+    /// The bookmarks' ends (id, place), in document order.
+    #[must_use]
+    pub fn bookmark_ends(&self) -> Vec<(String, Box<[u32]>)> {
+        let mut out = Vec::new();
+        for block in &self.blocks {
+            for (id, path) in &block.facts.ends {
+                out.push((id.clone(), block.placed(path)));
+            }
+        }
+        out
+    }
+
     /// Whether a table cell of the part ends with a paragraph mark that is deleted or moved
     /// away, or is itself deleted: Accept All takes the next cell's text into it.
     #[must_use]
@@ -125,6 +154,15 @@ impl PartFacts {
     }
 }
 
+impl Block {
+    /// A place relative to the block, as the part's.
+    fn placed(&self, path: &[u32]) -> Box<[u32]> {
+        let mut out = self.place.to_vec();
+        out.extend_from_slice(path);
+        out.into_boxed_slice()
+    }
+}
+
 fn index(k: usize) -> u32 {
     u32::try_from(k).unwrap_or(u32::MAX)
 }
@@ -144,6 +182,14 @@ impl BlockFacts {
             if let Some(a) = element.attribute(Some(W), "anchor").filter(|a| !a.is_empty()) {
                 self.anchors.push(a.to_owned());
             }
+        }
+        if name.is(Some(W), "bookmarkStart") {
+            let attribute = |local| element.attribute(Some(W), local).unwrap_or("").to_owned();
+            self.starts
+                .push((attribute("name"), attribute("id"), path.clone().into_boxed_slice()));
+        } else if name.is(Some(W), "bookmarkEnd") {
+            let id = element.attribute(Some(W), "id").unwrap_or("").to_owned();
+            self.ends.push((id, path.clone().into_boxed_slice()));
         }
         if !fallback {
             let found = || Found {
@@ -210,5 +256,30 @@ mod tests {
         assert!(facts.cell_ends());
         let again = PartFacts::read(tree.root(), Some(&facts));
         assert!(std::sync::Arc::ptr_eq(&again.blocks[0].facts, &facts.blocks[0].facts));
+    }
+
+    #[test]
+    fn bookmark_markers_are_found_beside_blocks_inside_them_and_in_fallbacks() {
+        let doc = r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"><w:body><w:bookmarkStart w:id="1" w:name="a"/><w:p><w:bookmarkEnd w:id="1"/><w:bookmarkStart w:id="2" w:name="b"/></w:p><w:p><mc:AlternateContent><mc:Fallback><w:bookmarkEnd w:id="2"/></mc:Fallback></mc:AlternateContent></w:p></w:body></w:document>"#;
+        let tree = ooxml_xml::parse(doc.as_bytes(), &XmlLimits::default()).unwrap_or_else(|e| panic!("{e}"));
+        let facts = PartFacts::read(tree.root(), None);
+        let starts: Vec<(String, String, Vec<u32>)> = facts
+            .bookmark_starts()
+            .into_iter()
+            .map(|(n, i, p)| (n, i, p.to_vec()))
+            .collect();
+        assert_eq!(
+            starts,
+            [
+                ("a".into(), "1".into(), vec![0, 0]),
+                ("b".into(), "2".into(), vec![0, 1, 1])
+            ]
+        );
+        let ends: Vec<(String, Vec<u32>)> = facts
+            .bookmark_ends()
+            .into_iter()
+            .map(|(i, p)| (i, p.to_vec()))
+            .collect();
+        assert_eq!(ends, [("1".into(), vec![0, 1, 0]), ("2".into(), vec![0, 2, 0, 0, 0])]);
     }
 }
