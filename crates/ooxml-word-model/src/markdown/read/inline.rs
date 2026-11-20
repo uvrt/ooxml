@@ -7,10 +7,11 @@
 //! Must not: group paragraphs or render text.
 
 use super::detail::{drawing_record, every_hyperlink};
-use super::{child_at, comment, index, ParagraphRecord, Placed, Reader};
+use super::{child_at, comment, index, DrawingRecord, ParagraphRecord, Placed, Reader};
 use crate::docx::controls::control_kind;
 use crate::docx::drawings::drawing_kind;
 use crate::docx::formatting::{Cell, EffectiveRun};
+use crate::docx::graphics::chart_of;
 use crate::docx::text::{leading_text, View, NON_BREAKING_HYPHEN, OBJECT, SOFT_HYPHEN};
 use crate::docx::{child_val, live_paths};
 use crate::ids::{MC, W, WP};
@@ -553,13 +554,16 @@ impl<'r, 'a> Walk<'r, 'a> {
             let doc_pr = frame.element.find(Some(WP), "docPr");
             let name = doc_pr.and_then(|d| d.attribute(None, "name")).map(str::to_owned);
             let alt = doc_pr.and_then(|d| d.attribute(None, "descr")).unwrap_or("").to_owned();
-            self.record.detail.drawings.push(drawing_record(
+            let (docx, part) = (self.reader.docx, self.record.part.as_str());
+            let record = drawing_record(
                 &frame.element,
-                self.reader.shared.pictures(self.reader.docx).get(&key).cloned(),
-                self.reader.shared.drawings(self.reader.docx).get(&key).cloned(),
-                name.clone(),
-                alt.clone(),
-            ));
+                self.reader.shared.pictures(docx).get(&key).cloned(),
+                self.reader.shared.drawings(docx).get(&key).cloned(),
+                (name.clone(), alt.clone()),
+                &|element| chart_of(docx, part, element),
+            );
+            let summary = graphic_summary(&record);
+            self.record.detail.drawings.push(record);
             if let Some(id) = self.reader.shared.pictures(self.reader.docx).get(&key).cloned() {
                 self.record.inline.push(Inline::Image {
                     alt,
@@ -581,6 +585,7 @@ impl<'r, 'a> Walk<'r, 'a> {
             if let Some(name) = name.filter(|n| !n.is_empty()) {
                 label.push_str(&format!(" \"{name}\""));
             }
+            label.push_str(&summary);
             self.record.inline.push(Inline::Html(comment(&label)));
             let placed = Placed {
                 element: Arc::clone(&frame.element),
@@ -656,4 +661,20 @@ pub(crate) fn one_line(text: &str, limit: usize) -> String {
     }
     let cut: String = joined.chars().take(limit - 1).collect();
     format!("{}\u{2026}", cut.trim_end())
+}
+
+/// What a drawing's comment says of the charts it holds, after its name: ` [chart: ...]`
+/// for a chart, ` [d:G/m chart: ...]` for each chart among a group's members (docx-agent's
+/// `_graphic`; in the comment, since the drawing stands in a paragraph's line).
+fn graphic_summary(record: &DrawingRecord) -> String {
+    if let Some(chart) = &record.chart {
+        return format!(" [chart: {}]", chart.summary());
+    }
+    let mut out = String::new();
+    for member in record.members.iter().flatten() {
+        if let Some(chart) = &member.chart {
+            out.push_str(&format!(" [{} chart: {}]", member.id, chart.summary()));
+        }
+    }
+    out
 }

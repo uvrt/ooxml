@@ -3,10 +3,10 @@
 The Rust definition (``crates/ooxml-tools-word``, golden ``tests/golden/word_read.json``
 there) equals today's byte for byte, and the reply of ``ooxml_core.Session.call("word_read",
 ...)`` equals today's envelope on every fixture, in every view and with every story -- but
-for one thing the Rust core does not read yet: a chart's or SmartArt diagram's one-line
-summary in its drawing's comment (``[chart: ...]``, ``[smartart: ...]``), which waits for the
-chart model (phase P3).  ``KNOWN`` takes those summaries out of today's text before the two
-are compared, so any other difference fails.
+for one thing the Rust core does not read yet: a SmartArt diagram's one-line summary in its
+drawing's comment (``[smartart: ...]``), which waits for the diagram's data model.  ``KNOWN``
+takes those summaries out of today's text before the two are compared, so any other
+difference fails.
 """
 from __future__ import annotations
 
@@ -29,8 +29,8 @@ HERE = Path(__file__).resolve().parent
 GOLDEN = HERE.parents[2] / "crates" / "ooxml-tools-word" / "tests" / "golden" / "word_read.json"
 FIXTURES = sorted((HERE / "fixtures").rglob("*.docx"))
 
-#: What the Rust core does not write yet: a chart's or diagram's summary in its comment.
-KNOWN = re.compile(r" \[(?:d:[^ \]]+ )?(?:chart|smartart): [^\n]*?\](?= -->| \[| empty -->)")
+#: What the Rust core does not write yet: a diagram's summary in its comment.
+KNOWN = re.compile(r" \[(?:d:[^ \]]+ )?smartart: [^\n]*?\](?= -->| \[| empty -->)")
 
 CASES = {"final": {}, "markup": {"view": "markup"}, "original": {"view": "original"}, "all": {"stories": "all"}}
 
