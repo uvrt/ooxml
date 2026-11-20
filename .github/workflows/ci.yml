@@ -2,8 +2,10 @@ name: CI
 
 # The seven Python packages' suites, lint, type check and build.  On a pull request only
 # the packages its change touches and every package that depends on one of them run
-# (tools/ci.py, PACKAGES: the dependency graph); a change to the workflows or to tools/
-# runs them all.  A push to main, the nightly run and a manual run take every package.
+# (tools/ci.py, PACKAGES: the dependency graph, `pr_uses` where a pull request follows less
+# of it); a change to a package's notes alone (tools/ci.py, NOTES) runs its build job only; a
+# change to the test workflows or to tools/ci.py (RUN_ALL_PREFIXES) runs them all.  A push
+# to main, the nightly run and a manual run take every package.
 # The Pythons per OS (tools/ci.py, LEGS): production runs CPython 3.15 on Linux (moving to
 # 3.15t, freethreading.yml); development runs on macOS, whose runners are few:
 #   pull request, push to main:  Linux 3.15; Windows 3.15 only for the packages with code
@@ -40,6 +42,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       any: ${{ steps.plan.outputs.any }}
+      any_build: ${{ steps.plan.outputs.any_build }}
       linux: ${{ steps.plan.outputs.linux }}
       windows: ${{ steps.plan.outputs.windows }}
       any_windows: ${{ steps.plan.outputs.any_windows }}
@@ -87,7 +90,7 @@ jobs:
   build:
     name: build ${{ matrix.package }}
     needs: plan
-    if: needs.plan.outputs.any == 'true'
+    if: needs.plan.outputs.any_build == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
