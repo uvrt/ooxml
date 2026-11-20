@@ -182,8 +182,8 @@ impl Shared {
     }
 
     /// The drawings of `docx` (the version these lookups are of) whose summary docx-agent
-    /// writes from the chart model (a chart, a SmartArt diagram, a group holding one), which
-    /// the core does not read yet (phase P3).
+    /// writes from a SmartArt diagram's data model (a diagram, a group holding one), which
+    /// the core does not read yet.
     #[must_use]
     pub fn graphics(&self, docx: &Docx) -> &[String] {
         &self.drawings_read(docx).1
@@ -199,15 +199,15 @@ impl Shared {
     }
 }
 
-/// Whether docx-agent writes `drawing`'s summary from the chart model: a chart, a diagram,
-/// or a group with one among its members.
+/// Whether docx-agent writes `drawing`'s summary from a SmartArt diagram's data model, which
+/// the core does not read yet: a diagram, or a group with one among its members.
 fn summarised(drawing: &crate::docx::drawings::Drawing) -> bool {
     use crate::docx::drawings::{group_members, member_kind};
     match drawing.kind {
-        "chart" | "diagram" => true,
+        "diagram" => true,
         "group" => group_members(&drawing.element, &drawing.id, false)
             .iter()
-            .any(|(_, member)| matches!(member_kind(member), "chart" | "diagram")),
+            .any(|(_, member)| member_kind(member) == "diagram"),
         _ => false,
     }
 }
