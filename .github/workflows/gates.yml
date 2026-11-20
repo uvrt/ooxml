@@ -119,25 +119,37 @@ jobs:
           REF: ${{ inputs.ref || 'main' }}
           EVERY: ${{ inputs.every || '1' }}
           FIXTURES: ${{ inputs.fixtures || 'all' }}
+        # The checked-out ref's tools/gates.py may predate an option this workflow passes (a branch that
+        # has not merged main since): each one is used only where its --help lists it, else the older call
+        # (fixtures all, modes all, 3 shards a mode). Remove a fallback once no such branch is dispatched.
         run: |
-          fixtures=$(python3 tools/gates.py fixtures --fixtures "$FIXTURES")
-          echo "fixtures=$fixtures" >> "$GITHUB_OUTPUT"
-          warm=()
-          if [ -n "$STORE" ]; then warm=(--warm); fi
-          if grep -q -- '"--warm"' tools/gates.py; then
-            matrix=$(python3 tools/gates.py matrix --gates "$GATES" --modes "$MODES" --shards "$SHARDS" --per-tool "$PER_TOOL" \
-              --every "$EVERY" --fixtures "$fixtures" "${warm[@]}" 2> plan.txt)
+          commands=$(python3 tools/gates.py --help)
+          has() { [[ "$commands" =~ [{,]$1[,}] ]]; }
+          if has fixtures; then
+            fixtures=$(python3 tools/gates.py fixtures --fixtures "$FIXTURES")
+            echo "fixtures=$fixtures" >> "$GITHUB_OUTPUT"
           else
-            # A branch that has not merged main since tools/gates_jobs.py: its own jobs, 3 shards a mode (the
-            # differential job reads their `mode` as a one-mode list). Remove once no such branch is dispatched.
-            matrix=$(python3 tools/gates.py matrix --gates "$GATES" --modes "$MODES" --shards "${SHARDS/auto/3}" \
-              --per-tool "$PER_TOOL" 2> plan.txt)
+            fixtures=all           # and the differential jobs pass no --fixtures
+            echo "tools/gates.py has no fixtures selection: every fixture" >&2
           fi
+          if [ "$MODES" = auto ] && ! has plan; then MODES=all; fi
+          args=()
+          matrix_help=$(python3 tools/gates.py matrix --help)
+          if [[ "$matrix_help" == *--warm* ]]; then
+            args=(--shards "$SHARDS" --every "$EVERY" --fixtures "$fixtures")
+            if [ -n "$STORE" ]; then args+=(--warm); fi
+          else
+            # its own jobs, 3 shards a mode (the differential job reads their `mode` as a one-mode list)
+            args=(--shards "${SHARDS/auto/3}")
+          fi
+          matrix=$(python3 tools/gates.py matrix --gates "$GATES" --modes "$MODES" --per-tool "$PER_TOOL" "${args[@]}" 2> plan.txt)
           cat plan.txt
           echo "matrix: $matrix"
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-          echo "corpus=$(case "$matrix" in *'"gate": "corpus"'*) echo true;; *) echo false;; esac)" >> "$GITHUB_OUTPUT"
+          corpus=false
+          if [[ "$matrix" == *'"gate": "corpus"'* ]]; then corpus=true; fi
+          echo "corpus=$corpus" >> "$GITHUB_OUTPUT"
           echo "ref $REF at $(git rev-parse HEAD); gates $GATES; modes $MODES $(cat plan.txt); per_tool '${PER_TOOL}'; every $EVERY; shards $SHARDS; reference store ${STORE:-none}; fixtures $FIXTURES: $fixtures" >> "$GITHUB_STEP_SUMMARY"
 
   # The release oracle binaries, once per run.
@@ -242,13 +254,15 @@ jobs:
           if [ "$GATE" = corpus ]; then tree=(--tree "$RUNNER_TEMP/corpus"); fi
           cache=()
           if [ "$GATE" != reads ]; then cache=(--cache "$RUNNER_TEMP/reference"); fi
+          fixtures=()     # none from a tools/gates.py without the fixtures selection (the plan job)
+          if [ -n "$FIXTURES" ]; then fixtures=(--fixtures "$FIXTURES"); fi
           # Each mode on its own: one failing still lets the others run.
           status=0
           for mode in ${MODES//,/ }; do
             echo "::group::$GATE $mode $SHARD"
             python tools/gates.py diff --gate "$GATE" --mode "$mode" --shard "$SHARD" --per-tool "$PER_TOOL" \
               --every "$EVERY" --bin "$RUNNER_TEMP/oracles" --out "$RUNNER_TEMP/out/$GATE-$mode-${SHARD%/*}" \
-              --fixtures "$FIXTURES" "${tree[@]}" "${cache[@]}" || status=1
+              "${fixtures[@]}" "${tree[@]}" "${cache[@]}" || status=1
             echo "::endgroup::"
           done
           exit $status
@@ -295,12 +309,13 @@ jobs:
         run: |
           echo "Every job ran $REF at $SHA." >> "$GITHUB_STEP_SUMMARY"
           python3 tools/gates.py summary "$RUNNER_TEMP/diffs" >> "$GITHUB_STEP_SUMMARY"
-          {
+          commands=$(python3 tools/gates.py --help)
+          if [[ "$commands" =~ [{,]durations[,}] ]]; then {
             echo "<details><summary>The warm modes' times (tools/gates_durations.json: python tools/gates.py durations DIR --write)</summary>"
             echo; echo '```json'
             python3 tools/gates.py durations "$RUNNER_TEMP/diffs"
             echo '```'; echo "</details>"
-          } >> "$GITHUB_STEP_SUMMARY"
+          } >> "$GITHUB_STEP_SUMMARY"; fi
 
   # The results the differential jobs computed, added to the store they restored (saved as a
   # new cache entry; the next run restores the newest).
