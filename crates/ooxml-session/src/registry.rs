@@ -270,6 +270,7 @@ impl<T: ToolArgs> Tool for EditHandler<T> {
             layout: call.layout,
             others: Others::new(&others),
             blobs: call.blobs,
+            rows_written: Some(&word.rows_written),
         };
         let result = match &self.run {
             EditRun::Plain(run) => run(&args, &editing),

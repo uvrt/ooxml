@@ -150,6 +150,7 @@ pub(crate) fn tool_case(
         layout: layout.as_ref().map(|l| l as &dyn ooxml_word_edit::FieldLayout),
         others: Others::new(&others),
         blobs: Some(&blobs),
+        rows_written: None,
     };
     let arguments = case.get("arguments").cloned().unwrap_or(Value::Object(Map::new()));
     let tool = case.get("tool").and_then(Value::as_str).unwrap_or("");

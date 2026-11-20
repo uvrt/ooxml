@@ -41,6 +41,7 @@ fn calls(calls: &[Value], author: Option<&str>) -> (Vec<Value>, String) {
         layout: None,
         others: ooxml_tools_word::Others::default(),
         blobs: None,
+        rows_written: None,
     };
     let mut replies = Vec::new();
     for arguments in calls {

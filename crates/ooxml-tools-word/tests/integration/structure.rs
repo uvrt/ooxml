@@ -120,6 +120,7 @@ fn call_tracking<A: ToolArgs>(
             layout: Some(&TwoPages),
             others: ooxml_tools_word::Others::default(),
             blobs: None,
+            rows_written: None,
         };
         let (args, _) = A::accept(arguments, Some("docx")).unwrap();
         Value::Object(tool(&args, &editing).to_json())

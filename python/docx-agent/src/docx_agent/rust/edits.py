@@ -230,13 +230,8 @@ def _drawings(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
 
 
 def _edit_table(call: Any, arguments: dict[str, Any]) -> dict[str, Any]:
-    from ..tools.objects import _WRITES_ROWS
-
-    if arguments.get("action") in _WRITES_ROWS:
-        # The rows a call adds or writes into are looked at against the rows around them
-        # (round 58, R126: a warning, the column's formatting taken into a cell that was
-        # empty, the rows kept for check's row_text_format) by the Python handler.
-        raise _Fallback("rows written: their look against the rows around them")
+    # The rows a call adds or writes into are looked at against the rows around them by the
+    # session too (round 58, R126), and kept in its record (owner.SessionRows).
     return {**_own(arguments), "table": reads._refs(call, arguments.get("table"))}
 
 

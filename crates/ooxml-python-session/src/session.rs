@@ -617,6 +617,24 @@ impl PySession {
         py.detach(|| session.seed_retired(&id, given)).map_err(|e| to_py(&e))
     }
 
+    /// The rows of the Word document this session's `word_edit_table` calls added or wrote
+    /// into, by `w14:paraId`, sorted (round 58, R126: check's `row_text_format` reads them).
+    fn rows_written(&self, py: Python<'_>, doc: &str) -> PyResult<Vec<String>> {
+        let id = doc_id(doc, &self.inner)?;
+        let session = &self.inner;
+        let rows = py.detach(|| session.rows_written(&id)).map_err(|e| to_py(&e))?;
+        Ok(rows.into_iter().collect())
+    }
+
+    /// Keep `rows` (`w14:paraId`s) as written by a table call the host answered itself, in
+    /// the record the session's own calls keep theirs in.
+    fn note_rows_written(&self, py: Python<'_>, doc: &str, rows: Vec<String>) -> PyResult<()> {
+        let id = doc_id(doc, &self.inner)?;
+        let session = &self.inner;
+        py.detach(|| session.note_rows_written(&id, rows))
+            .map_err(|e| to_py(&e))
+    }
+
     /// Close the document; its versions and history are let go.
     fn close(&self, py: Python<'_>, doc: &str) -> PyResult<()> {
         let id = doc_id(doc, &self.inner)?;

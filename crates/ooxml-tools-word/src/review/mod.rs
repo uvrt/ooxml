@@ -57,6 +57,18 @@ pub struct Editing<'a> {
     /// The session's blobs, where the host hands them over (`word_drawings`' pictures);
     /// `None`: a call that reads one is left to the host.
     pub blobs: Option<&'a dyn crate::Blobs>,
+    /// The host's record of the rows the session's `word_edit_table` calls wrote (round 58,
+    /// R126), read and added to; `None`: the call's own rows only, none kept.
+    pub rows_written: Option<&'a crate::RowsWritten>,
+}
+
+impl<'a> Editing<'a> {
+    /// The call with the host's record of the rows written ([`crate::RowsWritten`]).
+    #[must_use]
+    pub fn with_rows_written(mut self, rows_written: Option<&'a crate::RowsWritten>) -> Self {
+        self.rows_written = rows_written;
+        self
+    }
 }
 
 /// An edit's refusal as the tool's: an address refused with its way out, a refusal with

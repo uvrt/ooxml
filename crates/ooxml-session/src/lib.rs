@@ -34,6 +34,7 @@ mod model;
 mod names;
 mod registry;
 mod retired;
+mod rows_written;
 mod session;
 mod update;
 

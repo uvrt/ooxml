@@ -125,7 +125,19 @@ pub(super) fn set_cells(
         Err(error) => return Ok(refused(error, retry.clone())),
     };
     count_fills(&mut fills, &values);
-    Ok(reply(editing, view, done.out.edits, &fills, &held, retry))
+    let mut result = reply(editing, view, done.out.edits, &fills, &held, retry);
+    // round 58 (R126): the rows written looked at against the rows around them
+    let now = done.version.doc().ids().follow(&view.table.id);
+    result.warnings.extend(super::rows_written::rows_written(
+        editing,
+        &view.table.id,
+        &now,
+        done.previous.as_ref(),
+        &done.version,
+        None,
+        retry,
+    ));
+    Ok(result)
 }
 
 /// A cells entry's row or column: its place, else its label, else missing.
