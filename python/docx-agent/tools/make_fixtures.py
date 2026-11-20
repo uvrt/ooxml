@@ -35,6 +35,12 @@ purpose:
     an external and an internal hyperlink, a bookmark, and an inline picture (a PNG written
     here).
 
+``review-follow.docx`` (compatibility mode 15)
+    what a review settles beyond its records: data-bound controls showing tracked changes
+    (text, a drop-down list, a date whose node lacks its time), and a table with tracked
+    cell insertions that a comment describing them is anchored in, beside an ordinary
+    comment.
+
 Deterministic: the zip entries carry a fixed timestamp, so running this again writes the
 same bytes.
 
@@ -252,6 +258,87 @@ def controls() -> dict[str, str]:
             ("rId1", REL + "customXmlProps", "itemProps1.xml", False)]),
     }
 
+
+
+FOLLOW_STORE = "{5C1A2B3D-0000-4000-8000-00000000F011}"
+
+
+def review_follow() -> dict[str, str]:
+    """What a review settles beyond its records: data-bound controls showing tracked
+    changes (text, a drop-down list, a date whose node lacks its time), and a table with a
+    tracked cell insertion that a comment written to describe it is anchored in, beside
+    an ordinary comment."""
+    def bound(node: str) -> str:
+        # prefix "fl", not Word's "ns0": test_ids reads a stray ns0 near the head as a leak
+        return (f'<w:dataBinding w:prefixMappings="xmlns:fl=\'urn:follow\'" w:xpath="/fl:root[1]/fl:{node}[1]" '
+                f'w:storeItemID="{FOLLOW_STORE}"/>')
+
+    items = '<w:listItem w:displayText="One" w:value="a"/><w:listItem w:displayText="Two" w:value="b"/>'
+    deleted = '<w:del w:id="{0}" ' + AUTHOR + '><w:r><w:delText xml:space="preserve">{1}</w:delText></w:r></w:del>'
+    cell = '<w:tc><w:tcPr><w:tcW w:w="3000" w:type="dxa"/>{0}</w:tcPr>{1}</w:tc>'
+    body = "".join([
+        p("Review follow-ups", "7D000001", style="Heading1"),
+        # plain text and a plain table first: what an edit set over the document works on
+        p("Plain paragraphs come first in this document.", "7D000010"),
+        p("Another plain paragraph follows the first one.", "7D000011"),
+        p("A third plain paragraph keeps the opening going.", "7D000012"),
+        p("Fourth plain words stand here for edits.", "7D000013"),
+        p("Fifth plain words wait to be deleted.", "7D000014"),
+        p("Sixth plain paragraph closes the opening.", "7D000015"),
+        '<w:tbl><w:tblPr><w:tblStyle w:val="TableGrid"/><w:tblW w:w="0" w:type="auto"/></w:tblPr>'
+        '<w:tblGrid><w:gridCol w:w="3000"/><w:gridCol w:w="3000"/></w:tblGrid>'
+        '<w:tr w14:paraId="7E000011" w14:textId="77777777">'
+        + cell.format("", p("North", "7E000012")) + cell.format("", p("South", "7E000013")) + "</w:tr>"
+        '<w:tr w14:paraId="7E000014" w14:textId="77777777">'
+        + cell.format("", p("East", "7E000015")) + cell.format("", p("West", "7E000016")) + "</w:tr></w:tbl>",
+        p(inner=r("Client: ") + sdt('<w:id w:val="320"/>' + bound("client") + "<w:text/>",
+                                    r("Acme") + f'<w:ins w:id="501" {AUTHOR}>' + r(" Corp") + "</w:ins>"
+                                    + deleted.format(502, " Ltd")), para="7D000002"),
+        p(inner=r("Grade: ") + sdt(f'<w:id w:val="321"/>{bound("grade")}<w:dropDownList>{items}</w:dropDownList>',
+                                   deleted.format(503, "One") + f'<w:ins w:id="504" {AUTHOR}>' + r("Two") + "</w:ins>"),
+          para="7D000003"),
+        p(inner=r("Due: ") + sdt(f'<w:id w:val="322"/>{bound("due")}<w:date w:fullDate="2026-03-02T00:00:00Z">'
+                                 '<w:dateFormat w:val="d-M-yyyy"/><w:lid w:val="en-GB"/>'
+                                 '<w:storeMappedDataAs w:val="dateTime"/><w:calendar w:val="gregorian"/></w:date>',
+                                 r("2-3-2026")) + f'<w:ins w:id="505" {AUTHOR}>' + r(" (moved)") + "</w:ins>",
+          para="7D000004"),
+        '<w:tbl><w:tblPr><w:tblStyle w:val="TableGrid"/><w:tblW w:w="0" w:type="auto"/></w:tblPr>'
+        '<w:tblGrid><w:gridCol w:w="3000"/><w:gridCol w:w="3000"/></w:tblGrid>'
+        '<w:tr w14:paraId="7E000001" w14:textId="77777777">'
+        + cell.format("", p(inner='<w:commentRangeStart w:id="1"/>' + r("Name")
+                            + '<w:commentRangeEnd w:id="1"/><w:r><w:commentReference w:id="1"/></w:r>', para="7E000002"))
+        + cell.format(f'<w:cellIns w:id="506" {AUTHOR}/>', p("Added", "7E000003")) + "</w:tr>"
+        '<w:tr w14:paraId="7E000004" w14:textId="77777777">'
+        + cell.format("", p(inner=r("Row ") + '<w:commentRangeStart w:id="2"/>' + r("two")
+                            + '<w:commentRangeEnd w:id="2"/><w:r><w:commentReference w:id="2"/></w:r>'
+                            + f'<w:ins w:id="508" {AUTHOR}>' + r(" and more") + "</w:ins>", para="7E000005"))
+        + cell.format(f'<w:cellIns w:id="507" {AUTHOR}/>', p("Added too", "7E000006")) + "</w:tr></w:tbl>",
+        p("The document ends with this paragraph.", "7D000016"),
+        '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" '
+        'w:left="1440" w:header="708" w:footer="708" w:gutter="0"/></w:sectPr>',
+    ])
+
+    def comment(number: int, text: str, para: str) -> str:
+        return (f'<w:comment w:id="{number}" w:author="Reviewer" w:date="2026-10-01T09:00:00Z" w:initials="RV">'
+                + p(inner='<w:r><w:annotationRef/></w:r>' + r(text), para=para) + "</w:comment>")
+
+    comments = (f"{DECL}<w:comments {NS}>"
+                + comment(1, "Tracked structural change: a column inserted.", "7F000001")
+                + comment(2, "An ordinary remark.", "7F000002") + "</w:comments>")
+    # each node what its control shows now (Word keeps them so); a review changes them
+    item = (f'{DECL}<ns0:root xmlns:ns0="urn:follow"><ns0:client>Acme Corp</ns0:client><ns0:grade>b</ns0:grade>'
+            '<ns0:due>2026-03-02T00:00:00</ns0:due></ns0:root>')
+    props = (f'{DECL}<ds:datastoreItem ds:itemID="{FOLLOW_STORE}" '
+             'xmlns:ds="http://schemas.openxmlformats.org/officeDocument/2006/customXml">'
+             '<ds:schemaRefs/></ds:datastoreItem>')
+    return {
+        "word/document.xml": f"{DECL}<w:document {NS}><w:body>{body}</w:body></w:document>",
+        "word/comments.xml": comments,
+        "customXml/item1.xml": item,
+        "customXml/itemProps1.xml": props,
+        "customXml/_rels/item1.xml.rels": relationships([
+            ("rId1", REL + "customXmlProps", "itemProps1.xml", False)]),
+    }
 
 def styles() -> str:
     def style(kind: str, sid: str, name: str, extra: str = "", based: str | None = "Normal",
@@ -564,6 +651,28 @@ def main() -> None:
         "word/settings.xml": settings(15),
     }
     print(write("controls.docx", parts))
+
+    story = review_follow()
+    parts = {
+        "[Content_Types].xml": content_types({
+            "word/document.xml": WML + ".document.main+xml",
+            "word/styles.xml": WML + ".styles+xml",
+            "word/settings.xml": WML + ".settings+xml",
+            "word/comments.xml": WML + ".comments+xml",
+            "customXml/itemProps1.xml": "application/vnd.openxmlformats-officedocument.customXmlProperties+xml",
+        }),
+        "_rels/.rels": relationships([("rId1", REL + "officeDocument", "word/document.xml", False)]),
+        "word/_rels/document.xml.rels": relationships([
+            ("rIdStyles", REL + "styles", "styles.xml", False),
+            ("rIdSettings", REL + "settings", "settings.xml", False),
+            ("rIdComments", REL + "comments", "comments.xml", False),
+            ("rIdCustom", REL + "customXml", "../customXml/item1.xml", False),
+        ]),
+        **story,
+        "word/styles.xml": styles(),
+        "word/settings.xml": settings(15),
+    }
+    print(write("review-follow.docx", parts))
 
 
 if __name__ == "__main__":

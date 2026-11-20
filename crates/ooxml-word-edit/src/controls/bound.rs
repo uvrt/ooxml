@@ -110,6 +110,21 @@ impl Binding {
         ));
         sink.replace(&part, &path, new, vec![Key::Part(Arc::from(part.as_str()))])
     }
+
+    /// The node written with `value` where it holds no element (or other node but text)
+    /// and other text (`_sync_bound_controls`' rule); a node holding elements is left.
+    ///
+    /// # Errors
+    /// As [`Binding::node`] (the caller leaves a control whose part or node is missing).
+    pub(crate) fn sync(&self, sink: &mut EditSink<'_, '_>, docx: &Docx, value: &str) -> Result<()> {
+        let (part, path) = self.node(sink.doc(), docx)?;
+        let tree = sink.doc().tree(&part)?.ok_or_else(|| EditError::NoPart(part.clone()))?;
+        let node = ooxml_word_model::docx::at_path(tree.root(), &path).ok_or_else(|| EditError::Path(part.clone()))?;
+        if node.children().iter().any(|n| !matches!(n, Node::Text(_))) {
+            return Ok(());
+        }
+        self.write(sink, value)
+    }
 }
 
 /// `{prefix: namespace}` of a binding's `w:prefixMappings` (`xmlns:ns0='urn:x'`).
